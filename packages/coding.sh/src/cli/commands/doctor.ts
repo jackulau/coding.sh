@@ -18,6 +18,7 @@ import { paths, userHome } from "../../core/paths.ts";
 import { allGatewayConfigs, detectGatewaySetups, gatewaySettings } from "../../integrations/gateway/config.ts";
 import { GATEWAYS } from "../../integrations/gateway/providers.ts";
 import { GATEWAY_FLAG } from "../../integrations/gateway/ids.ts";
+import { UsageError } from "../args.ts";
 import { list, port as portFlag } from "../common.ts";
 import { ago, LABEL_WIDTH, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -204,6 +205,8 @@ function capturing(a: { hooked: boolean; hookFiles: HookFile[]; lastEventAgeMs: 
 }
 
 export async function run(c: CommandContext): Promise<number> {
+  if (c.flags.conformance) return (await import("../../conformance/doctor.ts")).runConformance(c);
+  for (const f of ["since", "max-events"]) if (c.flags[f] !== undefined) throw new UsageError(`--${f} works only with --conformance`, { suggestion: `coding.sh doctor --conformance --${f} ${String(c.flags[f])}` });
   const { out, env } = c;
   const named = list(c.flags.agent);
   const port = portFlag(c.flags.port, 4318);

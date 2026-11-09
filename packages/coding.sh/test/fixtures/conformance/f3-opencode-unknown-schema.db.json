@@ -1,0 +1,58 @@
+{
+  "schema": [
+    "CREATE TABLE __drizzle_migrations (id INTEGER PRIMARY KEY, hash TEXT NOT NULL, created_at INTEGER)",
+    "CREATE TABLE conversation (id TEXT PRIMARY KEY, project_id TEXT, directory TEXT, title TEXT, version TEXT, time_created INTEGER, time_updated INTEGER)",
+    "CREATE TABLE conversation_message (id TEXT PRIMARY KEY, conversation_id TEXT, time_created INTEGER, data TEXT)",
+    "CREATE TABLE conversation_part (id TEXT PRIMARY KEY, message_id TEXT, conversation_id TEXT, time_created INTEGER, data TEXT)"
+  ],
+  "rows": {
+    "__drizzle_migrations": [
+      {
+        "id": 1,
+        "hash": "0001_conversation",
+        "created_at": 1793440800000
+      }
+    ],
+    "conversation": [
+      {
+        "id": "ses_f3",
+        "project_id": "prj_1",
+        "directory": "/work/demo",
+        "title": "Add a parser",
+        "version": "9.0.0",
+        "time_created": 1793527200000,
+        "time_updated": 1793527205000
+      }
+    ],
+    "conversation_message": [
+      {
+        "id": "msg_u",
+        "conversation_id": "ses_f3",
+        "time_created": 1793527200010,
+        "data": "{\"role\":\"user\"}"
+      },
+      {
+        "id": "msg_a",
+        "conversation_id": "ses_f3",
+        "time_created": 1793527201000,
+        "data": "{\"role\":\"assistant\",\"modelID\":\"gpt-5\",\"tokens\":{\"input\":900,\"output\":40}}"
+      }
+    ],
+    "conversation_part": [
+      {
+        "id": "prt_1",
+        "message_id": "msg_u",
+        "conversation_id": "ses_f3",
+        "time_created": 1793527200010,
+        "data": "{\"type\":\"text\",\"text\":\"Add a parser\"}"
+      },
+      {
+        "id": "prt_2",
+        "message_id": "msg_a",
+        "conversation_id": "ses_f3",
+        "time_created": 1793527201000,
+        "data": "{\"type\":\"text\",\"text\":\"Done.\"}"
+      }
+    ]
+  }
+}

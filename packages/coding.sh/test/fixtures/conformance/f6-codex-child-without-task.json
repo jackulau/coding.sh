@@ -1,0 +1,152 @@
+[
+  {
+    "id": "a540fb15a945897db5c766da51c6fc185baf09f92ad816b0ebebe050d0e27af1",
+    "v": 0,
+    "agent": "codex",
+    "sessionId": "0193f6f6-0000-7000-8000-000000000001",
+    "kind": "session.start",
+    "ts": 1793527200000,
+    "cwd": "/work/demo",
+    "payload": {
+      "source": "rollout"
+    }
+  },
+  {
+    "id": "fe15da92f92f895999a05356fdc0c15d68ee80e8514e570dede780776ec0b50f",
+    "v": 0,
+    "agent": "codex",
+    "sessionId": "0193f6f6-0000-7000-8000-000000000001",
+    "kind": "user.message",
+    "ts": 1793527200005,
+    "cwd": "/work/demo",
+    "payload": {
+      "text": "Split the work across two agents"
+    },
+    "turnId": "t1"
+  },
+  {
+    "id": "7bf74439616434fc1a1da80b92f239700857bf04c7d5f66a06c64722e47bd1e0",
+    "v": 0,
+    "agent": "codex",
+    "sessionId": "0193f6f6-0000-7000-8000-000000000001",
+    "kind": "subagent.start",
+    "ts": 1793527200100,
+    "cwd": "/work/demo",
+    "payload": {
+      "subagentId": "0193f6f6-0000-7000-8000-000000000002",
+      "childSessionId": "0193f6f6-0000-7000-8000-000000000002"
+    }
+  },
+  {
+    "id": "4452c4b9062c98908d71411afac5f8a626287b93770539863a8faaea563ff72a",
+    "v": 0,
+    "agent": "codex",
+    "sessionId": "0193f6f6-0000-7000-8000-000000000002",
+    "kind": "session.start",
+    "ts": 1793527200100,
+    "cwd": "/work/demo",
+    "payload": {
+      "source": "rollout",
+      "parentSessionId": "0193f6f6-0000-7000-8000-000000000001",
+      "parentEventId": "7bf74439616434fc1a1da80b92f239700857bf04c7d5f66a06c64722e47bd1e0",
+      "subagentId": "0193f6f6-0000-7000-8000-000000000002"
+    }
+  },
+  {
+    "id": "e35f3832884cd6f1452844cd75a315362a24068eeb00eb7e68c73b429f885d2b",
+    "v": 0,
+    "agent": "codex",
+    "sessionId": "0193f6f6-0000-7000-8000-000000000002",
+    "kind": "llm.call",
+    "ts": 1793527200110,
+    "cwd": "/work/demo",
+    "payload": {
+      "provider": "openai",
+      "responseModel": "gpt-5",
+      "ok": true
+    },
+    "turnId": "c1",
+    "durationMs": 800,
+    "usage": {
+      "inputTokens": 900,
+      "outputTokens": 40
+    }
+  },
+  {
+    "id": "dd6008c246f52b81981cd1565bafcbf96c6ac12cadc4f90ca445eb8dc777aac7",
+    "v": 0,
+    "agent": "codex",
+    "sessionId": "0193f6f6-0000-7000-8000-000000000002",
+    "kind": "tool.start",
+    "ts": 1793527200910,
+    "cwd": "/work/demo",
+    "payload": {
+      "tool": "shell",
+      "toolUseId": "call_c1",
+      "input": {
+        "command": [
+          "rg",
+          "parse"
+        ]
+      }
+    },
+    "turnId": "c1"
+  },
+  {
+    "id": "6ec3d271957c62d2e9a67c1ab3a724b86d1ce168ccc26bc9591c1fbf98f7597a",
+    "v": 0,
+    "agent": "codex",
+    "sessionId": "0193f6f6-0000-7000-8000-000000000002",
+    "kind": "tool.end",
+    "ts": 1793527201000,
+    "cwd": "/work/demo",
+    "payload": {
+      "tool": "shell",
+      "toolUseId": "call_c1",
+      "ok": true,
+      "output": "src/parse.ts:1",
+      "exitCode": 0
+    },
+    "turnId": "c1",
+    "durationMs": 90
+  },
+  {
+    "id": "7cf21dbea41cc2006845c485bb100b12c987e14799787764e1143dc34407bc9a",
+    "v": 0,
+    "agent": "codex",
+    "sessionId": "0193f6f6-0000-7000-8000-000000000002",
+    "kind": "assistant.message",
+    "ts": 1793527201500,
+    "cwd": "/work/demo",
+    "payload": {
+      "text": "Found it."
+    },
+    "turnId": "c1"
+  },
+  {
+    "id": "52e61a91dd9ffd2e5c125556064c10f0945036ea02f63eda905cbc4a8e5a4bec",
+    "v": 0,
+    "agent": "codex",
+    "sessionId": "0193f6f6-0000-7000-8000-000000000001",
+    "kind": "subagent.end",
+    "ts": 1793527201600,
+    "cwd": "/work/demo",
+    "payload": {
+      "subagentId": "0193f6f6-0000-7000-8000-000000000002",
+      "ok": true,
+      "childSessionId": "0193f6f6-0000-7000-8000-000000000002"
+    }
+  },
+  {
+    "id": "9c1cb1aa98df064155b20ffcf19444cf84384302bb9cd15b24806b2c7de5c651",
+    "v": 0,
+    "agent": "codex",
+    "sessionId": "0193f6f6-0000-7000-8000-000000000001",
+    "kind": "session.end",
+    "ts": 1793527202000,
+    "cwd": "/work/demo",
+    "payload": {
+      "reason": "idle"
+    }
+  }
+]

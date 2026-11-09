@@ -1,0 +1,160 @@
+[
+  {
+    "id": "b9f4523a827e70583f715f8601efc17c52474a4666ab29ac4f944df61bb02027",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "a1f1f1f1-1111-4111-8111-111111111111",
+    "kind": "session.start",
+    "ts": 1793527200000,
+    "cwd": "/work/demo",
+    "payload": {
+      "source": "transcript"
+    }
+  },
+  {
+    "id": "7e5d48222fae0d6efa6ab69e51bd32949108af1eebffd4e959337a1f95424fa2",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "a1f1f1f1-1111-4111-8111-111111111111",
+    "kind": "user.message",
+    "ts": 1793527200010,
+    "cwd": "/work/demo",
+    "payload": {
+      "text": "Fix the failing test"
+    },
+    "turnId": "e96d36a1c83316102d64b7809659b000faa42f1bbd047485c79023664e40afba"
+  },
+  {
+    "id": "6793e330c7f0be6a594385dd1350baa6454f1d70d8f5dca655194e64baf6c2a5",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "a1f1f1f1-1111-4111-8111-111111111111",
+    "kind": "llm.call",
+    "ts": 1793527200020,
+    "cwd": "/work/demo",
+    "payload": {
+      "provider": "anthropic",
+      "responseModel": "claude-opus-4-5",
+      "ok": true,
+      "messageId": "msg_f1",
+      "ttftMs": 1100,
+      "stopReason": "tool_use",
+      "tokensPerSec": 41.2
+    },
+    "turnId": "e96d36a1c83316102d64b7809659b000faa42f1bbd047485c79023664e40afba",
+    "model": "claude-opus-4-5",
+    "durationMs": 1400,
+    "usage": {
+      "inputTokens": 1200,
+      "outputTokens": 60,
+      "cacheReadTokens": 8000,
+      "cacheWriteTokens": 0
+    }
+  },
+  {
+    "id": "ca49f0821c8b86f3eda730c1baeaa86ebf12f1fa6b0257194f4b11f6bc42e0b7",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "a1f1f1f1-1111-4111-8111-111111111111",
+    "kind": "tool.start",
+    "ts": 1793527201400,
+    "cwd": "/work/demo",
+    "payload": {
+      "tool": "Read",
+      "toolUseId": "toolu_a",
+      "input": {
+        "file_path": "/work/demo/sum.js"
+      }
+    },
+    "turnId": "e96d36a1c83316102d64b7809659b000faa42f1bbd047485c79023664e40afba"
+  },
+  {
+    "id": "22eb7560d1199ee9638722eedc681ae23ba0cb950ec99b4892f51ddf1a59764d",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "a1f1f1f1-1111-4111-8111-111111111111",
+    "kind": "tool.end",
+    "ts": 1793527201450,
+    "cwd": "/work/demo",
+    "payload": {
+      "tool": "Read",
+      "toolUseId": "toolu_a",
+      "ok": true,
+      "output": "module.exports = …"
+    },
+    "turnId": "e96d36a1c83316102d64b7809659b000faa42f1bbd047485c79023664e40afba",
+    "durationMs": 50
+  },
+  {
+    "id": "6793e330c7f0be6a594385dd1350baa6454f1d70d8f5dca655194e64baf6c2a5",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "a1f1f1f1-1111-4111-8111-111111111111",
+    "kind": "llm.call",
+    "ts": 1793527201450,
+    "cwd": "/work/demo",
+    "payload": {
+      "provider": "anthropic",
+      "responseModel": "claude-opus-4-5",
+      "ok": true,
+      "messageId": "msg_f1",
+      "ttftMs": 512,
+      "stopReason": "tool_use",
+      "tokensPerSec": 789
+    },
+    "turnId": "e96d36a1c83316102d64b7809659b000faa42f1bbd047485c79023664e40afba",
+    "model": "claude-opus-4-5",
+    "durationMs": 120,
+    "usage": {
+      "inputTokens": 1200,
+      "outputTokens": 95,
+      "cacheReadTokens": 8000,
+      "cacheWriteTokens": 0
+    }
+  },
+  {
+    "id": "17a0c86ebadb85d9212d2b8a6b876f7b69c4e12cf2658fb6a02b12d5149f3521",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "a1f1f1f1-1111-4111-8111-111111111111",
+    "kind": "tool.start",
+    "ts": 1793527201570,
+    "cwd": "/work/demo",
+    "payload": {
+      "tool": "Bash",
+      "toolUseId": "toolu_b",
+      "input": {
+        "command": "npm test"
+      }
+    },
+    "turnId": "e96d36a1c83316102d64b7809659b000faa42f1bbd047485c79023664e40afba"
+  },
+  {
+    "id": "b3e9e162363b7ef78988f69382838843aa85a0a077d63bbe939fe145e156b0c2",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "a1f1f1f1-1111-4111-8111-111111111111",
+    "kind": "tool.end",
+    "ts": 1793527203570,
+    "cwd": "/work/demo",
+    "payload": {
+      "tool": "Bash",
+      "toolUseId": "toolu_b",
+      "ok": true,
+      "output": "3 passing"
+    },
+    "turnId": "e96d36a1c83316102d64b7809659b000faa42f1bbd047485c79023664e40afba",
+    "durationMs": 2000
+  },
+  {
+    "id": "c400e86ef569ba0ccff0be867754d20d114dc69ac31566742eb97c87e734fcca",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "a1f1f1f1-1111-4111-8111-111111111111",
+    "kind": "turn.end",
+    "ts": 1793527203600,
+    "cwd": "/work/demo",
+    "payload": {},
+    "turnId": "e96d36a1c83316102d64b7809659b000faa42f1bbd047485c79023664e40afba"
+  }
+]

@@ -1,0 +1,252 @@
+[
+  {
+    "id": "1671854039725c0d68eb9d349563d9f139174f657ded42e166d93b9ed2db5d1e",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "b2f2f2f2-2222-4222-8222-222222222222",
+    "kind": "session.start",
+    "ts": 1793527200000,
+    "cwd": "/work/demo",
+    "payload": {
+      "source": "transcript"
+    }
+  },
+  {
+    "id": "f2b93d9472ee610d200edfae87172e1829d7bd2f244a2ed0a179fd2617cdb164",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "b2f2f2f2-2222-4222-8222-222222222222",
+    "kind": "user.message",
+    "ts": 1793527200010,
+    "cwd": "/work/demo",
+    "payload": {
+      "text": "Research the parser, then fix it"
+    }
+  },
+  {
+    "id": "da021ff96fd61108798ec9c617e32e2f722167f6c3faac1047c8f91db57311e0",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "b2f2f2f2-2222-4222-8222-222222222222",
+    "kind": "tool.start",
+    "ts": 1793527200100,
+    "cwd": "/work/demo",
+    "payload": {
+      "tool": "Agent",
+      "toolUseId": "toolu_m1",
+      "input": {
+        "subagent_type": "Explore"
+      }
+    }
+  },
+  {
+    "id": "9774e9d10bc75f30606c848833aca951d61d68415c5a6b427c673b816e369967",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "b2f2f2f2-2222-4222-8222-222222222222",
+    "kind": "subagent.start",
+    "ts": 1793527200110,
+    "cwd": "/work/demo",
+    "payload": {
+      "subagentId": "agent1",
+      "type": "Explore",
+      "childSessionId": "b2f2f2f2-2222-4222-8222-222222222222:sub:agent1",
+      "toolUseId": "toolu_m1"
+    },
+    "parentId": "da021ff96fd61108798ec9c617e32e2f722167f6c3faac1047c8f91db57311e0"
+  },
+  {
+    "id": "5f8188bdfaae6ebb713acdf0b2dab0016cdd9815d6c47eb24e8c13d5c3c02377",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "b2f2f2f2-2222-4222-8222-222222222222:sub:agent1",
+    "kind": "session.start",
+    "ts": 1793527200110,
+    "cwd": "/work/demo",
+    "payload": {
+      "source": "subagent",
+      "parentSessionId": "b2f2f2f2-2222-4222-8222-222222222222",
+      "parentEventId": "9774e9d10bc75f30606c848833aca951d61d68415c5a6b427c673b816e369967",
+      "subagentId": "agent1",
+      "subagentType": "Explore"
+    },
+    "subagentId": "agent1"
+  },
+  {
+    "id": "3be16e7ccb5e25a9e6177339c507fc656ed2f0030c5dcdcb0e8c878c566e3001",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "b2f2f2f2-2222-4222-8222-222222222222:sub:agent1",
+    "kind": "user.message",
+    "ts": 1793527200120,
+    "cwd": "/work/demo",
+    "payload": {
+      "text": "Find the parser and spawn a reader for it"
+    },
+    "subagentId": "agent1"
+  },
+  {
+    "id": "2c3085790fac16655b89f1bebee6d4a024a4dbc80276cf90b39797af18a29753",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "b2f2f2f2-2222-4222-8222-222222222222:sub:agent1",
+    "kind": "tool.start",
+    "ts": 1793527200200,
+    "cwd": "/work/demo",
+    "payload": {
+      "tool": "Agent",
+      "toolUseId": "toolu_s1",
+      "input": {
+        "subagent_type": "general-purpose"
+      }
+    },
+    "subagentId": "agent1"
+  },
+  {
+    "id": "3ef9883a358b6bcf74d55230b10c2ede1ca91b8afb704c4d81e9c59aaeea72f9",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "b2f2f2f2-2222-4222-8222-222222222222",
+    "kind": "subagent.start",
+    "ts": 1793527200210,
+    "cwd": "/work/demo",
+    "payload": {
+      "subagentId": "agent2",
+      "type": "general-purpose",
+      "childSessionId": "b2f2f2f2-2222-4222-8222-222222222222:sub:agent2",
+      "toolUseId": "toolu_s1"
+    },
+    "parentId": "721a53966580b5ea991672eab902ef33f36b26c75320a8599fba49831510f4dc"
+  },
+  {
+    "id": "133dec01587716687d3b895c0b7ccedbef509d3373518b1c25cdb8c28b7c6006",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "b2f2f2f2-2222-4222-8222-222222222222:sub:agent2",
+    "kind": "session.start",
+    "ts": 1793527200210,
+    "cwd": "/work/demo",
+    "payload": {
+      "source": "subagent",
+      "parentSessionId": "b2f2f2f2-2222-4222-8222-222222222222",
+      "parentEventId": "3ef9883a358b6bcf74d55230b10c2ede1ca91b8afb704c4d81e9c59aaeea72f9",
+      "subagentId": "agent2",
+      "subagentType": "general-purpose"
+    },
+    "subagentId": "agent2"
+  },
+  {
+    "id": "96fe6d066fd97943ed11fafa221ddf6faa1086a0cd9c113e507aa6133aa0b205",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "b2f2f2f2-2222-4222-8222-222222222222:sub:agent2",
+    "kind": "user.message",
+    "ts": 1793527200220,
+    "cwd": "/work/demo",
+    "payload": {
+      "text": "Read src/parse.ts"
+    },
+    "subagentId": "agent2"
+  },
+  {
+    "id": "42637913b47490318b3768858001c1eba5876c6c9cf7c969154d4ae3bc215209",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "b2f2f2f2-2222-4222-8222-222222222222:sub:agent2",
+    "kind": "session.end",
+    "ts": 1793527200900,
+    "cwd": "/work/demo",
+    "payload": {
+      "reason": "subagent-stop"
+    },
+    "subagentId": "agent2"
+  },
+  {
+    "id": "9becb488b72ec1a7df4275688059ec322b82c005e195068bf9936e9d1b28fd27",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "b2f2f2f2-2222-4222-8222-222222222222",
+    "kind": "subagent.end",
+    "ts": 1793527200900,
+    "cwd": "/work/demo",
+    "payload": {
+      "subagentId": "agent2",
+      "ok": true,
+      "childSessionId": "b2f2f2f2-2222-4222-8222-222222222222:sub:agent2"
+    },
+    "parentId": "721a53966580b5ea991672eab902ef33f36b26c75320a8599fba49831510f4dc",
+    "durationMs": 690
+  },
+  {
+    "id": "7bc95c6478b30a7cea9762d6844634dd098bc50f54522337fdf207e0f865bafd",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "b2f2f2f2-2222-4222-8222-222222222222:sub:agent1",
+    "kind": "tool.end",
+    "ts": 1793527200910,
+    "cwd": "/work/demo",
+    "payload": {
+      "tool": "Agent",
+      "toolUseId": "toolu_s1",
+      "ok": true
+    },
+    "subagentId": "agent1",
+    "durationMs": 710
+  },
+  {
+    "id": "04009eaf63145e2d650df486f087118eba3ed71d28fa67815485d8358d88a73c",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "b2f2f2f2-2222-4222-8222-222222222222:sub:agent1",
+    "kind": "session.end",
+    "ts": 1793527201000,
+    "cwd": "/work/demo",
+    "payload": {
+      "reason": "subagent-stop"
+    },
+    "subagentId": "agent1"
+  },
+  {
+    "id": "588e41045f757b00b2670f113aa4353ea7e1ee74a203e62067e6d0cd6d10228d",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "b2f2f2f2-2222-4222-8222-222222222222",
+    "kind": "subagent.end",
+    "ts": 1793527201000,
+    "cwd": "/work/demo",
+    "payload": {
+      "subagentId": "agent1",
+      "ok": true,
+      "childSessionId": "b2f2f2f2-2222-4222-8222-222222222222:sub:agent1"
+    },
+    "parentId": "da021ff96fd61108798ec9c617e32e2f722167f6c3faac1047c8f91db57311e0",
+    "durationMs": 890
+  },
+  {
+    "id": "f21158146cf8073195cddbf905fc7bb84a0ec0d71921a03b835288d1ca736220",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "b2f2f2f2-2222-4222-8222-222222222222",
+    "kind": "tool.end",
+    "ts": 1793527201010,
+    "cwd": "/work/demo",
+    "payload": {
+      "tool": "Agent",
+      "toolUseId": "toolu_m1",
+      "ok": true
+    },
+    "durationMs": 910
+  },
+  {
+    "id": "ebf6218645f604895b4d1d29684c1ad91b5b65c739285907a741695f8205cfca",
+    "v": 0,
+    "agent": "claude-code",
+    "sessionId": "b2f2f2f2-2222-4222-8222-222222222222",
+    "kind": "session.end",
+    "ts": 1793527202000,
+    "cwd": "/work/demo",
+    "payload": {
+      "reason": "idle"
+    }
+  }
+]

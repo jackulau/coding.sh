@@ -1,0 +1,94 @@
+[
+  {
+    "id": "0ff1a556e05ebe3c17fc629b4dc4667d74a666c49d977f0f1329a8cde351a61d",
+    "v": 0,
+    "agent": "antigravity",
+    "sessionId": "6b6b6b6b-6666-4666-8666-666666666666",
+    "kind": "session.start",
+    "ts": 1793527200000,
+    "cwd": "/work/demo",
+    "payload": {
+      "source": "transcript"
+    }
+  },
+  {
+    "id": "d36b72cfd91ccc0e5b5ace544d3a46a7582476e405472ebe95cae8fbca4ae1d7",
+    "v": 0,
+    "agent": "antigravity",
+    "sessionId": "6b6b6b6b-6666-4666-8666-666666666666",
+    "kind": "user.message",
+    "ts": 1793527200010,
+    "cwd": "/work/demo",
+    "payload": {
+      "text": "Run the tests"
+    }
+  },
+  {
+    "id": "ebf28e5c818fa81114c77ae2e0fc97283ea88ba3ba843b793c4d98c9b3d29654",
+    "v": 0,
+    "agent": "antigravity",
+    "sessionId": "6b6b6b6b-6666-4666-8666-666666666666",
+    "kind": "llm.call",
+    "ts": 1793527200020,
+    "cwd": "/work/demo",
+    "payload": {
+      "provider": "google",
+      "ok": true
+    },
+    "durationMs": 900
+  },
+  {
+    "id": "5eed68f1848391bf942ccb933cf6bcee8a04b8668e77b11dc28a8f8c8525cc45",
+    "v": 0,
+    "agent": "antigravity",
+    "sessionId": "6b6b6b6b-6666-4666-8666-666666666666",
+    "kind": "tool.start",
+    "ts": 1793527200930,
+    "cwd": "/work/demo",
+    "payload": {
+      "tool": "run_command",
+      "toolUseId": "call_1",
+      "input": {
+        "CommandLine": "npm test"
+      }
+    }
+  },
+  {
+    "id": "9c1ef04249bac2f2b70b67323ec57d37261699f0645049746f103166425f5753",
+    "v": 0,
+    "agent": "antigravity",
+    "sessionId": "6b6b6b6b-6666-4666-8666-666666666666",
+    "kind": "tool.end",
+    "ts": 1793527204000,
+    "cwd": "/work/demo",
+    "payload": {
+      "tool": "run_command",
+      "toolUseId": "call_1",
+      "ok": true,
+      "output": "The command exited with code 1.\nOutput:\n1 failing"
+    },
+    "durationMs": 3070
+  },
+  {
+    "id": "6320ade9a8719420e0b7bfe2e7d8bba1e1f50945fbe3d014c88b037480400a14",
+    "v": 0,
+    "agent": "antigravity",
+    "sessionId": "6b6b6b6b-6666-4666-8666-666666666666",
+    "kind": "assistant.message",
+    "ts": 1793527204500,
+    "cwd": "/work/demo",
+    "payload": {
+      "text": "One test fails."
+    }
+  },
+  {
+    "id": "5e5f99bc5b510d21fe946cc00b2a31acf5d42538d0d2a2b87e7bb60eb8dd880b",
+    "v": 0,
+    "agent": "antigravity",
+    "sessionId": "6b6b6b6b-6666-4666-8666-666666666666",
+    "kind": "turn.end",
+    "ts": 1793527204600,
+    "cwd": "/work/demo",
+    "payload": {}
+  }
+]
