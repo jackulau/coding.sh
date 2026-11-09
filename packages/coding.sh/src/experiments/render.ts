@@ -333,12 +333,12 @@ function renderGate(g: ComparisonGate, color: boolean): string[] {
 function renderNonInferiority(ni: ComparisonNonInferiority, color: boolean): string[] {
   const level = `${Math.round((1 - 2 * ni.alpha) * 100)}% CI`;
   const head = `non-inf B − A ≥ ${signedPct(-ni.delta)}: `;
+  const bound = `${level} lower bound ${signedPct(ni.lower)} ${ni.lower > -ni.delta ? ">" : "≤"} ${signedPct(-ni.delta)}`;
+  const exact = `sign-flip p=${pValue(ni.p)} ${ni.p < ni.alpha ? "<" : "≥"} ${ni.alpha} over ${ni.units} unit${ni.units === 1 ? "" : "s"}`;
   const out = [
     !ni.n
       ? `${head}${paint("unknown (no paired cases)", "yellow", color)}`
-      : ni.nonInferior
-        ? `${head}${paint("yes", "green", color)} ${paint(`(${level} lower bound ${signedPct(ni.lower)} > ${signedPct(-ni.delta)})`, "dim", color)}`
-        : `${head}${paint("no", "red", color)} ${paint(`(${level} lower bound ${signedPct(ni.lower)} ≤ ${signedPct(-ni.delta)})`, "dim", color)}`,
+      : `${head}${ni.nonInferior ? paint("yes", "green", color) : paint("no", "red", color)} ${paint(`(${bound}, ${exact})`, "dim", color)}`,
   ];
   if (ni.hardRegressions.length) {
     out.push(paint(`! B now mostly fails ${ni.hardRegressions.length} case(s) A passed on every trial: ${idList(ni.hardRegressions)}`, "yellow", color));

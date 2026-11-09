@@ -95,6 +95,9 @@ export interface QualityResult {
   hi: number;
   /** One-sided (1 − α) lower bound, for non-inferiority. */
   lower: number;
+  /** Exact one-sided sign-flip p over tasks of "the pass rate fell by the margin or more". */
+  pHold: number;
+  /** lower > −margin and pHold < α. */
   nonInferior: boolean;
   /** One-sided permutation p for "better". */
   p: number;
@@ -163,6 +166,7 @@ function quality(pairs: readonly TaskPair[], o: ObjectiveOpts, alpha: number): Q
     lo: boot.lo,
     hi: boot.hi,
     lower: ni.lower,
+    pHold: ni.p,
     nonInferior: ni.nonInferior,
     p: perm.p,
     better: diffs.length > 0 && m > 0 && perm.p < alpha,
@@ -259,7 +263,7 @@ export function judgeObjectives(pairs: readonly TaskPair[], o: ObjectiveOpts): O
   if (o.size === undefined && objectives.includes("size")) warnings.push("harness size: unknown for these arms");
 
   const reasons: string[] = [];
-  const qText = `pass rate ${(q.base * 100).toFixed(0)}% → ${(q.cand * 100).toFixed(0)}% (${pts(q.mean)} per task [${pts(q.lo)}, ${pts(q.hi)}], one-sided lower bound ${pts(q.lower)} vs margin −${(o.margin * 100).toFixed(1)} pts)`;
+  const qText = `pass rate ${(q.base * 100).toFixed(0)}% → ${(q.cand * 100).toFixed(0)}% (${pts(q.mean)} per task [${pts(q.lo)}, ${pts(q.hi)}], one-sided lower bound ${pts(q.lower)} vs margin −${(o.margin * 100).toFixed(1)} pts, hold p ${q.pHold.toFixed(3)})`;
   const better = metrics.filter((m) => m.better);
   const worse = metrics.filter((m) => m.worse);
   const mText = (m: MetricResult) => `${OBJECTIVE_LABEL[m.objective]} ${pct(m.relative)}${m.objective === "size" ? "" : ` [${pct(m.lo)}, ${pct(m.hi)}], p ${m.p === undefined ? "—" : m.p.toFixed(3)}`}`;
@@ -300,7 +304,11 @@ export function judgeObjectives(pairs: readonly TaskPair[], o: ObjectiveOpts): O
       `quality not shown to hold: ${qText}`,
       ...better.map((m) => `${mText(m)}, but the quality interval is too wide to adopt it within the margin at ${q.n} task${q.n === 1 ? "" : "s"}: add tasks or trials`),
     );
-    if (better.length) warnings.push(`the quality lower bound ${pts(q.lower)} is below the −${(o.margin * 100).toFixed(1)} pt margin, so this cheaper or faster candidate can't be adopted yet: add tasks or trials to narrow the interval, or raise --margin if the drop is acceptable`);
+    const why =
+      q.lower > -o.margin
+        ? `the exact hold test over ${q.n} task${q.n === 1 ? "" : "s"} gives p ${q.pHold.toFixed(3)} ≥ α ${alpha}`
+        : `the quality lower bound ${pts(q.lower)} is below the −${(o.margin * 100).toFixed(1)} pt margin`;
+    if (better.length) warnings.push(`${why}, so this cheaper or faster candidate can't be adopted yet: add tasks or trials to narrow the interval, or raise --margin if the drop is acceptable`);
     return out("inconclusive");
   }
   if (better.length) {

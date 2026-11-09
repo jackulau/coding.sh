@@ -200,9 +200,10 @@ the same dataset version. The base run uses the base branch's code because the c
 | B does not win enough without breaking what A solved | `exp compare base head --gate` |
 | Any case that passed on base fails on the pull request | a `run:` step with `coding.sh exp compare base head --json \| jq -e '.comparison.regressions \| length == 0'` |
 
-`--margin` passes only when the lower bound of the 95% interval of B − A is above −0.05, so a
-small or noisy suite can fail it with no real change; add cases or trials until the interval is
-narrow enough. `--gate` is for shipping a change that should help, and holds when the evidence is
+`--margin` passes only when the lower bound of the 95% interval of B − A is above −0.05 and an
+exact sign-flip test agrees, so a small or noisy suite can fail it with no real change; add cases
+or trials until the interval is narrow enough. Below 6 cases (or 6 clusters with `--cluster`) it
+always fails. `--gate` is for shipping a change that should help, and holds when the evidence is
 weak. The `jq` check is strict and suits small deterministic suites. `exp run` exits 1 only when
 every case errored, which usually means the task command is broken.
 

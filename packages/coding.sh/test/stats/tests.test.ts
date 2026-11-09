@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { clusteredBootstrap, hardRegressions, mulberry32, nonInferiority, pairedBootstrap, pairedPermutation } from "../../src/stats/index.ts";
+import { clusteredBootstrap, clusterSignFlip, hardRegressions, mulberry32, nonInferiority, pairedBootstrap, pairedPermutation } from "../../src/stats/index.ts";
 
 describe("pairedPermutation", () => {
   it("matches hand counts: [1,1,1,1,1] is 2/32 two-sided and 1/32 greater", () => {
@@ -133,6 +133,44 @@ describe("nonInferiority", () => {
 
   it("rejects a negative margin", () => {
     assert.throws(() => nonInferiority([0], -0.1), RangeError);
+  });
+
+  it("3 tied pairs are not shown non-inferior: the bound is 0, but the exact sign-flip p is 1/2³", () => {
+    const r = nonInferiority([0, 0, 0], 0.05);
+    assert.equal(r.lower, 0);
+    assert.equal(r.p, 0.125);
+    assert.equal(r.units, 3);
+    assert.equal(r.nonInferior, false);
+    // 5 tied pairs reach 1/32 < 0.05; at α 0.025 it takes 6.
+    assert.equal(nonInferiority(Array(5).fill(0), 0.05).nonInferior, true);
+    assert.equal(nonInferiority(Array(5).fill(0), 0.05, { alpha: 0.025 }).nonInferior, false);
+    assert.equal(nonInferiority(Array(6).fill(0), 0.05, { alpha: 0.025 }).nonInferior, true);
+  });
+
+  it("clusters: 10 tied pairs in 3 clusters flip as 3 units", () => {
+    const r = nonInferiority(Array(10).fill(0), 0.05, { clusterIds: ["a", "a", "a", "a", "b", "b", "b", "c", "c", "c"] });
+    assert.equal(r.lower, 0);
+    assert.equal(r.units, 3);
+    assert.equal(r.p, 0.125);
+    assert.equal(r.nonInferior, false);
+  });
+});
+
+describe("clusterSignFlip", () => {
+  it("is pairedPermutation on the shifted differences, or on the clusters' shifted sums", () => {
+    const d = [0.5, -0.2, 0.1, 0.3, -0.4];
+    assert.equal(clusterSignFlip(d, { alternative: "greater" }).p, pairedPermutation(d, { alternative: "greater" }).p);
+    assert.equal(clusterSignFlip(d, { shift: 0.1 }).p, pairedPermutation(d.map((x) => x + 0.1)).p);
+    const r = clusterSignFlip(d, { clusterIds: ["a", "a", "b", "b", "c"], shift: 0.1, alternative: "less" });
+    assert.equal(r.units, 3);
+    assert.equal(r.p, pairedPermutation([0.5, 0.6, -0.3], { alternative: "less" }).p);
+    assert.equal(r.method, "exact");
+  });
+
+  it("3 units that all improve: one-sided 1/8, two-sided 1/4", () => {
+    assert.equal(clusterSignFlip([1, 1, 1], { alternative: "greater" }).p, 0.125);
+    assert.equal(clusterSignFlip([1, 1, 1]).p, 0.25);
+    assert.throws(() => clusterSignFlip([1], { clusterIds: [] }), RangeError);
   });
 });
 

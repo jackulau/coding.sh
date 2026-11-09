@@ -84,7 +84,7 @@ describe("exp compare --gate from the CLI", () => {
     // c gains 8 of a's failures and loses 4: mean +13pp, comfortably within −20pp.
     const ok = cli(["exp", "compare", "a", "c", "--margin", "0.2"]);
     assert.equal(ok.status, 0, ok.stderr);
-    assert.match(ok.stdout, /^non-inf B − A ≥ -20\.0pp: yes \(95% CI lower bound [+-]\d+\.\dpp > -20\.0pp\)$/m);
+    assert.match(ok.stdout, /^non-inf B − A ≥ -20\.0pp: yes \(95% CI lower bound [+-]\d+\.\dpp > -20\.0pp, sign-flip p=[\d.<]+ < 0\.025 over 30 units\)$/m);
     assert.match(ok.stdout, /^! B now mostly fails 4 case\(s\) A passed on every trial: c10, c20, c25, c5$/m);
     // b solves all 30; c breaks the 6 multiples of 5: −20pp is not within 5pp.
     const bad = cli(["exp", "compare", "b", "c", "--margin", "0.05", "--json"]);

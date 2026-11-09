@@ -547,3 +547,19 @@ describe("compare: A/A noise floor (EM-10)", () => {
   });
 });
 
+// A percentile bootstrap is [x, x] when every unit moves the same way, so on a
+// few cases (or clusters) it decides alone what no exact test can support.
+describe("compareExperiments on a few cases", () => {
+  const few = (n: number) => createDataset({ name: `few${n}`, createdAt: 1, cases: ids.slice(0, n).map((id) => ({ id, input: id })) });
+
+  it("--margin: 4 cases with no change are not shown non-inferior (sign-flip p 1/16 ≥ 0.025)", async () => {
+    const d = few(4);
+    const all = new Set(ids);
+    const c = compareExperiments(await run("a", all, { dataset: d }), await run("b", all, { dataset: d }), { margin: 0.05 });
+    assert.equal(c.nonInferiority!.lower, 0);
+    assert.equal(c.nonInferiority!.p, 0.0625);
+    assert.equal(c.nonInferiority!.nonInferior, false);
+    assert.match(renderComparison(c, { color: false }), /^non-inf B − A ≥ -5\.0pp: no \(95% CI lower bound 0\.0pp > -5\.0pp, sign-flip p=0\.063 ≥ 0\.025 over 4 units\)$/m);
+  });
+});
+

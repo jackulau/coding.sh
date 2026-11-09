@@ -344,11 +344,15 @@ errors unevenly, the gate notes that a task error counts as a failure.
 than A? Use it to keep a cheaper or faster config only when it gives up no more than the margin.
 B is non-inferior when the lower end of the 95% paired bootstrap interval of B − A (the one the
 `B − A` line prints, over clusters with `--cluster`) lies above −0.03, a one-sided test at 2.5%
-(the confidence-interval form in the CONSORT non-inferiority extension). The report prints
-`non-inf B − A ≥ -3.0pp: yes (95% CI lower bound -1.2pp > -3.0pp)` or `no`, and lists cases A
-passed on every trial that B now passes at most a third of the time, which a mean within the
+(the confidence-interval form in the CONSORT non-inferiority extension), and an exact one-sided
+sign-flip test of "B − A ≤ −0.03" over the same units (cases, or clusters) also has p below 2.5%.
+A bootstrap bound is too narrow on a few units (4 cases with no change give a bound of exactly 0),
+while the exact test needs at least 6 units to reach 2.5%, so a smaller suite is never shown
+non-inferior. On larger suites the two agree. The report prints `non-inf B − A ≥ -3.0pp: yes (95%
+CI lower bound -1.2pp > -3.0pp, sign-flip p=0.004 < 0.025 over 40 units)` or `no`, and lists cases
+A passed on every trial that B now passes at most a third of the time, which a mean within the
 margin can hide. It exits 1 unless B is non-inferior; `--json` carries
-`comparison.nonInferiority` (`mean`, `lower`, `delta`, `nonInferior`, `n`, `alpha`,
+`comparison.nonInferiority` (`mean`, `lower`, `p`, `units`, `delta`, `nonInferior`, `n`, `alpha`,
 `hardRegressions`). The test itself is `nonInferiority(diffs, delta)` in `src/stats/tests.ts`.
 
 ### Grader fields
@@ -1753,7 +1757,9 @@ agent loads). The pass rate is always judged. A candidate is:
 - **kept on quality** when the pass rate is significantly better (a one-sided paired permutation
   test over tasks), or the gate says "Ship it";
 - **kept on efficiency** when the pass rate holds within `--margin` (default 2pp: the one-sided
-  95% bootstrap lower bound of the per-task difference is above minus the margin) and a listed
+  95% bootstrap lower bound of the per-task difference is above minus the margin, and an exact
+  one-sided sign-flip test over tasks of "it fell by the margin or more" has p below 0.05, the
+  `hold p` in the reason) and a listed
   objective is significantly better by at least `--min-gain` (default 10%). Cost, tokens, times and
   turns are compared as per-task log ratios with a one-sided permutation test; size is a byte count.
 - **rejected** when the pass rate fell and did not hold within the margin, however much cheaper or
@@ -1762,7 +1768,8 @@ agent loads). The pass rate is always judged. A candidate is:
 
 A measure decides only when at least 80% of each arm's runs reported it: cost and tokens need
 captured sessions, so run `coding.sh init` for the agent first. With fewer than 5 tasks no
-one-sided test can reach significance, and the round says so.
+one-sided test can reach significance, so nothing is kept on quality or on efficiency (a smaller
+file with the same passes too), and the round says so.
 
 **Cuts.** When the primary objective is not `pass`, the proposer cuts instead of adding. It sees the
 target file and its largest sections, and what made the last round's runs slow or expensive:
@@ -1803,8 +1810,8 @@ $ coding.sh refine log
 Climb on strkit (CLAUDE.md, primary cost / run)
 ROUND	CANDIDATE	VERDICT	PASS	COST/RUN	WALL/RUN	SIZE	REASON
 1	r_5f83c31fad	reject	100% → 0%	$0.29 → $0.0347 (−88%)	20.6s → 13.4s (−35%)	51166 B → 292 B (−99%)	hard regression: the base passed camelCase, countWords, padCenter, reverseWords, slugify, truncate every time and the candidate now mostly fails
-2	r_d50d8bebd5	keep (efficiency), applied	100% → 100%	$0.27 → $0.22 (−20%)	14.6s → 14.0s (−4%)	51166 B → 596 B (−99%)	cost / run -20% [-25%, -9.8%], p 0.031 with quality held: pass rate 100% → 100% (+0.0 pts per task [+0.0 pts, +0.0 pts], one-sided lower bound +0.0 pts vs margin −2.0 pts)
-3	r_9387e6524f	keep (efficiency), applied	100% → 100%	$0.22 → $0.0372 (−83%)	13.7s → 8.7s (−36%)	596 B → 530 B (−11%)	cost / run -83% [-83%, -82%], p 0.016; wall time / run -36% [-42%, -31%], p 0.016; tokens / run -45% [-51%, -40%], p 0.016 with quality held: pass rate 100% → 100% (+0.0 pts per task [+0.0 pts, +0.0 pts], one-sided lower bound +0.0 pts vs margin −2.0 pts)
+2	r_d50d8bebd5	keep (efficiency), applied	100% → 100%	$0.27 → $0.22 (−20%)	14.6s → 14.0s (−4%)	51166 B → 596 B (−99%)	cost / run -20% [-25%, -9.8%], p 0.031 with quality held: pass rate 100% → 100% (+0.0 pts per task [+0.0 pts, +0.0 pts], one-sided lower bound +0.0 pts vs margin −2.0 pts, hold p 0.016)
+3	r_9387e6524f	keep (efficiency), applied	100% → 100%	$0.22 → $0.0372 (−83%)	13.7s → 8.7s (−36%)	596 B → 530 B (−11%)	cost / run -83% [-83%, -82%], p 0.016; wall time / run -36% [-42%, -31%], p 0.016; tokens / run -45% [-51%, -40%], p 0.016 with quality held: pass rate 100% → 100% (+0.0 pts per task [+0.0 pts, +0.0 pts], one-sided lower bound +0.0 pts vs margin −2.0 pts, hold p 0.016)
 Pareto front (pass rate vs cost / run): r_5f83c31fad (round 1, not kept): 0% pass, $0.0347; r_9387e6524f (round 3): 100% pass, $0.0372
 climb: still gaining after 3 rounds (log wealth -0.17 of 3.00; a flat plateau needs at least 21 rounds to show at this suite size)
 ```

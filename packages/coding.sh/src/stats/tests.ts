@@ -346,6 +346,42 @@ export function pairedPermutation(diffs: readonly number[], opts: PermutationOpt
   return { p: Math.min(1, (1 + count) / (1 + iters)), n, observed: obs / n, method: "monte-carlo", iters };
 }
 
+export interface SignFlipOpts extends PermutationOpts {
+  /** Flip whole clusters, not single pairs (`clusterIds[i]` is the cluster of `diffs[i]`). */
+  clusterIds?: readonly string[];
+  /** Added to every difference before flipping: δ tests "B − A ≤ −δ" (a non-inferiority margin). Default 0. */
+  shift?: number;
+}
+
+export interface SignFlipResult {
+  /** Exact sign-flip p up to 20 units, a seeded Monte Carlo estimate above. */
+  p: number;
+  /** Units whose signs were flipped: pairs, or clusters with `clusterIds`. */
+  units: number;
+  method: "exact" | "monte-carlo";
+}
+
+/**
+ * Sign-flip test at the unit a bootstrap resamples: pairs, or whole clusters.
+ * Each unit's summed (shifted) difference keeps or flips its sign, so the test
+ * holds its level however few units there are, where a bootstrap's interval or
+ * share of draws does not: with 3 units that all improve, the bootstrap
+ * interval is [x, x], while this p can't go below 1/2³ (one-sided). The
+ * statistic is the total, which is the case-weighted mean times a constant.
+ */
+export function clusterSignFlip(diffs: readonly number[], opts: SignFlipOpts = {}): SignFlipResult {
+  const { clusterIds, shift = 0, ...perm } = opts;
+  if (clusterIds && clusterIds.length !== diffs.length) throw new RangeError("clusterSignFlip: diffs and clusterIds differ in length");
+  let units: number[];
+  if (clusterIds) {
+    const sums = new Map<string, number>();
+    diffs.forEach((d, i) => sums.set(clusterIds[i] as string, (sums.get(clusterIds[i] as string) ?? 0) + d + shift));
+    units = [...sums.values()];
+  } else units = diffs.map((d) => d + shift);
+  const r = pairedPermutation(units, perm);
+  return { p: r.p, units: r.n, method: r.method };
+}
+
 export interface NonInferiorityOpts {
   /** One-sided level: the bound is the α percentile of the bootstrap means. Default 0.05 (the lower end of the 90% two-sided interval). */
   alpha?: number;
@@ -362,7 +398,14 @@ export interface NonInferiorityResult {
   lower: number;
   /** The margin δ ≥ 0: how much worse B may be. */
   delta: number;
-  /** lower > −δ. False with no pairs. */
+  /**
+   * Exact one-sided sign-flip p of H0 "B − A ≤ −δ": each unit's (pair's, or
+   * cluster's) summed difference plus δ times its size, signs flipped. 1 with no pairs.
+   */
+  p: number;
+  /** Units the sign-flip test flipped: pairs, or clusters with `clusterIds`. */
+  units: number;
+  /** lower > −δ and p < α. False with no pairs. */
   nonInferior: boolean;
   n: number;
   alpha: number;
@@ -377,16 +420,23 @@ export interface NonInferiorityResult {
  * Establish Effectiveness", 2016). The bound is the α percentile of the paired
  * bootstrap (pairs, or whole clusters, resampled), so it is the interval
  * `exp compare` already reports, read one-sided.
+ *
+ * A percentile bound is too narrow at a few units (3 tied pairs give a bound
+ * of exactly 0), so the exact one-sided sign-flip test at the margin, at the
+ * same unit, must reject too. It can only reject from ⌈log2(1/α)⌉ units: 5 at α 0.05,
+ * 6 at 0.025. With many units the two agree, so the verdict is the bound's.
  */
 export function nonInferiority(diffs: readonly number[], delta: number, opts: NonInferiorityOpts = {}): NonInferiorityResult {
   const alpha = opts.alpha ?? 0.05;
   if (!(delta >= 0 && Number.isFinite(delta))) throw new RangeError(`nonInferiority: delta must be a finite number ≥ 0 (got ${delta})`);
   if (!(alpha > 0 && alpha < 0.5)) throw new RangeError(`nonInferiority: alpha must be in (0, 0.5) (got ${alpha})`);
   const n = diffs.length;
-  if (n === 0) return { mean: NaN, lower: NaN, delta, nonInferior: false, n, alpha };
-  const boot = { iters: opts.iters ?? 10_000, seed: opts.seed ?? 0x5eed, alpha: 2 * alpha };
+  if (n === 0) return { mean: NaN, lower: NaN, delta, p: 1, units: 0, nonInferior: false, n, alpha };
+  const seed = opts.seed ?? 0x5eed;
+  const boot = { iters: opts.iters ?? 10_000, seed, alpha: 2 * alpha };
   const b = opts.clusterIds ? clusteredBootstrap(diffs, opts.clusterIds, boot) : pairedBootstrap(diffs, boot);
-  return { mean: b.mean, lower: b.lo, delta, nonInferior: b.lo > -delta, n, alpha };
+  const sf = clusterSignFlip(diffs, { shift: delta, alternative: "greater", seed, ...(opts.clusterIds ? { clusterIds: opts.clusterIds } : {}) });
+  return { mean: b.mean, lower: b.lo, delta, p: sf.p, units: sf.units, nonInferior: b.lo > -delta && sf.p < alpha, n, alpha };
 }
 
 /**

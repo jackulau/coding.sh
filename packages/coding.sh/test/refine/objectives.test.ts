@@ -127,6 +127,16 @@ describe("judgeObjectives", () => {
     assert.deepEqual(taskGains(pairs, "size", { base: 4000, cand: 1000 }), Array(6).fill(0.75));
   });
 
+  it("does not keep a smaller file on 2 tasks: holding quality needs an exact test, not a bootstrap bound of 0", () => {
+    const pairs = suite(2, () => runs(1, 1), () => runs(1, 1));
+    const d = judgeObjectives(pairs, { ...opts, objectives: ["size"], size: { base: 4000, cand: 1000 } });
+    assert.equal(d.quality.lower, 0);
+    assert.equal(d.quality.pHold, 0.25);
+    assert.equal(d.quality.nonInferior, false);
+    assert.equal(d.verdict, "inconclusive");
+    assert.match(d.warnings.join("\n"), /the exact hold test over 2 tasks gives p 0\.250 ≥ α 0\.05/);
+  });
+
   it("is inconclusive when no task ran in both arms", () => {
     const d = judgeObjectives([{ task: "a", base: runs(2, 2), cand: [] }], { ...opts, objectives: ["cost"] });
     assert.equal(d.verdict, "inconclusive");
