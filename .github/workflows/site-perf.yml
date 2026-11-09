@@ -130,8 +130,11 @@ jobs:
           [ -f "$RUNNER_TEMP/perf/report.txt" ] || exit 0
           { echo '### Site perf: base vs head'; echo '```text'; cat "$RUNNER_TEMP/perf/report.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
+      # The report is already in the step summary; a failed upload (the desk runner
+      # has lost DNS mid-run before) must not fail a run whose gate passed.
       - uses: actions/upload-artifact@v6
         if: always()
+        continue-on-error: true
         with:
           name: site-perf
           path: ${{ runner.temp }}/perf
