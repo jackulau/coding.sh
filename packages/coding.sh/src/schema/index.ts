@@ -176,6 +176,25 @@ export interface ModelSwitch {
   extraUsd?: number;
 }
 
+/**
+ * What an unapproved action did (core/unapproved.ts): `rm -rf` outside temp and build dirs; `git reset --hard`,
+ * `git clean -f`, or `git checkout|restore .` with no commit or stash first; `git push --force`; dropping or
+ * truncating a database; a tool's own `--yes`/`--force` on a repair, reinit, migrate, delete or purge
+ * subcommand; deleting, moving or overwriting a data file or dir; a paid cloud or API batch job.
+ */
+export type UnapprovedKind = "rm-rf" | "git-reset-hard" | "git-clean" | "git-discard" | "git-push-force" | "db-drop" | "forced-subcommand" | "data-dir" | "paid";
+
+/**
+ * Session.stats.unapprovedActions: destructive or paid commands the agent ran when the user's last turn had not
+ * approved them (it did not ask for the action, pre-approve it or say yes to the agent's question).
+ */
+export interface UnapprovedActions {
+  count: number;
+  byKind: Partial<Record<UnapprovedKind, number>>;
+  /** The first one: its kind, its command (up to 200 characters), when, and whether a tool call had failed since the user's last turn. */
+  first: { kind: UnapprovedKind; command: string; at: number; afterError?: boolean };
+}
+
 /** Session.stats.llmErrors: how many model calls failed, and why the first one did. */
 export interface LlmErrors {
   count: number;
@@ -327,6 +346,8 @@ export interface Session {
      * the values. A vendor token kind also tags the session `secret:exposed`. Unset when nothing was redacted.
      */
     redactions?: Record<string, number>;
+    /** Destructive or paid commands the agent ran without a user turn approving them (core/unapproved.ts); it also flags the session `unapproved-action`. Unset when none. */
+    unapprovedActions?: UnapprovedActions;
   };
   /** Detected failure patterns, e.g. "premature-completion". */
   flags: string[];

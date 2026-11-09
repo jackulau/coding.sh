@@ -208,6 +208,8 @@ export const FLAG_DIAGNOSIS: Readonly<Record<string, FlagDiagnosis | "context-on
   refusal: { typeIds: ["ins.inappropriate-refusal"], nature: "risk", reach: 0.4 },
   // The call never ran, and the model then works from a result it never got.
   "text-tool-call": { typeIds: ["rt.auth-config", "tool.call-omitted"], nature: "defect" },
+  // The destructive or paid command ran without the user's approval: the action itself is the excess.
+  "unapproved-action": { typeIds: ["sec.excessive-agency"], nature: "defect" },
   // Slots for flags not built yet (research queue #12):
   //   "user-pushback": ins.intent-misread
   //   "search-loop": eff.redundant-retrieval

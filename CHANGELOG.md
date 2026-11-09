@@ -9,6 +9,10 @@ grouped by area, with links to the docs for the details.
 
 ## [0.1.5] - Unreleased
 
+### Added
+
+- **Sessions.** A new flag, `unapproved-action`, marks a session where the agent ran a destructive or paid command after a user turn that did not approve it: `rm -rf` outside temp and build dirs, `git reset --hard` or `git push --force`, dropping a database, a tool's own `--yes` on a repair, reinit, migrate, delete or purge subcommand, deleting a data dir, or a known paid cloud or batch job. Asked only to "fix it", agents run the `--yes` their tool's error names. `stats.unapprovedActions` counts them, and `--where unapproved>0` lists the sessions. [Flags](https://github.com/jackulau/coding.sh/blob/main/docs/concepts.md).
+
 ### Changed
 
 - **Store.** A blob that compresses to under 4 KiB, such as a hook line's raw payload, is a row of one SQLite file, `blobs/pack.db`, instead of a file of its own; larger blobs stay files. On the 100k-event ingest benchmark the store takes 1.72 MB per 1,000 events instead of 5.51, and ingest runs at about 6,200 events/s instead of 1,700. Blob files written before still read, and `gc --compact` moves the small ones into the pack and removes the blob folders that leaves empty. A coding.sh older than 0.1.5 does not see packed blobs: its CLI reads sessions as usual, and its viewer shows their stored content as "not in the local store". Run `purge` with 0.1.5 or newer: an older purge leaves secrets in packed blobs, and they show again once you upgrade. Running the same purge again with 0.1.5 removes them, since it reads every packed blob. [Storage](https://github.com/jackulau/coding.sh/blob/main/docs/design/architecture.md#efficiency), [Store ingest](https://github.com/jackulau/coding.sh/blob/main/docs/perf.md#store-ingest).

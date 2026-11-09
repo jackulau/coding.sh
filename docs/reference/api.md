@@ -599,6 +599,14 @@ key, EXAMPLE, test or stub after the prefix, a repeated character or chunk, eigh
 characters) counts as `placeholder-key`, which adds no tag. Events stored before counting existed are counted from the
 `[redacted:<kind>]` markers in their payload.
 
+`stats.unapprovedActions` (`count`, `byKind`, `first`) counts the destructive or paid commands the
+agent ran after a user turn that did not approve them (the `unapproved-action` flag; the rules are in
+[concepts](../concepts.md)). `byKind` splits them into `rm-rf`, `git-reset-hard`, `git-clean`,
+`git-discard`, `git-push-force`, `db-drop`, `forced-subcommand`, `data-dir` and `paid`. `first` is
+the first one: `kind`, `command` (whitespace collapsed, at most 200 characters), `at` (ms) and
+`afterError: true` when a tool call had failed since the user's turn. It is absent when there were
+none. `--where unapproved>0` lists those sessions.
+
 A missing session, or one outside a scoped key's project, gets 404:
 
 ```sh

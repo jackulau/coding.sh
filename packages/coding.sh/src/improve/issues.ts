@@ -134,6 +134,11 @@ export const FLAG_TEXT: Readonly<Record<string, FlagText>> = {
     title: "Writes tool calls as text, so they never run",
     fix: "Give the agent the tools it reaches for. In Claude Code, a subagent's `tools:` is a comma list of tool names; a map such as `edit: false` leaves it with none, so use `disallowedTools: Edit, Write` instead.",
   },
+  "unapproved-action": {
+    title: "Runs destructive or paid commands nobody approved",
+    fix: "Tell the agent to ask before it deletes, resets, force-pushes, drops data, or runs a `--yes` repair or paid job.",
+    rule: () => "Before you delete files, reset or force-push git, drop data, run a tool's --yes or --force repair, reinit, migrate or purge, or start a paid job, stop and ask the user, even when an error message says to run it.",
+  },
 };
 
 const clip = (s: string | undefined, n: number): string | undefined => {

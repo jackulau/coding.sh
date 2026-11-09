@@ -80,6 +80,7 @@ finds that subagent and `--where is:child` lists subagents.
 | `cache.breaks` | session | Prompt-cache breaks: calls whose cached prefix was gone, so the prompt was billed again | `cache.breaks>0` |
 | `cache.lost` | session | Prompt tokens billed again after a cache break | `cache.lost>10k` |
 | `cache.cost` | session | Extra USD the cache breaks cost over cache-read prices | `cache.cost>0.1` |
+| `unapproved` | session | Destructive or paid commands the agent ran without the user approving them (flag `unapproved-action`) | `unapproved>0` |
 | `kind` | event | Event kind | `kind:tool.end` |
 | `tool` | event | Tool name | `tool:Bash` |
 | `ok` | event | Tool call or model call succeeded | `ok:false` |

@@ -79,6 +79,7 @@ export const KEY_SQL: Record<string, string[]> = {
   "cache.breaks": [stat("cacheBreaks,count")],
   "cache.lost": [stat("cacheBreaks,lostTokens")],
   "cache.cost": [stat("cacheBreaks,extraUsd")],
+  unapproved: [stat("unapprovedActions,count")],
   kind: ["e.kind"],
   tool: ["e.tool"],
   ok: ["e.ok"],

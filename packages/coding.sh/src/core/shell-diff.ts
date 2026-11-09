@@ -70,6 +70,72 @@ export function stripHeredocs(command: string): string {
   return lines.join("\n");
 }
 
+export interface SimpleCommand {
+  /** The command word as written (`./bin/tool`, `rm`), after env assignments and `sudo`, `env`, `time`, `nohup`, `command`. */
+  name: string;
+  /** `name` without its directory. */
+  cmd: string;
+  /** The words after it, unquoted, redirections taken out. */
+  args: string[];
+  /** Redirection targets in order: `>` (append false) and `>>` (append true). */
+  redirects: { path: string; append: boolean }[];
+  /** The directory an earlier `cd`/`pushd` in the same command moved to (relative paths are under it). */
+  dir?: string;
+}
+
+/**
+ * The simple commands of a shell command line: split on `&&`, `||`, `;`, `|`,
+ * `&` and newlines, heredoc bodies skipped, each as its unquoted words.
+ * Best effort: no subshells or quoting across segments.
+ */
+export function simpleCommands(command: string): SimpleCommand[] {
+  const out: SimpleCommand[] = [];
+  let dir: string | undefined;
+  const text = stripHeredocs(command).replace(/\d*>&\d+|<<-?\s*(['"]?)[\w.-]+\1/g, " ").replace(/&>/g, ">");
+  for (const seg of text.split(/&&|\|\||[;|&\n]/)) {
+    const words = (seg.match(WORD) ?? []).map(unquote);
+    // Redirections write their target wherever they sit.
+    const rest: string[] = [];
+    const redirects: SimpleCommand["redirects"] = [];
+    for (let i = 0; i < words.length; i++) {
+      const w = words[i] as string;
+      const r = /^\d*(>>?)(.*)$/.exec(w);
+      if (r) {
+        const target = r[2] || words[++i];
+        if (target) redirects.push({ path: target, append: r[1] === ">>" });
+      } else rest.push(w);
+    }
+    while (rest.length && (/^[A-Za-z_]\w*=/.test(rest[0] as string) || ["sudo", "command", "env", "time", "nohup"].includes(rest[0] as string))) rest.shift();
+    const name = rest[0] ?? "";
+    const cmd = name.replace(/^.*\//, "");
+    const args = rest.slice(1);
+    out.push({ name, cmd, args, redirects, ...(dir !== undefined ? { dir } : {}) });
+    if ((cmd === "cd" || cmd === "pushd") && args[0] && !args[0].startsWith("-")) {
+      const to = args[0].replace(/\\/g, "/");
+      dir = dir && !/^(?:\/|[A-Za-z]:\/|~)/.test(to) ? posix.join(dir, to) : to;
+    }
+  }
+  return out;
+}
+
+/** A command's operands: words that are not options, everything after `--`, skipping the value of each option in `skipValueOf`. */
+export function operandsOf(args: readonly string[], skipValueOf: readonly string[] = []): string[] {
+  const ops: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] as string;
+    if (a === "--") {
+      ops.push(...args.slice(i + 1));
+      break;
+    }
+    if (a.startsWith("-")) {
+      if (skipValueOf.includes(a)) i++;
+      continue;
+    }
+    ops.push(a);
+  }
+  return ops;
+}
+
 /**
  * Files a shell command writes or removes: `sed -i`, `perl -pi`, `>`/`>>`,
  * `tee`, `rm`, `mv`, `cp`, `truncate`, `git checkout|restore -- <path>`, `git rm`.
@@ -77,50 +143,16 @@ export function stripHeredocs(command: string): string {
  */
 export function shellWrites(command: string): ShellWrite[] {
   const out: ShellWrite[] = [];
-  /** Set by `cd <dir>` earlier in the command: later relative paths are under it. */
-  let dir: string | undefined;
-  const under = (path: string) => (dir && !/^(?:\/|[A-Za-z]:[\\/]|~)/.test(path) ? posix.join(dir, path) : path);
-  const add = (path: string, op: ShellWrite["op"], renamedTo?: string) => {
-    // After `cd $DIR` relative paths are unknowable.
-    if (!pathLike(path) || path.startsWith("/dev/") || (dir?.includes("$") && !/^(?:\/|[A-Za-z]:[\\/]|~)/.test(path))) return;
-    out.push({ path: under(path), op, ...(renamedTo !== undefined ? { renamedTo: under(renamedTo) } : {}) });
-  };
-  const text = stripHeredocs(command).replace(/\d*>&\d+|<<-?\s*(['"]?)[\w.-]+\1/g, " ").replace(/&>/g, ">");
-  for (const seg of text.split(/&&|\|\||[;|&\n]/)) {
-    const words = (seg.match(WORD) ?? []).map(unquote);
-    // Redirections write their target wherever they sit.
-    const rest: string[] = [];
-    for (let i = 0; i < words.length; i++) {
-      const w = words[i] as string;
-      const r = /^\d*(>>?)(.*)$/.exec(w);
-      if (r) {
-        const target = r[2] || words[++i];
-        if (target) add(target, r[1] === ">>" ? "append" : "create");
-      } else rest.push(w);
-    }
-    while (rest.length && (/^[A-Za-z_]\w*=/.test(rest[0] as string) || ["sudo", "command", "env", "time", "nohup"].includes(rest[0] as string))) rest.shift();
-    const cmd = (rest[0] ?? "").replace(/^.*\//, "");
-    const args = rest.slice(1);
-    const operands = (skipValueOf: readonly string[] = []) => {
-      const ops: string[] = [];
-      for (let i = 0; i < args.length; i++) {
-        const a = args[i] as string;
-        if (a === "--") {
-          ops.push(...args.slice(i + 1));
-          break;
-        }
-        if (a.startsWith("-")) {
-          if (skipValueOf.includes(a)) i++;
-          continue;
-        }
-        ops.push(a);
-      }
-      return ops;
+  for (const { cmd, args, redirects, dir } of simpleCommands(command)) {
+    const under = (path: string) => (dir && !/^(?:\/|[A-Za-z]:[\\/]|~)/.test(path) ? posix.join(dir, path) : path);
+    const add = (path: string, op: ShellWrite["op"], renamedTo?: string) => {
+      // After `cd $DIR` relative paths are unknowable.
+      if (!pathLike(path) || path.startsWith("/dev/") || (dir?.includes("$") && !/^(?:\/|[A-Za-z]:[\\/]|~)/.test(path))) return;
+      out.push({ path: under(path), op, ...(renamedTo !== undefined ? { renamedTo: under(renamedTo) } : {}) });
     };
-    if ((cmd === "cd" || cmd === "pushd") && args[0] && !args[0].startsWith("-")) {
-      const to = args[0].replace(/\\/g, "/");
-      dir = dir && !/^(?:\/|[A-Za-z]:\/|~)/.test(to) ? posix.join(dir, to) : to;
-    } else if (cmd === "sed" && args.some((a) => /^-[a-zA-Z]*i/.test(a) || a.startsWith("--in-place"))) {
+    for (const r of redirects) add(r.path, r.append ? "append" : "create");
+    const operands = (skipValueOf: readonly string[] = []) => operandsOf(args, skipValueOf);
+    if (cmd === "sed" && args.some((a) => /^-[a-zA-Z]*i/.test(a) || a.startsWith("--in-place"))) {
       const hasScriptFlag = args.some((a) => a === "-e" || a === "-f" || a === "--expression" || a === "--file");
       // BSD `sed -i '' …`: the empty word is -i's backup suffix, not the script.
       const ops = operands(["-e", "-f", "--expression", "--file"]).filter((o) => o !== "");

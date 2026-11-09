@@ -17,6 +17,7 @@ import { claimsSuccess, reportsFailure } from "./failure-report.ts";
 import { foldWaste, wasteState, wasteStatsOf, type WasteState } from "./waste.ts";
 import { foldModels, mainModelOf, MODEL_FALLBACK, MODEL_SWITCH, modelFlags, modelState, modelSwitchOf, modelsOf, REFUSAL, type ModelState } from "./models.ts";
 import { exposesSecret, foldRedactions, redactionsOf, redactionState, SECRET_EXPOSED, type RedactionState } from "./redaction-stats.ts";
+import { foldUnapproved, unapprovedOf, unapprovedState, type UnapprovedState } from "./unapproved.ts";
 
 export { REOPEN_SLACK_MS };
 
@@ -47,6 +48,8 @@ export const FLAGS = {
   refusal: REFUSAL,
   /** The model wrote a tool call out as text, so it never ran: the tool was not available to it (writesToolCallAsText). */
   textToolCall: "text-tool-call",
+  /** The agent ran a destructive or paid command (rm -rf, git reset --hard, a tool's repair --yes, …) that the user's last turn had not approved (core/unapproved.ts, Session.stats.unapprovedActions). */
+  unapprovedAction: "unapproved-action",
   /** A tag, not a failure: the session wrote a prompt cache it barely read back (core/cache-breaks.ts cacheUnderused). */
   cacheLow: "cache:low",
   /** Derails (core/derail.ts): where the session went off the rails. */
@@ -418,7 +421,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * events, and every stored session is folded again once in the background
  * (core/reparse.ts, REFOLD_CURSOR), so old sessions get the new derivation.
  */
-export const SESSION_FOLD_VERSION = 13; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle).
+export const SESSION_FOLD_VERSION = 14; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions).
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -765,6 +768,8 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
   const redactions = redactionsOf(s.redactions);
   if (redactions) session.stats.redactions = redactions;
   if (exposesSecret(redactions)) session.flags.push(FLAGS.secretExposed);
+  const unapproved = unapprovedOf(s.flags.unapproved);
+  if (unapproved) session.stats.unapprovedActions = unapproved;
   if (s.lastTest) {
     session.stats.testsPassed = s.lastTest.passed;
     session.stats.testsFailed = s.lastTest.failed;
@@ -960,6 +965,7 @@ interface FlagState {
   textToolCall: boolean;
   gateways: Set<GatewayId>;
   tamper: TamperState;
+  unapproved: UnapprovedState;
 }
 
 const flagState = (): FlagState => ({
@@ -971,6 +977,7 @@ const flagState = (): FlagState => ({
   textToolCall: false,
   gateways: new Set(),
   tamper: tamperState(),
+  unapproved: unapprovedState(),
 });
 
 /** Anthropic's tool-use markup opening a call on a line of its own: `<invoke name="Read">`, then a parameter or the close. */
@@ -993,6 +1000,7 @@ function foldFlags(s: FlagState, e: AgentEvent): void {
   foldPremature(s.premature, e);
   foldRepeatedFailure(s.repeated, e);
   foldTamper(s.tamper, e);
+  foldUnapproved(s.unapproved, e);
   if (e.kind === "file.change") s.fileChange = true;
   if (e.kind === "test.result" || isVerifyToolStart(e)) s.verified = true;
   if (e.kind === "context.compact") s.compaction = true;
@@ -1011,6 +1019,7 @@ function flagsOf(s: FlagState, derails: readonly Derail[], sorted?: readonly Age
   if (s.textToolCall) flags.push(FLAGS.textToolCall);
   for (const d of derails) if (!flags.includes(d.flag)) flags.push(d.flag);
   if (s.tamper.high || (s.tamper.needsEvents && detectTestTamper(sorted!))) flags.push(FLAGS.testTamper);
+  if (s.unapproved.hits.length) flags.push(FLAGS.unapprovedAction);
   flags.push(...gatewayFlagsOf(s.gateways));
   return flags;
 }

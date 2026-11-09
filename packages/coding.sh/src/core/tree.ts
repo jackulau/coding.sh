@@ -54,6 +54,7 @@ export interface Tree {
 const FLAG_SEVERITY = [
   "test-tamper",
   "secret:exposed",
+  "unapproved-action",
   "premature-completion",
   "repeated-tool-failure",
   "looping",
