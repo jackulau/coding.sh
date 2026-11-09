@@ -245,11 +245,12 @@ describe("150k events in SQLite", () => {
     const first = await timed("/api/sessions/long-1/outline");
     assert.equal(first.status, 200);
     assert.equal(JSON.parse(first.body).spans, "building");
-    assert.ok(first.ms < 200, `first outline ${first.ms} ms`);
     // The rows route waits for the build; then every outline has the spans.
     const t0 = performance.now();
     assert.equal((await timed("/api/sessions/long-1/rows?turn=0")).status, 200);
     const build = performance.now() - t0;
+    // The first answer does not wait for the build: 200 ms, or a quarter of the build on a machine slow enough for that to be more.
+    assert.ok(first.ms < Math.max(200, build / 4), `first outline ${first.ms} ms, build ${build} ms`);
     const warm: number[] = [];
     let body = "";
     for (let k = 0; k < 7; k++) { const r = await timed("/api/sessions/long-1/outline"); warm.push(r.ms); body = r.body; }
