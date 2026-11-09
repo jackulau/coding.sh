@@ -10,7 +10,7 @@ import { backfill, ingest } from "../../src/core/ingest.ts";
 import { acquireLock, wakeMarker } from "../../src/core/lock.ts";
 import { paths } from "../../src/core/paths.ts";
 import { REFOLD_CURSOR, REPARSE_CURSOR, reparse, reparseDue, reparseKeptKey } from "../../src/core/reparse.ts";
-import { SESSION_FOLD_VERSION } from "../../src/core/sessions.ts";
+import { foldStamp, SESSION_FOLD_VERSION } from "../../src/core/sessions.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { loadSqlite, MIGRATIONS, SqliteIndexStore } from "../../src/store/sqlite.ts";
 
@@ -254,13 +254,13 @@ describe("reparse", () => {
     }
     await t.index.setCursor(REFOLD_CURSOR, SESSION_FOLD_VERSION - 1);
     // An earlier pass got as far as "a" before it was stopped.
-    await t.index.kvSet!("reparse:fold-after", JSON.stringify({ v: SESSION_FOLD_VERSION, id: "a" }));
+    await t.index.kvSet!("reparse:fold-after", JSON.stringify({ v: foldStamp(), id: "a" }));
     assert.equal(await t.due(), true);
     const r = await t.reparse();
     assert.deepEqual([r.sessions, r.refolded], [0, 2], "nothing stale; b and c refolded, a was done");
     const flags = async (id: string) => (await t.index.getSession(id))!.flags.includes("old-flag");
     assert.deepEqual([await flags("a"), await flags("b"), await flags("c")], [true, false, false]);
-    assert.equal(await t.index.getCursor(REFOLD_CURSOR), SESSION_FOLD_VERSION);
+    assert.equal(await t.index.getCursor(REFOLD_CURSOR), foldStamp());
     assert.equal(await t.due(), false);
     assert.equal((await t.reparse()).refolded, 0, "once per fold version");
     // A session the last run under these parsers kept (stale, no source it could use) is refolded, not read again.

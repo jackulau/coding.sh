@@ -60,7 +60,7 @@ import { join } from "node:path";
 import { hashParts, sha256Hex } from "./ids.ts";
 import { paths } from "./paths.ts";
 import { createRedactor, noteBlobHits, redactEventCounted, redactionTally, sessionToMetadata, toMetadata, type RedactionTally, type Redactor } from "./redact.ts";
-import { byTime, foldSession, isBackfillEvent, isRealPrompt, isVerifyToolStart, SESSION_FOLD_VERSION, sessionOf, sessionState, type SessionState } from "./sessions.ts";
+import { byTime, foldSession, foldStamp, isBackfillEvent, isFoldState, isRealPrompt, isVerifyToolStart, sessionOf, sessionState, type SessionState } from "./sessions.ts";
 import { copyFilter } from "./message-copies.ts";
 import { priceEvent, pricesFor } from "./pricing.ts";
 import { listSpoolFiles, readSpoolFile, type SpoolFile } from "./spool-read.ts";
@@ -203,13 +203,13 @@ export function validEvent(e: AgentEvent): string | undefined {
 export { BACKFILL_SOURCES } from "./sessions.ts";
 const isBackfill = isBackfillEvent;
 
-/** Cursor holding the SESSION_FOLD_VERSION every stored session was last folded with (core/reparse.ts refolds the rest). */
+/** Cursor holding the foldStamp() every stored session was last folded with (core/reparse.ts refolds the rest). */
 export const REFOLD_CURSOR = "reparse:fold";
 
 /** A store with no sessions yet has nothing to refold: marks it current before its first session lands. */
 async function markFreshStore(index: IndexStore): Promise<void> {
-  if ((await index.getCursor(REFOLD_CURSOR)) === SESSION_FOLD_VERSION) return;
-  if (!(await index.listSessions({ limit: 1 })).length) await index.setCursor(REFOLD_CURSOR, SESSION_FOLD_VERSION);
+  if ((await index.getCursor(REFOLD_CURSOR)) === foldStamp()) return;
+  if (!(await index.listSessions({ limit: 1 })).length) await index.setCursor(REFOLD_CURSOR, foldStamp());
 }
 
 /** kv key holding a pending parent link for a child session. */
@@ -796,10 +796,9 @@ export interface RecomputeOptions {
 export async function recomputeSession(index: IndexStore, id: string, o: RecomputeOptions): Promise<boolean> {
   const { linker, repo } = o;
   const prev = await index.getSession(id);
-  const folded = await foldStoredSession(index, id, prev, o.parseVersion !== undefined);
+  const folded = await foldRow(index, id, prev, o.parseVersion !== undefined);
   if (!folded) return false;
-  const { state } = folded;
-  const session = sessionOf(state, prev, folded.events);
+  const { state, session } = folded;
   // parseVersion 0: a row the proxy created before any hook or transcript event (proxy/record.ts).
   const unstamped = !prev || prev.parseVersion === 0;
   const version = o.parseVersion ?? (unstamped ? o.versionFor?.(session.agent) : undefined);
@@ -826,8 +825,27 @@ export async function recomputeSession(index: IndexStore, id: string, o: Recompu
  * events into (proxy/record.ts storeWriter).
  */
 export async function foldSessionRow(index: IndexStore, id: string, prev: Session | undefined): Promise<{ session: Session; state: SessionState; seq?: number } | undefined> {
-  const folded = await foldStoredSession(index, id, prev, false);
-  return folded && { session: sessionOf(folded.state, prev, folded.events), state: folded.state, ...(folded.seq !== undefined ? { seq: folded.seq } : {}) };
+  const folded = await foldRow(index, id, prev, false);
+  return folded && { session: folded.session, state: folded.state, ...(folded.seq !== undefined ? { seq: folded.seq } : {}) };
+}
+
+/**
+ * foldStoredSession, then sessionOf. A saved fold that passed readFold but
+ * throws once newer events are folded into it, or once the row is derived from
+ * it (another build's fold with the same sub-states holding other data), is
+ * dropped: the session is folded again from all its events.
+ */
+async function foldRow(index: IndexStore, id: string, prev: Session | undefined, rebuild: boolean) {
+  const row = async (rebuild: boolean) => {
+    const folded = await foldStoredSession(index, id, prev, rebuild);
+    return folded && { ...folded, session: sessionOf(folded.state, prev, folded.events) };
+  };
+  if (rebuild || !prev || !canFold(index)) return row(rebuild);
+  try {
+    return await row(false);
+  } catch {
+    return row(true);
+  }
 }
 
 /**
@@ -845,17 +863,24 @@ const PROMPT_SLACK_MS = 5_000;
 
 /** A saved fold: the state of every event stored up to seq and stamped up to upTo. */
 interface SavedFold {
+  /** foldStamp() of the build that saved it. */
   v: number;
   seq: number;
   upTo: number;
   state: SessionState;
 }
 
+/**
+ * A saved fold this build can fold on: its stamp is this build's, and its state
+ * has every sub-state a fresh one has. Another build's fold (a stamp of the
+ * same SESSION_FOLD_VERSION from a differently shaped state, or a state missing
+ * a sub-state) is undefined, and the session is folded from all its events.
+ */
 function readFold(bytes: Uint8Array | undefined): SavedFold | undefined {
   if (!bytes) return undefined;
   try {
     const f = deserialize(bytes) as SavedFold;
-    return f?.v === SESSION_FOLD_VERSION && f.state?.v === SESSION_FOLD_VERSION ? f : undefined;
+    return f?.v === foldStamp() && isFoldState(f.state) && Number.isFinite(f.seq) && typeof f.upTo === "number" ? f : undefined;
   } catch {
     return undefined;
   }
@@ -901,7 +926,7 @@ async function foldStoredSession(index: IndexStore, id: string, prev: Session | 
   const upTo = Math.max(from, Math.min(lastTs - FOLD_LAG_MS, lastPrompt === undefined ? Infinity : lastPrompt - PROMPT_SLACK_MS));
   let i = 0;
   for (; i < events.length && events[i]!.ts <= upTo; i++) foldSession(state, events[i]!);
-  if (state.simple && (!saved || i > 0 || seq !== saved.seq || upTo !== from)) await index.putSessionFold(id, serialize({ v: SESSION_FOLD_VERSION, seq, upTo, state } satisfies SavedFold));
+  if (state.simple && (!saved || i > 0 || seq !== saved.seq || upTo !== from)) await index.putSessionFold(id, serialize({ v: foldStamp(), seq, upTo, state } satisfies SavedFold));
   for (; i < events.length; i++) foldSession(state, events[i]!);
   if (state.simple) return { state, read: events, seq };
   // Spans or enrichment: sessionOf needs every event, and no fold is kept.

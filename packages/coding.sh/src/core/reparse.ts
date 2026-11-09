@@ -41,11 +41,13 @@
 // versions is kept under the cursor REPARSE_CURSOR. `ingest --rebuild` does
 // every session (optionally of some agents) now.
 //
-// Refold: when SESSION_FOLD_VERSION changes (how stats and flags are derived
-// from stored events), an automatic run then folds every other session again
-// from its stored rows, with no source re-read, under the same short lock
-// holds. Its progress is kept (REFOLD_AFTER), so a cut-short pass resumes; the
-// version it finished is kept under REFOLD_CURSOR.
+// Refold: when the fold stamp changes (core/sessions.ts foldStamp: the
+// SESSION_FOLD_VERSION of how stats and flags are derived from stored events,
+// and the shape of the fold state), an automatic run then folds every other
+// session again from its stored rows, with no source re-read, under the same
+// short lock holds. Its progress is kept (REFOLD_AFTER), so a cut-short pass
+// resumes; the stamp it finished is kept under REFOLD_CURSOR, so a store last
+// folded by another build is folded again once.
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AgentEvent } from "../schema/index.ts";
@@ -53,7 +55,7 @@ import type { Adapter, BackfillFile, BlobStore, Config, IndexStore } from "./typ
 import { sha256Hex } from "./ids.ts";
 import { acquireLock, wakeMarker, type Lock, type LockOptions } from "./lock.ts";
 import { paths } from "./paths.ts";
-import { isBackfillEvent, SESSION_FOLD_VERSION } from "./sessions.ts";
+import { foldStamp, isBackfillEvent } from "./sessions.ts";
 import { COPY_SLACK_MS, copyFilter, messageKey } from "./message-copies.ts";
 import { listSpoolFiles, readSpoolFile } from "./spool-read.ts";
 import { repoResolver } from "./repo-state.ts";
@@ -147,7 +149,7 @@ export interface ReparseResult {
   /** Rows deleted and inserted. */
   removed: number;
   inserted: number;
-  /** Sessions folded again from their stored rows because SESSION_FOLD_VERSION changed. */
+  /** Sessions folded again from their stored rows because the fold stamp changed. */
   refolded: number;
   errors: IngestError[];
 }
@@ -171,9 +173,9 @@ async function staleSessions(index: IndexStore, adapters: ReadonlyMap<string, Ad
  */
 export async function reparseDue(index: IndexStore, adapters: ReadonlyMap<string, Adapter>): Promise<boolean> {
   if (!index.replaceSessionEvents) return false;
-  if ((await index.getCursor(REFOLD_CURSOR)) !== SESSION_FOLD_VERSION) {
+  if ((await index.getCursor(REFOLD_CURSOR)) !== foldStamp()) {
     if ((await index.listSessions({ limit: 1 })).length) return true;
-    await index.setCursor(REFOLD_CURSOR, SESSION_FOLD_VERSION);
+    await index.setCursor(REFOLD_CURSOR, foldStamp());
   }
   const stamp = parseStamp(adapters);
   if ((await index.getCursor(REPARSE_CURSOR)) === stamp) return false;
@@ -483,7 +485,7 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
       let after = "";
       try {
         const saved = JSON.parse((await index.kvGet?.(REFOLD_AFTER)) ?? "null") as { v?: number; id?: string } | null;
-        if (saved?.v === SESSION_FOLD_VERSION && typeof saved.id === "string") after = saved.id;
+        if (saved?.v === foldStamp() && typeof saved.id === "string") after = saved.id;
       } catch {
         // unreadable progress: start over
       }
@@ -500,7 +502,7 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
           error({ message: `refold of session ${id} failed: ${(err as Error).message}` });
         }
         n++;
-        if (n % REFOLD_SAVE_EVERY === 0) await index.kvSet?.(REFOLD_AFTER, JSON.stringify({ v: SESSION_FOLD_VERSION, id }));
+        if (n % REFOLD_SAVE_EVERY === 0) await index.kvSet?.(REFOLD_AFTER, JSON.stringify({ v: foldStamp(), id }));
         opts.onProgress?.({ phase: "refold", done: n, total: ids.length });
       });
     }
@@ -508,10 +510,10 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
     // Everything not rebuilt from a transcript: spool only, or nothing left to read.
     await writeBatch(targets.filter((s) => !done.has(s.id) && !failed.has(s.id)).map((s) => [s.id, undefined]));
 
-    // Refold: every session not rebuilt above (OTel and SDK sessions too), from its stored rows, once per fold version.
-    if (!wanted && (await index.getCursor(REFOLD_CURSOR)) !== SESSION_FOLD_VERSION) {
+    // Refold: every session not rebuilt above (OTel and SDK sessions too), from its stored rows, once per fold stamp.
+    if (!wanted && (await index.getCursor(REFOLD_CURSOR)) !== foldStamp()) {
       await refold();
-      await index.setCursor(REFOLD_CURSOR, SESSION_FOLD_VERSION);
+      await index.setCursor(REFOLD_CURSOR, foldStamp());
       await index.kvSet?.(REFOLD_AFTER, undefined);
     }
     await linker.apply();

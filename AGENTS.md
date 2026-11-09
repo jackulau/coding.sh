@@ -52,7 +52,9 @@ set it for the user's store unless they ask.
   failure.
 - When an adapter parses a source differently, bump its `parseVersion` so stored sessions are
   parsed again. When the stats, flags or titles derived from the same stored events change, bump
-  `SESSION_FOLD_VERSION` in `src/core/sessions.ts` so stored sessions are folded again.
+  `SESSION_FOLD_VERSION` in `src/core/sessions.ts` so stored sessions are folded again. A new or
+  retyped sub-state of `SessionState` changes the fold stamp (`foldStamp`) by itself; a new
+  optional field or a change of meaning still needs the bump.
 
 ## Tests and fixtures
 

@@ -120,7 +120,9 @@ ingests the hook lines that arrived meanwhile, so a read made while it runs does
 new sessions keep showing up. Sessions are marked as they are rebuilt, so a re-parse that is cut
 short (the laptop sleeps, the process is killed) picks up where it stopped. When an upgrade changes
 how stats and flags are worked out (a `test-tamper` or `skill:` fix, say), the same background run
-works them out again for every stored session from the rows it already has.
+works them out again for every stored session from the rows it already has. It does this once after
+a switch to any other build of coding.sh (another branch or checkout), and a session's saved
+progress from another build is dropped and worked out again from its events.
 
 - **Do it now.** `coding.sh ingest --rebuild` re-parses every session. Add `--agent pi` for one
   agent. It prints how many sessions it re-parsed and how many it kept.

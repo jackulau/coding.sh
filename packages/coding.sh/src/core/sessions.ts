@@ -415,11 +415,14 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
 }
 
 /**
- * Bumped whenever SessionState (or anything folded into it) changes shape or
- * meaning, or sessionOf derives other stats, flags or titles from it: a saved
- * fold of another version is dropped and the session rebuilt from all its
- * events, and every stored session is folded again once in the background
- * (core/reparse.ts, REFOLD_CURSOR), so old sessions get the new derivation.
+ * Bumped whenever SessionState (or anything folded into it) changes meaning,
+ * or sessionOf derives other stats, flags or titles from it. Saved folds and
+ * the refold cursor carry foldStamp(), this integer plus a hash of a fresh
+ * state's shape: a saved fold with another stamp is dropped and the session
+ * rebuilt from all its events, and every stored session is folded again once
+ * in the background (core/reparse.ts, REFOLD_CURSOR), so old sessions get the
+ * new derivation. A new or retyped sub-state changes the stamp by itself; a
+ * new optional field or a change of meaning still needs the bump.
  */
 export const SESSION_FOLD_VERSION = 15; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context).
 
@@ -551,6 +554,67 @@ export function sessionState(): SessionState {
     models: modelState(),
     proxyModels: modelState(),
   };
+}
+
+/** A value's kind in a fold: map, set, array, object, null, or its typeof. */
+function kindOf(v: unknown): string {
+  if (v === null) return "null";
+  if (typeof v !== "object") return typeof v;
+  return v instanceof Map ? "map" : v instanceof Set ? "set" : Array.isArray(v) ? "array" : "object";
+}
+
+/** Every key of a fresh state, at every depth of its plain objects, with its value's kind, in key order. */
+function shapeOf(o: object, at: string[] = [], out: { path: string[]; kind: string }[] = []): { path: string[]; kind: string }[] {
+  for (const k of Object.keys(o).sort()) {
+    const v = (o as Record<string, unknown>)[k];
+    const kind = kindOf(v);
+    out.push({ path: [...at, k], kind });
+    if (kind === "object") shapeOf(v as object, [...at, k], out);
+  }
+  return out;
+}
+
+let freshShape: { path: string[]; kind: string }[] | undefined;
+let stamp: number | undefined;
+
+/**
+ * The stamp of saved folds and of the refold cursor: SESSION_FOLD_VERSION
+ * times 1e9 plus an FNV-1a hash, modulo 1e9, of a fresh state's shape (its
+ * keys at every depth, and their kinds), so it reads as the integer and nine
+ * more digits. Two builds that bump the integer to the same value for
+ * differently shaped states get different stamps, with nothing to keep by
+ * hand: the hash follows the code. A build id would refold every store on every
+ * release, and a run from source has none. The shape's hash changes only when
+ * the state does, is the same in every process of a build, and a cursor keeps
+ * it exactly (an integer in SQLite, a float64 in Postgres and ClickHouse).
+ * Computed once per process, on first use; the hook never calls it.
+ */
+export function foldStamp(): number {
+  if (stamp === undefined) {
+    freshShape ??= shapeOf(sessionState());
+    let h = 0x811c9dc5;
+    for (const ch of freshShape.map((p) => `${p.path.join(".")}:${p.kind}`).join(",")) h = Math.imul(h ^ ch.charCodeAt(0), 0x01000193);
+    stamp = SESSION_FOLD_VERSION * 1e9 + ((h >>> 0) % 1e9);
+  }
+  return stamp;
+}
+
+/**
+ * A decoded saved fold has every sub-state a fresh state has (each object,
+ * Map, Set and array, at every depth), of the same kind. A fold another build
+ * saved can lack one (core/ingest.ts readFold then drops it), and folding the
+ * next event into it would throw.
+ */
+export function isFoldState(x: unknown): x is SessionState {
+  if (kindOf(x) !== "object" || (x as SessionState).v !== SESSION_FOLD_VERSION) return false;
+  freshShape ??= shapeOf(sessionState());
+  for (const { path, kind } of freshShape) {
+    if (kind !== "object" && kind !== "map" && kind !== "set" && kind !== "array") continue;
+    let v: unknown = x;
+    for (const k of path) v = (v as Record<string, unknown>)[k];
+    if (kindOf(v) !== kind) return false;
+  }
+  return true;
 }
 
 /**
