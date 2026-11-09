@@ -1,6 +1,6 @@
 # coding.sh docs
 
-The user docs live at [coding.sh/docs](https://coding.sh/docs/). This folder holds the same
+The user docs live at [coding.sh/docs](https://coding.sh/docs). This folder holds the same
 material in Markdown, plus design specs and research.
 
 Building your own agent? Start with [how-to/trace-your-agent.md](how-to/trace-your-agent.md).

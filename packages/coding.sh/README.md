@@ -91,5 +91,5 @@ npm uninstall -g coding.sh
 `coding.sh/schema` exports the trace schema constants: `SCHEMA_ID`, `SCHEMA_VERSION`, `EVENT_KINDS`,
 `KNOWN_AGENTS` and `isEventKind()`. TypeScript types are not shipped yet.
 
-Docs: [coding.sh/docs](https://coding.sh/docs/). Source, the agent matrix and the privacy details:
+Docs: [coding.sh/docs](https://coding.sh/docs). Source, the agent matrix and the privacy details:
 [github.com/jackulau/coding.sh](https://github.com/jackulau/coding.sh). MIT licensed.

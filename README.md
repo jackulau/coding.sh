@@ -16,10 +16,10 @@
 </p>
 
 <p align="center">
-  <a href="https://coding.sh/docs/">Docs</a> ·
-  <a href="https://coding.sh/docs/quickstart/">Quickstart</a> ·
+  <a href="https://coding.sh/docs">Docs</a> ·
+  <a href="https://coding.sh/docs/quickstart">Quickstart</a> ·
   <a href="#supported-agents">Supported agents</a> ·
-  <a href="https://coding.sh/changelog/">Changelog</a> ·
+  <a href="https://coding.sh/changelog">Changelog</a> ·
   <a href="https://github.com/jackulau/coding.sh/discussions">Discussions</a> ·
   <a href="https://github.com/jackulau/coding.sh/issues/new/choose">Report a bug</a>
 </p>
@@ -188,7 +188,7 @@ Changes are listed in [CHANGELOG.md](CHANGELOG.md) and on the
 
 ## Docs
 
-- [coding.sh/docs](https://coding.sh/docs/): quickstart, agents, CLI, MCP, evals, OpenTelemetry,
+- [coding.sh/docs](https://coding.sh/docs): quickstart, agents, CLI, MCP, evals, OpenTelemetry,
   storage and the trace format.
 - [docs/](docs/README.md): the same guides in Markdown, plus production, design specs and
   research.
