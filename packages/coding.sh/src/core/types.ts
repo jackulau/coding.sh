@@ -331,6 +331,8 @@ export interface BlobStore {
   batch?(): BlobBatch;
   /** Releases open handles (the file store's pack database). The store stays usable: the next call opens them again. */
   close?(): Promise<void>;
+  /** Fold a write-ahead log back in and shrink it (the file store's pack). Ingest and backfill call it after a bulk write. */
+  checkpoint?(): Promise<void>;
 }
 
 /** See BlobStore.batch. Reads through the batch see its unflushed puts. */

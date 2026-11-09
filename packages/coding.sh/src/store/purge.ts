@@ -36,6 +36,8 @@ export interface PurgeOptions {
   literals: readonly string[];
   /** Count only; change nothing. */
   dryRun?: boolean;
+  /** How long emptying the index's and the blob pack's WALs waits for other processes' reads (default 5 s; tests shorten it). */
+  waitMs?: number;
 }
 
 export interface PurgeResult {
@@ -53,6 +55,12 @@ export interface PurgeResult {
   foldsDropped: number;
   /** After the purge: PRAGMA integrity_check passed and the search index is sound (searchIndexOk). */
   integrity?: boolean;
+  /**
+   * Files where another process's open read kept the old bytes (in the file or its
+   * WAL) past the wait: "index" (index.db), "blob pack" (blobs/pack.db). They stay
+   * until that process closes the file and purge runs again. Absent when none.
+   */
+  oldBytesKept?: ("index" | "blob pack")[];
 }
 
 type Row = Record<string, unknown>;
@@ -358,12 +366,18 @@ export async function purgeLiterals(o: PurgeOptions): Promise<PurgeResult> {
 
     if (!dry) {
       // Merge FTS segments (dropping deleted tokens), then rewrite the file so freed pages keep nothing.
+      // A checkpoint that a reader in another process keeps busy says so in its result row; it does not throw.
+      const truncate = () => (db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy?: number } | undefined)?.busy === 0;
       db.exec("INSERT INTO events_fts(events_fts) VALUES ('optimize')");
-      db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      truncate();
       db.exec("VACUUM");
-      db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      db.exec(`PRAGMA busy_timeout = ${o.waitMs ?? 5000}`); // how long the checkpoint waits for readers
+      const kept: ("index" | "blob pack")[] = [];
+      if (!truncate()) kept.push("index");
       // The file store's pack keeps deleted rows' bytes in free pages and its WAL until it is rewritten.
-      await (o.blobs as BlobStore & { compact?: () => Promise<unknown> }).compact?.();
+      const pack = await (o.blobs as BlobStore & { compact?: (opts?: { waitMs?: number }) => Promise<{ readerHeld?: boolean }> }).compact?.({ waitMs: o.waitMs });
+      if (pack?.readerHeld) kept.push("blob pack");
+      if (kept.length) result.oldBytesKept = kept;
       const ok = (db.prepare("PRAGMA integrity_check").get() as Row | undefined)?.integrity_check === "ok";
       result.integrity = ok && searchIndexOk(db);
     }

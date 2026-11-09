@@ -28,7 +28,7 @@
 // abandoned before flush() leaves temp files that sweepTmp removes.
 import { existsSync, readFileSync } from "node:fs";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
-import { link, mkdir, readdir, stat, unlink, utimes } from "node:fs/promises";
+import { link, mkdir, readdir, rmdir, stat, unlink, utimes } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 import { constants, zstdCompressSync, zstdDecompressSync } from "node:zlib";
@@ -70,7 +70,7 @@ interface Staged {
 }
 
 export interface FsBlobStoreOptions {
-  /** zstd level for new blobs (default 3; `gc --compact` may rewrite at 19). */
+  /** zstd level for new blobs (default 3). */
   level?: number;
   /** Compressed size under which a blob goes in the pack (default PACK_MAX_BYTES; 0 writes every blob as a file). */
   packMaxBytes?: number;
@@ -93,6 +93,11 @@ export class FsBlobStore implements BlobStore {
   /** Closes the pack (the next use opens it again). */
   async close(): Promise<void> {
     this.pack.close();
+  }
+
+  /** Folds the pack's WAL in and empties it, waiting briefly for readers. Ingest calls it after a bulk write. Never throws. */
+  async checkpoint(): Promise<void> {
+    await this.pack.checkpoint(PACK_CHECKPOINT_WAIT_MS);
   }
 
   pathFor(ref: BlobRef): string {
@@ -127,8 +132,16 @@ export class FsBlobStore implements BlobStore {
     if (existsSync(file) && (await this.read(ref, file)) !== undefined && (await touch(file))) return undefined;
     const compressed = compress();
     if (compressed.byteLength < this.packMaxBytes) return { ref, data: compressed };
-    const created = await mkdir(dirname(file), { recursive: true });
-    const tmp = await writeTemp(file, compressed);
+    let created = await mkdir(dirname(file), { recursive: true });
+    let tmp: string;
+    try {
+      tmp = await writeTemp(file, compressed);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+      // gc --compact removed the folder as it emptied: make it again.
+      created = (await mkdir(dirname(file), { recursive: true })) ?? created;
+      tmp = await writeTemp(file, compressed);
+    }
     return created === undefined ? { ref, file, tmp } : { ref, file, tmp, created };
   }
 
@@ -344,10 +357,14 @@ export class FsBlobStore implements BlobStore {
    * `gc --compact` and purge. Moves the file blobs small enough for the pack into
    * it (a store written before the pack had every blob as a file), keeping their
    * mtime; a file goes only after its row is committed, and one that fails
-   * verification stays for a re-put to heal. Then rewrites the pack and empties
-   * its WAL, so rows deleted from it leave no bytes on disk. Returns the files moved.
+   * verification stays for a re-put to heal. Removes the blob folders left empty.
+   * Then rewrites the pack and empties its WAL, so rows deleted from it leave no
+   * bytes on disk. That step waits up to `waitMs` for other processes' reads of
+   * the pack; `readerHeld` says one outlasted it, and the old bytes stay in pack.db
+   * or its WAL until that process closes the pack and a later compact runs.
+   * Returns the files moved.
    */
-  async compact(): Promise<{ packed: number }> {
+  async compact(opts: { waitMs?: number } = {}): Promise<{ packed: number; readerHeld: boolean }> {
     let packed = 0;
     if (this.packMaxBytes === PACK_MAX_BYTES) {
       let rows: Packed[] = [];
@@ -378,8 +395,20 @@ export class FsBlobStore implements BlobStore {
       }
       await move();
     }
-    await this.pack.vacuum();
-    return { packed };
+    await this.pruneDirs();
+    const clean = await this.pack.vacuum(opts.waitMs ?? PACK_VACUUM_WAIT_MS);
+    return { packed, readerHeld: !clean };
+  }
+
+  /** Removes empty ab/cd/ and ab/ blob folders (rmdir refuses one that is not empty). */
+  private async pruneDirs(): Promise<void> {
+    for (const a of await listDir(this.root)) {
+      if (!/^[0-9a-f]{2}$/.test(a)) continue;
+      for (const b of await listDir(join(this.root, a))) {
+        if (/^[0-9a-f]{2}$/.test(b)) await rmdir(join(this.root, a, b)).catch(() => {});
+      }
+      await rmdir(join(this.root, a)).catch(() => {});
+    }
   }
 
   /** Re-compresses a blob at a higher level (for `gc --compact`). Returns bytes saved. */
@@ -429,6 +458,14 @@ export class FsBlobStore implements BlobStore {
 
 /** How long a pack statement waits for another process's write. */
 const PACK_BUSY_TIMEOUT_MS = 5000;
+/** A reset WAL is truncated to this many bytes, about one auto-checkpoint's worth (PRAGMA journal_size_limit). */
+const PACK_WAL_LIMIT = 4 * 1024 * 1024;
+/** How long a checkpoint after a bulk write waits for readers. */
+const PACK_CHECKPOINT_WAIT_MS = 2000;
+/** close() barely waits: it runs at the end of every command. */
+const PACK_CLOSE_WAIT_MS = 50;
+/** How long compact waits for other processes' reads before it reports the old pages as kept. */
+const PACK_VACUUM_WAIT_MS = 5000;
 
 /**
  * <root>/pack.db: the small blobs, one row each (ref as its 32 bytes, mtime in ms,
@@ -462,6 +499,8 @@ class BlobPack {
       await switchToWal(db);
       // A commit is on disk when it returns (on macOS through the drive's cache too), as a blob file is once put() resolves.
       db.exec("PRAGMA synchronous = FULL; PRAGMA fullfsync = ON; PRAGMA checkpoint_fullfsync = ON;");
+      // Without a limit the WAL keeps its high-water size while another process (the viewer) has the pack open.
+      db.exec(`PRAGMA journal_size_limit = ${PACK_WAL_LIMIT}`);
       db.exec("CREATE TABLE IF NOT EXISTS blobs (ref BLOB PRIMARY KEY, mtime INTEGER NOT NULL, data BLOB NOT NULL)");
     } catch (e) {
       db.close();
@@ -552,19 +591,61 @@ class BlobPack {
     return db ? Number((this.stmt(db, "SELECT coalesce(sum(length(data)), 0) AS n FROM blobs").get() as { n: number }).n) : 0;
   }
 
-  /** Copies the WAL in, rewrites the file without free pages, and empties the WAL. */
-  async vacuum(): Promise<void> {
+  /**
+   * Copies the WAL in, rewrites the file without free pages, and empties the WAL.
+   * False when another process's read outlasted `waitMs`: SQLite then keeps the
+   * old pages in the file and the WAL (the checkpoint reports busy; it does not throw).
+   */
+  async vacuum(waitMs: number): Promise<boolean> {
     const db = await this.open(false);
-    if (!db) return;
-    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-    db.exec("VACUUM");
-    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    if (!db) return true;
+    const deadline = Date.now() + waitMs;
+    await this.truncate(db, deadline);
+    try {
+      db.exec("VACUUM");
+    } catch {
+      return false; // another process held the write lock past busy_timeout
+    }
+    return this.truncate(db, deadline);
+  }
+
+  /** Copies the WAL in and empties it, waiting at most `waitMs` for readers. False when they kept it busy. */
+  async checkpoint(waitMs: number): Promise<boolean> {
+    return this.db ? this.truncate(this.db, Date.now() + waitMs) : true; // only an open pack has written
+  }
+
+  /** wal_checkpoint(TRUNCATE), tried again until `deadline` while readers keep it busy. */
+  private async truncate(db: DatabaseSync, deadline: number): Promise<boolean> {
+    for (;;) {
+      if (truncateOnce(db, Math.min(500, deadline - Date.now()))) return true;
+      if (Date.now() >= deadline) return false;
+      await new Promise((r) => setTimeout(r, 50));
+    }
   }
 
   close(): void {
+    // SQLite folds the WAL in on the last connection's close only; with another process
+    // holding the pack open, the WAL would keep every frame this connection wrote.
+    if (this.db) truncateOnce(this.db, PACK_CLOSE_WAIT_MS);
     this.stmts.clear();
     this.db?.close();
     this.db = undefined;
+  }
+}
+
+/** One wal_checkpoint(TRUNCATE) that waits at most `waitMs` for readers: true when it completed. Never throws. */
+function truncateOnce(db: DatabaseSync, waitMs: number): boolean {
+  try {
+    db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.floor(waitMs))}`);
+    return (db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy: number } | undefined)?.busy === 0;
+  } catch {
+    return false;
+  } finally {
+    try {
+      db.exec(`PRAGMA busy_timeout = ${PACK_BUSY_TIMEOUT_MS}`);
+    } catch {
+      // nothing to restore on a connection that failed
+    }
   }
 }
 

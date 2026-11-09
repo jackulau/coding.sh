@@ -548,7 +548,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
 
   result.sessions = touchedAll.size;
   // A bulk drain leaves a WAL as big as what it wrote until some later read-write close.
-  if (result.events > BULK_WRITE_EVENTS) await index.checkpoint?.();
+  if (result.events > BULK_WRITE_EVENTS) await Promise.all([index.checkpoint?.(), blobs.checkpoint?.()]);
   for (const s of sinkStates.values()) {
     const { failed: _failed, ...report } = s;
     result.sinks.push(report);
@@ -1067,7 +1067,7 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
     await index.setCursor(backfillCursorKey(agent, file.path, "mtime"), Math.floor(file.mtimeMs));
   }
   result.sessions = updated.size;
-  if (result.events > BULK_WRITE_EVENTS) await index.checkpoint?.();
+  if (result.events > BULK_WRITE_EVENTS) await Promise.all([index.checkpoint?.(), blobs.checkpoint?.()]);
   return result;
 }
 

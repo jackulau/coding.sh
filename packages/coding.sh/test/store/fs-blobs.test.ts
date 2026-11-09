@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, u
 import { randomBytes } from "node:crypto";
 import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { zstdCompressSync, zstdDecompressSync } from "node:zlib";
 import { after, describe, it } from "node:test";
 import { sha256Hex } from "../../src/core/ids.ts";
@@ -306,9 +306,12 @@ describe("FsBlobStore pack", () => {
     const gone = await s.put(`payload with ${secret} inside`);
     await s.delete(gone);
     assert.equal(await s.get(gone), undefined);
-    assert.deepEqual(await s.compact(), { packed: 1 });
+    assert.deepEqual(await s.compact(), { packed: 1, readerHeld: false });
     assert.ok(!existsSync(s.pathFor(oldRef)), "the small file moved into the pack");
     assert.ok(existsSync(s.pathFor(bigRef)), "a big one stays a file");
+    if (oldRef.slice(0, 4) !== bigRef.slice(0, 4)) assert.ok(!existsSync(dirname(s.pathFor(oldRef))), "the folder it emptied is gone");
+    if (oldRef.slice(0, 2) !== bigRef.slice(0, 2)) assert.ok(!existsSync(join(dir, oldRef.slice(0, 2))), "and its parent");
+    assert.deepEqual(readdirSync(dir).filter((f) => /^[0-9a-f]{2}$/.test(f)), [bigRef.slice(0, 2)], "only the big blob's folder is left");
     assert.equal(await s.getText(oldRef), "written before the pack");
     assert.ok(Date.now() - (await s.stat(oldRef))!.mtimeMs > 4 * 86_400_000, "mtime kept");
     for (const f of readdirSync(dir).filter((f) => f.startsWith(PACK_FILE))) {
@@ -323,8 +326,55 @@ describe("FsBlobStore pack", () => {
     const t = new FsBlobStore(dir);
     opened.push(t);
     await t.put("captured last week and again today");
-    assert.deepEqual(await t.compact(), { packed: 1 });
+    assert.deepEqual(await t.compact(), { packed: 1, readerHeld: false });
     assert.ok(!existsSync(t.pathFor(ref)));
     assert.ok(Date.now() - (await t.stat(ref))!.mtimeMs < 60_000, "the put's mtime stands");
+  });
+
+  it("compact says when another connection's read kept a deleted row's bytes, and finishes once it ends", async () => {
+    const s = make();
+    const secret = "sk-live-HELDBYAREADER-0123456789";
+    const ref = await s.put(`payload with ${secret} inside`);
+    await s.put("something else");
+    const { loadSqlite } = await import("../../src/store/sqlite-open.ts");
+    const { DatabaseSync } = await loadSqlite();
+    const reader = new DatabaseSync(join(s.root, PACK_FILE)); // a sqlite3 shell or a backup, say
+    try {
+      reader.exec("BEGIN");
+      reader.prepare("SELECT count(*) FROM blobs").get();
+      await s.delete(ref);
+      assert.deepEqual(await s.compact({ waitMs: 100 }), { packed: 0, readerHeld: true });
+      const packHolds = () => readdirSync(s.root).filter((f) => f.startsWith(PACK_FILE)).some((f) => readFileSync(join(s.root, f)).includes(secret));
+      assert.ok(packHolds(), "SQLite kept the old pages for the reader");
+      reader.exec("COMMIT");
+      assert.deepEqual(await s.compact({ waitMs: 100 }), { packed: 0, readerHeld: false });
+      assert.ok(!packHolds());
+    } finally {
+      reader.close();
+    }
+  });
+
+  it("checkpoint() and close() empty the pack's WAL while another connection keeps the pack open", async () => {
+    const s = make();
+    await s.put("first");
+    const { loadSqlite } = await import("../../src/store/sqlite-open.ts");
+    const { DatabaseSync } = await loadSqlite();
+    const viewer = new DatabaseSync(join(s.root, PACK_FILE)); // open, between reads: SQLite won't fold the WAL in on its own
+    const wal = () => statSync(join(s.root, `${PACK_FILE}-wal`)).size;
+    try {
+      viewer.prepare("SELECT count(*) FROM blobs").get();
+      const b = s.batch();
+      for (let i = 0; i < 3000; i++) await b.put(noise(1000));
+      await b.flush();
+      assert.ok(wal() > 2_000_000, `a bulk write fills the WAL (${wal()} bytes)`);
+      await s.checkpoint();
+      assert.equal(wal(), 0);
+      await s.put("one more");
+      assert.ok(wal() > 0);
+      await s.close();
+      assert.equal(wal(), 0);
+    } finally {
+      viewer.close();
+    }
   });
 });

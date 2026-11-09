@@ -118,7 +118,7 @@ export async function run(c: CommandContext): Promise<number> {
 
   if (out.json) {
     out.data({ outcome: dryRun ? "planned" : "purged", values: literals.length, ...(matched ? { ruleMatches: matched.values } : {}), ...(matched?.short ? { shortMatches: matched.short } : {}), ...r });
-    return r.integrity === false ? 1 : 0;
+    return r.integrity === false || r.oldBytesKept?.length ? 1 : 0;
   }
   const verb = dryRun ? "would scrub" : "scrubbed";
   if (matched) out.row("Rules", `matched ${plural(matched.values, "distinct value")}`, "ok");
@@ -131,6 +131,11 @@ export async function run(c: CommandContext): Promise<number> {
   if (r.filesSkipped) out.row("Skipped", `${plural(r.filesSkipped, "file")} over ${MAX_FILE_BYTES / 1024 / 1024} MB, not read`, "warn");
   if (r.foldsDropped) out.row("Folds", `${dryRun ? "would drop" : "dropped"} ${plural(r.foldsDropped, "saved fold")} (rebuilt on the next ingest)`, "ok");
   if (r.integrity !== undefined) out.row("Integrity", r.integrity ? "index and search ok, file compacted" : "check failed: run coding.sh doctor", r.integrity ? "ok" : "fail");
+  for (const f of r.oldBytesKept ?? []) {
+    const file = f === "index" ? "index.db" : "blobs/pack.db";
+    out.row("Old bytes", `still in ${file}: another process is reading it (the viewer, serve, a sqlite3 shell or a backup). Close it and run the same purge again`, "fail");
+  }
+  if (r.oldBytesKept?.length) return 1;
   const total = r.events + r.sessions + r.otherRows + r.blobs + r.files;
   if (!total) out.note(`No copies of ${literals.length === 1 ? "the value" : "these values"} in the store`);
   else if (dryRun) out.note("Dry run: nothing changed. Run again without --dry-run to scrub");

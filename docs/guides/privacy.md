@@ -60,11 +60,15 @@ headers = { Authorization = "Bearer ${OTEL_TOKEN}" }
   and the search index, session titles and stats, labels, eval docs and settings. Blobs holding
   the value are rewritten under a new hash and every reference follows. Spool, judge-cache and
   eval run files (`~/.coding.sh/runs`) keep their length (the value becomes asterisks); a run's
-  `.git` directory and files over 64 MB are left alone. The index is then VACUUMed, so the old
-  bytes leave the file, and checked: purge exits 1 if the database or its search index is
-  damaged. Values shorter than 8 characters are refused, the values are never
-  printed, and only the SQLite store is supported. Rotate the secret as well: the agent's own
-  transcripts, shell history and git are not touched.
+  `.git` directory and files over 64 MB are left alone. The index and the blob pack
+  (`blobs/pack.db`) are then VACUUMed, so the old bytes leave the files, and checked: purge exits 1
+  if the database or its search index is damaged. If another process holds a read on one of them
+  (the viewer, `serve`, a `sqlite3` shell, a backup), SQLite keeps the old bytes until it closes:
+  purge waits a few seconds, then says which file still holds them and exits 1. Close that process
+  and run the same purge again. Purge with coding.sh 0.1.5 or newer: an older purge does not see
+  blobs in the pack. Values shorter than 8 characters are refused, the values are never printed,
+  and only the SQLite store is supported. Rotate the secret as well: the agent's own transcripts,
+  shell history and git are not touched.
 - **Remove secrets by shape.** `coding.sh purge --rule 'sk-ant-api03-[A-Za-z0-9_-]{80,}'` finds
   every distinct match of a regular expression in the same places and purges each one like a
   `--literal` value. `--rule` repeats, and combines with `--literal`. Matches shorter than 8

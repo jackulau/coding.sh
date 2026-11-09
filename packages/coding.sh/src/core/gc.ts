@@ -88,6 +88,8 @@ export interface GcResult {
   compacted?: boolean;
   /** Small blob files moved into the blob store's pack by --compact (file store only). */
   blobsPacked?: number;
+  /** --compact could not finish rewriting the blob pack: another process held a read on it. Absent otherwise. */
+  blobPackHeld?: boolean;
   spool: {
     scanned: number;
     deleted: number;
@@ -101,7 +103,7 @@ type Stat = { size: number; mtimeMs: number };
 type DeleteIfOlder = (ref: BlobRef, opts: { olderThanMs: number; now?: number }) => Promise<number | "kept" | undefined>;
 type SweepTmp = (opts: { olderThanMs: number; now?: number; dryRun?: boolean }) => Promise<{ files: number; bytes: number }>;
 type StatFn = (ref: BlobRef) => Promise<Stat | undefined>;
-type CompactBlobs = () => Promise<{ packed: number }>;
+type CompactBlobs = () => Promise<{ packed: number; readerHeld: boolean }>;
 
 /** Optional capability: stores that can report blob age implement stat(ref). */
 function statOf(blobs: BlobStore): StatFn | undefined {
@@ -146,7 +148,11 @@ export async function gc(opts: GcOptions): Promise<GcResult> {
     result.compacted = true;
   }
   const compactBlobs = (opts.blobs as BlobStore & { compact?: CompactBlobs }).compact;
-  if (opts.compact && !dryRun && typeof compactBlobs === "function") result.blobsPacked = (await compactBlobs.call(opts.blobs)).packed;
+  if (opts.compact && !dryRun && typeof compactBlobs === "function") {
+    const c = await compactBlobs.call(opts.blobs);
+    result.blobsPacked = c.packed;
+    if (c.readerHeld) result.blobPackHeld = true;
+  }
   return result;
 }
 

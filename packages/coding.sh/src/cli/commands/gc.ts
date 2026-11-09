@@ -19,6 +19,7 @@ export async function run(c: CommandContext): Promise<number> {
     if (r.judgeCache) out.row("Judge cache", `${verb} ${plural(r.judgeCache.deleted, "entry", "entries")}, ${bytes(r.judgeCache.keptBytes)} kept`, "ok");
     if (r.compacted) out.row("Index", "compacted", "ok");
     if (r.blobsPacked) out.row("Blob pack", `moved ${plural(r.blobsPacked, "small blob file")} in`, "ok");
+    if (r.blobPackHeld) out.row("Blob pack", "not compacted: another process is reading blobs/pack.db; run gc --compact again once it closes", "warn");
     if (c.flags.compact === true && dryRun) out.note("--compact is skipped in a dry run");
     return 0;
   });

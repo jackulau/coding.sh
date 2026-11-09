@@ -98,13 +98,18 @@ describe("ingest WAL checkpoint (RT-5)", () => {
     const index = await SqliteIndexStore.open(db);
     const reader = await SqliteIndexStore.open(db, { readOnly: true }); // the viewer, say: SQLite won't fold the WAL in on its own
     await reader.listSessions({ limit: 1 });
+    // The file store's pack has a WAL too: ingest checkpoints the blob store with the index.
+    let blobCheckpoints = 0;
+    const blobs = Object.assign(t.blobs, { checkpoint: async () => void blobCheckpoints++ });
     t.write(t.line({ session: "small", kind: "user.message", text: "hi" }));
-    await ingest({ config: t.config, index, blobs: t.blobs, adapters, env: t.env, lock: false });
+    await ingest({ config: t.config, index, blobs, adapters, env: t.env, lock: false });
     assert.ok(walSize(db) > 0, "a small drain does not pay for a checkpoint");
+    assert.equal(blobCheckpoints, 0);
     for (let i = 0; i < 6; i++) t.write(t.line({ session: `bulk-${i}`, kind: "notification", events: 2_000 }));
-    const r = await ingest({ config: t.config, index, blobs: t.blobs, adapters, env: t.env, lock: false });
+    const r = await ingest({ config: t.config, index, blobs, adapters, env: t.env, lock: false });
     assert.equal(r.events, 12_000);
     assert.equal(walSize(db), 0);
+    assert.equal(blobCheckpoints, 1);
     await index.close();
     await reader.close();
   });

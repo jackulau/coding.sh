@@ -1519,7 +1519,7 @@ export const COMMANDS: CommandSpec[] = [
     name: "gc",
     group: "Maintain",
     summary: "Delete expired spool files, blobs and judge cache",
-    flags: [{ name: "compact", type: "boolean", desc: "Also compact the index and the blob pack (VACUUM), and move small blob files into the pack" }, DRY_RUN],
+    flags: [{ name: "compact", type: "boolean", desc: "Also compact the index and the blob pack (VACUUM), move small blob files into the pack and remove the blob folders that leaves empty" }, DRY_RUN],
     load: () => import("./commands/gc.ts"),
   },
   {
@@ -1536,7 +1536,7 @@ export const COMMANDS: CommandSpec[] = [
     notes: [
       "Every copy becomes [redacted:purged]: event payloads (the full-text index is updated), session titles and stats, labels, eval docs and settings. Blobs holding a value are rewritten under their new hash and every reference follows. Spool, judge-cache and eval run files (~/.coding.sh/runs) keep their length (the value becomes asterisks) so ingest offsets stay valid. A run's .git directory and files over 64 MB are left alone.",
       "--rule takes a JavaScript regular expression. Each distinct match of 8 or more characters is purged like a --literal value; shorter matches are left alone, and a rule that matches over 10,000 distinct values is refused.",
-      "Then the search index is merged and the database VACUUMed, so the old bytes leave the file. Values shorter than 8 characters are refused. Only the SQLite store is supported.",
+      "Then the search index is merged, and the index and the blob pack (blobs/pack.db) are VACUUMed, so the old bytes leave the files. If another process is reading one of them (the viewer, serve, a sqlite3 shell), its old bytes stay until that process closes: purge says which file and exits 1, and the same purge run again finishes the job. Values shorter than 8 characters are refused. Only the SQLite store is supported.",
       "Rotate the secret as well: copies in the agent's own transcripts, shell history or git are not touched.",
     ],
     load: () => import("./commands/purge.ts"),

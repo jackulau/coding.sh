@@ -2,6 +2,7 @@
 // a blob, a saved fold and the spool ends with no copy anywhere on disk; the index
 // stays intact, search still works and every blob still matches its hash.
 import assert from "node:assert/strict";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -397,5 +398,96 @@ describe("coding.sh purge on a store ingested from a real capture", () => {
     const r = cli(["purge", "--literal", literal]);
     assert.equal(r.status, 1);
     assert.match(r.stderr, /Integrity\s+check failed/);
+  });
+});
+
+describe("coding.sh purge with another process reading the blob pack or the index", () => {
+  const INDEX_ONLY = "index-only-value-4471-correct-horse";
+  let env: TmpEnv;
+  let secrets = "";
+  let pack = "";
+  let index = "";
+  before(async () => {
+    env = tmpEnv();
+    const blobs = fsBlobs(join(env.dataHome, "blobs"));
+    const ref = await blobs.put(`$ cat .env\nAPI_TOKEN=${SECRET}\n`);
+    await blobs.close();
+    await seed(env.dataHome, {
+      sessions: [session("s1")],
+      events: [
+        event("s1", 1, { kind: "tool.end", payload: { tool: "Bash", ok: true, outputRef: ref }, blobs: [ref] } as never),
+        event("s1", 2, { payload: { text: `note ${INDEX_ONLY}` } }),
+      ],
+    });
+    pack = join(env.dataHome, "blobs", "pack.db");
+    index = join(env.dataHome, "index.db");
+    secrets = join(env.root, "leaked.txt");
+    writeFileSync(secrets, `${SECRET}\n`);
+  });
+  after(async () => {
+    await closeBlobs();
+    env.restore();
+  });
+
+  /** Another process (a sqlite3 shell, a backup) holding a read on `file` until it is killed. */
+  async function holdRead(file: string, table: string): Promise<ChildProcess> {
+    const src = `import { DatabaseSync } from "node:sqlite"; const db = new DatabaseSync(process.argv[1]); db.exec("BEGIN"); db.prepare("SELECT count(*) FROM ${table}").get(); console.log("holding"); setInterval(() => {}, 1000);`;
+    const child = spawn(process.execPath, ["--no-warnings", "--input-type=module", "-e", src, file], { stdio: ["ignore", "pipe", "inherit"] });
+    await new Promise<void>((res, rej) => {
+      child.stdout!.on("data", (d: Buffer) => d.toString().includes("holding") && res());
+      child.once("exit", (code) => rej(new Error(`the reader exited ${code}`)));
+    });
+    return child;
+  }
+  /** The value is in `name` or its WAL. */
+  const fileHolds = (dir: string, name: string, value: string) =>
+    readdirSync(dir)
+      .filter((f) => f.startsWith(name))
+      .some((f) => holds(readFileSync(join(dir, f)), value));
+  const packHolds = () => fileHolds(join(env.dataHome, "blobs"), "pack.db", SECRET);
+  const stop = async (reader: ChildProcess) => {
+    reader.kill();
+    await new Promise((res) => reader.once("exit", res));
+  };
+
+  test("says the old bytes stay in the index while a reader holds it; a purge after it closes removes them", async () => {
+    const run = async () => {
+      const blobs = new FsBlobStore(join(env.dataHome, "blobs"));
+      try {
+        return await purgeLiterals({ dbPath: index, blobs, literals: [INDEX_ONLY], waitMs: 200 });
+      } finally {
+        await blobs.close();
+      }
+    };
+    const reader = await holdRead(index, "events");
+    let r;
+    try {
+      r = await run();
+    } finally {
+      await stop(reader);
+    }
+    assert.deepEqual(r.oldBytesKept, ["index"]);
+    assert.ok(fileHolds(env.dataHome, "index.db", INDEX_ONLY), "SQLite kept the old pages while the reader held them");
+
+    assert.equal((await run()).oldBytesKept, undefined);
+    assert.ok(!fileHolds(env.dataHome, "index.db", INDEX_ONLY), "no copy left in index.db or its WAL");
+  });
+
+  test("says the old bytes stay in the pack and exits 1; a purge after the reader closes removes them", async () => {
+    const reader = await holdRead(pack, "blobs");
+    let r;
+    try {
+      r = cli(["purge", "--literal", secrets]);
+    } finally {
+      await stop(reader);
+    }
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /Old bytes\s+still in blobs\/pack\.db: another process is reading it/);
+    assert.doesNotMatch(r.stderr, /Rotate the secret/);
+    assert.ok(packHolds(), "SQLite kept the old pages while the reader held them");
+
+    const again = JSON.parse(ok(["purge", "--literal", secrets, "--json"]).stdout);
+    assert.equal(again.oldBytesKept, undefined);
+    assert.ok(!packHolds(), "no copy left in pack.db or its WAL");
   });
 });
