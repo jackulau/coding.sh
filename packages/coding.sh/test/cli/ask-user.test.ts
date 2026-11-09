@@ -5,12 +5,13 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import { UsageError } from "../../src/cli/args.ts";
 import { requireConsent } from "../../src/cli/common.ts";
 import { ASK_USER, CliError, Output } from "../../src/cli/output.ts";
 import type { CommandContext } from "../../src/cli/types.ts";
 
-const SRC = new URL("../../src/", import.meta.url).pathname;
+const SRC = fileURLToPath(new URL("../../src/", import.meta.url));
 
 /** A step that deletes, overwrites, undoes or spends: the user decides. */
 const DESTRUCTIVE = /--yes\b|--force(?:-all)?\b|\bpurge\b|\brollback\b|\buninstall\b/;
