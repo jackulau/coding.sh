@@ -27,7 +27,7 @@ Fix first
    e.g. "Make wrap() in src/wrap.js break at word boundaries instead of mid-word."
    Fix: Name the check in AGENTS.md. Add: "Run `npm test` before you say you are done, and say what it printed."
    → See it happen: coding.sh show 36ee2026-fff1-4fd3-aab3-a7d1706f15e0
-   → Add the line to AGENTS.md (uncommitted): coding.sh improve fix 1
+   → Add the line to your instructions file (uncommitted): coding.sh improve fix 1
    → Test the edit on the moments it went wrong (on your Claude subscription): coding.sh exp ab --behavior unverified-claim
    → Commit it, then check new sessions against it: coding.sh improve check
 ```
