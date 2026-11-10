@@ -78,7 +78,7 @@ export function costFrom(u: Usage, p: Rates, cacheWrite1h = 0): number {
 /** Where each group of rows comes from and when it was last checked against that page. */
 export const PRICE_SOURCES: Record<string, { url: string; updated: string }> = {
   openai: { url: "https://developers.openai.com/api/docs/pricing", updated: "2026-11-07" },
-  anthropic: { url: "https://platform.claude.com/docs/en/about-claude/pricing", updated: "2026-11-07" },
+  anthropic: { url: "https://platform.claude.com/docs/en/about-claude/pricing", updated: "2026-11-09" },
   google: { url: "https://aistudio.google.com/docs/pricing", updated: "2026-11-07" },
   zai: { url: "https://docs.z.ai/guides/overview/pricing", updated: "2026-11-07" },
   minimax: { url: "https://platform.minimax.io/docs/guides/pricing", updated: "2026-11-07" },
@@ -211,12 +211,14 @@ export const BUILTIN_PRICES: Prices = {
   "gpt-4.1-nano": plain(0.1, 0.4, 0.025),
   "o4-mini": plain(1.1, 4.4, 0.275),
 
-  // Anthropic (PRICE_SOURCES.anthropic, as of 2026-11-07). Cache reads are 0.1x input, except
-  // Fable/Mythos 5.1 (0.025x) and Opus/Sonnet 5.5 (0.05x). Every row has Batch at 0.5x. Fast mode
-  // ("Fast mode pricing"): Opus 5.5 $8/$40, Opus 5 and 4.8 $10/$50, cache multipliers on top, the
-  // same rate at any prompt length. Long context: Claude 4.6+ bills the whole 1M window at standard
+  // Anthropic (PRICE_SOURCES.anthropic, as of 2026-11-09). Cache reads are 0.1x input, except
+  // Fable/Mythos 5.2 and 5.1 (0.025x) and Opus/Sonnet 5.5 (0.05x). Every row has Batch at 0.5x. Fast
+  // mode ("Fast mode pricing"): Fable/Mythos 5.2 $16/$80, Opus 5.5 $8/$40, Opus 5 and 4.8 $10/$50,
+  // cache multipliers on top, the same rate at any prompt length, never with Batch. Long context: Claude 4.6+ bills the whole 1M window at standard
   // rates, except Haiku 5.5, whose prompts over 100,000 tokens (cache reads and writes included,
   // per request) pay $0.50/$2.50.
+  "claude-fable-5-2": anthropic46(8, 40, 0.2, { fast: anthropicRates(16, 80, 0.4) }),
+  "claude-mythos-5-2": anthropic46(8, 40, 0.2, { fast: anthropicRates(16, 80, 0.4) }),
   "claude-fable-5-1": anthropic46(10, 50, 0.25),
   "claude-mythos-5-1": anthropic46(10, 50, 0.25),
   "claude-fable-5": anthropic46(10, 50),

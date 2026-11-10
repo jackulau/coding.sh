@@ -41,6 +41,9 @@ describe("resolvePrice", () => {
       ["deepseek/deepseek-v4.1-flash-1017", "deepseek-v4.1-flash"],
       ["zai/glm-4.7", "glm-4.7"],
       ["openai/gpt-oss-120b", "gpt-oss-120b"],
+      ["claude-fable-5-2", "claude-fable-5-2"],
+      ["claude-fable-5-2-20261105", "claude-fable-5-2"],
+      ["anthropic/claude-mythos-5-2", "claude-mythos-5-2"],
     ];
     for (const [id, key] of cases) assert.deepEqual(resolvePrice(id, table), { price: BUILTIN_PRICES[key], key, fallback: false }, id);
   });
@@ -287,6 +290,17 @@ describe("tier and long-context pricing", () => {
     check(priced("claude-opus-4-8", { inputTokens: M, outputTokens: M }, { speed: "fast", serviceTier: "priority" }), 10 + 50, "fast");
     check(priced("claude-opus-4-6", { inputTokens: M }, { serviceTier: "priority" }), 5, undefined);
     check(priced("claude-sonnet-5-5", { inputTokens: M }, { speed: "fast" }), 2, undefined);
+  });
+
+  it("bills Claude Fable and Mythos 5.2 at their own rates, not Fable 5.1's", () => {
+    check(priced("claude-fable-5-2", { inputTokens: M, outputTokens: M }), 8 + 40, undefined);
+    check(priced("claude-fable-5-2", { cacheReadTokens: M }), 0.2, undefined);
+    check(priced("claude-fable-5-2", { cacheWriteTokens: M }), 10, undefined);
+    check(priced("claude-fable-5-2", { cacheWriteTokens: M }, { cacheWrite1hTokens: M }), 16, undefined);
+    check(priced("claude-mythos-5-2", { inputTokens: M, outputTokens: M }, { serviceTier: "batch" }), 4 + 20, "batch");
+    check(priced("claude-fable-5-2", { inputTokens: M, outputTokens: M, cacheReadTokens: M, cacheWriteTokens: M }, { speed: "fast" }), 16 + 80 + 0.4 + 20, "fast");
+    check(priced("claude-fable-5-2", { cacheWriteTokens: M }, { cacheWrite1hTokens: M, speed: "fast" }), 32, "fast");
+    check(priced("claude-fable-5-2", { inputTokens: M }, { inferenceGeo: "us", speed: "fast" }), 16 * 1.1, "fast+us-only");
   });
 
   it("bills Gemini Batch, Flex and Priority, short and long", () => {
