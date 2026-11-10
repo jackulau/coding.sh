@@ -21,7 +21,7 @@ const repo = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..
 const read = (rel: string) => readFileSync(join(repo, "docs", rel), "utf8");
 
 /** Guides whose commands are checked. */
-const GUIDES = ["guides/terse-mode.md", "how-to/does-this-plugin-help.md", "how-to/test-claude-md-change.md"];
+const GUIDES = ["guides/terse-mode.md", "how-to/does-this-plugin-help.md", "how-to/test-agents-md-change.md"];
 
 /** The ```sh blocks of a Markdown doc. */
 function shBlocks(md: string): string[] {

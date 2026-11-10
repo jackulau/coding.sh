@@ -478,7 +478,7 @@ export const COMMANDS: CommandSpec[] = [
       { name: "to", type: "number", value: "<M>", desc: "Show what steps --step (default 1) through M changed together" },
       { name: "file", type: "string", value: "<PATH>", desc: "Print this file as of --step (default: the last step)" },
       { name: "fork", type: "boolean", desc: "With --step: send the model call that made step N again, with the harness changed, and show the recorded and forked next action side by side" },
-      { name: "with", type: "list", value: "<DEST=SRC>", desc: "With --fork: the fork's DEST (CLAUDE.md, AGENTS.md, a rule or skill, ~/.claude/CLAUDE.md) has SRC's text; a bare PATH uses that file as it is now; DEST= drops it (repeatable)" },
+      { name: "with", type: "list", value: "<DEST=SRC>", desc: "With --fork: the fork's DEST (AGENTS.md, CLAUDE.md, a rule or skill, ~/.claude/CLAUDE.md) has SRC's text; a bare PATH uses that file as it is now; DEST= drops it (repeatable)" },
       { name: "harness", type: "string", value: "<BUNDLE>", desc: "With --fork: take the context files and model from this stored harness bundle" },
       { name: "model", type: "string", value: "<MODEL>", desc: "With --fork: send the call to this model" },
       { name: "system", type: "string", value: "<TEXT|@FILE>", desc: "With --fork: replace the system prompt" },
@@ -494,9 +494,9 @@ export const COMMANDS: CommandSpec[] = [
       "coding.sh replay 9f1c2e --step 12",
       "coding.sh replay 9f1c2e --step 5 --to 20",
       "coding.sh replay 9f1c2e --step 12 --file src/app.ts",
-      "coding.sh replay 9f1c2e --step 12 --fork --with CLAUDE.md=fixed.md -k 3",
+      "coding.sh replay 9f1c2e --step 12 --fork --with AGENTS.md=fixed.md -k 3",
       "coding.sh replay 9f1c2e --step 12 --fork --with CLAUDE.md --run --verify 'npm test'",
-      "coding.sh replay 9f1c2e --step 12 --fork --with CLAUDE.md --save-case forks",
+      "coding.sh replay 9f1c2e --step 12 --fork --with AGENTS.md --save-case forks",
     ],
     notes: [
       "File content is rebuilt from the agent's own tool calls: full writes, full reads and the edits applied to them. A file edited before any step showed it reads as unknown, with the reason, until a later read or write. A session run with `coding.sh run` also starts from its snapshot.",
@@ -995,7 +995,7 @@ export const COMMANDS: CommandSpec[] = [
     actions: [
       {
         name: "ab",
-        summary: "A/B a CLAUDE.md, AGENTS.md, rule or skill edit on the decision points your agent recently got wrong",
+        summary: "A/B an AGENTS.md, CLAUDE.md, rule or skill edit on the decision points your agent recently got wrong",
         args: [{ name: "spec", desc: "JSON file with the same fields as the options (behavior, since, a, b, model, …); options override it" }],
         flags: [
           { name: "a", type: "string", value: "<FILE|DIR|git:REV|BUNDLE|none>", desc: "Baseline harness (default: git HEAD when B is omitted, else the repo's current files; with no uncommitted edits, the version before your last harness commit)" },
@@ -1024,7 +1024,7 @@ export const COMMANDS: CommandSpec[] = [
         graceful: true,
         examples: [
           "coding.sh exp ab",
-          "coding.sh exp ab --b ./drafts/CLAUDE.md --behavior unverified-claim",
+          "coding.sh exp ab --b ./drafts/AGENTS.md --behavior unverified-claim",
           "coding.sh exp ab --a git:main --b . --since 30d --dry-run",
           "coding.sh exp ab --provider claude-code",
           "coding.sh exp ab --watch",
@@ -1261,7 +1261,7 @@ export const COMMANDS: CommandSpec[] = [
     notes: [
       "exp ab and refine call a model API with ANTHROPIC_API_KEY or OPENAI_API_KEY. With neither set they use a logged-in Claude Code (`claude -p`) or Codex (`codex exec`) instead and say so in one line; --provider claude-code or codex asks for one. Each call runs with no hooks, plugins, MCP servers or settings of yours, in an empty directory, with a throwaway CLAUDE_CONFIG_DIR or CODEX_HOME holding only a copy of the login. claude -p gets the session's own Claude Code tools and refuses every call, so none runs.",
       "On a subscription, costs are API-equivalent (what the same tokens would cost on the API), there is no spending cap unless you pass --max-cost, calls run 2 at a time, rate limits back off and retry, and a spent usage limit stops the run and keeps the finished trials.",
-      "With no uncommitted harness edits, exp ab tests your last commit that changed CLAUDE.md, AGENTS.md, a rule or a skill (B) against the version before it (A).",
+      "With no uncommitted harness edits, exp ab tests your last commit that changed AGENTS.md, CLAUDE.md, a rule or a skill (B) against the version before it (A).",
     ],
     load: () => import("./commands/exp.ts"),
   },
@@ -1531,20 +1531,20 @@ export const COMMANDS: CommandSpec[] = [
   {
     name: "improve",
     group: "Harness",
-    summary: "What to fix first in your sessions, the line that fixes it, and whether your last CLAUDE.md or AGENTS.md changes helped",
+    summary: "What to fix first in your sessions, the line that fixes it, and whether your last AGENTS.md or CLAUDE.md changes helped",
     actionOptional: true,
     flags: IMPROVE_FLAGS("14d", 5),
     actions: [
       {
         name: "fix",
-        summary: "Add an issue's line to CLAUDE.md or AGENTS.md (uncommitted), then print the command that tests it",
+        summary: "Add an issue's line to AGENTS.md or CLAUDE.md (uncommitted), then print the command that tests it",
         args: [{ name: "issue", desc: "Its number in coding.sh improve, or its id (flag:no-verification)", required: true }],
-        flags: [...IMPROVE_FLAGS("14d", 50).filter((f) => f.name !== "limit"), { name: "target", type: "string", value: "<FILE>", desc: "Repo file to add the line to (default: CLAUDE.md or AGENTS.md, whichever the issue's agent reads)" }, DRY_RUN],
+        flags: [...IMPROVE_FLAGS("14d", 50).filter((f) => f.name !== "limit"), { name: "target", type: "string", value: "<FILE>", desc: "Repo file to add the line to (default: AGENTS.md or CLAUDE.md, whichever the issue's agent reads)" }, DRY_RUN],
         examples: ["coding.sh improve fix 1", "coding.sh improve fix flag:no-verification --target AGENTS.md --dry-run"],
       },
       {
         name: "check",
-        summary: "Did each committed CLAUDE.md, AGENTS.md, rule or skill change help? Sessions before vs after it; exit 1 when one made things worse",
+        summary: "Did each committed AGENTS.md, CLAUDE.md, rule or skill change help? Sessions before vs after it; exit 1 when one made things worse",
         flags: [
           ...IMPROVE_FLAGS("30d", 5),
           { name: "watch", type: "boolean", desc: "Keep running and print a line when a change's verdict moves as new sessions arrive" },
@@ -1561,8 +1561,8 @@ export const COMMANDS: CommandSpec[] = [
       "Prompt cache paid for again (stored cache breaks) is an issue from $1 in two or more sessions: its dollars and share of the spend set its severity, with a fix per cause, costliest first.",
       "Headless sessions (claude -p, an Agent SDK, codex exec: scripts, judges and evals) are left out, and the first line says how many; --headless counts them. Eval and benchmark runs and subagents are always left out.",
       "A failed compound line (&&, ;, |, a loop) counts against the part that failed: the one its error names, the tool whose error it is, the part timeout stopped, or the last part of a pipeline. When nothing singles one out, the issue says compound command.",
-      "When sessions ran on the repo's current harness version (the newest commit that changed CLAUDE.md, AGENTS.md, a rule or a skill) and none of them had an issue, the issue is marked 'Not seen since <commit>', goes last, and points at improve check instead of a new line.",
-      "check reads the git history of CLAUDE.md, AGENTS.md, GEMINI.md, .claude/rules, .cursor/rules and skills. A session counts for the newest such commit its starting HEAD contains, so uncommitted edits count from the commit that keeps them. Sessions with no recorded HEAD, and sessions with no tool call outside MCP servers (a chat, or asking coding.sh about a change), are left out.",
+      "When sessions ran on the repo's current harness version (the newest commit that changed AGENTS.md, CLAUDE.md, a rule or a skill) and none of them had an issue, the issue is marked 'Not seen since <commit>', goes last, and points at improve check instead of a new line.",
+      "check reads the git history of AGENTS.md, CLAUDE.md, GEMINI.md, .claude/rules, .cursor/rules and skills. A session counts for the newest such commit its starting HEAD contains, so uncommitted edits count from the commit that keeps them. Sessions with no recorded HEAD, and sessions with no tool call outside MCP servers (a chat, or asking coding.sh about a change), are left out.",
       "check compares sessions with a failure flag before and after each change (overall and per flag), and, for each added line that names a command, flag, path or identifier, the share of sessions that acted on it. Two-sided Fisher exact tests at p ≤ 0.1: more flagged sessions is Regressed (exit 1); fewer flagged sessions, or one flag falling (Holm-adjusted) with no other rising, is Helped. A new line the agent follows while flagged sessions stay put is Followed, no effect yet. More tool calls or wall time per session (median 1.25x, permutation p ≤ 0.1) with no fall is Costlier; both suggest refine test git:<previous> to test the harness without the change. Under 5 sessions after a change without a clear result is Too early to tell.",
       "Under each change, check lists the sessions after it that still have a failure flag, newest first, with their flags (5, or all with --sessions; --json has every flagged session before and after).",
       "exp ab (the replay A/B that improve suggests) needs ANTHROPIC_API_KEY, OPENAI_API_KEY, or Claude Code or Codex logged in (it runs on your subscription then). Without any of them, commit the change and let improve check judge it on new sessions.",
@@ -1600,7 +1600,7 @@ export const COMMANDS: CommandSpec[] = [
       { name: "list", summary: "List harness bundles" },
       {
         name: "audit",
-        summary: "Count the sessions that loaded, read and wrote each memory, CLAUDE.md, AGENTS.md, rule and skill file; warn about subagent files Claude Code misreads",
+        summary: "Count the sessions that loaded, read and wrote each memory, AGENTS.md, CLAUDE.md, rule and skill file; warn about subagent files Claude Code misreads",
         flags: [
           { name: "agent", short: "a", type: "string", value: "<AGENT>", desc: "Only this agent's sessions and files" },
           { ...SINCE, default: "30d" },
@@ -1725,13 +1725,13 @@ export const COMMANDS: CommandSpec[] = [
   {
     name: "refine",
     group: "Harness",
-    summary: "Improve CLAUDE.md, AGENTS.md and skills in tested rounds, and protect their safety rules",
+    summary: "Improve AGENTS.md, CLAUDE.md and skills in tested rounds, and protect their safety rules",
     actions: [
       {
         name: "propose",
         summary: "Ask a model for lines that address your sessions' most severe flags; stores them as a candidate",
         flags: [...REFINE_SOURCE_FLAGS.filter((f) => ["since", "agent", "repo", "provider", "base-url"].includes(f.name)), PROPOSER_MODEL, PROPOSER_COMMAND, REFINE_TARGET, REFINE_MINED, { name: "dry-run", type: "boolean", desc: "Print the findings and the prompt; make no model call" }],
-        examples: ["coding.sh refine propose", "coding.sh refine propose --target CLAUDE.md --dry-run"],
+        examples: ["coding.sh refine propose", "coding.sh refine propose --target AGENTS.md --dry-run"],
       },
       {
         name: "test",
@@ -1742,8 +1742,8 @@ export const COMMANDS: CommandSpec[] = [
         examples: [
           "coding.sh refine test ./drafts/AGENTS.md",
           "coding.sh refine test r_3f9a1c02e1 --behavior unverified-claim --max-cost 2",
-          "coding.sh refine test ./a/CLAUDE.md ./b/CLAUDE.md --dry-run --json",
-          "coding.sh refine test ./drafts/CLAUDE.md --suite fixes --objective cost,wall --margin 2pp --yes",
+          "coding.sh refine test ./a/AGENTS.md ./b/AGENTS.md --dry-run --json",
+          "coding.sh refine test ./drafts/AGENTS.md --suite fixes --objective cost,wall --margin 2pp --yes",
         ],
       },
       {
@@ -1794,7 +1794,7 @@ export const COMMANDS: CommandSpec[] = [
       {
         name: "protected",
         summary: "List the harness lines an edit may not delete, reword or relax",
-        flags: [{ name: "a", type: "string", value: "<FILE|DIR|git:REV|BUNDLE>", desc: "Harness to read (default: the repo's current CLAUDE.md, AGENTS.md, GEMINI.md, rules and skills)" }],
+        flags: [{ name: "a", type: "string", value: "<FILE|DIR|git:REV|BUNDLE>", desc: "Harness to read (default: the repo's current AGENTS.md, CLAUDE.md, GEMINI.md, rules and skills)" }],
         examples: ["coding.sh refine protected", "coding.sh refine protected --a git:main --json"],
       },
       {

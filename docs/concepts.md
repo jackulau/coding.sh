@@ -44,7 +44,7 @@ model, the system prompt, a setting), several times per arm, and compares the ar
 experiment.
 
 **Fork.** `coding.sh replay <session> --step N --fork` sends the model call behind step N again
-with changed context files (CLAUDE.md, AGENTS.md, a skill) or another model, and shows the recorded
+with changed context files (AGENTS.md, CLAUDE.md, a skill) or another model, and shows the recorded
 next action beside the forked one. `--run` carries the fork on with the real agent, and
 `--save-case` keeps the step as an eval case graded on the next action. It needs a session captured
 through the proxy.
@@ -279,7 +279,7 @@ for Claude Code any plugins named with `--plugin`.
 See [Compare two agents](how-to/compare-agents.md).
 
 **Memory audit.** `coding.sh harness audit` counts, per memory and instruction file (auto-memory,
-CLAUDE.md, AGENTS.md, rules, skills), the sessions that loaded it, read it with a tool and wrote
+AGENTS.md, CLAUDE.md, rules, skills), the sessions that loaded it, read it with a tool and wrote
 it, and flags files never read, written but never read back, and skills listed but never used.
 See [Memory and instruction files](guides/explore.md#memory-and-instruction-files).
 

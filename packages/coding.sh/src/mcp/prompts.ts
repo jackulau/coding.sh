@@ -10,7 +10,7 @@ export function buildPrompts(): PromptDef[] {
     {
       name: "improve",
       title: "Improve my agent setup",
-      description: "Find what goes wrong most in this repo's agent sessions and the CLAUDE.md or AGENTS.md line that fixes it.",
+      description: "Find what goes wrong most in this repo's agent sessions and the AGENTS.md or CLAUDE.md line that fixes it.",
       arguments: [{ name: "repo", description: "A repo path or folder name. Default: the repo the server runs in." }],
       render: (a) =>
         [
@@ -32,13 +32,13 @@ export function buildPrompts(): PromptDef[] {
           "List the unused files (never-read, write-only, loaded-not-read) with their load tokens, and the load tokens per session.",
           "Propose what to delete or shorten, and change nothing until I say yes.",
           "After the edits, call harness_audit with check: true and tell me if a protected safety line was removed.",
-          "If it returned a refine run command in next, give it to me to run: it tests a shorter CLAUDE.md or AGENTS.md on an eval suite and takes minutes.",
+          "If it returned a refine run command in next, give it to me to run: it tests a shorter AGENTS.md or CLAUDE.md on an eval suite and takes minutes.",
         ].join("\n"),
     },
     {
       name: "did-it-help",
-      title: "Did my CLAUDE.md change help?",
-      description: "Whether a committed CLAUDE.md, AGENTS.md, rule or skill change made the agent's sessions better, from the sessions before and after it.",
+      title: "Did my AGENTS.md change help?",
+      description: "Whether a committed AGENTS.md, CLAUDE.md, rule or skill change made the agent's sessions better, from the sessions before and after it.",
       arguments: [
         { name: "commit", description: "The change's commit sha. Default: the recent changes." },
         { name: "repo", description: "A repo path or folder name. Default: the repo the server runs in." },

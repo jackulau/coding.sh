@@ -4,7 +4,7 @@ Your agent makes the same mistakes again and again. coding.sh already records ev
 guide turns those sessions into one weekly loop:
 
 1. See what goes wrong most.
-2. Add the line to CLAUDE.md or AGENTS.md that fixes it.
+2. Add the line to AGENTS.md or CLAUDE.md that fixes it.
 3. Test the edit on the moments it went wrong, or skip to 4.
 4. Commit it.
 5. Let new sessions tell you whether it helped, and catch a change that made things worse.
@@ -25,9 +25,9 @@ Fix first
 1. Says it is done without running anything to check
    3 of 12 sessions, low 23; latest 28m ago
    e.g. "Make wrap() in src/wrap.js break at word boundaries instead of mid-word."
-   Fix: Name the check in CLAUDE.md or AGENTS.md. Add: "Run `npm test` before you say you are done, and say what it printed."
+   Fix: Name the check in AGENTS.md or CLAUDE.md. Add: "Run `npm test` before you say you are done, and say what it printed."
    → See it happen: coding.sh show 36ee2026-fff1-4fd3-aab3-a7d1706f15e0
-   → Add the line to CLAUDE.md or AGENTS.md (uncommitted): coding.sh improve fix 1
+   → Add the line to AGENTS.md or CLAUDE.md (uncommitted): coding.sh improve fix 1
    → Test the edit on the moments it went wrong (on your Claude subscription): coding.sh exp ab --behavior unverified-claim
    → Commit it, then check new sessions against it: coding.sh improve check
 ```
@@ -36,7 +36,7 @@ Fix first
 `--repo all` for every repo). It leaves out subagents, eval and benchmark runs, and headless
 sessions: `claude -p`, an Agent SDK or `codex exec`, the ones whose `stats.launch` is `"headless"`
 (see [concepts.md](../concepts.md)). Those are mostly scripts, judges and evals that nobody watched,
-and a CLAUDE.md line is not what changes them. The first line says how many headless sessions it
+and an AGENTS.md line is not what changes them. The first line says how many headless sessions it
 left out, and `--headless` counts them. A session that does not say how it started stays in. It
 lists three kinds of issue:
 
@@ -82,8 +82,9 @@ coding.sh improve fix 1
 + Run `npm test` before you say you are done, and say what it printed.
 ```
 
-`improve fix` appends the issue's line to CLAUDE.md or AGENTS.md: the one the repo has, or, when
-it has both, the one the issue's agents read. `--target <file>` picks another file, and `--dry-run` only
+`improve fix` appends the issue's line to AGENTS.md or CLAUDE.md: the one the repo has, or, when
+it has both, the one the issue's agents read. This repo's sessions are Claude Code's and its file
+is CLAUDE.md, so the line went there. `--target <file>` picks another file, and `--dry-run` only
 prints the line. When the file already has the line, it says so and adds nothing. A line that is
 already there and still not followed needs rewording, or a place nearer the top of the file.
 
@@ -97,9 +98,9 @@ coding.sh exp ab --behavior unverified-claim
 ```
 
 `exp ab` replays the moments in your sessions where the agent went wrong. It asks the model for the
-next turn twice: once with the committed CLAUDE.md and once with your edit. A judge says which
-turns did the right thing. [Test a CLAUDE.md change in five
-minutes](../how-to/test-claude-md-change.md) walks through it.
+next turn twice: once with the committed file and once with your edit. A judge says which
+turns did the right thing. [Test an AGENTS.md change in five
+minutes](../how-to/test-agents-md-change.md) walks through it.
 
 It needs a model. With `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` set, it calls that API. With
 neither, it runs on your subscription through a logged-in Claude Code (`claude -p`) or Codex
@@ -132,7 +133,7 @@ git commit CLAUDE.md -m "CLAUDE.md: run the tests before saying done"
 ```
 
 coding.sh records the git HEAD each session starts at. A session counts for the newest commit
-that changed CLAUDE.md, AGENTS.md, GEMINI.md, a rule under `.claude/rules/` or `.cursor/rules/`,
+that changed AGENTS.md, CLAUDE.md, GEMINI.md, a rule under `.claude/rules/` or `.cursor/rules/`,
 or a skill's SKILL.md that its HEAD contains. So an edit counts from the commit that keeps it, not
 from when you saved the file.
 
@@ -233,7 +234,7 @@ The coding.sh MCP server (`coding.sh init` sets it up) has the same loop:
   [Memory and instruction files](explore.md#memory-and-instruction-files).
 
 You can also ask in plain words: "look at my recent sessions and help me improve my setup", or
-"did my CLAUDE.md change last week help?", or "which sessions still failed after it?", or "audit
+"did my AGENTS.md change last week help?", or "which sessions still failed after it?", or "audit
 my setup and trim what I don't use".
 
 ## What it can't tell you

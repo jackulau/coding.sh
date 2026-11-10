@@ -50,7 +50,7 @@ describe("improve tool", () => {
       severity: "low",
       example: { sessionId: "before-3", title: "Task before-3" },
       quietSince: { commit: w.commits.rule!.slice(0, 7), sessions: 6 },
-      fix: "Name the check in CLAUDE.md or AGENTS.md.",
+      fix: "Name the check in AGENTS.md or CLAUDE.md.",
       next: ["coding.sh show before-3", "coding.sh improve check"],
     });
     assert.deepEqual(

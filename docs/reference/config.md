@@ -180,7 +180,7 @@ rise for a pass-rate gain in `refine test|run --suite`; see
 
 | Key | Default | What |
 |---|---|---|
-| `protect` | `[]` | Regexes. A CLAUDE.md, AGENTS.md, rule or skill line matching one is protected; the line is tested without its list marker or bold, so `"^Use pnpm"` matches `- Use pnpm`. A repo config's patterns are added to yours. |
+| `protect` | `[]` | Regexes. An AGENTS.md, CLAUDE.md, rule or skill line matching one is protected; the line is tested without its list marker or bold, so `"^Use pnpm"` matches `- Use pnpm`. A repo config's patterns are added to yours. |
 | `autoProtect` | `true` | Protect gate-word + safety-topic lines ("Never run `git push --force`") automatically. Honoured only in your user config. |
 | `maxCostRise` | `"50%"` | The default of `--max-cost-rise`: how far a listed cost, tokens, time, turns or size objective may rise for a significant pass-rate gain. `"100%"`, `"none"`, or a number: below 1 a fraction (`0.5` is +50%), from 1 up percent (`150` is +150%). A repo config can lower it but not raise it. |
 | `canary_model` | none | The model `refine test --suite` and `refine run --suite` re-test kept candidates under when `--canary-model` is not given, and the default for `refine recheck --model`. See [Canary re-test](../guides/evals.md#canary-re-test). Honoured only in your user config. |

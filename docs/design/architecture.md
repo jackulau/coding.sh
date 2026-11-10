@@ -152,7 +152,7 @@ interface Sink {                                          // write-only mirror (
 - Events hold structured fields in columns (`session_id`, `kind`, `ts`, `tool`, `status`, `cost`, …)
   with a small JSON `payload`. Anything over 4 KB becomes a blob ref. This keeps the index small
   enough to scan.
-- Blobs are content-addressed, so a file read 50 times, or the same CLAUDE.md in 1,000 sessions, is
+- Blobs are content-addressed, so a file read 50 times, or the same AGENTS.md in 1,000 sessions, is
   stored once. They are compressed with zstd (`node:zlib`) at level 3.
 - A blob whose compressed form is under 4 KiB, such as a hook line's raw payload, is a row of
   `blobs/pack.db` (SQLite, WAL, `synchronous=FULL`); a larger one is a file of its own. A file costs
@@ -270,7 +270,7 @@ to a semconv version.
 
 ## Runner and harness lab
 
-- **Harness bundle:** `harness.toml` + overlay files (CLAUDE.md, AGENTS.md, skills, hooks, MCP config,
+- **Harness bundle:** `harness.toml` + overlay files (AGENTS.md, CLAUDE.md, skills, hooks, MCP config,
   CLI flags, model, env), plus Claude Code plugins for claude-code (stored whole, loaded with
   `--plugin-dir` from the run's home). Its content hash is its identity. `coding.sh harness snapshot`
   captures the current setup.

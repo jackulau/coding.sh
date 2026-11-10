@@ -170,7 +170,7 @@ export function stepsFor(issue: Issue, n: number, o: { provider: ModelProvider |
     steps.push({ label: `See whether ${issue.quietSince.commit} fixed it`, command: "coding.sh improve check" });
     return steps;
   }
-  if (issue.rule) steps.push({ label: "Add the line to CLAUDE.md or AGENTS.md (uncommitted)", command: `coding.sh improve fix ${n}` });
+  if (issue.rule) steps.push({ label: "Add the line to AGENTS.md or CLAUDE.md (uncommitted)", command: `coding.sh improve fix ${n}` });
   if (issue.behavior) {
     steps.push(
       o.provider

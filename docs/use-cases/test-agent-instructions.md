@@ -1,6 +1,6 @@
-# Test a CLAUDE.md, AGENTS.md or skill change
+# Test an AGENTS.md, CLAUDE.md or skill change
 
-You changed CLAUDE.md, AGENTS.md, a rule or a skill, and want to know whether it helped. coding.sh
+You changed AGENTS.md, CLAUDE.md, a rule or a skill, and want to know whether it helped. coding.sh
 answers that from the sessions it has already recorded, or from tasks you give it. Some checks are
 free and wait for new sessions. Others call a model now and cost a little.
 
@@ -18,8 +18,8 @@ free and wait for new sessions. Others call a model now and cost a little.
 
 ```sh
 coding.sh improve              # issues ranked, each with a line to add
-coding.sh improve fix 1        # appends that line to CLAUDE.md or AGENTS.md, uncommitted
-git commit CLAUDE.md -m "CLAUDE.md: run the tests before saying done"
+coding.sh improve fix 1        # appends that line to AGENTS.md or CLAUDE.md, uncommitted
+git commit AGENTS.md -m "AGENTS.md: run the tests before saying done"
 coding.sh improve check        # after a few sessions
 ```
 
@@ -70,14 +70,14 @@ prompts that should and should not load it and reports precision, recall and F1.
 
 ## Questions
 
-### Does this work for AGENTS.md, GEMINI.md and Cursor rules?
+### Does this work for CLAUDE.md, GEMINI.md and Cursor rules?
 
-Yes. `exp ab` and `improve check` read CLAUDE.md, AGENTS.md, GEMINI.md, rules under
+Yes. `exp ab` and `improve check` read AGENTS.md, CLAUDE.md, GEMINI.md, rules under
 `.claude/rules/` or `.cursor/rules/`, and a skill's SKILL.md.
 
 ### Can I test a draft without editing the repo?
 
-`coding.sh exp ab --b drafts/CLAUDE.md` tests a draft file against your current one.
+`coding.sh exp ab --b drafts/AGENTS.md` tests a draft file against your current one.
 `--a git:main --b .` compares a branch's files with your working tree.
 
 ### How many sessions do I need?
@@ -87,7 +87,7 @@ tell with fewer than 5 sessions after a change.
 
 ## Next
 
-- [Test a CLAUDE.md change in five minutes](../how-to/test-claude-md-change.md)
+- [Test an AGENTS.md change in five minutes](../how-to/test-agents-md-change.md)
 - [Improve your agent every week](../guides/improve.md)
 - [Evaluate an Agent Skill](../how-to/evaluate-a-skill.md)
 - [Evals and comparisons](../guides/evals.md#ab-a-harness-edit-on-your-own-sessions)

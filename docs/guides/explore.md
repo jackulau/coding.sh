@@ -286,15 +286,15 @@ step's tool call, or, for a prompt, the call that answered it. It then shows the
 recorded next to the action the forked call took.
 
 ```sh
-coding.sh replay <session> --step 12 --fork --with CLAUDE.md=fixed.md -k 3
+coding.sh replay <session> --step 12 --fork --with AGENTS.md=fixed.md -k 3
 coding.sh replay <session> --step 12 --fork --with AGENTS.md --model claude-haiku-4-5
 coding.sh replay <session> --step 12 --fork --harness strict-tests
 coding.sh replay <session> --step 12 --fork --with CLAUDE.md --run --verify 'npm test'
-coding.sh replay <session> --step 12 --fork --with CLAUDE.md --save-case forks
+coding.sh replay <session> --step 12 --fork --with AGENTS.md --save-case forks
 ```
 
 - `--with DEST=SRC` uses SRC's text as DEST. A bare `--with PATH` uses that file as it is now,
-  and `DEST=` drops the file. DEST is a CLAUDE.md, an AGENTS.md, a rule, a skill or
+  and `DEST=` drops the file. DEST is an AGENTS.md, a CLAUDE.md, a rule, a skill or
   `~/.claude/CLAUDE.md`. coding.sh changes the file where the agent put it in the request:
   Claude Code's `Contents of <path>` sections and Codex's `# AGENTS.md instructions` block. A file
   the request did not carry is added the way Claude Code adds CLAUDE.md. `--harness` takes the
@@ -318,14 +318,14 @@ Forking calls the API with `ANTHROPIC_API_KEY` (or a subscription token in
 `CLAUDE_CODE_OAUTH_TOKEN`) or `OPENAI_API_KEY`, never the agent's login. In `coding.sh ui`, the
 Replay pane has a "Fork from here" tab. It shows the step's context files as the agent had them,
 lets you edit them, and shows the recorded and forked actions side by side. The MCP tool
-`session_replay` forks too: pass `step` and `fork` (`{"CLAUDE.md": "…"}`; an empty text drops a
+`session_replay` forks too: pass `step` and `fork` (`{"AGENTS.md": "…"}`; an empty text drops a
 file).
 
 ## Memory and instruction files
 
 `coding.sh harness audit` lists each memory and instruction file and counts the sessions that
 loaded it, read it with a tool and wrote it: Claude Code's auto-memory
-(`~/.claude/projects/*/memory/`), CLAUDE.md, AGENTS.md and GEMINI.md, rules in `.claude/rules/`,
+(`~/.claude/projects/*/memory/`), AGENTS.md, CLAUDE.md and GEMINI.md, rules in `.claude/rules/`,
 and skills (`SKILL.md`).
 
 ```sh
@@ -360,9 +360,9 @@ files on this machine and the sessions from any.
 
 Through MCP, ask your agent to "audit my setup and trim what I don't use". The `harness_audit`
 tool returns the audit, and with `check: true` it runs `coding.sh refine check` on your
-uncommitted CLAUDE.md, AGENTS.md, rule and skill edits: did one delete, reword or relax a protected
+uncommitted AGENTS.md, CLAUDE.md, rule and skill edits: did one delete, reword or relax a protected
 line? It does not run the refine loop, which runs agent sessions for minutes. Its `next` holds the
-command instead, `coding.sh refine run --suite <name> --target CLAUDE.md --objective size`: the
+command instead, `coding.sh refine run --suite <name> --target AGENTS.md --objective size`: the
 repo's costliest instruction file, cut while the suite's pass rate holds. With no suite of repo
 tasks in `evals/`, its note says to build one first (the `eval_init` tool).
 

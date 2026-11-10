@@ -6,8 +6,8 @@
 // to the old `coding-sh-placeholder` worker.
 //
 // worker/index.ts runs first on every request: www and http 301 to
-// https://coding.sh, /sitemap.xml points at the sitemap index, /404 gets a 404
-// status. Everything else falls through to the static assets (and _headers).
+// https://coding.sh, /sitemap.xml points at the sitemap index, a moved page 301s
+// to its new path, /404 gets a 404 status. Everything else falls through to the static assets (and _headers).
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "coding-sh-site",

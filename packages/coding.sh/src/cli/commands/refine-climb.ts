@@ -351,7 +351,7 @@ async function climbRound(c: CommandContext, e: Env, f: Fitness, o: ClimbOpts, b
 
 async function proposeCut(e: Env, f: Fitness, o: ClimbOpts, base: Arm, path: string, spend: Spend): Promise<{ cand: Candidate; edits: number; drivers: string[] }> {
   const target = base.files.find((x) => x.path === path);
-  if (!target) throw new UsageError(`${path} is not in this repo: a cut needs a file to cut`, { reason: "not_found", suggestion: "coding.sh refine run --suite <name> --objective cost --target CLAUDE.md" });
+  if (!target) throw new UsageError(`${path} is not in this repo: a cut needs a file to cut`, { reason: "not_found", suggestion: "coding.sh refine run --suite <name> --objective cost --target AGENTS.md" });
   const { drivers } = await driversFor(e, f, o, base, path);
   const rejected = climbTests(readLedger(e.dir), { suite: o.suite, primary: o.primary, path })
     .filter((t) => t.verdict !== "keep")
@@ -403,7 +403,7 @@ const isResume = (c: CommandContext) => c.flags.resume !== undefined && c.flags.
 
 export async function climbTest(c: CommandContext, e: Env): Promise<number> {
   const { out } = c;
-  if (!c.positionals.length) throw new UsageError("Name the candidate(s) to test: a file, a directory, git:REV, a bundle or a stored r_… id", { reason: "missing_argument", suggestion: "coding.sh refine test ./drafts/CLAUDE.md --suite <name>" });
+  if (!c.positionals.length) throw new UsageError("Name the candidate(s) to test: a file, a directory, git:REV, a bundle or a stored r_… id", { reason: "missing_argument", suggestion: "coding.sh refine test ./drafts/AGENTS.md --suite <name>" });
   const o = climbOpts(c, e.root);
   const f = await loadFitness(c, e.ctx, e.root, o.suite);
   checkCanary(o, f.harness);

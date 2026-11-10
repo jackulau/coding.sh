@@ -191,7 +191,7 @@ describe("cli exp ab", () => {
 
     const nothing = await cli(e, ["exp", "ab"]);
     assert.equal(nothing.status, 2);
-    assert.match(nothing.stderr, /No uncommitted changes to CLAUDE\.md/);
+    assert.match(nothing.stderr, /No uncommitted changes to AGENTS\.md, CLAUDE\.md/);
 
     const empty = await setup("empty", 0);
     writeFileSync(join(empty.repo, "CLAUDE.md"), `${MARKER}\n`);

@@ -58,7 +58,7 @@ export const DOC_GROUPS: DocGroup[] = [
     pages: [
       { path: "/docs/use-cases/claude-code-cost", label: "Track agent cost", title: "Track Claude Code and Codex cost per session", metaTitle: "Claude Code cost tracking, per session and repo · coding.sh", summary: "Track Claude Code and Codex token usage and cost per session, repo and model, locally. Estimates from tokens × list price are marked ~." },
       { path: "/docs/use-cases/replay-agent-session", label: "Replay a session", title: "Replay a Claude Code or Codex session step by step", metaTitle: "Replay a Claude Code or Codex session step by step", summary: "Replay Claude Code and Codex sessions step by step: commands, output and diffs, from your local session history. Nothing is re-run." },
-      { path: "/docs/use-cases/test-agent-instructions", label: "Test CLAUDE.md and skills", title: "Test a CLAUDE.md, AGENTS.md or skill change", metaTitle: "Test a CLAUDE.md, AGENTS.md or skill change · coding.sh", summary: "Test a CLAUDE.md, AGENTS.md or skill change on your own sessions and get a Ship it, Hold or Don't ship verdict." },
+      { path: "/docs/use-cases/test-agent-instructions", label: "Test AGENTS.md and skills", title: "Test an AGENTS.md, CLAUDE.md or skill change", metaTitle: "Test an AGENTS.md, CLAUDE.md or skill change · coding.sh", summary: "Test an AGENTS.md, CLAUDE.md or skill change on your own sessions and get a Ship it, Hold or Don't ship verdict." },
       { path: "/docs/use-cases/evals-from-failures", label: "Evals from failures", title: "Build evals from your agent's failures", metaTitle: "Build coding agent evals from real failures · coding.sh", summary: "Turn your coding agent's failed sessions into an eval suite: one task per session, checked by your verifier, run with eval run." },
       { path: "/docs/use-cases/self-hosted-observability", label: "Self-hosted observability", title: "Open-source, self-hosted LLM observability", metaTitle: "Open-source, self-hosted LLM observability · coding.sh", summary: "Open-source, self-hosted LLM observability: one coding.sh serve takes OpenTelemetry traces and SDK events, on SQLite, Postgres or ClickHouse." },
       { path: "/docs/use-cases/t3-code", label: "With T3 Code", title: "coding.sh with T3 Code", metaTitle: "T3 Code session history, cost and evals · coding.sh", summary: "See T3 Code threads next to your other agents' sessions, with cost by model, failure flags and evals. Read from T3 Code's local store." },
@@ -121,7 +121,7 @@ export const DOC_GROUPS: DocGroup[] = [
         path: "/docs/harness-evals",
         label: "Harness evals",
         title: "Harness evals",
-        summary: "Test a CLAUDE.md, rule or skill change before you keep it: A/B it, keep safety lines, refine in rounds, check skill triggers and run repo-replay tasks.",
+        summary: "Test an AGENTS.md, rule or skill change before you keep it: A/B it, keep safety lines, refine in rounds, check skill triggers and run repo-replay tasks.",
       },
       { path: "/docs/benchmarks", label: "Benchmarks", title: "Benchmarks", summary: "coding.sh bench: fresh cases every day from a live source, every contender on the same frozen set, and a history of who leads." },
       { path: "/docs/workflows", label: "Workflows", title: "Workflow experiments", summary: "Capture multi-agent workflow runs, score them against known answers, compare two versions with paired statistics, and replay with a control fork." },
@@ -136,7 +136,7 @@ export const DOC_GROUPS: DocGroup[] = [
   {
     label: "How-to",
     pages: [
-      { path: "/docs/how-to/test-claude-md-change", label: "Test a CLAUDE.md change", title: "Test a CLAUDE.md change in five minutes", summary: "Replay the moments your agent went wrong with your committed CLAUDE.md and with your edit, and get a ship-or-hold verdict before you commit." },
+      { path: "/docs/how-to/test-agents-md-change", label: "Test an AGENTS.md change", title: "Test an AGENTS.md change in five minutes", summary: "Replay the moments your agent went wrong with your committed AGENTS.md and with your edit, and get a ship-or-hold verdict before you commit." },
       { path: "/docs/how-to/replay-llm-calls", label: "Replay model calls", title: "Replay recorded model calls", summary: "Record a run's model calls, then re-run your change with the calls before it served from the recording and the rest live, against a control arm." },
       { path: "/docs/how-to/compare-agents", label: "Compare two agents", title: "Compare two agents on your repo", summary: "Turn a real task into a checked eval, snapshot two agent setups, and run both on it with a paired comparison." },
       { path: "/docs/how-to/ci-regressions", label: "Catch regressions in CI", title: "Catch a regression in CI", summary: "Run an eval suite, or the same eval on the base branch and the pull request, with the coding.sh GitHub Action, and fail the job when it regresses." },

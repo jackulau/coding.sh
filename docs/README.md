@@ -31,7 +31,7 @@ Short recipes you can run as written.
 | [how-to/capture-with-proxy.md](how-to/capture-with-proxy.md) | log every model call through a local API proxy, see why the prompt cache missed, replay a call with another model |
 | [how-to/trace-durable-workflow.md](how-to/trace-durable-workflow.md) | trace a Vercel Workflow or Temporal run as one session, with attempts, waits and resumes |
 | [how-to/tee-agent-runs.md](how-to/tee-agent-runs.md) | send an eve or durable-harness agent's Agent Runs spans to coding.sh too, as sessions with turns, tools and usage |
-| [how-to/test-claude-md-change.md](how-to/test-claude-md-change.md) | test a CLAUDE.md change in five minutes, on your own sessions |
+| [how-to/test-agents-md-change.md](how-to/test-agents-md-change.md) | test an AGENTS.md change in five minutes, on your own sessions |
 | [how-to/compare-agents.md](how-to/compare-agents.md) | compare two coding agents on your repo |
 | [how-to/replay-llm-calls.md](how-to/replay-llm-calls.md) | record a run's model calls and replay them up to the first changed call |
 | [how-to/ci-regressions.md](how-to/ci-regressions.md) | catch a regression in CI |
@@ -51,7 +51,7 @@ One page per job, each pointing on to the how-to or guide that covers it in full
 |---|---|
 | [use-cases/claude-code-cost.md](use-cases/claude-code-cost.md) | track Claude Code and Codex cost per session, repo and model |
 | [use-cases/replay-agent-session.md](use-cases/replay-agent-session.md) | replay a Claude Code or Codex session step by step |
-| [use-cases/test-agent-instructions.md](use-cases/test-agent-instructions.md) | test a CLAUDE.md, AGENTS.md or skill change, and which method to pick |
+| [use-cases/test-agent-instructions.md](use-cases/test-agent-instructions.md) | test an AGENTS.md, CLAUDE.md or skill change, and which method to pick |
 | [use-cases/evals-from-failures.md](use-cases/evals-from-failures.md) | build an eval suite from your agent's failed sessions |
 | [use-cases/self-hosted-observability.md](use-cases/self-hosted-observability.md) | open-source, self-hosted LLM observability on one machine or one server |
 | [use-cases/proxy-model-calls.md](use-cases/proxy-model-calls.md) | log every model call your agent makes through a local proxy |

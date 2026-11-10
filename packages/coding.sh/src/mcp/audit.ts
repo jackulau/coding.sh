@@ -95,7 +95,7 @@ export async function auditReport(ctx: Context, a: AuditArgs, c: { cwd: string; 
 /** harness_audit check: true: did the uncommitted harness edits delete, reword or relax a protected line? */
 export async function auditCheck(c: { cwd: string; env: NodeJS.ProcessEnv }): Promise<Obj> {
   const root = await gitRootOf(c.cwd);
-  if (!root) throw new ToolError("check compares the uncommitted CLAUDE.md, AGENTS.md, rule and skill edits with git HEAD: run the server inside the repo.");
+  if (!root) throw new ToolError("check compares the uncommitted AGENTS.md, CLAUDE.md, rule and skill edits with git HEAD: run the server inside the repo.");
   const [{ harnessFilesIn, resolveArm, sameFiles }, { checkProtected }, { refineProtectConfig }] = await Promise.all([import("../cli/commands/exp-ab.ts"), import("../refine/protect.ts"), import("../refine/config.ts")]);
   let cfg;
   try {
