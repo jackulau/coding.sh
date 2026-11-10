@@ -855,7 +855,7 @@ A step past the last one gets 400. File content is cut at 1 MiB (`contentTruncat
 ### `GET /api/sessions/{id}/fork`, `POST /api/sessions/{id}/fork`
 
 Fork the session at a replay step: send the model call behind that step again with changed
-context files (CLAUDE.md, AGENTS.md) and compare the forked next action with the recorded one.
+context files (AGENTS.md, CLAUDE.md) and compare the forked next action with the recorded one.
 Only `coding.sh ui` answers these routes; `coding.sh serve` answers 404. The session needs model
 calls captured by [`coding.sh proxy`](../how-to/capture-with-proxy.md). When forking is on, the
 replay step list adds `"canFork": true`.

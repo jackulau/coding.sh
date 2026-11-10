@@ -99,7 +99,7 @@ interface Sink {
     Large, write-once content: full tool output, raw source payloads, diffs. Each blob is keyed by the sha256 of its uncompressed bytes and compressed
     with zstd level 3. One that compresses to under 4 KiB, such as a hook line's raw payload, is a row of <code>blobs/pack.db</code> (SQLite);
     a larger one is stored as <code>blobs/ab/cd/&lt;sha256&gt;.zst</code>, written to a temp file then renamed, so readers never see half a
-    blob. The same <code>CLAUDE.md</code> read in a thousand sessions is stored once. Event payloads larger than
+    blob. The same <code>AGENTS.md</code> read in a thousand sessions is stored once. Event payloads larger than
     <code>maxInlineBytes</code> (4 KB) move to a blob and the event keeps a reference.
   </p>
 

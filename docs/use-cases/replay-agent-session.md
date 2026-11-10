@@ -55,7 +55,7 @@ of the working tree.
 
 - It does not re-run commands or call the model. It shows what was recorded. `--fork` is the
   exception: for a session captured through the proxy, it sends a step's model call again with a
-  changed CLAUDE.md or AGENTS.md (see [Fork from a step](../guides/explore.md#fork-from-a-step)).
+  changed AGENTS.md or CLAUDE.md (see [Fork from a step](../guides/explore.md#fork-from-a-step)).
 - A file edited before any step showed all of it reads as unknown, with the reason, until a later
   read or write. The step then shows the agent's own diff instead of a guess.
 - A shell command that changes files (`sed -i`, `rm`) changes them in the replay only when the

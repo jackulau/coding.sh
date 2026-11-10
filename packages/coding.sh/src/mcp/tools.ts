@@ -225,7 +225,7 @@ async function resolveSession(ctx: Context, id: string): Promise<Session> {
 /** session_replay's fork: step N's stored model call sent once more with the given context files (`""` drops one). Loaded on use. */
 async function forkTool(ctx: Context, env: NodeJS.ProcessEnv, s: Session, replay: Replay, step: number, files: unknown): Promise<Obj> {
   if (typeof files !== "object" || files === null || Array.isArray(files) || !Object.values(files).every((v) => typeof v === "string")) {
-    throw new ToolError('fork is an object of context file paths to their new text, e.g. {"CLAUDE.md": "…"}; "" drops a file.');
+    throw new ToolError('fork is an object of context file paths to their new text, e.g. {"AGENTS.md": "…"}; "" drops a file.');
   }
   const [{ ForkError, viewerForks }, { proxySettings }, { pricesFor }] = await Promise.all([import("../experiments/fork.ts"), import("../proxy/state.ts"), import("../core/pricing.ts")]);
   try {
@@ -414,7 +414,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
           file: { type: "string", minLength: 1, description: "With step: this file as of that step." },
           from: { type: "integer", minimum: 1, description: "With to: the first step of a range." },
           to: { type: "integer", minimum: 1, description: "With from: the last step (included); each file's diff over the range." },
-          fork: { type: "object", description: 'With step: send its model call again with these files ({"CLAUDE.md": text}); recorded vs forked next action. Calls the model.' },
+          fork: { type: "object", description: 'With step: send its model call again with these files ({"AGENTS.md": text}); recorded vs forked next action. Calls the model.' },
           limit: LIMIT(100, 1000),
           cursor: CURSOR,
         },
@@ -485,7 +485,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
       name: "improve",
       title: "What to fix first",
       description:
-        "Start here to improve the agent setup: what goes wrong most in this repo's sessions, each with an example session, the CLAUDE.md/AGENTS.md line that fixes it and next commands, plus whether recent changes helped.",
+        "Start here to improve the agent setup: what goes wrong most in this repo's sessions, each with an example session, the AGENTS.md/CLAUDE.md line that fixes it and next commands, plus whether recent changes helped.",
       inputSchema: input({
         repo: { type: "string", description: 'Repo path or folder name; "all" for every repo. Default: the server\'s repo.' },
         since: SINCE("14d"),
@@ -504,9 +504,9 @@ export function buildTools(): ToolDef<ToolCtx>[] {
     },
     {
       name: "harness_changes",
-      title: "Did a CLAUDE.md change help?",
+      title: "Did an AGENTS.md change help?",
       description:
-        "Did a committed CLAUDE.md, AGENTS.md, rule or skill change help? Per change: lines added, flagged sessions before vs after (and which after, with flags), how often the agent follows each new line, and a verdict. No model calls. Default 30d.",
+        "Did a committed AGENTS.md, CLAUDE.md, rule or skill change help? Per change: lines added, flagged sessions before vs after (and which after, with flags), how often the agent follows each new line, and a verdict. No model calls. Default 30d.",
       inputSchema: input({
         repo: { type: "string", description: "Repo path or folder name. Default: the server's repo." },
         commit: { type: "string", description: "Only this change: a commit sha or prefix." },
@@ -527,7 +527,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
       name: "harness_audit",
       title: "Trim unused memory and skills",
       description:
-        "Audit the setup to trim it: each memory file, CLAUDE.md, AGENTS.md, rule and skill with the sessions that loaded and read it and its load tokens; unused first. After trimming, check: true finds deleted safety lines. Default 30d.",
+        "Audit the setup to trim it: each memory file, AGENTS.md, CLAUDE.md, rule and skill with the sessions that loaded and read it and its load tokens; unused first. After trimming, check: true finds deleted safety lines. Default 30d.",
       inputSchema: input({
         since: SINCE("30d"),
         agent: AGENT,

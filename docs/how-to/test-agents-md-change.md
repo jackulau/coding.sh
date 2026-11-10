@@ -1,7 +1,7 @@
-# Test a CLAUDE.md change in five minutes
+# Test an AGENTS.md change in five minutes
 
 You keep telling your agent the same thing: run the tests before you say you're done. So you add a
-line to CLAUDE.md. Did it help? `coding.sh exp ab` answers that from the sessions you already have,
+line to AGENTS.md. Did it help? `coding.sh exp ab` answers that from the sessions you already have,
 before you commit the line.
 
 You need: coding.sh capturing your agent's sessions for a week or two (`coding.sh init`), a repo
@@ -11,13 +11,13 @@ logged-in Claude Code or Codex, which runs it on your subscription (see
 
 ## 1. Make the edit
 
-Edit CLAUDE.md the way you normally would, and don't commit it:
+Edit AGENTS.md the way you normally would, and don't commit it:
 
 ```sh
-echo "After changing code, run the tests before you say you are done." >> CLAUDE.md
+echo "After changing code, run the tests before you say you are done." >> AGENTS.md
 ```
 
-The same works for AGENTS.md, GEMINI.md, a rule under `.claude/rules/` or `.cursor/rules/`, or a
+The same works for CLAUDE.md, GEMINI.md, a rule under `.claude/rules/` or `.cursor/rules/`, or a
 skill's SKILL.md.
 
 ## 2. Check what it will cost
@@ -66,7 +66,7 @@ Fixed (A failed, B passed):
 Full comparison: coding.sh exp compare exp_01M6VXZSFPM2QK12ANN6Z269WP exp_01M6VXZSFSZ25HD2HXXVY40BXV
 ```
 
-For each case, the model wrote the agent's next turn twice: once with your committed CLAUDE.md (A)
+For each case, the model wrote the agent's next turn twice: once with your committed AGENTS.md (A)
 and once with your edit (B). A judge scored both turns against what a good turn looks like at that
 point. Nothing ran in your repo.
 
@@ -95,7 +95,7 @@ Rewording the line? Leave it running:
 coding.sh exp ab --watch
 ```
 
-Each time you save CLAUDE.md it reruns and prints one line:
+Each time you save AGENTS.md it reruns and prints one line:
 
 ```text
 14:02:11  A 0/3 -> B 3/3 | fixed 3, broke 0 | Hold | <$0.01, 3 new calls
@@ -109,7 +109,7 @@ only on "Ship it".
 
 ## Options worth knowing
 
-- `--b drafts/CLAUDE.md` tests a draft file against your current one without touching the repo.
+- `--b drafts/AGENTS.md` tests a draft file against your current one without touching the repo.
   `--a git:main --b .` compares a branch's files with your working tree.
 - Already committed it? With no uncommitted edits, `exp ab` tests your last harness commit against
   the version before it. `--a git:HEAD~1 --b git:HEAD` names the two commits yourself.

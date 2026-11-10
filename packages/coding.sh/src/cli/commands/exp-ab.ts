@@ -182,7 +182,7 @@ export async function resolveArm(v: string, o: { cwd: string; root: string; base
   if (existsSync(abs)) {
     if (statSync(abs).isDirectory()) {
       const files = harnessFilesIn(abs);
-      if (!files.length) throw new UsageError(`--${o.flag} ${v}: no CLAUDE.md, AGENTS.md, rules or skills in that directory`, { reason: "invalid_argument" });
+      if (!files.length) throw new UsageError(`--${o.flag} ${v}: no AGENTS.md, CLAUDE.md, rules or skills in that directory`, { reason: "invalid_argument" });
       return { label: v, files, watch: [{ dir: abs, recursive: true }] };
     }
     const rel = relative(o.root, abs).replace(/\\/g, "/");
@@ -228,16 +228,16 @@ async function resolveArms(o: AbOptions, c: CommandContext, root: string, inGit:
     watch: [{ dir: root, recursive: false }, ...HARNESS_DIRS.map((d) => ({ dir: join(root, d), recursive: true }))],
   };
   if (o.a === undefined && o.b === undefined) {
-    if (!inGit) throw new UsageError("Not in a git repo: pass the harness to test with --b <file|dir>", { reason: "missing_argument", suggestion: "coding.sh exp ab --b ./CLAUDE.md" });
+    if (!inGit) throw new UsageError("Not in a git repo: pass the harness to test with --b <file|dir>", { reason: "missing_argument", suggestion: "coding.sh exp ab --b ./AGENTS.md" });
     const head = harnessAtRev(root, "HEAD") ?? [];
     if (!sameFiles(head, current)) return [{ label: "git:HEAD", files: head, watch: [] }, { ...currentArm, label: "your edits" }];
     // Already committed: test the last harness commit against the version before it.
     const last = lastHarnessCommit(root);
     const before = last ? harnessAtRev(root, `${last.commit}^`) : undefined;
     if (!last || !before || sameFiles(before, head)) {
-      throw new UsageError("No uncommitted changes to CLAUDE.md, AGENTS.md, rules or skills, and no earlier commit to compare with: edit one first, or pass the versions with --a and --b", {
+      throw new UsageError("No uncommitted changes to AGENTS.md, CLAUDE.md, rules or skills, and no earlier commit to compare with: edit one first, or pass the versions with --a and --b", {
         reason: "missing_argument",
-        suggestion: "coding.sh exp ab --b ./candidate/CLAUDE.md",
+        suggestion: "coding.sh exp ab --b ./candidate/AGENTS.md",
       });
     }
     return [

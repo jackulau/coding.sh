@@ -79,9 +79,9 @@ at that file instead of writing its own.
 `eval run` runs each prompt 3 times in Claude Code with the skill and its sibling skills installed,
 reads from each captured session whether the skill loaded, and reports precision, recall and F1
 next to pass@k. It is a **regression** suite, so it exits 1 when a prompt is wrong in most of its
-trials. To test whether a skill or CLAUDE.md helps on real work rather than whether it loads, see
+trials. To test whether a skill or AGENTS.md helps on real work rather than whether it loads, see
 [Evaluate an Agent Skill](../how-to/evaluate-a-skill.md) and
-[Test a CLAUDE.md change](../how-to/test-claude-md-change.md).
+[Test an AGENTS.md change](../how-to/test-agents-md-change.md).
 
 ### An app or a prompt
 
@@ -1104,7 +1104,7 @@ into scope)`. When no rule came into scope, the answer is N/A.
 ```json
 {"kind": "llm-checklist", "name": "rules", "items": [
   {"id": "tests", "question": "Ran the tests and they passed?", "check": {"name": "ran-command", "args": {"command": "npm test", "ok": true}}},
-  {"id": "claude-md", "question": "Followed CLAUDE.md?", "critical": true, "check": {"name": "follows-rules", "args": {"text": "Always run `npm test`.\nNever use `git push --force`."}}}
+  {"id": "agents-md", "question": "Followed AGENTS.md?", "critical": true, "check": {"name": "follows-rules", "args": {"text": "Always run `npm test`.\nNever use `git push --force`."}}}
 ]}
 ```
 
@@ -1385,7 +1385,7 @@ exits 1. `--json` prints `{parity, a, b, diffs}`. `--user-agent` sets the fetch'
 
 ## Harness A/B
 
-`coding.sh harness snapshot` bundles an agent's harness files (CLAUDE.md, AGENTS.md, skills, hooks,
+`coding.sh harness snapshot` bundles an agent's harness files (AGENTS.md, CLAUDE.md, skills, hooks,
 MCP config). `coding.sh compare A B` runs both bundles on eval tasks in isolated config
 directories. It reports per-arm Wilson intervals and the first step where the traces diverge.
 A snapshot follows linked files and directories, such as skills that `npx skills` or a dotfiles
@@ -1447,7 +1447,7 @@ equally; coding.sh also resamples tasks and adds the exact test, so a lucky run 
 promote B.
 
 When B adds or removes exactly one instruction item and changes nothing else (one rule file, one
-skill, or one `CLAUDE.md`/`AGENTS.md`; `--without` counts), the report adds the one-item gate:
+skill, or one `AGENTS.md`/`CLAUDE.md`; `--without` counts), the report adds the one-item gate:
 `item gate k=3 τ=.34 m=2: KEEP · G=1.67 net +4 runs D=.33 fired 11/36 · S=9 tasks`. It only looks at
 tasks where the item reached the agent's context in at least one run (S): an always-on file always
 does, a path-scoped rule only after the agent touched a matching file, a skill only when it was
@@ -1608,7 +1608,7 @@ of an `eval run` count as well, so a suite's baseline from `eval run` is not pai
 reused only when everything it measured is the same, keyed by content, never by path: the task's
 start snapshot, setup, instruction and verifier (hidden files included), the bundle (its id hashes
 its files), the agent's version, the attempt number, the trial timeout, and the gateway route.
-Editing a hidden test or a CLAUDE.md, or upgrading the agent, runs it again. So does a run that
+Editing a hidden test or an AGENTS.md, or upgrading the agent, runs it again. So does a run that
 recorded an error, was cancelled or failed on infrastructure, and one older than
 `--reuse-max-age` (default `7d`). Every run stores its key as `cellKey`, and a copy stores
 `reusedFrom`, the run it was copied from. Copies count $0 toward `--max-cost`, and the `agent
@@ -1940,12 +1940,12 @@ rerun noise (Madaan et al. 2024), so run the picked tasks with `--k 2` or more a
 
 ## A/B a harness edit on your own sessions
 
-`coding.sh compare` needs eval tasks with verifiers. Often you don't have those yet. You have a
-CLAUDE.md line you think will help, and a week of sessions where the agent did the thing that line
+`coding.sh compare` needs eval tasks with verifiers. Often you don't have those yet. You have an
+AGENTS.md line you think will help, and a week of sessions where the agent did the thing that line
 is meant to stop. `coding.sh exp ab` tests the line on those sessions:
 
 ```sh
-$ echo "After changing code, run the tests before you say you are done." >> CLAUDE.md
+$ echo "After changing code, run the tests before you say you are done." >> AGENTS.md
 $ coding.sh exp ab
 A: git:HEAD   B: your edits   model: claude-sonnet-5-5
 12 decision points from 9 sessions | A 2/12 -> B 9/12 | fixed 7, broke 0 | paired p=0.016 | $0.41, 0/24 cached
@@ -1971,16 +1971,16 @@ subagents are skipped, and so are turns right after a context compaction. At mos
 one session, and 40 overall (`--limit`).
 
 **Replay the next turn twice.** For each case it asks the model for the next turn once with A's
-harness files and once with B's. CLAUDE.md and AGENTS.md go in the way Claude Code injects them, a
-path-scoped rule only when the session had touched a matching file, and a skill as a one-line
-listing unless the session opened it. The model gets the tools the session used, plus a shell. Only
-one turn is generated: nothing runs in your repo.
+harness files and once with B's. AGENTS.md and CLAUDE.md go in the way Claude Code injects
+CLAUDE.md, a path-scoped rule only when the session had touched a matching file, and a skill as a
+one-line listing unless the session opened it. The model gets the tools the session used, plus a
+shell. Only one turn is generated: nothing runs in your repo.
 
 **Judge both turns.** An LLM judge scores each turn against the case's rubric. A turn passes at
 0.8. The judge sees only the turn, never which arm wrote it.
 
 By default A is your last commit (`git:HEAD`) and B is your working tree, so the usual loop is: edit
-CLAUDE.md, run `coding.sh exp ab`, keep or revert. `--a` and `--b` take a file (it replaces the file
+AGENTS.md, run `coding.sh exp ab`, keep or revert. `--a` and `--b` take a file (it replaces the file
 of the same path in A), a directory, `git:<rev>`, a harness bundle, or `none`. It errors when the
 two arms have the same files, so a typo'd path can't produce a "no difference" result.
 
@@ -2026,7 +2026,7 @@ gives the comparison, the fixed and broken cases, the per-behavior counts, the p
 and the cache hits.
 
 **A committed edit.** With no uncommitted harness edits and no `--a` or `--b`, `exp ab` tests your
-last commit that changed CLAUDE.md, AGENTS.md, a rule or a skill (B, `git:HEAD`) against the version
+last commit that changed AGENTS.md, CLAUDE.md, a rule or a skill (B, `git:HEAD`) against the version
 before it (A, `git:<commit>^`), and says so. `--a git:<rev> --b git:<rev>` compares any two
 commits, with or without `--dry-run`.
 
@@ -2102,7 +2102,7 @@ session's events in time order and returns the cuts, each `{ cutBeforeEventId, e
 
 **Building blocks.** The same pieces work without `exp ab`. A dataset of decision points is an
 ordinary dataset (named `dp-…`), and a `continuation` task replays a frozen session's next turn:
-`{"kind":"continuation","provider":"anthropic","model":"claude-sonnet-5-5","context":{"files":["CLAUDE.md"]}}`.
+`{"kind":"continuation","provider":"anthropic","model":"claude-sonnet-5-5","context":{"files":["AGENTS.md"]}}`.
 `exp run` with a continuation task needs a control arm: run it as an A/B with `--arm`, or pass
 `--no-control` to run one arm alone, and the comparison then warns that it has no noise floor.
 
@@ -2170,19 +2170,19 @@ agent editing the repo could otherwise unprotect a rule and then delete it. See
 
 ## Refine loop
 
-`coding.sh refine` improves CLAUDE.md, AGENTS.md, rules and skills in rounds. Each round tests one
+`coding.sh refine` improves AGENTS.md, CLAUDE.md, rules and skills in rounds. Each round tests one
 or more candidate edits against your current files and keeps, rejects or holds each one. Only a kept
 edit can be applied, and every round goes into a ledger.
 
 ```sh
 $ coding.sh refine propose
-r_3123c2cbef  CLAUDE.md (+1 line)
+r_e67f549cae  AGENTS.md (+1 line)
   + TEST-RULE: run npm test before you say you are done.
 Why: sessions end with an unverified claim
   From 1 finding; spent <$0.01
 
-$ coding.sh refine test r_3123c2cbef
-r_3123c2cbef  (CLAUDE.md; +3 lines)
+$ coding.sh refine test r_e67f549cae
+r_e67f549cae  (AGENTS.md; +3 lines)
   protected  ok (1 protected line in place)
   critics    ok
   dev        8 decision points | effect +100pp [+100pp, +100pp] | B wins 8, loses 0; A solved 0
@@ -2190,22 +2190,22 @@ r_3123c2cbef  (CLAUDE.md; +3 lines)
   verdict    keep: dev: Ship it: B wins 8 decision points, loses 0; guard: no earlier kept wins to hold
 
 $ coding.sh refine apply
-✓ Applied r_3123c2cbef to CLAUDE.md
-  Backup in ~/.coding.sh/refine/repo-d095414f/backups/a_25e3658e56
+✓ Applied r_e67f549cae to AGENTS.md
+  Backup in ~/.coding.sh/refine/repo-0beffa51/backups/a_613b9c92f5
 
-$ coding.sh refine test ./drafts/CLAUDE.md --behavior unchanged-retry
-r_b25de6ab68  ./drafts/CLAUDE.md (CLAUDE.md; +1 line)
+$ coding.sh refine test ./drafts/AGENTS.md --behavior unchanged-retry
+r_3b577b3897  ./drafts/AGENTS.md (AGENTS.md; +1 line)
   protected  ok (1 protected line in place)
   critics    ok
   dev        8 decision points | effect +100pp [+100pp, +100pp] | B wins 8, loses 0; A solved 0
-  guard      8 tasks earlier kept edits won (0 from this run, 8 rerun) | forgets kept edit r_3123c2cbef
+  guard      8 tasks earlier kept edits won (0 from this run, 8 rerun) | forgets kept edit r_e67f549cae
   preserved  gained 8, lost 0, 0 tasks regressed
-  verdict    reject: dev: Ship it: B wins 8 decision points, loses 0; guard: forgets kept edit r_3123c2cbef
+  verdict    reject: dev: Ship it: B wins 8 decision points, loses 0; guard: forgets kept edit r_e67f549cae
 
 $ coding.sh refine log
 ROUND  CANDIDATE     VERDICT        EFFECT (95% CI)          GUARD                 COST   REASON
-1      r_3123c2cbef  keep, applied  +100pp [+100pp, +100pp]  no tasks              $0.02  dev: Ship it: B wins 8 decision points, loses 0
-2      r_b25de6ab68  reject         +100pp [+100pp, +100pp]  forgets r_3123c2cbef  $0.02  guard: forgets kept edit r_3123c2cbef
+1      r_e67f549cae  keep, applied  +100pp [+100pp, +100pp]  no tasks              $0.02  dev: Ship it: B wins 8 decision points, loses 0
+2      r_3b577b3897  reject         +100pp [+100pp, +100pp]  forgets r_e67f549cae  $0.02  guard: forgets kept edit r_e67f549cae
 ```
 
 The second edit wins its own decision points, but it drops the line the first edit added, so it
@@ -2619,12 +2619,12 @@ capture mode `full`.
 ## Fork a failing step into a case
 
 When a session goes wrong at one step, `coding.sh replay --fork` sends that step's model call
-again with a changed CLAUDE.md or AGENTS.md (see
+again with a changed AGENTS.md or CLAUDE.md (see
 [Fork from a step](explore.md#fork-from-a-step)). `--save-case` keeps the step as a regression
 case:
 
 ```sh
-coding.sh replay 9f1c2e --step 12 --fork --with CLAUDE.md=fixed.md --save-case forks
+coding.sh replay 9f1c2e --step 12 --fork --with AGENTS.md=fixed.md --save-case forks
 coding.sh eval run forks
 ```
 
@@ -2639,7 +2639,7 @@ to `cases.jsonl`:
 
 - **The `request` task** sends each case's stored request to the model again. Before it sends,
   it puts in the project's context files as they are at run time: the suite's
-  `task.context.files`, which `--save-case` fills with the CLAUDE.md or AGENTS.md the request
+  `task.context.files`, which `--save-case` fills with the AGENTS.md or CLAUDE.md the request
   carried. So the case passes or fails on the harness in your working tree. `model`, `system` and
   `systemFile` on the task change those fields too. Its output is the reply's first action, its
   text and its tool calls.

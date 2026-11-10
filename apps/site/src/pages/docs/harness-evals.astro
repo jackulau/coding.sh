@@ -33,21 +33,23 @@ const AB = [
   `Full comparison: coding.sh exp compare exp_01M6VXZSFPM2QK12ANN6Z269WP exp_01M6VXZSFSZ25HD2HXXVY40BXV`,
 ].join("\n");
 
-// Real output of scripts/e2e/refine-loop.mjs (run 2026-11-07 against a stub model and a throwaway HOME).
+// Real output of scripts/e2e/refine-loop.mjs with its CLAUDE.md named AGENTS.md and the draft at ./drafts/AGENTS.md
+// (run 2026-11-09 against a stub model and a throwaway HOME).
+// With CLAUDE.md the same run prints r_3123c2cbef and r_b25de6ab68; nothing else differs.
 const REFINE = [
-  `${m("$")} ${t("coding.sh refine test ./drafts/CLAUDE.md --behavior unchanged-retry")}`,
-  `r_b25de6ab68  ./drafts/CLAUDE.md (CLAUDE.md; +1 line)`,
+  `${m("$")} ${t("coding.sh refine test ./drafts/AGENTS.md --behavior unchanged-retry")}`,
+  `r_3b577b3897  ./drafts/AGENTS.md (AGENTS.md; +1 line)`,
   `  protected  ${ok("ok")} (1 protected line in place)`,
   `  critics    ${ok("ok")}`,
   `  dev        8 decision points | effect +100pp [+100pp, +100pp] | B wins 8, loses 0; A solved 0`,
-  `  guard      8 tasks earlier kept edits won (0 from this run, 8 rerun) | ${no("forgets kept edit r_3123c2cbef")}`,
+  `  guard      8 tasks earlier kept edits won (0 from this run, 8 rerun) | ${no("forgets kept edit r_e67f549cae")}`,
   `  preserved  gained 8, lost 0, 0 tasks regressed`,
-  `  verdict    ${no("reject")}: dev: Ship it: B wins 8 decision points, loses 0; guard: forgets kept edit r_3123c2cbef`,
+  `  verdict    ${no("reject")}: dev: Ship it: B wins 8 decision points, loses 0; guard: forgets kept edit r_e67f549cae`,
   "",
   `${m("$")} ${t("coding.sh refine log")}`,
   m(`ROUND  CANDIDATE     VERDICT        EFFECT (95% CI)          GUARD                 COST   REASON`),
-  `1      r_3123c2cbef  ${ok("keep, applied")}  +100pp [+100pp, +100pp]  no tasks              $0.02  dev: Ship it: B wins 8 decision points, loses 0`,
-  `2      r_b25de6ab68  ${no("reject")}         +100pp [+100pp, +100pp]  forgets r_3123c2cbef  $0.02  guard: forgets kept edit r_3123c2cbef`,
+  `1      r_e67f549cae  ${ok("keep, applied")}  +100pp [+100pp, +100pp]  no tasks              $0.02  dev: Ship it: B wins 8 decision points, loses 0`,
+  `2      r_3b577b3897  ${no("reject")}         +100pp [+100pp, +100pp]  forgets r_e67f549cae  $0.02  guard: forgets kept edit r_e67f549cae`,
 ].join("\n");
 const TRIGGER = [
   `${m("$")} ${t('coding.sh eval trigger skills/pdf --description "Use when the user mentions pdf, invoice, scanned." --yes')}`,
@@ -70,13 +72,13 @@ const TRIGGER = [
 
 <DocsLayout>
   <p>
-    The harness is everything around the model: CLAUDE.md and AGENTS.md, rules, skills, the agent and its flags. These commands test a
+    The harness is everything around the model: AGENTS.md and CLAUDE.md, rules, skills, the agent and its flags. These commands test a
     change to it before you keep it, on the sessions you already have or on tasks replayed from your repo.
   </p>
 
   <h2 id="exp-ab">A/B a harness edit on your sessions <Tag status="built" /></h2>
   <p>
-    You changed a line in CLAUDE.md and want to know if it helps before you commit it. <code>coding.sh exp ab</code> answers that from
+    You changed a line in AGENTS.md and want to know if it helps before you commit it. <code>coding.sh exp ab</code> answers that from
     the sessions you already have, with no eval tasks to write. It finds the moments in your recent sessions where the agent went wrong:
     it said it was done without running anything, ended a turn while its tests were failing, or retried a failed command unchanged. It
     replays the next turn at each of those moments twice, once with your committed files and once with your edit, and a judge scores both
@@ -91,7 +93,7 @@ const TRIGGER = [
     difference smaller than that may just be replay noise. Use <code>--dry-run</code> to see the cases and a cost estimate before anything is
     called, and <code>--max-cost</code> to cap the spend. Responses are cached, so rerunning with unchanged files is free.
     <code>--watch</code> reruns each time you save, one line per run. See
-    <a href="/docs/how-to/test-claude-md-change">Test a CLAUDE.md change in five minutes</a>.
+    <a href="/docs/how-to/test-agents-md-change">Test an AGENTS.md change in five minutes</a>.
   </p>
 
   <h2 id="protected">Protected safety lines <Tag status="built" /></h2>
@@ -112,7 +114,7 @@ const TRIGGER = [
 
   <h2 id="refine">Refine loop <Tag status="built" /></h2>
   <p>
-    <code>coding.sh refine</code> improves CLAUDE.md, AGENTS.md, rules and skills in tested rounds. <code>refine propose</code> asks a model
+    <code>coding.sh refine</code> improves AGENTS.md, CLAUDE.md, rules and skills in tested rounds. <code>refine propose</code> asks a model
     for lines that address your sessions' most severe flags, with the file's protected lines marked READ-ONLY and earlier rejected edits listed.
     You can also write the edit yourself. <code>refine test</code> then decides each candidate in stages: the protected-line check and two
     critics on the added lines (harmful instructions, near duplicates) before any model call, then an A/B against your current files on the
@@ -177,7 +179,7 @@ const TRIGGER = [
     <code>--promote</code> adds the witness to the verifier.
   </p>
   <p>
-    Harness bundles (agent, model, flags, env and files such as <code>CLAUDE.md</code> or <code>AGENTS.md</code>, identified by a content hash)
+    Harness bundles (agent, model, flags, env and files such as <code>AGENTS.md</code> or <code>CLAUDE.md</code>, identified by a content hash)
     are what <code>compare</code> A/B tests: it runs both bundles on validated tasks in isolated worktrees and reports per-arm Wilson
     intervals, a paired bootstrap interval, McNemar's test, cost, token, turn and latency deltas, and the first step where the two traces diverge. Tasks export
     in coding.sh's own layout or Harbor's.

@@ -4595,7 +4595,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     } }, label);
     nodes.push(h("div", { class: "rp-tabs" }, h("div", { class: "seg", role: "group", "aria-label": "Show" },
       tab("changes", "This step" + (v.changes.length ? " · " + v.changes.length : "")), tab("file", "File"), tab("range", "Since step…"),
-      rp.index && rp.index.canFork ? h("button", { type: "button", "aria-pressed": String(rp.tab === "fork"), title: "Send this step's model call again with a changed CLAUDE.md or AGENTS.md", onclick: () => { rp.tab = "fork"; forkLoad(st.n); } }, "Fork from here") : null)));
+      rp.index && rp.index.canFork ? h("button", { type: "button", "aria-pressed": String(rp.tab === "fork"), title: "Send this step's model call again with a changed AGENTS.md or CLAUDE.md", onclick: () => { rp.tab = "fork"; forkLoad(st.n); } }, "Fork from here") : null)));
     if (rp.tab === "fork") {
       nodes.push(...forkNodes(st.n));
     } else if (rp.tab === "changes") {

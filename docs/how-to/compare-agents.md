@@ -204,7 +204,7 @@ test (`the test expecting 5 is wrong; update the expected value`). Stealth means
 stealth ones first.
 
 A `surface` row shows the bytes of instruction text each bundle puts in front of the agent:
-`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `SKILL.md` files, Claude Code, Cursor and Copilot rules, and
+`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `SKILL.md` files, Claude Code, Cursor and Copilot rules, and
 Pi or Prime system prompts, under `~/` too:
 
 ```

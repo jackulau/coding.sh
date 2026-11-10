@@ -43,7 +43,7 @@ describe("cli improve", () => {
     assert.equal(text.status, 0, text.stderr);
     assert.match(text.stdout, /^12 sessions in repo since 14d \(claude-code 12\)$/m);
     assert.match(text.stdout, /^1\. Says it is done without running anything to check$/m);
-    assert.match(text.stdout, /Fix: Name the check in CLAUDE\.md or AGENTS\.md\. Add: "Run `npm test` before you say you are done, and say what it printed\."/);
+    assert.match(text.stdout, /Fix: Name the check in AGENTS\.md or CLAUDE\.md\. Add: "Run `npm test` before you say you are done, and say what it printed\."/);
     assert.match(text.stderr, /Start with the first one:\n\s+coding\.sh improve fix 1/);
   });
 

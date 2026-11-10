@@ -229,12 +229,12 @@ needs no key and prints the number of calls and an estimated cost (input priced 
 ## 6. Fork a session at a step
 
 ```sh
-coding.sh replay latest --step 7 --fork --with CLAUDE.md=fixed.md -k 3
+coding.sh replay latest --step 7 --fork --with AGENTS.md=fixed.md -k 3
 coding.sh replay latest --step 7 --fork --with CLAUDE.md=fixed.md --run --verify "npm test"
-coding.sh replay latest --step 7 --fork --with CLAUDE.md=fixed.md --save-case forks
+coding.sh replay latest --step 7 --fork --with AGENTS.md=fixed.md --save-case forks
 ```
 
-`--fork` finds the model call behind a replay step, swaps the CLAUDE.md or AGENTS.md text in its
+`--fork` finds the model call behind a replay step, swaps the AGENTS.md or CLAUDE.md text in its
 stored request, sends it again and prints the recorded next action beside the forked one. `--run`
 goes on from there with Claude Code in a copy of the repo, and `--save-case` keeps the step as an
 eval case. See [Fork from a step](../guides/explore.md#fork-from-a-step).

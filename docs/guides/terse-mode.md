@@ -1,6 +1,6 @@
 # Does a terse mode save money on your tasks?
 
-A terse mode asks the agent to write less: a "be concise" line in CLAUDE.md, a rule, a skill, or a
+A terse mode asks the agent to write less: a "be concise" line in AGENTS.md, a rule, a skill, or a
 plugin that adds a style guide to every session. The idea is that fewer output tokens cost less.
 Two things pull in opposite directions:
 
@@ -109,7 +109,7 @@ dir = ".."
 Be concise. Give the answer and the evidence for it. Don't restate the task or summarize what you did.
 ```
 
-`dir = ".."` reads your repo's CLAUDE.md, AGENTS.md, `.claude/`, `.mcp.json` and the other usual
+`dir = ".."` reads your repo's AGENTS.md, CLAUDE.md, `.claude/`, `.mcp.json` and the other usual
 harness files, relative to the TOML file. Your user-level files, such as `~/.claude/CLAUDE.md`, are
 read only when you list them: write the same `include = [...]` in both TOMLs, for example
 `include = ["CLAUDE.md", ".claude/**", ".mcp.json", "~/.claude/CLAUDE.md"]`. `[files]` adds one

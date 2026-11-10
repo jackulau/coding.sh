@@ -188,7 +188,7 @@ async function report(c: CommandContext): Promise<number> {
       out.print("");
     } else if (o.root) {
       out.print(out.style("Did your last changes help?", "faint"));
-      out.print("  No commits changed CLAUDE.md, AGENTS.md, a rule or a skill in the last 30 days.");
+      out.print("  No commits changed AGENTS.md, CLAUDE.md, a rule or a skill in the last 30 days.");
       out.print("");
     }
     if (top[0]?.quietSince) out.next("Nothing new since your last change; see whether it helped", "coding.sh improve check");
@@ -206,7 +206,7 @@ async function fix(c: CommandContext): Promise<number> {
   const ref = c.positionals[0];
   if (!ref) throw new UsageError("Name the issue to fix: its number in coding.sh improve, or its id", { reason: "missing_argument", suggestion: "coding.sh improve fix 1" });
   const o = await options(c, "14d", 50);
-  if (!o.root) throw new UsageError("Not in a git repo: improve fix edits this repo's CLAUDE.md or AGENTS.md", { reason: "missing_argument" });
+  if (!o.root) throw new UsageError("Not in a git repo: improve fix edits this repo's AGENTS.md or CLAUDE.md", { reason: "missing_argument" });
   const root = o.root;
   return withContext(c, async (ctx: Context) => {
     await autoIngest(ctx, readIngest(c));
@@ -273,7 +273,7 @@ const SECOND = 1000;
 async function check(c: CommandContext): Promise<number> {
   const { out } = c;
   const o = await options(c, "30d", 5);
-  if (!o.root) throw new UsageError("Not in a git repo: improve check reads the history of CLAUDE.md, AGENTS.md, rules and skills", { reason: "missing_argument" });
+  if (!o.root) throw new UsageError("Not in a git repo: improve check reads the history of AGENTS.md, CLAUDE.md, rules and skills", { reason: "missing_argument" });
   const root = o.root;
   const watch = c.flags.watch === true;
   if (watch && out.json) throw new UsageError("--watch prints a line per change; it does not combine with --json", { reason: "invalid_argument" });
@@ -290,7 +290,7 @@ async function check(c: CommandContext): Promise<number> {
       return regressed.length ? 1 : 0;
     }
     if (!first.changes.length) {
-      out.note(`No commits changed CLAUDE.md, AGENTS.md, GEMINI.md, a rule or a skill in ${relative(c.cwd, root) || "this repo"} since ${o.sinceText}`);
+      out.note(`No commits changed AGENTS.md, CLAUDE.md, GEMINI.md, a rule or a skill in ${relative(c.cwd, root) || "this repo"} since ${o.sinceText}`);
       out.next("Find something worth changing", "coding.sh improve");
       if (!watch) return 0;
     }

@@ -354,7 +354,7 @@ The command ran and something failed.
 | `no_calls` | `This session has no model calls with stored requests` (replay --fork) | Capture the session through the proxy (`coding.sh init --proxy`) with `capture.mode = "full"`, then run the agent again. |
 | `no_call` | `No stored model call comes before step 3` (replay --fork) | Fork a later step: the proxy started after that step's call. |
 | `bad_step` | `step 40 is past the last step (31)` (replay --fork) | `coding.sh replay <session>` lists the steps. |
-| `bad_with` | `--with "=x.md": expected DEST=SRC or a path`, `--with ../x.md is outside the fork's directory` | Give `--with CLAUDE.md=fixed.md`, or a path inside the project or under `~/`. |
+| `bad_with` | `--with "=x.md": expected DEST=SRC or a path`, `--with ../x.md is outside the fork's directory` | Give `--with AGENTS.md=fixed.md`, or a path inside the project or under `~/`. |
 | `no_workdir` | `The session's directory /work/demo is not on this machine, so the fork has nothing to start from` (replay --fork --run) | Run it on the machine the session ran on, or fork without `--run`. |
 | `workdir_exists` | `/tmp/fork already exists` (replay --fork --run --workdir) | Pick a new `--workdir`, or leave it out for a temp dir. |
 | `no_prompt` | `The stored request has no prompt to start the agent with` (replay --fork --run) | Fork a step whose call starts from a user prompt, or fork without `--run`. |

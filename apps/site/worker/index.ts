@@ -3,10 +3,13 @@
 //   - one canonical origin: www.coding.sh and plain http 301 to https://coding.sh,
 //     path and query kept;
 //   - /sitemap.xml 301s to the sitemap index Astro writes;
+//   - a page that moved 301s to its new path (moved.ts), and so does its Markdown copy;
 //   - /404 itself answers with a 404 status, not 200;
 //   - the assets' trailing-slash redirect (/docs/ to /docs) becomes a 301;
 //   - any other host (workers.dev, preview URLs) is served but marked noindex.
 // Everything else is env.ASSETS.fetch, so public/_headers still applies.
+
+import { MOVED } from "./moved.ts";
 
 interface Env {
   ASSETS: { fetch(request: Request): Promise<Response> };
@@ -27,6 +30,14 @@ export default {
 
     if (url.pathname === "/sitemap.xml") {
       return Response.redirect(new URL("/sitemap-index.xml", url).toString(), 301);
+    }
+
+    // A moved page, with or without a trailing slash, and its Markdown copy (<page>.md).
+    const [, page, md = ""] = /^(.*?)\/?(\.md)?$/.exec(url.pathname) ?? [];
+    const moved = page ? MOVED[page] : undefined;
+    if (moved) {
+      url.pathname = moved + md;
+      return Response.redirect(url.toString(), 301);
     }
 
     const response = await env.ASSETS.fetch(request);

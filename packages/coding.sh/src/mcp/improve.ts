@@ -128,13 +128,13 @@ export async function improveReport(ctx: Context, a: ImproveArgs, c: { cwd: stri
         fix: i.fix,
         ...(i.usd !== undefined ? { usd: i.usd } : {}),
         ...(i.causes ? { causes: i.causes.map((k) => ({ cause: k.cause, breaks: k.breaks, usd: k.usd, fix: k.fix })) } : {}),
-        ...(i.rule && !i.quietSince ? { line: i.rule, file: p.root ? targetFile(p.root, agentsOf) : "CLAUDE.md or AGENTS.md" } : {}),
+        ...(i.rule && !i.quietSince ? { line: i.rule, file: p.root ? targetFile(p.root, agentsOf) : "AGENTS.md or CLAUDE.md" } : {}),
         next: stepsFor(i, k + 1, { provider }).map((s) => s.command),
       };
     }),
     ...(issues.length > top.length ? { more: issues.length - top.length } : {}),
     changes: changes.map((e) => changeSummary(e)),
-    ...(p.root ? {} : { note: "Not in a git repo: pass repo to see whether its CLAUDE.md or AGENTS.md changes helped." }),
+    ...(p.root ? {} : { note: "Not in a git repo: pass repo to see whether its AGENTS.md or CLAUDE.md changes helped." }),
   };
 }
 
@@ -150,6 +150,6 @@ export async function harnessChangesReport(ctx: Context, a: ImproveArgs & { comm
   return {
     repo: p.root,
     changes: picked.map((e) => changeSummary(e, { full: true, flagged: commit ? FLAGGED_COMMIT : FLAGGED_LIST })),
-    ...(picked.length ? {} : { note: "No commits changed CLAUDE.md, AGENTS.md, GEMINI.md, a rule or a skill in this window." }),
+    ...(picked.length ? {} : { note: "No commits changed AGENTS.md, CLAUDE.md, GEMINI.md, a rule or a skill in this window." }),
   };
 }
