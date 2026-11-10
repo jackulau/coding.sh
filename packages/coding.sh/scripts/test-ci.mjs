@@ -14,8 +14,10 @@ const node = (args) => spawnSync(process.execPath, ["--no-warnings", "--test", .
 
 const dir = mkdtempSync(join(tmpdir(), "coding-sh-test-ci-"));
 const failedPath = join(dir, "failed.txt");
+const args = [];
+if (shard) args.push(`--test-shard=${shard}`);
 const first = node([
-  ...(shard ? [`--test-shard=${shard}`] : []),
+  ...args,
   "--test-reporter=spec", "--test-reporter-destination=stdout",
   `--test-reporter=${new URL("./failed-files.mjs", import.meta.url).href}`, `--test-reporter-destination=${failedPath}`,
   ...(process.argv.length > 2 ? process.argv.slice(2) : ["test/**/*.test.ts"]),
