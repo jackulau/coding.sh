@@ -384,7 +384,13 @@ async function* backfillClaude(base: NormalizeContext, opts: BackfillOpts = {}, 
     if (!sub && relative(root, f.path).split(/[\\/]/).length !== 2) continue;
     if (opts.changed && !(await opts.changed(cursorView(f, TRANSCRIPT_IDLE_MS)))) continue; // unchanged since the last backfill (or since it went idle)
     // A copy of another session's subagent (fork, resumed or symlinked workflow run): the owner's file is stored instead.
-    if (sub && (await copiedSubagentOwner(f.path))) continue;
+    if (sub) {
+      const owner = await copiedSubagentOwner(f.path);
+      if (owner) {
+        opts.copied?.(childSessionId(sub[1]!, sub[3]!), childSessionId(owner, sub[3]!));
+        continue;
+      }
+    }
     let events: AgentEvent[];
     try {
       events = sub ? await convertSubagentFile(ctx, f.path, sub[1]!, sub[3]!, sub[2] ? (firstTs) => workflows.link(f.path, sub[1]!, sub[2]!, sub[3]!, firstTs) : undefined) : await convertMainFile(ctx, f.path);

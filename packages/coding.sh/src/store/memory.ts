@@ -96,6 +96,14 @@ export class MemoryIndexStore implements IndexStore {
       if (opts.project !== undefined && projectOf(s) !== opts.project) continue;
       if (lastActivity.get(s.id)! < cutoffMs) doomed.add(s.id);
     }
+    return this.dropSessions(doomed);
+  }
+
+  async deleteSessions(ids: string[]): Promise<{ sessions: number; events: number }> {
+    return this.dropSessions(new Set(ids));
+  }
+
+  private dropSessions(doomed: Set<string>): { sessions: number; events: number } {
     let events = 0;
     for (const [id, r] of this.events) {
       if (doomed.has(r.event.sessionId)) {
@@ -104,8 +112,9 @@ export class MemoryIndexStore implements IndexStore {
       }
     }
     for (const [id, s] of this.scores) if (s.sessionId !== undefined && doomed.has(s.sessionId)) this.scores.delete(id);
-    for (const id of doomed) this.sessions.delete(id);
-    return { sessions: doomed.size, events };
+    let sessions = 0;
+    for (const id of doomed) if (this.sessions.delete(id)) sessions++;
+    return { sessions, events };
   }
 
   async putEvents(batch: AgentEvent[]): Promise<{ inserted: number }> {

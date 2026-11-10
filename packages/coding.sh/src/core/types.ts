@@ -330,6 +330,13 @@ export interface IndexStore {
    */
   deleteBefore?(cutoffMs: number, opts?: { project?: string }): Promise<{ sessions: number; events: number }>;
   /**
+   * Deletes these sessions, whatever their age, with their events and labels
+   * (and what the store derives from them, such as facets and saved folds).
+   * Ids not stored are ignored. Re-parse uses it to remove sessions the adapter
+   * now reports as copies of another session (BackfillOpts.copied).
+   */
+  deleteSessions?(ids: string[]): Promise<{ sessions: number; events: number }>;
+  /**
    * Atomically deletes these events of one session (ids of other sessions are
    * ignored) and inserts `add` (idempotent on id, as putEvents), so a reader
    * sees the session's rows either before or after, never half re-parsed.
@@ -383,7 +390,7 @@ export interface IndexStore {
   /**
    * A session's saved fold: opaque bytes. The store drops it whenever the
    * session's stored events change other than by an insert (replaceSessionEvents,
-   * setEventCosts, deleteBefore), so a fold never outlives the rows it was made from.
+   * setEventCosts, deleteBefore, deleteSessions), so a fold never outlives the rows it was made from.
    */
   getSessionFold?(sessionId: string): Promise<Uint8Array | undefined>;
   putSessionFold?(sessionId: string, fold: Uint8Array | undefined): Promise<void>;
@@ -597,6 +604,13 @@ export interface BackfillOpts {
    * Adapters that never call it are re-read in full on every run.
    */
   changed?(file: BackfillFile): Promise<boolean>;
+  /**
+   * Called for a source file skipped because it copies another session's
+   * (Claude Code: a subagent transcript copied into another session's dir).
+   * `sessionId` is the session the copy would have been stored as, `ownerId`
+   * the session that stores it. Re-parse deletes copies stored by an older parse.
+   */
+  copied?(sessionId: string, ownerId: string): void;
 }
 
 export interface RunSpec {

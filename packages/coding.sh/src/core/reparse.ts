@@ -22,6 +22,12 @@
 // stored rows are only deduped that way ("hook-row dedupe") and the session is
 // kept at its old version; why is stored under kv `reparse:kept:<id>`.
 //
+// Copies: an adapter's backfill reports a file it skips because it copies
+// another session's (BackfillOpts.copied; Claude Code: a subagent transcript
+// copied into another session's dir). A session stored from such a copy by an
+// older parse, with only backfill rows and its owner in the index, is deleted
+// (IndexStore.deleteSessions) rather than kept as "its transcript is gone".
+//
 // Readers never wait and never see a half-rebuilt session: transcripts and
 // spool are read with no lock held, and each session is swapped in one
 // transaction (IndexStore.replaceSessionEvents) under the ingest lock, held
@@ -64,6 +70,7 @@ export { REFOLD_CURSOR } from "./ingest.ts";
 import {
   backfillEvent,
   childLinker,
+  childLinkKey,
   foldFailureMessage,
   normalizeContext,
   parseVersionFor,
@@ -148,6 +155,8 @@ export interface ReparseResult {
   /** Kept at their old version: nothing to re-read them from. Stored rows still deduped. */
   kept: number;
   keptSessions: KeptSession[];
+  /** Deleted: the adapter now reports them as copies of another stored session. */
+  copiesRemoved: number;
   /** Rows deleted and inserted. */
   removed: number;
   inserted: number;
@@ -251,7 +260,7 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
   const env = opts.env ?? process.env;
   const now = opts.now ?? Date.now;
   const spoolDir = opts.spoolDir ?? paths(env).spool;
-  const result: ReparseResult = { sessions: 0, reparsed: 0, kept: 0, keptSessions: [], removed: 0, inserted: 0, refolded: 0, errors: [] };
+  const result: ReparseResult = { sessions: 0, reparsed: 0, kept: 0, keptSessions: [], copiesRemoved: 0, removed: 0, inserted: 0, refolded: 0, errors: [] };
   const error = (e: IngestError) => {
     if (result.errors.length < MAX_ERRORS) result.errors.push(e);
   };
@@ -331,6 +340,8 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
 
     const linker = childLinker(index);
     const repo = repoResolver();
+    /** Targets the adapters' backfills skipped as copies: session id -> the owner's session id. */
+    const copies = new Map<string, string>();
     // A fold that throws leaves the session a row tagged fold:error (recomputeSession); reported here.
     const onFoldError = (f: FoldFailure) => error({ message: foldFailureMessage(f) });
 
@@ -352,6 +363,15 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
         return;
       }
       done.add(id);
+      // A copy of another session's transcript, stored by an older parse: its owner holds the same rows.
+      const owner = transcript === undefined ? copies.get(id) : undefined;
+      if (owner && index.deleteSessions && stored.length && stored.every(isBackfillEvent) && (await index.getSession(owner))) {
+        result.removed += (await index.deleteSessions([id])).events;
+        result.copiesRemoved++;
+        await index.kvSet?.(reparseKeptKey(id), undefined);
+        await index.kvSet?.(childLinkKey(id), undefined);
+        return;
+      }
       const bfRows = stored.filter(isBackfillEvent);
       const spoolRows = stored.filter((e) => !isBackfillEvent(e) && (e.source === undefined || spoolSources.has(e.source)));
       const otherRows = stored.filter((e) => !isBackfillEvent(e) && !(e.source === undefined || spoolSources.has(e.source)));
@@ -466,7 +486,10 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
         return true;
       };
       try {
-        for await (const raw of adapter.backfill!(ctx, { changed })) {
+        const copied = (sid: string, ownerId: string) => {
+          if (fromTranscript.has(sid)) copies.set(sid, ownerId);
+        };
+        for await (const raw of adapter.backfill!(ctx, { changed, copied })) {
           if (!fromTranscript.has(raw.sessionId)) continue;
           const ev = backfillEvent(raw, profileFor, metadata, env);
           if (typeof ev === "string") {
@@ -523,6 +546,6 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
     await linker.apply();
 
     if (!wanted) await index.setCursor(REPARSE_CURSOR, stamp);
-    await index.kvSet?.(REPARSE_LAST, JSON.stringify({ at: now(), all: !!opts.all, sessions: result.sessions, reparsed: result.reparsed, kept: result.kept, refolded: result.refolded, errors: result.errors.slice(0, 5) }));
+    await index.kvSet?.(REPARSE_LAST, JSON.stringify({ at: now(), all: !!opts.all, sessions: result.sessions, reparsed: result.reparsed, kept: result.kept, copiesRemoved: result.copiesRemoved, refolded: result.refolded, errors: result.errors.slice(0, 5) }));
   }
 }

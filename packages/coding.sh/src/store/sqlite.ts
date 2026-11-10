@@ -1577,27 +1577,35 @@ export class SqliteIndexStore implements IndexStore {
     let sql = `SELECT id FROM sessions s WHERE coalesce(ended_at, started_at) < ?
       AND NOT EXISTS (SELECT 1 FROM events e WHERE e.session_id = s.id AND e.ts + coalesce(e.duration_ms, 0) >= ?)`;
     if (opts.project !== undefined) sql += " AND project_id = ?", params.push(opts.project);
-    return this.tx(() => {
-      // Selected inside the transaction so an event committed meanwhile is seen.
-      const ids = (this.stmt(sql).all(...params) as Row[]).map((r) => r.id as string);
-      let events = 0;
-      // Contentless FTS with contentless_delete: entries go by rowid. Only searchable kinds can have one.
-      const ftsDelete = this.stmt(`DELETE FROM events_fts WHERE rowid IN (SELECT rowid FROM events WHERE session_id = ? AND kind IN (${sqlList(SEARCHABLE_KINDS)}))`);
-      const delEvents = this.stmt("DELETE FROM events WHERE session_id = ?");
-      const delScores = this.stmt("DELETE FROM scores WHERE session_id = ?");
-      const delSession = this.stmt("DELETE FROM sessions WHERE id = ?");
-      const delFold = this.stmt("DELETE FROM kv WHERE key = ?");
-      const delFacets = this.stmt("DELETE FROM session_facets WHERE session_id = ?");
-      for (const id of ids) {
-        ftsDelete.run(id);
-        events += Number(delEvents.run(id).changes);
-        delScores.run(id);
-        delSession.run(id);
-        delFold.run(foldKey(id));
-        delFacets.run(id);
-      }
-      return { sessions: ids.length, events };
-    });
+    // Selected inside the transaction so an event committed meanwhile is seen.
+    return this.tx(() => this.dropSessions((this.stmt(sql).all(...params) as Row[]).map((r) => r.id as string)));
+  }
+
+  async deleteSessions(ids: string[]): Promise<{ sessions: number; events: number }> {
+    if (!ids.length) return { sessions: 0, events: 0 };
+    return this.tx(() => this.dropSessions([...new Set(ids)]));
+  }
+
+  /** Deletes these sessions with their events, scores (labels), fold and facets; the caller holds the transaction. */
+  private dropSessions(ids: string[]): { sessions: number; events: number } {
+    let sessions = 0;
+    let events = 0;
+    // Contentless FTS with contentless_delete: entries go by rowid. Only searchable kinds can have one.
+    const ftsDelete = this.stmt(`DELETE FROM events_fts WHERE rowid IN (SELECT rowid FROM events WHERE session_id = ? AND kind IN (${sqlList(SEARCHABLE_KINDS)}))`);
+    const delEvents = this.stmt("DELETE FROM events WHERE session_id = ?");
+    const delScores = this.stmt("DELETE FROM scores WHERE session_id = ?");
+    const delSession = this.stmt("DELETE FROM sessions WHERE id = ?");
+    const delFold = this.stmt("DELETE FROM kv WHERE key = ?");
+    const delFacets = this.stmt("DELETE FROM session_facets WHERE session_id = ?");
+    for (const id of ids) {
+      ftsDelete.run(id);
+      events += Number(delEvents.run(id).changes);
+      delScores.run(id);
+      sessions += Number(delSession.run(id).changes);
+      delFold.run(foldKey(id));
+      delFacets.run(id);
+    }
+    return { sessions, events };
   }
 
   /** Approximate event count, for doctor/status output. */

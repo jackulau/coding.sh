@@ -660,6 +660,34 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
       assert.deepEqual(await s.search("tokeni"), []);
     }));
 
+    it("optional deleteSessions drops these sessions with their events and labels, whatever their age", withStore(async (s) => {
+      if (!s.deleteSessions) return;
+      await s.putEvents([
+        fixtureEvent({ id: "cp-1", sessionId: "copy", ts: 10, kind: "user.message", payload: { text: "copied zebrafish" } }),
+        fixtureEvent({ id: "cp-2", sessionId: "copy", ts: 9e12, kind: "tool.end", payload: { tool: "Bash", ok: true } }),
+        fixtureEvent({ id: "ow-1", sessionId: "owner", ts: 10, kind: "user.message", payload: { text: "owner zebrafish" } }),
+        fixtureEvent({ id: "nr-1", sessionId: "no-row", ts: 10 }),
+      ]);
+      await s.upsertSession(fixtureSession({ id: "copy", startedAt: 10 }));
+      await s.upsertSession(fixtureSession({ id: "owner", startedAt: 10 }));
+      await s.putLabel({ id: "lab-copy", sessionId: "copy", criterion: "outcome", value: "pass", by: "me", ts: 1 });
+      await s.putLabel({ id: "lab-owner", sessionId: "owner", criterion: "outcome", value: "pass", by: "me", ts: 2 });
+      await s.putTask(fixtureTask({ id: "keep-task", sourceSessionId: "copy" }));
+      await s.putSessionFold?.("copy", new Uint8Array([1]));
+
+      assert.deepEqual(await s.deleteSessions(["copy", "copy", "missing"]), { sessions: 1, events: 2 }, "an event after any cutoff does not keep it");
+      assert.equal(await s.getSession("copy"), undefined);
+      assert.deepEqual(await s.listEvents("copy"), []);
+      assert.deepEqual((await s.listLabels()).map((l) => l.id), ["lab-owner"]);
+      assert.deepEqual((await s.search("zebrafish")).map((h) => h.event.id), ["ow-1"], "search index forgets deleted events");
+      assert.ok(await s.getTask("keep-task"), "eval assets are never deleted");
+      if (s.getSessionFold) assert.equal(await s.getSessionFold("copy"), undefined, "the fold goes too");
+      assert.ok(await s.getSession("owner"), "other sessions are untouched");
+      assert.equal((await s.listEvents("owner")).length, 1);
+      assert.deepEqual(await s.deleteSessions(["no-row"]), { sessions: 0, events: 1 }, "events without a session row go");
+      assert.deepEqual(await s.deleteSessions([]), { sessions: 0, events: 0 });
+    }));
+
     it("getBundle by name breaks a createdAt tie by the greatest id", withStore(async (s) => {
       await s.putBundle(fixtureBundle({ id: "b-aaa", name: "tied", createdAt: 1 }));
       await s.putBundle(fixtureBundle({ id: "b-zzz", name: "tied", createdAt: 1 }));

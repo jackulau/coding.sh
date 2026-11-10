@@ -559,6 +559,28 @@ export class ChIndexStore implements IndexStore {
     return { sessions, events };
   }
 
+  /**
+   * Deletes these sessions, whatever their age, with their events and labels,
+   * DELETE_CHUNK sessions per round. Events and labels go first, then the
+   * session row, as in deleteBefore.
+   */
+  async deleteSessions(ids: string[]): Promise<{ sessions: number; events: number }> {
+    let sessions = 0;
+    let events = 0;
+    for (const part of chunks([...new Set(ids)].sort(), DELETE_CHUNK)) {
+      const p = new Params();
+      const inIds = p.bind("Array(String)", part);
+      const [s] = await this.q<{ n: number }>(`SELECT count() AS n FROM ${this.t("sessions")} FINAL WHERE id IN ${inIds}`, p, { timeoutMs: 0 });
+      const [c] = await this.q<{ n: number }>(`SELECT count() AS n FROM ${this.t("events")} FINAL WHERE session_id IN ${inIds}`, p, { timeoutMs: 0 });
+      await this.exec(`DELETE FROM ${this.t("events")} WHERE session_id IN ${inIds}`, p, { timeoutMs: 0 });
+      await this.exec(`DELETE FROM ${this.t("labels")} WHERE session_id IN ${inIds}`, p, { timeoutMs: 0 });
+      await this.exec(`DELETE FROM ${this.t("sessions")} WHERE id IN ${inIds}`, p, { timeoutMs: 0 });
+      sessions += s?.n ?? 0;
+      events += c?.n ?? 0;
+    }
+    return { sessions, events };
+  }
+
   // ------------------------------------------------------------ cursors
 
   async getCursor(source: string): Promise<number> {

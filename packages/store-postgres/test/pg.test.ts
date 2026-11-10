@@ -193,6 +193,27 @@ describe("postgres store", { skip: SKIP }, () => {
     }
   });
 
+  it("deleteSessions removes the named sessions whatever their age, through more than one chunk", async () => {
+    const s = await open();
+    try {
+      const stats = { events: 1, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 };
+      const ids = Array.from({ length: 1203 }, (_, i) => `s${i}`);
+      for (let i = 0; i < ids.length; i += 50) {
+        await Promise.all(ids.slice(i, i + 50).map((id) => s.upsertSession({ id, agent: "sdk", startedAt: 1, stats, flags: [] })));
+      }
+      await s.putEvents(ids.map((id) => ev({ sessionId: id, ts: 9e12 })));
+      await s.putLabel({ id: "l1", sessionId: "s1", criterion: "outcome", value: "pass", by: "me", ts: 1 });
+      await s.putLabel({ id: "l2", sessionId: "s7", criterion: "outcome", value: "pass", by: "me", ts: 1 });
+      const doomed = ids.filter((id) => id !== "s7");
+      assert.deepEqual(await s.deleteSessions([...doomed, "missing"]), { sessions: 1202, events: 1202 });
+      assert.deepEqual((await s.listSessions()).map((x) => x.id), ["s7"]);
+      assert.deepEqual((await s.listLabels()).map((l) => l.id), ["l2"]);
+      assert.equal((await s.listEvents("s7")).length, 1);
+    } finally {
+      await s.close();
+    }
+  });
+
   it("the writer lock is exclusive per schema and hands over on release", async () => {
     const schema = `t_lock_${Date.now().toString(36)}`;
     const a = await PgIndexStore.open(schemaUrl(schema));

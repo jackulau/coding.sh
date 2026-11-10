@@ -481,6 +481,24 @@ export class PgIndexStore implements IndexStore {
     return { sessions, events };
   }
 
+  /** Deletes these sessions, whatever their age, with their events and labels, DELETE_CHUNK sessions per transaction. */
+  async deleteSessions(ids: string[]): Promise<{ sessions: number; events: number }> {
+    let sessions = 0;
+    let events = 0;
+    const unique = [...new Set(ids)].sort();
+    for (let i = 0; i < unique.length; i += DELETE_CHUNK) {
+      const part = unique.slice(i, i + DELETE_CHUNK);
+      await withTx(this.pool, async (c) => {
+        const s = await c.query(`DELETE FROM ${this.t("sessions")} WHERE id = ANY($1::text[])`, [part]);
+        const ev = await c.query(`DELETE FROM ${this.t("events")} WHERE session_id = ANY($1::text[])`, [part]);
+        await c.query(`DELETE FROM ${this.t("labels")} WHERE session_id = ANY($1::text[])`, [part]);
+        sessions += s.rowCount ?? 0;
+        events += ev.rowCount ?? 0;
+      });
+    }
+    return { sessions, events };
+  }
+
   // ------------------------------------------------------------ cursors
 
   async getCursor(source: string): Promise<number> {

@@ -281,7 +281,7 @@ export const COMMANDS: CommandSpec[] = [
     examples: ["coding.sh ingest", "coding.sh ingest --backfill --since 30d", "coding.sh ingest --rebuild --agent pi"],
     notes: [
       "Rarely needed: read commands, the viewer and the MCP server ingest first, and the hook starts one when a session ends.",
-      "After an upgrade, sessions stored by an older adapter parse are re-parsed in the background. --rebuild does it for every session now; a session whose transcript and spool lines are gone keeps its rows, minus duplicates.",
+      "After an upgrade, sessions stored by an older adapter parse are re-parsed in the background. --rebuild does it for every session now; a session whose transcript and spool lines are gone keeps its rows, minus duplicates, and one the adapter now reads as a copy of another stored session is removed.",
       "Run in the foreground, it also folds sessions that have events but no session row, and sessions tagged fold:error; doctor counts both.",
     ],
     load: () => import("./commands/ingest.ts"),

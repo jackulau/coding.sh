@@ -182,6 +182,11 @@ progress from another build is dropped and worked out again from its events.
   (`retention.keepSpoolDays`, 7 days by default), keeps its rows. Rows that repeat another row
   of the same call or prompt are still removed. `coding.sh ingest --rebuild --json` lists each
   kept session with the reason.
+- **Some sessions were removed.** A session an older coding.sh stored from a copy of another
+  session's transcript (a Claude Code subagent copied into a session that resumed its workflow run,
+  or into a fork) is deleted with its events when the session that wrote it is stored, so its calls
+  and cost count once. A copy that also has rows from hooks, OTel or the SDK, or whose owner is not
+  in the index, is kept. `coding.sh ingest --rebuild` prints how many it removed.
 - **Nothing happens.** Re-parse needs the local SQLite index (or a store plugin that supports it),
   and `CODING_SH_NO_AUTO_INGEST=1` turns off the background run. `--rebuild` still works.
 

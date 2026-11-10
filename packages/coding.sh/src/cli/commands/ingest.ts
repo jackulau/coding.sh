@@ -84,6 +84,7 @@ export async function run(c: CommandContext): Promise<number> {
     if (rp) {
       out.row("Re-parsed", `${plural(rp.reparsed, "session")} (${plural(rp.removed, "row")} removed, ${rp.inserted} written)${rp.errors.length ? `, ${plural(rp.errors.length, "error")}` : ""}`, rp.errors.length ? "warn" : "ok");
       out.row("Kept", `${plural(rp.kept, "session")} without a source to re-read`, "ok");
+      if (rp.copiesRemoved) out.row("Removed", `${plural(rp.copiesRemoved, "session")} that copied another session`, "ok");
       if (rp.refolded) out.row("Refolded", `${plural(rp.refolded, "session")} from their stored rows (new stats and flags)`, "ok");
       for (const [reason, n] of keptReasons(rp).slice(0, 3)) out.note(`${n} kept: ${reason}`);
     }
