@@ -22,7 +22,6 @@ const oldest = releases[releases.length - 1];
       <CubeField variant="side" />
       <div class="wrap cl-head__inner" data-field-clear>
         <h1>Changelog</h1>
-        <p class="cl-head__sub">Every release, newest first, with the full notes one click away.</p>
         <p class="cl-meta">
           {count} {count === 1 ? "release" : "releases"}{oldest?.date && /^\d/.test(oldest.date) && ` since ${oldest.dateLabel}`} · <a class="inline-link" href="/changelog.xml">RSS</a> · from <a class="inline-link" href={`${REPO_URL}/blob/main/CHANGELOG.md`}>CHANGELOG.md</a>
         </p>
