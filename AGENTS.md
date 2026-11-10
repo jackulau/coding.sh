@@ -67,7 +67,8 @@ set it for the user's store unless they ask.
   pinned Claude Code against `scripts/e2e/stub-model.mjs`) under a throwaway home, with paths
   scrubbed to `/work/demo` and `/home/user`. They live in `test/fixtures/adapters/<agent>/`.
 - Adapter goldens: `UPDATE_GOLDEN=1` rewrites them. Read the diff before you commit it.
-- Timing tests assume an idle machine. If one fails under load, rerun it alone first.
+- Timing tests assume an idle machine. If one fails under load, rerun it alone first. CI does this
+  itself (`scripts/test-ci.mjs`): a file that passes alone is a warning, not a failure.
 
 ## Docs and changelog
 

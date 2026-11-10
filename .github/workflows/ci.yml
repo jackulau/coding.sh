@@ -83,7 +83,8 @@ jobs:
         env:
           CODING_SH_TEST_CHROME: ${{ steps.chrome.outputs.chrome-path || (runner.os == 'Linux' && '/usr/bin/google-chrome' || '') }}
           SHARD: ${{ matrix.shard }}/${{ matrix.of }}
-        run: node --no-warnings --test --test-shard="$SHARD" 'test/**/*.test.ts'
+        # A file that fails is run again alone; one that then passes is a warning, not a failure.
+        run: node scripts/test-ci.mjs
 
       # The SDK's golden test builds sessions with coding.sh's core, so a core change can break it.
       - name: SDK typecheck and test
@@ -318,7 +319,8 @@ jobs:
         working-directory: packages/coding.sh
         env:
           SHARD: ${{ matrix.shard }}/4
-        run: node --no-warnings --test --test-shard="$SHARD" 'test/**/*.test.ts'
+        # A file that fails is run again alone; one that then passes is a warning, not a failure.
+        run: node scripts/test-ci.mjs
 
       - name: Build
         if: matrix.shard == 1
