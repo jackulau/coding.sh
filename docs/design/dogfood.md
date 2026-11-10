@@ -199,7 +199,7 @@ Our captured sessions in this repo are the source.
    misses fail, and there is no leakage.
 4. **Promote.** A task is promoted automatically when validation passes and the verifier is a test
    file that exists in the repo. Anything else waits for a human in `tasks/dogfood/review.md`.
-5. **Replay.** Replay runs under bundle `repo-default` (this repo's AGENTS.md, CLAUDE.md, `.claude/`)
+5. **Replay.** Replay runs under bundle `repo-default` (this repo's AGENTS.md, `.claude/`)
    with `claude-code` and `codex`, k = 3.
 
 Score: `replay.success`, the pass rate on promoted tasks. 30% of promoted tasks are randomly

@@ -4,7 +4,7 @@ Your agent makes the same mistakes again and again. coding.sh already records ev
 guide turns those sessions into one weekly loop:
 
 1. See what goes wrong most.
-2. Add the line to AGENTS.md or CLAUDE.md that fixes it.
+2. Add the line to AGENTS.md that fixes it.
 3. Test the edit on the moments it went wrong, or skip to 4.
 4. Commit it.
 5. Let new sessions tell you whether it helped, and catch a change that made things worse.
@@ -25,9 +25,9 @@ Fix first
 1. Says it is done without running anything to check
    3 of 12 sessions, low 23; latest 28m ago
    e.g. "Make wrap() in src/wrap.js break at word boundaries instead of mid-word."
-   Fix: Name the check in AGENTS.md or CLAUDE.md. Add: "Run `npm test` before you say you are done, and say what it printed."
+   Fix: Name the check in AGENTS.md. Add: "Run `npm test` before you say you are done, and say what it printed."
    → See it happen: coding.sh show 36ee2026-fff1-4fd3-aab3-a7d1706f15e0
-   → Add the line to AGENTS.md or CLAUDE.md (uncommitted): coding.sh improve fix 1
+   → Add the line to AGENTS.md (uncommitted): coding.sh improve fix 1
    → Test the edit on the moments it went wrong (on your Claude subscription): coding.sh exp ab --behavior unverified-claim
    → Commit it, then check new sessions against it: coding.sh improve check
 ```
@@ -78,13 +78,13 @@ coding.sh improve fix 1
 ```
 
 ```text
-✓ Added to CLAUDE.md (not committed):
+✓ Added to AGENTS.md (not committed):
 + Run `npm test` before you say you are done, and say what it printed.
 ```
 
-`improve fix` appends the issue's line to AGENTS.md or CLAUDE.md: the one the repo has, or, when
-it has both, the one the issue's agents read. This repo's sessions are Claude Code's and its file
-is CLAUDE.md, so the line went there. `--target <file>` picks another file, and `--dry-run` only
+`improve fix` appends the issue's line to the repo's instructions file: AGENTS.md or the agent's
+own file, whichever the repo has, or, when it has both, the one the issue's agents read. This repo
+has only an AGENTS.md, so the line went there. `--target <file>` picks another file, and `--dry-run` only
 prints the line. When the file already has the line, it says so and adds nothing. A line that is
 already there and still not followed needs rewording, or a place nearer the top of the file.
 
@@ -129,11 +129,11 @@ With nothing logged in and no key, `exp ab` stops before it starts and points at
 ## 4. Commit it
 
 ```sh
-git commit CLAUDE.md -m "CLAUDE.md: run the tests before saying done"
+git commit AGENTS.md -m "AGENTS.md: run the tests before saying done"
 ```
 
 coding.sh records the git HEAD each session starts at. A session counts for the newest commit
-that changed AGENTS.md, CLAUDE.md, GEMINI.md, a rule under `.claude/rules/` or `.cursor/rules/`,
+that changed AGENTS.md, GEMINI.md or another instruction file, a rule under `.claude/rules/` or `.cursor/rules/`,
 or a skill's SKILL.md that its HEAD contains. So an edit counts from the commit that keeps it, not
 from when you saved the file.
 
@@ -146,7 +146,7 @@ coding.sh improve check
 ```
 
 ```text
-533729e  Nov 3 09:00  CLAUDE.md +2 -0  "CLAUDE.md: run the tests before saying done"
+533729e  Nov 3 09:00  AGENTS.md +2 -0  "AGENTS.md: run the tests before saying done"
     + Run `npm test` before you say you are done, and never claim a fix works without running it.
   Helped: Fewer sessions went wrong after it: flagged sessions 6 of 10 before, 1 of 9 after (p 0.06).
   Still flagged after it, 1 of 9 sessions (coding.sh show <id>):

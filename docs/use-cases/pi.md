@@ -68,7 +68,7 @@ coding.sh eval run failures --yes
 last 14 days, up to 10. `eval run` runs `pi --mode json --approve` on each task, in its own Pi
 agent directory with a copy of your `auth.json`, so your provider logins work and your own sessions
 and settings are left alone. `coding.sh harness snapshot --agent pi` saves the files that shape a
-Pi run (`AGENTS.md`, `CLAUDE.md`, `.pi/settings.json`, `.pi/SYSTEM.md`, skills, prompts and
+Pi run (`AGENTS.md`, Claude Code's instructions file, `.pi/settings.json`, `.pi/SYSTEM.md`, skills, prompts and
 extensions, in the project and in `~/.pi/agent`) as a bundle you can compare against another one.
 
 ## What it does not do

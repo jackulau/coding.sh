@@ -33,9 +33,9 @@ const AB = [
   `Full comparison: coding.sh exp compare exp_01M6VXZSFPM2QK12ANN6Z269WP exp_01M6VXZSFSZ25HD2HXXVY40BXV`,
 ].join("\n");
 
-// Real output of scripts/e2e/refine-loop.mjs with its CLAUDE.md named AGENTS.md and the draft at ./drafts/AGENTS.md
+// Real output of scripts/e2e/refine-loop.mjs with its instructions file named AGENTS.md and the draft at ./drafts/AGENTS.md
 // (run 2026-11-09 against a stub model and a throwaway HOME).
-// With CLAUDE.md the same run prints r_3123c2cbef and r_b25de6ab68; nothing else differs.
+// With the script's default file name the same run prints r_3123c2cbef and r_b25de6ab68; nothing else differs.
 const REFINE = [
   `${m("$")} ${t("coding.sh refine test ./drafts/AGENTS.md --behavior unchanged-retry")}`,
   `r_3b577b3897  ./drafts/AGENTS.md (AGENTS.md; +1 line)`,
@@ -72,7 +72,7 @@ const TRIGGER = [
 
 <DocsLayout>
   <p>
-    The harness is everything around the model: AGENTS.md and CLAUDE.md, rules, skills, the agent and its flags. These commands test a
+    The harness is everything around the model: AGENTS.md, rules, skills, the agent and its flags. These commands test a
     change to it before you keep it, on the sessions you already have or on tasks replayed from your repo.
   </p>
 
@@ -114,7 +114,7 @@ const TRIGGER = [
 
   <h2 id="refine">Refine loop <Tag status="built" /></h2>
   <p>
-    <code>coding.sh refine</code> improves AGENTS.md, CLAUDE.md, rules and skills in tested rounds. <code>refine propose</code> asks a model
+    <code>coding.sh refine</code> improves AGENTS.md, rules and skills in tested rounds. <code>refine propose</code> asks a model
     for lines that address your sessions' most severe flags, with the file's protected lines marked READ-ONLY and earlier rejected edits listed.
     You can also write the edit yourself. <code>refine test</code> then decides each candidate in stages: the protected-line check and two
     critics on the added lines (harmful instructions, near duplicates) before any model call, then an A/B against your current files on the
@@ -179,7 +179,7 @@ const TRIGGER = [
     <code>--promote</code> adds the witness to the verifier.
   </p>
   <p>
-    Harness bundles (agent, model, flags, env and files such as <code>AGENTS.md</code> or <code>CLAUDE.md</code>, identified by a content hash)
+    Harness bundles (agent, model, flags, env and files such as <code>AGENTS.md</code>, identified by a content hash)
     are what <code>compare</code> A/B tests: it runs both bundles on validated tasks in isolated worktrees and reports per-arm Wilson
     intervals, a paired bootstrap interval, McNemar's test, cost, token, turn and latency deltas, and the first step where the two traces diverge. Tasks export
     in coding.sh's own layout or Harbor's.

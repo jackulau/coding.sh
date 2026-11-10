@@ -192,7 +192,7 @@ METR, 2025-06-05. <https://metr.org/blog/2025-06-05-recent-reward-hacking>. Read
 - **Prompting doesn't help:** "Please do not cheat" did not lower the rate.
 - **Detection:** an anomaly heuristic and an LLM monitor each missed hacks the other caught.
 - **Idea for us:**
-  - Do not count CLAUDE.md "don't cheat" lines as a mitigation.
+  - Do not count "don't cheat" lines in an instructions file as a mitigation.
   - Report the union of the static tamper diff and an LLM monitor.
   - Add pattern rules for test-framework monkey-patching and frame inspection.
 
@@ -441,7 +441,7 @@ LLM-written and stored as a blob), `src/eval/validate.ts`, and `ValidationReport
 
 ### 9. Track instruction-surface size and cap automated prompt loops (S)
 
-Touches `src/runner/bundle.ts` (`instructionBytes`/`instructionTokens` over CLAUDE.md, AGENTS.md,
+Touches `src/runner/bundle.ts` (`instructionBytes`/`instructionTokens` over AGENTS.md,
 skills and the system-prompt files in a bundle), `CompareReport.metrics`, DOGFOOD §5 keep rule,
 and TOOL-EVALS §8.3.
 

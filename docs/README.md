@@ -51,7 +51,7 @@ One page per job, each pointing on to the how-to or guide that covers it in full
 |---|---|
 | [use-cases/claude-code-cost.md](use-cases/claude-code-cost.md) | track Claude Code and Codex cost per session, repo and model |
 | [use-cases/replay-agent-session.md](use-cases/replay-agent-session.md) | replay a Claude Code or Codex session step by step |
-| [use-cases/test-agent-instructions.md](use-cases/test-agent-instructions.md) | test an AGENTS.md, CLAUDE.md or skill change, and which method to pick |
+| [use-cases/test-agent-instructions.md](use-cases/test-agent-instructions.md) | test an AGENTS.md, rule or skill change, and which method to pick |
 | [use-cases/evals-from-failures.md](use-cases/evals-from-failures.md) | build an eval suite from your agent's failed sessions |
 | [use-cases/self-hosted-observability.md](use-cases/self-hosted-observability.md) | open-source, self-hosted LLM observability on one machine or one server |
 | [use-cases/proxy-model-calls.md](use-cases/proxy-model-calls.md) | log every model call your agent makes through a local proxy |

@@ -270,7 +270,7 @@ to a semconv version.
 
 ## Runner and harness lab
 
-- **Harness bundle:** `harness.toml` + overlay files (AGENTS.md, CLAUDE.md, skills, hooks, MCP config,
+- **Harness bundle:** `harness.toml` + overlay files (AGENTS.md and other instruction files, skills, hooks, MCP config,
   CLI flags, model, env), plus Claude Code plugins for claude-code (stored whole, loaded with
   `--plugin-dir` from the run's home). Its content hash is its identity. `coding.sh harness snapshot`
   captures the current setup.

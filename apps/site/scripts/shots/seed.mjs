@@ -461,8 +461,8 @@ if (listed.length !== written || repos.size !== 1 || !repos.has("coding.sh")) {
 const store = await SqliteIndexStore.open(join(CS, "index.db"));
 const EXP = "claude-md-rewrite";
 const bundle = (name, note) => ({ id: createHash("sha256").update("bundle:" + name).digest("hex"), name, agent: "claude-code", model: "claude-sonnet-4-6", flags: [], env: {}, files: {}, remove: [], createdAt: NOW - 3 * 60 * MIN, note });
-const before = bundle("before", "CLAUDE.md as it is today");
-const after = bundle("after", "the rewritten CLAUDE.md");
+const before = bundle("before", "AGENTS.md as it is today");
+const after = bundle("after", "the rewritten AGENTS.md");
 await store.putBundle(before);
 await store.putBundle(after);
 const expT0 = NOW - 2 * 60 * MIN - 40 * MIN;
