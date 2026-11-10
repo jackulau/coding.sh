@@ -1385,7 +1385,7 @@ exits 1. `--json` prints `{parity, a, b, diffs}`. `--user-agent` sets the fetch'
 
 ## Harness A/B
 
-`coding.sh harness snapshot` bundles an agent's harness files (AGENTS.md, CLAUDE.md, skills, hooks,
+`coding.sh harness snapshot` bundles an agent's harness files (AGENTS.md and other instruction files, skills, hooks,
 MCP config). `coding.sh compare A B` runs both bundles on eval tasks in isolated config
 directories. It reports per-arm Wilson intervals and the first step where the traces diverge.
 A snapshot follows linked files and directories, such as skills that `npx skills` or a dotfiles
@@ -1398,7 +1398,7 @@ longer than 20 lines collapses into directories with their file counts, such as
 `+ .claude/skills/ (412 files)`. `--json` keeps every path in `report.bundleDiff`.
 
 `coding.sh compare A --without .claude/skills/pdf` tests one piece of a harness. B is A minus that
-path: a skill, `AGENTS.md`, `CLAUDE.md` or `.mcp.json`. The path is also deleted from each task's
+path: a skill, `AGENTS.md`, another instruction file or `.mcp.json`. The path is also deleted from each task's
 repo. The report adds `effect of <path> = A − B` with its CI. `--without` can be repeated.
 
 `coding.sh compare A B --gate` adds a ship-or-hold answer under the verdict: `Ship it: B wins 9
@@ -1447,7 +1447,7 @@ equally; coding.sh also resamples tasks and adds the exact test, so a lucky run 
 promote B.
 
 When B adds or removes exactly one instruction item and changes nothing else (one rule file, one
-skill, or one `AGENTS.md`/`CLAUDE.md`; `--without` counts), the report adds the one-item gate:
+skill, or one `AGENTS.md` or other instruction file; `--without` counts), the report adds the one-item gate:
 `item gate k=3 τ=.34 m=2: KEEP · G=1.67 net +4 runs D=.33 fired 11/36 · S=9 tasks`. It only looks at
 tasks where the item reached the agent's context in at least one run (S): an always-on file always
 does, a path-scoped rule only after the agent touched a matching file, a skill only when it was
@@ -1971,8 +1971,8 @@ subagents are skipped, and so are turns right after a context compaction. At mos
 one session, and 40 overall (`--limit`).
 
 **Replay the next turn twice.** For each case it asks the model for the next turn once with A's
-harness files and once with B's. AGENTS.md and CLAUDE.md go in the way Claude Code injects
-CLAUDE.md, a path-scoped rule only when the session had touched a matching file, and a skill as a
+harness files and once with B's. AGENTS.md and the other instruction files go in the way Claude Code injects
+its own, a path-scoped rule only when the session had touched a matching file, and a skill as a
 one-line listing unless the session opened it. The model gets the tools the session used, plus a
 shell. Only one turn is generated: nothing runs in your repo.
 
@@ -2026,7 +2026,7 @@ gives the comparison, the fixed and broken cases, the per-behavior counts, the p
 and the cache hits.
 
 **A committed edit.** With no uncommitted harness edits and no `--a` or `--b`, `exp ab` tests your
-last commit that changed AGENTS.md, CLAUDE.md, a rule or a skill (B, `git:HEAD`) against the version
+last commit that changed AGENTS.md or another instruction file, a rule or a skill (B, `git:HEAD`) against the version
 before it (A, `git:<commit>^`), and says so. `--a git:<rev> --b git:<rev>` compares any two
 commits, with or without `--dry-run`.
 
@@ -2044,7 +2044,7 @@ Each call is isolated from your setup:
 - `claude -p` runs with `--setting-sources ""`, `--strict-mcp-config`,
   `--no-session-persistence` and `--disable-slash-commands`, and a throwaway `CLAUDE_CONFIG_DIR`
   that holds only the token or a copy of the credentials file. No hooks, plugins, MCP servers,
-  CLAUDE.md or settings of yours load, and the call is not recorded as a session. On macOS, where
+  instruction files or settings of yours load, and the call is not recorded as a session. On macOS, where
   the login lives in the keychain, there is no file to copy, so it uses your config dir and relies
   on those flags alone; set `CLAUDE_CODE_OAUTH_TOKEN` to get the throwaway dir there too.
 - `codex exec` runs with `--ephemeral`, `--ignore-user-config`, `--ignore-rules`, a read-only
@@ -2069,7 +2069,7 @@ with each tool call's input and each tool result. The tools reach the model in o
   The judge reads the same text and tool calls either way.
 
 The JSON form is the fallback because it changes behavior. On a real replay of four sessions that
-claimed done without running the tests, with a CLAUDE.md line telling the agent to run `npm test`,
+claimed done without running the tests, with an instructions-file line telling the agent to run `npm test`,
 Claude Haiku often answered in the JSON form that "the Bash tool is disabled", and arm B passed 0 to
 2 of the 4 decision points over five runs. With native tools B passed 4 of 4 (A 0 of 4 both ways),
 which matches what the edit did in later real sessions.
@@ -2170,7 +2170,7 @@ agent editing the repo could otherwise unprotect a rule and then delete it. See
 
 ## Refine loop
 
-`coding.sh refine` improves AGENTS.md, CLAUDE.md, rules and skills in rounds. Each round tests one
+`coding.sh refine` improves AGENTS.md and the other instruction files, rules and skills in rounds. Each round tests one
 or more candidate edits against your current files and keeps, rejects or holds each one. Only a kept
 edit can be applied, and every round goes into a ledger.
 
@@ -2218,7 +2218,7 @@ a hash of its changed files. Its files are stored with the ledger, so `refine te
 `refine apply r_…` work later.
 
 **Proposals.** `refine propose` asks a model for lines to add to one file: `--target`, else
-AGENTS.md, then CLAUDE.md, then GEMINI.md. The prompt lists your sessions' most severe flags (up to
+AGENTS.md, then Claude Code's instructions file, then GEMINI.md. The prompt lists your sessions' most severe flags (up to
 five, since `--since`, in this repo), each with its diagnosis and severity score. It shows the
 target file and marks its protected lines READ-ONLY. It also lists edits tested before and not kept,
 with their reasons (the last 20). The prompt is redacted before it is sent. The reply must be JSON
@@ -2294,7 +2294,7 @@ points. That lets a round ask more than "is it better?": it can also ask "is it 
 and no worse?".
 
 ```sh
-$ coding.sh refine test ./drafts/CLAUDE.md --suite strkit --objective cost,wall,tokens --yes
+$ coding.sh refine test ./drafts/AGENTS.md --suite strkit --objective cost,wall,tokens --yes
 $ coding.sh refine run --suite strkit --objective cost,wall,tokens --until-plateau --yes
 $ coding.sh refine log
 ```
@@ -2375,8 +2375,9 @@ size for both arms of every round, the verdict and the reason. It ends with the 
 rate against the primary objective, or cost when the primary is `pass`) and the plateau line. The
 front compares point estimates from different rounds, so it is a map, not a test.
 
-Here is a climb with Claude Code (`--model claude-sonnet-5-5`) on a repo whose CLAUDE.md was
-51 KB: a style guide and a project history, a step telling the agent to read three long docs
+Here is a climb with Claude Code (`--model claude-sonnet-5-5`) on a repo whose instructions file
+was 51 KB (the run used Claude Code's own file; the log below names it AGENTS.md, which `refine`
+handles the same way): a style guide and a project history, a step telling the agent to read three long docs
 first, and a rule that error messages start with `strkit: `, which the task checks test. The
 suite had 6 tasks and 2 trials. Round 1 was a hand trim that also dropped that rule. Rounds 2
 and 3 came from `--proposer-command 'claude -p'`: round 2 removed the style guide and the
@@ -2384,7 +2385,7 @@ history, and round 3 changed "read the docs first" to "read them only if the tas
 
 ```sh
 $ coding.sh refine log
-Climb on strkit (CLAUDE.md, primary cost / run)
+Climb on strkit (AGENTS.md, primary cost / run)
 ROUND	CANDIDATE	VERDICT	PASS	COST/RUN	WALL/RUN	SIZE	REASON
 1	r_5f83c31fad	reject	100% → 0%	$0.29 → $0.0347 (−88%)	20.6s → 13.4s (−35%)	51166 B → 292 B (−99%)	hard regression: the base passed camelCase, countWords, padCenter, reverseWords, slugify, truncate every time and the candidate now mostly fails
 2	r_d50d8bebd5	keep (efficiency), applied	100% → 100%	$0.27 → $0.22 (−20%)	14.6s → 14.0s (−4%)	51166 B → 596 B (−99%)	cost / run -20% [-25%, -9.8%], p 0.031 with quality held: pass rate 100% → 100% (+0.0 pts per task [+0.0 pts, +0.0 pts], one-sided lower bound +0.0 pts vs margin −2.0 pts, hold p 0.016)
@@ -2619,7 +2620,7 @@ capture mode `full`.
 ## Fork a failing step into a case
 
 When a session goes wrong at one step, `coding.sh replay --fork` sends that step's model call
-again with a changed AGENTS.md or CLAUDE.md (see
+again with a changed AGENTS.md or other instruction file (see
 [Fork from a step](explore.md#fork-from-a-step)). `--save-case` keeps the step as a regression
 case:
 
@@ -2639,7 +2640,7 @@ to `cases.jsonl`:
 
 - **The `request` task** sends each case's stored request to the model again. Before it sends,
   it puts in the project's context files as they are at run time: the suite's
-  `task.context.files`, which `--save-case` fills with the AGENTS.md or CLAUDE.md the request
+  `task.context.files`, which `--save-case` fills with the AGENTS.md or other instruction files the request
   carried. So the case passes or fails on the harness in your working tree. `model`, `system` and
   `systemFile` on the task change those fields too. Its output is the reply's first action, its
   text and its tool calls.

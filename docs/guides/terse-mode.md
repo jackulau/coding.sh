@@ -109,10 +109,10 @@ dir = ".."
 Be concise. Give the answer and the evidence for it. Don't restate the task or summarize what you did.
 ```
 
-`dir = ".."` reads your repo's AGENTS.md, CLAUDE.md, `.claude/`, `.mcp.json` and the other usual
-harness files, relative to the TOML file. Your user-level files, such as `~/.claude/CLAUDE.md`, are
-read only when you list them: write the same `include = [...]` in both TOMLs, for example
-`include = ["CLAUDE.md", ".claude/**", ".mcp.json", "~/.claude/CLAUDE.md"]`. `[files]` adds one
+`dir = ".."` reads your repo's AGENTS.md, `.claude/`, `.mcp.json` and the other usual
+harness files, relative to the TOML file. Your user-level files, such as Claude Code's user-level instructions file and skills in `~/.claude`,
+are read only when you list them: write the same `include = [...]` in both TOMLs, for example
+`include = ["AGENTS.md", ".claude/**", ".mcp.json", "~/.claude/skills/**"]`. `[files]` adds one
 file on top. Snapshot both:
 
 ```sh
@@ -123,8 +123,8 @@ coding.sh harness snapshot --file terse-ab/concise.toml
 B adds one always-on rule and changes nothing else, so the report adds the one-item gate (see
 below). Other terse modes:
 
-- **A line in CLAUDE.md.** Copy your CLAUDE.md to `terse-ab/CLAUDE.md`, add the line, and write
-  `"CLAUDE.md" = "CLAUDE.md"` under `[files]` instead. B then changes a file rather than adding
+- **A line in AGENTS.md.** Copy your AGENTS.md to `terse-ab/AGENTS.md`, add the line, and write
+  `"AGENTS.md" = "AGENTS.md"` under `[files]` instead. B then changes a file rather than adding
   one, so the one-item gate does not apply.
 - **A terse-mode skill.** Write `".claude/skills/terse/SKILL.md" = "terse-skill.md"` under
   `[files]`, with a `name` and `description` in the skill's frontmatter. Claude Code lists the

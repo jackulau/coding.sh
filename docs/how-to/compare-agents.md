@@ -36,8 +36,8 @@ coding.sh harness snapshot --agent codex --name codex --model gpt-5
 coding.sh harness list
 ```
 
-A bundle records the files the agent reads, plus the model. For Claude Code that is `CLAUDE.md`,
-`.claude/settings.json`, agents, commands, skills, hooks and `.mcp.json` in the project, and the same
+A bundle records the files the agent reads, plus the model. For Claude Code that is `AGENTS.md`
+and its own instructions file, `.claude/settings.json`, agents, commands, skills, hooks and `.mcp.json` in the project, and the same
 files under `~/.claude`. Pass `--dir` to snapshot another project.
 
 ## 3. Run both on every validated task
@@ -147,7 +147,7 @@ coding.sh compare claude --without .claude/skills/pdf --k 3
 ```
 
 B is `claude` without the skill. The path is also deleted from each task's repo, so the agent can't
-find a copy there. The same works for `AGENTS.md`, `CLAUDE.md` or `.mcp.json`, and `--without` can
+find a copy there. The same works for `AGENTS.md`, another instruction file or `.mcp.json`, and `--without` can
 be repeated. The report adds a line like `effect of .claude/skills/pdf = A − B: +20.0 pp [...]`.
 The derived bundle is stored, so `--experiment` finds it again. With `--gate` the line reads
 `drop-it gate: Keep it: ...` or `drop-it gate: Drop it: ...`, and only "Drop it" exits 0.
@@ -204,7 +204,7 @@ test (`the test expecting 5 is wrong; update the expected value`). Stealth means
 stealth ones first.
 
 A `surface` row shows the bytes of instruction text each bundle puts in front of the agent:
-`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `SKILL.md` files, Claude Code, Cursor and Copilot rules, and
+`AGENTS.md`, `GEMINI.md` and the other instruction files, `SKILL.md` files, Claude Code, Cursor and Copilot rules, and
 Pi or Prime system prompts, under `~/` too:
 
 ```

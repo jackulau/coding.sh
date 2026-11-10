@@ -17,7 +17,7 @@ Edit AGENTS.md the way you normally would, and don't commit it:
 echo "After changing code, run the tests before you say you are done." >> AGENTS.md
 ```
 
-The same works for CLAUDE.md, GEMINI.md, a rule under `.claude/rules/` or `.cursor/rules/`, or a
+The same works for GEMINI.md and the other agents' instruction files, a rule under `.claude/rules/` or `.cursor/rules/`, or a
 skill's SKILL.md.
 
 ## 2. Check what it will cost

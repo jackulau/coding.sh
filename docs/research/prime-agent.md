@@ -57,7 +57,7 @@ Research date: 2026-11-06. This is a read-only study. No coding.sh source was ch
    detects tampering, and has a written keep rule (DOGFOOD §5). What it lacks is the front half:
    mining failures, proposing edits, a pre-commit gate, and a versioned apply/rollback ledger.
 7. **Headline build: `coding.sh refine`.** It works on any agent and offline. It mines captured
-   sessions, proposes small edits to AGENTS.md, CLAUDE.md, skills or tool descriptions, and gates
+   sessions, proposes small edits to AGENTS.md, rules, skills or tool descriptions, and gates
    each candidate with critics. It tests candidates on failure-derived dev tasks plus a held-out
    split, and keeps one only if dev improves (Holm-adjusted) with held-out non-inferiority, no
    hard regressions, no cost blow-up and no tamper increase. Kept edits are marked blocks with
@@ -319,8 +319,8 @@ exactly what is missing.
 | **SkillsBench** (arXiv 2602.12670, Feb 2026) | — | — | 7,308 trajectories | Curated skills +16.2 pp (SWE domain +4.5). **Self-generated skills about −1.3 pp.** 16/84 tasks negative. Focused 2–3-module skills beat comprehensive docs. | A model-written skill has a near-zero prior. Measure every one, and prefer short focused edits. |
 | **Evaluating AGENTS.md** (arXiv 2602.11988; see landscape.md #10) | Context files | — | — | No general gain, +20% cost. Developer-written files +2.4 (n.s.). | Report cost next to pass rate, and warn on underpowered n. |
 | **LangChain "harness engineering"** (Feb 2026) | System prompt, middleware (loop detection, pre-completion checklist, local-context bootstrap, reasoning sandwich) | Parallel error-analysis agents over LangSmith traces, then a synthesizer | Benchmark reruns; human review optional; no ablation per change | Terminal Bench 2.0 52.8% → 66.5% with the model fixed | The workflow works, but per-change effects were not isolated. Our per-candidate A/B fixes that. Doom-loop and edit-churn signals are worth mining. |
-| **Arize Prompt Learning** (Nov 2025) | CLAUDE.md, Cline rules | An LLM judge explains failing SWE-bench runs, then a meta-prompt rewrites the rules | Train/test split by repo | Claude Code +5.19% (by-repo split), +10.87% (in-repo) on SWE-bench Lite. Vendor-reported. | The by-repo vs in-repo gap is the overfitting tax. Held-out should be a different repo or time window when possible. |
-| **Claude Code `/insights`** (Feb 2026) | Nothing (suggestions only) | Up to 200 recent local sessions; Opus extracts facets per session (`underlying_goal`, `outcome`, `goal_categories`, `friction_counts`, `friction_detail`, `user_instructions_to_claude`, …), cached in `~/.claude/usage-data/` | None | HTML report with CLAUDE.md additions ("repeated instructions worth hardcoding") and features to try | Repeated user instructions are a high-precision candidate source. Cache per-session facets by content hash. Our version must *test* its suggestions. |
+| **Arize Prompt Learning** (Nov 2025) | Claude Code's instructions file, Cline rules | An LLM judge explains failing SWE-bench runs, then a meta-prompt rewrites the rules | Train/test split by repo | Claude Code +5.19% (by-repo split), +10.87% (in-repo) on SWE-bench Lite. Vendor-reported. | The by-repo vs in-repo gap is the overfitting tax. Held-out should be a different repo or time window when possible. |
+| **Claude Code `/insights`** (Feb 2026) | Nothing (suggestions only) | Up to 200 recent local sessions; Opus extracts facets per session (`underlying_goal`, `outcome`, `goal_categories`, `friction_counts`, `friction_detail`, `user_instructions_to_claude`, …), cached in `~/.claude/usage-data/` | None | HTML report with instructions-file additions ("repeated instructions worth hardcoding") and features to try | Repeated user instructions are a high-precision candidate source. Cache per-session facets by content hash. Our version must *test* its suggestions. |
 | **Letta skill learning + sleep-time compute** (Dec 2025; arXiv 2504.13171) | Skills, memory blocks | A reflection agent uses skill-creator during idle time | None reported beyond task evals | "Learning in token space" | Mining and proposing can run in idle time, but acceptance still needs tests. |
 | **BinEval lesson loop** (our note `2606.27226.md`) | Prompt | Question-level disagreements | Best iteration chosen on **test** | +0.075 ρ, but prompt bloat from 22 to 6,248 chars, then collapse | Cap iterations (≤ 2) and instruction growth. Never select on test. |
 
@@ -451,7 +451,7 @@ by extracting them to `_shared` or `_util`; do not fork them):
 
 **`harnessFiles()`:**
 
-- project: `AGENTS.md`, `CLAUDE.md`, `.prime/agent/SYSTEM.md`, `.prime/agent/APPEND_SYSTEM.md`,
+- project: `AGENTS.md`, Claude Code's instructions file, `.prime/agent/SYSTEM.md`, `.prime/agent/APPEND_SYSTEM.md`,
   `.prime/agent/settings.json`, `.prime/agent/skills/**` (**U**)
 - user: `~/.prime/agent/{AGENTS.md,SYSTEM.md,APPEND_SYSTEM.md,settings.json,models.json}`,
   `~/.prime/agent/skills/**`, and **`~/.prime/agent/harness/harness_state.json`**
@@ -485,7 +485,7 @@ with:
 | | Prime `/refine` | `coding.sh refine` |
 |---|---|---|
 | Runs | online, inside one agent, at turn boundaries | offline, over all captured sessions, for any agent |
-| Edits | Prime's private store (notes, memories, Python skills, sub-agent specs) | the repo's real harness: AGENTS.md / CLAUDE.md / GEMINI.md blocks, skills (`.claude/skills`, `.agents/skills`, `.prime/agent/skills`, …), MCP tool descriptions, CLI help text |
+| Edits | Prime's private store (notes, memories, Python skills, sub-agent specs) | the repo's real harness: AGENTS.md / GEMINI.md and other instruction-file blocks, skills (`.claude/skills`, `.agents/skills`, `.prime/agent/skills`, …), MCP tool descriptions, CLI help text |
 | Signal | one trajectory, read by an LLM | failure patterns with support across sessions, plus verbatim evidence |
 | Validation | structural only | pre-commit critics, then a paired A/B on failure-derived dev tasks, then held-out non-inferiority, then tamper, cost and bloat checks |
 | Record | `RefinementResult` with before/after snapshots | ledger entry with patch blob, evidence ids, experiment ids, decision and reasons. Marked blocks make rollback robust to later edits. |
@@ -694,11 +694,11 @@ that can be A/B-tested on and off. That lets `/refine` output get validated.
 
 | Agent | Context file(s) | Skills | Tool docs |
 |---|---|---|---|
-| Claude Code | `CLAUDE.md` (or `@AGENTS.md` import) | `.claude/skills/*/SKILL.md` | `.mcp.json` servers → MCP description variants |
+| Claude Code | its own instructions file (or an `@AGENTS.md` import) | `.claude/skills/*/SKILL.md` | `.mcp.json` servers → MCP description variants |
 | Codex | `AGENTS.md` | `.agents/skills`, `.codex/skills` (**U** per version) | MCP description variants |
 | Gemini CLI | `GEMINI.md` | — | MCP description variants |
 | Pi | `AGENTS.md`, `.pi/APPEND_SYSTEM.md` | `.pi/skills`, `.agents/skills` | — |
-| Prime Agent | `AGENTS.md`/`CLAUDE.md`, `.prime/agent/APPEND_SYSTEM.md` | `.prime/agent/skills` (**U**) | MCP description variants |
+| Prime Agent | `AGENTS.md` or Claude Code's file, `.prime/agent/APPEND_SYSTEM.md` | `.prime/agent/skills` (**U**) | MCP description variants |
 | OpenCode, Cursor, Amp, Droid, Goose, Copilot CLI | `AGENTS.md` (plus `.cursor/rules/*` for Cursor) | per adapter `harnessFiles()` | MCP description variants |
 | any CLI under test | — | — | toolevals CLI help variants |
 
@@ -721,7 +721,7 @@ same finding spans agents, prefer `AGENTS.md`, which most agents read. Optionall
    hard stop at the cap, cached LLM facets, and agent-free model drivers for tool-description
    candidates.
 4. **Consent.**
-   - Never touch user-global configs (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`,
+   - Never touch user-global configs (Claude Code's user-level instructions file, `~/.codex/AGENTS.md`,
      `~/.prime/agent/*`, …) unless `--scope user` is given **and** the user confirms on a TTY.
      Non-TTY additionally needs `--allow-global`. Consent is recorded in the ledger.
    - Never commit, push or edit tests, verifiers or CI.

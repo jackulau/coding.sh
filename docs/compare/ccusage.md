@@ -47,7 +47,7 @@ page. If something here is out of date, open an issue.
 - **Billed cost when you have it.** A cost the agent or an LLM gateway reports is used before an
   estimate, and estimates are marked with `~`.
 - **From cost to fixes.** Flags mark failures and waste, `coding.sh improve` proposes a line for
-  your AGENTS.md or CLAUDE.md, and evals check whether the change helped. See
+  your AGENTS.md, and evals check whether the change helped. See
   [Test an AGENTS.md change](../how-to/test-agents-md-change.md).
 
 ## Questions

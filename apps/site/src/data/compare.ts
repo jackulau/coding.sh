@@ -1,4 +1,4 @@
-// The Compare section's experiment: coding.sh's own CLAUDE.md, before and after a
+// The Compare section's experiment: coding.sh's own AGENTS.md, before and after a
 // rewrite, on 20 coding.sh tasks, 5 runs each. scripts/shots/seed.mjs writes these
 // exact runs into the viewer for the screenshot, so the page and the picture agree.
 

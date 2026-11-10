@@ -6,9 +6,9 @@ import Tag from "../../components/docs/Tag.astro";
 // Tool list and config shapes follow packages/coding.sh/src/mcp/tools.ts and
 // src/adapters/_shared/mcp.ts (what `coding.sh init` writes for each agent).
 const TOOLS: [string, string][] = [
-  ["improve", "What goes wrong most in this repo's sessions, ranked, each with an example session, the AGENTS.md or CLAUDE.md line that fixes it and the next commands; then whether recent harness changes helped."],
-  ["harness_changes", "Each committed AGENTS.md, CLAUDE.md, rule or skill change: flagged sessions before and after, which sessions are still flagged after it and with what, how often the agent follows each new line, and a verdict."],
-  ["harness_audit", "Each memory file, AGENTS.md, CLAUDE.md, rule and skill with the sessions that loaded, read and wrote it and its load tokens, unused ones first, and the refine run command that cuts the costliest instruction file. With check: true, whether your uncommitted edits deleted, reworded or relaxed a protected line."],
+  ["improve", "What goes wrong most in this repo's sessions, ranked, each with an example session, the AGENTS.md line that fixes it and the next commands; then whether recent harness changes helped."],
+  ["harness_changes", "Each committed AGENTS.md, rule or skill change: flagged sessions before and after, which sessions are still flagged after it and with what, how often the agent follows each new line, and a verdict."],
+  ["harness_audit", "Each memory file, AGENTS.md, rule and skill with the sessions that loaded, read and wrote it and its load tokens, unused ones first, and the refine run command that cuts the costliest instruction file. With check: true, whether your uncommitted edits deleted, reworded or relaxed a protected line."],
   ["session_current", "The session of the agent calling the tool: its summary and latest timeline."],
   ["sessions_list", "Captured sessions, newest first, with turns, tool errors, tokens, cost, failure flags and derails. Filter with flag (e.g. looping) or where (e.g. tool:Bash ok:false cost>0.5); facets counts per value."],
   ["session_get", "One session as a digest: per-turn index and a timeline of prompts, replies, tool calls and model calls."],

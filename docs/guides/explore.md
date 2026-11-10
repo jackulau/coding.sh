@@ -289,15 +289,15 @@ recorded next to the action the forked call took.
 coding.sh replay <session> --step 12 --fork --with AGENTS.md=fixed.md -k 3
 coding.sh replay <session> --step 12 --fork --with AGENTS.md --model claude-haiku-4-5
 coding.sh replay <session> --step 12 --fork --harness strict-tests
-coding.sh replay <session> --step 12 --fork --with CLAUDE.md --run --verify 'npm test'
+coding.sh replay <session> --step 12 --fork --with AGENTS.md --run --verify 'npm test'
 coding.sh replay <session> --step 12 --fork --with AGENTS.md --save-case forks
 ```
 
 - `--with DEST=SRC` uses SRC's text as DEST. A bare `--with PATH` uses that file as it is now,
-  and `DEST=` drops the file. DEST is an AGENTS.md, a CLAUDE.md, a rule, a skill or
-  `~/.claude/CLAUDE.md`. coding.sh changes the file where the agent put it in the request:
+  and `DEST=` drops the file. DEST is an AGENTS.md or another instruction file, a rule, a skill or
+  Claude Code's user-level instructions file in `~/.claude`. coding.sh changes the file where the agent put it in the request:
   Claude Code's `Contents of <path>` sections and Codex's `# AGENTS.md instructions` block. A file
-  the request did not carry is added the way Claude Code adds CLAUDE.md. `--harness` takes the
+  the request did not carry is added the way Claude Code adds its instructions file. `--harness` takes the
   context files and the model from a stored bundle, `--model` sends the call to another model and
   `--system` replaces the system prompt.
 - Without `--run`, the call is sent again `-k` times (default 1), not streamed. Each forked
@@ -325,7 +325,7 @@ file).
 
 `coding.sh harness audit` lists each memory and instruction file and counts the sessions that
 loaded it, read it with a tool and wrote it: Claude Code's auto-memory
-(`~/.claude/projects/*/memory/`), AGENTS.md, CLAUDE.md and GEMINI.md, rules in `.claude/rules/`,
+(`~/.claude/projects/*/memory/`), AGENTS.md, GEMINI.md and Claude Code's instructions files, rules in `.claude/rules/`,
 and skills (`SKILL.md`).
 
 ```sh
@@ -336,9 +336,9 @@ coding.sh harness audit --json                   # every file, with totals
 
 The counts come from captured events:
 
-- **loaded**: a `harness.loaded` event (a nested CLAUDE.md, a skill listed or invoked), or a
+- **loaded**: a `harness.loaded` event (an instructions file in a subdirectory, a skill listed or invoked), or a
   file the agent loads at start for the session's directory. For Claude Code that is
-  `~/.claude/CLAUDE.md`, CLAUDE.md and `CLAUDE.local.md` up the tree, rules without a `paths`
+  its user-level instructions file in `~/.claude`, its project and local instructions files up the tree, rules without a `paths`
   or `globs` frontmatter, the project's `MEMORY.md` and the skill list. For Codex it is
   `AGENTS.md` in `CODEX_HOME` and from the repo root down to the directory, and its skills. A
   start-time load counts only for a file that is on disk now.
@@ -360,7 +360,7 @@ files on this machine and the sessions from any.
 
 Through MCP, ask your agent to "audit my setup and trim what I don't use". The `harness_audit`
 tool returns the audit, and with `check: true` it runs `coding.sh refine check` on your
-uncommitted AGENTS.md, CLAUDE.md, rule and skill edits: did one delete, reword or relax a protected
+uncommitted AGENTS.md, rule and skill edits: did one delete, reword or relax a protected
 line? It does not run the refine loop, which runs agent sessions for minutes. Its `next` holds the
 command instead, `coding.sh refine run --suite <name> --target AGENTS.md --objective size`: the
 repo's costliest instruction file, cut while the suite's pass rate holds. With no suite of repo

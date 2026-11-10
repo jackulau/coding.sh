@@ -1,6 +1,6 @@
-# Test an AGENTS.md, CLAUDE.md or skill change
+# Test an AGENTS.md, rule or skill change
 
-You changed AGENTS.md, CLAUDE.md, a rule or a skill, and want to know whether it helped. coding.sh
+You changed AGENTS.md, a rule or a skill, and want to know whether it helped. coding.sh
 answers that from the sessions it has already recorded, or from tasks you give it. Some checks are
 free and wait for new sessions. Others call a model now and cost a little.
 
@@ -18,7 +18,7 @@ free and wait for new sessions. Others call a model now and cost a little.
 
 ```sh
 coding.sh improve              # issues ranked, each with a line to add
-coding.sh improve fix 1        # appends that line to AGENTS.md or CLAUDE.md, uncommitted
+coding.sh improve fix 1        # appends that line to AGENTS.md or the agent's own file, uncommitted
 git commit AGENTS.md -m "AGENTS.md: run the tests before saying done"
 coding.sh improve check        # after a few sessions
 ```
@@ -70,9 +70,9 @@ prompts that should and should not load it and reports precision, recall and F1.
 
 ## Questions
 
-### Does this work for CLAUDE.md, GEMINI.md and Cursor rules?
+### Does this work for other agents' instruction files and Cursor rules?
 
-Yes. `exp ab` and `improve check` read AGENTS.md, CLAUDE.md, GEMINI.md, rules under
+Yes. `exp ab` and `improve check` read AGENTS.md, GEMINI.md, Claude Code's instructions file, rules under
 `.claude/rules/` or `.cursor/rules/`, and a skill's SKILL.md.
 
 ### Can I test a draft without editing the repo?

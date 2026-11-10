@@ -166,7 +166,7 @@ function fileCandidate(v: string, cwd: string, root: string, base: Arm): Arm {
   const name = basename(abs);
   const path = inside && isHarnessPath(rel) ? rel : base.files.some((f) => f.path === name) || isHarnessPath(name) ? name : undefined;
   if (!path) {
-    throw new UsageError(`Candidate ${v} is not a harness file: name it after the file it replaces (AGENTS.md, CLAUDE.md, GEMINI.md), or put it at its repo path (.claude/rules/…, .claude/skills/<name>/SKILL.md)`, {
+    throw new UsageError(`Candidate ${v} is not a harness file: name it after the instructions file it replaces (such as AGENTS.md), or put it at its repo path (.claude/rules/…, .claude/skills/<name>/SKILL.md)`, {
       reason: "invalid_argument",
       suggestion: "coding.sh refine test ./drafts/AGENTS.md",
     });
@@ -757,7 +757,7 @@ async function logCommand(c: CommandContext, e: Pick<Env, "dir" | "store">): Pro
   if (!rounds.length) {
     for (const k of entries) if (k.op === "propose") out.print(proposeLine(k));
     out.note(`No refine rounds in this repo yet (${ledgerFile(e.dir)})`);
-    out.next("Test an edit to AGENTS.md or CLAUDE.md", "coding.sh refine test ./drafts/AGENTS.md");
+    out.next("Test an edit to AGENTS.md", "coding.sh refine test ./drafts/AGENTS.md");
     return 0;
   }
   const decisionRounds = rounds.filter((t) => !t.suite);

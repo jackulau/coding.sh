@@ -120,7 +120,7 @@ Source: `src/cli/registry.ts`, `src/schema/index.ts`, `src/otel/map.ts`, `src/vi
 - **Experiments** (`exp run|compare|list`). Tasks are command or HTTP.
   - Statistics: paired bootstrap CI, exact McNemar, Wilson intervals, MDE/power warnings, pass^k.
 - **Harness lab:**
-  - `harness snapshot` content-hashes CLAUDE.md, AGENTS.md, skills, hooks, MCP, flags and model
+  - `harness snapshot` content-hashes AGENTS.md and other instruction files, skills, hooks, MCP, flags and model
     into a bundle.
   - `compare A B` runs paired A/B across tasks with k runs, the first step where the arms'
     traces diverge, and a test-tamper rate.
@@ -214,7 +214,7 @@ Source: `src/cli/registry.ts`, `src/schema/index.ts`, `src/otel/map.ts`, `src/vi
   OpenCode, Kiro, Augment and Pi, plus a gateway mode.
   <https://langfuse.com/integrations/developer-tools/claude-code>,
   <https://langfuse.com/integrations/developer-tools/codex>
-  - Langfuse's own write-up admits it cannot see the assembled CLAUDE.md or skills context.
+  - Langfuse's own write-up admits it cannot see the assembled instructions-file or skills context.
     <https://langfuse.com/resources/engineering/coding-agent-tracing>
 - **License split:**
   - **Enterprise only (EE):** project RBAC, protected prompt labels, data retention policies, audit
@@ -385,7 +385,7 @@ diagnosed, then handed to a coding agent through MCP or a PR.
     <https://agent-trace.dev/>
 - **Entire CLI:** checkpoints tied to commits, with rewind and resume. <https://docs.entire.io/cli/overview>
 - **Claude Code built-ins:**
-  - **`/usage`:** per-skill, MCP and subagent cost, plus "trim CLAUDE.md" advice.
+  - **`/usage`:** per-skill, MCP and subagent cost, plus advice to trim the instructions file.
     <https://code.claude.com/docs/en/costs>
   - **`/insights`:** LLM report over 200 sessions. Same page.
   - **OTel metrics:** lines of code, commits, PRs, edit decisions; `vcs.ref.head.revision` on
@@ -402,7 +402,7 @@ diagnosed, then handed to a coding agent through MCP or a PR.
 - **Session archives:** SpecStory and others. <https://github.com/specstoryai/getspecstory>
 - **Harbor** (about 6.9k stars): Terminal-Bench harness. <https://github.com/harbor-framework/harbor>
 - **Inspect SWE.** <https://meridianlabs-ai.github.io/inspect_swe>
-- **promptfoo Claude Agent SDK provider:** A/B across CLAUDE.md configs.
+- **promptfoo Claude Agent SDK provider:** A/B across instructions-file configs.
   <https://www.promptfoo.dev/docs/providers/claude-agent-sdk/>
 - **AgentOps** (MIT): framework SDKs only, no coding-agent support.
   <https://github.com/AgentOps-AI/agentops>
@@ -727,10 +727,10 @@ The research queue carries these in its own entry format. Summary:
     - Traces link through `coding_sh.prompt.{name,version}` or `langfuse.observation.prompt.*`
       attributes.
     - Harness bundle ids are attached to organic sessions by hashing the live instruction files at
-      session start (CLAUDE.md, AGENTS.md, skills).
+      session start (AGENTS.md and other instruction files, skills).
     - The viewer shows versions with per-version cost, flags and scores.
     - `coding.sh prompts diff a b`.
-  - **Acceptance:** two CLAUDE.md versions in a fixture produce two versions with separate metrics.
+  - **Acceptance:** two AGENTS.md versions in a fixture produce two versions with separate metrics.
   - **Tests:** hash stability; linking; a diff golden.
   - **Deps:** C-6; overlaps with R2-2 (instruction surface), so share `INSTRUCTION_GLOBS`.
 - **C-14 LLM-call playground (src/viewer, M)**
@@ -808,7 +808,7 @@ it still describes the old site.
    reference passes k of k, and impossible variants fail. Then gate every PR on it."**
    - True today, except the last sentence, which needs C-7 and D-3.
    - No competitor in §2 replays from the pre-agent tree or validates verifiers.
-3. **"A/B your harness (CLAUDE.md, skills, MCP servers, model) across 13 coding agents. Every
+3. **"A/B your harness (AGENTS.md, skills, MCP servers, model) across 13 coding agents. Every
    result comes with a confidence interval, a power warning and a tamper check, and judges only
    count once they agree with your labels (κ ≥ 0.6 on held-out data)."**
    - True today for the stats and calibration parts.

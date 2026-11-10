@@ -855,7 +855,7 @@ A step past the last one gets 400. File content is cut at 1 MiB (`contentTruncat
 ### `GET /api/sessions/{id}/fork`, `POST /api/sessions/{id}/fork`
 
 Fork the session at a replay step: send the model call behind that step again with changed
-context files (AGENTS.md, CLAUDE.md) and compare the forked next action with the recorded one.
+context files (AGENTS.md and the like) and compare the forked next action with the recorded one.
 Only `coding.sh ui` answers these routes; `coding.sh serve` answers 404. The session needs model
 calls captured by [`coding.sh proxy`](../how-to/capture-with-proxy.md). When forking is on, the
 replay step list adds `"canFork": true`.
@@ -873,13 +873,13 @@ curl -sS "http://127.0.0.1:4319/api/sessions/cd0185b0-305a-4df2-92fa-6fc6caffdb5
 {
   "step": {"n": 4, "kind": "shell", "label": "$ npm test"},
   "call": {"id": "7a1c…", "model": "claude-sonnet-4-5", "by": "tool-use", "messages": 5},
-  "files": [{"path": "CLAUDE.md", "text": "Run the tests with npm test.\n"}],
+  "files": [{"path": "AGENTS.md", "text": "Run the tests with npm test.\n"}],
   "recorded": {"action": {"type": "tool", "name": "Bash", "input": {"command": "npm test"}}, "label": "Bash: npm test"},
   "canCall": true, "keyEnv": "ANTHROPIC_API_KEY"
 }
 ```
 
-`POST` with `{"step": N, "files": {"CLAUDE.md": "…"}, "trials": 1}` sends the call with each file
+`POST` with `{"step": N, "files": {"AGENTS.md": "…"}, "trials": 1}` sends the call with each file
 replaced, added, or removed when its text is empty. `trials` is 1 to 5. The request must come from
 the viewer's own origin. It calls the model and costs money. `edits` says what changed in the
 request, each trial has the forked first action and `differs`, and `differ` counts the trials whose
@@ -890,8 +890,8 @@ action is not the recorded one.
   "sessionId": "cd0185b0-305a-4df2-92fa-6fc6caffdb55",
   "step": {"n": 4, "kind": "shell", "label": "$ npm test"},
   "call": {"id": "7a1c…", "model": "claude-sonnet-4-5", "by": "tool-use", "messages": 5},
-  "change": "CLAUDE.md changed",
-  "edits": [{"path": "CLAUDE.md", "how": "replaced", "count": 1}],
+  "change": "AGENTS.md changed",
+  "edits": [{"path": "AGENTS.md", "how": "replaced", "count": 1}],
   "recorded": {"action": {"type": "tool", "name": "Bash", "input": {"command": "npm test"}}, "label": "Bash: npm test"},
   "trials": [{"action": {"type": "tool", "name": "Bash", "input": {"command": "node --test"}}, "label": "Bash: node --test",
               "differs": true, "model": "claude-sonnet-4-5", "costUsd": 0.0123}],
