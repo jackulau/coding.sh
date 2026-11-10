@@ -3,7 +3,7 @@
 // isolation. See docs/ADAPTERS.md.
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import { createInterface } from "node:readline";
 import { paths, userHome } from "../core/paths.ts";
@@ -38,6 +38,7 @@ import {
   planNestedInstall,
   planNestedUninstall,
   promptText,
+  readHeadText,
   readJsonl,
   readJsonlTail,
   runEnv,
@@ -313,6 +314,48 @@ export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext
 /** Subagent transcripts: <sid>/subagents/agent-<id>.jsonl, and Workflow-tool agents at <sid>/subagents/workflows/<wf>/agent-<id>.jsonl. */
 const SUBAGENT_FILE = /[\\/]([^\\/]+)[\\/]subagents[\\/](?:workflows[\\/]([^\\/]+)[\\/])?agent-([^\\/]+)\.jsonl$/;
 
+/**
+ * The session that wrote a subagent transcript: its first entry's `sessionId`
+ * (read from the first 64 KB). Claude Code copies subagent transcripts into
+ * other session dirs (a fork, a workflow run resumed with `resumeFromRunId`,
+ * a symlinked run dir) and the copies keep the writer's `sessionId`.
+ */
+export async function subagentOwner(path: string): Promise<string | undefined> {
+  const head = await readHeadText(path, 64 * 1024);
+  for (const line of head?.split("\n") ?? []) {
+    if (!line.trim()) continue;
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      return /"sessionId":"([^"\\]+)"/.exec(line)?.[1]; // a first line longer than the head: its sessionId key comes before the message
+    }
+    const sid = str(obj(entry).sessionId);
+    if (sid) return sid;
+  }
+  return undefined;
+}
+
+/**
+ * For a subagent transcript under `<slug>/<host>/subagents/`: the owner's
+ * session id when the file is a copy and the owner still holds it at the same
+ * place under `<slug>/<owner>/`, so it is stored once, as `<owner>:sub:<id>`.
+ * Undefined for the owner's own file and for a copy whose owner is gone.
+ */
+export async function copiedSubagentOwner(path: string): Promise<string | undefined> {
+  const sub = SUBAGENT_FILE.exec(path);
+  if (!sub) return undefined;
+  const host = sub[1]!;
+  const owner = await subagentOwner(path);
+  if (!owner || owner === host || /[\\/]|^\.\.?$/.test(owner)) return undefined;
+  const rel = path.slice(sub.index + host.length + 2); // below <slug>/<host>/
+  try {
+    return (await stat(join(path.slice(0, sub.index), owner, rel))).isFile() ? owner : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** A backfilled session whose last entry is older than this is treated as finished (gets a session.end). */
 export const TRANSCRIPT_IDLE_MS = 30 * 60_000;
 
@@ -340,6 +383,8 @@ async function* backfillClaude(base: NormalizeContext, opts: BackfillOpts = {}, 
     // Main transcripts sit directly in projects/<slug>/; any other .jsonl (workflow journals, …) is not a session.
     if (!sub && relative(root, f.path).split(/[\\/]/).length !== 2) continue;
     if (opts.changed && !(await opts.changed(cursorView(f, TRANSCRIPT_IDLE_MS)))) continue; // unchanged since the last backfill (or since it went idle)
+    // A copy of another session's subagent (fork, resumed or symlinked workflow run): the owner's file is stored instead.
+    if (sub && (await copiedSubagentOwner(f.path))) continue;
     let events: AgentEvent[];
     try {
       events = sub ? await convertSubagentFile(ctx, f.path, sub[1]!, sub[3]!, sub[2] ? (firstTs) => workflows.link(f.path, sub[1]!, sub[2]!, sub[3]!, firstTs) : undefined) : await convertMainFile(ctx, f.path);
@@ -606,7 +651,9 @@ export const claudeCode: Adapter = {
   // 12 (0.1.6): one llm.call per response even when its tool results are written between its blocks (timed from the
   //    api-request record); a subagent another subagent spawned hangs off that subagent's session; a tool call that
   //    loads a skill names it (payload.skill).
-  parseVersion: 12,
+  // 13 (0.1.6): a subagent transcript copied into another session (a resumed workflow run, a symlinked run dir, a fork)
+  //    is stored once, under the session that wrote it.
+  parseVersion: 13,
 
   detect() {
     const dir = claudeConfigDir();
