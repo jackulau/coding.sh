@@ -103,7 +103,7 @@ const RETRY_RULE = "When a command fails, read the error and change something be
 export const FLAG_TEXT: Readonly<Record<string, FlagText>> = {
   "no-verification": {
     title: "Says it is done without running anything to check",
-    fix: "Name the check in AGENTS.md or CLAUDE.md.",
+    fix: "Name the check in AGENTS.md.",
     rule: (t) => `Run \`${t}\` before you say you are done, and say what it printed.`,
     behavior: "unverified-claim",
   },
@@ -123,12 +123,12 @@ export const FLAG_TEXT: Readonly<Record<string, FlagText>> = {
   },
   "duplicate-fetch": {
     title: "Reads the same file or page again with nothing changed",
-    fix: "List the files that matter in AGENTS.md or CLAUDE.md, so the agent reads them once.",
+    fix: "List the files that matter in AGENTS.md, so the agent reads them once.",
   },
   churn: { title: "Edits the same lines back and forth", fix: "Ask for a plan before edits on tasks like these." },
   "no-progress": { title: "Works a long time without progress", fix: "Split tasks like these, or give the agent a check to aim at." },
   stalled: { title: "Waits on a slow or failing model provider", fix: "Check the provider or gateway; coding.sh usage --by model shows which model." },
-  "context-thrash": { title: "Fills its context and compacts again and again", fix: "Split tasks like these, or trim what AGENTS.md or CLAUDE.md and skills load." },
+  "context-thrash": { title: "Fills its context and compacts again and again", fix: "Split tasks like these, or trim what AGENTS.md and skills load." },
   "skill-copy-conflict": { title: "Has two different copies of one skill", fix: "Delete the stale copy so the agent reads one." },
   "text-tool-call": {
     title: "Writes tool calls as text, so they never run",
@@ -365,7 +365,7 @@ export function rankIssues(sessions: readonly Session[], failures: ReadonlyMap<s
       fix: setup
         ? `Fix ${what} so it passes on a clean checkout, or tell the agent the command that works. Until then the agent can't check its work.`
         : key.startsWith("cmd:")
-          ? `Fix ${what}, or tell the agent in AGENTS.md or CLAUDE.md what to run instead.`
+          ? `Fix ${what}, or tell the agent in AGENTS.md what to run instead.`
           : compound
             ? "Open an example: the error doesn't say which part of the command failed, so run its parts one at a time."
             : `Look at an example: tell the agent how to use ${g.label}, or why it fails.`,
