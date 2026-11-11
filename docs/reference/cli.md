@@ -645,8 +645,8 @@ coding.sh attribution --since 7d --rev main
 coding.sh attribution --json
 ```
 
-- Matches the lines each commit added to the lines each captured session added: the diff from its start state to its end snapshot, and its own edit tool calls for the files that diff does not hold. A whole-file match (patch id) or a same-file line match counts; moved long lines count at lower confidence; braces and blank lines only follow a matched neighbor. A rebased commit still matches.
-- A session gets credit for commits authored or committed from its start to 21 days later; of two sessions that wrote a line, the later one. Lines no session wrote belong to no session: a person wrote them, or an agent coding.sh did not capture.
+- Matches the lines each commit added to the lines each captured session added: the diff from its start state to its end snapshot, kept only for files its tools named or when it ran a shell or subagent call, and its own edit tool calls for the files that diff does not hold. A whole-file match (patch id) or a same-file line match counts; moved long lines count at lower confidence; braces and blank lines only follow a matched neighbor. A rebased commit still matches.
+- A session gets credit for commits authored or committed from its start to 21 days later; of two sessions that wrote a line, the later one. Lines no session wrote belong to no session: a person wrote them, or an agent coding.sh did not capture. A session that ran a shell or subagent call can still be credited a file a person wrote in the same window, at lower confidence.
 - Reads git only (log, diff, blame, notes). git-ai notes (refs/notes/ai), when present, credit lines no captured session matched. Each commit's result is kept in the store's key/value table.
 - --json: one document with totals, the sessions credited and per commit its attributions (path, line ranges, session, agent, model, confidence, method). export --json: {version, records}.
 
