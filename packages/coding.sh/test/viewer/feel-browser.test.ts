@@ -224,4 +224,16 @@ describe("viewer feel in a browser", { skip: chrome ? false : "no Chrome/Chromiu
       await page.close();
     }
   });
+
+  test("relative times carry a timestamp and are rewritten by refreshTimes", async () => {
+    await open();
+    try {
+      assert.ok((await page.eval("document.querySelectorAll('.row [data-ts]').length")) >= 10);
+      await page.eval("document.querySelector('.row [data-ts]').textContent = 'stale'");
+      await page.eval("refreshTimes()");
+      assert.match(await page.eval("document.querySelector('.row [data-ts]').textContent"), /ago|just now/);
+    } finally {
+      await page.close();
+    }
+  });
 });
