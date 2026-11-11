@@ -24,15 +24,15 @@ or a proxy in front of it.
 - Create keys with `coding.sh serve keygen`. The key goes to stdout once; the server keeps only its sha256.
 - Ingest keys cannot read and read keys cannot ingest. Each gets 401.
 - On a loopback bind with no keys configured, ingest is open and lands in project `default`, and reads are open too.
-- A non-loopback bind with no credentials at all makes one ingest key and one read key on first start, keeps them in `<CODING_SH_HOME>/serve-keys.json` and prints them on every start. With only some credentials configured (an ingest key but no read key, say), it refuses to start unless you pass `--insecure`.
+- A non-loopback bind with no credentials at all makes one ingest key and one read key on first start. It keeps them in `<CODING_SH_HOME>/serve-keys.json` and prints them on every start.
+- A non-loopback bind with only some credentials (an ingest key but no read key, say) refuses to start unless you pass `--insecure`.
 
 **Projects.** The ingest key decides the project of everything it sends; a client cannot pick one.
-Every project other than `default` gets its session ids stored as `<project>/<sessionId>`, so
-`chat-1` sent with a `team` key becomes `team/chat-1`. Percent-encode the slash when an id goes in a
-path: `/api/sessions/team%2Fchat-1`. The raw form `/api/sessions/team/chat-1` answers 404 with a hint
-to encode it (the viewer always encodes ids). A read key scoped to one project sees only that project: lists
-are filtered, other sessions answer 404, and eval data (tasks, runs, bundles, experiments) comes back
-empty. A `*` read key sees every project and can filter with `?project=`.
+
+- In every project other than `default`, session ids are stored as `<project>/<sessionId>`: `chat-1` sent with a `team` key becomes `team/chat-1`.
+- Percent-encode the slash when an id goes in a path: `/api/sessions/team%2Fchat-1`. The raw form `/api/sessions/team/chat-1` answers 404 with a hint to encode it.
+- A read key scoped to one project sees only that project. Lists are filtered, other sessions answer 404, and eval data (tasks, runs, bundles, experiments) comes back empty.
+- A `*` read key sees every project and can filter with `?project=`.
 
 **Content types.** Requests: `application/json` for `/v1/ingest`, `POST /api/labels`, `POST /api/scores` and `POST /api/score-configs`;
 `application/json` or `application/x-protobuf` for OTLP. Ingest bodies may use `Content-Encoding`
@@ -53,8 +53,10 @@ text), blobs (`text/plain`) and OTLP protobuf requests (answered in protobuf).
 **Errors.** Ingest and read routes answer `{"error": "…", "status": N}`. OTLP routes answer in
 google.rpc.Status form, `{"code": N, "message": "…"}` with the gRPC code (16 unauthenticated,
 8 resource exhausted, 3 invalid argument), or the protobuf encoding of the same when the request
-was protobuf. A 429 or 503 carries `Retry-After` in seconds; clients should wait and resend. Ingest is
-idempotent on event ids, so a resend never duplicates.
+was protobuf.
+
+A 429 or 503 carries `Retry-After` in seconds; clients should wait and resend. Ingest is idempotent
+on event ids, so a resend never duplicates.
 
 **Running the examples.** Every example below ran against a server started like this, with a fresh
 `CODING_SH_HOME`:
@@ -133,11 +135,19 @@ Any other path answers 404 `{"error":"not found","status":404}`.
 
 ## Which process serves what
 
-`coding.sh serve` answers every route above. Two local commands answer a subset on their own port:
+`coding.sh serve` answers every route above. Two local commands answer a subset on their own port,
+and a viewer replica leaves out ingest:
 
-- `coding.sh ui` (default port 4319) serves `/`, `/index.html` and every `/api/*` route. Auth is a random token made per process: open the printed `/?t=…` URL once, or send `Authorization: Bearer <token>`. Read keys and basic auth do not apply. It binds loopback, checks the `Host` header, and has no `/v1/*`, `/healthz`, `/readyz` or `/metrics`. Its `/api/update` really checks for a new release.
-- `coding.sh collector` (default port 4318) serves only `POST /v1/traces`, `/v1/logs` and `/v1/metrics`, with no auth. It binds loopback, rejects a non-loopback `Host` header, and allows browser origins on localhost. Every other path, including `/healthz` and `/v1/ingest`, answers 404 `{"code":5,"message":"no route for /healthz; use /v1/traces, /v1/logs or /v1/metrics"}`.
-- `coding.sh serve --role viewer` is a read replica. It answers 404 `{"error":"this replica runs --role viewer and takes no ingest","status":404}` on every `/v1/*` route and serves the rest.
+| Process | Serves | Auth and limits |
+|---|---|---|
+| `coding.sh ui` (default port 4319) | `/`, `/index.html` and every `/api/*` route; its `/api/update` really checks for a new release | A random token made per process: open the printed `/?t=…` URL once, or send `Authorization: Bearer <token>`. Read keys and basic auth do not apply. Binds loopback and checks the `Host` header |
+| `coding.sh collector` (default port 4318) | Only `POST /v1/traces`, `/v1/logs` and `/v1/metrics` | No auth. Binds loopback, rejects a non-loopback `Host` header, allows browser origins on localhost |
+| `coding.sh serve --role viewer` | Everything but `/v1/*` and `/proxy/*` | Same read auth as `serve`; a read replica that takes no ingest |
+
+`coding.sh ui` has no `/v1/*`, `/healthz`, `/readyz` or `/metrics`. The collector answers any
+other path, `/healthz` and `/v1/ingest` included, with 404
+`{"code":5,"message":"no route for /healthz; use /v1/traces, /v1/logs or /v1/metrics"}`. A viewer
+replica answers `/v1/*` and `/proxy/*` with 404 `{"error":"this replica runs --role viewer and takes no ingest","status":404}`.
 
 ## Ingest
 
@@ -145,13 +155,21 @@ Any other path answers 404 `{"error":"not found","status":404}`.
 
 Native batched ingest, used by the SDKs. Auth: ingest key. Body: `{"v": 0, "service": "…", "events": [AgentEvent, …]}`.
 
-Each event needs `v: 0`, an `id` (1-128 printable ASCII characters, unique per project; a resend with
-the same id inserts nothing), a `sessionId` (1-200 characters, no control characters), a `kind`, a
-`ts` in epoch milliseconds no later than now plus one day, and a `payload` object. Optional fields:
-`parentId`, `turnId`, `subagentId`, `agent`, `agentVersion`, `model`, `runId`, `traceId`, `spanId`,
-`parentSpanId`, `cwd`, `source`, `durationMs`, `usage` (`inputTokens`, `outputTokens`,
-`cacheReadTokens`, `cacheWriteTokens`, `costUsd`, all non-negative) and `repo`. Anything else, and
-`blobs`, is dropped.
+Each event needs these fields:
+
+| Field | Rule |
+|---|---|
+| `v` | `0` |
+| `id` | 1-128 printable ASCII characters, unique per project. A resend with the same id inserts nothing |
+| `sessionId` | 1-200 characters, no control characters |
+| `kind` | One of the kinds below |
+| `ts` | Epoch milliseconds, no later than now plus one day |
+| `payload` | An object |
+
+Optional fields: `parentId`, `turnId`, `subagentId`, `agent`, `agentVersion`, `model`, `runId`,
+`traceId`, `spanId`, `parentSpanId`, `cwd`, `source`, `durationMs`, `usage` (`inputTokens`,
+`outputTokens`, `cacheReadTokens`, `cacheWriteTokens`, `costUsd`, all non-negative) and `repo`.
+Anything else, and `blobs`, is dropped.
 
 Kinds: `session.start`, `session.end`, `user.message`, `assistant.message`, `llm.call`, `tool.start`,
 `tool.end`, `context.compact`, `turn.end`, `subagent.start`, `subagent.end`, `file.change`,
@@ -403,10 +421,11 @@ A missing or wrong key gets a 401 HTML page that explains how to sign in, with
 `WWW-Authenticate: Basic` when basic auth is configured. Other methods get 405.
 
 The page arrives with the first sessions page drawn as rows, so the list shows before its script
-runs, and without JavaScript. It also embeds, in a `<script type="application/json"
-id="boot-data">` element, the responses the page asks for first (`/api/sessions`, `/api/stats`,
-`/api/facets` and `/api/where` with their default parameters), and the first row's session when it
-has 400 events or fewer. The script reads each one once instead of fetching it.
+runs, and without JavaScript.
+
+It also embeds the responses the page asks for first in a `<script type="application/json"
+id="boot-data">` element: `/api/sessions`, `/api/stats`, `/api/facets` and `/api/where` with their
+default parameters, and the first row's session when it has 400 events or fewer.
 
 ## Read API
 
@@ -422,6 +441,8 @@ share these errors:
 | 405 | wrong method | `{"error":"method not allowed","status":405}` |
 
 Times are epoch milliseconds. `since` is inclusive and `until` exclusive, both on a session's start.
+
+The examples use `$CSH` (the server's base URL) and `$READ_KEY` from [Basics](#basics).
 
 ### `GET /api/projects`
 
@@ -504,154 +525,179 @@ curl -sS "$CSH/api/sessions/team%2Fchat-1" -H "Authorization: Bearer $READ_KEY"
 {"id":"team/chat-1","agent":"support-bot","startedAt":1793872800000,"stats":{"events":5,"turns":1,"toolCalls":1,"toolErrors":0,"filesChanged":0,"usage":{"inputTokens":820,"outputTokens":46,"costUsd":0.00251,"estimatedCostUsd":0.00251},"latency":{"wallMs":3000,"llmCalls":1,"llmMs":900,"llmP50Ms":900,"llmP95Ms":900,"toolMs":400,"toolP95Ms":400}},"flags":[],"model":"gpt-4o","title":"Where is order 1042?","endedAt":1793872803000,"project":"team"}
 ```
 
-`stats.usage.costUsd` is the reported or gateway-billed cost where there is one, else token counts
-times list price; `estimatedCostUsd` is the part that was estimated (here all of it). Each estimated
-`llm.call` has `payload.costEstimated: true`, plus `payload.pricedAs` when a sibling model's price was
-used, and `payload.priceTier` when it was priced at batch, flex, priority, fast, long-context or US-only rates
-(`batch+long-context` for both). `stats.usage.estimatedCostByTier` totals the estimate by
-`priceTier`, and is left out when every call was standard. `stats.duplicateUsage` (`calls`, `tokens`, `costUsd`) is model-call usage left out because an
-enclosing call or an earlier copy of the same response already counted it. `stats.llmErrors`
-(`count`, plus the first failure's `statusCode` and `error`) counts `llm.call` events with
-`ok: false` or a status of 400 or more; it is absent when none failed.
+The fields below are grouped by topic: cost, parent and model, model switches, proxy calls, API
+errors, waste and cache breaks, launch and forks, hooks and redaction, unapproved actions,
+and tool errors and fold errors.
 
-`parent` is set on a child session: `sessionId`, plus `eventId`, `subagentId` and `type` when known.
-`type` is the subagent type (`explore`, …), or `"harness"` for an agent started by another agent's
-shell tool (`codex exec` from Claude Code's Bash tool). Such a child's `session.start` payload
-also carries `parentSessionId`, `parentAgent`, `subagentType: "harness"`, and `parentToolCallId`
-when Codex started it.
+**Cost.**
 
-`model` is the model that made most of the session's main-thread model calls (calls without a
-`subagentId`; the earlier one on a tie), else the last model any event named. `stats.models`
-counts model calls per model (`{"claude-sonnet-5-5": 3, "claude-sonnet-5": 2}`), subagent calls in
-the session included; it is absent when one model or none made them. `stats.modelSwitch`
-(`from`, `to`, `at`, `trigger`) is the session's first model switch: the last call on `from`, then
-the first call on `to` at `at`, in the same scope (the main thread, or one subagent). A change is a
-switch when the agent recorded a fallback for it, when it is inside a subagent (a Claude Code
-subagent's own session included), or when the main thread handed over: every main-thread call on
-`from` came before the first call on `to`. `trigger` is `fallback` for a recorded fallback (with
-`reason`, such as `overloaded` or `refusal`), `refusal` or `error` when the last call on `from`
-stopped on a refusal or failed, `command` when a `/model` command came right before the first call
-on `to`, and absent otherwise. Without a trigger or a record, each main-thread model needs at least
-two calls, so a helper model's single call before or after the others (a title) is not a switch; a
-helper model whose calls run between the main model's never is. A switch and back is one switch.
-`subagent: true` says the first switch was in a subagent, and `count` is the number of switches
-when there was more than one. `switchedCalls` counts the calls that ran on a model a switch moved
-to, until the scope went back, and `extraUsd` is what those calls cost at their model's list prices
-minus what the same tokens cost at `from`'s list prices (standard rates, so negative when the other
-model is cheaper); it is absent when either model has no price. A switch adds the `model:switch` tag
-to `flags`. Claude Code's `model_fallback` and `model_refusal_fallback` transcript records become a
-`notification` with `payload.kind: "model.fallback"` (`from`, `to`, `trigger`, `direction`, `text`)
-and add the `model:fallback` tag. A call whose `payload.stopReason` is `refusal`,
-`content_filter` or `safety` (any case) adds the `refusal` flag. Calls logged by `coding.sh proxy`
-count here only in a session with no other model calls, as they do for usage.
+| Field | Meaning |
+|---|---|
+| `stats.usage.costUsd` | The reported or gateway-billed cost where there is one, else token counts times list price |
+| `stats.usage.estimatedCostUsd` | The part of `costUsd` that was estimated (in the example, all of it) |
+| `stats.usage.estimatedCostByTier` | The estimate totalled by `priceTier`. Left out when every call was standard |
+| `stats.duplicateUsage` (`calls`, `tokens`, `costUsd`) | Model-call usage left out because an enclosing call or an earlier copy of the same response already counted it |
 
-Model calls logged by [`coding.sh proxy`](../how-to/capture-with-proxy.md) have `source: "proxy"`.
-Their payload adds `provider`, `api` (`messages`, `count_tokens`, `chat` or `responses`),
-`statusCode`, `stream`, `ttfbMs`, `ttftMs`, `stopReason`, `systemHash` and `toolsHash` (16 hex
-characters each), `toolNames`, `toolCount`, `messageCount`, `prompt` (the last user message,
-clipped), `linkedBy` (`header`, `metadata`, `previous-response` or `conversation`: how the call
-found its session), rate limits (`rlRequestsRemaining`, `rlTokensRemaining`, … when the API sent
-them), `errorClass` on failure, and `requestRef` and
-`responseRef` (the stored request and response blobs, absent in `metadata` mode), and
-`requestPaged: true` when the request's messages are stored in blocks, not inside the request blob
-(`show <session>#<n>` puts them back). When the request
-or response has them, it also adds `reasoningEffort` (`reasoning.effort`, `reasoning_effort` or
-`output_config.effort`), `serviceTier` and `speed` (the response's value, else the request's;
-`requestedServiceTier` when the request asked for another tier),
-`thinkingBudget`, and `compaction: true` on a call that compacted the conversation (Codex's
-`/responses/compact`, or a `compaction` block or output item). When the client names them, it adds
-`parentSessionId` (the session that started this one; for a Claude Code subagent, whose calls go to
-`<session>:sub:<agentId>`, the parent's), `agentId`, `parentAgentId` and `agentType` (Claude Code),
-`forkedFromSessionId` and `subagentKind` (Codex), `accountHash` (16 hex characters of the sha256 of
-the account id), and `upstreamAuth` (CLIProxyAPI's credential index). A session seen only through
-the proxy takes its `parent` from its calls' `parentSessionId`. When the
+Each estimated `llm.call` has `payload.costEstimated: true`. It adds `payload.pricedAs` when a
+sibling model's price was used, and `payload.priceTier` when it was priced at batch, flex, priority,
+fast, long-context or US-only rates (`batch+long-context` for both).
+
+**Parent and model.**
+
+| Field | Meaning |
+|---|---|
+| `parent` | Set on a child session: `sessionId`, plus `eventId`, `subagentId` and `type` when known |
+| `parent.type` | The subagent type (`explore`, …), or `"harness"` for an agent started by another agent's shell tool (`codex exec` from Claude Code's Bash tool) |
+| `model` | The model that made most of the main-thread model calls (calls without a `subagentId`; the earlier one on a tie), else the last model any event named |
+| `stats.models` | Model calls per model, subagent calls included (`{"claude-sonnet-5-5": 3, "claude-sonnet-5": 2}`). Absent when one model or none made them |
+| `stats.modelSwitch` | The session's first model switch, described below |
+
+A `"harness"` child's `session.start` payload also carries `parentSessionId`, `parentAgent`,
+`subagentType: "harness"`, and `parentToolCallId` when Codex started it.
+
+**Model switches.** `stats.modelSwitch` (`from`, `to`, `at`, `trigger`) is the last call on `from`,
+then the first call on `to` at `at`, in the same scope (the main thread, or one subagent). A change
+is a switch when:
+
+- the agent recorded a fallback for it,
+- it is inside a subagent (a Claude Code subagent's own session included), or
+- the main thread handed over: every main-thread call on `from` came before the first call on `to`.
+
+Without a trigger or a record, each main-thread model needs at least two calls. So a helper model's
+single call before or after the others (a title) is not a switch, and a helper model whose calls run
+between the main model's never is. A switch and back is one switch.
+
+| Field | Meaning |
+|---|---|
+| `trigger` | `fallback` for a recorded fallback (with `reason`, such as `overloaded` or `refusal`); `refusal` or `error` when the last call on `from` stopped on a refusal or failed; `command` when a `/model` command came right before the first call on `to`; absent otherwise |
+| `subagent` | `true` when the first switch was in a subagent |
+| `count` | The number of switches, when there was more than one |
+| `switchedCalls` | Calls that ran on a model a switch moved to, until the scope went back |
+| `extraUsd` | What those calls cost at their model's list prices, minus the same tokens at `from`'s list prices (standard rates, so negative when the other model is cheaper). Absent when either model has no price |
+
+- A switch adds the `model:switch` tag to `flags`.
+- Claude Code's `model_fallback` and `model_refusal_fallback` transcript records become a `notification` with `payload.kind: "model.fallback"` and add the `model:fallback` tag.
+- A call whose `payload.stopReason` is `refusal`, `content_filter` or `safety` (any case) adds the `refusal` flag.
+- Calls logged by `coding.sh proxy` count here only in a session with no other model calls, as they do for usage.
+
+**Proxy calls.** Model calls logged by [`coding.sh proxy`](../how-to/capture-with-proxy.md) have
+`source: "proxy"`. Their payload adds these fields. `reasoningEffort` through `compaction` appear when the request or
+response has them, and `parentSessionId` through `upstreamAuth` when the client names them.
+
+| Field | Meaning |
+|---|---|
+| `provider`, `api` | `api` is `messages`, `count_tokens`, `chat` or `responses` |
+| `statusCode`, `stream`, `ttfbMs`, `ttftMs`, `stopReason` | The answer's status, whether it streamed, time to first byte and to first token, and the stop reason |
+| `systemHash`, `toolsHash` | 16 hex characters each |
+| `toolNames`, `toolCount`, `messageCount` | The request's tools and messages |
+| `prompt` | The last user message, clipped |
+| `linkedBy` | How the call found its session: `header`, `metadata`, `previous-response` or `conversation` |
+| `rlRequestsRemaining`, `rlTokensRemaining`, … | Rate limits, when the API sent them |
+| `errorClass` | On failure; values below |
+| `requestRef`, `responseRef` | The stored request and response blobs. Absent in `metadata` mode |
+| `requestPaged` | `true` when the request's messages are stored in blocks, not inside the request blob (`show <session>#<n>` puts them back) |
+| `reasoningEffort` | From `reasoning.effort`, `reasoning_effort` or `output_config.effort` |
+| `serviceTier`, `speed` | The response's value, else the request's. `requestedServiceTier` when the request asked for another tier |
+| `thinkingBudget` | The request's thinking budget |
+| `compaction` | `true` on a call that compacted the conversation (Codex's `/responses/compact`, or a `compaction` block or output item) |
+| `parentSessionId` | Named by the client: the session that started this one. For a Claude Code subagent, whose calls go to `<session>:sub:<agentId>`, the parent's |
+| `agentId`, `parentAgentId`, `agentType` | Named by Claude Code |
+| `forkedFromSessionId`, `subagentKind` | Named by Codex |
+| `accountHash` | 16 hex characters of the sha256 of the account id |
+| `upstreamAuth` | CLIProxyAPI's credential index |
+
+A session seen only through the proxy takes its `parent` from its calls' `parentSessionId`. When the
 session also has model calls from the agent's transcript or OpenTelemetry, those count toward
-`stats` and the proxy's copies are detail only; failed proxy calls count either way.
+`stats` and the proxy's copies are detail only. Failed proxy calls count either way.
 
-`errorClass` is one of `rate_limit` (429), `overloaded` (529), `auth` (401, 403), `too_large`
-(413), `timeout`, `server` (other 5xx), `invalid_request` (other 4xx), `network` and `api`. Each
-API error Claude Code retried (a transcript's `api_error` line) is an `error` event with
-`source: "api"`, and a backfill also keeps what the transcript records about it: `statusCode`,
-`errorType` (`rate_limit_error`, `overloaded_error`, …), `errorClass`, `rateLimitType` (the limit
-that was hit, such as `seven_day` or `five_hour`), `resetsAt` (ms), `retryAfterMs` (how long Claude
-Code waited before the next attempt), `retryAttempt` and `maxRetries`. A weekly-limit stall then
-reads as hundreds of `rate_limit` errors on `seven_day`, not as one transient error.
+**API errors.**
 
-Two waste stats are absent when there is nothing to report. `stats.waste` (`duplicateFetches`,
-`duplicateFetchTokens`, `readOnlyCalls`) counts read-only calls that repeated an earlier call in the
-same context with the same result, and the tokens they sent again (output length / 4).
-`stats.cacheBreaks` (`count`, `lostTokens`, `extraUsd`, `byCause`) counts model calls that found the
-prompt cache gone: the previous prompt was over 4,096 tokens, this call read less than half of it
-from cache, and more than 2,048 tokens were billed again. `byCause` splits them into `compaction`,
-`model-switch`, `idle` (5 minutes, or an hour after a 1-hour cache write) and `other`. `byIdle`
-splits the idle breaks by where the wait was: `wait` when one tool call in the same scope ran past
-the cache lifetime (a foreground wait, such as a Bash command polling a job), `subagent` when a
-subagent sat idle between turns, and `away` when the main session sat idle between turns; it is
-absent when no break was idle. `extraUsd` is
-the cache-write (or input) price minus the cache-read price for those tokens; it is left out, and
-`unpriced` counts the breaks, when the model has no price. `--where cache.breaks>0`, `cache.lost`
-(the re-billed tokens) and `cache.cost` (`extraUsd`) query and sort on them, e.g.
-`coding.sh sessions --where 'cache.breaks>0 sort:-cache.cost'`. A session that wrote a prompt cache
-of at least one block over at least three turns but read back fewer tokens than it wrote is tagged
-`cache:low`. `coding.sh usage --cache` reports the hit rate, read vs write tokens, the read-to-write
-ratio, the breaks and their cost per group, with the break causes to change and a line per kind of
-idle break; `exp compare` adds the
-`cache breaks / run` and `cache waste / run` metrics so an A/B shows whether a setup change reused the
-cache better.
+| Field | Meaning |
+|---|---|
+| `stats.llmErrors` (`count`, `statusCode`, `error`) | `llm.call` events with `ok: false` or a status of 400 or more, with the first failure's status and error. Absent when none failed |
 
-`stats.launch` is `headless` for a session the agent ran without a person at the keyboard
-(`claude -p`, the Claude Agent SDK, `codex exec`, Codex as an MCP server) and `interactive` for a
-terminal or IDE session. It comes from the session's start: Claude Code's `entrypoint` (`sdk-cli`,
-`sdk-ts`, `sdk-py`; `cli`, `claude-vscode`, …) and Codex's `originator` and `launch` (the rollout's
-`session_meta.source`). It is absent when the start does not say. `--where launch:headless` and
-`--facets launch` use it.
+`errorClass` is one of `rate_limit` (429), `overloaded` (529), `auth` (401, 403),
+`too_large` (413), `timeout`, `server` (other 5xx), `invalid_request` (other 4xx), `network` and
+`api`.
 
-`stats.inheritedTokens` is set on a Claude Code fork subagent (`subagent_type: "fork"`): the tokens
-of the parent's context it started with, the prompt and output of the parent's call that started it.
-The fork's session holds only its own model calls, so the parent's calls count once, in the parent.
-The fork's own calls read the inherited context from the prompt cache, and those reads count in its
-`usage`. It comes from a `notification` event with `payload.kind: "fork"`, `toolUseId` (the parent's
-Agent call) and `inheritedTokens`, and is absent for other sessions.
+Each API error Claude Code retried (a transcript's `api_error` line) is an `error` event with
+`source: "api"`. A backfill also keeps what the transcript records about it:
 
-`stats.hookContext` (`count`, `tokens`, `bySource`) counts the texts hooks added to the model's
-context (Claude Code), and their size in tokens (characters / 4). `bySource` splits them by whose
-hook it was: `plugin:<name>`, `plugin` (a plugin not installed where the session was parsed),
-`settings` (a hook in a settings file) or `unknown` (the agent recorded no command). Each source also
-adds a `hook:<source>` tag to `flags`, such as `hook:plugin:terse`. It is absent when no hook added
-context. Each text is a `notification` event with `payload.kind: "hook.context"` and `hookEvent`,
-`hookName`, `hookSource`, `command`, `chars`, `tokens` and `text` (clipped; metadata mode keeps only
-`hookEvent`, `hookSource`, `chars` and `tokens`).
+| Field | Meaning |
+|---|---|
+| `statusCode`, `errorType` | The HTTP status and the API's error type (`rate_limit_error`, `overloaded_error`, …) |
+| `errorClass` | As above |
+| `rateLimitType` | The limit that was hit, such as `seven_day` or `five_hour` |
+| `resetsAt` | When the limit resets (ms) |
+| `retryAfterMs` | How long Claude Code waited before the next attempt |
+| `retryAttempt`, `maxRetries` | Which attempt this was, out of how many |
 
-`stats.redactions` counts the values redaction replaced before storage, by rule kind
-(`{"anthropic-key": 1, "password": 2}`); it never holds the values, and it is absent when nothing was
-redacted. Each event's own counts are in `payload.redactions`, which metadata mode keeps; a tool
-output moved to a blob counts what was redacted inside the blob. A vendor token kind also adds the
-`secret:exposed` tag to `flags`. A vendor-shaped value that is plainly made up (a published example
-key, EXAMPLE, test or stub after the prefix, a repeated character or chunk, eight consecutive
-characters) counts as `placeholder-key`, which adds no tag. Events stored before counting existed are counted from the
-`[redacted:<kind>]` markers in their payload.
+A weekly-limit stall then reads as hundreds of `rate_limit` errors on `seven_day`, not as one
+transient error.
 
-`stats.unapprovedActions` (`count`, `byKind`, `first`) counts the destructive or paid commands the
-agent ran after a user turn that did not approve them (the `unapproved-action` flag; the rules are in
-[concepts](../concepts.md)). `byKind` splits them into `rm-rf`, `git-reset-hard`, `git-clean`,
-`git-discard`, `git-push-force`, `db-drop`, `forced-subcommand`, `data-dir` and `paid`. `first` is
-the first one: `kind`, `command` (whitespace collapsed, at most 200 characters), `at` (ms) and
-`afterError: true` when a tool call had failed since the user's turn. It is absent when there were
-none. `--where unapproved>0` lists those sessions.
+**Waste and cache breaks.** Both stats are absent when there is nothing to report.
 
-`stats.foldError` is set when coding.sh could not fold the session's stored events into its stats,
-which is a coding.sh bug, not the agent's. The row then holds only what the events say directly: the
-agent, the first and last event times, the cwd and `stats.events`. The session also gets the
-`fold:error` tag. The text is the error, at most 500 characters. `coding.sh ingest` folds these
-sessions again, and `coding.sh doctor` counts them. It is absent when the fold worked.
+| Field | Meaning |
+|---|---|
+| `stats.waste` (`duplicateFetches`, `duplicateFetchTokens`, `readOnlyCalls`) | Read-only calls that repeated an earlier call in the same context with the same result, and the tokens they sent again (output length / 4) |
+| `stats.cacheBreaks` (`count`, `lostTokens`, `extraUsd`, `byCause`) | Model calls that found the prompt cache gone: the previous prompt was over 4,096 tokens, this call read less than half of it from cache, and more than 2,048 tokens were billed again |
+| `stats.cacheBreaks.byCause` | `compaction`, `model-switch`, `idle` (5 minutes, or an hour after a 1-hour cache write) and `other` |
+| `stats.cacheBreaks.byIdle` | Idle breaks by where the wait was: `wait` (one tool call in the same scope ran past the cache lifetime, such as a Bash command polling a job), `subagent` (a subagent sat idle between turns) or `away` (the main session did). Absent when no break was idle |
+| `stats.cacheBreaks.extraUsd` | The cache-write (or input) price minus the cache-read price for those tokens. Left out when the model has no price; `unpriced` then counts the breaks |
 
-`stats.toolErrors` counts tool calls that really failed. A shell search that found nothing (`grep`,
-`rg`, `git grep` and the like exiting 1 with no output), a probe that answered no (`test -f`,
-`which`, `command -v`) and a `diff`, `cmp` or `git diff --exit-code` that found differences are not
-errors: `stats.benignToolErrors` counts them. A call the user or the agent stopped (exit 130, or an
-interrupted result) is counted in `stats.interruptedToolCalls`. Both are absent when zero. The same
-rule decides `repeated-tool-failure`, which only counts real failures, and each phase's `toolErrors`
-in the outline. Sessions stored before this rule are counted again on the next ingest.
+- `--where cache.breaks>0`, `cache.lost` (the re-billed tokens) and `cache.cost` (`extraUsd`) query and sort on them, e.g. `coding.sh sessions --where 'cache.breaks>0 sort:-cache.cost'`.
+- A session that wrote a prompt cache of at least one block over at least three turns, but read back fewer tokens than it wrote, is tagged `cache:low`.
+- [`coding.sh usage --cache`](https://coding.sh/docs/cli/usage) reports the hit rate, breaks and their cost per group. `exp compare` adds the `cache breaks / run` and `cache waste / run` metrics.
+
+**Launch and forks.**
+
+| Field | Meaning |
+|---|---|
+| `stats.launch` | `headless` for a session run without a person at the keyboard (`claude -p`, the Claude Agent SDK, `codex exec`, Codex as an MCP server), `interactive` for a terminal or IDE session. From Claude Code's `entrypoint` and Codex's `originator` and `launch` ([details](../ADAPTERS.md)). Absent when the start does not say. Used by `--where launch:headless` and `--facets launch` |
+| `stats.inheritedTokens` | On a Claude Code fork subagent (`subagent_type: "fork"`): the tokens of the parent's context it started with, the prompt and output of the parent's call that started it. Absent for other sessions |
+
+- A fork subagent's session holds only its own model calls, so the parent's calls count once, in the parent. The fork's reads of the inherited context from the prompt cache count in its `usage`.
+
+**Hooks and redaction.**
+
+| Field | Meaning |
+|---|---|
+| `stats.hookContext` (`count`, `tokens`, `bySource`) | Texts hooks added to the model's context (Claude Code), and their size in tokens (characters / 4). Absent when no hook added context |
+| `stats.hookContext.bySource` | Whose hook it was: `plugin:<name>`, `plugin` (a plugin not installed where the session was parsed), `settings` (a hook in a settings file) or `unknown` (the agent recorded no command). Each source adds a `hook:<source>` tag, such as `hook:plugin:terse` |
+| `stats.redactions` | Values redaction replaced before storage, by rule kind (`{"anthropic-key": 1, "password": 2}`). Never holds the values. Absent when nothing was redacted |
+
+- Redaction counts per event are in `payload.redactions`, which metadata mode keeps. A tool output moved to a blob counts what was redacted inside the blob.
+- A vendor token kind adds the `secret:exposed` tag to `flags`.
+- A vendor-shaped value that is plainly made up counts as `placeholder-key`, which adds no tag: a published example key, EXAMPLE, test or stub after the prefix, a repeated character or chunk, or eight consecutive characters.
+- Events stored before redaction counting existed are counted from the `[redacted:<kind>]` markers in their payload.
+
+**Unapproved actions.**
+
+| Field | Meaning |
+|---|---|
+| `stats.unapprovedActions` (`count`, `byKind`, `first`) | Destructive or paid commands the agent ran after a user turn that did not approve them (the `unapproved-action` flag; rules in [concepts](../concepts.md)). Absent when there were none. `--where unapproved>0` lists those sessions |
+| `stats.unapprovedActions.byKind` | `rm-rf`, `git-reset-hard`, `git-clean`, `git-discard`, `git-push-force`, `db-drop`, `forced-subcommand`, `data-dir` and `paid` |
+| `stats.unapprovedActions.first` | `kind`, `command` (whitespace collapsed, at most 200 characters), `at` (ms), and `afterError: true` when a tool call had failed since the user's turn |
+
+**Tool errors and fold errors.**
+
+| Field | Meaning |
+|---|---|
+| `stats.toolErrors` | Tool calls that really failed |
+| `stats.benignToolErrors` | Non-zero exits that are not errors: a shell search that found nothing (`grep`, `rg`, `git grep` and the like exiting 1 with no output), a probe that answered no (`test -f`, `which`, `command -v`), and a `diff`, `cmp` or `git diff --exit-code` that found differences. Absent when zero |
+| `stats.interruptedToolCalls` | Calls the user or the agent stopped (exit 130, or an interrupted result). Absent when zero |
+| `stats.foldError` | Set when coding.sh could not fold the session's stored events into its stats, a coding.sh bug, not the agent's. The text is the error, at most 500 characters. Absent when the fold worked |
+
+- A session with `stats.foldError` holds only what the events say directly: the agent, the first and last event times, the cwd and `stats.events`, plus the `fold:error` tag. `coding.sh ingest` folds it again, and `coding.sh doctor` counts these sessions.
+- The benign and interrupted rule also decides `repeated-tool-failure`, which only counts real failures, and each phase's `toolErrors` in the outline.
+
+Three `notification` kinds carry the events behind these stats:
+
+| `payload.kind` | Fields |
+|---|---|
+| `model.fallback` | `from`, `to`, `trigger`, `direction`, `text` |
+| `fork` | `toolUseId` (the parent's Agent call) and `inheritedTokens` |
+| `hook.context` | `hookEvent`, `hookName`, `hookSource`, `command`, `chars`, `tokens` and `text` (clipped). Metadata mode keeps only `hookEvent`, `hookSource`, `chars` and `tokens` |
 
 A missing session, or one outside a scoped key's project, gets 404:
 
@@ -720,26 +766,36 @@ curl -sS "$CSH/api/sessions/team%2Fchat-1/outline" -H "Authorization: Bearer $RE
 }
 ```
 
-The span fields come from the session's span model. A turn starts at each prompt of the main
-agent (or a turn id not seen before); a subagent's events stay in the turn that ran it. `turns.lengths`
-is the number of events in each turn, so a turn's first index is the sum of the lengths before it
-(at most 2,000 turns, with `"truncated": true` past that). `failures.at` lists the first 100 failed
-events: failed tool calls, errors, and model calls, subagents or test runs that failed. `minimap.rows`
-splits the session into at most 120 runs of `size` events, each `[events, failures, tool calls,
-compactions]`. A session over 20,000 events builds its model in the background the first time:
-that outline has `"spans": "building"` in place of the span fields. Sessions of 5,000 events or
-more keep their model in the index, so a restarted viewer does not build it again.
+The span fields come from the session's span model. A turn starts at each prompt of the main agent
+(or a turn id not seen before); a subagent's events stay in the turn that ran it.
+
+| Field | Meaning |
+|---|---|
+| `turns.lengths` | The number of events in each turn, so a turn's first index is the sum of the lengths before it. At most 2,000 turns, with `"truncated": true` past that |
+| `failures.at` | The first 100 failed events: failed tool calls, errors, and model calls, subagents or test runs that failed |
+| `minimap.rows` | At most 120 runs of `size` events, each `[events, failures, tool calls, compactions]` |
+
+A session over 20,000 events builds its model in the background the first time: that outline has
+`"spans": "building"` in place of the span fields. Sessions of 5,000 events or more keep their
+model in the index, so a restarted viewer does not build it again.
 
 ### `GET /api/sessions/{id}/rows`
 
-One page of a turn's rows, for a timeline that shows a long session without loading it. Takes `turn`
-(from 0, default 0), `after` (the last event index already shown; the page starts after it), `limit`
-(1 to 1,000 rows, default 200) and `fold=0` to show every event. A run of 12 or more routine events
-(model calls, successful tool calls, spans, notifications) folds into one row, with its first and
-last three events left as rows. A fold never holds a failure, a prompt, a reply, a compaction, a
-subagent's start or end, a file change or a test result. Open a fold by asking for its range with
-`after=<from - 1>&fold=0`. `next`, when present, is the `after` of the next page. A `turn`, `after`
-or `limit` out of range is a 400.
+One page of a turn's rows, for a timeline that shows a long session without loading it.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `turn` | 0 | The turn, from 0 |
+| `after` | | The last event index already shown; the page starts after it |
+| `limit` | 200 | 1 to 1,000 rows |
+| `fold` | | `0` shows every event |
+
+A run of 12 or more routine events (model calls, successful tool calls, spans, notifications) folds
+into one row, with its first and last three events left as rows. A fold never holds a failure, a
+prompt, a reply, a compaction, a subagent's start or end, a file change or a test result.
+
+Open a fold by asking for its range with `after=<from - 1>&fold=0`. `next`, when present, is the
+`after` of the next page. A `turn`, `after` or `limit` out of range is a 400.
 
 ```sh
 curl -sS "$CSH/api/sessions/team%2Fchat-1/rows?turn=2&limit=3" -H "Authorization: Bearer $READ_KEY"
@@ -760,11 +816,12 @@ curl -sS "$CSH/api/sessions/team%2Fchat-1/rows?turn=2&limit=3" -H "Authorization
 
 ### `GET /api/sessions/{id}/tree`
 
-The whole multi-agent run this session belongs to: its top-level agent (found by following
-`parent` up) and every subagent under it, as a tree. Each node carries the session's own model,
-`usage`, tool calls, files changed and failure flags; `totals` sums them over the whole tree, with
-the run's wall `durationMs` and every failure flag in it worst first; `worst` names the node to fix
-first (the worst-flagged, costliest session), or is null when nothing is flagged.
+The whole multi-agent run this session belongs to, as a tree: its top-level agent (found by
+following `parent` up) and every subagent under it.
+
+- Each node carries the session's own model, `usage`, tool calls, files changed and failure flags.
+- `totals` sums them over the whole tree, with the run's wall `durationMs` and every failure flag in it, worst first.
+- `worst` names the node to fix first (the worst-flagged, costliest session), or is null when nothing is flagged.
 
 ```sh
 curl -sS "$CSH/api/sessions/9f1c2e…/tree" -H "Authorization: Bearer $READ_KEY"
@@ -818,19 +875,20 @@ curl -sS "$CSH/api/sessions/cd0185b0-305a-4df2-92fa-6fc6caffdb55/replay" -H "Aut
 }
 ```
 
-`step=N` returns what step N did: `detail` (the prompt or reply text, the tool input, or for a shell
-call `shell` with `command`, `exitCode` when known, `durationMs` and `output`), `changes` (one entry
-per file with a unified `diff`), and `tree` (every file touched up to step N, with `status` `added`,
-`modified`, `deleted` or `read`). Add `file=<path>` for that file's content as of step N.
+| Query | Returns |
+|---|---|
+| `step=N` | What step N did: `detail` (the prompt or reply text, the tool input, or for a shell call `shell` with `command`, `exitCode` when known, `durationMs` and `output`), `changes` (one entry per file with a unified `diff`), and `tree` (every file touched up to step N, with `status` `added`, `modified`, `deleted` or `read`) |
+| `step=N&file=<path>` | The same, plus that file's content as of step N |
+| `from=A&to=B` | What steps A through B changed together, one diff per file |
 
-`from=A&to=B` returns what steps A through B changed together, one diff per file.
+A diff with `exact: true` compares the rebuilt file before and after, with real line numbers.
 
-A diff with `exact: true` compares the rebuilt file before and after, with real line numbers. When
-the content on one side is unknown, `exact` is `false`, the diff is the change as the agent
+When the content on one side is unknown, `exact` is `false`, the diff is the change as the agent
 recorded it, and `why` says what is missing, for example `Step 3 patched it before any step showed
-its content (no earlier read, full write or start snapshot).` A file's content is unknown until a
-step writes or fully reads it, or the start snapshot has it; an edit that does not match the
-rebuilt content makes it unknown again.
+its content (no earlier read, full write or start snapshot).`
+
+A file's content is unknown until a step writes or fully reads it, or the start snapshot has it. An
+edit that does not match the rebuilt content makes it unknown again.
 
 ```sh
 curl -sS "$CSH/api/sessions/cd0185b0-305a-4df2-92fa-6fc6caffdb55/replay?step=4&file=notes.txt" -H "Authorization: Bearer $READ_KEY"
@@ -861,9 +919,10 @@ calls captured by [`coding.sh proxy`](../how-to/capture-with-proxy.md). When for
 replay step list adds `"canFork": true`.
 
 `GET ?step=N` returns the call a fork at step N starts from and the context files it carried. It
-does not call the model. `by` is `tool-use` when the call's reply holds the step's tool call, else
-`time` (the agent's last call before the step, or for a prompt the first call after it). `canCall` is false when neither `keyEnv` nor `CLAUDE_CODE_OAUTH_TOKEN` (for
-Anthropic) is set in the environment `coding.sh ui` runs in.
+does not call the model.
+
+- `by` is `tool-use` when the call's reply holds the step's tool call, else `time` (the agent's last call before the step, or for a prompt the first call after it).
+- `canCall` is false when neither `keyEnv` nor `CLAUDE_CODE_OAUTH_TOKEN` (for Anthropic) is set in the environment `coding.sh ui` runs in.
 
 ```sh
 curl -sS "http://127.0.0.1:4319/api/sessions/cd0185b0-305a-4df2-92fa-6fc6caffdb55/fork?step=4" -H "Authorization: Bearer $UI_TOKEN"
@@ -881,9 +940,10 @@ curl -sS "http://127.0.0.1:4319/api/sessions/cd0185b0-305a-4df2-92fa-6fc6caffdb5
 
 `POST` with `{"step": N, "files": {"AGENTS.md": "…"}, "trials": 1}` sends the call with each file
 replaced, added, or removed when its text is empty. `trials` is 1 to 5. The request must come from
-the viewer's own origin. It calls the model and costs money. `edits` says what changed in the
-request, each trial has the forked first action and `differs`, and `differ` counts the trials whose
-action is not the recorded one.
+the viewer's own origin. It calls the model and costs money.
+
+In the answer, `edits` says what changed in the request, each trial has the forked first action and
+`differs`, and `differ` counts the trials whose action is not the recorded one.
 
 ```json
 {
@@ -932,13 +992,20 @@ or `{"role": "tool", "toolUseId", "name", "content", "isError"?}`.
 
 `POST /api/playground/run` with `{"provider": "openai-compatible", "request": {…}}` sends the
 request and returns the answer with `latencyMs` and, when the model has a price, `usage.costUsd`.
-It calls the model and costs money. `POST /api/playground/save` with `{"dataset": "arith",
-"request": {…}, "expected"?: {…}, "sessionId"?, "callId"?}` adds the request as a case (a frozen
-prefix, tagged `playground`) to a new version of the dataset, creating it when needed, and returns
-`{"datasetId", "name", "version", "caseId", "cases", "created"}`. The case is redacted. Both POSTs
-must come from the viewer's own origin and take bodies up to 8 MB. A bad request gets 400 with
-reason `invalid_request`, a missing key 400 with `missing_api_key`, and a provider failure 502
-with `provider_error`.
+It calls the model and costs money.
+
+`POST /api/playground/save` with `{"dataset": "arith", "request": {…}, "expected"?: {…},
+"sessionId"?, "callId"?}` adds the request as a case to a new version of the dataset, creating it
+when needed. The case is a frozen prefix, tagged `playground` and redacted. The answer is
+`{"datasetId", "name", "version", "caseId", "cases", "created"}`.
+
+Both POSTs must come from the viewer's own origin and take bodies up to 8 MB.
+
+| Status | `reason` | When |
+|---|---|---|
+| 400 | `invalid_request` | a bad request |
+| 400 | `missing_api_key` | the provider's key is not set |
+| 502 | `provider_error` | the provider failed |
 
 ### `GET /api/blobs/{sha256}`
 
@@ -1005,10 +1072,12 @@ An unknown or ambiguous id gets 404.
 ### `GET /api/calls/{id}/diff`
 
 What changed between this call and the model call before it in its session, or `?with=<id>`:
-model, settings, tool definitions, the system prompt as a line diff, and the message history.
+model, settings, tool definitions, the system prompt as a line diff, and the message history. The
+same object as `coding.sh diff-calls <a> <b> --json`.
+
 When this call read less of the prompt cache than the other one cached, `cache.cause` names the
 first change in the order the cache reads a request (tools, then system, then messages), or the
-5-minute cache lifetime. The same object as `coding.sh diff-calls <a> <b> --json`.
+5-minute cache lifetime.
 
 ```json
 {
@@ -1026,12 +1095,13 @@ first change in the order the cache reads a request (tools, then system, then me
 }
 ```
 
-When the system prompt changed and both requests were stored, `system.firstChangeLine` is the
-1-based line of the earlier prompt where the two first differ, and `system.wastedPrefixFrac` is the
-share (0 to 1, by characters) of the earlier prompt from that point to the end: the part the cache
-could no longer read. Above 0.2, a system-prompt `cache.cause` adds a hint to move dynamic content
-to the end of the system prompt. Both fields are absent when the system prompt is the same and in
-`metadata` mode.
+When the system prompt changed and both requests were stored:
+
+- `system.firstChangeLine` is the 1-based line of the earlier prompt where the two first differ.
+- `system.wastedPrefixFrac` is the share (0 to 1, by characters) of the earlier prompt from that point to the end: the part the cache could no longer read.
+- Above 0.2, a system-prompt `cache.cause` adds a hint to move dynamic content to the end of the system prompt.
+
+Both fields are absent when the system prompt is the same, and in `metadata` mode.
 
 `content` is `metadata` when either request was not stored: tools and system are then compared
 by their short hashes. The first call of a session, without `?with=`, gets 404.
@@ -1055,9 +1125,11 @@ Without `q`: 400 `{"error":"q is required","status":400}`.
 ### `GET /api/stats`
 
 Totals and facet counts for the session list. Takes `project`, `scope`, `agent`, `model`, `flag`,
-`repo`, `since`, `until` and `where`. A `where` query narrows the totals, facets and histogram
-(its `sort:` and `limit:` do not apply), and a bad one answers 400 as on `/api/sessions`. Each facet applies every filter except its own. `histogram` buckets
-session starts over at most the 90 days before the newest session.
+`repo`, `since`, `until` and `where`.
+
+- A `where` query narrows the totals, facets and histogram (its `sort:` and `limit:` do not apply). A bad one answers 400 as on `/api/sessions`.
+- Each facet applies every filter except its own.
+- `histogram` buckets session starts over at most the 90 days before the newest session.
 
 ```sh
 curl -sS "$CSH/api/stats?project=team&agent=support-bot" -H "Authorization: Bearer $READ_KEY"
@@ -1084,14 +1156,21 @@ viewer's Explore page and `coding.sh stats --json`. Parameters:
 | `scope` | `all` | `top` leaves out subagent sessions |
 | `where`, `project` | | as on `/api/sessions` |
 
-A session counts in the bucket it started in. `failures` counts sessions with a flag that has no
-colon; `failureRate` is failures over sessions and `toolErrorRate` tool errors over tool calls.
-`llmP95Ms` is the 95th percentile (nearest rank) of the sessions' own p95 model-call time and
-`ttftP50Ms` the median of their median time to first token; both are `null` in a bucket with no
-such session. `costUsd` adds the sessions that have a cost (`pricedSessions` of them). With
-`by=flag` a session with several flags counts in each series, and sessions without a flag form
-`(none)`. `all` is every session, whatever the split. A store without a session-stats query reads
-the first 100,000 sessions and sets `truncated`.
+A session counts in the bucket it started in.
+
+| Field | Meaning |
+|---|---|
+| `failures` | Sessions with a flag that has no colon |
+| `failureRate` | Failures over sessions |
+| `toolErrorRate` | Tool errors over tool calls |
+| `llmP95Ms` | The 95th percentile (nearest rank) of the sessions' own p95 model-call time. `null` in a bucket with no such session |
+| `ttftP50Ms` | The median of the sessions' median time to first token. `null` in a bucket with no such session |
+| `costUsd` | The sum over sessions that have a cost (`pricedSessions` of them) |
+| `all` | Every session, whatever the split |
+| `truncated` | Set by a store without a session-stats query, which reads only the first 100,000 sessions |
+
+With `by=flag` a session with several flags counts in each series, and sessions without a flag form
+`(none)`.
 
 ```sh
 curl -sS "$CSH/api/metrics?since=7d&by=agent&tz=-120" -H "Authorization: Bearer $READ_KEY"
@@ -1102,19 +1181,23 @@ curl -sS "$CSH/api/metrics?since=7d&by=agent&tz=-120" -H "Authorization: Bearer 
 ```
 
 With `scope=all` and the same range and filters, `totals.sessions`, `toolCalls`, `toolErrors`,
-`llmCalls`, `costUsd` and `pricedSessions` equal `/api/stats`, and the series' session counts
-equal its `byAgent`, `byModel` and `byFlag`. A bad `bucket`, `by`, `tz`, `groups` or time, `since`
-not before `until`, more than 400 buckets, or a bad `where` answers 400 with the reason:
-`{"error":"bucket must be day or week","status":400}`.
+`llmCalls`, `costUsd` and `pricedSessions` equal `/api/stats`. The series' session counts equal its
+`byAgent`, `byModel` and `byFlag`.
+
+A bad `bucket`, `by`, `tz`, `groups` or time, `since` not before `until`, more than 400 buckets, or
+a bad `where` answers 400 with the reason: `{"error":"bucket must be day or week","status":400}`.
 
 ### `GET /api/facets`
 
-Session counts per value of each key in `keys` (comma-separated, at most 12, default
-`agent,model,repo,flag`): `agent`, `model`, `provider`, `repo`, `branch`, `flag`, `skill`, `kind`,
-`tool` or `mcp`. Takes `where`, `project`, `scope`, `since`, `until` and `limit` (values per key, 1
-to 200, default 20). Each key is counted over `where` without that key's own clauses, so a picked
-value does not hide the others. `prefix` (up to 200 characters) keeps only values that start with
-it, ignoring case, for autocomplete.
+Session counts per value of each key in `keys`. Each key is counted over `where` without that key's
+own clauses, so a picked value does not hide the others.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `keys` | `agent,model,repo,flag` | Comma-separated, at most 12, from `agent`, `model`, `provider`, `repo`, `branch`, `flag`, `skill`, `kind`, `tool` and `mcp` |
+| `limit` | 20 | Values per key, 1 to 200 |
+| `prefix` | | Keeps only values that start with it, ignoring case, for autocomplete (up to 200 characters) |
+| `where`, `project`, `scope`, `since`, `until` | | As on `/api/sessions` |
 
 ```sh
 curl -sS "$CSH/api/facets?keys=agent,tool&where=-flag:compaction" -H "Authorization: Bearer $READ_KEY"
@@ -1128,15 +1211,21 @@ An unknown key answers 400.
 
 ### `GET /api/events`
 
-Events that match `where` across sessions, newest first. Event keys (`kind`, `tool`, `ok`, `mcp`,
-`error`, `event.duration`, text) test each event; session keys (`agent`, `repo`, `flag`, …) test
-its session. Takes `limit` (1 to 200, default 50), `cursor`, `project`, `since` and `until` (on the
-session's start, as on the list), and `scope` (`top` leaves out subagent sessions' events; default
-`all`). Each item is the event with its payload clipped for a list row,
-`session` (`id`, `title`, `agent`, `model`, and `parent` and `type` for a subagent), and a
-`snippet` with matches wrapped in `«…»` when the query has text. `next` is the cursor for the
-following page and is absent on the last one. The first page also counts the matches: `total`, up
-to 10,000, with `totalCapped: true` past that.
+Events that match `where` across sessions, newest first.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `where` | | Event keys (`kind`, `tool`, `ok`, `mcp`, `error`, `event.duration`, text) test each event; session keys (`agent`, `repo`, `flag`, …) test its session |
+| `limit` | 50 | 1 to 200 |
+| `cursor` | | `next` from the previous page |
+| `since`, `until` | | On the session's start, as on the list |
+| `scope` | `all` | `top` leaves out subagent sessions' events |
+| `project` | | As on `/api/sessions` |
+
+- Each item is the event with its payload clipped for a list row, plus `session` (`id`, `title`, `agent`, `model`, and `parent` and `type` for a subagent).
+- When the query has text, each item has a `snippet` with matches wrapped in `«…»`.
+- `next` is the cursor for the following page, and is absent on the last one.
+- The first page also counts the matches: `total`, up to 10,000, with `totalCapped: true` past that.
 
 ```sh
 curl -sS "$CSH/api/events?where=tool:lookup_order&limit=1" -H "Authorization: Bearer $READ_KEY"
@@ -1175,12 +1264,19 @@ curl -sS "$CSH/api/where" -H "Authorization: Bearer $READ_KEY"
 
 ### `POST /api/labels`
 
-Adds or replaces a label. Body (JSON, up to 1 MB): `sessionId` (required), `value` (`pass`, `fail`
-or `skip`), `criterion` (default `outcome`, 1-100 characters of letters, digits and `_.:-`) and an
-optional `note` (up to 4,000 characters). There is one label per session, criterion and labeller, so
-labelling again replaces it. `by` is the basic-auth user name, the read key's `name` from
-`[serve.viewer] read_keys`, or else `reader:` and the first 12 hex characters of the key's sha256
-(never the key), so each read key keeps its own labels.
+Adds or replaces a label. Body (JSON, up to 1 MB):
+
+| Field | Meaning |
+|---|---|
+| `sessionId` | Required |
+| `value` | `pass`, `fail` or `skip` |
+| `criterion` | 1-100 characters of letters, digits and `_.:-`. Default: `outcome` |
+| `note` | Optional, up to 4,000 characters |
+
+There is one label per session, criterion and labeller, so labelling again replaces it. `by` is the
+basic-auth user name, the read key's `name` from `[serve.viewer] read_keys`, or else `reader:` and
+the first 12 hex characters of the key's sha256 (never the key). So each read key keeps its own
+labels.
 
 ```sh
 curl -sS -X POST "$CSH/api/labels" \
@@ -1236,11 +1332,11 @@ Body (JSON, up to 1 MB):
 | `ts` | Epoch milliseconds. Default: now |
 | `id` | Score id. Default: one score per target, name, source and caller, so scoring again replaces it |
 
-`by` is the caller, as for labels. A value outside its config's `min`/`max` or `categories` is a
-400. Posting the same id with the same content again changes nothing and answers 200 with the stored
-score (its first `ts` kept). An event id an SDK client sent to `/v1/ingest` works as `targetId` with
-its `sessionId` (serve stores such ids hashed with the project). A project-scoped key may only score
-its project's sessions and their events.
+`by` is the caller, as for labels. A value outside its config's `min`/`max` or `categories` gets 400.
+
+- Posting the same id with the same content again changes nothing and answers 200 with the stored score (its first `ts` kept).
+- An event id an SDK client sent to `/v1/ingest` works as `targetId` with its `sessionId` (serve stores such ids hashed with the project).
+- A project-scoped key may only score its project's sessions and their events.
 
 ```sh
 curl -sS -X POST "$CSH/api/scores" \
@@ -1280,12 +1376,20 @@ curl -sS "$CSH/api/scores?sessionId=team%2Fchat-1" -H "Authorization: Bearer $RE
 
 ### `GET /api/score-configs`, `POST /api/score-configs`
 
-A config fixes one score name's type and allowed values. Body: `name`, `dataType`, and for
-`numeric` optional `min` and `max` (inclusive), for `categorical` the `categories` list (required);
-plus optional `description` and `id` (default: the name). One config per name: another id with the
-same name is a 409. Posting a config again replaces it (201 when new, 200 otherwise). Configs are
-shared by every project, so a project-scoped key can read them but gets 403 on a POST. `GET` lists
-them sorted by name.
+A config fixes one score name's type and allowed values. `GET` lists them sorted by name. The
+`POST` body:
+
+| Field | Meaning |
+|---|---|
+| `name`, `dataType` | Required |
+| `min`, `max` | For `numeric`: optional, inclusive |
+| `categories` | For `categorical`: required |
+| `description` | Optional |
+| `id` | Optional. Default: the name |
+
+- One config per name: another id with the same name is a 409.
+- Posting a config again replaces it (201 when new, 200 otherwise).
+- Configs are shared by every project, so a project-scoped key can read them but gets 403 on a POST.
 
 ```sh
 curl -sS -X POST "$CSH/api/score-configs" \
@@ -1322,20 +1426,17 @@ curl -sS "$CSH/api/experiments?dataset=refunds&name=baseline" -H "Authorization:
 }
 ```
 
-An experiment run with `--samples adaptive` also has `"samples": "adaptive"` and
-`summary.caseVerdicts` (`passed`, `failed`, `tieBreaks`); its `passRate` interval is biased, so
-use the verdicts. One that `--stop-on-regression` stopped has status `cancelled` and
-`regression: {caseId, baseline}`. Both fields are absent otherwise.
+These fields are present only when they apply:
 
-Also present only when they apply: `metadata.checkpoint` (`done`, `total`, `at`) on a partial
-record written while the run was going (status `cancelled`); `metadata.selection` (`from`
-`{kind: "failing"|"errors", experiment}`, `cases`, `sample`, `seed`, `firstN`, `selected`, `of`)
-on a run of part of the dataset; and, for `exp run --seq K`, `metadata.seq` (`k`, `feedback`,
-`history`) and `summary.seq`: `k`, `feedback`, `history`, `curve` (`[{k, rate, lo, hi}]`, Seq@1..K),
-`egs`, `lgs`, `unchangedRate`, `costToSolve`, and with 2+ trials `passAtK` (`[{k, rate}]`),
-`front` (`[{protocol, k, cost, success, overall}]`) and `costUnit` (`usd` or `attempts`). Each
-run of such an experiment has `seq`: `k`, `solvedAt`, `feedback`, `history` and `attempts`
-(`[{pass, latencyMs, costUsd?, criticCostUsd?, unchanged?, error?, feedback?}]`).
+| Field | When | Holds |
+|---|---|---|
+| `samples`, `summary.caseVerdicts` | `exp run --samples adaptive` | `"samples": "adaptive"`, and verdicts `passed`, `failed`, `tieBreaks`. The `passRate` interval is then biased, so use the verdicts |
+| `regression` | `--stop-on-regression` stopped the run (status `cancelled`) | `{caseId, baseline}` |
+| `metadata.checkpoint` | A partial record written while the run was going (status `cancelled`) | `done`, `total`, `at` |
+| `metadata.selection` | A run of part of the dataset | `from` (`{kind: "failing"\|"errors", experiment}`), `cases`, `sample`, `seed`, `firstN`, `selected`, `of` |
+| `metadata.seq` | `exp run --seq K` | `k`, `feedback`, `history` |
+| `summary.seq` | `exp run --seq K` | `k`, `feedback`, `history`, `curve` (`[{k, rate, lo, hi}]`, Seq@1..K), `egs`, `lgs`, `unchangedRate`, `costToSolve`; with 2+ trials also `passAtK` (`[{k, rate}]`), `front` (`[{protocol, k, cost, success, overall}]`) and `costUnit` (`usd` or `attempts`) |
+| `seq` on each run | `exp run --seq K` | `k`, `solvedAt`, `feedback`, `history`, `attempts` (`[{pass, latencyMs, costUsd?, criticCostUsd?, unchanged?, error?, feedback?}]`) |
 
 ### `GET /api/experiments/{id}`
 
@@ -1384,25 +1485,27 @@ curl -sS "$CSH/api/compare?a=$EXP_A&b=$EXP_B" -H "Authorization: Bearer $READ_KE
 }
 ```
 
-`signFlip` is the exact two-sided sign-flip test on the per-case differences (per-cluster sums when
-clustered): `units` counts cases or clusters, and `method` is `exact` up to 20 changed units and
-`monte-carlo` above. `verdict` is `better` or `worse` only when `diff` excludes zero and
-`signFlip.p` is below 0.05.
+| Field | Meaning |
+|---|---|
+| `signFlip` | The exact two-sided sign-flip test on the per-case differences (per-cluster sums when clustered). `units` counts cases or clusters; `method` is `exact` up to 20 changed units and `monte-carlo` above |
+| `verdict` | `better` or `worse` only when `diff` excludes zero and `signFlip.p` is below 0.05 |
+| `power.exact` | The exact McNemar design when some case flipped: `{"n", "discordance", "alpha", "power", "minDiscordant", "ceiling", "mde"}`. `ceiling` is the power at the largest possible gap |
+| `timing.interleaved` | Also true for two cells of one `exp run` matrix (both carry the same `metadata.matrix.id`) |
 
-`power.exact` is the exact McNemar design when some case flipped: `{"n", "discordance",
-"alpha", "power", "minDiscordant", "ceiling", "mde"}`, where `ceiling` is the power at the largest
-possible gap and `mde` is `null` when no gap reaches `power`. Then `power.warnings` has a
-`no-power` entry.
+When `power.exact.mde` is `null`, no gap reaches `power`, and `power.warnings` has a `no-power`
+entry.
 
-Present only when they apply: `graders[].versionChanged` (`{"a","b"}` versions) and
-`gradersOnlyIn` (`{"a":[…],"b":[…]}`) when the sides were graded differently, with
-`instrumentWarning` saying so; `ungradedCases` for cases that ran on both sides but have no graded
-run on one.
-`timing.interleaved` is also true for two cells of one `exp run` matrix (both carry the same
-`metadata.matrix.id`).
-`selectionWarning` when one side ran only on the other's failures (`exp run --failing`); the
-verdict is then `inconclusive`. `seqK` (`k`, `feedback`, `n`, `a`, `b`, `diff`) when both sides ran
-`--seq` with the same K and feedback, and `seqNote` when only one did or they differ.
+These fields are present only when they apply:
+
+| Field | When |
+|---|---|
+| `graders[].versionChanged` | The sides were graded with different grader versions: `{"a","b"}` |
+| `gradersOnlyIn` | The sides were graded by different graders: `{"a":[…],"b":[…]}` |
+| `instrumentWarning` | The sides were graded differently; the text says how |
+| `ungradedCases` | Cases ran on both sides but have no graded run on one |
+| `selectionWarning` | One side ran only on the other's failures (`exp run --failing`). The verdict is then `inconclusive` |
+| `seqK` | Both sides ran `--seq` with the same K and feedback: `k`, `feedback`, `n`, `a`, `b`, `diff` |
+| `seqNote` | Only one side ran `--seq`, or their K or feedback differ |
 
 A missing or malformed id gets 400 `{"error":"a and b must be experiment ids","status":400}`; an
 unknown one gets 404 `{"error":"experiment not found","status":404}`.
@@ -1436,9 +1539,10 @@ curl -sS "$CSH/api/benchmarks" -H "Authorization: Bearer $READ_KEY"
 
 The same report `coding.sh bench show <name> --json` prints: the latest run, daily history per
 metric, the gap to the reference contender, the pooled gap, difficulty, the anchor set, cases whose
-content changed, the seed check and the failed cases. Two things differ: `cases` is left out, and
-each failure carries `hasSession` (whether the session is in this index, so the page can link to
-it) in place of `sessionUrl`.
+content changed, the seed check and the failed cases.
+
+Two things differ: `cases` is left out, and each failure carries `hasSession` (whether the session
+is in this index, so the page can link to it) in place of `sessionUrl`.
 
 ```sh
 curl -sS "$CSH/api/benchmarks/coding-sh-issues" -H "Authorization: Bearer $READ_KEY"
@@ -1515,31 +1619,30 @@ An unknown run gets 404, as does any other path under it, and on `coding.sh serv
 Eval tasks (`coding.sh eval`), runs (`coding.sh compare`) and harness bundles (`coding.sh harness`). All three
 answer `{"items":[…]}` and are empty for a scoped key.
 
-- `/api/tasks` filters: `status` (`draft`, `validated` or `archived`) and `tag`.
-- `/api/runs` filters: `experimentId`, `taskId` and `bundleId`. A run carries `cellKey` (the content key
-  `compare --reuse` matches on; absent on older runs) and, when `compare --reuse` copied it, `reusedFrom`
-  (the id of the run it was copied from). A run carries `tamper` when its diff was checked: `flagged`,
-  `flags` (each with `kind`, `path`, `why` and `detail`) and `addedTests`, the existing test files the
-  agent only added new test cases to (absent when none). `verifierOutput` holds the end of what the
-  verifier printed: `stdout` and `stderr`, each the last 4096 characters, colour codes removed and
-  redacted with `capture.redact` and `capture.redactPatterns`; a stream that was empty is absent, and
-  so is the field when both were. A run from `compare --repair` carries `repair`: `signal`
-  (`bit` or `names`), `mode` (`resume` or `fresh`), `limit`, `rounds` (each with `n`, `pass`,
-  `verifierExit`, `verifierOutput`, `durationMs`, `usage`, `sessionId`, `diffBlob`, `unchanged` when the round changed no
-  file, `tamper` when the round's diff tampers with tests, and `namesParsed` with signal `names`),
-  `pass` (the outcome after the last
-  round; `pass` on the run stays the first attempt's), `falseAlarm` and `falseAlarmFired` with
-  `--false-alarm`, and `skipped` (`error` or `timeout`) when the first attempt could not be repaired.
-  `agentVersion` is the agent release the run started on (the adapter's detected version, checked at
-  most once a minute); absent when the adapter can't tell and on older runs.
-  `isolation` says how the verifier's tree was built ([verifier isolation](../guides/evals.md#verifier-isolation)):
-  `carried`, the agent's changes applied to the fresh start tree, and `stripped`, each change left out
-  with `path`, `why` (`hook`, `config`, `scripts`, `verifier`, `dependency`, `symlink` or `special`)
-  and `change` (`add`, `modify` or `delete`); `skipped` names why the tree could not be isolated. It is
-  absent with `--no-isolation`, on a task without a verifier command and on older runs. `traceId` is the
-  trace id the agent got in `TRACEPARENT` with `compare --otel`, and `sequence` (`stream`, `step`) the
-  run's place with `compare --sequential`; both are absent otherwise.
-- `/api/bundles` returns `id`, `name`, `agent`, `model`, `createdAt` and `note` only; overlay files stay behind `/api/blobs`.
+| Route | Filters | Notes |
+|---|---|---|
+| `/api/tasks` | `status` (`draft`, `validated` or `archived`), `tag` | |
+| `/api/runs` | `experimentId`, `taskId`, `bundleId` | Run fields below |
+| `/api/bundles` | | `id`, `name`, `agent`, `model`, `createdAt` and `note` only; overlay files stay behind `/api/blobs` |
+
+A run carries these fields when they apply:
+
+| Field | Meaning |
+|---|---|
+| `cellKey` | The content key `compare --reuse` matches on. Absent on older runs |
+| `reusedFrom` | The id of the run `compare --reuse` copied this one from |
+| `tamper` | Set when the run's diff was checked: `flagged`, `flags` (each with `kind`, `path`, `why` and `detail`) and `addedTests`, the existing test files the agent only added new test cases to (absent when none) |
+| `verifierOutput` | The end of what the verifier printed: `stdout` and `stderr`, each the last 4096 characters, colour codes removed, redacted with `capture.redact` and `capture.redactPatterns`. An empty stream is absent, and so is the field when both were |
+| `repair` | From `compare --repair`: `signal` (`bit` or `names`), `mode` (`resume` or `fresh`), `limit`, `rounds`, `pass`, `falseAlarm` and `falseAlarmFired` with `--false-alarm`, and `skipped` (`error` or `timeout`) when the first attempt could not be repaired |
+| `repair.pass` | The outcome after the last round. `pass` on the run stays the first attempt's |
+| `repair.rounds[]` | `n`, `pass`, `verifierExit`, `verifierOutput`, `durationMs`, `usage`, `sessionId`, `diffBlob`; `unchanged` when the round changed no file, `tamper` when its diff tampers with tests, `namesParsed` with signal `names` |
+| `agentVersion` | The agent release the run started on (the adapter's detected version). Absent when the adapter can't tell, and on older runs |
+| `isolation` | How the verifier's tree was built ([verifier isolation](../guides/evals.md#verifier-isolation)): `carried`, `stripped` and `skipped`, below. Absent with `--no-isolation`, on a task without a verifier command, and on older runs |
+| `isolation.carried` | The agent's changes applied to the fresh start tree |
+| `isolation.stripped` | Each change left out, with `path`, `why` (`hook`, `config`, `scripts`, `verifier`, `dependency`, `symlink` or `special`) and `change` (`add`, `modify` or `delete`) |
+| `isolation.skipped` | Why the tree could not be isolated |
+| `traceId` | The trace id the agent got in `TRACEPARENT` with `compare --otel` |
+| `sequence` | The run's place (`stream`, `step`) with `compare --sequential` |
 
 ```sh
 curl -sS "$CSH/api/tasks?status=validated" -H "Authorization: Bearer $READ_KEY"
@@ -1563,7 +1666,13 @@ curl -sS "$CSH/api/update" -H "Authorization: Bearer $READ_KEY"
 
 ### `GET /api/ingest`
 
-Progress of the local spool ingest, for the viewer's "Indexing N files…" pill. `coding.sh ui` ingests in a background worker after it starts listening, so pages answer from what is already indexed while `filesPending` counts down. `lastIngestAt` is the end of the last finished pass (epoch ms), `null` before the first. Under `coding.sh ui`, `importing` is `true` while past sessions are being imported (the background import `coding.sh init` starts when its 8 seconds run out); the pill and the empty session list then say "Importing past sessions…". `coding.sh serve` ingests events as they arrive, so it always answers:
+Progress of the local spool ingest, for the viewer's "Indexing N files…" pill.
+
+- `coding.sh ui` ingests in a background worker after it starts listening, so pages answer from what is already indexed while `filesPending` counts down.
+- `lastIngestAt` is the end of the last finished pass (epoch ms), `null` before the first.
+- Under `coding.sh ui`, `importing` is `true` while past sessions are being imported (the background import `coding.sh init` starts when its 8 seconds run out). The pill and the empty session list then say "Importing past sessions…".
+
+`coding.sh serve` ingests events as they arrive, so it always answers:
 
 ```sh
 curl -sS "$CSH/api/ingest" -H "Authorization: Bearer $READ_KEY"
