@@ -1582,6 +1582,7 @@ coding.sh exp compare <A> <B> [options]
 | `--pairwise <JSON|FILE>` |  | Pairwise judge spec, {"kind":"pairwise","name":…,"rubric":…}: judges A and B's outputs side by side, in both orders. Repeat it for more judges: compare then reports how far they agree, and --gate holds unless every judge finds B better. Repeatable. |
 | `--labels <FILE>` |  | With --pairwise: human labels (JSON array or JSONL of {"caseId","winner":"a"\|"b"\|"tie"}) to calibrate each judge on the test split. |
 | `--matrix` |  | Also print the success-count matrix: cases by passes out of k in A (rows) and B (columns) |
+| `--given <GRADER>` |  | Compare only the cases where this grader passes in both arms, with every delta read over those cases (conditioned on the gate, not the whole dataset). Prints how many cases were kept and dropped. |
 | `--margin <D>` |  | Non-inferiority: exit 1 unless the 95% CI lower bound of B − A is above −D (0.05 = 5pp) |
 | `--labels-a <FILE>` |  | Human labels of A's outputs (JSON array or JSONL of {"caseId","value":"pass"\|"fail"\|"skip","criterion"?}): LLM judge graders get a PPI++ corrected B − A. |
 | `--labels-b <FILE>` |  | Human labels of B's outputs (required with --labels-a; labels are never shared across arms) |
@@ -1598,6 +1599,7 @@ coding.sh exp compare base cheaper --margin 0.03
 coding.sh exp compare base cand --cluster repo
 coding.sh exp compare base cand --gate
 coding.sh exp compare base cand --matrix
+coding.sh exp compare base cand --given terminated
 coding.sh exp compare base cand --pairwise judge.json
 coding.sh exp compare base cand --pairwise openai-judge.json --pairwise anthropic-judge.json --gate
 coding.sh exp compare base cand --labels-a base-labels.jsonl --labels-b cand-labels.jsonl

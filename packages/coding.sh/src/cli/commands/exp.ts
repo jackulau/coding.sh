@@ -16,7 +16,7 @@ import type { Case, Dataset, ExperimentResult, Grader, Split } from "../../datas
 import { slugify } from "../../datasets/dataset.ts";
 import { aaNoise, taskKey } from "../../experiments/aa.ts";
 import { runAb, type AbArm, type AbResult, type RunAbOpts } from "../../experiments/ab.ts";
-import { clusterMap, compareExperiments, type CompareOpts } from "../../experiments/compare.ts";
+import { clusterMap, compareExperiments, givenGraders, type CompareOpts } from "../../experiments/compare.ts";
 import { MetricRunError, renderMetrics, runMetrics, type MetricArm } from "../../experiments/metrics.ts";
 import { runPairwise, summarizePairwise, type PairwiseSummary } from "../../experiments/pairwise.ts";
 import { caseLabels, isCheckpoint, renderAa, renderComparison, renderExperiment, renderPairwise, renderReplication, renderSweep } from "../../experiments/render.ts";
@@ -1021,6 +1021,15 @@ export async function run(c: CommandContext): Promise<number> {
         const verdictOn = str(c.flags.verdict);
         if (verdictOn !== undefined && verdictOn !== "pass" && verdictOn !== "seq") throw new UsageError(`--verdict must be pass or seq, got ${JSON.stringify(verdictOn)}`, { reason: "invalid_argument" });
         const opts: CompareOpts = { force, ...(gate ? { gate } : {}), ...(margin !== undefined ? { margin } : {}), ...(verdictOn === "seq" ? { verdictOn } : {}) };
+        const given = str(c.flags.given);
+        if (c.flags.given !== undefined && !given) throw new UsageError("--given needs a grader name, e.g. --given terminated", { reason: "invalid_argument" });
+        if (given) {
+          const have = givenGraders(a!, b!);
+          if (!have.includes(given)) {
+            throw new UsageError(`--given ${given}: no grader named ${JSON.stringify(given)} in both experiments${have.length ? `; graders in both: ${have.join(", ")}` : "; they share no grader"}`, { reason: "invalid_argument" });
+          }
+          opts.given = given;
+        }
         const key = str(c.flags.cluster);
         if (key) {
           // Case metadata lives on the dataset; B's cases fill in ones A's version lacks.

@@ -4,6 +4,7 @@
 // snapshot into arms that differ by one rule file, and its SQL reads per-arm tokens from a store.
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import type { GraderDelta } from "../../src/experiments/compare.ts";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -229,5 +230,66 @@ describe("terse-mode.md end to end", () => {
       { arm: "base", runs: 2, passed: 1, output: 150, input: 10, cache_write: 1000, cache_read: 1000, cost: 0.15 },
       { arm: "concise", runs: 1, passed: 1, output: 120, input: 10, cache_write: 1500, cache_read: 1000, cost: 0.15 },
     ]);
+  });
+});
+
+/** The part of evals.md under one `###` heading. */
+function section(md: string, heading: string): string {
+  const m = new RegExp("^### " + heading + "\\n([\\s\\S]*?)(?=^#{1,3} |$(?![\\s\\S]))", "m").exec(md);
+  assert.ok(m, `evals.md has a section "${heading}"`);
+  return m[1]!;
+}
+
+describe("evals.md: compare an edited model with its base", () => {
+  let env: TmpEnv;
+  const md = read("guides/evals.md");
+  before(() => {
+    env = tmpEnv();
+  });
+  after(() => env.restore());
+
+  it("runs on a stub model: terminated and correct are two paired deltas, and --given conditions on the first", () => {
+    const recipe = section(md, "Compare an edited model with its base");
+    const proj = join(env.root, "recipe");
+    mkdirSync(proj, { recursive: true });
+    // A stub for generate.py: base finishes m1 and m2, edited finishes every case and misses m3;
+    // a cut answer is wrong.
+    writeFileSync(
+      join(proj, "gen.mjs"),
+      `let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const n=Number(JSON.parse(s).slice(1));const edited=process.env.MODEL==="edited";
+const done=edited||n<=2;const right=edited?n!==3:n<=2;
+process.stdout.write(JSON.stringify({answer:right?String(n):"?",finish_reason:done?"stop":"length"}))});\n`,
+    );
+    writeFileSync(join(proj, "math.jsonl"), [1, 2, 3, 4].map((n) => JSON.stringify({ id: `m${n}`, input: `m${n}`, expected: { answer: String(n) } })).join("\n") + "\n");
+    for (const f of ["base.json", "edited.json", "terminated.json", "correct.json"]) {
+      const spec = JSON.parse(fileBlock(recipe, f)) as { kind: string; command?: string; args?: string[] };
+      if (spec.kind === "command") Object.assign(spec, { command: process.execPath, args: [join(proj, "gen.mjs")] });
+      writeFileSync(join(proj, f), JSON.stringify(spec));
+    }
+    assert.equal((JSON.parse(fileBlock(recipe, "terminated.json")) as { name: string }).name, "terminated");
+    assert.equal((JSON.parse(fileBlock(recipe, "correct.json")) as { name: string }).name, "correct");
+
+    const cmds = commandsOf(recipe);
+    for (const argv of cmds) assert.doesNotThrow(() => checkArgs(argv), `coding.sh ${argv.join(" ")} parses`);
+    assert.deepEqual(cmds.map((c) => c.slice(0, 2).join(" ")), ["dataset import", "exp run", "exp run", "exp compare", "exp compare"]);
+    assert.ok(cmds[4]!.includes("--given") && cmds[4]!.includes("terminated"));
+    const out: string[] = [];
+    for (const argv of cmds) {
+      out.push(ok([...argv.map((a) => (/^(?:math\.jsonl|\w+\.json)$/.test(a) ? join(proj, a) : a)), "--json"]).stdout);
+    }
+    const graders = (stdout: string) => (JSON.parse(stdout) as { comparison: { graders: GraderDelta[]; given?: { kept: number; dropped: number } } }).comparison;
+    const plain = graders(out[3]!);
+    assert.deepEqual(plain.graders.map((g) => g.id), ["terminated", "correct"]);
+    for (const g of plain.graders) assert.ok(g.diff.mean > 0, `${g.id} is up: ${JSON.stringify(plain)}`);
+    assert.equal(plain.given, undefined);
+    // Among the two answers both finish, base and edited are both right.
+    const given = graders(out[4]!);
+    assert.deepEqual([given.given?.kept, given.given?.dropped], [2, 2]);
+    assert.equal(given.graders.find((g) => g.id === "correct")!.diff.mean, 0);
+  });
+
+  it("fails when the section is gone", () => {
+    const without = md.replace(/^### Compare an edited model with its base\n[\s\S]*?(?=^### )/m, "");
+    assert.throws(() => section(without, "Compare an edited model with its base"), /has a section/);
   });
 });

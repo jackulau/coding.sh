@@ -733,6 +733,72 @@ failures)`, and `--gate` holds. The fair comparison runs A's config on the same 
 (`exp run <A's spec> --failing A`) and compares B with that; two runs picked from the same
 experiment's failures are compared as usual.
 
+### Compare an edited model with its base
+
+An edit that stops a model from looping can look like a gain in accuracy: more answers finish, so
+more are right. To tell the two apart, grade each answer twice, on whether it finished and on
+whether it is right, and read the two as separate paired deltas.
+
+Import the items. Each line of `math.jsonl` is a case with the question as `input` and the answer
+as `expected`, shaped like the task's output (`{"id": "m1", "input": "…", "expected": {"answer": "7"}}`):
+
+```sh
+coding.sh dataset import math.jsonl --name math
+```
+
+Write one command task per model. The command gets each case's input as JSON on stdin and prints
+`{"answer": …, "finish_reason": …}` as JSON, where `finish_reason` is `stop` when the model ended
+its answer and anything else (`length`) when it was cut off. Only the environment differs between
+the two tasks:
+
+`base.json`:
+
+```json
+{"kind": "command", "command": "python3", "args": ["generate.py"], "env": {"MODEL": "base"}}
+```
+
+`edited.json`:
+
+```json
+{"kind": "command", "command": "python3", "args": ["generate.py"], "env": {"MODEL": "edited"}}
+```
+
+Two `json-path` graders read the output. `terminated` passes when the answer finished, and
+`correct` passes when `$.answer` equals the same field of the case's `expected`. Grader scores are 0 to 1, so a
+count such as tokens used has to become a pass or fail before it is a grader.
+
+`terminated.json`:
+
+```json
+{"kind": "json-path", "name": "terminated", "path": "$.finish_reason", "equals": "stop"}
+```
+
+`correct.json`:
+
+```json
+{"kind": "json-path", "name": "correct", "path": "$.answer"}
+```
+
+Run each model, then compare:
+
+```sh
+coding.sh exp run -d math --task base.json -g terminated.json -g correct.json --name base
+coding.sh exp run -d math --task edited.json -g terminated.json -g correct.json --name edited
+coding.sh exp compare base edited
+coding.sh exp compare base edited --given terminated
+```
+
+The first compare prints a paired delta for `terminated` and one for `correct`, each with its
+bootstrap interval. If the edited model only stopped looping, `terminated` is up and `correct`
+is up with it. `--given terminated` keeps the cases where `terminated` passes in both runs, and
+compares everything else on those: `correct` there is accuracy among answers that finished. The
+report says how many cases were kept and how many were dropped, and every number in it is
+conditioned on that gate, so it describes the kept cases and not the whole dataset. `--json`
+carries `comparison.given` (`grader`, `kept`, `dropped`). With no case kept it says so and prints
+no statistics. With several trials, a case is kept when the gate passes on at least half of each
+run's trials. A grader name that is not in both runs is a usage error that lists the ones that
+are.
+
 ### Sequential attempts with feedback
 
 `exp run --seq K` gives a case-trial that fails up to K attempts in all (2 to 10). Each new attempt

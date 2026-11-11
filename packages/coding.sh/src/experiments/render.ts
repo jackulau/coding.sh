@@ -250,8 +250,15 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
   const out: string[] = [];
   // A forced compare of a cancelled experiment keeps saying it is partial.
   const partial = (e?: ExperimentResult) => (e?.status === "cancelled" ? `  ${paint(`cancelled: ${e.runs.length} case run${e.runs.length === 1 ? "" : "s"} only`, "yellow", color)}` : "");
+  if (c.given && !c.given.kept) {
+    const g = c.given;
+    out.push(`${paint("A", "bold", color)} ${c.a.name} ${paint(c.a.id, "dim", color)}`, `${paint("B", "bold", color)} ${c.b.name} ${paint(c.b.id, "dim", color)}`);
+    out.push(paint(`! --given ${g.grader}: no case passes ${g.grader} in both A and B (${g.dropped} dropped), so there is nothing to compare`, "yellow", color));
+    return out.join("\n");
+  }
   out.push(`${paint("A", "bold", color)} ${c.a.name} ${paint(c.a.id, "dim", color)}  pass ${pct(c.a.passRate)}${partial(opts.a)}`);
   out.push(`${paint("B", "bold", color)} ${c.b.name} ${paint(c.b.id, "dim", color)}  pass ${pct(c.b.passRate)}${partial(opts.b)}`);
+  if (c.given) out.push(paint(`! ${c.given.note}`, "yellow", color));
   if (c.datasetWarning) out.push(paint(`! ${c.datasetWarning}`, "yellow", color));
   if (c.gradeWarning) out.push(paint(`! ${c.gradeWarning}`, "yellow", color));
   if (c.ungradedCases) out.push(paint(`unpaired because ungraded on a side: ${idList(c.ungradedCases)}`, "dim", color));

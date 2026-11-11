@@ -1,7 +1,7 @@
 {
-  "$comment": "Max median per metric for scripts/perf/ab.mjs --budgets (the candidate arm). Set from the landing-v2-20261106-perf results (docs/perf.md) with about 10% headroom; desktop LCP (about 100 ms) gets 25 ms instead, its run-to-run noise. Keys are metric names; * matches any part. The _ms budgets were measured on the desk runner and only hold on a similar machine: hosted runners pass --skip-budget '*_ms'. Raise a number in the same commit that needs it, and say why. 2026-11-10: scripts/perf/serve.mjs compresses at brotli quality 4, the level the edge sends, instead of 11, so html_bytes and js_bytes were set again about 10% over that build (home HTML 25,781 B, docs script 5,383 B); the _ms budgets held at quality 4 on the desk (9 pairs) and were left as they were. Blocking time is budgeted per page, the evals layout shift budget is 0.02 like the others (it measures about 0.004), and /docs/cli was added with budgets from the same desk run.",
+  "$comment": "Max median per metric for scripts/perf/ab.mjs --budgets (the candidate arm). Set from the landing-v2-20261106-perf results (docs/perf.md) with about 10% headroom; desktop LCP (about 100 ms) gets 25 ms instead, its run-to-run noise. Keys are metric names; * matches any part. The _ms budgets were measured on the desk runner and only hold on a similar machine: hosted runners pass --skip-budget '*_ms'. Raise a number in the same commit that needs it, and say why. 2026-11-10: scripts/perf/serve.mjs compresses at brotli quality 4, the level the edge sends, instead of 11, so html_bytes and js_bytes were set again about 10% over that build (home HTML 25,781 B, docs script 5,383 B); the _ms budgets held at quality 4 on the desk (9 pairs) and were left as they were. Blocking time is budgeted per page, the evals layout shift budget is 0.02 like the others (it measures about 0.004), and /docs/cli was added with budgets from the same desk run. 2026-11-11: the quickstart rewrite (a first run in minutes, a rail listing each step, two viewer screenshots) made its HTML 26,803 B and its mobile blocking time 27 to 32 ms on the desk (9 pairs, base and candidate alike), so its HTML budget is about 10% over that and its blocking time budget is 40 ms, like /docs/cli.",
   "*.home.html_bytes": 28400,
-  "*.quickstart.html_bytes": 21900,
+  "*.quickstart.html_bytes": 29500,
   "*.evals.html_bytes": 27700,
   "*.changelog.html_bytes": 19300,
   "*.cli.html_bytes": 23100,
@@ -36,7 +36,7 @@
   "mobile.cli.fcp_ms": 1000,
   "mobile.*.dcl_ms": 1480,
   "mobile.home.tbt_ms": 20,
-  "mobile.quickstart.tbt_ms": 20,
+  "mobile.quickstart.tbt_ms": 40,
   "mobile.changelog.tbt_ms": 50,
   "mobile.evals.tbt_ms": 60,
   "mobile.cli.tbt_ms": 40,
