@@ -49,6 +49,9 @@ export function sandbox(extra: NodeJS.ProcessEnv = {}): Sandbox {
   };
 }
 
+/** The variables agents and the store resolve their homes from (the list tmpEnv() in test/adapters/_helpers.ts clears). */
+const AGENT_HOME_KEYS = ["HOME", "USERPROFILE", "CODING_SH_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "CURSOR_CONFIG_DIR", "OPENCODE_CONFIG_DIR", "OPENCODE_DB", "CODING_SH_NO_AUTO_INGEST"];
+
 export interface Ran {
   code: number | void;
   stdout: string;
@@ -67,10 +70,23 @@ export async function runCmd(mod: CommandModule, sb: Sandbox, opts: { action?: s
     stdin: { isTTY: false },
   });
   const c: CommandContext = { action: opts.action, flags: opts.flags ?? {}, positionals: opts.positionals ?? [], rest: opts.rest ?? [], out, env: sb.env, cwd: opts.cwd ?? sb.env.HOME!, debug: false, signal: new AbortController().signal, argv: opts.argv };
+  // Some paths (the inline transcript ingest a read runs, os.homedir()) resolve agent homes from
+  // process.env, not c.env. Point those at the sandbox while the command runs, or a read would
+  // ingest the real ~/.claude and ~/.codex into the sandbox store.
+  const saved = Object.fromEntries(AGENT_HOME_KEYS.map((k) => [k, process.env[k]]));
+  for (const k of AGENT_HOME_KEYS) {
+    if (sb.env[k] === undefined) delete process.env[k];
+    else process.env[k] = sb.env[k];
+  }
   try {
     res.code = await mod.run(c);
   } catch (e) {
     res.error = e;
+  } finally {
+    for (const k of AGENT_HOME_KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
   }
   if (opts.json && res.stdout.trim()) {
     try {
