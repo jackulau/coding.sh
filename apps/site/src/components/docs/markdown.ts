@@ -1,14 +1,43 @@
 // Renders a page from docs/*.md at build time, so the repo docs and the site
 // pages are one source. Handles the subset those files use: ## headings,
-// paragraphs, lists, tables, fenced code, `code`, **bold** and [links].
-// Code blocks are returned separately so the page can render them with <Code>.
+// paragraphs, lists, tables, fenced code, `code`, **bold** and [links], plus a
+// few site blocks (each also reads fine on GitHub):
+//
+//   ```ts tab=TypeScript title=triage.mjs     consecutive tab= fences become one
+//   ```py tab=Python title=triage.py          CodeTabs; group= (default "lang")
+//                                             keeps the pick in sync on the page
+//   :::more Summary text  …  :::              a <details class="more"> disclosure
+//   :::note  …  :::                           a <div class="note"> aside
+//   ![alt](shot:docs/name "caption")          a DocShot (src/assets/<name>.webp)
+//   ![alt](diagram:name "caption")            src/assets/docs/diagrams/<name>.svg inline
+//
+// The first paragraph under the # title is the GitHub lede. The site skips it,
+// because the layout prints the nav summary there (a paragraph that ends in a
+// colon introduces what follows, so it stays).
+// Code, tabs, shots and containers are returned as blocks so MdDoc.astro can
+// render them with the site components.
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { MOVED } from "../../../worker/moved.ts";
 
-export type MdBlock = { kind: "html"; html: string } | { kind: "code"; code: string; title: string };
+export interface CodeTab {
+  label: string;
+  code: string;
+  title: string;
+}
+
+export type MdBlock =
+  | { kind: "html"; html: string }
+  | { kind: "code"; code: string; title: string }
+  | { kind: "tabs"; group: string; tabs: CodeTab[] }
+  | { kind: "more"; summary: string; blocks: MdBlock[] }
+  | { kind: "note"; blocks: MdBlock[] }
+  | { kind: "shot"; name: string; alt: string; caption?: string }
+  | { kind: "diagram"; html: string };
 
 const REPO_DOCS = join(process.cwd(), "..", "..", "docs");
+const DIAGRAMS = join(process.cwd(), "src", "assets", "docs", "diagrams");
 const GITHUB_REPO = "https://github.com/jackulau/coding.sh/blob/main/";
 const GITHUB_DOCS = `${GITHUB_REPO}docs/`;
 
@@ -19,31 +48,31 @@ const SITE_PAGES: Record<string, string> = {
   "reference/config.md": "/docs/config",
   "reference/cli.md": "/docs/cli",
   "reference/sdk.md": "/docs/sdk",
+  "reference/query.md": "/docs/query",
+  "reference/stores.md": "/docs/stores",
+  "reference/eval-methods.md": "/docs/eval-methods",
+  "reference/api.md": "/docs/api",
+  "guides/explore.md": "/docs/explore",
+  "guides/improve.md": "/docs/improve",
+  "guides/privacy.md": "/docs/privacy",
   "guides/benchmarks.md": "/docs/benchmarks",
   "guides/workflows.md": "/docs/workflows",
-  "reference/api.md": "/docs/api",
+  "guides/terse-mode.md": "/docs/terse-mode",
   "how-to/trace-your-agent.md": "/docs/how-to/trace-your-agent",
   "how-to/trace-durable-workflow.md": "/docs/how-to/trace-durable-workflow",
   "how-to/capture-with-proxy.md": "/docs/how-to/capture-with-proxy",
+  "how-to/track-cost.md": "/docs/cost",
   "how-to/compare-agents.md": "/docs/how-to/compare-agents",
+  "how-to/replay-llm-calls.md": "/docs/how-to/replay-llm-calls",
   "how-to/test-agents-md-change.md": "/docs/how-to/test-agents-md-change",
   "how-to/ci-regressions.md": "/docs/how-to/ci-regressions",
-  "how-to/expensive-sessions.md": "/docs/how-to/expensive-sessions",
   "how-to/session-to-eval.md": "/docs/how-to/session-to-eval",
   "how-to/self-host-team.md": "/docs/how-to/self-host-team",
   "how-to/attribute-commits.md": "/docs/how-to/attribute-commits",
   "how-to/evaluate-a-skill.md": "/docs/how-to/evaluate-a-skill",
   "how-to/does-this-plugin-help.md": "/docs/how-to/does-this-plugin-help",
-  "guides/terse-mode.md": "/docs/terse-mode",
-  "perf.md": "/docs/perf",
-  "use-cases/claude-code-cost.md": "/docs/use-cases/claude-code-cost",
+  "production/deploy.md": "/docs/deploy",
   "use-cases/replay-agent-session.md": "/docs/use-cases/replay-agent-session",
-  "use-cases/test-agent-instructions.md": "/docs/use-cases/test-agent-instructions",
-  "use-cases/evals-from-failures.md": "/docs/use-cases/evals-from-failures",
-  "use-cases/self-hosted-observability.md": "/docs/use-cases/self-hosted-observability",
-  "use-cases/proxy-model-calls.md": "/docs/use-cases/proxy-model-calls",
-  "use-cases/t3-code.md": "/docs/use-cases/t3-code",
-  "use-cases/pi.md": "/docs/use-cases/pi",
   "compare/README.md": "/docs/compare",
   "compare/langfuse.md": "/docs/compare/langfuse",
   "compare/langsmith.md": "/docs/compare/langsmith",
@@ -51,6 +80,40 @@ const SITE_PAGES: Record<string, string> = {
   "compare/agentops.md": "/docs/compare/agentops",
   "compare/laminar.md": "/docs/compare/laminar",
   "compare/ccusage.md": "/docs/compare/ccusage",
+};
+
+/**
+ * Repo docs whose content is on a site page that is not rendered from them:
+ * merged into another page (2026-11-11), or written as .astro. A link to one
+ * goes to that page, never to GitHub. Its #anchor is dropped: the heading may
+ * not exist there.
+ */
+const ON_SITE: Record<string, string> = {
+  "guides/install.md": "/docs/install",
+  "guides/agents.md": "/docs/agents",
+  "ADAPTERS.md": "/docs/agents",
+  "how-to/status-line.md": "/docs/agents",
+  "guides/evals.md": "/docs/evals",
+  "TOOL-EVALS.md": "/docs/tool-evals",
+  "guides/team.md": "/docs/how-to/self-host-team",
+  "PRODUCTION.md": "/docs/production",
+  "production/README.md": "/docs/production",
+  "production/compose.md": "/docs/deploy",
+  "production/fly.md": "/docs/deploy",
+  "production/railway.md": "/docs/deploy",
+  "production/render.md": "/docs/deploy",
+  "production/serverless.md": "/docs/deploy",
+  "integrations/ai-gateway.md": "/docs/ai-gateway",
+  "integrations/eve.md": "/docs/otel",
+  "how-to/tee-agent-runs.md": "/docs/otel",
+  "use-cases/claude-code-cost.md": "/docs/cost",
+  "how-to/expensive-sessions.md": "/docs/cost",
+  "use-cases/test-agent-instructions.md": "/docs/how-to/test-agents-md-change",
+  "use-cases/evals-from-failures.md": "/docs/how-to/session-to-eval",
+  "use-cases/self-hosted-observability.md": "/docs/production",
+  "use-cases/t3-code.md": "/docs/agents",
+  "use-cases/pi.md": "/docs/agents",
+  "use-cases/proxy-model-calls.md": "/docs/how-to/capture-with-proxy",
 };
 
 /**
@@ -90,7 +153,35 @@ function headingIds() {
 }
 
 const HEADING = /^(#{1,4}) (.*)$/;
+const FENCE = /^```([\w+-]*)[ \t]*(.*)$/;
+const OPEN = /^:::(more|note)\b[ \t]*(.*)$/;
+const CLOSE = /^:::\s*$/;
+const PICTURE = /^!\[([^\]]*)\]\((shot|diagram):([\w./-]+)(?:\s+"([^"]*)")?\)\s*$/;
 const splitAt = (file: string, line: string) => SPLITS[file]?.find((s) => line === s.heading)?.path;
+
+/** `tab=TypeScript title="my file.ts" group=lang` → { tab, title, group }. */
+function fenceAttrs(s: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const m of s.matchAll(/(\w+)=(?:"([^"]*)"|(\S+))/g)) out[m[1]!] = m[2] ?? m[3]!;
+  return out;
+}
+
+/**
+ * A diagram from src/assets/docs/diagrams/<name>.svg, inlined so its strokes
+ * and text take the page's colours (currentColor). Throws when the file is
+ * missing, so a page never ships without its picture. Pages written as
+ * .astro use it with <Fragment set:html={diagram(...)} />.
+ */
+export function diagram(name: string, alt: string, caption?: string): string {
+  const file = join(DIAGRAMS, `${name}.svg`);
+  if (!existsSync(file)) throw new Error(`docs: diagram ${name} is missing (src/assets/docs/diagrams/${name}.svg)`);
+  const svg = readFileSync(file, "utf8")
+    .replace(/<\?xml[\s\S]*?\?>\s*/, "")
+    .replace(/<!--[\s\S]*?-->\s*/g, "")
+    .replace(/<svg\b/, `<svg role="img" aria-label="${esc(alt)}" focusable="false"`)
+    .trim();
+  return `<figure class="diagram" data-agent-text="${esc(caption ? `${alt} ${caption}` : alt)}">${svg}${caption ? `<figcaption>${esc(caption)}</figcaption>` : ""}</figure>`;
+}
 
 /** The site page that shows heading `id` of docs/<file>: one of a split doc's pages. */
 const headingPages = new Map<string, Map<string, string>>();
@@ -122,10 +213,17 @@ export function laterPages(file: string): Record<string, string[]> {
   return out;
 }
 
+/** A site path that moved (worker/moved.ts) is linked at its new path, without the old anchor. */
+function current(path: string): string {
+  const [p, rest] = path.split(/(?=[#?])/) as [string, string | undefined];
+  const to = MOVED[p.replace(/(.)\/+$/, "$1")];
+  return to ?? `${p}${rest ?? ""}`;
+}
+
 /** `here` is the page being rendered: an anchor on another page of a split doc gets that page's path. */
 function href(url: string, from: string, here: string): string {
-  const site = url.match(/^https:\/\/coding\.sh(\/docs\/.*)$/);
-  if (site) return site[1]!;
+  const site = url.match(/^https:\/\/coding\.sh(\/docs(?:[/#?].*)?)$/);
+  if (site) return current(site[1]!);
   if (url.startsWith("#")) {
     const page = pageOf(from, url.slice(1));
     return page && page !== here ? `${page}${url}` : url;
@@ -145,6 +243,7 @@ function href(url: string, from: string, here: string): string {
   const target = out.join("/");
   const anchor = hash ? `#${hash}` : "";
   if (outside) return `${GITHUB_REPO}${target}${anchor}`;
+  if (ON_SITE[target]) return ON_SITE[target];
   if (!SITE_PAGES[target]) return `${GITHUB_DOCS}${target}${anchor}`;
   return `${(hash && pageOf(target, hash)) || SITE_PAGES[target]}${anchor}`;
 }
@@ -154,7 +253,8 @@ function inline(text: string, from: string, here: string): string {
   let s = text.replace(/`([^`]+)`/g, (_, c: string) => `\u0000${codes.push(c) - 1}\u0000`);
   s = esc(s)
     .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, t: string, u: string) => `<a href="${href(u.replace(/&amp;/g, "&"), from, here)}">${t}</a>`)
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/&lt;kbd&gt;([^&<]{1,12})&lt;\/kbd&gt;/g, "<kbd>$1</kbd>");
   return s.replace(/\u0000(\d+)\u0000/g, (_, i: string) => `<code>${esc(codes[Number(i)]!)}</code>`);
 }
 
@@ -166,29 +266,48 @@ const cells = (row: string) =>
     .map((c) => c.trim().replace(/\\\|/g, "|"));
 
 /**
- * Parse docs/<file> for the site page `here`. Drops the # title and the "Site
- * version" pointer; the layout has its own. A split doc gives only the part
- * on `here` (see SPLITS).
+ * Parse docs/<file> for the site page `here`. Drops the # title, the lede
+ * under it and the "Site version" pointer; the layout has its own. A split doc
+ * gives only the part on `here` (see SPLITS).
  */
 export function renderDoc(file: string, here: string = SITE_PAGES[file] ?? ""): MdBlock[] {
   return renderMarkdown(readFileSync(join(REPO_DOCS, file), "utf8"), file, here);
+}
+
+/** A block being filled: the page itself, or an open :::more / :::note. */
+interface Frame {
+  kind: "root" | "more" | "note";
+  summary: string;
+  blocks: MdBlock[];
+  html: string;
+  line: number;
 }
 
 /** Parse Markdown text. `file` is its path under docs/, which relative links resolve against; `here` as for renderDoc. */
 export function renderMarkdown(text: string, file: string, here: string = SITE_PAGES[file] ?? ""): MdBlock[] {
   const lines = text.split("\n");
   const blocks: MdBlock[] = [];
-  let html = "";
+  const stack: Frame[] = [{ kind: "root", summary: "", blocks, html: "", line: 0 }];
+  const top = () => stack[stack.length - 1]!;
   let page = SITE_PAGES[file] ?? "";
   const keep = () => !SPLITS[file] || page === here;
-  const flush = () => {
-    if (html && keep()) blocks.push({ kind: "html", html });
-    html = "";
+  // Inside a container everything is kept with it; at the top, only this page's part.
+  const emit = (b: MdBlock) => {
+    if (stack.length > 1) top().blocks.push(b);
+    else if (keep()) blocks.push(b);
   };
+  const flush = () => {
+    const f = top();
+    if (f.html) emit({ kind: "html", html: f.html });
+    f.html = "";
+  };
+  const add = (html: string) => (top().html += html);
   const isTable = (i: number) => lines[i]?.startsWith("|") && /^\|[\s:|-]+\|$/.test(lines[i + 1]?.trim() ?? "");
   const listItem = /^(\s*)(-|\d+\.) (.*)$/;
   const uniqueId = headingIds();
   const md = (text: string) => inline(text, file, here);
+  // True between the # title and the first block under it: that block, if a paragraph, is the lede.
+  let lede = false;
 
   for (let i = 0; i < lines.length; ) {
     const line = lines[i]!;
@@ -196,37 +315,95 @@ export function renderMarkdown(text: string, file: string, here: string = SITE_P
       i++;
       continue;
     }
-    const fence = line.match(/^```(\w*)/);
+    const atLede = lede;
+    lede = false;
+
+    const fence = line.match(FENCE);
     if (fence) {
-      const body: string[] = [];
-      for (i++; i < lines.length && !lines[i]!.startsWith("```"); i++) body.push(lines[i]!);
-      i++;
+      const read = (at: number) => {
+        const m = lines[at]!.match(FENCE)!;
+        const body: string[] = [];
+        let j = at + 1;
+        for (; j < lines.length && !lines[j]!.startsWith("```"); j++) body.push(lines[j]!);
+        const attrs = fenceAttrs(m[2] ?? "");
+        const title = attrs.title ?? FENCE_TITLES[m[1]!] ?? (m[1] || "shell");
+        return { attrs, title, code: body.join("\n"), end: j + 1 };
+      };
+      let f = read(i);
+      i = f.end;
       flush();
-      if (keep()) blocks.push({ kind: "code", code: body.join("\n"), title: FENCE_TITLES[fence[1]!] ?? (fence[1] || "shell") });
+      if (!f.attrs.tab) {
+        emit({ kind: "code", code: f.code, title: f.title });
+        continue;
+      }
+      // Consecutive tab= fences, blank lines between them allowed, are one CodeTabs.
+      const group = f.attrs.group ?? "lang";
+      const tabs: CodeTab[] = [{ label: f.attrs.tab, code: f.code, title: f.title }];
+      for (;;) {
+        let j = i;
+        while (j < lines.length && !lines[j]!.trim()) j++;
+        const next = lines[j]?.match(FENCE);
+        if (!next || !fenceAttrs(next[2] ?? "").tab) break;
+        f = read(j);
+        tabs.push({ label: f.attrs.tab!, code: f.code, title: f.title });
+        i = f.end;
+      }
+      emit({ kind: "tabs", group, tabs });
       continue;
     }
+
+    const open = line.match(OPEN);
+    if (open) {
+      i++;
+      flush();
+      stack.push({ kind: open[1] as "more" | "note", summary: md(open[2]!.trim()), blocks: [], html: "", line: i });
+      if (open[1] === "more" && !open[2]!.trim()) throw new Error(`docs: :::more needs a summary (docs/${file}:${i})`);
+      continue;
+    }
+    if (CLOSE.test(line)) {
+      i++;
+      if (stack.length === 1) throw new Error(`docs: ::: closes nothing (docs/${file}:${i})`);
+      flush();
+      const f = stack.pop()!;
+      emit(f.kind === "more" ? { kind: "more", summary: f.summary, blocks: f.blocks } : { kind: "note", blocks: f.blocks });
+      continue;
+    }
+
+    const pic = line.match(PICTURE);
+    if (pic) {
+      i++;
+      flush();
+      const [, alt = "", kind, name = "", caption] = pic;
+      emit(kind === "shot" ? { kind: "shot", name, alt, caption } : { kind: "diagram", html: diagram(name, alt, caption) });
+      continue;
+    }
+
     const h = line.match(HEADING);
     if (h) {
       i++;
-      if (h[1] === "#") continue;
+      if (h[1] === "#") {
+        lede = true;
+        continue;
+      }
       const next = splitAt(file, line);
       if (next) {
         flush();
         page = next;
       }
       const tag = `h${h[1]!.length}`;
-      html += `<${tag} id="${uniqueId(h[2]!)}">${md(h[2]!)}</${tag}>`;
+      add(`<${tag} id="${uniqueId(h[2]!)}">${md(h[2]!)}</${tag}>`);
       continue;
     }
     if (isTable(i)) {
       const head = cells(line);
       const rows: string[][] = [];
       for (i += 2; i < lines.length && lines[i]!.startsWith("|"); i++) rows.push(cells(lines[i]!));
-      html +=
+      add(
         `<div class="doc-table"><table><thead><tr>${head.map((c) => `<th>${md(c)}</th>`).join("")}</tr></thead><tbody>` +
-        // A cell that is one link becomes a full-cell tap target on touch (.cell-link).
-        rows.map((r) => `<tr>${r.map((c) => `<td${/^\[[^\]]+\]\([^)\s]+\)$/.test(c) ? ' class="cell-link"' : ""}>${md(c)}</td>`).join("")}</tr>`).join("") +
-        `</tbody></table></div>`;
+          // A cell that is one link becomes a full-cell tap target on touch (.cell-link).
+          rows.map((r) => `<tr>${r.map((c) => `<td${/^\[[^\]]+\]\([^)\s]+\)$/.test(c) ? ' class="cell-link"' : ""}>${md(c)}</td>`).join("")}</tr>`).join("") +
+          `</tbody></table></div>`,
+      );
       continue;
     }
     const li = line.match(listItem);
@@ -240,14 +417,26 @@ export function renderMarkdown(text: string, file: string, here: string = SITE_P
         else break;
         i++;
       }
-      html += `<${tag}>${items.map((t) => `<li>${md(t)}</li>`).join("")}</${tag}>`;
+      add(`<${tag}>${items.map((t) => `<li>${md(t)}</li>`).join("")}</${tag}>`);
       continue;
     }
     const para: string[] = [];
-    while (i < lines.length && lines[i]!.trim() && !/^(```|#{1,4} |\s*(-|\d+\.) )/.test(lines[i]!) && !isTable(i)) para.push(lines[i++]!.trim());
+    while (
+      i < lines.length &&
+      lines[i]!.trim() &&
+      !/^(```|#{1,4} |\s*(-|\d+\.) |:::)/.test(lines[i]!) &&
+      !PICTURE.test(lines[i]!) &&
+      !isTable(i)
+    )
+      para.push(lines[i++]!.trim());
     const text = para.join(" ").replace(/\s*Site version:\s*\[[^\]]*\]\([^)]*\)\.?/, "").trim();
-    if (text) html += `<p>${md(text)}</p>`;
+    // The GitHub lede: the layout prints the nav summary in its place. A
+    // "Site version" line on its own is not the lede; the paragraph after it is.
+    if (atLede && !text) lede = true;
+    if (atLede && !text.endsWith(":")) continue;
+    if (text) add(`<p>${md(text)}</p>`);
   }
+  if (stack.length > 1) throw new Error(`docs: :::${top().kind} opened at docs/${file}:${top().line} is never closed`);
   flush();
   if (!blocks.length) throw new Error(`docs: nothing in docs/${file} for ${here}; check SPLITS in markdown.ts`);
   return blocks;

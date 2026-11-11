@@ -1,0 +1,125 @@
+---
+// The same code in several forms (TypeScript and Python, npm and the script):
+// a row of tabs over <Code> panels, each with its own Copy button.
+// With `group`, picking a tab picks the same label in every block of that
+// group on the page, and the pick is remembered (localStorage
+// "docs-tab:<group>"). Without JS every panel shows, stacked under its label,
+// which is also what search and the .md twin read.
+import Code from "./Code.astro";
+
+interface Tab {
+  label: string;
+  code: string;
+  /** Title bar of the panel: a file name or a shell. Defaults to the label. */
+  title?: string;
+}
+interface Props {
+  tabs: Tab[];
+  group?: string;
+}
+const { tabs, group } = Astro.props;
+if (!tabs.length) throw new Error("CodeTabs: no tabs");
+
+// Ids for aria-controls/aria-labelledby: the nth CodeTabs on this page, so a
+// build gives the same HTML every time.
+const counts = Astro.locals as Record<string, number>;
+const uid = `ct${(counts.codeTabs = (counts.codeTabs ?? 0) + 1)}`;
+---
+
+<div class="codetabs" data-codetabs data-group={group}>
+  <div class="codetabs__list" role="tablist" aria-label="Code" hidden data-agent-skip data-pagefind-ignore>
+    {
+      tabs.map((t, i) => (
+        <button
+          type="button"
+          class="codetabs__tab"
+          role="tab"
+          id={`${uid}-tab-${i}`}
+          aria-controls={`${uid}-panel-${i}`}
+          aria-selected={i === 0 ? "true" : "false"}
+          tabindex={i === 0 ? 0 : -1}
+          data-label={t.label}
+        >
+          {t.label}
+        </button>
+      ))
+    }
+  </div>
+  {
+    tabs.map((t, i) => (
+      <div class="codetabs__panel" role="tabpanel" id={`${uid}-panel-${i}`} aria-labelledby={`${uid}-tab-${i}`} data-label={t.label}>
+        <p class="codetabs__label">{t.label}</p>
+        <Code code={t.code} title={t.title ?? t.label} />
+      </div>
+    ))
+  }
+</div>
+
+<script>
+  const KEY = "docs-tab:";
+  const read = (group: string) => {
+    try {
+      return localStorage.getItem(KEY + group);
+    } catch {
+      return null;
+    }
+  };
+  const write = (group: string, label: string) => {
+    try {
+      localStorage.setItem(KEY + group, label);
+    } catch {
+      /* private mode or blocked storage: the pick lasts for this page only */
+    }
+  };
+  const tabsOf = (root: Element) => [...root.querySelectorAll<HTMLButtonElement>(":scope > .codetabs__list > [role=tab]")];
+  const panelsOf = (root: Element) => [...root.querySelectorAll<HTMLElement>(":scope > [role=tabpanel]")];
+
+  /** Show `label` in one block; false when the block has no such tab. */
+  function show(root: HTMLElement, label: string): boolean {
+    const tabs = tabsOf(root);
+    if (!tabs.some((t) => t.dataset.label === label)) return false;
+    for (const t of tabs) {
+      const on = t.dataset.label === label;
+      t.setAttribute("aria-selected", String(on));
+      t.tabIndex = on ? 0 : -1;
+    }
+    for (const p of panelsOf(root)) p.hidden = p.dataset.label !== label;
+    return true;
+  }
+
+  /** A pick by the reader: every block of the group follows, and the clicked block stays where it was on screen. */
+  function pick(root: HTMLElement, label: string) {
+    const before = root.getBoundingClientRect().top;
+    const group = root.dataset.group;
+    if (group) {
+      for (const r of document.querySelectorAll<HTMLElement>("[data-codetabs][data-ready]")) if (r.dataset.group === group) show(r, label);
+      write(group, label);
+    } else show(root, label);
+    const moved = root.getBoundingClientRect().top - before;
+    if (Math.abs(moved) > 1) window.scrollBy(0, moved);
+  }
+
+  function setup() {
+    for (const root of document.querySelectorAll<HTMLElement>("[data-codetabs]:not([data-ready])")) {
+      const tabs = tabsOf(root);
+      const list = root.querySelector<HTMLElement>(":scope > .codetabs__list");
+      if (!list || !tabs.length) continue;
+      list.hidden = false;
+      root.dataset.ready = "";
+      const saved = root.dataset.group ? read(root.dataset.group) : null;
+      if (!saved || !show(root, saved)) show(root, tabs[0]!.dataset.label!);
+      tabs.forEach((t, i) => {
+        t.addEventListener("click", () => pick(root, t.dataset.label!));
+        t.addEventListener("keydown", (e) => {
+          const to = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[e.key];
+          if (to === undefined) return;
+          e.preventDefault();
+          const next = tabs[(to + tabs.length) % tabs.length]!;
+          pick(root, next.dataset.label!);
+          next.focus();
+        });
+      });
+    }
+  }
+  document.addEventListener("astro:page-load", setup);
+</script>

@@ -1,14 +1,41 @@
 ---
 // A docs page whose body is a file under the repo's docs/ folder (see markdown.ts).
+// The block kinds map to the site components: code to <Code>, tabs to
+// <CodeTabs>, shot to <DocShot>; :::more and :::note hold blocks of their own.
 import Code from "./Code.astro";
-import { renderDoc } from "./markdown";
+import CodeTabs from "./CodeTabs.astro";
+import DocShot from "./DocShot.astro";
+import { renderDoc, type MdBlock } from "./markdown";
 
 interface Props {
   /** Path under docs/, e.g. "concepts.md". */
-  file: string;
+  file?: string;
+  /** Blocks already parsed: the inside of a :::more or :::note. */
+  blocks?: MdBlock[];
 }
 // A doc split over several pages renders only this page's part.
-const blocks = renderDoc(Astro.props.file, Astro.url.pathname.replace(/(.)\/+$/, "$1"));
+const blocks = Astro.props.blocks ?? renderDoc(Astro.props.file!, Astro.url.pathname.replace(/(.)\/+$/, "$1"));
 ---
 
-{blocks.map((b) => (b.kind === "code" ? <Code code={b.code} title={b.title} /> : <Fragment set:html={b.html} />))}
+{
+  blocks.map((b) =>
+    b.kind === "code" ? (
+      <Code code={b.code} title={b.title} />
+    ) : b.kind === "tabs" ? (
+      <CodeTabs tabs={b.tabs} group={b.group} />
+    ) : b.kind === "shot" ? (
+      <DocShot name={b.name} alt={b.alt} caption={b.caption} />
+    ) : b.kind === "more" ? (
+      <details class="more">
+        <summary set:html={b.summary} />
+        <Astro.self blocks={b.blocks} />
+      </details>
+    ) : b.kind === "note" ? (
+      <div class="note">
+        <Astro.self blocks={b.blocks} />
+      </div>
+    ) : (
+      <Fragment set:html={b.html} />
+    ),
+  )
+}

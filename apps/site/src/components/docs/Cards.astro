@@ -1,0 +1,39 @@
+---
+// A grid of link cards: where to go next, or the paths through the docs.
+// One column below 640px, `cols` columns above. The whole card is the link.
+// `body` may hold `code` in backticks.
+interface Card {
+  href: string;
+  title: string;
+  body: string;
+}
+interface Props {
+  cards: Card[];
+  cols?: 2 | 3;
+}
+const { cards, cols = 2 } = Astro.props;
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const rich = (s: string) =>
+  s
+    .split("`")
+    .map((part, i) => (i % 2 ? `<code>${esc(part)}</code>` : esc(part)))
+    .join("");
+---
+
+<ul class:list={["cards", `cards--${cols}`]} role="list">
+  {
+    cards.map((c) => (
+      <li>
+        <a class="card" href={c.href}>
+          <span class="card__title">
+            {c.title}
+            <svg class="card__arrow" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+              <path d="M2.5 6h7M6.5 3l3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </span>
+          <span class="card__body" set:html={rich(c.body)} />
+        </a>
+      </li>
+    ))
+  }
+</ul>

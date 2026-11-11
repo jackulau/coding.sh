@@ -29,13 +29,8 @@
 .doc h3 + * {
   margin-top: 0.75rem;
 }
-.doc > p,
-.doc > ul,
-.doc > ol,
-.doc > .doc-table,
-.doc > figure,
-.doc > .code,
-.doc > .note {
+/* Blocks in the page flow, at the top level or inside a tab panel. */
+:is(.doc, .tabs__panel) > :is(p, ul, ol, .doc-table, figure, .code, .note, .codetabs, .cards) {
   margin-top: 1rem;
 }
 .doc h2 + p,
@@ -211,7 +206,7 @@
 }
 
 /* An optional path, folded: the main sequence reads straight through. */
-.doc > details.more {
+:is(.doc, .tabs__panel) > details.more {
   margin-top: 1rem;
   border-radius: var(--radius);
   box-shadow: inset 0 0 0 1px var(--line-strong);
@@ -253,28 +248,297 @@
   margin-bottom: 1rem;
 }
 
-/* Status, as bare mono text beside the feature: no box, no badge. Neutral
-   greys by design; pass/fail colours stay reserved for results. */
-.tag {
-  display: inline;
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  font-weight: 500;
-  white-space: nowrap;
-  vertical-align: 0.1em;
-  color: var(--text-2);
-}
-.tag--built {
-  color: var(--text);
-}
-.tag--planned {
-  color: var(--text-muted);
-}
-.doc h2 .tag,
-.doc h3 .tag {
-  margin-left: 0.5rem;
-  letter-spacing: 0;
-}
 .doc figure {
   margin-inline: 0;
+}
+
+/* ---------- Code tabs (CodeTabs.astro) ----------
+   Without JS every panel shows under its label. With JS (data-ready) a tab
+   row sits on the panel's own title bar and only the picked panel shows. */
+.codetabs__panel + .codetabs__panel {
+  margin-top: 1rem;
+}
+.codetabs__label {
+  margin-bottom: 0.4rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+.codetabs[data-ready] .codetabs__label {
+  display: none;
+}
+.codetabs[data-ready] .codetabs__panel + .codetabs__panel {
+  margin-top: 0;
+}
+.codetabs__list {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0 0.5rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: var(--term-bar);
+  box-shadow:
+    inset 1px 0 0 var(--line-strong),
+    inset -1px 0 0 var(--line-strong),
+    inset 0 1px 0 var(--line-strong);
+}
+.codetabs__list::-webkit-scrollbar {
+  display: none;
+}
+.codetabs[data-ready] .code__bar {
+  border-radius: 0;
+}
+.codetabs__tab {
+  position: relative;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 2.25rem;
+  padding: 0 0.6rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color var(--hover-out) ease;
+}
+.codetabs__tab[aria-selected="true"] {
+  color: var(--text);
+}
+.codetabs__tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  inset: auto 0.6rem 0;
+  height: 2px;
+  background: var(--text);
+}
+.codetabs__tab:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: -4px;
+  border-radius: var(--radius-sm);
+}
+@media (hover: hover) and (pointer: fine) {
+  .codetabs__tab:hover {
+    color: var(--text);
+    transition-duration: var(--hover-in);
+  }
+}
+@media (pointer: coarse) {
+  .codetabs__tab {
+    height: 2.75rem;
+    padding: 0 0.8rem;
+  }
+  .codetabs__tab[aria-selected="true"]::after {
+    inset-inline: 0.8rem;
+  }
+}
+
+/* ---------- Prose tabs (Tabs.astro) ---------- */
+:is(.doc, .tabs__panel) > .tabs {
+  margin-top: 1.25rem;
+}
+.tabs__list {
+  display: flex;
+  gap: 0.25rem;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0.25rem;
+  border-radius: var(--radius);
+  background: var(--term);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.tabs__tab {
+  min-height: 2.25rem;
+  padding: 0 1rem;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-base);
+  color: var(--text-2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color var(--hover-out) ease,
+    background-color var(--hover-out) ease;
+}
+.tabs__tab[aria-selected="true"] {
+  color: var(--text);
+  background: var(--raised);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.tabs__tab:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 1px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .tabs__tab:hover {
+    color: var(--text);
+    transition-duration: var(--hover-in);
+  }
+}
+@media (pointer: coarse) {
+  .tabs__tab {
+    min-height: 2.75rem;
+  }
+}
+@media (max-width: 639px) {
+  .tabs__list {
+    width: 100%;
+  }
+  .tabs__tab {
+    flex: 1;
+    padding: 0 0.5rem;
+  }
+}
+/* No JS: the panels stack, each opened by its label. */
+.tabs__label {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+.tabs[data-ready] .tabs__label {
+  display: none;
+}
+.tabs__panel > h2:first-of-type,
+.tabs__panel > h3:first-of-type {
+  margin-top: 1.75rem;
+}
+
+/* ---------- Link cards (Cards.astro) ---------- */
+.doc .cards {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  padding: 0;
+  list-style: none;
+}
+.doc .cards > li {
+  margin: 0;
+}
+@media (min-width: 640px) {
+  .doc .cards--2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .doc .cards--3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  height: 100%;
+  min-height: 2.75rem;
+  padding: 0.9rem 1rem 1rem;
+  border-radius: var(--radius);
+  background: var(--term);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  transition:
+    background-color var(--hover-out) ease,
+    transform 140ms var(--ease-out);
+}
+.card:active {
+  transform: scale(0.98);
+}
+.card__title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text);
+  font-weight: 520;
+  line-height: 1.35;
+}
+.card__arrow {
+  flex: none;
+  color: var(--text-muted);
+  transition: transform 160ms var(--ease-out);
+}
+.card__body {
+  font-size: var(--fs-base);
+  line-height: 1.55;
+  color: var(--text-2);
+}
+.card:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .card:hover {
+    background: var(--raised);
+    transition-duration: var(--hover-in);
+  }
+  .card:hover .card__arrow {
+    transform: translateX(2px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card,
+  .card__arrow,
+  .codetabs__tab,
+  .tabs__tab {
+    transition: none;
+  }
+  .card:active {
+    transform: none;
+  }
+}
+
+/* ---------- Screenshots and diagrams ---------- */
+:is(.doc, .tabs__panel) > :is(.docshot, .diagram) {
+  margin-top: 1.5rem;
+}
+:is(.docshot, .diagram) > figcaption {
+  margin-top: 0.6rem;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+/* A hand-drawn SVG from src/assets/docs/diagrams, inlined. Strokes and text
+   use currentColor, so they follow the theme; these classes give the token
+   colours: .d-box (a node), .d-line (a connector), .d-dash (optional path),
+   .d-muted (secondary text), .d-strong (primary text), .d-mono (code). */
+.diagram {
+  padding: 1rem;
+  border-radius: var(--radius);
+  background: var(--term);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  color: var(--text-2);
+}
+.diagram > svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.diagram svg text {
+  fill: currentColor;
+  font-family: var(--font-sans);
+}
+.diagram svg .d-box {
+  fill: var(--raised);
+  stroke: var(--line-strong);
+}
+.diagram svg .d-line {
+  fill: none;
+  stroke: var(--text-muted);
+}
+.diagram svg .d-dash {
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-dasharray: 4 4;
+}
+.diagram svg .d-muted {
+  fill: var(--text-muted);
+  color: var(--text-muted);
+}
+.diagram svg .d-strong {
+  fill: var(--text);
+  color: var(--text);
+}
+.diagram svg .d-mono {
+  font-family: var(--font-mono);
+}
+.diagram > figcaption {
+  margin-top: 0.85rem;
 }

@@ -4,16 +4,19 @@
 // description come from nav.ts so the sidebar, <title> and llms.txt agree.
 // A page that sits under a nav.ts entry without its own sidebar row (one CLI
 // command, /docs/cli/<name>) passes `page` and `parent`, and its own prev/next:
-// the sidebar and the breadcrumbs then point at the parent.
+// the sidebar and the breadcrumbs then point at the parent. A nav.ts sub page
+// (`children`) gets the same from nav.ts. At 1280px and wider an "On this
+// page" rail lists the page's h2s, and a Tabs block as its tab labels.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import Layout from "../../layouts/Layout.astro";
 import Nav from "../Nav.astro";
 import Search from "./Search.astro";
 import { SITE } from "../../data/site";
-import { DOC_GROUPS, docPage, neighbours, type DocPage } from "./nav";
+import { DOC_GROUPS, docPage, groupOf, neighbours, parentOf, type DocPage } from "./nav";
 import { techArticleSchema, faqSchema } from "../../lib/schema";
 import { pageLastmod } from "../../lib/lastmod.mjs";
+import { isAgentExcluded } from "../../lib/agent-routes.mjs";
 import "../../styles/doc.css";
 
 interface Props {
@@ -28,10 +31,18 @@ const { schemas = [] } = Astro.props;
 
 const path = Astro.url.pathname.length > 1 ? Astro.url.pathname.replace(/\/+$/, "") : Astro.url.pathname;
 const page = Astro.props.page ?? docPage(path);
-const { parent } = Astro.props;
+const parent = Astro.props.parent ?? parentOf(page.path);
 const current = parent ?? page;
+const currentGroup = groupOf(current.path);
 const { prev, next } = Astro.props.page ? Astro.props : neighbours(path);
 const isIndex = page.path === "/docs";
+// The page as Markdown (scripts/gen-agent-text.mjs writes <path>.md), for "Copy page" and "View as Markdown".
+const markdownURL = isAgentExcluded(path) ? null : `${path}.md`;
+// Search ranks task pages (guides, how-tos) above reference pages: a reader who types
+// "trace my python agent" wants the guide first, the full API second. Weights are
+// Pagefind's (default 1, h1 7): a guide's title and lede count more, a reference
+// page's body counts less.
+const isReference = currentGroup?.label === "Reference" || current.path.startsWith("/docs/cli");
 const title = page.metaTitle ?? (isIndex ? `${SITE.name} docs: observability and evals for any AI agent` : `${page.title} · ${SITE.name} docs`);
 const breadcrumbs = isIndex
   ? [{ name: "Docs", path: "/docs" }]
@@ -59,6 +70,23 @@ const faq = [...questions.matchAll(/<h3 [^>]*>([\s\S]*?)<\/h3>([\s\S]*?)(?=<h3[ 
   .map((m) => ({ q: m[1]!, a: m[2]! }))
   .filter((f) => f.q.trim().endsWith("?</a>") || f.q.trim().endsWith("?"));
 const faqSchemas = faq.length ? [faqSchema(faq)] : [];
+
+// "On this page": the h2s outside tab panels, in order, and each Tabs block
+// as its tab labels (Tabs.astro writes them to data-toc).
+// Astro writes `"` in an attribute as &#34; and the Markdown renderer as &quot;: decode both.
+const NAMED: Record<string, string> = { quot: '"', apos: "'", lt: "<", gt: ">", amp: "&" };
+const unesc = (s: string) =>
+  s.replace(/&(?:#(\d+)|#x([0-9a-f]+)|(quot|apos|lt|gt|amp));/gi, (m, d?: string, h?: string, n?: string) =>
+    d ? String.fromCodePoint(Number(d)) : h ? String.fromCodePoint(parseInt(h, 16)) : (NAMED[n!.toLowerCase()] ?? m),
+  );
+const plain = (s: string) => unesc(s.replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim();
+const outline: { id: string; label: string; tab?: boolean }[] = [];
+for (const m of body.matchAll(/<h2 id="([^"]+)"([^>]*)>([\s\S]*?)<\/h2>|<div class="tabs" data-tabs="[^"]*" data-toc="([^"]*)"/g)) {
+  if (m[4] !== undefined) {
+    for (const t of JSON.parse(unesc(m[4])) as { id: string; label: string }[]) outline.push({ id: t.id, label: t.label, tab: true });
+  } else if (!/\bdata-in-tabs\b/.test(m[2]!)) outline.push({ id: m[1]!, label: plain(m[3]!) });
+}
+const showOutline = outline.length >= 2;
 ---
 
 <Layout title={title} description={page.summary} breadcrumbs={breadcrumbs} image={ogImage} schemas={[article, ...faqSchemas, ...schemas]}>
@@ -101,8 +129,13 @@ const faqSchemas = faq.length ? [faqSchema(faq)] : [];
         <nav class="docs__menu-list" aria-label="Docs">
           {
             DOC_GROUPS.map((g) => (
-              <div class="docs__group">
-                <p class="docs__group-label">{g.label}</p>
+              <details class="docs__fold" open={g === currentGroup}>
+                <summary class="docs__fold-sum">
+                  {g.label}
+                  <svg class="docs__fold-chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+                    <path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </summary>
                 <ul>
                   {g.pages.map((p) => (
                     <li>
@@ -112,16 +145,24 @@ const faqSchemas = faq.length ? [faqSchema(faq)] : [];
                     </li>
                   ))}
                 </ul>
-              </div>
+              </details>
             ))
           }
         </nav>
       </details>
 
       <main id="main" class="doc" data-pagefind-body>
-        <h1>{page.title}</h1>
-        <p class="lede doc__lede">{page.summary}</p>
-        <Fragment set:html={body} />
+        {
+          markdownURL && (
+            <div class="doc__tools" data-agent-skip data-pagefind-ignore>
+              <button type="button" class="doc__tool" data-copy-page={markdownURL}>Copy page</button>
+              <a class="doc__tool" href={markdownURL}>View as Markdown</a>
+            </div>
+          )
+        }
+        <h1 data-pagefind-weight={isReference ? "5" : "10"}>{page.title}</h1>
+        <p class="lede doc__lede" data-pagefind-weight={isReference ? "1" : "5"}>{page.summary}</p>
+        {isReference ? <div data-pagefind-weight="0.5" style="display: contents"><Fragment set:html={body} /></div> : <Fragment set:html={body} />}
 
         {
           (prev || next) && (
@@ -144,9 +185,78 @@ const faqSchemas = faq.length ? [faqSchema(faq)] : [];
           )
         }
       </main>
+
+      {
+        showOutline && (
+          <aside class="onpage" aria-label="On this page" data-onpage data-agent-skip data-pagefind-ignore>
+            <p class="onpage__title">On this page</p>
+            <ul>
+              {outline.map((o) => (
+                <li>
+                  <a href={`#${o.id}`} class:list={["onpage__link", { "onpage__link--tab": o.tab }]}>
+                    {o.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </aside>
+        )
+      }
     </div>
   </div>
 </Layout>
+
+<script>
+  // "Copy page": the page's Markdown twin to the clipboard. The fetch goes inside the
+  // ClipboardItem so Safari still counts the click as the gesture.
+  document.addEventListener("click", async (e) => {
+    const btn = (e.target as Element).closest<HTMLButtonElement>("[data-copy-page]");
+    if (!btn) return;
+    const url = btn.dataset.copyPage!;
+    const text = () => fetch(url).then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))));
+    const done = (label: string) => {
+      btn.textContent = label;
+      setTimeout(() => (btn.textContent = "Copy page"), 2000);
+    };
+    try {
+      if (typeof ClipboardItem !== "undefined" && navigator.clipboard?.write) {
+        await navigator.clipboard.write([new ClipboardItem({ "text/plain": text().then((t) => new Blob([t], { type: "text/plain" })) })]);
+      } else {
+        await navigator.clipboard.writeText(await text());
+      }
+      done("Copied");
+    } catch {
+      done("Copy failed");
+    }
+  });
+
+  // Marks the section being read in the "On this page" rail: the last target
+  // whose top has passed under the nav. A tab label counts only while its tab
+  // is open.
+  let queued = 0;
+  function mark() {
+    queued = 0;
+    const rail = document.querySelector<HTMLElement>("[data-onpage]");
+    if (!rail || !rail.offsetParent) return;
+    const links = [...rail.querySelectorAll<HTMLAnchorElement>("a[href^='#']")];
+    const line = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) + 24 || 96;
+    let active: HTMLAnchorElement | undefined;
+    for (const a of links) {
+      const el = document.getElementById(decodeURIComponent(a.hash.slice(1)));
+      if (!el || el.hidden) continue;
+      const box = el.matches("[role=tabpanel]") ? el.closest("[data-tabs]") ?? el : el;
+      if (box.getBoundingClientRect().top <= line) active = a;
+    }
+    active ??= links[0];
+    for (const a of links) a.toggleAttribute("data-active", a === active);
+  }
+  const queue = () => (queued ||= requestAnimationFrame(mark));
+  addEventListener("scroll", queue, { passive: true });
+  addEventListener("resize", queue);
+  addEventListener("hashchange", queue);
+  document.addEventListener("docs:tab", queue);
+  document.addEventListener("astro:page-load", queue);
+</script>
 
 <style>
   .doc :global(.h-anchor) {
@@ -343,8 +453,43 @@ const faqSchemas = faq.length ? [faqSchema(faq)] : [];
   .docs__menu-search + .docs__menu-list {
     border-top: 0;
   }
-  .docs__menu-list .docs__group:first-child {
-    margin-top: 0.75rem;
+  /* Each group folds; the one holding this page starts open. */
+  .docs__fold:first-child {
+    margin-top: 0.25rem;
+  }
+  .docs__fold + .docs__fold {
+    border-top: 1px solid var(--line);
+  }
+  .docs__fold-sum {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-height: 2.75rem;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+  }
+  .docs__fold-sum::-webkit-details-marker {
+    display: none;
+  }
+  .docs__fold[open] > .docs__fold-sum {
+    color: var(--text);
+  }
+  .docs__fold-chev {
+    flex: none;
+    transition: transform 200ms var(--ease-out);
+  }
+  .docs__fold[open] .docs__fold-chev {
+    transform: rotate(180deg);
+  }
+  .docs__fold > ul {
+    list-style: none;
+    margin: 0;
+    padding: 0 0 0.75rem;
   }
   .docs__menu-list .docs__link {
     margin-left: 0;
@@ -355,9 +500,120 @@ const faqSchemas = faq.length ? [faqSchema(faq)] : [];
   }
   @media (prefers-reduced-motion: reduce) {
     .docs__menu-chev,
-    .docs__link {
+    .docs__fold-chev,
+    .docs__link,
+    .onpage__link {
       transition: none;
     }
+  }
+
+  /* ---------- On this page (1280px and wider) ---------- */
+  .onpage {
+    display: none;
+  }
+  @media (min-width: 1280px) {
+    .docs {
+      grid-template-columns: 12rem minmax(0, 1fr);
+      gap: 3rem;
+    }
+    .docs__body {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 11rem;
+      column-gap: 2.5rem;
+      align-items: start;
+    }
+    .docs__body > main {
+      grid-column: 1;
+      grid-row: 1;
+    }
+    .onpage {
+      display: block;
+      grid-column: 2;
+      grid-row: 1;
+      position: sticky;
+      top: calc(var(--nav-h) + 3rem);
+      max-height: calc(100dvh - var(--nav-h) - 4rem);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+      scrollbar-color: var(--line-strong) transparent;
+    }
+  }
+  .onpage__title {
+    margin-bottom: 0.5rem;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+  }
+  .onpage ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-left: 1px solid var(--line);
+  }
+  .onpage__link {
+    display: block;
+    margin-left: -1px;
+    padding: 0.3rem 0 0.3rem 0.75rem;
+    border-left: 1px solid transparent;
+    font-size: var(--fs-sm);
+    line-height: 1.4;
+    color: var(--text-muted);
+    transition: color var(--hover-out) ease;
+  }
+  .onpage__link--tab {
+    padding-left: 1.5rem;
+  }
+  .onpage__link[data-active] {
+    color: var(--text);
+    border-left-color: var(--text);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .onpage__link:hover {
+      color: var(--text);
+      transition-duration: var(--hover-in);
+    }
+  }
+
+  /* ---------- Copy page / View as Markdown ---------- */
+  .doc__tools {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+  .doc__tool {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.75rem;
+    padding: 0 0.625rem;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+    font: inherit;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+    cursor: pointer;
+    text-decoration: none;
+    transition: color var(--hover-out) ease;
+  }
+  @media (pointer: coarse) {
+    .doc__tool {
+      min-height: 2.75rem;
+    }
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .doc__tool:hover {
+      color: var(--text);
+      transition-duration: var(--hover-in);
+    }
+  }
+  .doc__tool:focus-visible {
+    outline: 2px solid var(--text);
+    outline-offset: 2px;
   }
 
   /* ---------- Pager ---------- */
