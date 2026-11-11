@@ -19,6 +19,10 @@ maxInlineBytes = 4096         # larger payloads move to blobs
 keepSpoolDays = 7
 toolOutputDays = 90`;
 
+const purge = `coding.sh purge --literal leaked.txt --dry-run   # count the copies
+coding.sh purge --literal leaked.txt             # replace them
+coding.sh purge --rule 'sk-ant-api03-[A-Za-z0-9_-]{80,}'   # every match of a shape`;
+
 const sinks = `[[sinks]]
 kind = "otlp"                           # OTLP/HTTP JSON traces to {endpoint}/v1/traces
 name = "collector"
@@ -87,20 +91,20 @@ interface Sink {
     <code>coding.sh search</code>. Writes are idempotent on event id, so re-ingesting the same spool changes nothing.
   </p>
   <p>
-    <code>coding.sh sql "select …"</code> runs one read-only query against it: one <code>SELECT</code> or <code>WITH</code> statement, on a
-    read-only connection with <code>query_only</code> on, stopped after <code>--timeout</code> seconds and capped at <code>--limit</code> rows.
-    <code>coding.sh export sessions|events|labels</code> streams rows as JSONL or CSV with the same filters as <code>coding.sh sessions</code>, and
-    works on every store. The tables and columns are listed in
-    <a href="https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md">Query and export</a>.
+    <a href="/docs/cli/sql"><code>coding.sh sql "select …"</code></a> runs one read-only query against it.
+    <a href="/docs/cli/export"><code>coding.sh export sessions|events|labels</code></a> streams rows as JSONL or CSV, on every store. The tables
+    and columns are in <a href="https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md">Query and export</a>.
   </p>
 
   <h2 id="blobs">Blobs <Tag status="built" /></h2>
   <p>
-    Large, write-once content: full tool output, raw source payloads, diffs. Each blob is keyed by the sha256 of its uncompressed bytes and compressed
-    with zstd level 3. One that compresses to under 4 KiB, such as a hook line's raw payload, is a row of <code>blobs/pack.db</code> (SQLite);
-    a larger one is stored as <code>blobs/ab/cd/&lt;sha256&gt;.zst</code>, written to a temp file then renamed, so readers never see half a
-    blob. The same <code>AGENTS.md</code> read in a thousand sessions is stored once. Event payloads larger than
-    <code>maxInlineBytes</code> (4 KB) move to a blob and the event keeps a reference.
+    Large, write-once content: full tool output, raw source payloads, diffs. Event payloads larger than <code>maxInlineBytes</code> (4 KB)
+    move to a blob and the event keeps a reference. Each blob is keyed by the sha256 of its uncompressed bytes, so the same
+    <code>AGENTS.md</code> read in a thousand sessions is stored once.
+  </p>
+  <p>
+    Blobs are compressed with zstd level 3. One that compresses to under 4 KiB is a row of <code>blobs/pack.db</code> (SQLite); a larger one
+    is <code>blobs/ab/cd/&lt;sha256&gt;.zst</code>, written to a temp file then renamed, so readers never see half a blob.
   </p>
 
   <h2 id="config">Config</h2>
@@ -114,15 +118,17 @@ interface Sink {
   <h2 id="privacy">Redaction and metadata mode</h2>
   <ul>
     <li>Redaction runs before anything is written to the index, blobs or sinks. The built-in <code>secrets</code> rules key on vendor token prefixes and on secret-looking names next to values, so code, paths and hashes pass through.</li>
-    <li>Each session counts what was redacted, by kind (<code>stats.redactions</code>, counts only). A session in which a vendor token was redacted gets the <code>secret:exposed</code> tag: the agent and its model provider saw the credential, so rotate it. <code>coding.sh sessions --flag secret:exposed</code> lists them.</li>
-    <li>A value that got past redaction can be removed afterwards: <code>coding.sh purge --literal leaked.txt</code> reads one value per line (<code>-</code> reads stdin) and replaces every copy with <code>[redacted:purged]</code> in events and the search index, sessions, labels, eval docs, blobs (rewritten under a new hash), the spool and eval run dirs, then VACUUMs the index. <code>--rule '&lt;regex&gt;'</code> purges every match of a pattern instead, such as a token prefix and length. <code>--dry-run</code> counts the copies first. SQLite store only; rotate the secret too.</li>
     <li><code>capture.mode = "metadata"</code> keeps ids, timings, kinds, counts and usage, and drops prompts, code and tool output.</li>
-    <li>
-      <a href="/docs/how-to/capture-with-proxy">The model API proxy</a> stores each call's request (system prompt, tools, messages) and
-      response, redacted first, and an allowlist of headers. It never stores <code>Authorization</code>, <code>x-api-key</code> or cookies.
-      In metadata mode it keeps hashes, counts, tool names, usage and timings only.
-    </li>
+    <li>A session in which a vendor token was redacted gets the <code>secret:exposed</code> tag: the agent and its model provider saw it, so rotate it. <code>coding.sh sessions --flag secret:exposed</code> lists them.</li>
+    <li><a href="/docs/how-to/capture-with-proxy">The model API proxy</a> redacts each request and response before storing it, and never stores <code>Authorization</code>, <code>x-api-key</code> or cookies.</li>
   </ul>
+  <p>A value that got past redaction can be removed afterwards. Put it in a file, one value per line, and count the copies first:</p>
+  <Code code={purge} />
+  <p>
+    Every copy is replaced, in the index, blobs, spool and eval runs: with <code>[redacted:purged]</code> in the index and blobs, with asterisks in spool and eval run files. SQLite store only; rotate the secret too.
+    <a href="/docs/cli/purge">purge</a> has the details, and
+    <a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md">Storage, sinks and privacy</a> covers every redaction rule.
+  </p>
 
   <h2 id="sinks">Sinks <Tag status="built" /></h2>
   <p>
