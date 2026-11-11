@@ -9,13 +9,16 @@ Later layers win:
 
 1. Built-in defaults.
 2. `~/.coding.sh/config.toml` (or `$CODING_SH_HOME/config.toml`), your user config.
-3. `<repo>/.coding.sh/config.toml`, the nearest one above the working directory. A repo file arrives
-   with `git clone`, so it may only make capture more private: it can set `capture` and `snapshot`
-   keys, redaction lists are merged rather than replaced, `capture.mode` can only become
-   `metadata`, and `capture.maxInlineBytes` can only go down. It can add `refine.protect` patterns
-   but not turn `refine.autoProtect` off. It can never set sinks or stores.
+3. `<repo>/.coding.sh/config.toml`, the nearest one above the working directory.
 4. Environment variables (`CODING_SH_STORE_URL`, `CODING_SH_BLOB_URL`, and the server variables).
 5. Command-line flags (`--store`, `--blobs`, and each command's own options).
+
+A repo file arrives with `git clone`, so it may only make capture more private:
+
+- It can set `capture` and `snapshot` keys. Redaction lists are merged, not replaced.
+- `capture.mode` can only become `metadata`, and `capture.maxInlineBytes` can only go down.
+- It can add `refine.protect` patterns but not turn `refine.autoProtect` off.
+- It can never set sinks or stores.
 
 ```sh
 coding.sh config path                          # the file in use
@@ -147,12 +150,12 @@ multiplies every rate for calls that ran in that inference geography:
 us = 1.1
 ```
 
-A call goes to
-a tier from its recorded service tier (`batch`, `flex`, `priority`), or `fast` for Claude fast mode
-(`fast` falls back to `priority` rates when it has no table of its own). A tier with no table is
-priced at the standard rates. An override replaces the whole built-in row, tiers included, so
-add the tier tables you want to keep. See
-[Where cost comes from](../how-to/expensive-sessions.md#where-cost-comes-from).
+A call goes to the tier it recorded (`batch`, `flex`, `priority`), or `fast` for Claude fast mode
+(`fast` falls back to `priority` rates when it has no table). A tier with no table is priced at
+the standard rates.
+
+An override replaces the whole built-in row, tiers included, so add the tier tables you want to
+keep. See [Where cost comes from](../how-to/expensive-sessions.md#where-cost-comes-from).
 
 ## `[gateway]`
 

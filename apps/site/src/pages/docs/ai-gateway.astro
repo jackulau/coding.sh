@@ -35,8 +35,9 @@ client = coding_sh.observe(OpenAI(base_url="https://gateway.ai.cloudflare.com/v1
 
 const cmds = `coding.sh gateway status          # which agents route through a gateway, keys set or not
 coding.sh gateway enrich          # billed cost + serving provider per call (last 30 days)
-coding.sh sessions --flag gateway:openrouter
-coding.sh compare sonnet gpt5 --gateway --k 3
+coding.sh sessions --flag gateway:openrouter`;
+
+const compareCmds = `coding.sh compare sonnet gpt5 --gateway --k 3
 coding.sh compare sonnet gpt5 --gateway openrouter`;
 
 const config = `# ~/.coding.sh/config.toml (only needed to change the defaults)
@@ -114,34 +115,52 @@ const GATEWAY_ROWS = [
   <Code title="ts" code={aiSdk} />
   <p>OpenCode uses its built-in <code>vercel</code> or <code>openrouter</code> provider, and Pi uses <code>vercel-ai-gateway</code> or <code>openrouter</code>.</p>
 
-  <h2 id="use">Use it <Tag status="built" /></h2>
+  <h2 id="use">Tag sessions and add billed cost <Tag status="built" /></h2>
   <Code code={cmds} />
   <p>
-    Detection is read-only. coding.sh never prints or stores your keys. Re-running <code>enrich</code> makes no new API calls. OpenRouter
-    and Requesty calls link by their response id. LiteLLM calls link through its OpenTelemetry export. Cloudflare, Portkey and Helicone
-    need the log id their response header carries: the SDKs record it, agents don't keep it. Calls through a Vercel <code>vmc/</code> virtual model record
-    the model it resolved to.
+    Detection is read-only. coding.sh never prints or stores your keys, and re-running <code>enrich</code> makes no new API calls. Cloudflare, Portkey and Helicone need the log id from their
+    response header: the SDKs record it, agents don't keep it. See <a href="/docs/cli/gateway">coding.sh gateway</a> for every option.
   </p>
 
-  <h2 id="sdk">From the SDKs <Tag status="built" /></h2>
+  <h2 id="compare">Compare models through a gateway <Tag status="built" /></h2>
+  <Code code={compareCmds} />
   <p>
-    Apps traced with the <a href="/docs/sdk">TypeScript or Python SDK</a> detect every gateway in the table on each model call: by base
-    URL (a self-hosted gateway by its URL env var, like <code>LITELLM_PROXY_API_BASE</code>), by a response header only that gateway sets,
-    or by the response id. The call records the gateway and its request id, so the session is tagged and <code>gateway enrich</code> can
-    look it up.
+    A bare <code>--gateway</code> uses <code>[gateway] default</code>, else the gateway with a key, else Vercel. See
+    <a href="/docs/cli/compare">coding.sh compare</a>.
+  </p>
+
+  <h2 id="sdk">Trace an app that calls a gateway <Tag status="built" /></h2>
+  <p>
+    Apps traced with the <a href="/docs/sdk">TypeScript or Python SDK</a> detect every gateway in the table on each model call. The call
+    records the gateway and its request id, so the session is tagged and <code>gateway enrich</code> can look it up.
   </p>
   <Code code={sdk} />
-  <p>
-    Request ids come from <code>cf-aig-log-id</code> (Cloudflare), <code>helicone-id</code>, <code>x-litellm-call-id</code>,
-    <code>x-portkey-trace-id</code> and <code>x-kong-request-id</code>, or the response id (<code>gen_…</code> Vercel,
-    <code>gen-…</code> OpenRouter, <code>rqsty-…</code> Requesty). The SDKs read headers only, never a body twice.
-  </p>
+
+  <details class="more" id="linking">
+    <summary>How calls are matched to a gateway</summary>
+    <p>
+      The SDKs detect a gateway by base URL (a self-hosted one by its URL env var, like <code>LITELLM_PROXY_API_BASE</code>), by a response
+      header only that gateway sets, or by the response id. They read headers only, never a body twice.
+    </p>
+    <p>
+      Request ids come from <code>cf-aig-log-id</code> (Cloudflare), <code>helicone-id</code>, <code>x-litellm-call-id</code>,
+      <code>x-portkey-trace-id</code> and <code>x-kong-request-id</code>, or the response id (<code>gen_…</code> Vercel,
+      <code>gen-…</code> OpenRouter, <code>rqsty-…</code> Requesty).
+    </p>
+    <p>
+      For <code>enrich</code>, OpenRouter and Requesty calls link by their response id, and LiteLLM calls through its OpenTelemetry export.
+      Calls through a Vercel <code>vmc/</code> virtual model record the model it resolved to.
+    </p>
+  </details>
 
   <h2 id="drains">Trace drains <Tag status="partial" /></h2>
   <p>
     Vercel Pro and Enterprise plans can drain one OpenTelemetry trace per gateway request. Tunnel to <code>coding.sh collector</code> and use
-    <code>&lt;tunnel&gt;/v1/traces</code> as the drain URL. Each request becomes one model call with its billed cost. Failovers are not
-    counted as extra calls. <code>enrich</code> then links each request to the agent session that made it. LiteLLM, Cloudflare, Portkey,
-    OpenRouter (Broadcast), TrueFoundry and Bifrost exports are tagged with their gateway and cost.
+    <code>&lt;tunnel&gt;/v1/traces</code> as the drain URL. Each request becomes one model call with its billed cost, and failovers are not
+    counted as extra calls. <code>enrich</code> then links each request to the agent session that made it.
+  </p>
+  <p>
+    OpenTelemetry exports from LiteLLM, Cloudflare, Portkey, OpenRouter (Broadcast), TrueFoundry and Bifrost are tagged with their gateway
+    and cost.
   </p>
 </DocsLayout>

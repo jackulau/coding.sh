@@ -6,30 +6,30 @@ import Tag from "../../components/docs/Tag.astro";
 // Tool list and config shapes follow packages/coding.sh/src/mcp/tools.ts and
 // src/adapters/_shared/mcp.ts (what `coding.sh init` writes for each agent).
 const TOOLS: [string, string][] = [
-  ["improve", "What goes wrong most in this repo's sessions, ranked, each with an example session, the AGENTS.md line that fixes it and the next commands; then whether recent harness changes helped."],
-  ["harness_changes", "Each committed AGENTS.md, rule or skill change: flagged sessions before and after, which sessions are still flagged after it and with what, how often the agent follows each new line, and a verdict."],
-  ["harness_audit", "Each memory file, AGENTS.md, rule and skill with the sessions that loaded, read and wrote it and its load tokens, unused ones first, and the refine run command that cuts the costliest instruction file. With check: true, whether your uncommitted edits deleted, reworded or relaxed a protected line."],
+  ["improve", "What goes wrong most in this repo's sessions, ranked, each with the AGENTS.md line that fixes it."],
+  ["harness_changes", "Each committed AGENTS.md, rule or skill change: flagged sessions before and after, and a verdict."],
+  ["harness_audit", "Each memory file, AGENTS.md, rule and skill with its load tokens and the sessions that used it, unused first. With check: true, whether uncommitted edits deleted, reworded or relaxed a protected line."],
   ["session_current", "The session of the agent calling the tool: its summary and latest timeline."],
-  ["sessions_list", "Captured sessions, newest first, with turns, tool errors, tokens, cost, failure flags and derails. Filter with flag (e.g. looping) or where (e.g. tool:Bash ok:false cost>0.5); facets counts per value."],
+  ["sessions_list", "Captured sessions, newest first, with turns, tool errors, tokens, cost and flags. Filter with flag or where."],
   ["session_get", "One session as a digest: per-turn index and a timeline of prompts, replies, tool calls and model calls."],
-  ["session_replay", "A session as numbered steps, with the files the agent touched rebuilt as of any step, one step's diff, or a range's. With fork, a step's model call sent again with changed context files."],
+  ["session_replay", "A session as numbered steps, with the files as of any step, and a step's or a range's diff. With fork, a step's model call sent again with changed files."],
   ["search", "Full-text search over prompts, replies and tool input/output across all sessions. Takes where too."],
   ["failures", "The raw data behind improve: flagged sessions, frequent tool errors, prompts where the user pushed back."],
   ["latency", "Model-call p50/p95 and time to first token, plus the slowest tools and tool calls."],
   ["usage", "Tokens and cost by day, agent, model or repo, with the most expensive sessions. Takes where too."],
   ["subagents", "The subagents a session spawned, as a tree with durations and errors."],
-  ["session_tree", "A whole multi-agent run as one tree: a parent agent and its subagents (or, by run id, a fan-out of separate agents), with per-node cost, tokens and flags, rolled-up totals and the worst flag to fix first."],
-  ["eval_candidates", "Captured sessions ranked as eval candidates: subagents, runs, sessions with no git start, no prompt or no edits left out, the rest scored by failure flags, pushback, a guessable verifier and recency."],
+  ["session_tree", "A whole multi-agent run as one tree, with per-node cost, tokens and flags and rolled-up totals."],
+  ["eval_candidates", "Captured sessions ranked as eval candidates by failure flags, pushback, a guessable verifier and recency."],
   ["experiments_list", "Dataset experiments with pass rate and confidence interval."],
   ["experiment_compare", "Paired comparison of two experiments: difference, p-value, regressed and improved cases."],
-  ["exp_session_summary", "The experiment session's timeline, oldest first: notes, commands and each run with its delta against the previous run."],
-  ["exp_session_note", "Add a note to the experiment session: the hypothesis before a run, the reading after it. Secrets are redacted."],
-  ["harness_compare", "Harness A/B results from coding.sh compare: the list, or one report with the ship gate, item gate and own-tests split."],
-  ["benchmarks", "Benchmarks: the list, one run's leaderboard with paired verdicts and worst failures, or one metric over time."],
-  ["eval_from_session", "Draft an eval task from a session. Agents ask you first; it, eval_init, score_add and exp_session_note are the only tools that write."],
-  ["eval_init", "Write an eval suite to evals/<name>/: tasks from failed sessions, a skill's trigger prompts, or cases the agent writes, marked draft. Agents ask you first."],
-  ["score_list", "Typed scores on sessions, events, dataset cases and eval runs, newest first, filtered by target, name, source or session."],
-  ["score_add", "Score a session, event, case or run: a number, true or false, or a category, checked against the score's config. Scoring the same thing again replaces it."],
+  ["exp_session_summary", "The experiment session's timeline: notes, commands and each run with its delta against the previous run."],
+  ["exp_session_note", "Add a note to the experiment session: a hypothesis before a run, the reading after it."],
+  ["harness_compare", "Harness A/B results from coding.sh compare: the list, or one report with its gates."],
+  ["benchmarks", "Benchmarks: the list, one run's leaderboard, or one metric over time."],
+  ["eval_from_session", "Draft an eval task from a session."],
+  ["eval_init", "Write an eval suite to evals/<name>/: tasks from failed sessions, a skill's trigger prompts, or cases the agent writes. What the agent writes is marked draft."],
+  ["score_list", "Typed scores on sessions, events, dataset cases and eval runs, newest first, with filters."],
+  ["score_add", "Score a session, event, case or run: a number, true or false, or a category. Scoring the same thing again replaces it."],
   ["status", "Health of coding.sh: version, available update, recent captures, pending spool, last error."],
 ];
 
@@ -75,27 +75,21 @@ const gemini = `// ~/.gemini/settings.json
 
 <DocsLayout>
   <p>
-    <code>coding.sh mcp</code> is a local MCP server over stdio. It gives an agent read access to the sessions coding.sh captured on this
-    machine, including the one it is running in, so it can answer "what failed last time?", "why was that slow?" or "what did this cost?"
-    from real traces. Nothing leaves your machine.
+    <code>coding.sh mcp</code> is a local MCP server over stdio. An agent can read the sessions captured on this machine, including its own,
+    and answer "what failed last time?" or "what did this cost?" from real traces. Nothing leaves your machine.
   </p>
 
   <h2 id="automatic">You don't set it up <Tag status="built" /></h2>
   <p>
-    <code>coding.sh init</code> shows one plan: capture hooks and the MCP server for every agent it finds. You answer once. It registers the
-    server at user scope with Claude Code, Codex, Cursor, OpenCode and older Gemini CLI installs, backing up each file first. The install script runs
-    <code>init</code> for you.
+    The install script runs <code>coding.sh init</code>, which adds capture hooks and the MCP server for every agent it finds. It registers
+    the server at user scope with Claude Code, Codex, Cursor, OpenCode and older Gemini CLI installs, backing up each file first.
   </p>
   <Code code={init} />
   <p>
-    The entry points at the installed CLI by absolute path, so agents started from a dock or an IDE find it without your shell's
-    <code>PATH</code>. <code>coding.sh uninstall</code> removes it. A config file nobody touched since init gets its original bytes back.
-    Otherwise only the <code>coding-sh</code> entry is removed.
+    The entry points at the installed CLI by absolute path, so agents started from a dock or an IDE find it. <code>coding.sh uninstall</code>
+    removes it, and restores a config file nobody touched since init byte for byte.
   </p>
-  <p>
-    Every call reads fresh data. The server ingests new hook events before it answers, and the hook starts a background ingest when a
-    session ends, so there is no <code>coding.sh ingest</code> step.
-  </p>
+  <p>Every call reads fresh data: the server ingests new hook events before it answers. There is no <code>coding.sh ingest</code> step.</p>
 
   <h2 id="tools">Tools</h2>
   <div class="doc-table">
@@ -116,14 +110,24 @@ const gemini = `// ~/.gemini/settings.json
     </table>
   </div>
   <p>
-    Prompts: <code>improve</code> (find the top issue and the line that fixes it), <code>trim</code> (find the memory files, skills and
-    instructions sessions never read, then check the edits) and <code>did-it-help</code> (whether a committed change helped, with an
-    optional <code>commit</code>). Claude Code lists them as <code>/mcp__coding-sh__improve</code>, <code>/mcp__coding-sh__trim</code> and
-    <code>/mcp__coding-sh__did-it-help</code>. See <a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/improve.md">Improve your agent every week</a>.
+    Only <code>eval_from_session</code>, <code>eval_init</code>, <code>score_add</code> and <code>exp_session_note</code> write. Agents ask
+    you before <code>eval_from_session</code> and <code>eval_init</code>. Notes have secrets redacted.
   </p>
+
+  <h2 id="prompts">Prompts and resources</h2>
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Prompt</th><th>In Claude Code</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>improve</code></td><td><code>/mcp__coding-sh__improve</code></td><td>Find the top issue and the line that fixes it.</td></tr>
+        <tr><td><code>trim</code></td><td><code>/mcp__coding-sh__trim</code></td><td>Find memory files, skills and instructions sessions never read, then check the edits.</td></tr>
+        <tr><td><code>did-it-help</code></td><td><code>/mcp__coding-sh__did-it-help</code></td><td>Whether a committed change helped, with an optional <code>commit</code>.</td></tr>
+      </tbody>
+    </table>
+  </div>
   <p>
-    Resources: <code>codingsh://latest</code> and <code>codingsh://session/&lt;id&gt;</code>, each a Markdown digest of one session. When a
-    newer coding.sh is out, the server's instructions mention it once and the <code>status</code> tool has the details.
+    See <a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/improve.md">Improve your agent every week</a>. Resources:
+    <code>codingsh://latest</code> and <code>codingsh://session/&lt;id&gt;</code>, each a Markdown digest of one session.
   </p>
 
   <h2 id="manual">Manual config</h2>
