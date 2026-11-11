@@ -83,6 +83,24 @@ function openAppend(file: string, dir: string): number {
   }
 }
 
+/**
+ * Cuts the file back to `size`. A descriptor opened for append holds no write access on
+ * Windows (FILE_APPEND_DATA only), so ftruncate on it fails there: truncate through a
+ * second descriptor opened for writing.
+ */
+function truncateTo(fd: number, file: string, size: number): void {
+  try {
+    ftruncateSync(fd, size);
+  } catch {
+    const w = openSync(file, "r+");
+    try {
+      ftruncateSync(w, size);
+    } finally {
+      closeSync(w);
+    }
+  }
+}
+
 /** O_APPEND write of `data`, on a fresh line even when the file ends in a torn fragment. */
 function append(file: string, dir: string, data: string): void {
   const fd = openAppend(file, dir);
@@ -102,7 +120,7 @@ function append(file: string, dir: string, data: string): void {
       // file ends where this write stopped: a line another hook appended since stays.
       if (off > 0) {
         try {
-          if (fstatSync(fd).size === size + off) ftruncateSync(fd, size);
+          if (fstatSync(fd).size === size + off) truncateTo(fd, file, size);
         } catch {
           // the fragment stays; readers skip it as a torn line
         }
