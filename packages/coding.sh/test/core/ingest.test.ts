@@ -1090,3 +1090,91 @@ describe("gateway enrichment stored while a session is folded (qa:proxy-6)", () 
     await assert.rejects(storeEnrichment(index, [billed()]), /disk full/);
   });
 });
+
+describe("a helper's events reach each sink once", () => {
+  // Claude Code hands a helper's events over twice: the parent's PostToolUse(Agent) and the helper's own SubagentStop.
+  const spoolLines = (): string[] => {
+    const lines = readFileSync(join(FIXTURES, "claude-code", "hooks.spool.jsonl"), "utf8").split("\n").filter(Boolean);
+    const start = JSON.parse(lines.find((l) => l.includes('"SubagentStart"'))!) as { raw: Record<string, unknown> };
+    const input = { description: "Find callers", prompt: "List files that import sum.js", subagent_type: "Explore" };
+    const post = { ...start, event: "PostToolUse", ts: 1793527209000, raw: { ...start.raw, agent_id: undefined, agent_type: undefined, hook_event_name: "PostToolUse", tool_name: "Agent", tool_use_id: "toolu_agent_abc", tool_input: input, tool_response: { status: "completed", agentId: "abc123", agentType: "Explore", content: [{ type: "text", text: "Two files." }], totalDurationMs: 5000 } } };
+    return [...lines, JSON.stringify(post)].map(local);
+  };
+
+  async function home(batchSize?: number) {
+    const env = tmpEnv();
+    process.env.CLAUDE_CONFIG_DIR = join(FIXTURES, "claude-code", "config");
+    const dir = join(env.dataHome, "spool", "claude-code");
+    mkdirSync(dir, { recursive: true });
+    const config = defaultConfig(process.env);
+    config.sinks = [{ kind: "x", name: "team", endpoint: "", mode: "full", batchSize }];
+    const index = await SqliteIndexStore.open(join(env.root, "idx.db"));
+    const adapters = new Map([[claudeCode.id, claudeCode]]);
+    return {
+      index,
+      write: (...lines: string[]) => appendFileSync(join(dir, "2026-11-01.jsonl"), lines.map((l) => l + "\n").join("")),
+      run: (...sinks: RecordingSink[]) => ingest({ config, index, blobs: new MemoryBlobStore(), sinks, adapters, env: process.env }),
+      /** Ids of every stored event. */
+      async stored() {
+        const ids: string[] = [];
+        for (const s of await index.listSessions({ limit: 1000 })) ids.push(...(await index.listEvents(s.id)).map((e) => e.id));
+        return ids.sort();
+      },
+      close: async () => {
+        await index.close();
+        env.restore();
+      },
+    };
+  }
+  const assertOnce = async (h: Awaited<ReturnType<typeof home>>, sink: RecordingSink) => {
+    const ids = sink.events.map((e) => e.id);
+    assert.equal(new Set(ids).size, ids.length, "no event id twice");
+    const stored = await h.stored();
+    assert.ok(stored.some((id) => id.length > 0) && stored.length > 10);
+    assert.deepEqual([...new Set(ids)].sort(), stored, "the sink got what the index stored");
+  };
+
+  it("one run, small batches", async () => {
+    const h = await home(1);
+    try {
+      const lines = spoolLines();
+      h.write(...lines);
+      const sink = new RecordingSink("team", "full");
+      await h.run(sink);
+      await assertOnce(h, sink);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("the two lines in two runs", async () => {
+    const h = await home();
+    try {
+      const lines = spoolLines();
+      h.write(...lines.slice(0, -1));
+      const sink = new RecordingSink("team", "full");
+      await h.run(sink);
+      h.write(lines.at(-1)!);
+      await h.run(sink);
+      await assertOnce(h, sink);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("a sink added after the events were stored gets each once", async () => {
+    const h = await home();
+    try {
+      h.write(...spoolLines());
+      const first = new RecordingSink("first", "full");
+      await h.run(first);
+      await assertOnce(h, first);
+      const late = new RecordingSink("team", "full");
+      await h.run(first, late);
+      await assertOnce(h, late);
+      assert.equal(first.events.length, late.events.length);
+    } finally {
+      await h.close();
+    }
+  });
+});
