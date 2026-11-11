@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
-import { findChrome, launchBrowser } from "./browser.ts";
+import { chromeArgs, findChrome, launchBrowser } from "./browser.ts";
 
 const root = mkdtempSync(join(tmpdir(), "find-chrome-"));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -25,6 +25,14 @@ test("on Windows, Chrome is found under Program Files, then Program Files (x86),
   const machine = exe("Program Files");
   assert.equal(findChrome(env, "win32"), machine);
   assert.equal(findChrome({}, "win32"), undefined);
+});
+
+test("test Chrome stays out of the macOS keychain, which a test HOME does not have", () => {
+  // Without these, every launch under a temp HOME pops "A keychain cannot be found" on the desktop.
+  const args = chromeArgs("/tmp/profile");
+  assert.ok(args.includes("--use-mock-keychain"));
+  assert.ok(args.includes("--password-store=basic"));
+  assert.ok(args.includes("--user-data-dir=/tmp/profile"));
 });
 
 test("CODING_SH_TEST_CHROME wins, and a wrong one fails instead of skipping", () => {
