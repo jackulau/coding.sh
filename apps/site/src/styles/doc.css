@@ -33,6 +33,10 @@
 :is(.doc, .tabs__panel) > :is(p, ul, ol, .doc-table, figure, .code, .note, .codetabs, .cards) {
   margin-top: 1rem;
 }
+/* Terminal.astro's scoped .term { margin: 0 } would beat .doc > figure. */
+.doc > figure.term {
+  margin-top: 1rem;
+}
 .doc h2 + p,
 .doc h3 + p {
   margin-top: 0.6rem;
