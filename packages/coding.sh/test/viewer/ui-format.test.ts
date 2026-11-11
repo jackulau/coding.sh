@@ -24,3 +24,15 @@ test("counts of one read in the singular", () => {
   assert.deepEqual([...f.summaryLine({ sessions: 1, toolCalls: 1, llmCalls: 1 })], ["1 session", "1 tool call", "1 model call"]);
   assert.deepEqual([...f.summaryLine({ sessions: 2, toolCalls: 3, llmCalls: 1234 })], ["2 sessions", "3 tool calls", "1.2k model calls"]);
 });
+
+test("relative times: past, a minute of skew, and the future", () => {
+  const now = Date.now();
+  assert.equal(f.fmtRel(0), "");
+  assert.equal(f.fmtRel(now - 5_000), "just now");
+  assert.equal(f.fmtRel(now + 20_000), "just now");
+  assert.equal(f.fmtRel(now - 5 * 60_000 - 500), "5m ago");
+  assert.equal(f.fmtRel(now - 3 * 3600_000 - 500), "3h ago");
+  assert.equal(f.fmtRel(now + 5 * 60_000 + 500), "in 5m");
+  assert.equal(f.fmtRel(now + 3 * 3600_000 + 500), "in 3h");
+  assert.equal(f.fmtRel(now + 2 * 86400_000 + 500), "in 2d");
+});
