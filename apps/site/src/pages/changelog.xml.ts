@@ -17,7 +17,10 @@ export const GET: APIRoute = () => {
     const html = [
       ...r.summary.map((s) => `<p>${s}</p>`),
       ...r.areas.map((a) => `<h3>${esc(a.name)}</h3><ul>${a.entries.map((e) => `<li>${kinds ? `<em>${esc(e.kind)}.</em> ` : ""}${e.html}</li>`).join("")}</ul>`),
-    ].join("");
+    ]
+      .join("")
+      // Notes link docs by site path; a feed reader needs the full URL.
+      .replace(/href="\//g, `href="${SITE_URL}/`);
     return `  <entry>
     <title>coding.sh ${esc(r.version)}${r.date ? ` (${esc(r.dateLabel)})` : ""}</title>
     <id>${id}</id>

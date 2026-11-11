@@ -6,6 +6,8 @@
 //   ### Added               a group (Added, Changed, Fixed, ...)
 //   - **Area.** text        an entry; the bold lead is its area
 import raw from "../../../../CHANGELOG.md?raw";
+import { docHref } from "../components/docs/markdown";
+import { REPO_URL } from "../data/site";
 
 export interface Entry {
   /** Anchor id, unique within its release. */
@@ -44,11 +46,19 @@ export interface Release {
 }
 
 export const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const REPO_FILES = `${REPO_URL}/blob/main/`;
+// A repo doc, linked as docs/<doc> or on GitHub, goes to its site page when it
+// has one (docHref); any other repo path goes to the file on GitHub.
+const link = (url: string) => {
+  const path = url.startsWith(REPO_FILES) ? url.slice(REPO_FILES.length) : /^(https?:|#|\/)/.test(url) ? "" : url.replace(/^(\.\.?\/)+/, "");
+  if (!path) return url;
+  return path.startsWith("docs/") ? docHref(path.slice("docs/".length)) : `${REPO_FILES}${path}`;
+};
 const inline = (s: string) =>
   esc(s)
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a class="inline-link" href="$2">$1</a>');
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, text: string, url: string) => `<a class="inline-link" href="${link(url)}">${text}</a>`);
 const plain = (s: string) =>
   s
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")

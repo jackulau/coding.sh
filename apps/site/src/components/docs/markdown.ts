@@ -243,9 +243,41 @@ function href(url: string, from: string, here: string): string {
   const target = out.join("/");
   const anchor = hash ? `#${hash}` : "";
   if (outside) return `${GITHUB_REPO}${target}${anchor}`;
+  return docHref(`${target}${anchor}`);
+}
+
+/**
+ * A repo doc, as a path under docs/ with any #fragment ("reference/cli.md#sessions"),
+ * to its site page with the fragment kept, or to the doc on GitHub when it has no site page.
+ */
+export function docHref(doc: string): string {
+  const [target, hash] = doc.split("#") as [string, string | undefined];
+  const anchor = hash ? `#${hash}` : "";
+  if (target === CLI_DOC && hash) return cliPage(hash) ?? `${GITHUB_DOCS}${target}${anchor}`;
   if (ON_SITE[target]) return ON_SITE[target];
   if (!SITE_PAGES[target]) return `${GITHUB_DOCS}${target}${anchor}`;
   return `${(hash && pageOf(target, hash)) || SITE_PAGES[target]}${anchor}`;
+}
+
+/**
+ * docs/reference/cli.md has a heading per command, but the site builds /docs/cli
+ * from the CLI's own --help (cli-help.ts): each top-level command has a page, with
+ * its sub-actions at #cmd-<name>. A heading the site has no place for stays on GitHub.
+ */
+const CLI_DOC = "reference/cli.md";
+let cliHeadings: Map<string, string> | undefined;
+function cliPage(id: string): string | undefined {
+  if (!cliHeadings) {
+    cliHeadings = new Map([
+      ["global-options", "/docs/cli#global"],
+      ["commands", "/docs/cli#commands"],
+    ]);
+    for (const line of readFileSync(join(REPO_DOCS, CLI_DOC), "utf8").split("\n")) {
+      const cmd = line.match(/^#{2,3} (`coding\.sh ([a-z][\w-]*)((?: [a-z][\w-]*)*)`)$/);
+      if (cmd) cliHeadings.set(slug(cmd[1]!), `/docs/cli/${cmd[2]}${cmd[3] ? `#cmd-${cmd[2]}${cmd[3].replace(/ /g, "-")}` : ""}`);
+    }
+  }
+  return cliHeadings.get(id);
 }
 
 function inline(text: string, from: string, here: string): string {
