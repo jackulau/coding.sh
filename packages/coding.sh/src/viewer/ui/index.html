@@ -1193,8 +1193,9 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .arm-name:has(.sw) { display: inline-flex; align-items: center; gap: 0.5rem; min-width: 0; }
 .bench-row { min-height: 56px; padding-top: 0.5rem; padding-bottom: 0.5rem; cursor: default; }
 .bench-row .place { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); }
-.stack-num { display: grid; justify-items: end; gap: 0.1rem; }
-.stack-num .meta { font-size: 10.5px; white-space: nowrap; }
+/* One track as wide as the cell: a long second line ends in an ellipsis and never pushes the number out of the column. */
+.stack-num { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: end; gap: 0.1rem; }
+.stack-num .meta { font-size: 10.5px; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .bench-row .mob { display: none; }
 .gap-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); gap: 0.75rem; }
 .gap-card { padding: 0.9rem 1.15rem 0.8rem; display: grid; gap: 0.5rem; min-width: 0; }
