@@ -3134,12 +3134,6 @@
     },
     {
       "rule": "site-placeholder",
-      "path": "apps/site/src/components/docs/nav.ts",
-      "max": 1,
-      "reason": "baseline 2026-11-08: labels a feature that is not built; drop the label when it ships"
-    },
-    {
-      "rule": "site-placeholder",
       "path": "apps/site/src/data/agents.ts",
       "max": 1,
       "reason": "baseline 2026-11-08: labels a feature that is not built; drop the label when it ships"
@@ -3147,13 +3141,7 @@
     {
       "rule": "site-placeholder",
       "path": "apps/site/src/lib/llms.ts",
-      "max": 2,
-      "reason": "baseline 2026-11-08: labels a feature that is not built; drop the label when it ships"
-    },
-    {
-      "rule": "site-placeholder",
-      "path": "apps/site/src/pages/docs/index.astro",
-      "max": 3,
+      "max": 1,
       "reason": "baseline 2026-11-08: labels a feature that is not built; drop the label when it ships"
     },
     {
