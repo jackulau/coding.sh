@@ -237,7 +237,11 @@ const markdownURL = noindex || isAgentExcluded(Astro.url.pathname)
     margin-left: auto;
   }
   @media (max-width: 639px) {
+    /* Seven links in rows of four and three, not five and two. */
     .site-footer__nav {
+      display: grid;
+      grid-template-columns: repeat(4, max-content);
+      column-gap: 1.25rem;
       margin-left: 0;
       width: 100%;
     }
