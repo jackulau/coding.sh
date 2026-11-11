@@ -263,7 +263,32 @@ describe("viewer feel in a browser", { skip: chrome ? false : "no Chrome/Chromiu
       await page.close();
     }
   });
+
+  test("at 390px the filter sheet opens and closes with the same slide, and has no grab handle", async () => {
+    await open("#/", 390, 844);
+    try {
+      await page.viewport(390, 844, true);
+      const groups = "document.querySelector('.facet-groups')";
+      const visible = `(() => { const g = ${groups}; const r = g.getBoundingClientRect(); return getComputedStyle(g).position === 'fixed' && r.height > 0 && r.top < innerHeight; })()`;
+      await page.eval("document.querySelector('.facets-toggle').click()");
+      await page.waitFor(`document.querySelector('.facets').dataset.open === 'true'`, "sheet open");
+      await sleep(400);
+      assert.equal(await page.eval(visible), true);
+      assert.equal(await page.eval("getComputedStyle(document.querySelector('.sheet-head'), '::before').content"), "none", "no grab handle");
+      await page.eval("document.querySelector('.sheet-head .btn').click()");
+      assert.equal(await page.eval("document.querySelector('.facets-toggle').getAttribute('aria-expanded')"), "false");
+      // Mid-slide the sheet is still on screen and moving down; it is hidden once the slide ends.
+      await sleep(60);
+      assert.equal(await page.eval(`document.querySelector('.facets').dataset.open`), "true");
+      assert.ok((await page.eval(`document.getAnimations().filter((a) => a.animationName === 'sheet-out').length`)) >= 1);
+      await page.waitFor(`document.querySelector('.facets').dataset.open === 'false' && !document.querySelector('.facets').classList.contains('closing')`, "sheet closed", 1500);
+      assert.equal(await page.eval("document.querySelector('.facets-toggle').getAttribute('aria-expanded')"), "false");
+    } finally {
+      await page.close();
+    }
+  });
 });
+
 
 describe("viewer feel: the benchmark table", { skip: chrome ? false : "no Chrome/Chromium found (set CODING_SH_TEST_CHROME)" }, () => {
   let v: Viewer;
