@@ -345,7 +345,8 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
       assert.deepEqual(sheet, { pos: "fixed", bottom: 844, focus: "Done" }, "Filters open as a bottom sheet with Done focused");
       assert.match(await page.eval("document.querySelector('.sheet-foot .btn-primary').textContent"), /^Show \d+ sessions?$/, "the footer says how many sessions the filters leave");
       await page.eval("document.querySelector('.sheet-head .btn').click()");
-      assert.equal(await page.eval("document.querySelector('.facets').dataset.open"), "false", "Done closes the sheet");
+      // The sheet slides out before it is hidden.
+      await page.waitFor("document.querySelector('.facets').dataset.open === 'false'", "Done closes the sheet");
     } finally {
       await page.close();
     }
@@ -775,11 +776,12 @@ describe("viewer UI: timeline, inspector and compare", { skip: chrome ? false : 
       const first = await page.waitFor(`${selected}?.classList.contains('is-fail') && ${selected}.textContent`, "first failure");
       assert.match(first, /Bash/);
       assert.match(await page.eval("document.querySelector('.fail-nav').textContent"), /1 \/ 2 failures/);
-      const pane: string = await page.eval("document.querySelector('#event-pane').innerText");
+      // A step pressed within 80 ms of the last paint shows its pane on the trailing timer.
+      const pane: string = await page.waitFor("/npm test/.test(document.querySelector('#event-pane').innerText) && document.querySelector('#event-pane').innerText", "pane of the failed command");
       assert.match(pane, /npm test/);
       assert.match(pane, /not ok 1 - cursor/);
       await key("]");
-      const second = await page.waitFor(`/LLM call/.test(${selected}?.textContent) && ${selected}.classList.contains('is-fail') && document.querySelector('#event-pane').innerText`, "failed model call");
+      const second = await page.waitFor(`/LLM call/.test(${selected}?.textContent) && ${selected}.classList.contains('is-fail') && /HTTP 429/.test(document.querySelector('#event-pane').innerText) && document.querySelector('#event-pane').innerText`, "failed model call");
       assert.match(second, /HTTP 429/);
       // z expands every fold.
       await key("z");
