@@ -69,7 +69,7 @@ const rows = <T>(file: string): T[] => readFileSync(file, "utf8").split("\n").fi
 function allFiles(dir: string): string[] {
   const out: string[] = [];
   const walk = (d: string) => {
-    for (const e of readdirSync(d, { withFileTypes: true })) e.isDirectory() ? walk(join(d, e.name)) : out.push(relative(dir, join(d, e.name)));
+    for (const e of readdirSync(d, { withFileTypes: true })) e.isDirectory() ? walk(join(d, e.name)) : out.push(relative(dir, join(d, e.name)).split("\\").join("/"));
   };
   walk(dir);
   return out.sort();

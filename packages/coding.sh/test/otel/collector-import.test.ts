@@ -48,6 +48,9 @@ function tmpHome(): void {
     XDG_CONFIG_HOME: join(home, ".config"),
     TMPDIR: tmpdir(),
     NO_COLOR: "1",
+    // No background ingest: a read would start one, and it can still hold index.db open when the temp home is
+    // removed (EBUSY on Windows).
+    CODING_SH_NO_AUTO_INGEST: "1",
     CLICKHOUSE_USER: "otel",
     CLICKHOUSE_PASSWORD: PASSWORD,
   };
@@ -60,7 +63,7 @@ describe("coding.sh collector import", () => {
   });
   after(async () => {
     await ch.close();
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   });
 
   it("--dry-run counts the spans and writes nothing", async () => {
@@ -154,7 +157,7 @@ describe("coding.sh collector import: the cursor", () => {
   });
   after(async () => {
     await ch.close();
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   });
 
   it("a run without --where imports the rows a filtered run skipped, then resumes", async () => {
@@ -201,7 +204,7 @@ describe("coding.sh collector import: a run that stops part-way", () => {
   });
   after(async () => {
     await ch.close();
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   });
 
   it("says how far it got and names the rerun, and the rerun finishes the job", async () => {
