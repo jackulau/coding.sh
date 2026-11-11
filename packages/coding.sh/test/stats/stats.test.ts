@@ -21,10 +21,26 @@ import {
   roganGladen,
   stddev,
   summarize,
+  newcombeDiff,
   wilson,
 } from "../../src/stats/index.ts";
 
 const close = (a: number, b: number, eps = 1e-4) => assert.ok(Math.abs(a - b) <= eps, `${a} ≉ ${b} (±${eps})`);
+
+describe("newcombeDiff", () => {
+  it("1 of 10 against 7 of 10: about 17 to 81 points, never zero-width", () => {
+    const r = newcombeDiff(1, 10, 7, 10);
+    assert.ok(Math.abs(r.p - 0.6) < 1e-12);
+    assert.ok(Math.abs(r.lo - 0.1705) < 0.001 && Math.abs(r.hi - 0.8090) < 0.001, `${r.lo} ${r.hi}`);
+  });
+  it("equal rates are centred on 0, a sweep stays inside [-1, 1], an empty arm is uninformative", () => {
+    const e = newcombeDiff(5, 10, 5, 10);
+    assert.ok(e.lo < 0 && e.hi > 0 && Math.abs(e.lo + e.hi) < 1e-12);
+    const s = newcombeDiff(0, 10, 10, 10);
+    assert.ok(s.lo > 0 && s.hi <= 1);
+    assert.deepEqual([newcombeDiff(0, 0, 1, 2).lo, newcombeDiff(0, 0, 1, 2).hi], [-1, 1]);
+  });
+});
 
 describe("wilson", () => {
   // Newcombe (1998), "Two-sided confidence intervals for the single proportion", Table I, method 3.

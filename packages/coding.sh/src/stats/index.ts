@@ -1,7 +1,7 @@
 export { mean, median, p90, quantile, quantileSorted, stddev, summarize } from "./summary.ts";
 export type { Summary } from "./summary.ts";
 export { mulberry32 } from "./prng.ts";
-export { pairedBootstrap, pairedBootstrapMedian, roganGladen, wilson } from "./interval.ts";
+export { pairedBootstrap, pairedBootstrapMedian, newcombeDiff, roganGladen, wilson } from "./interval.ts";
 export type { BootstrapOpts, BootstrapResult, CalibrationCounts, Interval, RoganGladenResult } from "./interval.ts";
 export { acceptanceGate, acceptanceGatePaired, binomCdfHalf, binomUpperTail, clusterSignFlip, fisherExact, hardRegressions, holm, mcnemar, mcnemarPaired, nonInferiority, pairedPermutation, signTest } from "./tests.ts";
 export type { GateOpts, GateReason, GateResult, McNemarResult, NonInferiorityOpts, NonInferiorityResult, PermutationOpts, PermutationResult, SignFlipOpts, SignFlipResult, SignTestResult } from "./tests.ts";

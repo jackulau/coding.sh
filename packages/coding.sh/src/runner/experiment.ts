@@ -8,11 +8,11 @@ import type { Adapter, AgentEvent, BlobStore, EvalTask, HarnessBundle, IndexStor
 import { exactPowerText, pairedPower, type PowerAnalysis } from "../experiments/power.ts";
 import { infraKind, infraKinds, infraKindsText, infraStopFor, voidText, withRetries, type InfraKind, type InfraStopReport, type RetryPolicy } from "../jobs/retry.ts";
 import type { JobScope } from "../jobs/store.ts";
-import { pairedBootstrap, wilson, type BootstrapResult, type Interval } from "../stats/interval.ts";
+import { newcombeDiff, pairedBootstrap, wilson, type BootstrapResult, type Interval } from "../stats/interval.ts";
 import { mean } from "../stats/summary.ts";
 import { itemGate, dec, type ItemGateOpts, type ItemGateReport } from "./gate-item.ts";
 import { gateDetail, gateHeadline, gateVerdict, idList, type GateVerdict } from "../stats/gate.ts";
-import { acceptanceGate, mcnemar, type GateOpts, type GateResult, type McNemarResult } from "../stats/tests.ts";
+import { acceptanceGate, fisherExact, mcnemar, type GateOpts, type GateResult, type McNemarResult } from "../stats/tests.ts";
 import { paretoSupport, type ParetoOpts, type ParetoSupport } from "../stats/pareto.ts";
 import { failureAnatomy, nestedVarianceShares, type ArmAnatomy, type VarianceShares } from "./anatomy.ts";
 import { diffBundles, formatBundleDiff, type BundleDiff, type InstructionSurface } from "./bundle.ts";
@@ -618,6 +618,13 @@ export interface CompareReport {
    */
   mcnemar: McNemarResult;
   /**
+   * Present when only one task ran in both arms. The task bootstrap and McNemar have nothing to
+   * resample or pair then, so the verdict reads the runs of that task instead: the Newcombe
+   * interval of the difference of the two pass rates (candidate − baseline) and Fisher's exact p.
+   * Both hold for this task only and say nothing about other tasks.
+   */
+  oneTask?: OneTaskRuns;
+  /**
    * Minimum detectable effect and power warnings over the per-task pass-rate
    * differences (the task is the cluster), same analysis as `exp compare`.
    */
@@ -701,6 +708,15 @@ export interface CompareReport {
   plan: ComparePlan;
   /** Sequential comparisons (`compare --sequential`): pass rate by position per arm. */
   learning?: LearningReport;
+}
+
+export interface OneTaskRuns {
+  baseline: { passes: number; runs: number };
+  candidate: { passes: number; runs: number };
+  /** Newcombe hybrid score interval of candidate − baseline over the runs; `p` is the observed difference. */
+  diff: Interval;
+  /** Two-sided Fisher exact p of passes against fails by arm. */
+  fisherP: number;
 }
 
 export interface ArmEfficiency {
@@ -1062,6 +1078,7 @@ export function armReliability(byTask: ReadonlyMap<string, readonly RunResult[]>
  */
 export function tasksNeeded(b: number, c: number, paired: number, o: { alpha?: number; power?: number } = {}): ComparePlan {
   const base = { paired, discordant: { b, c }, effect: paired ? Math.abs(c - b) / paired : NaN };
+  if (paired === 1) return { ...base, tasksNeeded: null, reason: "one task: no estimate of how many tasks" };
   if (!paired || b + c === 0) return { ...base, tasksNeeded: null, reason: "no discordant pairs" };
   if (b === c) return { ...base, tasksNeeded: null, reason: "no observed effect (as many tasks won as lost)" };
   const pd = (b + c) / paired;
@@ -1205,7 +1222,13 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
   const spend = { baseline: spendOf(opts.baseline), candidate: spendOf(opts.candidate) };
 
   const notes: string[] = [];
-  if (k > 1) notes.push(`pass-rate intervals (Wilson) treat the ${k} runs per task as independent and are optimistic; the bootstrap CI resamples tasks and is the one to trust`);
+  if (k > 1) {
+    notes.push(
+      diffs.length >= 2
+        ? `pass-rate intervals (Wilson) treat the ${k} runs per task as independent and are optimistic; the bootstrap CI resamples tasks and is the one to trust`
+        : `pass-rate intervals (Wilson) treat the ${k} runs per task as independent and are optimistic`,
+    );
+  }
   if (unpaired.length) notes.push(`${unpaired.length} task(s) ran in only one arm and are excluded from paired stats`);
   // With traces, each tamper flag is linked to the tool call that made it, and tampered passes split by disclosure.
   const atts = opts.events ? tamperAttributions(A, B, opts) : undefined;
@@ -1249,7 +1272,18 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
 
   // Runs lost to infrastructure left nothing to pair: say the round is void, not merely inconclusive.
   const isVoid = diffs.length === 0 && infra > 0;
-  const verdict: ReturnType<typeof decide> = isVoid ? { kind: "inconclusive", text: voidText(infra, infraByKind) } : decide(diffs.length, boot, mcn, alpha, metrics);
+  // One task: nothing to resample or pair, so the runs of that task carry the interval, the test and the verdict.
+  const only = tasks.length === 1 ? (tasks[0] as TaskOutcome) : undefined;
+  const oneTask: OneTaskRuns | undefined =
+    only && diffs.length === 1
+      ? {
+          baseline: only.baseline,
+          candidate: only.candidate,
+          diff: newcombeDiff(only.baseline.passes, only.baseline.runs, only.candidate.passes, only.candidate.runs, normalQuantile(1 - alpha / 2)),
+          fisherP: fisherExact(only.baseline.passes, only.baseline.runs - only.baseline.passes, only.candidate.passes, only.candidate.runs - only.candidate.passes),
+        }
+      : undefined;
+  const verdict: ReturnType<typeof decide> = isVoid ? { kind: "inconclusive", text: voidText(infra, infraByKind) } : decide(diffs.length, boot, mcn, alpha, metrics, oneTask);
   if (verdict.extra) notes.push(verdict.extra);
   const efficiency = { baseline: armEfficiency(A, opts.sessions), candidate: armEfficiency(B, opts.sessions) };
   const reliability = { baseline: armReliability(ta, k), candidate: armReliability(tb, k) };
@@ -1311,6 +1345,7 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
     k,
     diff: boot,
     mcnemar: mcn,
+    ...(oneTask ? { oneTask } : {}),
     power: pairedPower(diffs, { alpha, discordant: { b: mb, c: mc } }),
     metrics,
     spend,
@@ -1461,12 +1496,22 @@ function decide(
   mcn: McNemarResult,
   alpha: number,
   metrics: MetricDelta[],
+  one?: OneTaskRuns,
 ): { kind: VerdictKind; text: string; extra?: string } {
   if (paired === 0) return { kind: "inconclusive", text: "inconclusive: no task ran in both arms" };
   const level = `${Math.round((1 - alpha) * 100)}%`;
   const ci = `${level} CI [${pp(boot.lo)}, ${pp(boot.hi)}]`;
   const bootSig = boot.lo > 0 || boot.hi < 0;
   const mcSig = mcn.p < alpha;
+  if (one) {
+    // Runs of one task: a difference here is a fact about this task, not a result for the harness, so it is never better or worse.
+    const oci = `${level} CI [${pp(one.diff.lo)}, ${pp(one.diff.hi)}]`;
+    const sig = (one.diff.lo > 0 || one.diff.hi < 0) && one.fisherP < alpha;
+    const about = `runs of one task: ${one.baseline.passes}/${one.baseline.runs} vs ${one.candidate.passes}/${one.candidate.runs} passes, ${oci} (Newcombe), Fisher ${pval(one.fisherP)}; says nothing about other tasks`;
+    return sig
+      ? { kind: "inconclusive", text: `inconclusive: ${pp(one.diff.p)} pass rate on this task (${about}); run more tasks` }
+      : { kind: "no-difference", text: `no significant difference on this task: ${pp(one.diff.p)} pass rate (${about}); run more tasks` };
+  }
   const small = paired < 10 ? ` (only ${paired} task${paired === 1 ? "" : "s"}; underpowered)` : "";
   const cost = metrics.find((m) => m.key === "cost");
   let costNote: string | undefined;
@@ -1697,9 +1742,12 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
   out.push("");
   out.push(dim(row(["", "baseline", "candidate", "delta"])));
   const rate = (a: ArmSummary) => `${pct(a.passRate.p)} [${pct(a.passRate.lo).replace("%", "")}–${pct(a.passRate.hi)}]`;
-  const dtext = `${pp(r.diff.mean)} [${pp(r.diff.lo).replace(" pp", "")}, ${pp(r.diff.hi)}]`;
-  out.push(row(["pass rate", rate(r.baseline), rate(r.candidate), signed(r.diff.mean, false, dtext)]));
-  out.push(row(["passes", `${r.baseline.passes}/${r.baseline.runs}`, `${r.candidate.passes}/${r.candidate.runs}`, `McNemar ${pval(r.mcnemar.p)}`]));
+  const one = r.oneTask;
+  const interval = one ? one.diff : { p: r.diff.mean, lo: r.diff.lo, hi: r.diff.hi };
+  const dtext = `${pp(interval.p)} [${pp(interval.lo).replace(" pp", "")}, ${pp(interval.hi)}]`;
+  out.push(row(["pass rate", rate(r.baseline), rate(r.candidate), signed(interval.p, false, dtext)]));
+  out.push(row(["passes", `${r.baseline.passes}/${r.baseline.runs}`, `${r.candidate.passes}/${r.candidate.runs}`, one ? `Fisher ${pval(one.fisherP)}` : `McNemar ${pval(r.mcnemar.p)}`]));
+  if (one) out.push(dim("  runs of one task (Newcombe interval, Fisher exact test); says nothing about other tasks"));
   // Older stored reports (and hand-built ones) may lack the efficiency, reliability and plan fields.
   const rl = r.reliability;
   if (rl && rl.baseline.k >= 2) {
@@ -1890,7 +1938,7 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
       dim(`(α ${p.alpha}, power ${Math.round(p.power * 100)}%, paired, sd of per-case Δ ${Number.isFinite(p.sd) ? p.sd.toFixed(2) : "—"}${p.exact ? `, ${Math.round(p.exact.discordance * 100)}% discordant` : ""})`),
   );
   const pl = r.plan;
-  if (pl && pl.paired) {
+  if (pl && pl.paired >= 2) {
     out.push(
       pl.tasksNeeded === null
         ? dim(`tasks needed: — (${pl.reason})`)

@@ -25,6 +25,23 @@ export function wilson(successes: number, n: number, z = 1.959963984540054): Int
   return { p, lo: Math.max(0, center - half), hi: Math.min(1, center + half) };
 }
 
+/**
+ * Newcombe's hybrid score interval (method 10) for the difference p2 − p1 of two independent
+ * proportions: x1 of n1 against x2 of n2. Built from the two Wilson intervals, so it stays inside
+ * [-1, 1] and is never zero-width. `p` is the observed difference; an empty arm gives [-1, 1] with p = NaN.
+ */
+export function newcombeDiff(x1: number, n1: number, x2: number, n2: number, z = 1.959963984540054): Interval {
+  if (!(n1 > 0) || !(n2 > 0)) return { p: NaN, lo: -1, hi: 1 };
+  const a = wilson(x1, n1, z);
+  const b = wilson(x2, n2, z);
+  const d = b.p - a.p;
+  return {
+    p: d,
+    lo: Math.max(-1, d - Math.sqrt((b.p - b.lo) ** 2 + (a.hi - a.p) ** 2)),
+    hi: Math.min(1, d + Math.sqrt((b.hi - b.p) ** 2 + (a.p - a.lo) ** 2)),
+  };
+}
+
 export interface BootstrapOpts {
   iters?: number;
   seed?: number;
