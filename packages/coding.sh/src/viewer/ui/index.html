@@ -654,8 +654,8 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .st .name { color: var(--text); font-weight: 500; flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .st .arg { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-family: var(--font-mono); font-size: 12px; }
 .st .arg-path { display: flex; }
-.arg-path .pdir { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
-.arg-path .pbase { flex: none; color: var(--text-2); }
+.arg-path .pdir { flex: 0 1000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
+.arg-path .pbase { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
 .st .d { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
 .st .cost { flex: none; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); white-space: nowrap; }
 .st .wf { position: relative; height: 100%; display: none; }
@@ -1175,8 +1175,8 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .note-line { font-family: var(--font-sans); font-size: 12.5px; }
 .warn-line { display: flex; align-items: baseline; gap: 0.5rem; margin: 0.8rem 0 0; color: var(--text-2); }
 .warn-line .dot { color: var(--warn); transform: translateY(-1px); }
-.bench-board .thead, .bench-row { grid-template-columns: 2.6rem minmax(10rem, 1.3fr) minmax(11rem, 1.5fr) 7rem 7rem 4.5rem 4.5rem 6rem 6.5rem; }
-.bench-board.no-anchor .thead, .bench-board.no-anchor .bench-row { grid-template-columns: 2.6rem minmax(10rem, 1.3fr) minmax(11rem, 1.5fr) 7rem 7rem 4.5rem 6rem 6.5rem; }
+.bench-board .thead, .bench-row { grid-template-columns: 2.6rem minmax(6.5rem, 1.3fr) minmax(7rem, 1.5fr) 7rem 7rem 4.5rem 4.5rem 6rem 6.5rem; }
+.bench-board.no-anchor .thead, .bench-board.no-anchor .bench-row { grid-template-columns: 2.6rem minmax(6.5rem, 1.3fr) minmax(7rem, 1.5fr) 7rem 7rem 4.5rem 6rem 6.5rem; }
 .bench-row .delta.flat, .pooled-row .delta.flat, .gap-now .delta.flat { color: var(--text-2); }
 /* Short lists with rows taller than the 40px guess: render them all so nothing shifts. */
 .bench-row, .pooled-row, .fail-row, .bench-card { content-visibility: visible; }
@@ -1662,6 +1662,13 @@ function basename(p) {
   return parts[parts.length - 1] || String(p);
 }
 function short(sha, n = 7) { return sha ? String(sha).slice(0, n) : ""; }
+/** An id that differs at its end keeps both ends: "claude-opus-5-5-2…igh-a". The full id stays in the title. */
+function midClip(s, n) {
+  s = String(s ?? "");
+  if (s.length <= n) return s;
+  const tail = Math.ceil((n - 1) * 0.4);
+  return s.slice(0, n - 1 - tail) + "…" + s.slice(-tail);
+}
 function clip(s, n) { s = String(s ?? ""); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
 function oneLine(s) { return String(s ?? "").replace(/\s+/g, " ").trim(); }
 function fmtBytes(n) {
@@ -3138,10 +3145,10 @@ function sessionList(view) {
     },
       h("span", { class: "dot " + (tone ? "tone-" + tone : actErr || failedReqs ? "tone-fail ring" : "tone-muted"), "aria-hidden": "true", title: tone === "fail" ? "Tests failing" : tone === "pass" ? "Tests passing" : undefined }),
       h("div", { class: "row-main" },
-        h("span", { class: "row-title truncate", title: sessionTitle(s) }, depth ? h("span", { class: "sub-mark", "aria-hidden": "true" }, "↳ ") : null, sessionTitle(s)),
+        h("span", { class: "row-title truncate", dir: "auto", title: sessionTitle(s) }, depth ? h("span", { class: "sub-mark", "aria-hidden": "true" }, "↳ ") : null, sessionTitle(s)),
         h("span", { class: "row-badges" }, toggle, testsBadge(s), failedReqs, rowFlags(s.flags))),
       h("div", { class: "row-cells" },
-        h("span", { class: "cell agent-cell", title: [s.agent, s.model].filter(Boolean).join(" · ") }, h("span", null, s.parent && s.parent.type ? s.parent.type : s.agent), s.model ? h("span", { class: "sub" }, " " + s.model) : null),
+        h("span", { class: "cell agent-cell", title: [s.agent, s.model].filter(Boolean).join(" · ") }, h("span", null, s.parent && s.parent.type ? s.parent.type : s.agent), s.model ? h("span", { class: "sub" }, " " + midClip(s.model, 22)) : null),
         h("span", { class: "cell muted repo-cell" + (s.repo && s.repo.root ? "" : " is-none"), title: s.repo && s.repo.root }, s.repo && s.repo.root ? basename(s.repo.root) : "—"),
         h("span", { class: "cell act-cell" }, act, actErr ? h("span", { class: "err" }, " · " + actErr) : null),
         h("span", { class: "cell num muted tok-cell" }, rowTokens(st.usage).replace(" tokens", " tok")),
@@ -3343,8 +3350,8 @@ function eventRowEl(ev, i) {
         h("span", { class: "k" }, KIND_LABEL[ev.kind] || ev.kind), detail.length ? " · " : null, ...detail)),
     h("div", { class: "row-cells" },
       h("span", { class: "cell sess-cell", title: s ? sessionTitle(s) + "\n" + s.id : ev.sessionId },
-        h("span", null, s ? sessionTitle(s) : clip(ev.sessionId, 24)),
-        s ? h("span", { class: "sub" }, [s.parent ? s.type || "subagent" : s.agent, s.model].filter(Boolean).join(" · ")) : null),
+        h("span", { dir: "auto" }, s ? sessionTitle(s) : clip(ev.sessionId, 24)),
+        s ? h("span", { class: "sub" }, [s.parent ? s.type || "subagent" : s.agent, s.model && midClip(s.model, 22)].filter(Boolean).join(" · ")) : null),
       h("span", { class: "cell num muted dur-cell" }, v.dur !== undefined ? fmtDuration(v.dur) : ""),
       h("span", { class: "cell num muted", title: new Date(ev.ts).toLocaleString(), "data-ts": ev.ts }, fmtRel(ev.ts))));
 }
@@ -4834,10 +4841,10 @@ function sessionHeader(s, labels, rel) {
       h("span", { class: "sep", "aria-hidden": "true" }, "/"),
       s.parent ? [h("a", { class: "parent-link", href: sessionHref(s.parent.sessionId, s.parent.eventId), title: s.parent.sessionId },
         h("span", { "aria-hidden": "true" }, "↑"), "parent:",
-        h("span", { class: "truncate" }, parent ? sessionTitle(parent) : clip(s.parent.sessionId, 40))), h("span", { class: "sep", "aria-hidden": "true" }, "/")] : null,
+        h("span", { class: "truncate", dir: "auto" }, parent ? sessionTitle(parent) : clip(s.parent.sessionId, 40))), h("span", { class: "sep", "aria-hidden": "true" }, "/")] : null,
       h("span", { class: "sid truncate", title: s.id }, (s.parent ? "subagent " : "") + s.id),
       h("button", { class: "copy-id", type: "button", "aria-label": "Copy session id", onclick: () => copy(s.id, "session id") }, "copy")),
-    h("div", { class: "head-row" }, h("h1", { title: sessionTitle(s) }, sessionTitle(s))),
+    h("div", { class: "head-row" }, h("h1", { title: sessionTitle(s), dir: "auto" }, sessionTitle(s))),
     factsList = h("dl", { class: "facts" + (factsAll ? " all" : ""), id: "facts" },
       fact("agent", s.agent + (s.agentVersion ? " " + s.agentVersion : "")),
       fact("model", s.model),

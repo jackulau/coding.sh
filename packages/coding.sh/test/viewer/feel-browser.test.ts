@@ -2,9 +2,11 @@
 // and no per-key work. Driven in headless Chrome against a real viewer server. Skipped when no Chrome is installed.
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
+import { runBench } from "../../src/bench/run.ts";
+import { cleanup as benchCleanup, day, project } from "../bench/helpers.ts";
 import { startViewer, type Viewer } from "../../src/viewer/server.ts";
 import { findChrome, launchBrowser, type Browser, type Page } from "./browser.ts";
-import { FakeBlobs, FakeIndex, longSession, session } from "./fakes.ts";
+import { FakeBlobs, FakeIndex, event, longSession, session } from "./fakes.ts";
 
 const chrome = findChrome();
 if (!chrome && process.env.GITHUB_ACTIONS) throw new Error("no Chrome found on CI; set CODING_SH_TEST_CHROME");
@@ -22,6 +24,13 @@ describe("viewer feel in a browser", { skip: chrome ? false : "no Chrome/Chromiu
     for (let i = 0; i < 60; i++) {
       await index.upsertSession(session(`S-${i}`, { title: `Session number ${i}`, startedAt: T0 - i * 60_000, endedAt: T0 - i * 60_000 + 30_000 }));
     }
+    await index.upsertSession(session("odd-1", { title: "مرحبا بالعالم!", model: "claude-opus-5-5-20261001-thinking-high-extended-preview-a", startedAt: T0 + 60_000 }));
+    await index.upsertSession(session("odd-2", { title: "Same model prefix", model: "claude-opus-5-5-20261001-thinking-high-extended-preview-b", startedAt: T0 + 61_000 }));
+    await index.upsertSession(session("paths-1", { title: "Long file names", startedAt: T0 - 8_000_000 }));
+    await index.putEvents([
+      { ...event("paths-1", 1), kind: "tool.start", ts: T0 - 8_000_000, payload: { tool: "Read", toolUseId: "p1", input: { file_path: "/work/api/src/" + "a".repeat(120) + ".ts" } } },
+      { ...event("paths-1", 2), kind: "tool.end", ts: T0 - 7_999_000, payload: { tool: "Read", toolUseId: "p1", ok: true, output: "x" } },
+    ]);
     await index.upsertSession(session("long-1", { title: "Long session", startedAt: T0 - 9_000_000, stats: { events: 600, turns: 10, toolCalls: 200, toolErrors: 1, filesChanged: 0 } }));
     await index.putEvents(longSession(600, 10));
     v = await startViewer({ index, blobs: new FakeBlobs(), port: 0, updateStatus: async () => ({ disabled: "test" }) as any });
@@ -236,4 +245,65 @@ describe("viewer feel in a browser", { skip: chrome ? false : "no Chrome/Chromiu
       await page.close();
     }
   });
+
+  test("long values: a title takes its own direction, model ids keep their last characters, a long file name ends in an ellipsis", async () => {
+    await open();
+    try {
+      const dirs = await page.eval("Object.fromEntries([...document.querySelectorAll('.row-title')].map((e) => [e.textContent, getComputedStyle(e).direction]))");
+      assert.equal(dirs["مرحبا بالعالم!"], "rtl");
+      assert.equal(dirs["Same model prefix"], "ltr");
+      const models: string[] = await page.eval("[...document.querySelectorAll('.agent-cell .sub')].map((e) => e.textContent.trim()).filter((t) => t.includes('…'))");
+      assert.equal(models.length, 2);
+      assert.notEqual(models[0], models[1]);
+      await page.eval("location.hash = '#/s/paths-1'");
+      await page.waitFor("document.querySelector('#steps .st .pbase')", "path step");
+      const r = await page.eval("(() => { const b = document.querySelector('#steps .st .pbase'); const p = b.parentElement.getBoundingClientRect(); const r = b.getBoundingClientRect(); return { overflow: getComputedStyle(b).textOverflow, inside: r.right <= p.right + 0.5, clipped: b.scrollWidth > b.clientWidth }; })()");
+      assert.deepEqual(r, { overflow: "ellipsis", inside: true, clipped: true });
+    } finally {
+      await page.close();
+    }
+  });
+});
+
+describe("viewer feel: the benchmark table", { skip: chrome ? false : "no Chrome/Chromium found (set CODING_SH_TEST_CHROME)" }, () => {
+  let v: Viewer;
+  let browser: Browser;
+  before(async () => {
+    const p = project();
+    for (const d of ["2026-11-04", "2026-11-05"]) await runBench({ def: p.def('reference = "bad"'), env: p.env, now: day(d) });
+    v = await startViewer({ index: new FakeIndex(), blobs: new FakeBlobs(), port: 0, env: p.env, updateStatus: async () => ({ disabled: "test" }) as any });
+    browser = await launchBrowser(chrome!);
+  });
+  after(async () => {
+    await browser?.close();
+    await v?.close();
+    benchCleanup();
+  });
+
+  for (const w of [1101, 1120, 1140]) {
+    test(`at ${w}px every column of the table with an anchor column fits its row`, async () => {
+      const page = await browser.newPage();
+      try {
+        await page.viewport(w, 900);
+        await page.goto(v.url);
+        await page.waitFor("document.querySelector('main').children.length", "first view");
+        await page.eval("location.hash = '#/benchmarks/arith'");
+        await page.waitFor("document.querySelector('.bench-row')", "rows");
+        // The fixture has no anchor set; the anchor template is the one with nine columns.
+        await page.eval("document.querySelector('.bench-board').classList.remove('no-anchor')");
+        const fit = await page.eval(`(() => {
+          const row = document.querySelector('.bench-row');
+          const cs = getComputedStyle(row);
+          const tracks = cs.gridTemplateColumns.split(' ').map(parseFloat);
+          const gaps = (tracks.length - 1) * parseFloat(cs.columnGap);
+          const pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+          return { tracks: tracks.length, total: tracks.reduce((a, b) => a + b, 0) + gaps + pad, width: row.clientWidth };
+        })()`);
+        assert.equal(fit.tracks, 9);
+        assert.ok(fit.total <= fit.width + 0.5, `columns need ${Math.round(fit.total)}px of ${fit.width}px`);
+      } finally {
+        await page.close();
+      }
+    });
+  }
 });
