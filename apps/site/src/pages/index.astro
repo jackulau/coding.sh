@@ -297,6 +297,12 @@ const FAQ = [
     line-height: 1;
     letter-spacing: -0.05em;
   }
+  /* Centred flex items size to their longest word; anywhere lets a word longer
+     than the line break instead of widening the page. */
+  .hero h1,
+  .hero__sub {
+    overflow-wrap: anywhere;
+  }
   /* Two lines from tablets up; phones wrap the second line once. */
   @media (min-width: 768px) {
     .h1-line {
