@@ -37,7 +37,8 @@ date, open an issue.
 - No hosted cloud and no SSO or role-based access.
 - No online evals on live traffic and no alerts.
 - No human annotation queues; human labels are used to calibrate LLM judges.
-- No prompt management or playground.
+- No prompt management: no store of named, versioned prompts. `coding.sh ui` does have a
+  playground that reruns one model call.
 
 ## Questions
 
