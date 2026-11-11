@@ -682,7 +682,7 @@ export async function benchViewer({ cli = CLI, events = 5000, runs = 3 } = {}) {
     const profile = join(root, "chrome");
     // Chrome will not start as root without --no-sandbox (the desk's WSL runs benches as root).
     const sandbox = process.getuid?.() === 0 ? ["--no-sandbox"] : [];
-    browser = spawn(chrome, ["--headless=new", ...sandbox, "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "--disable-extensions", "--disable-background-networking", "--disable-sync", "--metrics-recording-only", "--mute-audio", "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
+    browser = spawn(chrome, ["--headless=new", ...sandbox, "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "--disable-extensions", "--disable-background-networking", "--disable-sync", "--metrics-recording-only", "--mute-audio", "--use-mock-keychain", "--password-store=basic", "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
     let chromeErr = "";
     browser.stderr.on("data", (d) => (chromeErr = (chromeErr + d).slice(-2000)));
     const portFile = join(profile, "DevToolsActivePort");
