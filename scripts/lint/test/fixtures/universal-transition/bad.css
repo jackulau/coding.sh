@@ -1,0 +1,12 @@
+.a * {
+  transition: all 0.2s; /* slop:expect */
+}
+html.theme-transition *,
+html.theme-transition *::before {
+  transition: color 1s !important; /* slop:expect */
+}
+@media (min-width: 40rem) {
+  * {
+    transition-property: opacity; /* slop:expect */
+  }
+}

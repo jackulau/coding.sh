@@ -14,6 +14,7 @@ import {
   stringsOnly,
   wordAt,
 } from "./source.mjs";
+import { SECRET_PATTERNS } from "../../release/secret-patterns.mjs";
 
 const TS_EXT = /\.(?:ts|tsx|mts|cts|astro)$/;
 const JS_EXT = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs|astro)$/;
@@ -314,6 +315,227 @@ function sitePlaceholder(path, src) {
   return found;
 }
 
+// ---------------------------------------------------------------- vendor-literal
+
+/** Vendor prefixes a string must not end with before a `+`: esbuild folds `"ghp_" + x` back into one literal. */
+const VENDOR_PREFIX = String.raw`(?:sk_test_|sk_live_|AKIA|ghp_|github_pat_|xox[abprs]-|sk-ant-|npm_)`;
+const SPLIT_LITERAL = new RegExp(String.raw`(["'\x60])(?:(?!\1)[^\\\n]|\\.)*?${VENDOR_PREFIX}\1\s*\+`, "g");
+/** The AWS docs example key, which GitHub's secret scanning knows by shape. */
+const AWS_EXAMPLE = /AKIA[0-9A-Z]{12}EXAMPLE/g;
+/**
+ * The shapes a secret scanner on a push reads as real. A made-up Anthropic key
+ * or a private key header is not one, so tests and docs may name them; the
+ * dist scan still catches them.
+ */
+const VENDOR_SHAPES = SECRET_PATTERNS.filter((p) => p.name !== "private-key" && p.name !== "anthropic-api-key");
+
+/**
+ * A whole vendor-shaped secret in a tracked file (push protection and the
+ * release scan read it as a real one), or a string split with `+` so the
+ * whole never appears: esbuild folds the split back into one literal in dist.
+ * Build such values with [..].join("").
+ */
+function vendorLiteral(path, src) {
+  const found = [];
+  for (const p of VENDOR_SHAPES) {
+    for (const m of src.matchAll(new RegExp(p.source, "g"))) found.push({ offset: m.index, message: `vendor-shaped literal (${p.name}); build it with [..].join("") so no whole value is in the file` });
+  }
+  for (const m of src.matchAll(AWS_EXAMPLE)) found.push({ offset: m.index, message: 'the AWS docs example key is vendor-shaped; build it with [..].join("")' });
+  if (JS_EXT.test(path)) {
+    for (const m of blankJs(src, { keepStrings: true }).matchAll(SPLIT_LITERAL)) found.push({ offset: m.index, message: 'build vendor-shaped literals with [..].join(""); esbuild folds +' });
+  }
+  return found;
+}
+
+// ---------------------------------------------------------------- site-voice
+
+/** Words that read as marketing, not as a description. Whole words, any case. */
+const MARKETING = new RegExp(
+  String.raw`\b(?:seamless(?:ly)?|unlock(?:s|ed|ing)?|powerful|effortless(?:ly)?|supercharge[sd]?|revolutionary|game-?chang(?:er|ing)|cutting-edge|state-of-the-art|best-in-class|world-class|next-generation|blazing(?:ly)?[- ]fast|turnkey|elevate[sd]?|delve[sd]?|empower(?:s|ed|ing)?)\b`,
+  "gi",
+);
+const NOT_X_BUT_Y = /\bnot (?:just|only|merely) [^.\n]{1,60}, but\b|\bisn't just\b/gi;
+const SPACED_EM_DASH = /\S — \S/g;
+const ID_LABEL = /\b[a-z]_[0-9a-f]{6,}\b/g;
+const HOOK_EVENTS = "SessionStart|SessionEnd|PreToolUse|PostToolUse|PostToolUseFailure|UserPromptSubmit|SubagentStart|SubagentStop|PreCompact|PostCompact|Notification|Stop";
+const HOOK_HEADING_HTML = new RegExp(String.raw`<h([1-3])\b[^>]*>\s*(?:${HOOK_EVENTS})\s*</h\1>`, "g");
+const HOOK_HEADING_MD = new RegExp(String.raw`^#{1,3}[ \t]+(?:${HOOK_EVENTS})[ \t]*$`, "gm");
+
+/** Visible text of a table-free Markdown file: code, comments, links and table rows blanked. */
+function proseOnly(src) {
+  const v = markdownVisible(src);
+  return v
+    .split("\n")
+    .map((l) => (/^\s*\|/.test(l) ? " ".repeat(l.length) : l))
+    .join("\n");
+}
+
+/**
+ * Landing and docs copy that reads as written by a model: marketing words,
+ * "not just X, but Y", spaced em dashes, id-style labels (`s_8f3a21`) and
+ * headings that are only a hook event name.
+ */
+function siteVoice(path, src) {
+  let text;
+  let headings;
+  let headingText;
+  if (/\.(?:astro|html?)$/.test(path)) {
+    text = headingText = astroVisible(src);
+    headings = HOOK_HEADING_HTML;
+  } else if (/\.mdx?$/.test(path)) {
+    text = proseOnly(src);
+    // Headings are prose too, but a code fence's `# comment` is not a heading.
+    headingText = blankMatches(blankMatches(src, /^(\s*)(```|~~~)[\s\S]*?^\s*\2/gm), /<!--[\s\S]*?-->/g);
+    headings = HOOK_HEADING_MD;
+  } else {
+    text = stringsOnly(src);
+  }
+  const found = [];
+  for (const m of text.matchAll(MARKETING)) found.push({ offset: m.index, message: `"${m[0]}" is a marketing word; say what coding.sh does in plain words` });
+  for (const m of text.matchAll(NOT_X_BUT_Y)) found.push({ offset: m.index, message: '"not just X, but Y" reads as written by a model; say the plain thing' });
+  for (const m of text.matchAll(SPACED_EM_DASH)) found.push({ offset: m.index + 1, message: "spaced em dash in prose; use a period, a comma or a colon" });
+  for (const m of text.matchAll(ID_LABEL)) found.push({ offset: m.index, message: `"${m[0]}" is an id-style label that shows as text; name the thing` });
+  if (headings) for (const m of headingText.matchAll(headings)) found.push({ offset: m.index, message: "a heading that is only a hook event name; say what happens in plain words" });
+  return found;
+}
+
+// ---------------------------------------------------------------- CSS rules
+
+/** The CSS of a file, same length as the file: a .css file whole, the <style> bodies of a template. */
+function cssText(path, src) {
+  let css;
+  if (path.endsWith(".css")) css = src;
+  else {
+    const ranges = [];
+    for (const m of src.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)) {
+      const body = m.index + m[0].indexOf(">") + 1;
+      ranges.push([body, body + m[1].length]);
+    }
+    css = keepRanges(src, ranges);
+  }
+  return blankMatches(css, /\/\*[\s\S]*?\*\//g);
+}
+
+const CSS_FILE = (path) => /\.css$/.test(path) || /\.(?:astro|html?)$/.test(path);
+const STYLED = (path) => /^apps\/site\/src\/.+\.(?:css|astro|html?)$/.test(path) || path === "packages/coding.sh/src/viewer/ui/index.html" || /^packages\/coding\.sh\/src\/viewer\/ui\/.+\.css$/.test(path);
+
+/** A selector whose last compound is `*`: `*`, `*::before`, `.theme-transition *`. */
+const UNIVERSAL = /(?:^|[\s>+~(])\*(?:::?[\w-]+(?:\([^)]*\))?)*$/;
+const NO_TRANSITION = /^(?:none|0s|0ms|initial|unset|revert)\b/i;
+
+/** Rules that hold declarations (`selector { ... }`), not other rules: selector text, body text and the body's offset. Linear. */
+function leafRules(css) {
+  const rules = [];
+  const brace = /[{}]/g;
+  let from = 0;
+  let pending;
+  for (let m = brace.exec(css); m; m = brace.exec(css)) {
+    if (m[0] === "{") pending = { selectors: css.slice(from, m.index), at: m.index + 1 };
+    else if (pending) {
+      rules.push({ ...pending, body: css.slice(pending.at, m.index) });
+      pending = undefined;
+    }
+    from = m.index + 1;
+  }
+  return rules;
+}
+
+/** `transition` on `*`: it runs on every element, and a large DOM stalls on a theme toggle. */
+function universalTransition(path, src) {
+  const found = [];
+  for (const rule of leafRules(cssText(path, src))) {
+    if (!rule.selectors.split(",").some((sel) => UNIVERSAL.test(sel.trim()))) continue;
+    for (const d of rule.body.matchAll(/(?:^|[;\s])(transition(?:-property)?)\s*:\s*([^;]*)/g)) {
+      if (NO_TRANSITION.test(d[2].replace(/!important/i, "").trim())) continue;
+      found.push({ offset: rule.at + d.index + d[0].indexOf(d[1]), message: "`transition` on `*`; scope it to the properties and elements that change" });
+    }
+  }
+  return found;
+}
+
+/** Keyframes and `animation` declarations that name an animation. */
+const ANIMATION = /@keyframes\b|(?:^|[;{\s])animation(?:-name)?\s*:\s*(?!none\b|inherit\b|initial\b|unset\b)[\w-]/gm;
+
+/** A file that animates needs a `prefers-reduced-motion` query in the same file. */
+function reducedMotion(path, src) {
+  const css = cssText(path, src);
+  if (/prefers-reduced-motion/.test(css)) return [];
+  const m = ANIMATION.exec(css);
+  ANIMATION.lastIndex = 0;
+  return m ? [{ offset: m.index + (m[0].length - m[0].trimStart().length), message: "this file animates but has no `@media (prefers-reduced-motion)` query; turn the motion off or shorten it there" }] : [];
+}
+
+// ---------------------------------------------------------------- global-install
+
+const NPM_GLOBAL = /\bnpm\s+(?:i|install|add)\b[^\n|;&]*?(?:\s-g\b|\s--global\b)|["']i(?:nstall)?["']\s*,\s*["'](?:-g|--global)["']/;
+const INSTALL_SH = /(?:\b(?:ba)?sh|\bexec)\s+(?:"[^"\n]*|\S*)install\.sh\b|\bcurl\b[^\n]*\|\s*(?:ba)?sh\b/;
+const PREFIX = /--prefix\b|npm_config_prefix|NPM_CONFIG_PREFIX|\bprefix=/;
+/** Where installers get exercised for real: repo scripts, workflows, examples and deploy recipes. Unit tests only record the command they would run. */
+const INSTALLER_SCOPE = /^(?:scripts\/|\.github\/workflows\/|examples\/|deploy\/)/;
+
+/**
+ * `npm i -g` or `install.sh` run in a script or workflow that names no
+ * throwaway npm prefix: a temp HOME does not stop npm writing to the real
+ * global prefix. A script or test counts as safe when it mentions a prefix
+ * anywhere (it sets it once for every child); a workflow, when one is within
+ * 25 lines of the command.
+ */
+function globalInstall(path, src) {
+  const text = JS_EXT.test(path) ? blankJs(src, { keepStrings: true }) : src;
+  const lines = text.split("\n");
+  const workflow = /\.ya?ml$/.test(path);
+  if (!workflow && PREFIX.test(text)) return [];
+  const found = [];
+  let at = 0;
+  for (const [i, line] of lines.entries()) {
+    const start = at;
+    at += line.length + 1;
+    if (!NPM_GLOBAL.test(line) && !INSTALL_SH.test(line)) continue;
+    if (/^\s*(?:#|\/\/|\*)/.test(line)) continue;
+    if (workflow && PREFIX.test(lines.slice(Math.max(0, i - 25), i + 26).join("\n"))) continue;
+    found.push({ offset: start + line.search(/\S/), message: "a global install with no throwaway npm prefix; set npm_config_prefix=$TMP/prefix (a temp HOME does not stop npm writing to the real one)" });
+  }
+  return found;
+}
+
+// ---------------------------------------------------------------- personal-data
+
+/** Names that stand for no one. */
+const DUMMY_NAMES = new Set(["user", "users", "you", "me", "x", "u", "dev", "demo", "runner", "someone", "ann", "test", "tester", "alice", "bob", "name", "username", "yourname", "foo", "work"]);
+const HOME_PATH = /(?<![\w.-])(?:\/Users\/|\/home\/|[A-Za-z]:[\\/]+Users[\\/]+)([A-Za-z0-9][\w.-]*)(?=[\\/]|$)/g;
+const EMAIL = /(?<![\w.%+-])([\w.%+-]+)@((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})\b/g;
+/** Domains that reach no one, plus the ones the repo may name. */
+const SAFE_DOMAIN =
+  /(?:^|\.)(?:example(?:\.[a-z.]+)?|test|localhost|internal|local|invalid)$|^(?:users\.noreply\.github\.com|noreply\.github\.com|anthropic\.com)$/i;
+/**
+ * Our own domain: an address there could reach someone, and a commit made with it is not a
+ * GitHub account. `coding.sh.invalid` is under the reserved `.invalid` TLD (RFC 2606), so it
+ * reaches no one and passes like any other reserved name.
+ */
+const OWN_DOMAIN = /^coding\.sh$/i;
+const FILE_EXT = /^(?:png|jpe?g|gif|webp|svg|json|js|mjs|ts|css|html|md|txt|yml|yaml|py|toml|lock|jsonl|mark|fixture|parametrize|skip)$/i;
+
+/**
+ * A real home path (a person's `/Users/<name>/`) or an email at a domain that is not
+ * reserved for examples. Synthetic commit identities say why in the allowlist.
+ */
+function personalData(path, src) {
+  const found = [];
+  for (const m of src.matchAll(HOME_PATH)) {
+    if (DUMMY_NAMES.has(m[1].toLowerCase())) continue;
+    found.push({ offset: m.index, message: `a home path with a real-looking user name (${m[1]}); use /home/user or /work/demo` });
+  }
+  for (const m of src.matchAll(EMAIL)) {
+    const domain = m[2];
+    const own = OWN_DOMAIN.test(domain);
+    if (!own && (FILE_EXT.test(domain.split(".").pop()) || /^\d+x$/.test(m[1]))) continue;
+    if (src[m.index - 1] === ":") continue; // user:password@host
+    if (!own && SAFE_DOMAIN.test(domain)) continue;
+    found.push({ offset: m.index, message: `an email address at ${domain}; use user@example.test, or allowlist a synthetic identity with the reason` });
+  }
+  return found;
+}
+
 // ---------------------------------------------------------------- registry
 
 /**
@@ -351,6 +573,44 @@ export const RULES = [
     applies: (path, site) =>
       (/^apps\/site\/src\//.test(path) && /\.(?:astro|html?|mdx?|ts|tsx|js|mjs)$/.test(path) && !/\.d\.ts$/.test(path)) || site.has(path),
     check: sitePlaceholder,
+  },
+  {
+    id: "vendor-literal",
+    description: 'A whole vendor-shaped secret (sk_test_, AKIA..., ghp_, xox...) or one split with `+`; build it with [..].join("")',
+    applies: (path) => /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs|md|json|ya?ml|astro)$/.test(path) && !path.endsWith(".d.ts") && !/(?:^|\/)package-lock\.json$/.test(path),
+    check: vendorLiteral,
+  },
+  {
+    id: "site-voice",
+    description: "Site and README copy that reads as written by a model: marketing words, em dashes, id-style labels, hook names as headings",
+    applies: (path, site) =>
+      (/^apps\/site\/src\//.test(path) && /\.(?:astro|html?|mdx?|ts|tsx|js|mjs)$/.test(path) && !/\.d\.ts$/.test(path)) || site.has(path) || path === "README.md" || /^packages\/[^/]+\/README\.md$/.test(path),
+    check: siteVoice,
+  },
+  {
+    id: "universal-transition",
+    description: "`transition` on the `*` selector",
+    applies: (path) => CSS_FILE(path) && STYLED(path),
+    check: universalTransition,
+  },
+  {
+    id: "reduced-motion",
+    description: "A stylesheet with @keyframes or an animation and no prefers-reduced-motion query",
+    applies: (path) => CSS_FILE(path) && STYLED(path),
+    check: reducedMotion,
+  },
+  {
+    id: "global-install",
+    description: "`npm i -g` or install.sh run with no throwaway npm prefix nearby",
+    applies: (path) => /\.(?:sh|mjs|cjs|js|ts|ya?ml)$/.test(path) && INSTALLER_SCOPE.test(path),
+    check: globalInstall,
+  },
+  {
+    id: "personal-data",
+    description: "A real-looking home path or an email at a domain not reserved for examples",
+    fixtures: true,
+    applies: (path) => /\.(?:ts|tsx|mts|js|mjs|cjs|md|json|jsonl|ya?ml|astro|html?|sh|py|toml|txt|css)$/.test(path) && !/(?:^|\/)package-lock\.json$/.test(path),
+    check: personalData,
   },
 ];
 
