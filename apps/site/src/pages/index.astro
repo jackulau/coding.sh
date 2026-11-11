@@ -75,7 +75,7 @@ const SDK_CODE = [
   `${tx("const")} openai = observe(${tx("new")} OpenAI());`,
 ].join("\n");
 
-const SDK_URL = `${REPO_URL}/tree/main/packages/sdk#readme`;
+const SDK_URL = "/docs/sdk";
 const PY_SDK_URL = `${REPO_URL}/tree/main/packages/sdk-python#readme`;
 
 // One real task from the same runs, so "better" has an example.
@@ -225,7 +225,7 @@ const FAQ = [
           <div class="copy">
             <p class="eyebrow">Production</p>
             <h2 id="production-title"><span class="nw">Track the AI calls</span> in your app</h2>
-            <p class="body">Wrap your OpenAI or Anthropic client with the SDK. Each request shows up with its model, tokens, cost and time. A failed call is marked red, with the error that came back.</p>
+            <p class="body">Wrap your OpenAI or Anthropic client with the SDK. Each request shows up with its model, tokens, cost and time.</p>
             <pre class="code" set:html={SDK_CODE} />
             <p class="links"><a class="inline-link hit" href={SDK_URL}>Read the SDK guide</a> <a class="inline-link hit" href={PY_SDK_URL}>Python SDK</a></p>
           </div>
