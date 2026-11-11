@@ -7,8 +7,8 @@ import { scanSessions, TOTALS_SCAN_CAP } from "../../mcp/data.ts";
 import type { Session } from "../../schema/index.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { BREAK_EVENT_KINDS, breakTotals, cacheHealth, type CacheHealth, type ClassifiedBreak, hasStoredRequest, sessionBreaks } from "../cache-health.ts";
-import { agentScope, agentsFlag, autoIngest, pendingField, queryCliError, readIngest, scanCap, stoppedAfter, str, whereFlag, withContext } from "../common.ts";
-import { tokens, usd, type Output } from "../output.ts";
+import { agentScope, agentsFlag, autoIngest, emptyStateNext, pendingField, queryCliError, readIngest, scanCap, stoppedAfter, str, whereFlag, withContext } from "../common.ts";
+import { plural, tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
 /** Sessions with breaks whose stored requests are read, costliest first. The totals, the causes and the grade cover the rest too. */
@@ -40,18 +40,25 @@ const windowText = (v: string) => (/^\d+(\.\d+)?\s*[smhdw]$/.test(v.trim()) ? `i
 const pct = (n: number) => `${Math.round(n * 100)}%`;
 const money = (n: number | undefined) => (n === undefined ? "-" : `~${usd(n)}`);
 
+/** The priced total, and how many breaks it leaves out because their model has no price. */
+export function extraText(r: CacheHealth): string {
+  const left = r.unpricedBreaks ? `${r.unpricedBreaks} ${r.unpricedBreaks === 1 ? "break" : "breaks"} on an unpriced model not counted` : "";
+  if (r.extraUsd === undefined) return left ? ` (${left})` : "";
+  return ` (${money(r.extraUsd)} extra${left ? `; ${left}` : ""})`;
+}
+
 function render(out: Output, r: CacheHealth, sessions: number, sinceText: string): void {
   if (r.hitRate === undefined) {
-    out.print(`Prompt cache: no cache tokens in ${sessions} sessions ${windowText(sinceText)}; these agents did not report cache use, or caching is off`);
+    out.print(`Prompt cache: no cache tokens in ${plural(sessions, "session")} ${windowText(sinceText)}; these agents did not report cache use, or caching is off`);
     return;
   }
   out.print(`Prompt cache: ${pct(r.hitRate)} hit rate, grade ${r.grade} (${r.score}/100)`);
   if (!r.breaks) {
-    out.print(`${sessions} sessions ${windowText(sinceText)}: no cache breaks; the cached prefix held between calls`);
+    out.print(`${plural(sessions, "session")} ${windowText(sinceText)}: no cache breaks; the cached prefix held between calls`);
     return;
   }
   const avoid = r.avoidableTokens ? `, ${tokens(r.avoidableTokens)} of them avoidable (${pct(r.avoidableShare ?? 0)} of all prompt tokens)` : ", none of them avoidable";
-  out.print(`${sessions} sessions ${windowText(sinceText)}: ${r.breaks} cache breaks re-billed ${tokens(r.lostTokens)} of ${tokens(r.promptTokens)} prompt tokens${r.extraUsd !== undefined ? ` (${money(r.extraUsd)} extra)` : ""}${avoid}`);
+  out.print(`${plural(sessions, "session")} ${windowText(sinceText)}: ${plural(r.breaks, "cache break")} re-billed ${tokens(r.lostTokens)} of ${tokens(r.promptTokens)} prompt tokens${extraText(r)}${avoid}`);
   out.print();
   out.table(
     ["CAUSE", "BREAKS", "SESSIONS", "RE-BILLED", "EXTRA"],
@@ -118,6 +125,7 @@ export async function run(c: CommandContext): Promise<number> {
     }
     if (!count) {
       out.note(`No sessions ${windowText(sinceText)}${agent || where ? " that match" : ""}`);
+      await emptyStateNext(out, c.env, ctx.index, { label: "Widen the window", command: "coding.sh cache doctor --since 90d" });
       return 0;
     }
     render(out, r, count, sinceText);
@@ -125,5 +133,5 @@ export async function run(c: CommandContext): Promise<number> {
     if (skipped) out.note(`Read the stored requests of the ${read} costliest ${read === 1 ? "session" : "sessions"} with breaks; ${skipped} more not read (--limit): ${r.breaksNotRead === 1 ? "1 break is" : `${r.breaksNotRead ?? 0} breaks are`} classified from hashes, message counts, the model and timing there, and the totals and the grade count them`);
     if (truncated) out.warn(stoppedAfter(cap));
     return 0;
-  });
+  }, { create: false });
 }

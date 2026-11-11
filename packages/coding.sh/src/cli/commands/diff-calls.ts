@@ -25,7 +25,8 @@ export async function callOrFail(index: IndexStore, ref: string): Promise<AgentE
 }
 
 const short = (id: string) => id.slice(0, 12);
-const clock = (ts: number) => new Date(ts).toISOString().slice(11, 19);
+/** Local wall-clock time with seconds, as `show` prints times (`--json` keeps the ISO instant). */
+export const clock = (ts: number) => new Date(ts).toTimeString().slice(0, 8);
 const val = (v: unknown) => (v === undefined ? "-" : typeof v === "string" ? v : JSON.stringify(v));
 
 function cacheText(u: AgentEvent["usage"]): string {
@@ -112,5 +113,5 @@ export async function run(c: CommandContext): Promise<number> {
     if (out.json) out.data(d);
     else printDiff(out, d);
     return 0;
-  });
+  }, { create: false });
 }

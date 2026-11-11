@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { after, before, describe, test } from "node:test";
+import { extraText } from "../../src/cli/commands/cache.ts";
 import { AVOIDABLE, breakTotals, cacheHealth, cacheScore, CACHE_CAUSE_FIX, sessionBreaks, volatileLine } from "../../src/cli/cache-health.ts";
 import { openContext } from "../../src/core/context.ts";
 import { buildSession } from "../../src/core/sessions.ts";
@@ -182,8 +183,13 @@ describe("cache-health: classification", () => {
     assert.equal(r.causes[1]!.example!.command, "coding.sh diff-calls s1-a s1-b", "a break that was not read still names its two calls");
     assert.deepEqual([r.score, r.grade], [84, "B"]);
     assert.equal(cacheHealth({ hitRate: 0.9, promptTokens: 1_000_000, breaks: [br] }).score, 92);
-    // A break on a model with no price leaves the USD total out, as in one session's stats.
-    assert.equal(breakTotals([stored[0]!, { count: 1, lostTokens: 9_000, unpriced: 1, byCause: { other: { count: 1, lostTokens: 9_000 } } }]).extraUsd, undefined);
+    // A break on a model with no price is counted apart; the priced total stays.
+    const mixed = breakTotals([stored[0]!, { count: 1, lostTokens: 9_000, unpriced: 1, byCause: { other: { count: 1, lostTokens: 9_000 } } }]);
+    assert.deepEqual([mixed.extraUsd, mixed.unpricedBreaks], [0.2, 1]);
+    assert.equal(breakTotals([{ count: 1, lostTokens: 9_000, unpriced: 1, byCause: { other: { count: 1, lostTokens: 9_000 } } }]).extraUsd, undefined);
+    const h = cacheHealth({ hitRate: 0.9, promptTokens: 1_000_000, breaks: [br, { ...br, sessionId: "s2", extraUsd: undefined }] });
+    assert.deepEqual([h.extraUsd, h.unpricedBreaks], [0.2, 1]);
+    assert.equal(extraText(h), " (~$0.2000 extra; 1 break on an unpriced model not counted)");
     assert.equal(cacheHealth({ promptTokens: 10, breaks: [] }).breaksNotRead, undefined);
   });
 });

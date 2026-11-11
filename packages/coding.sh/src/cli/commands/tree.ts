@@ -69,7 +69,7 @@ function printNode(out: Output, n: TreeNode, isRoot: boolean): void {
     out.style(role, "bold"),
     s.model ?? "",
     durationMs !== undefined ? duration(durationMs) : "-",
-    `${toolCalls} tools${toolErrors ? ` (${toolErrors} failed)` : ""}`,
+    `${plural(toolCalls, "tool")}${toolErrors ? ` (${toolErrors} failed)` : ""}`,
     costUsd !== undefined ? usd(costUsd) : "",
   ].filter(Boolean);
   const flags = worstFirst(s.flags);
@@ -127,8 +127,8 @@ export async function run(c: CommandContext): Promise<number> {
     const headline = [
       tree.runId ? `${plural(tree.roots.length, "agent")}, ${plural(subagents, "subagent")}` : `${plural(subagents, "subagent")}`,
       t.wallMs !== undefined ? duration(t.wallMs) : null,
-      `${t.toolCalls} tool calls${t.toolErrors ? ` (${t.toolErrors} failed)` : ""}`,
-      t.filesChanged ? `${t.filesChanged} files changed` : null,
+      `${plural(t.toolCalls, "tool call")}${t.toolErrors ? ` (${t.toolErrors} failed)` : ""}`,
+      t.filesChanged ? `${plural(t.filesChanged, "file")} changed` : null,
       t.usage.costUsd !== undefined ? `${usd(t.usage.costUsd)}${costNote(t.usage)}` : null,
     ].filter(Boolean);
     out.print(`  ${headline.join("  ·  ")}`);
@@ -150,7 +150,7 @@ export async function run(c: CommandContext): Promise<number> {
       out.next("Open it", `coding.sh show ${w.id}`);
     }
     return 0;
-  });
+  }, { create: false });
 }
 
 /** A short label for a tree's root: its title, else its id. */

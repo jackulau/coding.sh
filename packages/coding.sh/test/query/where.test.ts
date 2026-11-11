@@ -134,7 +134,7 @@ describe("compileWhere", () => {
     const evil = [`x' OR 1=1 --`, `"; DROP TABLE sessions; --`, `%_\\`, `') UNION SELECT * FROM kv --`, "a\u0000b"];
     const shapes = new Set<string>();
     for (const v of evil) {
-      const qt = (x: string) => `"${x.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+      const qt = (x: string) => `"${x.replace(/[\\"*]/g, (ch) => `\\${ch}`)}"`;
       const q = p(`agent:${qt(v)} title:${qt(v)} tool:${qt(v)} ${qt(v + " word")}`);
       const c = compileWhere(q.root!, "session");
       for (const piece of ["DROP", "UNION", "1=1", "\u0000"]) assert.ok(!c.sql.includes(piece), c.sql);

@@ -10,7 +10,7 @@
 // `sessions s`): every clause applies to the event or its session. Semantics
 // match src/query/match.ts, the scan fallback.
 import { ftsQuery } from "../store/common.ts";
-import { HAS, IS, KEYS, levelOf, QueryError, type Cmp, type KeyDef, type Node, type Value } from "./where.ts";
+import { globParts, HAS, IS, KEYS, levelOf, QueryError, type Cmp, type KeyDef, type Node, type Value } from "./where.ts";
 
 export type Param = string | number;
 export interface Sql {
@@ -18,11 +18,13 @@ export interface Sql {
   params: Param[];
 }
 
-/** LIKE pattern from a value: `*` → %, and %, _ and \ escaped (ESCAPE '\'). */
-function likePattern(raw: string, wildcard: boolean): string {
-  const esc = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
-  return wildcard ? raw.split("*").map(esc).join("%") : esc(raw);
+const esc = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+/** LIKE pattern from a value: its wildcards → %, and %, _ and \ escaped (ESCAPE '\'). */
+function likePattern(v: Value): string {
+  return v.kind === "glob" ? globParts(v).map(esc).join("%") : esc(v.raw);
 }
+
+const or = (xs: string[]) => (xs.length === 1 ? xs[0]! : `(${xs.join(" OR ")})`);
 
 const OPS: Record<string, string> = { ">": ">", ">=": ">=", "<": "<", "<=": "<=", ":": "=" };
 
@@ -38,8 +40,8 @@ class Compiler {
   private valueSql(def: KeyDef, c: Cmp, v: Value, expr: string): string {
     if (def.type === "text") {
       const p = def.multi?.prefix ?? "";
-      if (def.match === "contains") return `${expr} LIKE ${this.bind(`%${likePattern(v.raw, v.kind === "glob")}%`)} ESCAPE '\\'`;
-      if (v.kind === "glob") return `${expr} LIKE ${this.bind(likePattern(p, false) + likePattern(v.raw, true))} ESCAPE '\\'`;
+      if (def.match === "contains") return `${expr} LIKE ${this.bind(`%${likePattern(v)}%`)} ESCAPE '\\'`;
+      if (v.kind === "glob") return `${expr} LIKE ${this.bind(esc(p) + likePattern(v))} ESCAPE '\\'`;
       return `${expr} = ${this.bind(p + v.raw)}`;
     }
     if (def.type === "bool") return `${expr} = ${this.bind(v.n!)}`;
@@ -55,10 +57,21 @@ class Compiler {
       const any = c.values.map((v) => this.valueSql(def, c, v, "j.value")).join(" OR ");
       return `EXISTS (SELECT 1 FROM json_each(${def.multi.from}) j WHERE ${any})`;
     }
-    const parts = def.sql.flatMap((expr) => c.values.map((v) => this.valueSql(def, c, v, expr)));
-    const any = parts.length === 1 ? parts[0]! : `(${parts.join(" OR ")})`;
-    const sql = def.present ? `(${def.present} AND ${any})` : any;
+    const branches = this.branches(c);
+    const sql = branches
+      ? or(branches)
+      : def.present
+        ? `(${def.present} AND ${or(def.sql.flatMap((expr) => c.values.map((v) => this.valueSql(def, c, v, expr))))})`
+        : or(def.sql.flatMap((expr) => c.values.map((v) => this.valueSql(def, c, v, expr))));
     return negated && !def.notNull ? `coalesce(${sql}, 0)` : sql;
+  }
+
+  /** A key with one guard per SQL expression: one condition per expression, each on its own index. */
+  private branches(c: Cmp): string[] | undefined {
+    const def = KEYS.get(c.key)!;
+    const guards = def.present;
+    if (!Array.isArray(guards)) return undefined;
+    return def.sql.map((expr, i) => `(${guards[i]} AND ${or(c.values.map((v) => this.valueSql(def, c, v, expr)))})`);
   }
 
   text(words: string[], level: "session" | "event", at: number): string {
@@ -92,7 +105,10 @@ class Compiler {
 
   /** Sessions with an event matching `n` (event keys only, so the subquery never reads `s`). */
   private exists(n: Node, negated = false): string {
-    return `s.id ${negated ? "NOT IN" : "IN"} (SELECT e.session_id FROM events e WHERE ${this.event(n)})`;
+    // A key read from several columns (error:) unions one subquery per column, so each reads its own index.
+    const branches = n.t === "cmp" ? this.branches(n) : undefined;
+    const from = branches ? branches.map((b) => `SELECT e.session_id FROM events e WHERE ${b}`).join(" UNION ALL ") : `SELECT e.session_id FROM events e WHERE ${this.event(n)}`;
+    return `s.id ${negated ? "NOT IN" : "IN"} (${from})`;
   }
 
   /** Condition over `s`. */

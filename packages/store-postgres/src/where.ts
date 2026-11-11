@@ -30,10 +30,10 @@ const UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 export const lowerSql = (x: string): string => `translate(${x}, '${UPPER}', '${UPPER.toLowerCase()}')`;
 const asciiLower = (s: string): string => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
 
-/** LIKE pattern from a value: `*` → %, and %, _ and \ escaped (\ is Postgres's default LIKE escape). */
-function likePattern(raw: string, wildcard: boolean): string {
-  const esc = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
-  return wildcard ? raw.split("*").map(esc).join("%") : esc(raw);
+const esc = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+/** LIKE pattern from a value: its wildcards → %, and %, _ and \ escaped (\ is Postgres's default LIKE escape). A literal star (`\*` in quotes) stays a star. */
+function likePattern(v: Value): string {
+  return v.kind === "glob" ? (v.parts ?? v.raw.split("*")).map(esc).join("%") : esc(v.raw);
 }
 
 /** A JSON number at `path` of a JSON text column, else NULL. */
@@ -85,7 +85,8 @@ export const KEY_SQL: Record<string, string[]> = {
   tool: ["e.tool"],
   ok: ["e.ok"],
   mcp: [jstr("e.payload", "server")],
-  error: [jstr("e.payload", "error")],
+  // payload.error of a failed call, or the message of an error event.
+  error: [jstr("e.payload", "error"), `(CASE WHEN e.kind = 'error' THEN ${jstr("e.payload", "message")} END)`],
   "event.duration": ["e.duration_ms"],
 };
 /** Facet value when it differs from the key's first expression. */
@@ -141,8 +142,8 @@ class Compiler {
   private valueSql(def: KeyDef, c: Cmp, v: Value, expr: string): string {
     if (def.type === "text") {
       const p = def.multi?.prefix ?? "";
-      if (def.match === "contains") return `${lowerSql(expr)} LIKE ${this.bind(asciiLower(`%${likePattern(v.raw, v.kind === "glob")}%`))}`;
-      if (v.kind === "glob") return `${lowerSql(expr)} LIKE ${this.bind(asciiLower(likePattern(p, false) + likePattern(v.raw, true)))}`;
+      if (def.match === "contains") return `${lowerSql(expr)} LIKE ${this.bind(asciiLower(`%${likePattern(v)}%`))}`;
+      if (v.kind === "glob") return `${lowerSql(expr)} LIKE ${this.bind(asciiLower(esc(p) + likePattern(v)))}`;
       return `${expr} = ${this.bind(p + v.raw)}`;
     }
     if (def.type === "bool") return `${expr} = ${this.bind(v.n === 1)}`;
@@ -245,7 +246,7 @@ export function facetSource(key: string, bind: Bind, sessions: string, events: s
     const from = `${sessions} s CROSS JOIN LATERAL json_array_elements_text(s.flags::json) AS ff(v)`;
     const p = def.multi.prefix;
     if (!p) return { value: "ff.v", from };
-    return { value: `substr(ff.v, ${p.length + 1})`, from, where: `${lowerSql("ff.v")} LIKE ${bind(`${likePattern(asciiLower(p), false)}%`)}` };
+    return { value: `substr(ff.v, ${p.length + 1})`, from, where: `${lowerSql("ff.v")} LIKE ${bind(`${esc(asciiLower(p))}%`)}` };
   }
   const value = FACET_SQL[key] ?? KEY_SQL[key]![0]!;
   return def.level === "event" ? { value, from: `${events} e JOIN ${sessions} s ON s.id = e.session_id` } : { value, from: `${sessions} s` };

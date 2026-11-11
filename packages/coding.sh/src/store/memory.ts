@@ -27,11 +27,14 @@ import { labelToScore, scoreToLabel } from "../scores/labels.ts";
 import {
   assertBlobRef,
   bundleBlobs,
+  DatasetConflict,
   runBlobs,
   searchableText,
   searchTerms,
   termMatches,
   snippet,
+  symbolQuery,
+  symbolSnippet,
   taskBlobs,
   toBytes,
 } from "./common.ts";
@@ -195,7 +198,7 @@ export class MemoryIndexStore implements IndexStore {
 
   async search(text: string, opts: SearchOpts = {}): Promise<SearchHit[]> {
     const terms = searchTerms(text);
-    if (!terms.length) return [];
+    if (!terms.length) return this.symbolHits(text, opts);
     const hits: { hit: SearchHit; score: number }[] = [];
     for (const { event } of this.events.values()) {
       if (opts.agent && event.agent !== opts.agent) continue;
@@ -210,6 +213,20 @@ export class MemoryIndexStore implements IndexStore {
     }
     hits.sort((a, b) => b.score - a.score || b.hit.event.ts - a.hit.event.ts);
     return hits.slice(0, opts.limit ?? 50).map((h) => h.hit);
+  }
+
+  /** A symbols-only query (🚀): a substring of the search text, newest first (as SQLite's bounded scan). */
+  private symbolHits(text: string, opts: SearchOpts): SearchHit[] {
+    const needle = symbolQuery(text);
+    if (!needle) return [];
+    const hits: SearchHit[] = [];
+    for (const { event } of [...this.events.values()].sort((a, b) => b.event.ts - a.event.ts)) {
+      if (opts.agent && event.agent !== opts.agent) continue;
+      if (opts.project !== undefined && projectOf(event) !== opts.project) continue;
+      const body = searchableText(event);
+      if (body?.includes(needle)) hits.push({ event: clone(event), snippet: symbolSnippet(body, needle) });
+    }
+    return hits.slice(0, opts.limit ?? 50);
   }
 
   async upsertSession(s: Session): Promise<void> {
@@ -378,7 +395,8 @@ export class MemoryIndexStore implements IndexStore {
     else this.kv.set(key, value);
   }
 
-  async putDataset(ds: Dataset, opts: { note?: string; now?: number } = {}): Promise<{ version: string; created: boolean }> {
+  async putDataset(ds: Dataset, opts: { note?: string; now?: number; parent?: string | null } = {}): Promise<{ version: string; created: boolean }> {
+    if (opts.parent !== undefined && (this.datasetLatest.get(ds.id) ?? null) !== opts.parent) throw new DatasetConflict(ds.id, opts.parent, this.datasetLatest.get(ds.id));
     let versions = this.datasets.get(ds.id);
     if (!versions) this.datasets.set(ds.id, (versions = new Map()));
     let created = false;

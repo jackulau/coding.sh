@@ -4,6 +4,7 @@
 // node:sqlite is still flagged experimental and prints an ExperimentalWarning
 // on load. That warning is noise for CLI users, so it is filtered once while
 // the module is dynamically imported; every other warning passes through.
+import { chmodSync, mkdirSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 
 type SqliteModule = typeof import("node:sqlite");
@@ -41,6 +42,30 @@ export async function switchToWal(db: DatabaseSync): Promise<void> {
     } catch (e) {
       if ((e as { errcode?: number }).errcode !== 5 || i >= 50) throw e;
       await new Promise((r) => setTimeout(r, 10 + Math.random() * 40));
+    }
+  }
+}
+
+const POSIX = process.platform !== "win32";
+
+/** Creates `dir` (and its parents) as owner-only (0700); a dir that exists keeps its mode. */
+export function mkdirPrivate(dir: string): void {
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+}
+
+/**
+ * Makes a database file and its -wal and -shm owner-only (0600): they hold prompts,
+ * tool output and file contents. SQLite creates the -wal and -shm with the database
+ * file's mode, so calling this right after the file is created covers them too.
+ * A missing file or one this user can't change is left as it is. No-op on Windows.
+ */
+export function ownerOnly(path: string): void {
+  if (!POSIX || path === ":memory:") return;
+  for (const p of [path, `${path}-wal`, `${path}-shm`]) {
+    try {
+      chmodSync(p, 0o600);
+    } catch {
+      // ENOENT (no WAL yet) or EPERM (another user's file): nothing to tighten.
     }
   }
 }
