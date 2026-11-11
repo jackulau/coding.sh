@@ -36,7 +36,7 @@ export async function run(c: CommandContext): Promise<number> {
     out.fail(`${r.error}${r.exitCode === 127 ? " (command not found)" : ""}`);
     out.note(`Session ${r.sessionId} recorded (exit ${r.exitCode})`);
   } else {
-    out.ok(`Captured session ${r.sessionId} (${duration(r.durationMs)}, exit ${r.signal ?? r.exitCode})`);
+    out.ok(`Captured session ${r.sessionId} (the command ran ${duration(r.durationMs)}, exit ${r.signal ?? r.exitCode})`);
   }
   return code;
 }

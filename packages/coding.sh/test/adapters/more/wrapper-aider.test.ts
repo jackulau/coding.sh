@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { aiderAdapter, parseAiderUsage } from "../../../src/adapters/more/aider.ts";
+import { aiderAdapter, aiderRunUsage, parseAiderUsage } from "../../../src/adapters/more/aider.ts";
+import { costFrom, pricesFor, resolvePrice } from "../../../src/core/pricing.ts";
 import { wrapperAdapter } from "../../../src/adapters/more/wrapper.ts";
 import type { TmpEnv } from "../_helpers.ts";
 import { assertGolden, assertRunOk, assertWellFormed, fakeBinary, loadSpool, moreEnv, normalizeFixture, readArgv, runSpec, summarize, testCtx } from "./_helpers.ts";
@@ -51,11 +52,14 @@ describe("wrapper normalize", () => {
 describe("aider usage", () => {
   it("sums Tokens lines (k suffixes, cache parts) and keeps the last session cost", () => {
     const out = [
-      "Tokens: 2.1k sent, 1.2k cache write, 3k cache hit, 345 received. Cost: $0.01 message, $0.01 session.",
+      "Tokens: 18k sent, 2.4k cache write, 12k cache hit, 345 received. Cost: $0.06 message, $0.06 session.",
       "\x1b[32mApplied edit to src/app.py\x1b[0m",
-      "Tokens: 12k sent, 1,024 received. Cost: $0.04 message, $0.05 session.",
+      "Tokens: 12k sent, 1,024 received. Cost: $0.04 message, $0.10 session.",
     ].join("\n");
-    assert.deepEqual(parseAiderUsage(out), { inputTokens: 14100, outputTokens: 1369, cacheWriteTokens: 1200, cacheReadTokens: 3000, costUsd: 0.05 });
+    // Aider's "sent" holds the cache reads once and the writes twice: 18000 - 12000 - 2 × 2400 = 1200 uncached.
+    assert.deepEqual(parseAiderUsage(out), { inputTokens: 13200, outputTokens: 1369, cacheWriteTokens: 2400, cacheReadTokens: 12000, costUsd: 0.1 });
+    // The real cache run's reply (test/fixtures/adapters/aider): 18.3k sent is 1500 uncached.
+    assert.deepEqual(parseAiderUsage("Tokens: 18.3k sent, 2.4k cache write, 12k cache hit, 30 received."), { inputTokens: 1500, outputTokens: 30, cacheWriteTokens: 2400, cacheReadTokens: 12000 });
     assert.deepEqual(parseAiderUsage("Tokens: 10 sent, 2 received."), { inputTokens: 10, outputTokens: 2 });
     assert.equal(parseAiderUsage("no usage here"), undefined);
   });
@@ -85,6 +89,27 @@ describe("wrapper + aider run", () => {
     assert.ok(a.argv.includes("--no-show-release-notes"), "--yes-always would open the release notes in a browser");
     assert.ok(!a.argv.includes("--no-auto-commits"), "a harness flag overrides our default");
     assert.deepEqual(a.argv.slice(-3), ["--model", "sonnet", "--auto-commits"]);
+  });
+
+  it("aider: a priced model's run cost comes from its tokens, not Aider's figure", async () => {
+    // The real cache run's reply (test/fixtures/adapters/aider): Aider says $0.06075 because it
+    // prices the cache tokens twice; Sonnet's rates give $0.01755.
+    fakeBinary(bin, "aider", `console.log("Tokens: 18.3k sent, 2.4k cache write, 12k cache hit, 30 received. Cost: $0.06 message, $0.06 session.");`);
+    const model = "anthropic/claude-sonnet-4-5";
+    const r = await aiderAdapter.run!(runSpec(cwd, bin, { model }));
+    assertRunOk(r);
+    const tokens = { inputTokens: 1500, outputTokens: 30, cacheWriteTokens: 2400, cacheReadTokens: 12000 };
+    assert.deepEqual({ ...r.usage, costUsd: undefined }, { ...tokens, costUsd: undefined });
+    assert.ok(Math.abs(r.usage!.costUsd! - costFrom(tokens, resolvePrice(model, pricesFor())!.price)) < 1e-12);
+    assert.notEqual(r.usage!.costUsd, 0.06);
+  });
+
+  it("aiderRunUsage keeps Aider's figure for a model with no price, and usage without tokens as it is", () => {
+    const u = { inputTokens: 10, outputTokens: 2, costUsd: 0.5 };
+    assert.deepEqual(aiderRunUsage(u, "anthropic/unpriced-test-model"), u);
+    assert.deepEqual(aiderRunUsage(u, undefined), u);
+    assert.deepEqual(aiderRunUsage({ costUsd: 0.5 }, "anthropic/claude-sonnet-4-5"), { costUsd: 0.5 });
+    assert.equal(aiderRunUsage(undefined, "anthropic/claude-sonnet-4-5"), undefined);
   });
 
   it("wrapper: the command comes from flags; {instruction} is substituted", async () => {

@@ -8,7 +8,9 @@ import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { aiderUsageTap, parseAnalyticsLine, parseHistoryReport, toRecord } from "../../src/capture/aider.ts";
 import { wrapRunDetailed } from "../../src/capture/wrapper.ts";
+import { resolveRaw } from "../../src/spool/write.ts";
 import { aiderAdapter } from "../../src/adapters/more/aider.ts";
+import { applyPricing, pricesFor } from "../../src/core/pricing.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { SpoolLine } from "../../src/core/types.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
@@ -36,7 +38,9 @@ function spool(agent: string, h = home): SpoolLine[] {
   return readdirSync(dir)
     .filter((f) => f.endsWith(".jsonl"))
     .flatMap((f) => readFileSync(join(dir, f), "utf8").split("\n").filter(Boolean))
-    .map((l) => JSON.parse(l) as SpoolLine);
+    .map((l) => JSON.parse(l) as SpoolLine)
+    // A line over the inline limit keeps its payload in a side file.
+    .map((l) => ({ ...l, raw: resolveRaw(l) }));
 }
 
 /**
@@ -179,7 +183,8 @@ describe("aider usage tap", () => {
 
 describe("real aider sessions", () => {
   test("a wrapped Aider session has usage and cost (Anthropic, cache writes and reads, priced model)", async () => {
-    const events = await normalize("aider/cache.spool.jsonl");
+    // Priced the way ingest prices them.
+    const events = applyPricing(await normalize("aider/cache.spool.jsonl"), pricesFor());
     const calls = events.filter((e) => e.kind === "llm.call");
     assert.equal(calls.length, 2);
     assert.equal(calls[0]!.model, "anthropic/claude-3-5-sonnet-20241022");
@@ -189,8 +194,12 @@ describe("real aider sessions", () => {
     assert.equal(s.model, "anthropic/claude-3-5-sonnet-20241022");
     assert.deepEqual(
       { ...s.stats.usage, estimatedCostUsd: undefined, estimatedCostByTier: undefined },
-      { inputTokens: 3000, outputTokens: 60, cacheReadTokens: 24000, cacheWriteTokens: 4800, costUsd: 0.1215, estimatedCostUsd: undefined, estimatedCostByTier: undefined },
+      { inputTokens: 3000, outputTokens: 60, cacheReadTokens: 24000, cacheWriteTokens: 4800, costUsd: s.stats.usage?.costUsd, estimatedCostUsd: undefined, estimatedCostByTier: undefined },
     );
+    // Priced from the tokens, not Aider's $0.1215 (which counts the cache twice): each reply is
+    // 1500 × $3 + 2400 × $3.75 + 12000 × $0.30 + 30 × $15 per million = $0.01755.
+    assert.ok(Math.abs(s.stats.usage!.costUsd! - 0.0351) < 1e-9, `costUsd ${s.stats.usage?.costUsd}`);
+    for (const c of calls) assert.equal(c.payload.aiderCostUsd, 0.06075, "Aider's own figure stays on the call");
     assert.equal(s.stats.latency?.llmCalls, 2);
   });
 

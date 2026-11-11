@@ -5,7 +5,7 @@ date: 2026-11-08
 ---
 
 The `.sh` in coding.sh is not a pun. A coding agent does its real work in a shell. It reads files,
-runs tests, greps the tree, stages a commit, starts a server — all of it as shell commands the
+runs tests, greps the tree, stages a commit, starts a server. All of it is shell commands the
 model decides to run. The model's prose is a plan; the shell is where the plan becomes an action
 that can pass, fail, or change your repo. That is the layer worth watching, and it is the layer
 coding.sh records.
@@ -25,12 +25,12 @@ test run was earned or edited into passing.
 
 ## A hook, not an integration
 
-coding.sh captures through a hook — a small process the agent's own harness runs after each step.
+coding.sh captures through a hook, a small process the agent's own harness runs after each step.
 The rules it follows are shell-citizen rules. It exits 0 so it can never break the agent. It prints
 nothing unless the protocol needs a reply. It does no network and no git work. It writes the raw
 payload to a spool file and returns, well under 50 ms, so the agent never waits on it.
 
-That is the whole install for Claude Code, Codex, Gemini CLI and the rest: a hook line in the
+That is the whole install for Claude Code, Codex, Antigravity CLI and the rest: a hook line in the
 agent's config, added by `coding.sh init`. No SDK, no wrapper around your commands, no proxy in the
 default path. The agent keeps running exactly as it did.
 
@@ -41,7 +41,7 @@ produced them. `coding.sh sessions`, `coding.sh usage --by model`, `coding.sh sh
 viewer is the same binary: `coding.sh ui` serves a local page on 127.0.0.1 when you want to click
 through a replay, and closes when you are done.
 
-Underneath, coding.sh has zero runtime dependencies. Everything is Node's own built-ins — the
+Underneath, coding.sh has zero runtime dependencies. Everything is Node's own built-ins: the
 SQLite index through `node:sqlite`, compression through `node:zlib`. Install is one line:
 
 ```sh

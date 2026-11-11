@@ -50,9 +50,9 @@ def gateway_for_url(url: Any, env: Optional[Mapping[str, str]] = None) -> Option
     env = os.environ if env is None else env
     for g in GATEWAY_TABLE:
         if any(_host_matches(host, h) for h in g["hosts"]):
-            return g["id"]
+            return str(g["id"])
         if any(_host(env.get(k)) == host for k in g["url_env"]):
-            return g["id"]
+            return str(g["id"])
     return None
 
 
@@ -146,7 +146,7 @@ def hook_responses(client: Any) -> None:
     try:
         http = getattr(client, "_client", None)
         hooks = getattr(http, "event_hooks", None)
-        if not isinstance(hooks, dict) or not isinstance(hooks.get("response"), list):
+        if http is None or not isinstance(hooks, dict) or not isinstance(hooks.get("response"), list):
             return
         if any(getattr(h, _HOOKED, False) for h in hooks["response"]):
             return

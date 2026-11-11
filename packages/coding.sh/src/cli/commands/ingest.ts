@@ -45,6 +45,19 @@ export async function run(c: CommandContext): Promise<number> {
   }
 }
 
+/**
+ * An ingest the blob store stopped (a write failed; the lines from there on wait) leaves the
+ * same marker as one that threw, so status, doctor and the status line say so once it
+ * happens twice in a row. The next ingest that gets through removes it.
+ */
+function markBlobStop(ctx: Context, results: (IngestResult | undefined)[]): boolean {
+  const failed = results.find((r) => r?.storeWriteFailed !== undefined)?.storeWriteFailed;
+  if (failed === undefined) return false;
+  // The next step names where the blob store is set: [store] blobs in the config (or CODING_SH_BLOB_URL).
+  markIngestStopped(ctx.paths.ingestStopped, { reason: "blob_write_failed", why: oneLine(failed, 120), next: "coding.sh config path", version: version() });
+  return true;
+}
+
 /** Why a background ingest failed, as the marker keeps it. */
 function ingestFailure(e: unknown): Omit<IngestStopped, "since" | "at" | "failures"> {
   const ce = e instanceof CliError ? e : undefined;
@@ -85,7 +98,8 @@ async function ingest(c: CommandContext, o: { agents: string[]; since: number | 
         if (out.json) out.data({ outcome: "busy" });
         return 0;
       }
-      if (out.json) out.data({ outcome: "ingested", spool: r ?? null, backfill: bf, reparse: rp });
+      const blobStopped = markBlobStop(ctx, [r]);
+      if (out.json) out.data({ outcome: blobStopped ? "stopped" : "ingested", spool: r ?? null, backfill: bf, reparse: rp });
       return (r?.errors.length ?? 0) + (bf?.errors.length ?? 0) ? 1 : 0;
     }
     const spin = out.spin("Ingesting spool…");
@@ -106,8 +120,9 @@ async function ingest(c: CommandContext, o: { agents: string[]; since: number | 
     }
     const rp = rebuild ? await reparseWithProgress(ctx, out, { all: true, agents }) : (await ctx.reparseDue()) ? await reparseWithProgress(ctx, out, {}).catch(skipBusy) : undefined;
     const errors = r.errors.length + (bf?.errors.length ?? 0) + (rp?.errors.length ?? 0);
+    const blobStopped = markBlobStop(ctx, [r]);
     if (out.json) {
-      out.data({ outcome: rebuild ? "rebuilt" : "ingested", spool: r, backfill: bf ?? null, reparse: rp ?? null });
+      out.data({ outcome: blobStopped ? "stopped" : rebuild ? "rebuilt" : "ingested", spool: r, backfill: bf ?? null, reparse: rp ?? null });
       return errors ? 1 : 0;
     }
     out.row("Spool", `${plural(r.events, "event")}, ${plural(r.sessions, "session")}${r.errors.length ? `, ${plural(r.errors.length, "error")}` : ""}`, r.errors.length ? "warn" : "ok");

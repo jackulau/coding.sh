@@ -166,6 +166,15 @@ export function pairedPower(diffs: readonly number[], opts: PowerOpts = {}): Pow
 }
 
 /**
+ * The MDE as a power line shows it: `12.5pp`, or "—" when there is none. A pass
+ * rate moves at most 100pp, so an MDE above that is "— (too few cases)".
+ */
+export function mdeText(mde: number): string {
+  if (!Number.isFinite(mde)) return "—";
+  return mde > 1 ? "— (too few cases)" : `${(mde * 100).toFixed(1)}pp`;
+}
+
+/**
  * The exact McNemar part of a power line: ` · exact MDE 10.6pp` or ` · no 80%
  * power at this n (exact McNemar ceiling 62%)`; empty without an exact design.
  */

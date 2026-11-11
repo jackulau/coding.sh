@@ -225,8 +225,9 @@ coding.sh compare base candidate --k 3 --gate`;
       takes at least 8 wins.
     </p>
     <p>
-      It says Don't ship when B broke a task and either the breaks pass <code>--tau</code> or the net gain is not positive. Anything else
-      holds. The formulas are on <a href="/docs/eval-methods">How evals are computed</a>.
+      It says Don't ship when B's losses beat chance: an exact one-sided binomial test of the losses among the tasks that changed
+      outcome is under <code>--gate-alpha</code>. Each <code>--by</code> group says it when B broke a task and either the breaks pass
+      <code>--tau</code> or the net gain is not positive. Anything else holds. The formulas are on <a href="/docs/eval-methods">How evals are computed</a>.
     </p>
   </details>
 

@@ -4,6 +4,8 @@ import type { Config } from "../core/types.ts";
 import { ConfigError, interpolateEnv, isPostgresUrl, loadConfig, readUserConfigTable } from "../core/config.ts";
 import type { TomlTable } from "../core/toml.ts";
 import { isLoopbackHost } from "../otel/receiver.ts";
+import { proxySettings, upstreamProblem } from "../proxy/state.ts";
+import type { Upstreams } from "../proxy/server.ts";
 import { type BasicCredential, type Credentials, KeyFormatError, keyHash, parseBasicAuth, parseIngestKeys, parseReadKeys } from "./auth.ts";
 import { DEFAULT_PROJECT, isProjectId } from "./project.ts";
 
@@ -58,6 +60,11 @@ export interface ServeConfig {
   configFile: string;
   /** Unset: serve forwards nothing. */
   forward?: ForwardConfig;
+  /**
+   * Where /proxy/* forwards. With --config, only the [proxy] table of that file (the user's config.toml
+   * and proxy.json are not read); otherwise the same settings `coding.sh proxy` uses.
+   */
+  proxyUpstreams: Partial<Upstreams>;
 }
 
 /** Thrown when serve must refuse to start (exit 2). */
@@ -203,6 +210,7 @@ export function resolveServeConfig(flags: ServeFlags, envIn: NodeJS.ProcessEnv):
   if (cors !== undefined && (!Array.isArray(cors) || !cors.every((c) => typeof c === "string"))) throw new ConfigError("serve.cors_origins must be an array of origins", file);
 
   const forward = resolveForward(serve, env, core.capture.mode, file);
+  const proxyUpstreams = flags.config ? resolveProxyUpstreams(table(root, "proxy", file), file) : proxySettings(env).upstreams;
 
   return {
     core,
@@ -219,8 +227,23 @@ export function resolveServeConfig(flags: ServeFlags, envIn: NodeJS.ProcessEnv):
     log: (logFormat as "json" | "text" | undefined) ?? (process.stderr.isTTY ? "text" : "json"),
     corsOrigins: (cors as string[] | undefined) ?? [],
     configFile: file,
+    proxyUpstreams,
     ...(forward ? { forward } : {}),
   };
+}
+
+/** [proxy] anthropic_upstream, openai_upstream and chatgpt_upstream of a serve config file. */
+function resolveProxyUpstreams(t: TomlTable | undefined, file: string): Partial<Upstreams> {
+  const out: Partial<Upstreams> = {};
+  for (const name of ["anthropic", "openai", "chatgpt"] as const) {
+    const where = `proxy.${name}_upstream`;
+    const v = tomlString(t, `${name}_upstream`, where, file);
+    if (v === undefined) continue;
+    const problem = upstreamProblem(v);
+    if (problem) throw new ConfigError(`${where} ${problem}`, file);
+    out[name] = v;
+  }
+  return out;
 }
 
 /** `k=v,k2=v2`, each part URL-decoded (the OTEL_EXPORTER_OTLP_HEADERS format). */

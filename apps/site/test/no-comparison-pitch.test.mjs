@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { distOpts, needDist } from "./_dist.mjs";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const TEXT = new Set([".astro", ".ts", ".mjs", ".js", ".md", ".mdx", ".html", ".txt", ".xml", ".json", ".jsonc", ".svg", ".toml", ".yml", ".yaml", ""]);
@@ -41,6 +42,7 @@ const ALLOW = [
   [/^docs\/how-to\/trace-durable-workflow\.md$/, "LangSmith's OTel-only mode is a way to send traces in"],
   [/^docs\/integrations\/eve\.md$/, "eve's Braintrust reporter names its scores"],
   [/^docs\/troubleshooting\.md$/, "an existing ccusage status line the installer keeps"],
+  [/^apps\/site\/public\/og\/manifest\.json$/, "generated card titles, the compare pages' among them (og-fresh.test.mjs checks them against the pages)"],
 ];
 // A line that only links or labels a compare page.
 const COMPARE_LINK = /\/docs\/compare|compare\/(?:langfuse|langsmith|braintrust|agentops|laminar|ccusage)|"vs [A-Z]|label: "vs /;
@@ -90,7 +92,8 @@ test("other products are named only on the compare pages and where they are an i
   assert.deepEqual(found, [], `${found.length} line(s) name another product outside the compare pages; describe coding.sh by what it does, or add the file to ALLOW with the reason:\n${found.join("\n")}`);
 });
 
-test("the built site pitches nothing through another product", { skip: !existsSync(join(ROOT, "apps/site/dist")) && "no build in apps/site/dist" }, () => {
+test("the built site pitches nothing through another product", distOpts(join(ROOT, "apps/site/dist")), () => {
+  needDist(join(ROOT, "apps/site/dist"));
   const files = walk("apps/site/dist", { skipDist: false }).filter((f) => !/\/docs\/compare/.test(f));
   const found = [];
   for (const f of files) {
@@ -112,7 +115,7 @@ test("the built site pitches nothing through another product", { skip: !existsSy
 
 // Category words stacked in place of saying what coding.sh does. A page title may keep "observability" as a search label.
 const CATEGORY = /local-first (?:observability|traces)|\bfirst-class\b|\b(?:observability|traces) and evals for\b/i;
-const TITLE_LINE = /\b(?:title|metaTitle)\s*[=:]|<title>/;
+const TITLE_LINE = /\b(?:title|metaTitle)"?\s*[=:]|<title>/;
 
 test("no page describes coding.sh with stacked category words", () => {
   const found = lines(SITE_WORDS(), (f, l) => !/^docs\/(?:research|design)\/|^CHANGELOG\.md$/.test(f) && !TITLE_LINE.test(l) && CATEGORY.test(l));

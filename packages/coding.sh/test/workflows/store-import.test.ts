@@ -171,6 +171,6 @@ describe("importClaudeWorkflows", () => {
   it("finds nothing under a missing directory", async () => {
     const store = new WorkflowStore(join(root, "imp3"));
     const r = await importClaudeWorkflows({ root: join(root, "nowhere"), store });
-    assert.deepEqual(r, { found: 0, imported: [], skipped: 0, errors: [] });
+    assert.deepEqual(r, { found: 0, imported: [], skipped: 0, copies: 0, errors: [] });
   });
 });

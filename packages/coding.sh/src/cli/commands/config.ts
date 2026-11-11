@@ -7,9 +7,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConfigError, defaultConfigToml, loadConfig } from "../../core/config.ts";
+import { ConfigError, defaultConfigToml, loadConfig, readUserConfigTable } from "../../core/config.ts";
 import { paths } from "../../core/paths.ts";
-import { stringifyToml } from "../../core/toml.ts";
+import { parseToml, stringifyToml } from "../../core/toml.ts";
+import { section as refineSection } from "../../refine/config.ts";
 import { UsageError } from "../args.ts";
 import { printChanges } from "../changes.ts";
 import { CliError } from "../output.ts";
@@ -30,7 +31,38 @@ export const SETTABLE = [
   "retention.keepSpoolDays",
   "retention.toolOutputDays",
   "update.check",
+  "refine.maxCostRise",
+  "refine.canary_model",
+  "serve.forward.endpoint",
 ] as const;
+
+/**
+ * Documented keys that the loaded Config does not carry: they sit in the user's file and the commands
+ * that use them read them there. `config get` answers them from the file, and says "not set" when absent.
+ */
+export const FILE_KEYS = [
+  "refine.protect", "refine.autoProtect", "refine.maxCostRise", "refine.canary_model",
+  "serve.host", "serve.port", "serve.retention_days", "serve.log", "serve.queue_max_events", "serve.queue_max_bytes",
+  "serve.insecure", "serve.trust_proxy", "serve.cors_origins",
+  "serve.viewer.read_keys", "serve.viewer.basic_user", "serve.viewer.basic_password_sha256",
+  "serve.forward.endpoint", "serve.forward.headers", "serve.forward.mode", "serve.forward.max_buffer_spans",
+  "proxy.port", "proxy.host", "proxy.anthropic_upstream", "proxy.openai_upstream", "proxy.chatgpt_upstream",
+] as const;
+
+/** Gateway names that get their own `[gateway.<name>]` table (docs/reference/config.md). */
+const GATEWAY_NAMES = ["openrouter", "litellm", "cloudflare", "portkey", "helicone", "requesty", "ramp", "truefoundry", "kong", "bifrost", "martian"];
+
+/**
+ * The `[gateway]` keys `config get` reads from the file: the top-level ones (Vercel AI Gateway, plus
+ * `default`) and each named gateway's table. Not in the loaded Config: the gateway commands read them.
+ */
+export function isGatewayKey(key: string): boolean {
+  const m = /^gateway\.(?:([a-z]+)\.)?([A-Za-z]+)$/.exec(key);
+  if (!m) return false;
+  const [, name, leaf] = m;
+  if (name === undefined) return ["apiKeyEnv", "apiKey", "baseUrl", "default"].includes(leaf!);
+  return GATEWAY_NAMES.includes(name) && (["apiKeyEnv", "apiKey", "baseUrl"].includes(leaf!) || (name === "cloudflare" && ["accountId", "gatewayId"].includes(leaf!)));
+}
 
 function getPath(obj: unknown, key: string): unknown {
   let cur: unknown = obj;
@@ -136,7 +168,21 @@ export async function run(c: CommandContext): Promise<number> {
       else out.print(stringifyToml(config as unknown as Record<string, unknown>).trimEnd());
       return 0;
     }
-    const value = getPath(config, key);
+    let value = getPath(config, key);
+    if (value === undefined && ((FILE_KEYS as readonly string[]).includes(key) || isGatewayKey(key))) {
+      value = getPath(readUserConfigTable(env).table, key);
+      if (value === undefined) {
+        if (out.json) out.data({ key, value: null });
+        else out.print(`${key} is not set`);
+        return 0;
+      }
+      // A gateway key is never printed (docs/reference/config.md): say only that it is set.
+      if (isGatewayKey(key) && key.endsWith(".apiKey")) {
+        if (out.json) out.data({ key, set: true });
+        else out.print(`${key} is set (keys are never printed)`);
+        return 0;
+      }
+    }
     if (value === undefined) throw new UsageError(`Unknown config key ${JSON.stringify(key)}`, { reason: "unknown_key", suggestion: SETTABLE.find((k) => k.endsWith(key.split(".").pop() ?? "")) });
     if (out.json) out.data({ key, value });
     else out.print(typeof value === "string" ? value : JSON.stringify(value));
@@ -151,7 +197,14 @@ export async function run(c: CommandContext): Promise<number> {
     throw new UsageError(`Can't set ${JSON.stringify(key)}. Settable keys: ${SETTABLE.join(", ")}`, { reason: "unknown_key", suggestion: s ? `coding.sh config set ${s} ${raw}` : undefined });
   }
   const before = existsSync(file) ? readFileSync(file, "utf8") : undefined;
-  const dot = key.indexOf(".");
+  // What the key read before this edit (the default when the file did not set it), for the confirmation.
+  let previous: unknown;
+  try {
+    previous = getPath(loadConfig({ env }), key) ?? getPath(readUserConfigTable(env).table, key);
+  } catch {
+    previous = undefined; // an unreadable config: nothing to compare against
+  }
+  const dot = key.lastIndexOf(".");
   const after = setTomlKey(before ?? defaultConfigToml(env), key.slice(0, dot), key.slice(dot + 1), tomlLiteral(raw));
 
   // Validate with the real loader before touching the file, and check that the
@@ -173,6 +226,12 @@ export async function run(c: CommandContext): Promise<number> {
     }
     await writeFile(probe, after);
     const now = loadConfig({ env: fileEnv, file: probe });
+    // Keys the loader does not carry are checked where the commands that use them read them.
+    if (key === "serve.forward.endpoint" && !/^https?:\/\/[^\s/]+/i.test(raw.trim())) throw new ConfigError("serve.forward.endpoint must be an http:// or https:// URL", probe);
+    if (key.startsWith("refine.")) {
+      refineSection(parseToml(after, probe), probe);
+      if (key === "refine.canary_model" && !raw.trim()) throw new ConfigError("refine.canary_model must be a model name", probe);
+    }
     if (was !== undefined && !onlyKeyChanged(was, now, key)) {
       throw new CliError(`Can't set ${key}: the edit would change other settings too`, {
         reason: "unsafe_edit",
@@ -197,10 +256,16 @@ export async function run(c: CommandContext): Promise<number> {
     const { atomicWrite } = await import("../../adapters/_shared/files.ts");
     await atomicWrite(file, after, 0o600);
   }
-  const value = getPath(loadConfig({ env }), key);
-  if (out.json) out.data({ outcome: change ? "updated" : "unchanged", key, value, path: file });
+  const value = getPath(loadConfig({ env }), key) ?? getPath(readUserConfigTable(env).table, key);
+  const show = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v));
+  if (out.json) {
+    const doc: Record<string, unknown> = { outcome: change ? "updated" : "unchanged", key, value };
+    if (previous !== undefined) doc.previous = previous;
+    doc.path = file;
+    out.data(doc);
+  }
   else {
-    out.ok(change ? `Set ${key}` : `${key} is already ${raw}`);
+    out.ok(change ? `Set ${key}${previous !== undefined ? ` (was ${show(previous)})` : ""}` : `${key} is already ${raw}`);
     out.print(typeof value === "string" ? value : JSON.stringify(value));
   }
   return 0;

@@ -1281,7 +1281,7 @@
     {
       "rule": "conditional-empty-spread",
       "path": "packages/coding.sh/src/core/ingest.ts",
-      "max": 3,
+      "max": 2,
       "reason": "baseline 2026-11-09: existing code, do not add more"
     },
     {
@@ -1551,7 +1551,7 @@
     {
       "rule": "conditional-empty-spread",
       "path": "packages/coding.sh/src/experiments/render.ts",
-      "max": 7,
+      "max": 5,
       "reason": "baseline 2026-11-09: existing code, do not add more"
     },
     {
@@ -3133,6 +3133,12 @@
       "reason": "baseline 2026-11-09: existing code, do not add more"
     },
     {
+      "rule": "personal-data",
+      "path": "packages/coding.sh/src/runner/git.ts",
+      "max": 1,
+      "reason": "synthetic git identity on a throwaway repo or runner; the address is not a GitHub account and nothing can be sent to it"
+    },
+    {
       "rule": "site-placeholder",
       "path": "apps/site/src/data/agents.ts",
       "max": 1,
@@ -3149,6 +3155,12 @@
       "path": "CHANGELOG.md",
       "max": 1,
       "reason": "\"a TODO template\" names what eval init used to write, not an unfinished page"
+    },
+    {
+      "rule": "site-voice",
+      "path": "apps/site/src/pages/docs/experiments.astro",
+      "max": 7,
+      "reason": "pasted exp output in code samples: case ids and the em dash a dropped grader prints"
     },
     {
       "rule": "unknown-param",

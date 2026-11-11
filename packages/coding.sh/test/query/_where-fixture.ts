@@ -12,7 +12,7 @@ export function fixture(): { sessions: Session[]; events: AgentEvent[] } {
     session("s2", { agent: "claude-code", model: "claude-sonnet-4-5", repo: repo("/work/other", "feat/x"), cwd: "/work/other/sub", startedAt: T0 + H, endedAt: T0 + H + 5 * 60_000, flags: ["compaction", "unapproved-action"], title: "write docs", stats: { events: 4, turns: 25, toolCalls: 120, toolErrors: 0, filesChanged: 0, testsPassed: 10, usage: { inputTokens: 1000, outputTokens: 100, costUsd: 0.02 }, unapprovedActions: { count: 2, byKind: { "rm-rf": 1, paid: 1 }, first: { kind: "rm-rf", command: "rm -rf src", at: T0 + H + 60_000, afterError: true } } } }),
     session("s3", { agent: "claude-code", model: "claude-opus-4-1", cwd: "C:\\Users\\me\\proj", startedAt: T0 + 2 * H, flags: [], title: "50% done_now", stats: { events: 3, turns: 1, toolCalls: 1, toolErrors: 0, filesChanged: 0 } }),
     session("s4", { agent: "codex", model: "gpt-5.1-codex", repo: repo("/work/demo", "main"), cwd: "/work/demo", startedAt: T0 + 3 * H, endedAt: T0 + 3 * H + 2 * H, parent: { sessionId: "s1", type: "explorer" }, flags: ["skill:docx", "gateway:vercel"], stats: { events: 2, turns: 1, toolCalls: 2, toolErrors: 2, filesChanged: 0, llmErrors: { count: 1, statusCode: 429 }, usage: { inputTokens: 10, outputTokens: 5 }, cacheBreaks: { count: 1, lostTokens: 5000, byCause: { other: { count: 1, lostTokens: 5000 } }, unpriced: 1 } } }),
-    session("s5", { agent: "gemini", runId: "run_42", startedAt: T0 + 4 * H, endedAt: T0 + 4 * H + 30_000, flags: ["repeated-tool-failure"], stats: { events: 1, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0, usage: { inputTokens: 5, outputTokens: 5, costUsd: 0 } } }),
+    session("s5", { agent: "gemini", runId: "run_42", cwd: "/work/*", title: "done*now", startedAt: T0 + 4 * H, endedAt: T0 + 4 * H + 30_000, flags: ["repeated-tool-failure"], stats: { events: 1, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0, usage: { inputTokens: 5, outputTokens: 5, costUsd: 0 } } }),
   ];
   const tool = (sid: string, n: number, kind: "tool.start" | "tool.end", payload: Record<string, unknown>, over: Partial<AgentEvent> = {}) => event(sid, n, { kind, payload, ...over, agent: sessions.find((s) => s.id === sid)!.agent });
   const events: AgentEvent[] = [
@@ -29,6 +29,8 @@ export function fixture(): { sessions: Session[]; events: AgentEvent[] } {
     tool("s4", 1, "tool.end", { tool: "Bash", ok: false, error: "permission denied" }),
     tool("s4", 2, "tool.end", { tool: "Grep", ok: false }),
     { ...event("s4", 3, { agent: "codex", kind: "llm.call", payload: { ok: false, statusCode: 429 } }) },
+    // An error event carries its text in payload.message, not payload.error.
+    event("s2", 9, { agent: "claude-code", kind: "error", payload: { message: "Quota exceeded for this model" } }),
   ];
   return { sessions, events };
 }
@@ -136,6 +138,12 @@ export const QUERIES = [
   "mcp:github",
   "error:enoent",
   "error:*denied",
+  "error:quota",
+  'error:"*exceeded for*"',
+  'dir:"/work/*"',
+  'dir:"/work/\\*"',
+  'title:"done*now"',
+  'title:"done\\*now"',
   "event.duration>30s",
   "event.duration:1s..2s",
   "migration",

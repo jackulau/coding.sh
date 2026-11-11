@@ -23,7 +23,7 @@
 // file recreated at the same path is read from the start.
 import { existsSync } from "node:fs";
 import { readdir, stat, unlink } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import type { BlobRef } from "../schema/index.ts";
 import type { BlobStore, Config, IndexStore } from "./types.ts";
 import { paths } from "./paths.ts";
@@ -103,6 +103,8 @@ export interface GcResult {
     bytes: number;
     /** Side files (large raw payloads) removed: with their spool file, or unreferenced and older than keepSpoolDays. */
     rawFiles: number;
+    /** The unreferenced side files among them, relative to the spool dir. Absent when there are none. */
+    orphans?: string[];
   };
 }
 
@@ -300,6 +302,7 @@ async function sweepOrphanRaw(opts: GcOptions, result: GcResult, now: number, sp
     }
     result.spool.rawFiles++;
     result.spool.bytes += c.size;
+    (result.spool.orphans ??= []).push(relative(spoolDir, c.path).split(sep).join("/"));
   }
 }
 

@@ -24,7 +24,7 @@ import math
 import numbers
 import operator
 import re
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from ._trace import Scope, _get, clip, emit, full_capture
 
@@ -141,7 +141,8 @@ def weights_edit(
         _warn("weights_edit", "coding.sh: weights_edit dropped an event: %s" % e)
         return False
     try:
-        scope = _WeightsEdit(p).start()
+        scope = _WeightsEdit(p)
+        scope.start()
         queued = scope.queued
         scope.end()
         return queued
@@ -149,7 +150,7 @@ def weights_edit(
         return False
 
 
-def _walk(x: Any, shape: List[int], depth: int, out: List[float], leaves: set) -> None:
+def _walk(x: Any, shape: List[int], depth: int, out: List[float], leaves: Set[int]) -> None:
     if hasattr(x, "tolist") and not isinstance(x, (list, tuple, range)):
         x = x.tolist()
     if isinstance(x, (list, tuple, range)):
@@ -177,7 +178,7 @@ def _flatten(x: Any) -> Tuple[List[int], List[float]]:
     shape: List[int] = []
     out: List[float] = []
     try:
-        leaves: set = set()
+        leaves: Set[int] = set()
         _walk(x, shape, 0, out, leaves)
         if leaves and leaves != {len(shape)}:
             raise ValueError("ragged array")

@@ -8,7 +8,7 @@
 // is an in-sample number and is labelled as such, never as "calibrated".
 // Cases where humans disagree with each other, or where the judge is
 // confidently opposite to unanimous humans, are surfaced for relabelling.
-import type { Label } from "../core/types.ts";
+import type { Label, Score } from "../core/types.ts";
 import type { CalibrationState, CalibrationStatus, Dataset, JudgeVersion, Split } from "../datasets/types.ts";
 import { cohenKappa } from "../stats/agreement.ts";
 import { roganGladen } from "../stats/interval.ts";
@@ -41,13 +41,35 @@ export interface JudgedCase {
   undecided?: boolean;
 }
 
-/** Map core session labels onto case ids (default: case id = session id). */
-export function labelsFromCore(labels: readonly Label[], caseIdFor: (sessionId: string) => string | undefined = (s) => s): HumanLabel[] {
+/**
+ * Map core session labels onto case ids (default: case id = session id). With
+ * `hasCase`, a label scored on a case (`caseId`) of this dataset maps to that case.
+ */
+export function labelsFromCore(labels: readonly Label[], caseIdFor: (sessionId: string) => string | undefined = (s) => s, hasCase?: (caseId: string) => boolean): HumanLabel[] {
   const out: HumanLabel[] = [];
   for (const l of labels) {
-    const caseId = caseIdFor(l.sessionId);
+    const caseId = l.caseId !== undefined && hasCase?.(l.caseId) ? l.caseId : caseIdFor(l.sessionId);
     if (caseId === undefined) continue;
     out.push({ caseId, criterion: l.criterion, value: l.value, by: l.by });
+  }
+  return out;
+}
+
+/**
+ * Human pass/fail/skip scores on a case that names no session (`score add
+ * case:<id>`): the labels view leaves them out, so they are read as scores.
+ * Scores with a session are labels already and are skipped here.
+ */
+export function caseLabelsFromScores(scores: readonly Score[], hasCase: (caseId: string) => boolean, criterion?: string): HumanLabel[] {
+  const out: HumanLabel[] = [];
+  for (const s of scores) {
+    if (s.source !== "human" || s.target !== "case" || s.sessionId !== undefined || !hasCase(s.targetId)) continue;
+    if (criterion !== undefined && s.name !== criterion) continue;
+    let value: HumanLabel["value"];
+    if (s.dataType === "boolean" && typeof s.value === "boolean") value = s.value ? "pass" : "fail";
+    else if (s.dataType === "categorical" && (s.value === "pass" || s.value === "fail" || s.value === "skip")) value = s.value;
+    else continue;
+    out.push({ caseId: s.targetId, criterion: s.name, value, by: s.by });
   }
   return out;
 }
@@ -237,6 +259,15 @@ function metrics(pairs: readonly { human: boolean; judge: boolean }[], splits: S
     }
   }
   samples.sort((a, b) => a - b);
+  let lo = samples.length ? quantileSorted(samples, alpha / 2) : NaN;
+  let hi = samples.length ? quantileSorted(samples, 1 - alpha / 2) : NaN;
+  if (n > 0 && c.fp + c.fn === 0 && !Number.isNaN(k.kappa)) {
+    // No disagreement: every resample is κ = 1, a CI of no width. Bound it instead by the exact
+    // (Clopper-Pearson) lower limit on agreement with no misses, (α/2)^(1/n), at the observed marginals.
+    const pe = ((c.tp + c.fp) / n) * ((c.tp + c.fn) / n) + ((c.fn + c.tn) / n) * ((c.fp + c.tn) / n);
+    lo = Math.max(-1, ((alpha / 2) ** (1 / n) - pe) / (1 - pe));
+    hi = 1;
+  }
   const precision = ratio(c.tp, c.tp + c.fp);
   const recall = ratio(c.tp, c.tp + c.fn);
   return {
@@ -245,8 +276,8 @@ function metrics(pairs: readonly { human: boolean; judge: boolean }[], splits: S
     agreement: k.agreement,
     kappa: k.kappa,
     kappaCI: {
-      lo: samples.length ? quantileSorted(samples, alpha / 2) : NaN,
-      hi: samples.length ? quantileSorted(samples, 1 - alpha / 2) : NaN,
+      lo,
+      hi,
       iters: n > 0 ? iters : 0,
       degenerate,
     },

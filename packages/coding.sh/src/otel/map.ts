@@ -230,13 +230,11 @@ function maybeJson(v: OtelValue | undefined): unknown {
   }
 }
 
+/** Lowercase, words joined by "-": "Ünïcode Bot" → "unicode-bot", "客服" stays "客服". Letters and digits of any script are kept. */
 export function kebab(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64)
-    .replace(/-+$/, "");
+  // NFKD splits an accented letter into the letter and a combining accent (U+0300-036F), which goes; other marks (Devanagari vowel signs) stay.
+  const plain = s.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").normalize("NFC").toLowerCase();
+  return [...plain.replace(/[^\p{L}\p{N}\p{M}]+/gu, "-").replace(/^-+|-+$/g, "")].slice(0, 64).join("").replace(/-+$/, "");
 }
 
 // ---------------------------------------------------------------- agent detection

@@ -27,7 +27,7 @@ function docRows(doc: string, heading: string): Row[] {
   for (const line of doc.slice(start, end === -1 ? undefined : end).split("\n")) {
     if (!line.startsWith("| `")) continue;
     const cells = line.replace(/^\||\|$/g, "").split(/(?<!\\)\|/);
-    const reasons = [...cells[0]!.matchAll(/`([a-z_]+)`/g)].map((m) => m[1]!);
+    const reasons = [...cells[0]!.matchAll(/`([a-z0-9_]+)`/g)].map((m) => m[1]!);
     assert.ok(reasons.length, `row names a reason: ${line}`);
     // Outside code spans, so an example message like `npm install failed (exit 1): …` states nothing.
     const prose = cells.slice(1).join("|").replace(/(`+).*?\1/g, "");
@@ -113,17 +113,19 @@ function reasonExits(): Map<string, Set<number>> {
     const own = cliExit(c);
     const codes = own !== undefined ? [own] : [...(carried.get(c.cls) ?? [])];
     // `reason: "x"`, `reason: cond ? "x" : "y"`, or a carried class's positional reason: `new ForkError(message, "x")`.
-    const reasons = [...c.args.matchAll(/\breason: ([^,}\n]*)/g)].flatMap((m) => [...m[1]!.matchAll(/"([a-z_]+)"/g)].map((x) => x[1]!));
-    const positional = own === undefined ? /,\s*"([a-z_]+)"\s*$/.exec(c.args)?.[1] : undefined;
+    const reasons = [...c.args.matchAll(/\breason: ([^,}\n]*)/g)].flatMap((m) => [...m[1]!.matchAll(/"([a-z0-9_]+)"/g)].map((x) => x[1]!));
+    const positional = own === undefined ? /,\s*"([a-z0-9_]+)"\s*$/.exec(c.args)?.[1] : undefined;
     if (positional) reasons.push(positional);
     for (const reason of reasons) for (const code of codes) add(reason, code);
   }
 
-  // A class's default reason: `this.reason = opts.reason ?? "invalid_usage"`.
+  // A class's default reason: `this.reason = opts.reason ?? "invalid_usage"`, or a fixed one:
+  // `readonly reason = "store_missing"`, carried by `reason: e.reason`.
   for (const [cls, codes] of [["UsageError", [2]], ["CliError", [1]], ...carried] as [string, Iterable<number>][]) {
     const text = [...src.values()].find((t) => t.includes(`export class ${cls} `)) ?? "";
     const at = text.indexOf(`export class ${cls} `);
-    const fallback = /this\.reason = opts\.reason \?\? "([a-z_]+)"/.exec(text.slice(at, text.indexOf("\n}\n", at)))?.[1];
+    const body = text.slice(at, text.indexOf("\n}\n", at));
+    const fallback = (/this\.reason = opts\.reason \?\? "([a-z0-9_]+)"/.exec(body) ?? /\n  readonly reason = "([a-z0-9_]+)";/.exec(body))?.[1];
     if (fallback) for (const code of codes) add(fallback, code);
   }
 
@@ -153,6 +155,8 @@ describe("docs/troubleshooting.md", () => {
     assert.deepEqual([...exits.get("bad_step")!], [1], "a ForkError, carried by replay --fork");
     assert.deepEqual([...exits.get("invalid_usage")!], [2], "UsageError's default reason");
     assert.deepEqual([...exits.get("cost_confirmation_required")!], [2], "action_required, from the command itself");
+    assert.deepEqual([...exits.get("store_missing")!], [1], "a StoreMissingError's fixed reason, carried by storeOpenError");
+    assert.deepEqual([...exits.get("no_fts5")!], [1], "a reason with a digit");
   });
 
   it("reads both reason tables", () => {

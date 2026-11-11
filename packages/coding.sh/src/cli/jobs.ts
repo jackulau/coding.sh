@@ -156,6 +156,12 @@ export function resumeNote(c: CommandContext, job: Job): void {
   c.out.note(`${why}; finished trials are saved. Continue with: ${resumeCommand(job.header)}`);
 }
 
+/** The kind `exp status` prints: an A/B that `exp run --arm` started reads "exp run (A/B)", not "exp ab". */
+export function kindLabel(h: { kind: JobKind; command?: string[] }): string {
+  const i = h.command?.indexOf("exp") ?? -1;
+  return h.kind === "exp ab" && i >= 0 && h.command![i + 1] === "run" ? "exp run (A/B)" : h.kind;
+}
+
 /** One job as `exp status --json` reports it. */
 export function jobJson(v: JobView) {
   const h = v.header;
@@ -198,7 +204,7 @@ export async function statusCommand(c: CommandContext): Promise<number> {
     }
     const j = jobJson(v);
     const rows: [string, string][] = [
-      ["run", `${j.id} (${j.kind} ${j.name})`],
+      ["run", `${j.id} (${kindLabel(v.header)} ${j.name})`],
       ["status", j.status],
       ["progress", `${j.done}/${j.total} trials${j.infra ? `, ${j.infra} hit infra errors (run again on resume)` : ""}${j.retries ? `, ${plural(j.retries, "retry", "retries")}` : ""}`],
       ["eta", j.etaMs === null ? "-" : duration(j.etaMs)],
@@ -226,7 +232,7 @@ export async function statusCommand(c: CommandContext): Promise<number> {
     ["ID", "KIND", "NAME", "STATUS", "PROGRESS", "ETA", "COST", "UPDATED"],
     all.map((v) => {
       const p = v.progress;
-      return [v.header.id, v.header.kind, v.header.name, v.status, `${p.done}/${p.total}${p.infra ? ` +${p.infra} infra` : ""}`, p.etaMs === undefined ? "-" : duration(p.etaMs), p.costKnown ? usd(p.costUsd) : "-", ago(v.header.updatedAt)];
+      return [v.header.id, kindLabel(v.header), v.header.name, v.status, `${p.done}/${p.total}${p.infra ? ` +${p.infra} infra` : ""}`, p.etaMs === undefined ? "-" : duration(p.etaMs), p.costKnown ? usd(p.costUsd) : "-", ago(v.header.updatedAt)];
     }),
   );
   const open = all.filter((v) => v.status === "interrupted" || v.status === "incomplete");

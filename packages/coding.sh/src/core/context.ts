@@ -1,10 +1,11 @@
 // One call that gives CLI commands and the viewer everything they need:
 // effective config, paths, opened stores and sinks, and a single close().
+import { existsSync } from "node:fs";
 import type { BlobStore, Config, IndexStore, Sink } from "./types.ts";
 import { loadConfig } from "./config.ts";
 import { paths } from "./paths.ts";
 import { clearIngestStopped } from "./ingest-health.ts";
-import { openStores } from "../store/factory.ts";
+import { fileUrlPath, openStores, parseStoreUrl } from "../store/factory.ts";
 import { LockBusyError } from "./lock.ts";
 import type { BackfillProgress, BackfillResult, IngestOptions, IngestResult } from "./ingest.ts";
 import type { GcOptions, GcResult } from "./gc.ts";
@@ -43,10 +44,51 @@ export interface OpenContextOptions {
   cwd?: string;
   /** Use this config instead of loading one (tests, embedding). */
   config?: Config;
+  /**
+   * false: a read. A SQLite file named by --store or CODING_SH_STORE_URL that does not
+   * exist throws StoreMissingError instead of being created (a typo makes no new store).
+   * Default true: the store is created on first use.
+   */
+  create?: boolean;
+}
+
+/** The index store URL from --store / CODING_SH_STORE_URL, if one overrides the config. */
+const storeUrlOverride = (env: NodeJS.ProcessEnv): string | undefined => env.CODING_SH_STORE_URL?.trim() || undefined;
+
+/** The next step when the store does not open: check what named it (never echoing a URL, which may hold a password). */
+export function storeOpenNext(env: NodeJS.ProcessEnv): string[] {
+  return storeUrlOverride(env) ? ["Check the store URL given with --store or set in CODING_SH_STORE_URL"] : ["Check the [store] section of the config:", "coding.sh config path"];
+}
+
+/** A read named a SQLite store (--store / CODING_SH_STORE_URL) that does not exist; nothing was created. */
+export class StoreMissingError extends Error {
+  readonly reason = "store_missing";
+  readonly path: string;
+  readonly next: string[];
+  constructor(path: string) {
+    super(`No coding.sh store at ${path}. Nothing was created there`);
+    this.name = "StoreMissingError";
+    this.path = path;
+    this.next = ["Check the path given with --store or set in CODING_SH_STORE_URL"];
+  }
+}
+
+/** The SQLite file a read would create: the --store / CODING_SH_STORE_URL one, when it is missing. */
+function missingStoreFile(env: NodeJS.ProcessEnv): string | undefined {
+  const url = storeUrlOverride(env);
+  if (!url) return undefined;
+  const { scheme, rest } = parseStoreUrl(url);
+  if (scheme !== "sqlite" || rest === ":memory:") return undefined;
+  const file = fileUrlPath(rest);
+  return existsSync(file) ? undefined : file;
 }
 
 export async function openContext(opts: OpenContextOptions = {}): Promise<Context> {
   const env = opts.env ?? process.env;
+  if (opts.create === false) {
+    const missing = missingStoreFile(env);
+    if (missing) throw new StoreMissingError(missing);
+  }
   const config = opts.config ?? loadConfig({ env, cwd: opts.cwd });
   const { index, blobs, sinks } = await openStores(config);
   let closed = false;
@@ -58,12 +100,13 @@ export async function openContext(opts: OpenContextOptions = {}): Promise<Contex
     index,
     blobs,
     sinks,
-    storeOverridden: !!(env.CODING_SH_STORE_URL?.trim() || env.CODING_SH_BLOB_URL?.trim()),
+    storeOverridden: !!(storeUrlOverride(env) || env.CODING_SH_BLOB_URL?.trim()),
     async ingest(o = {}) {
       // Lazy: adapters and ingest are only loaded by commands that need them.
       const [{ ingest }, { ADAPTERS }] = await Promise.all([import("./ingest.ts"), import("../adapters/index.ts")]);
       const r = await ingest({ ...o, config, index, blobs, sinks, env, spoolDir: p.spool, adapters: new Map(ADAPTERS.map((a) => [a.id, a])) });
-      clearIngestStopped(p.ingestStopped); // an ingest ran, so whatever stopped the hook's is over
+      // An ingest ran, so whatever stopped the hook's is over, unless the blob store stopped this one too.
+      if (r.storeWriteFailed === undefined) clearIngestStopped(p.ingestStopped);
       return r;
     },
     async backfill(o = {}) {

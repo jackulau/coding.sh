@@ -1,0 +1,2 @@
+@keyframes spin { to { transform: rotate(1turn); } } /* slop:expect */
+.a { animation: spin 1s infinite; }

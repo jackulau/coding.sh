@@ -93,7 +93,8 @@ export interface FailureRecord {
 interface FlagText {
   title: string;
   fix: string;
-  rule?: (testCmd: string) => string;
+  /** The line to add; `testCmd` is the repo's test command, undefined when none is known. */
+  rule?: (testCmd: string | undefined) => string;
   behavior?: Behavior;
 }
 
@@ -104,7 +105,7 @@ export const FLAG_TEXT: Readonly<Record<string, FlagText>> = {
   "no-verification": {
     title: "Says it is done without running anything to check",
     fix: "Name the check in AGENTS.md.",
-    rule: (t) => `Run \`${t}\` before you say you are done, and say what it printed.`,
+    rule: (t) => (t ? `Run \`${t}\` before you say you are done, and say what it printed.` : "Run the tests before you say you are done, and say what it printed."),
     behavior: "unverified-claim",
   },
   "premature-completion": {
@@ -308,7 +309,7 @@ const example = (s: Session): IssueExample => ({ sessionId: s.id, startedAt: s.s
 export function rankIssues(sessions: readonly Session[], failures: ReadonlyMap<string, readonly FailureRecord[]>, opts: { testCommand?: string; maxExamples?: number } = {}): Issue[] {
   const analyzed = sessions.length;
   const maxEx = opts.maxExamples ?? 3;
-  const testCmd = opts.testCommand ?? "the tests";
+  const testCmd = opts.testCommand;
   const out: Issue[] = [];
   for (const f of flagFindings(sessions, { maxExamples: sessions.length })) {
     const t = FLAG_TEXT[f.flag];

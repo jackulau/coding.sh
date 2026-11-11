@@ -8,12 +8,13 @@
 //   guardSet     their union over kept, not rolled back entries, newest first,
 //                minus this finding's dev and held-out tasks, capped
 //   checkGuard   K8: the candidate must not be 'dont-ship' on the guard set under
-//                the acceptance gate ('hold' passes); a failure names the kept
+//                the acceptance gate's break rule (guardVerdict: no binomial test,
+//                since a guard set is a few tasks; 'hold' passes); a failure names the kept
 //                entries whose tasks went from pass to fail
 //
 // Pure: the ledger that stores guardTasks and the trial stage that runs the
 // guard set are R2-8.
-import { gateVerdict, type GateVerdict } from "../stats/gate.ts";
+import { guardVerdict, type GateVerdict } from "../stats/gate.ts";
 import { acceptanceGatePaired, type GateOpts, type GateResult } from "../stats/tests.ts";
 import type { Outcomes } from "./keep.ts";
 
@@ -115,7 +116,7 @@ export function checkGuard(guard: GuardSet, runs: { base: Outcomes; cand: Outcom
   }
   if (!base.length) return { ok: true, verdict: "hold", forgotten: [], forgets: [] };
   const g = acceptanceGatePaired(base, cand, gate);
-  const verdict = gateVerdict(g);
+  const verdict = guardVerdict(g);
   const lost = new Map<string, number>();
   for (const f of forgotten) for (const e of f.entries) lost.set(e, (lost.get(e) ?? 0) + 1);
   const forgets = [...lost].sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1)).map(([e]) => e);

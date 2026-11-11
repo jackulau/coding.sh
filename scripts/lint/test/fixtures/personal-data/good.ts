@@ -1,0 +1,10 @@
+export const home = "/home/user/code/app";
+export const mac = "/Users/x/code";
+export const work = "/work/demo";
+export const relative = "codex/home/sessions/2026/11/01";
+export const dot = "/home/.claude/settings.json";
+export const mail = "user@example.test";
+export const noreply = "1+someone@users.noreply.github.com";
+export const url = "postgres://coding:secret@db.internal:5432/coding";
+export const retina = "logo@2x.png";
+export const decorator = "@pytest.mark.skip";

@@ -1,9 +1,10 @@
 // Helpers shared by command modules (loaded only after dispatch).
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { openContext, type Context } from "../core/context.ts";
+import { openContext, storeOpenNext, StoreMissingError, type Context } from "../core/context.ts";
 import type { IngestError } from "../core/ingest.ts";
-import type { EvalTask, Session } from "../core/types.ts";
+import { isEmptySession } from "../core/sessions.ts";
+import type { EvalTask, IndexStore, Session } from "../core/types.ts";
 import type { GateOpts } from "../stats/tests.ts";
 import { andQuery, parseWhere, QueryError, QueryUnsupported, timeBounds, type Node, type Query } from "../query/where.ts";
 import { utcOffset, wallText, type When } from "../query/time.ts";
@@ -18,26 +19,35 @@ import { spawnBackgroundIngest } from "../spool/kick.ts";
 import { UsageError, type FlagValue } from "./args.ts";
 import { ago, CliError, plural, type Output } from "./output.ts";
 import type { CommandContext } from "./types.ts";
-import { noSessionsNextLines } from "./first-session.ts";
+import { noSessionsNext, noSessionsNextLines } from "./first-session.ts";
 
-export async function withContext<T>(c: CommandContext, fn: (ctx: Context) => Promise<T>): Promise<T> {
+/**
+ * Opens the store for a command. `create: false` is for reads: a SQLite file named by --store or
+ * CODING_SH_STORE_URL that does not exist is reported (store_missing), not created.
+ */
+export async function withContext<T>(c: CommandContext, fn: (ctx: Context) => Promise<T>, opts: { create?: boolean } = {}): Promise<T> {
   let ctx: Context;
   try {
-    ctx = await openContext({ env: c.env, cwd: c.cwd });
+    ctx = await openContext({ env: c.env, cwd: c.cwd, create: opts.create ?? true });
   } catch (e) {
-    if (e instanceof StoreOwnerError) throw storeOwnedError(e);
-    if (e instanceof StoreVersionError) throw storeVersionError(e);
-    if (e instanceof StoreNewerError) throw storeNewerError(e, c.env);
-    throw new CliError(`Couldn't open the coding.sh store: ${e instanceof Error ? e.message : String(e)}`, {
-      reason: "store_unavailable",
-      next: ["Check the [store] section of the config:", "coding.sh config path"],
-    });
+    throw storeOpenError(e, c.env);
   }
   try {
     return await fn(ctx);
   } finally {
     await ctx.close();
   }
+}
+
+/** Why the store did not open, with the next step that fits: what named the store, or the Node to install. */
+export function storeOpenError(e: unknown, env: NodeJS.ProcessEnv): CliError {
+  if (e instanceof StoreOwnerError) return storeOwnedError(e);
+  if (e instanceof StoreVersionError) return storeVersionError(e);
+  if (e instanceof StoreNewerError) return storeNewerError(e, env);
+  if (e instanceof StoreMissingError) return new CliError(e.message, { reason: e.reason, next: e.next, data: { path: e.path } });
+  // NoFts5Error (store/sqlite.ts, not loaded here until a store opens).
+  if (e instanceof Error && (e as { reason?: unknown }).reason === "no_fts5") return new CliError(`Couldn't open the coding.sh store: ${e.message}`, { reason: "no_fts5", next: ["Install Node 22.16 or newer"] });
+  return new CliError(`Couldn't open the coding.sh store: ${e instanceof Error ? e.message : String(e)}`, { reason: "store_unavailable", next: storeOpenNext(env) });
 }
 
 /** Pending migrations of a store another install owns: the user decides on `coding.sh upgrade-store`. */
@@ -333,16 +343,45 @@ export async function resolveTask(ctx: Context, ref: string): Promise<EvalTask> 
 /** Exact session id, or "latest" (newest top-level session). Never prefix-matches. */
 export async function resolveSession(ctx: Context, id: string): Promise<Session> {
   if (id === "latest" || id === "last") {
-    const [s] = await ctx.index.listSessions({ limit: 1, parentSessionId: null });
+    const s = await latestSession(ctx.index);
     if (!s) throw new CliError("No sessions captured yet", { reason: "not_found", next: noSessionsNextLines(ctx.env) });
     return s;
   }
-  const s = (await ctx.index.getSession(id)) ?? (await sessionByPrefix(ctx, id));
+  const s = (await ctx.index.getSession(id)) ?? (await sessionByPrefix(ctx, id)) ?? (await sdkSession(ctx, id)) ?? (await subagentById(ctx, id));
   if (!s) {
     const short = id.length < MIN_ID_PREFIX ? ` (an id prefix needs at least ${MIN_ID_PREFIX} characters)` : "";
     throw new CliError(`Can't find session ${JSON.stringify(id)}${short}`, { reason: "not_found", next: ["List sessions:", "coding.sh sessions"] });
   }
   return s;
+}
+
+// In args.ts, so main.ts quotes its hints without loading this module.
+export { shellQuote } from "./args.ts";
+
+/**
+ * The newest top-level session worth looking at: the newest one that is not empty (a hook with
+ * no work behind it), else the newest of all. When that session is an agent run under
+ * `coding.sh run` (no snapshots of its own), the wrapper session around it, the one `run`
+ * printed, which holds the start and end snapshots `eval new` needs.
+ */
+export async function latestSession(index: IndexStore): Promise<Session | undefined> {
+  const page = 50;
+  let newest: Session | undefined;
+  for (let offset = 0; offset < page * 4; offset += page) {
+    const rows = await index.listSessions({ limit: page, offset, parentSessionId: null });
+    newest ??= rows[0];
+    const hit = rows.find((s) => !isEmptySession(s));
+    if (hit) return (await wrapperAround(index, hit)) ?? hit;
+    if (rows.length < page) break;
+  }
+  return newest;
+}
+
+/** The `coding.sh run` wrapper session that was running when `s` started, when `s` has no snapshots of its own. */
+async function wrapperAround(index: IndexStore, s: Session): Promise<Session | undefined> {
+  if (s.agent === "wrapper" || s.repo?.snapshot || s.endSnapshot) return undefined;
+  const wrappers = await index.listSessions({ agent: "wrapper", since: s.startedAt - 6 * 3600e3, limit: 20, parentSessionId: null });
+  return wrappers.find((w) => w.startedAt <= s.startedAt && (w.endedAt === undefined || w.endedAt >= s.startedAt) && (!w.cwd || !s.cwd || w.cwd === s.cwd));
 }
 
 /** Shortest prefix that may stand for a session id (git's minimum for short hashes). */
@@ -358,8 +397,37 @@ async function sessionByPrefix(ctx: Context, prefix: string): Promise<Session | 
   const ids = ctx.index.sessionIdsByPrefix
     ? await ctx.index.sessionIdsByPrefix(prefix, MAX_CANDIDATES + 1)
     : (await ctx.index.listSessions()).map((s) => s.id).filter((x) => x.startsWith(prefix)).sort().slice(0, MAX_CANDIDATES + 1);
+  return pickSession(ctx, prefix, ids);
+}
+
+/**
+ * An SDK session id as the user wrote it (`tenant-7/conv-123`): the server stores it under the
+ * default project (`default/tenant-7/conv-123`, see server/project.ts scopeSessionId).
+ */
+async function sdkSession(ctx: Context, id: string): Promise<Session | undefined> {
+  if (!id.includes("/") || id.startsWith("default/")) return undefined;
+  const scoped = `default/${id}`;
+  return (await ctx.index.getSession(scoped)) ?? (await sessionByPrefix(ctx, scoped));
+}
+
+/** A subagent by the id its transcript carries (`a33e97aa…`), without its parent's id in front of it. */
+async function subagentById(ctx: Context, id: string): Promise<Session | undefined> {
+  if (id.length < MIN_ID_PREFIX || id.includes(":")) return undefined;
+  const marker = `:sub:${id}`;
+  const ids = (await ctx.index.listSessions()).map((s) => s.id).filter((x) => x.includes(marker)).sort().slice(0, MAX_CANDIDATES + 1);
+  return pickSession(ctx, id, ids);
+}
+
+/**
+ * The one session `ids` stand for. A parent X with its subagents X:sub:* is X, so a prefix of a
+ * parent id does not turn ambiguous because its subagents share it. Else an ambiguous prefix
+ * fails with the candidates listed (data.candidates in --json).
+ */
+async function pickSession(ctx: Context, prefix: string, ids: string[]): Promise<Session | undefined> {
   if (ids.length === 0) return undefined;
   if (ids.length === 1) return ctx.index.getSession(ids[0]!);
+  const parent = ids.find((x) => !x.includes(":sub:"));
+  if (parent !== undefined && ids.every((x) => x === parent || x.startsWith(`${parent}:sub:`))) return ctx.index.getSession(parent);
   const shown = (await Promise.all(ids.slice(0, MAX_CANDIDATES).map((x) => ctx.index.getSession(x)))).filter((x): x is Session => x !== undefined);
   shown.sort((a, b) => b.startedAt - a.startedAt);
   const lines = shown.map((x) => `  ${x.id}  ${x.agent}  ${ago(x.startedAt)}  ${oneLine(x.title ?? "", 50)}`.trimEnd());
@@ -631,4 +699,15 @@ export function pickFields(doc: unknown, paths: readonly (readonly string[])[]):
     if (picked !== undefined) out[k] = picked;
   }
   return out;
+}
+
+/**
+ * After an empty result: when the store holds no session at all, say how the first one gets here
+ * (the same step as `show latest` and `stats`); otherwise `widen`, when given, is the next step.
+ */
+export async function emptyStateNext(out: Output, env: NodeJS.ProcessEnv, index: IndexStore, widen?: { label: string; command: string }): Promise<void> {
+  if (!(await index.listSessions({ limit: 1 })).length) {
+    const n = noSessionsNext(env);
+    out.next(n.label, n.command);
+  } else if (widen) out.next(widen.label, widen.command);
 }

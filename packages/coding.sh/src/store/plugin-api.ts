@@ -29,6 +29,7 @@ export type { Cmp, KeyDef, Node, Query, Value } from "../query/where.ts";
 export { HAS, IS, KEYS, levelOf, QueryError, QueryUnsupported } from "../query/where.ts";
 export {
   BLOB_REF_FIELDS,
+  DatasetConflict,
   MESSAGE_SEARCH_KINDS,
   SEARCHABLE_KINDS,
   SNIPPET_CLOSE,

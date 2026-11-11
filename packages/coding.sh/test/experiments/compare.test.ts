@@ -488,7 +488,7 @@ describe("compare: acceptance gate (AA-5)", () => {
     assert.match(gated, /^gate {4}Hold: not enough evidence \(B wins 5, loses 0; needs 8\+ wins with no losses\)$/m);
   });
 
-  it("30 wins, 2 losses of 10 solved → regression-fraction, both lost cases listed", async () => {
+  it("30 wins, 2 losses of 10 solved → hold: over τ, but 2 losses against 30 wins are within chance; both lost cases listed", async () => {
     const big = Array.from({ length: 42 }, (_, i) => `d${String(i + 1).padStart(2, "0")}`);
     const dsBig = createDataset({ name: "big", createdAt: 1, cases: big.map((id) => ({ id, input: id })) });
     const a = await run("a", new Set(big.slice(0, 10)), { dataset: dsBig });
@@ -497,9 +497,9 @@ describe("compare: acceptance gate (AA-5)", () => {
     assert.deepEqual([g.wins, g.losses, g.solved], [30, 2, 10]);
     assert.deepEqual(g.reasons, ["regression-fraction"]);
     assert.deepEqual(g.lostCases, ["d01", "d02"]);
-    assert.equal(g.verdict, "dont-ship");
+    assert.equal(g.verdict, "hold");
     const text = renderComparison(compareExperiments(a, b, { gate: {} }), { color: false });
-    assert.match(text, /^gate {4}Don't ship: B breaks 2 cases A solved \(and wins 30\)$/m);
+    assert.match(text, /^gate {4}Hold: B wins 30, loses 2, but breaks 20% of the 10 cases A solved \(over τ 10%\)$/m);
     assert.match(text, /^ {8}lost: d01, d02$/m);
   });
 

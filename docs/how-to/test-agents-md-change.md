@@ -132,7 +132,7 @@ Watching . for changes to B; Ctrl-C to stop.
 ## 6. Commit, then check new sessions
 
 ```sh
-git commit AGENTS.md -m "AGENTS.md: run the tests before saying done"
+git add AGENTS.md && git commit -m "AGENTS.md: run the tests before saying done"
 coding.sh improve check
 ```
 

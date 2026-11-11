@@ -20,7 +20,7 @@ import { asText } from "../../graders/builtin.ts";
 import { createGrader, providerFromSpec, type GraderSpec, type LlmProviderSpec } from "../../graders/index.ts";
 import { parseAuditPlan, planAudit, type AuditPlan } from "../../judge/audit.ts";
 import { FileJudgeCache } from "../../judge/cache.ts";
-import { calibrate, labelsFromCore, withCalibration, type HumanLabel, type JudgedCase } from "../../judge/calibrate.ts";
+import { calibrate, caseLabelsFromScores, labelsFromCore, withCalibration, type HumanLabel, type JudgedCase } from "../../judge/calibrate.ts";
 import { CHECKLIST_KIND, type ChecklistVerdict } from "../../judge/checklist.ts";
 import type { ChatProvider, ChatResponse } from "../../judge/providers.ts";
 import { describeCoverage, traceCoverage, traceFromText, type TraceCoverage } from "../../judge/trace-file.ts";
@@ -119,7 +119,7 @@ async function grade(c: CommandContext): Promise<number> {
   const plainStdout = traceFlag === undefined && coverage?.records === 0;
   const partial = coverage && !coverage.ok && !plainStdout ? describeCoverage(coverage) : undefined;
   if (partial && c.flags["allow-partial-trace"] !== true) {
-    throw new UsageError(`incomplete trace: ${partial}`, { reason: "trace_incomplete", suggestion: "pass --allow-partial-trace to grade anyway" });
+    throw new UsageError(`incomplete trace: ${partial}`, { reason: "trace_incomplete", suggestion: "--allow-partial-trace" });
   }
   const inputArg = str(c.flags.input);
   const input = inputArg === undefined ? "" : inputArg.startsWith("@") ? await readText(inputArg.slice(1), "--input", c.cwd) : inputArg;
@@ -138,6 +138,10 @@ async function grade(c: CommandContext): Promise<number> {
   let r: Awaited<ReturnType<Grader["grade"]>>;
   try {
     r = await g.grade({ input, output, trace, ...(diff !== undefined ? { diff } : {}), ...(metadata ? { metadata } : {}), signal: c.signal });
+  } catch (e) {
+    if (c.signal?.aborted) throw e;
+    // Exit 2, not 1: the grader did not grade (no key, provider error), so this is no fail verdict.
+    throw new CliError(`grader error: ${e instanceof Error ? e.message : String(e)}`, { reason: "grader_error", exitCode: 2, next: ["Check the grader's provider and API key, then run again:", "coding.sh judge grade --help"] });
   } finally {
     const file = env.CODING_SH_GRADER_USAGE;
     if (file && calls.length) await appendFile(file, calls.map((x) => JSON.stringify({ grader: g.id, ...x })).join("\n") + "\n").catch(() => {});
@@ -259,9 +263,14 @@ export async function run(c: CommandContext): Promise<number> {
     }
 
     // Labels are on sessions; a case maps to its source session (or its own id).
+    // A label scored on one of this dataset's cases maps to that case, and a human
+    // score on a case with no session (not in the labels view) is read as a score.
     const caseBySession = new Map<string, string>();
     for (const cs of dataset.cases) caseBySession.set(cs.sourceSessionId ?? cs.id, cs.id);
-    let labels = labelsFromCore(await ctx.index.listLabels(criterion ? { criterion } : {}), (sid) => caseBySession.get(sid));
+    const caseIds = new Set(dataset.cases.map((cs) => cs.id));
+    const hasCase = (id: string) => caseIds.has(id);
+    let labels = labelsFromCore(await ctx.index.listLabels(criterion ? { criterion } : {}), (sid) => caseBySession.get(sid), hasCase);
+    if (ctx.index.listScores) labels.push(...caseLabelsFromScores(await ctx.index.listScores({ target: "case", source: "human", name: criterion }), hasCase, criterion));
     // --labels rows replace stored labels for the cases they name.
     const labelsFile = str(c.flags.labels);
     if (labelsFile) {

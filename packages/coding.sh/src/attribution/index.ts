@@ -18,11 +18,14 @@ import { sessionSource, type SourceContext } from "./sources.ts";
 export type { Attribution, AttributedRange, AttributionMethod, CommitAttribution, SessionSource, SourceFile } from "./match.ts";
 
 export class AttributionError extends Error {
-  readonly reason: "not_a_repo" | "unknown_rev" | "not_found";
-  constructor(message: string, reason: AttributionError["reason"]) {
+  readonly reason: "not_a_repo" | "unknown_rev" | "not_found" | "invalid_range";
+  /** The next step, when the default for the reason does not fit: [what to do, command]. */
+  readonly next?: [string, string];
+  constructor(message: string, reason: AttributionError["reason"], next?: [string, string]) {
     super(message);
     this.name = "AttributionError";
     this.reason = reason;
+    if (next) this.next = next;
   }
 }
 

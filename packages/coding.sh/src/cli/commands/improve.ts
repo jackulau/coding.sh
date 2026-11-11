@@ -16,7 +16,7 @@ import type { Issue } from "../../improve/issues.ts";
 import { abCommand, findChanges, findIssues, isHeadless, modelProvider, NEEDS_MODEL, removalStep, scopeSessions, stepsFor, targetFile, testCommandOf, type ImproveScope, type ModelProvider } from "../../improve/report.ts";
 import { CLI_PLAN, isCliProvider } from "../../judge/subscription.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
-import { autoIngest, list, oneLine, pendingField, readIngest, str, withContext } from "../common.ts";
+import { autoIngest, list, oneLine, pendingField, readIngest, shellQuote, str, withContext } from "../common.ts";
 import { ago, CliError, localTime, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { captureSetUp, START_NEW_SESSION } from "../first-session.ts";
@@ -261,7 +261,8 @@ async function fix(c: CommandContext): Promise<number> {
         out.note("Without any of them: commit it and let new sessions tell you.");
       }
     }
-    out.next("Keep it: commit, then check new sessions against it", `git commit ${target} -m "${target}: ${issue.title.toLowerCase()}" && coding.sh improve check`);
+    // git add first: `git commit <path>` refuses a file fix just created (untracked).
+    out.next("Keep it: commit, then check new sessions against it", `git add ${shellQuote(target)} && git commit -m ${shellQuote(`${target}: ${issue.title.toLowerCase()}`)} && coding.sh improve check`);
     return 0;
   });
 }

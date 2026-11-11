@@ -229,6 +229,16 @@ describe("durable exp run", { skip: process.platform === "win32" && "signals sen
     assert.match(text.stdout, new RegExp(`${id}\\texp run\\t.*\\tinterrupted\\t${st.done}/${2 * N}`));
   });
 
+  it("exp status labels an A/B started by exp run --arm as exp run (A/B)", () => {
+    const t = task({ delay: 0, pids: join(root, "arm.pids") });
+    const r = cli(["exp", "run", "-d", "ds", "--arm", `a=${t}`, "--arm", `b=${t}`, "-g", GRADER, "--name", "armab", "--json"]);
+    assert.ok(r.status === 0 || r.status === 1, r.stderr);
+    const text = cli(["exp", "status"]);
+    assert.equal(text.status, 0, text.stderr);
+    assert.match(text.stdout, /\texp run \(A\/B\)\tarmab/);
+    assert.doesNotMatch(text.stdout, /\texp ab\tarmab/);
+  });
+
   it("rate limits are retried with backoff and counted; a crash is never retried", async () => {
     const flaky = join(root, "flaky");
     mkdirSync(flaky);

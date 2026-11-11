@@ -106,7 +106,8 @@ class LLMCall(Scope):
         if arguments is not None:
             tc["arguments"] = arguments
         if isinstance(args_delta, str) and args_delta:
-            tc["arguments"] = (tc.get("arguments") if isinstance(tc.get("arguments"), str) else "") + args_delta
+            prev = tc.get("arguments")
+            tc["arguments"] = (prev if isinstance(prev, str) else "") + args_delta
 
     def set_response_id(self, v: Any) -> None:
         if isinstance(v, str) and v:

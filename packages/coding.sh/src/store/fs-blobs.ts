@@ -40,7 +40,7 @@ import type { BlobBatch, BlobMeta, BlobStore } from "../core/types.ts";
 import { sha256Hex } from "../core/ids.ts";
 import { assertBlobRef, blobPath, toBytes } from "./common.ts";
 import { renameOver, syncDir, writeFileDurable, writeTemp } from "./durable.ts";
-import { loadSqlite, switchToWal } from "./sqlite-open.ts";
+import { loadSqlite, ownerOnly, switchToWal } from "./sqlite-open.ts";
 
 /** Temp files put and recompress write before the rename: `<sha>.zst.<pid>.<hex>.tmp`. */
 const TMP_NAME = /^[0-9a-f]{64}\.zst\.\d+\.[0-9a-f]+\.tmp$/;
@@ -142,14 +142,14 @@ export class FsBlobStore implements BlobStore {
   /** Writes compressed bytes to a flushed temp file beside the blob's path. */
   private async stageFile(ref: BlobRef, compressed: Uint8Array): Promise<Staged> {
     const file = this.pathFor(ref);
-    let created = await mkdir(dirname(file), { recursive: true });
+    let created = await mkdir(dirname(file), { recursive: true, mode: 0o700 });
     let tmp: string;
     try {
       tmp = await writeTemp(file, compressed);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
       // gc --compact removed the folder as it emptied: make it again.
-      created = (await mkdir(dirname(file), { recursive: true })) ?? created;
+      created = (await mkdir(dirname(file), { recursive: true, mode: 0o700 })) ?? created;
       tmp = await writeTemp(file, compressed);
     }
     return created === undefined ? { ref, file, tmp } : { ref, file, tmp, created };
@@ -523,9 +523,10 @@ class BlobPack {
 
   private async connect(): Promise<DatabaseSync> {
     const { DatabaseSync } = await loadSqlite();
-    await mkdir(dirname(this.path), { recursive: true });
+    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
     const db = new DatabaseSync(this.path);
     try {
+      ownerOnly(this.path);
       db.exec(`PRAGMA busy_timeout = ${PACK_BUSY_TIMEOUT_MS}`);
       await switchToWal(db);
       // A commit is on disk when it returns (on macOS through the drive's cache too), as a blob file is once put() resolves.

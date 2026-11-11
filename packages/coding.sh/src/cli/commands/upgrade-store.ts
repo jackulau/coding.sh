@@ -16,9 +16,11 @@
 import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { acquireLock, type Lock } from "../../core/lock.ts";
+import { loadConfig } from "../../core/config.ts";
 import { paths } from "../../core/paths.ts";
 import { storeOwner, UPGRADE_STORE } from "../../core/store-guard.ts";
 import { runningCli } from "../../mcp/launch.ts";
+import { canonicalScheme, parseStoreUrl } from "../../store/factory.ts";
 import { loadSqlite } from "../../store/sqlite-open.ts";
 import { SQLITE_SCHEMA_VERSION, SqliteIndexStore } from "../../store/sqlite.ts";
 import { backupPath, listBackups, parseWriter, restoreBackup, StoreNewerError, WRITER_KEY, type StoreWriter } from "../../store/upgrade.ts";
@@ -75,9 +77,22 @@ async function pointAt(env: NodeJS.ProcessEnv, cli: string): Promise<void> {
   await atomicWrite(paths(env).cliPointer, cli + "\n", 0o644);
 }
 
+/** The index store's scheme when it is not SQLite (a store plugin, or memory://). */
+function otherIndex(c: CommandContext): string | undefined {
+  const { scheme } = parseStoreUrl(loadConfig({ env: c.env, cwd: c.cwd }).store.index);
+  return scheme === "sqlite" ? undefined : canonicalScheme(scheme);
+}
+
 export async function run(c: CommandContext): Promise<number> {
-  if (c.flags.restore === true) return restore(c);
   const { out, env } = c;
+  // Only the SQLite index migrates here; a plugin migrates its own schema when it opens.
+  const scheme = otherIndex(c);
+  if (scheme) {
+    if (out.json) out.data({ status: "plugin", scheme });
+    else out.ok(`The ${scheme} store is not the SQLite index: coding.sh migrates it when it opens it, so there is nothing to upgrade or restore here`);
+    return 0;
+  }
+  if (c.flags.restore === true) return restore(c);
   const p = paths(env);
   const file = p.index;
   const to = SQLITE_SCHEMA_VERSION;

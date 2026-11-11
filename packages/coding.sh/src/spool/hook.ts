@@ -27,7 +27,9 @@
 //   waits for this process instead of exec'ing it (so a node that cannot run
 //   never fails the agent), and the line records the pid and ppid of the hook
 //   process the agent started, not this child's.
-// - CODING_SH_DISABLE=1: drain stdin and exit without writing anything.
+// - CODING_SH_DISABLE=1: drain stdin and write no line. The payload's session
+//   id goes to spool/disabled-sessions (./write.ts), so ingest and backfill
+//   leave that session out.
 // - CODING_SH_HOME overrides the data dir; CODING_SH_RUN_ID is recorded as runId.
 // - A host app's env marker (T3 Code, see ./host.ts) is recorded as host.
 // - Parent agents' session ids in the env (CLAUDE_CODE_SESSION_ID,
@@ -51,9 +53,11 @@ import { gatewayFromEnv } from "../integrations/gateway/ids.ts";
 import { hostOf } from "./host.ts";
 import { kickIngest, kickProxy } from "./kick.ts";
 import { spawnedByFromEnv } from "./spawned.ts";
-import { MAX_INLINE_LINE_BYTES, appendSpool, isDisabled, logSpoolError } from "./write.ts";
+import { MAX_INLINE_LINE_BYTES, appendSpool, isDisabled, logSpoolError, payloadSessionId, recordDisabledSession } from "./write.ts";
 
 const MAX_STDIN_BYTES = 64 * 1024 * 1024;
+/** A paused call's payload up to this size is parsed for its session id; a larger one is searched. */
+const MAX_PARSE_BYTES = 1024 * 1024;
 /** Give up if stdin keeps returning EAGAIN (non-blocking pipe) with no data for this long. */
 const EAGAIN_IDLE_MS = 10_000;
 
@@ -136,7 +140,19 @@ function main(): void {
   let captured = false;
   try {
     const { text, truncated } = readStdin();
-    if (!isDisabled(env)) {
+    if (isDisabled(env)) {
+      // Paused: no line. The session id is kept so ingest and backfill leave the session out.
+      let raw: unknown;
+      if (!truncated && Buffer.byteLength(text) <= MAX_PARSE_BYTES) {
+        try {
+          raw = JSON.parse(text);
+        } catch {
+          // not JSON: no session id to keep
+        }
+      }
+      const sid = payloadSessionId(raw, raw === undefined ? text : "");
+      if (sid) recordDisabledSession(sid, env);
+    } else {
       // Payloads that can't fit inline anyway are not parsed: they go to a side
       // file verbatim and ingest parses them later.
       const inlineable = !truncated && Buffer.byteLength(text) <= MAX_INLINE_LINE_BYTES;

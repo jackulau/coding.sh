@@ -131,12 +131,12 @@ describe("runSweep", () => {
     assert.deepEqual([adopt.adopt?.decision, adopt.adopt?.wins, adopt.adopt?.losses], ["accept", 30, 0]);
     assert.match(renderSweep(adopt, { color: false }), /^adopt {3}good: wins 30 cases, loses 0 on held-out$/m);
 
-    // flashy wins the race (every train case) but breaks the 10 test cases base solves.
-    const configs = [fixed("base", (id) => id.startsWith("te") && num(id) < 10), fixed("flashy", (id) => id.startsWith("tr") || num(id) >= 10)];
+    // flashy wins the race (every train case) but breaks the 10 test cases base solves and fixes only 2.
+    const configs = [fixed("base", (id) => id.startsWith("te") && num(id) < 10), fixed("flashy", (id) => id.startsWith("tr") || num(id) >= 28)];
     const keep = await runSweep({ name: "k", dataset: dataset(20, 30), configs, graders: [truthy], seed: 1 });
     assert.equal(keep.winner?.name, "flashy");
     assert.equal(keep.adopt?.verdict, "dont-ship");
-    assert.deepEqual([keep.adopt?.wins, keep.adopt?.losses, keep.adopt?.solved], [20, 10, 10]);
+    assert.deepEqual([keep.adopt?.wins, keep.adopt?.losses, keep.adopt?.solved], [2, 10, 10]);
     const text = renderSweep(keep, { color: false });
     assert.match(text, /^keep {4}base: flashy breaks 10 cases base solved$/m);
     assert.match(text, /^ {8}lost: te0, te1, te2, te3, te4 \(\+5 more\)$/m);

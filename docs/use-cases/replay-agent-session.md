@@ -107,7 +107,7 @@ calls a model.
 ### Which agents can I replay?
 
 Any captured session. History import (`coding.sh ingest --backfill`) works for Claude Code, Codex,
-OpenCode, Cursor CLI, the Antigravity CLI, Gemini CLI, GitHub Copilot CLI, Factory Droid, Goose, Pi
+OpenCode, Cursor CLI, the Antigravity CLI (and older Gemini CLI installs), GitHub Copilot CLI, Factory Droid, Goose, Pi
 and T3 Code. Amp, SDK apps and commands wrapped with `coding.sh run` are recorded from install on.
 
 ### Can my agent read an old session itself?

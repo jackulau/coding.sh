@@ -6,7 +6,7 @@
   <a href="https://github.com/jackulau/coding.sh/actions/workflows/ci.yml"><img src="https://github.com/jackulau/coding.sh/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
   <a href="https://www.npmjs.com/package/coding.sh"><img src="https://img.shields.io/npm/v/coding.sh?label=npm" alt="npm version"></a>
   <a href="https://github.com/jackulau/coding.sh/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D22.15-brightgreen" alt="Node 22.15 or newer">
+  <img src="https://img.shields.io/badge/node-%3E%3D22.16-brightgreen" alt="Node 22.16 or newer">
 </p>
 
 <p align="center">
@@ -22,7 +22,7 @@
 coding.sh records what your AI agents do: every prompt, model call, tool call, file change and what it cost.
 It keeps them in a SQLite index on your machine. You browse it in a local viewer, query it from
 the CLI or from your agents over MCP, turn failures into evals, and compare changes with paired
-statistics. Zero runtime dependencies. Node 22.15 or newer.
+statistics. Zero runtime dependencies. Node 22.16 or newer.
 
 ## Quickstart
 

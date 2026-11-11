@@ -243,12 +243,26 @@ function portOf(url: unknown): number | undefined {
   }
 }
 
+/** host:port of a URL, with the scheme's port when it names none (http://h → h:80). */
+function endpointOf(url: unknown): string | undefined {
+  if (typeof url !== "string" || !url) return undefined;
+  try {
+    const u = new URL(url);
+    const port = u.port || (u.protocol === "https:" ? "443" : u.protocol === "http:" ? "80" : "");
+    return `${u.hostname.toLowerCase()}:${port}`;
+  } catch {
+    return undefined;
+  }
+}
+
 const hostMatches = (host: string, pattern: string): boolean => (pattern.startsWith(".") ? host.endsWith(pattern) : host === pattern || host.endsWith(`.${pattern}`));
 
 /**
  * The gateway a base URL points at. Hosted gateways match by hostname;
  * self-hosted ones (LiteLLM, Kong, ...) when `env` names their URL in one of
- * their urlEnv vars and the host is the same. A self-hosted gateway with a
+ * their urlEnv vars and the host and port are the same (two gateways on one
+ * machine differ by port; a variable that is set is not by itself where the
+ * agent sends its calls). A self-hosted gateway with a
  * default port (CLIProxyAPI, 8317) also matches any URL on that port, after
  * every host and env match. Reads URLs only.
  */
@@ -258,7 +272,7 @@ export function gatewayForUrl(url: unknown, env: NodeJS.ProcessEnv = {}): Gatewa
   for (const id of GATEWAY_IDS) {
     const g = GATEWAYS[id];
     if (g.hosts.some((h) => hostMatches(host, h))) return id;
-    if (g.urlEnv.some((k) => hostOf(env[k]) === host)) return id;
+    if (g.urlEnv.some((k) => endpointOf(env[k]) !== undefined && endpointOf(env[k]) === endpointOf(url))) return id;
   }
   const port = portOf(url);
   return port === undefined ? undefined : GATEWAY_IDS.find((id) => GATEWAYS[id].ports?.includes(port));

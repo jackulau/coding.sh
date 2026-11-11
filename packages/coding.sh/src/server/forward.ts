@@ -15,7 +15,8 @@
 import type { AgentEvent, Session } from "../schema/index.ts";
 import type { Redactor } from "../core/redact.ts";
 import type { OtelValue, ResourceSpans } from "../otel/model.ts";
-import { otlpTracesUrl, toOtlpRequest } from "../sinks/otlp.ts";
+import type { OpenSession } from "../core/types.ts";
+import { otlpTracesUrl, toOtlpOpenSessionRequest, toOtlpRequest } from "../sinks/otlp.ts";
 import { DEFAULT_TIMEOUT_MS, parseRetryAfter, redactUrl } from "../sinks/post.ts";
 import type { ForwardConfig } from "./config.ts";
 import type { Logger } from "./log.ts";
@@ -27,6 +28,8 @@ const BATCH_SPANS = 1000;
 const MIN_BACKOFF_MS = 1000;
 const MAX_BACKOFF_MS = 60_000;
 const WARN_EVERY_MS = 60_000;
+const QUIET_MS = 10_000;
+const REFRESH_MS = 60_000;
 
 // ---- OTLP/JSON shapes (what the collector receives)
 
@@ -220,6 +223,19 @@ export interface ForwarderOptions {
   minBackoffMs?: number;
   maxBackoffMs?: number;
   timeoutMs?: number;
+  /** An open session's invoke_agent span is sent once none of its events went out for this long (default 10 s). */
+  quietMs?: number;
+  /** A session that never goes quiet has its span sent this often (default 60 s). */
+  refreshMs?: number;
+}
+
+/** A native session whose events went out with no session.end: its invoke_agent span is still owed. */
+interface OpenRecord extends OpenSession {
+  project: string;
+  /** When its events first went out with no span after them. */
+  since: number;
+  /** When its events last went out. */
+  at: number;
 }
 
 type PostResult = { ok: true } | { ok: false; retry: true; afterMs?: number; error: string } | { ok: false; retry: false; error: string };
@@ -237,12 +253,17 @@ export class OtlpForwarder {
   private sending = 0;
   private lastWarn = 0;
   private closed = false;
+  /** Native sessions that have sent events and not their invoke_agent span (a session.end carries it). */
+  private readonly open = new Map<string, OpenRecord>();
 
   constructor(o: ForwarderOptions) {
     this.o = o;
     this.mode = o.config.mode;
     this.url = otlpTracesUrl(o.config.endpoint);
-    this.timer = setInterval(() => void this.pump(), o.flushMs ?? FLUSH_MS);
+    this.timer = setInterval(() => {
+      this.queueOpen(false);
+      void this.pump();
+    }, o.flushMs ?? FLUSH_MS);
     this.timer.unref();
   }
 
@@ -280,7 +301,11 @@ export class OtlpForwarder {
 
   /** Native /v1/ingest events (already scoped and redacted), converted to GenAI spans. */
   enqueueNative(events: AgentEvent[], sessions: Session[], project: string): void {
-    const req = toOtlpRequest(events, sessions, this.mode);
+    this.push(this.nativeItems(toOtlpRequest(events, sessions, this.mode), project));
+    this.track(events, sessions, project);
+  }
+
+  private nativeItems(req: ReturnType<typeof toOtlpRequest>, project: string): Item[] {
     const r = this.o.redactor;
     const items: Item[] = [];
     for (const rs of req.resourceSpans) {
@@ -292,7 +317,43 @@ export class OtlpForwarder {
         }
       }
     }
-    this.push(items);
+    return items;
+  }
+
+  /** After events went out: a session.end carried the session's span; any other session's span is now owed. */
+  private track(events: AgentEvent[], sessions: Session[], project: string): void {
+    const now = Date.now();
+    const byId = new Map(sessions.map((s) => [s.id, s]));
+    const last = new Map<string, number>();
+    const ended = new Set<string>();
+    for (const e of events) {
+      last.set(e.sessionId, Math.max(last.get(e.sessionId) ?? 0, e.ts));
+      if (e.kind === "session.end") ended.add(e.sessionId);
+    }
+    for (const [id, ts] of last) {
+      if (ended.has(id)) {
+        this.open.delete(id);
+        continue;
+      }
+      const was = this.open.get(id);
+      const session = byId.get(id) ?? was?.session;
+      if (session) this.open.set(id, { session, project, lastEventAt: Math.max(was?.lastEventAt ?? 0, ts), since: was?.since ?? now, at: now });
+    }
+  }
+
+  /** Buffers the invoke_agent span of the open sessions that are due (all of them when `all`). */
+  private queueOpen(all: boolean): void {
+    if (!this.open.size) return;
+    const now = Date.now();
+    const quiet = this.o.quietMs ?? QUIET_MS;
+    const every = this.o.refreshMs ?? REFRESH_MS;
+    const due = [...this.open.values()].filter((o) => all || now - o.at >= quiet || now - o.since >= every);
+    const byProject = new Map<string, OpenRecord[]>();
+    for (const o of due) {
+      this.open.delete(o.session.id);
+      byProject.set(o.project, [...(byProject.get(o.project) ?? []), o]);
+    }
+    for (const [project, recs] of byProject) this.push(this.nativeItems(toOtlpOpenSessionRequest(recs.map(({ session, lastEventAt }) => ({ session, lastEventAt })), this.mode), project));
   }
 
   private push(items: Item[]): void {
@@ -315,6 +376,12 @@ export class OtlpForwarder {
     if (now - this.lastWarn < WARN_EVERY_MS) return;
     this.lastWarn = now;
     this.o.log?.warn(msg, { endpoint: redactUrl(this.url), ...fields });
+  }
+
+  /** Sends every open session's span too, then what is buffered: nothing may run after a serverless request ends. */
+  flush(): Promise<void> {
+    this.queueOpen(true);
+    return this.pump();
   }
 
   /** Sends what is buffered (unless backing off). Resolves when this round is done. */
@@ -383,6 +450,7 @@ export class OtlpForwarder {
    */
   async close(timeoutMs: number): Promise<{ left: number }> {
     if (this.closed) return { left: this.items.length };
+    this.queueOpen(true);
     this.closed = true;
     clearInterval(this.timer);
     const deadline = Date.now() + timeoutMs;

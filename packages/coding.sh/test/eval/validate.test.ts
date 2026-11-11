@@ -62,7 +62,7 @@ describe("validateTask", () => {
     assert.equal(o.task.status, "validated");
     assert.equal((await index.getTask("t1"))?.status, "validated");
     assert.equal(o.steps.filter((s) => s.kind === "reference").length, 3);
-    assert.deepEqual(await readdir(workRoot), [], "step dirs are cleaned up");
+    assert.deepEqual(await readdir(workRoot), ["package.json"], "only the package scope fence is left: step dirs are cleaned up");
     assert.match(formatValidation(o), /→ validated/);
   });
 
@@ -100,7 +100,7 @@ describe("validateTask", () => {
     }
     assert.ok(Date.now() - abortedAt < 5000, `stopped ${Date.now() - abortedAt}ms after the abort`);
     assert.deepEqual(steps, [], "the killed no-op step is not recorded as a result");
-    assert.deepEqual(await readdir(workRoot), [], "step dirs are cleaned up");
+    assert.deepEqual(await readdir(workRoot), ["package.json"], "only the package scope fence is left: step dirs are cleaned up");
     assert.equal(await index.getTask("t1"), undefined, "task status not written");
     const pids = readFileSync(pidFile, "utf8").trim().split("\n").map(Number);
     assert.equal(pids.length, 1, "no step after the abort");
@@ -387,7 +387,7 @@ describe("validateTask: pass-to-pass", () => {
     assert.match(formatValidation(o), /ok {3}pass-to-pass 2\/2 `npm test`/);
     const npmLogs = join(fakeHome, ".npm", "_logs");
     assert.deepEqual(existsSync(npmLogs) ? await readdir(npmLogs) : [], [], "npm debug logs go to a throwaway dir, not ~/.npm/_logs");
-    assert.deepEqual(await readdir(workRoot), [], "suite dirs and the npm log dir are cleaned up");
+    assert.deepEqual(await readdir(workRoot), ["package.json"], "only the package scope fence is left: suite dirs and the npm log dir are cleaned up");
   });
 
   it("fails a reference that breaks a pre-existing passing test the verifier does not cover", async () => {
@@ -463,7 +463,7 @@ describe("validateTask: pass-to-pass", () => {
     assert.deepEqual(o.report.nearMissesFail, { failed: 2, of: 2 });
     assert.deepEqual(o.nearMisses.map((n) => n.label), ["wrong-number", "uptime", "edits-src"]);
     assert.equal(o.report.ok, true);
-    assert.deepEqual(await readdir(workRoot), [], "run files are cleaned up");
+    assert.deepEqual(await readdir(workRoot), ["package.json"], "only the package scope fence is left: run files are cleaned up");
   });
 
   it("without a reference patch or reference run, says so", async () => {

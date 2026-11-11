@@ -58,6 +58,8 @@ export interface ToolEvalsConfig {
   rewriter?: string;
   /** Per-target load problems (bad task files etc.), reported instead of thrown. */
   problems: string[];
+  /** Task files (or tasks.jsonl lines) that did not load, per target: `validate` counts them in its total. */
+  rejectedTasks?: { target: string; problem: string }[];
 }
 
 export class ToolEvalsConfigError extends Error {
@@ -328,8 +330,13 @@ export async function markTaskValidated(task: Pick<ToolTask, "id" | "source" | "
   return true;
 }
 
-async function loadTasksFrom(dir: string, target: string, problems: string[], forceSplit?: "heldout"): Promise<ToolTask[]> {
+async function loadTasksFrom(dir: string, target: string, problems: string[], rejected: { target: string; problem: string }[], forceSplit?: "heldout"): Promise<ToolTask[]> {
   const out: ToolTask[] = [];
+  const reject = (e: unknown) => {
+    const problem = e instanceof Error ? e.message : String(e);
+    problems.push(problem);
+    rejected.push({ target, problem });
+  };
   const push = (t: ToolTask) => out.push(forceSplit ? { ...t, split: forceSplit } : t);
   const tasksDir = join(dir, "tasks");
   if (existsSync(tasksDir)) {
@@ -339,7 +346,7 @@ async function loadTasksFrom(dir: string, target: string, problems: string[], fo
         if (f.endsWith(".toml")) push(parseTask(parseToml(await readFile(p, "utf8"), p), p, { target, suiteDir: dir }));
         else if (f.endsWith(".jsonl")) for (const t of await jsonl(p, target, dir)) push(t);
       } catch (e) {
-        problems.push(e instanceof Error ? e.message : String(e));
+        reject(e);
       }
     }
   }
@@ -348,7 +355,7 @@ async function loadTasksFrom(dir: string, target: string, problems: string[], fo
     try {
       for (const t of await jsonl(flat, target, dir)) push(t);
     } catch (e) {
-      problems.push(e instanceof Error ? e.message : String(e));
+      reject(e);
     }
   }
   return out;
@@ -426,6 +433,7 @@ export async function loadToolEvals(repoRoot: string): Promise<ToolEvalsConfig> 
   const doc = existsSync(file) ? parseToml(await readFile(file, "utf8"), file) : {};
   const te = isTable(doc.toolevals) ? doc.toolevals : {};
   const problems: string[] = [];
+  const rejectedTasks: { target: string; problem: string }[] = [];
   const targets = new Map<string, Target>();
   if (isTable(te.targets)) for (const [name, t] of Object.entries(te.targets)) if (isTable(t)) targets.set(name, parseTarget(name, t, file));
   const heldoutDir = typeof te.heldoutDir === "string" ? (isAbsolute(te.heldoutDir) ? te.heldoutDir : resolve(repoRoot, te.heldoutDir)) : undefined;
@@ -434,8 +442,8 @@ export async function loadToolEvals(repoRoot: string): Promise<ToolEvalsConfig> 
   for (const name of targets.keys()) {
     const dir = join(repoRoot, "evals", "toolevals", name);
     variants.set(name, await loadVariants(dir, problems));
-    tasks.push(...(await loadTasksFrom(dir, name, problems)));
-    if (heldoutDir) tasks.push(...(await loadTasksFrom(join(heldoutDir, name), name, problems, "heldout")));
+    tasks.push(...(await loadTasksFrom(dir, name, problems, rejectedTasks)));
+    if (heldoutDir) tasks.push(...(await loadTasksFrom(join(heldoutDir, name), name, problems, rejectedTasks, "heldout")));
   }
   const prices: Prices = {};
   if (isTable(doc.prices)) {
@@ -473,6 +481,7 @@ export async function loadToolEvals(repoRoot: string): Promise<ToolEvalsConfig> 
     prices,
     drivers,
     problems,
+    rejectedTasks,
   };
 }
 

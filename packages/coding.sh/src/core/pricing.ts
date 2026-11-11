@@ -243,6 +243,12 @@ export const BUILTIN_PRICES: Prices = {
   "claude-sonnet-4": anthropic(3, 15, undefined, { longContext: { above: 200_000, ...anthropicRates(6, 22.5) } }),
   "claude-haiku-5-5": anthropic46(0.1, 0.5, undefined, { longContext: { above: 100_000, ...anthropicRates(0.5, 2.5) } }),
   "claude-haiku-4-5": anthropic(1, 5),
+  // Retired Claude 3.x models at their last list prices (Sonnet 3.7 and 3.5 $3/$15, Haiku 3.5
+  // $0.80/$4), so runs on them, such as Aider's default claude-3-5-sonnet-20241022, cost from
+  // their tokens instead of the agent's own figure.
+  "claude-3-7-sonnet": anthropic(3, 15),
+  "claude-3-5-sonnet": anthropic(3, 15),
+  "claude-3-5-haiku": anthropic(0.8, 4),
 
   // Google Gemini (PRICE_SOURCES.google, paid tier, as of 2026-11-07): Standard, Batch, Flex and
   // Priority tabs; 3.1 Pro and 2.5 Pro bill prompts over 200K tokens higher. Writes cost plain input;

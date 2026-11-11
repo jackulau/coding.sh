@@ -98,4 +98,27 @@ describe("statusline install / uninstall", () => {
     await run(ctx(e, "uninstall"));
     assert.equal(readFileSync(settings(e), "utf8"), original, "the previous status line comes back byte-for-byte");
   });
+
+  test("--force, then settings.json changes: uninstall keeps the change and brings back the replaced status line", async () => {
+    const e = env();
+    writeFileSync(settings(e), '{"statusLine":{"type":"command","command":"my-line"}}\n');
+    await run(ctx(e, "install", { force: true }));
+    // Claude Code (or init) writes to the file after the install.
+    const cfg = JSON.parse(readFileSync(settings(e), "utf8"));
+    writeFileSync(settings(e), JSON.stringify({ ...cfg, permissions: { allow: ["Bash(ls)"] } }, null, 2) + "\n");
+    assert.equal(await run(ctx(e, "uninstall")), 0);
+    const after = JSON.parse(readFileSync(settings(e), "utf8"));
+    assert.deepEqual(after.statusLine, { type: "command", command: "my-line" });
+    assert.deepEqual(after.permissions, { allow: ["Bash(ls)"] }, "the later change stays");
+  });
+
+  test("no earlier status line, then settings.json changes: uninstall removes only ours", async () => {
+    const e = env();
+    writeFileSync(settings(e), '{"model":"opus"}\n');
+    await run(ctx(e, "install"));
+    const cfg = JSON.parse(readFileSync(settings(e), "utf8"));
+    writeFileSync(settings(e), JSON.stringify({ ...cfg, theme: "dark" }) + "\n");
+    await run(ctx(e, "uninstall"));
+    assert.deepEqual(JSON.parse(readFileSync(settings(e), "utf8")), { model: "opus", theme: "dark" });
+  });
 });

@@ -89,12 +89,22 @@ export interface Calls {
   outputTokens: number;
 }
 
-/** An Ask that reads the cache first and counts the calls it makes. */
+/** A reply worth keeping: every ask wants a JSON object back. */
+const usableReply = (text: string): boolean => {
+  const v = jsonReply(text);
+  return !!v && typeof v === "object" && !Array.isArray(v);
+};
+
+/**
+ * An Ask that reads the cache first and counts the calls it makes. Only a reply
+ * that parses as a JSON object is cached (and a cached one that does not is
+ * asked again), so a truncated or prose reply is not reused on the next run.
+ */
 export function cachedAsk(provider: ChatProvider, cache: ReplyCache, calls: Calls, signal?: AbortSignal): Ask {
   return async (req) => {
     const key = cacheKey(provider.model, req.system, req.user);
     const hit = cache.get(key);
-    if (hit !== undefined) {
+    if (hit !== undefined && usableReply(hit)) {
       calls.cached++;
       return hit;
     }
@@ -102,7 +112,7 @@ export function cachedAsk(provider: ChatProvider, cache: ReplyCache, calls: Call
     calls.calls++;
     calls.inputTokens += res.usage?.inputTokens ?? 0;
     calls.outputTokens += res.usage?.outputTokens ?? 0;
-    cache.set(key, res.text);
+    if (usableReply(res.text)) cache.set(key, res.text);
     return res.text;
   };
 }

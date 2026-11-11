@@ -47,7 +47,7 @@ export async function run(c: CommandContext): Promise<number> {
     r = await withContext(c, async (ctx) => {
       await autoIngest(ctx, readIngest(c));
       return runSql(path, sql, { limit, timeoutMs: timeout * 1000 });
-    });
+    }, { create: false });
   } catch (e) {
     if (e instanceof SqlTimeout) throw new CliError(e.message, { reason: "timeout", next: ["Narrow the query, or allow longer:", "coding.sh sql --timeout 60 \"…\""] });
     if (e instanceof SqlFailed) {

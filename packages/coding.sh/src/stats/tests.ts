@@ -169,7 +169,8 @@ export interface GateOpts {
  * stratum-regression: set by callers that also gate per group (`compare --gate
  * --by`): the pooled gate may pass, but one group's gate says don't ship.
  */
-export type GateReason = "no-discordant" | "net-gain" | "not-significant" | "regression-fraction" | "stratum-regression";
+/** "guard" is set only by `exp sweep`, when a guard suite blocks a winner the gate would ship. */
+export type GateReason = "no-discordant" | "net-gain" | "not-significant" | "regression-fraction" | "stratum-regression" | "guard";
 
 export interface GateResult {
   decision: "accept" | "abstain";
@@ -187,6 +188,12 @@ export interface GateResult {
   breakEven: number;
   /** Exact one-sided p: P(Bin(wins + losses, breakEven) ≥ wins). 1 with no discordant items. */
   p: number;
+  /**
+   * Exact one-sided p that B breaks more than it fixes: P(Bin(wins + losses,
+   * 1/2) ≥ losses). 1 with no discordant items. Below α the losses beat
+   * chance, and the verdict is "dont-ship" (gate.ts).
+   */
+  breakP: number;
   lambda: number;
   alpha: number;
   tau: number;
@@ -223,6 +230,7 @@ export function acceptanceGate(counts: { wins: number; losses: number; solved: n
   const regressionFraction = solved === 0 ? 0 : losses / solved;
   const m = wins + losses;
   const p = m === 0 ? 1 : binomUpperTail(wins, m, breakEven);
+  const breakP = m === 0 ? 1 : binomUpperTail(losses, m, 0.5);
   // The p of w wins and no losses is breakEven^w: the smallest w below α.
   let minCleanWins = 1;
   while (breakEven ** minCleanWins >= alpha) minCleanWins++;
@@ -243,6 +251,7 @@ export function acceptanceGate(counts: { wins: number; losses: number; solved: n
     regressionFraction,
     breakEven,
     p,
+    breakP,
     lambda,
     alpha,
     tau,
@@ -320,8 +329,22 @@ export function pairedPermutation(diffs: readonly number[], opts: PermutationOpt
   const tol = 1e-9 * Math.max(1, abs);
   const hit =
     alt === "two-sided" ? (s: number) => Math.abs(s) >= Math.abs(obs) - tol : alt === "greater" ? (s: number) => s >= obs - tol : (s: number) => s <= obs + tol;
+  const exactN = Math.min(exactMaxN, 30);
+  // Above the enumeration limit, when every non-zero difference has the same
+  // size (one trial per case), the sum is a function of how many are
+  // positive, X ~ Bin(m, 1/2), so p is still exact: the binomial tail.
+  // Two-sided it is the McNemar p.
+  const nz = n > exactN ? diffs.filter((d) => d !== 0) : [];
+  const size = nz.length ? Math.abs(nz[0] as number) : 0;
+  if (n > exactN && nz.every((d) => Math.abs(Math.abs(d) - size) <= 1e-12 * Math.max(1, size))) {
+    const m = nz.length;
+    const pos = nz.filter((d) => d > 0).length;
+    const p =
+      alt === "two-sided" ? (pos * 2 === m ? 1 : 2 * binomCdfHalf(Math.min(pos, m - pos), m)) : alt === "greater" ? 1 - binomCdfHalf(pos - 1, m) : binomCdfHalf(pos, m);
+    return { p: Math.min(1, Math.max(0, p)), n, observed: obs / n, method: "exact" };
+  }
   // 2^30 flips is the most the 32-bit Gray-code step can index (and minutes of work).
-  if (n <= Math.min(exactMaxN, 30)) {
+  if (n <= exactN) {
     // Gray code: step k flips the sign of pair ctz(k), starting from all +.
     const sign = new Int8Array(n).fill(1);
     let s = obs;

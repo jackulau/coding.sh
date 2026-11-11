@@ -8,8 +8,13 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { bundle } from "./bundle.mjs";
+import { BACKUP, restoreManifest } from "./pack-manifest.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+// A pack that stopped before postpack left package.json without its source conditions.
+if (restoreManifest(root)) console.log(`build: put package.json back from ${BACKUP} (an earlier pack stopped before postpack)`);
+
 await bundle("dist");
 const tsc = createRequire(import.meta.url).resolve("typescript/bin/tsc");
 const r = spawnSync(process.execPath, [tsc, "-p", "tsconfig.types.json"], { cwd: root, stdio: "inherit" });

@@ -149,7 +149,7 @@ for (const impl of IMPLS) describe(`hook contract (${impl === "node" ? "hook.mjs
     assert.equal(lines[0]?.runId, undefined);
   });
 
-  test("payloads over 256 KB go to a side file referenced by rawFile", () => {
+  test("payloads whose line would pass 1024 bytes go to a side file referenced by rawFile", () => {
     const h = freshHome();
     const big = { cwd: "/big/repo", blob: "x".repeat(MAX_INLINE_LINE_BYTES + 10) };
     const text = JSON.stringify(big);
@@ -599,6 +599,88 @@ describeSh("hook.sh", () => {
     assert.equal(rest.length, 0);
     assert.deepEqual({ runId: line?.runId, pid: line?.pid, ppid: line?.ppid }, { runId: "r1", pid: r.pid, ppid: process.pid });
   });
+
+  test("--reply={} (Antigravity's hooks) writes the line and prints {} itself, with no node on PATH", () => {
+    const h = freshHome();
+    const bin = tmp("csh-nonode-");
+    for (const tool of ["cat", "date", "mkdir", "wc"]) symlinkSync(spawnSync("/bin/sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout.trim(), join(bin, tool));
+    const r = spawnSync("/bin/sh", [HOOK_SH, "antigravity", "PostToolUse", "--reply={}"], { input: '{"cwd":"/w","conversation_id":"c1"}', env: { PATH: bin, CODING_SH_HOME: h }, encoding: "utf8" });
+    assert.deepEqual({ code: r.status, stdout: r.stdout, stderr: r.stderr }, { code: 0, stdout: "{}\n", stderr: "" });
+    assert.deepEqual(readLines(h, "antigravity").map((l) => [l.event, l.raw]), [["PostToolUse", { cwd: "/w", conversation_id: "c1" }]]);
+    // Paused and with node gone: still the reply.
+    const r2 = spawnSync("/bin/sh", [HOOK_SH, "antigravity", "Stop", "--reply={}"], { input: "{}", env: { PATH: bin, CODING_SH_HOME: h, CODING_SH_DISABLE: "1" }, encoding: "utf8" });
+    assert.deepEqual({ code: r2.status, stdout: r2.stdout }, { code: 0, stdout: "{}\n" });
+  });
+
+  /** CODING_SH_HOOK_REEXEC=v when v is set: the hook then stays in the shell it was started in. */
+  const reexecEnv = (v: string): Record<string, string> => (v ? { CODING_SH_HOOK_REEXEC: v } : {});
+
+  test("a paused call (CODING_SH_DISABLE) starts no node, and no cat where the shell reads stdin itself", () => {
+    const h = freshHome();
+    // PATH holds only a cat, a node and a mkdir that log their starts; the cat then runs the real one.
+    const bin = tmp("csh-nocat-");
+    const log = join(bin, "starts.log");
+    const realCat = spawnSync("/bin/sh", ["-c", "command -v cat"], { encoding: "utf8" }).stdout.trim();
+    for (const tool of ["cat", "node", "mkdir"]) {
+      writeFileSync(join(bin, tool), `#!/bin/sh\necho ${tool} >> ${JSON.stringify(log)}\n${tool === "cat" ? `exec ${JSON.stringify(realCat)} "$@"` : "exit 1"}\n`);
+      chmodSync(join(bin, tool), 0o755);
+    }
+    // Where /bin/sh is dash, the re-exec into bash is what reads stdin without cat;
+    // with CODING_SH_HOOK_REEXEC set the hook stays in dash, which needs cat(1).
+    const shReads = spawnSync("/bin/sh", ["-c", 'printf %s "${BASH_VERSION-}${ZSH_VERSION-}"'], { encoding: "utf8" }).stdout !== "";
+    mkdirSync(join(h, "spool"), { recursive: true, mode: 0o700 });
+    for (const reexec of ["", "1"]) {
+      const r = spawnSync("/bin/sh", [HOOK_SH, "claude-code", "UserPromptSubmit", "--echo-continue"], { input: JSON.stringify({ session_id: "s-paused", prompt: "x".repeat(500) }), env: { PATH: bin, CODING_SH_HOME: h, CODING_SH_DISABLE: "1", ...reexecEnv(reexec) }, encoding: "utf8" });
+      assert.deepEqual({ code: r.status, stdout: r.stdout }, { code: 0, stdout: '{"continue":true}\n' });
+    }
+    assert.equal(existsSync(log) ? readFileSync(log, "utf8") : "", shReads ? "" : "cat\n");
+    assert.equal(readFileSync(join(h, "spool", "disabled-sessions"), "utf8"), "s-paused\ns-paused\n");
+    assert.deepEqual(readLines(h, "claude-code"), []);
+  });
+
+  test("--echo-continue to a reader that is gone (SIGPIPE) still exits 0", async () => {
+    const h = freshHome();
+    for (const reexec of ["", "1"]) {
+      const child = spawn("/bin/sh", [HOOK_SH, "claude-code", "Stop", "--echo-continue"], { env: { PATH: SH_PATH, NODE_LOG, CODING_SH_HOME: h, ...reexecEnv(reexec) }, stdio: ["pipe", "pipe", "ignore"] });
+      // The reader goes before the hook has its payload, so its reply meets a pipe with no reader.
+      child.stdout!.destroy();
+      child.stdin!.end('{"session_id":"s"}');
+      const [code, signal] = await new Promise<[number | null, string | null]>((res) => child.on("close", (c, s) => res([c, s])));
+      assert.deepEqual({ code, signal }, { code: 0, signal: null }, `reexec=${reexec}`);
+    }
+    assert.equal(readLines(h, "claude-code").length, 2);
+  });
+
+  test("a stale exported EPOCHREALTIME (a shell without its own) is not taken for the time", () => {
+    const h = freshHome();
+    const before = Date.now();
+    for (const reexec of ["", "1"]) assert.equal(runHook_sh(["claude-code", `Stop${reexec}`], "{}", { CODING_SH_HOME: h, EPOCHREALTIME: "123.456", ...reexecEnv(reexec) }).code, 0);
+    const lines = readLines(h, "claude-code");
+    assert.equal(lines.length, 2);
+    for (const l of lines) assert.ok(l.ts >= before - 1 && l.ts <= Date.now() + 1, `${l.event} ts ${l.ts}`);
+  });
+
+  test("a cwd inside a nested object (tool_input.cwd) is not taken for the session's", () => {
+    const h = freshHome();
+    const cwd = tmp("csh-nestcwd-");
+    assert.equal(runHook_sh(["claude-code", "PreToolUse"], JSON.stringify({ session_id: "s", tool_input: { cwd: "/nested" } }), { CODING_SH_HOME: h }, cwd).code, 0);
+    const [line] = readLines(h, "claude-code");
+    assert.equal(line!.cwd, realpathSync(cwd));
+    assert.deepEqual(line!.raw, { session_id: "s", tool_input: { cwd: "/nested" } });
+  });
+
+  test("a payload whose braces do not pair up ({\"a\":1}}) goes to a side file, so the day file stays valid JSON lines", () => {
+    const h = freshHome();
+    for (const [event, text] of [["e1", '{"a":1}}'], ["e2", '{"a":[1}'], ["e3", '{"a":"}"}']]) assert.equal(runHook_sh(["claude-code", event!], text, { CODING_SH_HOME: h }).code, 0);
+    const dir = join(h, "spool", "claude-code");
+    const text = readdirSync(dir).filter((f) => f.endsWith(".jsonl")).map((f) => readFileSync(join(dir, f), "utf8")).join("");
+    const lines = text.split("\n").filter(Boolean).map((l) => JSON.parse(l) as SpoolLine);
+    const byEvent = new Map(lines.map((l) => [l.event, l]));
+    assert.deepEqual(resolveRaw(byEvent.get("e1")!), '{"a":1}}');
+    assert.deepEqual(resolveRaw(byEvent.get("e2")!), '{"a":[1}');
+    // A brace inside a string is counted too: it moves to a side file, and still reads back as the payload.
+    assert.deepEqual(resolveRaw(byEvent.get("e3")!), { a: "}" });
+  });
 });
 
 describe("hook.mjs", () => {
@@ -669,7 +751,7 @@ process.on("exit", () => write(${JSON.stringify(log)}, touched.map((t) => t + "\
       while (Date.now() < ${start});
       const w = Number(process.argv[1]);
       for (let i = 0; i < ${each}; i++)
-        appendSpool({ v: 0, agent: "fake", event: "w" + w + "-" + i, ts: ${Date.UTC(2026, 0, 2)}, pid: process.pid, cwd: "/c", raw: { data: String(w).repeat(5_000 + ((i * 7919) % 120_000)) } });
+        appendSpool({ v: 0, agent: "fake", event: "w" + w + "-" + i, ts: ${Date.UTC(2026, 0, 2)}, pid: process.pid, cwd: "/c", raw: { data: String(w).repeat(i % 2 ? 200 + ((i * 37) % 700) : 5_000 + ((i * 7919) % 120_000)) } });
     `;
     await Promise.all(
       Array.from({ length: writers }, (_, w) =>
@@ -681,11 +763,12 @@ process.on("exit", () => write(${JSON.stringify(log)}, touched.map((t) => t + "\
         }),
       ),
     );
-    for (const f of readdirSync(join(h, "spool", "fake"))) assert.match(f, /^2026-01-02(\.\d+)?\.jsonl$/);
+    // Odd lines are inline, even ones (over 1024 bytes) name a side file in raw/.
+    for (const f of readdirSync(join(h, "spool", "fake"))) assert.match(f, /^(2026-01-02(\.\d+)?\.jsonl|raw)$/);
     const lines = readLines(h, "fake"); // JSON.parse throws on an interleaved line
     assert.equal(lines.length, writers * each);
     assert.equal(new Set(lines.map((l) => l.event)).size, writers * each);
-    for (const l of lines) assert.equal((l.raw as { data: string }).data[0], l.event.slice(1, l.event.indexOf("-")));
+    for (const l of lines) assert.equal((resolveRaw(l) as { data: string }).data[0], l.event.slice(1, l.event.indexOf("-")));
   });
 });
 

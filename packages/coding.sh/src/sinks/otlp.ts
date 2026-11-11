@@ -269,6 +269,11 @@ export function toOtlpOpenSessionSpans(open: OpenSession[], mode: "full" | "meta
   return rows.map((o) => sessionSpan(o.session, o.lastEventAt, full, traceIdFor(rootOf(o.session.id))));
 }
 
+/** The OTLP ExportTraceServiceRequest body for the open sessions' invoke_agent spans. */
+export function toOtlpOpenSessionRequest(open: OpenSession[], mode: "full" | "metadata") {
+  return request(toOtlpOpenSessionSpans(open, mode));
+}
+
 function request(spans: OtlpSpan[]) {
   return {
     resourceSpans: [

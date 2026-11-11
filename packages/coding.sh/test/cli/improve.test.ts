@@ -132,6 +132,23 @@ describe("cli improve", () => {
     assert.match(missing.stderr, /No issue "9"/);
   });
 
+  it("improve fix on a file it just created: the printed commit step commits it", async () => {
+    const w = await world("fix-new", { afterFlagged: 0 });
+    const git = (...args: string[]) => spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { cwd: w.repo, env: w.env, encoding: "utf8" });
+    assert.equal(git("rm", "-q", "CLAUDE.md").status, 0);
+    assert.equal(git("commit", "-qm", "drop CLAUDE.md").status, 0);
+    const r = cli(w, ["improve", "fix", "1"]);
+    assert.equal(r.status, 0, r.stderr);
+    const step = `${r.stdout}\n${r.stderr}`.split("\n").map((l) => l.trim()).find((l) => l.startsWith("git "));
+    assert.ok(step, `a git step is printed:\n${r.stdout}${r.stderr}`);
+    // Run it up to the improve check, with an identity for the commit.
+    const commit = step!.replace(/ && coding\.sh improve check$/, "");
+    const env = { ...w.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
+    const run = spawnSync("sh", ["-c", commit], { cwd: w.repo, env, encoding: "utf8" });
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(git("status", "--porcelain").stdout.trim(), "");
+  });
+
   it("improve check exits 1 on a regression and 0 otherwise", async () => {
     const bad = await world("regressed", { afterFlagged: 6, beforeTested: true });
     const r = cli(bad, ["improve", "check", "--json"]);
@@ -202,7 +219,7 @@ describe("cli improve", () => {
     assert.equal(text.status, 0, text.stderr);
     assert.match(
       text.stdout,
-      /^ {2}Followed, no effect yet: The agent follows the new line \(9 of 10 sessions after, 0 of 10 before, p 0\.00\), but flagged sessions did not fall \(5 of 10 before, 5 of 10 after, p 1\.00\): following a line is not the same as fixing what it targets\.$/m,
+      /^ {2}Followed, no effect yet: The agent follows the new line \(9 of 10 sessions after, 0 of 10 before, p < 0\.001\), but flagged sessions did not fall \(5 of 10 before, 5 of 10 after, p 1\.000\): following a line is not the same as fixing what it targets\.$/m,
     );
     assert.match(text.stderr, new RegExp(`Test whether the harness does as well without this change:\\n\\s+coding\\.sh refine test git:${prev}`));
   });
@@ -219,7 +236,7 @@ describe("cli improve", () => {
     assert.equal(ch.next, `coding.sh refine test git:${w.commits.init!.slice(0, 7)}`);
     const text = cli(w, ["improve", "check"]);
     assert.equal(text.status, 0, text.stderr);
-    assert.match(text.stdout, /^ {2}Costlier: Sessions after it make more tool calls \(median 20 → 45, p 0\.00\), and flagged sessions did not fall \(0 of 10 before, 0 of 10 after, p 1\.00\)\.$/m);
+    assert.match(text.stdout, /^ {2}Costlier: Sessions after it make more tool calls \(median 20 → 45, p < 0\.001\), and flagged sessions did not fall \(0 of 10 before, 0 of 10 after, p 1\.000\)\.$/m);
     assert.match(text.stderr, /Test whether the harness does as well without this change:\n\s+coding\.sh refine test git:/);
   });
 

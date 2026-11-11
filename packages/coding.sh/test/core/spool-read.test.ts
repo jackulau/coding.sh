@@ -132,4 +132,30 @@ describe("spool-read", () => {
     assert.match(errs[0]!.message, /incomplete last line/);
     assert.deepEqual([errs[0]!.offset, errs[0]!.nextOffset], [good.length, statSync(file).size], "the cursor can move to the end");
   });
+  it("keeps a whole line that hook.sh appended right after a torn fragment", async () => {
+    // A full disk cut hook.sh's printf short; once space is free its next line lands on the fragment.
+    const dir = spool();
+    const file = join(dir, "codex", "2026-11-06.jsonl");
+    const first = line({ event: "PreToolUse", raw: { n: 1 } });
+    const fragment = line({ event: "PreToolUse", raw: { n: 2, text: "x".repeat(200) } }).slice(0, 120);
+    const after = line({ event: "PostToolUse", raw: { n: 3 } });
+    writeFileSync(file, first + fragment + after);
+    const { recs, errs } = await readAll(dir, file);
+    assert.deepEqual(recs.map((r) => r.line.event), ["PreToolUse", "PostToolUse"]);
+    assert.deepEqual(recs[1]!.line.raw, { n: 3 });
+    assert.equal(recs[1]!.offset, first.length + fragment.length, "the kept line's offset is where it starts");
+    assert.equal(recs[1]!.nextOffset, statSync(file).size);
+    assert.equal(errs.length, 1);
+    assert.match(errs[0]!.message, /invalid JSON.*the whole line after the torn fragment is kept/);
+  });
+
+  it("still skips a bad line with no whole line after it", async () => {
+    const dir = spool();
+    const file = join(dir, "codex", "2026-11-06.jsonl");
+    writeFileSync(file, line().slice(0, 40) + "{\"v\":0,\"agent\":\"codex\", broken\n" + line({ event: "Stop" }));
+    const { recs, errs } = await readAll(dir, file);
+    assert.deepEqual(recs.map((r) => r.line.event), ["Stop"]);
+    assert.equal(errs.length, 1);
+    assert.doesNotMatch(errs[0]!.message, /kept/);
+  });
 });

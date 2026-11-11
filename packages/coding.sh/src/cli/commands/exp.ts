@@ -13,16 +13,17 @@ import { readFile } from "node:fs/promises";
 import { basename, dirname, extname, resolve } from "node:path";
 import { FileEvalStore } from "../../datasets/store.ts";
 import type { Case, Dataset, ExperimentResult, Grader, Split } from "../../datasets/types.ts";
+import { slugify } from "../../datasets/dataset.ts";
 import { aaNoise, taskKey } from "../../experiments/aa.ts";
 import { runAb, type AbArm, type AbResult, type RunAbOpts } from "../../experiments/ab.ts";
 import { clusterMap, compareExperiments, givenGraders, type CompareOpts } from "../../experiments/compare.ts";
 import { MetricRunError, renderMetrics, runMetrics, type MetricArm } from "../../experiments/metrics.ts";
 import { runPairwise, summarizePairwise, type PairwiseSummary } from "../../experiments/pairwise.ts";
-import { isCheckpoint, renderAa, renderComparison, renderExperiment, renderPairwise, renderReplication, renderSweep } from "../../experiments/render.ts";
+import { caseLabels, isCheckpoint, renderAa, renderComparison, renderExperiment, renderPairwise, renderReplication, renderSweep } from "../../experiments/render.ts";
 import { judgeHold, replicatePairwise } from "../../experiments/replicate.ts";
 import { replayNoise } from "../../experiments/continuation.ts";
 import { plateau, plateauLine, renderPlateau, type PlateauGate, type PlateauResult } from "../../experiments/plateau.ts";
-import { regradeExperiment, ResumeMismatchError, runExperiment } from "../../experiments/run.ts";
+import { regradeExperiment, ResumeMismatchError, runExperiment, selectCases } from "../../experiments/run.ts";
 import { validSample, type SelectOpts } from "../../experiments/select.ts";
 import { JobStore } from "../../jobs/store.ts";
 import { regradeDiff, renderRegradeDiff } from "../../experiments/regrade.ts";
@@ -44,7 +45,7 @@ import { jobConfig, taskFingerprint } from "../../jobs/config.ts";
 import type { Job, JobKind } from "../../jobs/store.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { finishJob, infraStopNote, openJob, resumeField, resumeNote, retryFlag, statusCommand, trialTimeout } from "../jobs.ts";
-import { gateFlags, jsonArg, list, num, str, withContext } from "../common.ts";
+import { gateFlags, jsonArg, list, num, shellQuote, str, withContext } from "../common.ts";
 import { ago, CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import type { IndexStore, RunResult } from "../../core/types.ts";
@@ -140,8 +141,8 @@ export async function loadSpec(c: CommandContext, store: FileEvalStore, specFile
   if (!spec.dataset) throw new UsageError("Missing --dataset <ID>", { reason: "missing_argument" });
   if (needTask && !isObj(spec.task)) throw new UsageError('Missing --task, e.g. --task \'{"kind":"command","command":"./my-agent"}\'', { reason: "missing_argument" });
   if (!spec.graders?.length) throw new UsageError('Missing --grader, e.g. --grader \'{"kind":"exact"}\'', { reason: "missing_argument" });
-  const dataset = await store.getDataset(spec.dataset);
-  if (!dataset) throw new CliError(`Can't find dataset ${JSON.stringify(spec.dataset)}`, { reason: "not_found", next: ["List datasets:", "coding.sh dataset list"] });
+  const dataset = await datasetByRef(store, spec.dataset);
+  if (!dataset) throw new CliError(`Can't find dataset ${JSON.stringify(spec.dataset)}`, { reason: "not_found", next: ["List datasets and their versions:", "coding.sh dataset list"] });
   const graders = await buildGraders(c, spec.graders, baseDir);
   return { spec, dataset, graders, name: spec.name ?? `${dataset.name}-${new Date().toISOString().slice(0, 10)}`, baseDir, ...(file ? { file } : {}) };
 }
@@ -188,7 +189,7 @@ async function regradeCmd(c: CommandContext, store: FileEvalStore): Promise<numb
     baseDir = dirname(file);
   }
   specs = (await withGraderFlags(c, specs)) ?? [];
-  if (!specs.length) throw new UsageError("Missing graders: pass a spec file with \"graders\" or --grader", { reason: "missing_argument", suggestion: `coding.sh exp regrade ${ref} spec.json` });
+  if (!specs.length) throw new UsageError("Missing graders: pass a spec file with \"graders\" or --grader", { reason: "missing_argument", suggestion: `coding.sh exp regrade ${shellQuote(ref)} spec.json` });
   const graders = await buildGraders(c, specs, baseDir);
   // The exact dataset version the experiment ran on; the latest one only when that version is gone (it warns).
   const dataset = (await store.getDataset(prev.dataset.id, prev.dataset.version)) ?? (await store.getDataset(prev.dataset.id));
@@ -315,8 +316,30 @@ async function seqFlags(c: CommandContext): Promise<SeqOpts | undefined> {
   return { k, feedback, ...(hist ? { history: hist as "full" | "last" } : {}) };
 }
 
+/**
+ * A dataset by id, or pinned to one version as `exp show` prints it: `<name>@<version>`
+ * (a prefix of the version hash is enough when it names one version).
+ */
+export async function datasetByRef(store: FileEvalStore, ref: string): Promise<Dataset | undefined> {
+  const at = ref.lastIndexOf("@");
+  const pin = at > 0 && /^[0-9a-f]{4,}$/i.test(ref.slice(at + 1)) ? ref.slice(at + 1).toLowerCase() : undefined;
+  if (!pin) return store.getDataset(ref);
+  const name = ref.slice(0, at);
+  for (const id of new Set([name, slugify(name)])) {
+    const versions = await store.listDatasetVersions(id).catch(() => []);
+    const hits = versions.filter((v) => v.version.startsWith(pin));
+    if (hits.length > 1) throw new UsageError(`Dataset version ${JSON.stringify(pin)} of ${id} is ambiguous: ${hits.map((v) => v.version.slice(0, 12)).join(", ")}`, { reason: "ambiguous", suggestion: `-d ${id}@${hits[0]!.version}` });
+    if (hits[0]) return store.getDataset(id, hits[0].version);
+  }
+  return undefined;
+}
+
 async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string | undefined, gating: { adaptive?: boolean; baseline?: ExperimentResult; llm?: LlmRunOpts } = {}): Promise<{ result: ExperimentResult; job: Job; loaded: LoadedSpec }> {
   const loaded = await loadSpec(c, store, specFile);
+  if (!selectCases(loaded.dataset, loaded.spec.split).length) {
+    const split = loaded.spec.split ? ` in split ${loaded.spec.split}` : "";
+    throw new CliError(`Dataset ${loaded.dataset.name} has no cases${split}: nothing to run`, { reason: "no_cases", next: ["Add cases:", `coding.sh dataset add ${shellQuote(loaded.dataset.id)} --case '{"input": …, "expected": …}'`] });
+  }
   const selection = await selectionFlags(c, store);
   const seq = await seqFlags(c);
   if (seq) {
@@ -903,7 +926,7 @@ export async function run(c: CommandContext): Promise<number> {
           if (out.json) {
             out.data({ outcome: ab.a.infraStop ? "stopped" : cancelled ? "cancelled" : "completed", pair: { id: ab.pairId, seed: ab.seed }, experiments: [ab.a, ab.b], comparison: cmp, ...(ab.sequential ? { sequential: ab.sequential } : {}), ...resumeField(job) });
           } else {
-            out.print(renderComparison(cmp, { color: out.color, a: ab.a, b: ab.b }));
+            out.print(renderComparison(cmp, { color: out.color, a: ab.a, b: ab.b, cases: caseLabels(loaded.dataset.cases) }));
             out.print(`${ab.a.id} ${ab.b.id}`);
           }
           infraStopNote(c, ab.a.infraStop);
@@ -941,7 +964,7 @@ export async function run(c: CommandContext): Promise<number> {
         if (result.regression) {
           if (out.json) out.data({ outcome: "regression", experiment: result, regression: result.regression, ...resumeField(job) });
           else {
-            out.print(renderExperiment(result, { color: out.color }));
+            out.print(renderExperiment(result, { color: out.color, cases: caseLabels(loaded.dataset.cases) }));
             out.print(result.id);
           }
           return 1;
@@ -952,7 +975,7 @@ export async function run(c: CommandContext): Promise<number> {
         const joined = cancelled ? undefined : await session.recordRun(c, store, result, loaded);
         if (out.json) out.data({ outcome: result.infraStop ? "stopped" : cancelled ? "cancelled" : "completed", experiment: result, ...(series ? { plateau: series } : {}), ...(joined ? { session: joined } : {}), ...resumeField(job) });
         else {
-          out.print(renderExperiment(result, { color: out.color }));
+          out.print(renderExperiment(result, { color: out.color, cases: caseLabels(loaded.dataset.cases) }));
           out.print(result.id);
           if (joined) out.print(`\n${session.deltaText(c, joined)}`);
           if (series) out.note(plateauLine(seriesFlag(c)!, series));
@@ -983,13 +1006,13 @@ export async function run(c: CommandContext): Promise<number> {
           if (x.status === "cancelled" && !force) {
             throw new CliError(`Experiment ${x.name} (${x.id}) was cancelled after ${plural(x.runs.length, "case run")}; comparing a partial result is misleading`, {
               reason: "cancelled_experiment",
-              next: ["Re-run it, or compare the partial result anyway:", `coding.sh exp compare ${ida} ${idb} --force`],
+              next: ["Re-run it, or compare the partial result anyway:", `coding.sh exp compare ${shellQuote(ida)} ${shellQuote(idb)} --force`],
             });
           }
           if (x.samples === "adaptive" && !force) {
             throw new CliError(`Experiment ${x.name} (${x.id}) ran adaptive samples: its trial count depends on its outcomes, so a paired CI over it is biased`, {
               reason: "adaptive_samples",
-              next: ["Re-run both with fixed --trials, or compare anyway:", `coding.sh exp compare ${ida} ${idb} --force`],
+              next: ["Re-run both with fixed --trials, or compare anyway:", `coding.sh exp compare ${shellQuote(ida)} ${shellQuote(idb)} --force`],
             });
           }
         }
@@ -1051,7 +1074,8 @@ export async function run(c: CommandContext): Promise<number> {
             ...(replication && pws.some((x) => x.calibration) ? { pairwiseCalibration: pws.map(calField) } : {}),
           });
         } else {
-          out.print(renderComparison(cmp, { color: out.color, a: a!, b: b!, matrix: c.flags.matrix === true }));
+          const ds = await store.getDataset(b!.dataset.id, b!.dataset.version).catch(() => undefined);
+          out.print(renderComparison(cmp, { color: out.color, a: a!, b: b!, matrix: c.flags.matrix === true, cases: ds ? caseLabels(ds.cases) : undefined }));
           for (const x of pws) {
             out.print(`\n${renderPairwise(x.summary, { color: out.color })}`);
             if (x.calibration) {
@@ -1185,7 +1209,8 @@ export async function run(c: CommandContext): Promise<number> {
         return plateauCmd(c, store);
       case "show": {
         const ref = c.positionals[0]!;
-        const e = await store.resolveExperiment(ref, { includeCancelled: true });
+        // `latest` is the newest experiment, unless one is named that.
+        const e = (await store.resolveExperiment(ref, { includeCancelled: true })) ?? (ref === "latest" ? (await store.listExperiments({ limit: 1 }))[0] : undefined);
         // `eval run` on a tasks suite prints an experiment id that names its stored runs, not an experiment record.
         if (!e && /^exp_\w+$/.test(ref)) {
           const runs = (await ctx.index.listRuns({ experimentId: ref })).filter((r) => !r.superseded && !r.cancelled);
@@ -1194,7 +1219,10 @@ export async function run(c: CommandContext): Promise<number> {
         if (!e) throw new CliError(`Can't find experiment ${JSON.stringify(ref)}`, { reason: "not_found", next: ["List experiments:", "coding.sh exp list"] });
         const verifiers = await verifierAudits(store, e);
         if (out.json) out.data({ experiment: e, ...(verifiers.size ? { verifiers: [...verifiers.values()] } : {}) });
-        else out.print(renderExperiment(e, { color: out.color, verifiers }));
+        else {
+          const ds = await store.getDataset(e.dataset.id, e.dataset.version).catch(() => undefined);
+          out.print(renderExperiment(e, { color: out.color, verifiers, cases: ds ? caseLabels(ds.cases) : undefined }));
+        }
         return 0;
       }
       case "list": {
@@ -1216,5 +1244,5 @@ export async function run(c: CommandContext): Promise<number> {
       }
     }
     throw new UsageError(`Unknown exp command ${c.action}`);
-  });
+  }, { create: c.action !== "list" && c.action !== "show" });
 }

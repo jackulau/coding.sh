@@ -17,7 +17,7 @@ import { removeOnExit, withAbortSignal } from "../core/children.ts";
 import { sha256Hex } from "../core/ids.ts";
 import type { BlobRef, BlobStore, EvalTask, IndexStore, ValidationReport } from "../core/types.ts";
 import { commandEnv, sh, type ExecResult } from "../runner/exec.ts";
-import { safeJoin, safeWrite, writeHiddenFiles } from "../runner/fsutil.ts";
+import { fencePackageScope, safeJoin, safeWrite, writeHiddenFiles } from "../runner/fsutil.ts";
 import { applyPatch, git, rmrf, snapshotOps, type SnapshotOps } from "../runner/git.ts";
 import { couplingNote, goldCandidates, goldOnlyCoupling, startTreeLookup, type Coupling, type StartTree } from "./coupling.ts";
 import { impossibleMutations, isTestPath, readTextFiles, verifierReferencedFiles, type ImpossibleMutation, type TestFileText } from "./impossible.ts";
@@ -252,6 +252,7 @@ export function taskWorlds(o: TaskWorldsOpts): TaskWorlds {
   const { task, ops, env } = o;
   const setupTimeout = o.setupTimeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS;
   const checkpoint = () => o.signal?.throwIfAborted();
+  let fenced: Promise<void> | undefined;
   const forgetOnExit = new Map<string, () => void>();
   const removeDir = async (dir: string) => {
     await rmrf(dir);
@@ -265,6 +266,7 @@ export function taskWorlds(o: TaskWorldsOpts): TaskWorlds {
   return {
     async prepare(label, patch, opts = {}) {
       checkpoint();
+      await (fenced ??= mkdir(o.workRoot, { recursive: true }).then(() => fencePackageScope(o.workRoot)));
       const dir = await mkdtemp(join(o.workRoot, `${label.replace(/[^a-z0-9]+/gi, "-").slice(0, 40)}-`));
       if (!o.keep) forgetOnExit.set(dir, removeOnExit(dir));
       try {

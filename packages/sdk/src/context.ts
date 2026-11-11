@@ -154,7 +154,9 @@ function emit(span: SpanState, kind: EventKind, ts: number, payload: Record<stri
 export interface TraceOptions {
   /** Groups the turns of one conversation into one session. Default: the trace is its own session. */
   sessionId?: string;
+  /** Your user's id, recorded on the turn's session.start event. */
   userId?: string;
+  /** Any JSON object, recorded on the turn's session.start event. */
   metadata?: Record<string, unknown>;
   /** The turn's input (a prompt string, or any JSON value); becomes the session's user.message. */
   input?: unknown;

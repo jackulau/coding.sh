@@ -214,6 +214,9 @@ export interface EventCost {
 
 /** One session as metrics read it (IndexStore.metricRows): fields absent when the session has no value. */
 export interface MetricRow {
+  /** The session id, and its parent's for a subagent: metrics roll a subagent's spend up into its top-level session. */
+  id?: string;
+  parentSessionId?: string;
   startedAt: number;
   agent: string;
   model?: string;
@@ -424,8 +427,13 @@ export interface IndexStore {
    */
   memoryEvents?(sessionIds: readonly string[]): Promise<MemoryEvent[]>;
 
-  /** Stores an immutable dataset version and points "latest" at it. Same content → `created: false`. */
-  putDataset?(ds: Dataset, opts?: { note?: string; now?: number }): Promise<{ version: string; created: boolean }>;
+  /**
+   * Stores an immutable dataset version and points "latest" at it. Same content → `created: false`.
+   * With `parent`, only when "latest" is that version (null: the dataset has none yet), checked
+   * in the same transaction as the write; else it throws DatasetConflict (store/common.ts) and
+   * writes nothing, so two read-merge-writes never lose each other's cases.
+   */
+  putDataset?(ds: Dataset, opts?: { note?: string; now?: number; parent?: string | null }): Promise<{ version: string; created: boolean }>;
   /** A stored version; "latest" (default) follows the latest pointer. */
   getDataset?(id: string, version?: string | "latest"): Promise<Dataset | undefined>;
   listDatasets?(): Promise<DatasetListing[]>;
@@ -982,7 +990,7 @@ export interface RunResult {
    * the agent started): the outcome is unknown, comparisons leave it out, and
    * `compare --resume` runs it again.
    */
-  infra?: "rate-limit" | "server" | "network" | "tempfail" | "auth" | "setup";
+  infra?: "rate-limit" | "overloaded" | "server" | "network" | "tempfail" | "auth" | "setup";
   /** Tool-eval trials: the tap log (tool calls seen on the wire) as NDJSON. Referenced so blob gc keeps it. */
   tapBlob?: BlobRef;
   /**

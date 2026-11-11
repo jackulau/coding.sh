@@ -12,7 +12,7 @@ import type { BlobStore, IndexStore } from "../core/types.ts";
 import type { Prices } from "../core/pricing.ts";
 import type { CaptureProfile } from "../core/ingest.ts";
 import { claudeConfigDir } from "../adapters/claude-code.ts";
-import { findClaudeWorkflowDirs, loadClaudeWorkflowDir, peekClaudeWorkflowDir } from "./sources/claude-workflow.ts";
+import { copiedRunOwner, findClaudeWorkflowDirs, loadClaudeWorkflowDir, peekClaudeWorkflowDir, type ClaudeWorkflowDir } from "./sources/claude-workflow.ts";
 import type { WorkflowStore } from "./store.ts";
 import { buildWorkflowTree, restat, type WorkflowTree } from "./tree.ts";
 import type { WorkflowRun } from "./types.ts";
@@ -48,6 +48,8 @@ export interface ImportResult {
   found: number;
   imported: WorkflowRun[];
   skipped: number;
+  /** Run dirs that are copies of a run another session wrote (imported once, from that session). */
+  copies: number;
   errors: { path: string; error: string }[];
 }
 
@@ -56,8 +58,21 @@ export interface ImportResult {
 const PUT_BATCH = 20_000;
 
 export async function importClaudeWorkflows(o: ImportOpts): Promise<ImportResult> {
-  const dirs = await findClaudeWorkflowDirs(o.root);
-  const res: ImportResult = { found: dirs.length, imported: [], skipped: 0, errors: [] };
+  const found = await findClaudeWorkflowDirs(o.root);
+  const res: ImportResult = { found: found.length, imported: [], skipped: 0, copies: 0, errors: [] };
+  // A run dir copied under a second session (fork, resumed or symlinked run) is the
+  // same run: import it once, from the session that wrote it, so its agents are
+  // stored once and the run keeps its first host.
+  const dirs: ClaudeWorkflowDir[] = [];
+  const seen = new Set<string>();
+  for (const d of found) {
+    const owner = await copiedRunOwner(d);
+    if (owner) res.copies++;
+    const use = owner ?? d;
+    if (seen.has(use.runDir)) continue;
+    seen.add(use.runDir);
+    dirs.push(use);
+  }
   const resumed: WorkflowTree[] = [];
   for (const d of dirs) {
     try {

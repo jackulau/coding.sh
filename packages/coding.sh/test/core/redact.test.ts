@@ -36,20 +36,28 @@ function assertLinear(label: string, make: (n: number) => string, budgetMs = 500
   assert.ok(growth < 8, `${label}: ${median(small).toFixed(1)} ms at 256 KB, ${median(big).toFixed(1)} ms at 1 MB (${growth.toFixed(1)}x; linear is ~4x, O(n²) ~16x)`);
 }
 
+// Vendor-shaped values are built with join so no whole one sits in this file (esbuild folds "a" + "b").
+const GITHUB_CLASSIC = ["ghp_", "0123456789abcdefghijABCDEFGHIJ012345"].join("");
+const GITHUB_FINE = ["github_pat_", "11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyz"].join("");
+const SLACK_BOT = ["xox", "b-1234567890-0987654321-AbCdEfGh"].join("");
+const SLACK_USER = ["xox", "p-1234567890-abcdef"].join("");
+const AWS_KEY = ["AKIA", "IOSFODNN7EXAMPLE"].join("");
+const STRIPE_LIVE = ["sk_li", "ve_", "51H8abcdefghijklmnop"].join("");
+
 const positives: [string, string, string][] = [
   ["anthropic", "key: sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abc", "anthropic-key"],
   ["openai", "OPENAI sk-proj-Ab12Cd34Ef56Gh78Ij90Kl12Mn34", "openai-key"],
   ["openai classic", "use sk-1234567890abcdefghijklmnopqrstuv now", "openai-key"],
-  ["github classic", "token ghp_0123456789abcdefghijABCDEFGHIJ012345", "github-token"],
-  ["github fine-grained", "github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyz", "github-token"],
+  ["github classic", `token ${GITHUB_CLASSIC}`, "github-token"],
+  ["github fine-grained", GITHUB_FINE, "github-token"],
   ["gitlab", "glpat-abcdefghij0123456789", "gitlab-token"],
   ["prose PAT", "here is the PAT here ya go: abcD3f-ghiJkl-mnoPqr", "prose-secret"],
   ["prose password", "the password is hunter22x", "prose-secret"],
-  ["slack bot", "xoxb-1234567890-0987654321-AbCdEfGh", "slack-token"],
-  ["slack user", "xoxp-1234567890-abcdef", "slack-token"],
-  ["aws access key", "aws_access_key_id AKIAIOSFODNN7EXAMPLE", "aws-access-key"],
+  ["slack bot", SLACK_BOT, "slack-token"],
+  ["slack user", SLACK_USER, "slack-token"],
+  ["aws access key", `aws_access_key_id ${AWS_KEY}`, "aws-access-key"],
   ["google", "AIzaSyA-1234567890abcdefghijklmnopqrstu", "google-api-key"],
-  ["stripe", "sk_live_51H8abcdefghijklmnop", "stripe-key"],
+  ["stripe", STRIPE_LIVE, "stripe-key"],
   ["jwt", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U", "jwt"],
   ["bearer", "curl -H 'Authorization: Bearer abc123def456ghi789jkl'", "bearer"],
   ["url password", "postgres://admin:hunter2secret@db.internal:5432/app", "password"],
@@ -79,7 +87,7 @@ const negatives = [
   "AKIA is a prefix but AKIASHORT is not a key",
   "eyJ alone is not a token",
   "uuid 123e4567-e89b-12d3-a456-426614174000",
-  "/Users/jack/code/sk-tools/README.md",
+  "/Users/dev/code/sk-tools/README.md",
   "npm install @anthropic-ai/sdk",
   "SECRET_LENGTH=32",
   "the token is required here",
@@ -192,7 +200,7 @@ describe("redact: secrets", () => {
 describe("redact: email", () => {
   const er = createRedactor({ redact: ["email"] });
   it("redacts email addresses, and only those", () => {
-    assert.equal(er.string("mail jane.doe+ci@mail.example.co.uk or ops@corp.io."), "mail [redacted:email] or [redacted:email].");
+    assert.equal(er.string("mail jane.doe+ci@mail.example.co.uk or ops@corp.example.org."), "mail [redacted:email] or [redacted:email].");
     assert.equal(er.string("Author: Jane <JANE_D@Example.COM>"), "Author: Jane <[redacted:email]>");
     for (const keep of ["npm i zod@3.22.4", "npx @scope/pkg@latest", "icon@2x.png", "user@localhost", "a @ b.com", "@decorator.call()"]) assert.equal(er.string(keep), keep, keep);
   });
@@ -224,8 +232,8 @@ describe("toMetadata", () => {
       agent: "claude-code",
       model: "m",
       kind: "tool.end",
-      cwd: "/Users/jack/secret-project",
-      repo: { root: "/Users/jack/secret-project", head: "abc", snapshot: "snap" },
+      cwd: "/Users/dev/secret-project",
+      repo: { root: "/Users/dev/secret-project", head: "abc", snapshot: "snap" },
       payload: { tool: "Bash", toolUseId: "tu", ok: false, durationMs: 5, output: "secret output", input: { command: "cat .env" }, exitCode: 1 },
       blobs: ["a".repeat(64)],
       usage: { inputTokens: 1, outputTokens: 2 },

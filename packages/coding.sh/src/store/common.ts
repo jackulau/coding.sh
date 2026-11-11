@@ -95,6 +95,22 @@ export function storedSearchText(e: AgentEvent): string | undefined {
  * index keeps it in events.error (written with the event, and again by anything that
  * rewrites a payload), so a query reads the events_error index, not the payloads.
  */
+/**
+ * IndexStore.putDataset was given a parent version (`opts.parent`) and "latest" is
+ * another one: someone else stored a version in between. Read again, merge, retry.
+ * Matched by name, so a store plugin's bundled copy of this class still counts.
+ */
+export class DatasetConflict extends Error {
+  readonly reason = "dataset_conflict";
+  constructor(id: string, parent: string | null, latest: string | undefined) {
+    super(`dataset ${id}: latest is ${latest ?? "unset"}, not ${parent ?? "unset"}`);
+    this.name = "DatasetConflict";
+  }
+  static override [Symbol.hasInstance](x: unknown): boolean {
+    return x instanceof Error && x.name === "DatasetConflict";
+  }
+}
+
 export function errorText(payload: Record<string, unknown> | undefined): string | null {
   return typeof payload?.error === "string" ? payload.error : null;
 }
@@ -200,6 +216,33 @@ export function runBlobs(r: RunResult): BlobRef[] {
  * `terms` are folded search terms (searchTerms). Stores without a native
  * snippet function (memory, postgres) use this so snippets look the same.
  */
+/**
+ * A query with no word for the tokenizer (emoji, arrows, other symbols): the trimmed
+ * text itself, to find as a substring of event text. Undefined when it has words
+ * (FTS answers it) or nothing at all.
+ */
+export function symbolQuery(text: string): string | undefined {
+  let needle = text.trim();
+  // A quoted phrase ('"🚀"') searches for what is inside the quotes, as a quoted word does.
+  const quoted = /^"(.*)"$/s.exec(needle);
+  if (quoted) needle = quoted[1]!.trim();
+  return needle && !searchTerms(needle).length ? needle : undefined;
+}
+
+/** Up to SYMBOL_SNIPPET_CHARS of text on each side of the first `needle`, the match marked. */
+export function symbolSnippet(text: string, needle: string): string {
+  const at = text.indexOf(needle);
+  if (at < 0) return text.slice(0, 2 * SYMBOL_SNIPPET_CHARS);
+  // Never cut a surrogate pair (an emoji) in half.
+  const low = (i: number) => i > 0 && i < text.length && (text.charCodeAt(i) & 0xfc00) === 0xdc00;
+  let from = Math.max(0, at - SYMBOL_SNIPPET_CHARS);
+  let to = Math.min(text.length, at + needle.length + SYMBOL_SNIPPET_CHARS);
+  if (low(from)) from--;
+  if (low(to)) to++;
+  return `${from > 0 ? SNIPPET_ELLIPSIS : ""}${text.slice(from, at)}${SNIPPET_OPEN}${needle}${SNIPPET_CLOSE}${text.slice(at + needle.length, to)}${to < text.length ? SNIPPET_ELLIPSIS : ""}`;
+}
+const SYMBOL_SNIPPET_CHARS = 60;
+
 export function snippet(text: string, terms: string[]): string {
   const re = /[\p{L}\p{M}\p{N}_]+/gu;
   const words: { start: number; end: number; hit: boolean }[] = [];

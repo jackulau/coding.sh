@@ -14,7 +14,7 @@ import {
   readTextIfExists,
   stringifyJsonLike,
 } from "../../adapters/_shared/files.ts";
-import { existedBeforeInstall, forgetInstall, installRecord, recordInstall, restoreForInstall, sha256 } from "../../adapters/_shared/installs.ts";
+import { forgetInstall, installRecord, recordInstall, sha256 } from "../../adapters/_shared/installs.ts";
 import { ingestStoppedField, ingestStoppedJson, readIngestStopped } from "../../core/ingest-health.ts";
 import { paths } from "../../core/paths.ts";
 import { withContext } from "../common.ts";
@@ -101,6 +101,13 @@ function userSettings(c: CommandContext): string {
   return join(claudeConfigDir(c.env), "settings.json");
 }
 
+/**
+ * The status line's own record in installs.json. It sits beside init's record
+ * for settings.json, never over it: uninstalling the status line puts back the
+ * bytes from right before it was installed, and init's restore point stays.
+ */
+const recordKey = (file: string): string => `${file}#statusline`;
+
 function currentCommand(cfg: Record<string, unknown>): string | undefined {
   const sl = isObject(cfg.statusLine) ? cfg.statusLine : undefined;
   return sl && typeof sl.command === "string" ? sl.command : undefined;
@@ -139,8 +146,11 @@ async function install(c: CommandContext): Promise<number> {
     dryRun: false,
     env,
     onApplied(ch, backup) {
-      const pristine = !oursAlready; // the file did not already hold our status line
-      recordInstall(CLAUDE_AGENT, ch.path, ch.after ?? "", env, Date.now(), restoreForInstall(ch.path, ch.before, pristine, backup, env));
+      // The restore point is the bytes right before this install (null: the file did not exist).
+      // A file that already held our status line keeps the record it has.
+      const known = installRecord(recordKey(ch.path), env);
+      const restore = oursAlready ? (known?.restore ?? undefined) : ch.before === undefined ? null : backup;
+      recordInstall(CLAUDE_AGENT, recordKey(ch.path), ch.after ?? "", env, Date.now(), oursAlready && known === undefined ? undefined : restore);
     },
   });
   out.print(`Installed the coding.sh status line into ${file}`);
@@ -167,7 +177,7 @@ async function uninstall(c: CommandContext): Promise<number> {
   // not merely strip ours. While the file is byte-identical to our last write
   // (nothing changed since install), restore the recorded original exactly;
   // otherwise fall back to removing only our statusLine key.
-  const rec = installRecord(file, env);
+  const rec = installRecord(recordKey(file), env);
   const owned = rec !== undefined && rec.restore !== undefined && rec.sha256 === sha256(text);
   let change;
   if (owned && rec.restore === null) {
@@ -194,15 +204,35 @@ async function uninstall(c: CommandContext): Promise<number> {
     out.print(`Would remove the statusLine from ${file}`);
     return 0;
   }
-  await applyChanges([change], { agent: CLAUDE_AGENT, dryRun: false, env, onApplied: (ch) => forgetInstall(ch.path, env) });
+  await applyChanges([change], { agent: CLAUDE_AGENT, dryRun: false, env, onApplied: (ch) => forgetInstall(recordKey(ch.path), env) });
   out.print(`Removed the coding.sh status line from ${file}`);
   return 0;
 }
 
-/** Remove only our statusLine key; delete the file if that empties one we created. */
+/**
+ * The file changed since install (init, or Claude Code adding a permission): keep those
+ * changes and swap only our statusLine back to the one install replaced, read from the
+ * restore point. With no earlier status line, remove ours; delete the file if that
+ * empties one we created.
+ */
 function stripChange(file: string, text: string, cfg: Record<string, unknown>, env: NodeJS.ProcessEnv) {
   const rest = { ...cfg };
   delete rest.statusLine;
-  const empty = Object.keys(rest).length === 0 && !existedBeforeInstall(file, env);
+  const rec = installRecord(recordKey(file), env);
+  const previous = typeof rec?.restore === "string" ? previousStatusLine(file, rec.restore) : undefined;
+  if (previous !== undefined) return planEdit(file, text, stringifyJsonLike({ ...cfg, statusLine: previous }, text), "restore the status line coding.sh replaced");
+  const createdByUs = rec?.restore === null;
+  const empty = Object.keys(rest).length === 0 && createdByUs;
   return planEdit(file, text, empty ? undefined : stringifyJsonLike(rest, text), "remove coding.sh status line");
+}
+
+/** The statusLine in the restore point's bytes, when it held one that is not ours. */
+function previousStatusLine(file: string, backup: string): unknown {
+  try {
+    const cfg = parseJsonObject(file, readFileSync(backup, "utf8"));
+    const command = currentCommand(cfg);
+    return cfg.statusLine !== undefined && !(command !== undefined && OURS.test(command)) ? cfg.statusLine : undefined;
+  } catch {
+    return undefined; // a backup gone or unreadable: remove ours
+  }
 }

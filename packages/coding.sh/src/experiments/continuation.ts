@@ -18,6 +18,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { harnessItem, itemExposure, parseFrontmatter, type ExposureEvent, type ExposureState } from "../core/exposure.ts";
+import { importedBy, loadedBy } from "../core/harness-paths.ts";
 import { sha256Hex } from "../core/ids.ts";
 import { paths } from "../core/paths.ts";
 import { costFrom, lookupPrice, pricesFor, type Prices } from "../core/pricing.ts";
@@ -166,12 +167,21 @@ export interface InjectedFile {
  * files (CLAUDE.md, AGENTS.md, rules without paths) in full; a path-scoped
  * rule only when the prefix touched a matching file; a skill listed by name
  * and description unless the prefix opened it. Files that are not instruction
- * items (any other path) always go in full.
+ * items (any other path) always go in full. A harness file the prefix's agent
+ * does not load (loadedBy) is left out.
  */
 export function injectContext(files: readonly ContextFile[], p: FrozenPrefix): InjectedFile[] {
   const events = prefixEvents(p);
   const out: InjectedFile[] = [];
+  const imported = importedBy(p.agent, files);
   for (const f of files) {
+    // A file the session's agent never loads (AGENTS.md for Claude Code) is not in its context,
+    // unless a file it loads imports it (a CLAUDE.md of `@AGENTS.md`): then it goes in full.
+    if (imported.has(f.path.replace(/\\/g, "/"))) {
+      out.push({ path: f.path, how: "full", text: f.text, exposure: "in-context" });
+      continue;
+    }
+    if (loadedBy(p.agent, f.path) === false) continue;
     const item = harnessItem(f.path, f.text);
     if (!item) {
       out.push({ path: f.path, how: "full", text: f.text, exposure: "in-context" });

@@ -165,7 +165,9 @@ when the evidence is weak. The `jq` check is strict and suits small deterministi
 | `working-directory` | `.` | Where the command runs. |
 | `comment` | `true` | Post the report on the pull request, and edit that comment on later runs. |
 | `github-token` | `${{ github.token }}` | The token for the comment. |
-| `node-version` | `22` | The Node.js to set up. Empty uses the runner's (22.15 or newer). |
+| `annotate` | `true` | Write an error annotation on the run when the command fails. |
+| `fail` | `true` | Fail the step when the command fails. `false` only sets `exit-code`, for a job that checks the code itself. |
+| `node-version` | `22` | The Node.js to set up. Empty uses the runner's (22.16 or newer). |
 
 Outputs: `exit-code` (0 passed, 1 failed, 2 a usage error) and `report`, the path of a Markdown file
 with the report. The action sets `CODING_SH_HOME` under `$RUNNER_TEMP` when it is unset, so coding.sh

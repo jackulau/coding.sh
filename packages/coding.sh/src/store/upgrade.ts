@@ -12,6 +12,7 @@
 import { constants, copyFileSync, readdirSync, readFileSync, renameSync, rmSync, statfsSync, statSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { ownerOnly } from "./sqlite-open.ts";
 
 /** Stores with at least this many events print upgrade progress (smaller ones upgrade in well under a second). */
 export const UPGRADE_PROGRESS_MIN_ROWS = 100_000;
@@ -285,6 +286,8 @@ export function backupIndex(dbPath: string, from: number, io: BackupIo = BACKUP_
       if (free !== undefined && free < needed) throw new BackupSpaceError(dbPath, needed, free);
       io.copy(dbPath, tmp);
     }
+    // A copy of the index holds what it holds: owner-only, as the index is.
+    ownerOnly(tmp);
     renameSync(tmp, dest);
   } catch (e) {
     rmSync(tmp, { force: true });

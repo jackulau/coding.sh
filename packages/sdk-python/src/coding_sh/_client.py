@@ -21,9 +21,11 @@ import collections
 import json
 import logging
 import os
+import re
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Deque, Dict, List, Optional
 
@@ -62,6 +64,32 @@ def ingest_url(url: str) -> str:
     return u if u.endswith("/v1/ingest") else u + "/v1/ingest"
 
 
+_warned_urls: "set[str]" = set()
+
+
+def _url_problem(url: str) -> Optional[str]:
+    """Why a server URL cannot be used, or None. Never repeats credentials."""
+    try:
+        u = urllib.parse.urlsplit(url.strip())
+        scheme, host = u.scheme.lower(), u.hostname
+    except ValueError:
+        return "is not a URL"
+    if scheme not in ("http", "https"):
+        return "must start with http:// or https://"
+    if not host:
+        return "has no host"
+    return None
+
+
+def _redact_url(url: str) -> str:
+    """The URL with any user:password replaced by an ellipsis; the scheme stays."""
+    u = url.strip()
+    shown = re.sub(r"//[^@/]*@", "//\u2026@", u, count=1)
+    if shown != u:
+        return shown
+    return "\u2026@" + u.rsplit("@", 1)[-1] if "@" in u else u
+
+
 class Config:
     """Resolved settings. Arguments win over env vars, env vars over defaults."""
 
@@ -78,6 +106,17 @@ class Config:
         debug: Optional[bool] = None,
     ) -> None:
         self.url = url or _env("CODING_SH_URL")
+        if self.url:
+            problem = _url_problem(self.url)
+            if problem:
+                if self.url not in _warned_urls:
+                    _warned_urls.add(self.url)
+                    log.warning(
+                        "coding.sh: the server URL %r %s (for example http://localhost:4318); the SDK is off",
+                        _redact_url(self.url),
+                        problem,
+                    )
+                self.url = None
         self.key = key or _env("CODING_SH_INGEST_KEY")
         self.service = service or _env("CODING_SH_SERVICE") or _env("OTEL_SERVICE_NAME")
         mode = (capture or _env("CODING_SH_CAPTURE_MODE") or "full").strip().lower()
@@ -149,7 +188,8 @@ class Transport:
         ).encode("utf-8")
         self._reset_state()
         self._warned: Dict[str, bool] = {}
-        self._last_queue_warn = 0.0
+        self._gave_up = False  # an explicit flush() timed out: do not wait again at exit
+        self._last_queue_warn = float("-inf")
         if cfg.enabled:
             atexit.register(self._atexit)
             if hasattr(os, "register_at_fork"):
@@ -231,6 +271,12 @@ class Transport:
                 while self._q or self._inflight:
                     remaining = None if deadline is None else deadline - time.monotonic()
                     if remaining is not None and remaining <= 0:
+                        self._gave_up = True
+                        self._warn_once(
+                            "flush-timeout",
+                            "coding.sh: flush() gave up after %g s with %d events not sent; "
+                            "they will not be retried at exit" % (timeout or 0, len(self._q) + self._inflight),
+                        )
                         return False
                     self._cv.wait(remaining if remaining is not None else 0.5)
                 return True
@@ -404,7 +450,8 @@ class Transport:
 
     def _atexit(self) -> None:
         try:
-            self.flush(ATEXIT_TIMEOUT_S)
+            if not self._gave_up:
+                self.flush(ATEXIT_TIMEOUT_S)
         except Exception:
             pass
         finally:

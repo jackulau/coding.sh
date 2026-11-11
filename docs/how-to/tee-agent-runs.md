@@ -69,7 +69,7 @@ If you call `createAgentRun()` yourself, add the same processor to the tracer pr
 
 ```sh
 npx coding.sh sessions
-npx coding.sh view
+npx coding.sh ui
 ```
 
 Each Agent Runs run (`agent.run.id`) is one session:

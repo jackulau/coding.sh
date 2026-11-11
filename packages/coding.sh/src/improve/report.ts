@@ -1,13 +1,13 @@
 // The improve report: what to fix first in a repo's recent sessions, and
 // whether the harness changes already made helped. Shared by `coding.sh
 // improve` and the MCP improve / harness_changes tools.
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentEvent, Session } from "../schema/index.ts";
 import { redactShown } from "../core/redact.ts";
 import type { IndexStore } from "../core/types.ts";
 import { insideDir } from "../eval/decision.ts";
-import { guessVerifierFromRepo, inspectRepo } from "../eval/task.ts";
+import { extractTestCommand, guessVerifierFromEvents, guessVerifierFromRepo, inspectRepo } from "../eval/task.ts";
 import { autoCliProvider, CLI_PLAN, isCliProvider, type CliProvider } from "../judge/subscription.ts";
 import { changeEffects, currentVersion, sessionVersions, type ChangeEffect, type GroupStats } from "./changes.ts";
 import { failureRecords, rankIssues, type FailureRecord, type Issue } from "./issues.ts";
@@ -39,18 +39,72 @@ export async function scopeSessions(index: IndexStore, s: ImproveScope): Promise
   return all.filter((x) => x.startedAt >= s.since && (s.headless || !isHeadless(x)) && (!s.agents?.length || s.agents.includes(x.agent)) && (!s.repo || insideDir(s.repo, x.repo?.root) || insideDir(s.repo, x.cwd)));
 }
 
-/** The repo's own test command, e.g. `npm test` (undefined when none is obvious). */
+/**
+ * The repo's own test command, e.g. `npm test`: from its manifests, else the
+ * first one its AGENTS.md (or CLAUDE.md) names in code. Undefined when neither has one.
+ */
 export async function testCommandOf(root: string | undefined): Promise<string | undefined> {
   if (!root || !existsSync(root)) return undefined;
   try {
-    return guessVerifierFromRepo(await inspectRepo(root));
+    return guessVerifierFromRepo(await inspectRepo(root)) ?? namedTestCommand(root);
   } catch {
     return undefined;
   }
 }
 
+/** The first test command an instructions file names in a code span or block. */
+export function namedTestCommand(root: string): string | undefined {
+  for (const f of ["AGENTS.md", "CLAUDE.md"]) {
+    let text: string;
+    try {
+      text = readFileSync(join(root, f), "utf8");
+    } catch {
+      continue;
+    }
+    const code = [...text.matchAll(/```[^\n]*\n([\s\S]*?)```|`([^`\n]+)`/g)].flatMap((m) => (m[1] ?? m[2] ?? "").split("\n"));
+    for (const line of code) {
+      const t = extractTestCommand(line.replace(/\s+#.*$/, "").trim(), root);
+      if (t) return t;
+    }
+  }
+  return undefined;
+}
+
+/** The test command most sessions ran last (ties: the newest session's), or undefined. */
+async function sessionTestCommand(index: IndexStore, sessions: readonly Session[], repoRoot: string | undefined): Promise<string | undefined> {
+  const counts = new Map<string, number>();
+  for (const s of sessions.filter((x) => x.stats.toolCalls > 0).slice(0, MAX_EVENT_SESSIONS)) {
+    const t = guessVerifierFromEvents(await index.listEvents(s.id, { kinds: ["tool.start"], limit: 5000 }), repoRoot ?? s.repo?.root);
+    if (t) counts.set(t, (counts.get(t) ?? 0) + 1);
+  }
+  let best: [string, number] | undefined;
+  for (const e of counts) if (!best || e[1] > best[1]) best = e;
+  return best?.[0];
+}
+
+/**
+ * Sessions flagged no-verification that never said anything (a `coding.sh run`
+ * wrapper records the command, not the agent's words): with no claim of being
+ * done there is nothing unverified, so the flag is left out of the report.
+ */
+async function withoutSilentClaims(index: IndexStore, sessions: readonly Session[]): Promise<Session[]> {
+  const out: Session[] = [];
+  let read = 0;
+  for (const s of sessions) {
+    if (!s.flags?.includes("no-verification")) {
+      out.push(s);
+      continue;
+    }
+    const silent = s.agent === "wrapper" || (read++ < MAX_EVENT_SESSIONS && !(await index.listEvents(s.id, { kinds: ["assistant.message"], limit: 1 })).length);
+    out.push(silent ? { ...s, flags: s.flags.filter((f) => f !== "no-verification") } : s);
+  }
+  return out;
+}
+
 /** The ranked issues in `sessions`. */
 export async function findIssues(index: IndexStore, sessions: readonly Session[], o: { repoRoot?: string; testCommand?: string } = {}): Promise<Issue[]> {
+  sessions = await withoutSilentClaims(index, sessions);
+  const testCommand = o.testCommand ?? (await sessionTestCommand(index, sessions, o.repoRoot));
   const failures = new Map<string, FailureRecord[]>();
   const withFailures = sessions.filter((s) => s.stats.toolErrors > 0 || (s.stats.testsFailed ?? 0) > 0).slice(0, MAX_EVENT_SESSIONS);
   for (const s of withFailures) {
@@ -58,7 +112,7 @@ export async function findIssues(index: IndexStore, sessions: readonly Session[]
     const recs = failureRecords(events, o.repoRoot ?? s.repo?.root);
     if (recs.length) failures.set(s.id, recs);
   }
-  const ranked = rankIssues(sessions, failures, o.testCommand ? { testCommand: o.testCommand } : {}).map(shownIssue);
+  const ranked = rankIssues(sessions, failures, testCommand ? { testCommand } : {}).map(shownIssue);
   return o.repoRoot ? markQuiet(o.repoRoot, sessions, ranked) : ranked;
 }
 
@@ -197,14 +251,18 @@ export function removalStep(e: ChangeEffect): Step | undefined {
   return { label: "Test whether the harness does as well without this change", command: `coding.sh refine test git:${e.change.previous.slice(0, 7)}` };
 }
 
-/** Where a fix line goes: the context file the issue's agents read, else the one the repo has. */
+/**
+ * Where a fix line goes: the context file most of the issue's agents load.
+ * Claude Code reads CLAUDE.md and never AGENTS.md; Codex and most others read
+ * AGENTS.md; Gemini CLI reads GEMINI.md. With no agents, the file the repo has.
+ */
 export function targetFile(root: string, agents: readonly string[]): string {
   const has = (f: string) => existsSync(join(root, f));
   const claude = agents.filter((a) => a === "claude-code").length;
-  const other = agents.length - claude;
-  if (has("CLAUDE.md") && has("AGENTS.md")) return claude >= other ? "CLAUDE.md" : "AGENTS.md";
-  if (has("CLAUDE.md")) return "CLAUDE.md";
-  if (has("AGENTS.md")) return "AGENTS.md";
-  if (has("GEMINI.md") && agents.includes("gemini-cli")) return "GEMINI.md";
-  return claude >= other ? "CLAUDE.md" : "AGENTS.md";
+  const gemini = agents.filter((a) => a === "gemini-cli").length;
+  const other = agents.length - claude - gemini;
+  if (!agents.length) return has("AGENTS.md") && !has("CLAUDE.md") ? "AGENTS.md" : "CLAUDE.md";
+  if (claude >= other && claude >= gemini) return "CLAUDE.md";
+  if (gemini > other && has("GEMINI.md")) return "GEMINI.md";
+  return "AGENTS.md";
 }

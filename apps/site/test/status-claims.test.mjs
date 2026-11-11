@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { distOpts, needDist } from "./_dist.mjs";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const CORE = "packages/coding.sh";
@@ -86,8 +87,13 @@ export const FEATURES = [
 /** Packages from this repo that are on npm (checked with `npm view <name> version`, 2026-11-08). */
 export const PUBLISHED_ON_NPM = ["coding.sh", "@codingdotsh/sdk", "coding.sh-store-postgres", "coding.sh-store-s3", "coding.sh-store-clickhouse"];
 
-/** Phrases that say a published npm package is not published. The Python SDK on PyPI is still unpublished, so "not on PyPI" is fine. */
+/** Packages from this repo that are on PyPI (first release 0.1.3, docs/RELEASE.md). */
+export const PUBLISHED_ON_PYPI = ["coding-sh"];
+
+/** Phrases that say a published package is not published. */
 const STALE = [
+  /not (?:yet )?(?:on|in) PyPI/i,
+  /isn't on PyPI/i,
   /not (?:yet )?(?:on|in) npm/i,
   /not on npm or PyPI/i,
   /\bnot published yet\b/i,
@@ -149,16 +155,55 @@ test("nothing built is called planned", () => {
   assert.deepEqual(problems, [], `Stale planned claims:\n${problems.join("\n")}`);
 });
 
-test("no page says a published npm package is unpublished", () => {
+/** Lines in text that say a published package is not published. A claim wrapped over two lines counts. */
+export function findStale(text) {
+  const lines = text.split("\n");
+  return lines.filter((line, i) => STALE.some((re) => re.test(line) || (!re.test(lines[i + 1] ?? "") && re.test(`${line.trim()} ${(lines[i + 1] ?? "").trim()}`))));
+}
+
+test("findStale catches the Python SDK called unpublished", () => {
+  assert.equal(findStale("the Python SDK is not on PyPI yet").length, 1);
+  assert.equal(findStale("the Python SDK isn't on PyPI yet").length, 1);
+  assert.equal(findStale("is not on\n  PyPI yet").length, 1, "wrapped over two lines");
+  assert.equal(findStale("pip install coding-sh").length, 0);
+});
+
+test("no page says a published package is unpublished", () => {
   const problems = [];
   for (const file of scannedFiles()) {
-    read(file)
-      .split("\n")
-      .forEach((line, i) => {
-        if (STALE.some((re) => re.test(line))) problems.push(`${file}:${i + 1}: ${line.trim().slice(0, 140)}`);
-      });
+    const lines = read(file).split("\n");
+    lines.forEach((line, i) => {
+      if (findStale(`${line}\n${lines[i + 1] ?? ""}`).includes(line)) problems.push(`${file}:${i + 1}: ${line.trim().slice(0, 140)}`);
+    });
   }
   assert.deepEqual(problems, [], `Stale publish claims:\n${problems.join("\n")}`);
+});
+
+test("PUBLISHED_ON_PYPI names the Python SDK's package", () => {
+  const name = read("packages/sdk-python/pyproject.toml").match(/^name\s*=\s*"([^"]+)"/m)?.[1];
+  assert.deepEqual([name], PUBLISHED_ON_PYPI);
+});
+
+test("the version the site and README show is the CLI's version", () => {
+  const version = JSON.parse(read(`${CORE}/package.json`)).version;
+  const problems = [];
+  const site = read("apps/site/src/data/site.ts");
+  if (!site.includes(`RELEASE = "${version}"`)) problems.push(`apps/site/src/data/site.ts: RELEASE is not ${version}`);
+  for (const file of ["apps/site/src/data/site.ts", "apps/site/src/pages/docs/faq.astro", "README.md"]) {
+    for (const [i, line] of read(file).split("\n").entries()) {
+      for (const m of line.matchAll(/\b(?:latest: |v)(0\.\d+\.\d+)\b/g)) {
+        if (m[1] !== version && !/CODING_SH_VERSION/.test(line)) problems.push(`${file}:${i + 1}: says ${m[1]}, the CLI is ${version}`);
+      }
+    }
+  }
+  assert.deepEqual(problems, []);
+});
+
+test("a built site shows the release in its status", distOpts(join(ROOT, "apps/site/dist/index.html")), () => {
+  needDist(join(ROOT, "apps/site/dist/index.html"));
+  const release = read("apps/site/src/data/site.ts").match(/RELEASE = "([^"]+)"/)[1];
+  const shown = [...read("apps/site/dist/index.html").matchAll(/\bv(0\.\d+\.\d+)\b/g)].map((m) => m[1]).filter((v) => v !== "0.1.0");
+  assert.deepEqual(shown.filter((v) => v !== release), []);
 });
 
 test("every npm package in the repo is in PUBLISHED_ON_NPM", () => {

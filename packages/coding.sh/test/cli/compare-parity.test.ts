@@ -3,12 +3,14 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { diffParity, readPage, type ParitySide } from "../../src/cli/commands/compare-parity.ts";
 import { tmpEnv, type TmpEnv } from "../adapters/_helpers.ts";
 import { spawn } from "node:child_process";
+import { main } from "../../src/cli/main.ts";
 import { CLI, cli as cliSync } from "../query/_seed.ts";
 
 /** The CLI, run without blocking this process: the stub servers live here and must keep answering. */
@@ -122,14 +124,51 @@ describe("compare --parity", () => {
     const r = await cli(["compare", "--parity", cmd, `${a}/`, "--json"]);
     assert.equal(r.status, 1, r.stderr);
     const fields = JSON.parse(r.stdout).diffs.map((d: { field: string }) => d.field);
-    assert.deepEqual(fields, ["status", "redirects", "canonical", "og:url"]);
+    assert.deepEqual(fields, ["redirects", "canonical", "og:url"], "a command has no status, so none is compared");
   });
 
   test("an unreachable URL is a fetch_failed error; --user-agent alone is a usage error", async () => {
     const r = await cli(["compare", "--parity", "http://127.0.0.1:9/", `${a}/`, "--json"]);
-    assert.equal(r.status, 1);
+    assert.equal(r.status, 2, "a page that could not be read is exit 2; 1 stays 'the pages differ'");
     assert.equal(JSON.parse(r.stdout || r.stderr).error?.reason ?? JSON.parse(r.stdout || r.stderr).reason, "fetch_failed");
     assert.equal(cliSync(["compare", "a", "b", "--user-agent", "x"]).status, 2);
+  });
+});
+
+describe("compare --parity, edge cases", () => {
+  const side = (o: Partial<ParitySide["page"]> & { status?: number | undefined }, input = "x"): ParitySide => ({ input, page: { redirects: [], social: {}, hreflang: 0, jsonLdTypes: [], jsonLdErrors: 0, ...o } });
+
+  test("status is left out when a side is a command (it has none)", () => {
+    const d = diffParity(side({ status: 200, title: "T" }, "https://a.test/"), side({ title: "T" }, "cat x.html"));
+    assert.deepEqual(d, []);
+  });
+
+  test("two server-error pages are not at parity", () => {
+    const d = diffParity(side({ status: 500 }), side({ status: 500 }));
+    assert.equal(d.length, 1);
+    assert.equal(d[0]!.field, "status");
+    assert.deepEqual(diffParity(side({ status: 404 }), side({ status: 404 })), []);
+  });
+
+  test("named entities in a title read as the characters they stand for", () => {
+    assert.equal(readPage("<title>Docs &mdash; caf&eacute; &rsquo;s &#8212;</title>").title, "Docs \u2014 caf\u00e9 \u2019s \u2014");
+  });
+
+  test("an empty page argument is a usage error (exit 2), a command that never prints is exit 2", async () => {
+    // In process, so the empty argument reaches the command as written on every platform
+    // (a Windows command line has no portable spelling of an empty argument).
+    // A temp store, or a run from source refuses the default one (exit 1) before it reads the arguments.
+    const home = mkdtempSync(join(tmpdir(), "csh-parity-"));
+    const env = { ...process.env, CODING_SH_HOME: home, CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1", NO_COLOR: "1" };
+    try {
+      assert.equal(await main(["compare", "--parity", "", "x"], env), 2);
+      // `false` is no command on Windows; node is on PATH wherever the tests run.
+      const quiet = 'node -e "process.exit(3)"';
+      const r = cliSync(["compare", "--parity", quiet, quiet], { CODING_SH_HOME: home });
+      assert.equal(r.status, 2, r.stdout + r.stderr);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

@@ -5,7 +5,7 @@ import { createRedactor } from "../../core/redact.ts";
 import { FileEvalStore } from "../../datasets/store.ts";
 import { createEveEvalsHandler, EVE_EVALS_PATH } from "../../integrations/eve/evals.ts";
 import { ClickHouseError, importClickHouse } from "../../otel/clickhouse.ts";
-import { startReceiver } from "../../otel/receiver.ts";
+import { isLoopbackHost, startReceiver } from "../../otel/receiver.ts";
 import { SinkMirror } from "../../server/mirror.ts";
 import { parseSince } from "../args.ts";
 import { port as portFlag, str, withContext } from "../common.ts";
@@ -28,6 +28,14 @@ export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
   const port = portFlag(c.flags.port, 4318);
   const host = str(c.flags.host) ?? "127.0.0.1";
+  // The collector has no keys, so it stays on loopback. serve takes keys and a public bind.
+  if (!isLoopbackHost(host)) {
+    throw new CliError(`The collector only listens on loopback, not ${host}: it has no keys`, {
+      reason: "invalid_value",
+      exitCode: 2,
+      next: ["To receive traces from other machines, run the server (it needs keys):", `coding.sh serve --host ${host}`],
+    });
+  }
   return withContext(c, async (ctx) => {
     let receiver;
     // [[sinks]] get what the receiver newly stores, as ingest sends them hook events: a batch posted again is sent once.

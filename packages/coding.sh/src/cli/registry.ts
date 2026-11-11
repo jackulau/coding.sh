@@ -661,7 +661,7 @@ export const COMMANDS: CommandSpec[] = [
       { name: "per", type: "string", value: "<BUCKET>", choices: ["day", "week"], desc: "Bucket size", default: "day" },
       { ...SINCE, default: "30d" },
       { name: "until", type: "string", value: "<WHEN>", desc: "Only before this time (exclusive): 7d, 12h, today or a date in local time; --until 2026-11-09 leaves that day out (default: now)" },
-      { name: "all", type: "boolean", desc: "Count subagent sessions as their own rows (default: top-level sessions only)" },
+      { name: "all", type: "boolean", desc: "Count subagent sessions as their own rows (default: top-level sessions only, with each subagent's cost, tokens and tool calls added to its top-level session)" },
       WHERE("sessions"),
       FRESH,
     ],
@@ -1268,7 +1268,7 @@ export const COMMANDS: CommandSpec[] = [
       {
         name: "show",
         summary: "Show a stored experiment: pass rate, graders and failures",
-        args: [{ name: "experiment", desc: "Experiment id or name (newest, cancelled ones included)", required: true }],
+        args: [{ name: "experiment", desc: "Experiment id or name (newest, cancelled ones included), or latest", required: true }],
       },
       { name: "list", summary: "List experiments", flags: [LIMIT(20)] },
       {
@@ -1356,7 +1356,7 @@ export const COMMANDS: CommandSpec[] = [
     actions: [
       {
         name: "grade",
-        summary: "Run one grader on one output and trace (exit 0 on pass); inside a verifier both default to the agent's",
+        summary: "Run one grader on one output and trace (exit 0 on pass, 1 on a fail verdict, 2 when the grader could not grade); inside a verifier both default to the agent's",
         flags: [
           { name: "grader", short: "g", type: "string", value: "<JSON|FILE>", desc: "Grader spec, the same JSON as `exp run --grader` (llm, llm-checklist with trace checks, contains, regex, …)" },
           { name: "output", type: "string", value: "<FILE|->", desc: "The output to grade (default: $CODING_SH_AGENT_OUTPUT, the agent's final answer in a verifier)" },
@@ -1648,7 +1648,7 @@ export const COMMANDS: CommandSpec[] = [
       { name: "b", desc: "Candidate bundle id or name (omit with --without or --with; with --parity: the other URL or command)" },
     ],
     flags: [
-      { name: "parity", type: "boolean", desc: "Instead: diff what a crawler reads from two pages (status, redirects, title, description, canonical, robots, Open Graph and Twitter tags, hreflang count, JSON-LD types, lang). Exits 1 when they differ" },
+      { name: "parity", type: "boolean", desc: "Instead: diff what a crawler reads from two pages (status, redirects, title, description, canonical, robots, Open Graph and Twitter tags, hreflang count, JSON-LD types, lang; status is left out when a side is a command). Exits 1 when they differ, 2 when a page could not be read" },
       { name: "user-agent", type: "string", value: "<UA>", desc: "With --parity: the User-Agent to fetch as (default: a coding.sh crawler agent)" },
       { name: "task", short: "t", type: "list", commas: true, value: "<ID>", desc: "Task id (repeatable; default: all validated tasks)" },
       { name: "tag", type: "string", value: "<TAG>", desc: "Run every non-archived task with this tag, drafts included (e.g. the tag given to eval import)" },

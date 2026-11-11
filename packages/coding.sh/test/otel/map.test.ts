@@ -428,6 +428,17 @@ describe("ids, blobs and agent detection", () => {
     assert.equal(detectAgent({ "service.name": "My Cool_Agent v2" }), "my-cool-agent-v2");
     assert.equal(kebab("--A__b--"), "a-b");
   });
+
+  it("keeps the letters of any script in a service name", () => {
+    assert.equal(kebab("Ünïcode Bot"), "unicode-bot");
+    assert.equal(kebab("客服"), "客服");
+    assert.equal(kebab("Café Agent 2"), "cafe-agent-2");
+    assert.equal(kebab("агент поддержки"), "агент-поддержки");
+    assert.equal(kebab("हिन्दी सहायक"), "हिन्दी-सहायक", "vowel signs are marks of the word, not accents");
+    assert.equal(kebab("😀"), "", "no letters, no name");
+    assert.equal(detectAgent({ "service.name": "客服" }), "客服");
+    assert.equal([...kebab("字".repeat(80))].length, 64);
+  });
 });
 
 // Usage.inputTokens is the uncached part (adapters/_shared/normalize.ts openaiUsage):

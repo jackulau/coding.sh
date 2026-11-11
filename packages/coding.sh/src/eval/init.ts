@@ -12,13 +12,14 @@
 // model (`--draft`); drafted content is marked draft. The suite is plain files
 // to read, edit and commit; `coding.sh eval run <name>` runs it.
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { version } from "../cli/meta.ts";
 import { sha256Hex } from "../core/ids.ts";
 import { failureFlags } from "../core/sessions.ts";
 import { stringifyToml } from "../core/toml.ts";
-import type { BlobStore, IndexStore, Session } from "../core/types.ts";
+import type { BlobStore, EvalTask, IndexStore, Session } from "../core/types.ts";
 import { parseCases, formatFromPath, slugify } from "../datasets/dataset.ts";
 import type { ChatProvider } from "../judge/providers.ts";
 import { toPosix } from "../runner/fsutil.ts";
@@ -30,8 +31,8 @@ import { type SuitePurpose } from "./report.ts";
 import { DEFAULT_TRIALS, SUITE_FILE, SUITES_DIR, type SuiteKind, type SuiteSpec } from "./suite-spec.ts";
 import { draftTaskFromSession, exportTaskDir } from "./task.ts";
 import { referenceTestEdits } from "./test-edits.ts";
-import { validateTask } from "./validate.ts";
-import { sessionMatcher } from "../query/run.ts";
+import { runVerifier, taskWorlds, validateTask } from "./validate.ts";
+import { findSessions } from "../query/run.ts";
 import type { Query } from "../query/where.ts";
 import { parseTriggerSpec, readSkill, siblingSkills, TriggerSpecError } from "./trigger.ts";
 
@@ -56,6 +57,8 @@ export interface InitOpts {
   name: string;
   /** Project root: the suite goes to <root>/evals/<name>. */
   root: string;
+  /** Where eval init was run (default root): --cases and --skill are read from here, and a --command runs here. */
+  cwd?: string;
   source: InitSource;
   purpose?: SuitePurpose;
   trials?: number;
@@ -263,11 +266,15 @@ export const CAPTURED_FAILURE_TAG = "captured-failure";
 /** A session that went wrong: a failure flag (not a tag), or tests still failing. */
 export const isFlagged = (s: Session): boolean => failureFlags(s.flags).length > 0 || (s.stats.testsFailed ?? 0) > 0;
 
-/** Recent root sessions in the project (only failed or flagged ones unless `flaggedOnly` is false), newest first, at most CANDIDATE_POOL. */
-export async function recentSessions(o: Pick<InitOpts, "root" | "since" | "sessionsRepo">, index: IndexStore, now: number, flaggedOnly = true): Promise<Session[]> {
+/**
+ * Recent root sessions in the project (only failed or flagged ones unless `flaggedOnly` is false), newest first, at most CANDIDATE_POOL.
+ * With `query`, only sessions matching it, read through the store's query path (which answers event keys on SQLite).
+ */
+export async function recentSessions(o: Pick<InitOpts, "root" | "since" | "sessionsRepo">, index: IndexStore, now: number, flaggedOnly = true, query?: Query): Promise<Session[]> {
   const since = now - (o.since ?? DEFAULT_SINCE_MS);
   const where = o.sessionsRepo;
-  const all = await index.listSessions({ ...(where ? {} : { repoRoot: o.root }), runId: null, parentSessionId: null, since });
+  const filter = { ...(where ? {} : { repoRoot: o.root }), runId: null, parentSessionId: null, since };
+  const all = query ? (await findSessions(index, query, { filter })).sessions : await index.listSessions(filter);
   return all
     .filter((s) => (!flaggedOnly || isFlagged(s)) && s.startedAt >= since && (!where || where === "all" || insideDir(where, s.repo?.root) || insideDir(where, s.cwd)))
     .sort((a, b) => b.startedAt - a.startedAt)
@@ -285,13 +292,7 @@ async function pickSessions(o: InitOpts, index: IndexStore, now: number): Promis
     return { sessions: out, notes: [] };
   }
   // Ranked (eval/candidates.ts): sessions that can't become a task are left out, the rest go best first.
-  let pool = await recentSessions(o, index, now, !o.where);
-  if (o.where) {
-    const match = sessionMatcher(index, o.where.root);
-    const hits: Session[] = [];
-    for (const s of pool) if (await match(s)) hits.push(s);
-    pool = hits;
-  }
+  const pool = await recentSessions(o, index, now, !o.where, o.where);
   const ranked = await rankSessions(index, pool, { now });
   const byId = new Map(pool.map((s) => [s.id, s]));
   const sessions = ranked.filter((c) => c.eligible).slice(0, o.limit ?? DEFAULT_SESSION_LIMIT).map((c) => byId.get(c.sessionId)!);
@@ -340,7 +341,7 @@ async function fromSessions(o: InitOpts, deps: InitDeps, name: string, _dir: str
     let failed = isFlagged(s) && !!task.referencePatch;
     // Neither holds for a diff that changes the verifier's own tests: it passes
     // the verifier whatever the code does, so it is a near miss before any run.
-    const testEdits = task.referencePatch && task.verifier.command && (o.validate || !failed) ? await referenceTestEdits(task, (await deps.blobs.getText(task.referencePatch)) ?? "", await snapshotOps(deps.git)) : [];
+    const testEdits = task.referencePatch && task.verifier.command ? await referenceTestEdits(task, (await deps.blobs.getText(task.referencePatch)) ?? "", await snapshotOps(deps.git)) : [];
     if (testEdits.length) {
       failed = true;
       notes.push(`${d}: the session's diff changes the tests the verifier runs (${[...new Set(testEdits.map((f) => `${f.kind} ${f.path}`))].join(", ")}), so it is kept as a near miss, not the reference; add reference.patch, a fix that leaves the tests alone, then coding.sh eval validate`);
@@ -352,6 +353,13 @@ async function fromSessions(o: InitOpts, deps: InitDeps, name: string, _dir: str
         validated++;
       } else if (failed) notes.push(`${d}: the session's end state fails the verifier, so its diff is kept as a near miss; add reference.patch, a correct fix, then coding.sh eval validate`);
       else notes.push(`${d}: not validated: ${[...v.errors, ...(v.report.errors ?? [])][0] ?? validationGap(v.report)}`);
+    } else if (failed && task.verifier.command) {
+      // Flagged is not failed: one verifier run on the session's end state decides. A diff that
+      // passes is a candidate reference, not a near miss the verifier must fail.
+      if ((await endStatePasses(task, deps)) === true) {
+        failed = false;
+        notes.push(`${d}: the session's end state passes the verifier, so its diff is kept as reference.patch, not a near miss; check that it is a correct fix, then coding.sh eval validate`);
+      }
     }
     if (failed) task = { ...task, referencePatch: undefined, nearMissPatches: [task.referencePatch!, ...(task.nearMissPatches ?? [])] };
     await deps.index.putTask(task);
@@ -373,6 +381,29 @@ async function fromSessions(o: InitOpts, deps: InitDeps, name: string, _dir: str
   return { purpose: "capability", fields: { description: `Tasks from ${tasks.length} failed or flagged session(s)`, tasks: "tasks", agent }, files: {}, notes, drafted: false, todo: false, tasks };
 }
 
+/** Whether the verifier passes the task's start with its reference patch applied (the session's end state); undefined when it could not run. */
+async function endStatePasses(task: EvalTask, deps: InitDeps): Promise<boolean | undefined> {
+  const patch = task.referencePatch ? await deps.blobs.getText(task.referencePatch) : undefined;
+  if (patch === undefined) return undefined;
+  const workRoot = await mkdtemp(join(tmpdir(), "codingsh-init-"));
+  try {
+    const env = { ...process.env };
+    const worlds = taskWorlds({ task, workRoot, ops: await snapshotOps(deps.git), env });
+    const step = await worlds.prepare("end-state", patch);
+    try {
+      if (!step.applied || !step.setup.ok) return undefined;
+      const r = await runVerifier(step.dir, task, deps.blobs, env);
+      return r.exitCode === 0 && !r.timedOut;
+    } finally {
+      await worlds.cleanup(step.dir);
+    }
+  } catch {
+    return undefined;
+  } finally {
+    await rm(workRoot, { recursive: true, force: true });
+  }
+}
+
 /** The first check a validation failed, in words. */
 function validationGap(r: { noopFails: boolean; referencePasses: { passed: number; of: number }; nearMissesFail: { failed: number; of: number }; leakage: string[] }): string {
   if (!r.noopFails) return "the verifier already passes before any change";
@@ -386,7 +417,7 @@ function validationGap(r: { noopFails: boolean; referencePasses: { passed: numbe
 
 async function fromSkill(o: InitOpts, name: string, dir: string): Promise<Built> {
   if (!o.skill) throw new InitError("a skill suite needs the skill dir (--skill <DIR>)");
-  const skillPath = resolve(o.root, o.skill);
+  const skillPath = resolve(o.cwd ?? o.root, o.skill);
   const skill = await readSkill(skillPath).catch((e: Error) => {
     throw new InitError(e.message);
   });
@@ -484,9 +515,9 @@ async function fromCases(o: InitOpts, name: string, dir: string): Promise<Built>
   let cases: InitCase[];
   let drafted = false;
   if (o.casesFile) {
-    const file = resolve(o.root, o.casesFile);
+    const file = resolve(o.cwd ?? o.root, o.casesFile);
     const text = await readFile(file, "utf8").catch(() => {
-      throw new InitError(`can't read ${o.casesFile}`);
+      throw new InitError(`can't read ${file}`);
     });
     cases = parseCases(text, formatFromPath(file)) as InitCase[];
     if (!cases.length) throw new InitError(`${o.casesFile} has no cases`);
@@ -520,7 +551,11 @@ async function fromCases(o: InitOpts, name: string, dir: string): Promise<Built>
   if (cases.length < 20) notes.push(`${cases.length} case${cases.length === 1 ? "" : "s"}: grow toward 20 to 50 from real failures; a small suite only shows large changes`);
   const { graders, judge } = chooseGraders(cases, o.description);
   if (judge) notes.push("the grader is a model judge (ANTHROPIC_API_KEY, at ANTHROPIC_BASE_URL when set): label 20 or more runs in coding.sh ui, then coding.sh judge calibrate <experiment>, before you trust its verdicts");
-  const task = o.command ? { kind: "command", command: o.command } : { kind: "http", url: o.url };
+  // eval run starts a command at the root plus task.cwd: keep it where eval init was run.
+  const sub = o.cwd ? toPosix(relative(o.root, resolve(o.cwd))) : "";
+  const cwd = sub && !sub.startsWith("..") && !isAbsolute(sub) ? sub : undefined;
+  const task: Record<string, unknown> = o.command ? { kind: "command", command: o.command } : { kind: "http", url: o.url };
+  if (o.command && cwd) task.cwd = cwd;
   return {
     purpose: "regression",
     fields: { ...(o.description ? { description: o.description } : {}), cases: casesRef, task, graders },

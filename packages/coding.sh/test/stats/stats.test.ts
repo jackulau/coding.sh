@@ -459,12 +459,25 @@ describe("gate wording", () => {
     assert.equal(gateDetail(g), "abstain (not-significant) · 6 won, 0 lost of 6 solved (0%) · net +6 at λ=2 · p = 0.088 ≥ α 0.05 · needs ≥8 clean wins");
     assert.equal(gateHeadline(acceptanceGate({ wins: 0, losses: 0, solved: 4 }), "case"), "Hold: not enough evidence (no case changed outcome)");
   });
-  it("don't ship: B breaks solved items", () => {
-    const g = acceptanceGate({ wins: 6, losses: 3, solved: 6 });
+  it("hold with more wins than losses names what holds it, not the clean-win count", () => {
+    // 53 wins, 19 losses: significant, but 19 of 60 solved is over τ.
+    const over = acceptanceGate({ wins: 53, losses: 19, solved: 60 });
+    assert.equal(gateVerdict(over), "hold");
+    assert.equal(gateHeadline(over, "case"), "Hold: B wins 53, loses 19, but breaks 31.7% of the 60 cases A solved (over τ 10%)");
+    // Losses within τ, but each counts twice: the net gain is not positive.
+    assert.equal(gateHeadline(acceptanceGate({ wins: 10, losses: 5, solved: 100 }), "case"), "Hold: B wins 10, loses 5; with each loss counted 2 times, B gains nothing");
+    // Net positive and within τ, yet not significant.
+    assert.equal(gateHeadline(acceptanceGate({ wins: 9, losses: 2, solved: 100 }), "case"), "Hold: not enough evidence (B wins 9, loses 2; within chance)");
+  });
+  it("don't ship: B breaks solved items beyond chance", () => {
+    const g = acceptanceGate({ wins: 1, losses: 8, solved: 10 });
     assert.equal(gateVerdict(g), "dont-ship");
-    assert.equal(gateHeadline(g, "task"), "Don't ship: B breaks 3 tasks A solved (and wins 6)");
-    assert.match(gateDetail(g), /3 lost of 6 solved \(50% > τ 10%\) · net 0 at λ=2/);
-    assert.equal(gateHeadline(acceptanceGate({ wins: 0, losses: 1, solved: 5 }), "case"), "Don't ship: B breaks 1 case A solved");
+    assert.equal(gateHeadline(g, "task"), "Don't ship: B breaks 8 tasks A solved (and wins 1)");
+    assert.match(gateDetail(g), /8 lost of 10 solved \(80% > τ 10%\) · net -15 at λ=2 .* · breaks p = 0\.020 < α 0\.05 · /);
+    assert.equal(gateHeadline(acceptanceGate({ wins: 0, losses: 5, solved: 5 }), "case"), "Don't ship: B breaks 5 cases A solved");
+    // Losses that chance explains hold: 3 of 9 changed cases, or 1 of 1.
+    assert.equal(gateVerdict(acceptanceGate({ wins: 6, losses: 3, solved: 6 })), "hold");
+    assert.equal(gateVerdict(acceptanceGate({ wins: 0, losses: 1, solved: 5 })), "hold");
   });
   it("a group's regression (stratum-regression) is don't ship even with a pooled accept's numbers", () => {
     const g = acceptanceGate({ wins: 12, losses: 3, solved: 40 }, { lambda: 1 });

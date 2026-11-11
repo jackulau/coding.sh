@@ -84,6 +84,8 @@ export async function expReplay(c: CommandContext, store: FileEvalStore, ctx: Co
   const concurrency = positiveInt(c.flags.concurrency, "concurrency") ?? 4;
   const maxCost = num(c.flags["max-cost"]);
   const dryRun = c.flags["dry-run"] === true;
+  // The calls first: `--session latest` names what is replayed, and an error about it comes before one about --vary.
+  const events = await gather(c, ctx);
   let arms: [ReplayArm, ReplayArm];
   try {
     arms = parseVary(list(c.flags.vary), (p) => readFileSync(resolve(c.cwd, p), "utf8"));
@@ -91,7 +93,6 @@ export async function expReplay(c: CommandContext, store: FileEvalStore, ctx: Co
     throw new UsageError(e instanceof Error ? e.message : String(e), { reason: "invalid_argument" });
   }
 
-  const events = await gather(c, ctx);
   const cases: ReplayCase[] = [];
   const skipped: string[] = [];
   for (const e of events) {

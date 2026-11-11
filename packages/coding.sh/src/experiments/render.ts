@@ -1,7 +1,7 @@
 // Plain-text experiment and comparison reports (stdout = the answer). Scores
 // from judges that are not calibrated on held-out human labels are marked
 // with "*" wherever they appear, including the overall pass rate they feed.
-import type { CalibrationStatus, ExperimentResult, SeqSummary } from "../datasets/types.ts";
+import type { CalibrationStatus, Case, ExperimentResult, SeqSummary } from "../datasets/types.ts";
 import { CASE_KINDS } from "../datasets/types.ts";
 import type { KindComparisonReport } from "../datasets/kinds.ts";
 import { infraKinds, infraKindsText, infraStopText, voidText } from "../jobs/retry.ts";
@@ -17,7 +17,7 @@ import type { ArmAttrition, Comparison, ComparisonGate, ComparisonNonInferiority
 import type { PairwiseSummary } from "./pairwise.ts";
 import type { PairwiseReplication } from "./replicate.ts";
 import { selectionOf, type CaseSelection } from "./select.ts";
-import { exactPowerText } from "./power.ts";
+import { exactPowerText, mdeText } from "./power.ts";
 import type { ExperimentBlock, ExpSession, SessionBlock } from "./session.ts";
 import { stabilityLine } from "./stability.ts";
 import type { SweepResult } from "./sweep.ts";
@@ -26,6 +26,9 @@ import { fixed, ms, paint, pct, pValue, signedPct, table, truncate, type RenderO
 import { formatBestSet } from "../stats/mcb.ts";
 
 const trusted = (c: CalibrationStatus | undefined) => c === undefined || c.state === "calibrated";
+
+/** The columns (header cells or body cells) whose `keep` entry is true. */
+const keepColumns = <T>(keep: readonly boolean[], cols: readonly T[]): T[] => cols.filter((_, i) => keep[i]);
 
 function ci(lo: number, hi: number): string {
   return Number.isFinite(lo) && Number.isFinite(hi) ? `[${pct(lo)}, ${pct(hi)}]` : "—";
@@ -53,6 +56,32 @@ export function failureReason(run: ExperimentResult["runs"][number]): string {
   return "";
 }
 
+/** A failure reason as a table shows it: an Anthropic 529 also says "overloaded". */
+export function shownReason(reason: string): string {
+  return /overload/i.test(reason) ? reason : reason.replace(/(\b(?:HTTP|status(?: code)?:?|error:?|API) ?529)\b/i, "$1 (overloaded)");
+}
+
+const PROMPT_KEYS = ["prompt", "task", "instruction", "question", "message", "text", "input"];
+
+/**
+ * A short label per case id for failure tables: the case's `name` or `title`
+ * metadata, else its input on one line (an object's prompt field when it has
+ * one, else its JSON), cut to 40 characters.
+ */
+export function caseLabels(cases: readonly Pick<Case, "id" | "input" | "metadata">[]): Map<string, string> {
+  const str = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";
+  const out = new Map<string, string>();
+  for (const c of cases) {
+    const named = [c.metadata?.name, c.metadata?.title].find(str);
+    const i = c.input;
+    const prompt = i && typeof i === "object" && !Array.isArray(i) ? PROMPT_KEYS.map((k) => (i as Record<string, unknown>)[k]).find(str) : undefined;
+    const text = named ?? (typeof i === "string" ? i : (prompt ?? JSON.stringify(i) ?? ""));
+    const line = text.replace(/\s+/g, " ").trim();
+    if (line) out.set(c.id, truncate(line, 40));
+  }
+  return out;
+}
+
 /** Whether a stored experiment is a checkpoint written mid-run (`exp run` keeps one while it runs). */
 export function isCheckpoint(r: Pick<ExperimentResult, "metadata">): boolean {
   const ck = r.metadata?.checkpoint as { done?: unknown } | undefined;
@@ -70,7 +99,7 @@ export function selectionText(s: CaseSelection): string {
   return `${s.selected} of ${s.of}${parts.length ? `: ${parts.join(", ")}` : ""}`;
 }
 
-export function renderExperiment(r: ExperimentResult, opts: RenderOpts & { verifiers?: ReadonlyMap<string, VerifierAudit> }): string {
+export function renderExperiment(r: ExperimentResult, opts: RenderOpts & { verifiers?: ReadonlyMap<string, VerifierAudit>; cases?: ReadonlyMap<string, string> }): string {
   const color = opts.color;
   const limit = opts.limit ?? 20;
   const s = r.summary;
@@ -179,10 +208,34 @@ export function renderExperiment(r: ExperimentResult, opts: RenderOpts & { verif
     if (!rows.length) continue;
     out.push("");
     out.push(`${paint(title, "bold", color)} ${rows.length}`);
+    const reasonOf = (x: (typeof rows)[number]) => truncate(shownReason(failureReason(x)), 100);
+    const label = (id: string) => opts.cases?.get(id);
+    const labelled = rows.some((x) => label(x.caseId) !== undefined);
+    const shown = <T>(cols: T[]) => keepColumns([true, labelled, r.trials > 1, true], cols);
+    const groups = new Map<string, (typeof rows)[number][]>();
+    for (const x of rows) groups.set(reasonOf(x), [...(groups.get(reasonOf(x)) ?? []), x]);
+    if (groups.size < rows.length) {
+      // The same reason on several runs: one row per reason, with how many and which cases.
+      const sorted = [...groups].sort((a, b) => b[1].length - a[1].length);
+      out.push(
+        table(
+          [{ header: "runs", align: "right" }, { header: "reason" }, { header: "cases" }],
+          sorted.slice(0, limit).map(([why, xs]) => {
+            const ids = [...new Set(xs.map((x) => x.caseId))];
+            // Each case id with its label, shorter when the row names several.
+            const shown = ids.slice(0, 3).map((id) => (label(id) ? `${id} ${ids.length === 1 ? label(id) : truncate(label(id)!, 20)}` : id));
+            return [String(xs.length), why, `${shown.join(", ")}${ids.length > 3 ? ` +${ids.length - 3} more` : ""}`];
+          }),
+          { color },
+        ),
+      );
+      if (sorted.length > limit) out.push(paint(`… ${sorted.length - limit} more reasons (use --json for all)`, "dim", color));
+      continue;
+    }
     out.push(
       table(
-        [{ header: "case" }, ...(r.trials > 1 ? [{ header: "trial", align: "right" as const }] : []), { header: "reason" }],
-        rows.slice(0, limit).map((x) => [x.caseId, ...(r.trials > 1 ? [String(x.trial)] : []), truncate(failureReason(x), 100)]),
+        shown([{ header: "case" }, { header: "input" }, { header: "trial", align: "right" as const }, { header: "reason" }]),
+        rows.slice(0, limit).map((x) => shown([x.caseId, label(x.caseId) ?? "", String(x.trial), reasonOf(x)])),
         { color },
       ),
     );
@@ -191,7 +244,7 @@ export function renderExperiment(r: ExperimentResult, opts: RenderOpts & { verif
   return out.join("\n");
 }
 
-export function renderComparison(c: Comparison, opts: RenderOpts & { a?: ExperimentResult; b?: ExperimentResult; matrix?: boolean }): string {
+export function renderComparison(c: Comparison, opts: RenderOpts & { a?: ExperimentResult; b?: ExperimentResult; matrix?: boolean; cases?: ReadonlyMap<string, string> }): string {
   const color = opts.color;
   const limit = opts.limit ?? 20;
   const out: string[] = [];
@@ -260,7 +313,9 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
   const onSeq = c.verdictOn === "seq" && c.seqK ? `Seq@${c.seqK.k}` : undefined;
   const ciExcludes0 = c.diff.lo > 0 || c.diff.hi < 0;
   const seqExcludes0 = !!c.seqK && (c.seqK.diff.lo > 0 || c.seqK.diff.hi < 0);
-  const why = c.selectionWarning
+  const why = !c.paired
+    ? "no paired cases"
+    : c.selectionWarning
     ? "one side ran only on the other's failures"
     : onSeq
       ? seqExcludes0
@@ -279,7 +334,7 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
   if (c.nonInferiority) out.push(...renderNonInferiority(c.nonInferiority, color));
   const p = c.power;
   out.push(
-    `power   MDE ${Number.isFinite(p.mde) ? `${(p.mde * 100).toFixed(1)}pp` : "—"}${exactPowerText(p)} ` +
+    `power   MDE ${mdeText(p.mde)}${exactPowerText(p)} ` +
       paint(
         `(α ${p.alpha}, power ${Math.round(p.power * 100)}%, paired, sd of per-case Δ ${Number.isFinite(p.sd) ? fixed(p.sd) : "—"}${p.exact ? `, ${Math.round(p.exact.discordance * 100)}% discordant` : ""})`,
         "dim",
@@ -373,10 +428,11 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
     if (!rows.length) return;
     out.push("");
     out.push(`${paint(title, "bold", color)} ${rows.length}`);
+    const keep = [true, rows.some((x) => opts.cases?.has(x.caseId)), true, true, true];
     out.push(
       table(
-        [{ header: "case" }, { header: "A", align: "right" }, { header: "B", align: "right" }, { header: "Δ", align: "right" }],
-        rows.slice(0, limit).map((x) => [x.caseId, pct(x.a, 0), pct(x.b, 0), paint(signedPct(x.delta, 0), style, color)]),
+        keepColumns(keep, [{ header: "case" }, { header: "input" }, { header: "A", align: "right" as const }, { header: "B", align: "right" as const }, { header: "Δ", align: "right" as const }]),
+        rows.slice(0, limit).map((x) => keepColumns(keep, [x.caseId, opts.cases?.get(x.caseId) ?? "", pct(x.a, 0), pct(x.b, 0), paint(signedPct(x.delta, 0), style, color)])),
         { color },
       ),
     );
@@ -651,7 +707,7 @@ export function renderSweep(r: SweepResult, opts: RenderOpts): string {
   if (g && r.start) {
     const cases = (n: number) => `${n} case${n === 1 ? "" : "s"}`;
     const line = r.blockedBy?.length
-      ? `keep    ${paint(r.start.name, "bold", color)}: ${w.name} ${g.losses ? `loses ${g.losses} held-out case${g.losses === 1 ? "" : "s"} and ` : ""}forgets ${r.blockedBy.join(", ")} (guard)`
+      ? `keep    ${paint(r.start.name, "bold", color)}: ${w.name} forgets ${r.blockedBy.join(", ")} (guard)`
       : g.verdict === "ship"
         ? `adopt   ${paint(w.name, "green", color)}: wins ${cases(g.wins)}, loses ${g.losses} on held-out`
         : g.verdict === "dont-ship"

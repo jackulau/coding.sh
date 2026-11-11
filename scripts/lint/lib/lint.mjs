@@ -11,6 +11,8 @@ import { RULES } from "./rules.mjs";
  * hidden folders other than .github (nested worktrees, agent workspaces).
  */
 export const SKIP = /(?:^|\/)(?:node_modules|dist|vendor|fixtures?)\/|(?:^|\/)\.(?!github\/)[^/]+\//;
+/** The same paths, minus recorded fixtures: a rule with `fixtures: true` reads those too, except the lint's own. */
+const SKIP_BUT_FIXTURES = /(?:^|\/)(?:node_modules|dist|vendor)\/|(?:^|\/)\.(?!github\/)[^/]+\/|^scripts\/lint\/test\/fixtures\//;
 
 const git = (root, args, input) => {
   const r = spawnSync("git", args, { cwd: root, encoding: "utf8", maxBuffer: 256 * 1024 * 1024, input });
@@ -75,6 +77,10 @@ export function parseAllowlist(json, ruleIds) {
     if (typeof e.path !== "string" || !e.path) throw new Error(`${where}: "path" must be a file path or glob`);
     if (typeof e.reason !== "string" || !e.reason.trim()) throw new Error(`${where}: "reason" must say why the exception is allowed`);
     if (e.max !== undefined && !(Number.isInteger(e.max) && e.max > 0)) throw new Error(`${where}: "max" must be a positive integer`);
+    // A glob, or a file with no count, would let any new address or home path through unseen.
+    if (e.rule === "personal-data" && (/[*?]/.test(e.path) || e.max === undefined)) {
+      throw new Error(`${where}: a personal-data exception names one file and a "max" (the reserved names in RFC 2606, such as example.test and .invalid, need no entry)`);
+    }
   });
   return entries.map((e) => ({ ...e, re: globToRegExp(e.path) }));
 }
@@ -102,8 +108,9 @@ export function lintFiles(files, { read, rules = RULES, allowlist = [], site = n
   const findings = [];
   const counts = new Map();
   for (const path of files) {
-    if (SKIP.test(path)) continue;
-    const active = rules.filter((r) => r.applies(path, site));
+    if (SKIP_BUT_FIXTURES.test(path)) continue;
+    const skipped = SKIP.test(path);
+    const active = rules.filter((r) => (!skipped || r.fixtures) && r.applies(path, site));
     if (!active.length) continue;
     const src = read(path);
     if (src === undefined) continue;

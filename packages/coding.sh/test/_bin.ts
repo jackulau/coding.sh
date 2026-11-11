@@ -3,7 +3,7 @@
 // A test "binary" is a node script with a shebang. Windows cannot run that by
 // name, so there it also gets the `.cmd` shim npm would write for it: the same
 // layout a real npm-installed agent CLI has on Windows.
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 
 /** The `.cmd` file npm's cmd-shim writes for a node bin `target` (a file next to it). */
@@ -33,12 +33,24 @@ export function npmCmdShim(target: string): string {
 /** Write `dir/name` as a node script (plus `name.cmd` on Windows) and return the script path. */
 export function nodeBin(dir: string, name: string, js: string): string {
   mkdirSync(dir, { recursive: true });
+  fencePackageScope(dir);
   const p = join(dir, name);
   // The absolute node: a test PATH may hold nothing but the fake bins.
   writeFileSync(p, `#!${process.execPath}\n${js}`);
   chmodSync(p, 0o755);
   if (process.platform === "win32") writeFileSync(`${p}.cmd`, npmCmdShim(name));
   return p;
+}
+
+/**
+ * A package.json with no "type" in `dir`, so Node decides how to load the scripts in it from
+ * their syntax (require or import), as it does with no package.json above them. Without it, a
+ * TMPDIR inside a `"type": "module"` package (a checkout of this repo) makes every
+ * `require` in a fake bin throw.
+ */
+export function fencePackageScope(dir: string): void {
+  const file = join(dir, "package.json");
+  if (!existsSync(file)) writeFileSync(file, "{}\n");
 }
 
 /** A fake `name` that prints `stdout` (plus a newline) and exits with `code`. */

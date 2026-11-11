@@ -282,7 +282,7 @@ coding.sh harness audit --agent codex --since 90d
 
 | Flag | The file |
 |---|---|
-| `never-read` | Is on disk, and no session in the window loaded or read it. |
+| `never-read` | Is on disk, and no session in the window loaded or read it. A file added after every session in the window started is not flagged. |
 | `write-only` | Was written, and no other session loaded or read it. |
 | `loaded-not-read` | Is a skill that was listed but never invoked or read. |
 

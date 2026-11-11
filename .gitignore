@@ -22,6 +22,8 @@ npm-debug.log*
 
 # packed tarballs
 *.tgz
+# package.json backup while npm pack runs (packages/coding.sh/scripts/pack-manifest.mjs)
+.package.json.prepack
 # python caches
 .ruff_cache/
 __pycache__/

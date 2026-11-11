@@ -11,6 +11,7 @@
 import { randomUUID } from "node:crypto";
 import {
   BLOB_REF_FIELDS,
+  DatasetConflict,
   DEFAULT_PROJECT,
   searchableText,
   searchTerms,
@@ -54,6 +55,8 @@ const NO_LIMIT = "18446744073709551615";
 /** Writer lock: how long a lease lasts without a heartbeat, and how long a claim waits for a rival's to land. */
 const LOCK_TTL_MS = 30_000;
 const LOCK_SETTLE_MS = 300;
+/** How long putDataset with a parent waits for another process's write of the same dataset. */
+const DATASET_LEASE_WAIT_MS = 15_000;
 
 type Row = Record<string, unknown>;
 
@@ -675,20 +678,45 @@ export class ChIndexStore implements IndexStore {
 
   // ------------------------------------------------------------ datasets / experiments / judges
 
-  async putDataset(ds: Dataset, opts: { note?: string; now?: number } = {}): Promise<{ version: string; created: boolean }> {
+  /**
+   * With `parent`, stores only when latest is that version (null: none yet), else throws
+   * DatasetConflict and writes nothing. ClickHouse has no transactions, so the check and the
+   * write run under a lease named after the dataset (the writer lock's claim rows): another
+   * process writing the same dataset waits for it, or gets DatasetConflict and reads again.
+   */
+  async putDataset(ds: Dataset, opts: { note?: string; now?: number; parent?: string | null } = {}): Promise<{ version: string; created: boolean }> {
     return this.serial(async () => {
-      const p = new Params();
-      const [had] = await this.q(`SELECT 1 AS x FROM ${this.t("datasets")} WHERE id = ${p.bind("String", ds.id)} AND version = ${p.bind("String", ds.version)} LIMIT 1`, p);
-      if (!had) {
-        const createdAt = opts.now ?? ds.createdAt ?? Date.now();
-        const stored: Dataset = { ...ds, createdAt };
-        await this.client.insert(this.t("datasets"), [{
-          id: ds.id, version: ds.version, seq: nextVer(), name: ds.name, cases: ds.cases.length, created_at: createdAt, note: opt(opts.note), doc: JSON.stringify(stored),
-        }]);
+      let lease: WriterLock | undefined;
+      if (opts.parent !== undefined) {
+        lease = await this.acquireLease(`dataset:${ds.id}`, DATASET_LEASE_WAIT_MS);
+        if (!lease) throw new DatasetConflict(ds.id, opts.parent, undefined);
       }
-      await this.client.insert(this.t("dataset_latest"), [{ id: ds.id, ver: nextVer(), version: ds.version }]);
-      return { version: ds.version, created: !had };
+      try {
+        return await this.writeDataset(ds, opts);
+      } finally {
+        await lease?.release();
+      }
     });
+  }
+
+  private async writeDataset(ds: Dataset, opts: { note?: string; now?: number; parent?: string | null }): Promise<{ version: string; created: boolean }> {
+    if (opts.parent !== undefined) {
+      const lp = new Params();
+      const [l] = await this.q(`SELECT version FROM ${this.t("dataset_latest")} FINAL WHERE id = ${lp.bind("String", ds.id)} LIMIT 1`, lp);
+      const latest = l?.version as string | undefined;
+      if ((latest ?? null) !== opts.parent) throw new DatasetConflict(ds.id, opts.parent, latest);
+    }
+    const p = new Params();
+    const [had] = await this.q(`SELECT 1 AS x FROM ${this.t("datasets")} WHERE id = ${p.bind("String", ds.id)} AND version = ${p.bind("String", ds.version)} LIMIT 1`, p);
+    if (!had) {
+      const createdAt = opts.now ?? ds.createdAt ?? Date.now();
+      const stored: Dataset = { ...ds, createdAt };
+      await this.client.insert(this.t("datasets"), [{
+        id: ds.id, version: ds.version, seq: nextVer(), name: ds.name, cases: ds.cases.length, created_at: createdAt, note: opt(opts.note), doc: JSON.stringify(stored),
+      }]);
+    }
+    await this.client.insert(this.t("dataset_latest"), [{ id: ds.id, ver: nextVer(), version: ds.version }]);
+    return { version: ds.version, created: !had };
   }
 
   async getDataset(id: string, version = "latest"): Promise<Dataset | undefined> {
@@ -820,11 +848,15 @@ export class ChIndexStore implements IndexStore {
    * Resolves undefined when another process holds it after `waitMs`.
    */
   async acquireWriterLock(opts: { waitMs?: number } = {}): Promise<WriterLock | undefined> {
-    const name = "writer";
+    return this.acquireLease("writer", opts.waitMs ?? 0);
+  }
+
+  /** A lease on `name` (see acquireWriterLock), or undefined when another holder keeps it past `waitMs`. */
+  private async acquireLease(name: string, waitMs: number): Promise<WriterLock | undefined> {
     const ttl = this.opts.lockTtlMs ?? LOCK_TTL_MS;
     const settle = this.opts.lockSettleMs ?? LOCK_SETTLE_MS;
     const holder = randomUUID();
-    const deadline = Date.now() + Math.max(0, opts.waitMs ?? 0);
+    const deadline = Date.now() + Math.max(0, waitMs);
     for (;;) {
       if (!(await this.liveClaims(name)).length) {
         await this.writeClaim(name, holder, null, ttl);

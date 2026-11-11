@@ -71,7 +71,7 @@ coding.sh improve fix 1
     coding.sh exp ab --behavior unverified-claim
 
   Keep it: commit, then check new sessions against it:
-    git commit AGENTS.md -m "AGENTS.md: says it is done without running anything to check" && coding.sh improve check
+    git add AGENTS.md && git commit -m "AGENTS.md: says it is done without running anything to check" && coding.sh improve check
 ```
 
 `improve fix` appends the line to the repo's instructions file: AGENTS.md or the agent's own file,
@@ -102,7 +102,7 @@ optional: without a model, commit and let the next step judge it.
 Commit the line and keep working. After a few sessions:
 
 ```sh
-git commit AGENTS.md -m "AGENTS.md: run the tests before saying done"
+git add AGENTS.md && git commit -m "AGENTS.md: run the tests before saying done"
 coding.sh improve check
 ```
 

@@ -119,7 +119,7 @@ describe("--where on CLI, MCP and HTTP", () => {
     const err = JSON.parse(r.stderr.trim().split("\n").pop()!);
     assert.equal(err.reason, "unknown_key");
     assert.deepEqual(err.data, { offset: 12 });
-    assert.match(err.next[0], /model:/);
+    assert.match(err.next.join(" "), /model:/);
     const text = cli(["sessions", "--where", "cost>abc"]);
     assert.equal(text.status, 2);
     assert.match(text.stderr, /cost: must be a USD amount/);

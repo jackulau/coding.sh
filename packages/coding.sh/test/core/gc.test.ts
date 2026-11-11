@@ -214,6 +214,7 @@ describe("gc", () => {
     old(young, 3); // younger than keepSpoolDays (7)
     const dry = await gc({ index: new MemoryIndexStore(), blobs: new MemoryBlobStore(), config: t.config, env: t.env, judgeCacheDir: false, dryRun: true });
     assert.equal(dry.spool.rawFiles, 1);
+    assert.deepEqual(dry.spool.orphans, ["fake/raw/1-1-orphan.json"], "the dry run lists the orphan");
     assert.ok(existsSync(orphan));
     await gc({ index: new MemoryIndexStore(), blobs: new MemoryBlobStore(), config: t.config, env: t.env, judgeCacheDir: false });
     assert.deepEqual([existsSync(orphan), existsSync(referenced), existsSync(young)], [false, true, true]);

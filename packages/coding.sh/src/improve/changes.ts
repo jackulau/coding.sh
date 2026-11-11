@@ -297,10 +297,11 @@ export function workEffect(before: GroupStats, after: GroupStats): WorkEffect | 
   return out.toolCalls || out.durationMs ? out : undefined;
 }
 
-const fmtP = (p: number): string => p.toFixed(2);
+/** A p-value as a reason prints it after "p ": `0.034`, or `< 0.001` (never `0.00`). */
+export const fmtP = (p: number): string => (p < 0.001 ? "< 0.001" : p.toFixed(3));
 const seconds = (ms: number): string => (ms < 10_000 ? (ms / 1000).toFixed(1) : `${Math.round(ms / 1000)}`);
 
-/** The added-work clause ("make more tool calls (median 20 → 45, p 0.00) and take longer (…)"), or undefined when work did not rise. */
+/** The added-work clause ("make more tool calls (median 20 → 45, p < 0.001) and take longer (…)"), or undefined when work did not rise. */
 function addedWork(w: WorkEffect | undefined): string | undefined {
   const up = (m: WorkMeasure | undefined): m is WorkMeasure => !!m && m.p <= ALPHA && m.after >= WORK_RATIO * m.before && m.after > m.before;
   const parts: string[] = [];

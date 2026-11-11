@@ -7,25 +7,24 @@
 // negated one means "no such event". Text means one event holds every word.
 import type { AgentEvent, Session } from "../schema/index.ts";
 import { searchableText, searchTerms, termMatches } from "../store/common.ts";
-import { HAS, IS, KEYS, levelOf, type Cmp, type KeyDef, type Leaf, type Node, type Query, type Value } from "./where.ts";
+import { globParts, HAS, IS, KEYS, levelOf, type Cmp, type KeyDef, type Leaf, type Node, type Query, type Value } from "./where.ts";
 
 /** ASCII-only lower case, as SQLite's LIKE folds case. */
 const asciiLower = (s: string): string => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
 
-/** A LIKE-style pattern as a regex over ASCII-lowered text; `*` is a wildcard only when `wildcard`. */
-function likeRegex(pattern: string, contains: boolean, wildcard: boolean): RegExp {
+/** A LIKE-style pattern as a regex over ASCII-lowered text: `parts` are the literal pieces between wildcards. */
+function likeRegex(parts: string[], contains: boolean): RegExp {
   const esc = (p: string) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const lower = asciiLower(pattern);
-  const body = wildcard ? lower.split("*").map(esc).join("[\\s\\S]*") : esc(lower);
+  const body = parts.map((p) => esc(asciiLower(p))).join("[\\s\\S]*");
   return new RegExp(contains ? body : `^${body}$`);
 }
 
 function textValueMatches(def: KeyDef, v: Value, x: unknown): boolean {
   if (typeof x !== "string") return false;
-  const glob = v.kind === "glob";
+  const parts = v.kind === "glob" ? globParts(v) : [v.raw];
   const p = def.multi?.prefix ?? "";
-  if (def.match === "contains") return likeRegex(v.raw, true, glob).test(asciiLower(x));
-  if (glob) return likeRegex(p + v.raw, false, true).test(asciiLower(x));
+  if (def.match === "contains") return likeRegex(parts, true).test(asciiLower(x));
+  if (v.kind === "glob") return likeRegex([p + parts[0]!, ...parts.slice(1)], false).test(asciiLower(x));
   return x === p + v.raw;
 }
 

@@ -31,8 +31,8 @@ import { acquireLock, LockBusyError, type Lock } from "../core/lock.ts";
 import type { Dataset, DatasetVersionInfo, ExperimentResult, JudgeVersion } from "../datasets/types.ts";
 import type { DatasetListing } from "../core/types.ts";
 import { HARNESS_LOADED, MEMORY_INPUT_KEYS, MEMORY_PATH_TEXT, MEMORY_PAYLOAD_KEYS, pickSet, SKILL_TOOL, type MemoryEvent } from "../core/memory-events.ts";
-import { BLOB_REF_FIELDS, type BlobRefField, errorText, ftsQuery, searchableText, SEARCHABLE_KINDS, searchTerms, snippet } from "./common.ts";
-import { loadSqlite, switchToWal } from "./sqlite-open.ts";
+import { BLOB_REF_FIELDS, type BlobRefField, DatasetConflict, errorText, ftsQuery, searchableText, SEARCHABLE_KINDS, searchTerms, snippet, symbolQuery, symbolSnippet } from "./common.ts";
+import { loadSqlite, mkdirPrivate, ownerOnly, switchToWal } from "./sqlite-open.ts";
 import { backupIndex, describeStep, parseWriter, pruneBackups, runningUpgrade, splitSql, StoreNewerError, UPGRADE_PROGRESS_MIN_ROWS, UpgradeProgress, WRITER_KEY, type StoreWriter } from "./upgrade.ts";
 import { labelToScore } from "../scores/labels.ts";
 import { isNewer } from "../update/semver.ts";
@@ -632,6 +632,8 @@ const projectCol = (p: string | undefined): string => p ?? "default";
 
 /** A search matching more events than this lists them newest first instead of ranking them all (TE-8). */
 export const SEARCH_RANK_MAX_MATCHES = 20_000;
+/** A symbols-only search (no word for FTS) scans this many of the newest searchable events. */
+export const SEARCH_SYMBOL_SCAN_EVENTS = 200_000;
 
 /** Per-connection page cache, in KiB (negative cache_size = KiB, not pages). Bounded RAM, freed on close. */
 const CACHE_SIZE_KIB = 16_000;
@@ -725,6 +727,17 @@ export interface SqliteIndexOptions {
   progressMinRows?: number;
   /** Matches above which search lists newest first instead of by rank. Default: SEARCH_RANK_MAX_MATCHES. */
   searchRankMaxMatches?: number;
+  /** Newest searchable events a symbols-only search scans. Default: SEARCH_SYMBOL_SCAN_EVENTS. */
+  searchSymbolScanEvents?: number;
+}
+
+/** This Node's bundled SQLite was built without FTS5, which the index's search table needs. */
+export class NoFts5Error extends Error {
+  readonly reason = "no_fts5";
+  constructor() {
+    super(`this Node's SQLite has no FTS5; coding.sh needs Node 22.16 or newer (this is Node ${process.versions.node})`);
+    this.name = "NoFts5Error";
+  }
 }
 
 export class SqliteIndexStore implements IndexStore {
@@ -749,9 +762,11 @@ export class SqliteIndexStore implements IndexStore {
   /** Opens (creating if needed) the database at `path` (":memory:" for tests) and migrates it. */
   static async open(path: string, opts: SqliteIndexOptions = {}): Promise<SqliteIndexStore> {
     const { DatabaseSync } = await loadSqlite();
-    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+    if (path !== ":memory:") mkdirPrivate(dirname(path));
     const db = new DatabaseSync(path, { readOnly: opts.readOnly ?? false });
     try {
+      // Before the WAL switch: SQLite gives the -wal and -shm the database file's mode.
+      if (!opts.readOnly) ownerOnly(path);
       // busy_timeout first so the WAL switch itself waits on a concurrent writer.
       db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
       if (!opts.readOnly) await switchToWal(db);
@@ -771,6 +786,7 @@ export class SqliteIndexStore implements IndexStore {
       // A store that can't be opened (a newer schema, a failed migration) must not keep
       // the file open: Windows can't delete or replace an open file.
       db.close();
+      if (/no such module: fts5/i.test(e instanceof Error ? e.message : String(e))) throw new NoFts5Error();
       throw e;
     }
   }
@@ -1194,7 +1210,7 @@ export class SqliteIndexStore implements IndexStore {
    */
   private searchHits(text: string, opts: SearchOpts, q?: Query): SearchHit[] {
     const fts = ftsQuery(text);
-    if (!fts) return [];
+    if (!fts) return this.symbolHits(text, opts, q);
     const where: string[] = [];
     const params: (string | number)[] = [];
     if (opts.agent) where.push("e.agent = ?"), params.push(opts.agent);
@@ -1233,6 +1249,38 @@ export class SqliteIndexStore implements IndexStore {
       const event = rowToEvent(r);
       return { event, snippet: snippet(searchableText(event) ?? "", terms) };
     });
+  }
+
+  /**
+   * A query of symbols only (🚀, →): FTS has no word for it, so the newest
+   * SEARCH_SYMBOL_SCAN_EVENTS searchable events are scanned for it as a substring
+   * (instr on the stored payload, then the event's search text), newest first.
+   */
+  private symbolHits(text: string, opts: SearchOpts, q?: Query): SearchHit[] {
+    const needle = symbolQuery(text);
+    if (!needle) return [];
+    const where = ["instr(e.payload, ?) > 0"];
+    const params: (string | number)[] = [needle];
+    if (opts.agent) where.push("e.agent = ?"), params.push(opts.agent);
+    if (opts.project !== undefined) where.push("e.project_id = ?"), params.push(opts.project);
+    if (q?.root) {
+      const c = compileWhere(q.root, "event");
+      where.push(c.sql);
+      params.push(...c.params);
+    }
+    const limit = opts.limit ?? 50;
+    const sql = `SELECT ${eventCols("e")} FROM (SELECT rowid AS r FROM events WHERE kind IN (${sqlList(SEARCHABLE_KINDS)}) ORDER BY rowid DESC LIMIT ?) w
+      JOIN events e ON e.rowid = w.r ${q?.root ? "LEFT JOIN sessions s ON s.id = e.session_id" : ""} WHERE ${where.join(" AND ")} ORDER BY e.rowid DESC`;
+    const hits: SearchHit[] = [];
+    for (const r of this.db.prepare(sql).iterate(this.opts.searchSymbolScanEvents ?? SEARCH_SYMBOL_SCAN_EVENTS, ...params) as Iterable<Row>) {
+      const event = rowToEvent(r);
+      const body = searchableText(event);
+      // instr also matches JSON keys and fields search never reads: keep only a match in the search text.
+      if (!body?.includes(needle)) continue;
+      hits.push({ event, snippet: symbolSnippet(body, needle) });
+      if (hits.length >= limit) break;
+    }
+    return hits;
   }
 
   // ------------------------------------------------------------ sessions
@@ -1342,11 +1390,12 @@ export class SqliteIndexStore implements IndexStore {
     // Only the numbers metrics add up, read with json_extract: no full stats parse per session.
     const x = (path: string) => `json_extract(s.stats, '$.${path}')`;
     const cols = ["usage.inputTokens", "usage.outputTokens", "usage.cacheReadTokens", "usage.cacheWriteTokens", "usage.costUsd", "usage.estimatedCostUsd", "toolCalls", "toolErrors", "latency.llmCalls", "llmErrors.count", "latency.llmP95Ms", "latency.ttftP50Ms"];
-    const sql = `SELECT s.started_at, s.agent, s.model, coalesce(s.repo_root, s.cwd) AS dir, s.flags, ${cols.map((c, i) => `${x(c)} AS c${i}`).join(", ")}
+    const sql = `SELECT s.id, s.parent_session_id, s.started_at, s.agent, s.model, coalesce(s.repo_root, s.cwd) AS dir, s.flags, ${cols.map((c, i) => `${x(c)} AS c${i}`).join(", ")}
       FROM sessions s ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`;
     const keys = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "costUsd", "estimatedCostUsd", "toolCalls", "toolErrors", "llmCalls", "llmErrors", "llmP95Ms", "ttftP50Ms"] as const;
     return (this.db.prepare(sql).all(...params) as Row[]).map((r) => {
-      const m: MetricRow = { startedAt: num(r.started_at) ?? 0, agent: String(r.agent), flags: parse<string[]>(r.flags) ?? [], toolCalls: 0, toolErrors: 0 };
+      const m: MetricRow = { id: String(r.id), startedAt: num(r.started_at) ?? 0, agent: String(r.agent), flags: parse<string[]>(r.flags) ?? [], toolCalls: 0, toolErrors: 0 };
+      if (typeof r.parent_session_id === "string") m.parentSessionId = r.parent_session_id;
       if (typeof r.model === "string") m.model = r.model;
       if (typeof r.dir === "string") m.dir = r.dir;
       keys.forEach((k, i) => {
@@ -1588,8 +1637,13 @@ export class SqliteIndexStore implements IndexStore {
 
   // ------------------------------------------------------------ datasets / experiments / judges
 
-  async putDataset(ds: Dataset, opts: { note?: string; now?: number } = {}): Promise<{ version: string; created: boolean }> {
+  async putDataset(ds: Dataset, opts: { note?: string; now?: number; parent?: string | null } = {}): Promise<{ version: string; created: boolean }> {
+    // tx is BEGIN IMMEDIATE: the parent check and the write hold the write lock together.
     return this.tx(() => {
+      if (opts.parent !== undefined) {
+        const latest = (this.stmt("SELECT version FROM dataset_latest WHERE id = ?").get(ds.id) as Row | undefined)?.version as string | undefined;
+        if ((latest ?? null) !== opts.parent) throw new DatasetConflict(ds.id, opts.parent, latest);
+      }
       const exists = this.stmt("SELECT 1 FROM datasets WHERE id = ? AND version = ?").get(ds.id, ds.version);
       let created = false;
       if (!exists) {

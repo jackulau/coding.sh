@@ -126,8 +126,10 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
   const shown = (raw: string): string => (sensitive ? HIDDEN : JSON.stringify(raw));
 
   const unknown = (token: string): never => {
-    const names = [...visibleFlags(specs).map((s) => `--${s.name}`), ...(opts.suggestions ?? [])];
-    const hint = token.startsWith("--") ? suggest(token.split("=")[0]!, names) : undefined;
+    // Compared without the dashes every name shares, so the distance threshold means what it says.
+    const names = [...visibleFlags(specs).map((s) => s.name), ...(opts.suggestions ?? []).map((n) => n.replace(/^--/, ""))];
+    const close = token.startsWith("--") ? suggest(token.slice(2).split("=")[0]!, names) : undefined;
+    const hint = close === undefined ? undefined : `--${close}`;
     // The suggestion is always a known flag name, so it is safe to show.
     throw new UsageError(sensitive ? `Unknown option ${HIDDEN}` : `Unknown option ${token}`, { suggestion: hint, reason: "unknown_option" });
   };
@@ -244,6 +246,10 @@ export function parseSince(v: string, now = Date.now()): number {
 export function parseSinceWhen(v: string, now = Date.now(), flag = "since"): When {
   const w = parseWhen(v, { now });
   if (w) return w;
+  // A date that does not exist (2026-11-31) is an error, not the next month's 1st (Date.parse rolls it over).
+  if (/^\d{4}-\d{2}-\d{2}(?:$|[T ])/.test(v.trim())) {
+    throw new UsageError(`--${flag}: ${JSON.stringify(v)} is not a real date (use YYYY-MM-DD, e.g. 2026-11-09, local time)`, { reason: "invalid_argument" });
+  }
   // Other spellings Date.parse reads ("Nov 9 2026"): local time already.
   const t = Date.parse(v);
   if (Number.isNaN(t)) throw new UsageError(`--${flag} must be a duration (7d, 12h, 30m), today, yesterday or a date (2026-11-09, local time), got ${JSON.stringify(v)}`);
@@ -262,4 +268,9 @@ export function positiveInt(v: FlagValue, name: string): number | undefined {
   if (v === undefined) return undefined;
   if (typeof v !== "number" || !Number.isInteger(v) || v < 1) throw new UsageError(`--${name} must be an integer of at least 1, got ${JSON.stringify(v)}`);
   return v;
+}
+
+/** `s` as one shell word: left alone when it is plain, else single-quoted. For a command a hint prints. */
+export function shellQuote(s: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
 }

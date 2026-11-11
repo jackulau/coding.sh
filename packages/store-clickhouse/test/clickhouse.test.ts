@@ -274,6 +274,46 @@ describe("clickhouse store", { skip: SKIP }, () => {
     }
   });
 
+  it("dataset writes with a parent from several processes keep every case", async () => {
+    // Each `coding.sh dataset add` is its own process: read the latest, add a case, write
+    // with that version as the parent, and read again on DatasetConflict.
+    const url = dbUrl();
+    const owner = await open(url);
+    try {
+      await owner.putDataset({ id: "race", name: "race", version: "v0", createdAt: 1, cases: [{ id: "seed", input: "seed" }] } as never, { parent: null });
+      const child = `
+        import { ChIndexStore } from ${JSON.stringify(new URL("../src/index.ts", import.meta.url).href)};
+        const s = await ChIndexStore.open(process.argv[1], { lockSettleMs: 100 });
+        const me = process.argv[2];
+        try {
+          for (let attempt = 1; attempt <= 20; attempt++) {
+            const ds = await s.getDataset("race");
+            const next = { ...ds, version: "v-" + me + "-" + attempt, cases: [...ds.cases, { id: me, input: me }] };
+            try {
+              await s.putDataset(next, { parent: ds.version });
+              break;
+            } catch (e) {
+              if (e?.name !== "DatasetConflict") throw e;
+              await new Promise((r) => setTimeout(r, 10 + Math.random() * 40));
+            }
+          }
+        } finally {
+          await s.close();
+        }`;
+      const { spawn } = await import("node:child_process");
+      const runs = Array.from({ length: 6 }, (_, i) => new Promise<number | null>((done) => {
+        const p = spawn(process.execPath, ["--conditions=source", "--no-warnings", "--input-type=module", "-e", child, url, `p${i}`], { stdio: ["ignore", "ignore", "inherit"] });
+        p.on("close", done);
+      }));
+      assert.deepEqual(await Promise.all(runs), [0, 0, 0, 0, 0, 0]);
+      const ds = await owner.getDataset("race");
+      assert.ok(ds);
+      assert.deepEqual(ds.cases.map((c) => c.id).sort(), ["p0", "p1", "p2", "p3", "p4", "p5", "seed"]);
+    } finally {
+      await owner.close();
+    }
+  });
+
   it("a crashed holder's lease runs out, and its assertHeld then fails", async () => {
     const url = dbUrl();
     const a = await ChIndexStore.open(url, { lockTtlMs: 1500, lockSettleMs: 100 });

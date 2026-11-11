@@ -519,5 +519,4 @@ loop first:
    its Research and Queue phases.
 
 Snapshots go to `~/.coding.sh/dogfood/traces-<n>.json`, each with a diff against round n-1. One
-round costs about 120 to 150 k tokens. Numbers, storage choice and budget:
-[docs/research/trace-loop.md](../research/trace-loop.md).
+round costs about 120 to 150 k tokens.

@@ -1,0 +1,29 @@
+{
+  "command": "coding.sh usage --since 7d",
+  "head": [
+    "AGENT",
+    "SESSIONS",
+    "TOKENS",
+    "COST"
+  ],
+  "rows": [
+    [
+      "claude-code",
+      "29",
+      "9.8M",
+      "~$6.92"
+    ],
+    [
+      "codex",
+      "14",
+      "4.0M",
+      "~$2.08"
+    ],
+    [
+      "opencode",
+      "5",
+      "1.1M",
+      "~$0.7937"
+    ]
+  ]
+}

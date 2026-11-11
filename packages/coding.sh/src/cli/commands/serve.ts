@@ -2,6 +2,8 @@
 // OTLP + native ingest, the viewer, /healthz, /readyz and /metrics. stdout gets the
 // URL (or one JSON document) once ready; logs go to stderr. `keygen` prints a new
 // key; `healthcheck` probes a running server for Docker.
+import { get as httpGet } from "node:http";
+import { get as httpsGet } from "node:https";
 import { ConfigError } from "../../core/config.ts";
 import { generateKey, sha256 } from "../../server/auth.ts";
 import { checkExposure, DEFAULT_SERVE_PORT, resolveServeConfig, ServeRefusal, type ServeConfig, type ServeRole } from "../../server/config.ts";
@@ -39,7 +41,7 @@ function resolve(c: CommandContext): ServeConfig {
     );
   } catch (e) {
     if (e instanceof ConfigError) {
-      throw new CliError(`Invalid serve configuration: ${e.message}`, { reason: "invalid_config", exitCode: 2, next: ["See every setting in docs/PRODUCTION.md §1.1"] });
+      throw new CliError(`Invalid serve configuration: ${e.message}`, { reason: "invalid_config", exitCode: 2, next: ["See every setting: https://coding.sh/docs/production"] });
     }
     throw e;
   }
@@ -158,15 +160,32 @@ async function healthcheck(c: CommandContext): Promise<number> {
   let status = 0;
   let error: string | undefined;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(Math.max(1, timeout)) });
-    status = res.status;
-    await res.arrayBuffer().catch(() => {});
+    status = await probe(url, Math.max(1, timeout));
   } catch (e) {
-    error = (e as Error).name === "TimeoutError" ? `no answer within ${timeout} ms` : ((e as Error & { cause?: Error }).cause?.message ?? (e as Error).message);
+    error = (e as Error).message;
   }
   const ok = status === 200;
   if (out.json) out.data({ ok, url, status: status || null, ...(error ? { error } : {}) });
   else if (ok) out.ok(`${url} answered 200`);
   else out.fail(`${url} ${error ?? `answered ${status}`}`);
   return ok ? 0 : 1;
+}
+
+/** GET `url` and resolve its status. node:http, not fetch: fetch refuses ports such as 6666 that a server may use. */
+function probe(url: string, timeout: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    let u: URL;
+    try {
+      u = new URL(url);
+    } catch {
+      return reject(new Error("is not a URL"));
+    }
+    if (u.protocol !== "http:" && u.protocol !== "https:") return reject(new Error("must be an http:// or https:// URL"));
+    const req = (u.protocol === "https:" ? httpsGet : httpGet)(u, { signal: AbortSignal.timeout(timeout) }, (res) => {
+      res.resume();
+      res.on("end", () => resolve(res.statusCode ?? 0));
+      res.on("error", () => resolve(res.statusCode ?? 0));
+    });
+    req.on("error", (e: NodeJS.ErrnoException) => reject(new Error(e.name === "TimeoutError" || e.name === "AbortError" ? `no answer within ${timeout} ms` : e.code ? `${e.code}${e.message ? ` (${e.message})` : ""}` : e.message)));
+  });
 }

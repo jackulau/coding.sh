@@ -54,5 +54,39 @@ class ExitTest(unittest.TestCase):
         self.assertLess(elapsed, 5.0)
 
 
+DEAD_SCRIPT = textwrap.dedent(
+    """
+    import os, sys, time
+    sys.path.insert(0, os.environ["SDK_SRC"])
+    import coding_sh
+    coding_sh.init(url=os.environ["INGEST"], flush_interval_ms=10)
+    with coding_sh.trace("exit-test", input="bye"):
+        pass
+    drained = coding_sh.flush(0.5)
+    sys.stdout.write("%s %f" % (drained, time.time()))
+    sys.stdout.flush()
+    """
+)
+
+
+class ExitAfterFailedFlushTest(unittest.TestCase):
+    def test_exit_does_not_flush_again_after_a_flush_gave_up(self) -> None:
+        import socket
+
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()  # a port nothing listens on
+        env = dict(os.environ, SDK_SRC=support.SRC, INGEST="http://127.0.0.1:%d" % port)
+        p = subprocess.run([sys.executable, "-c", DEAD_SCRIPT], env=env, capture_output=True, text=True, timeout=30)
+        end = time.time()
+        self.assertEqual(p.returncode, 0, p.stderr)
+        drained, flushed_at = p.stdout.split()
+        self.assertEqual(drained, "False")
+        self.assertLess(end - float(flushed_at), 1.2, "the process stayed after flush() gave up")
+        self.assertEqual(p.stderr.count("coding.sh"), 1, p.stderr)
+        self.assertIn("not sent", p.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

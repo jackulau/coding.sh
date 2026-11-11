@@ -6,7 +6,7 @@
 // past it the tool answers from what is indexed, a background `coding.sh ingest`
 // finishes the rest, and the answer carries `pending: { files, indexing }`, so a
 // big backlog never stalls the agent that called the tool.
-import { openContext, type Context } from "../core/context.ts";
+import { openContext, storeOpenNext, type Context } from "../core/context.ts";
 import { autoIngest, pendingField, readBudgetMs, type IngestBacklog } from "../cli/common.ts";
 import { version } from "../cli/meta.ts";
 import { paths } from "../core/paths.ts";
@@ -73,7 +73,9 @@ export function createCodingShMcp(o: CodingShMcpOptions = {}): CodingShMcp {
   const open = (): Promise<Context> => {
     opened ??= openContext({ env, cwd }).catch((e: unknown) => {
       opened = undefined;
-      throw new ToolError(`Couldn't open the coding.sh store: ${e instanceof Error ? e.message : String(e)}. Check the [store] section of \`coding.sh config path\`.`);
+      // The next step follows what named the store (core/context.ts storeOpenNext).
+      const next = (e as { reason?: unknown }).reason === "no_fts5" ? "Install Node 22.16 or newer" : storeOpenNext(env).join(" ");
+      throw new ToolError(`Couldn't open the coding.sh store: ${e instanceof Error ? e.message : String(e)}. ${next}.`);
     });
     return opened;
   };

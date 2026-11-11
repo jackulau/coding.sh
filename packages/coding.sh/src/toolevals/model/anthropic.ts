@@ -1,7 +1,8 @@
 // Anthropic Messages API, streamed, with no SDK (§11). TTFT is the first
 // content_block_delta: text → ttftMs, thinking → ttfThinkingMs. Requests carry
 // top-level `cache_control: {type: "ephemeral"}` (automatic prompt caching)
-// unless the driver or variant sets promptCache = false.
+// unless the driver or variant sets promptCache = false. With no baseUrl on the
+// driver, ANTHROPIC_BASE_URL (when set) replaces the default endpoint.
 import type { Usage } from "../../schema/index.ts";
 import { readSse } from "./sse.ts";
 import { ProviderHttpError, type Conversation, type ConversationInit, type ModelTurn, type ToolCall, type ToolResult } from "./types.ts";
@@ -10,7 +11,7 @@ type Block = { type: string; [k: string]: unknown };
 
 export function anthropicConversation(init: ConversationInit): Conversation {
   const messages: { role: "user" | "assistant"; content: unknown }[] = [{ role: "user", content: init.instruction }];
-  const url = `${(init.baseUrl ?? "https://api.anthropic.com").replace(/\/$/, "")}/v1/messages`;
+  const url = `${(init.baseUrl ?? (process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com")).replace(/\/$/, "")}/v1/messages`;
   return {
     async call(signal) {
       const body: Record<string, unknown> = {

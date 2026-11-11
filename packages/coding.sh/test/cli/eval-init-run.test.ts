@@ -11,7 +11,7 @@ import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { which } from "../../src/adapters/_shared/detect.ts";
 import { posixShell } from "../../src/core/spawn.ts";
-import { pathOf } from "../_bin.ts";
+import { fencePackageScope, pathOf } from "../_bin.ts";
 
 const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const gitBin = which("git") ?? "";
@@ -42,6 +42,11 @@ before(() => {
     GIT_CONFIG_NOSYSTEM: "1",
     CODING_SH_HOOK_SOURCE: join(root, "hook-source.mjs"),
   };
+  // Fences: proj is its own repo, so a TMPDIR inside another work tree does not make eval init
+  // write into that tree's root; and the temp root's package.json has no "type", so the
+  // CommonJS files written below load inside a "type": "module" package too.
+  fencePackageScope(root);
+  if (gitBin) assert.equal(spawnSync(gitBin, ["init", "-q"], { cwd: proj, env }).status, 0);
   writeFileSync(join(root, "hook-source.mjs"), "// test hook\n");
   // The app under test: labels a ticket. "wrong color" is a bug it misses.
   writeFileSync(

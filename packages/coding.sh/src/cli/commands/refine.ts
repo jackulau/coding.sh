@@ -9,7 +9,7 @@ import { resolve } from "node:path";
 import type { Context } from "../../core/context.ts";
 import { checkProtected, protectedLines } from "../../refine/protect.ts";
 import { UsageError } from "../args.ts";
-import { str, withContext } from "../common.ts";
+import { shellQuote, str, withContext } from "../common.ts";
 import { plural } from "../output.ts";
 import { protectJson, protectOptions, protectOverrides, rejectionLines } from "../protect.ts";
 import type { CommandContext } from "../types.ts";
@@ -89,7 +89,7 @@ export async function run(c: CommandContext): Promise<number> {
     if (!r.ok) {
       const first = r.rejections[0]!.protected;
       out.fail(`${plural(r.rejections.length, "protected-line problem")} from A (${a.label}) to B (${b.label}); a pass-rate A/B can't see this harm`);
-      out.next("Restore the line, or allow this edit on purpose", `coding.sh refine check --allow-protected-edit ${first.path}:${first.line}`);
+      out.next("Restore the line, or allow this edit on purpose", `coding.sh refine check --allow-protected-edit ${shellQuote(`${first.path}:${first.line}`)}`);
       return 1;
     }
     if (sameFiles(a.files, b.files)) out.ok(`No changes from A (${a.label}) to B (${b.label}); ${plural(r.protected.length, "protected line")} in place`);

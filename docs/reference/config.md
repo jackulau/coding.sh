@@ -29,8 +29,13 @@ coding.sh config set capture.redact '["secrets","env"]'
 ```
 
 `config set` accepts the keys marked **settable** below, parses numbers, `true`/`false` and JSON
-arrays, and keeps the rest of the file as it is. Edit the file by hand for sinks, prices, gateway
-and serve settings.
+arrays, and keeps the rest of the file as it is. It also sets `refine.maxCostRise`,
+`refine.canary_model` and `serve.forward.endpoint`. Edit the file by hand for sinks, prices, gateway
+and the other serve settings.
+
+`config get <key>` reads the single keys on this page, the `[refine]`, `[proxy]` and `[serve]` ones
+too, and says "is not set" for one the file leaves out. It does not read the `[prices]` table or
+`[[serve.projects]]` by key; plain `config get` prints them.
 
 String values in `store.*`, `sinks.*.endpoint`, `sinks.*.headers` and `gateway.apiKey` may use
 `${NAME}`; it is replaced with that environment variable, and an unset variable is an error. Use it to
@@ -277,7 +282,7 @@ Read only by `coding.sh serve`. Every key has an environment variable, which win
 
 | Variable | What |
 |---|---|
-| `CODING_SH_DISABLE=1` | The hook reads its input and writes nothing. Set it in an agent's environment to pause capture. |
+| `CODING_SH_DISABLE=1` | The hook reads its input and writes no event. It records only the session id, in `spool/disabled-sessions`, so ingest and imports of past sessions leave that session out. Set it in an agent's environment to pause capture. |
 | `CODING_SH_NO_AUTO_INGEST=1` | The hook does not start a background ingest when a session ends, and `init` does not finish its import of past sessions in the background. |
 | `CODING_SH_NO_PROXY_AUTOSTART=1` | The hook does not restart a stopped `coding.sh proxy` when a session starts (it does only after `init --proxy`). |
 | `CODING_SH_ECHO_CONTINUE=1` | The hook prints `{"continue":true}`, for agents that need a JSON reply. `init` sets this up where needed. |
@@ -301,6 +306,8 @@ Read these in your agent or script to tie its output to a run.
 | `CODING_SH_BENCH`, `CODING_SH_BENCH_SEED`, `CODING_SH_BENCH_DATE`, `CODING_SH_BENCH_RUN_ID`, `CODING_SH_BENCH_CASES` | `bench run` command sources | Benchmark name, seed, date, run id and number of cases to print. |
 | `CODING_SH_BENCH_NOW` | you, in tests | Make `bench run` act as if it started at this time (ISO time or epoch ms), to simulate daily runs. |
 | `CODING_SH_BENCH_SEED_KEY` | you, or a CI secret | Key for `seed = "secret"` benchmarks: each date's salt is an HMAC of the date under it. Rename it per benchmark with `seedKeyEnv`. |
+| `CODING_SH_PROXY_DETACHED` | `proxy --background`, `init --proxy` | `1` in the detached proxy, which then prints `Stop with: coding.sh proxy stop` instead of `Press Ctrl-C to stop`. |
+| `CODING_SH_TAP_SHIM_DIRS` | tool-eval tap shims | The shim dirs a tapped call already passed through, so a nested shim never finds itself again on `PATH`. |
 
 ### Server
 

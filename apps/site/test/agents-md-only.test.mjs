@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { distOpts, needDist } from "./_dist.mjs";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const BANNED = new RegExp(["claude", "md"].join("\\."), "i");
@@ -64,7 +65,8 @@ test("the CLI help the /docs/cli pages print says AGENTS.md only", () => {
   assert.deepEqual(found, [], fail("the CLI help specs", found));
 });
 
-test("the built site says AGENTS.md only", { skip: !existsSync(join(ROOT, "apps/site/dist")) && "no build in apps/site/dist" }, () => {
+test("the built site says AGENTS.md only", distOpts(join(ROOT, "apps/site/dist")), () => {
+  needDist(join(ROOT, "apps/site/dist"));
   const found = hits(walk("apps/site/dist", { skipDist: false }));
   assert.deepEqual(found, [], fail("apps/site/dist", found));
 });

@@ -264,7 +264,7 @@ export const SIGNALS_CAPTION = "pooled AUROC mostly measures task difficulty (ar
  */
 export function formatSignalValidity(v: readonly SignalValidity[], o: { repeated?: boolean; minTasks?: number } = {}): string {
   const lines = ["signals  " + SIGNALS_CAPTION];
-  if (o.repeated === false) lines.push("  needs k>=2: no task has two runs in the same arm, so within-task+arm AUROC can't be computed (rerun with -k 3)");
+  if (o.repeated === false) lines.push("  needs k>=2: no task has two runs in the same arm, so within-task+arm AUROC can't be computed (rerun with --k 3)");
   if (!v.length) {
     lines.push("  no task has two runs, so no signal can be checked within a task");
     return lines.join("\n");
