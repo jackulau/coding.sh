@@ -32,7 +32,7 @@ try:  # gzip needs zlib, which a few minimal builds lack.
 except Exception:  # pragma: no cover
     _gzip = None  # type: ignore[assignment]
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 log = logging.getLogger("coding_sh")
 
