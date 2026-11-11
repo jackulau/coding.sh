@@ -121,36 +121,37 @@ export interface Browser {
   close(): Promise<void>;
 }
 
+/** The flags launchBrowser starts Chrome with, for a profile in `dir`. */
+export function chromeArgs(dir: string): string[] {
+  return [
+    "--headless=new",
+    "--remote-debugging-port=0",
+    `--user-data-dir=${dir}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-gpu",
+    "--disable-extensions",
+    "--disable-background-networking",
+    "--disable-component-update",
+    "--disable-domain-reliability",
+    "--disable-client-side-phishing-detection",
+    "--disable-sync",
+    "--no-pings",
+    "--metrics-recording-only",
+    "--mute-audio",
+    // Keep Chrome out of the macOS keychain: under a test HOME it has none, and the lookup
+    // pops a "keychain cannot be found" dialog on the desktop for every launch.
+    "--use-mock-keychain",
+    "--password-store=basic",
+    // Root (the desk, CI containers) cannot use Chrome's sandbox.
+    ...(process.getuid?.() === 0 ? ["--no-sandbox"] : []),
+    "about:blank",
+  ];
+}
+
 export async function launchBrowser(chrome: string): Promise<Browser> {
   const dir = mkdtempSync(join(tmpdir(), "csh-chrome-"));
-  const child: ChildProcess = spawn(
-    chrome,
-    [
-      "--headless=new",
-      "--remote-debugging-port=0",
-      `--user-data-dir=${dir}`,
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-gpu",
-      "--disable-extensions",
-      "--disable-background-networking",
-      "--disable-component-update",
-      "--disable-domain-reliability",
-      "--disable-client-side-phishing-detection",
-      "--disable-sync",
-      "--no-pings",
-      "--metrics-recording-only",
-      "--mute-audio",
-      // Keep Chrome out of the macOS keychain: under a test HOME it has none, and the lookup
-      // pops a "keychain cannot be found" dialog on the desktop for every launch.
-      "--use-mock-keychain",
-      "--password-store=basic",
-      // Root (the desk, CI containers) cannot use Chrome's sandbox.
-      ...(process.getuid?.() === 0 ? ["--no-sandbox"] : []),
-      "about:blank",
-    ],
-    { stdio: ["ignore", "ignore", "pipe"] },
-  );
+  const child: ChildProcess = spawn(chrome, chromeArgs(dir), { stdio: ["ignore", "ignore", "pipe"] });
   const wsUrl = await new Promise<string>((resolve, reject) => {
     let buf = "";
     const timer = setTimeout(() => reject(new Error("Chrome did not start: " + buf.slice(-500))), 20_000);
