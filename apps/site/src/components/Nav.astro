@@ -580,19 +580,28 @@ const [cmdHead, cmdTail] = INSTALL_SH.split(/ (?=\| )/);
   document.addEventListener("astro:page-load", setupNav);
 
   // Every copy button on the site ([data-copy]: the hero, the closing CTA and
-  // the sheet's install row), wired once on the document so it survives page
-  // swaps without rebinding. Enhancement only: without JS the command is still
-  // plain, selectable text. The sheet announces in its own live region (the
-  // page's is inert while the sheet is open), everything else in the page's.
+  // the sheet's install row; [data-code-copy]: a docs code block, which copies
+  // its own text), wired once on the document so it survives page swaps
+  // without rebinding. Enhancement only: without JS the command is still
+  // plain, selectable text. A code block announces in its own live region, the
+  // sheet in its own (the page's is inert while the sheet is open), everything
+  // else in the page's.
   document.addEventListener("click", async (e) => {
-    const btn = (e.target as Element | null)?.closest<HTMLElement>("[data-copy]");
-    if (!btn || !(await copyText(btn.dataset.copy ?? ""))) return;
-    flashCopied(btn);
+    const btn = (e.target as Element | null)?.closest<HTMLElement>("[data-copy], [data-code-copy]");
+    if (!btn) return;
+    const block = btn.hasAttribute("data-code-copy") ? btn.closest(".code") : null;
+    const pre = block?.querySelector<HTMLElement>("[data-code-text]");
+    const ok = await copyText(pre ? (pre.textContent ?? "") : (btn.dataset.copy ?? ""));
+    // A block the browser will not copy is selected instead, for the keyboard.
+    if (ok) flashCopied(btn);
+    else if (pre) getSelection()?.selectAllChildren(pre);
+    else return;
     const status =
+      block?.querySelector<HTMLElement>("[data-code-status]") ??
       btn.closest("[data-nav-sheet]")?.querySelector<HTMLElement>("[data-nav-copy-status]") ??
       document.querySelector<HTMLElement>("[data-copy-status]");
     if (status) {
-      status.textContent = "Copied to clipboard";
+      status.textContent = ok ? "Copied to clipboard" : "Selected, copy it with your keyboard";
       setTimeout(() => (status.textContent = ""), 1600);
     }
   });

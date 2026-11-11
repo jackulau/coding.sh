@@ -16,7 +16,7 @@ const text = code.replace(/^\n+|\s+$/g, "");
   <div class="code__bar" data-pagefind-ignore>
     <span class="code__title">{title}</span>
     <button type="button" class="code__copy ctl" data-code-copy aria-label={`Copy ${title}`} data-agent-skip>
-      <span data-code-label>Copy</span>
+      <span data-copy-label>Copy</span>
     </button>
     <span class="sr-only" role="status" data-code-status data-agent-skip></span>
   </div>
@@ -74,30 +74,3 @@ const text = code.replace(/^\n+|\s+$/g, "");
     color: inherit;
   }
 </style>
-
-<script>
-  function setupCodeCopy() {
-    document.querySelectorAll<HTMLButtonElement>("[data-code-copy]").forEach((btn) => {
-      if (btn.dataset.bound) return;
-      btn.dataset.bound = "1";
-      const root = btn.closest(".code");
-      const label = btn.querySelector<HTMLElement>("[data-code-label]");
-      const status = root?.querySelector<HTMLElement>("[data-code-status]");
-      const pre = root?.querySelector<HTMLElement>("[data-code-text]");
-      let timer = 0;
-      btn.addEventListener("click", async () => {
-        try {
-          await navigator.clipboard.writeText(pre?.textContent ?? "");
-          if (label) label.textContent = "Copied";
-          if (status) status.textContent = "Copied to clipboard";
-        } catch {
-          if (pre) getSelection()?.selectAllChildren(pre);
-          if (status) status.textContent = "Selected, copy it with your keyboard";
-        }
-        clearTimeout(timer);
-        timer = window.setTimeout(() => label && (label.textContent = "Copy"), 1600);
-      });
-    });
-  }
-  document.addEventListener("astro:page-load", setupCodeCopy);
-</script>
