@@ -35,11 +35,12 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
-`@main` runs the action from the main branch and installs the coding.sh release named in
-`packages/coding.sh/package.json` there. Pin a release tag instead (`@v<version>`) to keep both
-fixed. `eval init` prints this workflow for a cases or skill suite, pinned to the release you
-have installed. The API key is needed only when the suite calls a model: an LLM judge, a
-`--draft`ed grader, or an agent for a skill suite.
+`@main` runs the action from the main branch and installs the release its
+`packages/coding.sh/package.json` names. Pin a release tag (`@v<version>`) to keep both fixed. `eval init` prints this workflow for a cases or skill
+suite, pinned to the release you have installed.
+
+The API key is needed only when the suite calls a model: an LLM judge, a `--draft`ed grader, or an
+agent for a skill suite.
 
 `eval run` exits 1 when a regression suite has a task that fails most of its trials or nothing
 could be graded. A capability suite never fails on its score, so its report shows up but the job
@@ -101,10 +102,9 @@ again, so a job can use the action twice at little cost. `path` always installs.
 
 ## Compare the base branch with the pull request
 
-This runs your agent over a fixed set of cases on the base branch and on the pull request, compares
-the two runs case by case, and fails the job when the pull request does worse. It works for any
-agent you can call as a command that reads one case on stdin and prints an answer, or as an HTTP
-endpoint. The paths below are examples; put the files wherever suits your repo.
+This runs your agent over a fixed set of cases on the base branch and on the pull request, and
+fails the job when the pull request does worse, case by case. It works for any agent you can call
+as a command (one case on stdin, the answer on stdout) or as an HTTP endpoint.
 
 ### 1. Write the cases
 
@@ -200,12 +200,14 @@ the same dataset version. The base run uses the base branch's code because the c
 | B does not win enough without breaking what A solved | `exp compare base head --gate` |
 | Any case that passed on base fails on the pull request | a `run:` step with `coding.sh exp compare base head --json \| jq -e '.comparison.regressions \| length == 0'` |
 
-`--margin` passes only when the lower bound of the 95% interval of B − A is above −0.05 and an
-exact sign-flip test agrees, so a small or noisy suite can fail it with no real change; add cases
-or trials until the interval is narrow enough. Below 6 cases (or 6 clusters with `--cluster`) it
-always fails. `--gate` is for shipping a change that should help, and holds when the evidence is
-weak. The `jq` check is strict and suits small deterministic suites. `exp run` exits 1 only when
-every case errored, which usually means the task command is broken.
+- `--margin` passes only when the lower bound of the 95% interval of B − A is above −0.05 and an
+  exact sign-flip test agrees.
+- A small or noisy suite can fail `--margin` with no real change: add cases or trials. Below 6
+  cases (or 6 clusters with `--cluster`) it always fails.
+- `--gate` is for shipping a change that should help, and holds when the evidence is weak.
+- The `jq` check is strict and suits small deterministic suites.
+
+`exp run` exits 1 only when every case errored, which usually means the task command is broken.
 
 ## Benchmarks on a schedule
 
