@@ -59,3 +59,17 @@ test("motion respects prefers-reduced-motion and hover is gated", () => {
   assert.equal(hoverOutside, null, ":hover rules live only inside the hover media query");
   assert.doesNotMatch(html, /transition:\s*all/);
 });
+
+test("motion durations come from the shared tokens, and presses stay within 0.95 to 0.98", () => {
+  const css = (html.match(/<style\b[^>]*>([\s\S]*?)<\/style>/)?.[1] ?? "").replace(/\/\*[\s\S]*?\*\//g, "");
+  const lines = css.split("\n").filter((l) => /\b(transition|animation)\b[^:]*:/.test(l));
+  assert.ok(lines.length > 10);
+  // Only the two idle loops (the indexing dot and the loading sweep) carry their own times.
+  const literal = lines.filter((l) => /\d+ms/.test(l) && !/infinite/.test(l) && !/transition-delay/.test(l));
+  assert.deepEqual(literal, []);
+  assert.doesNotMatch(css, /--hover-(in|out)/);
+  for (const m of css.matchAll(/:active\s*\{[^}]*scale\((var\(--press-scale\))\)/g)) assert.equal(m[1], "var(--press-scale)");
+  assert.doesNotMatch(css, /:active\s*\{[^}]*scale\(\d/);
+  const scale = Number(/--press-scale:\s*([\d.]+)/.exec(css)?.[1]);
+  assert.ok(scale >= 0.95 && scale <= 0.98);
+});
