@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/assets/banner.png" alt="coding.sh: see what your AI agents did, and what it cost. Local-first observability and evals for any AI agent. Below the headline, the top of one session in the coding.sh viewer: a Claude Code session that raised the OTLP receiver body limit to 8 MB, with its model, duration, estimated cost, a '31 passed' test badge and its first file edits." width="100%">
+  <img src=".github/assets/banner.png" alt="coding.sh: see what your AI agents did, and what it cost. Every prompt, tool call, file change and cost, kept on your machine. Below the headline, the top of one session in the coding.sh viewer: a Claude Code session that raised the OTLP receiver body limit to 8 MB, with its model, duration, estimated cost, a '31 passed' test badge and its first file edits." width="100%">
 </p>
 
 <p align="center">
@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <b>coding.sh is open-source, local-first observability and evals for any AI agent. Coding agents first-class.<br>
+  <b>coding.sh records what your AI agents do: every prompt, model call, tool call, file change and what it cost. You read each run in a local viewer and turn the ones that went wrong into evals.<br>
   Your sessions stay on your machine.</b>
 </p>
 

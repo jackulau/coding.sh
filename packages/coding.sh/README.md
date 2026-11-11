@@ -1,12 +1,10 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/jackulau/coding.sh/main/.github/assets/banner.png" alt="coding.sh: see what your AI agents did, and what it cost. Local-first observability and evals for any AI agent. Below the headline, the top of one Claude Code session in the coding.sh viewer, with its model, duration, estimated cost, a '31 passed' test badge and its first file edits." width="100%">
+  <img src="https://raw.githubusercontent.com/jackulau/coding.sh/main/.github/assets/banner.png" alt="coding.sh: see what your AI agents did, and what it cost. Every prompt, tool call, file change and cost, kept on your machine. Below the headline, the top of one Claude Code session in the coding.sh viewer, with its model, duration, estimated cost, a '31 passed' test badge and its first file edits." width="100%">
 </p>
 
 Docs: [coding.sh/docs](https://coding.sh/docs) · Quickstart: [coding.sh/docs/quickstart](https://coding.sh/docs/quickstart)
 
 # coding.sh
-
-coding.sh is open-source, local-first observability and evals for any AI agent. Coding agents first-class.
 
 coding.sh records what your agents do (prompts, tool calls, file changes, model calls, latency and
 token usage) into a SQLite index on your machine. You browse it in a local viewer, query it from
