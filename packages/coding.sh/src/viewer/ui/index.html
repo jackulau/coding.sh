@@ -442,7 +442,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .row[aria-selected="true"] { background: var(--select); }
 .row[aria-selected="true"]::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--text); }
 .row-main { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
-.row-title { font-size: 13.5px; color: var(--text); min-width: min(12rem, 50%); flex: 0 1 auto; }
+.row-title { font-size: 13.5px; color: var(--text); min-width: min(12rem, 50%); flex: 0 1 auto; text-align: left; }
 /* Badges that do not fit wrap onto a hidden second line, so none is cut in half.
    The box never gets narrower than its widest badge: the title gives way first. */
 .row-badges { display: flex; flex-wrap: wrap; gap: 0 0.3rem; flex: 0 1 auto; height: 20px; overflow: clip; }
