@@ -39,7 +39,8 @@ A made-up key, like the ones in docs and test fixtures, is redacted too, but cou
 | `backups/` | A copy of every agent config file before coding.sh edited it. |
 | `config.toml` | Your settings. |
 
-`CODING_SH_HOME` moves the folder. In full mode, the default, coding.sh keeps prompts, replies,
+`CODING_SH_HOME` moves the folder. Outside Windows, the index, its WAL files, the blob store and
+the index backups are readable by your user only (files 0600, folders 0700). In full mode, the default, coding.sh keeps prompts, replies,
 tool calls with their input and output, file changes, errors, model names, token usage and timing.
 
 - **Nothing leaves your machine by default.** With no sinks, no session data is sent. The only

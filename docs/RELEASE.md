@@ -229,9 +229,6 @@ missing.
 
 None of these block the release, but each one is worth a decision:
 
-- **`index.db` and `blobs/` follow the umask** (usually 644/755), unlike the spool and config files
-  (600/700). On a shared machine, other local users can read captured sessions unless the home
-  directory is private.
 - **Timing tests** (hook latency, `--help` startup, snapshot, redaction and batch-write speed)
   compare against a baseline measured in the same process, so load alone should not fail them.
   If one does fail on a shared runner, its message prints both numbers.
