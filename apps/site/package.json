@@ -10,6 +10,7 @@
     "preview": "astro preview",
     "check": "astro check && npm test",
     "test": "node --test \"test/*.test.mjs\"",
+    "test:dist": "CODING_SH_REQUIRE_DIST=1 node --test \"test/*.test.mjs\"",
     "perf:budget": "node scripts/perf-budget.mjs",
     "og": "node scripts/gen-og.mjs",
     "seo": "node scripts/seo-check.mjs",

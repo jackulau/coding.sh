@@ -181,7 +181,7 @@ coding.sh search "timeout" --store 'postgres://…'`;
   <details class="more">
     <summary>What the server needs</summary>
     <ul>
-      <li>One Node process (Node 22.15 or newer) or the Docker image, on one port: 4318 by default. The image is distroless Node 22, built for amd64 and arm64.</li>
+      <li>One Node process (Node 22.16 or newer) or the Docker image, on one port: 4318 by default. The image is distroless Node 22, built for amd64 and arm64.</li>
       <li>On a public address, serve does not start with an ingest key and no read key or viewer login. Pass <code>--insecure</code> only on a private network.</li>
       <li><code>/metrics</code> needs a read key. It has ingest, throttling, queue and writer numbers.</li>
       <li>serve never checks for updates.</li>

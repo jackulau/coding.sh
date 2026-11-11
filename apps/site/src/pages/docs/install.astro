@@ -44,7 +44,7 @@ rm -rf ~/.coding.sh             # optional: delete your recorded sessions too`;
 <DocsLayout>
   <CodeTabs group="install" tabs={install} />
   <p>
-    The script checks for Node 22.15 or newer and installs coding.sh from npm. If npm does not have the release or can't be reached, it takes the tarball from
+    The script checks for Node 22.16 or newer and installs coding.sh from npm. If npm does not have the release or can't be reached, it takes the tarball from
     the GitHub release instead. Then it runs <code>coding.sh init</code>, which finds your agents, shows one plan and asks once before it
     writes anything. Last, it opens the viewer. Read the script at <a href="/install">coding.sh/install</a>.
   </p>
@@ -73,7 +73,7 @@ rm -rf ~/.coding.sh             # optional: delete your recorded sessions too`;
 
   <h2 id="requirements">Requirements</h2>
   <ul>
-    <li><strong>Node.js 22.15 or newer.</strong> coding.sh uses the SQLite and zstd built into Node, so nothing native is compiled.</li>
+    <li><strong>Node.js 22.16 or newer.</strong> coding.sh uses the SQLite and zstd built into Node, so nothing native is compiled.</li>
     <li><strong>git</strong>, for the repository snapshots that <code>coding.sh run</code> and repo-replay evals take.</li>
     <li>
       <strong>Windows:</strong> run the script from Git Bash, which comes with <a href="https://gitforwindows.org">Git for Windows</a>. Eval

@@ -12,6 +12,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer-core";
 import sharp from "sharp";
+import { assertCleanText } from "./clean-text.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const [uiArg, serveArg, outArg] = process.argv.slice(2);
@@ -44,6 +45,7 @@ async function open(url, width, height, mobile = false) {
 /** Saves a page-coordinate rect (CSS px) as a 2x WebP. */
 async function shot(page, name, rect, quality = 82) {
   await sleep(250);
+  assertCleanText(await page.evaluate(() => document.body.innerText), name);
   const png = await page.screenshot({ type: "png", clip: { ...rect, scale: 1 }, captureBeyondViewport: true });
   const file = join(OUT, name + ".webp");
   const info = await sharp(png).webp({ quality, effort: 6 }).toFile(file);
@@ -151,6 +153,7 @@ const rowsBelowFail = (page, n) =>
  */
 async function stitch(page, name, rects, bg, quality = 82) {
   await sleep(250);
+  assertCleanText(await page.evaluate(() => document.body.innerText), name);
   const W = 2 * Math.round(Math.max(...rects.map((r) => r.width)));
   const parts = [];
   for (const { pad = 0, padLeft = 0, ...r } of rects) {

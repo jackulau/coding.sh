@@ -12,7 +12,7 @@ const FAQ: { id: string; q: string; a: string }[] = [
   {
     id: "network",
     q: "Does anything leave my machine?",
-    a: `Your sessions stay on your machine unless you connect a team server or a <a href="/docs/storage#sinks">sink</a>, and a sink sends metadata only (no prompts, code or tool output) unless you set <code>mode = "full"</code>. The viewer and the local server listen on 127.0.0.1. Commands check once a day for a new release; <code>CODING_SH_NO_UPDATE_CHECK=1</code> turns that off. A judge calls your model provider only when you run it.`,
+    a: `Your sessions stay on your machine unless you connect a team server or a <a href="/docs/storage#sinks">sink</a>, and a sink sends metadata only (no prompts, code or tool output) unless you set <code>mode = "full"</code>. The viewer and the local server listen on 127.0.0.1. Commands run a daily update check for a new release; <code>CODING_SH_NO_UPDATE_CHECK=1</code> turns that off. A judge calls your model provider only when you run it.`,
   },
   {
     id: "status",

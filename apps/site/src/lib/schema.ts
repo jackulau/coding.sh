@@ -44,7 +44,7 @@ export function softwareSchema() {
     applicationCategory: "DeveloperApplication",
     operatingSystem: "macOS, Linux, Windows",
     softwareVersion: RELEASE,
-    softwareRequirements: "Node.js 22.15 or newer",
+    softwareRequirements: "Node.js 22.16 or newer",
     installUrl: `${SITE_URL}/install`,
     offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
     license: LICENSE_URL,

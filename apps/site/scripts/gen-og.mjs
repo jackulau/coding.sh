@@ -25,9 +25,10 @@ try {
 } catch {
   skip("rsvg-convert not found (brew install librsvg)");
 }
-let DOC_PAGES, cubeSvg, sharp;
+let DOC_PAGES, cubeSvg, sharp, cards, manifest, manifestEntry;
 try {
   ({ DOC_PAGES } = await import("../src/components/docs/nav.ts"));
+  ({ cards, manifest, manifestEntry } = await import("./og-cards.mjs"));
   ({ cubeSvg } = await import("../src/lib/cube.ts"));
   ({ default: sharp } = await import("sharp"));
 } catch (err) {
@@ -44,17 +45,6 @@ const mono = font("geist-mono-latin.woff2");
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 const cube = cubeSvg(undefined, undefined, 100);
-
-// Blog posts: src/content/blog/<slug>.md, title from the front matter.
-const POSTS = new URL("../src/content/blog/", import.meta.url).pathname;
-const posts = (existsSync(POSTS) ? readdirSync(POSTS) : [])
-  .filter((f) => f.endsWith(".md"))
-  .map((f) => {
-    const front = readFileSync(join(POSTS, f), "utf8").match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
-    const title = front.match(/^title:\s*(.+)$/m)?.[1].trim().replace(/^(["'])(.*)\1$/, "$2");
-    if (!title) throw new Error(`gen-og: no title in ${f}`);
-    return { slug: f.slice(0, -3), title };
-  });
 
 /** Wraps a title onto at most three lines of roughly `max` characters. */
 function lines(text, max) {
@@ -85,30 +75,33 @@ ${tl.map((l, i) => `<text x="88" y="${top + i * size * 1.05}" font-family="G, Ge
 `;
 }
 
+const list = cards(DOC_PAGES);
+const MANIFEST = join(PUBLIC, "og", "manifest.json");
+// What each card was drawn from. `--missing` draws a card that has no PNG and a
+// card whose title or template differs from this record.
+let recorded = {};
+try {
+  recorded = JSON.parse(readFileSync(MANIFEST, "utf8"));
+} catch {}
+const stale = (c) => {
+  const r = recorded[c.name];
+  const e = manifestEntry(c);
+  return !r || r.title !== e.title || r.template !== e.template;
+};
+
 const tmp = join(tmpdir(), `og-${process.pid}`);
 mkdirSync(tmp, { recursive: true });
 mkdirSync(join(PUBLIC, "og"), { recursive: true });
 let written = 0;
-async function png(name, spec) {
-  if (MISSING_ONLY && existsSync(join(PUBLIC, name + ".png"))) return;
+for (const c of list) {
+  if (MISSING_ONLY && existsSync(join(PUBLIC, c.name + ".png")) && !stale(c)) continue;
   written++;
-  const src = join(tmp, name.replace(/\//g, "_") + ".svg");
-  writeFileSync(src, svg(spec));
+  const src = join(tmp, c.name.replace(/\//g, "_") + ".svg");
+  writeFileSync(src, svg(c));
   const raw = execFileSync("rsvg-convert", ["-w", "1200", "-h", "630", src], { maxBuffer: 64 << 20 });
-  await sharp(raw).removeAlpha().png({ compressionLevel: 9 }).toFile(join(PUBLIC, name + ".png"));
+  await sharp(raw).removeAlpha().png({ compressionLevel: 9 }).toFile(join(PUBLIC, c.name + ".png"));
 }
-
-await png("og-image", { title: "Traces and evals for AI agents.", sub: "Open source, local-first, MIT licensed." });
-await png("og/changelog", { kicker: "changelog", title: "Changelog", sub: "Every release, newest first." });
-// The kicker names the section: comparisons are found from search as often as
-// from the docs; every other docs page is "docs", whatever its path.
-const kicker = (path) => (path === "/docs/compare" || path.startsWith("/docs/compare/") ? "compare" : "docs");
-await png("og/blog", { kicker: "blog", title: "Blog", sub: "Notes on how coding.sh works and why." });
-for (const p of posts) await png(`og/blog-${p.slug}`, { kicker: "blog", title: p.title, sub: "coding.sh blog" });
-for (const p of DOC_PAGES) {
-  const slug = p.path === "/docs" ? "docs" : `docs-${p.path.slice("/docs/".length).replace(/\//g, "-")}`;
-  await png(`og/${slug}`, { kicker: kicker(p.path), title: p.title, sub: "coding.sh docs" });
-}
+writeFileSync(MANIFEST, JSON.stringify(manifest(list), null, 2) + "\n");
 rmSync(tmp, { recursive: true, force: true });
 rmSync(join(PUBLIC, "og-image.svg"), { force: true });
-console.log(MISSING_ONLY ? `og: ${written} missing card(s) written` : `og images written: og-image.png, og/changelog.png, og/blog.png, ${posts.length} blog posts, ${DOC_PAGES.length} docs pages`);
+console.log(MISSING_ONLY ? `og: ${written} missing or changed card(s) written` : `og images written: ${list.length} cards`);
