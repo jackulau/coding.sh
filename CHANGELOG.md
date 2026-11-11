@@ -7,6 +7,12 @@ follow [Semantic Versioning](https://semver.org/) from the first npm release.
 Each release opens with a short summary. The list under it has one line per change,
 grouped by area, with links to the docs for the details.
 
+## [0.1.7] - Unreleased
+
+### Fixed
+
+- **Tests.** The viewer's browser tests no longer hang when Chrome closes its DevTools connection before it answers: a waiting call fails at once, and any call fails after 30 s. This was the cause of Windows CI jobs that ran into their time limit. [Contributing](https://github.com/jackulau/coding.sh/blob/main/CONTRIBUTING.md)
+
 ## [0.1.6] - 2026-11-11
 
 ### Added
