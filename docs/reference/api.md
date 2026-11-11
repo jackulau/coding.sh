@@ -1180,10 +1180,12 @@ viewer's Explore page and `coding.sh stats --json`. Parameters:
 | `by` | none | `agent`, `model`, `repo` or `flag`: one series per group |
 | `groups` | 6 | how many groups get their own series (1 to 50); the rest add up in `other` |
 | `tz` | 0 | minutes behind UTC, as `Date#getTimezoneOffset` gives (360 for UTC-6); buckets start at local midnight. Without `tz` the buckets are UTC days and a date is read in the server's zone, so send `tz` with a date |
-| `scope` | `all` | `top` leaves out subagent sessions |
+| `scope` | `all` | `top` counts top-level sessions only, and adds each subagent's cost, tokens, tool calls and model calls to the session it ran under |
 | `where`, `project` | | as on `/api/sessions` |
 
-A session counts in the bucket it started in.
+A session counts in the bucket it started in. With `scope=top`, a subagent counts in its top-level
+session's bucket and group; one whose top-level session is not in the range, or does not match
+`where`, counts as a session of its own. Cost, token and call totals then equal `scope=all`.
 
 | Field | Meaning |
 |---|---|
@@ -1346,7 +1348,7 @@ Body (JSON, up to 1 MB):
 
 | Field | Meaning |
 |---|---|
-| `target` | `session` (default), `event`, `case` or `run` |
+| `target` | `session` (default), `event`, `case` or `run`. An experiment is not a target: score its runs or cases |
 | `targetId` | Id of what is scored. For a session, `sessionId` works in its place |
 | `name` | 1-100 characters of letters, digits and `_.:/-` (or the config's name, with `configId`) |
 | `value` | A number (`numeric`), `true` or `false` (`boolean`, 0 and 1 work too), or a string (`categorical`, `text`) |
@@ -1571,6 +1573,11 @@ content changed, the seed check and the failed cases.
 
 Two things differ: `cases` is left out, and each failure carries `hasSession` (whether the session
 is in this index, so the page can link to it) in place of `sessionUrl`.
+
+Each pair in `latest.comparisons` has a `verdict`: `a` or `b` (that contender is ahead),
+`tie` (no significant difference) or `no-verdict`. A run that excluded over 10% of its cases draws
+no verdict: every pair says `no-verdict` and `withheld` says why, for example
+`"7 of 47 cases excluded, over 10%"`. `withheld` is absent when the test decided.
 
 ```sh
 curl -sS "$CSH/api/benchmarks/coding-sh-issues" -H "Authorization: Bearer $READ_KEY"

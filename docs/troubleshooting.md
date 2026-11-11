@@ -33,7 +33,8 @@ show up, work down this list:
 
 1. **Did the agent start before `init`?** Agents read their hook config at startup. Restart it.
 2. **Is capture switched off?** `CODING_SH_DISABLE=1` in the agent's environment makes the hook
-   write nothing.
+   write no event. It keeps the session id in `spool/disabled-sessions`, and ingest and
+   `ingest --backfill` leave that session out.
 3. **Is the repo excluded?** Run `coding.sh config get capture.exclude`. Sessions whose working
    directory matches are dropped at ingest.
 4. **Did ingest fail?** Run `coding.sh ingest` and read its output. Hook failures go to
@@ -71,16 +72,19 @@ The warnings are in the JSON as `warnings`, each with a `check`, a `message`, th
 | `not hooked` | The agent is installed but has no coding.sh hook in its user config or a project doctor checked, and no events in the last 5 minutes. | `coding.sh init --agent <id>` |
 | `hooked in <file> (project)` | The hook is in a project's config (`init --scope project`). doctor looks in the current directory, its parents and the directories of the agent's recent sessions. The agent is captured in that project only. | Nothing, or `coding.sh init --agent <id>` to capture every project. |
 | `hooks in <file> run <path>, not this home's hook` | The hooks run another coding.sh home's `hook.mjs`, usually because `HOME` or `CODING_SH_HOME` changed since they were written. They capture into that home. `doctor --json` lists each file under `hookFiles`. | `coding.sh init --agent <id>` hooks this home too. |
-| `hooked …, but the hook it runs is missing` | The hooks run this home's `hook.mjs`, and that file is gone. | `coding.sh init` |
+| `hooked …, but the hook it runs is missing` | The hooks run this home's `hook.sh` (`hook.mjs` on Windows), and that file or the `hook.mjs` beside it is gone. | `coding.sh init` |
 | `events arriving, hook not in user config` | Events came in during the last 5 minutes, but doctor found no hook. They can come from an import, the proxy or a project doctor did not look in. | `coding.sh init --agent <id>`, or run doctor from the project. |
 | `hooked but not firing` | The hook is in place but the agent will not run it. The note under the row says why. | Follow the note. |
 | `no events yet` | Nothing captured from this agent. Normal right after `init`. | Use the agent, then `coding.sh sessions`. |
 | `reads its store` / `no store yet` | Host apps such as T3 Code are read from their own database, not hooks. | Nothing to do. |
-| `Hook missing at …/bin/hook.mjs` | `init` has not run, or the file was deleted. | `coding.sh init` |
+| `Hook missing at …/bin/hook.sh` (or `…/bin/hook.mjs`) | `init` has not run, or the file was deleted. Outside Windows the hooks run `hook.sh`, which needs `hook.mjs` beside it. | `coding.sh init` |
 | `Hook …/bin/hook.mjs is stale` | The hook bin is from another coding.sh version, or `bin/cli-path` names another install. After `npm i -g`, the next session end refreshes it by itself. | `coding.sh update --refresh-bin` |
+| `Spool spool/<agent>/<day>.jsonl not writable: EACCES` | Hooks can't append to that agent's file for today, so its events are lost. | Fix the file's owner or permissions. |
+| `Spool N hook writes failed in the last day (…)` | Hooks logged write failures (`ENOSPC`, `EACCES`, …) to `spool/errors.log` in the last 24 hours. | Free disk space or fix permissions. The warning goes away a day after the last failure. |
+| `Stats N model calls past physical limits (…)` | Recent stored model calls show more than 500 output tokens a second, a first token outside the call, or a cost below $0 or above $50. A parser or unit bug, not a real call. | `coding.sh show <session>` for the session it names, and report it. |
 | `Spool … not writable` | coding.sh can't write to `~/.coding.sh/spool` (or `$CODING_SH_HOME/spool`). | Fix the directory's owner or permissions. |
 | `Store can't open: …` | The index could not be opened. The message has the cause. | See `store_unavailable` below. |
-| `Ingest stopped 4h ago: …` | The ingest the hook starts at session end has failed since then. Captures are not lost: the hook keeps writing them to the spool. `status --json` and `doctor --json` carry it as `ingestStopped`. | The command the row names, usually `coding.sh update` or `coding.sh upgrade-store`. See [Store version errors](#store-version-errors). |
+| `Ingest stopped 4h ago: …` | The ingest the hook starts at session end has failed since then, or the blob store refused writes in two ingests in a row (`blob_write_failed`; `ingest --json` says `"outcome": "stopped"`). Captures are not lost: the hook keeps writing them to the spool, and the next ingest that gets through stores them. `status --json` and `doctor --json` carry it as `ingestStopped`. | The command the row names, usually `coding.sh update` or `coding.sh upgrade-store`. For the blob store, check `blobs` in the `[store]` section of the file `coding.sh config path` prints, or `CODING_SH_BLOB_URL`. See [Store version errors](#store-version-errors). |
 | `Receiver port 4318 in use` | Something listens on the OTLP port, usually `coding.sh collector`. | Nothing, or `doctor --port <n>` to check another port. |
 | `Agents none detected` | No supported agent was found on PATH or in its usual config dir. | Capture any command with `coding.sh run -- <cmd>`. |
 :::
@@ -273,6 +277,7 @@ The command line was wrong. Nothing ran.
 | `too_short` | `1 value shorter than 8 characters; a short value would rewrite ordinary text` (purge) | Put the whole secret on its line, not a fragment. |
 | `read_only` | `DELETE is not allowed: coding.sh sql is read-only`, `only one statement is allowed (found text after ';')` | `coding.sh sql` only reads. Change data with the command that owns it. |
 | `trace_incomplete` | `incomplete trace: 5 tool result(s) in the source but 3 reached the judge` (judge grade) | Tool calls in `--trace` did not reach the judge, a line was cut (`1 line(s) are not whole JSON`), a record is in no format the judge reads, or the file has no JSON records, so a grade would miss them. Fix the capture, or pass `--allow-partial-trace` to grade anyway. |
+| `no_arm_difference` | (exp ab) `No arm difference: Claude Code does not load AGENTS.md, so A and B give all 12 cases the same context` | Edit the file the sessions' agent loads, or import the edited file there (an `@AGENTS.md` line in the agent's own instructions file counts), or pick sessions of an agent that loads it with `--agent`. |
 
 ### Errors (exit 1)
 
@@ -280,7 +285,9 @@ The command ran and something failed.
 
 | Reason | Example message | Fix |
 |---|---|---|
-| `store_unavailable` | `Couldn't open the coding.sh store: no index store for "foo://". Install the npm package "coding.sh-store-foo" …` | Check `[store]` in the config (`coding.sh config path`) and `CODING_SH_STORE_URL`. For `postgres://`, install `coding.sh-store-postgres` and check the database is reachable (`connect ECONNREFUSED` means it is not). |
+| `store_unavailable` | `Couldn't open the coding.sh store: no index store for "foo://". Install the npm package "coding.sh-store-foo" …` | Check what named the store: the URL given with `--store` or set in `CODING_SH_STORE_URL`, else `[store]` in the config (`coding.sh config path`). For `postgres://`, install `coding.sh-store-postgres` and check the database is reachable (`connect ECONNREFUSED` means it is not). |
+| `store_missing` | `No coding.sh store at /work/typo.db. Nothing was created there` | A read (`sessions`, `show`, `search`, `stats`, `usage`, `export`, `sql`, `replay`, `dataset list`, `score list`, `score configs`, `eval list`, `eval export`, `exp list`, `exp show`, `tree`, `cache doctor`, `diff-calls`) named a SQLite file with `--store` or `CODING_SH_STORE_URL` that does not exist. Check the path. Commands that write create the file. |
+| `no_fts5` | `Couldn't open the coding.sh store: this Node's SQLite has no FTS5; coding.sh needs Node 22.16 or newer` | Install Node 22.16 or newer. |
 | `store_owned` | `~/.coding.sh/index.db is at index schema v8, and this coding.sh 0.1.5 would migrate it to v9. Your hooks run the coding.sh 0.1.4 at …/dist/cli.mjs, which may not open v9.` | Another install owns the store. Run `coding.sh upgrade-store` from the install your hooks should run, or use the one the message names. See [Store version errors](#store-version-errors). |
 | `store_version` | `~/.coding.sh/index.db is at index schema v10. It was last written by coding.sh 0.1.6, and this coding.sh 0.1.6 is not a newer release, so it would migrate it to v11 only when asked.` | This build knows a newer schema than the release that wrote the store. Run `coding.sh upgrade-store` (it keeps a copy of the index; `--restore` puts it back), or use the release. See [Store version errors](#store-version-errors). |
 | `store_newer` | `~/.coding.sh/index.db uses index schema v12, written by coding.sh 0.1.7, but this coding.sh 0.1.6 only knows up to v11. Your captures are safe: 12 capture files wait in the spool (…) and are indexed once a coding.sh that knows v12 runs.` | A newer coding.sh migrated the store. Update this one: `coding.sh update`. To go back instead, `coding.sh upgrade-store --restore` when the message offers it. `coding.sh status` still prints the home, the spool and `ingest stopped` before this error. |
@@ -290,9 +297,10 @@ The command ran and something failed.
 | `port_in_use` | `Can't start the collector: port 4318 is in use` | Stop the other process, or pass `--port 0` for any free port. Same for `ui`, `serve` and `proxy`. |
 | `already_running` | `A coding.sh proxy is already running on http://127.0.0.1:4320 (pid 4182)` | Use the running one, or stop it first: `coding.sh proxy stop`. |
 | `proxy_failed` | `The background proxy did not start` | Read `~/.coding.sh/proxy.log`, or run `coding.sh proxy` in the foreground to see the error. |
-| `fetch_failed` | (compare --parity) `Couldn't fetch https://example.com/: …` | Check the URL and that the site is reachable from this machine. A fetch that takes over 30 s fails too. |
-| `redirect_loop` | (compare --parity) `https://example.com/ redirects more than 10 times` | Open the URL in a browser or `curl -sI` it to see where the redirects go. |
-| `command_failed` | (compare --parity) `"npm run render" exited 1 and printed no page` | Run the command yourself; it must print the page's HTML on stdout. |
+| `grader_error` | (judge grade) `grader error: …` (exit 2) | The grader could not grade, so there is no verdict. Check the grader's provider and API key, then run again. A fail verdict exits 1. |
+| `fetch_failed` | (compare --parity) `Couldn't fetch https://example.com/: …` (exit 2) | Check the URL and that the site is reachable from this machine. A fetch that takes over 30 s fails too. |
+| `redirect_loop` | (compare --parity) `https://example.com/ redirects more than 10 times` (exit 2) | Open the URL in a browser or `curl -sI` it to see where the redirects go. |
+| `command_failed` | (compare --parity) `"npm run render" exited 1 and printed no page` (exit 2) | Run the command yourself; it must print the page's HTML on stdout. |
 | `not_found` | `Can't find session "nope"` (a session id or a unique prefix of one, 4+ characters), `No sessions captured yet`, `Can't find experiment "a"` | List what exists: `coding.sh sessions`, `exp list`, `dataset list`, `eval list`, `harness list`. |
 | `bad_flag` | (usage) `--by must be one of agent, model, agent-model, day, repo` | Use one of the listed values. |
 | `config_changed` | `Can't resume exp_…: its config changed since it started (dataset, task)` | `--resume` refuses when the dataset version, graders, trials, task, agent script or timeouts differ from the interrupted run. Restore them, or start a new run without `--resume`. |

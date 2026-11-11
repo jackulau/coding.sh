@@ -105,9 +105,11 @@ Invariants: the hook always exits 0. Stdout carries only the `--echo-continue`/`
 |---|---|---|---|---|
 | Start | fd0 is a TTY or closed | StdinRead (empty) | – | hook.ts:49-55 |
 | Start | read until EOF, or 10 s of EAGAIN with no data | StdinRead | capped at 64 MB, then drained | hook.ts:62-85 |
-| StdinRead | `CODING_SH_DISABLE=1` | Replied | – | hook.ts:119 |
-| StdinRead | ≤256 KB and not truncated | Parsed (JSON or plain string) | – | hook.ts:122-130 |
-| Parsed / too big | serialized line >256 KB | Spilled: raw written `wx` to `raw/<ts>-<pid>-<rand>.json` | – | write.ts:87-103 |
+| StdinRead | `CODING_SH_DISABLE=1` | Disabled: no line; the payload's session id is appended to `spool/disabled-sessions` | – | hook.ts:143-154, write.ts |
+| Disabled | – | Replied | – | hook.ts |
+| StdinRead | ≤1023 bytes and not truncated | Parsed (JSON or plain string) | – | hook.ts:155-165 |
+| StdinRead | over 1023 bytes or truncated | Spilled, unparsed (ingest parses the side file) | – | hook.ts:155-158 |
+| Parsed / too big | serialized line >1023 bytes (1024 with its newline) | Spilled: raw written `wx` to `raw/<ts>-<pid>-<rand>.json` | – | write.ts:87-103 |
 | Spilled / Parsed | `appendFileSync(O_APPEND)` | Appended | – | write.ts:107, 46-54 |
 | any | throw | errors.log | – | hook.ts:152-154 |
 | Appended | END_EVENT matches | Kicked (M5) | captured, not RUN_ID, not NO_AUTO_INGEST | hook.ts:171-177, kick.ts:23 |

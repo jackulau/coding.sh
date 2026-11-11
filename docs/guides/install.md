@@ -17,7 +17,7 @@ coding.sh init             # finds your agents, shows one plan, asks once (Y/n)
 coding.sh                  # opens the viewer
 ```
 
-The script checks for Node 22.15 or newer and installs coding.sh from npm. If npm does not have the
+The script checks for Node 22.16 or newer and installs coding.sh from npm. If npm does not have the
 release (or can't be reached), it takes the tarball from the GitHub release instead. Then it runs
 `coding.sh init` and opens the viewer.
 
@@ -47,9 +47,12 @@ unless `CODING_SH_YES=1` is set.
 
 ## Requirements
 
-- Node.js 22.15 or newer. coding.sh uses the SQLite and zstd built into Node, so nothing native is
+- Node.js 22.16 or newer. coding.sh uses the SQLite and zstd built into Node, so nothing native is
   compiled.
 - git, for the repository snapshots that `coding.sh run` and repo-replay evals take.
+
+Outside Windows, `init` points each agent's hooks at `/bin/sh ~/.coding.sh/bin/hook.sh`, a shell
+script that starts no node for a plain hook call. On Windows they run `hook.mjs`, below.
 
 ## Windows
 
