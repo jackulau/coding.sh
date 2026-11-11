@@ -34,10 +34,10 @@ describe("bench stats", () => {
     assert.deepEqual(places.map((s) => [s.contender, s.place]), [["strong", 1], ["twin", 1], ["weak", 3]]);
   });
 
-  test("noVerdict keeps every pair a tie", () => {
+  test("noVerdict marks every pair no-verdict, never a winner", () => {
     const cells = Array.from({ length: 40 }, (_, i) => [cell(`c${i}`, "a", true), cell(`c${i}`, "b", false)]).flat();
     const [p] = comparePairs(cells, ["a", "b"], { trials: 1, dataset: { id: "d", version: "v" }, graders: [], noVerdict: true, iters: 200 });
-    assert.equal(p!.verdict, "tie");
+    assert.equal(p!.verdict, "no-verdict");
   });
 
   test("excluded or unfinished cases drop for everyone", () => {

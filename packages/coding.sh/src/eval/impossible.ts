@@ -32,7 +32,34 @@ const SKIP_LINE_RE = /^\s*(?:import\b|from\s+\S+\s+import\b|export\s+\*|#|\/\/|\
 // Strings, then numbers not glued to identifiers or other digits, then booleans.
 const LITERAL_RE = /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])|\b(?:true|false|True|False)\b/g;
 
+const STRING_RE = /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g;
+// Calls whose arguments a test never compares: log lines and exit codes.
+const QUIET_CALL_RE = /\b(?:console\.\w+|process\.exit|sys\.exit|os\._exit|exit|print|println|printf|fmt\.Print\w*|log\.\w+|logger\.\w+)\s*\(/g;
+
 const MAX_FILE_BYTES = 1024 * 1024;
+
+/** The line with each string literal's contents blanked (same length), so words and parens in messages don't count. */
+function maskStrings(line: string): string {
+  return line.replace(STRING_RE, (m) => m[0] + " ".repeat(m.length - 2) + m[0]);
+}
+
+/** [start, end) of each quiet call, parentheses included, on the masked line. */
+function quietSpans(masked: string): [number, number][] {
+  const spans: [number, number][] = [];
+  for (const m of masked.matchAll(QUIET_CALL_RE)) {
+    let depth = 0;
+    let end = masked.length;
+    for (let i = m.index + m[0].length - 1; i < masked.length; i++) {
+      if (masked[i] === "(") depth++;
+      else if (masked[i] === ")" && --depth === 0) {
+        end = i + 1;
+        break;
+      }
+    }
+    spans.push([m.index, end]);
+  }
+  return spans;
+}
 
 function flipLiteral(lit: string): string {
   if (lit === "true") return "false";
@@ -46,13 +73,13 @@ function flipLiteral(lit: string): string {
 }
 
 /**
- * Pick the literal to flip on an assertion line. The expected value is
+ * Pick the literal to flip on an assertion line, outside log and exit calls. The expected value is
  * usually the last non-string literal (`assert.equal(add(2, 3), 5, "msg")`);
  * with only strings, the first one, since a trailing string is often just the
  * failure message (`assert greet() == "hi", "greeting"`).
  */
-function pickLiteral(line: string): { index: number; lit: string } | undefined {
-  const all = [...line.matchAll(LITERAL_RE)].map((m) => ({ index: m.index, lit: m[0] }));
+function pickLiteral(line: string, quiet: readonly [number, number][]): { index: number; lit: string } | undefined {
+  const all = [...line.matchAll(LITERAL_RE)].map((m) => ({ index: m.index, lit: m[0] })).filter((m) => !quiet.some(([a, b]) => m.index >= a && m.index < b));
   const nonString = all.filter((m) => m.lit[0] !== '"' && m.lit[0] !== "'");
   return nonString.at(-1) ?? all[0];
 }
@@ -64,8 +91,9 @@ export function impossibleMutations(files: TestFileText[], max = 3): ImpossibleM
     const lines = f.text.split("\n");
     for (const [i, line] of lines.entries()) {
       if (out.length >= max) return out;
-      if (!ASSERT_RE.test(line) || SKIP_LINE_RE.test(line)) continue;
-      const pick = pickLiteral(line);
+      const masked = maskStrings(line);
+      if (!ASSERT_RE.test(masked) || SKIP_LINE_RE.test(line)) continue;
+      const pick = pickLiteral(line, quietSpans(masked));
       if (!pick) continue;
       const flipped = flipLiteral(pick.lit);
       const after = line.slice(0, pick.index) + flipped + line.slice(pick.index + pick.lit.length);

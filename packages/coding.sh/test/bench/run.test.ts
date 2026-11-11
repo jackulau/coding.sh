@@ -153,7 +153,7 @@ console.log(JSON.stringify(JSON.parse(fs.readFileSync(0, "utf8")).a));`);
 
   test("secrets in cases are redacted at freeze", async () => {
     const p = project();
-    const key = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8";
+    const key = ["ghp_", "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"].join("");
     p.write("gen.mjs", `for (let i = 0; i < 4; i++) console.log(JSON.stringify({ input: { a: i, b: 1, note: i === 0 ? "token ${key}" : "" }, expected: i + 1 }));`);
     const r = await run({ def: p.def(), env: p.env, now: day("2026-11-04") });
     assert.equal(r.redacted, 1);

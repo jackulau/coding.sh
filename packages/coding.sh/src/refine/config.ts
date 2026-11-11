@@ -17,7 +17,7 @@ import { parseToml, type TomlTable } from "../core/toml.ts";
 import { DEFAULT_MAX_COST_RISE, parseRise } from "./objectives.ts";
 import { compileProtect, type ProtectOpts } from "./protect.ts";
 
-function section(root: TomlTable, file: string): { protect: string[]; autoProtect?: boolean; maxCostRise?: number } {
+export function section(root: TomlTable, file: string): { protect: string[]; autoProtect?: boolean; maxCostRise?: number } {
   const t = root.refine;
   if (t === undefined) return { protect: [] };
   if (!t || typeof t !== "object" || Array.isArray(t)) throw new ConfigError("[refine] must be a table", file);

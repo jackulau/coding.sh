@@ -267,7 +267,10 @@ export interface PairComparison {
   p: number;
   /** Holm-adjusted across all pairs in the run. */
   pAdj: number;
-  verdict: "a" | "b" | "tie";
+  /** "no-verdict" when the run withheld one (see `withheld`); "tie" when the test found no significant difference. */
+  verdict: "a" | "b" | "tie" | "no-verdict";
+  /** Why no verdict was drawn (verdict is "no-verdict"), e.g. too many cases were excluded. Absent when the test decided. */
+  withheld?: string;
   /** Paired latency difference a − b (ms) over cases both answered, with a bootstrap CI. */
   latencyDiffMs?: { mean: number; lo: number; hi: number; n: number };
   /** Geometric mean of per-case a/b ratios (latency over cases both answered; cost over cases both priced). */

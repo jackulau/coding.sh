@@ -18,6 +18,9 @@ async function gitDiff(a: string, b: string): Promise<{ patch: string; dir: stri
   await writeFile(join(dir, "a", "f.txt"), a);
   await writeFile(join(dir, "b.txt"), b);
   const { execFileSync } = await import("node:child_process");
+  // Its own repo: inside another work tree (a TMPDIR in a checkout), git apply would read paths
+  // from that tree's root and skip f.txt.
+  execFileSync("git", ["init", "-q"], { cwd: dir });
   let patch = "";
   try {
     execFileSync("git", ["diff", "--no-index", "a/f.txt", "b.txt"], { cwd: dir });

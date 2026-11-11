@@ -92,6 +92,17 @@ describe("calibrate: metrics", () => {
     assert.notDeepEqual(calibrate({ judge, ...d, seed: 7, bootstrapIters: 1000 }).kappaCI, a.kappaCI);
   });
 
+  it("a judge that agrees with every label still gets a CI with width: the exact bound at that n", () => {
+    const r = calibrate({ judge, ...block("t", "test", { tp: 5, fp: 0, fn: 0, tn: 5 }), seed: 1 });
+    assert.equal(r.kappa, 1);
+    assert.equal(r.kappaCI.hi, 1);
+    // (0.025)^(1/10) ≈ 0.6915 agreement at p_e 0.5 → κ ≥ 0.383.
+    close(r.kappaCI.lo, (0.025 ** 0.1 - 0.5) / 0.5);
+    assert.ok(r.kappaCI.lo < 0.6, "10 cases are too few to show κ ≥ 0.6");
+    // More cases tighten it.
+    assert.ok(calibrate({ judge, ...block("t", "test", { tp: 50, fp: 0, fn: 0, tn: 50 }), seed: 1 }).kappaCI.lo > 0.9);
+  });
+
   it("insufficient data: too few cases, or one class only", () => {
     const few = calibrate({ judge, ...block("t", "test", { tp: 3, fp: 0, fn: 0, tn: 3 }) });
     assert.equal(few.state, "insufficient-data");

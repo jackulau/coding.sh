@@ -162,7 +162,7 @@ describe("decide", () => {
     assert.equal(d.verdict, "followed-no-effect", d.reason);
     assert.equal(
       d.reason,
-      "The agent follows the new line (9 of 10 sessions after, 0 of 10 before, p 0.00), but flagged sessions did not fall (5 of 10 before, 5 of 10 after, p 1.00): following a line is not the same as fixing what it targets.",
+      "The agent follows the new line (9 of 10 sessions after, 0 of 10 before, p < 0.001), but flagged sessions did not fall (5 of 10 before, 5 of 10 after, p 1.000): following a line is not the same as fixing what it targets.",
     );
     assert.equal(d.work, undefined, "no work data, no work field");
   });
@@ -171,7 +171,7 @@ describe("decide", () => {
     const d = decide(g(20, 8), g(20, 1), []);
     assert.equal(d.verdict, "helped", d.reason);
     assert.ok(d.p! <= ALPHA);
-    assert.equal(d.reason, `Fewer sessions went wrong after it: flagged sessions 8 of 20 before, 1 of 20 after (p ${d.p!.toFixed(2)}).`);
+    assert.equal(d.reason, `Fewer sessions went wrong after it: flagged sessions 8 of 20 before, 1 of 20 after (p ${d.p!.toFixed(3)}).`);
   });
 
   it("one flag falling while another rises in its place is not helped (6/20 → 6/20, repeated failures 6 → 0, looping 0 → 6)", () => {
@@ -186,7 +186,7 @@ describe("decide", () => {
     const d = decide(g(20, 6, { byFlag: { "repeated-tool-failure": 6, looping: 3 } }), g(20, 3, { byFlag: { looping: 3 } }), []);
     assert.ok(d.p! > ALPHA, "the flagged share alone is not significant");
     assert.equal(d.verdict, "helped", d.reason);
-    assert.match(d.reason, /^Fewer sessions had repeated-tool-failure after it: 6 of 20 before, 0 of 20 after \(Holm p 0\.0\d\); flagged sessions 6 of 20 before, 3 of 20 after\.$/);
+    assert.match(d.reason, /^Fewer sessions had repeated-tool-failure after it: 6 of 20 before, 0 of 20 after \(Holm p 0\.0\d\d\); flagged sessions 6 of 20 before, 3 of 20 after\.$/);
   });
 
   it("helped names a flag that rose without significance, with its counts (no-verification 6 → 0, repeated failures 4 → 8 of 12)", () => {
@@ -194,7 +194,7 @@ describe("decide", () => {
     assert.equal(d.verdict, "helped", d.reason);
     assert.equal(
       d.reason,
-      "Fewer sessions had no-verification after it: 6 of 12 before, 0 of 12 after (Holm p 0.03); flagged sessions 10 of 12 before, 8 of 12 after. repeated-tool-failure rose 4 to 8 of 12, not significant.",
+      "Fewer sessions had no-verification after it: 6 of 12 before, 0 of 12 after (Holm p 0.027); flagged sessions 10 of 12 before, 8 of 12 after. repeated-tool-failure rose 4 to 8 of 12, not significant.",
     );
     // Sides of different sizes give each count its own total.
     const uneven = decide(g(12, 10, { byFlag: { "no-verification": 6, "repeated-tool-failure": 4 } }), g(15, 8, { byFlag: { "repeated-tool-failure": 8 } }), []);
@@ -205,7 +205,7 @@ describe("decide", () => {
   it("helped by the flagged share names a rising flag too, before the added work; no rising flag, no such clause", () => {
     const d = decide(g(20, 12, { byFlag: { "no-verification": 12 } }), g(20, 3, { byFlag: { looping: 2, churn: 1 } }), []);
     assert.equal(d.verdict, "helped", d.reason);
-    assert.equal(d.reason, `Fewer sessions went wrong after it: flagged sessions 12 of 20 before, 3 of 20 after (p ${d.p!.toFixed(2)}). looping rose 0 to 2 of 20, not significant; churn rose 0 to 1 of 20, not significant.`);
+    assert.equal(d.reason, `Fewer sessions went wrong after it: flagged sessions 12 of 20 before, 3 of 20 after (p ${d.p!.toFixed(3)}). looping rose 0 to 2 of 20, not significant; churn rose 0 to 1 of 20, not significant.`);
     const toolCalls = (n: number) => Array.from({ length: 12 }, (_, k) => n + (k % 3));
     const work = decide(g(12, 10, { byFlag: { "no-verification": 6, "repeated-tool-failure": 4 }, toolCalls: toolCalls(20) }), g(12, 8, { byFlag: { "repeated-tool-failure": 8 }, toolCalls: toolCalls(45) }), []);
     assert.match(work.reason, /\. repeated-tool-failure rose 4 to 8 of 12, not significant\. It also added work: sessions after it make more tool calls /);
@@ -233,7 +233,7 @@ describe("decide", () => {
     const after = g(10, 5, { byFlag: { "no-verification": 5 }, toolCalls: [44, 45, 45, 46, 45, 43, 47, 45, 45, 44] });
     const d = decide(before, after, [rule([0, 10], [9, 10], 0.0001)]);
     assert.equal(d.verdict, "costlier", d.reason);
-    assert.match(d.reason, /^Sessions after it make more tool calls \(median 20 → 45, p 0\.00\), and flagged sessions did not fall \(5 of 10 before, 5 of 10 after, p 1\.00\)\.$/);
+    assert.match(d.reason, /^Sessions after it make more tool calls \(median 20 → 45, p < 0\.001\), and flagged sessions did not fall \(5 of 10 before, 5 of 10 after, p 1\.000\)\.$/);
     assert.deepEqual(d.work?.toolCalls && [d.work.toolCalls.before, d.work.toolCalls.after], [20, 45]);
     assert.ok(d.work!.toolCalls!.p <= ALPHA);
   });
@@ -244,13 +244,13 @@ describe("decide", () => {
     const after = g(20, 1, { durationMs: secs([150, 156, 160, 158, 152, 154, 156, 157, 159, 155, 156, 153, 151, 160, 156, 158, 157, 156, 155, 154]) });
     const d = decide(before, after, []);
     assert.equal(d.verdict, "helped", d.reason);
-    assert.match(d.reason, / It also added work: sessions after it take longer \(median 87 → 156 s, p 0\.00\)\.$/);
+    assert.match(d.reason, / It also added work: sessions after it take longer \(median 87 → 156 s, p < 0\.001\)\.$/);
   });
 
   it("regressed is unchanged by the new rules", () => {
     const d = decide(g(10, 0), g(10, 6), [rule([0, 10], [9, 10], 0.0001)]);
     assert.equal(d.verdict, "regressed");
-    assert.equal(d.reason, `More sessions went wrong after it: flagged sessions 0 of 10 before, 6 of 10 after (p ${d.p!.toFixed(2)}).`);
+    assert.equal(d.reason, `More sessions went wrong after it: flagged sessions 0 of 10 before, 6 of 10 after (p ${d.p!.toFixed(3)}).`);
   });
 });
 

@@ -84,7 +84,9 @@ describe("eval trigger --draft", () => {
     assert.deepEqual(draft(["--repo", "../b"], repoA).sources, ["trace:b-docx", "trace:b-pdf"], "a relative --repo is read from the cwd");
     assert.deepEqual(draft(["--repo", "all"], repoA).sources, ["trace:a-docx", "trace:a-pdf", "trace:b-docx", "trace:b-pdf"]);
     // A directory with no sessions under it mines nothing, so the model is asked (and the mock can't answer):
-    // the other repos' prompts are never the fallback.
+    // the other repos' prompts are never the fallback. Its own repo, so a TMPDIR inside another work
+    // tree does not make that tree's root (which holds a and b) the repo it mines.
+    assert.equal(spawnSync("git", ["init", "-q", join(root, "skills")], { encoding: "utf8" }).status, 0);
     const none = cli(["eval", "trigger", skill, "--draft", "mock", "--dry-run", "--n", "1"], join(root, "skills"));
     assert.equal(none.status, 1, none.stderr);
     assert.match(none.stderr, /Couldn't draft trigger prompts/);

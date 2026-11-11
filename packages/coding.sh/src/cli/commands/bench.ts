@@ -7,11 +7,11 @@ import { verifySeed, type SeedCheck } from "../../bench/commit.ts";
 import { buildReport, renderReportHtml } from "../../bench/report.ts";
 import { gridText } from "../../bench/grid.ts";
 import { specializationLines } from "../../bench/specialization.ts";
-import { BenchRunError, regradeRun, resumeBench, resumeTarget, runBench, type DryRunResult } from "../../bench/run.ts";
+import { BenchRunError, regradeRun, resumeBench, resumeCommand, resumeTarget, runBench, type DryRunResult } from "../../bench/run.ts";
 import { JobStore } from "../../jobs/store.ts";
 import { cronLine, envRefs, installCron, systemCrontab, workflowYaml } from "../../bench/schedule.ts";
 import { SourceError } from "../../bench/sources.ts";
-import { pooledGap, powerPlan, type PowerPlan } from "../../bench/stats.ts";
+import { pairVerdictText, pooledGap, powerPlan, type PowerPlan } from "../../bench/stats.ts";
 import { contentChanges, getRun, historyRuns, listRuns, series, vsSeries, type ContentChange } from "../../bench/store.ts";
 import { pricesFor } from "../../core/pricing.ts";
 import { version } from "../meta.ts";
@@ -131,7 +131,7 @@ const COLUMNS = ["#", "CONTENDER", "PASS", "95% CI", "P50", "P95", "COST/RUN", "
 
 function pairLines(pairs: readonly PairComparison[]): string[] {
   return pairs.map((p) => {
-    const verdict = p.verdict === "tie" ? "no significant difference" : `${p.verdict === "a" ? p.a : p.b} ahead`;
+    const verdict = pairVerdictText(p);
     return `${p.a} vs ${p.b}: ${pp(p.diff.mean)} pp (95% CI ${pp(p.diff.lo)} to ${pp(p.diff.hi)}, unadjusted), McNemar p=${p.pAdj < 0.001 ? "<0.001" : p.pAdj.toFixed(3)} (Holm) → ${verdict}`;
   });
 }
@@ -238,7 +238,7 @@ export async function run(c: CommandContext): Promise<number> {
     if (e instanceof BenchDefError || e instanceof SourceError || e instanceof DatasetError) throw new CliError(e.message, { reason: e instanceof SourceError ? "source_failed" : "invalid_definition" });
     if (e instanceof BenchRunError) {
       const interrupted = /interrupted/.test(e.message);
-      throw new CliError(e.message, { reason: interrupted ? "interrupted" : "run_failed", ...(interrupted ? { exitCode: 130 } : {}) });
+      throw new CliError(e.message, { reason: interrupted ? "interrupted" : "run_failed", ...(interrupted ? { exitCode: 130 } : {}), next: e.resume ? ["Continue it:", e.resume] : undefined });
     }
     throw e;
   }
@@ -375,7 +375,8 @@ async function dispatch(c: CommandContext): Promise<number> {
         else {
           const seedCheck = verifySeed(result, await listRuns(def.name, env));
           printRun(c, result, seedCheck ? { seedCheck } : {});
-          out.next("See it over time", `coding.sh bench history ${def.name}`);
+          if (result.status === "incomplete") out.next("Continue it", resumeCommand(def.name, result.id));
+          else out.next("See it over time", `coding.sh bench history ${def.name}`);
           out.print(result.id);
         }
         if (result.status === "incomplete") return 1;

@@ -420,6 +420,11 @@ export interface MineResult {
   belowSupport: number;
   minSupport: MinSupport;
   since?: number;
+  /**
+   * With `agents`, when no session or eval run is of those agents: the agents
+   * the window's sessions are from, most sessions first. Absent otherwise.
+   */
+  agentsSeen?: { agent: string; sessions: number }[];
 }
 
 const under = (dir: string, p: string | undefined): boolean => {
@@ -431,9 +436,12 @@ const under = (dir: string, p: string | undefined): boolean => {
 /** Mines the window: flags, error signatures, repeated instructions and eval failures, ranked and redacted. */
 export async function mineFindings(o: MineOptions): Promise<MineResult> {
   const min: MinSupport = { ...DEFAULT_MIN_SUPPORT, ...o.minSupport };
-  const inWindow = (s: Session) => (o.since === undefined || s.startedAt >= o.since) && (!o.agents?.length || o.agents.includes(String(s.agent)));
+  const inTime = (s: Session) => o.since === undefined || s.startedAt >= o.since;
+  const ofAgent = (s: Session) => !o.agents?.length || o.agents.includes(String(s.agent));
+  const inWindow = (s: Session) => inTime(s) && ofAgent(s);
   const inRepo = (s: Session) => !o.repo || under(o.repo, s.cwd) || under(o.repo, s.repo?.root);
-  const sessions = (await o.index.listSessions({ parentSessionId: null, runId: null, ...(o.since !== undefined ? { since: o.since } : {}), limit: o.maxSessions ?? 2000 })).filter((s) => !s.runId && inWindow(s) && inRepo(s));
+  const listed = (await o.index.listSessions({ parentSessionId: null, runId: null, ...(o.since !== undefined ? { since: o.since } : {}), limit: o.maxSessions ?? 2000 })).filter((s) => !s.runId && inTime(s) && inRepo(s));
+  const sessions = listed.filter(ofAgent);
   const events = new Map<string, AgentEvent[]>();
   for (const s of sessions) events.set(s.id, await o.index.listEvents(s.id, { kinds: ["user.message", "tool.start", "tool.end"] }));
   const all: MinedFinding[] = [...flagMined(sessions), ...errorSignatureFindings(sessions, events), ...repeatedInstructionFindings(sessions, events)];
@@ -462,7 +470,16 @@ export async function mineFindings(o: MineOptions): Promise<MineResult> {
   }
   const supported = all.filter((f) => f.support.sessions >= min.sessions && f.support.days >= min.days);
   const ranked = rankFindings(redactFindings(supported));
-  return { findings: o.limit === undefined ? ranked : ranked.slice(0, o.limit), analyzed: sessions.length, evalRuns, belowSupport: all.length - supported.length, minSupport: min, ...(o.since !== undefined ? { since: o.since } : {}) };
+  const res: MineResult = { findings: o.limit === undefined ? ranked : ranked.slice(0, o.limit), analyzed: sessions.length, evalRuns, belowSupport: all.length - supported.length, minSupport: min, ...(o.since !== undefined ? { since: o.since } : {}) };
+  if (o.agents?.length && !sessions.length && !evalRuns && listed.length) res.agentsSeen = countAgents(listed);
+  return res;
+}
+
+/** Sessions per agent, most first, then by name. */
+function countAgents(sessions: readonly Session[]): { agent: string; sessions: number }[] {
+  const n = new Map<string, number>();
+  for (const s of sessions) n.set(String(s.agent), (n.get(String(s.agent)) ?? 0) + 1);
+  return [...n].map(([agent, k]) => ({ agent, sessions: k })).sort((a, b) => b.sessions - a.sessions || (a.agent < b.agent ? -1 : a.agent > b.agent ? 1 : 0));
 }
 
 const KIND_TEXT: Record<MinedKind, string> = { flag: "flag", "error-signature": "error", "repeated-instruction": "instruction", "eval-failure": "eval", diagnosis: "diagnosis" };

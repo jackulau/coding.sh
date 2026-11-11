@@ -13,8 +13,8 @@ import type { CacheBreakCause, CacheIdleKind } from "../../schema/index.ts";
 import { repriceStored } from "../../core/reprice.ts";
 import { CACHE_BASELINE_NOTE } from "../../core/cache-baselines.ts";
 import { parseSinceWhen, positiveInt, UsageError } from "../args.ts";
-import { agentScope, agentsFlag, autoIngest, queryCliError, scanCap, stoppedAfter, str, timeWindow, whereFlag, windowJson, windowNote, withContext, pendingField, readIngest } from "../common.ts";
-import { CliError, Output, usd } from "../output.ts";
+import { agentScope, agentsFlag, autoIngest, emptyStateNext, queryCliError, scanCap, stoppedAfter, str, timeWindow, whereFlag, windowJson, windowNote, withContext, pendingField, readIngest } from "../common.ts";
+import { CliError, Output, plural, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
 const fmt = (n: number | undefined): string => (n === undefined ? "-" : n >= 1e9 ? `${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${(n / 1e3).toFixed(1)}k` : String(n));
@@ -121,10 +121,11 @@ export async function run(c: CommandContext): Promise<number> {
       out.data({ ...r, window: { ...r.window, ...windowJson(window) }, ...(repriced ? { repriced: { events: repriced.events, sessions: repriced.sessions } } : {}), ...pendingField(backlog) });
       return 0;
     }
-    if (repriced) out.note(`Repriced ${repriced.events} model calls in ${repriced.sessions} sessions`);
+    if (repriced) out.note(`Repriced ${plural(repriced.events, "model call")} in ${plural(repriced.sessions, "session")}`);
     windowNote(out, window);
     if (!r.groups.length) {
       out.note("No sessions in this window");
+      await emptyStateNext(out, c.env, ctx.index, { label: "Widen the window", command: "coding.sh usage --since 90d" });
       return 0;
     }
     if (c.flags.cache === true) {
@@ -137,7 +138,7 @@ export async function run(c: CommandContext): Promise<number> {
       [by.toUpperCase(), "SESSIONS", "TURNS", "TOKENS", "OUTPUT", "TOK/TURN", baseline ? "CACHE HIT" : "CACHE READ", ...(baseline ? ["VS PUBLISHED"] : []), ...(cost ? ["COST"] : [])],
       r.groups.map((g) => [g.key, String(g.sessions), String(g.turns), fmt(g.totalTokens), fmt(g.outputTokens), fmt(g.tokensPerTurn), pct(g.cacheReadShare), ...(baseline ? [vsPublished(g)] : []), ...(cost ? [costCell(g)] : [])]),
     );
-    out.note(`TURNS = user turns (top-level sessions). TOK/TURN = top-level sessions' input + output + cache-write tokens per turn; subagents' tokens and cache reads are left out. ${baseline ? "CACHE HIT = the prompt-cache hit rate, " : "CACHE READ = "}cache reads / all prompt tokens. TOKENS counts subagents.`);
+    out.note(`TURNS = user turns (top-level sessions). TOK/TURN = top-level sessions' input + output + cache-write tokens per turn; subagents' tokens and cache reads are left out. ${baseline ? "CACHE HIT = the prompt-cache hit rate, " : "CACHE READ = "}cache reads / all prompt tokens. SESSIONS and TOKENS count subagents.`);
     if (baseline) out.note(CACHE_BASELINE_NOTE);
     if (r.groups.some((g) => g.estimatedCostUsd)) out.note("~ = includes cost estimated from tokens × list price (no reported cost).");
     if (r.groups.some((g) => g.costPartial)) out.note("≥ = some sessions in the row have tokens but no price; the cost is a lower bound.");
@@ -155,5 +156,5 @@ export async function run(c: CommandContext): Promise<number> {
     }
     if (r.window.truncated) out.warn(stoppedAfter(cap));
     return 0;
-  });
+  }, { create: false });
 }

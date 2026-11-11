@@ -261,6 +261,8 @@ describe("formatSignalValidity", () => {
     const text = formatSignalValidity(signalValidity(fixture()), { repeated: false });
     assert.match(text, /pooled AUROC mostly measures task difficulty/);
     assert.match(text, /needs k>=2/);
+    // compare has only a long --k flag, so the hint names that one.
+    assert.match(text, /rerun with --k 3\)/);
     const lines = text.split("\n");
     const at = lines.findIndex((l) => l.trim().startsWith("signal "));
     assert.match(lines[at + 1]!, /difficulty\(loo\) \(ref\)/);

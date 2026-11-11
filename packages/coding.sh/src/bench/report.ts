@@ -8,7 +8,7 @@
 // caller passes includePrivate.
 import { basename } from "node:path";
 import { verifySeed, type SeedCheck } from "./commit.ts";
-import { pooledGap, type PooledGap } from "./stats.ts";
+import { pairVerdictText, pooledGap, type PooledGap } from "./stats.ts";
 import { contentChanges, historyRuns, otherRuns, protocolBreaks, series, vsSeries, type ContentChange } from "./store.ts";
 import type { AnchorResult, BenchRun, ContenderSummary, FrozenCase, Metric, PairComparison, SeriesPoint } from "./types.ts";
 import { excludesZero, gridNotes, starred, type GridAnalysis, type Interval } from "./grid.ts";
@@ -370,7 +370,7 @@ function headToHead(pairs: readonly PairComparison[]): string {
   if (!pairs.length) return "";
   const rows = pairs
     .map((p) => {
-      const verdict = p.verdict === "tie" ? `<span class="muted">no significant difference</span>` : `<span class="win">${esc(p.verdict === "a" ? p.a : p.b)} ahead</span>`;
+      const verdict = p.verdict !== "a" && p.verdict !== "b" ? `<span class="muted">${esc(pairVerdictText(p))}</span>` : `<span class="win">${esc(pairVerdictText(p))}</span>`;
       const ratio = (r?: number) => (r === undefined ? "" : ` · ${r.toFixed(2)}×`);
       const lat = p.latencyDiffMs ? `${p.latencyDiffMs.mean >= 0 ? "+" : "−"}${ms(Math.abs(p.latencyDiffMs.mean))}<div class="meta">${ms(p.latencyDiffMs.lo)} to ${ms(p.latencyDiffMs.hi)}${ratio(p.latencyRatio)}</div>` : "–";
       const cost = p.costRatio === undefined ? "–" : `${p.costRatio.toFixed(2)}×`;

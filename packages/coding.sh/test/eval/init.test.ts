@@ -259,6 +259,21 @@ describe("initSuite: sessions", () => {
     assert.equal((await w.index.listTasks()).length, 1, "stored too, so compare --tag suite:failures finds it");
   });
 
+  it("a flagged session whose end state passes the verifier keeps its diff as the reference, not a near miss", async () => {
+    const root = await project();
+    const w = await world();
+    // Flagged, but its end state is the correct fix (with the test the verifier runs).
+    w.git.add("good-test", { ...FIXED, "test/add.test.js": HIDDEN_TEST });
+    await w.index.upsertSession({ ...(await w.index.getSession("failed"))!, id: "flagged-good", endSnapshot: "good-test", startedAt: 11_000 });
+    await w.index.putEvents([ev("flagged-good", "session.start", {}, { repo: { root: ROOT, head: "abc", snapshot: "start" } }), ev("flagged-good", "user.message", { text: "fix add and mul (flagged-good)" })]);
+    const r = await initSuite({ name: "fg", root, source: "sessions", sessionIds: ["flagged-good"], hiddenTests: ["test/**"], verifier: "node test/add.test.js" }, { ...w, now: 12_000 });
+    const [dir] = r.files.filter((f) => f.includes("/tasks/"));
+    assert.equal(existsSync(join(root, dir!, "reference.patch")), true, r.notes.join("\n"));
+    assert.equal(existsSync(join(root, dir!, "near-misses")), false);
+    assert.ok(r.notes.some((n) => /end state passes the verifier, so its diff is kept as reference\.patch/.test(n)), r.notes.join("\n"));
+    assert.ok(!r.notes.some((n) => /near-misses\/001\.patch/.test(n)));
+  });
+
   it("ranks flagged sessions and leaves out the ones that can't become a task", async () => {
     const root = await project();
     const w = await world();

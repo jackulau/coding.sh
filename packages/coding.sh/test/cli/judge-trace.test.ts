@@ -106,7 +106,7 @@ describe("judge grade --trace", () => {
     const err = JSON.parse(r.stderr.trim().split("\n").at(-1) as string) as { reason: string; message: string; next: string[] };
     assert.equal(err.reason, "trace_incomplete");
     assert.match(err.message, /trace has 1 tool call\(s\) in unknown records but 0 reached the judge/);
-    assert.deepEqual(err.next, ["pass --allow-partial-trace to grade anyway"]);
+    assert.deepEqual(err.next, ["Did you mean:", "--allow-partial-trace"]);
   });
 
   test("--allow-partial-trace grades anyway (exit 0/1) and warns", () => {

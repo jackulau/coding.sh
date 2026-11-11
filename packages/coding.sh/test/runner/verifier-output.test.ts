@@ -4,7 +4,7 @@ import { createRedactor } from "../../src/core/redact.ts";
 import type { RunResult } from "../../src/core/types.ts";
 import { cleanStream, failedRuns, outputTail, renderFailedRuns, VERIFIER_OUTPUT_CHARS, verifierOutput } from "../../src/runner/verifier-output.ts";
 
-const KEY = "sk-ant-" + "api03-" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
+const KEY = ["sk-ant-", "api03-", "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"].join("");
 const r = createRedactor();
 
 describe("verifier output", () => {

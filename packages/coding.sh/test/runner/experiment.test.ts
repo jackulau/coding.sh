@@ -627,7 +627,7 @@ describe("compare --gate", () => {
     assert.ok(text.indexOf("verdict:") < text.indexOf("gate:"));
   });
 
-  it("6 wins, 3 losses of 6 solved → don't ship, net gain 0, regression cap, lost ids listed", () => {
+  it("6 wins, 3 losses of 6 solved → hold (losses within chance), net gain 0, regression cap, lost ids listed", () => {
     const r = compare(twelve(6, 3), { baseline: "A", candidate: "B", iters: 500, gate: {} });
     const g = r.gate!;
     assert.equal(g.netGain, 0);
@@ -636,7 +636,8 @@ describe("compare --gate", () => {
     assert.equal(g.regressionFraction, 0.5);
     assert.deepEqual(g.lost, ["s0", "s1", "s2"]);
     const text = formatCompare(r);
-    assert.match(text, /^gate: Don't ship: B breaks 3 tasks A solved \(and wins 6\)$/m);
+    assert.equal(g.verdict, "hold");
+    assert.match(text, /^gate: Hold: B wins 6, loses 3, but breaks 50% of the 6 tasks A solved \(over τ 10%\)$/m);
     assert.match(text, /^ {6}lost: s0, s1, s2$/m);
   });
 
@@ -684,7 +685,7 @@ describe("compare --gate", () => {
     for (let i = 0; i < 6; i++) rs.push(run(`t${i}`, "A", 1, true), run(`t${i}`, "B", 1, i >= 2));
     const ablation = { paths: [".claude/skills/pdf"], dropped: [".claude/skills/pdf/SKILL.md"], unmatched: [] };
     const text = formatCompare(compare(rs, { baseline: "A", candidate: "B", iters: 200, ablation, gate: {} }));
-    assert.match(text, /^drop-it gate: Keep it: dropping \.claude\/skills\/pdf breaks 2 tasks A solved$/m);
+    assert.match(text, /^drop-it gate: Keep it: not enough evidence that dropping \.claude\/skills\/pdf helps \(B wins 0, loses 2\)$/m);
     assert.match(text, /^ {14}lost: t0, t1$/m);
   });
 

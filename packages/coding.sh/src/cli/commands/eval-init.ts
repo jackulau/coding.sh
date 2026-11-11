@@ -79,7 +79,8 @@ async function askSource(c: CommandContext, root: string, o: Partial<InitOpts>):
   out.note("  3  an app or prompt: inputs, expected answers, a command that answers them");
   const pick = await out.ask("1, 2 or 3?", { default: "1" });
   if (pick === "2") {
-    const skills = projectSkills(root);
+    // Relative to where the user is: the answer is read from there.
+    const skills = projectSkills(root).map((s) => toPosix(relative(c.cwd, join(root, s))));
     if (skills.length) out.note(`Skills here: ${skills.join(", ")}`);
     const skill = await out.ask("Skill dir?", skills[0] ? { default: skills[0] } : {});
     if (!skill) throw new UsageError("A skill suite needs the skill dir", { reason: "missing_argument" });
@@ -120,6 +121,7 @@ export async function evalInit(c: CommandContext): Promise<number> {
   const where = whereFlag(c);
   let o: Partial<InitOpts> = {
     root,
+    cwd: c.cwd,
     ...(purpose ? { purpose } : {}),
     ...(trials ? { trials } : {}),
     ...(flags.force === true || flags["force-all"] === true ? { force: true } : {}),
@@ -194,8 +196,11 @@ function render(c: CommandContext, r: InitResult, root: string): void {
     return;
   }
   const what = r.kind === "tasks" ? plural(r.tasks?.length ?? 0, "task") : r.kind === "triggers" ? "skill trigger prompts" : "cases";
-  out.ok(`Wrote ${r.purpose} suite ${r.name} (${what}) to ${toPosix(relative(root, r.dir)) || "."}${r.drafted ? ", DRAFT: read it before trusting a score" : ""}`);
-  for (const f of r.files) out.note(f);
+  // Paths as seen from where the command ran: `r.files` are relative to the repo root.
+  const fromCwd = (p: string) => toPosix(relative(c.cwd, resolve(root, p))) || ".";
+  out.ok(`Wrote ${r.purpose} suite ${r.name} (${what}) to ${fromCwd(r.dir)}${r.drafted ? ", DRAFT: read it before trusting a score" : ""}`);
+  if (resolve(root) !== resolve(c.cwd)) out.note(`Suites live at the repo root, ${fromCwd(root)}`);
+  for (const f of r.files) out.note(fromCwd(f) + (f.endsWith("/") ? "/" : ""));
   for (const t of r.tasks ?? []) out.row(t.name, `${t.verifier || "no verifier"} · from session ${t.sessionId.slice(0, 8)}`);
   for (const n of r.notes) out.warn(n);
   out.note("");
