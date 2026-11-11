@@ -3,7 +3,8 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { diffParity, readPage, type ParitySide } from "../../src/cli/commands/compare-parity.ts";
@@ -156,12 +157,18 @@ describe("compare --parity, edge cases", () => {
   test("an empty page argument is a usage error (exit 2), a command that never prints is exit 2", async () => {
     // In process, so the empty argument reaches the command as written on every platform
     // (a Windows command line has no portable spelling of an empty argument).
-    const env = { ...process.env, CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1", NO_COLOR: "1" };
-    assert.equal(await main(["compare", "--parity", "", "x"], env), 2);
-    // `false` is no command on Windows; node is on PATH wherever the tests run.
-    const quiet = 'node -e "process.exit(3)"';
-    const r = cliSync(["compare", "--parity", quiet, quiet]);
-    assert.equal(r.status, 2, r.stdout + r.stderr);
+    // A temp store, or a run from source refuses the default one (exit 1) before it reads the arguments.
+    const home = mkdtempSync(join(tmpdir(), "csh-parity-"));
+    const env = { ...process.env, CODING_SH_HOME: home, CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1", NO_COLOR: "1" };
+    try {
+      assert.equal(await main(["compare", "--parity", "", "x"], env), 2);
+      // `false` is no command on Windows; node is on PATH wherever the tests run.
+      const quiet = 'node -e "process.exit(3)"';
+      const r = cliSync(["compare", "--parity", quiet, quiet], { CODING_SH_HOME: home });
+      assert.equal(r.status, 2, r.stdout + r.stderr);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 
