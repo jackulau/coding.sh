@@ -305,6 +305,32 @@ describe("viewer feel: the benchmark table", { skip: chrome ? false : "no Chrome
     benchCleanup();
   });
 
+  test("a long cost source ends in an ellipsis and the cost stays inside its column", async () => {
+    const page = await browser.newPage();
+    try {
+      await page.viewport(1120, 900);
+      await page.goto(v.url);
+      await page.waitFor("document.querySelector('main').children.length", "first view");
+      await page.eval("location.hash = '#/benchmarks/arith'");
+      await page.waitFor("document.querySelector('.bench-row')", "rows");
+      const out = await page.eval(`(() => {
+        const bad = [];
+        for (const cell of document.querySelectorAll('.bench-row .stack-num')) {
+          const box = cell.getBoundingClientRect();
+          for (const el of cell.children) {
+            const r = el.getBoundingClientRect();
+            if (r.left < box.left - 0.5 || r.right > box.right + 0.5) bad.push(el.textContent);
+          }
+        }
+        return { cells: document.querySelectorAll('.bench-row .stack-num').length, bad };
+      })()`);
+      assert.ok(out.cells >= 4, "stacked cells: " + out.cells);
+      assert.deepEqual(out.bad, []);
+    } finally {
+      await page.close();
+    }
+  });
+
   for (const w of [1101, 1120, 1140]) {
     test(`at ${w}px every column of the table with an anchor column fits its row`, async () => {
       const page = await browser.newPage();
