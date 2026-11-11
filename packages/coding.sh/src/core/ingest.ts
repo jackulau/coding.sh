@@ -81,6 +81,7 @@ import { snapshot } from "./snapshot.ts";
 import { isWrapperLine } from "../adapters/more/wrapper.ts";
 import { rememberTraceSessions } from "../adapters/_shared/traceparent.ts";
 import { traceKvKey } from "../otel/map.ts";
+import { InsertedEvents } from "../otel/receiver.ts";
 import { linkSpawned } from "../spool/spawned.ts";
 import { matchSpawnedParent, openAt } from "../spool/spawned-match.ts";
 
@@ -170,6 +171,8 @@ interface LineEvents {
   offset: number;
   nextOffset: number;
   events: AgentEvent[];
+  /** The line was read for the index too (not only to catch a sink up): its events were put in this run. */
+  stored?: boolean;
 }
 
 export interface CaptureProfile {
@@ -382,12 +385,24 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   };
   const atomically = <T>(fn: () => Promise<T>): Promise<T> => inTransaction(index, fn);
 
+  // An agent can hand the same event over in two lines (Claude Code: the parent's Agent-tool
+  // PostToolUse and the helper's own SubagentStop). The index keeps one copy by id; a sink
+  // gets one too: a line new to the index sends only the events it inserted (a copy of an
+  // event stored earlier is sent by the line that stored it, now or when the sink catches
+  // up), and an id already sent in this run is not sent again (a replay for a sink that is
+  // behind reads both lines).
+  const insertedIds = new InsertedEvents();
+  const sentIds = new Map<Sink, Set<string>>();
+  let repeats = new Set<string>();
   const sendToSink = async (sink: Sink, file: SpoolFile, window: LineEvents[], readPos: number) => {
     const state = sinkStates.get(sink)!;
     if (state.failed) return;
     const key = sinkCursorKey(sink.name, file.source);
     const from = await index.getCursor(key);
-    const lines = window.filter((l) => l.offset >= from);
+    let seen = sentIds.get(sink);
+    if (!seen) sentIds.set(sink, (seen = new Set()));
+    const once = (l: LineEvents): AgentEvent[] => l.events.filter((e) => !(l.stored && repeats.has(e.id)) && !seen.has(e.id) && !!seen.add(e.id));
+    const lines = window.filter((l) => l.offset >= from).map((l) => ({ ...l, events: once(l) }));
     const size = sinkBatchSize(config, sink);
     let i = 0;
     while (i < lines.length) {
@@ -442,7 +457,17 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     // at the previous checkpoint and the next run re-reads from there.
     const inserted = await atomically(async () => {
       let n = 0;
-      for (let i = 0; i < pending.length; i += PUT_BATCH) n += (await index.putEvents(pending.slice(i, i + PUT_BATCH))).inserted;
+      const fresh = new Set<string>();
+      for (let i = 0; i < pending.length; i += PUT_BATCH) {
+        const batch = pending.slice(i, i + PUT_BATCH);
+        if (!sinkStates.size) n += (await index.putEvents(batch)).inserted;
+        else {
+          const r = await insertedIds.put(index, batch);
+          n += r.inserted;
+          for (const id of r.ids) fresh.add(id);
+        }
+      }
+      repeats = sinkStates.size ? new Set(pending.flatMap((e) => (fresh.has(e.id) ? [] : [e.id]))) : repeats;
       // Hook events in an agent's OTel trace (a traceparent): that trace's spans join their session.
       await rememberTraceSessions(index, pending, traceKvKey);
       durations.settle();
@@ -551,7 +576,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
           }
         }
       }
-      if (keepWindow) fr.window.push({ offset: rec.offset, nextOffset: rec.nextOffset, events });
+      if (keepWindow) fr.window.push({ offset: rec.offset, nextOffset: rec.nextOffset, events, stored: rec.offset >= fr.local });
       // Bounds memory (buffered events, sink windows) and how much work a crash can force us to redo.
       windowEvents += events.length;
       if (windowEvents >= checkpointEvents) {
@@ -1544,6 +1569,8 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
       queued += list.length;
     }
   };
+  /** Ids each sink was sent in this run: a sink behind on a source gets every event read, and the same id can be read twice. */
+  const sentIds = new Map<Sink, Set<string>>();
   /** Folds the sessions that got events, sends what is queued, and moves the cursor of each sink that now has a whole source. */
   const deliver = async () => {
     if (!sources.length) return;
@@ -1556,9 +1583,12 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
       const open = new Map<string, number>();
       const ended = new Set<string>();
       for (const s of sources) {
-        const events = s.queue.get(sink);
-        if (!events) continue;
+        const waiting = s.queue.get(sink);
+        if (!waiting) continue;
         s.queue.delete(sink);
+        let seen = sentIds.get(sink);
+        if (!seen) sentIds.set(sink, (seen = new Set()));
+        const events = waiting.filter((e) => !seen.has(e.id) && !!seen.add(e.id));
         const send = { now, fence, error: (message: string) => error({ sink: sink.name, source: s.name, message }) };
         for (let i = 0; i < events.length && !state.failed; i += size) {
           const batch = events.slice(i, i + size);
