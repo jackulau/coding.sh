@@ -199,7 +199,7 @@ npx wrangler pages deploy apps/site/dist --project-name coding-sh --branch main
 
 Then add the custom domain `coding.sh` under the project's *Custom domains*. `_headers` sets
 immutable caching for `/_astro/*`, UTF-8 text for `/install`, `/install.sh`, `*.txt` and `*.md`,
-and the Atom type for `/changelog.xml`.
+and `application/xml` for `/changelog.xml`, which the edge compresses (it does not compress the Atom type).
 
 After deploying, check:
 

@@ -18,9 +18,14 @@ A slow phone here means Slow 4G (150 ms round trip, 1.6 Mbps) on a 4x slower CPU
 | Script per page | 6.0-8.5 kB | 4.7-6.8 kB |
 | Requests before the page loads (home, docs) | 10-11, 7 | 7-8, 5 |
 | Layout shift on a phone, Quickstart | 0.128 | 0.009 |
-| Layout shift on a phone, Evals | 0.168 | 0.081 |
+| Layout shift on a phone, Evals | 0.168 | 0.004 |
 | Home screenshot on a desktop screen | 119.8 kB | 57.4 kB |
 | Link preview images (13 files) | 545 kB | 382 kB |
+
+The byte counts in this table were measured with the lab server at brotli quality 11. It now
+uses quality 4, as production does (see "How we measure"), so the same pages read about 20% more
+HTML and script than this table. The Evals layout shift is the median of the 9 pairs on main in
+run 42721228885; the first run after the change measured 0.081.
 
 What it cost:
 
@@ -42,12 +47,47 @@ What it cost:
   the 2x one.
 - **Smaller link previews.** The images re-encode without losing a pixel.
 
+## Font swap and image sizes
+
+A second pass, measured with 11 pairs against the build before it. The fallback fonts now match
+Geist closely enough that almost no line rewraps when the real font arrives: Arial at 103.4%,
+plus a bold face of its own. The values were tuned on all 119 pages at phone width. Outside
+103.3% to 103.5%, some pages rewrap again.
+
+The home screenshots also say how wide their slot is, so a desktop screen picks the smaller file.
+
+| What | Before | After | Change [95% interval] |
+|---|---|---|---|
+| Layout shift on a slow phone, /docs/cli | 0.208 | 0.0003 | -0.208 [-0.208, -0.208] |
+| Layout shift on a slow phone, Quickstart | 0.009 | 0.0002 | -0.0088, the same in every pair |
+| Layout shift on a slow phone, home | 0.0037 | 0.0029 | -0.0008 [-0.001, -0.001] |
+| Layout shift on a slow phone, changelog | 0.0002 | 0 | -0.0002, the same in 9 of 11 pairs |
+| Home screenshots on a desktop screen | 60.1 kB | 58.5 kB | -1,612 B, the same in every pair |
+
+What it cost:
+
+- HTML at brotli quality 4: the docs sidebar script and the code block script add 192 B on
+  Quickstart, 234 B on /docs/cli and 129 B on Evals. Home is 6 B larger and the changelog 278 B
+  smaller.
+- Load times on a slow phone and on the desktop did not change for home, Evals, /docs/cli and
+  the changelog: every interval includes zero.
+- Desktop first paint on Quickstart is the one number to watch. Four runs read +5.8 ms
+  [+1.4, +29], +4.1 ms [-21, +19], +7.8 ms [+2.5, +14] and -4.9 ms [-15, +9.4].
+- The last two runs pooled read +6.0 ms [-1.5, +9.4], under the 130 ms budget.
+- Removing the code block script does not change that number: -0.2 ms [-6.3, +9.5].
+
+A fade at the bottom of the docs sidebar was tried and left out. Its mask made desktop first paint
+on Evals 16.8 ms [3.2, 25.6] slower. Without it, Evals is -3.4 ms [-18, +5.5] against the build
+before.
+
 ## How we measure
 
-- **Pages:** home, /docs/quickstart, /docs/evals and /changelog.
+- **Pages:** home, /docs/quickstart, /docs/evals, /changelog and /docs/cli.
 - **Profiles:** desktop with no throttling, and the slow phone above.
 - **Each run:** Lighthouse loads every page in a fresh Chrome with an empty cache. A local server
-  serves the build over HTTP/2 with brotli, like production.
+  serves the build over HTTP/2 with brotli at quality 4, the level production sends: the home
+  page's HTML is 25,796 B in the lab and 25,776 B from coding.sh. Production sends Chrome zstd,
+  which is about 6% larger, so the lab still reads a little low.
 - **Pairs:** the old build and the new one run in 11 interleaved pairs after one warm-up. Half the
   pairs run the old build first.
 - **When a change counts:** the 95% bootstrap interval of the median paired difference excludes
@@ -77,14 +117,15 @@ See [Experiments](https://coding.sh/docs/experiments#metrics) for the metric A/B
 head commits and runs 9 pairs. It fails when a gated metric gets worse by an amount that matters,
 or when a page goes over its budget in
 [scripts/perf/budgets.json](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/budgets.json). The budgets sit about 10%
-above the numbers above. The rules are in
+above what the current build measures. Layout shift is budgeted at 0.02 on every page, and each
+page has its own blocking-time budget on the slow phone. The rules are in
 [scripts/perf/gate.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/gate.mjs), with tests in `scripts/perf/test`.
 
 | Where | What runs |
 |---|---|
 | Pull requests | GitHub's hosted runners. Load-time budgets are skipped: they only hold on our own machine. |
 | Pushes to main | The one desk runner labelled `perf`, so two perf runs never overlap. CI and deploys run beside it. |
-| Deploys | `npm run perf:budget` in apps/site checks page weight, fonts, scripts and images in the build. |
+| Deploys | `npm run perf:budget` in apps/site checks page weight, inline CSS and script, fonts, scripts and images in the build. |
 
 The desk runs other jobs, so each sample records `cpu_busy`, the share of CPU in use while the
 page loaded. A load-time budget counts only samples at 0.5 or less (`--quiet-cpu`). When fewer
@@ -140,7 +181,7 @@ smaller site.
 | Preload on hover or focus | Already true: Astro's router prefetches links on hover. |
 | SVG sprite for repeated icons | Skipped: few icons repeat, and brotli compresses the repeats well. |
 | Streaming server rendering, data in the page, worker threads | Skipped: the site has no server. These apply to `coding.sh ui`. |
-| Field data from real visitors | Skipped: the site has no analytics, by choice. |
+| Field data from real visitors | Skipped. The build ships no analytics script. Cloudflare's edge can add its Web Analytics beacon when that is on for the zone, and the deploy prints a warning when the live home page has one. |
 
 ## Store ingest
 
