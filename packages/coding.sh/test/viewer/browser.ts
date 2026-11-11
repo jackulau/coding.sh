@@ -141,6 +141,10 @@ export async function launchBrowser(chrome: string): Promise<Browser> {
       "--no-pings",
       "--metrics-recording-only",
       "--mute-audio",
+      // Keep Chrome out of the macOS keychain: under a test HOME it has none, and the lookup
+      // pops a "keychain cannot be found" dialog on the desktop for every launch.
+      "--use-mock-keychain",
+      "--password-store=basic",
       // Root (the desk, CI containers) cannot use Chrome's sandbox.
       ...(process.getuid?.() === 0 ? ["--no-sandbox"] : []),
       "about:blank",

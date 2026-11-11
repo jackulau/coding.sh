@@ -32,9 +32,12 @@ export const NONE = "(none)";
 
 export class MetricsError extends Error {
   readonly reason = "invalid_params";
-  constructor(message: string) {
+  /** Set when the range needs more than MAX_BUCKETS buckets of this size, so a caller can name its own flags. */
+  readonly tooManyBuckets?: MetricBucket;
+  constructor(message: string, opts: { tooManyBuckets?: MetricBucket } = {}) {
     super(message);
     this.name = "MetricsError";
+    if (opts.tooManyBuckets) this.tooManyBuckets = opts.tooManyBuckets;
   }
 }
 
@@ -49,7 +52,11 @@ export interface MetricsSpec {
   tzOffsetMin?: number;
   /** Sessions must match this query too. */
   where?: Query;
-  /** project, top-level only (parentSessionId: null), …; since/until come from the spec. */
+  /**
+   * project, top-level only (parentSessionId: null), …; since/until come from the spec.
+   * Top-level only counts top-level sessions, and adds each subagent's cost, tokens,
+   * tool calls and model calls to the top-level session it ran under (rollUpSubagents).
+   */
   filter?: Omit<SessionFilter, "limit" | "offset" | "since" | "until">;
   maxGroups?: number;
 }
@@ -136,7 +143,7 @@ export function bucketTimes(since: number, until: number, bucket: MetricBucket, 
   const out: number[] = [];
   for (let t = bucketStart(since, bucket, tzOffsetMin); t < until; t = nextBucket(t, bucket, tzOffsetMin)) {
     out.push(t);
-    if (out.length > MAX_BUCKETS) throw new MetricsError(`the range needs more than ${MAX_BUCKETS} ${bucket} buckets${bucket === "day" ? "; use bucket=week" : "; narrow since/until"}`);
+    if (out.length > MAX_BUCKETS) throw new MetricsError(`the range needs more than ${MAX_BUCKETS} ${bucket} buckets${bucket === "day" ? "; use bucket=week" : "; narrow since/until"}`, { tooManyBuckets: bucket });
   }
   return out;
 }
@@ -145,7 +152,8 @@ export function bucketTimes(since: number, until: number, bucket: MetricBucket, 
 
 /** A session as metrics read it: the same fields SqliteIndexStore.metricRows selects. */
 export function metricRow(s: Session): MetricRow {
-  const m: MetricRow = { startedAt: s.startedAt, agent: s.agent, flags: s.flags ?? [], toolCalls: s.stats.toolCalls ?? 0, toolErrors: s.stats.toolErrors ?? 0 };
+  const m: MetricRow = { id: s.id, startedAt: s.startedAt, agent: s.agent, flags: s.flags ?? [], toolCalls: s.stats.toolCalls ?? 0, toolErrors: s.stats.toolErrors ?? 0 };
+  if (s.parent?.sessionId) m.parentSessionId = s.parent.sessionId;
   if (s.model !== undefined) m.model = s.model;
   const dir = s.repo?.root ?? s.cwd;
   if (dir !== undefined) m.dir = dir;
@@ -166,20 +174,74 @@ export function metricRow(s: Session): MetricRow {
   return m;
 }
 
-/** Every matching session in [since, until) as a MetricRow: the store's own path, else a scan. */
+/**
+ * Every matching session in [since, until) as a MetricRow: the store's own path, else
+ * the store's query path a page at a time, else a scan. With the top-level filter
+ * (parentSessionId: null), subagents are read too and rolled up into their sessions.
+ */
 export async function loadMetricRows(index: IndexStore, spec: Pick<MetricsSpec, "since" | "until" | "where" | "filter">, opts: { scan?: boolean } = {}): Promise<{ rows: MetricRow[]; truncated?: boolean }> {
-  const filter: Omit<SessionFilter, "limit" | "offset"> = { ...spec.filter, since: spec.since, until: spec.until };
-  const q: Query = spec.where ?? {};
+  const { parentSessionId, ...rest } = spec.filter ?? {};
+  const rollUp = parentSessionId === null;
+  const filter: Omit<SessionFilter, "limit" | "offset"> = { ...rest, since: spec.since, until: spec.until };
+  if (!rollUp && parentSessionId !== undefined) filter.parentSessionId = parentSessionId;
+  const loaded = await loadRows(index, spec.where ?? {}, filter, opts);
+  return rollUp ? { ...loaded, rows: rollUpSubagents(loaded.rows) } : loaded;
+}
+
+async function loadRows(index: IndexStore, q: Query, filter: Omit<SessionFilter, "limit" | "offset">, opts: { scan?: boolean }): Promise<{ rows: MetricRow[]; truncated?: boolean }> {
   if (index.metricRows && !opts.scan) return { rows: await index.metricRows({ root: q.root }, { filter }) };
-  const match = sessionMatcher(index, q.root);
   const rows: MetricRow[] = [];
   const page = 1000;
+  // A store that compiles --where (Postgres, ClickHouse) answers event keys and text itself.
+  const query = index.querySessions && !opts.scan && q.root ? index.querySessions.bind(index) : undefined;
+  const match = query ? async () => true : sessionMatcher(index, q.root);
   for (let offset = 0; ; offset += page) {
     if (offset >= METRICS_SCAN_CAP) return { rows, truncated: true };
-    const batch = await index.listSessions({ ...filter, limit: page, offset });
+    const batch = query ? await query({ root: q.root }, { filter, limit: page, offset }) : await index.listSessions({ ...filter, limit: page, offset });
     for (const s of batch) if (await match(s)) rows.push(metricRow(s));
     if (batch.length < page) return { rows };
   }
+}
+
+/** Adds b's value to a's, keeping a field absent when neither has it. */
+function addTo(a: MetricRow, b: MetricRow, k: "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens" | "costUsd" | "estimatedCostUsd" | "llmCalls" | "llmErrors"): void {
+  if (b[k] !== undefined) a[k] = (a[k] ?? 0) + b[k];
+}
+
+/**
+ * Top-level sessions with their subagents' spend. Each subagent's cost, tokens, tool
+ * calls and model calls are added to the session at the top of its parent chain, so a
+ * total counts every dollar once and `sessions` counts top-level sessions. The top
+ * session keeps its own start (bucket), agent, model, repo, flags and latency. A
+ * subagent whose parent is not among the rows (it started before the range, or does not
+ * match the query) stays a row of its own.
+ */
+export function rollUpSubagents(rows: readonly MetricRow[]): MetricRow[] {
+  const byId = new Map<string, MetricRow>();
+  for (const r of rows) if (r.id !== undefined) byId.set(r.id, r);
+  const topOf = (r: MetricRow): MetricRow => {
+    const seen = new Set<MetricRow>([r]);
+    let cur = r;
+    for (let p = cur.parentSessionId; p !== undefined && byId.has(p); p = cur.parentSessionId) {
+      cur = byId.get(p)!;
+      if (seen.has(cur)) return r; // a loop of parents: no top to add to
+      seen.add(cur);
+    }
+    return cur;
+  };
+  // A fixed order, so float sums are the same whatever order the store listed the rows in.
+  const sorted = [...rows].sort((a, b) => a.startedAt - b.startedAt || cmp(a.id ?? "", b.id ?? ""));
+  const out = new Map<MetricRow, MetricRow>();
+  for (const r of sorted) {
+    const top = topOf(r);
+    let acc = out.get(top);
+    if (!acc) out.set(top, (acc = { ...top, flags: [...top.flags] }));
+    if (top === r) continue;
+    for (const k of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "costUsd", "estimatedCostUsd", "llmCalls", "llmErrors"] as const) addTo(acc, r, k);
+    acc.toolCalls += r.toolCalls;
+    acc.toolErrors += r.toolErrors;
+  }
+  return [...out.values()];
 }
 
 // ---------------------------------------------------------------- sums
