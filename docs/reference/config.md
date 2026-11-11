@@ -84,7 +84,18 @@ Applied by `coding.sh gc`.
 
 A sink copies events to another system as they are ingested. Add one table per sink. Sinks run
 for local ingest, the local OTLP receiver (`coding.sh collector`) and `coding.sh serve`, which mirrors
-each committed batch after it answers the request.
+each committed batch after it answers the request. The collector and serve send an event once: a
+request that is posted again, such as a client retry, adds nothing to a sink.
+
+Local ingest sends what it stores from the hook spool and what it imports from agent transcripts
+(`coding.sh ingest --backfill`, `coding.sh init`, and the import a read runs for agents without
+hooks).
+
+- A sink that fails does not stop ingest. It is tried again after a backoff, then catches up from
+  where it stopped in the spool.
+- For transcripts it starts again at the top of each file it missed part of, so it can get a
+  transcript event twice. A sink added later gets the transcripts still on disk the same way.
+- With sinks set, one transcript import runs at a time (`~/.coding.sh/sinks.lock`).
 
 ```toml
 [[sinks]]
@@ -103,6 +114,12 @@ headers = { Authorization = "Bearer ${CODING_SH_INGEST_KEY}" }
 | `name` | the kind | Unique name: letters, digits, `.`, `_`, `-`. Needed when two sinks share a kind. |
 | `batchSize` | | Events per request. |
 | `headers` | | Table of HTTP headers. |
+
+The `otlp` sink sends a session as one `invoke_agent` span when the session ends. From
+`coding.sh collector` and `coding.sh serve` it also sends that span while a session is open, so a
+session that never ends has one ([Forward and sinks](../PRODUCTION.md#19-forward-and-sinks)).
+Local ingest sends it again when a transcript import adds events to a session without ending it,
+so the span has the session's totals.
 
 ## `[prices]`
 
@@ -252,6 +269,7 @@ Read only by `coding.sh serve`. Every key has an environment variable, which win
 | `CODING_SH_STORE_URL` | Index store for every command; same as `--store`. Skips the automatic ingest of the local spool. |
 | `CODING_SH_BLOB_URL` | Blob store; same as `--blobs`. |
 | `CODING_SH_DEV_REAL_STORE=1` | Lets coding.sh run from a source checkout (`src/*.ts`, or a `dist/` built inside it) open the default home. Without it, or `CODING_SH_HOME` or a store URL, such a run stops before it opens anything. Migrations still wait for the install that owns the store ([Troubleshooting](../troubleshooting.md#a-store-another-codingsh-cant-open)). |
+| `CODING_SH_SCAN_CAP` | How many sessions `usage` and `cache doctor` read for a window's totals before they stop and say so (`Stopped after N sessions`, `truncated` in `--json`). Default `100000`. Tests set a small one. |
 | `CODING_SH_PURGE_WAIT_MS` | How long `purge` waits for another process's read of the index or the blob pack before it reports that the old bytes stay. Default `10000` for the index checkpoint before VACUUM and `5000` after it. Tests set a short wait. |
 | `DATABASE_URL` | `coding.sh serve` only: the store when it is a `postgres://` URL and `CODING_SH_STORE_URL` is unset. |
 

@@ -1,13 +1,13 @@
 // AD-3: the run corpus refine distill hands a coding agent. Made-up runs and
 // sessions in an in-memory store.
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { after, describe, it } from "node:test";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { AgentEvent, EvalTask, RunResult } from "../../src/core/types.ts";
-import { isHeldOut, PREVIEW_CHARS, writeCorpusDir, type EpisodeRow, type ToolCallRow } from "../../src/refine/corpus.ts";
+import { corpusDirEntries, isHeldOut, PREVIEW_CHARS, SCHEMA_MD, writeCorpusDir, type EpisodeRow, type ToolCallRow } from "../../src/refine/corpus.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { sessionEvents } from "../helpers-decision.ts";
 
@@ -153,6 +153,49 @@ describe("writeCorpusDir", () => {
     await writeCorpusDir({ index: new MemoryIndexStore(), source: { kind: "experiment", experimentId: "x" }, dir: ok, prompt: [{ path: "../escape.md", text: "no" }, { path: "/abs.md", text: "no" }] });
     assert.ok(!existsSync(join(ok, "..", "escape.md")));
     assert.deepEqual(readdirSync(join(ok, "prompt")), []);
+  });
+
+  it("a directory that holds SCHEMA.md next to other work is not a corpus: nothing in it is removed", async () => {
+    const empty = { index: new MemoryIndexStore(), source: { kind: "experiment", experimentId: "x" } as const, prompt: [] };
+    // A file named SCHEMA.md beside the user's own files.
+    const dir = fresh();
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "SCHEMA.md"), "# My database schema\n");
+    writeFileSync(join(dir, "keep.txt"), "mine\n");
+    writeFileSync(join(dir, "src", "a.js"), "x\n");
+    await assert.rejects(writeCorpusDir({ ...empty, dir }), /not empty and holds no corpus/);
+    assert.deepEqual(allFiles(dir), ["SCHEMA.md", "keep.txt", "src/a.js"]);
+    assert.equal(readFileSync(join(dir, "keep.txt"), "utf8"), "mine\n");
+    assert.equal(readFileSync(join(dir, "SCHEMA.md"), "utf8"), "# My database schema\n");
+    // Even the corpus's own SCHEMA.md does not make a directory with other entries a corpus.
+    writeFileSync(join(dir, "SCHEMA.md"), SCHEMA_MD);
+    await assert.rejects(writeCorpusDir({ ...empty, dir }), /not empty and holds no corpus/);
+    assert.deepEqual(allFiles(dir), ["SCHEMA.md", "keep.txt", "src/a.js"]);
+    // Only corpus names, but SCHEMA.md is someone else's file.
+    const named = fresh();
+    mkdirSync(join(named, "prompt"), { recursive: true });
+    writeFileSync(join(named, "prompt", "draft.md"), "mine\n");
+    writeFileSync(join(named, "SCHEMA.md"), "# My database schema\n");
+    await assert.rejects(writeCorpusDir({ ...empty, dir: named }), /not empty and holds no corpus/);
+    assert.deepEqual(allFiles(named), ["SCHEMA.md", "prompt/draft.md"]);
+    assert.throws(() => corpusDirEntries(named), /not empty and holds no corpus/);
+  });
+
+  it("replaces an earlier corpus entry by entry and keeps the directory itself", async () => {
+    const index = await experimentStore();
+    const dir = fresh();
+    await writeCorpusDir({ index, source: { kind: "experiment", experimentId: "exp_1" }, dir, prompt: [{ path: "CLAUDE.md", text: "x\n" }] });
+    assert.deepEqual(readdirSync(dir).sort(), ["SCHEMA.md", "episodes", "episodes.jsonl", "prompt", "tool_calls.jsonl"]);
+    assert.deepEqual(corpusDirEntries(dir).sort(), ["SCHEMA.md", "episodes", "episodes.jsonl", "prompt", "tool_calls.jsonl"]);
+    assert.deepEqual(corpusDirEntries(fresh()), [], "a new directory has nothing to replace");
+    const before = statSync(dir);
+    // The next corpus is smaller: nothing of the earlier one may survive.
+    const r = await writeCorpusDir({ index: new MemoryIndexStore(), source: { kind: "experiment", experimentId: "x" }, dir, prompt: [] });
+    assert.equal(r.episodes, 0);
+    assert.equal(statSync(dir).ino, before.ino, "the directory was not removed and made again");
+    assert.deepEqual(allFiles(dir), ["SCHEMA.md", "episodes.jsonl", "tool_calls.jsonl"]);
+    assert.deepEqual(readdirSync(join(dir, "prompt")), []);
+    assert.equal(readFileSync(join(dir, "episodes.jsonl"), "utf8"), "");
   });
 
   it("captured sessions: pass is null and flags count as failures", async () => {

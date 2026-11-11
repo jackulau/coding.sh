@@ -168,13 +168,21 @@ export async function referenceAgainst(task: ToolTask & { kind: CaseKind }, targ
   return { caseId: task.id, kind: task.kind, passes: ref.pass ? 1 : 0, trials: 1 };
 }
 
-/** Per-task rows from agent trials on the against variant; trials that errored are left out (neither pass nor fail). */
+/**
+ * Per-task rows from agent trials on the against variant. A trial that errored
+ * or failed on infrastructure (the agent was not logged in, a setup step
+ * failed) is left out: the agent never worked on the task, so it is neither a
+ * pass nor a fail. A task with no trial left is an error that names why.
+ */
 export function againstRows(tasks: readonly (ToolTask & { kind: CaseKind })[], trials: readonly TrialResult[]): AgainstRow[] {
   return tasks.map((t) => {
     const mine = trials.filter((x) => x.taskId === t.id);
-    const counted = mine.filter((x) => !x.error);
+    const counted = mine.filter((x) => !x.error && !x.infra);
     const row: AgainstRow = { caseId: t.id, kind: t.kind, passes: counted.filter((x) => x.pass).length, trials: counted.length };
-    if (!counted.length) row.error = mine.find((x) => x.error)?.error ?? "no trial ran";
+    if (!counted.length) {
+      const lost = mine[0];
+      row.error = lost?.infra ? `infra: ${lost.infra}${lost.error ? ` (${lost.error})` : ""}` : (lost?.error ?? "no trial ran");
+    }
     return row;
   });
 }

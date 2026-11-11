@@ -362,6 +362,10 @@ kind = "exact"
     const html = renderReportHtml(buildReport([r], { now: day("2026-11-03") }));
     assert.match(html, /<section id="grid">[\s\S]*<h2>Model × harness<\/h2>/);
     assert.match(html, /Rank reversal: m1 leads m2 under alpha, m2 leads under beta\./);
+    assert.match(html, /excludes 0\. The marks are not adjusted for the number of cells\./);
+    assert.match(html, /<th class="num">Regret<\/th><th class="num">95% CI<\/th>/);
+    assert.match(html, /Mean regret \d+\.\d points \(95% CI \d+\.\d to \d+\.\d\)\./);
+    assert.ok(r.grid.meanRegretCi && r.grid.meanRegretCi.lo <= r.grid.meanRegret && r.grid.meanRegret <= r.grid.meanRegretCi.hi, JSON.stringify(r.grid.meanRegretCi));
     assert.match(html, /<section id="routing">[\s\S]*<h2>Routing headroom<\/h2>/);
   });
 

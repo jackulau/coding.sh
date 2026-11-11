@@ -4,8 +4,9 @@
 // for the whole loop. A fan-out of separate agent processes that share a run id
 // (CODING_SH_RUN_ID) groups into one run; pass that id (or --run).
 import { costNote } from "../../core/pricing.ts";
-import { buildRunTree, buildSessionTree, worstNode, worstFirst, type Tree, type TreeNode } from "../../core/tree.ts";
+import { buildRunTree, buildSessionTree, pageTree, TREE_PAGE_NODES, worstNode, worstFirst, type Tree, type TreeNode } from "../../core/tree.ts";
 import type { Session } from "../../core/types.ts";
+import { positiveInt, UsageError } from "../args.ts";
 import { autoIngest, oneLine, resolveSession, sessionJson, withContext, notFoundWithBacklog, pendingField, readIngest } from "../common.ts";
 import { clean, duration, plural, tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -34,9 +35,11 @@ function nodeJson(n: TreeNode): Record<string, unknown> {
   };
 }
 
-function treeJson(t: Tree) {
+/** The whole tree's totals and worst node, and one page of its nodes (`limit` from `offset`, depth-first). */
+function treeJson(t: Tree, offset: number, limit: number) {
   const worst = worstNode(t.roots);
-  return {
+  const page = pageTree(t.roots, offset, limit);
+  const doc: Record<string, unknown> = {
     ...(t.runId ? { runId: t.runId } : {}),
     totals: {
       sessions: t.totals.sessions,
@@ -48,8 +51,10 @@ function treeJson(t: Tree) {
       flags: t.totals.flags,
     },
     worst: worst ? { id: worst.session.id, role: worst.depth === 0 ? "root" : (worst.session.parent?.type ?? "subagent"), flags: worstFirst(worst.session.flags) } : null,
-    tree: t.roots.map(nodeJson),
+    tree: page.roots.map(nodeJson),
   };
+  if (page.next !== undefined) Object.assign(doc, { nextCursor: String(page.next), truncated: true });
+  return doc;
 }
 
 /** "└ 9f1c2e  reviewer  sonnet  12s  18 tools  $0.03  [premature-completion]  title" */
@@ -78,6 +83,9 @@ export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
   const arg = c.positionals[0]!;
   const forceRun = c.flags.run === true;
+  const limit = positiveInt(c.flags.limit, "limit") ?? TREE_PAGE_NODES;
+  const cursor = typeof c.flags.cursor === "string" ? c.flags.cursor : undefined;
+  if (cursor !== undefined && !/^\d{1,9}$/.test(cursor)) throw new UsageError(`--cursor must be the nextCursor of the last page, got ${JSON.stringify(cursor)}`, { reason: "invalid_argument" });
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
 
@@ -109,7 +117,7 @@ export async function run(c: CommandContext): Promise<number> {
     }
 
     if (out.json) {
-      out.data({ ...treeJson(tree), ...pendingField(backlog) });
+      out.data({ ...treeJson(tree, Number(cursor ?? 0), limit), ...pendingField(backlog) });
       return 0;
     }
 

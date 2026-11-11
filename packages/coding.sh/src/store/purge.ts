@@ -5,19 +5,24 @@
 // spool. Then the FTS index is merged, the WAL checkpointed and the file VACUUMed,
 // so the old bytes are gone from disk, not just unreferenced.
 //
+// The copies of the index an upgrade or `upgrade-store --restore` kept next to it
+// (index.db.v<N>.bak, index.db.v<N>.undone) hold the value too, at a schema this
+// code may not know. They are deleted, not rewritten (removeIndexCopies).
+//
 // Values are replaced with [redacted:purged]. Spool files keep their length (the
 // value becomes asterisks) so ingest cursors, which are byte offsets, stay valid.
 // Nothing here prints or returns a value; callers get counts.
 //
 // `--rule <regex>` first reads everywhere a purge writes (findRuleMatches) and
 // turns each distinct match into a literal, so both paths scrub the same way.
-import { closeSync, existsSync, openSync, readdirSync, readFileSync, statSync, writeSync } from "node:fs";
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { BlobStore } from "../core/types.ts";
 import type { AgentEvent } from "../schema/index.ts";
-import { searchableText } from "./common.ts";
+import { errorText, searchableText } from "./common.ts";
 import { loadSqlite, searchIndexOk } from "./sqlite.ts";
+import { listIndexCopies } from "./upgrade.ts";
 
 export const PURGE_MARKER = "[redacted:purged]";
 /** Shorter literals would rewrite ordinary text. */
@@ -65,6 +70,35 @@ export interface PurgeResult {
    * until that process closes the file and purge runs again. Absent when none.
    */
   oldBytesKept?: ("index" | "blob pack")[];
+  /** Kept copies of the index deleted (or that would be), as paths: see removeIndexCopies. Absent when none. */
+  copiesRemoved?: string[];
+  /** Kept copies of the index that could not be deleted, as paths. They may hold the values. Absent when none. */
+  copiesKept?: string[];
+}
+
+/**
+ * Deletes the copies of the index kept next to `dbPath` by a migration (`.v<N>.bak`) or by
+ * `upgrade-store --restore` (`.v<N>.undone`); ./upgrade.ts listIndexCopies names them. A copy
+ * holds every event as it was, the purged values included, and is at a schema this code may
+ * not know how to rewrite, so it goes whole. A purge that kept one would report a clean store
+ * with the value still on disk beside it, and `upgrade-store --restore` would bring it back.
+ * A copy another process keeps open on Windows can't be deleted: it is reported, not skipped.
+ */
+export function removeIndexCopies(dbPath: string, dryRun = false): Pick<PurgeResult, "copiesRemoved" | "copiesKept"> {
+  const removed: string[] = [];
+  const kept: string[] = [];
+  for (const path of dbPath === ":memory:" ? [] : listIndexCopies(dbPath)) {
+    try {
+      if (!dryRun) rmSync(path, { force: true });
+      removed.push(path);
+    } catch {
+      kept.push(path);
+    }
+  }
+  const out: Pick<PurgeResult, "copiesRemoved" | "copiesKept"> = {};
+  if (removed.length) out.copiesRemoved = removed;
+  if (kept.length) out.copiesKept = kept;
+  return out;
 }
 
 type Row = Record<string, unknown>;
@@ -284,7 +318,8 @@ export async function purgeLiterals(o: PurgeOptions): Promise<PurgeResult> {
         if (text !== undefined) ftsInsert.run(rid, text);
       };
       // search_extra (a copy of tool text) is read by nothing since v10, so a changed row drops it.
-      const update = db.prepare("UPDATE events SET payload = ?, cwd = ?, search_extra = NULL WHERE rowid = ?");
+      // events.error is a copy of payload.error (v11), so it is written again from the scrubbed payload.
+      const update = db.prepare("UPDATE events SET payload = ?, cwd = ?, search_extra = NULL, error = ? WHERE rowid = ?");
       // ---- events: payload, plus cwd and search_extra in rows from before v10 that gc --compact has not emptied
       // yet, with the FTS row replaced.
       const cols = ["payload", "cwd", "search_extra"];
@@ -295,7 +330,7 @@ export async function purgeLiterals(o: PurgeOptions): Promise<PurgeResult> {
         if (dry) continue;
         const before = JSON.parse(String(r.payload)) as Record<string, unknown>;
         const payload = scrub.value(before) as Record<string, unknown>;
-        update.run(JSON.stringify(payload), typeof r.cwd === "string" ? scrub.text(r.cwd) : null, r.rid as number);
+        update.run(JSON.stringify(payload), typeof r.cwd === "string" ? scrub.text(r.cwd) : null, errorText(payload), r.rid as number);
         reindex(r.rid as number, r.kind, before, payload);
       }
       // ---- cwds: one row per distinct path, shared by every event in it.
@@ -314,9 +349,10 @@ export async function purgeLiterals(o: PurgeOptions): Promise<PurgeResult> {
           touchedSessions.add(String(r.session_id));
           const before = JSON.parse(String(r.payload)) as Record<string, unknown>;
           const payload = swap(before) as Record<string, unknown>;
-          db.prepare("UPDATE events SET blobs = ?, payload = ? WHERE rowid = ?").run(
+          db.prepare("UPDATE events SET blobs = ?, payload = ?, error = ? WHERE rowid = ?").run(
             typeof r.blobs === "string" ? JSON.stringify(swap(JSON.parse(r.blobs))) : null,
             JSON.stringify(payload),
+            errorText(payload),
             r.rid as number,
           );
           reindex(r.rid as number, r.kind, before, payload);
@@ -383,6 +419,9 @@ export async function purgeLiterals(o: PurgeOptions): Promise<PurgeResult> {
     const raw = rawFiles(o.fileDirs);
     for (const f of raw.files) if (maskFile(f, scrub, dry)) result.files++;
     if (raw.skipped) result.filesSkipped = raw.skipped;
+
+    // ---- copies of the index kept by an upgrade or a restore: deleted whole, whatever the rows above held.
+    Object.assign(result, removeIndexCopies(o.dbPath, dry));
 
     if (!dry) {
       // Merge FTS segments (dropping deleted tokens), then rewrite the file so freed pages keep nothing.

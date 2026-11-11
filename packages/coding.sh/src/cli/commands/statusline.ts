@@ -1,7 +1,7 @@
 // coding.sh statusline: Claude Code runs the configured status line command on
 // every turn with session JSON on stdin; we print one line (model, this
-// session's cost, today's cost, the worst flag) and exit 0 even on error, so a
-// missing store or bad input never disrupts the agent. `install`/`uninstall`
+// session's cost, today's cost, the worst flag, a stopped ingest) and exit 0
+// even on error, so a missing store or bad input never disrupts the agent. `install`/`uninstall`
 // wire settings.statusLine, backed up and restored byte-for-byte.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -15,9 +15,11 @@ import {
   stringifyJsonLike,
 } from "../../adapters/_shared/files.ts";
 import { existedBeforeInstall, forgetInstall, installRecord, recordInstall, restoreForInstall, sha256 } from "../../adapters/_shared/installs.ts";
+import { ingestStoppedField, ingestStoppedJson, readIngestStopped } from "../../core/ingest-health.ts";
+import { paths } from "../../core/paths.ts";
 import { withContext } from "../common.ts";
 import { CliError } from "../output.ts";
-import { statuslineLine, worstFailureFlag } from "../statusline.ts";
+import { ingestStoppedPart, statuslineLine, worstFailureFlag } from "../statusline.ts";
 import type { CommandContext } from "../types.ts";
 
 // The command Claude Code runs. coding.sh is on PATH after a global install.
@@ -67,20 +69,30 @@ async function print(c: CommandContext): Promise<number> {
       const todayCostUsd = today.reduce((sum, s) => sum + (s.stats.usage?.costUsd ?? 0), 0);
       const sessionCostUsd = session?.stats.usage?.costUsd;
       const flags = session?.flags;
+      const stopped = readIngestStopped(ctx.paths.ingestStopped);
       if (c.out.json) {
         c.out.data({
           model: model ?? session?.model ?? null,
           sessionCostUsd: sessionCostUsd ?? null,
           todayCostUsd,
           worstFlag: flags ? (worstFailureFlag(flags) ?? null) : null,
+          ...ingestStoppedField(stopped),
         });
       } else {
-        c.out.print(statuslineLine({ model: model ?? session?.model, sessionCostUsd, todayCostUsd, flags }));
+        c.out.print(statuslineLine({ model: model ?? session?.model, sessionCostUsd, todayCostUsd, flags, ingestStoppedSince: stopped?.since }));
       }
       return 0;
     });
   } catch {
-    // Never break Claude Code's status line.
+    // Never break Claude Code's status line. A store that can't be opened has no costs
+    // to show, but a stopped ingest is the one thing worth saying about it.
+    try {
+      const stopped = readIngestStopped(paths(c.env).ingestStopped);
+      if (stopped && c.out.json) c.out.data({ model: model ?? null, sessionCostUsd: null, todayCostUsd: null, worstFlag: null, ingestStopped: ingestStoppedJson(stopped) });
+      else if (stopped) c.out.print(`${model ? `${model}  ·  ` : ""}${ingestStoppedPart(stopped.since)}`);
+    } catch {
+      // nothing to print
+    }
     return 0;
   }
 }

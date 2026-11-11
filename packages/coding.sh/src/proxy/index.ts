@@ -39,6 +39,7 @@ export function recorderFor(o: {
     metadata: cap.mode === "metadata",
     prices: pricesFor(o.config.pricing),
     write: o.write ?? storeWriter(o.index),
+    env: o.env ?? process.env,
     ...(o.project ? { project: o.project } : {}),
     ...(o.onError ? { onError: o.onError } : {}),
     ...(o.onEvent ? { onEvent: o.onEvent } : {}),

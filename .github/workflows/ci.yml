@@ -474,3 +474,42 @@ jobs:
       - name: Proxy latency budget
         if: runner.os == 'Linux'
         run: node scripts/dogfood/bench.mjs proxy --check
+
+  cli-suite:
+    name: cli-suite (dev tasks)
+    # The CLI effectiveness suite's own health, on the committed dev tasks only: held-out tasks
+    # live outside the repo, so this never passes --split all or heldout. It needs no API key and
+    # starts no agent. Always GitHub-hosted.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.x
+          cache: npm
+
+      # The fixture world holds git repos with commits.
+      - name: Git identity
+        run: |
+          git config --global user.name "coding.sh CI"
+          git config --global user.email "ci@coding.sh.invalid"
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        working-directory: packages/coding.sh
+        run: npm run build
+
+      # For every dev task: the fixture home builds, the checks fail before any work, the scripted
+      # reference passes them, and the instruction does not leak the answer. Exits 1 on any
+      # invalid task.
+      - name: Validate the dev tasks
+        run: node scripts/dogfood/cli-suite.mjs validate --split dev --json
+
+      # The CLI guidelines over the same fixture home. The score is printed, not gated; the step
+      # fails when the fixture home does not build.
+      - name: CLI guidelines on the fixture home
+        run: node scripts/dogfood/cli-guidelines.mjs

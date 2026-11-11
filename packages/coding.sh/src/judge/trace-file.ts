@@ -15,8 +15,9 @@
 //     Responses items (function_call / function_call_output on call_id).
 //   - coding.sh events ({"kind": …, "payload": …}), e.g. from `sessions show --json`.
 // Anything else yields no events. traceCoverage() says whether every tool call
-// in the source reached the events, so a judge never grades a trace whose calls
-// were dropped (arXiv 2611.02676: blank steps that still matched their hashes).
+// in the source reached the events, every line parsed and every record was
+// read, so a judge never grades a trace with holes (arXiv 2611.02676: blank
+// steps that still matched their hashes).
 import type { TraceEvent } from "../datasets/types.ts";
 import { eventText } from "./prompt.ts";
 
@@ -24,37 +25,55 @@ type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => !!v && typeof v === "object" && !Array.isArray(v);
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
-/** One record per JSON object; a request body's `messages` / `input` array is flattened into its items. */
-function records(text: string): Obj[] {
+interface Source {
+  /** One record per JSON object; a request body's `messages` / `input` array is flattened into its items. */
+  rows: Obj[];
+  /** Lines that begin or end like a JSON record but do not parse: a cut line or a partial write. */
+  unparsedLines: number;
+  /** Array items that are not objects. */
+  strays: number;
+}
+
+function source(text: string): Source {
+  const src: Source = { rows: [], unparsedLines: 0, strays: 0 };
   const t = text.trim();
-  if (!t) return [];
+  if (!t) return src;
+  const objects = (items: unknown[]): Obj[] => {
+    const objs = items.filter(isObj);
+    src.strays += items.length - objs.length;
+    return objs;
+  };
   const flat = (v: unknown): Obj[] => {
-    if (Array.isArray(v)) return v.filter(isObj);
+    if (Array.isArray(v)) return objects(v);
     if (!isObj(v)) return [];
     if (typeof v.kind !== "string" && typeof v.type !== "string" && typeof v.role !== "string") {
-      if (Array.isArray(v.messages)) return v.messages.filter(isObj);
-      if (Array.isArray(v.input)) return v.input.filter(isObj);
+      if (Array.isArray(v.messages)) return objects(v.messages);
+      if (Array.isArray(v.input)) return objects(v.input);
     }
     return [v];
   };
   if (t.startsWith("[") || t.startsWith("{")) {
     try {
-      return flat(JSON.parse(t) as unknown);
+      src.rows = flat(JSON.parse(t) as unknown);
+      return src;
     } catch {
       // not one document: read it as JSONL
     }
   }
-  const out: Obj[] = [];
   for (const line of t.split("\n")) {
     const l = line.trim();
-    if (!l.startsWith("{")) continue;
+    if (!l.startsWith("{")) {
+      // The tail of a record whose head was cut off; any other text is a log line.
+      if (l.endsWith("}")) src.unparsedLines++;
+      continue;
+    }
     try {
-      out.push(...flat(JSON.parse(l) as unknown));
+      src.rows.push(...flat(JSON.parse(l) as unknown));
     } catch {
-      // a log line or a partial write
+      src.unparsedLines++;
     }
   }
-  return out;
+  return src;
 }
 
 /** tool_result content: a string, or text blocks joined. */
@@ -95,6 +114,42 @@ function tsOf(r: Obj): number | undefined {
     if (Number.isFinite(ms)) return ms;
   }
   return undefined;
+}
+
+/** Codex's exec_command header line; it comes before the command's own output. */
+const CODEX_EXIT = /^Process exited with code (-?\d+)[ \t]*\r?$/m;
+/** A line that only states an exit code: "exit code 1", "Exit code: 0", "[Process exited with code 1]". */
+const EXIT_LINE = /^[ \t[(]*(?:(?:process|command|shell)[ \t]+)?exit(?:ed with)?[ _]code[ \t]*[:=]?[ \t]*(-?\d+)[ \t\]).]*\r?$/gim;
+
+/**
+ * ok for a tool result that has no status field (OpenAI chat and Responses),
+ * from the exit code its text states: false for non-zero, true for 0.
+ * undefined when the text states none, or states both: a mention inside a
+ * longer line is the command's own output and decides nothing.
+ */
+function statedOk(output: unknown, text: string): boolean | undefined {
+  // Codex before exec_command: {"output": "…", "metadata": {"exit_code": 1}}.
+  const doc = isObj(output) ? output : text.trimStart().startsWith("{") ? args(text) : undefined;
+  const code = isObj(doc) && isObj(doc.metadata) ? doc.metadata.exit_code : undefined;
+  if (typeof code === "number") return code === 0;
+  const header = CODEX_EXIT.exec(text);
+  if (header) return Number(header[1]) === 0;
+  let ok: boolean | undefined;
+  for (const m of text.matchAll(EXIT_LINE)) {
+    const zero = Number(m[1]) === 0;
+    if (ok !== undefined && ok !== zero) return undefined;
+    ok = zero;
+  }
+  return ok;
+}
+
+/** tool.end fields for a result with no status field. */
+function statelessResult(output: unknown): { ok?: boolean; output: string } {
+  const text = anyText(output);
+  const r: { ok?: boolean; output: string } = { output: text };
+  const ok = statedOk(output, text);
+  if (ok !== undefined) r.ok = ok;
+  return r;
 }
 
 const CODEX_TOOL_ITEMS = new Set(["command_execution", "mcp_tool_call", "file_change", "web_search"]);
@@ -149,7 +204,7 @@ function cursorResult(result: unknown): { ok: boolean; output: string } {
 }
 
 export function traceFromText(text: string): TraceEvent[] {
-  const rows = records(text);
+  const { rows } = source(text);
   const out: TraceEvent[] = [];
   const toolNames = new Map<string, string>();
   /** Codex items and Cursor calls whose tool.start was already emitted. */
@@ -210,7 +265,7 @@ export function traceFromText(text: string): TraceEvent[] {
       continue;
     }
     if (type && RESPONSES_RESULTS.has(type)) {
-      end(str(r.call_id), { output: anyText(r.output) }, ts);
+      end(str(r.call_id), statelessResult(r.output), ts);
       continue;
     }
 
@@ -225,7 +280,7 @@ export function traceFromText(text: string): TraceEvent[] {
           const fn = isObj(tc.function) ? tc.function : {};
           start(str(fn.name) ?? str(tc.name) ?? "unknown", str(tc.id), args(fn.arguments ?? tc.arguments), ts);
         }
-      } else if (role === "tool") end(str(r.tool_call_id), { output: anyText(r.content) }, ts);
+      } else if (role === "tool") end(str(r.tool_call_id), statelessResult(r.content), ts);
       else if (role === "user" && text) push("user.message", { text }, ts);
       continue;
     }
@@ -255,6 +310,10 @@ export interface TraceCoverage {
   format: TraceFormat;
   /** JSON records in the source. 0 for plain text. */
   records: number;
+  /** Lines that begin or end like a JSON record but do not parse: the file was cut, or a write was partial. */
+  unparsedLines: number;
+  /** Records no format accounts for: every record of an unknown format, a record with no type, role or kind, an array item that is not an object. */
+  unreadRecords: number;
   /** Tool calls in the source, counted by a structural scan of the records (not by the parser). */
   sourceCalls: number;
   /** Tool results in the source, counted the same way. */
@@ -268,7 +327,7 @@ export interface TraceCoverage {
   unmatchedResults: string[];
   /** Events that render as an empty line for the judge. */
   blankEvents: string[];
-  /** False when calls or results were dropped, an event is blank, or JSON records were not understood. */
+  /** False when calls or results were dropped, an event is blank, a line did not parse, a record was not read, or non-empty text has no JSON record. */
   ok: boolean;
 }
 
@@ -335,18 +394,22 @@ function scan(r: Obj, calls: Set<string>, results: Set<string>, anon: { n: numbe
 /**
  * Did every tool call in `text` reach `events` (the trace parsed from it)?
  * Counts come from a separate structural scan of the raw records, so a parser
- * that drops a format's calls shows up as toolStarts < sourceCalls. Plain text
- * (no JSON records) is ok: there is nothing to drop.
+ * that drops a format's calls shows up as toolStarts < sourceCalls. A cut line
+ * and a record no format accounts for are holes too. Text with no JSON record
+ * is an unknown format; only an empty file has nothing to drop.
  */
 export function traceCoverage(text: string, events: readonly TraceEvent[]): TraceCoverage {
-  const rows = records(text);
+  const { rows, unparsedLines, strays } = source(text);
   const families = new Set<string>();
   const calls = new Set<string>();
   const results = new Set<string>();
   const anon = { n: 0 };
+  /** Records with no type, role or kind: no format says what they are. */
+  let shapeless = 0;
   for (const r of rows) {
     const f = familyOf(r);
     if (f) families.add(f);
+    else if (typeof r.type !== "string") shapeless++;
     scan(r, calls, results, anon);
   }
   if (families.has("cursor") && families.has("claude-like")) families.delete("claude-like");
@@ -368,10 +431,16 @@ export function traceCoverage(text: string, events: readonly TraceEvent[]): Trac
   const unmatchedCalls = [...startIds].filter((id) => !endIds.has(id));
   const unmatchedResults = [...endIds].filter((id) => !startIds.has(id));
   const blankEvents = events.filter((e) => eventText(e).trim() === "").map((e) => e.id);
-  const ok = starts.length >= calls.size && ends.length >= results.size && blankEvents.length === 0 && !(format === "unknown" && rows.length > 0);
+  // In a known format, a record with a type the judge has no use for is that format's metadata
+  // (a Claude transcript has a dozen such types); a tool call inside one still shows up in the scan.
+  const unreadRecords = strays + (format === "unknown" ? rows.length : shapeless);
+  const noRecords = rows.length === 0 && text.trim() !== "";
+  const ok = starts.length >= calls.size && ends.length >= results.size && blankEvents.length === 0 && unparsedLines === 0 && unreadRecords === 0 && !noRecords;
   return {
     format,
     records: rows.length,
+    unparsedLines,
+    unreadRecords,
     sourceCalls: calls.size,
     sourceResults: results.size,
     toolStarts: starts.length,
@@ -390,5 +459,8 @@ export function describeCoverage(c: TraceCoverage): string {
   if (c.toolEnds < c.sourceResults) parts.push(`${c.sourceResults} tool result(s) in the source but ${c.toolEnds} reached the judge`);
   if (c.blankEvents.length) parts.push(`${c.blankEvents.length} event(s) render blank (${c.blankEvents.slice(0, 5).join(", ")}${c.blankEvents.length > 5 ? ", …" : ""})`);
   if (c.format === "unknown" && c.records > 0) parts.push(`${c.records} JSON record(s) in a format the judge does not read`);
+  else if (c.records === 0 && !c.ok) parts.push("the file has no JSON records (not a trace format the judge reads)");
+  else if (c.unreadRecords > 0) parts.push(`${c.unreadRecords} record(s) with no type, role or kind, which the judge does not read`);
+  if (c.unparsedLines > 0) parts.push(`${c.unparsedLines} line(s) are not whole JSON (a cut or partial write)`);
   return parts.join("; ") || "trace complete";
 }

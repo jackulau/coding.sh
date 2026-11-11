@@ -18,8 +18,8 @@
 //
 // Every value goes to ClickHouse as a typed query parameter (param_*); only the
 // user's own --where is spliced into the SQL.
+import { setTimeout as sleep } from "node:timers/promises";
 import type { BlobStore, IndexStore } from "../core/types.ts";
-import type { Session } from "../schema/index.ts";
 import { applyPricing, pricesFor, type Prices } from "../core/pricing.ts";
 import { createRedactor, type Redactor } from "../core/redact.ts";
 import { sha256Hex } from "../core/ids.ts";
@@ -266,9 +266,14 @@ export class ClickHouseError extends Error {
   override name = "ClickHouseError";
   /** HTTP status, or 0 when the server could not be reached. */
   readonly status: number;
-  constructor(message: string, status: number) {
+  /** Worth another try: a dropped connection, or a 5xx that is not ClickHouse's own answer to the query. */
+  readonly transient: boolean;
+  /** Set by importClickHouse when it fails part-way: what the run had read and stored by then. */
+  imported?: { spans: number; inserted: number; sessions: number };
+  constructor(message: string, status: number, transient = false) {
     super(message);
     this.status = status;
+    this.transient = transient;
   }
 }
 
@@ -280,6 +285,12 @@ export interface ClickHouseTarget {
   /** Default: the URL's userinfo, then CLICKHOUSE_USER / CLICKHOUSE_PASSWORD. */
   env?: NodeJS.ProcessEnv;
   fetch?: typeof fetch;
+  /**
+   * How long to wait before each new try of a query that failed in a transient
+   * way (ClickHouseError.transient), in ms. Default 250, 1000 and 4000: three
+   * more tries. [] fails on the first error.
+   */
+  retryDelaysMs?: number[];
 }
 
 interface Endpoint {
@@ -288,7 +299,10 @@ interface Endpoint {
   table: string;
   headers: Record<string, string>;
   fetch: typeof fetch;
+  retryDelaysMs: number[];
 }
+
+const RETRY_DELAYS_MS = [250, 1000, 4000];
 
 function endpoint(t: ClickHouseTarget): Endpoint {
   let url: URL;
@@ -314,15 +328,28 @@ function endpoint(t: ClickHouseTarget): Endpoint {
   const headers: Record<string, string> = {};
   if (user) headers["X-ClickHouse-User"] = user;
   if (password) headers["X-ClickHouse-Key"] = password;
-  return { base, database, table, headers, fetch: t.fetch ?? fetch };
+  return { base, database, table, headers, fetch: t.fetch ?? fetch, retryDelaysMs: t.retryDelaysMs ?? RETRY_DELAYS_MS };
 }
 
-/** Where a target's import cursor is kept: host, database and table, never credentials. */
-export function cursorKey(t: ClickHouseTarget): string {
+/**
+ * Where a target's import cursor is kept: host, database and table, never
+ * credentials, then the row filter (`genAiOnly: false`, a hash of `where`). A
+ * run with another filter keeps its own cursor, so it reads the rows an earlier
+ * run's filter skipped.
+ */
+export function cursorKey(t: ClickHouseTarget & Pick<FetchSpansOptions, "where" | "genAiOnly">): string {
   const e = endpoint(t);
-  return `clickhouse:${e.base.host}/${e.database || "default"}/${e.table}`;
+  const where = t.where?.trim();
+  return `clickhouse:${e.base.host}/${e.database || "default"}/${e.table}${t.genAiOnly === false ? "#all" : ""}${where ? `#where=${sha256Hex(where).slice(0, 16)}` : ""}`;
 }
 
+/**
+ * A connection that dropped: the next try may get through. A refused connection
+ * or an unknown host is not here: a wrong URL fails the same way every time.
+ */
+const DROPPED = new Set(["ECONNRESET", "EPIPE", "ETIMEDOUT", "EAI_AGAIN", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"]);
+
+/** Runs one statement. A transient failure is tried again after each of the endpoint's retry delays. */
 async function query(e: Endpoint, sql: string, params: Record<string, string>): Promise<string> {
   const url = new URL(e.base);
   if (e.database) url.searchParams.set("database", e.database);
@@ -330,16 +357,36 @@ async function query(e: Endpoint, sql: string, params: Record<string, string>): 
   url.searchParams.set("wait_end_of_query", "1");
   url.searchParams.set("output_format_json_quote_64bit_integers", "0");
   for (const [k, v] of Object.entries(params)) url.searchParams.set(`param_${k}`, v);
+  for (let tries = 1; ; tries++) {
+    try {
+      return await send(e, url, sql);
+    } catch (err) {
+      const wait = e.retryDelaysMs[tries - 1];
+      if (!(err instanceof ClickHouseError) || !err.transient) throw err;
+      if (wait === undefined) throw tries > 1 ? new ClickHouseError(`${err.message} (${tries} tries)`, err.status, true) : err;
+      await sleep(wait);
+    }
+  }
+}
+
+async function send(e: Endpoint, url: URL, sql: string): Promise<string> {
   let res: Response;
+  let body: string;
   try {
     res = await e.fetch(url, { method: "POST", body: sql, headers: { ...e.headers, "Content-Type": "text/plain; charset=utf-8" } });
+    // The connection can drop while the rows are still arriving.
+    body = await res.text();
   } catch (err) {
     const cause = (err as { cause?: { code?: string; message?: string } }).cause;
-    throw new ClickHouseError(`can't reach ClickHouse at ${e.base.origin}: ${cause?.code ?? cause?.message ?? (err as Error).message}`, 0);
+    throw new ClickHouseError(`can't reach ClickHouse at ${e.base.origin}: ${cause?.code ?? cause?.message ?? (err as Error).message}`, 0, DROPPED.has(cause?.code ?? ""));
   }
-  const body = await res.text();
-  if (!res.ok) throw new ClickHouseError(body.trim().split("\n")[0]!.slice(0, 500) || `HTTP ${res.status}`, res.status);
   const exception = res.headers.get("x-clickhouse-exception-code");
+  if (!res.ok) {
+    // 502, 503 and 504 mean "not now", from ClickHouse (too many queries) or a proxy in front of it.
+    // Any other 5xx is retried only when it is not ClickHouse's own exception, which a new try would get again.
+    const transient = res.status === 502 || res.status === 503 || res.status === 504 || (res.status >= 500 && !exception);
+    throw new ClickHouseError(body.trim().split("\n")[0]!.slice(0, 500) || `HTTP ${res.status}`, res.status, transient);
+  }
   if (exception) throw new ClickHouseError(`ClickHouse error ${exception}: ${body.slice(-500)}`, 500);
   return body;
 }
@@ -482,7 +529,10 @@ export interface ImportClickHouseOptions extends Omit<FetchSpansOptions, "after"
   prices?: Prices;
   /** Count only: read the rows and map them, store nothing and keep no cursor. */
   dryRun?: boolean;
-  /** Start from `since` instead of the saved cursor. */
+  /**
+   * Start from `since` instead of the saved cursor (`collector import --from-start`,
+   * or a --since given on the command line). The cursor is still saved at the end.
+   */
   fromStart?: boolean;
   /**
    * How far before the saved cursor a run starts reading again, in ms (default
@@ -513,8 +563,13 @@ export interface ImportClickHouseResult {
 /**
  * Pages GenAI spans out of ClickHouse into the index, through one receiver
  * pipeline. The cursor (the last row read) is kept in the index kv under
- * cursorKey(), so the next run reads only newer rows; event ids are stable,
- * so reading a row again stores nothing new.
+ * cursorKey(), one per target and row filter, so the next run with that filter
+ * reads only newer rows; `fromStart` reads from `since` again. Event ids are
+ * stable, so reading a row again stores nothing new.
+ *
+ * Each page is stored, its sessions are rebuilt, and only then is the cursor
+ * saved, so a run that fails part-way (a ClickHouseError with `imported` set)
+ * leaves no event without its session, and the next run reads on from there.
  */
 export async function importClickHouse(o: ImportClickHouseOptions): Promise<ImportClickHouseResult> {
   const key = cursorKey(o);
@@ -531,7 +586,7 @@ export async function importClickHouse(o: ImportClickHouseOptions): Promise<Impo
     keepRaw: false,
   });
   let saved: SpanCursor | undefined;
-  if (!o.fromStart && o.store.kvGet) {
+  if (o.store.kvGet) {
     try {
       const v = await o.store.kvGet(key);
       if (v) saved = JSON.parse(v) as SpanCursor;
@@ -540,41 +595,51 @@ export async function importClickHouse(o: ImportClickHouseOptions): Promise<Impo
     }
   }
   const overlapNs = BigInt(Math.max(0, Math.floor(o.overlapMs ?? DEFAULT_OVERLAP_MS))) * 1_000_000n;
-  let after: SpanCursor | undefined = saved && overlapNs ? { ts: String(BigInt(saved.ts) - overlapNs), traceId: "", spanId: "" } : saved;
+  // fromStart reads from `since`; the saved cursor still only moves forward.
+  const resume = o.fromStart ? undefined : saved;
+  let after: SpanCursor | undefined = resume && overlapNs ? { ts: String(BigInt(resume.ts) - overlapNs), traceId: "", spanId: "" } : resume;
   const result: ImportClickHouseResult = { mode: "map", spans: 0, events: 0, inserted: 0, sessions: [], rejected: 0, errors: [], dryRun: !!o.dryRun, ...(saved ? { cursor: saved } : {}) };
+  // Sessions the run rebuilt (a dry run: would write).
   const touched = new Set<string>();
   let mode: AttributeMode | undefined;
-  for (;;) {
-    const page = await fetchSpans({ ...o, ...(after ? { after } : {}), ...(mode ? { mode } : {}) });
-    mode = result.mode = page.mode;
-    if (!page.rows.length) break;
-    const batch = o.dryRun ? undefined : blobs.batch?.();
-    const mapped = await pipeline.map("traces", rowsToResourceSpans(page.rows, page.mode), batch);
-    const events = applyPricing(mapped.events, prices);
-    result.spans += page.rows.length;
-    result.events += events.length;
-    result.rejected += mapped.rejected;
-    result.errors.push(...mapped.errors);
-    if (o.dryRun) for (const e of events) touched.add(e.sessionId);
-    else {
-      await batch?.flush();
-      const inserted = events.length ? (await o.store.putEvents(events)).inserted : 0;
-      result.inserted += inserted;
-      // Sessions of a page that stored something (rows read again in the overlap store nothing).
-      if (inserted) for (const e of events) touched.add(e.sessionId);
-      if (page.next && (!result.cursor || compareCursor(page.next, result.cursor) > 0)) {
-        result.cursor = page.next;
-        if (o.store.kvSet) await o.store.kvSet(key, JSON.stringify(page.next));
+  try {
+    for (;;) {
+      const page = await fetchSpans({ ...o, ...(after ? { after } : {}), ...(mode ? { mode } : {}) });
+      mode = result.mode = page.mode;
+      if (!page.rows.length) break;
+      const batch = o.dryRun ? undefined : blobs.batch?.();
+      const mapped = await pipeline.map("traces", rowsToResourceSpans(page.rows, page.mode), batch);
+      const events = applyPricing(mapped.events, prices);
+      result.spans += page.rows.length;
+      result.events += events.length;
+      result.rejected += mapped.rejected;
+      result.errors.push(...mapped.errors);
+      if (o.dryRun) for (const e of events) touched.add(e.sessionId);
+      else {
+        await batch?.flush();
+        const inserted = events.length ? (await o.store.putEvents(events)).inserted : 0;
+        result.inserted += inserted;
+        // The cursor moves past a page only once the page's sessions are rebuilt, so every row at or
+        // before it is in its session, and reading it again (the overlap, fromStart) rebuilds only when
+        // it stored something. A page past the cursor is rebuilt whatever it stored: a run that stopped
+        // between storing a page and saving its cursor left events with no session.
+        const ahead = page.next !== undefined && (!result.cursor || compareCursor(page.next, result.cursor) > 0);
+        if (inserted || ahead) for (const s of await rebuildSessions(o.store, new Set(events.map((e) => e.sessionId)))) touched.add(s.id);
+        if (ahead) {
+          result.cursor = page.next!;
+          if (o.store.kvSet) await o.store.kvSet(key, JSON.stringify(page.next));
+        }
       }
+      if (page.next) after = page.next;
+      o.onPage?.({ spans: result.spans, events: result.events });
+      if (page.rows.length < (o.limit ?? 5000)) break;
     }
-    if (page.next) after = page.next;
-    o.onPage?.({ spans: result.spans, events: result.events });
-    if (page.rows.length < (o.limit ?? 5000)) break;
+  } catch (e) {
+    // What is stored is whole (see above); the caller can say how far the run got and that running it again reads on.
+    if (e instanceof ClickHouseError && result.spans && !o.dryRun) e.imported = { spans: result.spans, inserted: result.inserted, sessions: touched.size };
+    throw e;
   }
-  if (!o.dryRun) {
-    const sessions: Session[] = await rebuildSessions(o.store, touched);
-    result.sessions = sessions.map((s) => s.id);
-  } else result.sessions = [...touched];
+  result.sessions = [...touched];
   return result;
 }
 

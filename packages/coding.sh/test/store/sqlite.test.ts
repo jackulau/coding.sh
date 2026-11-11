@@ -5,6 +5,9 @@ import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { AgentEvent } from "../../src/schema/index.ts";
+import { findSessions } from "../../src/query/run.ts";
+import { parseWhere } from "../../src/query/where.ts";
+import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { loadSqlite, MIGRATIONS, searchIndexOk, SQLITE_SCHEMA_VERSION, SqliteIndexStore, WAL_SIZE_LIMIT } from "../../src/store/sqlite.ts";
 import { median, timeMs } from "../helpers-timing.ts";
 
@@ -533,6 +536,113 @@ describe("SqliteIndexStore", () => {
     const check = new DatabaseSync(path); // the integrity-check is a write
     assert.equal(searchIndexOk(check), true);
     check.close();
+  });
+
+  it("migrating to v11 fills events.error and builds events_duration in place, and both filters find the same sessions as before", async () => {
+    // What each session's events hold: an error that is text, one that is not, an "error" key deeper down, durations around a minute.
+    const rows: { id: string; session: string; kind: AgentEvent["kind"]; payload: Record<string, unknown>; durationMs?: number }[] = [
+      { id: "a1", session: "a", kind: "tool.end", payload: { tool: "Bash", ok: false, error: "command timeout after 30s" }, durationMs: 90_000 },
+      { id: "b1", session: "b", kind: "tool.end", payload: { tool: "Bash", ok: false, error: "Request TIMEOUT" }, durationMs: 500 },
+      { id: "c1", session: "c", kind: "llm.call", payload: { ok: false, error: { message: "timeout" } }, durationMs: 61_000 },
+      { id: "d1", session: "d", kind: "tool.start", payload: { tool: "Bash", input: { error: "timeout nested" }, note: 'it said "error": timeout' } },
+      { id: "e1", session: "e", kind: "session.end", payload: { error: "" }, durationMs: 0 },
+      { id: "f1", session: "f", kind: "tool.end", payload: { tool: "Read", ok: false, error: "50% done_timeout\\x" }, durationMs: 60_000 },
+      { id: "g1", session: "g", kind: "tool.end", payload: { tool: "Read", ok: true } },
+      { id: "h1", session: "h", kind: "tool.end", payload: { tool: "Read", ok: false, error: 42 }, durationMs: 3000 },
+      { id: "a2", session: "a", kind: "tool.end", payload: { tool: "Read", ok: true }, durationMs: 2000 },
+    ];
+    const sessionIds = [...new Set(rows.map((r) => r.session))];
+    const asEvent = (r: (typeof rows)[number], i: number): AgentEvent => {
+      const e: AgentEvent = { id: r.id, v: 0, sessionId: r.session, ts: i, agent: "claude-code", kind: r.kind, payload: r.payload };
+      if (r.durationMs !== undefined) e.durationMs = r.durationMs;
+      return e;
+    };
+    const { DatabaseSync } = await loadSqlite();
+    const path = join(root, "v10-alone.db");
+    const old = new DatabaseSync(path);
+    old.exec("PRAGMA journal_mode = WAL");
+    old.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
+    for (const m of MIGRATIONS.filter((m) => m.version <= 10)) {
+      old.exec(m.sql);
+      m.after?.(old);
+      old.prepare("INSERT INTO migrations (version, applied_at) VALUES (?, 0)").run(m.version);
+    }
+    // Rows as v10 putEvents wrote them: no error column.
+    const insert = old.prepare("INSERT INTO events (id, session_id, ts, duration_ms, agent, kind, tool, ok, payload) VALUES (?, ?, ?, ?, 'claude-code', ?, ?, ?, ?)");
+    rows.forEach((r, i) => insert.run(r.id, r.session, i, r.durationMs ?? null, r.kind, typeof r.payload.tool === "string" ? r.payload.tool : null, typeof r.payload.ok === "boolean" ? Number(r.payload.ok) : null, JSON.stringify(r.payload)));
+    for (const [i, id] of sessionIds.entries()) old.prepare("INSERT INTO sessions (id, agent, started_at, stats) VALUES (?, 'claude-code', ?, '{}')").run(id, i);
+    // The answers of v10, from the SQL it compiled each key to (src/query/where.ts before v11).
+    const V10_ERROR = "CASE WHEN json_type(e.payload, '$.error') = 'text' THEN json_extract(e.payload, '$.error') END";
+    const v10 = (cond: string, ...params: (string | number)[]) => (old.prepare(`SELECT s.id FROM sessions s WHERE s.id IN (SELECT e.session_id FROM events e WHERE ${cond}) ORDER BY s.id`).all(...params) as { id: string }[]).map((r) => r.id);
+    const before: [string, string[]][] = [
+      ["event.duration>60s", v10("e.duration_ms > ?", 60_000)],
+      ["event.duration>=60s", v10("e.duration_ms >= ?", 60_000)],
+      ["event.duration:1s..5s", v10("e.duration_ms BETWEEN ? AND ?", 1000, 5000)],
+      ["error:*timeout*", v10(`${V10_ERROR} LIKE ? ESCAPE '\\'`, "%%timeout%%")],
+      ["error:timeout", v10(`${V10_ERROR} LIKE ? ESCAPE '\\'`, "%timeout%")],
+      ["error:50%", v10(`${V10_ERROR} LIKE ? ESCAPE '\\'`, "%50\\%%")],
+      ["error:done_timeout", v10(`${V10_ERROR} LIKE ? ESCAPE '\\'`, "%done\\_timeout%")],
+    ];
+    assert.deepEqual(before.map(([q, ids]) => [q, ids.join(" ")]), [["event.duration>60s", "a c"], ["event.duration>=60s", "a c f"], ["event.duration:1s..5s", "a h"], ["error:*timeout*", "a b f"], ["error:timeout", "a b f"], ["error:50%", "f"], ["error:done_timeout", "f"]]);
+    old.close();
+    const sizeBefore = statSync(path).size;
+
+    const lines: string[] = [];
+    const s = await SqliteIndexStore.open(path, { progress: (l) => lines.push(l), progressMinRows: 1 });
+    assert.match(lines[0]!, new RegExp(`the index holds ${rows.length} events; upgrading it from schema v10 to v${SQLITE_SCHEMA_VERSION}\\. This runs once\\.`));
+    const ids = async (q: string) => (await findSessions(s, parseWhere(q), {})).sessions.map((x) => x.id).sort();
+    for (const [q, want] of before) assert.deepEqual(await ids(q), want, q);
+    // The scan fallback agrees, negated too.
+    const memory = new MemoryIndexStore();
+    await memory.putEvents(rows.map(asEvent));
+    for (const [i, id] of sessionIds.entries()) await memory.upsertSession({ id, agent: "claude-code", startedAt: i, stats: {} as never, flags: [] });
+    for (const q of [...before.map(([q]) => q), "-error:timeout", "-event.duration>60s", "error:timeout,nested", "error:*"]) {
+      assert.deepEqual(await ids(q), (await findSessions(memory, parseWhere(q), {})).sessions.map((x) => x.id).sort(), q);
+    }
+    // In place: the same file and events, the new column filled from the payloads, both indexes there.
+    assert.deepEqual((await s.listEvents("a")).map((e) => [e.id, e.durationMs, e.payload.error]), [["a1", 90_000, "command timeout after 30s"], ["a2", 2000, undefined]]);
+    // A new event's error is written with it.
+    await s.putEvents([{ id: "i1", v: 0, sessionId: "i", ts: 99, agent: "claude-code", kind: "tool.end", payload: { tool: "Bash", ok: false, error: "late timeout" }, durationMs: 120_000 }]);
+    await s.upsertSession({ id: "i", agent: "claude-code", startedAt: 99, stats: {} as never, flags: [] });
+    assert.deepEqual(await ids("error:timeout"), ["a", "b", "f", "i"]);
+    assert.deepEqual(await ids("event.duration>60s"), ["a", "c", "i"]);
+    await s.close();
+    assert.ok(statSync(path).size >= sizeBefore);
+
+    const peek = new DatabaseSync(path, { readOnly: true });
+    try {
+      assert.equal((peek.prepare("SELECT MAX(version) AS v FROM migrations").get() as { v: number }).v, SQLITE_SCHEMA_VERSION);
+      assert.deepEqual(
+        (peek.prepare("SELECT id, error FROM events ORDER BY id").all() as { id: string; error: string | null }[]).map((r) => [r.id, r.error]),
+        [["a1", "command timeout after 30s"], ["a2", null], ["b1", "Request TIMEOUT"], ["c1", null], ["d1", null], ["e1", ""], ["f1", "50% done_timeout\\x"], ["g1", null], ["h1", null], ["i1", "late timeout"]],
+      );
+      const indexes = (peek.prepare("SELECT name, sql FROM sqlite_schema WHERE type = 'index' AND name IN ('events_duration', 'events_error') ORDER BY name").all() as { name: string; sql: string }[]).map((r) => r.sql);
+      assert.deepEqual(indexes, [
+        "CREATE INDEX events_duration ON events(duration_ms, session_id) WHERE duration_ms IS NOT NULL",
+        "CREATE INDEX events_error ON events(error, session_id) WHERE error IS NOT NULL",
+      ]);
+    } finally {
+      peek.close();
+    }
+
+    // A fresh store given the same events holds the same errors and the same schema for events.
+    const freshPath = join(root, "v11-alone-fresh.db");
+    const fresh = await SqliteIndexStore.open(freshPath);
+    await fresh.putEvents(rows.map(asEvent));
+    await fresh.close();
+    const shape = (file: string) => {
+      const db = new DatabaseSync(file, { readOnly: true });
+      try {
+        return {
+          errors: (db.prepare("SELECT id, error FROM events WHERE id <> 'i1' ORDER BY id").all() as { id: string; error: string | null }[]).map((r) => [r.id, r.error]),
+          columns: (db.prepare("PRAGMA table_xinfo(events)").all() as { name: string; type: string }[]).map((c) => `${c.name} ${c.type}`),
+          indexes: (db.prepare("SELECT sql FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'events' AND sql IS NOT NULL ORDER BY name").all() as { sql: string }[]).map((r) => r.sql),
+        };
+      } finally {
+        db.close();
+      }
+    };
+    assert.deepEqual(shape(path), shape(freshPath));
   });
 
   it("a store under the progress threshold upgrades silently", async () => {

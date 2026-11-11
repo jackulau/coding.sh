@@ -33,6 +33,7 @@
 import type { AgentEvent, AgentId, BlobRef, EventKind, Usage, UsageNumberKey } from "../schema/index.ts";
 import { SCHEMA_VERSION } from "../schema/index.ts";
 import { hashParts, sha256Hex } from "../core/ids.ts";
+import { noteBlobHits, type RedactionTally, type Redactor, redactionTally } from "../core/redact.ts";
 import { geoValue, tierValue } from "../core/pricing.ts";
 import { anthropicPriceHints } from "../adapters/_shared/normalize.ts";
 import { type DurableTag, durableOf, durableSessionId } from "./durable.ts";
@@ -60,6 +61,14 @@ export interface MapContext {
   spanTree?: SpanTree;
   /** Keep the normalized source span/log as blobs[0] (default true). */
   keepRaw?: boolean;
+  /**
+   * Redacts what goes into a blob before it is serialized: each string of a source
+   * span or log record, or of an oversize structured value, on its own, and a
+   * string that holds a JSON document as that document. The JSON text is not
+   * enough: a `NAME=value` line after an escaped newline and a JSON field inside
+   * a JSON string no longer match there. Undefined: blobs are stored as given.
+   */
+  redactor?: Redactor;
   /**
    * Enrichment hook, called once per span after the built-in mapping. This is
    * where framework integrations plug in, e.g. src/integrations/eve's
@@ -608,17 +617,80 @@ function truncateUtf8(s: string, maxBytes: number): string {
 
 const serialize = (v: unknown): string => (typeof v === "string" ? v : JSON.stringify(v) ?? "");
 
+/** A new value with `f` applied to every string in it (keys are kept). */
+function mapStrings(v: unknown, f: (s: string) => string, depth = 0): unknown {
+  if (typeof v === "string") return f(v);
+  if (depth > 64 || v === null || typeof v !== "object" || v instanceof Uint8Array) return v;
+  if (Array.isArray(v)) return v.map((x) => mapStrings(x, f, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [k, x] of Object.entries(v)) Object.defineProperty(out, k, { value: mapStrings(x, f, depth + 1), writable: true, enumerable: true, configurable: true });
+  return out;
+}
+
+/** JSON documents inside strings are followed this deep (a tool result inside a messages attribute). */
+const JSON_STRING_DEPTH = 3;
+
+/**
+ * Redacts a value for a blob: every string on its own (Redactor.value), and a
+ * string that holds a JSON document as that document, the way the mapping reads
+ * it (maybeJson), so a source span hides what its events hide. Such a string is
+ * rewritten, as compact JSON, only when that found something.
+ */
+function redactForBlob(r: Redactor, v: unknown, tally: RedactionTally, level = 0): unknown {
+  if (level >= JSON_STRING_DEPTH) return r.value(v, tally);
+  const docs = mapStrings(v, (s) => {
+    const doc = maybeJson(s);
+    if (typeof doc !== "object" || doc === null) return s;
+    const found = redactionTally();
+    const clean = JSON.stringify(redactForBlob(r, doc, found, level + 1));
+    if (clean === JSON.stringify(doc)) return s;
+    for (const [k, n] of Object.entries(found.kinds)) tally.kinds[k] = (tally.kinds[k] ?? 0) + n;
+    return clean;
+  });
+  return r.value(docs, tally);
+}
+
+/** A stored blob: its ref and the text behind it (redacted when the context has a redactor). */
+interface StoredBlob {
+  ref: BlobRef;
+  text: string;
+}
+
 class Blobs {
-  private readonly cache = new Map<string, Promise<BlobRef>>();
+  private readonly cache = new Map<string, Promise<StoredBlob>>();
   private readonly ctx: MapContext;
   constructor(ctx: MapContext) {
     this.ctx = ctx;
   }
-  put(data: string): Promise<BlobRef> {
-    const key = sha256Hex(data);
+  /** An oversize value (`text`: serialize(v)). The same content is redacted and written once per batch. */
+  put(v: unknown, text: string): Promise<StoredBlob> {
+    const key = sha256Hex(text);
     let p = this.cache.get(key);
-    if (!p) this.cache.set(key, (p = this.ctx.blob(data)));
+    if (!p) this.cache.set(key, (p = this.store(v, text, true)));
     return p;
+  }
+  /** The source span or log record (MapContext.keepRaw). */
+  async raw(v: unknown): Promise<BlobRef> {
+    return (await this.store(v, undefined, false)).ref;
+  }
+  /**
+   * Redacts `v` (redactForBlob), then serializes; the JSON text gets the string
+   * rules too, as it did before. `counted`: the hits count for the event that
+   * points at the blob (redactEventCounted). Not for a source span, which several
+   * events share and whose content they count inline.
+   */
+  private async store(v: unknown, unredacted: string | undefined, counted: boolean): Promise<StoredBlob> {
+    const r = this.ctx.redactor;
+    if (!r) {
+      const text = unredacted ?? serialize(v);
+      return { ref: await this.ctx.blob(text), text };
+    }
+    const tally = redactionTally();
+    const clean = redactForBlob(r, v, tally);
+    const text = typeof clean === "string" ? clean : r.string(serialize(clean), tally);
+    const ref = await this.ctx.blob(text);
+    if (counted) noteBlobHits(ref, tally.kinds);
+    return { ref, text };
   }
 }
 
@@ -647,8 +719,9 @@ class Draft {
       this.payload[key] = v;
       return this;
     }
-    const ref = await this.store.put(text);
-    this.payload[key] = truncateUtf8(text, Math.min(PREVIEW_BYTES, this.maxInline));
+    // The preview is cut from the stored (redacted) text: a prefix of the blob.
+    const { ref, text: stored } = await this.store.put(v, text);
+    this.payload[key] = truncateUtf8(stored, Math.min(PREVIEW_BYTES, this.maxInline));
     this.payload[`${key}Blob`] = ref;
     this.payload.truncated = true;
     if (!this.blobs.includes(ref)) this.blobs.push(ref);
@@ -665,7 +738,7 @@ class Draft {
         Object.defineProperty(out, k, { value: v, writable: true, enumerable: true, configurable: true });
         continue;
       }
-      const ref = await this.store.put(text);
+      const { ref } = await this.store.put(v, text);
       if (!this.blobs.includes(ref)) this.blobs.push(ref);
       Object.defineProperty(out, k, { value: { blob: ref, bytes: Buffer.byteLength(text) }, writable: true, enumerable: true, configurable: true });
     }
@@ -773,9 +846,7 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
 
   let raw: BlobRef | undefined;
   if (ctx.keepRaw !== false) {
-    raw = await store.put(
-      JSON.stringify({ format: "otlp.span", v: 0, resource: c.resource, scope: { name: c.scope.name, version: c.scope.version }, span }),
-    );
+    raw = await store.raw({ format: "otlp.span", v: 0, resource: c.resource, scope: { name: c.scope.name, version: c.scope.version }, span });
   }
 
   const out: AgentEvent[] = [];
@@ -1188,7 +1259,7 @@ async function mapLog(rec: OtelLogRecord, resource: Attrs, scope: OtelScope, ctx
   const raw =
     ctx.keepRaw === false
       ? undefined
-      : await store.put(JSON.stringify({ format: "otlp.log", v: 0, resource, scope: { name: scope.name, version: scope.version }, log: rec }));
+      : await store.raw({ format: "otlp.log", v: 0, resource, scope: { name: scope.name, version: scope.version }, log: rec });
   const version = str(resource, "service.version") ?? str(a, "app.version");
   const runId = str(a, ...RUN_KEYS) ?? str(resource, ...RUN_KEYS);
   const promptId = str(a, "prompt.id");

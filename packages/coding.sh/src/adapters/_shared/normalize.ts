@@ -251,6 +251,48 @@ export function lineKey(line: Pick<SpoolLine, "ts" | "pid">, ctx: Pick<Normalize
   return ctx.source ? ["at", ctx.source.file, ctx.source.offset] : [line.ts, line.pid];
 }
 
+/**
+ * The spool lines of one hook firing land at most this far apart: the agent
+ * starts every command registered for the event when it fires. Real firings
+ * with one payload are further apart (a prompt sent again, a second Stop).
+ */
+export const FIRING_WINDOW_MS = 2_000;
+
+/** Recent firings by payload id: the time of the first line seen and the slot its ids use. Bounded, oldest out first. */
+const firings = new Map<string, { ts: number; slot: number }>();
+const FIRINGS_KEPT = 4096;
+
+/**
+ * Id parts that identify one hook firing, whichever command spooled it. An
+ * agent runs every hook command registered for an event, so with coding.sh
+ * hooks in two settings files whose commands differ (`/bin/sh hook.sh` in one,
+ * `node hook.mjs` in the other) one firing is two spool lines: the same
+ * payload, a few ms apart, from two pids at two offsets. The parts are the
+ * payload's hash (under `scope`: agent, session, event) and a time slot of
+ * FIRING_WINDOW_MS, never the line's position, so both lines give the same
+ * event ids and the store keeps one copy. The same payload after the window
+ * is another firing.
+ *
+ * A line within the window of the first line seen for its payload takes that
+ * line's slot, so two copies either side of a slot boundary still match. That
+ * memory lasts one process: copies read by two ingest passes match only inside
+ * one slot. A line with no payload falls back to lineKey.
+ */
+export function firingKey(line: Pick<SpoolLine, "ts" | "pid">, ctx: Pick<NormalizeContext, "id" | "source">, raw: unknown, ...scope: (string | number)[]): (string | number)[] {
+  // Both hooks hand over the agent's bytes, parsed by one reader: equal payloads serialize equally.
+  const body = typeof raw === "string" ? raw.trim() : isObj(raw) ? JSON.stringify(raw) : "";
+  if (!body || body === "{}") return lineKey(line, ctx);
+  const firing = ctx.id("firing", ...scope, body);
+  let first = firings.get(firing);
+  if (!first || Math.abs(line.ts - first.ts) > FIRING_WINDOW_MS) {
+    first = { ts: line.ts, slot: Math.floor(line.ts / FIRING_WINDOW_MS) };
+    firings.delete(firing);
+    firings.set(firing, first);
+    if (firings.size > FIRINGS_KEPT) firings.delete(firings.keys().next().value!);
+  }
+  return ["firing", firing, first.slot];
+}
+
 export class Emitter {
   readonly events: AgentEvent[] = [];
   readonly ctx: NormalizeContext;

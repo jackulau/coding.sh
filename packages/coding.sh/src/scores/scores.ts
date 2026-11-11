@@ -220,24 +220,38 @@ export interface AddScoreOptions extends ScoreDefaults {
 }
 
 /**
- * Checks and stores one score. A session target must exist; an event target's
- * session is looked up when the store can find events by id. Posting the same
- * id with the same content again changes nothing (`created: false`, the stored
- * score back, its ts kept); with other content it replaces the score.
+ * Checks and stores one score. A session target must exist; an event target
+ * must exist too when the store can find events by id, and its session is the
+ * event's own (a different sessionId is a 400). Posting the same id with the
+ * same content again changes nothing (`created: false`, the stored score back,
+ * its ts kept); with other content it replaces the score. A stored score keeps
+ * its data type: a value of another type is a 400 unless the body gives
+ * dataType or the name has a config.
  */
 export async function addScore(index: IndexStore, body: unknown, o: AddScoreOptions): Promise<{ score: Score; created: boolean; changed: boolean }> {
   const store = requireScores(index);
   const score = parseScore(body, o, await store.listScoreConfigs());
-  if (score.target === "event" && score.sessionId === undefined && index.eventsByIdPrefix) {
+  const givenSession = score.sessionId;
+  if (score.target === "event" && index.eventsByIdPrefix) {
     const [e] = (await index.eventsByIdPrefix(score.targetId, 2)).filter((x) => x.id === score.targetId);
     if (!e) throw new ScoreError(404, `event not found: ${score.targetId}`);
     score.sessionId = e.sessionId;
   }
   if (o.checkSession) await o.checkSession(score.sessionId);
   else if (score.target === "session" && !(await index.getSession(score.targetId))) throw new ScoreError(404, `session not found: ${score.targetId}`);
+  // After the session check, so a caller learns an event's session only when it may see it.
+  if (givenSession !== undefined && givenSession !== score.sessionId) throw bad(`event ${score.targetId} belongs to session ${score.sessionId}, not ${givenSession}`);
   const [prev] = await store.listScores({ id: score.id });
   const givenTs = !!body && typeof body === "object" && (body as Obj).ts !== undefined;
   if (prev && sameButTs(prev, score) && (!givenTs || prev.ts === score.ts)) return { score: prev, created: false, changed: false };
+  // The type was only guessed from the value (no dataType, no config): a guess never retypes a stored score.
+  if (prev && prev.dataType !== score.dataType && (body as Obj).dataType === undefined && score.configId === undefined) {
+    throw bad(
+      `${prev.name} is a ${prev.dataType} score on ${prev.target} ${prev.targetId}, and ${JSON.stringify(score.value)} reads as ${score.dataType}. ` +
+        `Pass --type ${prev.dataType} to keep its type or --type ${score.dataType} to change it (dataType in the API). ` +
+        `To fix the type of every ${score.name} score: coding.sh score config ${score.name} --type ${prev.dataType}`,
+    );
+  }
   await store.putScore(score);
   return { score, created: !prev, changed: true };
 }

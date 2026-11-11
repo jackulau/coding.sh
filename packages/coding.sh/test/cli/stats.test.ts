@@ -80,6 +80,40 @@ describe("stats", () => {
   });
 });
 
+// Days are the user's: a date names local midnight, so the day before `--until <date>` is whole.
+describe("stats: a date is local midnight", () => {
+  const TZ = "America/Chicago";
+  const local = (t: number, o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-CA", { timeZone: TZ, hourCycle: "h23", ...o }).format(t);
+  const ymd = (t: number) => local(t, { year: "numeric", month: "2-digit", day: "2-digit" });
+  // Yesterday in Chicago and today; 20:00 there is already the next day in UTC.
+  const noon = Date.now() - ((Number(local(Date.now(), { hour: "2-digit" })) - 12) * 3_600_000);
+  const day = ymd(noon - DAY);
+  const next = ymd(noon);
+  const evening = [5, 6].map((h) => Date.parse(`${day}T20:00:00Z`) + h * 3_600_000).find((t) => local(t, { hour: "2-digit" }) === "20")!;
+  let env: TmpEnv;
+  before(async () => {
+    env = tmpEnv();
+    await seed(env.dataHome, { sessions: [session("late", { startedAt: evening, endedAt: evening + 60_000 })] });
+  });
+  after(() => env.restore());
+  const rows = (args: string[]) => ok(["stats", ...args], { TZ }).stdout.trim().split("\n").slice(1, -1);
+
+  test("--until <day+1> keeps the whole of <day>, and --since <day> starts on it", () => {
+    assert.equal(ymd(evening), day);
+    const row = rows([]).find((l) => l.startsWith(day));
+    assert.match(row ?? "", /^\S+\t1\t0%\t/);
+    // Newest first: <day> is the last day before --until, with every session it has.
+    assert.equal(rows(["--until", next])[0], row);
+    // Oldest last: the window starts on <day>, not in the evening of the day before.
+    const since = rows(["--since", day]);
+    assert.equal(since.at(-1), row);
+    assert.ok(since.length <= 2, since.join(" | "));
+    const none = ok(["stats", "--since", next], { TZ });
+    assert.equal(none.stdout, "");
+    assert.match(none.stderr, new RegExp(`No sessions from ${next} to ${next}`));
+  });
+});
+
 test("sparkline scales to the largest value and leaves blanks for gaps", () => {
   assert.equal(sparkline([0, 1, 2, 4]), "▁▃▅█");
   assert.equal(sparkline([null, 3, null]), " █ ");

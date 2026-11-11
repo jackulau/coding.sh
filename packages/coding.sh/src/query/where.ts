@@ -8,6 +8,7 @@
 // every surface. This file has no imports beyond types so the CLI registry can
 // load the key docs for help without loading a store.
 import type { AgentEvent, Session } from "../schema/index.ts";
+import { parseWhen } from "./time.ts";
 
 export type Op = ":" | ">" | ">=" | "<" | "<=";
 
@@ -120,6 +121,12 @@ export interface KeyDef {
   sql: string[];
   /** Columns that are never NULL (no COALESCE needed under negation). */
   notNull?: boolean;
+  /**
+   * SQL that is true exactly when the value is set, put before the comparison. For a key
+   * whose index holds only the rows with a value (`WHERE error IS NOT NULL`): SQLite takes
+   * such an index only when the query says so, and LIKE alone does not.
+   */
+  present?: string;
   /** A list-valued field: one EXISTS over json_each, values compared after `prefix`. */
   multi?: { from: string; prefix: string };
   /** The values the scan fallback compares (one per `sql` expression, or every list item for multi). */
@@ -188,8 +195,8 @@ const KEY_LIST: KeyDef[] = [
     facet: {},
   },
   { name: "hook.tokens", level: "session", type: "number", unit: "count", doc: "Tokens hooks added to the context (characters / 4)", example: "hook.tokens>500", sql: [stat("hookContext.tokens")], get: (s) => [num(s.stats?.hookContext?.tokens)] },
-  { name: "since", level: "session", type: "time", bound: "since", doc: "Started at or after: 7d, 12h or a date", example: "since:7d", sql: ["s.started_at"], notNull: true, get: (s) => [s.startedAt] },
-  { name: "until", level: "session", type: "time", bound: "until", doc: "Started before: 7d, 12h or a date", example: "until:2026-11-01", sql: ["s.started_at"], notNull: true, get: (s) => [s.startedAt] },
+  { name: "since", level: "session", type: "time", bound: "since", doc: "Started at or after: 7d, 12h, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight", example: "since:7d", sql: ["s.started_at"], notNull: true, get: (s) => [s.startedAt] },
+  { name: "until", level: "session", type: "time", bound: "until", doc: "Started before (exclusive): 7d, 12h, today or a date in local time. until:2026-11-01 leaves that day out", example: "until:2026-11-01", sql: ["s.started_at"], notNull: true, get: (s) => [s.startedAt] },
   { name: "duration", level: "session", type: "number", unit: "ms", doc: "Wall time of an ended session (30s, 10m, 2h)", example: "duration>10m", sql: ["(s.ended_at - s.started_at)"], get: (s) => [s.endedAt !== undefined ? s.endedAt - s.startedAt : undefined] },
   { name: "turns", level: "session", type: "number", unit: "count", doc: "User turns", example: "turns>=20", sql: [stat("turns")], get: (s) => [num(s.stats?.turns)] },
   { name: "tools", level: "session", type: "number", unit: "count", doc: "Tool calls", example: "tools>100", sql: [stat("toolCalls")], get: (s) => [num(s.stats?.toolCalls)] },
@@ -222,7 +229,8 @@ const KEY_LIST: KeyDef[] = [
   { name: "ok", level: "event", type: "bool", doc: "Tool call or model call succeeded", example: "ok:false", sql: ["e.ok"], get: (e) => [typeof e.payload?.ok === "boolean" ? e.payload.ok : undefined] },
   // events.mcp holds payload.server of tool calls (written at insert, indexed).
   { name: "mcp", level: "event", type: "text", doc: "MCP server of a tool call", example: "mcp:github", sql: ["e.mcp"], get: (e) => [typeof e.payload?.tool === "string" && typeof e.payload.server === "string" ? e.payload.server : undefined], facet: {} },
-  { name: "error", level: "event", type: "text", match: "contains", doc: "Error message contains (case-insensitive)", example: "error:ENOENT", sql: ["CASE WHEN json_type(e.payload, '$.error') = 'text' THEN json_extract(e.payload, '$.error') END"], get: (e) => [typeof e.payload?.error === "string" ? e.payload.error : undefined] },
+  // events.error holds payload.error when it is text (written at insert; events_error indexes the rows that have one).
+  { name: "error", level: "event", type: "text", match: "contains", doc: "Error message contains (case-insensitive)", example: "error:ENOENT", sql: ["e.error"], present: "e.error IS NOT NULL", get: (e) => [typeof e.payload?.error === "string" ? e.payload.error : undefined] },
   { name: "event.duration", level: "event", type: "number", unit: "ms", doc: "Event duration (30s, 2m)", example: "event.duration>30s", sql: ["e.duration_ms"], get: (e) => [num(e.durationMs)] },
 ];
 
@@ -298,7 +306,6 @@ export function keyGuide(): KeyGuide[] {
 
 // ------------------------------------------------------------ values
 
-const TIME_UNITS: Record<string, number> = { s: 1e3, m: 60e3, h: 3600e3, d: 86400e3, w: 7 * 86400e3 };
 const MS_UNITS: Record<string, number> = { ms: 1, s: 1e3, m: 60e3, h: 3600e3, d: 86400e3 };
 const COUNT_SUFFIX: Record<string, number> = { "": 1, k: 1e3, K: 1e3, m: 1e6, M: 1e6, b: 1e9, B: 1e9 };
 
@@ -317,15 +324,12 @@ export function parseNumber(raw: string, unit: Unit): number | undefined {
   return m ? Number(m[1]) * COUNT_SUFFIX[m[2]!]! : undefined;
 }
 
-/** `7d` (ago), an ISO date or epoch ms → epoch ms. */
-export function parseTime(raw: string, now: number): number | undefined {
-  const t = raw.trim();
-  const m = /^(\d+(?:\.\d+)?)(s|m|h|d|w)$/.exec(t);
-  if (m) return now - Number(m[1]) * TIME_UNITS[m[2]!]!;
-  if (/^\d{12,}$/.test(t)) return Number(t);
-  if (!/^\d{4}-\d{2}-\d{2}/.test(t)) return undefined;
-  const d = Date.parse(t);
-  return Number.isNaN(d) ? undefined : d;
+/**
+ * `7d` (ago), `today`, `yesterday`, a date or epoch ms → epoch ms (./time.ts, the reader --since uses too).
+ * A date without a zone is read in `tzOffsetMin` (Date#getTimezoneOffset minutes), by default this process's zone.
+ */
+export function parseTime(raw: string, now: number, tzOffsetMin?: number): number | undefined {
+  return parseWhen(raw, tzOffsetMin !== undefined ? { now, tzOffsetMin } : { now })?.ms;
 }
 
 const BOOL: Record<string, boolean> = { true: true, false: false, yes: true, no: false, "1": true, "0": false };
@@ -396,6 +400,8 @@ const CLAUSE = /^([A-Za-z][A-Za-z0-9._-]*)(>=|<=|>|<|:)/;
 export interface ParseOptions {
   /** For relative times (`since:7d`). */
   now?: number;
+  /** The zone `since:2026-11-09` and `since:today` are read in, as Date#getTimezoneOffset minutes. Default: this process's zone; an HTTP caller passes the request's. */
+  tzOffsetMin?: number;
 }
 
 /** Splits a raw value on commas outside quotes; each part keeps whether it was quoted. */
@@ -452,7 +458,7 @@ function editDistance(a: string, b: string): number {
   return prev[b.length]!;
 }
 
-function resolveValue(def: KeyDef, op: Op, part: { text: string; quoted: boolean; at: number }, now: number): Value {
+function resolveValue(def: KeyDef, op: Op, part: { text: string; quoted: boolean; at: number }, now: number, tzOffsetMin?: number): Value {
   const { text, quoted, at } = part;
   const v: Value = { raw: text, quoted, kind: "eq" };
   const bad = (why: string, next: string[] = [`e.g. ${def.example}`]) => new QueryError(`${def.name}: ${why}`, at, { reason: "bad_value", next });
@@ -471,8 +477,8 @@ function resolveValue(def: KeyDef, op: Op, part: { text: string; quoted: boolean
   }
   if (def.type === "time") {
     if (op !== ":") throw bad(`takes ':' only, not '${op}'`);
-    const t = parseTime(text, now);
-    if (t === undefined) throw bad(`must be a duration ago (7d, 12h, 30m) or a date (2026-11-01), got ${JSON.stringify(text)}`);
+    const t = parseTime(text, now, tzOffsetMin);
+    if (t === undefined) throw bad(`must be a duration ago (7d, 12h, 30m), today, yesterday or a date (2026-11-01), got ${JSON.stringify(text)}`);
     v.n = t;
     return v;
   }
@@ -536,7 +542,7 @@ export function parseWhere(q: string, opts: ParseOptions = {}): Query {
       throw new QueryError(`unknown key ${JSON.stringify(name)}`, t.at, { reason: "unknown_key", next: near ? [`did you mean ${near}:?`] : ["quote it to search the text: \"" + t.text.replace(/"/g, '\\"') + "\"", `keys: ${ALL_KEYS.join(" ")}`] });
     }
     const parts = op === ":" ? splitValues(rawValue, valueAt) : [{ text: rawValue.startsWith('"') ? readQuoted(rawValue, 0).text : rawValue, quoted: rawValue.startsWith('"'), at: valueAt }];
-    return { t: "cmp", key: def.name, op, values: parts.map((p) => resolveValue(def, op, p, now)), at: t.at };
+    return { t: "cmp", key: def.name, op, values: parts.map((p) => resolveValue(def, op, p, now, opts.tzOffsetMin)), at: t.at };
   };
 
   const parseOr = (top: boolean): Node | undefined => {
@@ -716,6 +722,25 @@ export function andQuery(a: Query, b: Node | undefined): Query {
   if (!a.root) return { ...a, root: b };
   const items = [...(a.root.t === "and" ? a.root.items : [a.root]), ...(b.t === "and" ? b.items : [b])];
   return { ...a, root: { t: "and", items } };
+}
+
+/**
+ * The since/until bounds every match must meet (the root, or a clause of the root's AND), for
+ * echoing the window a query resolved to. `zoned`: one was written as a day or a clock time
+ * without a zone, so the zone decided the instant.
+ */
+export function timeBounds(q: Query | undefined): { since?: number; until?: number; zoned: boolean } {
+  const out: { since?: number; until?: number; zoned: boolean } = { zoned: false };
+  const items = !q?.root ? [] : q.root.t === "and" ? q.root.items : [q.root];
+  for (const n of items) {
+    if (n.t !== "cmp" || (n.key !== "since" && n.key !== "until") || n.values.length !== 1) continue;
+    const v = n.values[0]!;
+    if (v.n === undefined) continue;
+    if (n.key === "since") out.since = Math.max(out.since ?? -Infinity, v.n);
+    else out.until = Math.min(out.until ?? Infinity, v.n);
+    if (parseWhen(v.raw)?.zoned) out.zoned = true;
+  }
+  return out;
 }
 
 /** For JSON error replies: `{ reason, message, offset, next }`. */

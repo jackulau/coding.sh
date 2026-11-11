@@ -15,11 +15,22 @@
 // A record joins an llm.call:
 // 1. by session id: CLIProxyAPI normalizes the client's session id to a UUID
 //    (Claude Code's session id, Codex's thread id), which is the coding.sh
-//    session id (subagent sessions are `<id>:sub:<agent>`). The nearest
-//    unlinked call within SESSION_JOIN_MS of the request, whose model matches
-//    when both are known, gets it.
-// 2. else by time and model: the only unlinked call with the same model within
-//    TIME_JOIN_MS of the request, across the sessions being enriched.
+//    session id (subagent sessions are `<id>:sub:<agent>`). An unlinked call
+//    within SESSION_JOIN_MS of the request, whose model matches when both are
+//    known, gets it: the one that reports the record's token counts (or, for
+//    a failed request, its status), else the nearest.
+// 2. by time and model, only when the record has no session id: the only
+//    unlinked call with the same model within TIME_JOIN_MS of the request,
+//    across the sessions being enriched (of several, the only one that
+//    reports the record's token counts or status). These join after every
+//    record that names a session.
+// Either way a failed request (`failed`, or a status of 400 or more) joins
+// only a call that failed, and a request that answered only a call that did
+// not. An agent retries a failed request, and its transcript holds only the
+// call that answered, so the failed record has no call: joined to the nearest
+// one, it would hand every later call its neighbour's record.
+// A record whose session id is not in the store joins nothing: it is another
+// client's request, or a session not captured yet. It stays pending.
 //
 // Each joined call gets the same companion span as other gateways (enrich.ts):
 // kind "span", source "gateway", parentId = the call, an id derived from the
@@ -31,8 +42,9 @@
 // here). Never stored: the client API key, IP addresses, user agent, response
 // headers and error bodies.
 import { hashParts } from "../../core/ids.ts";
+import { storeEnrichment } from "../../core/ingest.ts";
 import type { Redactor } from "../../core/redact.ts";
-import { buildSession } from "../../core/sessions.ts";
+import { llmCallFailed } from "../../core/sessions.ts";
 import type { IndexStore } from "../../core/types.ts";
 import type { AgentEvent, Session } from "../../schema/index.ts";
 import { ENRICH_SOURCE, generationSpanName, SESSION_JOIN_MS } from "./enrich.ts";
@@ -332,6 +344,26 @@ function distance(u: CliProxyUsage, c: AgentEvent): number {
   return c.ts < u.ts ? u.ts - c.ts : c.ts > end ? c.ts - end : 0;
 }
 
+/** A record of a request that failed: `failed`, or an HTTP status of 400 or more. */
+const recordFailed = (u: CliProxyUsage): boolean => u.failed === true || (u.statusCode ?? 0) >= 400;
+
+/** A call that failed: `ok: false`, an HTTP status of 400 or more, or an error message. */
+const callFailed = (c: AgentEvent): boolean => llmCallFailed(c.payload) || (typeof c.payload.error === "string" && c.payload.error !== "");
+
+/**
+ * The call reports what the record does. A failed request: the same HTTP status. One that answered:
+ * the same output tokens, and the same input tokens with or without the cached part (the proxy and
+ * the agent do not always count cached input on the same side).
+ */
+function sameResult(u: CliProxyUsage, c: AgentEvent): boolean {
+  if (recordFailed(u)) return u.statusCode !== undefined && c.payload.statusCode === u.statusCode;
+  const cu = c.usage;
+  if (!cu || !u.outputTokens || cu.outputTokens !== u.outputTokens) return false;
+  const inputs = (input = 0, read = 0, write = 0) => [input, input + read + write].filter((n) => n > 0);
+  const mine = inputs(cu.inputTokens, cu.cacheReadTokens, cu.cacheWriteTokens);
+  return inputs(u.inputTokens, u.cacheReadTokens, u.cacheCreationTokens).some((n) => mine.includes(n));
+}
+
 /** The companion span for one joined call. */
 export function cliProxyEvent(call: AgentEvent, u: CliProxyUsage, linkedBy: "client-session-id" | "time-model"): AgentEvent {
   const p: Record<string, unknown> = { name: generationSpanName(CLIPROXYAPI), gateway: CLIPROXYAPI, llmEventId: call.id, linkedBy };
@@ -449,51 +481,58 @@ export async function enrichFromCliProxyApi(o: CliProxyEnrichOptions): Promise<C
   const taken = linked;
   const out: AgentEvent[] = [];
   const left: CliProxyUsage[] = [];
-  for (const u of [...records.values()].sort((a, b) => a.ts - b.ts)) {
-    let best: AgentEvent | undefined;
-    let linkedBy: "client-session-id" | "time-model" = "client-session-id";
-    let known = false;
-    if (u.sessionId && !byRoot.has(u.sessionId) && (await index.getSession(u.sessionId))) await load(u.sessionId);
+  const settle = (u: CliProxyUsage, call: AgentEvent | undefined, linkedBy: "client-session-id" | "time-model") => {
+    if (!call) {
+      if (now - u.ts > PENDING_TTL_MS) r.expired++;
+      else left.push(u);
+      return;
+    }
+    taken.add(call.id);
+    r.joined++;
+    if (linkedBy === "time-model") r.byTimeModel++;
+    else r.bySessionId++;
+    if (u.costUsd !== undefined) r.billedUsd += u.costUsd;
+    out.push(cliProxyEvent(call, u, linkedBy));
+  };
+  const oldestFirst = [...records.values()].sort((a, b) => a.ts - b.ts);
+  // A failed request joins only a call that failed, and one that answered only a call that did not.
+  const free = (u: CliProxyUsage, c: AgentEvent) => !taken.has(c.id) && callFailed(c) === recordFailed(u);
+  // 3a. Every record that names a session, before any record that does not: a call goes to the
+  // record that names its session. A session id that is not stored is another client's request (or
+  // a session not captured yet), so the record waits; it never joins by time and model.
+  for (const u of oldestFirst) {
+    if (!u.sessionId) continue;
+    if (!byRoot.has(u.sessionId) && (await index.getSession(u.sessionId))) await load(u.sessionId);
     const gen = u.executionId ?? u.requestId;
     if (gen && linkedGens.has(gen)) {
       r.alreadyEnriched++;
       continue;
     }
-    if (u.sessionId) {
-      const calls = byRoot.get(u.sessionId);
-      known = !!calls;
-      let bestFit = "";
-      for (const c of calls ?? []) {
-        if (taken.has(c.id)) continue;
-        const fit = modelFit(u, c);
-        const d = distance(u, c);
-        if (fit === "mismatch" || d > SESSION_JOIN_MS) continue;
-        const better = !best || (fit === "match" && bestFit !== "match") || (fit === bestFit && d < distance(u, best));
-        if (better) {
-          best = c;
-          bestFit = fit;
-        }
-      }
+    // Best first: a known model match, then the record's own token counts (or status), then the nearest.
+    let best: { call: AgentEvent; match: boolean; same: boolean; d: number } | undefined;
+    for (const c of byRoot.get(u.sessionId) ?? []) {
+      if (!free(u, c)) continue;
+      const fit = modelFit(u, c);
+      const d = distance(u, c);
+      if (fit === "mismatch" || d > SESSION_JOIN_MS) continue;
+      const cand = { call: c, match: fit === "match", same: sameResult(u, c), d };
+      const better = !best || (cand.match !== best.match ? cand.match : cand.same !== best.same ? cand.same : d < best.d);
+      if (better) best = cand;
     }
-    if (!best && !known) {
-      // No session to go by: the one call with this model at that time, or nothing.
-      const near = all.filter((c) => !taken.has(c.id) && modelFit(u, c) === "match" && distance(u, c) <= TIME_JOIN_MS);
-      if (near.length === 1) {
-        best = near[0];
-        linkedBy = "time-model";
-      }
-    }
-    if (!best) {
-      if (now - u.ts > PENDING_TTL_MS) r.expired++;
-      else left.push(u);
+    settle(u, best?.call, "client-session-id");
+  }
+  // 3b. No session to go by: the one call with this model at that time that no record took (of
+  // several, the one that reports the record's token counts or status), or nothing.
+  for (const u of oldestFirst) {
+    if (u.sessionId) continue;
+    const gen = u.executionId ?? u.requestId;
+    if (gen && linkedGens.has(gen)) {
+      r.alreadyEnriched++;
       continue;
     }
-    taken.add(best.id);
-    r.joined++;
-    if (linkedBy === "time-model") r.byTimeModel++;
-    else r.bySessionId++;
-    if (u.costUsd !== undefined) r.billedUsd += u.costUsd;
-    out.push(cliProxyEvent(best, u, linkedBy));
+    const near = all.filter((c) => free(u, c) && modelFit(u, c) === "match" && distance(u, c) <= TIME_JOIN_MS);
+    const same = near.length > 1 ? near.filter((c) => sameResult(u, c)) : near;
+    settle(u, same.length === 1 ? same[0] : undefined, "time-model");
   }
   r.kept = left.length;
   r.enriched = out.length;
@@ -502,13 +541,7 @@ export async function enrichFromCliProxyApi(o: CliProxyEnrichOptions): Promise<C
   if (o.dryRun) return r;
 
   // 4. Write, then keep only what is still unjoined.
-  if (out.length) {
-    await index.putEvents(out);
-    for (const id of r.touchedSessions) {
-      const evs = await index.listEvents(id);
-      if (evs.length) await index.upsertSession(buildSession(evs, await index.getSession(id)));
-    }
-  }
+  if (out.length) await storeEnrichment(index, out);
   await writePending(index, left);
   return r;
 }

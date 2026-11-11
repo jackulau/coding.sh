@@ -1388,13 +1388,20 @@ function withFacets(q: Query, f: Facets, top: boolean): Query {
 /**
  * /api/metrics range and split: since/until as epoch ms, a date or an age (30d),
  * default the last 30 days; bucket day|week; by agent|model|repo|flag; tz as
- * Date#getTimezoneOffset minutes. Anything else is a 400.
+ * Date#getTimezoneOffset minutes. A date without a zone (2026-11-09, yesterday) is midnight in
+ * `tz`, the zone the buckets use, or in the server's zone without `tz`. Anything else is a 400.
  */
 export function metricsParams(q: URLSearchParams, now = Date.now()): Pick<MetricsSpec, "since" | "until" | "bucket" | "by" | "tzOffsetMin" | "maxGroups"> {
+  const tzRaw = q.get("tz");
+  let tz: number | undefined;
+  if (tzRaw !== null && tzRaw !== "") {
+    if (!/^-?\d{1,4}$/.test(tzRaw) || Math.abs(Number(tzRaw)) > 840) throw new HttpError(400, "tz must be minutes from -840 to 840 (Date#getTimezoneOffset)");
+    tz = Number(tzRaw);
+  }
   const time = (name: string): number | undefined => {
     const raw = q.get(name);
     if (raw === null || raw === "") return undefined;
-    const t = /^\d{1,16}$/.test(raw) ? Number(raw) : parseTime(raw, now);
+    const t = /^\d{1,16}$/.test(raw) ? Number(raw) : parseTime(raw, now, tz);
     if (t === undefined || !Number.isFinite(t) || t < 0 || t > 8_640_000_000_000_000) throw new HttpError(400, `${name} must be epoch ms, a date or an age such as 30d`);
     return t;
   };
@@ -1405,14 +1412,8 @@ export function metricsParams(q: URLSearchParams, now = Date.now()): Pick<Metric
   if (!(METRIC_BUCKETS as readonly string[]).includes(bucket)) throw new HttpError(400, `bucket must be ${METRIC_BUCKETS.join(" or ")}`);
   const by = q.get("by") || undefined;
   if (by !== undefined && !(METRIC_GROUPS as readonly string[]).includes(by)) throw new HttpError(400, `by must be one of ${METRIC_GROUPS.join(", ")}`);
-  const tzRaw = q.get("tz");
-  let tzOffsetMin = 0;
-  if (tzRaw !== null && tzRaw !== "") {
-    if (!/^-?\d{1,4}$/.test(tzRaw) || Math.abs(Number(tzRaw)) > 840) throw new HttpError(400, "tz must be minutes from -840 to 840 (Date#getTimezoneOffset)");
-    tzOffsetMin = Number(tzRaw);
-  }
   const maxGroups = q.get("groups") ? intParam(q, "groups", MAX_GROUPS, 1, 50) : MAX_GROUPS;
-  return { since, until, bucket: bucket as MetricBucket, ...(by ? { by: by as MetricGroup } : {}), tzOffsetMin, maxGroups };
+  return { since, until, bucket: bucket as MetricBucket, ...(by ? { by: by as MetricGroup } : {}), tzOffsetMin: tz ?? 0, maxGroups };
 }
 
 /** List filters shared by /api/sessions, /api/search and /api/stats. */

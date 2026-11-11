@@ -4,17 +4,23 @@
 // the work). Values come from a file or stdin, never argv, so they stay out of
 // shell history and process listings, and they are never printed. A --rule
 // pattern is on argv, so it should describe the secret's shape, not spell it.
+//
+// A purge that is not a dry run also deletes the copies of the index an upgrade
+// or `upgrade-store --restore` kept (index.db.v<N>.bak, .undone): they hold the
+// value and are not rewritten. Exit 1 while one of them can't be deleted.
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { loadConfig } from "../../core/config.ts";
 import { acquireLock } from "../../core/lock.ts";
 import { paths } from "../../core/paths.ts";
 import { fileUrlPath, parseStoreUrl } from "../../store/factory.ts";
-import { findRuleMatches, MAX_FILE_BYTES, MAX_RULE_VALUES, MIN_LITERAL_LENGTH, purgeLiterals, RuleTooBroad, type PurgeResult } from "../../store/purge.ts";
+import { findRuleMatches, MAX_FILE_BYTES, MAX_RULE_VALUES, MIN_LITERAL_LENGTH, purgeLiterals, removeIndexCopies, RuleTooBroad, type PurgeResult } from "../../store/purge.ts";
 import { UsageError } from "../args.ts";
 import { withContext } from "../common.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
+
+type Copies = Pick<PurgeResult, "copiesRemoved" | "copiesKept">;
 
 const safeUrl = (url: string): string => url.replace(/\/\/[^@/]*@/, "//…@");
 
@@ -68,6 +74,15 @@ function readLiterals(source: string, cwd: string): string[] {
   return literals;
 }
 
+/** The copies of the index a purge deletes (store/purge.ts removeIndexCopies), and the ones it could not. */
+function copyRows(out: CommandContext["out"], r: Copies, dryRun: boolean): void {
+  if (r.copiesRemoved?.length) {
+    const names = r.copiesRemoved.map((f) => basename(f)).join(", ");
+    out.row("Index copies", `${dryRun ? "would delete" : "deleted"} ${names}: a kept copy of the index is deleted, not rewritten, so upgrade-store --restore can no longer put it back`, "warn");
+  }
+  for (const f of r.copiesKept ?? []) out.row("Index copies", `couldn't delete ${f}, a copy of the index that may still hold the values. Delete it yourself`, "fail");
+}
+
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
   const source = c.flags.literal;
@@ -92,6 +107,7 @@ export async function run(c: CommandContext): Promise<number> {
   const fileDirs = [p.spool, p.judgeCache, p.runs];
   let literals = given;
   let matched: { values: number; short: number } | undefined;
+  let copies: Copies = {};
 
   // withContext opens (and migrates) the store and the blob store; the ingest lock keeps ingest out meanwhile.
   const r: PurgeResult | undefined = await withContext(c, async (ctx) => {
@@ -108,7 +124,11 @@ export async function run(c: CommandContext): Promise<number> {
         matched = { values: found.values.length, short: found.short };
         literals = [...new Set([...given, ...found.values])];
       }
-      if (!literals.length) return undefined;
+      if (!literals.length) {
+        // The rules matched nothing where purge can look. A kept copy of the index is not read, so it goes all the same.
+        copies = removeIndexCopies(fileUrlPath(rest), dryRun);
+        return undefined;
+      }
       return await purgeLiterals({ dbPath: fileUrlPath(rest), blobs: ctx.blobs, fileDirs, literals, dryRun, ...purgeWait(c.env) });
     } finally {
       lock?.release();
@@ -118,18 +138,20 @@ export async function run(c: CommandContext): Promise<number> {
   if (!r) {
     // Only rules were given, and they matched nothing to purge.
     if (out.json) {
-      out.data({ outcome: dryRun ? "planned" : "purged", values: 0, ruleMatches: matched?.values ?? 0, ...(matched?.short ? { shortMatches: matched.short } : {}), events: 0, sessions: 0, otherRows: 0, blobs: 0, files: 0, foldsDropped: 0 });
-      return 0;
+      out.data({ outcome: dryRun ? "planned" : "purged", values: 0, ruleMatches: matched?.values ?? 0, ...(matched?.short ? { shortMatches: matched.short } : {}), events: 0, sessions: 0, otherRows: 0, blobs: 0, files: 0, foldsDropped: 0, ...copies });
+      return copies.copiesKept?.length ? 1 : 0;
     }
     out.row("Rules", `matched no value of ${MIN_LITERAL_LENGTH}+ characters`, "ok");
     if (matched?.short) out.row("Short matches", `left ${plural(matched.short, "value")} under ${MIN_LITERAL_LENGTH} characters alone`, "ok");
-    out.note("Nothing to purge");
+    copyRows(out, copies, dryRun);
+    if (copies.copiesKept?.length) return 1;
+    out.note(!copies.copiesRemoved ? "Nothing to purge" : dryRun ? "Dry run: nothing changed. Run again without --dry-run to delete the copies; that cannot be undone, so an agent asks the user first" : "Nothing else to purge");
     return 0;
   }
 
   if (out.json) {
     out.data({ outcome: dryRun ? "planned" : "purged", values: literals.length, ...(matched ? { ruleMatches: matched.values } : {}), ...(matched?.short ? { shortMatches: matched.short } : {}), ...r });
-    return r.integrity === false || r.oldBytesKept?.length ? 1 : 0;
+    return r.integrity === false || r.oldBytesKept?.length || r.copiesKept?.length ? 1 : 0;
   }
   const verb = dryRun ? "would scrub" : "scrubbed";
   if (matched) out.row("Rules", `matched ${plural(matched.values, "distinct value")}`, "ok");
@@ -146,8 +168,10 @@ export async function run(c: CommandContext): Promise<number> {
     const file = f === "index" ? "index.db" : "blobs/pack.db";
     out.row("Old bytes", `still in ${file}: another process is reading it (the viewer, serve, a sqlite3 shell or a backup). Close it and run the same purge again`, "fail");
   }
-  if (r.oldBytesKept?.length) return 1;
-  const total = r.events + r.sessions + r.otherRows + r.blobs + r.files;
+  copyRows(out, r, dryRun);
+  if (r.oldBytesKept?.length || r.copiesKept?.length) return 1;
+  // A deleted copy was never read, so it counts as one that may have held a value.
+  const total = r.events + r.sessions + r.otherRows + r.blobs + r.files + (r.copiesRemoved?.length ?? 0);
   if (!total) out.note(`No copies of ${literals.length === 1 ? "the value" : "these values"} in the store`);
   else if (dryRun) out.note("Dry run: nothing changed. Run again without --dry-run to scrub; that cannot be undone, so an agent asks the user first");
   else out.note("Rotate the secret too: copies outside coding.sh (agent transcripts, shell history, git) are not touched");

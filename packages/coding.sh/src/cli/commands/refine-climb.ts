@@ -49,7 +49,7 @@ import { list, requireConsent, str } from "../common.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { money, newSpend, type Arm, type Spend } from "./exp-ab.ts";
-import { applyCandidate, baseArm, defaultTarget, printApplied, propose, proposerName, proposerReply, resolveCandidate, spendJson, type Candidate, type Env } from "./refine-loop.ts";
+import { applyCandidate, baseArm, defaultTarget, printApplied, propose, proposerName, proposerReply, resolveCandidate, spendJson, verdictReasons, type Candidate, type Env } from "./refine-loop.ts";
 import { armBundle, armDrivers, clearPending, infraRoundText, loadFitness, readPending, roundsText, runSuiteRound, writePending, type Fitness, type SuiteRound } from "./refine-suite.ts";
 
 const CLIMB_FLAGS = ["suite", "objective", "margin", "min-gain", "max-cost-rise", "until-plateau", "harness", "proposer-command", "reuse", "reuse-max-age", "canary", "canary-model", "canary-delta"] as const;
@@ -219,7 +219,7 @@ function printRound(c: CommandContext, t: TestEntry, checks?: { protect: Protect
     for (const m of o.metrics) out.print(`  ${OBJECTIVE_LABEL[m.objective].replace(" / run", "/run").padEnd(9)}  ${metricLine(m)}`);
     for (const w of o.warnings) out.print(`  note       ${w}`);
   }
-  out.print(`  verdict    ${t.verdict}${o?.branch ? ` (${o.branch})` : ""}: ${t.reasons.join("; ")}`);
+  out.print(`  verdict    ${t.verdict}${o?.branch ? ` (${o.branch})` : ""}: ${verdictReasons(t).join("; ")}`);
   out.print("");
 }
 
@@ -665,7 +665,7 @@ export function printClimbs(c: CommandContext, entries: readonly LedgerEntry[], 
         const a = t.objectives?.arms;
         const state = applied.live.has(t.id) ? ", applied" : applied.ever.has(t.id) ? ", rolled back" : "";
         const cell = (o: Objective) => (a ? delta(o, a.base, a.cand) : "—");
-        return [String(t.round), t.id, `${t.verdict}${t.objectives?.branch ? ` (${t.objectives.branch})` : ""}${state}`, cell("pass"), cell("cost"), cell("wall"), cell("size"), t.reasons[0] ?? ""];
+        return [String(t.round), t.id, `${t.verdict}${t.objectives?.branch ? ` (${t.objectives.branch})` : ""}${state}`, cell("pass"), cell("cost"), cell("wall"), cell("size"), verdictReasons(t)[0] ?? ""];
       }),
     );
     const fk = frontKey(x.key.primary, x.rounds);

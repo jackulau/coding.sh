@@ -7,7 +7,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, describe, it } from "node:test";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -38,5 +38,24 @@ describe("package types", () => {
       assert.ok(existsSync(file), `${sub}: ${cond.types} is emitted`);
     }
     assert.match(readFileSync(join(out, "store/plugin-api.d.ts"), "utf8"), /IndexStore/);
+  });
+
+  // qa:eval-5: the changelog announced pairedDiscrimination and createWasteJudge, and no export reached them.
+  it("coding.sh/judge exports the judge library functions the changelog and the guide name", async () => {
+    const cond = pkg.exports["./judge"] as Record<string, string> | undefined;
+    assert.ok(cond && typeof cond === "object", "exports['./judge'] exists");
+    assert.deepEqual(Object.keys(cond), ["source", "types", "default"]);
+    assert.equal(cond.default, "./dist/judge.mjs");
+    assert.ok(pkg.files.includes("dist/*.mjs"), "files ships dist/judge.mjs");
+    const entry = cond.source!.replace(/^\.\//, "");
+    const lib = (await import(pathToFileURL(join(root, entry)).href)) as Record<string, unknown>;
+    for (const name of ["pairedDiscrimination", "traceMutations", "formatDiscrimination", "createWasteJudge", "wasteGrader", "anthropicProvider", "openAICompatibleProvider"]) {
+      assert.equal(typeof lib[name], "function", `${cond.source} exports ${name}`);
+    }
+    // The bundle and the declarations are built from the same entry file.
+    assert.ok(readFileSync(join(root, "scripts/bundle.mjs"), "utf8").includes(`judge: "${entry}"`), "bundle.mjs builds dist/judge.mjs");
+    const types = JSON.parse(readFileSync(join(root, "tsconfig.types.json"), "utf8").replace(/^\s*\/\/.*$/gm, "")) as { files: string[] };
+    assert.ok(types.files.includes(entry), "tsconfig.types.json emits its declarations");
+    assert.equal(cond.types, `./dist/types/${entry.replace(/^src\//, "").replace(/\.ts$/, ".d.ts")}`);
   });
 });

@@ -1,6 +1,6 @@
 // Default IndexStore: a single SQLite file via node:sqlite (no native deps),
 // loaded through ./sqlite-open.ts (which filters its ExperimentalWarning).
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname } from "node:path";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
@@ -30,10 +30,12 @@ import type { Query } from "../query/where.ts";
 import { acquireLock, LockBusyError, type Lock } from "../core/lock.ts";
 import type { Dataset, DatasetVersionInfo, ExperimentResult, JudgeVersion } from "../datasets/types.ts";
 import type { DatasetListing } from "../core/types.ts";
-import { BLOB_REF_FIELDS, type BlobRefField, ftsQuery, searchableText, SEARCHABLE_KINDS, searchTerms, snippet } from "./common.ts";
+import { HARNESS_LOADED, MEMORY_INPUT_KEYS, MEMORY_PATH_TEXT, MEMORY_PAYLOAD_KEYS, pickSet, SKILL_TOOL, type MemoryEvent } from "../core/memory-events.ts";
+import { BLOB_REF_FIELDS, type BlobRefField, errorText, ftsQuery, searchableText, SEARCHABLE_KINDS, searchTerms, snippet } from "./common.ts";
 import { loadSqlite, switchToWal } from "./sqlite-open.ts";
-import { runningUpgrade, describeStep, splitSql, UPGRADE_PROGRESS_MIN_ROWS, UpgradeProgress } from "./upgrade.ts";
+import { backupIndex, describeStep, parseWriter, pruneBackups, runningUpgrade, splitSql, StoreNewerError, UPGRADE_PROGRESS_MIN_ROWS, UpgradeProgress, WRITER_KEY, type StoreWriter } from "./upgrade.ts";
 import { labelToScore } from "../scores/labels.ts";
+import { isNewer } from "../update/semver.ts";
 
 export { loadSqlite };
 
@@ -446,13 +448,44 @@ CREATE VIRTUAL TABLE events_fts_v10 USING fts5(
       for (let lo = 0; lo < total; lo += CHUNK) {
         const hi = Math.min(total, lo + CHUNK);
         build.run(lo, hi);
-        progress?.step("search index", hi, total);
+        progress?.stepRows("search index", hi, total);
       }
       progress?.step("swapping in the new search index");
       db.exec("DROP TABLE events_fts");
       db.exec("ALTER TABLE events_fts_v10 RENAME TO events_fts");
       // A VIRTUAL generated column: dropping it rewrites nothing.
       db.exec("ALTER TABLE events DROP COLUMN text");
+    },
+  },
+  {
+    // Event filters that stand alone (EZ-5). `sessions --where 'event.duration>60s'` and
+    // `--where 'error:timeout'` had no index to read, so each read every event: 43 s and
+    // 46 s on a 1.75M-event store.
+    // - events_duration answers `event.duration` from the index alone.
+    // - events.error holds payload.error when it is text (common.ts errorText), written at
+    //   insert like tool, ok and mcp. events_error holds only the events that have one, so
+    //   a contains match reads that index and never a payload.
+    // Rows stored before get their error here: one pass over the payloads that rewrites
+    // only the rows with one (2% of a 1.4M-event store, 4 s of its upgrade; an instr()
+    // test before json_type made the pass slower, not faster). events_error is built
+    // after the fill, in one sort, not row by row.
+    version: 11,
+    sql: `
+CREATE INDEX events_duration ON events(duration_ms, session_id) WHERE duration_ms IS NOT NULL;
+ALTER TABLE events ADD COLUMN error TEXT;
+`,
+    after: (db, progress) => {
+      const total = num((db.prepare("SELECT max(rowid) AS m FROM events").get() as Row).m) ?? 0;
+      const fill = db.prepare(`UPDATE events SET error = json_extract(payload, '$.error')
+        WHERE rowid > ? AND rowid <= ? AND json_type(payload, '$.error') = 'text'`);
+      const CHUNK = 20_000;
+      for (let lo = 0; lo < total; lo += CHUNK) {
+        const hi = Math.min(total, lo + CHUNK);
+        fill.run(lo, hi);
+        progress?.stepRows("error text", hi, total);
+      }
+      progress?.step("error index");
+      db.exec("CREATE INDEX events_error ON events(error, session_id) WHERE error IS NOT NULL");
     },
   },
 ];
@@ -529,6 +562,36 @@ const foldKey = (sessionId: string): string => `fold:${sessionId}`;
 
 /** The columns rowToEvent reads, for events aliased `a`: every column plus the cwd path (v10 cwds table). */
 const eventCols = (a: string): string => `${a}.*, (SELECT path FROM cwds WHERE cwds.id = ${a}.cwd_id) AS cwd_path`;
+
+/** `json_object` of the given keys of the event payload (under `at`, a path prefix); a key that is not set comes out null. */
+const jsonPick = (keys: readonly string[], at = ""): string => `json_object(${keys.map((k) => `'${k}', e.payload->'$.${at}${k}'`).join(", ")})`;
+
+/**
+ * IndexStore.memoryEvents: the rows and fields core/memory-events.ts names, for the session ids in ?
+ * (a JSON array). It walks the three kinds in events_kind_ts, which also holds the session id, so only
+ * an asked-for session's rows are read from the table, and a payload is parsed only when it has
+ * the text the audit looks for. The unary + keeps the planner off events_session_ts, which would
+ * read every row of every session to learn its kind.
+ */
+const MEMORY_EVENTS_SQL = `SELECT e.session_id AS s, e.kind AS k, e.ts AS ts,
+    CASE e.kind ${Object.entries(MEMORY_PAYLOAD_KEYS).map(([kind, keys]) => `WHEN '${kind}' THEN ${jsonPick(keys)}`).join(" ")} END AS p,
+    CASE json_type(e.payload, '$.input') WHEN 'object' THEN ${jsonPick(MEMORY_INPUT_KEYS, "input.")} WHEN 'text' THEN e.payload->'$.input' END AS input
+  FROM events e
+  WHERE e.kind IN (${sqlList(Object.keys(MEMORY_PAYLOAD_KEYS))}) AND +e.session_id IN (SELECT value FROM json_each(?))
+    AND CASE e.kind
+      WHEN 'notification' THEN instr(e.payload, '${HARNESS_LOADED}') > 0 AND e.payload->>'$.kind' = '${HARNESS_LOADED}'
+      WHEN 'tool.start' THEN lower(e.tool) = '${SKILL_TOOL}' OR instr(e.payload, '${MEMORY_PATH_TEXT}') > 0
+      ELSE instr(e.payload, '${MEMORY_PATH_TEXT}') > 0 END
+  ORDER BY e.ts, e.rowid`;
+
+/** Bytes in the WAL of the database at `path` (0 when there is none). */
+function walBytes(path: string): number {
+  try {
+    return statSync(`${path}-wal`).size;
+  } catch {
+    return 0;
+  }
+}
 
 function rowToEvent(r: Row): AgentEvent {
   const e: AgentEvent = {
@@ -644,10 +707,18 @@ export interface SqliteIndexOptions {
   /** Open read-only (no migrations). */
   readOnly?: boolean;
   /**
-   * Runs before pending migrations (schema `from` → `to`); throws to refuse them and
-   * leave the file as it is (core/store-guard.ts: another install owns the store).
+   * Runs before pending migrations (schema `from` → `to`, 0 for a new file);
+   * throws to refuse them and leave the file as it is (core/store-guard.ts: another
+   * install owns the store, or this build is not newer than `writer`, its last one).
    */
-  beforeMigrate?: (from: number, to: number) => void;
+  beforeMigrate?: (from: number, to: number, writer: StoreWriter | undefined) => void;
+  /** The coding.sh version to record as the store's writer (./upgrade.ts WRITER_KEY). Unset: no stamp. */
+  writer?: string;
+  /**
+   * The copy of the index kept before a migration rewrites it (./upgrade.ts
+   * backupIndex, the default), or false for none. Returns where the copy is.
+   */
+  backup?: false | ((path: string, from: number) => string);
   /** Where upgrade progress lines go (each ends in a newline). Default: stderr. */
   progress?: (line: string) => void;
   /** Events a store must hold before an upgrade reports progress. Default: UPGRADE_PROGRESS_MIN_ROWS. */
@@ -776,9 +847,42 @@ export class SqliteIndexStore implements IndexStore {
   private schemaVersion(): number {
     const current = num((this.db.prepare("SELECT MAX(version) AS v FROM migrations").get() as Row | undefined)?.v) ?? 0;
     if (current > SQLITE_SCHEMA_VERSION) {
-      throw new Error(`${this.path} uses index schema v${current}, but this coding.sh only knows up to v${SQLITE_SCHEMA_VERSION}. Upgrade coding.sh.`);
+      throw new StoreNewerError({ path: this.path, schema: current, known: SQLITE_SCHEMA_VERSION, writer: this.lastWriter() });
     }
     return current;
+  }
+
+  /** The store's writer stamp (./upgrade.ts), read with plain SQL so it also works on a schema this build doesn't know. */
+  private lastWriter(): StoreWriter | undefined {
+    try {
+      return parseWriter((this.db.prepare("SELECT value FROM kv WHERE key = ?").get(WRITER_KEY) as Row | undefined)?.value);
+    } catch {
+      return undefined; // before v2 there is no kv table
+    }
+  }
+
+  /**
+   * Records this coding.sh as the store's writer when the stamp is missing, names
+   * another schema, or names an older version: a write once per upgrade, a read
+   * otherwise. Skipped while another process writes (the next open stamps).
+   */
+  private stampWriter(inTransaction = false): void {
+    const version = this.opts.writer;
+    if (!version) return;
+    const last = this.lastWriter();
+    if (last && last.schema === SQLITE_SCHEMA_VERSION && !isNewer(version, last.version)) return;
+    const write = (): void => {
+      this.db.prepare("INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at").run(WRITER_KEY, JSON.stringify({ version, schema: SQLITE_SCHEMA_VERSION, at: Date.now() } satisfies StoreWriter), Date.now());
+    };
+    if (inTransaction) return write();
+    try {
+      this.db.exec("PRAGMA busy_timeout = 0");
+      write();
+    } catch {
+      // busy: not worth waiting for
+    } finally {
+      this.db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
+    }
   }
 
   /**
@@ -788,24 +892,28 @@ export class SqliteIndexStore implements IndexStore {
    * prints progress to stderr (see ./upgrade.ts) and, when it rewrote the events,
    * suggests `coding.sh gc --compact` to give the freed space back. A process that
    * finds another one upgrading waits for it and says so.
+   *
+   * A migration is one-way, so a store that holds data is copied first, to
+   * `<db>.v<from>.bak` (./upgrade.ts backupIndex; `coding.sh upgrade-store --restore`
+   * puts it back), and the migration is refused when the copy can't be made.
    */
   async migrate(): Promise<void> {
     this.db.exec("CREATE TABLE IF NOT EXISTS migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
     const current = this.schemaVersion();
-    if (current === SQLITE_SCHEMA_VERSION) return;
-    // core/store-guard.ts: another install owns this store, so leave its schema as it is.
-    this.opts.beforeMigrate?.(current, SQLITE_SCHEMA_VERSION);
-    // The highest rowid stands for the event count: read from the b-tree's edge, no scan.
-    const rows = current === 0 ? 0 : (num((this.db.prepare("SELECT max(rowid) AS n FROM events").get() as Row).n) ?? 0);
+    if (current === SQLITE_SCHEMA_VERSION) return this.stampWriter();
+    // core/store-guard.ts: this store's schema is another install's to change, so leave it as it is.
+    this.opts.beforeMigrate?.(current, SQLITE_SCHEMA_VERSION, this.lastWriter());
+    // Progress is for big stores only. The highest rowid bounds the count from the b-tree's edge
+    // (no scan); a store that may be big is then counted, since rowids have gaps where events were deleted.
+    const most = current === 0 ? 0 : (num((this.db.prepare("SELECT max(rowid) AS n FROM events").get() as Row).n) ?? 0);
+    const rows = most >= this.opts.progressMinRows! ? (num((this.db.prepare("SELECT count(*) AS n FROM events").get() as Row).n) ?? 0) : most;
     const report = rows >= this.opts.progressMinRows! ? this.opts.progress : undefined;
     const progress = new UpgradeProgress(this.path, current, SQLITE_SCHEMA_VERSION, rows, report);
-    await this.lockForUpgrade(report);
+    // Another process (the background hook ingest, a second CLI) may have upgraded while this one waited for the lock.
+    const { from, backup } = await this.lockForUpgrade(report, progress);
     let ok = false;
     let rewrote = false;
     try {
-      // Another process (the background hook ingest, a second CLI) may have upgraded while this one waited.
-      const from = this.schemaVersion();
-      if (from < SQLITE_SCHEMA_VERSION) progress.begin();
       const record = this.db.prepare("INSERT INTO migrations (version, applied_at) VALUES (?, ?)");
       for (const m of MIGRATIONS) {
         if (m.version <= from) continue;
@@ -817,13 +925,57 @@ export class SqliteIndexStore implements IndexStore {
         record.run(m.version, Date.now());
         if (m.compactAfter && from > 0) rewrote = true;
       }
+      this.stampWriter(true);
       this.db.exec("COMMIT");
       ok = true;
+      if (backup) pruneBackups(this.path, from);
     } catch (err) {
       this.db.exec("ROLLBACK");
+      // Nothing changed, so the copy is of the store as it still is.
+      if (backup) rmSync(backup, { force: true });
       throw err;
     } finally {
-      progress.end(ok, rewrote ? "Run `coding.sh gc --compact` to give back the space the old layout used." : undefined);
+      const hints: string[] = [];
+      if (rewrote) hints.push("Run `coding.sh gc --compact` to give back the space the old layout used.");
+      if (backup) hints.push(`The index as it was is kept at ${backup}: \`coding.sh upgrade-store --restore\` puts it back, and it is yours to delete.`);
+      progress.end(ok, hints.join(" ") || undefined);
+    }
+  }
+
+  /**
+   * Takes the write lock for migrate() and returns the schema the store is at under it. A
+   * store that holds data is copied first (see migrate; `backup` is where). The copy is of
+   * the database file alone, so it is made under the write lock with an empty WAL: the WAL is
+   * folded in before the lock is taken, and when another writer got in between, the lock is
+   * given up and taken again.
+   */
+  private async lockForUpgrade(report: ((line: string) => void) | undefined, progress: UpgradeProgress): Promise<{ from: number; backup?: string }> {
+    const copy = this.path === ":memory:" ? false : (this.opts.backup ?? backupIndex);
+    let begun = false;
+    for (let attempt = 0; ; attempt++) {
+      if (copy && progress.from > 0) await this.checkpoint("TRUNCATE");
+      await this.beginUpgrade(report);
+      try {
+        const from = this.schemaVersion();
+        if (from < SQLITE_SCHEMA_VERSION && !begun) {
+          begun = true;
+          progress.begin();
+        }
+        if (!copy || from === 0 || from === SQLITE_SCHEMA_VERSION) return { from };
+        if (walBytes(this.path) === 0) {
+          progress.step("keeping a copy of the index as it is");
+          return { from, backup: copy(this.path, from) };
+        }
+      } catch (e) {
+        this.db.exec("ROLLBACK");
+        progress.end(false);
+        throw e;
+      }
+      this.db.exec("ROLLBACK");
+      if (attempt >= 4) {
+        progress.end(false);
+        throw new Error(`${this.path} is not upgraded: coding.sh keeps a copy of the index before a one-way migration, and another process kept the index busy. Close other coding.sh commands (coding.sh ui, a running ingest), then run this again.`);
+      }
     }
   }
 
@@ -832,7 +984,7 @@ export class SqliteIndexStore implements IndexStore {
    * the index (it keeps `<db>.upgrade`), this waits as long as that process lives and
    * prints how far it is once a second; any other writer gets the usual busy timeout.
    */
-  private async lockForUpgrade(report: ((line: string) => void) | undefined): Promise<void> {
+  private async beginUpgrade(report: ((line: string) => void) | undefined): Promise<void> {
     const started = Date.now();
     let lastPrint = 0;
     this.db.exec("PRAGMA busy_timeout = 200");
@@ -896,6 +1048,12 @@ export class SqliteIndexStore implements IndexStore {
     return this.tx(() => ({ inserted: this.insertEvents(batch) }));
   }
 
+  async putEventsReturningIds(batch: AgentEvent[]): Promise<{ inserted: number; ids: string[] }> {
+    const ids: string[] = [];
+    if (!batch.length) return { inserted: 0, ids };
+    return this.tx(() => ({ inserted: this.insertEvents(batch, ids), ids }));
+  }
+
   async replaceSessionEvents(sessionId: string, removeIds: string[], add: AgentEvent[]): Promise<{ removed: number; inserted: number }> {
     // Contentless FTS with contentless_delete: an entry is removed by rowid (see deleteBefore).
     const ftsDelete = this.stmt(`DELETE FROM events_fts WHERE rowid = (SELECT rowid FROM events WHERE id = ? AND session_id = ? AND kind IN (${sqlList(SEARCHABLE_KINDS)}))`);
@@ -916,12 +1074,12 @@ export class SqliteIndexStore implements IndexStore {
     });
   }
 
-  /** INSERT OR IGNORE plus FTS rows; the caller holds the transaction. Returns rows inserted. */
-  private insertEvents(batch: AgentEvent[]): number {
+  /** INSERT OR IGNORE plus FTS rows; the caller holds the transaction. Returns rows inserted, and adds their ids to `ids`. */
+  private insertEvents(batch: AgentEvent[], ids?: string[]): number {
     const insert = this.stmt(`INSERT OR IGNORE INTO events
       (id, session_id, turn_id, parent_id, ts, duration_ms, trace_id, span_id, parent_span_id, subagent_id,
-       agent, agent_version, model, kind, tool, ok, run_id, cwd_id, repo, payload, blobs, usage, source, project_id, mcp)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+       agent, agent_version, model, kind, tool, ok, run_id, cwd_id, repo, payload, blobs, usage, source, project_id, mcp, error)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const fts = this.stmt("INSERT INTO events_fts (rowid, text) VALUES (?, ?)");
     const facet = this.stmt("INSERT OR IGNORE INTO session_facets (key, value, session_id) VALUES (?, ?, ?)");
     // A session repeats a handful of (key, value) facets across hundreds of events,
@@ -946,10 +1104,11 @@ export class SqliteIndexStore implements IndexStore {
         e.spanId ?? null, e.parentSpanId ?? null, e.subagentId ?? null, e.agent, e.agentVersion ?? null,
         e.model ?? null, e.kind, tool, ok, e.runId ?? null, e.cwd ? this.cwdId(e.cwd) : null, json(e.repo), JSON.stringify(p),
         e.blobs?.length ? JSON.stringify(e.blobs) : null, json(e.usage), e.source ?? null,
-        projectCol(e.project), mcp,
+        projectCol(e.project), mcp, errorText(p),
       );
       if (Number(r.changes) === 0) continue;
       inserted++;
+      ids?.push(e.id);
       // session_facets (SESSION_FACET_KEYS): most inserts find the row there already.
       if (e.kind) addFacet("kind", e.kind, e.sessionId);
       if (tool) addFacet("tool", tool, e.sessionId);
@@ -991,6 +1150,18 @@ export class SqliteIndexStore implements IndexStore {
     sql += " ORDER BY ts, rowid LIMIT ? OFFSET ?";
     params.push(opts.limit ?? -1, opts.offset ?? 0);
     return (this.db.prepare(sql).all(...params) as Row[]).map(rowToEvent);
+  }
+
+  async memoryEvents(sessionIds: readonly string[]): Promise<MemoryEvent[]> {
+    if (!sessionIds.length) return [];
+    return (this.stmt(MEMORY_EVENTS_SQL).all(JSON.stringify(sessionIds)) as Row[]).map((r) => {
+      const kind = r.k as AgentEvent["kind"];
+      const payload = pickSet(parse<Record<string, unknown>>(r.p) ?? {}, MEMORY_PAYLOAD_KEYS[kind] ?? []);
+      const input = parse<unknown>(r.input);
+      if (typeof input === "string") payload.input = input;
+      else if (input) payload.input = pickSet(input as Record<string, unknown>, MEMORY_INPUT_KEYS);
+      return { sessionId: r.s as string, kind, ts: num(r.ts)!, payload };
+    });
   }
 
   async search(text: string, opts: SearchOpts = {}): Promise<SearchHit[]> {

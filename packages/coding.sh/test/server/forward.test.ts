@@ -475,7 +475,7 @@ describe("serve mirrors committed events to [[sinks]]", () => {
 });
 
 describe("the local collector mirrors OTLP events to [[sinks]]", () => {
-  it("an http sink in config.toml receives what `coding.sh collector` stores", async () => {
+  it("an http sink in config.toml receives what `coding.sh collector` stores, once however often it is posted", async () => {
     const { spawn } = await import("node:child_process");
     const received: J[] = [];
     const server = createServer((req, res) => {
@@ -508,6 +508,16 @@ describe("the local collector mirrors OTLP events to [[sinks]]", () => {
       const text = JSON.stringify(received);
       assert.ok(text.includes("conv-1"), text.slice(0, 300) + stderr);
       assert.ok(!text.includes("my secret plan"), "a metadata sink got content");
+      // An exporter's retry (the same request twice more) stores nothing new, so the sink gets nothing more.
+      // A span of another conversation, posted last, says when everything before it went out.
+      const body = JSON.stringify(otlpTraces("svc", [contentSpan("b7ad6b7169203331")]));
+      for (let i = 0; i < 2; i++) assert.equal((await fetch(`${url}/v1/traces`, { method: "POST", headers: { "content-type": "application/json" }, body })).status, 200);
+      const last = JSON.stringify(otlpTraces("svc", [contentSpan("b7ad6b7169203332", "conv-last")]));
+      assert.equal((await fetch(`${url}/v1/traces`, { method: "POST", headers: { "content-type": "application/json" }, body: last })).status, 200);
+      await until(() => JSON.stringify(received).includes("conv-last"), 10_000);
+      const ids = received.flatMap((b) => (b.events as { id: string }[]).map((e) => e.id));
+      assert.ok(JSON.stringify(received).includes("conv-last"), stderr);
+      assert.equal(new Set(ids).size, ids.length, `an event reached the sink more than once: ${ids.join()}`);
     } finally {
       p.kill("SIGINT");
       await closed;

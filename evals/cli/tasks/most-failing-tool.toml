@@ -1,0 +1,18 @@
+id = "most-failing-tool"
+split = "dev"
+tags = ["sql", "failures", "aggregate", "json"]
+instruction = """
+Across every captured session, of any age and any agent, which tool has the most failed calls, and how many of its calls failed? Answer with a single JSON object like {"tool": "<name>", "failed": N}.
+"""
+
+reference = ['''
+coding.sh sql "select tool, count(*) as failed from events where kind = 'tool.end' and ok = 0 group by tool order by failed desc limit 1" --json | node -e 'console.log(JSON.stringify(JSON.parse(require("fs").readFileSync(0)).rows[0]))'
+''']
+
+# From the fixture spec: Bash fails 5 times in t1 and twice in t2; shell fails once in w1 and once in t3.
+[[check]]
+kind = "output"
+json = { tool = "Bash", failed = 7 }
+
+[expect]
+minTargetCalls = 1

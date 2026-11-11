@@ -90,6 +90,15 @@ export function storedSearchText(e: AgentEvent): string | undefined {
   return MESSAGE_SEARCH_KINDS.includes(e.kind) ? undefined : searchableText(e);
 }
 
+/**
+ * What the `error` key of `--where` matches: payload.error when it is text. The SQLite
+ * index keeps it in events.error (written with the event, and again by anything that
+ * rewrites a payload), so a query reads the events_error index, not the payloads.
+ */
+export function errorText(payload: Record<string, unknown> | undefined): string | null {
+  return typeof payload?.error === "string" ? payload.error : null;
+}
+
 /** Lower-case and strip diacritics ("Café" → "cafe"), like FTS5 remove_diacritics. */
 export function foldTerm(word: string): string {
   return word.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();

@@ -15,8 +15,8 @@ import { DIRTY_KEY, IngestQueue } from "../../src/server/queue.ts";
 import { startServe, type ServeHandle, type ServeOptions } from "../../src/server/serve.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
-import type { IndexStore } from "../../src/core/types.ts";
-import { otlpSpan, otlpTraces, sAttr } from "../otel/_encode.ts";
+import type { IndexStore, Sink } from "../../src/core/types.ts";
+import { otlpSpan, otlpTraces, sAttr, secretRequests } from "../otel/_encode.ts";
 import { FileEvalStore } from "../../src/datasets/store.ts";
 import { openIndexStore } from "../../src/store/factory.ts";
 import { experimentResult } from "../viewer/fakes.ts";
@@ -214,6 +214,34 @@ for (const kind of ["memory", "sqlite"] as const) {
       await h.shutdown();
     });
 
+    // Regression: the source span and log record blobs kept secrets their events showed as redacted.
+    it("serves no secret from /api/blobs after OTLP traces and logs", async () => {
+      const ik = generateKey("ingest");
+      const rk = generateKey("read");
+      const { h } = await serve(kind, tmpEnv({ CODING_SH_INGEST_KEYS: ik, CODING_SH_READ_KEYS: rk }));
+      const trace = "5ec0000000000000000000000000beef";
+      const { traces, logs, canaries } = secretRequests(trace);
+      assert.equal((await call(h, "/v1/traces", { key: ik, body: traces })).status, 200);
+      assert.equal((await call(h, "/v1/logs", { key: ik, body: logs })).status, 200);
+
+      const events = await call(h, `/api/sessions/${trace}/events?limit=100`, { key: rk });
+      assert.equal(events.status, 200, events.text);
+      const held = (text: string) => canaries.filter((c) => text.includes(c));
+      assert.deepEqual(held(events.text), [], "events hold no secret");
+      const refs = new Set((events.json.items as AgentEvent[]).flatMap((e) => e.blobs ?? []));
+      let spans = 0;
+      let records = 0;
+      for (const ref of refs) {
+        const blob = await call(h, `/api/blobs/${ref}?full=1`, { key: rk });
+        assert.equal(blob.status, 200, `${ref}: ${blob.text}`);
+        assert.deepEqual(held(blob.text), [], `blob ${ref.slice(0, 8)} serves a secret in clear`);
+        if (blob.text.startsWith('{"format":"otlp.span"')) spans++;
+        if (blob.text.startsWith('{"format":"otlp.log"')) records++;
+      }
+      assert.deepEqual({ spans, records }, { spans: 3, records: 1 }, "every source span and log record was read back");
+      await h.shutdown();
+    });
+
     // Regression: `coding.sh exp run` results in the server's store never showed in its viewer.
     it("serves dataset experiments from its store to the viewer; project keys see none", async () => {
       const rkAll = generateKey("read");
@@ -352,6 +380,113 @@ describe("ingest queue", () => {
     assert.equal(e?.payload.text, undefined, "metadata mode keeps no message text");
     await q.drain(1000);
   });
+});
+
+// ---- a retried batch and the sinks (qa:server-3): ingest is idempotent, so the mirror must be too
+
+/** A sink that keeps what it was sent. */
+function recordingSink(): Sink & { ids(): string[] } {
+  const got: AgentEvent[] = [];
+  return {
+    name: "stub",
+    mode: "full",
+    ids: () => got.map((e) => e.id),
+    async write(events) {
+      got.push(...events);
+      return { ok: true };
+    },
+  };
+}
+
+/** The id of every stored event, sorted. */
+async function storedIds(h: ServeHandle): Promise<string[]> {
+  const ids: string[] = [];
+  for (const s of await h.index.listSessions()) ids.push(...(await h.index.listEvents(s.id)).map((e) => e.id));
+  return ids.sort();
+}
+
+for (const kind of ["memory", "sqlite"] as const) {
+  describe(`serve mirrors a retried batch to [[sinks]] once (${kind})`, () => {
+    it("a /v1/ingest batch posted twice reaches the sink once, and a batch that overlaps a stored one sends only its new half", async () => {
+      const sink = recordingSink();
+      const { h } = await serve(kind, tmpEnv(), { sinks: [sink], hookTiming: { flushMs: 10 } });
+      const first = await call(h, "/v1/ingest", { body: batch([ev("a", "s"), ev("b", "s")]) });
+      assert.equal(first.json.inserted, 2);
+      const again = await call(h, "/v1/ingest", { body: batch([ev("a", "s"), ev("b", "s")]) });
+      assert.deepEqual([again.status, again.json.inserted], [200, 0]);
+      const half = await call(h, "/v1/ingest", { body: batch([ev("a", "s"), ev("b", "s"), ev("c", "s"), ev("d", "s")]) });
+      assert.equal(half.json.inserted, 2);
+      const stored = await storedIds(h);
+      assert.equal(stored.length, 4);
+      // Shutdown sends what the mirror still holds.
+      await h.shutdown();
+      assert.deepEqual(sink.ids().sort(), stored, "the sink has every stored event, each once");
+    });
+
+    it("an OTLP /v1/traces request posted three times reaches the sink once, then only the span that is new", async () => {
+      const sink = recordingSink();
+      const { h } = await serve(kind, tmpEnv(), { sinks: [sink], hookTiming: { flushMs: 10 } });
+      const chat = (spanId: string, at: number) => otlpSpan("0af7651916cd43dd8448eb211c80319c", spanId, undefined, "chat gpt-4o", [sAttr("gen_ai.operation.name", "chat"), sAttr("gen_ai.request.model", "gpt-4o"), sAttr("gen_ai.conversation.id", "conv-retry")], at, at + 100);
+      const one = otlpTraces("svc", [chat("b7ad6b7169203331", 0)]);
+      for (let i = 0; i < 3; i++) assert.equal((await call(h, "/v1/traces", { body: one })).status, 200);
+      const two = otlpTraces("svc", [chat("b7ad6b7169203331", 0), chat("b7ad6b7169203332", 1000)]);
+      assert.equal((await call(h, "/v1/traces", { body: two })).status, 200);
+      const stored = await storedIds(h);
+      assert.ok(stored.length >= 2, `the two spans map to events: ${stored.join()}`);
+      await h.shutdown();
+      assert.deepEqual(sink.ids().sort(), stored, "the sink has every stored event, each once");
+    });
+  });
+}
+
+describe("ingest queue: what a commit hands on (onCommit)", () => {
+  const config = resolveServeConfig({}, tmpEnv()).core;
+  const native = (ids: string[]): AgentEvent[] => ids.map((id) => ({ id, v: 0, sessionId: "s", ts: NOW, agent: "sdk", kind: "user.message", payload: { text: id } }));
+  const entry = (ids: string[]) => ({ kind: "native" as const, project: "default", events: native(ids), items: ids.length, bytes: 10 });
+  /** MemoryIndexStore as a store plugin that only has the required contract (Postgres, ClickHouse). */
+  const plain = (): MemoryIndexStore => Object.assign(new MemoryIndexStore(), { putEventsReturningIds: undefined });
+  function queue(store: IndexStore): { q: IngestQueue; handed: string[][] } {
+    const handed: string[][] = [];
+    const q = new IngestQueue({ store, blobs: new MemoryBlobStore(), config, maxEvents: 100, maxBytes: 1e6, onCommit: (cs) => void handed.push(...cs.map((c) => c.insertedEvents.map((e) => e.id))) });
+    q.setWritable(true);
+    return { q, handed };
+  }
+
+  for (const [name, make] of [["a store that names the ids it inserted", () => new MemoryIndexStore()], ["a store with putEvents alone", plain]] as const) {
+    it(`${name}: only newly stored events are handed on, and an id two requests of one tick share goes with the first`, async () => {
+      const { q, handed } = queue(make());
+      const a = q.submit(entry(["x", "y"]));
+      const b = q.submit(entry(["y", "z"]));
+      q.start();
+      await Promise.all([a, b]);
+      // A retry, then a batch that overlaps the stored events by half.
+      assert.equal((await q.submit(entry(["x", "y"]))).inserted, 0);
+      assert.equal((await q.submit(entry(["z", "v", "x", "w"]))).inserted, 2);
+      await q.drain(1000);
+      assert.deepEqual(handed, [["x", "y"], ["z"], [], ["v", "w"]]);
+    });
+
+    it(`${name}: a tick that fails after its put still owes its events, and the retry hands them on once`, async () => {
+      const store = make();
+      const upsert = store.upsertSession.bind(store);
+      let fail = 1;
+      store.upsertSession = async (s) => {
+        if (fail-- > 0) throw new Error("connection reset");
+        return upsert(s);
+      };
+      const { q, handed } = queue(store);
+      q.start();
+      // The events are stored, the session rebuild fails: the client is told to retry and nothing was handed on.
+      await assert.rejects(q.submit(entry(["x", "y"])), /store unavailable/);
+      assert.deepEqual(handed, []);
+      assert.equal((await store.listEvents("s")).length, 2);
+      // The retry inserts nothing, and its commit hands on what the failed one owed, with one new event.
+      assert.equal((await q.submit(entry(["x", "y", "z"]))).inserted, 1);
+      assert.equal((await q.submit(entry(["x", "y", "z"]))).inserted, 0);
+      await q.drain(1000);
+      assert.deepEqual(handed, [["x", "y", "z"], []]);
+    });
+  }
 });
 
 describe("single writer (sqlite)", () => {

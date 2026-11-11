@@ -8,9 +8,10 @@ import { after, before, describe, it } from "node:test";
 import type { AgentEvent, EventKind } from "../../src/schema/index.ts";
 import type { Adapter, BackfillOpts, Config } from "../../src/core/types.ts";
 import { defaultConfig } from "../../src/core/config.ts";
-import { backfill, backfillCursorKey, END_SNAPSHOT_MAX_AGE_MS, ingest } from "../../src/core/ingest.ts";
+import { backfill, backfillCursorKey, END_SNAPSHOT_MAX_AGE_MS, ingest, storeEnrichment } from "../../src/core/ingest.ts";
 import { diffSnapshots } from "../../src/core/snapshot.ts";
 import { draftTaskFromSession } from "../../src/eval/task.ts";
+import { cliProxyEvent } from "../../src/integrations/gateway/cliproxyapi.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { gitc, isolate, makeRepo, removeTmp, tmp, write } from "../capture/_helpers.ts";
 
@@ -84,6 +85,46 @@ describe("hook-captured sessions get repo state (QA P0: eval new on hook session
     assert.equal(task.start.repoRoot, root);
     assert.equal(task.start.snapshot, headSha);
     assert.ok(task.referencePatch, "reference patch from start HEAD to the end snapshot");
+  });
+
+  it("an end snapshot keeps what was written on the row while git ran (qa:proxy-6)", async () => {
+    const root = makeRepo({ "sum.js": "module.exports = (a, b) => a - b;\n" });
+    const { env: e, config, spool, spoolDir } = env();
+    const t0 = Date.now() + 2000;
+    const call: AgentEvent = { id: "call-1", v: 0, sessionId: "s1", ts: t0 + 20, agent: "fake", kind: "llm.call", model: "claude-sonnet-4-5", cwd: root, payload: { costEstimated: true }, usage: { inputTokens: 120, outputTokens: 30, costUsd: 0.0016 } };
+    // Says when ingest has read the row of the ended turn, which it does just before the snapshot.
+    let rowRead = false;
+    class Store extends MemoryIndexStore {
+      override async getSession(id: string) {
+        const s = await super.getSession(id);
+        if (s?.stats.events === 4) rowRead = true;
+        return s;
+      }
+    }
+    const index = new Store();
+    await index.putEvents([call]);
+    const file = join(spool, "s.jsonl");
+    writeFileSync(file, spoolLine(t0, root, { session: "s1", kind: "session.start" }) + spoolLine(t0 + 10, root, { session: "s1", kind: "user.message", text: "fix sum" }));
+    const adapters = new Map([["fake", hookAdapter]]);
+    let now = t0 + 100;
+    // `gateway enrich` in another process, landing while git takes the snapshot: ingest asks the time between reading the row and running git.
+    let enriching: Promise<string[]> | undefined;
+    const clock = () => {
+      if (rowRead) enriching ??= storeEnrichment(index, [cliProxyEvent(call, { ts: t0, sessionId: "s1", model: "claude-sonnet-4-5", costUsd: 0.1 }, "client-session-id")]);
+      return now;
+    };
+    const run = () => ingest({ config, index, blobs: new MemoryBlobStore(), adapters, env: e, spoolDir, lock: false, now: clock });
+    await run();
+    write(root, { "sum.js": "module.exports = (a, b) => a + b;\n" });
+    appendFileSync(file, spoolLine(t0 + 5000, root, { session: "s1", kind: "turn.end" }));
+    now = t0 + 6000;
+    assert.deepEqual((await run()).errors, []);
+    assert.ok(enriching, "the enrichment was written during the snapshot");
+    await enriching;
+    const s = (await index.getSession("s1"))!;
+    assert.ok(s.endSnapshot, "the end snapshot is on the row");
+    assert.ok(s.flags.includes("gateway:cliproxyapi"), `the row keeps the gateway tag: ${JSON.stringify(s.flags)}`);
+    assert.equal(Math.round((s.stats.usage?.costUsd ?? 0) * 1e6) / 1e6, 0.1, "and the billed cost");
   });
 
   it("takes the start commit from the reflog, not today's HEAD, when HEAD moved before ingest", async () => {

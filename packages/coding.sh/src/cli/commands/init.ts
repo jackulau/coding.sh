@@ -16,6 +16,7 @@ import { detectAll, ADAPTERS } from "../../adapters/index.ts";
 import { defaultConfigToml } from "../../core/config.ts";
 import { paths } from "../../core/paths.ts";
 import type { Adapter, FileChange, McpServerSpec } from "../../core/types.ts";
+import { gitRoot } from "../../mcp/data.ts";
 import { mcpLaunchSpec, runningCli } from "../../mcp/launch.ts";
 import { applyProxyInstall, isProxyAgent, planProxyInstall, readProxyInstalls } from "../../proxy/install.ts";
 import { proxySettings } from "../../proxy/state.ts";
@@ -122,6 +123,20 @@ export async function otherScopeHooks(a: Adapter, scope: "user" | "project", pro
   } catch {
     return undefined; // an unreadable config in the other scope is not this init's problem
   }
+}
+
+/**
+ * otherScopeHooks for an init run in `cwd`. A user-scope init also looks at the
+ * root of the repo `cwd` is in: project config lives there (`.claude/settings.local.json`),
+ * and a session started at the root runs its hooks next to the user's.
+ */
+export async function scopeConflict(a: Adapter, scope: "user" | "project", cwd: string, planned: FileChange[], hook?: string): Promise<AgentScopeConflict | undefined> {
+  const here = await otherScopeHooks(a, scope, cwd, planned, hook);
+  const root = scope === "user" ? gitRoot(cwd) : undefined;
+  if (!root || resolve(root) === resolve(cwd)) return here;
+  const above = await otherScopeHooks(a, scope, root, planned, hook);
+  const files = [...new Set([...(here?.files ?? []), ...(above?.files ?? [])])];
+  return files.length ? { scope: "project", files } : undefined;
 }
 
 /** "a", "a and b", "a, b and c". */
@@ -333,7 +348,7 @@ export async function run(c: CommandContext): Promise<number> {
     };
     if (result.version) pl.version = result.version;
     // User and project hooks both fire in agents that don't dedupe identical commands: every event twice.
-    const conflict = pl.hooks.error ? undefined : await otherScopeHooks(adapter, scope, c.cwd, pl.hooks.changes, p.hook);
+    const conflict = pl.hooks.error ? undefined : await scopeConflict(adapter, scope, c.cwd, pl.hooks.changes, p.hook);
     if (conflict) {
       pl.otherScope = conflict;
       if (pl.hooks.changes.length && !force) {

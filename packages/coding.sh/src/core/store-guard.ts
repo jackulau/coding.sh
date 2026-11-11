@@ -1,18 +1,27 @@
-// Two guards around the store in a coding.sh home. Index migrations are one-way,
+// The guards around the store in a coding.sh home. Index migrations are one-way,
 // so a newer build that migrates a store strands every older install that shares
 // it: on 2026-11-08 a run from a source checkout migrated a real ~/.coding.sh
 // from index schema v8 to v9 and the installed CLI could not open it again.
 //
 // 1. sourceRunRefusal: coding.sh run from a git checkout of this repo (src/*.ts,
 //    or a dist/ built inside one) does not open the default home unless told to.
-// 2. ownerGuard: pending index migrations wait for the install that owns the
-//    store, the CLI named in <home>/bin/cli-path (init and update write it, and
-//    hooks start that CLI). Another install needs `coding.sh upgrade-store`.
+// 2. ownerGuard, before pending index migrations of a home's index:
+//    - they wait for the install that owns the store, the CLI named in
+//      <home>/bin/cli-path (init and update write it, and hooks start that CLI);
+//    - they wait for a release newer than the store's last writer (the stamp
+//      store/upgrade.ts WRITER_KEY): a build of the same or an older version
+//      that knows a newer schema is not the release that follows it;
+//    - a store with no stamp (written before 0.1.6) is never migrated by a run
+//      from a source checkout.
+//    Each refusal changes nothing and names `coding.sh upgrade-store`, which
+//    migrates on request, keeps a copy of the index and can put it back.
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { version } from "../cli/meta.ts";
 import { runningCli } from "../mcp/launch.ts";
+import type { StoreWriter } from "../store/upgrade.ts";
+import { isNewer } from "../update/semver.ts";
 import { dataHome } from "./paths.ts";
 
 /** The command that migrates a store owned by another install (see ownerGuard). */
@@ -122,17 +131,56 @@ export class StoreOwnerError extends Error {
   }
 }
 
+/** Pending index migrations refused because this build is not a release newer than the store's last writer. */
+export class StoreVersionError extends Error {
+  readonly path: string;
+  readonly from: number;
+  readonly to: number;
+  readonly version: string;
+  /** The version that last wrote the store; unset for a store without a stamp opened from a source checkout. */
+  readonly writer?: string;
+  /** The message without the command to run (the CLI prints that as its next step). */
+  readonly detail: string;
+  constructor(o: { path: string; from: number; to: number; version: string; writer?: string }) {
+    const why = o.writer
+      ? `It was last written by coding.sh ${o.writer}, and this coding.sh ${o.version} is not a newer release, so it would migrate it to v${o.to} only when asked.`
+      : `This coding.sh ${o.version} runs from a source checkout, so it would migrate it to v${o.to} only when asked.`;
+    const detail = `${o.path} is at index schema v${o.from}. ${why} A migration is one-way: a coding.sh that knows only v${o.from} can't open the store after.`;
+    super(`${detail} To migrate it with this build (a copy of the index is kept): ${UPGRADE_STORE}`);
+    this.name = "StoreVersionError";
+    this.detail = detail;
+    this.path = o.path;
+    this.from = o.from;
+    this.to = o.to;
+    this.version = o.version;
+    if (o.writer !== undefined) this.writer = o.writer;
+  }
+}
+
 /**
- * The check SqliteIndexStore runs before pending migrations of `file`: throws a
- * StoreOwnerError when `file` is the index of `home` and bin/cli-path names an
- * install other than `cli` (the running one; undefined from source). Undefined
- * (no check) for any other file, such as a store named with --store.
+ * The check SqliteIndexStore runs before pending migrations of `file`, the index
+ * of `home` (undefined, no check, for any other file, such as a store named with
+ * --store). It throws
+ * - a StoreOwnerError when bin/cli-path names an install other than `cli` (the
+ *   running one; undefined from source);
+ * - a StoreVersionError when the store holds data and this build is not newer
+ *   than its last writer, or it has no stamp and this is a source checkout.
+ * `at` replaces the running version and whether this is a source checkout (tests).
  */
-export function ownerGuard(home: string, file: string, cli: string | undefined = runningCli()): ((from: number, to: number) => void) | undefined {
+export function ownerGuard(
+  home: string,
+  file: string,
+  cli: string | undefined = runningCli(),
+  at: { version?: string; source?: boolean } = {},
+): ((from: number, to: number, writer?: StoreWriter) => void) | undefined {
   if (resolve(file) !== resolve(home, "index.db")) return undefined;
-  return (from, to) => {
+  return (from, to, writer) => {
+    const running = at.version ?? version();
     const owner = storeOwner(home);
-    if (!owner || owner.cli === cli) return;
-    throw new StoreOwnerError({ path: file, from, to, version: version(), owner: owner.cli, ...(owner.version ? { ownerVersion: owner.version } : {}) });
+    if (owner && owner.cli !== cli) throw new StoreOwnerError({ path: file, from, to, version: running, owner: owner.cli, ...(owner.version ? { ownerVersion: owner.version } : {}) });
+    if (from === 0) return; // a new index: nothing to strand
+    if (writer ? !isNewer(running, writer.version) : (at.source ?? sourceCheckout() !== undefined)) {
+      throw new StoreVersionError({ path: file, from, to, version: running, writer: writer?.version });
+    }
   };
 }

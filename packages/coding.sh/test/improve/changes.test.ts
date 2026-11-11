@@ -189,6 +189,33 @@ describe("decide", () => {
     assert.match(d.reason, /^Fewer sessions had repeated-tool-failure after it: 6 of 20 before, 0 of 20 after \(Holm p 0\.0\d\); flagged sessions 6 of 20 before, 3 of 20 after\.$/);
   });
 
+  it("helped names a flag that rose without significance, with its counts (no-verification 6 → 0, repeated failures 4 → 8 of 12)", () => {
+    const d = decide(g(12, 10, { byFlag: { "no-verification": 6, "repeated-tool-failure": 4 } }), g(12, 8, { byFlag: { "repeated-tool-failure": 8 } }), []);
+    assert.equal(d.verdict, "helped", d.reason);
+    assert.equal(
+      d.reason,
+      "Fewer sessions had no-verification after it: 6 of 12 before, 0 of 12 after (Holm p 0.03); flagged sessions 10 of 12 before, 8 of 12 after. repeated-tool-failure rose 4 to 8 of 12, not significant.",
+    );
+    // Sides of different sizes give each count its own total.
+    const uneven = decide(g(12, 10, { byFlag: { "no-verification": 6, "repeated-tool-failure": 4 } }), g(15, 8, { byFlag: { "repeated-tool-failure": 8 } }), []);
+    assert.equal(uneven.verdict, "helped", uneven.reason);
+    assert.match(uneven.reason, / repeated-tool-failure rose 4 of 12 to 8 of 15, not significant\.$/);
+  });
+
+  it("helped by the flagged share names a rising flag too, before the added work; no rising flag, no such clause", () => {
+    const d = decide(g(20, 12, { byFlag: { "no-verification": 12 } }), g(20, 3, { byFlag: { looping: 2, churn: 1 } }), []);
+    assert.equal(d.verdict, "helped", d.reason);
+    assert.equal(d.reason, `Fewer sessions went wrong after it: flagged sessions 12 of 20 before, 3 of 20 after (p ${d.p!.toFixed(2)}). looping rose 0 to 2 of 20, not significant; churn rose 0 to 1 of 20, not significant.`);
+    const toolCalls = (n: number) => Array.from({ length: 12 }, (_, k) => n + (k % 3));
+    const work = decide(g(12, 10, { byFlag: { "no-verification": 6, "repeated-tool-failure": 4 }, toolCalls: toolCalls(20) }), g(12, 8, { byFlag: { "repeated-tool-failure": 8 }, toolCalls: toolCalls(45) }), []);
+    assert.match(work.reason, /\. repeated-tool-failure rose 4 to 8 of 12, not significant\. It also added work: sessions after it make more tool calls /);
+    // A flag whose share held (looping 3 → 3) or fell is not named.
+    for (const quiet of [decide(g(20, 6, { byFlag: { "repeated-tool-failure": 6, looping: 3 } }), g(20, 3, { byFlag: { looping: 3 } }), []), decide(g(20, 8, { byFlag: { looping: 8 } }), g(20, 1, { byFlag: { looping: 1 } }), [])]) {
+      assert.equal(quiet.verdict, "helped", quiet.reason);
+      assert.doesNotMatch(quiet.reason, /rose|not significant/);
+    }
+  });
+
   it("one flag falling is not helped when the flagged share rose, even with no single flag rising significantly", () => {
     const d = decide(g(20, 6, { byFlag: { "repeated-tool-failure": 6 } }), g(20, 9, { byFlag: { looping: 3, churn: 3, "no-progress": 3 } }), []);
     assert.notEqual(d.verdict, "helped", d.reason);

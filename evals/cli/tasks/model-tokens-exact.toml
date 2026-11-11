@@ -1,0 +1,20 @@
+id = "model-tokens-exact"
+split = "dev"
+tags = ["usage", "aggregate"]
+instruction = """
+Exactly how many tokens (input plus output) did the model claude-opus-5 use across my sessions in the last 30 days? Reply with the exact number, not a rounded one.
+"""
+
+reference = ['''
+coding.sh usage --by model --since 30d --json | node -e 'console.log(JSON.parse(require("fs").readFileSync(0)).groups.find(g=>g.key==="claude-opus-5").totalTokens)'
+''']
+
+# From the fixture spec: only session y1 runs on claude-opus-5, with three model calls:
+# input 5000 + 5600 + 6000, output 400 + 650 + 90.
+[[check]]
+kind = "output"
+number = 17740
+tolerance = 0
+
+[expect]
+minTargetCalls = 1

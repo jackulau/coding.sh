@@ -75,7 +75,7 @@ async function add(c: CommandContext, ctx: Context): Promise<number> {
     return 0;
   }
   c.out.print(r.score.id);
-  c.out.ok(`${r.changed ? (r.created ? "Scored" : "Updated") : "Unchanged:"} ${r.score.name} = ${shown(r.score)} on ${r.score.target} ${r.score.targetId}`);
+  c.out.ok(`${r.changed ? (r.created ? "Scored" : "Updated") : "Unchanged:"} ${r.score.name} = ${shown(r.score)} (${r.score.dataType}) on ${r.score.target} ${r.score.targetId}`);
   return 0;
 }
 

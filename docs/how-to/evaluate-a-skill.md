@@ -204,6 +204,9 @@ skill (or a sibling), filled out by a model to 8 per side. Mined prompts are red
 500 characters. It warns when half or more of the `should` prompts name the skill, since those
 make activation look perfect.
 
+Only sessions captured in this git repo are read, because the file is committed with the skill.
+`--repo DIR` reads the sessions under another directory, and `--repo all` reads every repo's.
+
 ```sh
 coding.sh eval trigger .claude/skills/pdf --draft --dry-run   # print it
 coding.sh eval trigger .claude/skills/pdf --draft             # write triggers.toml

@@ -1307,8 +1307,13 @@ export class Replay {
     return out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   }
 
-  /** What step n changed: one entry per file, with its diff. */
-  async changesAt(n: number): Promise<StepChange[]> {
+  /**
+   * What step n changed: one entry per file, with its diff.
+   * `own: true` keeps to the step's own edits. A step that only read is left out, and a file is compared
+   * from how the step's edit found it (the text a read or the edit tool reported, when that differs from
+   * the reconstruction), so a change made outside the agent's edit tools is never in the diff.
+   */
+  async changesAt(n: number, opts: { own?: boolean } = {}): Promise<StepChange[]> {
     const idx = this.checkStep(n) - 1;
     if (idx < 0) return [];
     const ops = await this.ops(idx);
@@ -1316,6 +1321,7 @@ export class Replay {
     const maxDiff = this.opts.maxDiffBytes ?? MAX_DIFF;
     for (const [path, list] of ops.files) {
       if (list.every((o) => o.t === "read" || o.t === "base")) {
+        if (opts.own) continue;
         // A read that differed from the reconstruction is a change made outside the agent's edit tools.
         const before = await this.stateAt(path, idx - 1);
         const after = await this.stateAt(path, idx);
@@ -1327,6 +1333,7 @@ export class Replay {
       }
       let before = await this.stateAt(path, idx - 1);
       const after = await this.stateAt(path, idx);
+      if (opts.own) before = await this.apply(before, list.slice(0, list.findIndex((o) => o.t !== "read" && o.t !== "base")), idx);
       if (before.content === undefined && ops.changeOps.get(path) === "add") before = { exists: false, content: "" };
       const opFromOps = list.some((o) => o.t === "delete") && after.exists === false ? "delete" : before.exists === false || (before.content === undefined && ops.changeOps.get(path) === "add") ? "add" : undefined;
       const op = opFromOps ?? ops.changeOps.get(path) ?? (list.some((o) => o.t === "write") && before.exists === false ? "add" : "modify");

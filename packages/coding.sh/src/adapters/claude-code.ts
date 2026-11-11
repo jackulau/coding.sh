@@ -47,7 +47,7 @@ import {
   toMs,
   walkFiles,
   which,
-  lineKey,
+  firingKey,
   type HookEventSpec,
   mcpInstaller,
 } from "./_shared/index.ts";
@@ -107,29 +107,42 @@ const TRANSCRIPT_TAIL_BYTES = 8 * 1024 * 1024;
 const FLUSH_SLACK_MS = 2_000;
 
 /**
- * Transcript window for a Stop at `untilTs`: entries from the last real
- * prompt up to untilTs (+slack, transcripts are flushed around Stop).
+ * Transcript window for a Stop at `untilTs`: the turn it ended, from the last
+ * real prompt at or before untilTs up to untilTs (+slack, transcripts are
+ * flushed around Stop). A prompt after untilTs opens the next turn and ends
+ * the window: an ingest that runs once a `--resume` has started, or a re-parse
+ * with the whole transcript on disk, reads the same turn the Stop's own ingest did.
+ *
+ * `lost`: the window can't be read as it was when the line was captured. The
+ * file is gone, or it has grown and the turn starts before the tail read here.
  */
-async function transcriptWindow(path: string, untilTs: number, whole = false): Promise<unknown[]> {
+async function transcriptWindow(path: string, untilTs: number, whole = false): Promise<{ entries: unknown[]; lost: boolean }> {
+  const size = (await stat(path).catch(() => undefined))?.size;
+  if (size === undefined) return { entries: [], lost: true };
   const entries = (await readJsonlTail(path, TRANSCRIPT_TAIL_BYTES)).filter((e) => {
     const ts = isObj(e) ? toMs(e.timestamp, 0) : 0;
     return ts === 0 || ts <= untilTs + FLUSH_SLACK_MS;
   });
-  if (whole) return entries;
-  let start = 0;
+  if (whole) return { entries, lost: false };
+  let start = -1;
+  let end = entries.length;
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i];
-    if (isObj(e) && promptText(e) !== undefined) {
+    if (!isObj(e) || promptText(e) === undefined) continue;
+    if (toMs(e.timestamp, 0) <= untilTs) {
       start = i;
       break;
     }
+    end = i;
   }
+  const lost = start < 0 && size > TRANSCRIPT_TAIL_BYTES;
+  start = Math.max(start, 0);
   // Hook output written before the prompt (SessionStart's, on the first turn or
   // after a compaction) reaches no Stop window otherwise: since the previous prompt.
   let prev = start - 1;
   while (prev > 0 && !(isObj(entries[prev]) && promptText(entries[prev] as Record<string, unknown>) !== undefined)) prev--;
   const hooks = entries.slice(Math.max(prev, 0), start).filter((e) => isObj(e) && e.type === "attachment" && /^hook_/.test(str(obj(e.attachment).type) ?? ""));
-  return [...hooks, ...entries.slice(start)];
+  return { entries: [...hooks, ...entries.slice(start, end)], lost };
 }
 
 /** The plugins' hook commands under the config dir a transcript lives in (<dir>/projects/<slug>/…). */
@@ -143,7 +156,9 @@ async function windowEvents(ctx: NormalizeContext, path: string | undefined, unt
   if (!path) return { events: [] };
   let entries: unknown[];
   try {
-    entries = await transcriptWindow(path, untilTs, whole);
+    const w = await transcriptWindow(path, untilTs, whole);
+    if (w.lost) ctx.missing?.(path, sessionId);
+    entries = w.entries;
   } catch {
     return { events: [] };
   }
@@ -195,7 +210,8 @@ async function subagentFromResult(ctx: NormalizeContext, em: Emitter, raw: Recor
 export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext, agent = CLAUDE_AGENT): Promise<AgentEvent[]> {
   // `coding.sh run --agent <id> -- …` spools its session.start/file.change/session.end under this agent id.
   if (isWrapperLine(line)) return normalizeWrapperLine(line, ctx);
-  const raw = obj(lineRaw(line));
+  const payload = lineRaw(line); // read once: a large payload sits in a side file
+  const raw = obj(payload);
   if (agent === CLAUDE_AGENT && isForeignClaudePayload(raw)) return [];
   const event = str(raw.hook_event_name) ?? line.event;
   const parentSid = str(raw.session_id) ?? `ppid-${line.ppid ?? line.pid}`;
@@ -203,6 +219,8 @@ export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext
   // Tool/prompt events fired inside a subagent belong to its child session.
   const inChild = subagentId !== undefined && event !== "SubagentStart" && event !== "SubagentStop";
   const sessionId = inChild ? childSessionId(parentSid, subagentId) : parentSid;
+  // Hooks in two settings files whose commands differ both run: ids come from the firing, not the spool line.
+  const firing = firingKey(line, ctx, payload, agent, sessionId, event);
   const em = new Emitter(
     ctx,
     {
@@ -214,10 +232,10 @@ export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext
       runId: line.runId,
       subagentId: inChild ? subagentId : undefined,
     },
-    ["hook", ...lineKey(line, ctx), event],
+    ["hook", ...firing, event],
   );
   const tool = str(raw.tool_name) ?? "unknown";
-  const toolUseId = str(raw.tool_use_id) ?? ctx.id(sessionId, "tool", ...lineKey(line, ctx));
+  const toolUseId = str(raw.tool_use_id) ?? ctx.id(sessionId, "tool", ...firing);
   const extra: AgentEvent[] = [];
 
   switch (event) {
@@ -261,7 +279,7 @@ export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext
       if (event === "StopFailure") em.emit("error", { message: (str(raw.error) ?? str(obj(raw.error).message) ?? "stop failure").slice(0, 1000), errorType: str(raw.error_type) });
       // Keyed by the turn the transcript window ends in (the transcript keys its turn.end the
       // same way), so a backfill of this session and a Stop-hook continuation
-      // (stop_hook_active) add no second end for the turn. No transcript: keyed by spool position.
+      // (stop_hook_active) add no second end for the turn. No transcript: keyed by the firing.
       em.emit("turn.end", { ok: event === "Stop", stopHookActive: raw.stop_hook_active === true || undefined }, w.turnId ? { key: [w.turnId, "end"], turnId: w.turnId } : {});
       break;
     }
@@ -305,7 +323,7 @@ export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext
     default:
       em.emit("notification", { hookEvent: event });
   }
-  await em.attachRaw(lineRaw(line));
+  await em.attachRaw(payload);
   return [...em.events, ...extra];
 }
 
@@ -659,7 +677,10 @@ export const claudeCode: Adapter = {
   //    loads a skill names it (payload.skill).
   // 13 (0.1.6): a subagent transcript copied into another session (a resumed workflow run, a symlinked run dir, a fork)
   //    is stored once, under the session that wrote it.
-  parseVersion: 13,
+  // 14 (0.1.6): a hook event's id comes from the firing (payload hash and a 2 s time slot), not its spool line, so
+  //    a firing spooled twice is one event; a Stop line reads its own turn even when the next prompt is already in
+  //    the transcript (a late ingest, a re-parse).
+  parseVersion: 14,
 
   detect() {
     const dir = claudeConfigDir();

@@ -16,6 +16,11 @@ type Obj = Record<string, unknown>;
 
 /** Sessions read per aggregate query, newest first. Reported as `truncated` when hit. */
 export const SCAN_CAP = 2000;
+/**
+ * Sessions a window's totals (usage, cache doctor) read. They fold over the scan and keep no
+ * rows, so this is a stop for a runaway store, not a page size. Same as METRICS_SCAN_CAP.
+ */
+export const TOTALS_SCAN_CAP = 100_000;
 /** Sessions whose events an event-level aggregate (latency, failures) reads. */
 export const EVENT_SCAN_CAP = 300;
 
@@ -592,10 +597,26 @@ export const USAGE_GROUPS: readonly UsageGroup[] = ["day", "agent", "model", "ag
 /** Usage options: `baseline` adds each agent row's published prompt-cache hit rate (core/cache-baselines.ts). */
 export interface UsageOpts {
   baseline?: boolean;
+  /** Index rows read at most (default TOTALS_SCAN_CAP); `window.truncated` when it stopped there. */
+  cap?: number;
+}
+
+/** The `n` first items of a stream under `cmp`; among equals the earlier one stays ahead, as a stable sort leaves them. */
+function topN<T>(n: number, cmp: (a: T, b: T) => number): { items: T[]; add(x: T): void } {
+  const items: T[] = [];
+  return {
+    items,
+    add(x) {
+      let i = items.length;
+      while (i > 0 && cmp(x, items[i - 1]!) < 0) i--;
+      if (i >= n) return;
+      items.splice(i, 0, x);
+      if (items.length > n) items.pop();
+    },
+  };
 }
 
 export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup, limit: number, opts: UsageOpts = {}): Promise<Obj> {
-  const { sessions, truncated } = await collectSessions(index, { ...q, topLevel: false });
   interface Acc {
     sessions: number;
     /** User turns: the turns of top-level sessions (a subagent's prompt comes from its parent's turn). */
@@ -667,7 +688,25 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
   const unpricedModels = new Map<string, number>();
   const total = zero();
   const groups = new Map<string, Acc>();
-  for (const s of sessions) {
+  // The five sessions to name, under both rankings: which one applies is known only at the end.
+  const cost = (s: Session) => s.stats.usage?.costUsd ?? 0;
+  const out = (s: Session) => s.stats.usage?.outputTokens ?? 0;
+  const topByCost = topN<Session>(5, (a, b) => cost(b) - cost(a) || out(b) - out(a));
+  const topByOutput = topN<Session>(5, (a, b) => out(b) - out(a));
+  // Folded one session at a time, so a long window costs time, not memory.
+  const it = scanSessions(index, { ...q, topLevel: false }, opts.cap ?? TOTALS_SCAN_CAP);
+  let truncated = false;
+  for (;;) {
+    const next = await it.next();
+    if (next.done) {
+      truncated = next.value.truncated;
+      break;
+    }
+    const s = next.value;
+    if (cost(s) > 0 || out(s) > 0) {
+      topByCost.add(s);
+      topByOutput.add(s);
+    }
     add(total, s);
     if (typeof s.stats.usage?.costUsd !== "number" && tokens(s) > 0) unpricedModels.set(s.model ?? "unknown", (unpricedModels.get(s.model ?? "unknown") ?? 0) + 1);
     const key =
@@ -723,12 +762,7 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
   if (groupBy === "day") rows.sort((a, b) => b.key.localeCompare(a.key));
   else rows.sort((a, b) => (b.costUsd ?? 0) - (a.costUsd ?? 0) || b.totalTokens - a.totalTokens);
   const anyCost = total.priced > 0;
-  const cost = (s: Session) => s.stats.usage?.costUsd ?? 0;
-  const out = (s: Session) => s.stats.usage?.outputTokens ?? 0;
-  const top = [...sessions]
-    .filter((s) => cost(s) > 0 || out(s) > 0)
-    .sort((a, b) => (anyCost ? cost(b) - cost(a) : 0) || out(b) - out(a))
-    .slice(0, 5)
+  const top = (anyCost ? topByCost : topByOutput).items
     .map((s) => ({ id: s.id, agent: s.agent, title: clip(s.title, 80), costUsd: s.stats.usage?.costUsd !== undefined ? round4(s.stats.usage.costUsd) : undefined, costEstimated: (s.stats.usage?.estimatedCostUsd ?? 0) > 0 ? true : undefined, outputTokens: s.stats.usage?.outputTokens }));
   const notes: string[] = [];
   if (!anyCost && total.unpriced) notes.push("No session in this window has a cost (none reported one and their models have no price), so costUsd is omitted rather than shown as $0. Compare spend by totalTokens; topSessions is ranked by output tokens.");
@@ -747,7 +781,7 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
   if (withBaseline) notes.push(CACHE_BASELINE_NOTE);
   if (unpricedModels.size) notes.push(`No price for: ${[...unpricedModels].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([m, n]) => `${m} (${n})`).join(", ")}. Add [prices."<model>"] to config.toml to price them.`);
   return {
-    window: windowOf(q, sessions.length, truncated),
+    window: windowOf(q, total.sessions, truncated),
     groupBy,
     total: fix(total),
     groups: rows.slice(0, limit),

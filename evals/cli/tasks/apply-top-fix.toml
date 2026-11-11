@@ -1,0 +1,25 @@
+id = "apply-top-fix"
+split = "dev"
+tags = ["improve", "harness", "state"]
+instruction = """
+coding.sh can name the most common problem in the agent sessions of the repository ${answers.paths.repos.calc} and the line to add to the agent's instructions to fix it. Add the line it recommends for that problem to that repository's agent instruction file. Do not commit it.
+"""
+
+reference = ['''
+coding.sh improve --repo ${answers.paths.repos.calc} > /dev/null
+coding.sh improve fix 1 --repo ${answers.paths.repos.calc}
+''']
+
+# The wording is the product's own line for the flag no-verification (src/improve/issues.ts);
+# both wrapper sessions in calc edit a file and never run a check.
+[[check]]
+kind = "state"
+command = "cat ${answers.paths.repos.calc}/AGENTS.md ${answers.paths.repos.calc}/CLAUDE.md 2>/dev/null | grep 'before you say you are done'"
+contains = "say what it printed"
+
+[[check]]
+kind = "state"
+command = "test -n \"$(git -C ${answers.paths.repos.calc} status --porcelain -- AGENTS.md CLAUDE.md)\""
+
+[expect]
+minTargetCalls = 2

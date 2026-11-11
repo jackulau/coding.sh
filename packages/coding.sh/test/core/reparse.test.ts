@@ -37,6 +37,11 @@ function versioned(transcripts: { path: string; events: Raw[] }[]) {
     uninstall: async () => [],
     async normalize(line, ctx) {
       const { session, kind, ...payload } = line.raw as Raw;
+      // A line whose rows are read from a file it names, as a Stop line's model calls are: without the file, no rows.
+      if (typeof payload.reads === "string" && !existsSync(payload.reads)) {
+        ctx.missing?.(payload.reads, session);
+        return [];
+      }
       const n = kind === "llm.call" && adapter.parseVersion === 1 ? 2 : 1;
       return Array.from({ length: n }, (_, i) => ({
         id: ctx.id(line.agent, session, line.ts, line.event, i),
@@ -178,6 +183,29 @@ describe("reparse", () => {
     assert.equal(await t.due(), false, "a kept session does not make every read retry");
     const again = await t.reparse({ all: true });
     assert.deepEqual([again.kept, again.removed, again.inserted], [1, 0, 0]);
+    await t.index.close();
+  });
+
+  it("keeps the hook rows of a session whose spool line reads a file that is gone, and says why", async () => {
+    const t = await setup();
+    const transcript = join(t.root, "run-home", "s.jsonl");
+    mkdirSync(join(t.root, "run-home"));
+    writeFileSync(transcript, "");
+    t.hook("d1.1.jsonl", { session: "s", kind: "user.message", text: "hi" }, 1);
+    t.hook("d1.1.jsonl", { session: "s", kind: "llm.call", model: "m", reads: transcript }, 2);
+    // Another session in the same spool file, with nothing missing.
+    t.hook("d1.1.jsonl", { session: "o", kind: "llm.call", model: "m" }, 3);
+    await t.ingest();
+    assert.deepEqual(await t.stats("s"), { events: 3, toolErrors: 0, input: 200, parseVersion: 1 });
+    rmSync(join(t.root, "run-home"), { recursive: true }); // the run's home is deleted; the spool line stays
+
+    t.adapter.parseVersion = 2;
+    const r = await t.reparse();
+    assert.deepEqual([r.sessions, r.reparsed, r.kept, r.removed, r.inserted, r.errors], [2, 1, 1, 1, 0, []]);
+    assert.deepEqual(await t.stats("s"), { events: 3, toolErrors: 0, input: 200, parseVersion: 1 }, "no row is removed that can't be read again");
+    assert.deepEqual(await t.stats("o"), { events: 1, toolErrors: 0, input: 100, parseVersion: 2 });
+    assert.deepEqual(r.keptSessions, [{ id: "s", agent: "vf", reason: "the transcript its hook lines read is gone, or has grown past their turns" }]);
+    assert.equal(await t.due(), false);
     await t.index.close();
   });
 

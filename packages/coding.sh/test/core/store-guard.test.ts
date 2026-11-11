@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, describe, it } from "node:test";
 import { openContext } from "../../src/core/context.ts";
-import { sourceCheckout, sourceRunRefusal, StoreOwnerError } from "../../src/core/store-guard.ts";
+import { ownerGuard, sourceCheckout, sourceRunRefusal, StoreOwnerError, StoreVersionError } from "../../src/core/store-guard.ts";
 import { loadSqlite } from "../../src/store/sqlite-open.ts";
 import { MIGRATIONS, SQLITE_SCHEMA_VERSION } from "../../src/store/sqlite.ts";
 
@@ -113,17 +113,65 @@ describe("migrations wait for the install that owns the store", () => {
     db.close();
   });
 
-  it("a store with no owner, or a gone one, migrates; a store at the current schema opens for anyone", async () => {
+  it("a store with no owner, or a gone one, is not another install's; a store at the current schema opens for anyone", async () => {
     for (const env of [home(), home(join(root, "gone", "cli.mjs"))]) {
-      await storeAt(join(env.CODING_SH_HOME!, "index.db"), OLD);
-      const ctx = await openContext({ env });
-      await ctx.close();
+      const file = join(env.CODING_SH_HOME!, "index.db");
+      await storeAt(file, OLD);
+      // An installed coding.sh migrates it (test/cli/store-guard.test.ts runs one).
+      assert.doesNotThrow(() => ownerGuard(env.CODING_SH_HOME!, file, undefined, { source: false })!(OLD, SQLITE_SCHEMA_VERSION));
     }
     const owner = pkgAt(join(root, "old2", "lib", "node_modules", "coding.sh"), false);
     const env = home(owner);
     await storeAt(join(env.CODING_SH_HOME!, "index.db"), SQLITE_SCHEMA_VERSION);
     const ctx = await openContext({ env });
     await ctx.close();
+  });
+
+  it("a run from a source checkout never migrates a store that holds data by itself, even one nobody owns", async () => {
+    const env = home();
+    const file = join(env.CODING_SH_HOME!, "index.db");
+    await storeAt(file, OLD);
+    await assert.rejects(
+      () => openContext({ env }),
+      (e: unknown) => e instanceof StoreVersionError && e.from === OLD && e.to === SQLITE_SCHEMA_VERSION && e.writer === undefined && /source checkout/.test(e.message) && /coding\.sh upgrade-store/.test(e.message),
+    );
+    const { DatabaseSync } = await loadSqlite();
+    const db = new DatabaseSync(file, { readOnly: true });
+    assert.equal((db.prepare("SELECT MAX(version) AS v FROM migrations").get() as { v: number }).v, OLD);
+    db.close();
+    // A new index is nothing to strand: source creates it.
+    const fresh = home();
+    await (await openContext({ env: fresh })).close();
+  });
+
+  it("only a release newer than the store's last writer migrates it, with or without bin/", () => {
+    const data = mkdtempSync(join(root, "data-"));
+    const file = join(data, "index.db");
+    const stamp = { version: "0.1.6", schema: OLD, at: 1 };
+    const guard = (version: string, source = false) => ownerGuard(data, file, undefined, { version, source })!;
+    // The same version with a newer schema is a source build or a stale one, not the next release.
+    for (const [v, source] of [["0.1.6", false], ["0.1.6", true], ["0.1.5", false], ["0.1.6-dev.1", false], ["not a version", false]] as const) {
+      assert.throws(
+        () => guard(v, source)(OLD, SQLITE_SCHEMA_VERSION, stamp),
+        (e: unknown) => e instanceof StoreVersionError && e.writer === "0.1.6" && e.version === v && e.from === OLD && /last written by coding\.sh 0\.1\.6/.test(e.message) && /coding\.sh upgrade-store/.test(e.message),
+        v,
+      );
+    }
+    // The release that follows migrates, also from a source checkout of it.
+    assert.doesNotThrow(() => guard("0.1.7")(OLD, SQLITE_SCHEMA_VERSION, stamp));
+    assert.doesNotThrow(() => guard("0.2.0", true)(OLD, SQLITE_SCHEMA_VERSION, stamp));
+    // No stamp (a store from before 0.1.6): an install migrates, a source checkout does not.
+    assert.doesNotThrow(() => guard("0.1.6")(OLD, SQLITE_SCHEMA_VERSION, undefined));
+    assert.throws(() => guard("0.1.6", true)(OLD, SQLITE_SCHEMA_VERSION, undefined), StoreVersionError);
+    // A new index has nothing to strand.
+    assert.doesNotThrow(() => guard("0.1.6", true)(0, SQLITE_SCHEMA_VERSION, undefined));
+  });
+
+  it("another install's store is refused as owned before the version is looked at", () => {
+    const owner = pkgAt(join(root, "old4", "lib", "node_modules", "coding.sh"), false);
+    const env = home(owner);
+    const file = join(env.CODING_SH_HOME!, "index.db");
+    assert.throws(() => ownerGuard(env.CODING_SH_HOME!, file, undefined, { version: "0.1.7", source: false })!(OLD, SQLITE_SCHEMA_VERSION, { version: "0.1.6", schema: OLD, at: 1 }), StoreOwnerError);
   });
 
   it("only guards the home's own index, not a store named with --store", async () => {

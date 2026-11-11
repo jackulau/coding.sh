@@ -225,7 +225,7 @@ export interface DiagnoseFilter {
   since?: number;
   agents?: readonly string[];
   repo?: string;
-  /** Exactly these sessions (overrides the window). */
+  /** Exactly these sessions, by full id (overrides the window); an id that is not in the index throws. */
   sessionIds?: readonly string[];
   /** Also diagnose eval-run sessions. */
   includeRuns?: boolean;
@@ -274,7 +274,9 @@ export async function selectSessions(index: Pick<IndexStore, "listSessions" | "g
     const out: Session[] = [];
     for (const id of f.sessionIds) {
       const s = await index.getSession(id);
-      if (s) out.push(s);
+      // A named session that is missing is an error: an empty plan would read as "nothing to diagnose".
+      if (!s) throw new Error(`No session ${JSON.stringify(id)} in the index`);
+      out.push(s);
     }
     return out;
   }

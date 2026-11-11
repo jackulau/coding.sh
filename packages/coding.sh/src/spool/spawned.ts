@@ -9,7 +9,10 @@
 // ingest links the child's session to the parent's (linkSpawned below).
 //
 // A marker can also be the line's own session (an agent's own hooks may see
-// its own id): ingest drops a marker equal to the session it is stamping.
+// its own id): ingest drops a marker equal to the session it is linking.
+// It can be stale too (a shell that outlived the agent that started it keeps
+// the id in its env), so ingest keeps the link only when that session is in
+// the index and was open when the child started (core/ingest.ts childLinker).
 // Eval runs (CODING_SH_RUN_ID) are their own roots: the hook records no marker.
 //
 // Hot path: no imports, pure env lookups (linkSpawned runs at ingest).
@@ -35,8 +38,8 @@ export function spawnedByFromEnv(env: NodeJS.ProcessEnv): SpawnedBy[] | undefine
 }
 
 /**
- * The parent link a child's `session.start` payload gets from its line's
- * markers: `{ parentSessionId, parentAgent, subagentType: "harness" }` (plus
+ * The parent a line's markers name for its session:
+ * `{ parentSessionId, parentAgent, subagentType: "harness" }` (plus
  * `parentToolCallId` from Codex), or undefined when every marker is the
  * session itself. With markers from two agents (Claude ran Codex, which ran
  * Gemini), the env cannot say which is nearer; the last recorded wins, so a

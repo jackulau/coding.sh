@@ -274,16 +274,19 @@ describe("cli exp ab", () => {
     assert.doesNotMatch(runs.stdout, /exp ab/, "no experiment was recorded");
   });
 
-  it("--watch reruns once per edit, calls the model only for arm B, and Ctrl-C exits 0", { skip: process.platform === "win32" && "no SIGINT to a child on Windows" }, async () => {
+  it("--watch reruns once per edit, calls the model only for arm B, and Ctrl-C exits 0", { skip: process.platform === "win32" && "no SIGINT to a child on Windows" }, async (t) => {
     const e = await setup("watch");
     writeFileSync(join(e.repo, "CLAUDE.md"), `Keep answers short.\n${MARKER}: run npm test first.\n`);
     const p = spawn(process.execPath, ["--no-warnings", CLI, "exp", "ab", "--watch"], { env: e.env, cwd: e.repo });
+    // A failed assertion must not leave the watcher running: its open pipes keep this file from ending.
+    t.after(() => void p.kill("SIGKILL"));
     let stdout = "";
     let stderr = "";
     p.stdout.on("data", (d) => (stdout += d));
     p.stderr.on("data", (d) => (stderr += d));
+    // Up to a minute, for a loaded machine; it returns as soon as the line shows or the command exits.
     const until = async (re: RegExp, what: string) => {
-      for (let i = 0; i < 300 && !re.test(stdout + stderr); i++) await new Promise((r) => setTimeout(r, 50));
+      for (let i = 0; i < 1200 && p.exitCode === null && !re.test(stdout + stderr); i++) await new Promise((r) => setTimeout(r, 50));
       assert.match(stdout + stderr, re, `${what}\n${stdout}\n${stderr}`);
     };
     await until(/Watching .* for changes to B/, "watch started");

@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { buildSession } from "../../src/core/sessions.ts";
-import type { AgentEvent, RunResult } from "../../src/core/types.ts";
+import type { AgentEvent, EvalTask, RunResult } from "../../src/core/types.ts";
 import {
   canonicalInstruction,
   errorSignatureFindings,
@@ -193,6 +193,55 @@ describe("flags and eval failures", () => {
     const f = evalFailureFindings([run("a", "p", true), run("b", "f1", false), run("c", "f2", false), run("d", "f3", false)], sessions, events);
     const by = Object.fromEntries(f.map((x) => [x.signature, x.count]));
     assert.deepEqual(by, { "eval:Write": 2, "eval:<end>": 1 });
+  });
+
+  it("under a repo filter an eval run counts by the repo of its task, not by the scratch directory it ran in", async () => {
+    const R = "/work/demo";
+    const index = new MemoryIndexStore();
+    const task = (id: string, repoRoot: string): EvalTask => ({ id, name: id, status: "validated", start: { repoRoot, snapshot: "s", head: "h" }, instruction: "Fix it.", setup: [], verifier: { command: "npm test", hiddenFiles: {}, timeoutMs: 1000 }, tags: [], createdAt: 0 });
+    await index.putTask(task("t_here", R));
+    await index.putTask(task("t_sub", `${R}/packages/api`));
+    await index.putTask(task("t_other", "/work/other"));
+    await index.putTask(task("t_empty", "/home/user/.coding.sh/repos/empty-start"));
+    let k = 0;
+    // Each run's agent works under the coding.sh home, as the runner has it: never under a repo.
+    const run = async (taskId: string, day: number, pass: boolean, agent = "claude-code"): Promise<string> => {
+      const sid = `run-s${k}`;
+      const id = `run_${String(k++).padStart(2, "0")}`;
+      const evs = sessionEvents(sid, { cwd: `/home/user/.coding.sh/runs/${id}/work`, startedAt: T0 + day * DAY, runId: id, agent }, (pass ? ["Read", "Edit", "Bash"] : ["Read"]).map((t, i) => ["tool.start", { tool: t, toolUseId: `${sid}-${i}` }] as Step));
+      await index.putEvents(evs);
+      await index.upsertSession({ ...buildSession(evs), runId: id });
+      await index.putRun({ id, taskId, bundleId: "b", attempt: k, sessionId: sid, pass, verifierExit: pass ? 0 : 1, agent: { exitCode: 0, timedOut: false, durationMs: 1, stdoutTail: "", stderrTail: "" }, startedAt: T0 + day * DAY, endedAt: T0 + day * DAY + 1 });
+      return sid;
+    };
+    await run("t_here", 0, true);
+    await run("t_sub", 0, true);
+    const here = [await run("t_here", 0, false), await run("t_here", 1, false), await run("t_sub", 2, false, "codex")];
+    await run("t_other", 0, true);
+    const other = [await run("t_other", 0, false), await run("t_other", 1, false), await run("t_other", 2, false)];
+    const empty = [await run("t_empty", 0, false), await run("t_empty", 1, false), await run("t_empty", 2, false)];
+
+    const evalOf = (r: Awaited<ReturnType<typeof mineFindings>>) => r.findings.filter((f) => f.kind === "eval-failure");
+    const mined = await mineFindings({ index, repo: R });
+    assert.equal(mined.evalRuns, 5, "the two passing runs and the three failed ones of this repo's tasks");
+    assert.equal(mined.analyzed, 0, "eval runs are not captured sessions");
+    const [f, ...rest] = evalOf(mined);
+    assert.deepEqual(rest, []);
+    assert.equal(f!.count, 3);
+    assert.deepEqual([f!.support.sessions, f!.support.days], [3, 3]);
+    assert.deepEqual(f!.examples.map((e) => e.sessionId).sort(), [...here].sort());
+    assert.ok(![...other, ...empty].some((sid) => f!.examples.some((e) => e.sessionId === sid)), "runs of another repo's task are left out");
+
+    // The since and agent parts of the filter still apply to the run's session.
+    assert.deepEqual(evalOf(await mineFindings({ index, repo: R, agents: ["codex"], minSupport: { sessions: 1, days: 1 } })).flatMap((x) => x.examples.map((e) => e.sessionId)), [here[2]]);
+    assert.deepEqual(evalOf(await mineFindings({ index, repo: R, since: T0 + DAY, minSupport: { sessions: 1, days: 1 } })).map((x) => x.count), [2]);
+
+    // A suite task that starts from an empty tree names no repo: the suites in the repo say it is theirs.
+    const suite = evalOf(await mineFindings({ index, repo: R, repoTaskIds: new Set(["t_empty"]) }));
+    assert.deepEqual(suite.flatMap((x) => x.examples.map((e) => e.sessionId)).sort(), [...here, ...empty].sort());
+    assert.deepEqual(evalOf(await mineFindings({ index, repo: "/work/other" })).flatMap((x) => x.examples.map((e) => e.sessionId)).sort(), [...other].sort());
+    // No repo filter: every failed run.
+    assert.equal(evalOf(await mineFindings({ index })).reduce((n, x) => n + x.count, 0), 9);
   });
 
   it("error signatures come from failed calls only", () => {

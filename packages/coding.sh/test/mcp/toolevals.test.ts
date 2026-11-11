@@ -68,6 +68,9 @@ describe("tool evals against the coding.sh MCP server", () => {
     // read back) add about 2.85 KB, 0.65 KB of it descriptions. eval_candidates (the 25th: which
     // sessions would make good repo-replay eval tasks, before eval_init) adds about 1.6 KB, and
     // usage's baseline argument (published cache-hit baselines per agent) about 0.3 KB.
+    // session_tree's paging (limit, cursor, nextCursor, truncated and a page-top node's
+    // parentSessionId) adds about 0.2 KB within the same budget; without it an 800-subagent
+    // tree was one 679 KB reply.
     assert.ok(s.surfaceBytes < 42_900, `surface is ${s.surfaceBytes} bytes`);
     assert.ok(s.descriptionBytes < 11_750, `descriptions are ${s.descriptionBytes} bytes`);
     for (const it of s.items) assert.ok(it.bytes < 4_000, `${it.name} is ${it.bytes} bytes`);

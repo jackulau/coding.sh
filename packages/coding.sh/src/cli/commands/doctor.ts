@@ -22,7 +22,9 @@ import { UsageError } from "../args.ts";
 import { list, port as portFlag } from "../common.ts";
 import { ago, LABEL_WIDTH, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
+import { ingestStoppedField, readIngestStopped } from "../../core/ingest-health.ts";
 import { blockingNotes, hookTarget, otherScopeHooks, pickAdapters } from "./init.ts";
+import { ingestStoppedText } from "./status.ts";
 
 /** Newest of the agent's spool files, and its mtime. */
 function lastSpoolWrite(spool: string, agent: string): { file: string; mtimeMs: number } | undefined {
@@ -199,9 +201,60 @@ function hooksHere(a: { hooked: boolean; hookFiles: HookFile[] }): HookFile | tr
   return here ?? (a.hooked && !user.length ? true : undefined);
 }
 
-/** Not hooked for this home in the user config, but captured anyway: project-level hooks, or events within the last few minutes. */
-function capturing(a: { hooked: boolean; hookFiles: HookFile[]; lastEventAgeMs: number | null }): boolean {
-  return hooksHere(a) !== undefined || (a.lastEventAgeMs !== null && a.lastEventAgeMs < RECENT_EVENT_MS);
+/** One agent as doctor reports it (the `agents` rows of --json). */
+interface DoctorAgent {
+  id: string;
+  name: string;
+  tier: Adapter["tier"];
+  installed: boolean;
+  version: string | null;
+  /** coding.sh hooks in the agent's user config. */
+  hooked: boolean;
+  /** Project-level config files holding coding.sh hooks, looked for only when the user config has none. */
+  projectHooks: string[];
+  /** Every settings file doctor read holding its hooks (user config and projects), with the hook.mjs each runs and whether that is this home's (current). */
+  hookFiles: HookFile[];
+  /** Captured by reading the agent's own store (T3 Code), not by hooks. */
+  store: boolean;
+  /** How this agent is captured: its hooks, its own store, or the `coding.sh run --` wrapper (tier C: nothing to install). */
+  capture: "hooks" | "store" | "wrapper";
+  lastEventAt: string | null;
+  lastEventAgeMs: number | null;
+  notes: string[];
+  /** What keeps its hooks from firing (agent too old, hooks disabled, not trusted yet), hooked or not. */
+  blockers: string[];
+}
+
+/** A row doctor marks with "!": what is wrong, and the command that fixes it when one does. */
+export interface DoctorWarning {
+  check: "agent" | "agents" | "hook" | "mcp" | "sessions" | "ingest" | "proxy";
+  agent?: string;
+  message: string;
+  /** For an agent: why its hooks will not fire, with the file and line to change when there is one. */
+  blockers?: string[];
+  next?: string;
+}
+
+/**
+ * One agent's row: what it says, whether capture works, and the lines under it.
+ * A hook-captured agent is ok only when hooks that run this home's hook.mjs are in a config
+ * doctor read, that file exists, and nothing blocks them. Recent events alone are not capture:
+ * they also come from an import, the proxy or a project doctor did not look in.
+ */
+function agentRow(a: DoctorAgent, hookInstalled: boolean): { state: string; ok: boolean; notes: string[] } {
+  if (a.capture === "wrapper") return { state: `no hooks needed; capture with coding.sh run -- ${a.id === "wrapper" ? "<cmd>" : a.id}`, ok: true, notes: [] };
+  const recent = a.lastEventAgeMs !== null && a.lastEventAgeMs < RECENT_EVENT_MS;
+  if (a.store) return { state: a.hooked ? "reads its store" : "no store yet", ok: a.hooked || recent, notes: a.notes };
+  const here = hooksHere(a);
+  const elsewhere = a.hookFiles.find((f) => !f.current);
+  const where = (f: HookFile) => `${f.file}${f.scope === "project" ? " (project)" : ""}`;
+  const more = (n: number) => (n > 1 ? ` and ${n - 1} more` : "");
+  const state =
+    here !== undefined && a.blockers.length ? "hooked but not firing"
+    : here !== undefined ? `hooked${here === true ? "" : ` in ${where(here)}${more(a.hookFiles.filter((f) => f.current).length)}`}${hookInstalled ? "" : ", but the hook it runs is missing"}`
+    : elsewhere ? `hooks in ${where(elsewhere)} run ${elsewhere.hook}, not this home's hook`
+    : recent ? "events arriving, hook not in user config" : "not hooked";
+  return { state, ok: here !== undefined && hookInstalled && a.blockers.length === 0, notes: a.blockers };
 }
 
 export async function run(c: CommandContext): Promise<number> {
@@ -263,12 +316,12 @@ export async function run(c: CommandContext): Promise<number> {
   const health = hookBinHealth(env);
   const hookBin = { path: p.hook, installed: existsSync(p.hook), ...health, stale: existsSync(p.hook) && (health.hookCurrent === false || health.cliPathCurrent === false || (health.cliPath !== null && !health.cliPathExists)) };
   const home = resolve(userHome(env));
-  const agents = [];
+  const agents: DoctorAgent[] = [];
   for (const { adapter, result } of detected) {
     const newest = lastSpoolWrite(p.spool, adapter.id);
     const indexed = lastByAgent[adapter.id];
     const last = Math.max(newest?.mtimeMs ?? 0, indexed ?? 0) || undefined;
-    const capture = adapter.tail !== undefined ? "store" : adapter.tier === "C" ? "wrapper" : "hooks";
+    const capture: DoctorAgent["capture"] = adapter.tail !== undefined ? "store" : adapter.tier === "C" ? "wrapper" : "hooks";
     // No hook in the user config: look for one in the projects the agent ran in
     // (Claude Code also reads <project>/.claude/settings.json and settings.local.json).
     const shown = result.installed || named.includes(adapter.id);
@@ -298,8 +351,8 @@ export async function run(c: CommandContext): Promise<number> {
       lastEventAt: last !== undefined ? new Date(last).toISOString() : null,
       lastEventAgeMs: last !== undefined ? Date.now() - last : null,
       notes: result.notes ?? [],
-      // Hooks are installed but will not fire (agent too old, hooks disabled,
-      // not trusted yet): "hooked" alone would read as working capture.
+      // Hooks will not fire (agent too old, hooks disabled, not trusted yet):
+      // "hooked" alone would read as working capture.
       blockers: blockingNotes(result.notes),
     });
   }
@@ -327,71 +380,83 @@ export async function run(c: CommandContext): Promise<number> {
     .map((g) => ({ id: g.id, key: { set: true, source: g.keySource } }));
   const gateway = { configured: detectGatewaySetups(env, c.cwd), key: gs.apiKey ? { set: true, source: gs.keySource } : { set: false, env: gs.apiKeyEnv }, sessions: gatewaySessions, others };
 
-  if (out.json) {
-    out.data({ ok: problems === 0, agents, hook: hookBin, mcp, spool, store, receiver, proxy, gateway });
-    return problems ? 1 : 0;
-  }
-
+  // The rows below print nothing with --json (the document is the answer); every "!" row is also a warning in it.
+  const warnings: DoctorWarning[] = [];
+  const warn = (label: string, value: string, w: DoctorWarning) => {
+    warnings.push(w);
+    out.row(label, value, "warn");
+  };
   const shown = agents.filter((a) => a.installed || named.includes(a.id));
+  let notCapturing = 0;
   for (const a of shown) {
-    const wrapper = a.capture === "wrapper";
+    const r = agentRow(a, hookBin.installed);
     // The built-in wrapper is not something "installed": it is part of coding.sh.
-    const parts = a.id === "wrapper" ? [] : [a.version ? `v${a.version}` : "installed"];
-    const blocked = !a.store && a.hooked && a.blockers.length > 0;
-    const here = hooksHere(a);
-    const elsewhere = a.hookFiles.find((f) => !f.current);
-    const recent = a.lastEventAgeMs !== null && a.lastEventAgeMs < RECENT_EVENT_MS;
-    // Hooks only capture when they run this home's hook.mjs and it exists; the Hook row below says the same.
-    const working = here !== undefined && hookBin.installed;
-    const where = (f: HookFile) => `${f.file}${f.scope === "project" ? " (project)" : ""}`;
-    const more = (n: number) => (n > 1 ? ` and ${n - 1} more` : "");
-    parts.push(
-      a.store ? (a.hooked ? "reads its store" : "no store yet")
-      : wrapper ? `no hooks needed; capture with coding.sh run -- ${a.id === "wrapper" ? "<cmd>" : a.id}`
-      : blocked ? "hooked but not firing"
-      : here !== undefined ? `hooked${here === true ? "" : ` in ${where(here)}${more(a.hookFiles.filter((f) => f.current).length)}`}${hookBin.installed ? "" : ", but the hook it runs is missing"}`
-      : elsewhere ? `hooks in ${where(elsewhere)} run ${elsewhere.hook}, not this home's hook`
-      : recent ? "events arriving, hook not in user config" : "not hooked",
-    );
+    const parts = a.id === "wrapper" ? [r.state] : [a.version ? `v${a.version}` : "installed", r.state];
     if (a.lastEventAt) {
       parts.push(`last event ${ago(Date.parse(a.lastEventAt))}`);
-    } else parts.push(wrapper ? "no runs yet" : "no events yet");
+    } else parts.push(a.capture === "wrapper" ? "no runs yet" : "no events yet");
     // "Any command (coding.sh run --)" reads better as "Any command" than cut off.
     const label = a.name.length >= LABEL_WIDTH ? a.name.replace(/\s*\(.*\)$/, "") : a.name;
-    const ok = wrapper || (a.store ? a.hooked || recent : !blocked && (working || (here === undefined && recent)));
-    out.row(label, parts.join(", "), ok ? "ok" : "warn");
-    if (a.store) for (const n of a.notes) out.note(n);
-    else if (blocked) for (const n of a.blockers) out.note(n);
+    if (r.ok) out.row(label, parts.join(", "), "ok");
+    else {
+      notCapturing++;
+      const hooks = a.capture === "hooks";
+      const w: DoctorWarning = { check: "agent", agent: a.id, message: `${a.name} is not capturing: ${r.state}` };
+      if (hooks && a.blockers.length) w.blockers = a.blockers;
+      if (hooks && hooksHere(a) === undefined) w.next = `coding.sh init --agent ${a.id}`;
+      warn(label, parts.join(", "), w);
+    }
+    // Every blocker, hooked or not: each names what to change.
+    for (const n of r.notes) out.note(n);
   }
-  if (!shown.length) out.row("Agents", "none detected; capture any agent with coding.sh run -- <cmd>", "warn");
-  if (!hookBin.installed) out.row("Hook", `missing at ${hookBin.path}; run coding.sh init`, "warn");
+  if (!shown.length) warn("Agents", "none detected; capture any agent with coding.sh run -- <cmd>", { check: "agents", message: "No agent detected", next: "coding.sh run -- <cmd>" });
+  if (!hookBin.installed) warn("Hook", `missing at ${hookBin.path}; run coding.sh init`, { check: "hook", message: `The hook is missing at ${hookBin.path}`, next: "coding.sh init" });
   else if (hookBin.stale) {
     const why = hookBin.hookCurrent === false ? "differs from the hook this CLI ships" : hookBin.cliPath && !hookBin.cliPathExists ? `cli-path names a missing ${hookBin.cliPath}` : `cli-path names ${hookBin.cliPath ?? "nothing"}, not this CLI`;
     // Only the bin lags: refreshing it leaves the agent configs alone (init would rewrite them).
-    out.row("Hook", `${hookBin.path} is stale (${why}); run coding.sh update --refresh-bin`, "warn");
+    warn("Hook", `${hookBin.path} is stale (${why}); run coding.sh update --refresh-bin`, { check: "hook", message: `${hookBin.path} is stale (${why})`, next: "coding.sh update --refresh-bin" });
   } else out.row("Hook", hookBin.path, "ok");
-  for (const m of mcp.filter((x) => !x.ok)) out.row("MCP", `${m.agent}: ${m.problem} (${m.file}); run coding.sh init`, "warn");
+  for (const m of mcp.filter((x) => !x.ok)) warn("MCP", `${m.agent}: ${m.problem} (${m.file}); run coding.sh init`, { check: "mcp", agent: m.agent, message: `${m.problem} (${m.file})`, next: "coding.sh init" });
   out.row("Spool", spool.ok ? `${spool.path} writable` : `${spool.path} not writable: ${spool.error}`, spool.ok ? "ok" : "fail");
   out.row("Store", store.ok ? `${store.kind} ${store.url}` : `can't open: ${store.error}`, store.ok ? "ok" : "fail");
+  // The ingest the hook starts runs unseen: a failed one leaves a marker (core/ingest-health.ts).
+  const stopped = readIngestStopped(p.ingestStopped);
+  if (stopped) {
+    const message = `Ingest ${ingestStoppedText(stopped)}`;
+    warn("Ingest", ingestStoppedText(stopped), { check: "ingest", message, next: stopped.next });
+  }
   const missing = store.missingRows;
   if (missing?.count) {
     const byAgent = Object.entries(missing.byAgent).sort((a, b) => b[1] - a[1]).map(([agent, n]) => `${agent} ${n}`);
-    out.row("Sessions", `${plural(missing.count, "session")} ${missing.count === 1 ? "has" : "have"} events but no session row (${byAgent.join(", ")}); run coding.sh ingest`, "warn");
+    const message = `${plural(missing.count, "session")} ${missing.count === 1 ? "has" : "have"} events but no session row (${byAgent.join(", ")})`;
+    warn("Sessions", `${message}; run coding.sh ingest`, { check: "sessions", message, next: "coding.sh ingest" });
   }
-  if (store.foldErrors) out.row("Sessions", `${plural(store.foldErrors, "session")} could not be folded (tagged ${FLAGS.foldError}); update coding.sh, then run coding.sh ingest`, "warn");
+  if (store.foldErrors) {
+    const message = `${plural(store.foldErrors, "session")} could not be folded (tagged ${FLAGS.foldError})`;
+    warn("Sessions", `${message}; update coding.sh, then run coding.sh ingest`, { check: "sessions", message, next: "coding.sh ingest" });
+  }
   out.row("Receiver", receiver.listening ? `port ${port} in use (collector running?)` : `port ${port} free; start with coding.sh collector`, receiver.listening ? "ok" : "none");
   const routedNames = proxy.routes.filter((r) => r.ok).map((r) => `${ADAPTERS.find((a) => a.id === r.agent)?.displayName ?? r.agent}${r.chained ? ` (then ${r.chained})` : ""}`);
   if (proxy.running) out.row("Proxy", `${proxy.url} (pid ${proxy.pid})${routedNames.length ? `, routes ${routedNames.join(", ")}` : ""}`, "ok");
-  else if (routedNames.length) out.row("Proxy", `not running, but ${routedNames.join(" and ")} call it; it restarts on the next session start, or now with coding.sh proxy --background`, "warn");
+  else if (routedNames.length) {
+    const message = `not running, but ${routedNames.join(" and ")} call it`;
+    warn("Proxy", `${message}; it restarts on the next session start, or now with coding.sh proxy --background`, { check: "proxy", message: `The proxy is ${message}`, next: "coding.sh proxy --background" });
+  }
   else out.row("Proxy", "not running; route agents through it with coding.sh init --proxy", "none");
-  for (const r of proxy.routes.filter((x) => !x.ok)) out.row("Proxy", `${r.agent} no longer points at the proxy (${r.file}); with the user's approval, coding.sh init --proxy or coding.sh uninstall --proxy`, "warn");
+  for (const r of proxy.routes.filter((x) => !x.ok)) {
+    const message = `${r.agent} no longer points at the proxy (${r.file})`;
+    warn("Proxy", `${message}; with the user's approval, coding.sh init --proxy or coding.sh uninstall --proxy`, { check: "proxy", agent: r.agent, message });
+  }
   const routed = [...new Set(gateway.configured.filter((f) => f.active).map((f) => (f.gateway === "vercel" ? f.agent : `${f.agent} via ${f.gateway}`)))];
   const gwParts = [routed.length ? `routes ${routed.join(", ")}` : "not configured", gateway.key.set ? `key set (${gateway.key.source})` : "no key", `${gateway.sessions >= 1000 ? "1000+" : gateway.sessions} tagged sessions`];
   out.row("AI Gateway", gwParts.join(", "), routed.length || gateway.key.set || gateway.sessions ? "ok" : "none");
   if (others.length) out.row("Gateways", `keys set for ${others.map((g) => GATEWAYS[g.id].name).join(", ")}`, "ok");
   for (const f of gateway.configured) out.note(`${f.gateway === "vercel" ? "" : `${GATEWAYS[f.gateway].name}: `}${f.detail} (${f.where}${f.active ? "" : ", not selected"})`);
-  const unhooked = shown.filter((a) => a.capture === "hooks" && !capturing(a));
+  const unhooked = shown.filter((a) => a.capture === "hooks" && hooksHere(a) === undefined);
   if (unhooked.length) out.next("Capture the agents without hooks", `coding.sh init ${unhooked.map((a) => `--agent ${a.id}`).join(" ")}`);
-  out.print(problems ? "problems found" : "ok");
+  // `ok` and the exit code are about the spool and the store, so a script that checks them keeps
+  // working; an agent that cannot capture is in `warnings` and on the last line.
+  out.data({ ok: problems === 0, warnings, agents, hook: hookBin, mcp, spool, store, ...ingestStoppedField(stopped), receiver, proxy, gateway });
+  out.print(problems ? "problems found" : notCapturing ? `${plural(notCapturing, "agent")} not capturing` : "ok");
   return problems ? 1 : 0;
 }

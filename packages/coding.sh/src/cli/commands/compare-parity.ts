@@ -73,7 +73,16 @@ function attrs(tag: string): Record<string, string> {
   return out;
 }
 
-const tags = (html: string, name: string): Record<string, string>[] => [...html.matchAll(new RegExp(`<${name}\\b[^>]*>`, "gi"))].map((m) => attrs(m[0]));
+/**
+ * The rest of a start tag after its name, up to the closing '>'. A quoted attribute value is
+ * skipped whole, so a raw '>' in it (content="a > b") does not end the tag. A quote opens a
+ * value only after '=': an apostrophe in an unquoted value is plain text.
+ */
+const TAG_REST = String.raw`(?:=\s*(?:"[^"]*"|'[^']*')|=(?!\s*["'])|[^>=])*`;
+const TITLE = new RegExp(String.raw`<title\b${TAG_REST}>([\s\S]*?)<\/title\s*>`, "i");
+const SCRIPT = new RegExp(String.raw`<script\b(${TAG_REST})>([\s\S]*?)<\/script\s*>`, "gi");
+
+const tags = (html: string, name: string): Record<string, string>[] => [...html.matchAll(new RegExp(`<${name}\\b${TAG_REST}>`, "gi"))].map((m) => attrs(m[0]));
 
 /** Every top-level JSON-LD entity's @type (entries of an @graph count as top level). */
 function ldTypes(doc: unknown, into: Set<string>): void {
@@ -93,7 +102,7 @@ export function readPage(html: string, base?: string): Omit<PageRead, "status" |
   // Comments hide tags from crawlers too.
   const doc = html.replace(/<!--[\s\S]*?-->/g, "");
   const page: Omit<PageRead, "status" | "redirects" | "xRobotsTag"> = { social: {}, hreflang: 0, jsonLdTypes: [], jsonLdErrors: 0 };
-  const title = /<title\b[^>]*>([\s\S]*?)<\/title\s*>/i.exec(doc);
+  const title = TITLE.exec(doc);
   if (title) page.title = squash(title[1]!);
   const resolve = (href: string): string => {
     try {
@@ -117,7 +126,7 @@ export function readPage(html: string, base?: string): Omit<PageRead, "status" |
     if (rel.includes("alternate") && l.hreflang) page.hreflang++;
   }
   const types = new Set<string>();
-  for (const m of doc.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)) {
+  for (const m of doc.matchAll(SCRIPT)) {
     if ((attrs(`<script${m[1]}>`).type ?? "").toLowerCase().trim() !== "application/ld+json") continue;
     try {
       ldTypes(JSON.parse(m[2]!), types);

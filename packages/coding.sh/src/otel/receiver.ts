@@ -145,6 +145,8 @@ export interface BatchInfo {
   events: AgentEvent[];
   /** Events newly stored (0 for a re-post). */
   inserted: number;
+  /** The ones of `events` this commit newly stored: what goes on to [[sinks]] (see InsertedEvents). */
+  insertedEvents: AgentEvent[];
   /** Sessions rebuilt and upserted. */
   sessions: Session[];
   /** Spans/log records rejected (reported back as partial_success). */
@@ -339,11 +341,13 @@ export function createOtlpPipeline(opts: OtlpPipelineOptions): OtlpPipeline {
   let blobs = opts.blobs;
   const mapCtx: MapContext = {
     maxInlineBytes: opts.maxInlineBytes ?? DEFAULT_MAX_INLINE_BYTES,
-    blob: opts.blob ?? ((data) => blobs.put(redactor && typeof data === "string" ? redactor.string(data) : data)),
+    blob: opts.blob ?? ((data) => blobs.put(data)),
     traceSessions,
     spanTree: new SpanTree(),
     keepRaw: opts.keepRaw ?? true,
   };
+  // Blob content is redacted by the mapping, before it is serialized (MapContext.redactor).
+  if (redactor) mapCtx.redactor = redactor;
   if (opts.enrichSpan !== false) mapCtx.enrichSpan = opts.enrichSpan ?? defaultEnricher;
 
   // trace → conversation entries survive restarts in the index kv (when the
@@ -390,6 +394,62 @@ export function countOtlpItems(signal: Signal, decoded: ResourceSpans[] | Resour
 export async function storeAndRebuild(store: IndexStore, events: AgentEvent[]): Promise<{ inserted: number; sessions: Session[] }> {
   const { inserted } = events.length ? await store.putEvents(events) : { inserted: 0 };
   return { inserted, sessions: await rebuildSessions(store, new Set(events.map((e) => e.sessionId))) };
+}
+
+/** Ids a failed commit can leave owed (InsertedEvents); past this the oldest are forgotten. */
+const OWED_MAX = 100_000;
+
+/**
+ * Says which of a commit's events are new to the store, for what runs after
+ * the commit: [[sinks]] get an event once, however often its batch is posted.
+ * One per writer (the receiver's group commit, serve's ingest queue).
+ */
+export class InsertedEvents {
+  /**
+   * Ids stored by a commit that failed after its put (the rebuild threw, the
+   * client was answered 503): nothing was handed on, and the retry inserts
+   * nothing, so the retry's commit hands them on. In insertion order.
+   */
+  private readonly owed = new Set<string>();
+
+  /**
+   * putEvents, plus the ids it inserted. A store without putEventsReturningIds
+   * has the stored ids of the touched sessions read before the put, so call
+   * this inside the store's transaction where it has one.
+   */
+  async put(store: IndexStore, events: AgentEvent[]): Promise<{ inserted: number; ids: Set<string> }> {
+    if (!events.length) return { inserted: 0, ids: new Set() };
+    if (store.putEventsReturningIds) {
+      const r = await store.putEventsReturningIds(events);
+      return { inserted: r.inserted, ids: new Set(r.ids) };
+    }
+    const had = new Set<string>();
+    for (const id of new Set(events.map((e) => e.sessionId))) for (const e of await store.listEvents(id)) had.add(e.id);
+    const { inserted } = await store.putEvents(events);
+    // The count wins where it is certain: nothing inserted means nothing new, whatever the read said.
+    return { inserted, ids: new Set(inserted ? events.flatMap((e) => (had.has(e.id) ? [] : [e.id])) : []) };
+  }
+
+  /** The commit failed after these ids were put: the next commit that carries them hands them on. */
+  owe(ids: Iterable<string>): void {
+    for (const id of ids) this.owed.add(id);
+    for (const id of this.owed) {
+      if (this.owed.size <= OWED_MAX) break;
+      this.owed.delete(id);
+    }
+  }
+
+  /**
+   * The events of one request to hand on, in order: those whose id is in `ids`
+   * (what the put inserted) or owed. Each id is handed on once: it leaves `ids`
+   * and the owed set, so the first request of a commit that carries it gets it.
+   */
+  take(events: AgentEvent[], ids: Set<string>): AgentEvent[] {
+    return events.filter((e) => {
+      const inserted = ids.delete(e.id);
+      return this.owed.delete(e.id) || inserted;
+    });
+  }
 }
 
 /**
@@ -603,6 +663,7 @@ export async function startReceiver(opts: ReceiverOptions): Promise<Receiver> {
   };
   const waiting: Job[] = [];
   let working: Promise<void> | undefined;
+  const insertedEvents = new InsertedEvents();
   const commit = async (group: Job[]): Promise<void> => {
     const batch = opts.blobs.batch?.();
     const done: { job: Job; events: AgentEvent[]; rejected: number; errors: string[] }[] = [];
@@ -614,27 +675,30 @@ export async function startReceiver(opts: ReceiverOptions): Promise<Receiver> {
         job.reject(err);
       }
     }
+    // What each request's put inserted, kept out here: a commit that fails after a put owes those ids.
+    const puts: { inserted: number; ids: Set<string> }[] = [];
     try {
       await batch?.flush();
       // The group's events and session rows commit together (one transaction
       // where the store has them), and each request still counts its own inserts.
       const write = async () => {
-        const inserted: number[] = [];
-        for (const d of done) inserted.push(d.events.length ? (await opts.store.putEvents(d.events)).inserted : 0);
+        for (const d of done) puts.push(await insertedEvents.put(opts.store, d.events));
         // A session with no row yet whose events were all new is built from the
         // events in hand, without reading them back from the store.
-        const fresh = done.every((d, i) => inserted[i] === d.events.length);
+        const fresh = done.every((d, i) => puts[i]!.inserted === d.events.length);
         const touched = new Map<string, AgentEvent[]>();
         for (const d of done) for (const e of d.events) (touched.get(e.sessionId) ?? touched.set(e.sessionId, []).get(e.sessionId)!).push(e);
-        const rebuilt = new Map((await rebuildSessions(opts.store, touched.keys(), fresh ? touched : undefined)).map((s) => [s.id, s]));
-        return { inserted, rebuilt };
+        return new Map((await rebuildSessions(opts.store, touched.keys(), fresh ? touched : undefined)).map((s) => [s.id, s]));
       };
-      const { inserted, rebuilt } = opts.store.transaction ? await opts.store.transaction(write) : await write();
+      const rebuilt = opts.store.transaction ? await opts.store.transaction(write) : await write();
       done.forEach((d, i) => {
         const sessions = [...new Set(d.events.map((e) => e.sessionId))].flatMap((id) => rebuilt.get(id) ?? []);
-        d.job.resolve({ batch: { signal: d.job.signal, events: d.events, inserted: inserted[i]!, sessions, rejected: d.rejected }, errors: d.errors });
+        const { inserted, ids } = puts[i]!;
+        d.job.resolve({ batch: { signal: d.job.signal, events: d.events, inserted, insertedEvents: insertedEvents.take(d.events, ids), sessions, rejected: d.rejected }, errors: d.errors });
       });
     } catch (err) {
+      // A store with no transaction keeps what was put: the retry inserts nothing and hands these on.
+      for (const p of puts) insertedEvents.owe(p.ids);
       for (const d of done) d.job.reject(err);
     }
   };

@@ -3,7 +3,7 @@
 A fixed test set goes stale. Contenders get tuned to it, and the cases leak into training data.
 `coding.sh bench` draws new cases every day from a live source: a script, your recent failed
 sessions, new GitHub issues, or a sitemap. It gives every contender the same frozen set and keeps
-the history, so you can see who is ahead today and how that changes over weeks.
+the history, so you see who is ahead today and over weeks.
 
 Benchmark runs call your contenders with your credentials and at your cost. Set `budget_usd`
 before you schedule one.
@@ -96,9 +96,9 @@ pairs. The verdict uses an exact McNemar test, Holm-adjusted across pairs. Conte
 difference is not significant share a place.
 
 `bench new` and `run --dry-run` print the smallest gap your case count can detect and how many cases
-a 10-point gap needs. Small benchmarks only find big differences.
+a 10-point gap needs.
 
-One day is a small sample, so `bench history --vs <contender>` and the report also pool the daily
+One day is a small sample, so `bench history --vs <contender>` and the report pool the daily
 gaps over the last `window` counted runs (default 28). The pooled gap has a 95% interval that lets
 the true gap vary by day (DerSimonian-Laird with the Hartung-Knapp correction).
 
@@ -108,8 +108,8 @@ drops on the same day, the sample was probably harder; an [anchor set](#anchor-s
 
 ## Routing headroom
 
-Some contender usually passes a case the best one fails, so "pick the right contender per case"
-always looks better than running the best one everywhere. Most of that gap is run noise. With 20 or
+Some contender usually passes a case the best one fails, so routing each case to the right
+contender always looks better than it is. Most of that gap is run noise. With 20 or
 more counted cases and two or more contenders, each run tests it:
 
 ```text
@@ -118,25 +118,27 @@ Upsets 31.7% of 60 split cells (expected 17.8%-42.1%, p 0.40).
 No evidence of specialization: per-case routing is unlikely to beat running claude alone.
 ```
 
-The gap is the share of cases any contender passed minus the best contender's pass rate. Upsets are
-the split cases the weaker contender won. Both are checked against 500 simulations of a Rasch model
+The gap is the share of cases any contender passed minus the best single contender's leaderboard
+pass rate. Upsets are the split cases the weaker contender won.
+
+Both are checked against 500 simulations of a Rasch model
 with no specialization (one ability per contender, one difficulty per case). The verdict is
 "contenders specialize" when the smaller p-value, Holm-adjusted over the two, is below 0.05.
 
 ## Model × harness grid
 
 When contenders cover two or more models and two or more harnesses, with one contender per
-combination, the run reads them as a grid. A harness that is best with one model can be worst with
-another, and a flat ranking hides that.
+combination, the run reads them as a grid. The best harness for one model can be the worst for
+another.
 
 ```text
-Model × harness grid: 40 cases; pass rate and interaction Δp in pp (* = 95% CI excludes 0)
+Model × harness grid: 40 cases; pass rate and interaction Δp in pp (* = this cell's 95% CI excludes 0, not adjusted for the number of cells)
 MODEL  H1             H2
 m1     100.0% +17.5*  65.0% -17.5*
 m2     65.0% -17.5*   100.0% +17.5*
 Cross-model fit: h1 80.6 (70.7-89.4); h2 80.6 (70.7-89.4). h1 leads h2 by +0.0 (95% CI +0.0 to +0.0), not a clear lead.
 Rank reversal: m1 leads m2 under h1, m2 leads under h2.
-Leave-one-model-out regret: m1 35.0 pts (picks h2, best h1); m2 35.0 pts (picks h1, best h2); mean 35.0.
+Leave-one-model-out regret: m1 35.0 pts (95% CI 20.0 to 50.0; picks h2, best h1); m2 35.0 pts (95% CI 20.0 to 50.0; picks h1, best h2); mean 35.0 (95% CI 20.0 to 50.0).
 ```
 
 | Number | Meaning |
@@ -147,10 +149,12 @@ Leave-one-model-out regret: m1 35.0 pts (picks h2, best h1); m2 35.0 pts (picks 
 | Δp, Δv | Interaction, `x(m,h) − x(m,·) − x(·,h) + x(·,·)`, equal-weight margins. Positive: the pair beats its parts. |
 | F | J as a share of the model's best J over harnesses. |
 | Cross-Model Fit | Per harness, 100 × the geometric mean of F (0 when any F is 0). 100: every model's best. |
-| Leave-one-model-out regret | Points of J a held-out model loses when the harness is picked by fit on the others. |
-| Rank reversal | Two models whose order flips between two harnesses. |
+| Leave-one-model-out regret | Points of J a held-out model loses when the harness is picked by fit on the others. An interval that starts at 0 may be noise. |
+| Rank reversal | Two models whose order flips between two harnesses, with both gap intervals excluding 0. |
 
-Intervals are 95% from 2,000 case bootstrap draws. An incomplete grid is skipped.
+Intervals are 95% from 2,000 case bootstrap draws. An incomplete grid is skipped. Stars are not
+adjusted: about 1 equal cell in 20 gets one, and under 20 paired cases none is given. `--json` adds
+`regretCi` per `grid.lomo` row and `meanRegretCi`.
 
 ## Anchor set
 
@@ -164,7 +168,7 @@ The anchor set is a fixed sample that runs every day next to the fresh cases, un
 `version` or `cases`. It is scored apart: the leaderboard, verdicts and history use fresh cases.
 
 If fresh pass rates drop and the anchor holds, the day was harder. If both drop, the contenders got
-worse. Fixed cases can leak into training data, so bump `version` now and then.
+worse. Bump `version` now and then.
 
 ```sh
 coding.sh bench history answers --anchor
@@ -178,7 +182,7 @@ seed = "secret"
 ```
 
 Each date's salt is an HMAC of `<name>:<date>` under a key in `CODING_SH_BENCH_SEED_KEY` (rename it
-with `seedKeyEnv`). Keep the key out of the repo; in CI it is a secret.
+with `seedKeyEnv`). Keep the key out of the repo.
 
 Each run reveals its own salt and publishes the sha256 of the next date's salt, so anyone can check
 that a sample was fixed before its run. `bench show` runs the check and exits 1 if it fails.
@@ -214,7 +218,7 @@ self-contained file with no scripts, so you can publish the folder as is.
 | Section | Shows |
 | --- | --- |
 | Leaderboard | Places, pass rate, latency, cost and its source, tokens and errors. |
-| Trend | Pass rate, latency and cost per day; a dashed line marks a protocol change (sampling, source, graders or limits; adding a contender is not one). |
+| Trend | Pass rate, latency and cost per day; a dashed line marks a protocol change (adding a contender is not one). |
 | Gap to the reference | Each contender's daily and pooled gap to `reference` (default: the first contender). |
 | Difficulty, Anchor set | Mean pass rate per day; the anchor set's own charts and tables. |
 | Head to head | Every pair, with the paired interval, McNemar and Holm p-values. |

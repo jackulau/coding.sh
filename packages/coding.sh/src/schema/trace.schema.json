@@ -676,6 +676,44 @@
       ],
       "additionalProperties": false
     },
+    "MemoryUse": {
+      "description": "Session.stats.memoryUse: one memory or instruction file a session used, or a\nskill its events name without a path.",
+      "type": "object",
+      "properties": {
+        "use": {
+          "description": "`loaded`: the agent put the file in its context. `read`: a tool read it, or the skill ran. `wrote`: a tool or a file change wrote it.",
+          "enum": [
+            "loaded",
+            "read",
+            "wrote"
+          ]
+        },
+        "path": {
+          "description": "The file, as an absolute path (`~/…` when the event wrote it so). Unset for a skill named without one.",
+          "type": "string"
+        },
+        "skill": {
+          "description": "A skill named without a path: `harness audit` matches it to the SKILL.md files on disk.",
+          "type": "string"
+        },
+        "by": {
+          "description": "With `skill`: `tool` when a Skill tool call named it, `harness` when the agent's record of loaded skills did.",
+          "enum": [
+            "tool",
+            "harness"
+          ]
+        },
+        "ts": {
+          "description": "The last time, in ms since the epoch.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "use",
+        "ts"
+      ],
+      "additionalProperties": false
+    },
     "ModelSwitch": {
       "description": "Session.stats.modelSwitch: the model changed mid-session (core/models.ts): a\nfallback the agent recorded (a switch and back included), any change inside a\nsubagent, or a main-thread hand-over from one model to another. The fields\nname the first switch; the counts cover them all.",
       "type": "object",
@@ -891,6 +929,13 @@
             "hookContext": {
               "description": "Text hooks added to the model's context, by source (`plugin:<name>`, `settings`, …). Unset when no hook added any.",
               "$ref": "#/$defs/HookContextStats"
+            },
+            "memoryUse": {
+              "description": "Memory and instruction files (AGENTS.md, rules, skills, Claude auto-memory) the\nsession's events name, in the order first seen: what `harness audit` counts\n(core/memory-use.ts). Unset when its events name none.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/MemoryUse"
+              }
             },
             "redactions": {
               "description": "Values redaction replaced before storage, by rule kind (`anthropic-key`, `password`, …): counts, never\nthe values. A vendor token kind also tags the session `secret:exposed`. Unset when nothing was redacted.",

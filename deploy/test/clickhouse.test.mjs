@@ -65,18 +65,21 @@ describe("deploy/clickhouse compose", { skip: SKIP, timeout: 300_000 }, () => {
     compose("up", "-d", "--wait");
     const { OtlpSink, toOtlpSpans } = await import("../../packages/coding.sh/src/sinks/otlp.ts");
     const { clickhouseFixture } = await import("../../packages/coding.sh/test/docs/clickhouse-fixture.ts");
-    const { batch, sessions } = clickhouseFixture();
-    spans = toOtlpSpans(batch, sessions, "metadata").length;
+    const { batch, sessions, open } = clickhouseFixture();
+    // Both sessions were also sent while open: an earlier invoke_agent row each, with the same span id.
+    spans = toOtlpSpans(batch, sessions, "metadata").length + open.length;
     // The sink config from the doc, pointed at the published port.
     const [toml] = blocks("toml");
     assert.match(toml, /kind = "otlp"/);
     const sink = new OtlpSink({ kind: "otlp", name: "clickhouse", endpoint: "http://127.0.0.1:4319", mode: "metadata" });
     for (let i = 0; ; i++) {
-      const ack = await sink.write(batch, sessions, undefined);
+      const ack = await sink.writeOpenSessions(open, undefined);
       if (ack.ok) break;
-      if (i > 30) throw new Error(`collector refused the batch: ${JSON.stringify(ack)}`);
+      if (i > 30) throw new Error(`collector refused the open sessions: ${JSON.stringify(ack)}`);
       await sleep(1000);
     }
+    const ack = await sink.write(batch, sessions, undefined);
+    if (!ack.ok) throw new Error(`collector refused the batch: ${JSON.stringify(ack)}`);
     for (let i = 0; ; i++) {
       const rows = await sql("SELECT count() AS n FROM otel.otel_traces WHERE ServiceName = 'coding.sh'").catch(() => [{ n: 0 }]);
       if (rows[0].n >= spans) break;
@@ -91,9 +94,11 @@ describe("deploy/clickhouse compose", { skip: SKIP, timeout: 300_000 }, () => {
     assert.deepEqual(rows, [
       { op: "chat", n: 4 },
       { op: "execute_tool", n: 5 },
-      { op: "invoke_agent", n: 2 },
+      { op: "invoke_agent", n: 4 },
     ]);
-    assert.equal(spans, 11);
+    assert.equal(spans, 13);
+    const ids = await sql("SELECT uniqExact(SpanId) AS sessions, count() AS n FROM otel.otel_traces WHERE SpanAttributes['gen_ai.operation.name'] = 'invoke_agent'");
+    assert.deepEqual(ids, [{ sessions: 2, n: 4 }]);
   });
 
   test("the doc's four queries run and answer for the fixture", async () => {

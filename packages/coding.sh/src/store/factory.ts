@@ -11,6 +11,7 @@ import { resolve } from "node:path";
 import type { BlobStore, Config, IndexStore, Sink, SinkConfig } from "../core/types.ts";
 import { expandHome } from "../core/paths.ts";
 import { repriceStored } from "../core/reprice.ts";
+import { version } from "../cli/meta.ts";
 import { ownerGuard } from "../core/store-guard.ts";
 import { createHttpSink } from "../sinks/http.ts";
 import { createOtlpSink } from "../sinks/otlp.ts";
@@ -64,9 +65,10 @@ registerIndexStore("sqlite", (url, config) => {
   const { rest } = parseStoreUrl(url);
   if (rest === ":memory:") return SqliteIndexStore.open(":memory:");
   const file = fileUrlPath(rest);
-  // A home's own index migrates only for the install that owns it (core/store-guard.ts).
+  // A home's own index migrates only for the install that owns it, and only for a release
+  // newer than its last writer, which every open records (core/store-guard.ts).
   const beforeMigrate = ownerGuard(config.home, file);
-  return SqliteIndexStore.open(file, beforeMigrate ? { beforeMigrate } : {});
+  return SqliteIndexStore.open(file, { writer: version(), beforeMigrate });
 });
 registerIndexStore("memory", () => new MemoryIndexStore());
 registerBlobStore("file", (url) => new FsBlobStore(fileUrlPath(parseStoreUrl(url).rest)));

@@ -157,4 +157,41 @@ describe("proxy store writes", () => {
     for (const ref of e.blobs ?? []) assert.ok(await mem.get(ref), `blob ${ref.slice(0, 8)} is stored`);
     assert.ok(e.payload.systemRef && e.payload.toolsRef, "the system prompt and tools were put again after the failed flush");
   });
+
+  it("tags the session with the gateway the proxy sends its calls on to", async () => {
+    // After `init --proxy` chains through a gateway, the hook sees only the proxy's URL: the call names the gateway.
+    const body = Buffer.from(JSON.stringify({ model: "claude-sonnet-4-5", messages: [{ role: "user", content: "hi" }] }));
+    const captured = (upstream: string): CapturedCall => ({
+      route: { provider: "anthropic", api: "messages" },
+      method: "POST",
+      path: "/v1/messages",
+      upstream,
+      reqHeaders: { "user-agent": "claude-cli/2.1.319 (external, cli)", "x-claude-code-session-id": SESSION },
+      reqBody: body,
+      reqBytes: body.length,
+      status: 200,
+      resHeaders: { "content-type": "application/json" },
+      result: { id: "msg_1", model: "claude-sonnet-4-5", usage: { inputTokens: 10, outputTokens: 2 }, hints: {}, events: 0, body: { id: "msg_1", content: [] } },
+      resBytes: 10,
+      stream: false,
+      startedAt: T0,
+      endedAt: T0 + 500,
+    });
+    const flagsAfter = async (upstream: string, o: { metadata?: boolean; env?: NodeJS.ProcessEnv } = {}) => {
+      const sqlite = await SqliteIndexStore.open(":memory:");
+      const rec = createRecorder({ blobs: new MemoryBlobStore(), redactor: createRedactor({ redact: defaultConfig({}).capture.redact, patterns: [], env: {} }), metadata: o.metadata === true, prices: pricesFor({}), write: storeWriter(sqlite), env: o.env ?? {} });
+      rec.record(captured(upstream));
+      await rec.flush();
+      assert.deepEqual(rec.stats, { written: 1, failed: 0 });
+      const [call] = await sqlite.listEvents(SESSION);
+      const flags = (await sqlite.getSession(SESSION))!.flags;
+      await sqlite.close();
+      return { gateway: call!.payload.gateway, flags };
+    };
+    assert.deepEqual(await flagsAfter("http://127.0.0.1:8317"), { gateway: "cliproxyapi", flags: ["gateway:cliproxyapi"] });
+    assert.deepEqual(await flagsAfter("http://127.0.0.1:8317", { metadata: true }), { gateway: "cliproxyapi", flags: ["gateway:cliproxyapi"] }, "capture mode metadata keeps the tag");
+    assert.deepEqual(await flagsAfter("https://ai-gateway.vercel.sh"), { gateway: "vercel", flags: ["gateway:vercel"] });
+    assert.deepEqual(await flagsAfter("https://litellm.internal", { env: { LITELLM_PROXY_URL: "https://litellm.internal/v1" } }), { gateway: "litellm", flags: ["gateway:litellm"] }, "a self-hosted gateway, by its URL variable");
+    assert.deepEqual(await flagsAfter("https://api.anthropic.com"), { gateway: undefined, flags: [] }, "the provider's own API is no gateway");
+  });
 });

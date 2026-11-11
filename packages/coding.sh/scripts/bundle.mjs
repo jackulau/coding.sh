@@ -52,6 +52,8 @@ export async function bundle(outdir = "dist") {
     build({ ...common, entryPoints: { eve: "src/integrations/eve/reporter.ts" } }),
     // Serverless ingest (`coding.sh/server`): createFetchHandler, serve's ingest routes as a fetch handler.
     build({ ...common, entryPoints: { server: "src/server/index.ts" } }),
+    // Judge library (`coding.sh/judge`): pairedDiscrimination, createWasteJudge and the providers they call.
+    build({ ...common, entryPoints: { judge: "src/judge/lib.ts" } }),
   ]);
   chmodSync(join(out, "cli.mjs"), 0o755);
   chmodSync(join(out, "hook.mjs"), 0o755);

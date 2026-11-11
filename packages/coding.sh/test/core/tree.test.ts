@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { buildSession } from "../../src/core/sessions.ts";
-import { buildRunTree, buildSessionTree, rootOf, treeTotals, worstFirst, worstNode } from "../../src/core/tree.ts";
+import { buildRunTree, buildSessionTree, rootOf, subagentsOf, treeTotals, worstFirst, worstNode } from "../../src/core/tree.ts";
 import type { AgentEvent, EventKind, Session } from "../../src/schema/index.ts";
 
 const T0 = Date.UTC(2026, 10, 8, 9);
@@ -90,6 +90,28 @@ describe("a parent session and its subagents are one tree", () => {
     const worst = worstNode(fromRoot.roots);
     assert.equal(worst?.session.id, "root:sub:a2", "the flagged subagent is the one to fix first");
     assert.deepEqual(worstFirst(worst!.session.flags), ["premature-completion"]);
+  });
+
+  // A read of the newest N children counted N and dropped the first subagents.
+  it("a fan-out wider than any page is read whole, oldest first", async () => {
+    const index = new MemoryIndexStore();
+    const WIDE = 1200;
+    const kid = (i: number) => `wide:sub:${String(i).padStart(4, "0")}`;
+    const root = session({ id: "wide", dt: 0, dur: 5000 });
+    await index.upsertSession(root);
+    for (let i = 0; i < WIDE; i++) await index.upsertSession(session({ id: kid(i), dt: 1 + i, dur: 2, startPayload: { source: "subagent", parentSessionId: "wide", subagentId: `k${i}`, subagentType: "reviewer" } }));
+    await index.upsertSession(session({ id: `${kid(0)}:sub:g`, dt: 2, dur: 1, startPayload: { source: "subagent", parentSessionId: kid(0), subagentId: "g", subagentType: "searcher" } }));
+
+    const tree = await buildSessionTree(index, kid(700));
+    assert.equal(tree!.totals.sessions, WIDE + 2);
+    assert.deepEqual(tree!.flat.slice(0, 4).map((x) => x.session.id), ["wide", kid(0), `${kid(0)}:sub:g`, kid(1)]);
+
+    // The subagents under one session: the same walk, without the session itself.
+    const subs = await subagentsOf(index, root);
+    assert.equal(subs.length, WIDE);
+    assert.deepEqual([subs[0]!.session.id, subs[0]!.depth, subs.at(-1)!.session.id], [kid(0), 1, kid(WIDE - 1)]);
+    assert.deepEqual(subs[0]!.children.map((x) => [x.session.id, x.depth]), [[`${kid(0)}:sub:g`, 2]]);
+    assert.deepEqual(await subagentsOf(index, subs[1]!.session), []);
   });
 });
 

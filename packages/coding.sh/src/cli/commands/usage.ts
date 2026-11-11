@@ -12,8 +12,8 @@ import { CACHE_BREAK_FIX, CACHE_IDLE_FIX, CACHE_IDLE_LABEL } from "../../core/ca
 import type { CacheBreakCause, CacheIdleKind } from "../../schema/index.ts";
 import { repriceStored } from "../../core/reprice.ts";
 import { CACHE_BASELINE_NOTE } from "../../core/cache-baselines.ts";
-import { parseSince, positiveInt, UsageError } from "../args.ts";
-import { agentScope, agentsFlag, autoIngest, queryCliError, str, whereFlag, withContext, pendingField, readIngest } from "../common.ts";
+import { parseSinceWhen, positiveInt, UsageError } from "../args.ts";
+import { agentScope, agentsFlag, autoIngest, queryCliError, scanCap, stoppedAfter, str, timeWindow, whereFlag, windowJson, windowNote, withContext, pendingField, readIngest } from "../common.ts";
 import { CliError, Output, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -95,35 +95,41 @@ const costCell = (g: Row): string => (g.costUsd === undefined ? "-" : `${g.costP
 
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
-  const { usage, USAGE_GROUPS } = await import("../../mcp/data.ts");
+  const { usage, USAGE_GROUPS, TOTALS_SCAN_CAP } = await import("../../mcp/data.ts");
+  const cap = scanCap(c.env) ?? TOTALS_SCAN_CAP;
   const by = str(c.flags.by) ?? "agent";
   if (!(USAGE_GROUPS as readonly string[]).includes(by)) throw new CliError(`--by must be one of ${USAGE_GROUPS.join(", ")}`, { reason: "bad_flag" });
-  const since = parseSince(str(c.flags.since) ?? "30d");
+  const sinceWhen = parseSinceWhen(str(c.flags.since) ?? "30d");
+  const since = sinceWhen.ms;
   const limit = positiveInt(c.flags.limit, "limit") ?? 20;
   const { agent, where } = agentScope(agentsFlag(c), whereFlag(c));
+  const window = timeWindow({ since: sinceWhen }, where);
   const baseline = c.flags.baseline === true;
   if (baseline && by !== "agent" && by !== "agent-model") throw new UsageError("--baseline compares agents: use it with --by agent or --by agent-model", { reason: "invalid_argument" });
   if (baseline && c.flags.cache === true) throw new UsageError("--baseline adds a column to the main table; drop --cache", { reason: "invalid_argument" });
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
     const repriced = c.flags.reprice === true ? await repriceStored(ctx.index, ctx.config.pricing, { force: true }) : undefined;
-    const r = (await usage(ctx.index, { since, topLevel: false, ...(agent ? { agent } : {}), ...(where ? { query: where } : {}) }, by as (typeof USAGE_GROUPS)[number], limit, baseline ? { baseline } : {}).catch((e) => Promise.reject(queryCliError(e)))) as {
+    const r = (await usage(ctx.index, { since, topLevel: false, ...(agent ? { agent } : {}), ...(where ? { query: where } : {}) }, by as (typeof USAGE_GROUPS)[number], limit, { cap, baseline }).catch((e) => Promise.reject(queryCliError(e)))) as {
+      window: { truncated?: boolean; [k: string]: unknown };
       groups: Row[];
       total: Row;
       notes?: string[];
       unpricedModels?: Record<string, number>;
     };
     if (out.json) {
-      out.data({ ...r, ...(repriced ? { repriced: { events: repriced.events, sessions: repriced.sessions } } : {}), ...pendingField(backlog) });
+      out.data({ ...r, window: { ...r.window, ...windowJson(window) }, ...(repriced ? { repriced: { events: repriced.events, sessions: repriced.sessions } } : {}), ...pendingField(backlog) });
       return 0;
     }
     if (repriced) out.note(`Repriced ${repriced.events} model calls in ${repriced.sessions} sessions`);
+    windowNote(out, window);
     if (!r.groups.length) {
       out.note("No sessions in this window");
       return 0;
     }
     if (c.flags.cache === true) {
       renderCache(out, by, r);
+      if (r.window.truncated) out.warn(stoppedAfter(cap));
       return 0;
     }
     const cost = r.groups.some((g) => g.costUsd !== undefined);
@@ -147,6 +153,7 @@ export async function run(c: CommandContext): Promise<number> {
       const named = unpriced.slice(0, 5).map(([m, k]) => `${m} (${k})`).join(", ");
       out.note(`No price for ${named}${unpriced.length > 5 ? ` +${unpriced.length - 5} more` : ""}: add [prices."<model>"] with input and output in USD per 1M tokens to config.toml (coding.sh config path prints where)`);
     }
+    if (r.window.truncated) out.warn(stoppedAfter(cap));
     return 0;
   });
 }

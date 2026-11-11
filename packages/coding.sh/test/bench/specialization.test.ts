@@ -76,6 +76,19 @@ describe("headroomStats", () => {
     assert.equal(s.upset, 1 / 3);
   });
 
+  test("3 trials with a different leader each: best is the overall best contender's rate, not a per-trial best", () => {
+    // Passes over 10 cases per trial: A 8, 5, 5 (18/30); B 4, 7, 4 (15/30); C 3, 3, 6 (12/30). Each passes its first cases.
+    const upTo = (...ns: number[]) => (i: number) => ns.map((n) => (i < n ? 1 : 0));
+    const [a, b, c] = [upTo(8, 5, 5), upTo(4, 7, 4), upTo(3, 3, 6)];
+    const s = headroomStats(Array.from({ length: 10 }, (_, i) => [a(i), b(i), c(i)]));
+    assert.deepEqual(s.rates, [18 / 30, 15 / 30, 12 / 30]);
+    assert.equal(s.bestIndex, 0);
+    // Any contender: 8, 7, 6 of 10. The best per trial would average 0.7 too and hide the whole gap.
+    assert.ok(Math.abs(s.oracle - 0.7) < 1e-12, String(s.oracle));
+    assert.equal(s.best, s.rates[0]);
+    assert.equal(s.gap, s.oracle - s.rates[0]!);
+  });
+
   test("pairs with equal pass rates are skipped for upsets", () => {
     const y = [
       [[1], [0], [0]],
@@ -101,6 +114,29 @@ describe("specialization", () => {
       assert.equal(s.verdict, "no-evidence-of-specialization", `seed ${seed}: p ${s.pAdj}`);
       assert.ok(s.gap >= s.gapExpected.lo && s.gap <= s.gapExpected.hi, `seed ${seed}: gap ${s.gap} outside [${s.gapExpected.lo}, ${s.gapExpected.hi}]`);
       assert.ok(s.gap > 0, "noise alone makes a raw gap");
+    }
+  });
+
+  test("3 contenders × 3 trials, a different one leading each trial: the rate beside the best contender is its pass rate", () => {
+    // Passes over 30 cases per trial: A 24, 15, 15 (60%); B 12, 21, 12 (50%); C 9, 9, 18 (40%).
+    const passes: Record<string, number[]> = { A: [24, 15, 15], B: [12, 21, 12], C: [9, 9, 18] };
+    const cells: Cell[] = [];
+    for (let i = 0; i < 30; i++) for (const [c, ns] of Object.entries(passes)) for (const [t, n] of ns.entries()) cells.push(cell(id(i), c, t, i < n));
+    const s = done(specialization(cells, ["A", "B", "C"], 3));
+    assert.deepEqual(s.best, { contender: "A", rate: 0.6 });
+    assert.equal(s.bestSingle, s.best.rate);
+    assert.equal(s.gap, s.oracle - s.best.rate);
+    assert.ok(Math.abs(s.gap - 0.1) < 1e-12, String(s.gap));
+    assert.match(specializationLines(s)[0]!, /any contender 70\.0% vs best single \(A\) 60\.0%: gap 10\.0 pp/);
+  });
+
+  test("Rasch-generated 3 contenders × 3 trials: the gap from the best contender's rate stays inside the expected band", () => {
+    for (const seed of [31, 32, 33]) {
+      const s = done(specialization(raschCells(seed, 60, [1, 0.3, -0.3], 3), ["m0", "m1", "m2"], 3));
+      assert.equal(s.bestSingle, s.best.rate);
+      assert.equal(s.gap, s.oracle - s.best.rate);
+      assert.ok(s.gap >= s.gapExpected.lo && s.gap <= s.gapExpected.hi, `seed ${seed}: gap ${s.gap} outside [${s.gapExpected.lo}, ${s.gapExpected.hi}]`);
+      assert.equal(s.verdict, "no-evidence-of-specialization", `seed ${seed}: p ${s.pAdj}`);
     }
   });
 

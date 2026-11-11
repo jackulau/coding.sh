@@ -9,6 +9,10 @@
 // Sinks replay from their own cursors by re-normalizing spool lines, so an
 // offline remote never blocks local capture and catches up when it returns.
 //
+// Transcript import (backfill) sends to the sinks too: the events it stores,
+// in batches of the sink's size, with the rows of their sessions as they are
+// once the import has folded them (see "backfill → sinks" below).
+//
 // One ingest at a time: a lockfile in the spool dir (core/lock.ts, with stale
 // detection) keeps two processes from reading the same range and sending it
 // to the sinks twice. The holder checks it still owns the lock before every
@@ -58,16 +62,16 @@
 // folds sessions that have events but no row, and fold:error rows, again.
 import type { AgentEvent, Session } from "../schema/index.ts";
 import { isEventKind } from "../schema/index.ts";
-import type { Adapter, BackfillFile, BlobStore, Config, IndexStore, NormalizeContext, Sink, SpoolLine } from "./types.ts";
+import type { Adapter, BackfillFile, BlobStore, Config, IndexStore, NormalizeContext, OpenSession, Sink, SinkAck, SpoolLine } from "./types.ts";
 import { resolveRepoConfig, isExcluded } from "./config.ts";
 import { acquireLock, LockBusyError, wakeMarker, type Lock, type LockOptions } from "./lock.ts";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { deserialize, serialize } from "node:v8";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { hashParts, sha256Hex } from "./ids.ts";
 import { paths } from "./paths.ts";
 import { createRedactor, noteBlobHits, redactEventCounted, redactionTally, sessionToMetadata, toMetadata, type RedactionTally, type Redactor } from "./redact.ts";
-import { byTime, FLAGS, foldSession, foldStamp, isBackfillEvent, isFoldState, isRealPrompt, isVerifyToolStart, sessionOf, sessionState, type SessionState } from "./sessions.ts";
+import { buildSession, byTime, FLAGS, foldSession, foldStamp, isBackfillEvent, isFoldState, isRealPrompt, isVerifyToolStart, sessionOf, sessionState, type SessionState } from "./sessions.ts";
 import { copyFilter } from "./message-copies.ts";
 import { priceEvent, pricesFor } from "./pricing.ts";
 import { listSpoolFiles, readSpoolFile, type SpoolFile } from "./spool-read.ts";
@@ -77,7 +81,7 @@ import { isWrapperLine } from "../adapters/more/wrapper.ts";
 import { rememberTraceSessions } from "../adapters/_shared/traceparent.ts";
 import { traceKvKey } from "../otel/map.ts";
 import { linkSpawned } from "../spool/spawned.ts";
-import { matchSpawnedParent } from "../spool/spawned-match.ts";
+import { matchSpawnedParent, openAt } from "../spool/spawned-match.ts";
 
 export const PUT_BATCH = 500;
 const DEFAULT_CHECKPOINT_EVENTS = 5000;
@@ -229,6 +233,10 @@ async function markFreshStore(index: IndexStore): Promise<void> {
 
 /** kv key holding a pending parent link for a child session. */
 export const childLinkKey = (childId: string): string => `child-link:${childId}`;
+/** kv key holding the ids (a JSON array) of sessions whose hook named this session as their parent when that link did not hold (childLinker). */
+export const childWaitKey = (parentId: string): string => `child-wait:${parentId}`;
+/** Most children kept waiting on one named parent: a shell with a stale id can start any number. */
+const MAX_WAITING = 50;
 
 export async function ingest(opts: IngestOptions): Promise<IngestResult> {
   const env = opts.env ?? process.env;
@@ -320,17 +328,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   const blobStore = blobBatch ?? blobs;
 
   // Sinks currently allowed to send (not backing off).
-  const sinkStates = new Map<Sink, SinkReport & { failed: boolean }>();
-  for (const sink of opts.sinks ?? []) {
-    const retryAt = await index.getCursor(sinkRetryKey(sink.name));
-    const state = { name: sink.name, sent: 0, ok: true, failed: false } as SinkReport & { failed: boolean };
-    if (retryAt > now()) {
-      state.retryAt = retryAt;
-      state.failed = true;
-    }
-    sinkStates.set(sink, state);
-  }
-  const sinkBatchSize = (sink: Sink) => config.sinks.find((s) => (s.name ?? s.kind) === sink.name)?.batchSize ?? DEFAULT_SINK_BATCH;
+  const sinkStates = await sinkStatesFor(index, opts.sinks ?? [], now);
   const touchedAll = new Set<string>();
 
   const durations = toolDurationFiller(index);
@@ -372,10 +370,16 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
       }
       const before = s.endSnapshot;
       await endSnapshot(s);
-      if (s.endSnapshot !== before) await index.upsertSession(s);
+      if (s.endSnapshot === before) continue;
+      // Git took a while: the snapshot goes on the row as it is now, which another process may have written meanwhile (storeEnrichment).
+      const snap = s.endSnapshot;
+      await inTransaction(index, async () => {
+        const row = await index.getSession(id);
+        if (row) await index.upsertSession({ ...row, endSnapshot: snap });
+      });
     }
   };
-  const atomically = <T>(fn: () => Promise<T>): Promise<T> => (index.transaction ? index.transaction(fn) : fn());
+  const atomically = <T>(fn: () => Promise<T>): Promise<T> => inTransaction(index, fn);
 
   const sendToSink = async (sink: Sink, file: SpoolFile, window: LineEvents[], readPos: number) => {
     const state = sinkStates.get(sink)!;
@@ -383,7 +387,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     const key = sinkCursorKey(sink.name, file.source);
     const from = await index.getCursor(key);
     const lines = window.filter((l) => l.offset >= from);
-    const size = sinkBatchSize(sink);
+    const size = sinkBatchSize(config, sink);
     let i = 0;
     while (i < lines.length) {
       const batch: AgentEvent[] = [];
@@ -396,23 +400,8 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
       if (batch.length) {
         const sessions = await sessionsFor(index, batch);
         const meta = sink.mode === "metadata";
-        fence();
-        let ack;
-        try {
-          ack = await sink.write(meta ? batch.map(toMetadata) : batch, meta ? sessions.map(sessionToMetadata) : sessions, blobStore);
-        } catch (err) {
-          ack = { ok: false, error: (err as Error).message };
-        }
-        if (!ack.ok) {
-          state.ok = false;
-          state.failed = true;
-          state.error = ack.error ?? "sink rejected the batch";
-          state.retryAt = now() + (ack.retryAfterMs ?? PERMANENT_FAILURE_BACKOFF_MS);
-          fence();
-          await index.setCursor(sinkRetryKey(sink.name), state.retryAt);
-          error({ sink: sink.name, source: file.source, message: state.error });
-          return;
-        }
+        const sent = await sinkSend(index, sink, state, () => sink.write(meta ? batch.map(toMetadata) : batch, meta ? sessions.map(sessionToMetadata) : sessions, blobStore), { now, fence, error: (message) => error({ sink: sink.name, source: file.source, message }) });
+        if (!sent) return;
         state.sent += batch.length;
       }
       fence();
@@ -575,13 +564,61 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   result.sessions = touchedAll.size;
   // A bulk drain leaves a WAL as big as what it wrote until some later read-write close.
   if (result.events > BULK_WRITE_EVENTS) await Promise.all([index.checkpoint?.(), blobs.checkpoint?.()]);
-  for (const s of sinkStates.values()) {
-    const { failed: _failed, ...report } = s;
-    result.sinks.push(report);
-  }
+  result.sinks.push(...sinkReports(sinkStates));
   if (droppedErrors) result.errors.push({ message: `…and ${droppedErrors} more errors` });
   return result;
 }
+
+// ---------------------------------------------------------------- sinks
+
+/** A sink in one run: its report, and `failed` once it is backing off or a send failed (nothing more goes to it in this run). */
+type SinkState = SinkReport & { failed: boolean };
+
+/** Every configured sink's state as a run starts: one still backing off (sinkRetryKey) starts failed. */
+async function sinkStatesFor(index: IndexStore, sinks: Sink[], now: () => number): Promise<Map<Sink, SinkState>> {
+  const states = new Map<Sink, SinkState>();
+  for (const sink of sinks) {
+    const retryAt = await index.getCursor(sinkRetryKey(sink.name));
+    const state: SinkState = { name: sink.name, sent: 0, ok: true, failed: false };
+    if (retryAt > now()) {
+      state.retryAt = retryAt;
+      state.failed = true;
+    }
+    states.set(sink, state);
+  }
+  return states;
+}
+
+const sinkReports = (states: Map<Sink, SinkState>): SinkReport[] => [...states.values()].map(({ failed: _failed, ...report }) => report);
+
+const sinkBatchSize = (config: Config, sink: Sink): number => config.sinks.find((s) => (s.name ?? s.kind) === sink.name)?.batchSize ?? DEFAULT_SINK_BATCH;
+
+/**
+ * One write to a sink. False when it was refused or threw: the sink is failed
+ * for the rest of the run, its backoff is stored (so later runs skip it until
+ * then) and the error reported. `fence` runs before the send and the cursor write.
+ */
+async function sinkSend(index: IndexStore, sink: Sink, state: SinkState, write: () => Promise<SinkAck>, o: { now: () => number; fence: () => void; error: (message: string) => void }): Promise<boolean> {
+  o.fence();
+  let ack: SinkAck;
+  try {
+    ack = await write();
+  } catch (err) {
+    ack = { ok: false, error: (err as Error).message };
+  }
+  if (ack.ok) return true;
+  state.ok = false;
+  state.failed = true;
+  state.error = ack.error ?? "sink rejected the batch";
+  state.retryAt = o.now() + (ack.retryAfterMs ?? PERMANENT_FAILURE_BACKOFF_MS);
+  o.fence();
+  await index.setCursor(sinkRetryKey(sink.name), state.retryAt);
+  o.error(state.error);
+  return false;
+}
+
+/** `fn` as one transaction when the store has them. */
+const inTransaction = <T>(index: IndexStore, fn: () => Promise<T>): Promise<T> => (index.transaction ? index.transaction(fn) : fn());
 
 // ---------------------------------------------------------------- shared steps
 
@@ -593,8 +630,10 @@ export interface SpoolNormalizerOptions {
   error: (e: IngestError) => void;
   /** A line skipped because its cwd matched capture.exclude. */
   excluded: () => void;
-  /** A session started from another agent's shell tool (SpoolLine.spawnedBy): its parent link. */
+  /** A session whose hook's env named another agent's session (SpoolLine.spawnedBy): the parent link it offers, unchecked. */
   spawned?: (childSessionId: string, link: NonNullable<Session["parent"]>) => Promise<void>;
+  /** A file a line reads a session's events from is gone or out of reach (NormalizeContext.missing). */
+  missing?: (path: string, sessionId: string) => void;
 }
 
 /**
@@ -621,6 +660,7 @@ export function spoolNormalizer(o: SpoolNormalizerOptions): (line: SpoolLine, so
     }
     const metadata = capture.mode === "metadata";
     const ctx = normalizeContext(profile, blobs, metadata, { file: source, offset });
+    if (o.missing) ctx.missing = o.missing;
     let raw: AgentEvent[];
     try {
       raw = await adapter.normalize(line, ctx);
@@ -644,14 +684,12 @@ export function spoolNormalizer(o: SpoolNormalizerOptions): (line: SpoolLine, so
       if (line.gateway && ev.payload.gateway === undefined && (ev.kind === "llm.call" || out.length === 0)) ev = { ...ev, payload: { ...ev.payload, gateway: line.gateway } };
       // Host app (T3 Code) that launched the agent: buildSession attributes the session to it.
       if (line.host && ev.payload.via === undefined) ev = { ...ev, payload: { ...ev.payload, via: line.host.id, ...(line.host.thread ? { hostThreadId: line.host.thread } : {}) } };
-      // Started from another agent's shell tool (spool/spawned.ts): the start names that session as
-      // its parent, and the linker keeps the link for a start stored earlier without it.
+      // Started from another agent's shell tool (spool/spawned.ts): the linker gets the session the
+      // hook's env named. Nothing is written into the event: the marker can be stale, and only the
+      // linker, once the run's sessions are in the index, can tell (childLinker.apply).
       if (line.spawnedBy) {
         const link = linkSpawned(line.spawnedBy, ev.sessionId);
-        if (link) {
-          if (ev.kind === "session.start" && ev.payload.parentSessionId === undefined) ev = { ...ev, payload: { ...ev.payload, ...link } };
-          await o.spawned?.(ev.sessionId, { sessionId: link.parentSessionId!, type: "harness" });
-        }
+        if (link) await o.spawned?.(ev.sessionId, { sessionId: link.parentSessionId!, type: "harness" });
       }
       // HEAD a 0.1.3 hook read from .git as the session started: the start commit (./repo-state.ts).
       // Later hooks do no git work; their sessions' start commit comes from the reflog.
@@ -766,30 +804,68 @@ export function toolDurationFiller(index: IndexStore): DurationFiller {
 export interface ChildLinker {
   /** Remember links named by these (parent) events. */
   observe(parentId: string, events: AgentEvent[]): Promise<void>;
-  /** Remember a link the child named itself (a harness child's spool line), unless one is known already. */
+  /** Remember a link the child named itself (a harness child's spool line) for apply() to check, unless one is known already. */
   offer(childId: string, link: NonNullable<Session["parent"]>): Promise<void>;
   /** A pending link for a session that has none, if any. */
   pending(childId: string): Promise<NonNullable<Session["parent"]> | undefined>;
+  /** False for a link the child named itself whose parent is not in the index, or was not open when the child started. */
+  holds(child: Pick<Session, "startedAt">, link: NonNullable<Session["parent"]>): Promise<boolean>;
   /** A session new to the index that nothing links: apply() matches it to another session's shell call. */
   consider(childId: string): void;
+  /** A session's row was written: children that named it before their link held offer it again. */
+  arrived(parent: Session): Promise<void>;
   /** Applies links observed this run to children already in the index. Returns updated ids. */
   apply(): Promise<string[]>;
 }
 
 /**
- * Parent links named only by a parent's subagent.start|end { childSessionId },
- * or offered by a child started from another agent's shell tool (its spool
- * lines' spawnedBy, linked with type "harness"). Kept in memory for this run and, when the store has kv, durably, so a child
- * ingested in a later run than its parent is still linked. New sessions linked by neither are matched at apply() to a
- * shell call of another session that ran their agent's CLI (spool/spawned-match.ts).
+ * Parent links named only by a parent's subagent.start|end { childSessionId }:
+ * kept in memory for this run and, when the store has kv, durably, so a child
+ * ingested in a later run than its parent is still linked.
+ *
+ * A child started from another agent's shell tool offers its own link (its
+ * spool lines' spawnedBy, type "harness"). The id comes from the hook's env,
+ * which can be stale (a shell that outlived the agent that started it), so the
+ * link is kept only when it holds(): the named session is in the index and was
+ * open when the child started. apply() checks it, after the whole run, so a
+ * parent whose lines came later in the run counts. A link that does not hold is
+ * not made and the session stays top-level. The named session may still be its
+ * parent: one known only from its transcript is read later than the child's
+ * hooks, and ends at its last activity so far, which is the shell call that
+ * started the child until that call returns. So the child waits under that
+ * session's id (kv, the newest MAX_WAITING), and is offered again when the
+ * session's row is written (arrived()), as it is by its own later lines.
+ *
+ * New sessions linked by neither are matched at apply() to a shell call of
+ * another session that ran their agent's CLI (spool/spawned-match.ts).
  */
 export function childLinker(index: IndexStore): ChildLinker {
   const links = new Map<string, NonNullable<Session["parent"]>>();
-  /** Children whose offered link was settled this run (one kv read each, not one per line). */
-  const offered = new Set<string>();
+  /** Links children named themselves this run (the first one each), unchecked until apply(). */
+  const offers = new Map<string, NonNullable<Session["parent"]>>();
   const unlinked = new Set<string>();
   const kv = index.kvGet && index.kvSet ? { get: index.kvGet.bind(index), set: index.kvSet.bind(index) } : undefined;
+  const waiting = (raw: string | undefined): string[] => {
+    try {
+      const ids: unknown = raw ? JSON.parse(raw) : [];
+      return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+    } catch {
+      return [];
+    }
+  };
+  const wait = async (childId: string, parentId: string): Promise<void> => {
+    if (!kv) return;
+    const ids = waiting(await kv.get(childWaitKey(parentId)));
+    if (!ids.includes(childId)) await kv.set(childWaitKey(parentId), JSON.stringify([...ids, childId].slice(-MAX_WAITING)));
+  };
+  // A link with a call event was named by the parent's own events, or matched to its shell call: that parent is stored.
+  const holds: ChildLinker["holds"] = async (child, link) => {
+    if (link.type !== "harness" || link.eventId !== undefined) return true;
+    const parent = await index.getSession(link.sessionId);
+    return parent !== undefined && openAt(parent, child.startedAt);
+  };
   return {
+    holds,
     async observe(parentId, events) {
       for (const e of events) {
         const child = e.payload.childSessionId;
@@ -806,11 +882,8 @@ export function childLinker(index: IndexStore): ChildLinker {
       }
     },
     async offer(childId, link) {
-      if (childId === link.sessionId || offered.has(childId) || links.has(childId)) return;
-      offered.add(childId);
-      if (kv && (await kv.get(childLinkKey(childId)))) return;
-      links.set(childId, link);
-      if (kv) await kv.set(childLinkKey(childId), JSON.stringify(link));
+      if (childId === link.sessionId || offers.has(childId) || links.has(childId)) return;
+      offers.set(childId, link);
     },
     async pending(childId) {
       const mem = links.get(childId);
@@ -826,6 +899,20 @@ export function childLinker(index: IndexStore): ChildLinker {
     consider(childId) {
       unlinked.add(childId);
     },
+    async arrived(parent) {
+      const raw = kv ? await kv.get(childWaitKey(parent.id)) : undefined;
+      if (!raw) return;
+      const ids = waiting(raw);
+      const still: string[] = [];
+      for (const childId of ids) {
+        const child = await index.getSession(childId);
+        // Gone, or linked since: it waits no longer.
+        if (!child || child.parent) continue;
+        still.push(childId);
+        if (openAt(parent, child.startedAt) && !offers.has(childId) && !links.has(childId)) offers.set(childId, { sessionId: parent.id, type: "harness" });
+      }
+      if (still.length !== ids.length) await kv!.set(childWaitKey(parent.id), still.length ? JSON.stringify(still) : undefined);
+    },
     async apply() {
       const updated: string[] = [];
       for (const [childId, link] of links) {
@@ -835,6 +922,17 @@ export function childLinker(index: IndexStore): ChildLinker {
         updated.push(childId);
       }
       // After the whole run, so a parent whose lines came later in it (another agent's spool) is in the index.
+      for (const [childId, link] of offers) {
+        const child = links.has(childId) ? undefined : await index.getSession(childId);
+        if (!child || child.parent) continue;
+        if (!(await holds(child, link))) {
+          await wait(childId, link.sessionId);
+          continue;
+        }
+        await index.upsertSession({ ...child, parent: link });
+        updated.push(childId);
+      }
+      offers.clear();
       for (const childId of unlinked) {
         const child = links.has(childId) ? undefined : await index.getSession(childId);
         if (!child || child.parent) continue;
@@ -897,36 +995,102 @@ const FOLD_ERROR_MAX = 500;
  * has no events. When the fold throws (FoldError), the session still gets a
  * row, tagged fold:error (flagFoldError), so one bad session never hides the
  * others or stops the run that folds them.
+ *
+ * The linker and git are awaited between reading the events and writing the
+ * row, and another process may store events for the session meanwhile
+ * (storeEnrichment, a collector). So the row is written only if the session
+ * got no events since they were read (checked and written as one transaction,
+ * when the store has them); otherwise it is folded again, REFOLD_TRIES times
+ * at most.
  */
 export async function recomputeSession(index: IndexStore, id: string, o: RecomputeOptions): Promise<boolean> {
   const { linker, repo } = o;
   const prev = await index.getSession(id);
-  let folded;
-  try {
-    folded = await foldRow(index, id, prev, o.parseVersion !== undefined);
-  } catch (err) {
-    if (!(err instanceof FoldError)) throw err;
-    return flagFoldError(index, id, prev, err, o);
+  let start: Awaited<ReturnType<RepoResolver["start"]>>;
+  for (let tries = 1; ; tries++) {
+    let folded: Awaited<ReturnType<typeof foldRow>>;
+    try {
+      folded = await foldRow(index, id, prev, o.parseVersion !== undefined);
+    } catch (err) {
+      if (!(err instanceof FoldError)) throw err;
+      return flagFoldError(index, id, prev, err, o);
+    }
+    if (!folded) return false;
+    const { state, session, mark } = folded;
+    // parseVersion 0: a row the proxy created before any hook or transcript event (proxy/record.ts).
+    const unstamped = !prev || prev.parseVersion === 0;
+    const version = o.parseVersion ?? (unstamped ? o.versionFor?.(session.agent) : undefined);
+    if (version !== undefined) session.parseVersion = version;
+    // A link the child named itself is kept only while it holds (childLinker): an older build stored it unchecked.
+    const stale = session.parent !== undefined && !(await linker.holds(session, session.parent));
+    if (stale) {
+      // Offered again, so it waits for the session it named like any other.
+      await linker.offer(id, session.parent!);
+      delete session.parent;
+    }
+    if (!session.parent) {
+      const link = await linker.pending(id);
+      if (link && (await linker.holds(session, link))) session.parent = link;
+      // New to the index (or its named parent was not one) and linked by nothing: maybe started by another session's shell call (spool/spawned-match.ts).
+      else if (!prev || stale) linker.consider(id);
+    }
+    if (!session.repo) {
+      start ??= await repo.start(session, { start: state.gitStart, live: state.live });
+      if (start) session.repo = start;
+    }
+    const written = await inTransaction(index, async () => {
+      if (tries < REFOLD_TRIES && (await storedSince(index, id, mark))) return false;
+      await index.upsertSession(session);
+      return true;
+    });
+    if (!written) continue;
+    await linker.arrived(session);
+    await linker.observe(id, folded.read);
+    return true;
   }
-  if (!folded) return false;
-  const { state, session } = folded;
-  // parseVersion 0: a row the proxy created before any hook or transcript event (proxy/record.ts).
-  const unstamped = !prev || prev.parseVersion === 0;
-  const version = o.parseVersion ?? (unstamped ? o.versionFor?.(session.agent) : undefined);
-  if (version !== undefined) session.parseVersion = version;
-  if (!session.parent) {
-    const link = await linker.pending(id);
-    if (link) session.parent = link;
-    // New to the index and linked by nothing: maybe started by another session's shell call (spool/spawned-match.ts).
-    else if (!prev) linker.consider(id);
-  }
-  if (!session.repo) {
-    const start = await repo.start(session, { start: state.gitStart, live: state.live });
-    if (start) session.repo = start;
-  }
-  await index.upsertSession(session);
-  await linker.observe(id, folded.read);
-  return true;
+}
+
+/** Folds of one session by one recomputeSession call: the last one is written whatever was stored meanwhile (the writer that stored it folds the session too). */
+const REFOLD_TRIES = 3;
+
+/**
+ * True when the session got events since a fold read them. `mark` is that
+ * fold's (foldStoredSession): the store's highest sequence number among the
+ * session's events then, or their count for a store without sequence numbers.
+ */
+async function storedSince(index: IndexStore, id: string, mark: number): Promise<boolean> {
+  if (canFold(index)) return (await index.listEventsSince(id, { seq: mark, ts: Number.MAX_VALUE })).events.length > 0;
+  return (await index.listEvents(id, { offset: mark, limit: 1 })).length > 0;
+}
+
+/**
+ * Stores events that add to sessions already in the index (gateway enrich:
+ * billed cost and serving provider, as spans next to their llm calls) and
+ * builds the rows of those sessions again. Returns the sessions' ids.
+ *
+ * With a store that has transactions it is one: nothing another process
+ * stores lands between the events and the rows built from them. A fold of one
+ * of the sessions that runs in another process meanwhile (ingest, backfill,
+ * re-parse, refold) read its events either with these or without; without,
+ * recomputeSession sees that they were stored since and folds again.
+ *
+ * It does not take the ingest lock. Whoever holds that lock is taken to be
+ * ingesting: a background ingest that finds it held exits and leaves the spool
+ * and a due re-parse to the holder, and a hook leaves the holder a wake marker.
+ * A re-parse also takes it again the moment it lets go (reparse.ts underLock),
+ * so a wait for it lasts as long as the re-parse.
+ */
+export async function storeEnrichment(index: IndexStore, events: AgentEvent[]): Promise<string[]> {
+  const ids = [...new Set(events.map((e) => e.sessionId))];
+  if (!ids.length) return ids;
+  await inTransaction(index, async () => {
+    await index.putEvents(events);
+    for (const id of ids) {
+      const all = await index.listEvents(id);
+      if (all.length) await index.upsertSession(buildSession(all, await index.getSession(id)));
+    }
+  });
+  return ids;
 }
 
 /**
@@ -950,7 +1114,7 @@ async function flagFoldError(index: IndexStore, id: string, prev: Session | unde
     if (first.agentVersion) row.agentVersion = first.agentVersion;
     if (first.project && first.project !== "default") row.project = first.project;
     const link = await o.linker.pending(id);
-    if (link) row.parent = link;
+    if (link && (await o.linker.holds(row, link))) row.parent = link;
   }
   const version = o.parseVersion ?? (!prev || prev.parseVersion === 0 ? o.versionFor?.(row.agent) : undefined);
   if (version !== undefined) row.parseVersion = version;
@@ -1073,13 +1237,14 @@ const canFold = (index: IndexStore): index is FoldStore => !!(index.listEventsSi
  * saved again, up to FOLD_LAG_MS (and the last prompt) behind the newest event.
  * `events` (all of them, in time order) is set when the state needs them (see
  * sessionOf); `read` is what was read from the store; `seq`, for a simple
- * state, the store's sequence number it covers. Undefined: no events.
+ * state, the store's sequence number it covers; `mark` says how far the store
+ * was read (storedSince). Undefined: no events.
  */
-async function foldStoredSession(index: IndexStore, id: string, prev: Session | undefined, rebuild: boolean): Promise<{ state: SessionState; events?: AgentEvent[]; read: AgentEvent[]; seq?: number } | undefined> {
-  const all = (events: AgentEvent[]) => {
+async function foldStoredSession(index: IndexStore, id: string, prev: Session | undefined, rebuild: boolean): Promise<{ state: SessionState; events?: AgentEvent[]; read: AgentEvent[]; seq?: number; mark: number } | undefined> {
+  const all = (events: AgentEvent[], mark = events.length) => {
     const state = sessionState();
     for (const e of events) foldInto(state, e);
-    return { state, events, read: events };
+    return { state, events, read: events, mark };
   };
   if (!canFold(index)) {
     const events = await index.listEvents(id);
@@ -1105,14 +1270,41 @@ async function foldStoredSession(index: IndexStore, id: string, prev: Session | 
   for (; i < events.length && events[i]!.ts <= upTo; i++) foldInto(state, events[i]!);
   if (state.simple && (!saved || i > 0 || seq !== saved.seq || upTo !== from)) await index.putSessionFold(id, serialize({ v: foldStamp(), seq, upTo, state } satisfies SavedFold));
   for (; i < events.length; i++) foldInto(state, events[i]!);
-  if (state.simple) return { state, read: events, seq };
+  if (state.simple) return { state, read: events, seq, mark: seq };
   // Spans or enrichment: sessionOf needs every event, and no fold is kept.
   await index.putSessionFold(id, undefined);
-  if (!saved) return { state, events, read: events };
-  return all((await index.listEventsSince(id, { seq: 0, ts: -Infinity })).events);
+  if (!saved) return { state, events, read: events, mark: seq };
+  const whole = await index.listEventsSince(id, { seq: 0, ts: -Infinity });
+  return all(whole.events, whole.seq);
 }
 
 // ---------------------------------------------------------------- backfill
+//
+// backfill → sinks. A sink gets each event the import stores, once, with the
+// current rows of the sessions the batch touches (stripped for a metadata sink,
+// as in spool ingest). Events the store already held are not sent: a live
+// capture path stored them and the spool path sends those.
+//
+// Per sink and transcript source (a file the adapter reports, else the adapter),
+// a cursor says whether the sink has what the index stored from it: the file's
+// mtime, as the import's own cursor (SINK_CURRENT for an adapter with no files).
+// A sink whose cursor says so gets only what this run inserts. Any other value
+// means it is behind: the file is read again for it, even when the index has it
+// all, and the sink gets every event read (ids are deterministic, so one it had
+// is the same span or row again). A sink falls behind when a send fails, when
+// events are stored while it backs off, and for the length of a run: its cursor
+// is SINK_BEHIND from before the first event is stored until the sink has
+// acknowledged the source's last one, so a run that dies in between is made up
+// for by the next. A failed sink never stops the import.
+//
+// A sink that sends its session record only with session.end (otlp) has the
+// record refreshed (writeOpenSessions) for sessions that got events without one:
+// a transcript read after the session's end changes its totals.
+//
+// Sends wait until the sessions are folded: at the end of the run, and whenever
+// SINK_QUEUE_EVENTS are waiting. With sinks, one import runs at a time (a lock,
+// paths.sinkLock): what a sink is owed is what this process inserted, which
+// holds only while no other process inserts from the same files.
 
 export interface BackfillOptions {
   config: Config;
@@ -1120,12 +1312,20 @@ export interface BackfillOptions {
   blobs: BlobStore;
   /** Adapters whose backfill() to run. */
   adapters: Adapter[];
+  /** Sinks that get the events this import stores. */
+  sinks?: Sink[];
   env?: NodeJS.ProcessEnv;
   since?: number;
   /** Read no further source files (after the first) once Date.now() passes this (ms epoch); they count in `pendingFiles`. */
   deadline?: number;
   /** Called as the import goes: source files read so far and events stored, for the agent being read. */
   onProgress?: (p: BackfillProgress) => void;
+  now?: () => number;
+  /**
+   * Only with sinks: the cross-process lock one import holds while it stores and sends
+   * (default: paths(env).sinkLock; wait 30 s, or not at all with a `deadline`). false = no lock.
+   */
+  lock?: false | (LockOptions & { path?: string });
 }
 
 export interface BackfillProgress {
@@ -1147,29 +1347,93 @@ export interface BackfillResult {
   agents: { agent: string; events: number; error?: string }[];
   /** Changed source files left unread because `deadline` passed (0 otherwise). */
   pendingFiles: number;
+  /** Per sink, what this import sent it. Absent without sinks. */
+  sinks?: SinkReport[];
+  /** Another import was storing and sending to the sinks: this one read nothing. */
+  busy?: true;
 }
 
 /** Cursor keys for one backfill source file: size, mtime (floored ms) and the `since` it was read with. */
 export const backfillCursorKey = (agent: string, path: string, field: "size" | "mtime" | "since"): string => `backfill:${agent}:${path}#${field}`;
 
 /**
+ * A sink's cursor for one transcript source: a file a backfill reports, else
+ * the adapter. It holds the file's mtime (floored ms) once the sink has every
+ * event the index stored from the file as it was then, SINK_CURRENT for an
+ * adapter with no files, and SINK_BEHIND while it is owed some.
+ */
+export const sinkBackfillKey = (sink: string, agent: string, path?: string): string => sinkCursorKey(sink, path === undefined ? `backfill:${agent}` : `backfill:${agent}:${path}`);
+/** Never a file's mtime, nor 0 (a source the sink has not seen). */
+export const SINK_BEHIND = 1;
+export const SINK_CURRENT = 2;
+/** Events waiting for the sinks before an import folds its sessions and sends them, mid-run. */
+const SINK_QUEUE_EVENTS = DEFAULT_CHECKPOINT_EVENTS;
+
+/** One transcript source being read, for the sinks. */
+interface SinkSource {
+  /** Cursor name after the sink's: `backfill:<agent>[:<path>]`. */
+  name: string;
+  key: (sink: Sink) => string;
+  /** What a sink's cursor holds once it has everything stored from this source. */
+  current: number;
+  /** Sinks sent to from this source → true: every event read (the sink is behind); false: only what this run inserts. */
+  takes: Map<Sink, boolean>;
+  /** Events waiting to be sent, per sink. */
+  queue: Map<Sink, AgentEvent[]>;
+  /** Sinks owed events of this source that they were not sent: marked SINK_BEHIND. */
+  owed: Set<Sink>;
+  /** Fully read. */
+  done: boolean;
+}
+
+/**
  * Imports historical sessions from each adapter's local transcripts, with the
  * same redaction, metadata and exclusion rules as spool ingest. Prompts and
  * replies a live path (hook, plugin, OTel) already captured for the session
- * are skipped, since they share no natural id with the transcript copy.
+ * are skipped, since they share no natural id with the transcript copy. The
+ * events it stores go to the sinks (see "backfill → sinks" above).
  */
 export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
-  const { config, index, blobs } = opts;
   const env = opts.env ?? process.env;
+  if (!opts.sinks?.length || opts.lock === false) return backfillLocked(opts, env, () => {});
+  const lo = opts.lock ?? {};
+  const lockPath = lo.path ?? paths(env).sinkLock;
+  mkdirSync(dirname(lockPath), { recursive: true });
+  // A budgeted read does not wait: the import holding the lock is reading the same transcripts.
+  const waits = lo.waitMs !== undefined || opts.deadline === undefined;
+  let lock: Lock;
+  try {
+    lock = await acquireLock(lockPath, waits ? lo : { ...lo, waitMs: 0 });
+  } catch (e) {
+    if (!(e instanceof LockBusyError)) throw e;
+    const holder = e.holder ? `pid ${e.holder.pid}` : "another process";
+    const errors = waits ? [{ message: `transcripts not read: another import (${holder}) is sending to the sinks; run this again when it is done` }] : [];
+    return { events: 0, duplicates: 0, sessions: 0, excluded: 0, errors, agents: [], pendingFiles: 0, busy: true };
+  }
+  try {
+    return await backfillLocked(opts, env, () => lock.assertHeld());
+  } finally {
+    lock.release();
+  }
+}
+
+/** `fence` throws when this run no longer owns the sink lock; called before every sink send and sink cursor write. */
+async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fence: () => void): Promise<BackfillResult> {
+  const { config, index, blobs } = opts;
+  const now = opts.now ?? Date.now;
   const result: BackfillResult = { events: 0, duplicates: 0, sessions: 0, excluded: 0, errors: [], agents: [], pendingFiles: 0 };
   await markFreshStore(index);
+  const error = (e: IngestError) => {
+    if (result.errors.length < MAX_ERRORS) result.errors.push(e);
+  };
   const profileFor = profileCache(config, env, (e) => result.errors.push(e));
   const base = profileFor(undefined);
   const metadata = base.config.capture.mode === "metadata";
   // Blobs are redacted with the user-level profile: backfill can't know an event's cwd before normalizing it.
   // Puts write behind and are flushed before the rows that reference them.
   const blobBatch = blobs.batch?.();
-  const ctx = normalizeContext(base, blobBatch ?? blobs, metadata);
+  const blobStore = blobBatch ?? blobs;
+  const ctx = normalizeContext(base, blobStore, metadata);
   const copies = copyFilter(index);
   const durations = toolDurationFiller(index);
   // Sessions to recompute: those that received new events, plus every session
@@ -1181,6 +1445,132 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
   const fileCursors: { agent: string; file: BackfillFile }[] = [];
   /** Changed files read so far (the deadline only defers files after the first). */
   let accepted = 0;
+
+  const linker = childLinker(index);
+  const repo = repoResolver();
+  const byId = new Map(opts.adapters.map((a) => [a.id, a]));
+  const versionFor = (agent: string) => parseVersionFor(byId, agent);
+  const updated = new Set<string>();
+  const onFoldError = (f: FoldFailure) => error({ message: foldFailureMessage(f) });
+  const recompute = async () => {
+    for (const id of touched) if (await recomputeSession(index, id, { linker, repo, versionFor, onFoldError })) updated.add(id);
+    touched.clear();
+  };
+
+  // ---- sinks (see "backfill → sinks" above). Nothing below runs without one.
+  const sinkStates = await sinkStatesFor(index, opts.sinks ?? [], now);
+  /** Sources read in this run that a sink still has events or a cursor to get for, in read order. */
+  let sources: SinkSource[] = [];
+  /** The source the events now being yielded come from. */
+  let src: SinkSource | undefined;
+  let queued = 0;
+  const markBehind = async (s: SinkSource, sink: Sink) => {
+    fence();
+    await index.setCursor(s.key(sink), SINK_BEHIND);
+  };
+  /** `sink` did not get events of `s` it should have: behind on it until a later run reads the source again. */
+  const owe = async (s: SinkSource, sink: Sink) => {
+    s.takes.delete(sink);
+    s.queue.delete(sink);
+    if (s.owed.has(sink)) return;
+    s.owed.add(sink);
+    await markBehind(s, sink);
+  };
+  /**
+   * A source about to be read. `had`: what the cursor of a sink that has all the index
+   * stored from it holds; `at`: each sink's cursor now; `reading`: the index may get new
+   * events from it. Undefined when no sink has anything to get from it.
+   */
+  const openSource = async (agent: string, path: string | undefined, o: { current: number; had: number; at: Map<Sink, number>; reading: boolean }): Promise<SinkSource | undefined> => {
+    const s: SinkSource = { name: path === undefined ? `backfill:${agent}` : `backfill:${agent}:${path}`, key: (sink) => sinkBackfillKey(sink.name, agent, path), current: o.current, takes: new Map(), queue: new Map(), owed: new Set(), done: false };
+    for (const [sink, at] of o.at) {
+      if (at !== o.had) s.takes.set(sink, true);
+      else if (o.reading) {
+        // Behind from before anything new is stored until it has it: a run that dies in between owes it.
+        await markBehind(s, sink);
+        s.takes.set(sink, false);
+      }
+    }
+    if (!s.takes.size && !o.reading) return undefined;
+    sources.push(s);
+    return s;
+  };
+  /** Each listening sink's cursor for a source. */
+  const sinkCursors = async (agent: string, path?: string): Promise<Map<Sink, number>> => {
+    const at = new Map<Sink, number>();
+    for (const [sink, state] of sinkStates) if (!state.failed) at.set(sink, await index.getCursor(sinkBackfillKey(sink.name, agent, path)));
+    return at;
+  };
+  /** A flushed batch of `from` (`stored` of its events were new): queued for the sinks that take it. */
+  const enqueue = async (from: SinkSource, batch: AgentEvent[], fresh: AgentEvent[] | undefined, stored: number) => {
+    for (const [sink, state] of sinkStates) {
+      const all = from.takes.get(sink);
+      if (all === undefined || state.failed) {
+        // Not sent to (it backs off, or a send failed in this run): owed what it would have got.
+        if (all ? batch.length : stored) await owe(from, sink);
+        continue;
+      }
+      const list = all ? batch : fresh!;
+      if (!list.length) continue;
+      const q = from.queue.get(sink);
+      if (q) q.push(...list);
+      else from.queue.set(sink, [...list]);
+      queued += list.length;
+    }
+  };
+  /** Folds the sessions that got events, sends what is queued, and moves the cursor of each sink that now has a whole source. */
+  const deliver = async () => {
+    if (!sources.length) return;
+    await recompute();
+    for (const [sink, state] of sinkStates) {
+      const size = sinkBatchSize(config, sink);
+      const meta = sink.mode === "metadata";
+      const sent: SinkSource[] = [];
+      /** Sessions sent events here with no session.end among them → their latest event. */
+      const open = new Map<string, number>();
+      const ended = new Set<string>();
+      for (const s of sources) {
+        const events = s.queue.get(sink);
+        if (!events) continue;
+        s.queue.delete(sink);
+        const send = { now, fence, error: (message: string) => error({ sink: sink.name, source: s.name, message }) };
+        for (let i = 0; i < events.length && !state.failed; i += size) {
+          const batch = events.slice(i, i + size);
+          const sessions = await sessionsFor(index, batch);
+          if (!(await sinkSend(index, sink, state, () => sink.write(meta ? batch.map(toMetadata) : batch, meta ? sessions.map(sessionToMetadata) : sessions, blobStore), send))) break;
+          state.sent += batch.length;
+          for (const e of batch) {
+            open.set(e.sessionId, Math.max(open.get(e.sessionId) ?? -Infinity, e.ts));
+            if (e.kind === "session.end") ended.add(e.sessionId);
+          }
+        }
+        if (state.failed) await owe(s, sink);
+        else sent.push(s);
+      }
+      for (const id of ended) open.delete(id);
+      if (!state.failed && sink.writeOpenSessions && open.size) {
+        const rows: OpenSession[] = [];
+        for (const [id, lastEventAt] of open) {
+          const session = await index.getSession(id);
+          if (session) rows.push({ session: meta ? sessionToMetadata(session) : session, lastEventAt });
+        }
+        const send = { now, fence, error: (message: string) => error({ sink: sink.name, message }) };
+        for (let i = 0; i < rows.length; i += size) if (!(await sinkSend(index, sink, state, () => sink.writeOpenSessions!(rows.slice(i, i + size), blobStore), send))) break;
+        // Their events went out, the records that total them did not: sent again with the events.
+        if (state.failed) for (const s of sent) await owe(s, sink);
+      }
+      // A source read to its end whose events the sink has (or that had none for it).
+      for (const s of sources) {
+        if (!s.done || !s.takes.has(sink)) continue;
+        s.takes.delete(sink);
+        fence();
+        await index.setCursor(s.key(sink), s.current);
+      }
+    }
+    sources = sources.filter((s) => !s.done);
+    queued = 0;
+  };
+
   for (const adapter of opts.adapters) {
     if (!adapter.backfill) continue;
     const report = { agent: adapter.id, events: 0 } as BackfillResult["agents"][number];
@@ -1199,32 +1589,64 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
         if (list) list.push(e);
         else bySession.set(e.sessionId, [e]);
       }
+      // With a sink that gets only what is new, which events the store lacked matters: putEvents
+      // counts them, so each is put by itself (in one transaction when the store has them).
+      const from = src;
+      const fresh: AgentEvent[] | undefined = from && [...from.takes.values()].includes(false) ? [] : undefined;
+      let stored = 0;
       for (const [id, events] of bySession) {
-        const { inserted } = await index.putEvents(events);
+        let inserted: number;
+        if (fresh) {
+          const before = fresh.length;
+          await inTransaction(index, async () => {
+            for (const e of events) if ((await index.putEvents([e])).inserted) fresh.push(e);
+          });
+          inserted = fresh.length - before;
+        } else ({ inserted } = await index.putEvents(events));
         if (inserted) touched.add(id);
+        stored += inserted;
         result.events += inserted;
         report.events += inserted;
       }
+      if (from) {
+        await enqueue(from, batch, fresh, stored);
+        if (queued >= SINK_QUEUE_EVENTS) await deliver();
+      }
       opts.onProgress?.({ agent: adapter.id, files: accepted, events: result.events });
+    };
+    /** The source being read has yielded its last event. */
+    const endSource = async () => {
+      if (!src) return;
+      await flush();
+      src.done = true;
+      src = undefined;
     };
     // Whether events now being yielded come from a file this adapter reported as
     // read for the first time; undefined = the adapter reports no files.
     let firstRead: boolean | undefined;
     const files: BackfillFile[] = [];
     const changed = async (f: BackfillFile): Promise<boolean> => {
+      await endSource();
       const key = (field: "size" | "mtime" | "since") => backfillCursorKey(adapter.id, f.path, field);
       const [size, mtime, readSince] = await Promise.all([index.getCursor(key("size")), index.getCursor(key("mtime")), index.getCursor(key("since"))]);
       const seen = mtime > 0;
+      const current = Math.floor(f.mtimeMs);
       // Unchanged, and last read with a window at least as wide as this one.
-      if (seen && size === f.size && mtime === Math.floor(f.mtimeMs) && readSince <= since) return false;
+      const unchanged = seen && size === f.size && mtime === current && readSince <= since;
+      // A sink that lacks what the index stored from the file has it read again.
+      const at = sinkStates.size ? await sinkCursors(adapter.id, f.path) : undefined;
+      const behind = at !== undefined && [...at.values()].some((c) => c !== mtime);
+      if (unchanged && !behind) return false;
       // Out of time (after reading one, so every run makes progress): left for the next backfill, which finds it still changed.
       if (accepted > 0 && opts.deadline !== undefined && Date.now() >= opts.deadline) {
-        result.pendingFiles++;
+        if (!unchanged) result.pendingFiles++;
         return false;
       }
       accepted++;
-      firstRead = !seen;
-      files.push(f);
+      if (at) src = await openSource(adapter.id, f.path, { current, had: mtime, at, reading: !unchanged });
+      firstRead = unchanged ? false : !seen;
+      // Read only for a sink: the index's own cursors stay as they are.
+      if (!unchanged) files.push(f);
       opts.onProgress?.({ agent: adapter.id, files: accepted, events: result.events });
       return true;
     };
@@ -1234,36 +1656,33 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
         const ev = backfillEvent(e, profileFor, metadata, env);
         if (typeof ev === "string") {
           if (ev === "excluded") result.excluded++;
-          else if (result.errors.length < MAX_ERRORS) result.errors.push({ message: `${adapter.id}: ${ev}` });
+          else error({ message: `${adapter.id}: ${ev}` });
           continue;
         }
         if (await copies.isCopy(ev)) {
           result.duplicates++;
           continue;
         }
+        // Read from no file (an adapter that reports none): the adapter is the source.
+        if (!src && sinkStates.size) src = await openSource(adapter.id, undefined, { current: SINK_CURRENT, had: SINK_CURRENT, at: await sinkCursors(adapter.id), reading: true });
         pending.push(ev);
         if (firstRead !== false) touched.add(ev.sessionId);
         if (pending.length >= PUT_BATCH) await flush();
       }
       await flush();
+      await endSource();
       for (const file of files) fileCursors.push({ agent: adapter.id, file });
     } catch (err) {
       await flush().catch(() => {});
+      // Cut short: its sinks stay behind on it.
+      src = undefined;
       report.error = (err as Error).message;
       result.errors.push({ message: `${adapter.id}.backfill failed: ${report.error}` });
     }
   }
   // Blobs whose events were all dropped: renamed into place (unreferenced, gc removes them) rather than left as temp files.
   await blobBatch?.flush();
-  const linker = childLinker(index);
-  const repo = repoResolver();
-  const byId = new Map(opts.adapters.map((a) => [a.id, a]));
-  const versionFor = (agent: string) => parseVersionFor(byId, agent);
-  const updated = new Set<string>();
-  const onFoldError = (f: FoldFailure) => {
-    if (result.errors.length < MAX_ERRORS) result.errors.push({ message: foldFailureMessage(f) });
-  };
-  for (const id of touched) if (await recomputeSession(index, id, { linker, repo, versionFor, onFoldError })) updated.add(id);
+  await recompute();
   for (const id of await linker.apply()) updated.add(id);
   for (const { agent, file } of fileCursors) {
     await index.setCursor(backfillCursorKey(agent, file.path, "size"), file.size);
@@ -1271,7 +1690,10 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
     // mtime last: it marks the file as read.
     await index.setCursor(backfillCursorKey(agent, file.path, "mtime"), Math.floor(file.mtimeMs));
   }
+  // After the rows are linked and the index's cursors are in: a sink's cursor never runs ahead of them.
+  await deliver();
   result.sessions = updated.size;
+  if (sinkStates.size) result.sinks = sinkReports(sinkStates);
   if (result.events > BULK_WRITE_EVENTS) await Promise.all([index.checkpoint?.(), blobs.checkpoint?.()]);
   return result;
 }

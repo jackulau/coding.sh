@@ -135,6 +135,9 @@ export interface HookTiming {
   flushMs?: number;
   minBackoffMs?: number;
   maxBackoffMs?: number;
+  /** The sink mirror's open-session timing (SinkMirrorOptions). */
+  quietMs?: number;
+  refreshMs?: number;
 }
 
 export function createCommitHooks(o: { cfg: ServeConfig; blobs: BlobStore; sinks: Sink[]; metrics: ServeMetrics; log: Logger; fetch?: typeof fetch; timing?: HookTiming }): CommitHooks {
@@ -155,7 +158,8 @@ export function createCommitHooks(o: { cfg: ServeConfig; blobs: BlobStore; sinks
     forwarder || mirror
       ? (committed: CommittedEntry[]) => {
           for (const c of committed) {
-            mirror?.add(c.events, c.sessions);
+            // Only the events this commit newly stored: a retried request reaches a sink once.
+            mirror?.add(c.insertedEvents, c.sessions);
             if (!forwarder) continue;
             // Traces only (v1): log records and metrics are stored but not forwarded.
             if (c.entry.kind === "otlp") {

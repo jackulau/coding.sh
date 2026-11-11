@@ -1,6 +1,6 @@
 {
   // npm run build: declaration files for the published entry points
-  // (coding.sh/schema, coding.sh/store, coding.sh/store/conformance, coding.sh/eve, coding.sh/server) into dist/types.
+  // (coding.sh/schema, coding.sh/store, coding.sh/store/conformance, coding.sh/eve, coding.sh/server, coding.sh/judge) into dist/types.
   // html.d.ts types the viewer page import that coding.sh/server reaches through serve.ts.
   "extends": "./tsconfig.json",
   "compilerOptions": {
@@ -11,5 +11,5 @@
     "outDir": "dist/types"
   },
   "include": [],
-  "files": ["src/schema/index.ts", "src/store/plugin-api.ts", "src/store/conformance.ts", "src/integrations/eve/reporter.ts", "src/server/index.ts", "src/viewer/ui/html.d.ts"]
+  "files": ["src/schema/index.ts", "src/store/plugin-api.ts", "src/store/conformance.ts", "src/integrations/eve/reporter.ts", "src/server/index.ts", "src/judge/lib.ts", "src/viewer/ui/html.d.ts"]
 }

@@ -728,6 +728,8 @@ const METADATA_STRING_KEYS = new Set([
   "subagentKind",
   "accountHash",
   "upstreamAuth",
+  // Which gateway a call went through (a gateway id such as "cliproxyapi"): the session's gateway tag.
+  "gateway",
   // Hook context: which hook event and whose hook (plugin:<name>, settings), never the text or command.
   "hookEvent",
   "hookSource",
@@ -788,11 +790,12 @@ export function redactionCounts(v: unknown): Record<string, number> | undefined 
   return out;
 }
 
-/** Metadata-only view of a session: drops title, cwd and repo root. */
+/** Metadata-only view of a session: drops title, cwd, repo root and the paths of the memory files it used. */
 export function sessionToMetadata(s: Session): Session {
   const out: Session = { ...s, stats: { ...s.stats }, flags: [...s.flags] };
   delete out.title;
   delete out.cwd;
+  delete out.stats.memoryUse;
   // A model error message can quote the prompt; keep the count and status code.
   if (out.stats.llmErrors?.error !== undefined) {
     const { error: _error, ...rest } = out.stats.llmErrors;

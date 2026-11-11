@@ -59,10 +59,13 @@ export const DRY_RUN: FlagSpec = { name: "dry-run", type: "boolean", desc: "Show
 export const FORCE: FlagSpec = { name: "force", type: "boolean", desc: "Replace the named target when it already exists. An agent passes it only once the user approves" };
 const AGENT_LIST: FlagSpec = { name: "agent", short: "a", type: "list", commas: true, value: "<AGENT>", desc: "Only this agent (repeatable, or a comma list: a,b)" };
 const AGENT_ONE: FlagSpec = { name: "agent", short: "a", type: "list", commas: true, value: "<AGENT>", desc: "Only sessions from this agent (repeatable, or a comma list: a,b)" };
-const SINCE: FlagSpec = { name: "since", type: "string", value: "<WHEN>", desc: "Only after this time: 7d, 12h, 30m or a date" };
+/** Every --since and --until goes through parseSince (args.ts): a date without a zone is local time. */
+const SINCE: FlagSpec = { name: "since", type: "string", value: "<WHEN>", desc: "Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight" };
 const FRESH: FlagSpec = { name: "fresh", type: "boolean", desc: "Wait for every pending capture to be ingested (default: answer after 1.5 s)" };
 /** What a read answered before every capture was indexed says, for --json readers. */
 const PENDING_NOTE = 'With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.';
+/** --fields: only these paths of the --json document. */
+const FIELDS = (example: string): FlagSpec => ({ name: "fields", type: "list", commas: true, value: "<PATHS>", desc: `With --json: print only these fields, as a comma list of dotted paths (${example}). A path through a list picks from each item` });
 const LIMIT = (d: number): FlagSpec => ({ name: "limit", short: "n", type: "number", value: "<N>", desc: "Maximum rows", default: String(d) });
 /** `--where`: the query language in src/query/where.ts. */
 const WHERE = (what: string): FlagSpec => ({ name: "where", type: "string", dashValue: true, value: "<QUERY>", desc: `Only ${what} matching a query, e.g. 'agent:codex cost>0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help)` });
@@ -95,7 +98,7 @@ const EXP_RUN_FLAGS: FlagSpec[] = [
 
 /** Where improve looks (improve, improve fix, improve check). */
 const IMPROVE_FLAGS = (since: string, limit: number): FlagSpec[] => [
-  { name: "since", type: "string", value: "<WHEN>", desc: "Only sessions (check: changes) after this time: 7d, 12h or a date", default: since },
+  { name: "since", type: "string", value: "<WHEN>", desc: "Only sessions (check: changes) after this time: 7d, 12h, today or a date (local time)", default: since },
   { name: "repo", type: "string", value: "<DIR|all>", desc: "Only sessions under this directory, or all (default: this git repo)" },
   AGENT_LIST,
   { name: "headless", type: "boolean", desc: "Include headless sessions (claude -p, an Agent SDK, codex exec), left out by default" },
@@ -221,11 +224,12 @@ export const COMMANDS: CommandSpec[] = [
       AGENT_LIST,
       { name: "port", type: "number", value: "<PORT>", desc: "OTLP receiver port to check", default: "4318" },
       { name: "conformance", type: "boolean", desc: "Instead: read each agent's transcripts and check the events against coding.sh's invariants (read-only)" },
-      { name: "since", type: "string", value: "<WHEN>", desc: "With --conformance, only transcripts after this time: 7d, 12h, 30m or a date", default: "7d" },
+      { name: "since", type: "string", value: "<WHEN>", desc: "With --conformance, only transcripts after this time: 7d, 12h, 30m or a date (local time)", default: "7d" },
       { name: "max-events", type: "number", value: "<N>", desc: "With --conformance, stop each agent after this many events", default: "200000" },
     ],
     examples: ["coding.sh doctor", "coding.sh doctor --json", "coding.sh doctor --conformance", "coding.sh doctor --conformance --agent codex --since 30d --json"],
     notes: [
+      "A row marked ! is a warning, and --json lists each one under warnings with the command that fixes it. An agent is one when no hook for this coding.sh home is in its config or something blocks the hook; the last line then reads N agents not capturing. The exit code and ok in --json are 1 and false only when the spool or the store fails.",
       "--conformance runs each agent's backfill over the transcripts on this machine and checks the events: ids, timestamps, tool and subagent pairing, parent links, usage and prompts. It only reads: blobs are hashed and dropped, SQLite sources are read from a copy, and the coding.sh store is not opened. Exits 1 when any agent has a violation.",
     ],
     load: () => import("./commands/doctor.ts"),
@@ -315,7 +319,8 @@ export const COMMANDS: CommandSpec[] = [
         flags: [
           { name: "clickhouse", type: "string", value: "<URL>", desc: "ClickHouse HTTP URL, e.g. http://127.0.0.1:8123/?database=otel (user and password from the URL or CLICKHOUSE_USER / CLICKHOUSE_PASSWORD)" },
           { name: "table", type: "string", value: "<TABLE>", desc: "Table to read (db.table also names the database)", default: "otel_traces" },
-          { name: "since", type: "string", value: "<WHEN>", desc: "Only spans that started after this: a duration (7d, 12h) or a date", default: "7d" },
+          { name: "since", type: "string", value: "<WHEN>", desc: "Only spans that started after this: a duration (7d, 12h) or a date. When given, the run reads from there again instead of resuming", default: "7d" },
+          { name: "from-start", type: "boolean", desc: "Read from --since again instead of resuming after the last span imported (nothing is stored twice)" },
           { name: "where", type: "string", value: "<SQL>", desc: "Extra ClickHouse condition on the rows, e.g. \"ServiceName = 'claude-code'\"" },
           { name: "all", type: "boolean", desc: "Read every span, not only traces with an agent span (gen_ai.*, OpenInference, Vercel AI SDK, Claude Code, eve)" },
           DRY_RUN,
@@ -323,13 +328,15 @@ export const COMMANDS: CommandSpec[] = [
         examples: [
           "coding.sh collector import --clickhouse http://127.0.0.1:8123/?database=otel",
           "coding.sh collector import --clickhouse https://ch.example.com:8443/ --table otel.otel_traces --since 30d --dry-run",
+          "coding.sh collector import --clickhouse http://127.0.0.1:8123/?database=otel --from-start",
         ],
       },
     ],
     examples: ["coding.sh collector", "coding.sh otel --port 0", "coding.sh collector import --clickhouse http://127.0.0.1:8123/?database=otel"],
     notes: [
       "Prints the OTEL_* environment to stdout; status goes to stderr.",
-      "import keeps its place per table and starts the next run an hour before it (a root span lands after its children); a span stored once is never stored again.",
+      "import keeps its place per table and row filter (--all, each --where) and starts the next run an hour before it (a root span lands after its children); --from-start or a --since on the command line reads from --since again. A span stored once is never stored again.",
+      "import tries a dropped connection or a 502, 503 or 504 three more times. A run that still fails keeps the pages it read, with their sessions, and prints the command that reads the rest.",
     ],
     load: () => import("./commands/collector.ts"),
   },
@@ -430,11 +437,12 @@ export const COMMANDS: CommandSpec[] = [
       { name: "project", type: "string", value: "<ID>", desc: "Only sessions in this serve project (default: all)" },
       { name: "flag", type: "string", value: "<NAME>", desc: "Only sessions with this flag: looping, failure-streak, churn, no-progress, stalled, context-thrash, premature-completion, duplicate-fetch, …, or a tag such as skill:<name>" },
       WHERE("sessions"),
+      FIELDS("id,title,stats.usage.costUsd"),
       { name: "facets", type: "string", optionalValue: true, valuePattern: /^[a-z.]+(,[a-z.]+)*$/, value: "<KEYS>", desc: `Count sessions per value instead of listing them: ${FACET_KEYS.join(", ")} (default: agent, model, repo, flag, skill, tool)` },
       FRESH,
     ],
     examples: ["coding.sh sessions --where 'agent:codex cost>0.5 since:7d'", "coding.sh sessions --where 'tool:Bash ok:false -flag:compaction'", "coding.sh sessions --facets model,tool --where 'repo:coding-sh'", "coding.sh sessions --agent codex --since 7d"],
-    notes: [...WHERE_NOTES, "--facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).", PENDING_NOTE],
+    notes: [...WHERE_NOTES, "--facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).", "With --json each session is a digest: its stats without stats.phases, and each derail without the event it started at (eventId, index). show <id> --json has both, and --fields stats.phases or --fields stats.derails prints them here.", PENDING_NOTE],
     load: () => import("./commands/sessions.ts"),
   },
   {
@@ -446,11 +454,13 @@ export const COMMANDS: CommandSpec[] = [
       { name: "limit", short: "n", type: "number", value: "<N>", desc: "List the first N events (default 200; a longer session shows as phases)" },
       { name: "all", type: "boolean", desc: "List every event, with phase and day lines and derail markers" },
       { name: "follow", short: "f", type: "boolean", desc: "Keep printing new events as a running session goes on (Ctrl-C to stop)" },
+      FIELDS("session.id,session.stats.usage,phases"),
       FRESH,
     ],
     examples: ["coding.sh show latest", "coding.sh show 9f1c2e", "coding.sh show 9f1c2e --all", "coding.sh show latest --follow", "coding.sh show 'latest#-1'"],
     notes: [
       "A session with more than 200 events shows one line per phase: the start, each resume, compaction and long idle gap, with where it derailed.",
+      "With --json a session with more than 200 events prints events: [] next to eventCount and phases; --limit N or --all lists the events. An event leaves out sessionId, agent and cwd when they equal the session's. subagents lists the first 50 subagent sessions and subagentCount is how many there are; when more are left, subagentsRest is the command that pages them all (tree --json).",
       "A model call logged by coding.sh proxy shows its system prompt, tools, settings, cache use, usage and cost (--all: the whole system prompt).",
     ],
     load: () => import("./commands/show.ts"),
@@ -460,10 +470,16 @@ export const COMMANDS: CommandSpec[] = [
     group: "Explore",
     summary: "Show a whole multi-agent run as one tree, with rolled-up totals",
     args: [{ name: "session|run", desc: "A session id or prefix (its whole tree, from the top-level agent down), or a run id (every agent of the fan-out)", required: true }],
-    flags: [{ name: "run", type: "boolean", desc: "Read the argument as a run id (CODING_SH_RUN_ID), not a session" }, FRESH],
-    examples: ["coding.sh tree latest", "coding.sh tree 9f1c2e", "coding.sh tree my-fanout-123 --run"],
+    flags: [
+      { name: "run", type: "boolean", desc: "Read the argument as a run id (CODING_SH_RUN_ID), not a session" },
+      { name: "limit", short: "n", type: "number", value: "<N>", desc: "With --json: most nodes in one page", default: "50" },
+      { name: "cursor", type: "string", value: "<CURSOR>", desc: "With --json: the nextCursor of the last page" },
+      FRESH,
+    ],
+    examples: ["coding.sh tree latest", "coding.sh tree 9f1c2e", "coding.sh tree my-fanout-123 --run", "coding.sh tree latest --json --limit 100"],
     notes: [
       "From any session, the tree is its top-level agent and every subagent under it, with per-node model, cost, tokens, duration and tool calls, and the run's totals and worst flag.",
+      "With --json the tree comes a page at a time: 50 nodes, depth-first, with nextCursor and truncated: true when more are left. totals and worst cover the whole tree on every page. A node whose parent was on an earlier page is at the top level of its page; depth and parentSessionId say where it hangs. Nodes are session digests, as in sessions --json.",
       "Separate agent processes group into one run when they share a run id: set CODING_SH_RUN_ID on the orchestrator that launches your fan-out, then pass that id.",
     ],
     load: () => import("./commands/tree.ts"),
@@ -513,7 +529,7 @@ export const COMMANDS: CommandSpec[] = [
     flags: [
       { name: "repo", type: "string", value: "<DIR>", desc: "A directory in the git repository (default: the current one)" },
       { name: "rev", type: "string", value: "<REV>", desc: "Branch or commit to walk back from", default: "HEAD" },
-      { name: "since", type: "string", value: "<WHEN>", desc: "Only commits after this time: 30d, 12h or a date (default: the first captured session in the repo)" },
+      { name: "since", type: "string", value: "<WHEN>", desc: "Only commits after this time: 30d, 12h or a date in local time (default: the first captured session in the repo)" },
       { name: "all", type: "boolean", desc: "Also list commits with no agent lines" },
       LIMIT(50),
       FRESH,
@@ -528,7 +544,7 @@ export const COMMANDS: CommandSpec[] = [
           { name: "viewer-url", type: "string", value: "<URL>", desc: "Viewer base URL for each session link", default: "http://127.0.0.1:4319" },
           { name: "repo", type: "string", value: "<DIR>", desc: "A directory in the git repository (default: the current one)" },
           { name: "rev", type: "string", value: "<REV>", desc: "Branch or commit to walk back from", default: "HEAD" },
-          { name: "since", type: "string", value: "<WHEN>", desc: "Only commits after this time: 30d, 12h or a date (default: the first captured session in the repo)" },
+          { name: "since", type: "string", value: "<WHEN>", desc: "Only commits after this time: 30d, 12h or a date in local time (default: the first captured session in the repo)" },
           FRESH,
         ],
         examples: ["coding.sh attribution export > agent-trace.jsonl", "coding.sh attribution export --since 30d --out trace.jsonl", "coding.sh attribution export --json"],
@@ -536,7 +552,7 @@ export const COMMANDS: CommandSpec[] = [
     ],
     examples: ["coding.sh attribution", "coding.sh attribution --since 7d --rev main", "coding.sh attribution --json"],
     notes: [
-      "Matches the lines each commit added to the lines each captured session added: the diff from its start state to its end snapshot, else its own edit tool calls. A whole-file match (patch id) or a same-file line match counts; moved long lines count at lower confidence; braces and blank lines only follow a matched neighbor. A rebased commit still matches.",
+      "Matches the lines each commit added to the lines each captured session added: the diff from its start state to its end snapshot, and its own edit tool calls for the files that diff does not hold. A whole-file match (patch id) or a same-file line match counts; moved long lines count at lower confidence; braces and blank lines only follow a matched neighbor. A rebased commit still matches.",
       "A session gets credit for commits authored or committed from its start to 21 days later; of two sessions that wrote a line, the later one. Lines no session wrote belong to no session: a person wrote them, or an agent coding.sh did not capture.",
       "Reads git only (log, diff, blame, notes). git-ai notes (refs/notes/ai), when present, credit lines no captured session matched. Each commit's result is kept in the store's key/value table.",
       "--json: one document with totals, the sessions credited and per commit its attributions (path, line ranges, session, agent, model, confidence, method). export --json: {version, records}.",
@@ -604,6 +620,7 @@ export const COMMANDS: CommandSpec[] = [
       FRESH,
     ],
     examples: ["coding.sh usage", "coding.sh usage --baseline", "coding.sh usage --cache --by model", "coding.sh usage --by agent-model --since 90d", "coding.sh usage --by model --where 'repo:coding-sh tool:Bash'"],
+    notes: ["Totals cover every session in the window. A scan that stops at 100,000 sessions says so under the table (Stopped after 100,000 sessions) and sets window.truncated in --json; cache doctor does the same."],
     load: () => import("./commands/usage.ts"),
   },
   {
@@ -617,7 +634,7 @@ export const COMMANDS: CommandSpec[] = [
         flags: [
           AGENT_ONE,
           { ...SINCE, default: "30d" },
-          { name: "limit", short: "n", type: "number", value: "<N>", desc: "Read the events of at most this many sessions with breaks, costliest first", default: "200" },
+          { name: "limit", short: "n", type: "number", value: "<N>", desc: "Read the stored requests of at most this many sessions with breaks, costliest first; the totals, the causes and the grade cover every session", default: "200" },
           WHERE("sessions"),
           FRESH,
         ],
@@ -628,7 +645,8 @@ export const COMMANDS: CommandSpec[] = [
       "Hit rate is cache reads / all prompt tokens, the CACHE READ column of coding.sh usage, over the same sessions. The breaks are the ones coding.sh show and usage count, so tokens and USD match theirs.",
       "Each break gets the first change between its two calls, in the order the cache reads a request: model-switch; tools-added, tools-removed, tools-reordered, tools-changed; system-volatile-line (a line that differs only in its numbers, such as a timestamp), system-changed; history-rewritten (compaction); then idle (a wait past the cache lifetime) or other. Idle and other are not counted as avoidable.",
       "Grade: 60% the hit rate against 90%, 40% the share of prompt tokens re-billed for avoidable causes (a quarter or more scores 0). A 90+, B 80+, C 70+, D 60+, else F.",
-      "Tool and system prompt causes need the requests: calls logged by coding.sh proxy in capture mode full. Without them a break is classified from hashes, the model and timing, and the report says how many were.",
+      "Tool and system prompt causes need the requests: calls logged by coding.sh proxy in capture mode full. Without them a break is classified from hashes, message counts, the model and timing, and the report says how many were.",
+      "--limit bounds only the sessions whose stored requests are read. The hit rate, breaks, tokens, USD and grade cover every session in the window, and the grade is the same at any --limit wherever the hashes and counts show the change. A session with stored requests past the limit is classified as one without them is, from hashes, message counts, the model and timing: a tools or system prompt change is named without its detail (tools-changed, system-changed), and a history edit that keeps the message count reads as other. --json has sessionsNotRead and breaksNotRead. A session with no stored requests reads the same at any --limit.",
       PENDING_NOTE,
     ],
     load: () => import("./commands/cache.ts"),
@@ -642,7 +660,7 @@ export const COMMANDS: CommandSpec[] = [
       { name: "by", type: "string", value: "<GROUP>", choices: ["agent", "model", "repo", "flag"], desc: "One row per group, with its trend (default: one row per day or week)" },
       { name: "per", type: "string", value: "<BUCKET>", choices: ["day", "week"], desc: "Bucket size", default: "day" },
       { ...SINCE, default: "30d" },
-      { name: "until", type: "string", value: "<WHEN>", desc: "Only before this time: 7d, 12h or a date (default: now)" },
+      { name: "until", type: "string", value: "<WHEN>", desc: "Only before this time (exclusive): 7d, 12h, today or a date in local time; --until 2026-11-09 leaves that day out (default: now)" },
       { name: "all", type: "boolean", desc: "Count subagent sessions as their own rows (default: top-level sessions only)" },
       WHERE("sessions"),
       FRESH,
@@ -751,7 +769,7 @@ export const COMMANDS: CommandSpec[] = [
           { name: "verifier", type: "string", value: "<CMD>", desc: "With --sessions: command that passes only when a task is solved (default: guessed per session)" },
           { name: "hidden-test", type: "list", value: "<GLOB>", desc: "With --sessions: test files to hide from the agent (repeatable)" },
           { name: "where", type: "string", value: "<QUERY>", desc: "Tasks from the sessions this query matches (sessions --where syntax), instead of every failed or flagged one" },
-          { name: "validate", type: "boolean", desc: "With --sessions or --where: validate each task before it goes into the suite. A session diff that passes the verifier becomes the reference and the task is marked validated; one that fails it is kept as a near miss" },
+          { name: "validate", type: "boolean", desc: "With --sessions or --where: validate each task before it goes into the suite. A session diff that passes the verifier becomes the reference and the task is marked validated; one that fails it, or that changes the tests the verifier runs, is kept as a near miss" },
           { name: "validate-k", type: "number", value: "<N>", desc: "With --validate: the session's end state must pass N of N verifier runs", default: "1" },
           { name: "skill", type: "string", value: "<DIR>", desc: "Should / should-not trigger prompts for this skill" },
           { name: "should", type: "list", value: "<PROMPT>", desc: "With --skill: a prompt that should load it (repeatable)" },
@@ -918,6 +936,7 @@ export const COMMANDS: CommandSpec[] = [
           { name: "draft-model", type: "string", value: "<MODEL>", desc: "With --draft: the model" },
           { name: "n", type: "number", value: "<N>", desc: "With --draft: prompts per side", default: "8" },
           { name: "since", type: "string", value: "<AGE>", desc: "With --draft: how far back to look for sessions", default: "90d" },
+          { name: "repo", type: "string", value: "<DIR|all>", desc: "With --draft: sessions under this directory, or all (default: this git repo)" },
           { name: "no-traces", type: "boolean", desc: "With --draft: draft from SKILL.md only, without reading captured sessions" },
           { name: "force", type: "boolean", desc: "With --draft: replace an existing triggers.toml. An agent passes it only once the user approves" },
           { name: "dry-run", type: "boolean", desc: "With --draft: print the draft without writing it" },
@@ -1283,12 +1302,12 @@ export const COMMANDS: CommandSpec[] = [
           { name: "comment", type: "string", value: "<TEXT>", desc: "Why this score" },
           { name: "source", type: "string", value: "<SOURCE>", choices: ["human", "judge", "code", "api", "monitor"], desc: "Who gave it", default: "human" },
           { name: "config", type: "string", value: "<ID>", desc: "Check the value against this config (default: the config with the score's name)" },
-          { name: "session", type: "string", value: "<ID>", desc: "The session an event, case or run belongs to" },
+          { name: "session", type: "string", value: "<ID>", desc: "The session a case or run belongs to (an event's own session is looked up)" },
           { name: "judge-version", type: "string", value: "<VERSION>", desc: "Judge version that produced the score" },
           { name: "id", type: "string", value: "<ID>", desc: "Score id; adding the same id again replaces it (default: one per target, name, source and person)" },
           FRESH,
         ],
-        examples: ["coding.sh score add latest outcome true", "coding.sh score add 4f2a helpfulness 4 --comment 'fixed it first try'", "coding.sh score add event:evt_123 correct false --source code --session 4f2a"],
+        examples: ["coding.sh score add latest outcome true", "coding.sh score add 4f2a helpfulness 4 --comment 'fixed it first try'", "coding.sh score add event:evt_123 correct false --source code"],
       },
       {
         name: "list",
@@ -1323,6 +1342,8 @@ export const COMMANDS: CommandSpec[] = [
     notes: [
       "Labels are human scores: a pass or fail label is a boolean score, and judge calibrate reads human boolean scores as labels.",
       "A value outside its config's range or categories is refused (exit 2). The viewer and serve take the same scores at /api/scores.",
+      "A stored score keeps its type: a value that reads as another type is refused (exit 2) unless --type is given or the name has a config.",
+      "An event must be in the store to be scored. Its session is its own: --session with another session is refused (exit 2).",
     ],
     load: () => import("../scores/cli.ts"),
   },
@@ -1338,7 +1359,7 @@ export const COMMANDS: CommandSpec[] = [
           { name: "grader", short: "g", type: "string", value: "<JSON|FILE>", desc: "Grader spec, the same JSON as `exp run --grader` (llm, llm-checklist with trace checks, contains, regex, …)" },
           { name: "output", type: "string", value: "<FILE|->", desc: "The output to grade (default: $CODING_SH_AGENT_OUTPUT, the agent's final answer in a verifier)" },
           { name: "trace", type: "string", value: "<FILE>", desc: "Claude stream-json or transcript, codex exec --json, Cursor stream-json, OpenAI chat messages or Responses items, or coding.sh events as JSONL (default: $CODING_SH_AGENT_STDOUT)" },
-          { name: "allow-partial-trace", type: "boolean", desc: "Grade even when tool calls in --trace did not reach the judge (otherwise exit 2, trace_incomplete)" },
+          { name: "allow-partial-trace", type: "boolean", desc: "Grade even when --trace has cut lines, records the judge does not read, or tool calls that did not reach it (otherwise exit 2, trace_incomplete)" },
           { name: "input", type: "string", value: "<TEXT|@FILE>", desc: "The task input shown to a judge" },
           { name: "metadata", type: "string", value: "<JSON|FILE>", desc: "Case metadata, e.g. {\"instructions\": \"…\"} for follows-rules" },
           { name: "diff", type: "string", value: "<FILE|->", desc: "The agent's work as a unified diff, for agent-slop (default: $CODING_SH_AGENT_DIFF in a verifier)" },
@@ -1563,7 +1584,7 @@ export const COMMANDS: CommandSpec[] = [
       "A failed compound line (&&, ;, |, a loop) counts against the part that failed: the one its error names, the tool whose error it is, the part timeout stopped, or the last part of a pipeline. When nothing singles one out, the issue says compound command.",
       "When sessions ran on the repo's current harness version (the newest commit that changed AGENTS.md or another instructions file, a rule or a skill) and none of them had an issue, the issue is marked 'Not seen since <commit>', goes last, and points at improve check instead of a new line.",
       "check reads the git history of AGENTS.md, the Claude Code and Gemini instructions files, .claude/rules, .cursor/rules and skills. A session counts for the newest such commit its starting HEAD contains, so uncommitted edits count from the commit that keeps them. Sessions with no recorded HEAD, and sessions with no tool call outside MCP servers (a chat, or asking coding.sh about a change), are left out.",
-      "check compares sessions with a failure flag before and after each change (overall and per flag), and, for each added line that names a command, flag, path or identifier, the share of sessions that acted on it. Two-sided Fisher exact tests at p ≤ 0.1: more flagged sessions is Regressed (exit 1); fewer flagged sessions, or one flag falling (Holm-adjusted) with no other rising, is Helped. A new line the agent follows while flagged sessions stay put is Followed, no effect yet. More tool calls or wall time per session (median 1.25x, permutation p ≤ 0.1) with no fall is Costlier; both suggest refine test git:<previous> to test the harness without the change. Under 5 sessions after a change without a clear result is Too early to tell.",
+      "check compares sessions with a failure flag before and after each change (overall and per flag), and, for each added line that names a command, flag, path or identifier, the share of sessions that acted on it. Two-sided Fisher exact tests at p ≤ 0.1: more flagged sessions is Regressed (exit 1); fewer flagged sessions, or one flag falling (Holm-adjusted) with no other rising significantly, is Helped, and its line names any flag that rose. A new line the agent follows while flagged sessions stay put is Followed, no effect yet. More tool calls or wall time per session (median 1.25x, permutation p ≤ 0.1) with no fall is Costlier; both suggest refine test git:<previous> to test the harness without the change. Under 5 sessions after a change without a clear result is Too early to tell.",
       "Under each change, check lists the sessions after it that still have a failure flag, newest first, with their flags (5, or all with --sessions; --json has every flagged session before and after).",
       "exp ab (the replay A/B that improve suggests) needs ANTHROPIC_API_KEY, OPENAI_API_KEY, or Claude Code or Codex logged in (it runs on your subscription then). Without any of them, commit the change and let improve check judge it on new sessions.",
     ],
@@ -1813,7 +1834,7 @@ export const COMMANDS: CommandSpec[] = [
         flags: [
           { name: "since", type: "string", value: "<DURATION|DATE>", desc: "Sessions started since", default: "30d" },
           { name: "agent", type: "list", commas: true, value: "<AGENT>", desc: "Only sessions of this agent (repeatable, or a comma list)" },
-          { name: "repo", type: "string", value: "<DIR|all>", desc: "Only sessions under this directory (default: this git repo)" },
+          { name: "repo", type: "string", value: "<DIR|all>", desc: "Only sessions under this directory, and eval runs of tasks that start from it or of the suites under its evals/ (default: this git repo)" },
           { name: "min-support", type: "string", value: "<SESSIONS[,DAYS]>", desc: "Keep a pattern seen in at least this many sessions over this many days", default: "3,2" },
           { name: "limit", short: "n", type: "number", value: "<N>", desc: "Most patterns shown", default: "20" },
         ],
@@ -1849,7 +1870,7 @@ export const COMMANDS: CommandSpec[] = [
           { name: "max-cost", type: "number", value: "<USD>", desc: "Start no new draw once distiller spend reaches this", default: "5" },
           { name: "min-episodes", type: "number", value: "<N>", desc: "Refuse a corpus with fewer episodes", default: "20" },
           { name: "min-failures", type: "number", value: "<N>", desc: "Refuse a corpus with fewer failing or flagged episodes", default: "5" },
-          { name: "keep-corpus", type: "string", value: "<DIR>", desc: "Write the corpus here and keep it (an empty or new directory)" },
+          { name: "keep-corpus", type: "string", value: "<DIR>", desc: "Write the corpus here and keep it: an empty or new directory, or one that holds only an earlier corpus, which is replaced. Nothing is written there with --dry-run" },
           { name: "dry-run", type: "boolean", desc: "Write the corpus to a temp dir, print its counts and the plan; start no agent" },
           YES,
         ],
@@ -1862,7 +1883,7 @@ export const COMMANDS: CommandSpec[] = [
           { name: "since", type: "string", value: "<DURATION|DATE>", desc: "Sessions started since", default: "7d" },
           { name: "agent", type: "list", commas: true, value: "<AGENT>", desc: "Only sessions of this agent (repeatable, or a comma list)" },
           { name: "repo", type: "string", value: "<DIR|all>", desc: "Only sessions under this directory (default: this git repo)" },
-          { name: "session", type: "list", commas: true, value: "<ID>", desc: "Exactly these sessions (repeatable; ignores --since)" },
+          { name: "session", type: "list", commas: true, value: "<ID>", desc: "Exactly these sessions: an id, a prefix or latest (repeatable; ignores --since, --repo and --agent)" },
           { name: "max-sessions", type: "number", value: "<N>", desc: "Most sessions diagnosed, newest first", default: "50" },
           { name: "budget-tokens", type: "number", value: "<N>", desc: "Stop starting uncached sessions past this many estimated input tokens; the next run picks up the rest" },
           { name: "provider", type: "string", value: "<PROVIDER>", desc: "anthropic, openai, claude-code or codex (default: the API whose key is set; with none, a $0 plan)" },
@@ -1877,7 +1898,10 @@ export const COMMANDS: CommandSpec[] = [
       {
         name: "signals",
         summary: "List the Signals refine diagnose wrote, or show one with its cited evidence and fix",
-        args: [{ name: "show", desc: "show <id>: one Signal's occurrences, citations and fix" }],
+        args: [
+          { name: "show", desc: "show <id>: one Signal's occurrences, citations and fix" },
+          { name: "id", desc: "With show: the Signal id, or a prefix of it" },
+        ],
         examples: ["coding.sh refine signals", "coding.sh refine signals show 3fa1c2", "coding.sh refine signals --json"],
       },
       {
@@ -1921,7 +1945,7 @@ export const COMMANDS: CommandSpec[] = [
         flags: [
           GATEWAY_NAME,
           { name: "session", short: "s", type: "list", commas: true, value: "<ID>", desc: "Only this session (repeatable; or latest)" },
-          { name: "since", type: "string", value: "<WHEN>", desc: "Sessions after this time: 7d, 12h, 30m or a date", default: "30d" },
+          { name: "since", type: "string", value: "<WHEN>", desc: "Sessions after this time: 7d, 12h, 30m, today or a date (local time)", default: "30d" },
           LIMIT(500),
           { name: "offline", type: "boolean", desc: "Use only the cache and drained traces; no API calls" },
           DRY_RUN,
@@ -1959,6 +1983,7 @@ export const COMMANDS: CommandSpec[] = [
       "Every copy becomes [redacted:purged]: event payloads (the full-text index is updated), session titles and stats, labels, eval docs and settings. Blobs holding a value are rewritten under their new hash and every reference follows. Spool, judge-cache and eval run files (~/.coding.sh/runs) keep their length (the value becomes asterisks) so ingest offsets stay valid. A run's .git directory and files over 64 MB are left alone.",
       "--rule takes a JavaScript regular expression. Each distinct match of 8 or more characters is purged like a --literal value; shorter matches are left alone, and a rule that matches over 10,000 distinct values is refused.",
       "Then the search index is merged, and the index and the blob pack (blobs/pack.db) are VACUUMed, so the old bytes leave the files. If another process is reading one of them (the viewer, serve, a sqlite3 shell), its old bytes stay until that process closes: purge says which file and exits 1, and the same purge run again finishes the job. Values shorter than 8 characters are refused. Only the SQLite store is supported.",
+      "A copy of the index kept next to it by an upgrade (index.db.v<N>.bak) or by upgrade-store --restore (index.db.v<N>.undone) holds the value too. Purge deletes these copies instead of rewriting them, so upgrade-store --restore can no longer put one back; --dry-run names them. If one can't be deleted, purge names it and exits 1.",
       "Rotate the secret as well: copies in the agent's own transcripts, shell history or git are not touched.",
     ],
     load: () => import("./commands/purge.ts"),
@@ -2001,12 +2026,13 @@ export const COMMANDS: CommandSpec[] = [
   {
     name: "upgrade-store",
     group: "Maintain",
-    summary: "Migrate the store for this install when another install owns it",
-    flags: [YES],
-    examples: ["coding.sh upgrade-store"],
+    summary: "Migrate the store for this install, or put back the index from before a migration",
+    flags: [{ name: "restore", type: "boolean", desc: "Put back the index kept from before the last migration (index.db.v<N>.bak); the index it replaces is kept too" }, YES],
+    examples: ["coding.sh upgrade-store", "coding.sh upgrade-store --restore"],
     notes: [
-      "The store's owner is the coding.sh that ~/.coding.sh/bin/cli-path names: init and update write it, and hooks start it. Only the owner migrates the index on its own.",
-      "Migrations are one-way, so the old owner may not open the store after. This command also points the hooks at the running coding.sh.",
+      "The store's owner is the coding.sh that ~/.coding.sh/bin/cli-path names: init and update write it, and hooks start it. The index migrates on its own only for the owner, and only for a release newer than the coding.sh that last wrote it.",
+      "Migrations are one-way, so an older coding.sh may not open the store after. Every migration first keeps a copy of the index next to it (index.db.v<N>.bak), and this command also makes bin/cli-path name the running coding.sh.",
+      "--restore puts that copy back and keeps the index it replaces (index.db.v<N>.undone). Any coding.sh that knows the copy's schema can run it, including one the migration left unable to open the store.",
     ],
     load: () => import("./commands/upgrade-store.ts"),
   },

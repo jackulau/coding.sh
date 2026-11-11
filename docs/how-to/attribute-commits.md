@@ -78,23 +78,29 @@ Session links point at `http://127.0.0.1:4319/#/s/<id>` unless you pass `--viewe
 ## How matching works
 
 For each session, coding.sh takes the lines it added: the diff from its start state to its end
-snapshot, which sees every write, Bash and subagents included. Without an end snapshot, it uses the
-session's own edit tool calls.
+snapshot, which sees every write, Bash and subagents included.
 
-Then it walks each commit, oldest first, and each file the commit changed:
+For a file the session's tools named that this diff does not hold, it uses the session's own edit
+tool calls. That is every such file when there is no end snapshot, and a file whose change had left
+the tree by then (committed on a branch, then another branch checked out).
+
+Then it walks each commit, oldest first, in passes over the files the commit changed:
 
 | Method | Matches when | Confidence |
 |---|---|---|
 | Patch id | The file's change equals what one session did to it. A rebased commit still matches. | as the source |
 | Line hash | A session added the same line to the same file | as the source |
-| Moved line | A line of 24+ characters matches one the session wrote in another file | 0.8x |
+| Moved line | Once every file of the commit has had its same-file matches, a line of 24+ characters still unmatched matches one the session wrote in another file | 0.8x |
 | Trivial line | Braces, blank lines and `else` follow the nearest matched line in their block | 0.95x |
 | git-ai | [git-ai](https://github.com/git-ai-project/git-ai) notes (`refs/notes/ai`) credit lines no session matched, to that agent with no session link | 0.9 |
 
 The source sets the starting confidence: 1 from a pre-agent snapshot, 0.9 from HEAD at the
 session's start, 0.8 from edit tool calls. A file the session's tools never named gives 0.85x.
 
-- A session's line is credited once, so a person who types the same line later owns that copy.
+- A session's line is credited once. A person who types the same line in a later commit, or copies
+  it into another file of the same commit, owns that copy.
+- An edit tool call counts for the lines it added itself, less the ones a later call of the session
+  removed. Lines someone else added to the file between two calls are not the session's.
 - A session is credited for commits from its start (10 minutes of clock skew allowed) to 21 days
   later.
 - When two sessions added the same line, the one that started later wins.

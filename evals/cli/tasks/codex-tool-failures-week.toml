@@ -1,0 +1,19 @@
+id = "codex-tool-failures-week"
+split = "dev"
+tags = ["stats", "failures", "aggregate", "json"]
+instruction = """
+Over the last 7 days, how many tool calls did Codex sessions make, and what percentage of those calls failed? Answer with a single JSON object like {"toolCalls": N, "failedPercent": N}, both as plain numbers.
+"""
+
+reference = ['''
+coding.sh stats --by agent --since 7d --json | node -e 'const t=JSON.parse(require("fs").readFileSync(0)).series.find(s=>s.key==="codex").totals;console.log(JSON.stringify({toolCalls:t.toolCalls,failedPercent:Math.round(100*t.toolErrorRate)}))'
+''']
+
+# From the fixture spec: the six Codex sessions of the last week (w1, w3, f2, f5, y4, t3) make
+# 10 tool calls, and 2 of them fail (w1 "npm test", t3 "npx prettier").
+[[check]]
+kind = "output"
+json = { toolCalls = 10, failedPercent = 20 }
+
+[expect]
+minTargetCalls = 1

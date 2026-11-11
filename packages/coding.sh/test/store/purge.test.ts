@@ -4,15 +4,18 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, test } from "node:test";
 import { parseLiterals, purgeWait } from "../../src/cli/commands/purge.ts";
+import type { AgentEvent } from "../../src/schema/index.ts";
+import { searchableText } from "../../src/store/common.ts";
 import { FsBlobStore } from "../../src/store/fs-blobs.ts";
 import { closeBlobs, fsBlobs } from "./_blobs.ts";
-import { PURGE_MARKER, purgeLiterals, Scrubber } from "../../src/store/purge.ts";
-import { SqliteIndexStore } from "../../src/store/sqlite.ts";
+import { PURGE_MARKER, purgeLiterals, removeIndexCopies, Scrubber } from "../../src/store/purge.ts";
+import { MIGRATIONS, SQLITE_SCHEMA_VERSION, SqliteIndexStore } from "../../src/store/sqlite.ts";
+import { backupPath, undonePath } from "../../src/store/upgrade.ts";
 import { FIXTURES, tmpEnv, type TmpEnv } from "../adapters/_helpers.ts";
 import { cli, event, ok, seed, session } from "../query/_seed.ts";
 
@@ -198,6 +201,166 @@ describe("purge of rows from before index schema v10", () => {
       const buf = readFileSync(f);
       assert.ok(!holds(buf, SECRET) && !holds(buf, QUOTED), `${f} still holds a secret`);
     }
+  });
+});
+
+describe("purge of an error message", () => {
+  let env: TmpEnv;
+  before(async () => {
+    env = tmpEnv();
+    // events.error is a copy of payload.error, and events_error indexes it (index schema v11).
+    await seed(env.dataHome, {
+      sessions: [session("s1"), session("s2")],
+      events: [
+        event("s1", 1, { kind: "tool.end", payload: { tool: "Bash", ok: false, error: `auth failed for token ${SECRET}` } }),
+        event("s1", 2, { kind: "tool.end", payload: { tool: "Bash", ok: false, error: `bad password ${QUOTED}` } }),
+        event("s2", 1, { kind: "tool.end", payload: { tool: "Bash", ok: false, error: "exit code 1" } }),
+      ],
+    });
+  });
+  after(async () => {
+    await closeBlobs();
+    env.restore();
+  });
+
+  test("scrubs the error column and its index with the payload, and error: still finds the row", () => {
+    const secrets = join(env.root, "leaked.txt");
+    writeFileSync(secrets, `${SECRET}\n${QUOTED}\n`);
+    const found = (q: string) => (JSON.parse(ok(["sessions", "--where", q, "--json"]).stdout) as { sessions: { id: string }[] }).sessions.map((x) => x.id);
+    assert.deepEqual(found("error:hunter2-correct"), ["s1"]);
+    const j = JSON.parse(ok(["purge", "--literal", secrets, "--json"]).stdout);
+    assert.equal(j.events, 2);
+    assert.equal(j.integrity, true);
+    const db = new DatabaseSync(join(env.dataHome, "index.db"), { readOnly: true });
+    try {
+      const rows = db.prepare("SELECT id, error, json_extract(payload, '$.error') AS p FROM events ORDER BY id").all() as { id: string; error: string; p: string }[];
+      assert.deepEqual(rows.map((r) => [r.id, r.error]), [["s1-e1", `auth failed for token ${PURGE_MARKER}`], ["s1-e2", `bad password ${PURGE_MARKER}`], ["s2-e1", "exit code 1"]]);
+      for (const r of rows) assert.equal(r.error, r.p, "the column is the payload's error");
+    } finally {
+      db.close();
+    }
+    for (const f of files(env.dataHome)) {
+      const buf = readFileSync(f);
+      assert.ok(!holds(buf, SECRET) && !holds(buf, QUOTED), `${f} still holds a secret`);
+    }
+    assert.deepEqual(found("error:hunter2-correct"), []);
+    assert.deepEqual(found('error:"auth failed"'), ["s1"]);
+  });
+});
+
+// A migration keeps the index as it was next to the new one (index.db.v<N>.bak), and
+// upgrade-store --restore keeps the one it replaces (index.db.v<N>.undone). Purge rewrote
+// index.db, reported the store clean and left the value in full in the copy beside it.
+describe("purge of the copies of the index kept by an upgrade", () => {
+  const OLD = SQLITE_SCHEMA_VERSION - 1;
+  // Matches no redaction rule; in the store only inside a kept copy by the time --rule runs.
+  const TOKEN = "zz-keep-Q7d9KfL2mN4pR8sT";
+  let env: TmpEnv;
+  let index = "";
+  let secrets = "";
+  let bak = "";
+  let undone = "";
+  let killed = "";
+  let mine = "";
+
+  /** An index at the schema before this one, as the coding.sh that knew only up to it left it. */
+  function storeBefore(file: string, events: AgentEvent[]): void {
+    const db = new DatabaseSync(file);
+    db.exec("PRAGMA journal_mode = WAL");
+    db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
+    for (const m of MIGRATIONS.filter((m) => m.version <= OLD)) {
+      db.exec(m.sql);
+      m.after?.(db);
+      db.prepare("INSERT INTO migrations (version, applied_at) VALUES (?, 0)").run(m.version);
+    }
+    for (const e of events) {
+      const { lastInsertRowid } = db.prepare("INSERT INTO events (id, session_id, ts, agent, kind, payload) VALUES (?, ?, ?, ?, ?, ?)").run(e.id, e.sessionId, e.ts, e.agent, e.kind, JSON.stringify(e.payload));
+      const text = searchableText(e);
+      if (text !== undefined) db.prepare("INSERT INTO events_fts (rowid, text) VALUES (?, ?)").run(lastInsertRowid, text);
+    }
+    db.close();
+  }
+
+  const copies = (): string[] => readdirSync(env.dataHome).filter((f) => f.startsWith("index.db.v")).sort();
+
+  before(async () => {
+    env = tmpEnv();
+    index = join(env.dataHome, "index.db");
+    mkdirSync(env.dataHome, { recursive: true });
+    storeBefore(index, [event("s1", 1, { kind: "tool.end", payload: { tool: "Bash", ok: false, error: `auth failed for token ${SECRET}` } }), event("s1", 2, { payload: { text: "fine" } })]);
+    // The first open by this coding.sh migrates the index and keeps the copy.
+    await (await SqliteIndexStore.open(index)).close();
+    bak = backupPath(index, OLD);
+    assert.ok(holds(readFileSync(bak), SECRET), "the migration kept a copy of the index, with the secret in it");
+    // What `upgrade-store --restore` keeps, and what a backup killed half-way leaves.
+    undone = undonePath(index, SQLITE_SCHEMA_VERSION);
+    killed = `${bak}.tmp-4242`;
+    copyFileSync(bak, undone);
+    copyFileSync(bak, killed);
+    // Not a name coding.sh gives a copy: the user's own file, left alone.
+    mine = join(env.dataHome, "index.db.vnext.bak");
+    writeFileSync(mine, "my notes");
+    secrets = join(env.root, "leaked.txt");
+    writeFileSync(secrets, `${SECRET}\n`);
+  });
+  after(async () => {
+    await closeBlobs();
+    env.restore();
+  });
+
+  test("--dry-run names the copies it would delete and deletes none", () => {
+    const names = [bak, killed, undone].map((f) => basename(f)).sort();
+    const r = ok(["purge", "--literal", secrets, "--dry-run"]);
+    assert.match(r.stderr, /Index copies\s+would delete index\.db\.v\d+\.bak, /);
+    const j = JSON.parse(ok(["purge", "--literal", secrets, "--dry-run", "--json"]).stdout);
+    assert.equal(j.events, 1);
+    assert.deepEqual((j.copiesRemoved as string[]).map((f) => basename(f)), names);
+    assert.deepEqual(copies(), [...names, basename(mine)].sort());
+    assert.ok(holds(readFileSync(bak), SECRET));
+  });
+
+  test("the purge leaves the secret in no file of the store, and nothing left to restore it from", () => {
+    const r = ok(["purge", "--literal", secrets]);
+    assert.match(r.stderr, /Index copies\s+deleted index\.db\.v\d+\.bak, /);
+    assert.match(r.stderr, /Integrity\s+index and search ok/);
+    for (const f of files(env.dataHome)) assert.ok(!holds(readFileSync(f), SECRET), `${f} still holds the secret`);
+    assert.deepEqual(copies(), [basename(mine)], "only a file coding.sh did not name stays");
+    const back = cli(["upgrade-store", "--restore", "--yes", "--json"]);
+    assert.equal(back.status, 1);
+    assert.equal(JSON.parse(back.stderr.trim().split("\n").pop()!).reason, "no_backup");
+    const again = JSON.parse(ok(["purge", "--literal", secrets, "--json"]).stdout);
+    assert.equal(again.copiesRemoved, undefined, "absent when there is no copy");
+  });
+
+  test("--rule deletes a kept copy too, though it can't look inside one", () => {
+    // The index no longer holds the token (an earlier purge, a gc); the copy from before still does.
+    writeFileSync(bak, `token ${TOKEN}`);
+    const dry = JSON.parse(ok(["purge", "--rule", "zz-keep-[A-Za-z0-9]{16}", "--dry-run", "--json"]).stdout);
+    assert.equal(dry.ruleMatches, 0);
+    assert.deepEqual(dry.copiesRemoved, [bak]);
+    assert.ok(existsSync(bak), "a dry run deletes nothing");
+    const r = ok(["purge", "--rule", "zz-keep-[A-Za-z0-9]{16}"]);
+    assert.match(r.stderr, /Index copies\s+deleted index\.db\.v\d+\.bak:/);
+    assert.match(r.stderr, /Nothing else to purge/);
+    assert.equal(existsSync(bak), false);
+    assert.match(ok(["purge", "--rule", "zz-keep-[A-Za-z0-9]{16}"]).stderr, /Nothing to purge/);
+  });
+
+  test("a copy that can't be deleted is named, and purge exits 1 until it is gone", () => {
+    // A folder under a copy's name stands in for a file another process keeps open on Windows.
+    mkdirSync(undone);
+    writeFileSync(join(undone, "held"), SECRET);
+    assert.deepEqual(removeIndexCopies(index, true), { copiesRemoved: [undone] });
+    const r = cli(["purge", "--literal", secrets]);
+    assert.equal(r.status, 1, r.stderr);
+    assert.ok(r.stderr.includes(`couldn't delete ${undone}`), r.stderr);
+    assert.doesNotMatch(r.stderr, /Rotate the secret|No copies/);
+    const j = cli(["purge", "--literal", secrets, "--json"]);
+    assert.equal(j.status, 1);
+    assert.deepEqual(JSON.parse(j.stdout).copiesKept, [undone]);
+    const rule = cli(["purge", "--rule", "zz-keep-[A-Za-z0-9]{16}"]);
+    assert.equal(rule.status, 1, rule.stderr);
+    assert.doesNotMatch(rule.stderr, /Nothing/);
   });
 });
 

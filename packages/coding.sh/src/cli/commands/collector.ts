@@ -30,7 +30,7 @@ export async function run(c: CommandContext): Promise<number> {
   const host = str(c.flags.host) ?? "127.0.0.1";
   return withContext(c, async (ctx) => {
     let receiver;
-    // [[sinks]] get what the receiver commits, as ingest sends them hook events.
+    // [[sinks]] get what the receiver newly stores, as ingest sends them hook events: a batch posted again is sent once.
     const mirror = new SinkMirror({ sinks: ctx.sinks, blobs: ctx.blobs, config: ctx.config, log: { warn: (m, f) => out.warn(`${m}${f?.error ? `: ${String(f.error)}` : ""}`) } });
     try {
       receiver = await startReceiver({
@@ -42,7 +42,7 @@ export async function run(c: CommandContext): Promise<number> {
         prices: pricesFor(ctx.config.pricing),
         keepRaw: c.flags["keep-raw"] === true,
         onBatch: (b) => {
-          mirror.add(b.events, b.sessions);
+          mirror.add(b.insertedEvents, b.sessions);
           if (b.events.length) out.note(`${b.signal}: ${plural(b.events.length, "event")}, ${plural(b.sessions.length, "session")}${b.rejected ? `, ${b.rejected} rejected` : ""}`);
         },
         onError: (e) => out.warn(e.message),
@@ -84,7 +84,10 @@ async function importRun(c: CommandContext): Promise<number> {
       next: ["coding.sh collector import --clickhouse http://127.0.0.1:8123/?database=otel"],
     });
   }
-  const since = parseSince(str(c.flags.since) ?? "7d");
+  const sinceFlag = str(c.flags.since);
+  const since = parseSince(sinceFlag ?? "7d");
+  // A --since on the command line reads from that time again; without it (the 7d default) a run resumes at its saved cursor.
+  const fromStart = c.flags["from-start"] === true || sinceFlag !== undefined;
   const table = str(c.flags.table) ?? "otel_traces";
   const where = str(c.flags.where);
   const dryRun = c.flags["dry-run"] === true;
@@ -104,10 +107,11 @@ async function importRun(c: CommandContext): Promise<number> {
         maxInlineBytes: ctx.config.capture.maxInlineBytes,
         prices: pricesFor(ctx.config.pricing),
         dryRun,
+        fromStart,
         onPage: (p) => spin.update?.(`Read ${plural(p.spans, "span")}…`),
       });
     } catch (e) {
-      throw clickhouseCliError(e, url);
+      throw clickhouseCliError(e, url, c.flags);
     } finally {
       spin.stop();
     }
@@ -126,13 +130,23 @@ async function importRun(c: CommandContext): Promise<number> {
   });
 }
 
-function clickhouseCliError(e: unknown, url: string): unknown {
+function clickhouseCliError(e: unknown, url: string, flags: CommandContext["flags"]): unknown {
   if (!(e instanceof ClickHouseError)) return e;
   const safe = url.replace(/\/\/[^@/]*@/, "//");
   if (e.status === 401 || e.status === 403 || /AUTHENTICATION_FAILED|Authentication failed|REQUIRED_PASSWORD/i.test(e.message)) {
     return new CliError(`ClickHouse refused the credentials: ${e.message}`, {
       reason: "clickhouse_unauthorized",
       next: ["Pass the user and password in the URL or the environment:", `CLICKHOUSE_USER=… CLICKHOUSE_PASSWORD=… coding.sh collector import --clickhouse ${safe}`],
+    });
+  }
+  if (e.imported) {
+    // The run got part of the way: those pages and their sessions are stored, and the same command reads on.
+    const again = ["coding.sh collector import --clickhouse", shellArg(safe)];
+    for (const f of ["table", "where", "since"]) if (str(flags[f]) !== undefined) again.push(`--${f}`, shellArg(str(flags[f])!));
+    for (const f of ["all", "from-start"]) if (flags[f] === true) again.push(`--${f}`);
+    return new CliError(`The import stopped after ${plural(e.imported.spans, "span")} (${plural(e.imported.sessions, "session")} stored): ${e.message}`, {
+      reason: e.status === 0 ? "clickhouse_unreachable" : "clickhouse_error",
+      next: ["Run it again to read the rest (nothing is stored twice):", again.join(" ")],
     });
   }
   if (e.status === 0) {
@@ -152,3 +166,6 @@ function clickhouseCliError(e: unknown, url: string): unknown {
     next: ["Check the --where condition, or run the import with --dry-run first:", `coding.sh collector import --clickhouse ${safe} --dry-run`],
   });
 }
+
+/** A value as one shell word. */
+const shellArg = (v: string): string => (/^[\w@%+=:,./-]+$/.test(v) ? v : `'${v.replaceAll("'", `'\\''`)}'`);

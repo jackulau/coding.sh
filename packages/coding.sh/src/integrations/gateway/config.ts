@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { interpolateEnv } from "../../core/config.ts";
 import { paths, userHome } from "../../core/paths.ts";
 import { parseToml, type TomlTable } from "../../core/toml.ts";
+import { proxyRoutes } from "../../proxy/install.ts";
 import { BASE_URL_VARS, GATEWAY_API_BASE } from "./ids.ts";
 import { gatewayForProvider, gatewayForUrl, GATEWAY_IDS, GATEWAYS, isGatewayId, type GatewayId } from "./providers.ts";
 
@@ -199,22 +200,36 @@ function stringsOf(t: TomlTable): Record<string, string> {
 /** Hosted gateway hosts, for a plain-text search of configs we can't parse. */
 const HOSTED = GATEWAY_IDS.flatMap((id) => GATEWAYS[id].hosts.filter((h) => !h.startsWith(".")).map((h) => [id, h] as const));
 
-function claudeFindings(env: NodeJS.ProcessEnv, cwd: string | undefined, out: GatewayFinding[]): void {
+/**
+ * The base URLs behind the coding.sh proxy. `init --proxy` puts the proxy in
+ * front of the URL an agent called before (proxy-installs.json), so a config
+ * value that is still what it wrote stands for that URL. Keyed by agent and value.
+ */
+function chainedThroughProxy(env: NodeJS.ProcessEnv): Map<string, string> {
+  const behind = new Map<string, string>();
+  for (const r of proxyRoutes(env)) if (r.chained !== undefined && r.url === r.expected) behind.set(`${r.agent} ${r.expected}`, r.chained);
+  return behind;
+}
+
+const VIA_PROXY = " (through the coding.sh proxy)";
+
+function claudeFindings(env: NodeJS.ProcessEnv, cwd: string | undefined, behind: Map<string, string>, out: GatewayFinding[]): void {
   const dir = env.CLAUDE_CONFIG_DIR || join(userHome(env), ".claude");
   const files = [join(dir, "settings.json")];
   if (cwd) files.push(join(cwd, ".claude", "settings.json"), join(cwd, ".claude", "settings.local.json"));
   for (const file of files) {
     const e = readJson(file)?.env;
     if (!isTable(e)) continue;
-    const base = e.ANTHROPIC_BASE_URL;
+    const chained = typeof e.ANTHROPIC_BASE_URL === "string" ? behind.get(`claude-code ${e.ANTHROPIC_BASE_URL}`) : undefined;
+    const base = chained ?? e.ANTHROPIC_BASE_URL;
     const gateway = gatewayForUrl(base, { ...env, ...stringsOf(e) });
     if (!gateway) continue;
     const headers = gateway === "vercel" && typeof e.ANTHROPIC_CUSTOM_HEADERS === "string" && /x-ai-gateway-api-key/i.test(e.ANTHROPIC_CUSTOM_HEADERS);
-    out.push({ gateway, agent: "claude-code", where: file, detail: `ANTHROPIC_BASE_URL → ${shortUrl(base as string)}${headers ? " (Claude subscription + gateway key header)" : ""}`, active: true });
+    out.push({ gateway, agent: "claude-code", where: file, detail: `ANTHROPIC_BASE_URL → ${shortUrl(base as string)}${chained ? VIA_PROXY : ""}${headers ? " (Claude subscription + gateway key header)" : ""}`, active: true });
   }
 }
 
-function codexFindings(env: NodeJS.ProcessEnv, out: GatewayFinding[]): void {
+function codexFindings(env: NodeJS.ProcessEnv, behind: Map<string, string>, out: GatewayFinding[]): void {
   const file = join(env.CODEX_HOME || join(userHome(env), ".codex"), "config.toml");
   const text = readText(file);
   if (text === undefined) return;
@@ -233,10 +248,13 @@ function codexFindings(env: NodeJS.ProcessEnv, out: GatewayFinding[]): void {
   if (typeof doc.model_provider === "string") selected.add(doc.model_provider);
   if (isTable(doc.profiles)) for (const p of Object.values(doc.profiles)) if (isTable(p) && typeof p.model_provider === "string") selected.add(p.model_provider);
   for (const [name, p] of Object.entries(providers)) {
-    const gateway = isTable(p) ? gatewayForUrl(p.base_url, env) : undefined;
-    if (!isTable(p) || !gateway) continue;
+    if (!isTable(p)) continue;
+    const chained = typeof p.base_url === "string" ? behind.get(`codex ${p.base_url}`) : undefined;
+    const base = chained ?? p.base_url;
+    const gateway = gatewayForUrl(base, env);
+    if (!gateway) continue;
     const keyEnv = typeof p.env_key === "string" ? `, key from $${p.env_key}` : "";
-    out.push({ gateway, agent: "codex", where: file, detail: `model_providers.${name}.base_url → ${shortUrl(p.base_url as string)}${keyEnv}`, active: selected.has(name) });
+    out.push({ gateway, agent: "codex", where: file, detail: `model_providers.${name}.base_url → ${shortUrl(base as string)}${chained ? VIA_PROXY : ""}${keyEnv}`, active: selected.has(name) });
   }
 }
 
@@ -262,7 +280,10 @@ function piFindings(env: NodeJS.ProcessEnv, out: GatewayFinding[]): void {
   if (s && gateway) out.push({ gateway, agent: "pi", where: file, detail: `defaultProvider → ${String(s.defaultProvider)}`, active: true });
 }
 
-/** Read-only scan of env and agent configs. `env` is the process env to inspect (names and URLs only). */
+/**
+ * Read-only scan of env and agent configs. `env` is the process env to inspect (names and URLs only).
+ * A config that `init --proxy` pointed at the coding.sh proxy is read as the base URL the proxy goes on to.
+ */
 export function detectGatewaySetups(env: NodeJS.ProcessEnv = process.env, cwd?: string): GatewayFinding[] {
   const out: GatewayFinding[] = [];
   for (const k of BASE_URL_VARS) {
@@ -270,8 +291,9 @@ export function detectGatewaySetups(env: NodeJS.ProcessEnv = process.env, cwd?: 
     const gateway = gatewayForUrl(v, env);
     if (gateway) out.push({ gateway, agent: k.startsWith("ANTHROPIC") ? "claude-code" : "any", where: "env", detail: `${k} → ${shortUrl(v!)}`, active: true });
   }
-  claudeFindings(env, cwd, out);
-  codexFindings(env, out);
+  const behind = chainedThroughProxy(env);
+  claudeFindings(env, cwd, behind, out);
+  codexFindings(env, behind, out);
   opencodeFindings(env, out);
   piFindings(env, out);
   return out;

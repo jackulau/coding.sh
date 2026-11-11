@@ -12,6 +12,7 @@ import { detectTestTamper, foldTamper, tamperState, type TamperState } from "./i
 // waste.ts and skills-use.ts import commandOf and FLAGS back from here, inside functions only.
 import { cacheBreakState, cacheBreaksOf, cacheUnderused, foldCacheBreaks, type CacheBreakState } from "./cache-breaks.ts";
 import { foldSkills, skillFlags, skillState, skillUseOf, type SkillState } from "./skills-use.ts";
+import { foldMemoryUse, memoryUseOf, memoryUseState, type MemoryUseState } from "./memory-use.ts";
 import { foldHookContext, hookContextFlags, hookContextOf, hookContextState, type HookContextState } from "./hook-context.ts";
 import { shellCommandsInCode } from "./cells.ts";
 import { claimsSuccess, reportsFailure } from "./failure-report.ts";
@@ -65,6 +66,17 @@ export const failureFlags = (flags: readonly string[]): string[] => flags.filter
 
 /** Events written by enrichment (`coding.sh gateway enrich`): they never decide a session's shape. */
 const isEnrichment = (e: AgentEvent): boolean => e.source === "gateway";
+
+/**
+ * The call a gateway companion billed: its parent, when the companion carries a
+ * billed cost (`payload.billedCostUsd`, or the correction to the call's cost in
+ * its usage). One with neither (a usage record the gateway did not price) bills
+ * nothing: the call's estimate stays an estimate.
+ */
+export function billedCallOf(e: AgentEvent): string | undefined {
+  if (!isEnrichment(e) || !e.parentId) return undefined;
+  return num(e.payload?.billedCostUsd) !== undefined || num(e.usage?.costUsd) !== undefined ? e.parentId : undefined;
+}
 
 /** A model call logged by `coding.sh proxy`. */
 const isProxyCall = (e: AgentEvent): boolean => e.kind === "llm.call" && e.source === "proxy";
@@ -204,12 +216,16 @@ export interface UsageRollup {
  *   nearest nested calls. A reported nested cost beats the wrapper's estimate;
  * - a model call repeating an earlier call's `payload.responseId` counts once;
  * - `estimatedCostUsd` is the part of `costUsd` computed from the price table
- *   (`payload.costEstimated`), unless a gateway companion billed that call.
+ *   (`payload.costEstimated`), unless a gateway companion billed that call
+ *   (its `payload.billedCostUsd`).
  * What was left out is returned as `duplicate`. Events without trace ids sum as before.
  */
 export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
   const billed = new Set<string>();
-  for (const e of sorted) if (isEnrichment(e) && e.parentId) billed.add(e.parentId);
+  for (const e of sorted) {
+    const call = billedCallOf(e);
+    if (call) billed.add(call);
+  }
   const bySpan = new Map<string, AgentEvent>();
   for (const e of sorted) {
     const k = e.traceId && e.spanId ? `${e.traceId}\u0000${e.spanId}` : undefined;
@@ -436,7 +452,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * new derivation. A new or retyped sub-state changes the stamp by itself; a
  * new optional field or a change of meaning still needs the bump.
  */
-export const SESSION_FOLD_VERSION = 16; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts).
+export const SESSION_FOLD_VERSION = 18; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory).
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -526,6 +542,8 @@ export interface SessionState {
   /** A model call from a capture path other than the proxy. */
   otherCalls?: boolean;
   skills: SkillState;
+  /** Memory and instruction files the events name (stats.memoryUse, core/memory-use.ts). */
+  memory: MemoryUseState;
   redactions: RedactionState;
   hookContext: HookContextState;
   /**
@@ -571,6 +589,7 @@ export function sessionState(): SessionState {
     waste: wasteState(),
     cacheBreaks: cacheBreakState(),
     skills: skillState(),
+    memory: memoryUseState(),
     redactions: redactionState(),
     hookContext: hookContextState(),
     models: modelState(),
@@ -670,7 +689,7 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
   if (e.spanId || e.parentSpanId || isEnrichment(e)) s.simple = false;
   if (s.provider === undefined && typeof e.payload.provider === "string" && e.payload.provider) s.provider = e.payload.provider;
   if (s.project === undefined && e.project) s.project = e.project;
-  if (e.kind === "session.start" && typeof e.payload.parentSessionId === "string" && (!s.parent || s.parentByProxy)) {
+  if (e.kind === "session.start" && typeof e.payload.parentSessionId === "string" && !isSpawnMarker(e.payload) && (!s.parent || s.parentByProxy)) {
     s.parent = parentOf([e]);
     delete s.parentByProxy;
   } else if (!s.parent && isProxyCall(e) && typeof e.payload.parentSessionId === "string" && e.payload.parentSessionId !== e.sessionId) {
@@ -706,6 +725,7 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
   foldWaste(s.waste, e);
   foldCacheBreaks(s.cacheBreaks, e);
   foldSkills(s.skills, e);
+  foldMemoryUse(s.memory, e, s.cwd);
   foldRedactions(s.redactions, e);
   foldHookContext(s.hookContext, e);
   if (isEnrichment(e)) return;
@@ -864,6 +884,8 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
   if (hookContext) session.stats.hookContext = hookContext;
   if (s.launch) session.stats.launch = s.launch;
   if (s.inheritedTokens) session.stats.inheritedTokens = s.inheritedTokens;
+  const memoryUse = memoryUseOf(s.memory, s.cwd ?? prev?.cwd);
+  if (memoryUse) session.stats.memoryUse = memoryUse;
   session.flags.push(...hookContextFlags(s.hookContext));
   const redactions = redactionsOf(s.redactions);
   if (redactions) session.stats.redactions = redactions;
@@ -950,6 +972,15 @@ export function addLlmError(prev: LlmErrors | undefined, payload: Record<string,
   if (typeof payload.error === "string" && payload.error) out.error = payload.error.slice(0, 300);
   return out;
 }
+
+/**
+ * A session.start an older build's ingest stamped with the session its hook's
+ * env named (spool/spawned.ts): `{ parentSessionId, parentAgent, subagentType:
+ * "harness" }`. That id can be stale (a session that ended, or was never
+ * captured), so it is not the parent: ingest links a harness child once it has
+ * checked the named session (core/ingest.ts childLinker).
+ */
+const isSpawnMarker = (p: AgentEvent["payload"]): boolean => p.subagentType === "harness" && typeof p.parentAgent === "string";
 
 /**
  * Parent link for a subagent session, from its session.start payload

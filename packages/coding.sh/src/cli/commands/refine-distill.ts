@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { getAdapter } from "../../adapters/index.ts";
-import { writeCorpusDir, type CorpusSource } from "../../refine/corpus.ts";
+import { corpusDirEntries, writeCorpusDir, type CorpusSource } from "../../refine/corpus.ts";
 import { distill, ledgerDraws, preflight, MIN_EPISODES, MIN_FAILURES } from "../../refine/distill.ts";
 import { ledgerFile, refineDir } from "../../refine/ledger.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
@@ -55,12 +55,15 @@ export async function refineDistill(c: CommandContext): Promise<number> {
     } else source = { kind: "sessions", since, ...(repo ? { repo } : {}), ...(agents.length ? { agents } : {}) };
     const work = mkdtempSync(join(tmpdir(), "csh-distill-"));
     try {
-      const corpusDir = keep ? resolve(c.cwd, keep) : join(work, "corpus");
+      const keepDir = keep ? resolve(c.cwd, keep) : undefined;
+      // A dry run writes nothing under --keep-corpus: it checks the directory as a real run would, then builds the corpus in the temp dir.
+      if (keepDir && dryRun) corpusDirEntries(keepDir);
+      const corpusDir = keepDir && !dryRun ? keepDir : join(work, "corpus");
       const prompt = harnessFilesIn(root);
       const corpus = await writeCorpusDir({ index: ctx.index, source, dir: corpusDir, prompt });
       const refusal = preflight(corpus, min);
       const sourceLabel = experiment ?? "sessions";
-      const summary = { source: sourceLabel, episodes: corpus.episodes, failures: corpus.failures, passRate: corpus.passRate, leftOut: corpus.leftOut, skipped: corpus.skipped, truncated: corpus.truncated, ...(keep ? { dir: corpusDir } : {}) };
+      const summary = { source: sourceLabel, episodes: corpus.episodes, failures: corpus.failures, passRate: corpus.passRate, leftOut: corpus.leftOut, skipped: corpus.skipped, truncated: corpus.truncated, ...(keepDir ? { dir: keepDir } : {}) };
       const rate = corpus.passRate === null ? "no verifier (captured sessions)" : `pass rate ${Math.round(corpus.passRate * 100)}%`;
       const corpusLine = `Corpus: ${plural(corpus.episodes, "episode")} from ${experiment ? `experiment ${experiment}` : "captured sessions"}, ${corpus.failures} failing or flagged, ${rate}${corpus.leftOut.runs ? `; left out ${plural(corpus.leftOut.runs, "run")} of held-out tasks ${corpus.leftOut.tasks.join(", ")}` : ""}`;
       if (dryRun) {

@@ -1,0 +1,13 @@
+{"type":"launched","runId":"wf_review0001"}
+{"type":"started","key":"v2:a0","agentId":"a0","label":"find-bugs","phase":"Find"}
+{"type":"started","key":"v2:a1","agentId":"a1","label":"find-races","phase":"Find"}
+{"type":"started","key":"v2:a2","agentId":"a2","label":"find-leaks","phase":"Find"}
+{"type":"started","key":"v2:a3","agentId":"a3","label":"fix-0","phase":"Fix"}
+{"type":"started","key":"v2:a4","agentId":"a4","label":"fix-1","phase":"Fix"}
+{"type":"started","key":"v2:a5","agentId":"a5","label":"verify","phase":"Verify"}
+{"type":"result","key":"v2:a0","agentId":"a0","result":{"findings":[{"file":"src/a.ts","line":10,"summary":"off by one"}]},"toolsUsed":["StructuredOutput"],"remoteControlDeviceReport":null}
+{"type":"result","key":"v2:a1","agentId":"a1","result":{"findings":[{"file":"src/b.ts","line":40,"summary":"race on counter"}]},"toolsUsed":["StructuredOutput"],"remoteControlDeviceReport":null}
+{"type":"result","key":"v2:a2","agentId":"a2","result":{"findings":[]},"toolsUsed":["StructuredOutput"],"remoteControlDeviceReport":null}
+{"type":"result","key":"v2:a3","agentId":"a3","result":{"patched":"src/a.ts"},"toolsUsed":["StructuredOutput"],"remoteControlDeviceReport":null}
+{"type":"result","key":"v2:a4","agentId":"a4","result":{"patched":"src/b.ts"},"toolsUsed":["StructuredOutput"],"remoteControlDeviceReport":null}
+{"type":"result","key":"v2:a5","agentId":"a5","result":{"ok":true},"toolsUsed":["StructuredOutput"],"remoteControlDeviceReport":null}

@@ -1,0 +1,19 @@
+id = "agent-written-lines"
+split = "dev"
+tags = ["attribution", "git", "json"]
+instruction = """
+In the git repository ${answers.paths.repos.calc}: how many lines did its commits add in total, and how many of those lines were written by an agent session that coding.sh captured? Answer with a single JSON object like {"linesAdded": N, "agentLines": N}.
+"""
+
+reference = ['''
+coding.sh attribution --repo ${answers.paths.repos.calc} --json | node -e 'const t=JSON.parse(require("fs").readFileSync(0)).totals;console.log(JSON.stringify({linesAdded:t.linesAdded,agentLines:t.linesAttributed}))'
+''']
+
+# From the fixture spec: the repo has one commit, made by the fixture itself (calc.mjs 1 line,
+# test.mjs 3 lines). The sessions that edited calc.mjs had their edits reverted, never committed.
+[[check]]
+kind = "output"
+json = { linesAdded = 4, agentLines = 0 }
+
+[expect]
+minTargetCalls = 1

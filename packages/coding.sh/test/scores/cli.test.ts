@@ -54,7 +54,7 @@ describe("coding.sh score", () => {
     const out = ok(["score", "add", "sess-aaaa", "helpfulness", "4", "--comment", "fixed it"]);
     const id = out.stdout.trim();
     assert.match(id, /^[0-9a-f]{64}$/);
-    assert.match(out.stderr, /Scored helpfulness = 4 on session sess-aaaa1111/);
+    assert.match(out.stderr, /Scored helpfulness = 4 \(numeric\) on session sess-aaaa1111/);
     const again = json(["score", "add", "sess-aaaa1111", "helpfulness", "4", "--comment", "fixed it"]);
     assert.equal(again.created, false);
     assert.equal(again.changed, false);
@@ -74,12 +74,36 @@ describe("coding.sh score", () => {
   test("add: events, cases and runs; types from the value or --type", () => {
     const ev = json(["score", "add", "event:evt-1", "correct", "false", "--source", "code"]).score as Score;
     assert.deepEqual([ev.target, ev.sessionId, ev.dataType, ev.value, ev.source], ["event", "sess-aaaa1111", "boolean", false, "code"]);
+    // --session never stands in for the event: an unknown event is not scored, and another session is refused.
+    const ghost = cli(["score", "add", "event:evt_nope", "correct", "false", "--source", "code", "--session", "sess-aaaa"]);
+    assert.equal(ghost.status, 1);
+    assert.match(ghost.stderr, /event not found: evt_nope/);
+    const other = cli(["score", "add", "event:evt-1", "correct", "false", "--source", "code", "--session", "sess-bbbb"]);
+    assert.equal(other.status, 2);
+    assert.match(other.stderr, /event evt-1 belongs to session sess-aaaa1111, not sess-bbbb2222/);
+    assert.equal(json(["score", "add", "event:evt-1", "correct", "false", "--source", "code", "--session", "sess-aaaa"]).changed, false, "its own session is fine");
+    assert.deepEqual((json(["score", "list", "--name", "correct"]).items as Score[]).map((s) => [s.targetId, s.sessionId]), [["evt-1", "sess-aaaa1111"]]);
     const cs = json(["score", "add", "case:c-1", "tone", "neutral", "--session", "sess-bbbb"]).score as Score;
     assert.deepEqual([cs.target, cs.targetId, cs.sessionId, cs.configId], ["case", "c-1", "sess-bbbb2222", "tone"]);
     const run = json(["score", "add", "run:r-1", "summary", "clean diff", "--type", "text", "--id", "my-id", "--judge-version", "j@2"]).score as Score;
     assert.deepEqual([run.id, run.dataType, run.value, run.judgeVersion, run.sessionId], ["my-id", "text", "clean diff", "j@2", undefined]);
     assert.equal(cli(["score", "add", "trace:x", "ok", "1"]).status, 1, "an unknown kind reads as a session id");
     assert.equal(cli(["score", "add", "event:", "ok", "1"]).status, 2);
+  });
+
+  test("add: a typo does not retype a stored score; --type does", () => {
+    assert.match(ok(["score", "add", "sess-bbbb2222", "n1", "-5"]).stderr, /Scored n1 = -5 \(numeric\) on session sess-bbbb2222/);
+    const typo = cli(["score", "add", "sess-bbbb2222", "n1", "1,5"]);
+    assert.equal(typo.status, 2);
+    assert.match(typo.stderr, /n1 is a numeric score on session sess-bbbb2222, and "1,5" reads as categorical/);
+    assert.match(typo.stderr, /--type categorical/);
+    assert.match(typo.stderr, /coding\.sh score config n1 --type numeric/);
+    assert.deepEqual((json(["score", "list", "--name", "n1"]).items as Score[]).map((s) => [s.dataType, s.value]), [["numeric", -5]]);
+    // A number over a person's pass/fail label would drop the label from export labels.
+    ok(["score", "add", "sess-aaaa1111", "resolved", "true"]);
+    assert.equal(cli(["score", "add", "sess-aaaa1111", "resolved", "0.5"]).status, 2);
+    assert.match(ok(["export", "labels"]).stdout, /"sessionId":"sess-aaaa1111","criterion":"resolved","value":"pass"/);
+    assert.match(ok(["score", "add", "sess-bbbb2222", "n1", "1,5", "--type", "categorical"]).stderr, /Updated n1 = 1,5 \(categorical\)/);
   });
 
   test("list: newest first, filters, and labels show up as human boolean scores", () => {

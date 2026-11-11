@@ -12,8 +12,8 @@ import { failureFlags } from "./sessions.ts";
 
 /** How deep the subagent walk goes (a guard against a cycle the parent links should never form). */
 const MAX_DEPTH = 64;
-/** Children read per node (a fan-out this wide is already pathological). */
-const MAX_CHILDREN = 1000;
+/** Top-level sessions read per run id. */
+const MAX_ROOTS = 1000;
 
 export interface TreeNode {
   session: Session;
@@ -102,10 +102,14 @@ export async function rootOf(index: IndexStore, id: string): Promise<string> {
   return cur?.id ?? id;
 }
 
-/** The subtree rooted at `session`, reading child sessions (Session.parent) breadth by node. */
+/**
+ * The subtree rooted at `session`, reading child sessions (Session.parent) breadth by node.
+ * Every child is read: a limit keeps the newest and drops the first subagents, and the
+ * totals would then count the limit.
+ */
 async function nodeOf(index: IndexStore, session: Session, depth: number, seen: Set<string>): Promise<TreeNode> {
   if (depth >= MAX_DEPTH) return { session, children: [], depth };
-  const kids = await index.listSessions({ parentSessionId: session.id, limit: MAX_CHILDREN });
+  const kids = await index.listSessions({ parentSessionId: session.id });
   kids.sort((a, b) => a.startedAt - b.startedAt);
   const children: TreeNode[] = [];
   for (const k of kids) {
@@ -196,6 +200,45 @@ const lessKey = (a: [number, number, number, number], b: [number, number, number
   return false;
 };
 
+/** Nodes a tree reply (`tree --json`, MCP session_tree) carries unless the caller asks for another count. */
+export const TREE_PAGE_NODES = 50;
+
+/** One page of a tree: its nodes, and where the next page starts when nodes are left. */
+export interface TreePage {
+  /** The page's nodes, each under its parent when the parent is on the page too, else at the top. */
+  roots: TreeNode[];
+  /** Offset of the next page. */
+  next?: number;
+}
+
+/**
+ * `limit` nodes of a tree from `offset`, counted in tree order (depth-first, as Tree.flat).
+ * A parent always comes before its children, so a node whose parent was on an earlier page
+ * comes back at the top of this one; its depth and its session's parent say where it hangs.
+ */
+export function pageTree(roots: readonly TreeNode[], offset: number, limit: number): TreePage {
+  const end = offset + limit;
+  const page: TreeNode[] = [];
+  let seen = 0;
+  const walk = (nodes: readonly TreeNode[], into: TreeNode[]): void => {
+    for (const n of nodes) {
+      if (seen >= end) {
+        seen++; // one past the page is enough to know more are left
+        return;
+      }
+      let kids = into;
+      if (seen++ >= offset) {
+        const copy: TreeNode = { session: n.session, children: [], depth: n.depth };
+        into.push(copy);
+        kids = copy.children;
+      }
+      walk(n.children, kids);
+    }
+  };
+  walk(roots, page);
+  return seen > end ? { roots: page, next: end } : { roots: page };
+}
+
 /** The whole tree the session `id` belongs to (its top-level agent down through every subagent). */
 export async function buildSessionTree(index: IndexStore, id: string): Promise<Tree | undefined> {
   const rootId = await rootOf(index, id);
@@ -207,13 +250,21 @@ export async function buildSessionTree(index: IndexStore, id: string): Promise<T
 }
 
 /**
+ * The subagent sessions under `session`, oldest first, each with its own subagents: the walk
+ * buildSessionTree does, from this session down (depth 1 for its direct subagents).
+ */
+export async function subagentsOf(index: IndexStore, session: Session): Promise<TreeNode[]> {
+  return (await nodeOf(index, session, 0, new Set<string>([session.id]))).children;
+}
+
+/**
  * The whole run grouped by run id: every top-level session stamped with
  * `runId` (a fan-out of separate agent processes whose orchestrator set
  * CODING_SH_RUN_ID) and the subagents under each. Undefined when no session
  * carries the run id.
  */
 export async function buildRunTree(index: IndexStore, runId: string, opts: { project?: string } = {}): Promise<Tree | undefined> {
-  const tops = await index.listSessions({ runId, parentSessionId: null, limit: MAX_CHILDREN, ...(opts.project !== undefined ? { project: opts.project } : {}) });
+  const tops = await index.listSessions({ runId, parentSessionId: null, limit: MAX_ROOTS, ...(opts.project !== undefined ? { project: opts.project } : {}) });
   if (!tops.length) return undefined;
   tops.sort((a, b) => a.startedAt - b.startedAt);
   const seen = new Set<string>(tops.map((s) => s.id));

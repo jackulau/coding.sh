@@ -88,6 +88,11 @@ To send calls on to a gateway by hand, pass `--anthropic-upstream` or `--openai-
 them under `[proxy]` in the [config](../reference/config.md). A flag wins over the config, and the
 config wins over the URL `init --proxy` chained through.
 
+When the URL behind the proxy is a known gateway, each call the proxy logs names it (`gateway` in
+the call's payload), so the session keeps its `gateway:<name>` tag. `gateway status` and `doctor`
+report the route too, marked "through the coding.sh proxy"
+([LLM gateways](../integrations/ai-gateway.md)).
+
 Measured overhead on a Linux desktop: 0.34 ms per streamed chunk (95% CI 0.28 to 0.39 ms) and
 1.96 ms to the first byte (95% CI 1.66 to 2.49 ms).
 

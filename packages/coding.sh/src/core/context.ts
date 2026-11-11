@@ -3,6 +3,7 @@
 import type { BlobStore, Config, IndexStore, Sink } from "./types.ts";
 import { loadConfig } from "./config.ts";
 import { paths } from "./paths.ts";
+import { clearIngestStopped } from "./ingest-health.ts";
 import { openStores } from "../store/factory.ts";
 import { LockBusyError } from "./lock.ts";
 import type { BackfillProgress, BackfillResult, IngestOptions, IngestResult } from "./ingest.ts";
@@ -25,7 +26,7 @@ export interface Context {
   storeOverridden: boolean;
   /** Drains the spool through the adapters' normalize into the index and sinks (lazy-loads adapters). */
   ingest(opts?: Pick<IngestOptions, "lock" | "checkpointEvents" | "now" | "deadline" | "signal" | "onProgress" | "repair">): Promise<IngestResult>;
-  /** Imports agents' local transcript history (adapter.backfill), skipping copies live capture already has. */
+  /** Imports agents' local transcript history (adapter.backfill), skipping copies live capture already has, and sends what it stores to the sinks. */
   backfill(opts?: { agents?: string[]; since?: number; deadline?: number; onProgress?: (p: BackfillProgress) => void }): Promise<BackfillResult>;
   /** Rebuilds sessions stored by an older adapter parse (or every one with `all`) from their transcripts and spool. */
   reparse(opts?: Pick<ReparseOptions, "all" | "agents" | "onProgress" | "runLock">): Promise<ReparseResult>;
@@ -61,12 +62,14 @@ export async function openContext(opts: OpenContextOptions = {}): Promise<Contex
     async ingest(o = {}) {
       // Lazy: adapters and ingest are only loaded by commands that need them.
       const [{ ingest }, { ADAPTERS }] = await Promise.all([import("./ingest.ts"), import("../adapters/index.ts")]);
-      return ingest({ ...o, config, index, blobs, sinks, env, spoolDir: p.spool, adapters: new Map(ADAPTERS.map((a) => [a.id, a])) });
+      const r = await ingest({ ...o, config, index, blobs, sinks, env, spoolDir: p.spool, adapters: new Map(ADAPTERS.map((a) => [a.id, a])) });
+      clearIngestStopped(p.ingestStopped); // an ingest ran, so whatever stopped the hook's is over
+      return r;
     },
     async backfill(o = {}) {
       const [{ backfill }, { ADAPTERS }] = await Promise.all([import("./ingest.ts"), import("../adapters/index.ts")]);
       const chosen = o.agents?.length ? ADAPTERS.filter((a) => o.agents!.includes(a.id)) : ADAPTERS;
-      return backfill({ config, index, blobs, env, adapters: chosen, ...(o.since !== undefined ? { since: o.since } : {}), ...(o.deadline !== undefined ? { deadline: o.deadline } : {}), ...(o.onProgress ? { onProgress: o.onProgress } : {}) });
+      return backfill({ config, index, blobs, sinks, env, adapters: chosen, ...(o.since !== undefined ? { since: o.since } : {}), ...(o.deadline !== undefined ? { deadline: o.deadline } : {}), ...(o.onProgress ? { onProgress: o.onProgress } : {}) });
     },
     async reparse(o = {}) {
       const [{ reparse }, { ADAPTERS }] = await Promise.all([import("./reparse.ts"), import("../adapters/index.ts")]);

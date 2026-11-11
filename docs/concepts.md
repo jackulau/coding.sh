@@ -16,7 +16,7 @@ Site version: [coding.sh/docs/concepts](https://coding.sh/docs/concepts).
 | **Replay** | `coding.sh exp replay` sends a logged model call again with one thing changed, several times per arm, and compares the arms. |
 | **Fork** | `coding.sh replay <session> --step N --fork` sends the call behind step N again with changed context files or another model. Needs [the proxy](how-to/capture-with-proxy.md). |
 | **Subagent** | A child agent a session started, such as Claude Code's Task tool, stored as its own session with a parent id. |
-| **Harness child** | An agent started by another agent's shell tool, such as `codex exec` from Claude Code's Bash tool. Its `parent.type` is `"harness"`. |
+| **Harness child** | An agent started by another agent's shell tool, such as `codex exec` from Claude Code's Bash tool. Its `parent.type` is `"harness"`. An id a hook names links the child only when that session is in the store and was open when the child started, so a shell that outlived its agent starts top-level sessions. |
 | **Run** | A top-level agent and every subagent under it, as one tree. [`coding.sh tree <session>`](https://coding.sh/docs/cli/tree) shows it with per-node cost, tokens and flags. |
 | **Spool, index and blobs** | Hooks append raw events to `~/.coding.sh/spool`. Ingest moves them into `index.db` and large payloads into `blobs/`. See [Storage, sinks and privacy](guides/privacy.md). |
 | **Sink** | A remote copy of your events over OTLP or HTTP, metadata only unless you set `mode = "full"`. See [Configuration](reference/config.md#sinks). |
@@ -102,4 +102,4 @@ What each tag's stat holds is in the [API reference](reference/api.md#get-apises
 | **Repair round** | With `compare --repair N`, a run whose verifier fails goes back to the agent, up to N times. A round that edits, deletes or skips tests does not count. See [Repair rounds](guides/evals.md#repair-rounds). |
 | **Agent release** | The agent version a compare run started on. When the two arms ran on different releases, compare says so and `--promote` holds. |
 | **Protected line** | A harness line an edit may not delete or relax, such as "Never run `git push --force`". `refine check` and `exp ab` reject an edit that drops one. See [Protected safety lines](guides/evals.md#protected-safety-lines). |
-| **Memory audit** | `coding.sh harness audit` counts the sessions that loaded, read and wrote each memory and instruction file, and flags files never read. See [Memory and instruction files](guides/explore.md#memory-and-instruction-files). |
+| **Memory audit** | `coding.sh harness audit` counts the sessions that loaded, read and wrote each memory and instruction file, and flags files never read. Each session keeps the files its events name in `stats.memoryUse`. See [Memory and instruction files](guides/explore.md#memory-and-instruction-files). |

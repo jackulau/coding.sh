@@ -130,4 +130,26 @@ describe("validate --against", () => {
       { caseId: "sum", kind: "guard", passes: 0, trials: 0, error: "boom" },
     ]);
   });
+
+  it("a trial lost to infrastructure (a logged-out agent) is no failing trial: the task couldn't run, so a bad task does not hold", () => {
+    const loggedOut = (id: string, attempt = 1): TrialResult => ({ ...trial(id, "old", D, attempt, false, { turns: 0 }), infra: "auth" });
+    const rows = againstRows([bad(), { ...guard }, leaky], [loggedOut("greet-bob"), { ...loggedOut("sum"), infra: "setup", error: "setup `x` exited 1" }, loggedOut("sum-bad"), trial("sum-bad", "old", D, 2, false)]);
+    assert.deepEqual(rows, [
+      { caseId: "greet-bob", kind: "bad", passes: 0, trials: 0, error: "infra: auth" },
+      { caseId: "sum", kind: "guard", passes: 0, trials: 0, error: "infra: setup (setup `x` exited 1)" },
+      // One trial with a known outcome is enough: the lost one is left out.
+      { caseId: "sum-bad", kind: "bad", passes: 0, trials: 1 },
+    ]);
+    const report = checkAgainst(rows, "old");
+    assert.equal(report.ok, false);
+    assert.deepEqual(
+      report.cases.map((c) => [c.caseId, c.ok, c.problem]),
+      [
+        ["greet-bob", false, "couldn't run on old: infra: auth"],
+        ["sum", false, "couldn't run on old: infra: setup (setup `x` exited 1)"],
+        ["sum-bad", true, undefined],
+      ],
+    );
+    assert.deepEqual(report.counts.bad, { cases: 2, ok: 1 });
+  });
 });

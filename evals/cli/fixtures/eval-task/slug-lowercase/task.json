@@ -1,0 +1,5 @@
+{
+  "name": "slug-lowercase",
+  "verifier": { "command": "node test.mjs" },
+  "tags": ["hand-written"]
+}

@@ -3,9 +3,10 @@
 // price table, are filled in here, in place (same ids):
 // - only calls (and usage snapshots) with tokens and no cost, or with a cost we
 //   estimated earlier; a cost the agent reported is never touched;
-// - a call with a gateway companion (`coding.sh gateway enrich`) is skipped:
+// - a call a gateway companion billed (`coding.sh gateway enrich`) is skipped:
 //   the companion holds billed minus the cost the call had, so a new estimate
-//   would be counted twice;
+//   would be counted twice. A companion with no billed cost bills nothing, and
+//   its call is priced like any other;
 // - each changed session gets its usage totals (and cache-break cost) refolded, nothing else.
 // It runs once per price table (built-in + `[prices]` overrides) and lookup-rule
 // version: the stamp is kept under a cursor, so later opens cost one read.
@@ -13,7 +14,7 @@
 import type { AgentEvent, Session } from "../schema/index.ts";
 import { sha256Hex } from "./ids.ts";
 import { priceEvent, PRICING_RULES_VERSION, pricesFor, type Prices } from "./pricing.ts";
-import { buildSession } from "./sessions.ts";
+import { billedCallOf, buildSession } from "./sessions.ts";
 import type { EventCost, IndexStore } from "./types.ts";
 
 export const REPRICE_CURSOR = "pricing:repriced";
@@ -43,7 +44,7 @@ export async function repriceStored(index: IndexStore, overrides?: Prices, opts:
   let sessions = 0;
   for (const prev of await index.listSessions({})) {
     const stored = await index.listEvents(prev.id, { kinds: KINDS });
-    const enriched = new Set(stored.filter((e) => e.source === "gateway" && e.parentId).map((e) => e.parentId!));
+    const enriched = new Set(stored.map(billedCallOf).filter((id) => id !== undefined));
     const costs: EventCost[] = [];
     let estimates = false;
     for (const e of stored) {

@@ -275,7 +275,7 @@ What lands in `otel_traces`, with `ServiceName = 'coding.sh'`:
 
 | `SpanName` | One per | Attributes (`SpanAttributes['…']`) |
 | --- | --- | --- |
-| `invoke_agent <agent>` | session | `gen_ai.operation.name`, `gen_ai.agent.name`, `gen_ai.request.model`, `gen_ai.conversation.id` (the session id), `gen_ai.usage.*`, `coding_sh.cost_usd`, `coding_sh.stats.*` (turns, tool_calls, tool_errors, files_changed, tests_passed, tests_failed), `coding_sh.session.flags`, `vcs.ref.head.revision` |
+| `invoke_agent <agent>` | session (an open one can have several rows) | `gen_ai.operation.name`, `gen_ai.agent.name`, `gen_ai.request.model`, `gen_ai.conversation.id` (the session id), `gen_ai.usage.*`, `coding_sh.cost_usd`, `coding_sh.stats.*` (events, turns, tool_calls, tool_errors, files_changed, tests_passed, tests_failed), `coding_sh.session.flags`, `vcs.ref.head.revision` |
 | `execute_tool <tool>` | tool call | `gen_ai.operation.name`, `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.agent.name`; `StatusCode` is `Error` when the call failed |
 | `chat <model>` | model call | `gen_ai.operation.name`, `gen_ai.request.model`, `gen_ai.provider.name`, `gen_ai.usage.*`, `coding_sh.cost_usd` |
 
@@ -297,13 +297,21 @@ SELECT
     round(sum(toFloat64OrZero(SpanAttributes['coding_sh.cost_usd'])), 2) AS cost_usd,
     sum(toUInt64OrZero(SpanAttributes['gen_ai.usage.input_tokens'])) AS input_tokens,
     sum(toUInt64OrZero(SpanAttributes['gen_ai.usage.output_tokens'])) AS output_tokens
-FROM otel.otel_traces
-WHERE ServiceName = 'coding.sh'
-  AND SpanAttributes['gen_ai.operation.name'] = 'invoke_agent'
-  AND Timestamp >= now() - INTERVAL 30 DAY
+FROM (
+    SELECT Timestamp, SpanId, SpanAttributes
+    FROM otel.otel_traces
+    WHERE ServiceName = 'coding.sh'
+      AND SpanAttributes['gen_ai.operation.name'] = 'invoke_agent'
+      AND Timestamp >= now() - INTERVAL 30 DAY
+    ORDER BY toUInt64OrZero(SpanAttributes['coding_sh.stats.events']) DESC
+    LIMIT 1 BY SpanId
+)
 GROUP BY day, agent, model
 ORDER BY day DESC, cost_usd DESC
 ```
+
+The inner query keeps one row per session: an open session is sent again as it grows (see "Things
+to know"), and the row with the most events (`coding_sh.stats.events`) wins.
 
 Slow and failing tools:
 
@@ -335,11 +343,16 @@ SELECT
     toUInt32OrZero(SpanAttributes['coding_sh.stats.tests_failed']) AS tests_failed,
     JSONExtract(SpanAttributes['coding_sh.session.flags'], 'Array(String)') AS flags,
     round(Duration / 1e9) AS duration_s
-FROM otel.otel_traces
-WHERE ServiceName = 'coding.sh'
-  AND SpanAttributes['gen_ai.operation.name'] = 'invoke_agent'
-  AND Timestamp >= now() - INTERVAL 7 DAY
-  AND (tests_failed > 0 OR hasAny(flags, ['repeated-tool-failure', 'premature-completion']))
+FROM (
+    SELECT Timestamp, SpanId, SpanAttributes, Duration
+    FROM otel.otel_traces
+    WHERE ServiceName = 'coding.sh'
+      AND SpanAttributes['gen_ai.operation.name'] = 'invoke_agent'
+      AND Timestamp >= now() - INTERVAL 7 DAY
+    ORDER BY toUInt64OrZero(SpanAttributes['coding_sh.stats.events']) DESC
+    LIMIT 1 BY SpanId
+)
+WHERE tests_failed > 0 OR hasAny(flags, ['repeated-tool-failure', 'premature-completion'])
 ORDER BY started DESC
 LIMIT 50
 ```
@@ -353,10 +366,15 @@ SELECT
     round(Duration / 1e6) AS ms,
     StatusCode,
     SpanAttributes['coding_sh.cost_usd'] AS cost_usd
-FROM otel.otel_traces
-WHERE TraceId = (
-    SELECT any(TraceId) FROM otel.otel_traces
-    WHERE SpanAttributes['gen_ai.conversation.id'] = {session:String}
+FROM (
+    SELECT Timestamp, SpanId, SpanName, Duration, StatusCode, SpanAttributes
+    FROM otel.otel_traces
+    WHERE TraceId = (
+        SELECT any(TraceId) FROM otel.otel_traces
+        WHERE SpanAttributes['gen_ai.conversation.id'] = {session:String}
+    )
+    ORDER BY toUInt64OrZero(SpanAttributes['coding_sh.stats.events']) DESC
+    LIMIT 1 BY SpanId
 )
 ORDER BY Timestamp
 ```
@@ -367,8 +385,11 @@ Things to know:
   `coding_sh.session.flags` is a JSON array string.
 - Cost is on the `invoke_agent` span (the session) and on each `chat` span. Sum one, never both.
 - `mode = "full"` adds prompts, code and tool output as span attributes.
-- The `invoke_agent` span is sent when the session ends, so a running session has no session row
-  yet.
+- The `invoke_agent` span is sent when the session ends. `coding.sh serve` and `coding.sh collector`
+  also send it while a session is open: after 10 quiet seconds, and every 60 seconds while busy.
+- Each send is a new row with the same `TraceId` and `SpanId` and newer totals. A session keyed by
+  a conversation id never ends, so those are its only rows.
+- A laptop sink (`coding.sh ingest`) sends the span at the session's end only.
 - `ttl: 720h` drops rows after 30 days. Set it to your retention.
 
 ### Pull from ClickHouse
@@ -383,12 +404,17 @@ CLICKHOUSE_USER=otel CLICKHOUSE_PASSWORD=… \
 
 - Each row is mapped as a span posted to `coding.sh collector` would be: the same events,
   redaction and pricing.
-- It reads only traces with an agent span unless you pass `--all`, keeps its place per table, and
-  never stores a span twice.
+- It reads only traces with an agent span unless you pass `--all`, and never stores a span twice.
+- It keeps its place per table and row filter (`--all`, each `--where`). The next run starts an
+  hour before it.
+- `--since` or `--from-start` reads from that time again, for a root span that landed over an hour
+  late. Leave both out of a scheduled import.
+- It stores 5,000 rows at a time and retries a dropped connection or a 502, 503 or 504 three
+  times. A run that still fails prints the command to run again.
 - Both the default `Map(String, String)` columns and `json: true` columns work. In Map columns a
   string that looks like a number (an id such as `"42"`) comes back as a number.
 
-`--since`, `--where`, `--table` and `--dry-run` are on
+`--since`, `--from-start`, `--where`, `--table` and `--dry-run` are on
 [coding.sh collector](https://coding.sh/docs/cli/collector).
 
 ## Next

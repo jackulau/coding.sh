@@ -1,0 +1,19 @@
+id = "eval-candidates"
+split = "dev"
+tags = ["eval-authoring", "query"]
+instruction = """
+I want to build eval tasks from my past sessions in the repository ${answers.paths.repos.calc}. Which of its captured sessions can become an eval task? Reply with the ids of the sessions that qualify, and leave out the ones that do not.
+"""
+
+reference = ['''
+coding.sh eval candidates --repo ${answers.paths.repos.calc} --json | node -e 'for(const c of JSON.parse(require("fs").readFileSync(0)).candidates)if(c.eligible)console.log(c.sessionId)'
+''']
+
+# From the fixture spec: r1 and r3 edit calc.mjs; oldcalc and ycalc only read files.
+[[check]]
+kind = "output"
+set = ["${answers.ids.r1}", "${answers.ids.r3}"]
+absent = ["${answers.ids.oldcalc}", "${answers.ids.ycalc}"]
+
+[expect]
+minTargetCalls = 1

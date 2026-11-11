@@ -295,6 +295,73 @@ describe("initSuite: sessions", () => {
   });
 });
 
+describe("initSuite: a session diff that changes the verifier's own tests", () => {
+  const ROOT = "/work/toy";
+  const VERIFIER = "node test/add.test.js";
+  const TEST = 'import assert from "node:assert/strict";\nimport { test } from "node:test";\nimport { add } from "../src/add.js";\n\ntest("add sums", () => {\n  assert.equal(add(2, 3), 5);\n});\n';
+  const START = { ...BUGGY, "test/add.test.js": TEST };
+  const FIX = { "src/add.js": FIXED["src/add.js"] as string };
+  /** One flagged session per end tree, each from the same failing start. */
+  async function world(ends: Record<string, Record<string, string>>) {
+    const d = deps();
+    const git = new FakeSnapshots().add("start", START);
+    let seq = 0;
+    const ev = (sessionId: string, kind: AgentEvent["kind"], payload: Record<string, unknown>, extra: Partial<AgentEvent> = {}): AgentEvent => ({ id: `${sessionId}-${++seq}`, v: 0, sessionId, ts: 1000 + seq, agent: "claude-code", kind, payload, ...extra });
+    for (const [id, tree] of Object.entries(ends)) {
+      git.add(`end-${id}`, { ...START, ...tree });
+      await d.index.upsertSession({ id, agent: "claude-code", repo: { root: ROOT, head: "abc", snapshot: "start" }, startedAt: 10_000, stats: { events: 0, turns: 1, toolCalls: 1, toolErrors: 0, filesChanged: 1 }, flags: ["test-failures"], endSnapshot: `end-${id}` });
+      await d.index.putEvents([ev(id, "session.start", {}, { repo: { root: ROOT, head: "abc", snapshot: "start" } }), ev(id, "user.message", { text: `make the add test pass (${id})` })]);
+    }
+    const workRoot = await project();
+    return { ...d, git, workRoot };
+  }
+  const init = async (w: Awaited<ReturnType<typeof world>>, id: string, validate = true) => {
+    const o: Parameters<typeof initSuite>[0] = { name: id, root: await project(), source: "sessions", sessionIds: [id], verifier: VERIFIER };
+    if (validate) o.validate = { workRoot: w.workRoot, passToPass: false };
+    const r = await initSuite(o, { ...w, now: 12_000 });
+    return { r, task: (await w.index.getTask(r.tasks![0]!.id))! };
+  };
+
+  it("keeps a diff that only rewrites the test as a near miss, never the validated reference", async () => {
+    const w = await world({ tamper: { "test/add.test.js": "console.log('ok');\n" } });
+    const { r, task } = await init(w, "tamper");
+    assert.equal(task.status, "draft", "the verifier fails the start and passes this end state, and that proves nothing");
+    assert.equal(task.referencePatch, undefined);
+    assert.equal(task.nearMissPatches?.length, 1);
+    assert.match(r.notes[0]!, /^0 of 1 task\(s\) validated/);
+    assert.ok(r.notes.some((n) => /changes the tests the verifier runs \(edit test\/add\.test\.js\), so it is kept as a near miss, not the reference/.test(n)), r.notes.join("\n"));
+    const [dir] = r.files.filter((f) => f.includes("/tasks/"));
+    assert.equal(existsSync(join(r.dir, "..", "..", dir!, "reference.patch")), false);
+  });
+
+  it("does the same without --validate, and for a deleted test", async () => {
+    const w = await world({ tamper: { "test/add.test.js": "console.log('ok');\n" } });
+    w.git.add("end-gone", { ...BUGGY, "src/add.js": FIXED["src/add.js"] as string });
+    await w.index.upsertSession({ ...(await w.index.getSession("tamper"))!, id: "gone", flags: [], endSnapshot: "end-gone" });
+    await w.index.putEvents([{ id: "gone-1", v: 0, sessionId: "gone", ts: 1001, agent: "claude-code", kind: "user.message", payload: { text: "fix add" } }]);
+    await w.index.upsertSession({ ...(await w.index.getSession("tamper"))!, flags: [] });
+    for (const [id, what] of [["tamper", "edit"], ["gone", "delete"]] as const) {
+      const { r, task } = await init(w, id, false);
+      assert.equal(task.referencePatch, undefined, id);
+      assert.equal(task.nearMissPatches?.length, 1, id);
+      assert.ok(r.notes.some((n) => n.includes(`(${what} test/add.test.js)`)), r.notes.join("\n"));
+    }
+  });
+
+  it("still validates a real fix, and keeps one that also adds a test case to the test file as the reference", async () => {
+    const more = `${TEST}\ntest("add sums negatives", () => {\n  assert.equal(add(-2, -3), -5);\n});\n`;
+    const w = await world({ fix: FIX, "fix-and-test": { ...FIX, "test/add.test.js": more } });
+    const fix = await init(w, "fix");
+    assert.equal(fix.task.status, "validated", fix.r.notes.join("\n"));
+    assert.ok(fix.task.referencePatch);
+    // New test cases, every existing line kept: nothing is disabled, so the diff is still the reference.
+    const both = await init(w, "fix-and-test");
+    assert.ok(both.task.referencePatch, both.r.notes.join("\n"));
+    assert.equal(both.task.nearMissPatches, undefined);
+    assert.ok(![...fix.r.notes, ...both.r.notes].some((n) => /changes the tests/.test(n)));
+  });
+});
+
 describe("draft", () => {
   it("rejects a reply with no usable draft", async () => {
     await assert.rejects(draftCases(fakeProvider("no json here"), { description: "x" }), DraftError);

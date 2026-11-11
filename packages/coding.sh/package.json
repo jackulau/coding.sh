@@ -71,6 +71,11 @@
       "types": "./dist/types/server/index.d.ts",
       "default": "./dist/server.mjs"
     },
+    "./judge": {
+      "source": "./src/judge/lib.ts",
+      "types": "./dist/types/judge/lib.d.ts",
+      "default": "./dist/judge.mjs"
+    },
     "./package.json": "./package.json"
   },
   "files": [

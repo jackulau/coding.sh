@@ -81,7 +81,7 @@ export function scoreTools(): ToolDef<ToolCtx>[] {
           dataType: { type: "string", enum: ["numeric", "boolean", "categorical", "text"], description: "Default: from config or value." },
           comment: { type: "string", description: "Why." },
           source: { ...SOURCE, description: "Who scored. Default api." },
-          sessionId: { type: "string", description: "Session of an event, case or run." },
+          sessionId: { type: "string", description: "Session of a case or run." },
           id: { type: "string", description: "Same id replaces." },
         },
         required: ["targetId", "name", "value"],

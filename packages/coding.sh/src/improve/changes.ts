@@ -19,7 +19,8 @@
 // Each is a two-sided Fisher exact test at ALPHA. Worse flagged share is a
 // regression. Helped needs the failure itself to fall: the flagged share, or one
 // diagnosed flag's share (Holm-adjusted across the flags seen before) with no
-// other flag rising in its place. A new line the agent follows while flags stay
+// other flag rising significantly in its place; the reason names every flag
+// that rose, significant or not. A new line the agent follows while flags stay
 // put is "followed, no effect yet": following a line is not fixing what it
 // targets (Treude & Baltes, arXiv 2610.34938, RQ2). A third measure, work (tool
 // calls and wall time per session), turns a change that adds work without
@@ -317,6 +318,7 @@ interface FlagMove {
   p: number;
 }
 
+/** Every flag in `flags` whose share moved `dir`, significant or not, most significant first. */
 function flagMoves(before: GroupStats, after: GroupStats, flags: readonly string[], dir: "down" | "up"): FlagMove[] {
   const raw = flags.map((f) => {
     const b = before.byFlag[f] ?? 0;
@@ -326,9 +328,11 @@ function flagMoves(before: GroupStats, after: GroupStats, flags: readonly string
   const adj = holm(raw.map((r) => r.p));
   return raw
     .map((r, i) => ({ ...r, p: adj[i]! }))
-    .filter((r) => r.p <= ALPHA && (dir === "down" ? share(r.after, after.sessions) < share(r.before, before.sessions) : share(r.after, after.sessions) > share(r.before, before.sessions)))
+    .filter((r) => (dir === "down" ? share(r.after, after.sessions) < share(r.before, before.sessions) : share(r.after, after.sessions) > share(r.before, before.sessions)))
     .sort((x, y) => x.p - y.p || x.flag.localeCompare(y.flag));
 }
+
+const significant = (m: FlagMove): boolean => m.p <= ALPHA;
 
 /** Verdict and reason from the flagged share, each flag's share, the new rules' effects and the work per session. */
 export function decide(before: GroupStats, after: GroupStats, rules: readonly RuleEffect[]): { verdict: Verdict; reason: string; p?: number; work?: WorkEffect } {
@@ -343,15 +347,21 @@ export function decide(before: GroupStats, after: GroupStats, rules: readonly Ru
   if (up && p <= ALPHA) return { verdict: "regressed", reason: `More sessions went wrong after it: ${flagText} (p ${fmtP(p)}).`, p, ...w };
   const extra = addedWork(work);
   const alsoWork = extra ? ` It also added work: sessions after it ${extra}.` : "";
-  if (down && p <= ALPHA) return { verdict: "helped", reason: `Fewer sessions went wrong after it: ${flagText} (p ${fmtP(p)}).${alsoWork}`, p, ...w };
+  // Holm across the flags seen on the side a move starts from (fell) or ends on (rose).
+  const fell = flagMoves(before, after, Object.keys(before.byFlag).filter((f) => (before.byFlag[f] ?? 0) > 0).sort(), "down").filter(significant);
+  const anyRose = flagMoves(before, after, Object.keys(after.byFlag).filter((f) => (after.byFlag[f] ?? 0) > 0).sort(), "up");
+  const rose = anyRose.filter(significant);
+  // Helped still names every flag whose share rose, significant or not: "x rose 4 to 8 of 12, not significant."
+  const roseText = (m: FlagMove) =>
+    `${m.flag} rose ${before.sessions === after.sessions ? `${m.before} to ${pct(m.after, after.sessions)}` : `${pct(m.before, before.sessions)} to ${pct(m.after, after.sessions)}`}${significant(m) ? ` (Holm p ${fmtP(m.p)})` : ", not significant"}`;
+  const alsoRose = anyRose.length ? ` ${anyRose.map(roseText).join("; ")}.` : "";
+  if (down && p <= ALPHA) return { verdict: "helped", reason: `Fewer sessions went wrong after it: ${flagText} (p ${fmtP(p)}).${alsoRose}${alsoWork}`, p, ...w };
   // One diagnosed flag falling counts when it survives Holm across the flags seen before,
-  // the flagged share did not rise, and no other flag rose in its place.
-  const fell = flagMoves(before, after, Object.keys(before.byFlag).filter((f) => (before.byFlag[f] ?? 0) > 0).sort(), "down");
-  const rose = flagMoves(before, after, Object.keys(after.byFlag).filter((f) => (after.byFlag[f] ?? 0) > 0).sort(), "up");
+  // the flagged share did not rise, and no other flag rose significantly in its place.
   const counts = (m: FlagMove) => `${pct(m.before, before.sessions)} before, ${pct(m.after, after.sessions)} after`;
   if (fell.length && !up && !rose.length) {
     const f = fell[0]!;
-    return { verdict: "helped", reason: `Fewer sessions had ${f.flag} after it: ${counts(f)} (Holm p ${fmtP(f.p)}); ${flagText}.${alsoWork}`, p, ...w };
+    return { verdict: "helped", reason: `Fewer sessions had ${f.flag} after it: ${counts(f)} (Holm p ${fmtP(f.p)}); ${flagText}.${alsoRose}${alsoWork}`, p, ...w };
   }
   const moved = fell.length && rose.length ? ` ${fell[0]!.flag} fell (${counts(fell[0]!)}) but ${rose[0]!.flag} rose (${counts(rose[0]!)}): the failures moved.` : "";
   const followed = rules.filter((r) => r.p !== undefined && r.p <= ALPHA && share(r.after.acted, r.after.n) > share(r.before.acted, r.before.n));

@@ -35,6 +35,25 @@ function fixture(seed = 7): SignalRow[] {
   return rows;
 }
 
+/**
+ * `tasks` tasks × 2 arms × `k` attempts. Each task passes at its own rate in [0.3, 0.7];
+ * `coin` is a 0/1 score drawn apart from the outcome, and `planted` marks the failed attempts.
+ */
+function nullTable(tasks: number, k: number, seed: number): SignalRow[] {
+  const rand = mulberry32(seed);
+  const rows: SignalRow[] = [];
+  for (let t = 0; t < tasks; t++) {
+    const pPass = 0.3 + 0.4 * rand();
+    for (const arm of ["A", "B"]) {
+      for (let a = 0; a < k; a++) {
+        const pass = rand() < pPass;
+        rows.push({ runId: `t${t}-${arm}-${a}`, taskId: `t${t}`, arm, pass, scores: { coin: rand() < 0.5 ? 1 : 0, planted: pass ? 0 : 1 } });
+      }
+    }
+  }
+  return rows;
+}
+
 describe("signalValidity", () => {
   it("a within-task-constant score: 0.5 within task and arm, tracks-difficulty when pooled ≥ 0.6", () => {
     const v = signalValidity(fixture());
@@ -143,6 +162,61 @@ describe("signalValidity", () => {
     assert.ok(v.every((r) => r.verdict === "too-few-pairs"));
   });
 
+  it("one task, k=10 per arm: too-few-pairs whatever the pair count, and no one-task CI", () => {
+    let enoughPairs = 0;
+    for (let seed = 1; seed <= 100; seed++) {
+      for (const r of signalValidity(nullTable(1, 10, seed))) {
+        assert.equal(r.verdict, "too-few-pairs", `seed ${seed} ${r.signal}`);
+        assert.ok(r.withinTaskArm.tasks <= 1);
+        // One task is the same value on every bootstrap draw: never print it as an interval.
+        assert.ok(Number.isNaN(r.withinTaskArm.ci[0]) && Number.isNaN(r.withinTaskArm.ci[1]), `seed ${seed} ${r.signal} ci ${r.withinTaskArm.ci}`);
+        if (r.signal === "coin" && r.withinTaskArm.pairs >= 20) enoughPairs++;
+      }
+    }
+    // The pair count alone would have let most of these tables through.
+    assert.ok(enoughPairs >= 80, `${enoughPairs} tables with 20 pairs or more`);
+  });
+
+  it("2 tasks × 8 per arm: too-few-pairs, also for a score that marks every failure", () => {
+    let enoughPairs = 0;
+    for (let seed = 1; seed <= 100; seed++) {
+      for (const r of signalValidity(nullTable(2, 8, seed))) {
+        assert.equal(r.verdict, "too-few-pairs", `seed ${seed} ${r.signal}`);
+        assert.ok(r.withinTaskArm.tasks <= 2);
+        if (r.signal === "coin" && r.withinTaskArm.pairs >= 20) enoughPairs++;
+      }
+    }
+    assert.ok(enoughPairs >= 80, `${enoughPairs} tables with 20 pairs or more`);
+  });
+
+  it("minTasks is an option: the same 2-task table gets a verdict with minTasks 2", () => {
+    const r = get(signalValidity(nullTable(2, 8, 1), { minTasks: 2 }), "planted");
+    assert.equal(r.withinTaskArm.tasks, 2);
+    assert.equal(r.verdict, "adds-run-signal");
+  });
+
+  it("20 tasks × 3 per arm with a planted signal: still adds-run-signal", () => {
+    const r = get(signalValidity(nullTable(20, 3, 1)), "planted");
+    assert.ok(r.withinTaskArm.tasks >= 8, `tasks ${r.withinTaskArm.tasks}`);
+    assert.equal(r.withinTaskArm.auroc, 1);
+    assert.deepEqual(r.withinTaskArm.ci, [1, 1]);
+    assert.equal(r.verdict, "adds-run-signal");
+  });
+
+  it("a coin-flip score at 8 tasks × 4 per arm gets adds-run-signal in at most 10% of 200 tables", () => {
+    let judged = 0;
+    let positive = 0;
+    for (let seed = 1; seed <= 200; seed++) {
+      const r = get(signalValidity(nullTable(8, 4, seed)), "coin");
+      if (r.verdict === "too-few-pairs") continue;
+      judged++;
+      assert.ok(r.withinTaskArm.tasks >= 8);
+      if (r.verdict === "adds-run-signal") positive++;
+    }
+    assert.ok(judged >= 100, `${judged} tables judged`);
+    assert.ok(positive <= 20, `${positive} of 200 coin-flip tables got adds-run-signal`);
+  });
+
   it("no task with two runs → empty", () => {
     assert.deepEqual(signalValidity([{ runId: "a", taskId: "t", arm: "A", pass: true, scores: { s: 1 } }]), []);
   });
@@ -191,5 +265,16 @@ describe("formatSignalValidity", () => {
     const at = lines.findIndex((l) => l.trim().startsWith("signal "));
     assert.match(lines[at + 1]!, /difficulty\(loo\) \(ref\)/);
     assert.match(text, /planted .* adds-run-signal/);
+    assert.doesNotMatch(text, /needs 8 tasks/);
+  });
+
+  it("one task: a dash where the CI was, and a line that says how many tasks a verdict needs", () => {
+    const text = formatSignalValidity(signalValidity(nullTable(1, 10, 2)), { repeated: true });
+    assert.match(text, /\n {2}needs 8 tasks: 1 task has a failed and a passed run in the same arm/);
+    const rows = text.split("\n").filter((l) => /too-few-pairs$/.test(l));
+    assert.equal(rows.length, 4);
+    for (const l of rows) assert.match(l, / – +\d+ {2}too-few-pairs$/);
+    assert.doesNotMatch(text, /\[|adds-run-signal|no-signal|tracks-difficulty/);
+    assert.match(formatSignalValidity(signalValidity(nullTable(3, 6, 2))), /needs 8 tasks: 3 tasks have/);
   });
 });

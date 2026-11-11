@@ -597,6 +597,16 @@ interface Applied {
   test: TestEntry;
 }
 
+/**
+ * A round's reasons with the one that decided its verdict first. Stage 3 appends the canary's
+ * reason after the reason the candidate was first kept, so a round the canary rejected or left
+ * inconclusive leads with the canary's; every other round reads as written.
+ */
+export function verdictReasons(t: Pick<TestEntry, "verdict" | "stage" | "reasons">): string[] {
+  const i = t.stage === "canary" || t.verdict !== "keep" ? t.reasons.findIndex((r) => r.startsWith("canary")) : -1;
+  return i > 0 ? [t.reasons[i]!, ...t.reasons.slice(0, i), ...t.reasons.slice(i + 1)] : [...t.reasons];
+}
+
 export function applyCandidate(root: string, dir: string, id: string | undefined, force: boolean): Applied {
   const entries = readLedger(dir);
   const all = tests(entries);
@@ -610,7 +620,7 @@ export function applyCandidate(root: string, dir: string, id: string | undefined
   }
   const forced: string[] = [];
   if (test.verdict !== "keep") {
-    if (!force) throw new CliError(`${test.id} was not kept (${test.verdict}: ${test.reasons[0] ?? "no reason"})`, { reason: "not_kept", askUser: true, next: ["Apply it anyway (recorded in the ledger):", `coding.sh refine apply ${test.id} --force`] });
+    if (!force) throw new CliError(`${test.id} was not kept (${test.verdict}: ${verdictReasons(test)[0] ?? "no reason"})`, { reason: "not_kept", askUser: true, next: ["Apply it anyway (recorded in the ledger):", `coding.sh refine apply ${test.id} --force`] });
     forced.push(`verdict ${test.verdict}`);
   }
   const stored = loadCandidate(dir, test.id);

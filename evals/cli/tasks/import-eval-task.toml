@@ -1,0 +1,21 @@
+id = "import-eval-task"
+split = "dev"
+tags = ["eval-authoring", "state"]
+instruction = """
+A hand-written eval task sits in the directory ${fixtures}/eval-task/slug-lowercase. Add it to coding.sh's eval tasks.
+"""
+
+reference = ['''
+coding.sh eval import ${fixtures}/eval-task/slug-lowercase
+''']
+
+[[check]]
+kind = "state"
+command = "coding.sh eval list --json"
+jsonPath = "$.tasks"
+where = { name = "slug-lowercase" }
+pick = "verifier.command"
+equals = "node test.mjs"
+
+[expect]
+minTargetCalls = 1

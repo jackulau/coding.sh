@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
-import type { Adapter, RunSpec } from "../../src/core/types.ts";
+import type { Adapter, RunSpec, Session } from "../../src/core/types.ts";
 import { sh } from "../../src/runner/exec.ts";
 import { compareToolArms, summarizeArms } from "../../src/toolevals/compare.ts";
 import { runToolExperiment, runTrial, type ToolJob } from "../../src/toolevals/experiment.ts";
@@ -96,6 +96,40 @@ describe("runToolExperiment: infrastructure errors", () => {
     assert.match(cmp.verdict.text, /^void: 4 trials failed on infrastructure \(login 4\)/);
     assert.ok(cmp.notes.some((n) => /^4 trial\(s\) failed on infrastructure \(login 4\) after their retries: outcome unknown, left out of the pass rates/.test(n)));
     assert.deepEqual([cmp.baseline.trials, cmp.baseline.infra], [0, 2]);
+  });
+
+  it("an agent that could not start (exit 127) or exited non-zero before its first turn is an error, not a plain fail", async () => {
+    const index = new MemIndex();
+    // What the agent's process did, by task: its exit code, what it printed on stderr, and the turns its captured session shows.
+    const plan: Record<string, { exitCode: number; stderr: string; turns?: number }> = {
+      missing: { exitCode: 127, stderr: "spawn claude ENOENT" },
+      crashed: { exitCode: 139, stderr: "Segmentation fault" },
+      worked: { exitCode: 1, stderr: "Reached max turns", turns: 2 },
+      wrong: { exitCode: 0, stderr: "" },
+    };
+    const agent: Adapter = {
+      ...fakeAdapter(),
+      run: async (spec: RunSpec) => {
+        const p = plan[spec.instruction.split(" ")[0]!]!;
+        if (p.turns) await index.upsertSession({ id: `s_${spec.runId}`, agent: "claude-code", runId: spec.runId, startedAt: 1, stats: { events: 0, turns: p.turns, toolCalls: 0, toolErrors: 0 } } as Session);
+        return { exitCode: p.exitCode, timedOut: false, durationMs: 1, stdoutTail: "nope", stderrTail: p.stderr };
+      },
+    };
+    const tasks = Object.keys(plan).map((id) => task({ id, instruction: `${id} greets bob` }));
+    const r = await run(tasks, agent, { index, retry: retry(0) });
+    const by = (id: string) => r.trials.find((t) => t.taskId === id)!;
+    assert.deepEqual(
+      Object.keys(plan).map((id) => [id, by(id).pass, by(id).error, by(id).infra]),
+      [
+        ["missing", false, "agent never ran, exit 127: spawn claude ENOENT", undefined],
+        ["crashed", false, "agent never ran, exit 139: Segmentation fault", undefined],
+        // The agent took turns and then exited 1, or exited 0 with the wrong answer: both are its own failure.
+        ["worked", false, undefined, undefined],
+        ["wrong", false, undefined, undefined],
+      ],
+    );
+    const stored = await index.listRuns({ experimentId: r.experimentId });
+    assert.equal(stored.find((x) => x.taskId === "missing")?.error, "agent never ran, exit 127: spawn claude ENOENT");
   });
 });
 

@@ -8,7 +8,7 @@
 // finishes the drain must end with exactly the rows a clean drain stores.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
@@ -123,8 +123,9 @@ describe("ingest crash safety", () => {
     assert.equal(Object.keys(expected.stats).length, SESSIONS);
     assert.equal(Object.values(expected.events).flat().length, SESSIONS * (3 + 2 * TOOLS));
 
+    // The same bytes: a hook event's id comes from its payload and time, which a second writeSpool would change.
     const crashed = newHome();
-    writeSpool(crashed.spool);
+    for (const f of readdirSync(clean.spool)) copyFileSync(join(clean.spool, f), join(crashed.spool, f));
     const deaths: Death[] = [
       { killAfterCheckpoints: 3 },
       // Inside a checkpoint: after its events are written, after a session row, after a cursor.

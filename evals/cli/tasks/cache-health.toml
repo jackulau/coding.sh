@@ -1,0 +1,19 @@
+id = "cache-health"
+split = "dev"
+tags = ["cache", "diagnosis", "json"]
+instruction = """
+How healthy is my prompt cache over the last 30 days? Give the hit rate as a percentage and the letter grade coding.sh assigns it. Answer with a single JSON object like {"hitRatePercent": N, "grade": "<letter>"}.
+"""
+
+reference = ['''
+coding.sh cache doctor --json | node -e 'const d=JSON.parse(require("fs").readFileSync(0));console.log(JSON.stringify({hitRatePercent:Math.round(100*d.hitRate),grade:d.grade}))'
+''']
+
+# From the fixture spec: no model call reads from the cache, so the hit rate is 0 and the
+# documented grade formula (60% hit rate against 90%, 40% avoidable re-billing) gives 40: an F.
+[[check]]
+kind = "output"
+json = { hitRatePercent = 0, grade = "F" }
+
+[expect]
+minTargetCalls = 1

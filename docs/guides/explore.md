@@ -97,8 +97,13 @@ coding.sh cache doctor --agent claude-code,codex --since 7d --json
 
 Telling tool and system prompt changes apart needs both requests, which
 [the proxy](../how-to/capture-with-proxy.md) stores with capture mode `full`. Without them a break
-is classified from hashes, the model and timing, and a note says how many were. The events of the
-200 costliest sessions with breaks are read (`--limit`).
+is classified from hashes, message counts, the model and timing, and a note says how many were.
+The stored requests of the 200 costliest sessions with breaks are read (`--limit`). The hit rate,
+breaks, tokens, USD and grade still cover every session in the window, as `usage` does. A session
+with stored requests past the limit is classified the same way as one without them: a tools or
+system prompt change is named without its detail (`tools-changed`, `system-changed`), and a history
+edit that keeps the message count reads as `other`. `--json` says how many in `sessionsNotRead` and
+`breaksNotRead`. A session with no stored requests reads the same at any `--limit`.
 
 `coding.sh usage --baseline` adds a `VS PUBLISHED` column to the by-agent table: your hit rate
 against Requesty's published rate for that agent (April 2026), as a signed point delta, or `-` for
@@ -124,7 +129,8 @@ call".
 
 In `coding.sh ui`, a model call also has "Open in playground". The playground rebuilds the call
 as the system prompt, the messages and the tools, from the stored request, or from the transcript
-when the proxy did not see the call. Edit any of it, pick a provider, and Run sends it again and
+when the proxy did not see the call. A call in a subagent's session is rebuilt from the subagent's
+own conversation. Edit any of it, pick a provider, and Run sends it again and
 shows the answer beside the recorded one. "Save as case" adds the request, with the recorded or the
 new answer as the expected output if you choose one, to a new dataset version, where a
 `continuation` task in `coding.sh exp run` can replay it. A provider is ready when `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set where
@@ -153,7 +159,12 @@ coding.sh show latest --follow     # keep printing new events while it runs; Ctr
 coding.sh sessions --flag looping  # sessions with one derail (or any other flag)
 ```
 
-`show --json` adds `phases` and `days`. `--follow` prints the last 20 events, then every new
+`show --json` adds `phases` and `days`. For a session over 200 events it prints `events: []` next
+to `eventCount`, as the text shows phases; `--limit N` or `--all` lists the events. An event leaves
+out `sessionId`, `agent` and `cwd` when they equal the session's. `sessions --json` rows are
+digests: `stats` without `stats.phases`, and each derail without the event it started at.
+`--fields id,title,stats.usage.costUsd` on `sessions` and `show` prints only those paths of the
+document. `--follow` prints the last 20 events, then every new
 event and derail as hooks write them. It stops on its own after the session ends.
 
 ### Derails
@@ -334,7 +345,9 @@ coding.sh harness audit --agent codex --since 90d
 coding.sh harness audit --json                   # every file, with totals
 ```
 
-The counts come from captured events:
+The counts come from captured events. Ingest keeps what each session's events say about these
+files on the session (`stats.memoryUse`), and the audit reads the sessions, not their events. After
+an upgrade it reads the events, which is slower, until an ingest has refolded the stored sessions.
 
 - **loaded**: a `harness.loaded` event (an instructions file in a subdirectory, a skill listed or invoked), or a
   file the agent loads at start for the session's directory. For Claude Code that is
@@ -451,7 +464,12 @@ file with `file`), or a range with `from` and `to`. With `step` and `fork` it fo
 `session_tree` gives the same as `coding.sh tree`: a whole multi-agent run as one tree — from any
 session, its top-level agent and every subagent; with `run: true`, every agent of a fan-out that
 shares a run id. Each node has its model, cost, tokens, duration and flags, and the result rolls up
-the loop's totals, the worst flag across it, and `worst`, the node to fix first.
+the loop's totals, the worst flag across it, and `worst`, the node to fix first. The nodes come a
+page at a time, depth-first: 50 by default (`limit`, up to 200), with `nextCursor` and
+`truncated: true` when more are left; pass it back as `cursor`. The totals and `worst` cover the
+whole tree on every page. A node whose parent was on an earlier page is at the top of its page and
+names it in `parentSessionId`. `coding.sh tree <session> --json` pages the same way with `--limit`
+and `--cursor`; the text tree is always whole.
 
 `coding.sh init` registers it with Claude Code, Codex, Cursor and OpenCode (`--no-mcp` skips
 this). `coding.sh mcp config` prints the snippet for any other client.

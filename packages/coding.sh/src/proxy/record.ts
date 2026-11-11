@@ -18,6 +18,7 @@ import { type Prices, priceEvent } from "../core/pricing.ts";
 import { type Redactor, toMetadata } from "../core/redact.ts";
 import { foldSession, sessionOf, type SessionState } from "../core/sessions.ts";
 import type { BlobStore, IndexStore } from "../core/types.ts";
+import { gatewayForUrl } from "../integrations/gateway/providers.ts";
 import { type AgentEvent, SCHEMA_VERSION, type Session } from "../schema/index.ts";
 import { messagesKey, putMessages, RecentBlobs } from "./blocks.ts";
 import { accountHash, callLineage, type Client, detectClient, type Headers, type Lineage, type Link, linkCall, ResponseSessions, upstreamAuth } from "./link.ts";
@@ -62,6 +63,8 @@ export interface RecorderOptions {
   write: (events: AgentEvent[]) => Promise<void>;
   /** Set on every event (serve). */
   project?: string;
+  /** Names a self-hosted gateway's URL (LITELLM_PROXY_URL, CLIPROXYAPI_URL, …), to tell which gateway an upstream is. */
+  env?: NodeJS.ProcessEnv;
   /** false: store each request body whole (format 1) instead of in message blocks; for benchmarks. */
   blocks?: boolean;
   onError?: (err: Error) => void;
@@ -425,6 +428,10 @@ export function createRecorder(o: RecorderOptions): Recorder {
     if (call.route.api === "responses") responses.set(call.result?.id, link.sessionId);
     const payload = buildPayload(call, info, client, content, link.linkedBy);
     Object.assign(payload, lineagePayload(lineage, link, call.resHeaders));
+    // The gateway the call went on to (init --proxy chained through it): the hook sees only the
+    // proxy's URL, so the call itself tags the session `gateway:<id>`.
+    const gateway = gatewayForUrl(call.upstream, o.env ?? {});
+    if (gateway) payload.gateway = gateway;
     const e: AgentEvent = {
       id: hashParts("proxy", link.sessionId, call.startedAt, seq++, randomUUID()),
       v: SCHEMA_VERSION,

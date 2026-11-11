@@ -3,27 +3,36 @@
 // The prompt cache's health over a window: the hit rate (`usage`'s cacheReadShare, over the same
 // sessions), a 0-100 grade, and the cache breaks ranked by what they cost, each with its structural
 // cause, the fix, and the two calls to pass to `coding.sh diff-calls`. Analysis: ../cache-health.ts.
-import { collectSessions } from "../../mcp/data.ts";
+import { scanSessions, TOTALS_SCAN_CAP } from "../../mcp/data.ts";
 import type { Session } from "../../schema/index.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
-import { cacheHealth, type CacheHealth, type ClassifiedBreak, sessionBreaks } from "../cache-health.ts";
-import { agentScope, agentsFlag, autoIngest, pendingField, queryCliError, readIngest, str, whereFlag, withContext } from "../common.ts";
+import { BREAK_EVENT_KINDS, breakTotals, cacheHealth, type CacheHealth, type ClassifiedBreak, hasStoredRequest, sessionBreaks } from "../cache-health.ts";
+import { agentScope, agentsFlag, autoIngest, pendingField, queryCliError, readIngest, scanCap, stoppedAfter, str, whereFlag, withContext } from "../common.ts";
 import { tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
-/** Sessions with breaks whose events are read, costliest first. */
+/** Sessions with breaks whose stored requests are read, costliest first. The totals, the causes and the grade cover the rest too. */
 const DEFAULT_LIMIT = 200;
 
 /** Cache reads / all prompt tokens, rounded as `usage` rounds cacheReadShare. */
-export function hitRateOf(sessions: readonly Session[]): { hitRate?: number; promptTokens: number } {
+export function hitRateOf(sessions: Iterable<Session>): { hitRate?: number; promptTokens: number } {
+  const acc = hitRateAcc();
+  for (const s of sessions) acc.add(s);
+  return acc.rate();
+}
+
+/** hitRateOf one session at a time, for a scan that keeps no rows. */
+function hitRateAcc(): { add(s: Session): void; rate(): { hitRate?: number; promptTokens: number } } {
   let read = 0;
   let prompt = 0;
-  for (const s of sessions) {
-    const u = s.stats.usage ?? {};
-    read += u.cacheReadTokens ?? 0;
-    prompt += (u.inputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0);
-  }
-  return { ...(prompt ? { hitRate: Math.round((read / prompt) * 1000) / 1000 } : {}), promptTokens: prompt };
+  return {
+    add(s) {
+      const u = s.stats.usage ?? {};
+      read += u.cacheReadTokens ?? 0;
+      prompt += (u.inputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0);
+    },
+    rate: () => ({ ...(prompt ? { hitRate: Math.round((read / prompt) * 1000) / 1000 } : {}), promptTokens: prompt }),
+  };
 }
 
 /** "in the last 30d" for a duration, "since 2026-11-01" for a date. */
@@ -51,7 +60,7 @@ function render(out: Output, r: CacheHealth, sessions: number, sinceText: string
   out.print();
   r.causes.forEach((c, i) => {
     out.print(`${i + 1}. ${c.cause}${c.avoidable ? "" : " (not avoidable)"}: ${c.fix}`);
-    out.print(`   e.g. ${c.example.command}`);
+    if (c.example) out.print(`   e.g. ${c.example.command}`);
   });
 }
 
@@ -64,28 +73,57 @@ export async function run(c: CommandContext): Promise<number> {
   const { agent, where } = agentScope(agentsFlag(c), whereFlag(c));
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
-    const { sessions, truncated } = await collectSessions(ctx.index, { since, topLevel: false, ...(agent ? { agent } : {}), ...(where ? { query: where } : {}) }).catch((e) => Promise.reject(queryCliError(e)));
-    const { hitRate, promptTokens } = hitRateOf(sessions);
-    const broken = sessions
-      .filter((s) => (s.stats.cacheBreaks?.count ?? 0) > 0)
+    // Every session in the window counts, as in `usage`; only the ones with breaks are kept.
+    const cap = scanCap(c.env) ?? TOTALS_SCAN_CAP;
+    const rate = hitRateAcc();
+    const withBreaks: Session[] = [];
+    let count = 0;
+    let truncated = false;
+    try {
+      const it = scanSessions(ctx.index, { since, topLevel: false, ...(agent ? { agent } : {}), ...(where ? { query: where } : {}) }, cap);
+      for (;;) {
+        const next = await it.next();
+        if (next.done) {
+          truncated = next.value.truncated;
+          break;
+        }
+        count++;
+        rate.add(next.value);
+        if ((next.value.stats.cacheBreaks?.count ?? 0) > 0) withBreaks.push(next.value);
+      }
+    } catch (e) {
+      throw queryCliError(e);
+    }
+    const { hitRate, promptTokens } = rate.rate();
+    const broken = withBreaks
       .sort((a, b) => (b.stats.cacheBreaks?.extraUsd ?? 0) - (a.stats.cacheBreaks?.extraUsd ?? 0) || (b.stats.cacheBreaks?.lostTokens ?? 0) - (a.stats.cacheBreaks?.lostTokens ?? 0));
-    const read = broken.slice(0, limit);
+    // Every session with breaks has its calls read, so every break gets a cause and the grade does
+    // not move with --limit. The limit bounds the sessions whose stored requests are read too; a
+    // session with none takes no place in it, and reads the same either way.
     const breaks: ClassifiedBreak[] = [];
-    for (const s of read) breaks.push(...(await sessionBreaks(ctx.blobs, await ctx.index.listEvents(s.id))));
-    const r = cacheHealth({ ...(hitRate !== undefined ? { hitRate } : {}), promptTokens, breaks });
-    const skipped = broken.length - read.length;
+    let read = 0;
+    let skipped = 0;
+    for (const s of broken) {
+      const events = await ctx.index.listEvents(s.id, { kinds: BREAK_EVENT_KINDS });
+      const requests = read < limit && events.some(hasStoredRequest);
+      if (requests) read++;
+      const found = await sessionBreaks(ctx.blobs, events, { requests });
+      if (found.some((b) => b.notRead)) skipped++;
+      breaks.push(...found);
+    }
+    const r = cacheHealth({ ...(hitRate !== undefined ? { hitRate } : {}), promptTokens, breaks, totals: breakTotals(broken.map((s) => s.stats.cacheBreaks!)) });
     if (out.json) {
-      out.data({ since: new Date(since).toISOString(), sessions: sessions.length, ...r, ...(skipped ? { sessionsNotRead: skipped } : {}), ...(truncated ? { truncated: true } : {}), ...pendingField(backlog) });
+      out.data({ since: new Date(since).toISOString(), sessions: count, ...r, ...(skipped ? { sessionsNotRead: skipped } : {}), ...(truncated ? { truncated: true } : {}), ...pendingField(backlog) });
       return 0;
     }
-    if (!sessions.length) {
+    if (!count) {
       out.note(`No sessions ${windowText(sinceText)}${agent || where ? " that match" : ""}`);
       return 0;
     }
-    render(out, r, sessions.length, sinceText);
+    render(out, r, count, sinceText);
     if (r.degraded) out.note(`${r.degraded} of ${r.breaks} breaks were classified without both stored requests (capture mode metadata, or no coding.sh proxy), from hashes, the model and timing only; run the agent through coding.sh proxy with capture mode full to see tool and system prompt changes`);
-    if (skipped) out.note(`Read the ${read.length} costliest sessions with breaks; ${skipped} more not read (--limit)`);
-    if (truncated) out.note("Scanned the newest sessions only; narrow with --since");
+    if (skipped) out.note(`Read the stored requests of the ${read} costliest ${read === 1 ? "session" : "sessions"} with breaks; ${skipped} more not read (--limit): ${r.breaksNotRead === 1 ? "1 break is" : `${r.breaksNotRead ?? 0} breaks are`} classified from hashes, message counts, the model and timing there, and the totals and the grade count them`);
+    if (truncated) out.warn(stoppedAfter(cap));
     return 0;
   });
 }

@@ -1,9 +1,11 @@
 // Rule-compliance predicates (Y-20): ran-command, read-path, wrote-identifier, follows-rules.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import type { TraceEvent } from "../../src/datasets/types.ts";
 import { createGrader } from "../../src/graders/index.ts";
 import { BUILTIN_PREDICATES, normalizePredicateResult, predicateContext, type PredicateOutcome } from "../../src/judge/index.ts";
+import { traceFromText } from "../../src/judge/trace-file.ts";
 
 const bash = (id: string, command: string): TraceEvent => ({ id, kind: "tool.start", payload: { tool: "Bash", toolUseId: id, input: { command } } });
 const done = (id: string, ok: boolean): TraceEvent => ({ id: `${id}-end`, kind: "tool.end", payload: { tool: "Bash", toolUseId: id, ok, output: ok ? "ok" : "1 failing" } });
@@ -29,6 +31,42 @@ describe("ran-command", () => {
     assert.equal(check("ran-command", { command: "npm test", ok: true }, [bash("b1", "npm test")]).answer, false, "ok needs a result");
     assert.equal(check("ran-command", { command: "npm test" }, []).answer, null, "no trace at all is n/a");
     assert.equal(check("read-path", { path: "a.md" }, []).answer, null);
+  });
+
+  // qa:eval-1: a result with no ok is not a success. OpenAI chat and Responses results carry none.
+  it("with ok, a result that does not say whether it succeeded is n/a, never a pass", () => {
+    const silent = (id: string): TraceEvent => ({ id: `${id}-end`, kind: "tool.end", payload: { tool: "Bash", toolUseId: id, output: "npm ERR! Test failed" } });
+    const unknown = check("ran-command", { command: "npm test", ok: true }, [bash("b1", "npm test"), silent("b1")]);
+    assert.equal(unknown.answer, null);
+    assert.match(unknown.explanation!, /does not say whether it succeeded/);
+    assert.deepEqual(unknown.eventIds, ["b1", "b1-end"]);
+    // One known failure does not make an unknown result a failure, and one known success is enough.
+    assert.equal(check("ran-command", { command: "npm test", ok: true }, [bash("b1", "npm test"), done("b1", false), bash("b2", "npm test"), silent("b2")]).answer, null);
+    assert.equal(check("ran-command", { command: "npm test", ok: true }, [bash("b1", "npm test"), silent("b1"), bash("b2", "npm test"), done("b2", true)]).answer, true);
+    // Without ok the item only asks whether it ran.
+    assert.equal(check("ran-command", { command: "npm test" }, [bash("b1", "npm test"), silent("b1")]).answer, true);
+  });
+
+  it("with ok, real traces: the failed cat is never a pass in any format, and exit code 0 still passes", () => {
+    const fixture = (name: string) => readFileSync(new URL(`../fixtures/judge/trace/${name}`, import.meta.url), "utf8");
+    const ok = (text: string, command: string) => check("ran-command", { command, ok: true }, traceFromText(text));
+    const responses = ok(fixture("openai-responses.json"), "cat missing.txt");
+    assert.equal(responses.answer, false, "Process exited with code 1");
+    assert.match(responses.explanation!, /never succeeded/);
+    assert.equal(ok(fixture("openai-responses.json"), "echo hello from demo").answer, true, "Process exited with code 0");
+    assert.equal(ok(fixture("codex-exec.jsonl"), "cat missing.txt").answer, false);
+    assert.equal(ok(fixture("codex-exec.jsonl"), "echo hello from demo").answer, true);
+    const chat = (content: string) =>
+      JSON.stringify({
+        messages: [
+          { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "shell", arguments: '{"command":"npm test"}' } }] },
+          { role: "tool", tool_call_id: "c1", content },
+        ],
+      });
+    assert.equal(ok(chat("npm ERR! Test failed. 1 failing: sum(2, 2) expected 4, got 5\nexit code 1"), "npm test").answer, false);
+    assert.equal(ok(chat("3 passing\nexit code 0"), "npm test").answer, true);
+    // The chat fixture's results state no exit code: the trace does not say.
+    assert.equal(ok(fixture("openai-chat.json"), "npm test").answer, null);
   });
 
   it("rejects bad args", () => {

@@ -104,6 +104,23 @@ export interface WasteStats {
 }
 
 /**
+ * Session.stats.memoryUse: one memory or instruction file a session used, or a
+ * skill its events name without a path.
+ */
+export interface MemoryUse {
+  /** `loaded`: the agent put the file in its context. `read`: a tool read it, or the skill ran. `wrote`: a tool or a file change wrote it. */
+  use: "loaded" | "read" | "wrote";
+  /** The file, as an absolute path (`~/…` when the event wrote it so). Unset for a skill named without one. */
+  path?: string;
+  /** A skill named without a path: `harness audit` matches it to the SKILL.md files on disk. */
+  skill?: string;
+  /** With `skill`: `tool` when a Skill tool call named it, `harness` when the agent's record of loaded skills did. */
+  by?: "tool" | "harness";
+  /** The last time, in ms since the epoch. */
+  ts: number;
+}
+
+/**
  * Session.stats.hookContext: text hooks added to the model's context
  * (`notification` events with `payload.kind: "hook.context"`), counted and
  * sized (characters / 4), in all and by source: `plugin:<name>`, `plugin` (a
@@ -357,6 +374,12 @@ export interface Session {
     inheritedTokens?: number;
     /** Text hooks added to the model's context, by source (`plugin:<name>`, `settings`, …). Unset when no hook added any. */
     hookContext?: HookContextStats;
+    /**
+     * Memory and instruction files (AGENTS.md, rules, skills, Claude auto-memory) the
+     * session's events name, in the order first seen: what `harness audit` counts
+     * (core/memory-use.ts). Unset when its events name none.
+     */
+    memoryUse?: MemoryUse[];
     /**
      * Values redaction replaced before storage, by rule kind (`anthropic-key`, `password`, …): counts, never
      * the values. A vendor token kind also tags the session `secret:exposed`. Unset when nothing was redacted.

@@ -194,6 +194,22 @@ test("a call with no stored request rebuilds from the session's events (real Cla
   await assert.rejects(rebuildCall(index, new MemoryBlobStore(), hooked[0]!), (e: unknown) => e instanceof PlaygroundError && e.reason === "no_request");
 });
 
+test("a call in a subagent's own session rebuilds from the subagent's conversation (real Claude Code fork capture)", async () => {
+  // Every event of a subagent session carries its subagentId; they are the session's own turns.
+  const events = JSON.parse(readFileSync(new URL("../fixtures/adapters/claude-code/golden/fork.golden.json", import.meta.url), "utf8")) as AgentEvent[];
+  assert.ok(events.length > 0 && events.every((e) => e.subagentId && e.sessionId.includes(":sub:")), "the fixture is one subagent session");
+  const index = new MemoryIndexStore();
+  await index.putEvents(events);
+  const prompt = events.find((e) => e.kind === "user.message")!;
+  for (const c of events.filter((e) => e.kind === "llm.call")) {
+    const r = await rebuildCall(index, new MemoryBlobStore(), c);
+    assert.equal(r.source, "transcript");
+    assert.equal(r.request.model, c.model);
+    assert.deepEqual(r.request.messages[0], { role: "user", text: prompt.payload.text });
+    assert.deepEqual(validatePrefix({ v: 1, tools: r.request.tools, messages: r.request.messages }).messages, r.request.messages);
+  }
+});
+
 const REQ: PlaygroundRequest = {
   model: "stub-coder-1",
   system: "Be terse.",

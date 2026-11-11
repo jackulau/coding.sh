@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { toOtlpRequest } from "../../src/sinks/otlp.ts";
+import { toOtlpOpenSessionSpans, toOtlpRequest } from "../../src/sinks/otlp.ts";
 import { clickhouseFixture } from "./clickhouse-fixture.ts";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
@@ -56,6 +56,21 @@ describe("ClickHouse collector how-to", () => {
       assert.ok(section.includes(`\`${n} <`), `table row for ${n}`);
     }
     for (const op of section.matchAll(/'gen_ai\.operation\.name'\] = '([a-z_]+)'/g)) assert.ok(ops.has(op[1]!), op[1]);
+  });
+
+  it("every query on invoke_agent rows keeps one row per span id", () => {
+    // An open session is sent again as it grows: the same span id, more events.
+    const { sessions, open } = clickhouseFixture(1_800_000_000_000);
+    const final = toOtlpRequest(clickhouseFixture(1_800_000_000_000).batch, sessions, "metadata").resourceSpans[0]!.scopeSpans[0]!.spans.filter((s) => s.name.startsWith("invoke_agent "));
+    const early = toOtlpOpenSessionSpans(open, "metadata");
+    assert.deepEqual(early.map((s) => [s.traceId, s.spanId]), final.map((s) => [s.traceId, s.spanId]));
+    const events = (s: (typeof final)[number]) => Number((s.attributes.find((a) => a.key === "coding_sh.stats.events")!.value as { intValue: string }).intValue);
+    for (const [i, s] of early.entries()) assert.ok(events(s) < events(final[i]!), "the later row has more events");
+    const sql = [...section.matchAll(/```sql\n([\s\S]*?)```/g)].map((m) => m[1]!);
+    const sessionQueries = sql.filter((q) => q.includes("'invoke_agent'") || q.includes("gen_ai.conversation.id"));
+    assert.equal(sessionQueries.length, 3);
+    for (const q of sessionQueries) assert.match(q, /ORDER BY toUInt64OrZero\(SpanAttributes\['coding_sh\.stats\.events'\]\) DESC\s+LIMIT 1 BY SpanId/, q);
+    assert.match(section, /same `TraceId` and `SpanId`/);
   });
 
   it("metadata mode sends no prompts or tool output, as the doc says", () => {

@@ -108,12 +108,16 @@ async function grade(c: CommandContext): Promise<number> {
   if (!outputArg && !(spec.kind === "agent-slop" && diff !== undefined)) throw new UsageError("Missing --output <FILE|-> (outside a verifier there is no CODING_SH_AGENT_OUTPUT)", { reason: "missing_argument" });
   if (outputArg === "-" && diffArg === "-") throw new UsageError("--output and --diff can't both read stdin", { reason: "invalid_argument" });
   const output = !outputArg ? "" : outputArg === "-" ? await readStdin() : await readText(outputArg, "--output", c.cwd);
-  const traceArg = str(c.flags.trace) ?? env.CODING_SH_AGENT_STDOUT;
+  const traceFlag = str(c.flags.trace);
+  const traceArg = traceFlag ?? env.CODING_SH_AGENT_STDOUT;
   const traceText = traceArg ? await readText(traceArg, "--trace", c.cwd) : undefined;
   const trace = traceText !== undefined ? traceFromText(traceText) : [];
   // Never grade a trace whose tool calls were dropped on the way (arXiv 2611.02676).
   const coverage: TraceCoverage | undefined = traceText !== undefined ? traceCoverage(traceText, trace) : undefined;
-  const partial = coverage && !coverage.ok ? describeCoverage(coverage) : undefined;
+  // The default trace is the agent's stdout, and an agent with no JSON mode prints plain text:
+  // that is no trace, as before. A file named with --trace has to be one.
+  const plainStdout = traceFlag === undefined && coverage?.records === 0;
+  const partial = coverage && !coverage.ok && !plainStdout ? describeCoverage(coverage) : undefined;
   if (partial && c.flags["allow-partial-trace"] !== true) {
     throw new UsageError(`incomplete trace: ${partial}`, { reason: "trace_incomplete", suggestion: "pass --allow-partial-trace to grade anyway" });
   }

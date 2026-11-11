@@ -1,0 +1,30 @@
+id = "score-session"
+split = "dev"
+tags = ["scores", "state"]
+instruction = """
+Set up a score named quality that only accepts numbers from 1 to 5, then give session ${answers.ids.y2} a quality score of 4.
+"""
+
+reference = ['''
+coding.sh score config quality --type numeric --min 1 --max 5
+coding.sh score add ${answers.ids.y2} quality 4
+''']
+
+[[check]]
+kind = "state"
+command = "coding.sh score configs --json"
+jsonPath = "$.items"
+where = { name = "quality", dataType = "numeric", min = 1 }
+pick = "max"
+equals = 5
+
+[[check]]
+kind = "state"
+command = "coding.sh score list --name quality --json"
+jsonPath = "$.items"
+where = { sessionId = "${answers.ids.y2}" }
+pick = "value"
+equals = 4
+
+[expect]
+minTargetCalls = 2

@@ -340,6 +340,50 @@ describe("event results and indexed keys (V-2, V-6)", () => {
       db.close();
     }
   });
+
+  // EZ-5: with no other clause these read every event (`SCAN e`: 43 s and 46 s on 1.75M events) until
+  // index schema v11 added events_duration and events.error with events_error.
+  const ALONE: [string, string][] = [
+    ["event.duration>60s", "events_duration"],
+    ["event.duration>30s", "events_duration"],
+    ["event.duration:1s..2s", "events_duration"],
+    ["-event.duration>30s", "events_duration"],
+    ["error:*timeout*", "events_error"],
+    ["error:enoent", "events_error"],
+    ["error:enoent,denied", "events_error"],
+    ["-error:enoent", "events_error"],
+  ];
+
+  test("sessions by event.duration or error alone read an index, never the events table", async () => {
+    const { DatabaseSync } = await loadSqlite();
+    const db = new DatabaseSync(join(dir, "index.db"), { readOnly: true });
+    try {
+      for (const [q, index] of ALONE) {
+        const c = compileWhere(parseWhere(q).root!, "session");
+        // The statement querySessions runs.
+        const detail = (db.prepare(`EXPLAIN QUERY PLAN SELECT s.* FROM sessions s WHERE ${c.sql} ORDER BY s.started_at DESC, s.id LIMIT 50 OFFSET 0`).all(...c.params) as { detail: string }[]).map((r) => r.detail);
+        assert.ok(!detail.some((d) => /^SCAN e\b/.test(d)), `${q} scans events: ${detail.join(" | ")}`);
+        assert.ok(detail.some((d) => d.startsWith(`SEARCH e USING COVERING INDEX ${index} `)), `${q} is not answered from ${index}: ${detail.join(" | ")}`);
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  for (const [q] of ALONE) {
+    test(`sessions ${q}: SQL equals the scan`, async () => {
+      const ids = async (st: IndexStore) => (await findSessions(st, p(q), {})).sessions.map((s) => s.id);
+      assert.deepEqual(await ids(sqlite), await ids(memory));
+    });
+  }
+
+  test("the fixture has sessions for the alone filters to find and to leave out", async () => {
+    const ids = async (q: string) => (await findSessions(sqlite, p(q), {})).sessions.map((s) => s.id).sort();
+    assert.deepEqual(await ids("event.duration>30s"), ["s1"]);
+    assert.deepEqual(await ids("error:enoent,denied"), ["s1", "s4"]);
+    assert.deepEqual(await ids("-error:enoent"), ["s2", "s3", "s4", "s5"]);
+    assert.deepEqual(await ids("error:*timeout*"), []);
+  });
 });
 
 /** The AST without source offsets (round trips move them). */

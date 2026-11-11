@@ -4,8 +4,13 @@
 // - snapshot: the diff from the session's start state (its pre-agent
 //   snapshot, else HEAD at its start) to its end snapshot, read from the
 //   shadow repo. It sees every write, Bash and subagents included.
-// - replay: the session's own edit tool calls (core/replay.ts), for sessions
-//   with no end snapshot, and for files a partial snapshot left out.
+// - replay: the session's own edit tool calls (core/replay.ts), for every
+//   file its tools named that the snapshot diff does not hold: there is no
+//   end snapshot, a partial one left the file out, or the tree had changed
+//   by the time it was taken (the work was committed on a branch and another
+//   branch checked out). Each edit step gives the lines it added itself
+//   (editStepKeys); what a read shows that no step wrote is someone else's
+//   edit and is left out.
 // The files a file.change event or an edit tool named are marked `edited`;
 // the matcher trusts lines in other files a little less.
 //
@@ -13,7 +18,7 @@
 // index key/value store (when it has one), keyed by what it was built from.
 import { realpathSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
-import { loadReplay } from "../core/replay.ts";
+import { loadReplay, type Replay } from "../core/replay.ts";
 import type { BlobStore, IndexStore, Session } from "../core/types.ts";
 import { snapshotPatch } from "./git.ts";
 import { filePatchId, lineKey, type LineKey } from "./lines.ts";
@@ -26,7 +31,7 @@ export interface SourceContext {
 }
 
 /** Bump when a stored source would be built differently. */
-const SOURCE_VERSION = 1;
+const SOURCE_VERSION = 3;
 const kvKey = (id: string) => `attribution:source:${id}`;
 
 function real(p: string): string {
@@ -51,10 +56,50 @@ function repoPath(p: string, base: string | undefined, root: string): string | u
   return rel.split(sep).join("/");
 }
 
-/** "+" lines of a unified diff (or of several, as replay ranges join them). */
-function addedKeys(diff: string): LineKey[] {
-  const out: LineKey[] = [];
-  for (const l of diff.split("\n")) if (l.startsWith("+") && !l.startsWith("+++ ")) out.push(lineKey(l.slice(1)));
+/** Keys of the "+" and "-" lines of a unified diff. */
+function diffKeys(diff: string): { added: LineKey[]; removed: LineKey[] } {
+  const added: LineKey[] = [];
+  const removed: LineKey[] = [];
+  for (const l of diff.split("\n")) {
+    if (l.startsWith("+") && !l.startsWith("+++ ")) added.push(lineKey(l.slice(1)));
+    else if (l.startsWith("-") && !l.startsWith("--- ")) removed.push(lineKey(l.slice(1)));
+  }
+  return { added, removed };
+}
+
+/**
+ * Keys of the lines the session's own edit steps added, per repo path.
+ *
+ * Each step that wrote or edited a file gives its own diff: the file as the
+ * step found it against the file as it left it. A line a later step of the
+ * session removed again is dropped. Lines that reach the replay only through
+ * a read (a person, a formatter or another agent changed the file between two
+ * steps) are in no step's diff, so they are never the session's.
+ */
+export async function editStepKeys(replay: Replay, root: string): Promise<Map<string, LineKey[]>> {
+  // path → key → how many the session has added and not removed
+  const owned = new Map<string, Map<LineKey, number>>();
+  for (const st of replay.steps) {
+    if (!st.files?.some((f) => f.op !== "read")) continue;
+    for (const c of await replay.changesAt(st.n, { own: true }).catch(() => [])) {
+      const p = c.diff ? repoPath(c.path, replay.root, root) : undefined;
+      if (!p) continue;
+      const counts = owned.get(p) ?? new Map<LineKey, number>();
+      owned.set(p, counts);
+      const { added, removed } = diffKeys(c.diff!);
+      for (const k of removed) {
+        const n = counts.get(k) ?? 0;
+        if (n > 1) counts.set(k, n - 1);
+        else counts.delete(k);
+      }
+      for (const k of added) counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+  }
+  const out = new Map<string, LineKey[]>();
+  for (const [p, counts] of owned) {
+    const keys = [...counts].flatMap(([k, n]) => new Array<LineKey>(n).fill(k));
+    if (keys.length) out.set(p, keys);
+  }
   return out;
 }
 
@@ -98,10 +143,8 @@ async function buildFiles(ctx: SourceContext, s: Session): Promise<SourceFile[]>
   const files = new Map<string, SourceFile>();
 
   const start = s.repo?.snapshot || s.repo?.head;
-  let haveSnapshot = false;
   if (start && s.endSnapshot && start !== s.endSnapshot) {
     const patch = await snapshotPatch(root, start, s.endSnapshot, ctx.env).catch(() => undefined);
-    haveSnapshot = patch !== undefined;
     for (const f of patch ?? []) {
       if (f.binary || f.deleted || !f.added.length) continue;
       const pid = filePatchId(f);
@@ -109,7 +152,7 @@ async function buildFiles(ctx: SourceContext, s: Session): Promise<SourceFile[]>
     }
   }
 
-  // The session's own edits: which files its tools named, and (without a full snapshot) what they wrote.
+  // The session's own edits: which files its tools named, and what they wrote to the ones the snapshot diff lacks.
   let replay;
   try {
     replay = await loadReplay(ctx, s);
@@ -129,15 +172,11 @@ async function buildFiles(ctx: SourceContext, s: Session): Promise<SourceFile[]>
     const f = files.get(p);
     if (f) f.edited = true;
   }
-  const needReplay = !haveSnapshot || s.repo?.partial === true;
-  if (needReplay && replay.steps.length && [...edited].some((p) => !files.has(p))) {
-    const view = await replay.range(1, replay.steps.length).catch(() => undefined);
-    for (const f of view?.files ?? []) {
-      if (f.op === "delete" || !f.diff) continue;
-      const p = repoPath(f.path, base, root);
-      if (!p || files.has(p)) continue;
-      const keys = addedKeys(f.diff);
-      if (keys.length) files.set(p, { path: p, keys, via: "replay", edited: true });
+  // A snapshot diff that exists says nothing about a file it lacks: the end snapshot is of the tree as it was
+  // when ingest ran, which can be another branch than the one the session's work was committed on.
+  if ([...edited].some((p) => !files.has(p))) {
+    for (const [p, keys] of await editStepKeys(replay, root)) {
+      if (!files.has(p)) files.set(p, { path: p, keys, via: "replay", edited: true });
     }
   }
   return [...files.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));

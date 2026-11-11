@@ -3,6 +3,7 @@
 // and cli/ all build against these types.
 import type { AgentEvent, AgentId, BlobRef, RepoState, Session, Usage } from "../schema/index.ts";
 import type { Dataset, DatasetVersionInfo, ExperimentResult, JudgeVersion } from "../datasets/types.ts";
+import type { MemoryEvent } from "./memory-events.ts";
 import type { Prices } from "./pricing.ts";
 import type { Query } from "../query/where.ts";
 
@@ -240,6 +241,14 @@ export interface IndexStore {
   close(): Promise<void>;
 
   putEvents(batch: AgentEvent[]): Promise<{ inserted: number }>;
+  /**
+   * putEvents that also names what it stored: `ids` holds the id of every event
+   * this call inserted, each once, in any order (`ids.length === inserted`).
+   * Serve and the collector hand [[sinks]] only those events, so a batch that is
+   * posted again is mirrored once. Without it they read the stored ids of the
+   * sessions a batch touches before each put (InsertedEvents in otel/receiver.ts).
+   */
+  putEventsReturningIds?(batch: AgentEvent[]): Promise<{ inserted: number; ids: string[] }>;
   upsertSession(session: Session): Promise<void>;
   getSession(id: string): Promise<Session | undefined>;
   listSessions(filter?: SessionFilter): Promise<Session[]>;
@@ -395,6 +404,16 @@ export interface IndexStore {
   getSessionFold?(sessionId: string): Promise<Uint8Array | undefined>;
   putSessionFold?(sessionId: string, fold: Uint8Array | undefined): Promise<void>;
 
+  /**
+   * The harness audit's narrow read (core/memory-events.ts): of these sessions'
+   * events, the ones that can name a memory or instruction file, each with only
+   * the payload fields the audit reads. The rows equal memoryEventOf over
+   * listEvents(id, { kinds: MEMORY_EVENT_KINDS }); one session's rows come in
+   * listEvents order, sessions in any order. A store without it is read with
+   * listEvents, one session at a time.
+   */
+  memoryEvents?(sessionIds: readonly string[]): Promise<MemoryEvent[]>;
+
   /** Stores an immutable dataset version and points "latest" at it. Same content → `created: false`. */
   putDataset?(ds: Dataset, opts?: { note?: string; now?: number }): Promise<{ version: string; created: boolean }>;
   /** A stored version; "latest" (default) follows the latest pointer. */
@@ -476,11 +495,28 @@ export interface SinkAck {
   retryAfterMs?: number;
 }
 
+/** A session whose events were written to a sink with no session.end among them. */
+export interface OpenSession {
+  /** The session's current row. */
+  session: Session;
+  /** ts of the latest event written for it: when the record ends if the row has no endedAt. */
+  lastEventAt: number;
+}
+
 /** Write-only mirror (OTLP, HTTP, …). Each sink keeps its own cursor and retries. */
 export interface Sink {
   readonly name: string;
   readonly mode: "full" | "metadata";
   write(batch: AgentEvent[], sessions: Session[], blobs: BlobStore): Promise<SinkAck>;
+  /**
+   * For a sink that sends its session record only with session.end (otlp: the
+   * invoke_agent span): sends or refreshes the record of sessions that are
+   * still open, under the id the final record will have. The server mirror
+   * (server/mirror.ts) calls it once a session's events went out and it has
+   * been quiet for a while. A sink whose write() already sends session rows
+   * leaves it out.
+   */
+  writeOpenSessions?(open: OpenSession[], blobs: BlobStore): Promise<SinkAck>;
   close?(): Promise<void>;
 }
 
@@ -585,6 +621,14 @@ export interface NormalizeContext {
   id(...parts: (string | number)[]): string;
   /** Spool file + byte offset of the line being normalized, for stable fallback ids. */
   source?: { file: string; offset: number };
+  /**
+   * The adapter calls this when a file it reads a session's events from while
+   * normalizing a line (the transcript a Stop line names) can't be read as it
+   * was when the line was captured: it is gone, or the part the line needs is
+   * out of reach. A re-parse then keeps that session's stored hook rows
+   * (core/reparse.ts); ingest ignores it.
+   */
+  missing?(path: string, sessionId: string): void;
 }
 
 /** A source file a backfill reads (one transcript, rollout, …). */

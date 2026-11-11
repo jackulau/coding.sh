@@ -1,17 +1,21 @@
 import assert from "node:assert/strict";
-import { cpSync, existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { ClaudeTranscriptConverter } from "../../src/adapters/_shared/claude-transcript.ts";
 import { buildHookCommand, hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
+import { FIRING_WINDOW_MS } from "../../src/adapters/_shared/normalize.ts";
 import { defaultConfig } from "../../src/core/config.ts";
-import { backfill, backfillCursorKey } from "../../src/core/ingest.ts";
+import { backfill, backfillCursorKey, ingest } from "../../src/core/ingest.ts";
 import { applyPricing, pricesFor } from "../../src/core/pricing.ts";
 import { toMetadata } from "../../src/core/redact.ts";
+import { reparse } from "../../src/core/reparse.ts";
 import { buildSession } from "../../src/core/sessions.ts";
+import type { SpoolLine } from "../../src/core/types.ts";
 import type { AgentEvent, Usage } from "../../src/schema/index.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
+import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { assertGolden, assertWellFormed, collect, FIXTURES, loadSpool, summarize, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
@@ -110,6 +114,186 @@ describe("claude-code normalize", () => {
     const a = await claudeCode.normalize(lines[3]!, testCtx().ctx);
     const b = await claudeCode.normalize(lines[3]!, testCtx().ctx);
     assert.deepEqual(a, b);
+  });
+
+  // qa:capture-10: coding.sh hooks in two settings files whose commands differ (`/bin/sh hook.sh` in
+  // one, `node hook.mjs` in the other) both run, so every firing is spooled twice.
+  it("a firing spooled by hook.sh and by hook.mjs is stored once; the same prompt a minute later is another", async () => {
+    const { ctx } = testCtx();
+    const sid = "dddd1010-2222-4333-8444-000000000010";
+    const T = 1_800_000_000_000;
+    assert.equal(T % FIRING_WINDOW_MS, 0);
+    const body = (event: string, extra: string) => `{"session_id":"${sid}","transcript_path":"/nonexistent/${sid}.jsonl","cwd":"/work/demo","permission_mode":"default","hook_event_name":"${event}"${extra}}`;
+    let offset = 0;
+    // hook.sh copies the payload's bytes into its line; hook.mjs parses them and writes its line 30 ms later, from another pid.
+    const fire = async (ts: number, event: string, extra: string): Promise<AgentEvent[]> => {
+      const sh = `{"v":0,"agent":"claude-code","event":"${event}","ts":${ts},"pid":${4000 + offset},"ppid":3999,"cwd":"/work/demo","entrypoint":"cli","raw":${body(event, extra)}}`;
+      const mjs = JSON.stringify({ v: 0, agent: "claude-code", event, ts: ts + 30, pid: 5000 + offset, ppid: 3999, cwd: "/work/demo", raw: JSON.parse(body(event, extra)), entrypoint: "cli" });
+      const out: AgentEvent[] = [];
+      for (const text of [sh, mjs]) {
+        out.push(...(await claudeCode.normalize(JSON.parse(text) as SpoolLine, { ...ctx, source: { file: "claude-code/2027-01-15.jsonl", offset } })));
+        offset += text.length + 1;
+      }
+      return out;
+    };
+    const prompt = ',"prompt":"list the files"';
+    const tool = ',"tool_name":"Bash","tool_use_id":"toolu_b1","tool_input":{"command":"ls"}';
+    const stop = ',"stop_hook_active":false,"last_assistant_message":"a.txt"';
+    const turn = [
+      ...(await fire(T, "SessionStart", ',"source":"startup","model":"claude-sonnet-4-5"')),
+      // 10 ms before a slot boundary: the hook.mjs copy lands after it.
+      ...(await fire(T + FIRING_WINDOW_MS - 10, "UserPromptSubmit", prompt)),
+      ...(await fire(T + 2500, "PreToolUse", tool)),
+      ...(await fire(T + 2600, "PostToolUse", `${tool},"tool_response":{"stdout":"a.txt","stderr":"","interrupted":false}`)),
+      ...(await fire(T + 3000, "Stop", stop)),
+    ];
+    // The same prompt and the same reply a minute later: a second turn.
+    const later = [...(await fire(T + 60_000, "UserPromptSubmit", prompt)), ...(await fire(T + 61_000, "Stop", stop))];
+    const end = await fire(T + 62_000 - 10, "SessionEnd", ',"reason":"other"');
+    // The store keeps one row per event id.
+    const stored = (events: AgentEvent[]) => [...new Map(events.map((e) => [e.id, e])).values()];
+    const one = stored([...turn, ...end]);
+    assert.equal(turn.length + end.length, 2 * one.length, "both lines of a firing give the same events");
+    assert.deepEqual(one.map((e) => e.kind), ["session.start", "user.message", "tool.start", "tool.end", "assistant.message", "turn.end", "session.end"]);
+    assert.equal(buildSession(one).stats.turns, 1);
+
+    const two = stored([...turn, ...later, ...end]);
+    assert.deepEqual(two.map((e) => e.kind), ["session.start", "user.message", "tool.start", "tool.end", "assistant.message", "turn.end", "user.message", "assistant.message", "turn.end", "session.end"]);
+    assert.equal(buildSession(two).stats.turns, 2);
+
+    // A payload over 1 KB: hook.sh puts its bytes in a side file, hook.mjs still inlines it.
+    const t = tmpEnv();
+    try {
+      const long = body("UserPromptSubmit", `,"prompt":"${"caf\u00e9 1.50 ".repeat(200)}"`);
+      const rawFile = join(t.root, "raw", "1-4100-abcd.json");
+      writeFile(rawFile, long);
+      const at = { v: 0, agent: "claude-code", event: "UserPromptSubmit", pid: 4100, ppid: 3999, cwd: "/work/demo" };
+      const sh = await claudeCode.normalize({ ...at, ts: T + 120_000, rawFile } as SpoolLine, { ...ctx, source: { file: "claude-code/2027-01-15.jsonl", offset: 90_000 } });
+      const mjs = await claudeCode.normalize({ ...at, ts: T + 120_030, pid: 5100, raw: JSON.parse(long) } as SpoolLine, { ...ctx, source: { file: "claude-code/2027-01-15.jsonl", offset: 90_200 } });
+      assert.deepEqual([sh.length, sh[0]!.kind, sh[0]!.payload.text], [1, "user.message", mjs[0]!.payload.text]);
+      assert.equal(sh[0]!.id, mjs[0]!.id);
+    } finally {
+      t.restore();
+    }
+  });
+});
+
+// qa:upgrade-reparse-drops-events: a Stop line's model calls, replies and turn come from the transcript it
+// names. Real capture (scripts/e2e/claude-unapproved-capture.mjs, `claude -p` then `claude -p --resume`
+// against the stub model): two turns, the second prompt 164 ms after the first turn's last entry.
+describe("claude-code Stop windows read later", () => {
+  const sid = "557dbd37-5f0f-4dfc-8ddb-a90b5013856a";
+  const T0 = Date.parse("2026-11-09T05:25:48.186Z");
+  const recorded = readFileSync(join(FIXTURES, "claude-code", "unapproved", "config", "projects", "-work-demo", `${sid}.jsonl`), "utf8").split("\n").filter(Boolean);
+  // The resume's first write (its queue-operation, 232 ms in): everything before it is the first turn.
+  const resumeAt = recorded.findIndex((l) => Date.parse((JSON.parse(l) as { timestamp?: string }).timestamp ?? "") >= T0 + 200);
+  const turn1 = recorded.slice(0, resumeAt).join("\n") + "\n";
+  const turn2 = recorded.slice(resumeAt).join("\n") + "\n";
+  const line = (transcript: string, event: string, at: number, extra: Record<string, unknown> = {}): SpoolLine => ({
+    v: 0,
+    agent: "claude-code",
+    event,
+    ts: T0 + at,
+    pid: 4000 + at,
+    cwd: "/work/demo",
+    entrypoint: "sdk-cli",
+    raw: { session_id: sid, transcript_path: transcript, cwd: "/work/demo", hook_event_name: event, ...extra },
+  });
+  // Every hook payload of a turn carries its prompt's id.
+  const [p1, p2] = recorded.map((l) => JSON.parse(l) as { type?: string; promptId?: string; message?: { content?: unknown } }).filter((e) => e.type === "user" && typeof e.message?.content === "string").map((e) => e.promptId);
+  const stop = (transcript: string, at: number) => line(transcript, "Stop", at, { prompt_id: at < 200 ? p1 : p2, stop_hook_active: false });
+  // An hour later the session reads nine 1 MB tool results.
+  const result = JSON.stringify({ type: "user", uuid: "pad", timestamp: new Date(T0 + 3_600_000).toISOString(), sessionId: sid, message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_pad", content: "x".repeat(1024 * 1024) }] } });
+  const nineMb = `${Array.from({ length: 9 }, () => result).join("\n")}\n`;
+  let t: TmpEnv;
+  let transcript: string;
+  before(() => {
+    t = tmpEnv();
+    transcript = join(t.home, ".claude", "projects", "-work-demo", `${sid}.jsonl`);
+  });
+  after(() => t.restore());
+
+  it("a Stop's window is its own turn once a resume less than 2 s later is on disk", async () => {
+    assert.equal(resumeAt, 23);
+    writeFile(transcript, turn1);
+    const live = await claudeCode.normalize(stop(transcript, 90), testCtx().ctx);
+    const kinds = (events: AgentEvent[]) => events.map((e) => e.kind).sort();
+    assert.deepEqual(kinds(live), ["assistant.message", "llm.call", "llm.call", "turn.end"]);
+    // The whole session is on disk: an ingest that ran late, or a re-parse.
+    appendFileSync(transcript, turn2);
+    const later = await claudeCode.normalize(stop(transcript, 90), testCtx().ctx);
+    assert.deepEqual(later, live, "the first turn's Stop reads the first turn");
+    const second = await claudeCode.normalize(stop(transcript, 320), testCtx().ctx);
+    assert.deepEqual(kinds(second), ["assistant.message", "llm.call", "llm.call", "turn.end"]);
+    assert.equal(new Set([...later, ...second].map((e) => e.id)).size, 8, "two turns, no row shared");
+    assert.notEqual(second[0]!.turnId, later[0]!.turnId);
+  });
+
+  it("says when the transcript a line reads is gone, or the turn is no longer in the part it reads", async () => {
+    const missing = async (l: SpoolLine): Promise<string[][]> => {
+      const said: string[][] = [];
+      await claudeCode.normalize(l, { ...testCtx().ctx, missing: (path, session) => void said.push([path, session]) });
+      return said;
+    };
+    writeFile(transcript, turn1 + turn2);
+    assert.deepEqual(await missing(stop(transcript, 90)), []);
+    assert.deepEqual(await missing(stop(transcript, 320)), []);
+    const gone = join(t.home, "runs", "run_1", "home", ".claude", "projects", "-work-demo", `${sid}.jsonl`);
+    assert.deepEqual(await missing(stop(gone, 90)), [[gone, sid]]);
+    // A subagent's rows are its child session's: the parent's are not read from that file.
+    const child = join(dirname(gone), sid, "subagents", "agent-abc123.jsonl");
+    assert.deepEqual(await missing(line(gone, "SubagentStop", 80, { agent_id: "abc123", agent_type: "Explore", agent_transcript_path: child })), [[child, `${sid}:sub:abc123`]]);
+    // The session went on for 9 MB: the first turn is before the 8 MB a Stop line reads.
+    appendFileSync(transcript, nineMb);
+    assert.deepEqual(await missing(stop(transcript, 90)), [[transcript, sid]]);
+  });
+
+  it("an upgrade re-parse keeps every row: of turns resumed within 2 s, and of a session whose transcript has grown or is gone", async () => {
+    const env = { CODING_SH_HOME: t.dataHome, HOME: t.home };
+    const spool = join(t.dataHome, "spool", "claude-code");
+    mkdirSync(spool, { recursive: true });
+    const hook = (l: SpoolLine) => appendFileSync(join(spool, "2026-11-09.jsonl"), JSON.stringify(l) + "\n");
+    const index = await SqliteIndexStore.open(join(t.root, "index.db"));
+    const base = { config: defaultConfig(env), index, blobs: new MemoryBlobStore(), env };
+    const at = (n: number) => new Map([["claude-code", { ...claudeCode, parseVersion: n }]]);
+    const v = claudeCode.parseVersion!;
+    try {
+      // Each turn is ingested as its SessionEnd fires (the hook starts an ingest), before the resume.
+      writeFile(transcript, turn1);
+      for (const l of [line(transcript, "SessionStart", 0, { source: "startup" }), line(transcript, "UserPromptSubmit", 16, { prompt_id: p1, prompt: "datatool stopped working. What's wrong?" }), stop(transcript, 90), line(transcript, "SessionEnd", 100, { prompt_id: p1, reason: "other" })]) hook(l);
+      await ingest({ ...base, adapters: at(v) });
+      appendFileSync(transcript, turn2);
+      for (const l of [line(transcript, "SessionStart", 225, { source: "resume" }), line(transcript, "UserPromptSubmit", 247, { prompt_id: p2, prompt: "Yes, go ahead." }), stop(transcript, 320), line(transcript, "SessionEnd", 330, { prompt_id: p2, reason: "other" })]) hook(l);
+      await ingest({ ...base, adapters: at(v) });
+      const rows = async () => (await index.listEvents(sid)).map((e) => `${e.kind} ${e.id}`);
+      const stats = async () => {
+        const s = (await index.getSession(sid))!;
+        return { turns: s.stats.turns, calls: s.stats.latency?.llmCalls, input: s.stats.usage?.inputTokens, parseVersion: s.parseVersion };
+      };
+      const stored = await rows();
+      assert.equal(stored.length, 14);
+      const want = await stats();
+      assert.deepEqual([want.turns, want.calls, want.parseVersion], [2, 4, v]);
+      assert.ok(want.input! > 0);
+
+      const r = await reparse({ ...base, adapters: at(v + 1) });
+      assert.deepEqual([r.reparsed, r.kept, r.removed, r.inserted, r.errors], [1, 0, 0, 0, []]);
+      assert.deepEqual(await rows(), stored);
+      assert.deepEqual(await stats(), { ...want, parseVersion: v + 1 });
+
+      // The transcript has grown past the 8 MB a Stop line reads, then is deleted (an eval run's goes with the
+      // run's home; its spool lines stay for a week): the turns can't be read again, so the stored rows stay.
+      for (const [n, lose] of [[v + 2, () => appendFileSync(transcript, nineMb)], [v + 3, () => rmSync(transcript)]] as const) {
+        lose();
+        const r = await reparse({ ...base, adapters: at(n) });
+        assert.deepEqual([r.reparsed, r.kept, r.removed, r.inserted, r.errors], [0, 1, 0, 0, []]);
+        assert.equal(r.keptSessions[0]!.reason, "the transcript its hook lines read is gone, or has grown past their turns");
+        assert.deepEqual(await rows(), stored);
+        assert.deepEqual(await stats(), { ...want, parseVersion: v + 1 });
+      }
+    } finally {
+      await index.close();
+    }
   });
 });
 

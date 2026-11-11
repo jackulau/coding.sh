@@ -4,10 +4,12 @@ import { Agent, request } from "node:http";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { deflateSync, gzipSync } from "node:zlib";
 import type { Session } from "../../src/schema/index.ts";
-import { type BatchInfo, type Receiver, startReceiver } from "../../src/otel/receiver.ts";
+import { type BatchInfo, createOtlpPipeline, type Receiver, startReceiver } from "../../src/otel/receiver.ts";
 import { ProtoReader } from "../../src/otel/proto.ts";
-import { encodeLogs, encodeTraces, fixture, gzip, iAttr, otlpSpan, otlpTraces, sAttr, splitSpans } from "./_encode.ts";
+import { decodeLogsJson, decodeTraceJson } from "../../src/otel/json.ts";
+import { encodeLogs, encodeTraces, fixture, gzip, iAttr, otlpSpan, otlpTraces, sAttr, secretRequests, splitSpans } from "./_encode.ts";
 import { MemBlobs, MemIndex } from "./_memstore.ts";
+import { createRedactor } from "../../src/core/redact.ts";
 
 interface Res {
   status: number;
@@ -423,6 +425,62 @@ describe("OTLP receiver over HTTP", () => {
     await closed;
     agent.destroy();
     await start();
+  });
+});
+
+// Regression: blobs were redacted as JSON text. A `NAME=value` line after an escaped
+// newline and a JSON field inside a JSON string no longer matched there, so the
+// source span, the source log record and an oversize structured value kept the
+// secrets their events showed as redacted.
+describe("blob redaction", () => {
+  const TRACE = "5ec0000000000000000000000000beef";
+
+  const run = async (opts: { redactor?: false } = {}) => {
+    const store = new MemIndex();
+    const blobs = new MemBlobs();
+    const options: Parameters<typeof createOtlpPipeline>[0] = { store, blobs, keepRaw: true };
+    if (opts.redactor !== false) options.redactor = createRedactor();
+    const pipeline = createOtlpPipeline(options);
+    const { traces, logs, canaries } = secretRequests(TRACE);
+    const events = [...(await pipeline.map("traces", decodeTraceJson(traces))).events, ...(await pipeline.map("logs", decodeLogsJson(logs))).events];
+    const texts = new Map([...blobs.data].map(([ref, b]) => [ref, Buffer.from(b).toString()]));
+    return { events, texts, canaries };
+  };
+
+  it("keeps no secret in a source span, a source log record or a content blob", async () => {
+    const { events, texts, canaries } = await run();
+    const held = (text: string) => canaries.filter((c) => text.includes(c));
+    for (const [ref, text] of texts) assert.deepEqual(held(text), [], `blob ${ref.slice(0, 8)} holds a secret in clear: ${text.slice(0, 80)}`);
+    assert.deepEqual(held(JSON.stringify(events)), [], "events hold no secret");
+
+    // The blobs are there and still say what was removed.
+    const all = [...texts.values()];
+    const spans = all.filter((t) => t.startsWith('{"format":"otlp.span"'));
+    assert.equal(spans.length, 3);
+    assert.equal(all.filter((t) => t.startsWith('{"format":"otlp.log"')).length, 1);
+    const toolSpan = spans.find((t) => t.includes('"gen_ai.tool.call.id":"c1"'))!;
+    const shown = ["line one", "DB_PASSWORD=[redacted:secret-assignment]", 'export STRIPE_SECRET_KEY="[redacted:secret-assignment]"'].join("\n");
+    assert.ok(toolSpan.includes(JSON.stringify(shown).slice(1, -1)), toolSpan);
+    assert.equal(JSON.parse(toolSpan).span.spanId, "a000000000000002", "the source span is still JSON");
+  });
+
+  it("counts what was redacted inside an oversize structured value on its event, with a redacted preview", async () => {
+    const { events, texts } = await run();
+    const end = events.find((e) => e.kind === "tool.end" && e.spanId === "a000000000000003")!;
+    const stored = texts.get(end.payload.outputBlob as string)!;
+    assert.ok(stored.includes("DB_PASSWORD=[redacted:secret-assignment]"), stored.slice(0, 200));
+    assert.ok(stored.startsWith((end.payload.output as string).slice(0, -1)), "the preview is a prefix of the stored blob");
+    assert.deepEqual(end.payload.redactions, { "secret-assignment": 2, "secret-field": 2 });
+    // The small result is counted inline, as before; the source span adds nothing to it.
+    const small = events.find((e) => e.kind === "tool.end" && e.spanId === "a000000000000002")!;
+    assert.deepEqual(small.payload.redactions, { "secret-assignment": 2, "secret-field": 2 });
+    assert.equal(events.find((e) => e.kind === "session.start")!.payload.redactions, undefined);
+  });
+
+  it("stores blobs as given without a redactor", async () => {
+    const { texts, canaries } = await run({ redactor: false });
+    const span = [...texts.values()].find((t) => t.includes('"gen_ai.tool.call.id":"c1"'))!;
+    assert.ok(canaries.every((c) => span.includes(c)));
   });
 });
 
