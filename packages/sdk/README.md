@@ -1,8 +1,21 @@
 # @codingdotsh/sdk
 
-Observability for LLM apps and APIs in production. Wrap your OpenAI or Anthropic client, point two
-env vars at a `coding.sh serve` instance (backed by SQLite, or Postgres plus S3), and every model
-call, tool call and turn shows up as a session with tokens, cost, latency and errors.
+<p align="center">
+  <a href="https://www.npmjs.com/package/@codingdotsh/sdk"><img src="https://img.shields.io/npm/v/@codingdotsh/sdk?label=npm" alt="npm version"></a>
+  <a href="https://github.com/jackulau/coding.sh/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
+  <a href="https://github.com/jackulau/coding.sh/actions/workflows/ci.yml"><img src="https://github.com/jackulau/coding.sh/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
+</p>
+
+<p align="center">
+  <a href="https://coding.sh">coding.sh</a> ·
+  <a href="https://coding.sh/docs">Docs</a> ·
+  <a href="https://github.com/jackulau/coding.sh/blob/main/docs/production/README.md">Production guide</a> ·
+  <a href="https://github.com/jackulau/coding.sh/tree/main/packages/sdk">Source</a>
+</p>
+
+Records the model calls, tool calls and turns of your production LLM apps and APIs. Wrap your OpenAI or Anthropic client, point two
+env vars at a `coding.sh serve` instance (backed by SQLite, or Postgres plus S3), and every call they make
+shows up as a session with tokens, cost, latency and errors.
 
 - Zero runtime dependencies, ESM with types, Node ≥ 18 (Vercel's Node runtime too; edge is best effort).
 - Never changes your return values, errors or streams, and never throws into your app.
