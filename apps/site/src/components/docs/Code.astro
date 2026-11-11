@@ -15,7 +15,7 @@ const text = code.replace(/^\n+|\s+$/g, "");
 <div class:list={["code", klass]}>
   <div class="code__bar" data-pagefind-ignore>
     <span class="code__title">{title}</span>
-    <button type="button" class="code__copy ctl" data-code-copy aria-label={`Copy ${title}`} data-agent-skip>
+    <button type="button" class="code__copy ctl hit" data-code-copy aria-label={`Copy ${title}`} data-agent-skip>
       <span data-copy-label>Copy</span>
     </button>
     <span class="sr-only" role="status" data-code-status data-agent-skip></span>
@@ -51,6 +51,13 @@ const text = code.replace(/^\n+|\s+$/g, "");
     flex: none;
     min-width: 4.25rem;
     justify-content: center;
+  }
+  /* Touch: the chip keeps its size inside the 40px bar; .hit gives the 44px target. */
+  @media (pointer: coarse) {
+    .code__copy.ctl {
+      height: 1.75rem;
+      padding: 0 0.6rem;
+    }
   }
   .code__body {
     margin: 0;
