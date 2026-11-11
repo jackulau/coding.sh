@@ -127,4 +127,60 @@ describe("viewer feel in a browser", { skip: chrome ? false : "no Chrome/Chromiu
       await page.close();
     }
   });
+
+  test("holding j in a session paints the pane and calls replaceState at most once per 80 ms", async () => {
+    await open("#/s/long-1");
+    try {
+      await page.eval("document.getElementById('steps').focus(); window.__rs = 0; const o = history.replaceState.bind(history); history.replaceState = (...a) => { window.__rs++; return o(...a); };");
+      const t0 = Date.now();
+      for (let i = 0; i < 40; i++) {
+        await key("j");
+        await sleep(8);
+      }
+      const ms = Date.now() - t0;
+      await sleep(250);
+      const calls = await page.eval("window.__rs");
+      assert.ok(calls >= 2 && calls <= Math.ceil(ms / 80) + 2, `${calls} replaceState calls in ${ms} ms`);
+      // The trailing paint lands on the last row.
+      const sel = await page.eval("document.querySelector('#steps .st[aria-selected=true]').id.replace('st-', '')");
+      assert.ok(Number(sel) >= 30, `selected row ${sel}`);
+      assert.match(await page.eval("location.hash"), /#\/s\/long-1\/e\d+/);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("the ‹ › step buttons are not rebuilt on each step", async () => {
+    await open("#/s/long-1");
+    try {
+      await page.eval("document.getElementById('steps').focus(); window.__nb = [...document.querySelectorAll('.fail-nav button')];");
+      assert.ok((await page.eval("window.__nb.length")) >= 4);
+      await key("j");
+      await key("j");
+      await sleep(150);
+      assert.equal(await page.eval("window.__nb.every((b) => b.isConnected)"), true);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("the Raw toggle keeps the pane's scroll position; a new step starts at the top", async () => {
+    await open("#/s/long-1", 1280, 360);
+    try {
+      await page.eval("document.getElementById('steps').focus()");
+      await key("j");
+      await sleep(120);
+      await page.eval("document.querySelector('.pane').scrollTop = 40");
+      await key("r");
+      await page.waitFor("document.querySelector('.pane .json')", "raw JSON");
+      const top = await page.eval("document.querySelector('.pane').scrollTop");
+      const max = await page.eval("document.querySelector('.pane').scrollHeight - document.querySelector('.pane').clientHeight");
+      assert.equal(top, Math.min(40, max), `scrollTop ${top} of ${max}`);
+      await key("j");
+      await sleep(150);
+      assert.equal(await page.eval("document.querySelector('.pane').scrollTop"), 0);
+    } finally {
+      await page.close();
+    }
+  });
 });
