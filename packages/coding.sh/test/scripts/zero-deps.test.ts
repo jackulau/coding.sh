@@ -49,7 +49,7 @@ describe("zero runtime dependencies", () => {
     const bad: string[] = [];
     for (const file of sources(join(PKG, "src"))) {
       for (const dep of scanner(readFileSync(file, "utf8"))) {
-        const found = `${file.slice(PKG.length)}: ${dep}`;
+        const found = `${file.slice(PKG.length).replaceAll("\\", "/")}: ${dep}`;
         if (!HOST_PROVIDED.has(found)) bad.push(found);
       }
     }
