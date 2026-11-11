@@ -1345,7 +1345,7 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
     k,
     diff: boot,
     mcnemar: mcn,
-    ...(oneTask ? { oneTask } : {}),
+    oneTask,
     power: pairedPower(diffs, { alpha, discordant: { b: mb, c: mc } }),
     metrics,
     spend,
