@@ -580,7 +580,7 @@ Record one weight edit as a `notification` event with `payload.kind` "weights.ed
 
 tensor: the tensor's name. shape: its dimensions. changed: how many weights differ. l2, max_abs: the L2 norm and the largest absolute value of the change (edited minus base). base_sha256, edited_sha256: 64-hex hashes of the tensor before and after. note: free text, kept only in full capture mode.
 
-Returns True when the event was queued. Returns False, with one warning, when a value is invalid or the SDK is off. Never raises.
+Returns True only when the event was queued. Returns False when a value is invalid (with one warning per process), and, without a warning, when the SDK is off or shut down or the queue is full. A note that is not a string is dropped with one warning; the edit is still recorded. Never raises. Outside trace() and with_session() the edit gets a session of its own, so group a run of edits inside one.
 
 ```python
 def weights_edit(
@@ -610,16 +610,18 @@ def weights_edit(
 
 {shape, changed, l2, max_abs} for two array-likes of the same shape, in pure Python.
 
-Takes nested lists or anything with `.tolist()` (numpy, torch). It is slow on large tensors: compute big ones with your own library and pass the numbers to weights_edit(). Unlike weights_edit(), it raises ValueError on a shape mismatch.
+Takes nested lists, tuples, ranges, or anything with `.tolist()` (numpy, torch), up to 16 levels deep, holding finite numbers. Generators are not accepted. It is slow on large tensors: compute big ones with your own library and pass the numbers to weights_edit().
+
+A pure helper you call on purpose, unlike the never-raise weights_edit(): it raises ValueError on bad input (a shape mismatch, ragged or too deep nesting, a non-number, None, NaN or inf, or an argument that is not a sequence or array).
 
 ```python
-def weights_delta(base: Iterable[Any], edited: Iterable[Any]) -> Dict[str, Any]
+def weights_delta(base: Sequence[Any], edited: Sequence[Any]) -> Dict[str, Any]
 ```
 
 | Parameter | Type | Default |
 |---|---|---|
-| `base` | `Iterable[Any]` | required |
-| `edited` | `Iterable[Any]` | required |
+| `base` | `Sequence[Any]` | required |
+| `edited` | `Sequence[Any]` | required |
 
 ### `coding_sh.otel`
 

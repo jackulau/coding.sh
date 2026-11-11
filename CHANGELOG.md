@@ -11,7 +11,7 @@ grouped by area, with links to the docs for the details.
 
 ### Added
 
-- **SDK.** `coding_sh.weights_edit()` in the Python SDK records each weight edit a script makes as one `notification` event with `payload.kind: "weights.edit"`: tensor name, shape, weights changed, L2 and max-abs of the change, and the base and edited sha256. It adds no event kind, and `coding_sh.weights_delta()` computes the counts and norms for small arrays without numpy. [Docs](https://coding.sh/docs/reference/api)
+- **SDK.** `coding_sh.weights_edit()` in the Python SDK records each weight edit a script makes as one `notification` event with `payload.kind: "weights.edit"`: tensor name, shape, weights changed, L2 and max-abs of the change, and the base and edited sha256. It adds no event kind, and `coding_sh.weights_delta()` computes the counts and norms for small arrays without numpy. [Docs](https://coding.sh/docs/api)
 
 ### Changed
 

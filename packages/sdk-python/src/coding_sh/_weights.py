@@ -11,16 +11,20 @@
     )
 
 The caller's script computes the hashes and norms; this module only checks them and sends them.
-It imports no numpy or torch. A bad value drops the event with one warning and returns False:
-the SDK never raises into the app. The event lands in the current trace or session, or in a
+It imports no numpy or torch; numpy and torch scalars are accepted as numbers. weights_edit()
+never raises into the app: a bad value drops the event with a warning (once per process) and it
+returns False. weights_delta() is a helper you call on purpose, so it raises ValueError on bad
+input. The event lands in the current trace or session, or in a
 session of its own when there is none. Payload fields are in docs/reference/api.md.
 """
 
 from __future__ import annotations
 
 import math
+import numbers
+import operator
 import re
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ._trace import Scope, _get, clip, emit, full_capture
 
@@ -30,21 +34,31 @@ MAX_DIMS = 16
 
 
 def _count(v: Any, what: str) -> int:
-    if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+    if isinstance(v, bool) or not isinstance(v, numbers.Integral) or operator.index(v) < 0:
         raise ValueError("%s must be a non-negative integer, got %r" % (what, v))
-    return v
+    return operator.index(v)
 
 
 def _norm(v: Any, what: str) -> float:
-    if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0:
+    if isinstance(v, bool) or not isinstance(v, numbers.Real):
         raise ValueError("%s must be a finite number >= 0, got %r" % (what, v))
-    return float(v)
+    f = float(v)
+    if not math.isfinite(f) or f < 0:
+        raise ValueError("%s must be a finite number >= 0, got %r" % (what, v))
+    return f
 
 
 def _sha(v: Any, what: str) -> str:
-    if not isinstance(v, str) or not _SHA256.match(v):
+    if not isinstance(v, str) or not _SHA256.fullmatch(v):
         raise ValueError("%s must be 64 hex characters" % what)
     return v.lower()
+
+
+def _warn(key: str, msg: str) -> None:
+    try:
+        _get()._warn_once(key, msg)
+    except Exception:
+        pass
 
 
 def _payload(
@@ -73,8 +87,9 @@ def _payload(
     }
     if note is not None:
         if not isinstance(note, str):
-            raise ValueError("note must be a string")
-        if full_capture() and note:
+            # The edit is still recorded; only the note is dropped.
+            _warn("weights_edit_note", "coding.sh: weights_edit ignored a note that is not a string")
+        elif full_capture() and note:
             p["note"] = clip(note)
     return p
 
@@ -85,13 +100,14 @@ class _WeightsEdit(Scope):
     def __init__(self, payload: Dict[str, Any]) -> None:
         super().__init__()
         self.payload = payload
+        self.queued = False
 
     def _root_name(self) -> str:
         return KIND
 
     def _on_start(self) -> None:
         if self.node is not None:
-            emit(self.node.event("notification", self._t0, self.payload, child=True))
+            self.queued = emit(self.node.event("notification", self._t0, self.payload, child=True))
 
 
 def weights_edit(
@@ -111,55 +127,75 @@ def weights_edit(
     base_sha256, edited_sha256: 64-hex hashes of the tensor before and after. note: free text,
     kept only in full capture mode.
 
-    Returns True when the event was queued. Returns False, with one warning, when a value is
-    invalid or the SDK is off. Never raises.
+    Returns True only when the event was queued. Returns False when a value is invalid (with
+    one warning per process), and, without a warning, when the SDK is off or shut down or the
+    queue is full. A note that is not a string is dropped with one warning; the edit is still
+    recorded. Never raises. Outside trace() and with_session() the edit gets a session of its
+    own, so group a run of edits inside one.
     """
     try:
         p = _payload(tensor, shape, changed, l2, max_abs, base_sha256, edited_sha256, note)
     except Exception as e:
-        try:
-            _get()._warn_once("weights_edit", "coding.sh: weights_edit dropped an event: %s" % e)
-        except Exception:
-            pass
+        _warn("weights_edit", "coding.sh: weights_edit dropped an event: %s" % e)
         return False
     try:
         scope = _WeightsEdit(p).start()
-        queued = scope.node is not None
+        queued = scope.queued
         scope.end()
         return queued
     except Exception:
         return False
 
 
-def _walk(x: Any, shape: List[int], depth: int, out: List[float]) -> None:
-    if hasattr(x, "tolist"):
+def _walk(x: Any, shape: List[int], depth: int, out: List[float], leaves: set) -> None:
+    if hasattr(x, "tolist") and not isinstance(x, (list, tuple, range)):
         x = x.tolist()
-    if isinstance(x, (list, tuple)):
+    if isinstance(x, (list, tuple, range)):
+        if depth >= MAX_DIMS:
+            raise ValueError("nested more than %d levels deep" % MAX_DIMS)
         if len(shape) == depth:
             shape.append(len(x))
         elif shape[depth] != len(x):
             raise ValueError("ragged array")
         for item in x:
-            _walk(item, shape, depth + 1, out)
+            _walk(item, shape, depth + 1, out, leaves)
     else:
-        if len(shape) != depth:
-            raise ValueError("ragged array")
-        out.append(float(x))
+        leaves.add(depth)
+        if isinstance(x, bool) or not isinstance(x, numbers.Real):
+            raise ValueError("values must be numbers, got %r" % (x,))
+        f = float(x)
+        if not math.isfinite(f):
+            raise ValueError("values must be finite, got %r" % (x,))
+        out.append(f)
 
 
 def _flatten(x: Any) -> Tuple[List[int], List[float]]:
+    if not (hasattr(x, "tolist") or isinstance(x, (list, tuple, range))):
+        raise ValueError("expected a list, tuple, range or array, got %s" % type(x).__name__)
     shape: List[int] = []
     out: List[float] = []
-    _walk(x, shape, 0, out)
+    try:
+        leaves: set = set()
+        _walk(x, shape, 0, out, leaves)
+        if leaves and leaves != {len(shape)}:
+            raise ValueError("ragged array")
+    except ValueError:
+        raise
+    except Exception as e:  # tolist() or float() failing on an odd object
+        raise ValueError("cannot read the values: %s" % type(e).__name__) from e
     return shape, out
 
 
-def weights_delta(base: Iterable[Any], edited: Iterable[Any]) -> Dict[str, Any]:
+def weights_delta(base: Sequence[Any], edited: Sequence[Any]) -> Dict[str, Any]:
     """{shape, changed, l2, max_abs} for two array-likes of the same shape, in pure Python.
 
-    Takes nested lists or anything with `.tolist()` (numpy, torch). It is slow on large
+    Takes nested lists, tuples, ranges, or anything with `.tolist()` (numpy, torch), up to 16
+    levels deep, holding finite numbers. Generators are not accepted. It is slow on large
     tensors: compute big ones with your own library and pass the numbers to weights_edit().
-    Unlike weights_edit(), it raises ValueError on a shape mismatch.
+
+    A pure helper you call on purpose, unlike the never-raise weights_edit(): it raises
+    ValueError on bad input (a shape mismatch, ragged or too deep nesting, a non-number, None,
+    NaN or inf, or an argument that is not a sequence or array).
     """
     s1, a = _flatten(base)
     s2, b = _flatten(edited)
