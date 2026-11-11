@@ -89,22 +89,8 @@ export function techArticleSchema(page: { path: string; title: string; summary: 
   };
 }
 
-/**
- * A meta description of at most `max` characters: whole sentences while they
- * fit, else whole words and an ellipsis. Search results cut longer ones anyway.
- */
-export function clampDescription(text: string, max = 155): string {
-  const t = text.replace(/\s+/g, " ").trim();
-  if (t.length <= max) return t;
-  let out = "";
-  for (const s of t.match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g) ?? []) {
-    if ((out + s).trimEnd().length > max) break;
-    out += s;
-  }
-  if (out.trim().length >= max * 0.6) return out.trim();
-  const cut = t.slice(0, max - 1);
-  return `${cut.slice(0, cut.lastIndexOf(" ")).replace(/[,;:]$/, "")}…`;
-}
+// In its own file with no imports so test/clamp.test.mjs can load it.
+export { clampDescription } from "./clamp";
 
 /** Plain text from a fragment of our own HTML (tags dropped, entities decoded). */
 export function plainText(html: string): string {
