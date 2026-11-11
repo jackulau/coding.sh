@@ -1,5 +1,5 @@
 # OpenTelemetry Collector: OTLP/HTTP in, ClickHouse out (otel.otel_traces).
-# coding.sh sends here with an otlp sink; see docs/how-to/self-host-team.md#export-to-clickhouse-through-an-opentelemetry-collector.
+# coding.sh sends here with an otlp sink; see docs/reference/stores.md#export-to-clickhouse-through-an-opentelemetry-collector.
 # Needs the contrib distribution (otel/opentelemetry-collector-contrib), which has the clickhouse exporter.
 
 receivers:

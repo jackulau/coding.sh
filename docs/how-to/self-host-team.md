@@ -1,92 +1,152 @@
 # Self-host for a team
 
-Run one `coding.sh serve` that the whole team sends sessions to and reads from. One port (4318)
-takes OpenTelemetry traces and sessions from each developer's agents, and serves the viewer and the
-API.
+Run one `coding.sh serve` that the whole team sends sessions to and reads from. Each developer's
+agents send to it, and everyone opens one viewer with all the sessions in it.
 
-## Quickstart
+## Before you start
 
-**1. Run the server** on any machine with Docker that your team can reach:
+- A machine with Docker and Docker Compose that your team can reach, on port 4318.
+- coding.sh on each developer's machine: `curl -fsSL https://coding.sh/install | sh`.
+- No checkout of the repo. The server image is `ghcr.io/jackulau/coding.sh`.
+
+## 1. Start the server
+
+In an empty folder on the server, download the Compose file and start it:
 
 ```sh
-docker run -d --name coding-sh -p 4318:4318 -v coding-sh:/data --restart unless-stopped ghcr.io/jackulau/coding.sh
-docker logs coding-sh
+curl -fsSLO https://raw.githubusercontent.com/jackulau/coding.sh/main/deploy/compose/compose.yml
+docker compose up -d --wait
+docker compose logs coding-sh
 ```
 
-The first start makes a read key and an ingest key, keeps them in the `coding-sh` volume, and
-prints them. Every later start prints the same keys:
+The stack is one container with SQLite on a volume. With no keys set, the first start makes a read
+key and an ingest key, keeps them on the volume, and prints them:
 
 ```text
-http://127.0.0.1:4318
-No keys are configured, so serve uses the keys in /data/serve-keys.json (made now):
-  read key    csh_rk_…
-  ingest key  csh_ik_…
-  Open        http://127.0.0.1:4318/?t=csh_rk_…
-  Connect     coding.sh init --remote http://127.0.0.1:4318 --key csh_ik_…
+coding-sh-1  | http://127.0.0.1:4318
+coding-sh-1  | No keys are configured, so serve uses the keys in /data/serve-keys.json (made now):
+coding-sh-1  |   read key    csh_rk_…
+coding-sh-1  |   ingest key  csh_ik_…
+coding-sh-1  |   Open        http://127.0.0.1:4318/?t=csh_rk_…
+coding-sh-1  |   Connect     coding.sh init --remote http://127.0.0.1:4318 --key csh_ik_…
+coding-sh-1  | Use the server's public URL in place of the one above. Set CODING_SH_INGEST_KEYS and CODING_SH_READ_KEYS to use your own keys.
 ```
 
-The URLs are the address inside the container. Use the server's own host name or IP instead.
+These keys are enough to try it: skip to step 4. The URLs are the address inside the container, so
+use the server's own host name or IP.
 
-**2. Connect each developer's machine** with the ingest key:
+## 2. Make your own keys
+
+Make an ingest key for sending and a read key for the viewer. Each command prints the key once,
+then the line the server needs, which holds only the key's sha256 hash:
+
+```sh
+docker run --rm ghcr.io/jackulau/coding.sh /app/cli.mjs serve keygen --project team
+docker run --rm ghcr.io/jackulau/coding.sh /app/cli.mjs serve keygen --project '*' --read
+```
+
+```text
+csh_ik_…
+  Shown once. Store it in the client's secret manager.
+
+  Server env:
+    CODING_SH_INGEST_KEYS=team:sha256:…
+  Or in the config file:
+    [[serve.projects]]
+    id = "team"
+    ingest_keys = ["sha256:…"]
+```
+
+Put both `Server env` lines in a file named `.env` next to `compose.yml`, then start again:
+
+```sh
+# .env
+CODING_SH_INGEST_KEYS=team:sha256:…
+CODING_SH_READ_KEYS=*:sha256:…
+```
+
+```sh
+docker compose up -d --wait
+```
+
+The first-start keys stop working. Set both variables: on a public address, serve does not start
+with an ingest key and no read key or viewer login. To revoke a key, remove its hash and run
+`docker compose up -d` again.
+
+| Key | Can | Give it to |
+| --- | --- | --- |
+| ingest, `csh_ik_…` | send sessions into its project | each developer and app |
+| read, `csh_rk_…` | open the viewer, the API and `/metrics` | people who read |
+
+:::more Other ways to set keys
+- `CODING_SH_INGEST_KEYS` takes a comma-separated list. Each entry is `project:sha256:<hex>`,
+  `project:csh_ik_…` (the key itself), or a bare key, which lands in the `default` project.
+  `CODING_SH_READ_KEYS` takes the same forms; `*`, or a bare key, reads every project.
+- `CODING_SH_BASIC_AUTH=team:<a long password>` adds one shared browser login that sees every
+  project, in place of read keys.
+- Per-project settings such as `retention_days` go in `[[serve.projects]]` tables in a config
+  file. See the `[serve]` keys in [Configuration](../reference/config.md#serve).
+:::
+
+## 3. Optional: one key per person
+
+The ingest key decides the project its sessions land in. With one key per person, you can tell who
+sent what. Make a key for each person:
+
+```sh
+docker run --rm ghcr.io/jackulau/coding.sh /app/cli.mjs serve keygen --project alice
+docker run --rm ghcr.io/jackulau/coding.sh /app/cli.mjs serve keygen --project bob
+```
+
+Add each hash to the same variable and start again:
+
+```sh
+# .env
+CODING_SH_INGEST_KEYS=team:sha256:…,alice:sha256:…,bob:sha256:…
+CODING_SH_READ_KEYS=*:sha256:…
+```
+
+Alice's sessions then have ids like `alice/<id>`, and `GET /api/sessions?project=alice` returns
+only hers. A read key made with `--project alice --read` sees only that project. The viewer list
+does not show the project yet.
+
+Projects keep data apart, but they do not make one server safe for untrusted tenants. For those,
+run a separate server for each.
+
+## 4. Connect each machine
+
+Each developer runs this with their ingest key:
 
 ```sh
 coding.sh init --remote http://<server>:4318 --key csh_ik_…
 ```
 
-New sessions from the coding agents on that machine now go to the server too, as metadata (no
-prompts, code or tool output). Install coding.sh first if needed:
-`curl -fsSL https://coding.sh/install | sh`.
-
-**3. Open the viewer** at `http://<server>:4318/?t=csh_rk_…`, or open `http://<server>:4318` and
-paste the read key into the form.
-
-| Key | Can | Give it to |
-| --- | --- | --- |
-| ingest (`csh_ik_…`) | only send; sessions land in the `default` project | developers and apps |
-| read (`csh_rk_…`) | open the viewer, the API (`Authorization: Bearer csh_rk_…`) and `/metrics` | people who read |
-
-Keys are made only when no key and no viewer login is configured. To make new ones, delete
-`serve-keys.json` from the volume and restart; the old keys stop working.
-
-## Run it with Compose
-
-`deploy/compose/` has three stacks. None needs edits; optional settings go in
-`deploy/compose/.env` (copy [`.env.example`](../../deploy/compose/.env.example)).
-
-| File | Store | Use it when |
-| --- | --- | --- |
-| `compose.yml` | SQLite on the `coding-sh-data` volume | the default; one team, one machine |
-| `compose.postgres.yml` | Postgres 17 in the stack | you want Postgres, or the CLI on the team database |
-| `compose.clickhouse.yml` | ClickHouse in the stack, blobs on the volume | you keep a lot of sessions or want SQL over them ([ClickHouse](#clickhouse)) |
-
-From a checkout:
-
-```sh
-docker compose -f deploy/compose/compose.yml up -d --wait
-docker compose -f deploy/compose/compose.yml logs coding-sh     # the keys and the connect command
+```text
+  Checking http://<server>:4318…
+  Detecting agents…
+  Claude Code (user scope)
+    create  ~/.claude/settings.json  hooks
+✓ Set up Claude Code (hooks)
+✓ Sending new sessions to http://<server>:4318 (metadata only). Sessions from before stay on this machine
+  Team viewer: http://<server>:4318
 ```
 
-Only port 4318 is published, not the database ports. `docker-compose.yml` at the repo root is a
-different stack, used by the store tests ([production/compose.md](../production/compose.md)).
-
-## Connect
-
 `init --remote` checks the key against the server first, and changes nothing if the server is
-unreachable or refuses it. Then it installs the capture hooks, as `coding.sh init` does, and adds a
-sink named `team` to `~/.coding.sh/config.toml`. Running it again replaces that sink.
+down or refuses the key. Then it installs the capture hooks and adds a sink named `team` to
+`~/.coding.sh/config.toml`. Run it again to change the URL, key or mode.
 
 | Option | What it does |
 | --- | --- |
-| `--remote-mode full` | Also sends prompts, code and tool output, redacted on the machine first. Decide as a team. |
-| `CODING_SH_INGEST_KEY=csh_ik_… coding.sh init --remote <url>` | Keeps the key out of shell history. |
-| `https://` URL | Use it over the internet ([TLS](#tls)). Plain `http://` sends the key in the clear. |
+| `--remote-mode full` | Also sends prompts, code and tool output. The default, `metadata`, sends none. |
+| `CODING_SH_INGEST_KEY=csh_ik_…` | Reads the key from the environment, which keeps it out of shell history. |
+| an `https://` URL | Sends the key encrypted. Use it over the internet (step 5). |
 
-Sessions are sent when the agent's hook runs at the end of each turn, and whenever a `coding.sh`
-command runs. Sessions captured before you connected stay on the machine.
+New sessions are sent at the end of each agent turn, and whenever a `coding.sh` command runs.
+Sessions from before you connected stay on the machine. Apps send to the same server with the
+SDKs or OpenTelemetry: see [Trace an app in production](../PRODUCTION.md).
 
-### Connect by hand
-
-This is the block `init --remote` writes. It works on any coding.sh version:
+:::more The sink init writes
+To connect by hand, add this block to `~/.coding.sh/config.toml`, then run `coding.sh ingest`:
 
 ```toml
 [[sinks]]
@@ -96,55 +156,20 @@ endpoint = "http://<server>:4318/v1/ingest"
 mode = "metadata" # "full" also sends prompts, code and tool output
 headers = { Authorization = "Bearer csh_ik_…" }
 ```
+:::
 
-Run `coding.sh ingest`, then look for your session in the viewer.
+## 5. Serve it over HTTPS
 
-### Apps and SDKs
-
-Set these where the app runs. The TypeScript and Python SDKs read them:
-
-```sh
-CODING_SH_URL=http://<server>:4318
-CODING_SH_INGEST_KEY=csh_ik_…
-```
-
-A plain OpenTelemetry app uses `OTEL_EXPORTER_OTLP_ENDPOINT=http://<server>:4318` and
-`OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer%20csh_ik_…"`. Never ship an ingest key to a
-browser. See [Trace your own agent](trace-your-agent.md).
-
-## Your own keys and one project per person
-
-The project comes from the ingest key. With one key per person, sessions show up as
-`alice/<id>`, and `GET /api/sessions?project=alice` filters by person:
+serve speaks plain HTTP. On the internet, put a TLS proxy in front and keep port 4318 on the
+loopback interface. Add two lines to `.env`:
 
 ```sh
-docker run --rm ghcr.io/jackulau/coding.sh /app/cli.mjs serve keygen --project alice
-docker run --rm ghcr.io/jackulau/coding.sh /app/cli.mjs serve keygen --project '*' --read
-```
-
-Each command prints the key once on stdout, and on stderr the setting that holds only its sha256
-hash. Give each key to its owner, and put the hashes in `deploy/compose/.env` (or pass them with
-`-e`):
-
-```sh
-CODING_SH_INGEST_KEYS=alice:sha256:<hex>,bob:sha256:<hex>,billing-api:sha256:<hex>
-CODING_SH_READ_KEYS=*:sha256:<hex>
-```
-
-Set both, or serve refuses to start on a public address. Then run
-`docker compose -f deploy/compose/compose.yml up -d` again. To revoke a key, remove its hash and
-restart. Per-project retention and a shared viewer login are in [guides/team.md](../guides/team.md).
-
-## TLS
-
-serve speaks plain HTTP. On the internet, put a proxy in front and keep 4318 on the loopback
-interface. With Caddy, which gets the certificate itself:
-
-```sh
-# deploy/compose/.env
+# .env
 CODING_SH_PUBLISH=127.0.0.1:4318
 CODING_SH_TRUST_PROXY=1
 ```
+
+With Caddy, which gets the certificate itself:
 
 ```caddyfile
 obs.example.com {
@@ -152,273 +177,63 @@ obs.example.com {
 }
 ```
 
-Then connect with `coding.sh init --remote https://obs.example.com --key csh_ik_…`. Fly, Railway
-and Render terminate TLS for you ([production/](../production/README.md)).
+Run `docker compose up -d`, and connect with `--remote https://obs.example.com`. Fly.io, Railway
+and Render handle TLS for you: see [Deploy coding.sh serve](../production/deploy.md).
 
-## Data, backups and upgrades
+## Read the result
+
+Open `http://<server>:4318/?t=csh_rk_…`, or open `http://<server>:4318` and paste the read key
+into the form. A cookie keeps you signed in until the browser closes.
+
+![The team viewer's session list: five Claude Code sessions sent from two developers' machines, each with its title, test result, model, tool count, tokens, cost and duration](shot:docs/team-list "Sessions from two machines that connected with --remote-mode full.")
+
+- **Metadata mode** sends no prompt text, so a session has no title: the list shows
+  *Untitled session*, with its agent, model, tools, tokens, cost and duration.
+- **Full mode** (`--remote-mode full`) adds the title, prompts, replies, code and tool output.
+  Redaction runs on the developer's machine before anything is sent.
+
+Decide the mode as a team. What each mode keeps is in [Privacy and redaction](../guides/privacy.md).
+
+## Back up and upgrade
+
+The data lives on the `coding-sh-data` volume: `index.db`, `blobs/` and `serve-keys.json`.
+
+```sh
+docker compose stop
+docker compose cp coding-sh:/data ./coding-sh-backup
+docker compose start
+```
 
 | Task | How |
 | --- | --- |
-| Find the data | `index.db`, `blobs/` and `serve-keys.json` in the volume; Postgres in `pgdata`, ClickHouse in `chdata` |
-| Back up | Copy the volumes or the database. For SQLite, stop the container first (below) |
-| Upgrade | `docker pull ghcr.io/jackulau/coding.sh` and run it again, or Compose `pull` and `up -d`. The schema migrates on start |
-| Pin a version | `ghcr.io/jackulau/coding.sh:0.1.2`, or `CODING_SH_IMAGE` in `.env` |
-| Check health | `curl -s http://<server>:4318/readyz` answers `{"ok":true,…}` once the store is ready |
-| Delete old sessions | `CODING_SH_RETENTION_DAYS=30` deletes sessions older than 30 days, every hour |
+| Upgrade | `docker compose pull`, then `docker compose up -d`. The schema migrates on start. |
+| Pin a version | `CODING_SH_IMAGE=ghcr.io/jackulau/coding.sh:0.1.6` in `.env`. |
+| Delete old sessions | `CODING_SH_RETENTION_DAYS=30` in `.env` deletes sessions older than 30 days, every hour. Eval assets stay. |
+| Check health | `curl -s http://<server>:4318/readyz` answers `{"ok":true,…}` once the store is ready. |
+| Use Postgres | Download `compose.postgres.yml` from the same folder and run it with `-f`. Postgres holds the index and the blobs. |
 
-```sh
-docker stop coding-sh && docker run --rm -v coding-sh:/data -v "$PWD":/backup alpine tar czf /backup/coding-sh.tgz -C /data . && docker start coding-sh
-```
+For ClickHouse, the store plugins and SQL over the tables, see
+[Postgres and ClickHouse stores](../reference/stores.md).
 
-## Read from the CLI
+## If something goes wrong
 
-People with database access can run the CLI and MCP tools against the team database. This needs
-the `coding.sh-store-postgres` package next to coding.sh. With `--store`, local spool files are not
-pushed into the shared database:
+- **`init` prints `refused the key. Nothing was changed`.** The key's hash is not in
+  `CODING_SH_INGEST_KEYS`, or it is a read key. Check `.env`, then run `docker compose up -d`.
+- **`init` prints `Can't reach <url>`.** Check the URL and the port, then run
+  `curl -s http://<server>:4318/healthz` from the developer's machine.
+- **`docker compose up --wait` reports the container unhealthy.** On a busy host the first health
+  checks can time out. Run `docker compose ps` a minute later; `curl -s http://<server>:4318/readyz`
+  shows whether the store is ready.
+- **serve exits with no read key.** You set `CODING_SH_INGEST_KEYS` alone. Add
+  `CODING_SH_READ_KEYS` or `CODING_SH_BASIC_AUTH`.
+- **No sessions show up.** Run `coding.sh ingest` on the developer's machine, then reload the
+  viewer. Only sessions that started after `init --remote` are sent.
+- **Every session says Untitled session.** The machine sends metadata. Run
+  `coding.sh init --remote <url> --key csh_ik_… --remote-mode full` if the team agreed to full mode.
 
-```sh
-coding.sh sessions --store 'postgres://coding:…@db-host:5432/coding' --project alice
-```
+## Next steps
 
-## ClickHouse
-
-There are two ways to use ClickHouse, and they can run together:
-
-| | Store plugin | Collector route |
-| --- | --- | --- |
-| What goes to ClickHouse | Everything coding.sh stores: sessions, events, search text, eval assets | Span metadata only, in the collector's `otel_traces` table |
-| Who reads it | coding.sh (viewer, CLI, MCP) and your own SQL | Your own SQL or Grafana; `coding.sh collector import` can pull agent traces back |
-| What runs | `coding.sh serve` with `--store clickhouse://…` | Your OpenTelemetry Collector with the `clickhouse` exporter |
-| Pick it when | ClickHouse is the database you want coding.sh to run on | You already collect traces into ClickHouse |
-
-### Run the server on ClickHouse
-
-Pick ClickHouse when your team already runs it, keeps a lot of sessions, or wants analytical SQL
-over the tables coding.sh reads. Pick Postgres for a small team, or for transactional writes.
-
-```sh
-docker run -d --name coding-sh -p 4318:4318 -v coding-sh:/data --restart unless-stopped \
-  -e CODING_SH_STORE_URL='clickhouses://coding:pass@ch.example.com:8443/coding' \
-  -e CODING_SH_BLOB_URL='file:///data/blobs' \
-  ghcr.io/jackulau/coding.sh
-```
-
-With Compose: `docker compose -f deploy/compose/compose.clickhouse.yml up -d --wait`.
-
-- The image has the plugin. Outside Docker, install `coding.sh-store-clickhouse` next to coding.sh.
-- `clickhouse://…:8123/db` is HTTP and `clickhouses://…:8443/db` is HTTPS. The plugin uses the
-  HTTP interface, not port 9000.
-- Blobs never go to ClickHouse: keep them on `file://` or on S3 with `coding.sh-store-s3`.
-- One serve writes at a time; another takes over within 30 s if it dies.
-
-URL parameters, transactions, replication and search are in the
-[store plugin's README](../../packages/store-clickhouse/README.md).
-
-### Export to ClickHouse through an OpenTelemetry Collector
-
-If your traces already go through the Collector's `clickhouse` exporter, send coding.sh sessions
-there too. coding.sh keeps its own store, and an otlp sink copies each session's spans to the
-collector, which writes them to `otel.otel_traces`. You query that table; coding.sh does not read
-it.
-
-`deploy/clickhouse/` has a working pair,
-[otel-collector.yaml](../../deploy/clickhouse/otel-collector.yaml) and
-[docker-compose.yml](../../deploy/clickhouse/docker-compose.yml), pinned, with ports on 127.0.0.1:
-
-```sh
-export CLICKHOUSE_PASSWORD=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')
-docker compose -f deploy/clickhouse/docker-compose.yml up -d --wait
-```
-
-The collector part of the config, to merge into your own:
-
-```yaml
-receivers:
-  otlp:
-    protocols:
-      http:
-        endpoint: 0.0.0.0:4318
-exporters:
-  clickhouse:
-    endpoint: tcp://clickhouse:9000?dial_timeout=10s
-    database: otel
-    username: ${env:CLICKHOUSE_USER}
-    password: ${env:CLICKHOUSE_PASSWORD}
-    ttl: 720h
-    create_schema: true
-    # json: true          # attributes as the JSON type; needs enable_json_type=1 on the server
-    sending_queue:
-      batch:
-        flush_timeout: 5s
-service:
-  pipelines:
-    traces:
-      receivers: [otlp]
-      exporters: [clickhouse]
-```
-
-Then add a sink on each machine that captures sessions. The Compose file publishes the collector
-on 4319, so it can share a host with serve on 4318:
-
-```toml
-[[sinks]]
-kind = "otlp"
-name = "clickhouse"
-endpoint = "http://collector:4319"
-mode = "metadata"
-```
-
-On a team, set `CODING_SH_FORWARD_URL=http://collector:4319` on serve instead, and it forwards
-every trace it commits ([Forward and sinks](../PRODUCTION.md#19-forward-and-sinks)).
-
-What lands in `otel_traces`, with `ServiceName = 'coding.sh'`:
-
-| `SpanName` | One per | Attributes (`SpanAttributes['…']`) |
-| --- | --- | --- |
-| `invoke_agent <agent>` | session (an open one can have several rows) | `gen_ai.operation.name`, `gen_ai.agent.name`, `gen_ai.request.model`, `gen_ai.conversation.id` (the session id), `gen_ai.usage.*`, `coding_sh.cost_usd`, `coding_sh.stats.*` (events, turns, tool_calls, tool_errors, files_changed, tests_passed, tests_failed), `coding_sh.session.flags`, `vcs.ref.head.revision` |
-| `execute_tool <tool>` | tool call | `gen_ai.operation.name`, `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.agent.name`; `StatusCode` is `Error` when the call failed |
-| `chat <model>` | model call | `gen_ai.operation.name`, `gen_ai.request.model`, `gen_ai.provider.name`, `gen_ai.usage.*`, `coding_sh.cost_usd` |
-
-`gen_ai.usage.*` is `input_tokens`, `output_tokens`, `cache_read.input_tokens` and
-`cache_write.input_tokens`. `input_tokens` is the whole prompt, cache included; the uncached part
-is `coding_sh.usage.uncached_input_tokens`. Through 0.1.5 cache writes are also sent as
-`cache_creation.input_tokens`, so query `cache_write.input_tokens`. A call with reasoning tokens
-also gets `reasoning.output_tokens`. A session's spans share one `TraceId`, subagents join their
-parent's trace, and `Duration` is in nanoseconds.
-
-Cost per agent and model per day:
-
-```sql
-SELECT
-    toDate(Timestamp) AS day,
-    SpanAttributes['gen_ai.agent.name'] AS agent,
-    SpanAttributes['gen_ai.request.model'] AS model,
-    count() AS sessions,
-    round(sum(toFloat64OrZero(SpanAttributes['coding_sh.cost_usd'])), 2) AS cost_usd,
-    sum(toUInt64OrZero(SpanAttributes['gen_ai.usage.input_tokens'])) AS input_tokens,
-    sum(toUInt64OrZero(SpanAttributes['gen_ai.usage.output_tokens'])) AS output_tokens
-FROM (
-    SELECT Timestamp, SpanId, SpanAttributes
-    FROM otel.otel_traces
-    WHERE ServiceName = 'coding.sh'
-      AND SpanAttributes['gen_ai.operation.name'] = 'invoke_agent'
-      AND Timestamp >= now() - INTERVAL 30 DAY
-    ORDER BY toUInt64OrZero(SpanAttributes['coding_sh.stats.events']) DESC
-    LIMIT 1 BY SpanId
-)
-GROUP BY day, agent, model
-ORDER BY day DESC, cost_usd DESC
-```
-
-The inner query keeps one row per session: an open session is sent again as it grows (see "Things
-to know"), and the row with the most events (`coding_sh.stats.events`) wins.
-
-Slow and failing tools:
-
-```sql
-SELECT
-    SpanAttributes['gen_ai.tool.name'] AS tool,
-    count() AS calls,
-    countIf(StatusCode = 'Error') AS errors,
-    round(errors / calls, 3) AS error_rate,
-    round(quantile(0.95)(Duration) / 1e6) AS p95_ms,
-    round(max(Duration) / 1e6) AS max_ms
-FROM otel.otel_traces
-WHERE ServiceName = 'coding.sh'
-  AND SpanAttributes['gen_ai.operation.name'] = 'execute_tool'
-  AND Timestamp >= now() - INTERVAL 7 DAY
-GROUP BY tool
-ORDER BY p95_ms DESC
-LIMIT 20
-```
-
-Failed sessions: tests failed, or coding.sh flagged repeated tool failures or a premature finish:
-
-```sql
-SELECT
-    Timestamp AS started,
-    SpanAttributes['gen_ai.conversation.id'] AS session,
-    SpanAttributes['gen_ai.agent.name'] AS agent,
-    toUInt32OrZero(SpanAttributes['coding_sh.stats.tool_errors']) AS tool_errors,
-    toUInt32OrZero(SpanAttributes['coding_sh.stats.tests_failed']) AS tests_failed,
-    JSONExtract(SpanAttributes['coding_sh.session.flags'], 'Array(String)') AS flags,
-    round(Duration / 1e9) AS duration_s
-FROM (
-    SELECT Timestamp, SpanId, SpanAttributes, Duration
-    FROM otel.otel_traces
-    WHERE ServiceName = 'coding.sh'
-      AND SpanAttributes['gen_ai.operation.name'] = 'invoke_agent'
-      AND Timestamp >= now() - INTERVAL 7 DAY
-    ORDER BY toUInt64OrZero(SpanAttributes['coding_sh.stats.events']) DESC
-    LIMIT 1 BY SpanId
-)
-WHERE tests_failed > 0 OR hasAny(flags, ['repeated-tool-failure', 'premature-completion'])
-ORDER BY started DESC
-LIMIT 50
-```
-
-One session's spans, in order (`clickhouse-client --param_session=<session id>`):
-
-```sql
-SELECT
-    Timestamp,
-    SpanName,
-    round(Duration / 1e6) AS ms,
-    StatusCode,
-    SpanAttributes['coding_sh.cost_usd'] AS cost_usd
-FROM (
-    SELECT Timestamp, SpanId, SpanName, Duration, StatusCode, SpanAttributes
-    FROM otel.otel_traces
-    WHERE TraceId = (
-        SELECT any(TraceId) FROM otel.otel_traces
-        WHERE SpanAttributes['gen_ai.conversation.id'] = {session:String}
-    )
-    ORDER BY toUInt64OrZero(SpanAttributes['coding_sh.stats.events']) DESC
-    LIMIT 1 BY SpanId
-)
-ORDER BY Timestamp
-```
-
-Things to know:
-
-- Map columns store every attribute as a string: cast with `toFloat64OrZero` and `toUInt64OrZero`.
-  `coding_sh.session.flags` is a JSON array string.
-- Cost is on the `invoke_agent` span (the session) and on each `chat` span. Sum one, never both.
-- `mode = "full"` adds prompts, code and tool output as span attributes.
-- The `invoke_agent` span is sent when the session ends. `coding.sh serve` and `coding.sh collector`
-  also send it while a session is open: after 10 quiet seconds, and every 60 seconds while busy.
-- Each send is a new row with the same `TraceId` and `SpanId` and newer totals. A session keyed by
-  a conversation id never ends, so those are its only rows.
-- A laptop sink (`coding.sh ingest`) sends the span at the session's end only.
-- `ttl: 720h` drops rows after 30 days. Set it to your retention.
-
-### Pull from ClickHouse
-
-If your agents already send traces to a Collector with the `clickhouse` exporter (your own,
-ClickStack or HyperDX), `coding.sh collector import` reads them into your local store:
-
-```sh
-CLICKHOUSE_USER=otel CLICKHOUSE_PASSWORD=… \
-  coding.sh collector import --clickhouse "http://127.0.0.1:8123/?database=otel"
-```
-
-- Each row is mapped as a span posted to `coding.sh collector` would be: the same events,
-  redaction and pricing.
-- It reads only traces with an agent span unless you pass `--all`, and never stores a span twice.
-- It keeps its place per table and row filter (`--all`, each `--where`). The next run starts an
-  hour before it.
-- `--since` or `--from-start` reads from that time again, for a root span that landed over an hour
-  late. Leave both out of a scheduled import.
-- It stores 5,000 rows at a time and retries a dropped connection or a 502, 503 or 504 three
-  times. A run that still fails prints the command to run again.
-- Both the default `Map(String, String)` columns and `json: true` columns work. In Map columns a
-  string that looks like a number (an id such as `"42"`) comes back as a number.
-
-`--since`, `--from-start`, `--where`, `--table` and `--dry-run` are on
-[coding.sh collector](https://coding.sh/docs/cli/collector).
-
-## Next
-
-- [guides/team.md](../guides/team.md): the complete team setup.
-- [PRODUCTION.md](../PRODUCTION.md): every serve setting, auth, projects, retention and metrics.
-- [Configuration](../reference/config.md#serve): the `[serve]` keys and their env vars.
+- [Trace an app in production](../PRODUCTION.md): send your API apps to the same server.
+- [Deploy coding.sh serve](../production/deploy.md): Fly.io, Railway, Render and serverless.
+- [Privacy and redaction](../guides/privacy.md): what each mode sends and stores.
+- [Configuration](../reference/config.md#serve): every `[serve]` key and its environment variable.

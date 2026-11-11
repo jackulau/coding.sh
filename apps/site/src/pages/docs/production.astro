@@ -1,47 +1,89 @@
 ---
 import DocsLayout from "../../components/docs/DocsLayout.astro";
 import Code from "../../components/docs/Code.astro";
-import Tag from "../../components/docs/Tag.astro";
+import CodeTabs from "../../components/docs/CodeTabs.astro";
+import DocShot from "../../components/docs/DocShot.astro";
 
-// Short version of docs/production/README.md. The full contract is docs/PRODUCTION.md.
-const serve = `docker run -d -p 4318:4318 \\
-  -e CODING_SH_STORE_URL='postgres://user:pass@db.example.com:5432/coding?sslmode=require' \\
-  -e CODING_SH_INGEST_KEYS='myapp:csh_ik_…' \\
-  -e CODING_SH_READ_KEYS='*:csh_rk_…' \\
-  ghcr.io/jackulau/coding.sh
-curl -s http://127.0.0.1:4318/readyz`;
+// The GitHub twin is docs/production/README.md; the full contract is docs/PRODUCTION.md.
+const start = `docker run -d --name coding-sh -p 4318:4318 -v coding-sh:/data --restart unless-stopped ghcr.io/jackulau/coding.sh
+docker logs coding-sh      # the read key, the ingest key and the viewer URL`;
 
-const keys = `coding.sh serve keygen --project myapp          # csh_ik_… for the app
-coding.sh serve keygen --project myapp --read   # csh_rk_… for people`;
-
-const sdk = `import OpenAI from "openai";
+const sdk = [
+  {
+    label: "TypeScript",
+    title: "app.ts",
+    code: `// npm install @codingdotsh/sdk
+// CODING_SH_URL=https://obs.example.com  CODING_SH_INGEST_KEY=csh_ik_…
+import OpenAI from "openai";
 import { observe } from "@codingdotsh/sdk";
 
-// CODING_SH_URL=https://obs.example.com  CODING_SH_INGEST_KEY=csh_ik_…
-const openai = observe(new OpenAI()); // or new Anthropic()`;
+const openai = observe(new OpenAI()); // or new Anthropic()`,
+  },
+  {
+    label: "Python",
+    title: "app.py",
+    code: `# pip install coding-sh
+# CODING_SH_URL=https://obs.example.com  CODING_SH_INGEST_KEY=csh_ik_…
+import coding_sh
+from openai import OpenAI
 
-const otel = `OTEL_EXPORTER_OTLP_ENDPOINT=https://obs.example.com
-OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer%20csh_ik_…"`;
+client = coding_sh.observe(OpenAI())   # also AsyncOpenAI, Anthropic, AsyncAnthropic`,
+  },
+  {
+    label: "OpenTelemetry",
+    title: "shell",
+    code: `OTEL_EXPORTER_OTLP_ENDPOINT=https://obs.example.com
+OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer%20csh_ik_…"`,
+  },
+];
 
-const cli = `coding.sh sessions --store postgres://… --project myapp
-coding.sh search "timeout" --store postgres://…`;
+const keys = `docker run --rm ghcr.io/jackulau/coding.sh /app/cli.mjs serve keygen --project myapp
+docker run --rm ghcr.io/jackulau/coding.sh /app/cli.mjs serve keygen --project '*' --read`;
+
+const keygenOut = `csh_ik_…
+  Shown once. Store it in the client's secret manager.
+
+  Server env:
+    CODING_SH_INGEST_KEYS=myapp:sha256:…`;
+
+const postgres = `docker run -d -p 4318:4318 \\
+  -e CODING_SH_STORE_URL='postgres://user:pass@db.example.com:5432/coding?sslmode=require' \\
+  -e CODING_SH_INGEST_KEYS='myapp:sha256:…' \\
+  -e CODING_SH_READ_KEYS='*:sha256:…' \\
+  ghcr.io/jackulau/coding.sh
+curl -s http://127.0.0.1:4318/readyz      # {"ok":true,"store":"postgres",…}`;
+
+const cli = `coding.sh sessions --store 'postgres://…' --project myapp
+coding.sh search "timeout" --store 'postgres://…'`;
 ---
 
 <DocsLayout>
   <p>
-    Run one <code>coding.sh serve</code> process, point it at a database, and send traces from your API apps: OpenAI, Anthropic, the AI SDK,
-    an LLM gateway such as Vercel AI Gateway or OpenRouter, or any OpenTelemetry app. The viewer, CLI, MCP tools, datasets and experiments work on the same database.
+    Run one <code>coding.sh serve</code> process, give it a database, and send traces from any AI agent or app you deploy: OpenAI and
+    Anthropic clients, the AI SDK, an LLM gateway, or any OpenTelemetry app. The viewer, CLI, MCP tools, datasets and experiments work on the
+    same database.
   </p>
-  <p>
-    For a team's coding agents on one machine, start with <a href="/docs/how-to/self-host-team">Self-host for a team</a>: one
-    <code>docker run</code>, no keys to make.
-  </p>
+  <div class="note">
+    <p>To collect your team's agent sessions on one server, see <a href="/docs/how-to/self-host-team">Self-host for a team</a>.</p>
+  </div>
 
-  <h2 id="run">Run serve <Tag status="built" /></h2>
-  <p>Make one ingest key per app and one read key for people. Each key is printed once.</p>
-  <Code code={keys} />
-  <p>Then start serve with a store URL. It creates its tables on first start. With a volume on <code>/data</code> and no keys set, the first start makes a key pair there and prints it instead.</p>
-  <Code code={serve} />
+  <h2 id="start">Start in two commands</h2>
+  <p>
+    On any machine with Docker, start serve with SQLite on a volume. With no keys set, the first start makes an ingest key and a read key,
+    keeps them on the volume, and prints them:
+  </p>
+  <Code code={start} />
+  <p>Then point your app at it. Each model call becomes a session with its model, tokens, cost, latency and tool calls:</p>
+  <CodeTabs group="lang" tabs={sdk} />
+  <p>
+    Open <code>https://obs.example.com/?t=csh_rk_…</code> to see the calls. The link sets a cookie, so you pass the read key once. Without
+    <code>CODING_SH_URL</code>, the SDKs do nothing.
+  </p>
+  <DocShot
+    name="product/production-requests"
+    alt="The session list of a deployed triage agent: one row per issue it triaged, each with the model, one request, tokens, cost and duration"
+    caption="A deployed agent's calls in the viewer, one session per request."
+  />
 
   <h2 id="store">Pick a store</h2>
   <div class="doc-table">
@@ -50,39 +92,106 @@ coding.sh search "timeout" --store postgres://…`;
         <tr><th>Setup</th><th><code>CODING_SH_STORE_URL</code></th><th>Blobs</th></tr>
       </thead>
       <tbody>
-        <tr><td>One box</td><td><code>sqlite:///data/index.db</code></td><td><code>file:///data/blobs</code></td></tr>
-        <tr><td>Real traffic</td><td><code>postgres://…</code></td><td>same database</td></tr>
-        <tr><td>Large payloads</td><td><code>postgres://…</code></td><td><code>s3://bucket/blobs?region=…</code> (S3, R2, MinIO)</td></tr>
+        <tr><td>One machine, small traffic</td><td><code>sqlite:///data/index.db</code> (the default in the image)</td><td><code>file:///data/blobs</code></td></tr>
+        <tr><td>Real traffic</td><td><code>postgres://…</code>: Neon, Supabase, RDS or your own</td><td>the same database</td></tr>
+        <tr><td>Many large payloads</td><td><code>postgres://…</code></td><td><code>s3://bucket/blobs?region=…</code>: S3, R2 or MinIO</td></tr>
       </tbody>
     </table>
   </div>
-  <p>Postgres and S3 come from plugin packages, so the core stays dependency-free. The Docker image includes both.</p>
+  <p>
+    Serve creates its tables on first start. <code>DATABASE_URL</code> works too when it holds a <code>postgres://</code> URL. Managed Postgres
+    over the internet needs <code>?sslmode=require</code>. Use a direct connection or a session pooler: a transaction pooler breaks the lock
+    that keeps one writer. ClickHouse and the plugin packages are in <a href="/docs/stores">Postgres and ClickHouse stores</a>.
+  </p>
+
+  <h2 id="keys">Make keys</h2>
+  <p>
+    On a host with no volume, set your own keys, or they change on every deploy. Make one ingest key per app and a read key for people. Each
+    command prints the key once, then the line the server needs:
+  </p>
+  <Code code={keys} />
+  <Code title="output" code={keygenOut} />
+  <p>
+    Give the key to the app, and give the server only the hash: <code>CODING_SH_INGEST_KEYS=myapp:sha256:…,billing:sha256:…</code> and
+    <code>CODING_SH_READ_KEYS=*:sha256:…</code>. Both variables also take the key itself, <code>myapp:csh_ik_…</code>, if your platform keeps
+    secrets for you.
+  </p>
+  <Code code={postgres} />
+  <p>
+    The ingest key decides the project. Sessions from <code>myapp</code> have ids like <code>myapp/&lt;id&gt;</code>, and a read key made
+    with <code>--project myapp --read</code> sees only that project.
+  </p>
 
   <h2 id="send">Send traces</h2>
-  <p>Node, with <code>@codingdotsh/sdk</code>:</p>
-  <Code title="ts" code={sdk} />
-  <p>Python: <code>coding_sh.observe(client)</code>. Any OpenTelemetry SDK, a Vercel AI Gateway trace drain, or a gateway's own OpenTelemetry export (LiteLLM, Cloudflare, Portkey):</p>
-  <Code code={otel} />
-  <p>The key decides the project. Group a conversation with <code>sessionId</code> or <code>gen_ai.conversation.id</code>.</p>
+  <div class="doc-table">
+    <table>
+      <thead>
+        <tr><th>From</th><th>How</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Node: OpenAI, Anthropic, fetch, the AI SDK</td><td><code>@codingdotsh/sdk</code>: <code>observe(client)</code>, <code>observeFetch()</code>, <code>aiSdkTracer()</code></td></tr>
+        <tr><td>Python</td><td><code>pip install coding-sh</code>, then <code>coding_sh.observe(client)</code></td></tr>
+        <tr><td>Any OpenTelemetry SDK</td><td><code>OTEL_EXPORTER_OTLP_ENDPOINT</code> and the ingest key as a Bearer header</td></tr>
+        <tr><td>Vercel AI Gateway</td><td>its trace drain at <code>https://obs.example.com/v1/traces</code>, with the ingest key as a Bearer header</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    Group the turns of one conversation with <code>sessionId</code> in the SDKs or <code>gen_ai.conversation.id</code> in OpenTelemetry. Set
+    <code>capture: "metadata"</code> in the SDK, or <code>CODING_SH_CAPTURE_MODE=metadata</code> on the server, to send no message text. More:
+    <a href="/docs/sdk">SDK reference</a>, <a href="/docs/otel">OpenTelemetry</a>, <a href="/docs/privacy">Privacy and redaction</a>.
+  </p>
 
-  <h2 id="use">Use it</h2>
-  <p>Open <code>https://obs.example.com/?t=csh_rk_…</code> for the viewer. The CLI and MCP server read the same store:</p>
+  <h2 id="routes">What the server takes</h2>
+  <div class="doc-table">
+    <table>
+      <thead>
+        <tr><th>Route</th><th>What</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>POST /v1/traces</code>, <code>/v1/logs</code></td><td>OTLP/HTTP, protobuf or JSON</td></tr>
+        <tr><td><code>POST /v1/ingest</code></td><td>batched events from the TypeScript and Python SDKs</td></tr>
+        <tr><td><code>/proxy/</code></td><td>the model API proxy, for agents that send every call through it</td></tr>
+        <tr><td><code>GET /</code>, <code>/api/*</code></td><td>the viewer and its API, with a read key</td></tr>
+        <tr><td><code>/healthz</code>, <code>/readyz</code>, <code>/metrics</code></td><td>health checks and Prometheus metrics</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    A request is acknowledged only after its events are committed, and a retried batch never writes twice. Every route is in the
+    <a href="/docs/api">REST API reference</a>.
+  </p>
+
+  <h2 id="use">Read it from the CLI</h2>
+  <p>
+    The CLI and MCP tools read the same store. Install <code>coding.sh-store-postgres</code> next to coding.sh, then pass
+    <code>--store</code> or set <code>CODING_SH_STORE_URL</code>:
+  </p>
   <Code code={cli} />
 
-  <h2 id="ops">Operate it</h2>
+  <h2 id="ops">Run it</h2>
   <ul>
-    <li><code>/healthz</code> is up, <code>/readyz</code> is ready to write, <code>/metrics</code> is Prometheus.</li>
-    <li>One writer replica. Add read-only replicas with <code>--role viewer</code>.</li>
-    <li>A full queue answers 429 with <code>Retry-After</code>. Retries never duplicate.</li>
-    <li>Secrets are redacted before writing. <code>CODING_SH_CAPTURE_MODE=metadata</code> drops message text.</li>
-    <li>Recipes for Compose, Fly, Railway and Render are in <a href="https://github.com/jackulau/coding.sh/tree/main/docs/production">docs/production</a>.</li>
+    <li><strong>Health.</strong> <code>/healthz</code> answers while the process is up. <code>/readyz</code> answers 200 once the store responds and this instance holds the writer lock.</li>
+    <li><strong>One writer.</strong> Run one instance that ingests. Add read-only instances with <code>serve --role viewer</code>.</li>
+    <li><strong>Backpressure.</strong> A full queue answers 429 with <code>Retry-After</code>. The SDKs and OpenTelemetry exporters retry.</li>
+    <li><strong>TLS.</strong> serve speaks plain HTTP. Put it behind the platform's TLS or a proxy, and set <code>CODING_SH_TRUST_PROXY=1</code>.</li>
+    <li><strong>Retention.</strong> <code>CODING_SH_RETENTION_DAYS=30</code> deletes older sessions every hour. Datasets and experiments stay.</li>
+    <li><strong>Backups.</strong> Back up the database, and the bucket if you use one.</li>
   </ul>
+  <details class="more">
+    <summary>What the server needs</summary>
+    <ul>
+      <li>One Node process (Node 22.15 or newer) or the Docker image, on one port: 4318 by default. The image is distroless Node 22, built for amd64 and arm64.</li>
+      <li>On a public address, serve does not start with an ingest key and no read key or viewer login. Pass <code>--insecure</code> only on a private network.</li>
+      <li><code>/metrics</code> needs a read key. It has ingest, throttling, queue and writer numbers.</li>
+      <li>serve never checks for updates.</li>
+    </ul>
+  </details>
 
-  <div class="note">
-    <p>
-      <strong>Packages:</strong> <code>@codingdotsh/sdk</code> and the store plugins are on npm, and the image
-      <code>ghcr.io/jackulau/coding.sh</code> is published for each release from 0.1.2 on. The Python SDK, <code>coding-sh</code>, is not on
-      PyPI yet: install it from a checkout with <code>pip install -e packages/sdk-python</code>.
-    </p>
-  </div>
+  <h2 id="next">Next steps</h2>
+  <ul>
+    <li><a href="/docs/deploy">Deploy coding.sh serve</a>: Docker Compose, Fly.io, Railway, Render and serverless.</li>
+    <li><a href="/docs/how-to/trace-your-agent">Trace your own agent</a>: traces, spans and tool calls from your code.</li>
+    <li><a href="/docs/config">Configuration</a>: every <code>[serve]</code> key and environment variable.</li>
+  </ul>
 </DocsLayout>

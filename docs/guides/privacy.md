@@ -1,122 +1,187 @@
-# Storage, sinks and privacy
+# Privacy and redaction
 
-## Storage
+coding.sh keeps what it records on your machine, in `~/.coding.sh`. Secrets are replaced before
+anything is written, and nothing is sent anywhere unless you add a sink or connect to a team
+server.
 
-Everything lives in `~/.coding.sh` (override it with `CODING_SH_HOME`):
+## What redaction looks like
 
-| Path | What |
-|---|---|
-| `index.db` | SQLite index of sessions and events (`node:sqlite`, no native deps) |
-| `blobs/` | content-addressed, zstd-compressed blobs (large prompts and tool output) |
-| `spool/` | hook payloads: unredacted until ingested; after ingest, payloads in `raw/` files are redacted in place and payloads inside a spool line stay as written until `gc` |
-| `repos/` | shadow git objects for repo snapshots (your repository's refs are never touched) |
-| `bin/hook.sh`, `bin/hook.mjs` | the hook agents run (`hook.sh` outside Windows, which hands what it does not cover to `hook.mjs`) |
-| `backups/` | copies of every agent config file before coding.sh edited it |
-| `config.toml` | settings (`coding.sh config get` / `set`) |
+A prompt that pasted an API key, after `coding.sh ingest`:
 
-Store URLs are pluggable. `sqlite://` and `file://` are built in. Other schemes load a plugin
-package named `coding.sh-store-<scheme>`. `coding.sh-store-postgres`, `coding.sh-store-clickhouse`
-and `coding.sh-store-s3` are on npm.
+```sh
+coding.sh show cd0185b0
+```
+
+```text
+Tidy notes.txt and greet. The API key is [redacted:anthropic-key] if you need it.
+  Redacted      anthropic-key 1. The agent saw these credentials: rotate them
+    +0ms  user        Tidy notes.txt and greet. The API key is [redacted:anthropic-key] if you need it.
+```
+
+The key never reached the index, the blobs or any sink. The agent and its model provider still saw
+it, so the session gets the `secret:exposed` tag. List every session whose credentials to rotate:
+
+```sh
+coding.sh sessions --flag secret:exposed
+```
+
+A made-up key, like the ones in docs and test fixtures, is redacted too, but counts as
+`placeholder-key` and does not add the tag.
+
+## What is stored, and where
+
+| Path in `~/.coding.sh` | What |
+| --- | --- |
+| `index.db` | The SQLite index of sessions and events. |
+| `blobs/` | Large prompts and tool output, compressed and stored by hash. |
+| `spool/` | What the hook received from the agent. Unredacted until ingest; see below. |
+| `repos/` | Snapshots of the working tree before and after a session. Your repo's own refs are never touched. |
+| `backups/` | A copy of every agent config file before coding.sh edited it. |
+| `config.toml` | Your settings. |
+
+`CODING_SH_HOME` moves the folder. In full mode, the default, coding.sh keeps prompts, replies,
+tool calls with their input and output, file changes, errors, model names, token usage and timing.
+
+- **Nothing leaves your machine by default.** With no sinks, no session data is sent. The only
+  default network request is a daily update check to `api.github.com` (or `registry.npmjs.org`),
+  which you can turn off: see [Install](install.md#updates).
+- **The viewer** listens on 127.0.0.1 and needs the token in the URL it prints.
+- **A repo's own `.coding.sh/config.toml` can only add privacy.** It can add redaction rules or
+  switch to metadata mode, but never add a sink or move the store, so a cloned repo cannot send
+  your sessions anywhere.
+
+## Redaction
+
+Redaction runs at ingest, before anything is written to the index, the blobs or a sink. Each
+match becomes `[redacted:<kind>]`.
+
+| `[capture] redact` | Replaces | On by default |
+| --- | --- | --- |
+| `secrets` | Private keys; API keys and tokens from Anthropic, OpenAI, GitHub, GitLab, Slack, AWS, Google, Stripe, npm, Vercel and coding.sh; JWTs; bearer and basic auth headers; passwords in URLs; values next to names like `password`, `token` or `api_key` | yes |
+| `env` | The values of your environment variables whose names hold `KEY`, `TOKEN`, `SECRET`, `PASSW`, `PWD`, `CREDENTIAL`, `AUTH`, `COOKIE` or `SESSION` | no |
+| `pii` | Email addresses, phone numbers, card numbers, IBANs and national ids | no |
+| `email`, `phone`, `card`, `iban`, `national-id` | One kind of personal data | no |
+| `none` | Nothing | no |
+
+```toml
+# ~/.coding.sh/config.toml
+[capture]
+redact = ["secrets", "env", "pii"]
+redactPatterns = ["CSH-[0-9]{8}"]        # your own regular expressions
+exclude = ["~/work/secret-client/**"]    # never capture sessions in these folders
+```
+
+:::more How the rules avoid false matches
+- `env` skips variables that hold a place, not a secret: `PWD`, `OLDPWD`, and names ending in
+  `_PATH`, `_DIR`, `_FILE` or `_SOCK`, such as `SSH_AUTH_SOCK`.
+- `env` also skips values shorter than 8 characters, and values that are existing paths on this
+  machine, so your working directory is not replaced wherever it appears.
+- Card numbers must have a known issuer prefix and pass the Luhn check. IBANs must have their
+  country's length and a valid check. So ids, versions, dates and timestamps pass through.
+- National ids are a US SSN, a UK National Insurance number or a Canadian SIN.
+- A span or log record that `coding.sh serve` or `coding.sh collector --keep-raw` keeps as a blob
+  is redacted one string at a time, so the blob hides what its events hide.
+:::
+
+## Metadata mode
+
+Metadata mode keeps the structure and the numbers, with no prompts, code or tool output: ids,
+times, event kinds, durations, token counts, cost and short labels such as tool names.
+
+| Where | Setting | Default |
+| --- | --- | --- |
+| Your machine's store | `[capture] mode = "metadata"` | `full` |
+| A sink | `mode = "metadata"` on the `[[sinks]]` entry | `metadata` |
+| A team server, from your machine | `coding.sh init --remote <url> --key csh_ik_… --remote-mode full` | `metadata` |
+| The TypeScript or Python SDK in your app | `capture: "metadata"`, or `CODING_SH_CAPTURE_MODE=metadata` | `full` |
+| `coding.sh serve` | `CODING_SH_CAPTURE_MODE=metadata`: drops content from everything it receives | `full` |
+
+A session sent in metadata mode has no title, so a team viewer lists it as *Untitled session*.
+The SDK setting drops message text and tool input and output before they leave your app's
+process.
 
 ## Sinks
 
-To mirror events somewhere else, add a sink. Sinks send **metadata only** unless you set
-`mode = "full"`. Metadata means ids, timestamps, kinds, durations, token counts and short labels.
-It excludes prompts, code and tool output.
+A sink copies your sessions to another place: an OpenTelemetry collector (`otlp`) or any HTTP
+endpoint that takes coding.sh's JSON (`http`). Sinks send metadata unless you set `mode = "full"`:
 
 ```toml
 # ~/.coding.sh/config.toml
 [[sinks]]
 kind = "otlp"                      # or "http"
 endpoint = "http://localhost:4318"
-mode = "metadata"                  # default; "full" sends content
+mode = "metadata"                  # the default; "full" sends content, redacted first
 headers = { Authorization = "Bearer ${OTEL_TOKEN}" }
 ```
 
-## Privacy
+`coding.sh init --remote` writes an `http` sink named `team` for you: see
+[Self-host for a team](../how-to/self-host-team.md).
 
-- **Nothing leaves your machine by default.** With no sinks configured, no session data is sent
-  anywhere. The only default network request is the daily update check: a GET to
-  `api.github.com` (falling back to `registry.npmjs.org`) whose User-Agent includes the coding.sh
-  version. Turn it off as described in [install.md](install.md#updates).
-- **What is captured** (full mode, the default): prompts, assistant replies, tool calls with
-  inputs and outputs, file changes, errors, subagent links, model names, token usage, latency and
-  a snapshot of the working tree before and after a session.
-- **Redaction** runs at ingest, before anything is written to the index, blobs or sinks (the spool is
-  covered under "Raw spool" below). Built-in
-  rules catch private keys, vendor API keys and tokens (Anthropic, OpenAI, GitHub, GitLab, Slack,
-  AWS, Google, Stripe, npm and more), JWTs, bearer and basic auth, and values next to secret-looking
-  names. Add `redact = ["secrets", "env"]` to also replace the literal values of secret-looking
-  environment variables, and `redactPatterns` for your own regexes. The `env` rule skips
-  variables that hold a place rather than a secret (`PWD`, `OLDPWD`, names ending in `_PATH`,
-  `_DIR`, `_FILE` or `_SOCK`, such as `SSH_AUTH_SOCK`) and values that are existing paths on this
-  machine, so a path such as your working directory is not replaced wherever it appears.
-  A source span or log record that `coding.sh serve` or `coding.sh collector --keep-raw` keeps as
-  a blob is redacted one string at a time, and a string that holds JSON as JSON, so the blob hides
-  what its events hide. Blobs stored before 0.1.6 were redacted as one text and can hold a
-  `NAME=value` line or a JSON field in clear: remove such a value with `coding.sh purge` (below).
-- **Personal data** is opt-in: `redact = ["secrets", "pii"]` also replaces email addresses, phone
-  numbers, card numbers, IBANs and national ids (US SSN, UK National Insurance number, Canadian
-  SIN) with `[redacted:<kind>]`. Card numbers must have a known issuer prefix and pass the Luhn
-  check, and IBANs must have their country's length and a valid check, so ids, versions, dates and
-  timestamps pass through. Each kind can be turned on alone: `phone`, `card`, `iban`,
-  `national-id`, `email`.
-- **Exposed secrets.** Redaction keeps a secret out of the store, but the agent and its model
-  provider still saw it. Each session counts what was redacted by kind (`coding.sh show` prints a
-  `Redacted` row), and a session that held a vendor token gets the `secret:exposed` tag:
-  `coding.sh sessions --flag secret:exposed` lists the sessions whose credentials to rotate. A
-  made-up key, like the ones in docs and test fixtures, is redacted but counts as
-  `placeholder-key` and does not add the tag. Sessions captured before this rule keep their tag
-  until `coding.sh ingest --rebuild` reads them again from their transcripts.
-- **Remove a leaked secret.** When a value got past redaction, put it in a file (one value per
-  line) and run `coding.sh purge --literal leaked.txt`; `--literal -` reads stdin. Add
-  `--dry-run` first to count the copies. Every copy becomes `[redacted:purged]`: event payloads
-  and the search index, session titles and stats, labels, eval docs and settings. Blobs holding
-  the value are rewritten under a new hash and every reference follows. Spool, judge-cache and
-  eval run files (`~/.coding.sh/runs`) keep their length (the value becomes asterisks); a run's
-  `.git` directory and files over 64 MB are left alone. The index and the blob pack
-  (`blobs/pack.db`) are then VACUUMed, so the old bytes leave the files, and checked: purge exits 1
-  if the database or its search index is damaged. If another process holds a read on one of them
-  (the viewer, `serve`, a `sqlite3` shell, a backup), SQLite keeps the old bytes until it closes:
-  purge waits a few seconds (`CODING_SH_PURGE_WAIT_MS` sets how long), then says which file still
-  holds them and exits 1. Close that process and run the same purge again. A copy of the index
-  kept next to it by an upgrade (`index.db.v<N>.bak`) or by `upgrade-store --restore`
-  (`index.db.v<N>.undone`) holds the value too. Purge deletes these copies instead of rewriting
-  them, so `upgrade-store --restore` can no longer put one back; `--dry-run` names them, and
-  purge exits 1 if one can't be deleted. Purge with coding.sh
-  0.1.5 or newer: an older purge does not see blobs in the pack. Values shorter than 8 characters
-  are refused, the values are never printed, and only the SQLite store is supported. Rotate the
-  secret as well: the agent's own transcripts, shell history and git are not touched.
-- **Remove secrets by shape.** `coding.sh purge --rule 'sk-ant-api03-[A-Za-z0-9_-]{80,}'` finds
-  every distinct match of a regular expression in the same places and purges each one like a
-  `--literal` value. `--rule` repeats, and combines with `--literal`. Matches shorter than 8
-  characters are left alone, a rule that matches empty text or more than 10,000 distinct values
-  is refused, and neither the rule nor a match is printed. The rule sits on the command line, so
-  write the shape of the secret, not the secret.
-- **Metadata mode.** `[capture] mode = "metadata"` stores structure and numbers only, with no
-  prompts, code or tool output.
-- **Exclusions.** `[capture] exclude = ["~/work/secret-client/**"]` drops events from matching
-  directories.
-- **Repo-level config can only add privacy.** A `.coding.sh/config.toml` inside a repository may
-  add redaction rules or switch to metadata mode. It can never add sinks or move the stores, so a
-  cloned repo cannot exfiltrate your sessions.
-- **The model API proxy** ([Capture with the proxy](../how-to/capture-with-proxy.md)) stores each
-  call's request (system prompt, tool definitions, messages and settings) and response, redacted with
-  the same rules before they are written. It keeps an allowlist of headers (API version, beta flags,
-  user agent, session ids, request ids, rate limits) and never stores `Authorization`, `x-api-key`
-  or cookies, so no API key or login token is kept. In metadata mode it keeps hashes of the system
-  prompt and tools, counts, tool names, usage and timings. The proxy listens on 127.0.0.1 unless you
-  pass `--host`.
-- **Raw spool.** The hook writes the agent's payload to `~/.coding.sh/spool` (mode 600) unredacted,
-  to stay fast. Hooks share one spool file per agent per UTC day.
-  - The shell hook handles most calls. It gives a payload its own file under `spool/<agent>/raw/`
-    unless the payload is one line of up to about 1 KB.
-  - Once ingest has stored the line, it rewrites that file with secrets redacted, in every capture
-    mode. The file stays because a re-parse reads it again.
-  - A payload inside the spool file stays as written: a short one-line payload, and any payload up
-    to 256 KB from a call the node hook handles (an eval run, a reply to the agent, a gateway base
-    URL).
-  - `coding.sh gc` deletes ingested spool files and their `raw/` files older than 7 days
-    (`[retention] keepSpoolDays`), never the current day's file. `coding.sh purge` removes a value
-    from the spool sooner.
-- **The viewer** binds to 127.0.0.1 and requires the per-process token in the URL it prints.
+## The model API proxy
+
+[The proxy](../how-to/capture-with-proxy.md) stores each call's request and response, redacted
+with the same rules. It keeps an allowlist of headers (API version, beta flags, user agent,
+session and request ids, rate limits) and never stores `Authorization`, `x-api-key` or cookies.
+In metadata mode it keeps hashes of the system prompt and tools, counts, tool names, usage and
+timing. It listens on 127.0.0.1 unless you pass `--host`.
+
+## The raw spool
+
+The hook writes what the agent sends to `~/.coding.sh/spool` (mode 600) without redacting it, to
+stay fast. Ingest then stores a redacted copy.
+
+- The shell hook gives a payload its own file under `spool/<agent>/raw/`, unless it is one line
+  of about 1 KB or less. Once ingested, that file is rewritten with secrets redacted, in every
+  capture mode.
+- A payload written inside the day's spool file stays as written: a short one-line payload, and
+  any payload the node hook handles (an eval run, a reply to the agent).
+- `coding.sh gc` deletes ingested spool files older than 7 days (`[retention] keepSpoolDays`),
+  never the current day's. `coding.sh purge` removes a value sooner.
+
+## Remove a leaked secret
+
+When a value got past redaction, put it in a file, one value per line, and purge it. Count the
+copies first:
+
+```sh
+coding.sh purge --literal leaked.txt --dry-run
+coding.sh purge --literal leaked.txt
+```
+
+`--literal -` reads the values from stdin. To remove every value of one shape, pass a regular
+expression; write the shape, not the secret, because it sits on the command line:
+
+```sh
+coding.sh purge --rule 'sk-ant-api03-[A-Za-z0-9_-]{80,}' --dry-run
+```
+
+Every copy becomes `[redacted:purged]`:
+
+| Where | What purge does |
+| --- | --- |
+| Events and the search index | Replaces the value. |
+| Session titles and stats, labels, eval docs, settings | Replaces the value. |
+| Blobs | Rewrites them under a new hash, and every reference follows. |
+| Spool, judge cache and eval run files | Replaces the value with asterisks of the same length. |
+| `index.db` and `blobs/pack.db` | VACUUMs them, so the old bytes leave the files. |
+| Index backups from an upgrade | Deletes them; `--dry-run` names them. |
+
+Values shorter than 8 characters are refused, and neither values nor matches are printed. Purge
+works on the SQLite store only. Rotate the secret as well: the agent's own transcripts, your shell
+history and git are not touched.
+
+:::more When purge exits 1
+- **Another process holds a file open.** The viewer, `serve`, a `sqlite3` shell or a backup keeps
+  old bytes until it closes. Purge waits a few seconds (`CODING_SH_PURGE_WAIT_MS`) and names
+  the file. Close it and purge again.
+- **A backup can't be deleted.** Purge names it. Delete it by hand.
+- **The database or its search index is damaged.** Purge checks both after it runs.
+- A run's `.git` folder and files over 64 MB are left alone. A `--rule` that matches empty text or
+  more than 10,000 distinct values is refused.
+:::
+
+## Next steps
+
+- [Self-host for a team](../how-to/self-host-team.md): what a team server receives in each mode.
+- [Configuration](../reference/config.md): every `[capture]`, `[retention]` and `[[sinks]]` key.
+- [Postgres and ClickHouse stores](../reference/stores.md): where a team server keeps the data.

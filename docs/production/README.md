@@ -63,7 +63,7 @@ pass the key once.
 | One box, small traffic | `sqlite:///data/index.db` (the default in the image) | `file:///data/blobs` (default) |
 | Real traffic | `postgres://…` (Neon, Supabase, RDS, Railway, Render, your own) | same URL (default) |
 | Lots of large payloads | `postgres://…` | `s3://bucket/blobs?region=…` (S3, R2, MinIO, RustFS) |
-| You run ClickHouse | `clickhouse://…` or `clickhouses://…` ([when and how](../how-to/self-host-team.md#clickhouse)) | `s3://…` or `file:///data/blobs` |
+| You run ClickHouse | `clickhouse://…` or `clickhouses://…` ([when and how](../reference/stores.md#clickhouse)) | `s3://…` or `file:///data/blobs` |
 
 - `DATABASE_URL` is used when `CODING_SH_STORE_URL` is unset and it holds a `postgres://` or
   `postgresql://` URL.
@@ -78,7 +78,7 @@ pass the key once.
 
 | Where | Store | Guide |
 |---|---|---|
-| Any machine with Docker | SQLite, Postgres or ClickHouse, no edits | [Self-host for a team](../how-to/self-host-team.md#run-it-with-compose) |
+| Any machine with Docker | SQLite, Postgres or ClickHouse, no edits | [Self-host for a team](../how-to/self-host-team.md) |
 | Any machine with Docker | Postgres + S3-compatible blobs (the test stack) | [compose.md](compose.md) |
 | Fly.io | SQLite on a volume, or Postgres | [fly.md](fly.md) |
 | Railway | Railway Postgres | [railway.md](railway.md) |

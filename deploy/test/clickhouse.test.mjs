@@ -1,4 +1,4 @@
-// The ClickHouse collector recipe (deploy/clickhouse/, docs/how-to/self-host-team.md) end to end:
+// The ClickHouse collector recipe (deploy/clickhouse/, docs/reference/stores.md) end to end:
 // compose up, send the fixture sessions through the otlp sink to the collector on 127.0.0.1:4319,
 // wait for them in otel.otel_traces over HTTP on 8123, then run every SQL block in the doc.
 // Needs Docker and free ports 8123 and 4319, so it runs only with CODING_SH_TEST_COMPOSE=1 (on the desk):
@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const read = (p) => readFileSync(join(root, p), "utf8");
-const doc = read("docs/how-to/self-host-team.md");
+const doc = read("docs/reference/stores.md");
 const section = doc.slice(doc.indexOf("### Export to ClickHouse through an OpenTelemetry Collector"), doc.indexOf("## Next"));
 const blocks = (lang) => [...section.matchAll(new RegExp("```" + lang + "\\n([\\s\\S]*?)```", "g"))].map((m) => m[1]);
 const lines = (text) => text.split("\n").map((l) => l.replace(/\s+#.*$/, "").replace(/^\s*#.*$/, "").trimEnd()).filter(Boolean);

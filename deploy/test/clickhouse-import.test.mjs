@@ -1,4 +1,4 @@
-// `coding.sh collector import --clickhouse` against a real ClickHouse (docs/how-to/self-host-team.md,
+// `coding.sh collector import --clickhouse` against a real ClickHouse (docs/reference/stores.md,
 // "Pull from ClickHouse"): compose up deploy/clickhouse (Map attributes) plus a second collector with
 // `json: true` (JSON attributes), post the Claude Code and Vercel AI SDK fixtures to both, then import
 // each table and compare with posting the same OTLP straight to the coding.sh receiver, field by field.
