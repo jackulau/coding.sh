@@ -657,6 +657,16 @@ const FAQ = [
   .faq details[open] summary::after {
     content: "−" / "";
   }
+  /* A mouse lights the sign up; a press still shows the dimmer :active colour below. */
+  @media (hover: hover) and (pointer: fine) {
+    .faq summary::after {
+      transition: color var(--hover-out) ease;
+    }
+    .faq summary:hover::after {
+      color: var(--text);
+      transition-duration: var(--hover-in);
+    }
+  }
   .faq summary:active,
   .faq summary:active::after {
     color: var(--text-2);
