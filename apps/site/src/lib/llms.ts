@@ -1,11 +1,31 @@
 // Agent-facing text for /llms.txt.
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { SITE_URL, SITE, NAV_PAGES, REPO_URL, LICENSE, SOURCE_STEPS, CLI_PATH, INSTALL_SH, RELEASE_TGZ, VERSION } from "../data/site";
 import { FRAMEWORKS, OTLP_ENDPOINT } from "../data/agents";
 import { DOC_GROUPS, type DocPage } from "../components/docs/nav";
 import { ADAPTER_ROWS, PLANNED_AGENTS, STATUS_LABEL } from "../components/docs/agents";
-import { cliReference } from "../components/docs/cli-help";
+import { cliPath, cliReference } from "../components/docs/cli-help";
 
 const abs = (path: string) => new URL(path, SITE_URL).toString();
+
+/**
+ * Blog posts, newest first, from the front matter of src/content/blog/*.md (the
+ * file name is the slug). Read from disk because llms.txt is built synchronously,
+ * outside astro:content. Build-time only, run from apps/site.
+ */
+function blogPosts(): { path: string; title: string; description: string; date: string }[] {
+  const dir = join(process.cwd(), "src/content/blog");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".md"))
+    .map((f) => {
+      const head = readFileSync(join(dir, f), "utf8").match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
+      const field = (key: string) => (head.match(new RegExp(`^${key}:[ \t]*(.*)$`, "m"))?.[1] ?? "").trim().replace(/^(["'])(.*)\1$/, "$2");
+      return { path: `/blog/${f.slice(0, -3)}`, title: field("title"), description: field("description"), date: field("date") };
+    })
+    .sort((a, b) => b.date.localeCompare(a.date) || a.path.localeCompare(b.path));
+}
 
 /** What an agent should paste-and-run to install coding.sh and record its own session. */
 export const AGENT_PROMPT = `Install coding.sh and start recording this session: run \`${INSTALL_SH}\` then \`coding.sh init --yes\`. Docs for agents: ${abs("/llms.txt")}`;
@@ -13,7 +33,7 @@ export const AGENT_PROMPT = `Install coding.sh and start recording this session:
 function cliSection(): string {
   const ref = cliReference();
   const commands = ref
-    ? ref.groups.flatMap((g) => g.commands.map((c) => `- \`coding.sh ${c.name}\` (${g.label.toLowerCase()}): ${c.summary}`)).join("\n")
+    ? ref.groups.flatMap((g) => g.commands.map((c) => `- [\`coding.sh ${c.name}\`](${abs(cliPath(c.name))}) (${g.label.toLowerCase()}): ${c.summary}`)).join("\n")
     : `- Run \`coding.sh --help\` for the command list (the reference is generated from the CLI at build time).`;
   return `## CLI
 
@@ -70,6 +90,10 @@ ${NAV_PAGES.map((p) => `- [${p.title}](${abs(p.path)}): ${p.summary}`).join("\n"
 ## Docs
 
 ${docsSection()}
+
+## Blog
+
+${blogPosts().map((p) => `- [${p.title}](${abs(p.path)}) (${p.date}): ${p.description}`).join("\n")}
 
 ## What it does
 

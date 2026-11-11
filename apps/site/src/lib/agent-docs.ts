@@ -1,22 +1,41 @@
 // Hand-written agent documents: /agents.md (the canonical setup workflow) and
 // /skill.md (the same workflow as a Claude Code-style skill). Commands here
 // match the CLI reference generated from the binary (/docs/cli).
+import { execFileSync } from "node:child_process";
+import { join } from "node:path";
 import { SITE_URL, INSTALL_SH } from "../data/site";
 
-const today = new Date().toISOString().slice(0, 10);
 const abs = (p: string) => new URL(p, SITE_URL).toString();
 
+/**
+ * YYYY-MM-DD of the last commit to this file, dated the way src/lib/lastmod.mjs
+ * dates pages: the build day while it has uncommitted edits or no git history.
+ * Build-time only, run from apps/site.
+ */
+function lastCommitDay(): string {
+  const file = join(process.cwd(), "src/lib/agent-docs.ts");
+  const git = (args: string[]) => {
+    try {
+      return execFileSync("git", args, { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    } catch {
+      return "";
+    }
+  };
+  const committed = git(["status", "--porcelain", "--", file]) ? "" : git(["log", "-1", "--format=%cI", "--", file]);
+  return (committed ? new Date(committed) : new Date()).toISOString().slice(0, 10);
+}
+
 /** YAML frontmatter shared by every agent-facing Markdown page. */
-export function frontmatter(f: { title: string; description: string; path: string; md: string }) {
+export function frontmatter(f: { title: string; description: string; path: string; md: string; canonical?: string; updated: string }) {
   return `---
 title: ${JSON.stringify(f.title)}
 description: ${JSON.stringify(f.description)}
-canonical: ${abs(f.path)}
+canonical: ${abs(f.canonical ?? f.path)}
 human_url: ${abs(f.path)}
 markdown_url: ${abs(f.md)}
 agents_url: ${abs("/agents.md")}
 llms_url: ${abs("/llms.txt")}
-updated: ${today}
+updated: ${f.updated}
 ---`;
 }
 
@@ -126,6 +145,9 @@ export function agentsMd() {
     description: "The canonical workflow for an AI agent setting up coding.sh for a user: install, hooks, verify, sessions, evals.",
     path: "/",
     md: "/agents.md",
+    // This file is the page's source; there is no HTML page to point at.
+    canonical: "/agents.md",
+    updated: lastCommitDay(),
   })}
 
 # coding.sh agent setup
