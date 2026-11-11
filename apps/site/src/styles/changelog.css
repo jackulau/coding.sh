@@ -144,6 +144,13 @@
   font-size: clamp(1.75rem, 1.4rem + 1vw, 2.25rem);
   letter-spacing: -0.03em;
 }
+@media (hover: hover) and (pointer: fine) {
+  .cl-card__ver a:hover {
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.18em;
+  }
+}
 .cl-card__sum {
   margin-top: 0.9rem;
   font-size: 1.0625rem;
