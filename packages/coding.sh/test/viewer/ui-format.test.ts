@@ -14,8 +14,8 @@ function slice(from: string, to: string): string {
   return html.slice(a, b);
 }
 
-const src = [slice("const nf = new Intl.NumberFormat();", "function fmtDate("), slice("function summaryLine(", "\n}\n") + "\n}"].join("\n");
-const f: any = runInNewContext(`${src}\n({ plural, fmtNum, fmtCompact, fmtCost, fmtDuration, fmtRel, summaryLine })`, { Intl, Date, String, Number, Math, isFinite });
+const src = [slice("const nf = new Intl.NumberFormat();", "function fmtDate("), slice("function midClip(", "function clip("), slice("function summaryLine(", "\n}\n") + "\n}"].join("\n");
+const f: any = runInNewContext(`${src}\n({ plural, fmtNum, fmtCompact, fmtCost, fmtDuration, fmtRel, summaryLine, midClip })`, { Intl, Date, String, Number, Math, isFinite });
 
 test("counts of one read in the singular", () => {
   assert.equal(f.plural(1, "tool call"), "1 tool call");
@@ -65,4 +65,13 @@ test("long durations roll up to days", () => {
   assert.equal(f.fmtDuration(23 * 3600e3 + 59 * 60e3), "23h 59m");
   assert.equal(f.fmtDuration(24 * 3600e3), "1d 0h");
   assert.equal(f.fmtDuration(1284 * 3600e3 + 12 * 60e3), "53d 12h");
+});
+
+test("long ids that differ at the end keep both ends", () => {
+  const a = "claude-opus-5-5-20261001-thinking-high-extended-preview-a";
+  const b = "claude-opus-5-5-20261001-thinking-high-extended-preview-b";
+  assert.equal(f.midClip("gpt-6.1-sol", 22), "gpt-6.1-sol");
+  assert.equal(f.midClip(a, 22).length, 22);
+  assert.notEqual(f.midClip(a, 22), f.midClip(b, 22));
+  assert.match(f.midClip(a, 22), /^claude-opus.*….*-a$/);
 });
