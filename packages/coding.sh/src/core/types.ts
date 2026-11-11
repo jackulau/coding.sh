@@ -364,6 +364,16 @@ export interface IndexStore {
   setEventCosts?(costs: EventCost[]): Promise<number>;
 
   /**
+   * Gives each stored `llm.call` that has no timing (no durationMs) the timing of
+   * the event with its id here: ts, durationMs, payload.ttftMs and
+   * payload.tokensPerSec. Events without durationMs, and rows that have timing,
+   * are left alone. Ingest calls it with transcript copies: a hook read part of a
+   * response and could not time it, and INSERT OR IGNORE keeps that first copy.
+   * Returns the sessions it changed.
+   */
+  fillCallTiming?(events: AgentEvent[]): Promise<string[]>;
+
+  /**
    * Runs `fn` as one transaction: every write it makes commits together when it
    * resolves, or none does when it throws. Ingest commits each checkpoint's
    * events, session rows and spool cursors this way. Writes made on the same
@@ -399,7 +409,7 @@ export interface IndexStore {
   /**
    * A session's saved fold: opaque bytes. The store drops it whenever the
    * session's stored events change other than by an insert (replaceSessionEvents,
-   * setEventCosts, deleteBefore, deleteSessions), so a fold never outlives the rows it was made from.
+   * setEventCosts, fillCallTiming, deleteBefore, deleteSessions), so a fold never outlives the rows it was made from.
    */
   getSessionFold?(sessionId: string): Promise<Uint8Array | undefined>;
   putSessionFold?(sessionId: string, fold: Uint8Array | undefined): Promise<void>;

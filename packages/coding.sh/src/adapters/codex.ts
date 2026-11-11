@@ -222,6 +222,28 @@ interface Call {
 
 const MODEL_OUTPUT = new Set(["reasoning", "function_call", "custom_tool_call", "local_shell_call"]);
 
+/**
+ * A record is written late when its line timestamp is this far past the time
+ * the record itself says the thing happened. Codex stamps a line when it writes
+ * it, and at times holds a stretch of records back and writes them together (a
+ * call's input and output within a few ms of each other). On time, the gap is
+ * under 100 ms; written late, it is seconds.
+ */
+const LATE_WRITE_MS = 1_000;
+
+/**
+ * When a record says its own item happened, apart from the line's timestamp: a
+ * tool output's or inter-agent message's `create_time` (seconds), an
+ * item_completed event's `completed_at_ms`. Other items' create_time is when
+ * streaming began, not when the line was due, so it says nothing about lateness.
+ */
+function ownTime(type: unknown, p: Record<string, unknown>): number | undefined {
+  if (type === "event_msg") return p.type === "item_completed" ? num(p.completed_at_ms) : undefined;
+  if (type !== "response_item" || !(str(p.type)?.endsWith("_output") || p.type === "agent_message")) return undefined;
+  const s = num(obj(p.internal_chat_message_metadata_passthrough).create_time);
+  return s !== undefined ? s * 1000 : undefined;
+}
+
 /** A backfilled rollout whose last record is older than this is treated as finished (gets a session.end). */
 export const ROLLOUT_IDLE_MS = 30 * 60_000;
 
@@ -429,6 +451,8 @@ export class CodexRolloutConverter {
   private started = false;
   private lastInputTs?: number;
   private firstOutputTs?: number;
+  /** A record of the call now open was written late (LATE_WRITE_MS): its line times don't time it. */
+  private lateWrite = false;
   private lastTs = 0;
   private lastOk?: boolean;
   /** A task_started not yet closed by task_complete/turn_aborted. */
@@ -588,23 +612,34 @@ export class CodexRolloutConverter {
       if (pt?.endsWith("_output")) this.markInput(ts); // a tool result starts the next model call
       if (full) await this.responseItem(em, p, pt, ts);
     }
+    // After markInput: a late input record leaves the call it starts untimed.
+    const own = ownTime(type, p);
+    if (own !== undefined && ts - own > LATE_WRITE_MS) this.lateWrite = true;
     this.push(em);
   }
 
   private markInput(ts: number): void {
     this.lastInputTs = ts;
     this.firstOutputTs = undefined;
+    this.lateWrite = false;
   }
 
+  /**
+   * One model call, from its input (the last prompt, tool result or message, or
+   * the previous call's end) to its usage record. When a record in between was
+   * written late (LATE_WRITE_MS), the line times are write times, not when the
+   * call ran: no durationMs, ttftMs or tokensPerSec, stamped at the usage record.
+   */
   private llmCall(em: Emitter, ts: number, u: unknown, key: (string | number)[], turnId?: string, responseId?: string): void {
     const usage = codexUsage(u);
-    const start = this.lastInputTs !== undefined && this.lastInputTs <= ts ? this.lastInputTs : ts;
-    const durationMs = ts - start;
-    const ttftMs = this.firstOutputTs !== undefined && this.firstOutputTs >= start ? this.firstOutputTs - start : undefined;
+    const timed = !this.lateWrite;
+    const start = timed && this.lastInputTs !== undefined && this.lastInputTs <= ts ? this.lastInputTs : ts;
+    const durationMs = timed ? ts - start : undefined;
+    const ttftMs = timed && this.firstOutputTs !== undefined && this.firstOutputTs >= start ? this.firstOutputTs - start : undefined;
     const out = usage?.outputTokens;
     em.emit(
       "llm.call",
-      { provider: this.provider, responseModel: this.model, ok: true, ttftMs, tokensPerSec: out && durationMs > 0 ? Math.round((out / (durationMs / 1000)) * 10) / 10 : undefined, responseId },
+      { provider: this.provider, responseModel: this.model, ok: true, ttftMs, tokensPerSec: out && durationMs ? Math.round((out / (durationMs / 1000)) * 10) / 10 : undefined, responseId },
       { key, ts: start, durationMs, usage, turnId: turnId ?? this.turnId },
     );
     // The next call starts when this one ended, unless a tool result/prompt arrives later.
@@ -1033,7 +1068,9 @@ export const codex: Adapter = {
   // 3 (0.1.2): a hook SessionStart records how Codex was launched (originator, launch) from the rollout.
   // 4 (0.1.2): tool.end records a tool output Codex cut before the model saw it (cut).
   // 5 (0.1.5): a subagent thread's task (the agent mail addressed to it) is its user.message, so it has a title. A tool call that loads a skill names it (payload.skill).
-  parseVersion: 6,
+  // 7 (0.1.7): an llm.call with a record written late in it (a stretch of the rollout written at once) has no
+  //    durationMs, ttftMs or tokensPerSec.
+  parseVersion: 7,
 
   detect() {
     const home = codexHome();

@@ -166,6 +166,17 @@ order.
   between lines of one `message.id`. They are one `llm.call` with the usage counted once, timed from
   the `api-request` line that starts the request (`apiRequestId`; `requestId` is the API's
   `req_…`). Verified by `scripts/e2e/claude-subagent-capture.mjs`.
+- **Claude Code:** a model call is timed only when coding.sh read the line that starts it: its
+  `api-request` line, or, in transcripts without them (older versions), the prompt or tool results
+  just before it. A hook reads the last 8 MB of a transcript, which can start in the middle of a
+  response. That call then has no `durationMs`, `ttftMs` or `tokensPerSec`. The same goes for a
+  response whose lines are stamped before its `api-request` line. The import reads the whole file
+  and fills in the stored call's timing. After an upgrade, the background re-parse does the same for
+  calls an older version stored.
+- **Codex:** a rollout line is stamped when Codex writes it, and Codex sometimes writes several
+  records at once, seconds late. A tool output or agent message whose own `create_time` (or an
+  `item_completed`'s `completed_at_ms`) is more than 1 s before its line leaves the model call it
+  belongs to without `durationMs`, `ttftMs` or `tokensPerSec`.
 - **Copilot CLI:** with OpenTelemetry on (`COPILOT_OTEL_ENABLED`), 1.0.107 adds a W3C
   `traceparent` to every hook payload after `sessionStart`. Hook events keep its trace id and the
   caller's span (`traceId`, `parentSpanId`), and ingest records the trace's session, so an OTLP span

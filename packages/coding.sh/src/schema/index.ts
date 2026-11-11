@@ -252,7 +252,9 @@ export interface AgentEvent {
    * Kind-specific, small (< 4 KB after normalization). Conventions:
    * - user.message / assistant.message: { text }
    * - llm.call: { provider?, requestModel?, responseModel?, ttftMs?, stopReason?,
-   *               tokensPerSec?, ok, error? } — one model API call; durationMs on the event
+   *               tokensPerSec?, ok, error? } — one model API call; durationMs on the event.
+   *   durationMs, ttftMs and tokensPerSec are absent when the source does not show when
+   *   the request went out (a transcript read from the middle of a response, lines written late)
    * - subagent.start: { subagentId, type?, description?, prompt? }
    * - subagent.end:   { subagentId, ok?, result? (truncated), childSessionId? }
    * - tool.start: { tool, toolUseId, input, server? (MCP server name) }

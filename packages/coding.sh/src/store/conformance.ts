@@ -448,6 +448,25 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
       assert.deepEqual((await s.search("giraffe")).map((h) => h.event.id), [a3.id]);
     }));
 
+    it("optional fillCallTiming gives an untimed llm.call the timing of a copy, and leaves timed rows alone", withStore(async (s) => {
+      if (!s.fillCallTiming) return;
+      const untimed = fixtureEvent({ sessionId: "ct", kind: "llm.call", ts: 5000, payload: { ok: true, messageId: "m1" } });
+      const timed = fixtureEvent({ sessionId: "ct", kind: "llm.call", ts: 1000, durationMs: 900, payload: { ok: true, messageId: "m2", ttftMs: 100, tokensPerSec: 50 } });
+      await s.putEvents([untimed, timed]);
+      const copy = (e: AgentEvent, more: Partial<AgentEvent>) => ({ ...e, ...more, payload: { ...e.payload, ...more.payload } });
+      const changed = await s.fillCallTiming([
+        copy(untimed, { ts: 2000, durationMs: 4000, payload: { ttftMs: 3000, tokensPerSec: 20 } }),
+        copy(timed, { ts: 1, durationMs: 1, payload: { ttftMs: 0, tokensPerSec: 9999 } }),
+        copy(untimed, { id: "not-stored", durationMs: 1 }),
+      ]);
+      assert.deepEqual(changed, ["ct"]);
+      const byMsg = new Map((await s.listEvents("ct")).map((e) => [e.payload.messageId, e]));
+      const got = (m: string) => [byMsg.get(m)!.ts, byMsg.get(m)!.durationMs, byMsg.get(m)!.payload.ttftMs, byMsg.get(m)!.payload.tokensPerSec, byMsg.get(m)!.payload.ok];
+      assert.deepEqual(got("m1"), [2000, 4000, 3000, 20, true]);
+      assert.deepEqual(got("m2"), [1000, 900, 100, 50, true], "a row that has timing keeps it");
+      assert.deepEqual(await s.fillCallTiming([copy(untimed, { durationMs: undefined })]), [], "a copy without timing changes nothing");
+    }));
+
     it("optional session folds: events since a seq or a time, and a fold dropped when stored events change in place", withStore(async (s) => {
       if (!s.listEventsSince || !s.getSessionFold || !s.putSessionFold) return;
       const a1 = fixtureEvent({ sessionId: "fa", ts: 1000 });
@@ -481,6 +500,14 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
       if (s.setEventCosts) {
         await s.setEventCosts([{ id: a1.id, costUsd: 0.5 }]);
         assert.equal(await s.getSessionFold("fa"), undefined, "repricing drops the fold");
+        await put();
+      }
+      if (s.fillCallTiming) {
+        const call = fixtureEvent({ sessionId: "fa", kind: "llm.call", ts: 1200, payload: { ok: true } });
+        await s.putEvents([call]);
+        await put();
+        await s.fillCallTiming([{ ...call, durationMs: 300 }]);
+        assert.equal(await s.getSessionFold("fa"), undefined, "filling a call's timing drops the fold");
         await put();
       }
       if (s.deleteBefore) {

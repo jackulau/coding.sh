@@ -481,3 +481,61 @@ describe("codex failed shell commands keep their exit code", () => {
     assert.equal(endOf(out, "call_f").payload.ok, true);
   });
 });
+
+// Codex stamps a rollout line when it writes it, and at times writes a stretch of records at once: a tool
+// output that came back 18 s earlier lands a few ms before the usage record of the call it started.
+describe("codex model calls with records written late", () => {
+  const rid = "01a1a555-b594-7121-9ed2-cd46a64fd2a1";
+  const iso = (dt: number) => new Date(T0 + dt).toISOString();
+  const rec = (dt: number, type: string, payload: Record<string, unknown>) => ({ timestamp: iso(dt), type, payload });
+  /** A record that says it happened at `own` (ms from T0), apart from when its line was written. */
+  const made = (own: number) => ({ internal_chat_message_metadata_passthrough: { create_time: (T0 + own) / 1000 } });
+  const usage = (dt: number, response: string, output: number) => rec(dt, "token_usage_record", { turn_id: "t1", response_id: response, usage: { input_tokens: 100, output_tokens: output } });
+  let env: TmpEnv;
+  before(() => {
+    env = tmpEnv();
+  });
+  after(() => env.restore());
+
+  it("a call whose input was written late has no duration, ttft or speed; on-time calls keep theirs", async () => {
+    const file = join(env.root, `rollout-2026-11-04T00-00-00-${rid}.jsonl`);
+    const rows = [
+      rec(0, "session_meta", { id: rid, cwd: "/w", cli_version: "0.167.0" }),
+      rec(1, "turn_context", { turn_id: "t1", model: "gpt-5.5" }),
+      rec(2, "event_msg", { type: "task_started", turn_id: "t1" }),
+      rec(500, "response_item", { type: "reasoning", summary: [] }),
+      rec(1_000, "response_item", { type: "function_call", call_id: "c1", name: "shell", arguments: "{}" }),
+      usage(1_010, "r1", 50),
+      // Written at 20 s, all at once: c1's output (done at 2 s), then the next call's output and usage.
+      rec(20_000, "response_item", { type: "function_call_output", call_id: "c1", output: "ok", ...made(2_000) }),
+      rec(20_002, "response_item", { type: "reasoning", summary: [] }),
+      rec(20_003, "response_item", { type: "function_call", call_id: "c2", name: "shell", arguments: "{}" }),
+      usage(20_005, "r2", 300),
+      // On time again.
+      rec(21_000, "response_item", { type: "function_call_output", call_id: "c2", output: "ok", ...made(20_990) }),
+      rec(22_000, "response_item", { type: "reasoning", summary: [] }),
+      usage(24_000, "r3", 100),
+      // Mail from another agent, written 4 s after it was sent.
+      rec(30_000, "response_item", { type: "agent_message", author: "/root/scope", recipient: "/root", content: [{ type: "input_text", text: "done" }], ...made(25_981) }),
+      rec(30_010, "response_item", { type: "reasoning", summary: [] }),
+      usage(30_060, "r4", 30),
+    ];
+    writeFile(file, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+    const events = await convertRollout(testCtx().ctx, file, { mode: "full" });
+    const timing = (response: string) => {
+      const e = events.find((x) => x.kind === "llm.call" && x.payload.responseId === response)!;
+      return [e.ts - T0, e.durationMs, e.payload.ttftMs, e.payload.tokensPerSec];
+    };
+    assert.deepEqual(timing("r1"), [2, 1_008, 498, 49.6]);
+    assert.deepEqual(timing("r2"), [20_005, undefined, undefined, undefined], "not 300 tokens in 5 ms");
+    assert.deepEqual(timing("r3"), [21_000, 3_000, 1_000, 33.3]);
+    assert.deepEqual(timing("r4"), [30_060, undefined, undefined, undefined], "late mail");
+  });
+
+  it("a real rollout written on time keeps every call's timing", async () => {
+    const file = join(FIXTURES, "codex", "skill", "sessions", "2026", "11", "08", "rollout-2026-11-08T22-33-01-01a1be94-bd43-7302-aa30-9fe348846093.jsonl");
+    const calls = (await convertRollout(testCtx().ctx, file, { mode: "full" })).filter((e) => e.kind === "llm.call");
+    assert.equal(calls.length, 3);
+    for (const c of calls) assert.ok(c.durationMs! > 0 && c.payload.tokensPerSec !== undefined, `${c.payload.responseId} is timed`);
+  });
+});

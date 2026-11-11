@@ -20,7 +20,9 @@
 // - anything else (OTel, SDK batches, gateway companions): kept as is.
 // The two capture paths are then deduped as ingest does (message-copies.ts:
 // live wins), and also by tool call id, which matches a transcript row to a
-// hook row the old parse gave another id. Where nothing could be re-read, the
+// hook row the old parse gave another id. A hook row's model call that the
+// transcript has too takes the transcript copy's timing: the hook read only
+// part of the same file. Where nothing could be re-read, the
 // stored rows are only deduped that way ("hook-row dedupe") and the session is
 // kept at its old version; why is stored under kv `reparse:kept:<id>`.
 //
@@ -223,6 +225,34 @@ function viewOf(rows: AgentEvent[]): IndexStore {
 }
 
 /**
+ * A hook row's llm.call with the timing of the transcript's copy (same id):
+ * ts, durationMs, payload.ttftMs and payload.tokensPerSec, each set or absent
+ * as the copy has it. The hook read the call from a window of the same
+ * transcript; the backfill read all of it, so it knows the call's start
+ * whenever any read does (an older parse may have timed it from a line
+ * written mid-response).
+ */
+function withCallTiming(row: AgentEvent, copy: AgentEvent): AgentEvent {
+  const { ttftMs: _t, tokensPerSec: _s, ...payload } = row.payload;
+  const out: AgentEvent = { ...row, ts: copy.ts, payload: { ...payload, ...pick(copy.payload, ["ttftMs", "tokensPerSec"]) } };
+  if (copy.durationMs !== undefined) out.durationMs = copy.durationMs;
+  else delete out.durationMs;
+  return out;
+}
+
+const pick = (o: Record<string, unknown>, keys: string[]) => Object.fromEntries(keys.filter((k) => o[k] !== undefined).map((k) => [k, o[k]]));
+
+/** Hook rows (`spoolSources`) whose model call the transcript has too, with the transcript copy's timing (withCallTiming). */
+function withTranscriptTiming(live: AgentEvent[], transcript: AgentEvent[], spoolSources: ReadonlySet<string>): AgentEvent[] {
+  const copies = new Map(transcript.filter((e) => e.kind === "llm.call").map((e) => [e.id, e]));
+  if (!copies.size) return live;
+  return live.map((e) => {
+    const copy = e.kind === "llm.call" && (e.source === undefined || spoolSources.has(e.source)) ? copies.get(e.id) : undefined;
+    return copy ? withCallTiming(e, copy) : e;
+  });
+}
+
+/**
  * Drops live rows that repeat an earlier live row (same tool call; same prompt
  * or reply within COPY_SLACK_MS), then backfill rows a live row already has
  * (ingest's copy filter, tool call ids). Live wins, as at ingest.
@@ -388,7 +418,7 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
         const [sFrom, sTo] = span(spool);
         replaceSpool = sFrom <= from + SPAN_SLACK_MS && sTo >= to - SPAN_SLACK_MS;
       }
-      const live = [...otherRows, ...(replaceSpool ? spool : spoolRows)];
+      const live = withTranscriptTiming([...otherRows, ...(replaceSpool ? spool : spoolRows)], transcript ?? [], spoolSources);
       const final = await dedupe(live, replaceBf ? transcript : bfRows);
       const old = new Set(stored);
       const keep = new Set(final.filter((e) => old.has(e)).map((e) => e.id));

@@ -879,3 +879,158 @@ describe("claude-code split responses and nested subagents (real capture)", () =
     for (const c of calls) assert.ok(ids.has(c.id), "live llm.call dedupes with the backfill's");
   });
 });
+
+// A call's speed is its output tokens over its duration, so the duration has to start when the request went out.
+// The real capture above, read the way a hook reads a large transcript (from the middle) and as an older
+// Claude Code wrote it (no api-request records); and synthetic lines written out of order.
+describe("claude-code call timing", () => {
+  const CONFIG = join(FIXTURES, "claude-code", "subagents", "config");
+  const MAIN = "36d2966a-1c53-47f1-891d-aae1827d0e95";
+  const FILE = join(CONFIG, "projects", "-work-demo", `${MAIN}.jsonl`);
+  const SPLIT = "msg_mw8qwtvc0";
+  const lines = readFileSync(FILE, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, any>);
+  const isResult = (e: Record<string, any>) => e.type === "user" && Array.isArray(e.message?.content) && e.message.content.some((b: Record<string, unknown>) => b.type === "tool_result");
+  // The first tool result: it is written between the blocks of SPLIT, the response that asked for it.
+  const firstResult = lines.findIndex(isResult);
+  const convert = async (entries: Record<string, unknown>[], mode: "full" | "assistant") => {
+    const conv = new ClaudeTranscriptConverter(testCtx().ctx, { agent: "claude-code", mode, sessionId: MAIN, source: `${MAIN}.jsonl` });
+    for (const [i, e] of entries.entries()) await conv.add(e, i + 1);
+    const events = await conv.finish();
+    assertWellFormed(events);
+    return new Map(events.filter((e) => e.kind === "llm.call").map((e) => [e.payload.messageId as string, e]));
+  };
+  const timing = (e: AgentEvent) => [e.ts, e.durationMs, e.payload.ttftMs, e.payload.tokensPerSec];
+  const at = (e: Record<string, any>) => Date.parse(e.timestamp);
+
+  it("a window that opens in the middle of a response leaves that call's duration, ttft and speed out", async () => {
+    assert.equal(lines[firstResult - 1]!.message.id, SPLIT);
+    assert.equal(lines[firstResult + 1]!.message.id, SPLIT);
+    const full = await convert(lines, "full");
+    const window = await convert(lines.slice(firstResult), "assistant");
+    const split = window.get(SPLIT)!;
+    assert.equal(split.id, full.get(SPLIT)!.id, "the same call as the full read's");
+    assert.equal(split.usage?.outputTokens, 30);
+    assert.deepEqual(timing(split), [at(lines[firstResult + 1]!), undefined, undefined, undefined], "stamped at its first block read, untimed");
+    assert.ok(full.get(SPLIT)!.durationMs! > 0);
+    assert.equal(window.size, full.size);
+    for (const [msg, call] of full) if (msg !== SPLIT) assert.deepEqual(timing(window.get(msg)!), timing(call), `${msg} has its api-request in the window`);
+  });
+
+  it("without api-request records (older Claude Code), a call is timed from the prompt or the tool results before it", async () => {
+    const old = lines.filter((e) => e.type !== "api-request");
+    const full = await convert(old, "full");
+    const prompt = old.find((e) => e.type === "user" && typeof e.message?.content === "string")!;
+    const blocks = old.filter((e) => e.type === "assistant" && e.message.id === SPLIT);
+    assert.deepEqual(timing(full.get(SPLIT)!), [at(prompt), at(blocks.at(-1)!) - at(prompt), at(blocks[0]!) - at(prompt), Math.round((30 / ((at(blocks.at(-1)!) - at(prompt)) / 1000)) * 10) / 10]);
+    // The next response is asked for by SPLIT's last tool result.
+    const next = old.findIndex((e) => e.type === "assistant" && e.message.id !== SPLIT);
+    assert.equal(full.get(old[next]!.message.id)!.ts, at(old.slice(0, next).findLast(isResult)!));
+    for (const call of full.values()) assert.ok(call.durationMs !== undefined, "every call read whole is timed");
+    // The window's first line is a tool result whose tool_use it did not read: the response is still being written.
+    const window = await convert(old.slice(old.indexOf(lines[firstResult]!)), "assistant");
+    assert.deepEqual(timing(window.get(SPLIT)!).slice(1), [undefined, undefined, undefined]);
+    assert.deepEqual(timing(window.get(old[next]!.message.id)!), timing(full.get(old[next]!.message.id)!));
+  });
+
+  const T = Date.parse("2026-11-09T06:00:00.000Z");
+  const iso = (dt: number) => new Date(T + dt).toISOString();
+  const prompt = (uuid: string, dt: number, content: string) => ({ type: "user", uuid, promptId: `p-${uuid}`, timestamp: iso(dt), sessionId: MAIN, message: { role: "user", content } });
+  const request = (id: string, dt: number) => ({ type: "api-request", sessionId: MAIN, id, timestamp: iso(dt) });
+  const block = (msg: string, dt: number, content: Record<string, unknown>, output = 1000) => ({ type: "assistant", uuid: `${msg}-${dt}`, timestamp: iso(dt), sessionId: MAIN, message: { id: msg, role: "assistant", model: "claude-sonnet-4-5", content: [content], usage: { input_tokens: 10, output_tokens: output } } });
+  const result = (id: string, dt: number) => ({ type: "user", uuid: `r-${id}`, timestamp: iso(dt), sessionId: MAIN, message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] } });
+  const use = (id: string) => ({ type: "tool_use", id, name: "Read", input: { file_path: "/work/demo/a.txt" } });
+
+  it("a response whose lines are stamped before its start is untimed, and the request recorded before them is the next call's", async () => {
+    const calls = await convert(
+      [
+        prompt("u1", 0, "go"),
+        request("r1", 10),
+        block("m1", 1000, use("t1")),
+        result("t1", 1200),
+        request("r2", 6000),
+        // m2's lines were written after r2 (Claude Code wrote them late) but stamped as they streamed, before it.
+        block("m2", 1100, { type: "thinking", thinking: "" }),
+        block("m2", 1300, use("t2")),
+        result("t2", 5900),
+        block("m3", 9000, { type: "text", text: "done" }),
+      ],
+      "full",
+    );
+    assert.deepEqual(timing(calls.get("m1")!), [T + 10, 990, 990, 1010.1]);
+    assert.deepEqual(timing(calls.get("m2")!), [T + 1100, undefined, undefined, undefined]);
+    assert.deepEqual(timing(calls.get("m3")!), [T + 6000, 3000, 3000, 333.3]);
+    assert.equal(calls.get("m3")!.payload.apiRequestId, "r2");
+  });
+
+  it("a prompt command's response is one call, in the command's turn, timed from the command", async () => {
+    const { ctx } = testCtx();
+    const conv = new ClaudeTranscriptConverter(ctx, { agent: "claude-code", mode: "full", sessionId: MAIN, source: `${MAIN}.jsonl` });
+    const entries = [prompt("c1", 0, "<command-name>/review</command-name>\n<command-message>review</command-message>\n<command-args></command-args>"), block("m1", 1000, { type: "text", text: "Reviewing." }), block("m1", 2000, use("t1"))];
+    for (const [i, e] of entries.entries()) await conv.add(e, i + 1);
+    const events = await conv.finish();
+    const calls = events.filter((e) => e.kind === "llm.call");
+    assert.equal(calls.length, 1);
+    assert.deepEqual(timing(calls[0]!), [T, 2000, 1000, 500]);
+    const turn = events.find((e) => e.kind === "user.message" && e.payload.command === "/review")!;
+    assert.equal(calls[0]!.turnId, turn.turnId);
+  });
+
+  describe("stored through ingest: the hook's copy first, then the transcript's", () => {
+    let t: TmpEnv;
+    let transcript: string;
+    const split = lines.filter((e) => e.type === "assistant" && e.message.id === SPLIT);
+    const splitRequest = lines.slice(0, lines.indexOf(split[0]!)).reverse().find((e) => e.type === "api-request")!;
+    const want = { ts: at(splitRequest), durationMs: at(split.at(-1)!) - at(splitRequest), ttftMs: at(split[0]!) - at(splitRequest) };
+    before(() => {
+      t = tmpEnv();
+      process.env.CLAUDE_CONFIG_DIR = join(t.home, ".claude");
+      transcript = join(t.home, ".claude", "projects", "-work-demo", `${MAIN}.jsonl`);
+      // SPLIT's first tool result is 9 MiB: the 8 MB a Stop line reads starts after it, in the middle of SPLIT.
+      const big = lines.map((e, i) => (i === firstResult ? { ...e, message: { ...e.message, content: [{ ...e.message.content[0], content: "x".repeat(9 * 1024 * 1024) }] } } : e));
+      writeFile(transcript, big.map((e) => JSON.stringify(e)).join("\n") + "\n");
+    });
+    after(() => t.restore());
+
+    it("the stored call gets the transcript's timing, and a reparse repairs a row an older parse stored", async () => {
+      const env = { CODING_SH_HOME: t.dataHome, HOME: t.home, CLAUDE_CONFIG_DIR: join(t.home, ".claude") };
+      const spool = join(t.dataHome, "spool", "claude-code");
+      // The Stop of the turn's second-to-last response, before the next prompt.
+      const lastCall = lines.findLast((e) => e.type === "assistant" && at(e) < at(lines.findLast((x) => x.type === "user" && typeof x.message?.content === "string")!))!;
+      const stop: SpoolLine = { v: 0, agent: "claude-code", event: "Stop", ts: at(lastCall) + 50, pid: 4100, cwd: "/work/demo", raw: { session_id: MAIN, transcript_path: transcript, cwd: "/work/demo", hook_event_name: "Stop", stop_hook_active: false } };
+      writeFile(join(spool, "2026-11-09.jsonl"), JSON.stringify(stop) + "\n");
+      const index = await SqliteIndexStore.open(join(t.root, "index.db"));
+      const base = { config: defaultConfig(env), index, blobs: new MemoryBlobStore(), env };
+      const stored = async () => (await index.listEvents(MAIN)).find((e) => e.kind === "llm.call" && e.payload.messageId === SPLIT)!;
+      const timed = (e: AgentEvent) => ({ ts: e.ts, durationMs: e.durationMs, ttftMs: e.payload.ttftMs });
+      try {
+        await ingest({ ...base, adapters: new Map([["claude-code", claudeCode]]) });
+        const hook = await stored();
+        assert.ok(hook, "the hook's window has SPLIT");
+        assert.deepEqual([hook.durationMs, hook.payload.ttftMs, hook.payload.tokensPerSec], [undefined, undefined, undefined], "the hook read part of SPLIT");
+
+        await backfill({ ...base, adapters: [claudeCode] });
+        const filled = await stored();
+        assert.equal(filled.id, hook.id);
+        assert.deepEqual(timed(filled), want);
+        assert.equal(filled.payload.tokensPerSec, Math.round((30 / (want.durationMs / 1000)) * 10) / 10);
+        assert.equal(filled.source, hook.source, "the hook's row, with the transcript's timing");
+
+        // A row an older parse stored from the same window: timed from a line written during the response.
+        const bad = { ...filled, ts: at(split.at(-1)!) - 244, durationMs: 244, payload: { ...filled.payload, ttftMs: 244, tokensPerSec: 9213.1 } };
+        const v = claudeCode.parseVersion!;
+        const versions = (n: number) => new Map([["claude-code", { ...claudeCode, parseVersion: n }]]);
+        for (const [n, lose] of [[v + 1, () => {}], [v + 2, () => rmSync(spool, { recursive: true })]] as const) {
+          await index.replaceSessionEvents!(MAIN, [filled.id], [bad]);
+          lose();
+          const r = await reparse({ ...base, adapters: versions(n) });
+          assert.deepEqual(r.errors, []);
+          const fixed = await stored();
+          assert.deepEqual(timed(fixed), want, `parse ${n}`);
+          assert.equal(fixed.payload.tokensPerSec, filled.payload.tokensPerSec);
+        }
+      } finally {
+        await index.close();
+      }
+    });
+  });
+});
