@@ -11,7 +11,8 @@ coding.sh improve fix 1 --repo ${answers.paths.repos.calc}
 ''']
 
 # The wording is the product's own line for the flag no-verification (src/improve/issues.ts);
-# both wrapper sessions in calc edit a file and never run a check.
+# an agent session in calc edits a file and never runs a check (wrapper sessions say nothing,
+# so they do not count).
 [[check]]
 kind = "state"
 command = "cat ${answers.paths.repos.calc}/AGENTS.md ${answers.paths.repos.calc}/CLAUDE.md 2>/dev/null | grep 'before you say you are done'"

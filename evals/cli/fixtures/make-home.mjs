@@ -192,6 +192,9 @@ session("y3", "claude-code", "webapp", at(yest0, 16), "review the auth module an
 });
 session("y4", "codex", "infra", at(yest0, 11), "bump the terraform aws provider to v6", { tools: [shell("terraform init -upgrade", 8000), shell("terraform validate", 1500)] });
 session("ycalc", "claude-code", "calc", at(yest0, 18), "why does calc.mjs have no default export?", { tools: [read("calc.mjs", 20)], llm: [{ ms: 1100, in: 800, out: 90 }] });
+// An agent that edits a file, says "Done." and never runs a check: the no-verification issue in
+// calc (wrapper sessions say nothing, so they are not counted for it).
+session("ycalc2", "claude-code", "calc", at(yest0, 19), "make add return the sum", { tools: [read("calc.mjs", 20), { name: "Edit", input: { file_path: "calc.mjs" }, ms: 60, ok: true }], llm: [{ ms: 1300, in: 900, out: 110 }] });
 
 // Today (relative to now so it is always in the past).
 session("t1", "claude-code", "api", NOW - 50 * 60e3, "the integration tests fail on CI, fix them", {
