@@ -127,11 +127,13 @@ def weights_edit(
     base_sha256, edited_sha256: 64-hex hashes of the tensor before and after. note: free text,
     kept only in full capture mode.
 
-    Returns True only when the event was queued. Returns False when a value is invalid (with
-    one warning per process), and, without a warning, when the SDK is off or shut down or the
-    queue is full. A note that is not a string is dropped with one warning; the edit is still
-    recorded. Never raises. Outside trace() and with_session() the edit gets a session of its
-    own, so group a run of edits inside one.
+    Returns True only when the event was queued. Returns False when a value is invalid, with
+    one warning per process. Returns False without a warning when the SDK is off or shut down
+    or the queue is full. Never raises.
+
+    A note that is not a string is dropped with one warning; the edit is still recorded.
+    Outside trace() and with_session() the edit gets a session of its own, so group a run of
+    edits inside one.
     """
     try:
         p = _payload(tensor, shape, changed, l2, max_abs, base_sha256, edited_sha256, note)

@@ -722,7 +722,9 @@ One more `notification` kind records weight edits. The Python SDK's `coding_sh.w
 |---|---|
 | `weights.edit` | `tensor` (string, the tensor's name), `shape` (array of non-negative integers, at most 16), `changed` (integer, the weights that differ, at most the product of `shape`), `l2` (number >= 0, the L2 norm of edited minus base), `maxAbs` (number >= 0, the largest absolute value of that change), `baseSha256` and `editedSha256` (64 lowercase hex characters, the tensor's hash before and after) and `note` (string, optional, left out in metadata mode) |
 
-- The caller computes the hashes and norms. The SDK checks the values, drops an invalid edit with one warning, and never raises into the app. Numpy and torch scalars count as numbers. `weights_edit()` returns `True` only when the event was queued. A `note` that is not a string is dropped with a warning and the edit is still recorded. `coding_sh.weights_delta()` computes `shape`, `changed`, `l2` and `max_abs` for two small array-likes in pure Python; it is a helper you call on purpose, so it raises `ValueError` on bad input.
+- The caller computes the hashes and norms. The SDK checks the values, drops an invalid edit with one warning, and never raises into the app. Numpy and torch scalars count as numbers.
+- `weights_edit()` returns `True` only when the event was queued. A `note` that is not a string is dropped with a warning, and the edit is still recorded.
+- `coding_sh.weights_delta()` computes `shape`, `changed`, `l2` and `max_abs` for two small array-likes in pure Python. It is a helper you call on purpose, so it raises `ValueError` on bad input.
 - The server stores the payload without validating these fields, after redaction.
 - A call outside `trace()` and `with_session()` makes a session of its own, so put a run of edits inside one of them.
 
