@@ -11,6 +11,8 @@ import puppeteer from "puppeteer-core";
 import sharp from "sharp";
 
 const here = dirname(fileURLToPath(import.meta.url));
+// 256-color PNGs: the dark UI quantizes without visible loss at under 60% of the bytes.
+const PNG = { palette: true, quality: 100, effort: 10, compressionLevel: 9, dither: 0 };
 const CHROME = process.env.CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 
 const browser = await puppeteer.launch({
@@ -29,7 +31,7 @@ try {
   const el = await page.$("#banner");
   const shot = await el.screenshot({ type: "png" });
   // Opaque background, so drop the alpha channel; sharp writes no metadata by default.
-  await sharp(shot).removeAlpha().png({ compressionLevel: 9 }).toFile(join(here, "banner.png"));
+  await sharp(shot).removeAlpha().png(PNG).toFile(join(here, "banner.png"));
   console.log("wrote .github/assets/banner.png");
 } finally {
   await browser.close();

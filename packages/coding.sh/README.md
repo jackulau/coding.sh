@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/jackulau/coding.sh/main/.github/assets/banner.png" alt="coding.sh: every agent run, recorded and measurable. Open-source, local-first observability and evals for any AI agent." width="100%">
+  <img src="https://raw.githubusercontent.com/jackulau/coding.sh/main/.github/assets/banner.png" alt="coding.sh: see what your AI agents did, and what it cost. Local-first observability and evals for any AI agent. Below the headline, the top of one Claude Code session in the coding.sh viewer, with its model, duration, estimated cost, a '31 passed' test badge and its first file edits." width="100%">
 </p>
 
 Docs: [coding.sh/docs](https://coding.sh/docs) · Quickstart: [coding.sh/docs/quickstart](https://coding.sh/docs/quickstart)
@@ -27,9 +27,9 @@ coding.sh init     # finds your agents, shows one plan, asks once (Y/n)
 coding.sh          # opens the viewer
 ```
 
-`init` points each detected agent's hooks at `~/.coding.sh/bin/hook.mjs` and registers the
-coding.sh MCP server with Claude Code, Codex, Cursor and OpenCode. Every config file it
-edits is backed up first. `coding.sh init --dry-run` shows the plan (agents, files, blockers) without writing
+`init` points each detected agent's hooks at `~/.coding.sh/bin/hook.sh` (`hook.mjs` on Windows)
+and registers the coding.sh MCP server with Claude Code, Codex, Cursor, OpenCode and Gemini CLI.
+Every config file it edits is backed up first. `coding.sh init --dry-run` shows the plan (agents, files, blockers) without writing
 anything; add `--diff` for the exact edits. After that, use your agents as usual. New sessions appear without an ingest step.
 
 With `npx` only, the hook is copied to a stable path, but the MCP entry points at the npx cache,
@@ -62,11 +62,11 @@ OpenInference, Vercel AI SDK spans and Claude Code, Codex and Gemini CLI log eve
 
 | Group | Commands |
 |---|---|
-| Capture | `init`, `doctor`, `status`, `ingest [--backfill]`, `run -- <cmd>`, `collector`, `uninstall` |
-| Explore | `sessions`, `show <id\|latest>`, `search <text>`, `usage`, `ui`, `mcp` |
-| Evaluate | `eval new\|validate\|list\|export`, `dataset`, `exp run\|compare`, `judge calibrate`, `toolevals`, `workflows`, `bench new\|run\|history\|report\|schedule` |
-| Harness | `harness snapshot\|list`, `compare A B` |
-| Maintain | `gateway`, `gc`, `config`, `update`, `version` |
+| Capture | `init`, `doctor`, `status`, `ingest [--backfill]`, `run -- <cmd>`, `collector`, `proxy`, `serve`, `uninstall` |
+| Explore | `sessions`, `show <id\|latest>`, `search <text>`, `usage`, `stats`, `diff-calls`, `cache doctor`, `export`, `ui`, `mcp` |
+| Evaluate | `eval new\|validate\|list\|export`, `dataset`, `exp run\|compare\|replay`, `score`, `judge calibrate`, `toolevals`, `workflows`, `bench new\|run\|history\|report\|schedule` |
+| Harness | `improve`, `harness snapshot\|list`, `compare A B`, `refine` |
+| Maintain | `gateway`, `gc`, `purge`, `config`, `update`, `version` |
 
 Every command takes `--json` and `--help`.
 
@@ -75,9 +75,9 @@ Every command takes `--json` and `--help`.
 With no sinks configured, no session data is sent anywhere. The only default network request is
 the daily update check, which can be turned off. Secrets are redacted at ingest, before anything
 reaches the index, blobs or sinks. `[capture] mode = "metadata"` keeps structure and numbers only.
-Remote sinks (`otlp`, `http`) send metadata only unless you set `mode = "full"`. Raw hook payloads
-wait in `~/.coding.sh/spool` (mode 600) until they are ingested, and `coding.sh gc` removes old
-spool files.
+Remote sinks (`otlp`, `http`) send metadata only unless you set `mode = "full"`. The hook writes
+raw payloads to `~/.coding.sh/spool` (mode 600). Ingest redacts the ones in `spool/<agent>/raw/` in
+place, and `coding.sh gc` deletes ingested spool files after 7 days.
 
 ## Uninstall
 

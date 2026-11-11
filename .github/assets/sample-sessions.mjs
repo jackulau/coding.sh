@@ -16,9 +16,11 @@
 //   kill $C
 //   node $CLI ingest --backfill
 //   node $CLI sessions      # 13 sessions: 6 claude-code, 3 codex, 4 coding-sh-triage
-//   node $CLI ui --port 4320 --no-open & U=$!
-//   node .github/assets/capture-readme.mjs http://127.0.0.1:4320/   # 1280 wide, 2x, dark
+//   node $CLI ui --port 0 --no-open > $R/ui.log & U=$!
+//   until [ -s $R/ui.log ]; do sleep 0.2; done
+//   node .github/assets/capture-readme.mjs "$(head -1 $R/ui.log)"   # the URL with its ?t= token
 //   kill $U
+//   node .github/assets/render-banner.mjs                          # banner.png from banner-session.png
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
