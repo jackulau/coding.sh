@@ -5,7 +5,7 @@
 //
 // A source with uncommitted edits, or no git history, falls back to the build
 // time. A shallow checkout would date every file at HEAD, so the site workflow
-// fetches full history.
+// fetches full history; a release's notes skip the shallow cut-off's lines.
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -62,10 +62,14 @@ function releaseLastmod(route) {
     const next = lines.findIndex((l, i) => i > start && /^## \[/.test(l));
     const end = next < 0 ? lines.length : next;
     const blame = git(["blame", "--line-porcelain", "-L", `${start + 1},${end}`, "--", CHANGELOG]);
-    const times = [...blame.matchAll(/^committer-time (\d+)$/gm)].map((t) => Number(t[1]));
+    // One record per line. A shallow clone credits every older line to its cut-off commit, which blame
+    // marks "boundary": that date is the clone's, not the line's, so those lines fall back to the release date.
+    const records = blame.split(/^(?=[0-9a-f]{40} \d+ \d+)/m).filter(Boolean);
+    const times = records.filter((r) => !/^boundary$/m.test(r)).map((r) => Number(r.match(/^committer-time (\d+)$/m)?.[1])).filter(Boolean);
+    const releasedAt = Date.parse(`${released}T00:00:00Z`) / 1000;
     // An uncommitted line (blame's all-zero commit) dates the page at the build time, as fileLastmod does.
     if (/^0{40} /m.test(blame)) date = BUILD_TIME;
-    else date = times.length ? new Date(Math.max(...times) * 1000).toISOString() : new Date(`${released}T00:00:00Z`).toISOString();
+    else date = new Date(Math.max(releasedAt, ...times) * 1000).toISOString();
   }
   cache.set(key, date);
   return date;
