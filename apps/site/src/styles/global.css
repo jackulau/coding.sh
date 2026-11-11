@@ -60,17 +60,31 @@
 }
 
 /* Metric-matched stand-ins shown until Geist arrives, so the swap doesn't shift
-   text (Next/font-style). size-adjust matches the average glyph width; the
+   text (Next/font-style). size-adjust is close to the average glyph width; the
    overrides give Geist's ascent 1005, descent 295, no line gap (per 1000).
+   Arial's 103.4% and the bold face were tuned on every page at phone width so
+   the fewest lines rewrap at the swap (under 103.3% or over 103.5% some do).
    Liberation Sans is metric-compatible with Arial, DejaVu Sans Mono with Menlo.
    unicode-range is exactly what Geist covers, so glyphs Geist lacks still fall
    through to the system font, as before. */
 @font-face {
   font-family: "Geist Fallback";
   src: local("Arial"), local("ArialMT"), local("Liberation Sans"), local("LiberationSans");
-  size-adjust: 104.76%;
-  ascent-override: 95.94%;
-  descent-override: 28.16%;
+  size-adjust: 103.4%;
+  ascent-override: 97.2%;
+  descent-override: 28.53%;
+  line-gap-override: 0%;
+  unicode-range: U+0020-007E, U+00A0-00AC, U+00AE-00FF, U+0131, U+0152-0153, U+02BC, U+02C6, U+02DA, U+02DC, U+0304,
+    U+0308, U+2013-2014, U+2018-201A, U+201C-201E, U+2022, U+2026, U+2032-2033, U+2039-203A, U+2044, U+20AC, U+2122,
+    U+2191, U+2193, U+2212;
+}
+@font-face {
+  font-family: "Geist Fallback";
+  font-weight: 600 700;
+  src: local("Arial Bold"), local("Arial-BoldMT"), local("Liberation Sans Bold"), local("LiberationSans-Bold");
+  size-adjust: 99.66%;
+  ascent-override: 100.85%;
+  descent-override: 29.6%;
   line-gap-override: 0%;
   unicode-range: U+0020-007E, U+00A0-00AC, U+00AE-00FF, U+0131, U+0152-0153, U+02BC, U+02C6, U+02DA, U+02DC, U+0304,
     U+0308, U+2013-2014, U+2018-201A, U+201C-201E, U+2022, U+2026, U+2032-2033, U+2039-203A, U+2044, U+20AC, U+2122,
@@ -79,9 +93,9 @@
 @font-face {
   font-family: "Geist Fallback Roboto";
   src: local("Roboto"), local("Roboto-Regular");
-  size-adjust: 104.99%;
-  ascent-override: 95.73%;
-  descent-override: 28.1%;
+  size-adjust: 102.92%;
+  ascent-override: 97.66%;
+  descent-override: 28.67%;
   line-gap-override: 0%;
   unicode-range: U+0020-007E, U+00A0-00AC, U+00AE-00FF, U+0131, U+0152-0153, U+02BC, U+02C6, U+02DA, U+02DC, U+0304,
     U+0308, U+2013-2014, U+2018-201A, U+201C-201E, U+2022, U+2026, U+2032-2033, U+2039-203A, U+2044, U+20AC, U+2122,
