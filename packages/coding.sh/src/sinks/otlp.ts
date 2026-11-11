@@ -121,7 +121,10 @@ function rootIn(sessionsById: Map<string, Session>): (id: string) => string {
 /** Converts a batch to OTLP spans. Pure; exported for tests and custom exporters. */
 export function toOtlpSpans(batch: AgentEvent[], sessions: Session[], mode: "full" | "metadata"): OtlpSpan[] {
   const full = mode === "full";
-  const events = full ? batch : batch.map(toMetadata);
+  // An event once per batch: a helper's events come from its parent's Agent call and from its own stop, with the same ids.
+  const seenIds = new Set<string>();
+  const unique = batch.filter((e) => !seenIds.has(e.id) && seenIds.add(e.id));
+  const events = full ? unique : unique.map(toMetadata);
   const sessionsById = new Map(sessions.map((s) => [s.id, full ? s : sessionToMetadata(s)]));
   const starts = new Map<string, AgentEvent>();
   for (const e of events) {

@@ -143,4 +143,13 @@ describe("otlp sink → OTLP receiver round-trip", () => {
       await rx.close();
     }
   });
+
+  it("sends a model call once when its event is in the batch twice (a helper's events arrive with its parent's call and its own stop)", () => {
+    const helper = { ...llmCall("helper-call", { inputTokens: 5, outputTokens: 7 }), sessionId: "otlp-sink-helper" } as AgentEvent;
+    const parentCall = llmCall("parent-call", { inputTokens: 10, outputTokens: 20 });
+    const sessions = [session(), { ...session(), id: "otlp-sink-helper", parent: { sessionId: "otlp-sink-s1" } } as Session];
+    const spans = toOtlpSpans([parentCall, helper, helper, { ...helper }], sessions, "full").filter((s) => s.name.startsWith("chat"));
+    assert.equal(spans.length, 2);
+    assert.equal(new Set(spans.map((s) => s.spanId)).size, 2);
+  });
 });
