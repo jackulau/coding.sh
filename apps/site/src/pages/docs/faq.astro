@@ -35,11 +35,6 @@ const FAQ: { id: string; q: string; a: string }[] = [
     a: "init shows every edit with --dry-run, backs up each file before changing it, marks its own entries, and uninstall removes only those. It never answers a permission prompt for you. Eval runs use isolated config directories, so your global setup is not touched. For Codex, coding.sh never writes hook trust; you approve the hooks yourself.",
   },
   {
-    id: "vs",
-    q: "How is this different from LangSmith, Braintrust or Judgment Labs?",
-    a: "They are hosted platforms that capture and grade traces. coding.sh does the same on your machine, with no account, and it is MIT licensed. It also treats coding agents as first-class: adapters for a dozen agents, subagents as child sessions, and tasks that replay from the repository state before the agent ran, scored by a verifier that has itself been checked (drafting those tasks from captured sessions doesn't work yet).",
-  },
-  {
     id: "otel",
     q: "My agent isn't a coding agent. Does it work?",
     a: `Yes. Anything that exports OpenTelemetry traces works through <code>coding.sh collector</code>: the Vercel AI SDK, the Claude Agent SDK, the OpenAI Agents SDK, LangGraph, or your own code. See <a href="/docs/otel">OpenTelemetry</a>. For evals, any program that reads JSON on stdin or answers HTTP can be the task.`,
