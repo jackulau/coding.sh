@@ -55,7 +55,7 @@ export const SITE = {
 } as const;
 
 /** Shown in the version pill; the full history is in /CHANGELOG.md. */
-export const VERSION = "0.1.6";
+export const VERSION = RELEASE;
 
 export const NAV_PAGES = [
   {
