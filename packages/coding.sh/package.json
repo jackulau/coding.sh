@@ -87,7 +87,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=22.15"
+    "node": ">=22.16"
   },
   "publishConfig": {
     "access": "public"
@@ -97,6 +97,8 @@
     "test": "node --no-warnings --test \"test/**/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "check": "npm run typecheck && npm test",
+    "prepack": "node scripts/pack-manifest.mjs --prepack",
+    "postpack": "node scripts/pack-manifest.mjs --postpack",
     "prepublishOnly": "npm run check && npm run build"
   },
   "devDependencies": {

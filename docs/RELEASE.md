@@ -3,7 +3,8 @@
 This is the checklist for publishing coding.sh and deploying the site. A tag `vX.Y.Z` creates the
 GitHub release as soon as the checks pass, with no approval and no credentials, so
 `curl -fsSL https://coding.sh/install | sh` gets the new version right away. The same tag also
-publishes five packages, once you approve the npm and PyPI jobs and their credentials exist:
+publishes six packages, five on npm and one on PyPI, once you approve the npm and PyPI jobs and their
+credentials exist:
 
 | Package | Registry | Source |
 |---|---|---|
@@ -11,6 +12,7 @@ publishes five packages, once you approve the npm and PyPI jobs and their creden
 | `@codingdotsh/sdk` | npm | `packages/sdk` |
 | `coding.sh-store-postgres` | npm | `packages/store-postgres` |
 | `coding.sh-store-s3` | npm | `packages/blob-s3` |
+| `coding.sh-store-clickhouse` | npm | `packages/store-clickhouse` |
 | `coding-sh` (Python SDK) | PyPI | `packages/sdk-python` |
 
 The canonical repository is **`https://github.com/jackulau/coding.sh`**. These files all name it,
@@ -29,13 +31,13 @@ so change all of them together if the repo moves (for example to a `coding-sh` o
 
 These steps are done: `coding.sh`, `@codingdotsh/sdk` and the store plugins are on npm, and
 `coding-sh` is on PyPI (first release 0.1.3, with 0.1.6). They are kept here for a new package. Everything in the repo is ready (`scripts/release/smoke.sh` packs, installs and exercises
-all five packages); these are the steps only you can do. Your npm and PyPI accounts need
+all six packages); these are the steps only you can do. Your npm and PyPI accounts need
 two-factor authentication on.
 
 1. **Log in to npm** on your machine: `npm login`, then `npm whoami`.
 2. **Create the npm org** that owns `@codingdotsh/sdk`: npmjs.com → your avatar → **Add
    Organization** → name `coding.sh` → **Unlimited public packages (free)**. The unscoped names
-   `coding.sh`, `coding.sh-store-postgres` and `coding.sh-store-s3` need no org.
+   `coding.sh`, `coding.sh-store-postgres`, `coding.sh-store-s3` and `coding.sh-store-clickhouse` need no org.
 3. **Give CI a one-time npm token.** npm can attach a trusted publisher only to a package that
    already exists, so the first publish uses a token. npmjs.com → **Access Tokens → Generate New
    Token**: check **Bypass two-factor authentication**, **Packages and scopes** = *Read and write*
@@ -62,7 +64,7 @@ two-factor authentication on.
    tag's run only.
 8. **Switch npm to trusted publishing and drop the token** (needs npm 11.15+, hence `npx npm@11`):
    ```sh
-   for p in coding.sh @codingdotsh/sdk coding.sh-store-postgres coding.sh-store-s3; do
+   for p in coding.sh @codingdotsh/sdk coding.sh-store-postgres coding.sh-store-s3 coding.sh-store-clickhouse; do
      npx -y npm@11 trust github "$p" --file release.yml --repo jackulau/coding.sh --env release --allow-publish --yes
    done
    gh secret delete NPM_TOKEN --env release --repo jackulau/coding.sh
@@ -80,17 +82,21 @@ Check it worked: `npm view coding.sh version`, `npm view @codingdotsh/sdk versio
 1. You push a tag `vX.Y.Z` that matches `packages/coding.sh/package.json`.
 2. `.github/workflows/release.yml`, job **verify** (GitHub-hosted): checks that the tag matches
    the version and that `CHANGELOG.md` has a `## [X.Y.Z]` section, typechecks and tests every
-   package (store-postgres against a real Postgres service), packs the four npm tarballs, builds
+   package (store-postgres and store-clickhouse against real servers), packs the five npm tarballs, builds
    the Python sdist and wheel, runs `scripts/release/smoke.sh` on those exact files, and dry-runs the
    npm publish with `scripts/release/publish-npm.sh`, the same script publish-npm runs.
 3. Job **github-release** (GitHub-hosted, no environment, no approval) runs as soon as verify
    passes. It creates the GitHub release `vX.Y.Z` with the verified `coding.sh-X.Y.Z.tgz`, the same
    bytes npm gets, attached and that CHANGELOG section as the notes. From then on install.sh and
    `coding.sh update` install the new version from the release.
-4. Jobs **publish-npm** and **publish-pypi** need github-release and wait for approval in the
-   `release` environment. publish-npm publishes `coding.sh`, `@codingdotsh/sdk`,
-   `coding.sh-store-postgres` and `coding.sh-store-s3` in that order (the stores peer-depend on
-   `coding.sh`) with provenance. publish-pypi publishes `coding-sh` through PyPI trusted
+4. Job **publish-image** needs github-release and runs with no approval and only the workflow
+   token. It builds the container image, smoke tests it, then pushes it for linux/amd64 and
+   linux/arm64 to `ghcr.io/<owner>/coding.sh`. Jobs **publish-npm** and **publish-pypi** need
+   github-release and wait for approval in the `release` environment. publish-npm publishes
+   `coding.sh`, `@codingdotsh/sdk`, `coding.sh-store-postgres`, `coding.sh-store-s3` and
+   `coding.sh-store-clickhouse` in that order (the stores peer-depend on `coding.sh`) with
+   provenance. The `coding.sh` tarball is packed with its `source` export conditions removed
+   (`prepack` in `packages/coding.sh/scripts/pack-manifest.mjs`), since `src/` is not published. publish-pypi publishes `coding-sh` through PyPI trusted
    publishing. Without approval or credentials they wait, and the GitHub release stands on its own.
 5. Each package publishes the version in its own manifest, and a version already on the registry
    is skipped. So a release that only bumps the CLI republishes nothing else, and **Re-run failed
@@ -102,6 +108,9 @@ Check it worked: `npm view coding.sh version`, `npm view @codingdotsh/sdk versio
    version and from the GitHub release tarball otherwise (`CODING_SH_SOURCE=npm|github` forces
    one). `coding.sh update` installs the newest of the two. Running installs show the update
    notice within a day.
+
+The CLI package also ships `dist/schema.json` (the trace JSON Schema) and `dist/hook.sh` (the shell
+hook); both are in the tarball and checked by `scripts/release/smoke.sh`.
 
 The GitHub release asset has to be named `coding.sh-X.Y.Z.tgz`, which is what `npm pack`
 produces. `install.sh` and `coding.sh update` depend on that name.
@@ -118,7 +127,7 @@ cd ~/coding-sh && git checkout main && git pull
 
 - [ ] `packages/coding.sh/package.json` has the new version, and the `packages/coding.sh` entry in
       `package-lock.json` matches (`npm install --package-lock-only` updates it).
-- [ ] Bump `packages/sdk`, `packages/store-postgres`, `packages/blob-s3` and
+- [ ] Bump `packages/sdk`, `packages/store-postgres`, `packages/blob-s3`, `packages/store-clickhouse` and
       `packages/sdk-python` (`pyproject.toml` and `__version__` in `_client.py`) only if they
       changed. Unchanged versions are skipped on publish.
 - [ ] `CHANGELOG.md` has `## [X.Y.Z] - YYYY-MM-DD` (replace `Unreleased` with today's date) and a
@@ -134,7 +143,7 @@ cd ~/coding-sh && git checkout main && git pull
       npm run build
       npm pack --dry-run  # expect only dist/*.mjs, dist/types, README.md, LICENSE, package.json
       cd ../../apps/site && npm run build && npm run check
-      cd ../.. && scripts/release/smoke.sh   # packs, installs and exercises all five packages
+      cd ../.. && scripts/release/smoke.sh   # packs, installs and exercises all six packages
       ```
 - [ ] Commit, tag and push:
       ```sh
@@ -167,6 +176,8 @@ cd ~/coding-sh && git checkout main && git pull
 - **github-release failed for another reason** (a GitHub API error): use **Re-run failed jobs**.
   It reuses a release that already exists and uploads the tarball if it is missing. The publish
   jobs only start after it succeeds.
+- **A timing test fails on a busy machine**: hook latency and help startup assume an idle one. Rerun
+  that file alone before you treat it as a regression. CI does this itself and reports it as a warning.
 - **A broken version reached npm**: run `npm deprecate coding.sh@X.Y.Z "<reason>"` and release
   X.Y.(Z+1). Do not unpublish.
 
@@ -177,29 +188,28 @@ installer at `/install` and `/install.sh` (copied from the repo's `install.sh` a
 `llms.txt`, the Markdown twins and `_headers`. It needs Node 22 or newer and reads files outside
 `apps/site` (`install.sh`, `CHANGELOG.md`), so build from the repository root.
 
-### Cloudflare Pages (primary; uses `public/_headers`)
+### Cloudflare Worker (`coding-sh-site`)
 
-Dashboard: **Workers & Pages → Create → Pages → Connect to Git → jackulau/coding.sh**.
+The site is a Cloudflare Worker with static assets, configured in `apps/site/wrangler.jsonc`. It
+serves `coding.sh` and `www.coding.sh`. `.github/workflows/site.yml` deploys it on every push to
+`main` that touches the site, `docs/`, the CLI reference sources, the schema, the SDK, `install.sh`
+or `CHANGELOG.md`. It runs on the self-hosted desk runner.
 
-| Setting | Value |
-|---|---|
-| Production branch | `main` |
-| Root directory | *(empty: repository root)* |
-| Build command | `npm ci && npm run build -w @coding.sh/site` |
-| Build output directory | `apps/site/dist` |
-| Environment variable | `NODE_VERSION=22` |
+The workflow deploys only when the `CLOUDFLARE_API_TOKEN` secret is set (and
+`CLOUDFLARE_ACCOUNT_ID` names the account). Without it the run builds and checks the site, then
+writes a "Site not deployed" warning and a summary, and https://coding.sh keeps serving the
+previous deploy. To set it: `gh secret set CLOUDFLARE_API_TOKEN`.
 
-Or deploy from your machine:
+Or deploy from your machine, with your own Cloudflare login:
 
 ```sh
 npm ci && npm run build -w @coding.sh/site
-npx wrangler pages project create coding-sh --production-branch main
-npx wrangler pages deploy apps/site/dist --project-name coding-sh --branch main
+cd apps/site && npx wrangler@4 deploy
 ```
 
-Then add the custom domain `coding.sh` under the project's *Custom domains*. `_headers` sets
-immutable caching for `/_astro/*`, UTF-8 text for `/install`, `/install.sh`, `*.txt` and `*.md`,
-and `application/xml` for `/changelog.xml`, which the edge compresses (it does not compress the Atom type).
+`public/_headers` sets immutable caching for `/_astro/*`, UTF-8 text for `/install`, `/install.sh`,
+`*.txt` and `*.md`, and `application/xml` for `/changelog.xml`, which the edge compresses (it does
+not compress the Atom type).
 
 After deploying, check:
 

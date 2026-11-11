@@ -12,6 +12,12 @@ on:
       - "apps/site/**"
       - "install.sh"
       - "CHANGELOG.md"
+      - "docs/**"
+      - "packages/coding.sh/src/cli/registry.ts"
+      - "packages/coding.sh/src/**/cli-spec.ts"
+      - "packages/coding.sh/src/schema/**"
+      - "packages/coding.sh/package.json"
+      - "packages/sdk/**"
       - ".github/workflows/site.yml"
   workflow_dispatch:
 

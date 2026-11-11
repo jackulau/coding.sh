@@ -33,8 +33,16 @@ inputs:
     description: Token for the pull request comment.
     required: false
     default: ${{ github.token }}
+  annotate:
+    description: "Write an error annotation on the run when the command fails. Set it to false to keep the annotation out of a run that expects the failure."
+    required: false
+    default: "true"
+  fail:
+    description: "Fail the step when the command fails. Set it to false to only record the exit-code output, for a job that expects the failure or checks the code itself: the step then passes, with no annotation."
+    required: false
+    default: "true"
   node-version:
-    description: "Node.js to set up (coding.sh needs 22.15 or newer). Empty: use the runner's."
+    description: "Node.js to set up (coding.sh needs 22.16 or newer). Empty: use the runner's."
     required: false
     default: "22"
 
@@ -122,10 +130,11 @@ runs:
       run: node "$GITHUB_ACTION_PATH/packages/coding.sh/scripts/github-action.mjs"
 
     - name: Fail on the command's exit code
-      if: steps.run.outputs.exit-code != '' && steps.run.outputs.exit-code != '0'
+      if: inputs.fail != 'false' && steps.run.outputs.exit-code != '' && steps.run.outputs.exit-code != '0'
       shell: bash
       env:
         CODE: ${{ steps.run.outputs.exit-code }}
+        ANNOTATE: ${{ inputs.annotate }}
       run: |
-        echo "::error title=coding.sh::coding.sh exited $CODE"
+        if [ "$ANNOTATE" != "false" ]; then echo "::error title=coding.sh::coding.sh exited $CODE"; fi
         exit "$CODE"

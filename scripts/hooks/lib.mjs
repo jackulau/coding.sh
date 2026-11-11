@@ -9,6 +9,14 @@ const ZERO = /^0+$/;
 /** git's empty tree: diffing against it lists every file. */
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
+/**
+ * Whether spawning `cmd` needs a shell: on Windows npm and npx are .cmd files,
+ * which spawn without a shell can't start (ENOENT).
+ */
+export function needsShell(cmd, platform = process.platform) {
+  return platform === "win32" && (cmd === "npm" || cmd === "npx");
+}
+
 export function git(root, args) {
   const r = spawnSync("git", args, { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   return { ok: r.status === 0, out: (r.stdout ?? "").trim(), err: (r.stderr ?? "").trim() };
@@ -57,10 +65,15 @@ export function dependents(spaces, names) {
 /** A step: a label for the log and the command to run from `cwd` (repo-relative). */
 const step = (label, cmd, args, cwd = ".") => ({ label, cmd, args, cwd });
 
-/** The script a workspace typechecks with: `typecheck`, or a `check` that runs no tests (astro check). */
-function typecheckScript(w) {
-  if (w.scripts.typecheck) return "typecheck";
-  if (w.scripts.check && !/\btest\b/.test(w.scripts.check)) return "check";
+/**
+ * The command a workspace typechecks with: its `typecheck` script, a `check`
+ * that runs no tests, or `astro check` when `check` runs it before the tests
+ * (the site's `check` is `astro check && npm test`, too slow to run alone).
+ */
+function typecheckCommand(w) {
+  if (w.scripts.typecheck) return ["npm", ["run", "--silent", "typecheck"]];
+  if (w.scripts.check && !/\btest\b/.test(w.scripts.check)) return ["npm", ["run", "--silent", "check"]];
+  if (/(^|&&\s*)astro check\b/.test(w.scripts.check ?? "")) return ["npx", ["astro", "check"]];
   return undefined;
 }
 
@@ -75,8 +88,8 @@ export function precommitPlan(root, files) {
   const touched = new Set(files.map((f) => workspaceOf(spaces, f)).filter(Boolean));
   for (const w of spaces) {
     if (!touched.has(w)) continue;
-    const script = typecheckScript(w);
-    if (script) plan.push(step(`typecheck ${w.name}`, "npm", ["run", "--silent", script], w.dir));
+    const cmd = typecheckCommand(w);
+    if (cmd) plan.push(step(`typecheck ${w.name}`, cmd[0], cmd[1], w.dir));
   }
   return plan;
 }
@@ -88,14 +101,20 @@ const SCRIPT_SUITES = [
 ];
 
 /**
- * pre-push: the tests of each workspace the pushed commits touch and of the
+ * pre-push: with `ranges` (the pushed commits), the gate's repo-hygiene check
+ * first; then the tests of each workspace the pushed commits touch and of the
  * workspaces that depend on it (a coding.sh change runs the store plugins'
  * tests too), the Python SDK's tests, and the repo scripts' own tests.
  */
-export function prepushPlan(root, files) {
+export function prepushPlan(root, files, ranges) {
   const spaces = workspaces(root);
   const touched = [...new Set(files.map((f) => workspaceOf(spaces, f)).filter(Boolean))];
   const plan = [];
+  // The gate's repo-hygiene check on the pushed commits: a users.noreply.github.com
+  // author on each, no repo-local identity, no tracked agent files.
+  if (ranges?.length && existsSync(join(root, "scripts/gate/hygiene.mjs"))) {
+    plan.push(step("commit identity and private files", process.execPath, ["scripts/gate/hygiene.mjs", ...ranges]));
+  }
   for (const w of dependents(spaces, touched.map((t) => t.name))) {
     if (w.scripts.test) plan.push(step(`test ${w.name}${touched.includes(w) ? "" : " (depends on a changed package)"}`, "npm", ["test", "--silent"], w.dir));
   }
@@ -123,6 +142,23 @@ export function stagedFiles(root) {
  */
 export function pushedFiles(root, stdin, remote = "origin") {
   const files = new Set();
+  for (const { base, local } of pushes(root, stdin, remote)) {
+    const r = git(root, ["diff", "--name-only", base ?? EMPTY_TREE, local]);
+    if (r.ok && r.out) for (const f of r.out.split("\n")) files.add(f);
+  }
+  return [...files];
+}
+
+/**
+ * The commit ranges a push sends, as `base..local` (or `local` alone when there
+ * is no base, so every commit counts). Read from the same pre-push lines.
+ */
+export function pushedRanges(root, stdin, remote = "origin") {
+  return pushes(root, stdin, remote).map(({ base, local }) => (base ? `${base}..${local}` : local));
+}
+
+function pushes(root, stdin, remote) {
+  const out = [];
   for (const line of stdin.split("\n")) {
     const [, local, , remoteSha] = line.trim().split(/\s+/);
     if (!local || ZERO.test(local)) continue;
@@ -136,8 +172,7 @@ export function pushedFiles(root, stdin, remote = "origin") {
         }
       }
     }
-    const r = git(root, ["diff", "--name-only", base ?? EMPTY_TREE, local]);
-    if (r.ok && r.out) for (const f of r.out.split("\n")) files.add(f);
+    out.push({ base, local });
   }
-  return [...files];
+  return out;
 }

@@ -10,17 +10,21 @@
 # CODING_SH_SMOKE_NPM_DIR / CODING_SH_SMOKE_PY_DIR test already-built tarballs,
 # sdists and wheels (the release workflow passes the exact files it publishes).
 #
-# Needs Node 22.15+, npm, curl and python3 (with venv).
+# Needs Node 22.16+, npm, curl and python3 (with venv).
 set -eu
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 W=$(mktemp -d)
 SERVE_PID=
 cleanup() { [ -n "$SERVE_PID" ] && kill "$SERVE_PID" 2>/dev/null; rm -rf "$W"; }
 trap cleanup EXIT
-export HOME="$W/home" NO_UPDATE_NOTIFIER=1 CODING_SH_NO_UPDATE_CHECK=1 npm_config_update_notifier=false
-mkdir -p "$HOME/.claude" "$W/pack" "$W/app"
+. "$ROOT/scripts/release/smoke-env.sh"
+smoke_isolate_env "$W"
+mkdir -p "$CLAUDE_CONFIG_DIR" "$W/pack" "$W/app"
 step() { printf '\n== %s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+
+# The shapes of secrets that must not ship: the same list the gate's dist scan reads.
+SECRET_ERE=$(node "$ROOT/scripts/release/secret-patterns.mjs")
 
 step "pack"
 if [ -n "${CODING_SH_SMOKE_NPM_DIR:-}" ]; then
@@ -37,7 +41,7 @@ for t in "$W"/pack/*.tgz; do
   bad=$(tar -tzf "$t" | grep -E '(^|/)(test|tests|fixtures?|__tests__|\.env[^/]*|\.npmrc|[^/]*\.pem|[^/]*\.test\.[a-z]+|src/[^/]*\.ts)$' || true)
   [ -z "$bad" ] || fail "$(basename "$t") ships: $bad"
   mkdir -p "$W/x" && tar -xzf "$t" -C "$W/x"
-  if grep -rIlE 'sk-ant-api[0-9A-Za-z_-]{20,}|ghp_[0-9A-Za-z]{36}|github_pat_[0-9A-Za-z_]{40,}|AKIA[0-9A-Z]{16}|npm_[0-9A-Za-z]{36}|BEGIN [A-Z ]*PRIVATE KEY' "$W/x" >/dev/null; then
+  if grep -rIlE "$SECRET_ERE" "$W/x" >/dev/null; then
     fail "$(basename "$t") contains something that looks like a secret"
   fi
   rm -rf "$W/x"
@@ -50,7 +54,17 @@ B="$W/prefix/bin/coding.sh"
 "$B" --version
 "$W/prefix/bin/codingsh" --version >/dev/null
 "$B" init --agent claude-code --dry-run
-[ ! -f "$HOME/.claude/settings.json" ] || fail "init --dry-run wrote settings.json"
+[ ! -f "$CLAUDE_CONFIG_DIR/settings.json" ] || fail "init --dry-run wrote $CLAUDE_CONFIG_DIR/settings.json"
+[ ! -e "$CODING_SH_HOME/bin" ] || fail "init --dry-run wrote $CODING_SH_HOME/bin"
+
+step "coding.sh: the shell hook ships and writes a spool line"
+H="$W/prefix/lib/node_modules/coding.sh/dist/hook.sh"
+[ -f "$H" ] || fail "the tarball has no dist/hook.sh"
+printf '{"session_id":"smoke-hook-sh","hook_event_name":"UserPromptSubmit","prompt":"hi"}' \
+  | /bin/sh "$H" claude-code UserPromptSubmit >"$W/hook.out" || fail "dist/hook.sh exited non-zero"
+[ ! -s "$W/hook.out" ] || fail "dist/hook.sh printed: $(cat "$W/hook.out")"
+grep -rqs smoke-hook-sh "$CODING_SH_HOME/spool" || fail "dist/hook.sh wrote no spool line"
+echo "hook.sh spooled one line"
 
 step "coding.sh ui: start and stop"
 "$B" ui --port 0 --no-open >"$W/ui.out" 2>"$W/ui.err" &
@@ -138,7 +152,16 @@ for f in "$W"/pydist/*; do
     *.tar.gz) list=$(tar -tzf "$f") ;;
   esac
   echo "$list" | grep -Eq '(^|/)tests?/|harness\.ts|__pycache__' && fail "$(basename "$f") ships tests or caches"
+  rm -rf "$W/px" && mkdir -p "$W/px"
+  case "$f" in
+    *.whl) "$W/venv/bin/python" -m zipfile -e "$f" "$W/px" ;;
+    *.tar.gz) tar -xzf "$f" -C "$W/px" ;;
+  esac
+  if grep -rIlE "$SECRET_ERE" "$W/px" >/dev/null; then
+    fail "$(basename "$f") contains something that looks like a secret"
+  fi
 done
+rm -rf "$W/px"
 "$W/venv/bin/pip" install -q --disable-pip-version-check "$W"/pydist/*.whl
 CODING_SH_URL="$SERVE_URL" CODING_SH_SERVICE=smoke-py "$W/venv/bin/python" -I -c '
 import coding_sh

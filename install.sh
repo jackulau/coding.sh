@@ -1,7 +1,7 @@
 #!/bin/sh
 # coding.sh installer:  curl -fsSL https://coding.sh/install | sh
 #
-# 1. Checks for Node >= 22.15.
+# 1. Checks for Node >= 22.16.
 # 2. Installs coding.sh: from npm when the registry has it (npm i -g coding.sh@<version>),
 #    otherwise the tarball attached to the GitHub release. Both are the same bytes.
 # 3. Runs `coding.sh init`: detects your agents, shows one plan (capture hooks +
@@ -17,13 +17,13 @@ REPO="jackulau/coding.sh"
 say() { printf '%s\n' "$*" >&2; }
 die() { say "coding.sh: $*"; exit 1; }
 
-command -v node >/dev/null 2>&1 || die "Node.js 22.15+ is required. Install it from https://nodejs.org and rerun."
+command -v node >/dev/null 2>&1 || die "Node.js 22.16+ is required. Install it from https://nodejs.org and rerun."
 command -v npm  >/dev/null 2>&1 || die "npm is required (it ships with Node.js)."
 
 node -e '
 const [maj, min] = process.versions.node.split(".").map(Number);
-process.exit(maj > 22 || (maj === 22 && min >= 15) ? 0 : 1);
-' || die "Node $(node -v) found; coding.sh needs 22.15 or newer."
+process.exit(maj > 22 || (maj === 22 && min >= 16) ? 0 : 1);
+' || die "Node $(node -v) found; coding.sh needs 22.16 or newer."
 
 SOURCE="${CODING_SH_SOURCE:-auto}"
 case "$SOURCE" in auto|npm|github) ;; *) die "CODING_SH_SOURCE must be npm or github, got $SOURCE." ;; esac
