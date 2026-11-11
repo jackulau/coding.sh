@@ -1,10 +1,15 @@
 # Troubleshooting
 
-For a coding agent, start with `coding.sh doctor`. For your own agent, see
-[Your agent's traces don't show up](#your-agents-traces-dont-show-up). If a command failed, find its `reason` in the [error table](#errors-by-reason).
-Site version: [coding.sh/docs/troubleshooting](https://coding.sh/docs/troubleshooting).
+Fixes for sessions that don't show up, traces that don't arrive, incomplete data and slow upgrades,
+then every error `reason` coding.sh prints, with its fix.
 
-## Run doctor
+Find your symptom below. If a command failed, look up its `reason` in
+[Errors by reason](#errors-by-reason).
+
+## Sessions don't show up
+
+Start with doctor. It checks each agent's hooks, the spool and the store, and prints the fix under
+any row that fails.
 
 ```sh
 coding.sh doctor          # one line per check
@@ -23,71 +28,66 @@ coding.sh doctor --json   # the same as one JSON document
     coding.sh init --agent claude-code
 ```
 
-A `!` row is a warning. An agent captured by hooks gets `✓` only when a hook that runs this home's
-`hook.mjs` is in a config doctor read, that file exists and nothing blocks it.
+A `!` row is a warning. Run the command under it. If doctor is all `✓` and sessions still don't
+show up, work down this list:
 
-Each blocker is printed under the row, with the file and line to change when there is one. When an
-agent row is a warning, the last line is `N agents not capturing` in place of `ok`.
+1. **Did the agent start before `init`?** Agents read their hook config at startup. Restart it.
+2. **Is capture switched off?** `CODING_SH_DISABLE=1` in the agent's environment makes the hook
+   write nothing.
+3. **Is the repo excluded?** Run `coding.sh config get capture.exclude`. Sessions whose working
+   directory matches are dropped at ingest.
+4. **Did ingest fail?** Run `coding.sh ingest` and read its output. Hook failures go to
+   `~/.coding.sh/spool/errors.log`; the hook always exits 0 so your agent carries on.
+5. **Are you reading another store?** With `--store` or `CODING_SH_STORE_URL` set, commands skip
+   the automatic ingest of your local spool. Run `coding.sh ingest --store <url>` to push it, or
+   unset the variable.
+6. **Is it older than `init`?** `init` imports past transcripts unless you passed `--no-import`.
+   Run `coding.sh ingest --backfill --since 30d`. Running it again adds nothing new.
 
-doctor exits 1 only when the spool or the store fails, and `ok` in `doctor --json` says the same,
-so a script that checks either keeps working.
-
-The warnings are in the JSON as `warnings`: each has a `check` (`agent`, `agents`, `hook`, `mcp`, `sessions` or `proxy`), a `message`, the `agent`
-and its `blockers` when it is about one, and the command that fixes it as `next` when one does.
-
-| Row says | Means | Fix |
-|---|---|---|
-| `not hooked` | The agent is installed but has no coding.sh hook in its user config or in a project doctor checked, and no events in the last 5 minutes. | `coding.sh init --agent <id>` |
-| `hooked in <file> (project)` | The hook is in a project's config (`init --scope project`), not the user config. doctor looks in the current directory, its parents and the directories the agent's recent sessions ran in. The agent is captured in that project only. | Nothing, or `coding.sh init --agent <id>` to capture every project. |
-| `hooks in <file> run <path>, not this home's hook` | The agent's hooks in that settings file run another coding.sh home's `hook.mjs`, usually because `HOME` or `CODING_SH_HOME` points somewhere else than when the hooks were written. They capture into that home, not this one. `doctor --json` lists each file it read under `hookFiles`, with the hook it runs and `current: false`. | `coding.sh init --agent <id>` hooks this home too. |
-| `hooked …, but the hook it runs is missing` | The hooks run this home's `hook.mjs`, and that file is gone. The `Hook` row says the same. | `coding.sh init` |
-| `events arriving, hook not in user config` | Events came in during the last 5 minutes, but doctor found no hook in the user config or a project it checked. Still a warning: the events can come from an import, the proxy or a project doctor did not look in. | `coding.sh init --agent <id>`, or run doctor from the project to see its hook. |
-| `hooked but not firing` | The hook is in place but the agent will not run it. The note under the row says why (see below). | Follow the note. |
-| `no events yet` | Nothing captured from this agent. Normal right after `init`. | Use the agent, then `coding.sh sessions`. |
-| `reads its store` / `no store yet` | Host apps such as T3 Code are read from their own database, not hooks. | Nothing to do. |
-| `Hook missing at …/bin/hook.mjs` | `init` has not run, or the file was deleted. | `coding.sh init` |
-| `Hook …/bin/hook.mjs is stale` | The hook bin is from another coding.sh version, or `bin/cli-path` names another install. The agent configs are fine. After an upgrade in place (`npm i -g`), the `coding.sh ingest` the hook starts at the next session end refreshes the bin by itself. | `coding.sh update --refresh-bin` |
-| `Spool … not writable` | coding.sh can't write to `~/.coding.sh/spool` (or `$CODING_SH_HOME/spool`). | Fix the directory's owner or permissions. |
-| `Store can't open: …` | The index could not be opened. The message has the cause. | See `store_unavailable` below. |
-| `Ingest stopped 4h ago: …` | The `coding.sh ingest` the hook starts at session end has failed since then, so nothing new is indexed. A store it can't open shows at the first failure, any other error once the next ingest fails too. Captures are not lost: the hook keeps writing them to the spool. `coding.sh status` and the status line say the same, and `status --json` and `doctor --json` carry it as `ingestStopped`. The row goes away with the next ingest that works. | The command the row names, usually `coding.sh update` or `coding.sh upgrade-store`. See [A store another coding.sh can't open](#a-store-another-codingsh-cant-open). |
-| `Receiver port 4318 in use` | Something listens on the OTLP port, usually `coding.sh collector`. | Nothing, or `doctor --port <n>` to check another port. |
-| `Agents none detected` | No supported agent was found on PATH or in its usual config dir. | Capture any command with `coding.sh run -- <cmd>`. |
-
-Notes that mean a hook will not fire. doctor prints them under the agent's row whether or not the
-hook is installed yet:
+Some agents need one step of their own before a hook fires. doctor prints these under the agent's
+row:
 
 - **Codex: `coding.sh hook(s) not trusted yet`.** Codex runs a new or changed hook only after you
   approve it. Start `codex`, run `/hooks` and approve the coding.sh entries. coding.sh never writes
   trust state for you.
-- **Codex: `hooks are disabled in config.toml ([features] hooks = false)`.** Remove that line or set
-  it to `true` in `~/.codex/config.toml`. The note ends with the file and the line number.
+- **Codex: `hooks are disabled in config.toml ([features] hooks = false)`.** Remove that line or
+  set it to `true` in `~/.codex/config.toml`. The note ends with the file and line number.
 - **Cursor: `cursor-agent <version> predates CLI hooks`.** Run `cursor-agent update`; hooks need
   2026.01 or newer.
 - **OpenCode: `installed plugin targets the wrong OpenCode API`.** Run `coding.sh init` again after
-  upgrading OpenCode.
+  you upgrade OpenCode.
 
-## Sessions don't show up
+:::more Every doctor row
+An agent captured by hooks gets `✓` only when a hook that runs this home's `hook.mjs` is in a
+config doctor read, that file exists and nothing blocks it. When an agent row is a warning, the last
+line is `N agents not capturing` in place of `ok`.
 
-Work down this list:
+doctor exits 1 only when the spool or the store fails, and `ok` in `doctor --json` says the same.
+The warnings are in the JSON as `warnings`, each with a `check`, a `message`, the `agent` and its
+`blockers` when it is about one, and the fix as `next`.
 
-1. **Is the hook firing?** `coding.sh doctor`, then fix what it reports.
-2. **Did the agent start before `init`?** Agents read their hook config at startup. Restart it.
-3. **Is capture switched off?** `CODING_SH_DISABLE=1` in the agent's environment makes the hook
-   write nothing.
-4. **Is the repo excluded?** `coding.sh config get capture.exclude`. Sessions whose working directory
-   matches are dropped at ingest.
-5. **Did ingest fail?** Run `coding.sh ingest` and read its output. Hook failures are logged to
-   `~/.coding.sh/spool/errors.log`; the hook itself always exits 0 so the agent carries on.
-6. **Are you reading another store?** With `--store` or `CODING_SH_STORE_URL` set, commands skip the
-   automatic ingest of your local spool. Run `coding.sh ingest --store <url>` to push it, or unset
-   the variable.
-7. **Is it older than `init`?** `init` imports past transcripts unless you passed `--no-import`.
-   Run `coding.sh ingest --backfill` (add `--since 30d` for the last 30 days). Re-running it adds
-   nothing new.
+| Row says | Means | Fix |
+|---|---|---|
+| `not hooked` | The agent is installed but has no coding.sh hook in its user config or a project doctor checked, and no events in the last 5 minutes. | `coding.sh init --agent <id>` |
+| `hooked in <file> (project)` | The hook is in a project's config (`init --scope project`). doctor looks in the current directory, its parents and the directories of the agent's recent sessions. The agent is captured in that project only. | Nothing, or `coding.sh init --agent <id>` to capture every project. |
+| `hooks in <file> run <path>, not this home's hook` | The hooks run another coding.sh home's `hook.mjs`, usually because `HOME` or `CODING_SH_HOME` changed since they were written. They capture into that home. `doctor --json` lists each file under `hookFiles`. | `coding.sh init --agent <id>` hooks this home too. |
+| `hooked …, but the hook it runs is missing` | The hooks run this home's `hook.mjs`, and that file is gone. | `coding.sh init` |
+| `events arriving, hook not in user config` | Events came in during the last 5 minutes, but doctor found no hook. They can come from an import, the proxy or a project doctor did not look in. | `coding.sh init --agent <id>`, or run doctor from the project. |
+| `hooked but not firing` | The hook is in place but the agent will not run it. The note under the row says why. | Follow the note. |
+| `no events yet` | Nothing captured from this agent. Normal right after `init`. | Use the agent, then `coding.sh sessions`. |
+| `reads its store` / `no store yet` | Host apps such as T3 Code are read from their own database, not hooks. | Nothing to do. |
+| `Hook missing at …/bin/hook.mjs` | `init` has not run, or the file was deleted. | `coding.sh init` |
+| `Hook …/bin/hook.mjs is stale` | The hook bin is from another coding.sh version, or `bin/cli-path` names another install. After `npm i -g`, the next session end refreshes it by itself. | `coding.sh update --refresh-bin` |
+| `Spool … not writable` | coding.sh can't write to `~/.coding.sh/spool` (or `$CODING_SH_HOME/spool`). | Fix the directory's owner or permissions. |
+| `Store can't open: …` | The index could not be opened. The message has the cause. | See `store_unavailable` below. |
+| `Ingest stopped 4h ago: …` | The ingest the hook starts at session end has failed since then. Captures are not lost: the hook keeps writing them to the spool. `status --json` and `doctor --json` carry it as `ingestStopped`. | The command the row names, usually `coding.sh update` or `coding.sh upgrade-store`. See [Store version errors](#store-version-errors). |
+| `Receiver port 4318 in use` | Something listens on the OTLP port, usually `coding.sh collector`. | Nothing, or `doctor --port <n>` to check another port. |
+| `Agents none detected` | No supported agent was found on PATH or in its usual config dir. | Capture any command with `coding.sh run -- <cmd>`. |
+:::
 
 ## Your agent's traces don't show up
 
-For an agent sending over OpenTelemetry or the SDK:
+For an agent or app sending over OpenTelemetry or the SDK:
 
 1. **Is a receiver running?** OpenTelemetry goes to `coding.sh collector`; the SDKs need
    `coding.sh serve`, because the collector only takes OTLP. `serve` takes both. Both default to
@@ -98,27 +98,73 @@ For an agent sending over OpenTelemetry or the SDK:
    `await flush()` (TypeScript), `coding_sh.flush()` (Python), or the OTel provider's
    `shutdown()` before a short script exits.
 4. **Right protocol?** The Python OTLP HTTP exporter speaks protobuf only: set
-   `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`. `OTEL_EXPORTER_OTLP_ENDPOINT` is the base URL;
-   a signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` must include `/v1/traces`.
+   `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`. `OTEL_EXPORTER_OTLP_ENDPOINT` is the base URL; a
+   signal-specific `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` must include `/v1/traces`.
 5. **Are you looking under the right name?** The agent id comes from `OTEL_SERVICE_NAME`
-   (kebab-cased) or `CODING_SH_SERVICE`. `coding.sh sessions` lists every agent.
+   (kebab-cased) or `CODING_SH_SERVICE`. `coding.sh sessions --facets agent` lists every agent.
 
 ## Data looks incomplete
 
 - **No model latency or tokens.** Hooks see tool calls, not model calls. Most adapters read model
-  calls from the transcript after the session ends. For Claude Code latency, run `coding.sh collector` and
-  turn on its [OpenTelemetry export](https://coding.sh/docs/otel#claude-code).
-- **No cost.** Most coding-agent transcripts carry tokens, not dollars. See
-  [Find your most expensive sessions](how-to/expensive-sessions.md#where-cost-comes-from).
+  calls from the transcript after the session ends. For Claude Code latency, run
+  `coding.sh collector` and turn on its [OpenTelemetry export](https://coding.sh/docs/otel#claude-code).
+- **No cost.** Most transcripts carry tokens, not dollars, and a model with no price keeps no cost.
+  See [Where cost comes from](https://coding.sh/docs/cost#where-cost-comes-from).
 - **Prompts and tool output are missing.** `capture.mode` is `metadata`, or a repo's
   `.coding.sh/config.toml` set it. Check with `coding.sh config get capture.mode`.
 - **Text shows `[redacted:<kind>]`.** A redactor matched it. Redaction runs before anything is
-  stored. See [Configuration](reference/config.md#capture).
+  stored. See [Configuration](https://coding.sh/docs/config#capture).
 - **Cursor headless runs have no prompt or reply.** `cursor-agent -p` does not fire the prompt and
   response hooks. This is a Cursor limitation.
-- **`eval new` fails with `has no repo state`.** The session ran outside a git repository, so
-  there is nothing to replay. Record it with `coding.sh run --` inside the repository. See
-  [Turn a session into an eval](how-to/session-to-eval.md).
+- **`eval new` fails with `has no repo state`.** The session ran outside a git repository, so there
+  is nothing to replay. Record it with `coding.sh run --` inside the repository. See
+  [Turn failed runs into evals](https://coding.sh/docs/how-to/session-to-eval).
+
+If sessions look wrong in other ways, check what the adapters read with
+[`doctor --conformance`](#check-what-the-adapters-read).
+
+## Old sessions show doubled counts
+
+Sessions captured before an upgrade keep the rows the older coding.sh parsed. When an agent's
+parsing changes, coding.sh parses that agent's stored sessions again in the background, from their
+transcripts and the hook lines still in the spool. It starts at the next session end, read or
+viewer start.
+
+Reads and new captures keep working while it runs, and each session is swapped in one step. A run
+that is cut short picks up where it stopped.
+
+- **Do it now.** `coding.sh ingest --rebuild` parses every session again (`--agent pi` for one
+  agent). It prints how many it parsed, kept and removed.
+- **Some sessions were kept.** A session whose transcript and spool lines are both gone keeps its
+  rows, minus duplicates. `coding.sh ingest --rebuild --json` lists each one with the reason.
+- **Hook lines without a transcript.** A Claude Code session is also kept when its hook lines
+  remain and its transcript is gone (an eval run's temporary home).
+- **Some sessions were removed.** A session stored from a copy of another session's transcript (a
+  Claude Code subagent copied into a fork) is deleted, so its cost counts once. A copy with hook,
+  OTel or SDK rows is kept.
+- **Nothing happens.** It needs the local SQLite index (or a store plugin that supports it), and
+  `CODING_SH_NO_AUTO_INGEST=1` turns off the background run. `--rebuild` still works.
+
+## The first command after an upgrade is slow
+
+When a new coding.sh changes the index layout, the first command that opens the index upgrades it,
+once. On a store of 100,000 events or more it says so on stderr, then prints progress at most once
+a second:
+
+```text
+coding.sh: the index holds 756,302 events; upgrading it from schema v8 to v11. This runs once.
+coding.sh: upgrading the index: search index 300,000 of 756,302 events (39%)
+coding.sh: index upgraded in 11.5s. Run `coding.sh gc --compact` to give back the space the old layout used.
+```
+
+- **Another command waits.** A command that opens the index while another process upgrades it
+  waits and prints that process's progress (`waiting for another coding.sh (pid …)`).
+- **Stopped halfway.** The upgrade runs in one transaction. If it is stopped, the index stays as it
+  was and the next command starts it again.
+- **The index grew.** Run `coding.sh gc --compact` once the upgrade has finished.
+
+If the command stops with `store_owned`, `store_version` or `store_newer` instead, see
+[Store version errors](#store-version-errors).
 
 ## Check what the adapters read
 
@@ -142,12 +188,12 @@ coding.sh doctor --conformance --json               # one JSON document with eve
 ```
 
 It only reads: nothing is stored, and reports hold ids, counts and short details, never prompt,
-reply or tool text. Agents with no transcript changed since `--since` are left out unless you name
-them with `--agent`.
+reply or tool text. Each agent stops after `--max-events` events (200,000 by default) or 60
+seconds. doctor exits 1 when any agent has a violation. Please
+[open an issue](https://github.com/jackulau/coding.sh/issues) with the `--json` output for that
+agent.
 
-Each agent stops after `--max-events` events (200,000 by default) or 60 seconds. Sessions still
-being read then skip the checks that need a whole session.
-
+:::more Every conformance rule
 | Rule | What it means |
 |---|---|
 | `duplicate-id` | Two events share an id but differ in content, so the store keeps only one. |
@@ -168,96 +214,10 @@ being read then skip the checks that need a whole session.
 | `backfill-threw` | The backfill threw instead of skipping what it could not read. |
 
 A tool start with no end is counted, not reported: the call was cancelled or is still running.
-The F numbers name the bugs in `docs/research/round-1-self.md` each rule was written to catch.
-doctor exits 1 when any agent has a violation. Please report one as an issue with the `--json`
-output for that agent.
-
-## Old sessions show doubled counts
-
-Sessions captured before an upgrade keep the rows the older coding.sh parsed. When an adapter's
-parsing changes, coding.sh re-parses that agent's stored sessions in the background, from their
-transcripts and the hook lines still in the spool. It starts on the next session end, read or
-viewer start.
-
-Reads and new captures keep working while it runs, and each session is swapped in one step. A
-re-parse that is cut short picks up where it stopped. An upgrade that changes stats or flags works
-them out again the same way, from the rows already stored.
-
-- **Do it now.** `coding.sh ingest --rebuild` re-parses every session (`--agent pi` for one agent).
-  It prints how many it re-parsed, kept and removed.
-- **Some sessions were kept.** A session whose transcript and spool lines are both gone keeps its
-  rows, minus duplicates. `coding.sh ingest --rebuild --json` lists each one with the reason.
-- **Hook lines without a transcript.** A Claude Code session is also kept when its hook lines remain
-  and its transcript is gone (an eval run's temporary home), or the turn is now over 8 MB from the
-  transcript's end.
-- **Some sessions were removed.** A session stored from a copy of another session's transcript (a
-  Claude Code subagent copied into a fork) is deleted, so its cost counts once. A copy with hook,
-  OTel or SDK rows is kept.
-- **Nothing happens.** Re-parse needs the local SQLite index (or a store plugin that supports it),
-  and `CODING_SH_NO_AUTO_INGEST=1` turns off the background run. `--rebuild` still works.
-
-## A store another coding.sh can't open
-
-Index migrations are one-way. A coding.sh that migrates `~/.coding.sh/index.db` to a newer schema
-leaves every older install that shares it unable to open it (`uses index schema v9, but this
-coding.sh only knows up to v8`), and ingest stops. Three checks keep that from happening by
-accident, and every migration keeps a way back:
-
-- **The store has an owner**: the coding.sh that `~/.coding.sh/bin/cli-path` names. Another install
-  that would migrate it stops with `store_owned` and changes nothing. Run `coding.sh upgrade-store`
-  from that install to migrate it and point the hooks there.
-- **A source checkout doesn't open the default home.** It stops with `source_checkout` unless
-  `CODING_SH_HOME`, `--store` or `CODING_SH_STORE_URL` names a store. Use
-  `CODING_SH_HOME=$(mktemp -d)`, or `CODING_SH_DEV_REAL_STORE=1` for the real one.
-- **Only a newer release migrates by itself.** From 0.1.6 the store records the newest version
-  that opened it. A build with a newer schema but not a newer version (a source build, a stale
-  `dist/`) stops with `store_version`.
-
-An upgrade in place (`coding.sh update`, `npm i -g coding.sh`) migrates as before, and an `npm link`
-of a checkout counts as an install. `coding.sh upgrade-store` migrates on request. A store written
-before 0.1.6 has no version record: an install migrates it, and a source checkout stops the same
-way.
-
-**The way back.** Before a migration changes a store that holds data, coding.sh copies the index to
-`index.db.v<N>.bak` next to it (`N` is the schema it had).
-
-- **Space.** On APFS, Btrfs and XFS the copy is a clone that takes no space until the files differ.
-  Elsewhere it is a full copy, and the migration is refused, naming the space it needs, when that
-  would not fit.
-- **One copy is kept.** A later migration removes the older one. Delete the file once the new
-  version works. `coding.sh purge` deletes it too, since a copy holds every event as it was.
-- **Restore.** `coding.sh upgrade-store --restore` puts the copy back, from any coding.sh that
-  knows the copy's schema. The index it replaces is kept as `index.db.v<N>.undone`, and later
-  captures are ingested again from the spool.
-- **After a restore** the build that migrated the store does not migrate it again by itself, and
-  `bin/cli-path` points back at the install the upgrade took the hooks from.
-
-**A store already migrated past your install.** The error says nothing is lost: the hook keeps
-writing captures to the spool, and the message counts the files waiting there and names the version
-that wrote the store.
-
-Update that install (`coding.sh update`), or run `coding.sh upgrade-store --restore` when the
-message offers it. Meanwhile `coding.sh status`, the status line and `coding.sh doctor` print
-`ingest stopped 4h ago` with the command that fixes it.
-
-## The first command after an upgrade is slow
-
-When a new coding.sh changes the index layout, the first command that opens the index upgrades
-it, once. On a store of 100,000 events or more it says so on stderr right away, then prints
-what it is doing at most once a second:
-
-```text
-coding.sh: the index holds 756,302 events; upgrading it from schema v8 to v11. This runs once.
-coding.sh: upgrading the index: search index 300,000 of 756,302 events (39%)
-coding.sh: index upgraded in 11.5s. Run `coding.sh gc --compact` to give back the space the old layout used.
-```
-
-- **Another command waits.** A command that opens the index while another process upgrades it
-  waits for that process and prints its progress (`waiting for another coding.sh (pid …)`).
-- **Stopped halfway.** The upgrade runs in one transaction. If it is stopped, the index stays as
-  it was and the next command starts it again.
-- **The index grew.** Run `coding.sh gc --compact` once the upgrade has finished. It empties
-  what old rows still hold and gives the space back.
+Agents with no transcript changed since `--since` are left out unless you name them with
+`--agent`. Sessions still being read when the limit hits skip the checks that need a whole
+session.
+:::
 
 ## Errors by reason
 
@@ -268,15 +228,9 @@ stderr:
 {"status":"error","reason":"not_found","message":"Can't find session \"nope\"","next":["List sessions:","coding.sh sessions"]}
 ```
 
-When the next step deletes or overwrites data, cannot be undone, or spends money (`--yes`, `--force`,
-`purge`, a rollback), the error also says the user must approve it first, and the JSON has
-`askUser: true`:
-
-```json
-{"status":"error","reason":"confirmation_required","message":"Run 8 agent sessions (1 arm x 8 prompts x 1) needs confirmation from the user","askUser":true,"next":["coding.sh eval trigger ./skill --yes"]}
-```
-
-An agent that reads `askUser: true` asks the user instead of running `next` itself.
+When the next step deletes or overwrites data, cannot be undone, or spends money (`--yes`,
+`--force`, `purge`, a rollback), the message says it needs your approval, and the JSON has
+`askUser: true`. An AI agent that hits such an error asks you before it runs `next`.
 
 Exit codes: `1` error, `2` usage error, `130` canceled. Add `--debug` for a stack trace.
 
@@ -296,11 +250,11 @@ The command line was wrong. Nothing ran.
 | `missing_argument` | `Missing --out <DIR>` | Add the argument or option named. |
 | `invalid_argument` | (bench) a bad `--date`, `--seed` or contender | Fix the value the message names. |
 | `invalid_usage` | Any other usage error. | Read the message. |
-| `confirmation_required` | `Set up coding.sh for 1 agent (2 config files, backed up first) needs confirmation from the user` | Not a terminal, so it can't ask. Re-run with `--yes`, or `--dry-run` first to see the changes. An agent asks the user first (`askUser: true`). |
+| `confirmation_required` | `Set up coding.sh for 1 agent (2 config files, backed up first) needs confirmation from the user` | Not a terminal, so it can't ask. Re-run with `--yes`, or `--dry-run` first to see the changes. An AI agent asks you first (`askUser: true`). |
 | `cost_confirmation_required` | `Estimated cost $7.20 exceeds confirmAboveUsd $5.00` | With `--json` this is `{"status":"action_required",…}`. Re-run with `--yes`, or raise `[toolevals] confirmAboveUsd`. |
 | `insecure_bind` | `refusing to listen on 0.0.0.0 without auth: …` | Only some credentials are set. Set both `CODING_SH_INGEST_KEYS` and `CODING_SH_READ_KEYS` (make keys with `coding.sh serve keygen`), unset both to use the first-start keys, or pass `--insecure` on a trusted network. |
 | `unknown_agent` | `Unknown agent "claude"` | Use an agent id from [Coding agents](https://coding.sh/docs/agents). |
-| `unknown_key` | `Can't set "capture.mod". Settable keys: …`, or in `--where`: `unknown key "modle" at character 13` | Use a key from [Configuration](reference/config.md), or a `--where` key from [Query and export](reference/query.md#filter-with---where). To search for the word itself, quote it. |
+| `unknown_key` | `Can't set "capture.mod". Settable keys: …`, or in `--where`: `unknown key "modle" at character 13` | Use a key from [Configuration](https://coding.sh/docs/config), or a `--where` key from [Query language](https://coding.sh/docs/query#filter-with---where). To search for the word itself, quote it. |
 | `bad_value` | `--where: cost: must be a USD amount like 0.5, got "abc" at character 6` | Use a value the key takes; the message gives one. Durations need a unit (`duration>10m`). |
 | `unterminated_quote`, `unbalanced_parens` | `--where: missing ')' at character 23` | Close the quote or parenthesis the caret points at. |
 | `dangling_or`, `dangling_not`, `empty_group` | `--where: OR needs a clause on each side` | Put a clause after `OR` or `-`, or inside `( )`. |
@@ -327,8 +281,8 @@ The command ran and something failed.
 | Reason | Example message | Fix |
 |---|---|---|
 | `store_unavailable` | `Couldn't open the coding.sh store: no index store for "foo://". Install the npm package "coding.sh-store-foo" …` | Check `[store]` in the config (`coding.sh config path`) and `CODING_SH_STORE_URL`. For `postgres://`, install `coding.sh-store-postgres` and check the database is reachable (`connect ECONNREFUSED` means it is not). |
-| `store_owned` | `~/.coding.sh/index.db is at index schema v8, and this coding.sh 0.1.5 would migrate it to v9. Your hooks run the coding.sh 0.1.4 at …/dist/cli.mjs, which may not open v9.` | Another install owns the store. Ask the user, then run `coding.sh upgrade-store` from the install the hooks should run, or use the one the message names. See [A store another coding.sh can't open](#a-store-another-codingsh-cant-open). |
-| `store_version` | `~/.coding.sh/index.db is at index schema v10. It was last written by coding.sh 0.1.6, and this coding.sh 0.1.6 is not a newer release, so it would migrate it to v11 only when asked.` | This build knows a newer schema than the release that wrote the store. Ask the user, then run `coding.sh upgrade-store` (it keeps a copy of the index; `--restore` puts it back), or use the release. |
+| `store_owned` | `~/.coding.sh/index.db is at index schema v8, and this coding.sh 0.1.5 would migrate it to v9. Your hooks run the coding.sh 0.1.4 at …/dist/cli.mjs, which may not open v9.` | Another install owns the store. Run `coding.sh upgrade-store` from the install your hooks should run, or use the one the message names. See [Store version errors](#store-version-errors). |
+| `store_version` | `~/.coding.sh/index.db is at index schema v10. It was last written by coding.sh 0.1.6, and this coding.sh 0.1.6 is not a newer release, so it would migrate it to v11 only when asked.` | This build knows a newer schema than the release that wrote the store. Run `coding.sh upgrade-store` (it keeps a copy of the index; `--restore` puts it back), or use the release. See [Store version errors](#store-version-errors). |
 | `store_newer` | `~/.coding.sh/index.db uses index schema v12, written by coding.sh 0.1.7, but this coding.sh 0.1.6 only knows up to v11. Your captures are safe: 12 capture files wait in the spool (…) and are indexed once a coding.sh that knows v12 runs.` | A newer coding.sh migrated the store. Update this one: `coding.sh update`. To go back instead, `coding.sh upgrade-store --restore` when the message offers it. `coding.sh status` still prints the home, the spool and `ingest stopped` before this error. |
 | `no_backup` | `No index from before a migration is kept next to ~/.coding.sh/index.db: nothing to restore` | `upgrade-store --restore` found no `index.db.v<N>.bak` this coding.sh can open: none was kept, or a `coding.sh purge` deleted it. Update instead: `coding.sh update`. |
 | `source_checkout` | `coding.sh is running from a source checkout (…), so it won't open your real store in ~/.coding.sh: …` | Set `CODING_SH_HOME` to a temp dir, or `CODING_SH_DEV_REAL_STORE=1` to use the real store. |
@@ -356,7 +310,7 @@ The command ran and something failed.
 | `clickhouse_unreachable` | `Can't import from ClickHouse: can't reach ClickHouse at http://127.0.0.1:8123: ECONNREFUSED` (collector import) | Check the URL and port (8123, or 8443 with TLS) and that the server is up: `curl http://127.0.0.1:8123/ping`. `The import stopped after 5000 spans (455 sessions stored): …` means the connection dropped part-way and three more tries failed: those spans and their sessions are stored, so run the command it prints to read the rest. |
 | `clickhouse_unauthorized` | `ClickHouse refused the credentials: … Authentication failed …` (collector import) | Pass the user and password in the URL or as `CLICKHOUSE_USER` and `CLICKHOUSE_PASSWORD`. |
 | `clickhouse_error` | `ClickHouse error: …` (collector import) | Usually a bad `--where`. Check the condition in your own client, or run with `--dry-run` first. A missing table is `not_found`: name it with `--table db.table`. `The import stopped after … spans (… sessions stored): …` is ClickHouse failing on a later page (a memory or time limit): what was read is stored, and the command it prints reads the rest. |
-| `sql_error` | `SQLite: no such column: foo` (sql) | List the tables and columns: `coding.sh sql "select name, sql from sqlite_schema"`. See [Query and export](reference/query.md). |
+| `sql_error` | `SQLite: no such column: foo` (sql) | List the tables and columns: `coding.sh sql "select name, sql from sqlite_schema"`. See [Query language](https://coding.sh/docs/query#tables). |
 | `judge_error` | `The pairwise judge failed on every case: …` | Check the judge's `provider`, `model`, `baseURL` and API key variable, then re-run `exp compare --pairwise`. |
 | `model_error` | ``Every model call failed (6 of 6 trials): claude-code: `claude -p` failed: …`` (exp ab) | Every replayed turn failed, so there is nothing to compare. Fix what the message names (the key, the login, the model name or the base URL), then run it again. When only some trials fail, exp ab warns and counts them as not passing. |
 | `init_failed` | `no failed or flagged sessions in /work/demo in the last 14 days …` (eval init), a draft model that returned no usable JSON, or `evals/pdf has files eval init did not write, or that changed since: …` (eval init --force) | List flagged sessions with `coding.sh sessions --where is:flagged`, or name sessions with `--session <id>`. For a draft, check the provider and its API key. For --force, move the listed files out first, or pass `--force-all` to delete them. |
@@ -372,7 +326,7 @@ The command ran and something failed.
 | `remote_unreachable` | `Can't reach https://obs.example.com: …. Nothing was changed` | Check the URL and that the server is up: `curl -s <url>/healthz`. |
 | `remote_not_serve` | `https://obs.example.com/v1/ingest answered 404: that is not a coding.sh serve that takes ingest` | The URL points somewhere else, or at a `serve --role viewer` replica. Use the server's base URL (the one that answers `/readyz`), with the ingest role. |
 | `remote_error` | `https://obs.example.com/v1/ingest answered 503. Nothing was changed` | The server is up but not ready, often while it waits for its database. Check `curl -s <url>/readyz` and try again. |
-| `statusline_exists` | `Claude Code already has a status line: ccusage statusline` (statusline install) | Keep it, or replace it with `coding.sh statusline install --force` (uninstall restores the old one). |
+| `statusline_exists` | `Claude Code already has a status line: ~/bin/statusline.sh` (statusline install) | Keep it, or replace it with `coding.sh statusline install --force` (uninstall restores the old one). |
 | `draft_failed` | `Couldn't draft a task from …: session … has no repo state; cannot build a task` | Record the session inside a git repository, ideally with `coding.sh run --`. |
 | `no_tasks` | `No validated tasks to run` | `coding.sh eval new` then `eval validate`, or add tool-eval tasks. |
 | `unsupported_agent` | `Agent aider has no headless driver, so bundle … can't be run`, `--run forks Claude Code sessions; this one is codex` | Use an agent that can run headless. For `replay --fork`, leave out `--run`: it sends the one call again for any proxied agent. |
@@ -392,7 +346,7 @@ The command ran and something failed.
 | `nothing_to_check` | `Step 4's recorded reply was text, and the fork gave no single tool call to expect instead` (replay --fork --save-case) | Fork with a few trials first (`-k 3`), so the case has a tool call to expect. |
 | `insufficient_data` | `Not enough to distill from: the corpus has 8 episodes; distilling needs at least 20` (refine distill) | Run more tasks or look further back (`--since 90d --repo all`), or lower the bar with `--min-episodes` and `--min-failures`. |
 | `invalid_file` | `Couldn't import cases.csv: …`, `2 problems in labels labels.jsonl` (refine score) | Fix the file. Datasets accept JSONL, JSON and CSV. refine score prints each problem with its line number. |
-| `invalid_config` | `Can't read config: …`, `Invalid serve configuration: …` (exit 2) | Fix the file or variable named in the message. See [Configuration](reference/config.md). |
+| `invalid_config` | `Can't read config: …`, `Invalid serve configuration: …` (exit 2) | Fix the file or variable named in the message. See [Configuration](https://coding.sh/docs/config). |
 | `no_config` | `No coding.sh.toml found in … or its parents` | `coding.sh toolevals init --cli <bin>` |
 | `surface_failed` | `Couldn't read the gh surface: …` | The CLI or MCP server could not be started or listed. Run it by hand to see why. |
 | `invalid_definition` | `bench/answers.toml: …` | Fix the benchmark file. |
@@ -407,7 +361,7 @@ The command ran and something failed.
 | `files_changed` | `AGENTS.md changed since r_… was tested`, `… changed since r_… was applied` (refine apply, refine rollback) | Run `refine test r_…` again on the current files, or pass `--force`. A forced rollback loses your later edits to the file. |
 | `applied_over` | `r_… was applied over r_… on the same file; roll it back first` (refine rollback) | Roll back the newest apply first. |
 | `already_applied` | `r_… is already in the working tree` (refine apply, exit 0) | Nothing to do. |
-| `no_recordings` | `exp_… has no recorded model calls to replay` (exp run --replay) | Record a run first with `coding.sh exp run spec.json --record`, then replay that experiment. See [how-to/replay-llm-calls.md](how-to/replay-llm-calls.md). |
+| `no_recordings` | `exp_… has no recorded model calls to replay` (exp run --replay) | Record a run first with `coding.sh exp run spec.json --record`, then replay that experiment. See [Replay LLM calls](https://coding.sh/docs/how-to/replay-llm-calls). |
 | `not_replayable` | `None of these calls can be replayed` (exp replay) | Replay needs calls logged by `coding.sh proxy` with `capture.mode = "full"`: in `metadata` mode the request is not stored. |
 | `missing_script` | `Run … has no captured script` | The workflow run can't be replayed. |
 | `score_failed` | `Couldn't score wf_… on case-3: …` (workflows score) | The case's scorer threw. Check the case's truth file and, for a judge, its provider and API key. |
@@ -424,6 +378,52 @@ The command ran and something failed.
 | Reason | Means |
 |---|---|
 | `canceled` | You answered no, or pressed Ctrl-C. `Canceled. Nothing was changed`. |
+
+### Store version errors
+
+Index migrations are one-way. A coding.sh that migrates `~/.coding.sh/index.db` to a newer schema
+leaves every older install that shares it unable to open it, and ingest stops. So coding.sh
+migrates only when it is sure, and keeps a copy to go back to.
+
+| You see | Do this |
+|---|---|
+| `store_owned` | Run `coding.sh upgrade-store` from the install your hooks should run. It migrates the store and points the hooks there. Or use the install the message names. |
+| `store_version` | You are running a source build or a stale `dist/`. Run `coding.sh upgrade-store` to migrate anyway (it keeps a copy), or use the release. |
+| `store_newer` | A newer coding.sh migrated the store. Run `coding.sh update`, or `coding.sh upgrade-store --restore` when the message offers it. |
+| `source_checkout` | Set `CODING_SH_HOME=$(mktemp -d)`, or `CODING_SH_DEV_REAL_STORE=1` to open the real store. |
+
+Your captures are safe in every case: the hook keeps writing them to the spool, and they are
+indexed once a coding.sh that can open the store runs. Meanwhile `coding.sh status`, the status
+line and `coding.sh doctor` print `ingest stopped 4h ago` with the command that fixes it.
+
+:::more When coding.sh migrates the store by itself
+- **The store has an owner**: the coding.sh that `~/.coding.sh/bin/cli-path` names. Another install
+  that would migrate it stops with `store_owned` and changes nothing.
+- **A source checkout doesn't open the default home.** It stops with `source_checkout` unless
+  `CODING_SH_HOME`, `--store` or `CODING_SH_STORE_URL` names a store.
+- **Only a newer release migrates by itself.** The store records the newest coding.sh version that
+  opened it. A build with a newer schema but not a newer version stops with `store_version`.
+
+An upgrade in place (`coding.sh update`, `npm i -g coding.sh`) migrates as before, and an
+`npm link` of a checkout counts as an install. A store from a release too old to record its version is
+migrated by an install, and a source checkout stops the same way.
+:::
+
+:::more The copy kept before each migration
+Before a migration changes a store that holds data, coding.sh copies the index to
+`index.db.v<N>.bak` next to it (`N` is the schema it had).
+
+- **Space.** On APFS, Btrfs and XFS the copy is a clone that takes no space until the files differ.
+  Elsewhere it is a full copy, and the migration is refused, naming the space it needs, when that
+  would not fit.
+- **One copy is kept.** A later migration removes the older one. Delete the file once the new
+  version works. `coding.sh purge` deletes it too, since a copy holds every event as it was.
+- **Restore.** `coding.sh upgrade-store --restore` puts the copy back, from any coding.sh that knows
+  the copy's schema. The index it replaces is kept as `index.db.v<N>.undone`, and later captures
+  are ingested again from the spool.
+- **After a restore** the build that migrated the store does not migrate it again by itself, and
+  `bin/cli-path` points back at the install the upgrade took the hooks from.
+:::
 
 ## Still stuck
 

@@ -6,11 +6,11 @@ Site version: [coding.sh/docs/sdk](https://coding.sh/docs/sdk).
 
 <!-- Generated from packages/sdk and packages/sdk-python by packages/coding.sh/scripts/sdk-reference.ts. Do not edit by hand. -->
 
-Both SDKs send to a server you run with `coding.sh serve` ([production guide](../PRODUCTION.md), [serverless apps](../production/serverless.md)). Without `CODING_SH_URL` they do nothing. They never change return values, errors or stream behavior, and never throw into your app. The SDKs do not price calls; the server does.
+Both SDKs send to a server you run with `coding.sh serve` ([production guide](https://coding.sh/docs/production), [serverless apps](https://coding.sh/docs/deploy)). Without `CODING_SH_URL` they do nothing. They never change return values, errors or stream behavior, and never throw into your app. The SDKs do not price calls; the server does.
 
 ## Environment variables
 
-Both SDKs read the same variables. Options passed to `init()` win over them. Every other variable coding.sh reads is in the [configuration reference](config.md).
+Both SDKs read the same variables. Options passed to `init()` win over them. Every other variable coding.sh reads is in the [configuration reference](https://coding.sh/docs/config).
 
 | Variable | TypeScript | Python | Meaning |
 |---|---|---|---|
@@ -97,26 +97,26 @@ That is AI SDK 7. On AI SDK 6 and older, pass `experimental_telemetry: { isEnabl
 
 ### Exports
 
-| Name | Kind | Source |
-|---|---|---|
-| [`init`](#initopts) | function | `packages/sdk/src/client.ts` |
-| [`flush`](#flushtimeoutms) | function | `packages/sdk/src/client.ts` |
-| [`shutdown`](#shutdowntimeoutms) | function | `packages/sdk/src/client.ts` |
-| [`stats`](#stats) | function | `packages/sdk/src/client.ts` |
-| [`InitOptions`](#initoptions) | interface | `packages/sdk/src/config.ts` |
-| [`CaptureMode`](#capturemode) | type | `packages/sdk/src/config.ts` |
-| [`observe`](#observeclient) | function | `packages/sdk/src/observe.ts` |
-| [`observeFetch`](#observefetchf) | function | `packages/sdk/src/fetch.ts` |
-| [`trace`](#tracename-fn-opts) | function | `packages/sdk/src/context.ts` |
-| [`span`](#spankind-name-fn-opts) | function | `packages/sdk/src/context.ts` |
-| [`withSession`](#withsessionid-fn) | function | `packages/sdk/src/context.ts` |
-| [`TraceOptions`](#traceoptions) | interface | `packages/sdk/src/context.ts` |
-| [`TraceHandle`](#tracehandle) | interface | `packages/sdk/src/context.ts` |
-| [`SpanOptions`](#spanoptions) | interface | `packages/sdk/src/context.ts` |
-| [`aiSdkTracer`](#aisdktraceropts) | function | `packages/sdk/src/ai-sdk.ts` |
-| [`AiSdkTracer`](#aisdktracer) | interface | `packages/sdk/src/ai-sdk.ts` |
-| [`AiSdkTracerOptions`](#aisdktraceroptions) | interface | `packages/sdk/src/ai-sdk.ts` |
-| [`TransportStats`](#transportstats) | interface | `packages/sdk/src/transport.ts` |
+| Name | Kind |
+|---|---|
+| [`init`](#initopts) | function |
+| [`flush`](#flushtimeoutms) | function |
+| [`shutdown`](#shutdowntimeoutms) | function |
+| [`stats`](#stats) | function |
+| [`InitOptions`](#initoptions) | interface |
+| [`CaptureMode`](#capturemode) | type |
+| [`observe`](#observeclient) | function |
+| [`observeFetch`](#observefetchf) | function |
+| [`trace`](#tracename-fn-opts) | function |
+| [`span`](#spankind-name-fn-opts) | function |
+| [`withSession`](#withsessionid-fn) | function |
+| [`TraceOptions`](#traceoptions) | interface |
+| [`TraceHandle`](#tracehandle) | interface |
+| [`SpanOptions`](#spanoptions) | interface |
+| [`aiSdkTracer`](#aisdktraceropts) | function |
+| [`AiSdkTracer`](#aisdktracer) | interface |
+| [`AiSdkTracerOptions`](#aisdktraceroptions) | interface |
+| [`TransportStats`](#transportstats) | interface |
 
 ### `init(opts?)`
 
@@ -417,18 +417,18 @@ coding_sh.flush(timeout=5)  # end of a script, a job or a serverless handler
 
 Everything in `coding_sh.__all__`:
 
-| Name | Kind | Source |
-|---|---|---|
-| [`coding_sh.__version__`](#coding_sh__version__) | constant | `packages/sdk-python/src/coding_sh/_client.py` |
-| [`coding_sh.init`](#coding_shinit) | function | `packages/sdk-python/src/coding_sh/_trace.py` |
-| [`coding_sh.observe`](#coding_shobserveclient) | function | `packages/sdk-python/src/coding_sh/_providers.py` |
-| [`coding_sh.trace`](#coding_shtrace) | function | `packages/sdk-python/src/coding_sh/_trace.py` |
-| [`coding_sh.span`](#coding_shspankind-name-) | function | `packages/sdk-python/src/coding_sh/_trace.py` |
-| [`coding_sh.with_session`](#coding_shwith_sessionsession_id) | function | `packages/sdk-python/src/coding_sh/_trace.py` |
-| [`coding_sh.current_session_id`](#coding_shcurrent_session_id) | function | `packages/sdk-python/src/coding_sh/_trace.py` |
-| [`coding_sh.flush`](#coding_shflush) | function | `packages/sdk-python/src/coding_sh/_trace.py` |
-| [`coding_sh.shutdown`](#coding_shshutdown) | function | `packages/sdk-python/src/coding_sh/_trace.py` |
-| [`coding_sh.stats`](#coding_shstats) | function | `packages/sdk-python/src/coding_sh/_trace.py` |
+| Name | Kind |
+|---|---|
+| [`coding_sh.__version__`](#coding_sh__version__) | constant |
+| [`coding_sh.init`](#coding_shinit) | function |
+| [`coding_sh.observe`](#coding_shobserveclient) | function |
+| [`coding_sh.trace`](#coding_shtrace) | function |
+| [`coding_sh.span`](#coding_shspankind-name-) | function |
+| [`coding_sh.with_session`](#coding_shwith_sessionsession_id) | function |
+| [`coding_sh.current_session_id`](#coding_shcurrent_session_id) | function |
+| [`coding_sh.flush`](#coding_shflush) | function |
+| [`coding_sh.shutdown`](#coding_shshutdown) | function |
+| [`coding_sh.stats`](#coding_shstats) | function |
 
 ### `coding_sh.__version__`
 
@@ -574,7 +574,7 @@ def stats() -> Dict[str, int]
 
 ### `coding_sh.otel`
 
-For apps that already emit OpenTelemetry gen_ai spans. Needs `pip install coding-sh[otel]`. `configure()` picks the endpoint from its `url` argument, then `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT`, then `CODING_SH_URL` with `CODING_SH_INGEST_KEY`. See [plain OpenTelemetry](../PRODUCTION.md#43-plain-opentelemetry-no-sdk).
+For apps that already emit OpenTelemetry gen_ai spans. Needs `pip install coding-sh[otel]`. `configure()` picks the endpoint from its `url` argument, then `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT`, then `CODING_SH_URL` with `CODING_SH_INGEST_KEY`. See [OpenTelemetry](https://coding.sh/docs/otel).
 
 | Name | Kind |
 |---|---|
