@@ -37,7 +37,8 @@ export function parseBlameTarget(arg: string): { path: string; lines?: [number, 
   if (!m || !m[1]) return { path: arg };
   const a = Number(m[2]);
   const b = m[3] !== undefined ? Number(m[3]) : a;
-  if (a < 1 || b < a) return { path: arg };
+  if (a < 1) throw new AttributionError(`${arg}: line numbers start at 1`, "invalid_range");
+  if (b < a) throw new AttributionError(`${arg}: the range ends before it starts (${a}-${b})`, "invalid_range");
   return { path: m[1], lines: [a, b] };
 }
 
@@ -53,7 +54,18 @@ export async function blameFile(ctx: SourceContext, opts: Omit<AttributeOptions,
   try {
     lines = await blame(root, path, report.rev, opts.lines);
   } catch (e) {
-    throw new AttributionError(`git blame ${path}: ${(e as Error).message.split("\n").pop()}`, "not_found");
+    // git says why after "fatal:": "no such path x in HEAD", "file x has only 2 lines". The git
+    // command line before it is not for the reader.
+    const msg = (e as Error).message;
+    const why = /fatal:\s*(.+)/.exec(msg)?.[1]?.trim() ?? msg.split("\n").map((l) => l.trim()).filter(Boolean).pop() ?? "git blame failed";
+    const at = report.rev.slice(0, 8);
+    const only = /has only (\d+) lines?/.exec(why);
+    if (only) {
+      const n = Number(only[1]);
+      throw new AttributionError(`${path} has ${n} line${n === 1 ? "" : "s"} at ${at}; ask for lines 1-${n}`, "not_found", ["Blame the whole file:", `coding.sh blame ${/^[\w./@:+-]+$/.test(path) ? path : `'${path.replace(/'/g, "'\\''")}'`}`]);
+    }
+    if (/no such path|does not exist|not in /i.test(why)) throw new AttributionError(`${path} is not in ${at}`, "not_found");
+    throw new AttributionError(`${path} at ${at}: ${why}`, "not_found");
   }
   const commits = new Map(report.commits.map((c) => [c.commit, c]));
   const counts = new Map<string, number>();

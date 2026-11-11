@@ -23,6 +23,7 @@
 import { realpathSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
 import { loadReplay, type Replay } from "../core/replay.ts";
+import { shellCommand, simpleCommands } from "../core/shell-diff.ts";
 import type { BlobStore, IndexStore, Session } from "../core/types.ts";
 import { snapshotPatch } from "./git.ts";
 import { filePatchId, lineKey, type LineKey } from "./lines.ts";
@@ -35,7 +36,7 @@ export interface SourceContext {
 }
 
 /** Bump when a stored source would be built differently. */
-const SOURCE_VERSION = 4;
+const SOURCE_VERSION = 5;
 const kvKey = (id: string) => `attribution:source:${id}`;
 
 function real(p: string): string {
@@ -105,6 +106,29 @@ export async function editStepKeys(replay: Replay, root: string): Promise<Map<st
     if (keys.length) out.set(p, keys);
   }
   return out;
+}
+
+/** Commands that only look: they write no file, so a file they ran beside is not theirs to have written. */
+const LOOKS = new Set(["ls", "cat", "head", "tail", "pwd", "echo", "printf", "wc", "rg", "grep", "egrep", "fgrep", "tree", "stat", "file", "which", "type", "date", "whoami", "basename", "dirname", "realpath", "du", "df", "cd", "true", "false", "test", "[", "sort", "uniq", "cut", "tr", "diff", "cmp", "nl", "od", "xxd", "jq", "less", "more", "sleep", "uname", "id", "env", "printenv"]);
+const GIT_LOOKS = new Set(["status", "log", "diff", "show", "rev-parse", "ls-files", "blame", "describe", "grep", "shortlog", "ls-tree", "cat-file", "remote", "config"]);
+
+/**
+ * True when every command in `command` can only look at files (ls, cat, rg, git status, …), with no
+ * redirect, no command substitution and no pipe into something that could write. Unknown commands,
+ * scripts and builds are not read-only: they may write files nothing names.
+ */
+export function readOnlyCommand(command: string): boolean {
+  if (/\$\(|`|<\(|>\(/.test(command)) return false;
+  return simpleCommands(command).every((c) => {
+    if (c.redirects.length) return false;
+    if (c.cmd === "") return true;
+    if (c.cmd === "find") return !c.args.some((a) => /^-(?:exec|execdir|ok|okdir|delete|fprint\w*|fls)$/.test(a));
+    if (c.cmd === "git") {
+      const sub = c.args.filter((a, i) => !a.startsWith("-") && !(i > 0 && (c.args[i - 1] === "-C" || c.args[i - 1] === "-c")))[0];
+      return sub !== undefined && GIT_LOOKS.has(sub) && !(sub === "remote" && c.args.some((a) => /^(?:add|remove|rm|set-url|rename)$/.test(a))) && !(sub === "config" && !c.args.includes("--get") && !c.args.includes("--list") && !c.args.includes("-l"));
+    }
+    return LOOKS.has(c.cmd);
+  });
 }
 
 function sameKeys(a: LineKey[], b: LineKey[]): boolean {
@@ -181,7 +205,16 @@ async function buildFiles(ctx: SourceContext, s: Session): Promise<SourceFile[]>
   }
   // A shell or subagent call can write files nothing names; without one the session wrote only the files its tools named.
   // A session with no stored events at all says nothing about what it ran: its diff stands as it is.
-  const mayWriteUnnamed = !replay.steps.length || replay.steps.some((st) => st.kind === "shell" || st.kind === "subagent");
+  // A shell call whose command only looks (ls, cat, git status) writes nothing, so it does not count.
+  const starts = new Map((await ctx.index.listEvents(s.id, { kinds: ["tool.start"] }).catch(() => [])).map((e) => [e.id, e] as const));
+  const mayWrite = (st: (typeof replay.steps)[number]): boolean => {
+    if (st.kind === "subagent") return true;
+    if (st.kind !== "shell") return false;
+    const e = starts.get(st.eventId);
+    const command = e ? shellCommand(typeof e.payload.tool === "string" ? e.payload.tool : undefined, e.payload.input) : undefined;
+    return command === undefined || !readOnlyCommand(command);
+  };
+  const mayWriteUnnamed = !replay.steps.length || replay.steps.some(mayWrite);
   // The tree diff from the start to the end snapshot also holds what a person typed in that window (and what
   // another session left uncommitted), so a file the session could not have written is not its own.
   for (const p of [...files.keys()]) {

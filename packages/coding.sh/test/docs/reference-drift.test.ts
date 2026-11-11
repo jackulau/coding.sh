@@ -69,7 +69,8 @@ describe("docs drift", () => {
 
   it("reference/config.md lists every CODING_SH_* variable", () => {
     const doc = readFileSync(join(repo, "docs", "reference", "config.md"), "utf8");
-    const dirs = [join(pkg, "src"), join(repo, "packages", "sdk", "src"), join(repo, "packages", "sdk-python")];
+    // Sources only, as for the other packages: a variable only the tests read is not configuration.
+    const dirs = [join(pkg, "src"), join(repo, "packages", "sdk", "src"), join(repo, "packages", "sdk-python", "src")];
     const texts = dirs.flatMap((d) => {
       try {
         return sources(d);
@@ -82,5 +83,21 @@ describe("docs drift", () => {
     assert.ok(vars.length > 20, "found the variables");
     const missing = vars.filter((v) => !doc.includes(v));
     assert.deepEqual(missing, [], `add these variables to docs/reference/config.md: ${missing.join(", ")}`);
+  });
+
+  it("the hook docs say what a paused hook writes and the hook's inline limit", () => {
+    const write = readFileSync(join(pkg, "src", "spool", "write.ts"), "utf8");
+    const limit = /export const MAX_INLINE_LINE_BYTES = (\d+);/.exec(write)?.[1];
+    assert.ok(limit, "MAX_INLINE_LINE_BYTES in write.ts");
+    const states = readFileSync(join(repo, "docs", "design", "state-machines.md"), "utf8");
+    assert.match(states, new RegExp(`≤${limit} bytes and not truncated`), "the parse step names the inline limit");
+    assert.doesNotMatch(states, /≤256 KB and not truncated/);
+    // Both hooks record a paused session's id; the docs say so instead of "writes nothing".
+    for (const f of ["hook.sh", "hook.ts", "write.ts"]) assert.match(readFileSync(join(pkg, "src", "spool", f), "utf8"), /disabled-sessions/, f);
+    const config = readFileSync(join(repo, "docs", "reference", "config.md"), "utf8");
+    const row = config.split("\n").find((l) => l.startsWith("| `CODING_SH_DISABLE=1`")) ?? "";
+    assert.match(row, /spool\/disabled-sessions/);
+    assert.doesNotMatch(row, /writes nothing/);
+    assert.match(states, /CODING_SH_DISABLE=1` \| Disabled: [^|]*disabled-sessions/);
   });
 });

@@ -7,6 +7,7 @@
 // - Glyphs: ✓ done, ! warning, ✗ error, ? prompt. Plain mode keeps the glyphs
 //   (they are text, not color) and drops color and spinners.
 // - Color precedence: --no-color, NO_COLOR, FORCE_COLOR, then per-stream TTY.
+import { cutToWidth, padToWidth, textWidth } from "../core/width.ts";
 import { UsageError } from "./args.ts";
 
 export const LABEL_WIDTH = 16;
@@ -15,7 +16,7 @@ export interface OutputOptions {
   json?: boolean;
   noColor?: boolean;
   env?: NodeJS.ProcessEnv;
-  stdout?: NodeJS.WriteStream | { write(s: string): unknown; isTTY?: boolean };
+  stdout?: NodeJS.WriteStream | { write(s: string): unknown; isTTY?: boolean; columns?: number };
   stderr?: NodeJS.WriteStream | { write(s: string): unknown; isTTY?: boolean };
   stdin?: NodeJS.ReadStream | { isTTY?: boolean };
 }
@@ -76,8 +77,10 @@ export class Output {
   readonly errColor: boolean;
   /** Prompts allowed: stdin and stderr are TTYs, not --json, not CI. */
   readonly interactive: boolean;
+  /** The help command for what is running (`coding.sh run --help`); errors with no next step point at it. */
+  helpCommand?: string;
   readonly stdoutTTY: boolean;
-  private readonly so: { write(s: string): unknown; isTTY?: boolean };
+  private readonly so: { write(s: string): unknown; isTTY?: boolean; columns?: number };
   private readonly se: { write(s: string): unknown; isTTY?: boolean };
   private spinnerTimer: ReturnType<typeof setInterval> | undefined;
   private spinnerText = "";
@@ -116,25 +119,50 @@ export class Output {
     this.so.write((this.stdoutTTY ? JSON.stringify(doc, null, 2) : JSON.stringify(doc)) + "\n");
   }
 
-  /** Borderless table: TTY gets aligned columns; non-TTY gets a header row and tab-separated values. */
-  table(headers: readonly string[], rows: readonly (readonly string[])[]): void {
+  /**
+   * Borderless table: TTY gets aligned columns; non-TTY gets a header row and tab-separated values.
+   * Widths are terminal cells (a CJK character takes two). On a narrow terminal, in this order:
+   * long text columns shrink (widest first, to 8 cells), then the free-text columns (`collapse`, by
+   * default TITLE and MATCH) are left out, then the rightmost other columns, and only then do short
+   * columns such as AGENT and STARTED shrink. An id column (`keep`, by default ID and SESSION)
+   * never shrinks: a cut id cannot be pasted into the next command.
+   * A terminal that reports no width (columns 0) counts as 120.
+   */
+  table(headers: readonly string[], rows: readonly (readonly string[])[], opts: { keep?: readonly string[]; collapse?: readonly string[] } = {}): void {
     if (this.json) return;
     if (!this.stdoutTTY) {
       this.so.write([headers, ...rows].map((r) => r.join("\t")).join("\n") + "\n");
       return;
     }
-    const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] ?? "").length)));
-    const cols = (process.stdout.columns as number | undefined) ?? 120;
-    // Shrink the widest (descriptive) column first so the row fits the terminal.
-    const total = () => widths.reduce((a, b) => a + b, 0) + 2 * (widths.length - 1);
-    while (total() > cols) {
-      const i = widths.indexOf(Math.max(...widths));
-      if (widths[i]! <= 8) break;
-      widths[i] = widths[i]! - 1;
-    }
-    const fit = (s: string, w: number) => (s.length > w ? s.slice(0, Math.max(0, w - 1)) + "…" : s.padEnd(w));
+    const widths = headers.map((h, i) => Math.max(textWidth(h), ...rows.map((r) => textWidth(r[i] ?? ""))));
+    const cols = this.so.columns || process.stdout.columns || 120;
+    const upper = (xs: readonly string[]) => new Set(xs.map((h) => h.toUpperCase()));
+    const keep = upper(opts.keep ?? ["ID", "SESSION"]);
+    const collapse = upper(opts.collapse ?? ["TITLE", "MATCH"]);
+    const fixed = headers.map((h) => keep.has(h.toUpperCase()));
+    const shown = headers.map(() => true);
+    const total = () => widths.reduce((a, w, i) => a + (shown[i] ? w + 2 : 0), 0) - 2;
+    const SHORT = 12;
+    const shrink = (ok: (j: number) => boolean) => {
+      while (total() > cols) {
+        let i = -1;
+        for (let j = 0; j < widths.length; j++) if (shown[j] && !fixed[j] && ok(j) && widths[j]! > 8 && (i === -1 || widths[j]! > widths[i]!)) i = j;
+        if (i === -1) return;
+        widths[i] = widths[i]! - 1;
+      }
+    };
+    shrink((j) => widths[j]! > SHORT);
+    for (let j = 0; j < headers.length && total() > cols; j++) if (collapse.has(headers[j]!.toUpperCase()) && !fixed[j]) shown[j] = false;
+    // Never the first column: the table must still say what each row is.
+    for (let j = headers.length - 1; j > 0 && total() > cols; j--) if (shown[j] && !fixed[j] && shown.filter(Boolean).length > 2) shown[j] = false;
+    shrink(() => true);
+    const fit = (s: string, w: number) => padToWidth(cutToWidth(s, w), w);
+    const last = shown.lastIndexOf(true);
     const line = (r: readonly string[], head = false) => {
-      const text = r.map((c, i) => (i === r.length - 1 ? (c.length > widths[i]! ? fit(c, widths[i]!) : c) : fit(c, widths[i]!))).join("  ");
+      const text = r
+        .map((c, i) => (!shown[i] ? undefined : i === last ? cutToWidth(c, widths[i]!) : fit(c, widths[i]!)))
+        .filter((c) => c !== undefined)
+        .join("  ");
       return head ? this.style(text, "bold") : text;
     };
     this.so.write([line(headers, true), ...rows.map((r) => line(r))].join("\n") + "\n");
@@ -251,12 +279,25 @@ export class Output {
 
   // ------------------------------------------------------------ errors
 
+  /** A usage error's `next`: always [what it is, the command]; a close suggestion first, else the help to read. */
+  private usageNext(e: UsageError): string[] {
+    if (e.suggestion) return [e.askUser ? "With their approval:" : "Did you mean:", e.suggestion];
+    if (e.reason === "unknown_command") return ["See the commands:", this.helpCommand ?? "coding.sh --help"];
+    return [e.reason === "unknown_option" ? "See the options:" : "See the usage:", this.helpCommand ?? "coding.sh --help"];
+  }
+
+  /** `next` of a failure in --json: two lines, [what it is, the command], never empty. */
+  private nextSteps(next: readonly string[] | undefined): string[] {
+    if (!next?.length) return ["See what this command takes:", this.helpCommand ?? "coding.sh --help"];
+    return next.length === 1 ? ["Next:", next[0]!] : next.slice(0, 2);
+  }
+
   /** Prints an error (human: headline + details + recovery; --json: one line on stderr). */
   error(e: unknown, debug = false): number {
     this.stopSpinner();
     if (e instanceof UsageError) {
       if (this.json) {
-        this.se.write(JSON.stringify({ status: "error", reason: e.reason, message: e.message, ...(e.askUser ? { askUser: true } : {}), next: e.suggestion ? [e.suggestion] : [] }) + "\n");
+        this.se.write(JSON.stringify({ status: "error", reason: e.reason, message: e.message, ...(e.askUser ? { askUser: true } : {}), next: this.usageNext(e) }) + "\n");
       } else {
         this.se.write(`${this.style("✗", "red", "err")} ${e.message}\n`);
         if (e.askUser) {
@@ -274,7 +315,7 @@ export class Output {
     const ce = e instanceof CliError ? e : undefined;
     const message = ce ? ce.message : e instanceof Error ? `Failed to complete: ${e.message}` : `Failed to complete: ${String(e)}`;
     if (this.json) {
-      const doc: Record<string, unknown> = { status: "error", reason: ce?.reason ?? "internal_error", message, ...(ce?.askUser ? { askUser: true } : {}), next: ce?.next ?? [] };
+      const doc: Record<string, unknown> = { status: "error", reason: ce?.reason ?? "internal_error", message, ...(ce?.askUser ? { askUser: true } : {}), next: this.nextSteps(ce?.next) };
       if (ce?.data !== undefined) doc.data = ce.data;
       this.se.write(JSON.stringify(doc) + "\n");
     } else {

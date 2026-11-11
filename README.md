@@ -6,7 +6,7 @@
   <a href="https://github.com/jackulau/coding.sh/actions/workflows/ci.yml"><img src="https://github.com/jackulau/coding.sh/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
   <a href="https://www.npmjs.com/package/coding.sh"><img src="https://img.shields.io/npm/v/coding.sh?label=npm" alt="npm version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D22.15-brightgreen" alt="Node 22.15 or newer">
+  <img src="https://img.shields.io/badge/node-%3E%3D22.16-brightgreen" alt="Node 22.16 or newer">
 </p>
 
 <p align="center">
@@ -50,7 +50,7 @@ Each session goes into a SQLite index on your machine, with its latency and toke
 a local viewer, query it from the CLI or from your agents over MCP, turn failures into evals, and
 compare changes with paired statistics. No session data leaves your machine unless you add a remote sink.
 
-No runtime dependencies. Node 22.15 or newer.
+No runtime dependencies. Node 22.16 or newer.
 
 ## Quickstart
 

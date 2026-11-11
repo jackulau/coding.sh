@@ -1184,10 +1184,13 @@ function flagsOf(s: FlagState, derails: readonly Derail[], sorted?: readonly Age
 /**
  * A session with nothing to look at: no turn, no tool call and no model call
  * (a hook that fired with no agent work behind it, such as a wrapper process
- * or a subagent that never ran). `coding.sh sessions` hides these unless --empty.
+ * or a subagent that never ran). A changed file or a start snapshot (what
+ * `coding.sh run` takes) is something to look at. `coding.sh sessions` hides
+ * the empty ones unless --empty. Applied when listing, not when folding.
  */
-export function isEmptySession(s: Pick<Session, "stats">): boolean {
-  const { turns, toolCalls, usage, latency } = s.stats;
+export function isEmptySession(s: Pick<Session, "stats"> & Partial<Pick<Session, "repo">>): boolean {
+  const { turns, toolCalls, usage, latency, filesChanged } = s.stats;
+  if (filesChanged > 0 || s.repo?.snapshot) return false;
   return !turns && !toolCalls && !latency?.llmCalls && !usage?.inputTokens && !usage?.outputTokens && !usage?.costUsd;
 }
 

@@ -13,7 +13,7 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { paths } from "../core/paths.ts";
-import { parseArgs, suggest, UsageError, visibleFlags, type FlagSpec } from "./args.ts";
+import { parseArgs, shellQuote, suggest, UsageError, visibleFlags, type FlagSpec } from "./args.ts";
 import { CliError, Output } from "./output.ts";
 import { version } from "./meta.ts";
 import { COMMANDS, findCommand, GLOBAL_FLAGS, type ActionSpec, type CommandSpec } from "./registry.ts";
@@ -45,12 +45,27 @@ function flagSyntax(f: FlagSpec): string {
   return f.short ? `-${f.short}, ${long}` : `    ${long}`;
 }
 
+/** The description, the choices when it does not name them all ("One of: a, b"), and the default. */
 function flagDesc(f: FlagSpec): string {
-  return f.default !== undefined ? `${f.desc} (default: ${f.default})` : f.desc;
+  const named = f.choices?.every((c) => new RegExp(`(^|[^\\w-])${c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^\\w-])`).test(f.desc));
+  const desc = f.choices?.length && !named ? `${f.desc.replace(/[.:]?\s*$/, "")}. One of: ${f.choices.join(", ")}.` : f.desc;
+  return f.default !== undefined ? `${desc} (default: ${f.default})` : desc;
 }
 
 function argSyntax(args: ActionSpec["args"] = []): string {
   return args.map((a) => (a.required ? `<${a.name.toUpperCase()}>` : `[${a.name}]`) + (a.variadic ? "..." : "")).join(" ");
+}
+
+/** Where the first word that is not one of the command's own options (or an option's value) starts. */
+function commandStart(tail: readonly string[], flags: readonly FlagSpec[]): number {
+  let i = 0;
+  while (i < tail.length && tail[i]!.startsWith("-") && tail[i] !== "-") {
+    const t = tail[i]!;
+    const spec = t.startsWith("--") ? flags.find((f) => f.name === t.slice(2).split("=")[0]) : flags.find((f) => f.short === t.slice(1).split("=")[0]);
+    if (!spec) break;
+    i += spec.type === "boolean" || t.includes("=") ? 1 : 2;
+  }
+  return i;
 }
 
 function section(title: string, body: string[], s: HelpStyle): string[] {
@@ -217,7 +232,8 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
     }
     if (name === undefined || name.startsWith("-")) {
       if (name !== undefined && !globals.help) {
-        const hint = name.startsWith("--") ? suggest(name.split("=")[0]!, ROOT_OPTION_NAMES) : undefined;
+        const close = name.startsWith("--") ? suggest(name.slice(2).split("=")[0]!, ROOT_OPTION_NAMES.map((n) => n.slice(2))) : undefined;
+        const hint = close === undefined ? undefined : `--${close}`;
         throw new UsageError(`Unknown option ${name}`, { suggestion: hint, reason: "unknown_option" });
       }
       if (out.json) out.data(helpMetadata());
@@ -228,9 +244,10 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
     if (!cmd) {
       const names = COMMANDS.flatMap((c) => [c.name, ...(c.aliases ?? [])]);
       const s = suggest(name, names);
-      throw new UsageError(`Unknown command ${JSON.stringify(name)}`, { suggestion: s ? `${BIN} ${s}` : `${BIN} --help`, reason: "unknown_command" });
+      throw new UsageError(`Unknown command ${JSON.stringify(name)}`, { suggestion: s ? `${BIN} ${s}` : undefined, reason: "unknown_command" });
     }
 
+    out.helpCommand = `${BIN} ${cmd.name} --help`;
     let action: ActionSpec | undefined;
     if (cmd.actions && !(cmd.actionOptional && (tail[0] === undefined || tail[0].startsWith("-")) && !globals.help)) {
       const a = tail[0];
@@ -245,7 +262,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
       action = cmd.actions.find((x) => x.name === a);
       if (!action) {
         const s = suggest(a, cmd.actions.map((x) => x.name));
-        throw new UsageError(`Unknown command ${JSON.stringify(`${cmd.name} ${a}`)}`, { suggestion: s ? `${BIN} ${cmd.name} ${s}` : `${BIN} ${cmd.name} --help`, reason: "unknown_command" });
+        throw new UsageError(`Unknown command ${JSON.stringify(`${cmd.name} ${a}`)}`, { suggestion: s ? `${BIN} ${cmd.name} ${s}` : undefined, reason: "unknown_command" });
       }
       tail = tail.slice(1);
     }
@@ -264,6 +281,14 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
     const args = action ? (action.args ?? []) : (cmd.args ?? []);
     const flags = action ? (action.flags ?? []) : (cmd.flags ?? []);
     const variadic = args.some((a) => a.variadic) && !cmd.passthrough;
+    out.helpCommand = `${BIN} ${cmd.name}${action ? ` ${action.name}` : ""} --help`;
+    // `coding.sh run claude -p hi`: the command goes after `--`.
+    if (cmd.passthrough && !tail.includes("--")) {
+      const at = commandStart(tail, flags);
+      if (at < tail.length) {
+        throw new UsageError(`Put -- before the command to run`, { reason: "missing_argument", suggestion: `${BIN} ${cmd.name} ${[...tail.slice(0, at), "--", ...tail.slice(at)].map(shellQuote).join(" ")}` });
+      }
+    }
     const parsed = parseArgs(tail, flags, { maxPositionals: cmd.passthrough ? 0 : variadic ? undefined : args.length, suggestions: GLOBAL_OPTION_NAMES, sensitive: cmd.sensitive === true });
     if (cmd.passthrough) {
       if (parsed.rest.length === 0) throw new UsageError(`Missing command. Usage: ${BIN} ${cmd.name} -- <cmd> [args...]`, { reason: "missing_argument" });
@@ -326,7 +351,11 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
         });
       } catch (e) {
         // A command cut short by the abort may throw (AbortError, a killed step); that is the interrupt, not a failure.
-        if (handle && stopCode) return stopExit ?? stopCode;
+        // A CliError with next steps (how to resume the stopped run) is still printed.
+        if (handle && stopCode) {
+          if (e instanceof CliError && e.next.length) out.error(e, globals.debug);
+          return stopExit ?? stopCode;
+        }
         throw e;
       }
       if (handle && stopCode) return stopExit ?? stopCode;
