@@ -51,7 +51,7 @@ dᵢ = Bᵢ − Aᵢ: its pass rate, or score, in B minus the same in A.
 | B − A | mean of dᵢ | How much B moved the pass rate. |
 | Paired bootstrap interval | Resample the cases with replacement 10,000 times (seeded) and take the 2.5th and 97.5th percentiles of the mean dᵢ | The 95% range for B − A. |
 | Sign-flip test | Under "no difference", each dᵢ is as likely to be +dᵢ as −dᵢ. p is the share of the 2ⁿ sign assignments whose mean is at least as extreme as the one observed | Exact up to 20 cases, a seeded Monte Carlo estimate above. It holds its level on small suites, where a bootstrap does not. |
-| McNemar's test | b cases only A passed, c only B passed. p = min(1, 2 · P(X ≤ min(b, c))) with X ~ Bin(b + c, ½) | Exact test on the cases that changed. Cases both or neither passed say nothing about the difference. |
+| McNemar's test | b cases only A passed, c only B passed. p = min(1, 2 · P(X ≤ min(b, c))) with X ~ Bin(b + c, 1/2) | Exact test on the cases that changed. Cases both or neither passed say nothing about the difference. |
 | Verdict | `better` or `worse` when the interval excludes 0 and the sign-flip p is below 0.05; else `inconclusive` | p cannot go below 0.05 with fewer than 6 changed cases, so a smaller change is always inconclusive. |
 
 ### More checks `exp compare` prints
@@ -59,7 +59,7 @@ dᵢ = Bᵢ − Aᵢ: its pass rate, or score, in B minus the same in A.
 | Check | Rule |
 |---|---|
 | Clusters (`--cluster repo`) | The bootstrap and the sign-flip test resample whole clusters, such as every case from one repo, instead of single cases. Use it when cases in a cluster are not independent. |
-| Bayesian check | Below 100 paired cases: a Dirichlet posterior with a uniform prior over {only A passed, only B passed, tie}. P(B > A) is the chance that the only-B share of changed cases is above ½, from Beta(c + 1, b + 1). |
+| Bayesian check | Below 100 paired cases: a Dirichlet posterior with a uniform prior over {only A passed, only B passed, tie}. P(B > A) is the chance that the only-B share of changed cases is above 1/2, from Beta(c + 1, b + 1). |
 | Minimum detectable effect (MDE) | The smallest true gap the comparison finds 80% of the time, from the exact power of McNemar's test at this many cases. A small suite may have none: `no 80% power at this n`. |
 | Non-inferiority (`--margin D`) | B is at most D worse than A when the interval's lower bound is above −D and a one-sided sign-flip test of "B − A ≤ −D" has p below 0.025. Exits 1 otherwise. Use it for a cheaper or faster B. |
 | Regression to the mean | When B ran only on the cases A failed, B looks better even if it changes nothing. The verdict is forced to `inconclusive`. |
@@ -112,7 +112,7 @@ splits agrees with you there by construction.
 | Method | Formula | Used by |
 |---|---|---|
 | Rogan-Gladen correction | θ̂ = (p̂ + q₀ − 1) / (q₀ + q₁ − 1), with p̂ the judge's pass rate | `exp compare` for a calibrated judge. Refused when q₀ + q₁ ≤ 1. The interval counts the uncertainty in q₀ and q₁ too. |
-| Judge-corrected delta (PPI++) | θ = ȳₙ + λ (f̄_N − f̄ₙ): the mean label on the n labelled cases, plus λ times the judge's mean on all N cases minus its mean on the labelled ones | `exp compare --labels-a A.jsonl --labels-b B.jsonl`, with at least 20 labels per run (`--min-labels`). λ is tuned so the interval is never wider than labels alone give. |
+| Judge-corrected delta (PPI++) | θ = mean(y)ₙ + λ (mean(f)_N − mean(f)ₙ): the mean label on the n labelled cases, plus λ times the judge's mean on all N cases minus its mean on the labelled ones | `exp compare --labels-a A.jsonl --labels-b B.jsonl`, with at least 20 labels per run (`--min-labels`). λ is tuned so the interval is never wider than labels alone give. |
 
 `exp compare` also warns when the judge's sensitivity or specificity differs between the two runs,
 because that biases B − A even when each run's judge looks fine.
