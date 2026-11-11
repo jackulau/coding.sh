@@ -60,8 +60,8 @@ One page per job, each pointing on to the how-to or guide that covers it in full
 
 ## Compare
 
-How coding.sh compares with other tools, with a feature table, where each tool is the better
-choice, and sources. Checked against each tool's docs; each page says when.
+Feature tables for tools that overlap with coding.sh, where each one is the better choice, and
+sources. Checked against each tool's docs; each page says when.
 
 | Doc | What |
 |---|---|

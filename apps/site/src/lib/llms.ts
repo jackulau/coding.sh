@@ -65,8 +65,8 @@ ${DOC_PAGES.map((p) => `- [${p.title}](${abs(p.path)}): ${p.summary}`).join("\n"
 
 ## What it is for
 
-Open-source, local-first observability and evals for AI agents: like LangSmith, Braintrust or Judgment Labs,
-but on your machine. Pre-alpha: what is built is covered by the package's tests; items marked planned do not exist yet.
+coding.sh records what AI agents do (prompts, model calls, tool calls, file changes, cost), shows each run in a
+local viewer, and turns runs that went wrong into evals. Everything stays on your machine. Pre-alpha: what is built is covered by the package's tests; items marked planned do not exist yet.
 
 1. Record (built): a local OTLP receiver (\`coding.sh collector\`, ${OTLP_ENDPOINT}) for ${FRAMEWORKS.join(", ")};
    model-call latency per call. Coding agents are first-class: hooks capture prompts, tool calls, file changes
@@ -85,11 +85,6 @@ but on your machine. Pre-alpha: what is built is covered by the package's tests;
 5. Tool evals (built): \`coding.sh toolevals\` scores how well agents use a CLI, MCP server or HTTP API.
    Workflows (built): \`coding.sh workflows\` captures, scores and compares multi-agent runs.
    Trace format (built): TypeScript types (\`coding.sh/schema\`) and a JSON Schema (\`coding.sh/schema.json\`, ${abs("/schema.json")}).
-
-## Compared with other tools
-
-Langfuse, LangSmith, Braintrust, AgentOps, Laminar and ccusage overlap with coding.sh. Each comparison page has a feature
-table, says where the other tool is the better choice, and cites its sources: ${abs("/docs/compare")}
 
 ## Coding agents (adapters in code)
 

@@ -9,6 +9,10 @@ grouped by area, with links to the docs for the details.
 
 ## [0.1.7] - Unreleased
 
+### Changed
+
+- **Docs.** The docs home, the home page FAQ and llms.txt say what coding.sh does (it records prompts, model calls, tool calls, file changes and cost, shows each run in a local viewer, and turns failed runs into evals) instead of comparing it with other products. Other products are named only on the compare pages and where they are an integration, and a site test fails on a page that pitches coding.sh through another product. [Docs](https://coding.sh/docs)
+
 ### Fixed
 
 - **Tests.** The viewer's browser tests no longer hang when Chrome closes its DevTools connection before it answers: a waiting call fails at once, and any call fails after 30 s. The helper also lets go of Chrome's pipe after closing it, and the CI runner makes each test file exit once its tests are done, so a handle left open can no longer hold a Windows job until its time limit. [Contributing](https://github.com/jackulau/coding.sh/blob/main/CONTRIBUTING.md)
