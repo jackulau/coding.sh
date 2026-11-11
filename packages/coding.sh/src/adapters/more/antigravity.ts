@@ -46,7 +46,6 @@ import {
   get,
   hasFlag,
   home,
-  hookCmd,
   isEmptyObject,
   isObj,
   isOurCommand,
@@ -70,12 +69,13 @@ import {
 } from "./_util.ts";
 import type { Json } from "./_util.ts";
 import { isWrapperEvent, normalizeWrapperLine } from "./wrapper.ts";
+import { buildHookCommand } from "../_shared/hooks.ts";
 
 const ID = "antigravity";
 const KEY = "coding-sh";
 export const AGY_HOOK_EVENTS = ["SessionStart", "PreInvocation", "PostToolUse", "Stop"] as const;
 const TOOL_EVENTS = new Set(["PreToolUse", "PostToolUse"]);
-/** agy reads hook stdout as a JSON decision; {} means "no opinion" for every event. */
+/** agy reads hook stdout as a JSON decision; {} means "no opinion" for every event. hook.sh prints it itself. */
 const HOOK_REPLY = "--reply={}";
 /** agy tool that spawns a subagent (docs: "Agent collaboration"). Its internals are not exposed. */
 const SUBAGENT_TOOL = "invoke_subagent";
@@ -100,17 +100,18 @@ export function agyHooksPath(opts: { scope: "user" | "project"; projectDir?: str
   return opts.scope === "project" ? join(opts.projectDir ?? process.cwd(), ".agents", "hooks.json") : join(home(env), ".gemini", "config", "hooks.json");
 }
 
-export function agyHookDef(hookCommand: string): Json {
+/** The hooks.json entry: the sh fast path outside Windows (no node start), hook.mjs on Windows. */
+export function agyHookDef(hookCommand: string, platform: NodeJS.Platform = process.platform): Json {
   const def: Json = {};
   for (const ev of AGY_HOOK_EVENTS) {
-    const handler = { type: "command", command: hookCmd(hookCommand, ID, ev, HOOK_REPLY), timeout: 10 };
+    const handler = { type: "command", command: `${buildHookCommand(hookCommand, ID, ev, [], platform)} ${HOOK_REPLY}`, timeout: 10 };
     def[ev] = TOOL_EVENTS.has(ev) ? [{ matcher: "*", hooks: [handler] }] : [handler];
   }
   return def;
 }
 
 function isOurDef(v: unknown): boolean {
-  return isObj(v) && JSON.stringify(v).includes("hook.mjs") && Object.values(v).some((list) => Array.isArray(list) && list.some((h) => isObj(h) && (isOurCommand(h.command, ID) || (Array.isArray(h.hooks) && h.hooks.some((x) => isObj(x) && isOurCommand(x.command, ID))))));
+  return isObj(v) && /hook\.(?:mjs|sh)/.test(JSON.stringify(v)) && Object.values(v).some((list) => Array.isArray(list) && list.some((h) => isObj(h) && (isOurCommand(h.command, ID) || (Array.isArray(h.hooks) && h.hooks.some((x) => isObj(x) && isOurCommand(x.command, ID))))));
 }
 
 /**

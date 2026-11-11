@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { AGY_HOOK_EVENTS, agyResultMeta, antigravityAdapter } from "../../../src/adapters/more/antigravity.ts";
+import { AGY_HOOK_EVENTS, agyHookDef, agyResultMeta, antigravityAdapter } from "../../../src/adapters/more/antigravity.ts";
+import type { Json } from "../../../src/adapters/more/_util.ts";
 import type { TmpEnv } from "../_helpers.ts";
 import { assertGolden, assertInstallRoundTrip, assertRunOk, assertWellFormed, collect, fakeBinary, FIXTURES, HOOK, moreEnv, normalizeFixture, readArgv, runSpec, summarize, testCtx, writeFile } from "./_helpers.ts";
 
@@ -67,9 +68,23 @@ describe("antigravity install", () => {
     assert.deepEqual(h["my-guard"], user["my-guard"]);
     assert.deepEqual(Object.keys(h["coding-sh"]), [...AGY_HOOK_EVENTS]);
     assert.ok(!("PreToolUse" in h["coding-sh"]), "PreToolUse requires a decision; never installed");
-    assert.deepEqual(h["coding-sh"].PostToolUse, [{ matcher: "*", hooks: [{ type: "command", command: `node "${HOOK}" antigravity PostToolUse --reply={}`, timeout: 10 }] }]);
-    assert.deepEqual(h["coding-sh"].Stop, [{ type: "command", command: `node "${HOOK}" antigravity Stop --reply={}`, timeout: 10 }]);
+    // Outside Windows the sh fast path (hook.sh beside hook.mjs) answers {} itself: no node start.
+    const run = process.platform === "win32" ? `node "${HOOK}"` : `/bin/sh "${HOOK.replace(/\.mjs$/, ".sh")}"`;
+    assert.deepEqual(h["coding-sh"].PostToolUse, [{ matcher: "*", hooks: [{ type: "command", command: `${run} antigravity PostToolUse --reply={}`, timeout: 10 }] }]);
+    assert.deepEqual(h["coding-sh"].Stop, [{ type: "command", command: `${run} antigravity Stop --reply={}`, timeout: 10 }]);
     assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), user);
+  });
+
+  it("installs on hook.sh outside Windows and hook.mjs on Windows; an install of either form is ours to update and remove", async () => {
+    assert.equal((agyHookDef(HOOK, "linux").Stop as Json[])[0]!.command, `/bin/sh "/opt/coding.sh/hook.sh" antigravity Stop --reply={}`);
+    assert.equal((agyHookDef(HOOK, "win32").Stop as Json[])[0]!.command, `node "${HOOK}" antigravity Stop --reply={}`);
+    const path = join(env.home, ".gemini", "config", "hooks.json");
+    for (const platform of ["linux", "win32"] as const) {
+      writeFile(path, JSON.stringify({ "coding-sh": agyHookDef(HOOK, platform) }));
+      assert.equal((await antigravityAdapter.detect()).hooked, true, platform);
+      assert.deepEqual((await antigravityAdapter.uninstall({ scope: "user", dryRun: false })).length > 0, true, platform);
+      assert.equal(existsSync(path) ? JSON.parse(readFileSync(path, "utf8"))["coding-sh"] : undefined, undefined);
+    }
   });
 
   it("refuses to replace a foreign hook named coding-sh", async () => {

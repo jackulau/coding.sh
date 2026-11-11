@@ -17,6 +17,7 @@ import type { Adapter, AgentRunOutput, DetectResult, FileChange, HarnessBundle, 
 import type { AgentEvent, Usage } from "../../schema/index.ts";
 import { Emitter, binVersion, emitText, findBinary, hasFlag, isObj, overlayHome, runEnv, spawnAgent, spoolIdParts, toRunOutput } from "./_util.ts";
 import { normalizeWrapperLine } from "./wrapper.ts";
+import { costFrom, pricesFor, resolvePrice } from "../../core/pricing.ts";
 
 const ID = "aider";
 
@@ -35,15 +36,19 @@ export function parseAiderUsage(text: string): Usage | undefined {
   for (const m of t.matchAll(/Tokens:\s*([^\n]*?)\s+received\./g)) {
     const parts = `${m[1]} received`.split(/,\s+/);
     u ??= {};
+    const n: Record<string, number> = {};
     for (const p of parts) {
       const mm = /^([\d.,]+\s*[kKmM]?)\s+(sent|received|cache write|cache hit)$/.exec(p.trim());
-      if (!mm) continue;
-      const n = tok(mm[1]!);
-      if (mm[2] === "sent") u.inputTokens = (u.inputTokens ?? 0) + n;
-      else if (mm[2] === "received") u.outputTokens = (u.outputTokens ?? 0) + n;
-      else if (mm[2] === "cache write") u.cacheWriteTokens = (u.cacheWriteTokens ?? 0) + n;
-      else u.cacheReadTokens = (u.cacheReadTokens ?? 0) + n;
+      if (mm) n[mm[2]!] = (n[mm[2]!] ?? 0) + tok(mm[1]!);
     }
+    // "sent" counts the cache reads once and the cache writes twice (src/capture/aider.ts):
+    // inputTokens is the uncached part, as everywhere else in coding.sh.
+    const read = n["cache hit"] ?? 0;
+    const write = n["cache write"] ?? 0;
+    if (n.sent !== undefined) u.inputTokens = (u.inputTokens ?? 0) + Math.max(0, n.sent - read - 2 * write);
+    if (n.received !== undefined) u.outputTokens = (u.outputTokens ?? 0) + n.received;
+    if (n["cache write"] !== undefined) u.cacheWriteTokens = (u.cacheWriteTokens ?? 0) + write;
+    if (n["cache hit"] !== undefined) u.cacheReadTokens = (u.cacheReadTokens ?? 0) + read;
   }
   let cost: number | undefined;
   for (const m of t.matchAll(/Cost:\s*\$([\d.]+)\s+message,\s*\$([\d.]+)\s+session/g)) cost = Number(m[2]);
@@ -65,9 +70,42 @@ export function argValue(args: string[], ...names: string[]): string | undefined
   return v;
 }
 
+/**
+ * A model reply's cost from its tokens, not Aider's figure: for Anthropic models
+ * Aider prices the cache tokens it already counted in "sent" a second time
+ * (a reply of 1,500 input, 2,400 cache write, 12,000 cache hit and 30 output
+ * tokens on Claude Sonnet comes out at $0.06075; its tokens price to $0.01755).
+ * When the price table has the model, the cost is left to ingest's pricing
+ * (marked estimated) and Aider's figure stays in payload.aiderCostUsd; a
+ * model with no price keeps Aider's figure.
+ */
+function tokenPriced(e: AgentEvent): void {
+  const u = e.usage;
+  if (!u || typeof u.costUsd !== "number" || !((u.inputTokens ?? 0) + (u.outputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0))) return;
+  const model = e.model ?? (typeof e.payload.responseModel === "string" ? e.payload.responseModel : undefined);
+  if (!resolvePrice(model, pricesFor())) return;
+  const { costUsd, ...tokens } = u;
+  e.usage = tokens;
+  e.payload = { ...e.payload, aiderCostUsd: costUsd };
+}
+
+/**
+ * The usage of a `run` of aider, priced like a hook-path reply (tokenPriced): when the price
+ * table has the model, the cost comes from the tokens, since Aider's session cost counts the
+ * cache tokens twice for Anthropic models. A model with no price keeps Aider's figure.
+ */
+export function aiderRunUsage(u: Usage | undefined, model: string | undefined): Usage | undefined {
+  if (!u || typeof u.costUsd !== "number") return u;
+  const { costUsd, ...tokens } = u;
+  if (!((tokens.inputTokens ?? 0) + (tokens.outputTokens ?? 0) + (tokens.cacheReadTokens ?? 0) + (tokens.cacheWriteTokens ?? 0))) return u;
+  const hit = resolvePrice(model, pricesFor());
+  return hit ? { ...tokens, costUsd: costFrom(tokens, hit.price) } : { ...tokens, costUsd };
+}
+
 /** Wrapper events, plus the prompt and model aider was started with. */
 export async function normalizeAider(line: SpoolLine, ctx: NormalizeContext): Promise<AgentEvent[]> {
   const events = await normalizeWrapperLine(line, ctx);
+  for (const e of events) if (e.kind === "llm.call") tokenPriced(e);
   const start = events.find((e) => e.kind === "session.start");
   const raw = isObj(line.raw) ? line.raw : {};
   if (!start || !Array.isArray(raw.args)) return events;
@@ -88,7 +126,9 @@ export const aiderAdapter: Adapter = {
   displayName: "Aider",
   tier: "C",
   // 2 (0.1.2): prompt and model from aider's argv. 3: live usage (llm.usage lines from the wrapper).
-  parseVersion: 3,
+  // 4: a reply's cost from its tokens when the model has a price (Aider's figure counts cache twice).
+  // 5: stdout usage: inputTokens is "sent" less the cache reads and twice the cache writes.
+  parseVersion: 5,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["aider"]);
     const r: DetectResult = { installed: !!binary, hooked: false, notes: ["Aider has no hooks. Capture with `coding.sh run -- aider …`."] };
@@ -126,7 +166,7 @@ export const aiderAdapter: Adapter = {
         if (/Tokens:|Cost:/.test(l)) all += `${l}\n`;
       },
     });
-    return toRunOutput(r, undefined, parseAiderUsage(all));
+    return toRunOutput(r, undefined, aiderRunUsage(parseAiderUsage(all), argValue(args, "--model")));
   },
   harnessFiles() {
     return { project: [".aider.conf.yml", "CONVENTIONS.md", ".aiderignore", ".aider.model.settings.yml", ".aider.model.metadata.json"], user: ["~/.aider.conf.yml", "~/.aider.model.settings.yml", "~/.aider.model.metadata.json"] };
