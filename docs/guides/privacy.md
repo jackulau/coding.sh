@@ -8,7 +8,7 @@ Everything lives in `~/.coding.sh` (override it with `CODING_SH_HOME`):
 |---|---|
 | `index.db` | SQLite index of sessions and events (`node:sqlite`, no native deps) |
 | `blobs/` | content-addressed, zstd-compressed blobs (large prompts and tool output) |
-| `spool/` | raw hook payloads waiting to be ingested |
+| `spool/` | hook payloads: unredacted until ingested; after ingest, long payloads are redacted in place and short ones stay as written until `gc` |
 | `repos/` | shadow git objects for repo snapshots (your repository's refs are never touched) |
 | `bin/hook.sh`, `bin/hook.mjs` | the hook agents run (`hook.sh` outside Windows, which hands what it does not cover to `hook.mjs`) |
 | `backups/` | copies of every agent config file before coding.sh edited it |
@@ -42,7 +42,8 @@ headers = { Authorization = "Bearer ${OTEL_TOKEN}" }
 - **What is captured** (full mode, the default): prompts, assistant replies, tool calls with
   inputs and outputs, file changes, errors, subagent links, model names, token usage, latency and
   a snapshot of the working tree before and after a session.
-- **Redaction** runs at ingest, before anything is written to the index, blobs or sinks. Built-in
+- **Redaction** runs at ingest, before anything is written to the index, blobs or sinks (the spool is
+  covered under "Raw spool" below). Built-in
   rules catch private keys, vendor API keys and tokens (Anthropic, OpenAI, GitHub, GitLab, Slack,
   AWS, Google, Stripe, npm and more), JWTs, bearer and basic auth, and values next to secret-looking
   names. Add `redact = ["secrets", "env"]` to also replace the literal values of secret-looking
@@ -106,8 +107,13 @@ headers = { Authorization = "Bearer ${OTEL_TOKEN}" }
   or cookies, so no API key or login token is kept. In metadata mode it keeps hashes of the system
   prompt and tools, counts, tool names, usage and timings. The proxy listens on 127.0.0.1 unless you
   pass `--host`.
-- **Raw spool.** The hook writes the agent's raw payload to `~/.coding.sh/spool` (mode 600), and
-  redaction happens when that file is ingested. Hooks share one spool file per agent per UTC day.
-  `coding.sh gc` deletes ingested spool files older than 7 days (`[retention] keepSpoolDays`), and
-  never the current day's file, which hooks are still writing to.
+- **Raw spool.** The hook writes the agent's raw payload to `~/.coding.sh/spool` (mode 600), unredacted:
+  the hook does no redaction, to stay fast. Hooks share one spool file per agent per UTC day. A payload
+  that is one line of up to about 1 KB sits inline in that file. A longer or multi-line payload goes to
+  its own file under `spool/<agent>/raw/`. Once ingest has stored a line, it rewrites that line's
+  `raw/` file with secrets redacted, in place. It keeps the file because a re-parse and a sink that
+  was behind read it again. This applies in metadata mode too. An inline payload is not rewritten:
+  it stays in the spool file as written. `coding.sh gc` deletes ingested spool files and their `raw/`
+  files older than 7 days (`[retention] keepSpoolDays`), and never the current day's file, which hooks
+  are still writing to. Until then, run `coding.sh purge` to remove a value from the spool as well.
 - **The viewer** binds to 127.0.0.1 and requires the per-process token in the URL it prints.
