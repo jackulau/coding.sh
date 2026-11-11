@@ -6,7 +6,7 @@
 // compares them with the same machinery as `exp run --arm` and `exp compare`:
 // the interleaved durable runner (resume, retries), the acceptance gate, the
 // one-item gate and the EM-19 replay noise floor.
-import { HARNESS_DIRS, HARNESS_PATHSPECS, isHarnessPath, isInstructionHarnessPath } from "../../core/harness-paths.ts";
+import { AGENT_NAMES, HARNESS_DIRS, HARNESS_PATHSPECS, importedBy, isHarnessPath, isInstructionHarnessPath, loadedBy } from "../../core/harness-paths.ts";
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync, watch, type FSWatcher } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -14,7 +14,7 @@ import { harnessItem, itemExposure, type ExposureState } from "../../core/exposu
 import { nativeRoot } from "../../core/git.ts";
 import { DEFAULT_MODELS, lookupPrice, pricesFor } from "../../core/pricing.ts";
 import type { Context } from "../../core/context.ts";
-import type { RunResult } from "../../core/types.ts";
+import type { AgentId, RunResult } from "../../core/types.ts";
 import { FileEvalStore } from "../../datasets/store.ts";
 import type { Case, CaseRun, Dataset, Grader } from "../../datasets/types.ts";
 import { BUILTIN_ANCHORS, buildDecisionDataset, caseSession, loadAnchor, type Anchor, type DecisionDataset } from "../../eval/decision.ts";
@@ -256,6 +256,28 @@ async function resolveArms(o: AbOptions, c: CommandContext, root: string, inGit:
   }
   return [a, b];
 }
+
+/**
+ * The changed harness files some cases' agent never loads (AGENTS.md for
+ * Claude Code sessions): each arm gives the model only the files its
+ * session's agent reads, so an edit there changes nothing for those cases.
+ * `none` is true when no case loads any changed file: A and B are the same.
+ */
+export function unloadedEdits(a: readonly ContextFile[], b: readonly ContextFile[], agents: readonly (string | undefined)[]): { unloaded: { path: string; agents: string[]; cases: number }[]; none: boolean } {
+  const d = fileDiff(a, b);
+  const changed = [...d.added, ...d.removed, ...d.changed];
+  const unloaded = changed
+    .map((path) => {
+      // Read in either arm counts: a CLAUDE.md of `@AGENTS.md` makes an AGENTS.md edit reach Claude Code.
+      const skip = agents.filter((g) => loadedBy(g, path) === false && !importedBy(g, a).has(path) && !importedBy(g, b).has(path)) as string[];
+      return { path, agents: [...new Set(skip)], cases: skip.length };
+    })
+    .filter((x) => x.cases > 0);
+  const none = agents.length > 0 && changed.length > 0 && unloaded.length === changed.length && unloaded.every((x) => x.cases === agents.length);
+  return { unloaded, none };
+}
+
+const agentNames = (agents: readonly string[]) => agents.map((a) => AGENT_NAMES[a] ?? a).join(" and ");
 
 /** What changed from A to B, for the one-item gate: added and removed paths, and whether any shared file changed. */
 function fileDiff(a: readonly ContextFile[], b: readonly ContextFile[]): { added: string[]; removed: string[]; changed: string[] } {
@@ -782,6 +804,17 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
   if (!out.json) warnProtected(c, guard);
 
   const { mined, dataset, cases, caseMap, counts } = await mineDecisionPoints(c, o, ctx, store, anchors, "coding.sh exp ab");
+  const caseAgents = cases.map((x) => (x.input as Partial<FrozenPrefix> | undefined)?.agent);
+  const unloaded = unloadedEdits(armA.files, armB.files, caseAgents);
+  if (unloaded.none) {
+    const skipped = [...new Set(unloaded.unloaded.flatMap((x) => x.agents))];
+    const who = agentNames(skipped);
+    // Point at another agent only when the store has sessions of one that loads the edited files.
+    const other = Object.keys(AGENT_NAMES).find((g) => !skipped.includes(g) && unloaded.unloaded.every((x) => loadedBy(g, x.path) === true));
+    const hasOther = other !== undefined && (await ctx.index.listSessions({ agent: other as AgentId, limit: 1 })).length > 0;
+    throw new UsageError(`No arm difference: ${who} does not load ${unloaded.unloaded.map((x) => x.path).join(", ")}, so A and B give all ${plural(cases.length, "case")} the same context. Edit the file the agent loads (CLAUDE.md for Claude Code, or import it there with a line \`@${unloaded.unloaded[0]!.path}\`)${hasOther ? ", or test the edit on sessions of an agent that loads it" : ""}`, hasOther ? { reason: "no_arm_difference", suggestion: `--agent ${other}` } : { reason: "no_arm_difference" });
+  }
+  if (!out.json) for (const u of unloaded.unloaded) out.warn(`${agentNames(u.agents)} does not load ${u.path}: the edit changes nothing for ${u.cases} of ${plural(cases.length, "case")}`);
   const setup = trialSetup(o, cases, c.env);
   const { model } = setup;
   if (o.autoProvider && !out.json) out.note(o.autoProvider);

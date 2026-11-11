@@ -250,7 +250,7 @@ describe("coding.sh exp metrics", () => {
     assert.match(worse.stdout, /desktop\.lcp_ms .* worse/);
     const aa = cli(["exp", "metrics", "--arm", "a=node bench.mjs", "--arm", "b=node bench.mjs", "--pairs", "3", "--fail-on-worse"]);
     assert.equal(aa.status, 0, aa.stderr);
-    assert.match(aa.stdout, /0 better · 0 worse · 2 inconclusive/);
+    assert.match(aa.stdout, /0 better · 0 worse · 2 same · 0 inconclusive/);
   });
 
   it("usage errors exit 2 and a broken arm exits 1 with the next step", () => {

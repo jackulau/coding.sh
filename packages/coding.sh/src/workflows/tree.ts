@@ -312,6 +312,10 @@ function claudeTree(src: TreeSources, opts: BuildOpts): WorkflowTree {
     if (start !== undefined) node.startedAt = start;
     if (end !== undefined) node.endedAt = Math.max(end, start ?? end);
     if (c.issuedAt !== undefined) node.issuedAt = c.issuedAt;
+    if (node.status === "running") {
+      const seen = d?.endedAt ?? live?.endedAt;
+      if (seen !== undefined) node.lastActivityAt = seen;
+    }
     if (d?.sessionId) node.sessionId = d.sessionId;
     // Ran earlier in this run (its start is in this journal); a later resume replayed it.
     if (p?.cached && !c.cached) node.cacheHit = true;
@@ -379,7 +383,8 @@ function claudeTree(src: TreeSources, opts: BuildOpts): WorkflowTree {
   for (const [i, p] of reached.entries()) {
     const members = agents.filter((a) => a.phase === p);
     if (!members.length) continue;
-    const node: WorkflowNode = { id: `${runId}/phase/${p}`, runId, parentId: wf.id, kind: "phase", name: p, phase: p, ordinal: i, status: members.some((m) => m.status === "failed") ? "failed" : members.every((m) => m.status === "cached") ? "cached" : "ok" };
+    const status = members.some((m) => m.status === "failed") ? "failed" : members.every((m) => m.status === "cached") ? "cached" : members.some((m) => m.status === "running") ? "running" : "ok";
+    const node: WorkflowNode = { id: `${runId}/phase/${p}`, runId, parentId: wf.id, kind: "phase", name: p, phase: p, ordinal: i, status };
     const t = members.filter((m) => m.startedAt !== undefined);
     if (t.length) {
       node.startedAt = Math.min(...t.map((m) => m.startedAt!));
@@ -467,4 +472,32 @@ export function buildWorkflowTree(sources: TreeSources, opts: BuildOpts = {}): W
 export function restat(t: { run: WorkflowRun; nodes: WorkflowNode[] }, base?: { run: WorkflowRun; nodes: WorkflowNode[] }): WorkflowRun {
   t.run.stats = workflowStats(t.run, t.nodes, base);
   return t.run;
+}
+
+/** A running agent whose transcript has not moved for this long is shown stalled. */
+export const STALL_MS = 15 * 60_000;
+
+/**
+ * Marks running agents with no activity for longer than `stallMs` at `now`: their
+ * `stalledMs`, and the same on every node above them (group, phase, workflow), so
+ * a phase holding a stalled agent does not read ok. Activity is the latest of the
+ * agent's start, its transcript's last entry and `seen` (e.g. the transcript file's
+ * mtime, which moves before a re-import does). Returns how many agents stalled.
+ */
+export function markStalled(nodes: WorkflowNode[], now: number, seen: (n: WorkflowNode) => number | undefined, stallMs = STALL_MS): number {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  let count = 0;
+  for (const n of nodes) {
+    if (n.kind !== "agent" || n.status !== "running") continue;
+    const ts = [n.startedAt, n.lastActivityAt, seen(n)].filter((t): t is number => t !== undefined);
+    if (!ts.length) continue;
+    const idle = now - Math.max(...ts);
+    if (idle <= stallMs) continue;
+    count++;
+    n.stalledMs = idle;
+    for (let p = n.parentId !== undefined ? byId.get(n.parentId) : undefined; p; p = p.parentId !== undefined ? byId.get(p.parentId) : undefined) {
+      p.stalledMs = Math.max(p.stalledMs ?? 0, idle);
+    }
+  }
+  return count;
 }

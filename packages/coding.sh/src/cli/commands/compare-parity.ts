@@ -51,7 +51,12 @@ export interface ParityDiff {
   b: string | number | string[] | null;
 }
 
-const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+const ENTITIES: Record<string, string> = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ",
+  mdash: "\u2014", ndash: "\u2013", hellip: "\u2026", lsquo: "\u2018", rsquo: "\u2019", ldquo: "\u201c", rdquo: "\u201d",
+  laquo: "\u00ab", raquo: "\u00bb", middot: "\u00b7", bull: "\u2022", copy: "\u00a9", reg: "\u00ae", trade: "\u2122", times: "\u00d7", rarr: "\u2192", larr: "\u2190",
+  eacute: "\u00e9", egrave: "\u00e8", agrave: "\u00e0", aacute: "\u00e1", uuml: "\u00fc", ouml: "\u00f6", auml: "\u00e4", szlig: "\u00df", ntilde: "\u00f1", ccedil: "\u00e7",
+};
 const decode = (s: string): string =>
   s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
     if (e[0] === "#") {
@@ -150,14 +155,15 @@ export async function fetchSide(url: string, userAgent = PARITY_USER_AGENT): Pro
       res = await fetch(at, { redirect: "manual", headers: { "user-agent": userAgent, accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8" }, signal: AbortSignal.timeout(TIMEOUT_MS) });
     } catch (e) {
       const cause = (e as { cause?: { code?: string; message?: string } }).cause;
-      throw new CliError(`Couldn't fetch ${at}: ${cause?.code ?? cause?.message ?? (e as Error).message}`, { reason: "fetch_failed", next: ["Check the URL is up, then run again"] });
+      const timedOut = (e as Error).name === "TimeoutError" || (e as Error).name === "AbortError";
+      throw new CliError(timedOut ? `${at} did not answer within ${TIMEOUT_MS / 1000} s` : `Couldn't fetch ${at}: ${cause?.code ?? cause?.message ?? (e as Error).message}`, { reason: timedOut ? "timeout" : "fetch_failed", exitCode: 2, next: ["Check the URL is up, then run again"] });
     }
     const location = res.headers.get("location");
     if (res.status >= 300 && res.status < 400 && location) {
       await res.body?.cancel();
       const next = new URL(location, at).href;
       redirects.push({ status: res.status, location: next });
-      if (hop + 1 >= MAX_REDIRECTS) throw new CliError(`${url} redirects more than ${MAX_REDIRECTS} times`, { reason: "redirect_loop" });
+      if (hop + 1 >= MAX_REDIRECTS) throw new CliError(`${url} redirects more than ${MAX_REDIRECTS} times`, { reason: "redirect_loop", exitCode: 2 });
       at = next;
       continue;
     }
@@ -187,11 +193,15 @@ export function commandSide(cmd: string, env: NodeJS.ProcessEnv, cwd: string): P
     let err = "";
     child.stdout.on("data", (d: Buffer) => out.push(d));
     child.stderr.on("data", (d: Buffer) => (err += d.toString()));
-    child.on("error", (e) => reject(new CliError(`Couldn't run ${JSON.stringify(cmd)}: ${e.message}`, { reason: "command_failed" })));
-    child.on("close", (code) => {
+    child.on("error", (e) => reject(new CliError(`Couldn't run ${JSON.stringify(cmd)}: ${e.message}`, { reason: "command_failed", exitCode: 2 })));
+    child.on("close", (code, signal) => {
       const html = Buffer.concat(out).toString("utf8");
+      if (child.killed && signal) {
+        reject(new CliError(`${JSON.stringify(cmd)} did not finish within ${TIMEOUT_MS / 1000} s`, { reason: "timeout", exitCode: 2 }));
+        return;
+      }
       if (code !== 0 && !html.trim()) {
-        reject(new CliError(`${JSON.stringify(cmd)} exited ${code} and printed no page${err.trim() ? `: ${oneLine(err)}` : ""}`, { reason: "command_failed" }));
+        reject(new CliError(`${JSON.stringify(cmd)} exited ${code} and printed no page${err.trim() ? `: ${oneLine(err)}` : ""}`, { reason: "command_failed", exitCode: 2 }));
         return;
       }
       resolve({ input: cmd, exitCode: code ?? -1, page: { redirects: [], ...readPage(html) } });
@@ -251,7 +261,9 @@ const URL_SOCIAL = new Set(["og:url", "og:image", "og:image:url", "og:image:secu
 
 /** Every field that reads differently, in crawler order; empty when the pages are at parity. */
 export function diffParity(a: ParitySide, b: ParitySide): ParityDiff[] {
-  const fa = parityFields(a);
+  // A command prints a page and has no HTTP status: with one on a side, status is not compared.
+  const statusless = a.page.status === undefined || b.page.status === undefined;
+  const fa = parityFields(a).filter(([f]) => !(statusless && f === "status"));
   const fb = new Map(parityFields(b));
   const same = (x: unknown, y: unknown) => JSON.stringify(x) === JSON.stringify(y);
   const diffs: ParityDiff[] = [];
@@ -272,6 +284,10 @@ export function diffParity(a: ParitySide, b: ParitySide): ParityDiff[] {
     if (va !== vb) socialDiffs.push({ field: k, a: va, b: vb });
   }
   diffs.splice(at === -1 ? diffs.length : at, 0, ...socialDiffs);
+  // Two error pages read the same and say nothing: that is not parity.
+  const sa = a.page.status;
+  const sb = b.page.status;
+  if (sa !== undefined && sb !== undefined && sa >= 500 && sb >= 500 && !diffs.some((d) => d.field === "status")) diffs.unshift({ field: "status", a: `${sa} (server error)`, b: `${sb} (server error)` });
   return diffs;
 }
 
@@ -280,12 +296,12 @@ const show = (v: ParityDiff["a"]): string => (v === null ? "-" : Array.isArray(v
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
   const [ra, rb] = c.positionals;
-  if (ra === undefined || rb === undefined) throw new UsageError("--parity needs two pages: coding.sh compare --parity <urlA|cmdA> <urlB|cmdB>", { reason: "missing_argument" });
+  if (!ra?.trim() || !rb?.trim()) throw new UsageError("--parity needs two pages: coding.sh compare --parity <urlA|cmdA> <urlB|cmdB>", { reason: "missing_argument" });
   const ua = str(c.flags["user-agent"]) ?? PARITY_USER_AGENT;
   const read = (x: string) => (isUrl(x) ? fetchSide(x, ua) : commandSide(x, c.env, c.cwd));
   const [a, b] = await Promise.all([read(ra), read(rb)]);
   const diffs = diffParity(a, b);
-  const fields = parityFields(a).length + new Set([...Object.keys(a.page.social), ...Object.keys(b.page.social)]).size;
+  const fields = parityFields(a).filter(([f]) => f !== "status" || (a.page.status !== undefined && b.page.status !== undefined)).length + new Set([...Object.keys(a.page.social), ...Object.keys(b.page.social)]).size;
   if (out.json) {
     out.data({ parity: diffs.length === 0, a, b, diffs });
     return diffs.length ? 1 : 0;

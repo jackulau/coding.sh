@@ -122,14 +122,39 @@ describe("compare --parity", () => {
     const r = await cli(["compare", "--parity", cmd, `${a}/`, "--json"]);
     assert.equal(r.status, 1, r.stderr);
     const fields = JSON.parse(r.stdout).diffs.map((d: { field: string }) => d.field);
-    assert.deepEqual(fields, ["status", "redirects", "canonical", "og:url"]);
+    assert.deepEqual(fields, ["redirects", "canonical", "og:url"], "a command has no status, so none is compared");
   });
 
   test("an unreachable URL is a fetch_failed error; --user-agent alone is a usage error", async () => {
     const r = await cli(["compare", "--parity", "http://127.0.0.1:9/", `${a}/`, "--json"]);
-    assert.equal(r.status, 1);
+    assert.equal(r.status, 2, "a page that could not be read is exit 2; 1 stays 'the pages differ'");
     assert.equal(JSON.parse(r.stdout || r.stderr).error?.reason ?? JSON.parse(r.stdout || r.stderr).reason, "fetch_failed");
     assert.equal(cliSync(["compare", "a", "b", "--user-agent", "x"]).status, 2);
+  });
+});
+
+describe("compare --parity, edge cases", () => {
+  const side = (o: Partial<ParitySide["page"]> & { status?: number | undefined }, input = "x"): ParitySide => ({ input, page: { redirects: [], social: {}, hreflang: 0, jsonLdTypes: [], jsonLdErrors: 0, ...o } });
+
+  test("status is left out when a side is a command (it has none)", () => {
+    const d = diffParity(side({ status: 200, title: "T" }, "https://a.test/"), side({ title: "T" }, "cat x.html"));
+    assert.deepEqual(d, []);
+  });
+
+  test("two server-error pages are not at parity", () => {
+    const d = diffParity(side({ status: 500 }), side({ status: 500 }));
+    assert.equal(d.length, 1);
+    assert.equal(d[0]!.field, "status");
+    assert.deepEqual(diffParity(side({ status: 404 }), side({ status: 404 })), []);
+  });
+
+  test("named entities in a title read as the characters they stand for", () => {
+    assert.equal(readPage("<title>Docs &mdash; caf&eacute; &rsquo;s &#8212;</title>").title, "Docs \u2014 caf\u00e9 \u2019s \u2014");
+  });
+
+  test("an empty page argument is a usage error (exit 2), a command that never prints is exit 2", () => {
+    assert.equal(cliSync(["compare", "--parity", "", "x"]).status, 2);
+    assert.equal(cliSync(["compare", "--parity", "false", "false"]).status, 2);
   });
 });
 

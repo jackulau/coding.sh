@@ -17,7 +17,7 @@ import { SUITES_DIR } from "../../eval/suite-spec.ts";
 import { proxySettings } from "../../proxy/state.ts";
 import type { Session } from "../../schema/index.ts";
 import { positiveInt, UsageError } from "../args.ts";
-import { list, oneLine, str } from "../common.ts";
+import { list, oneLine, shellQuote, str } from "../common.ts";
 import { clean, CliError, duration, plural, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -108,7 +108,7 @@ export async function fork(c: CommandContext, ctx: Context, s: Session, replay: 
   let saved: { suite: string; dir: string; caseId: string; created: boolean } | undefined;
   if (suite !== undefined) {
     const expected = caseExpectation(rc.recorded, result);
-    if (!expected) throw new CliError(`Step ${n}'s recorded reply was text, and the fork gave no single tool call to expect instead, so the case would have nothing to check`, { reason: "nothing_to_check", next: ["Fork with a few trials first:", `coding.sh replay ${s.id.slice(0, 8)} --step ${n} --fork -k 3 --save-case ${suite}`] });
+    if (!expected) throw new CliError(`Step ${n}'s recorded reply was text, and the fork gave no single tool call to expect instead, so the case would have nothing to check`, { reason: "nothing_to_check", next: ["Fork with a few trials first:", `coding.sh replay ${shellQuote(s.id)} --step ${n} --fork -k 3 --save-case ${suite}`] });
     const root = (await repoRoot(c.cwd)) ?? c.cwd;
     const dir = join(root, SUITES_DIR, suite);
     const caseId = `fork-${s.id.slice(0, 8)}-step${n}`;
@@ -141,7 +141,7 @@ export async function fork(c: CommandContext, ctx: Context, s: Session, replay: 
     out.print(`Saved case ${saved.caseId} in ${saved.dir}${saved.created ? " (new suite)" : ""}`);
     out.print(out.style("Its request file holds the conversation up to this step, redacted as stored. Read it before you commit it.", "faint"));
     out.next("Run it", `coding.sh eval run ${saved.suite}`);
-  } else if (result && result.differ) out.next("Keep this step as a regression case", `coding.sh replay ${s.id.slice(0, 8)} --step ${n} --fork ${forkFlags(c)}--save-case forks`);
+  } else if (result && result.differ) out.next("Keep this step as a regression case", `coding.sh replay ${shellQuote(s.id)} --step ${n} --fork ${forkFlags(c)}--save-case forks`);
   return run?.verify && !run.verify.ok ? 1 : 0;
 }
 
@@ -194,5 +194,5 @@ function printRun(out: Output, replay: Replay, n: number, r: ForkRunResult): voi
     out.print(r.verify.ok ? out.style(`✓ ${r.verify.command} passed`, "green") : out.style(`✗ ${r.verify.command} failed (exit ${r.verify.exitCode ?? "?"})`, "red"));
     if (!r.verify.ok && r.verify.output.trim()) for (const l of clean(r.verify.output).trimEnd().split("\n").slice(-12)) out.print(`  ${l}`);
   }
-  if (r.sessionId) out.next("Replay the fork", `coding.sh replay ${r.sessionId.slice(0, 8)}`);
+  if (r.sessionId) out.next("Replay the fork", `coding.sh replay ${shellQuote(r.sessionId)}`);
 }

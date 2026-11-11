@@ -86,7 +86,8 @@ export interface MetricExpResult {
   alpha: number;
   correction: "holm" | "none";
   metrics: MetricStat[];
-  summary: { better: number; worse: number; inconclusive: number; pairsComplete: number; failedRuns: number };
+  /** `same`: metrics with no spread that did not move (an exit code of 0 on both arms); `inconclusive` leaves them out. */
+  summary: { better: number; worse: number; same: number; inconclusive: number; pairsComplete: number; failedRuns: number };
   notes: string[];
 }
 
@@ -246,13 +247,17 @@ export async function runMetrics(opts: RunMetricsOpts): Promise<MetricExpResult>
     summary: {
       better: analysis.metrics.filter((m) => m.verdict === "better").length,
       worse: analysis.metrics.filter((m) => m.verdict === "worse").length,
-      inconclusive: analysis.metrics.filter((m) => m.verdict === "inconclusive").length,
+      same: analysis.metrics.filter(isSame).length,
+      inconclusive: analysis.metrics.filter((m) => m.verdict === "inconclusive" && !isSame(m)).length,
       pairsComplete: analysis.pairsComplete,
       failedRuns,
     },
     notes,
   };
 }
+
+/** A metric with no spread on either arm and no change: "same", not inconclusive. */
+const isSame = (m: MetricStat) => m.verdict === "inconclusive" && m.deterministic && m.delta.median === 0;
 
 export interface AnalyzeOpts {
   higher?: readonly string[];
@@ -363,7 +368,7 @@ export function renderMetrics(r: MetricExpResult, opts: RenderOpts): string {
   if (r.metrics.length) {
     out.push("");
     const verdictCell = (m: MetricStat) => {
-      const text = m.verdict === "inconclusive" ? (m.deterministic && m.delta.median === 0 ? "same" : "inconclusive") : m.verdict;
+      const text = isSame(m) ? "same" : m.verdict;
       return m.verdict === "better" ? paint(text, "green", color) : m.verdict === "worse" ? paint(text, "red", color) : paint(text, "dim", color);
     };
     out.push(
@@ -389,7 +394,7 @@ export function renderMetrics(r: MetricExpResult, opts: RenderOpts): string {
   }
   out.push("");
   const s = r.summary;
-  const tally = `${s.better} better · ${s.worse} worse · ${s.inconclusive} inconclusive`;
+  const tally = `${s.better} better · ${s.worse} worse${s.same ? ` · ${s.same} same` : ""} · ${s.inconclusive} inconclusive`;
   out.push(`verdict: ${s.worse ? paint(tally, "red", color) : s.better ? paint(tally, "green", color) : paint(tally, "bold", color)}`);
   for (const n of r.notes) out.push(paint(`note: ${n}`, "dim", color));
   const failed = r.runs.filter((x) => x.error !== undefined);

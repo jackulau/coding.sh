@@ -9,7 +9,7 @@
 // instructions for <dir>" block, in every user message that carries one. A
 // file the request did not carry is added the way Claude Code adds CLAUDE.md.
 // The sending is exp replay's (experiments/replay.ts).
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, posix } from "node:path";
 import { commandOf, type ReplayStep } from "../core/replay.ts";
 import type { BlobStore, HarnessBundle, IndexStore } from "../core/types.ts";
 import type { Prices } from "../core/pricing.ts";
@@ -177,6 +177,23 @@ function sections(s: string, path: string, cwd: string | undefined): Section[] {
   return out;
 }
 
+/** A Codex request: it carries Codex's AGENTS.md block, or is a Responses call with no Claude Code context. */
+function codexShaped(api: Api, slots: readonly Slot[]): boolean {
+  const texts = slots.map((sl) => sl.get());
+  if (texts.some((t) => /# AGENTS\.md instructions for /.test(t))) return true;
+  return api === "responses" && !texts.some((t) => t.includes("Contents of "));
+}
+
+/** Puts `block` in a user message of its own before the first user message of a Responses `input` list. */
+function insertCodexBlock(body: Record<string, unknown>, block: string): boolean {
+  const list = body.input;
+  if (!Array.isArray(list)) return false;
+  const at = list.findIndex((m) => isObj(m) && m.role === "user" && (m.type === undefined || m.type === "message"));
+  if (at < 0) return false;
+  list.splice(at, 0, { type: "message", role: "user", content: [{ type: "input_text", text: block }] });
+  return true;
+}
+
 const CLAUDE_MD_HEAD = "Codebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: These instructions OVERRIDE any default behavior and you MUST follow them exactly as written.";
 
 /**
@@ -209,6 +226,12 @@ export function rewriteHarness(api: Api, body: Record<string, unknown>, change: 
       continue;
     }
     const abs = f.path.startsWith("~/") || isAbsolute(f.path) || !cwd ? f.path : join(cwd, f.path).replace(/\\/g, "/");
+    // Codex's own shape: an AGENTS.md block as a user message of its own, before the prompt.
+    if (codexShaped(api, slots) && /(?:^|\/)AGENTS\.md$/.test(f.path)) {
+      const block = `# AGENTS.md instructions for ${posix.dirname(abs)}\n\n<INSTRUCTIONS>\n${text}\n</INSTRUCTIONS>`;
+      edits.push({ path: f.path, how: insertCodexBlock(out, block) || prepend(block) ? "added" : "absent" });
+      continue;
+    }
     const section = `Contents of ${abs} (project instructions, checked into the codebase):\n\n${text}`;
     // Next to the files the agent already loaded, else in a reminder of its own.
     const host = slots.find((sl) => sl.get().includes("Contents of "));

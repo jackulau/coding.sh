@@ -13,7 +13,7 @@
 // on infra (InfraStop below): with a dead login, the rest of the round would
 // only add more unknowns.
 
-export type InfraKind = "rate-limit" | "server" | "network" | "tempfail" | "auth" | "setup";
+export type InfraKind = "rate-limit" | "overloaded" | "server" | "network" | "tempfail" | "auth" | "setup";
 
 /** Retries per kind, at most: a login does not come back after a backoff, and a setup step gets one more try. */
 const KIND_RETRIES: Partial<Record<InfraKind, number>> = { auth: 0, setup: 1 };
@@ -44,7 +44,9 @@ export function retryPolicy(env: NodeJS.ProcessEnv, retries?: number, stopAfter?
 }
 
 const OWN_TIMEOUT = /\btimed out after \d/i;
-const RATE = /\b(rate[ _-]?limit(?:ed|s)?|too many requests|overloaded(?:_error)?|resource[ _]exhausted|(?:HTTP|status(?: code)?:?|error:?) ?(?:429|529))\b/i;
+const RATE = /\b(rate[ _-]?limit(?:ed|s)?|too many requests|resource[ _]exhausted|(?:HTTP|status(?: code)?:?|error:?) ?429)\b/i;
+/** The provider is overloaded (Anthropic's HTTP 529 overloaded_error): not this caller's rate limit. */
+const OVERLOADED = /\b(overloaded(?:_error)?|(?:HTTP|status(?: code)?:?|error:?) ?529)\b/i;
 const SERVER = /\b(?:HTTP|status(?: code)?:?|API error:?) ?5\d\d\b|\b(?:internal server error|bad gateway|service unavailable|gateway time-?out)\b/i;
 const NETWORK = /\b(ECONNRESET|ECONNREFUSED|ECONNABORTED|ETIMEDOUT|EPIPE|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|UND_ERR_[A-Z_]+)\b|\bsocket hang up\b|\bfetch failed\b|\bnetwork error\b/i;
 /** EX_TEMPFAIL (sysexits.h): a command's way to say "temporary failure, try again". */
@@ -67,6 +69,7 @@ export function infraKind(error: string | undefined): InfraKind | undefined {
   if (!error || OWN_TIMEOUT.test(error)) return undefined;
   if (TEMPFAIL.test(error)) return "tempfail";
   if (AUTH.test(error)) return "auth";
+  if (OVERLOADED.test(error)) return "overloaded";
   if (RATE.test(error)) return "rate-limit";
   if (SERVER.test(error)) return "server";
   if (NETWORK.test(error)) return "network";
@@ -187,7 +190,7 @@ export function infraKinds(records: readonly { infra?: InfraKind }[]): Partial<R
   return out;
 }
 
-const KIND_TEXT: Record<InfraKind, string> = { auth: "login", setup: "setup", "rate-limit": "rate limit", server: "5xx", network: "network", tempfail: "temporary failure" };
+const KIND_TEXT: Record<InfraKind, string> = { auth: "login", setup: "setup", "rate-limit": "rate limit", overloaded: "overloaded", server: "5xx", network: "network", tempfail: "temporary failure" };
 
 /** "login 4, setup 1": infra counts by kind, largest first. */
 export function infraKindsText(kinds: Partial<Record<InfraKind, number>>): string {

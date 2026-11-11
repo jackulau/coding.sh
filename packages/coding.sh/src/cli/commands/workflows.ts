@@ -1,7 +1,7 @@
 // coding.sh workflows list|import|show|stats|score|run|compare|replay
 // (docs/design/workflows.md §10). Runs live in the workflow store
 // (~/.coding.sh/workflows); agent transcripts go to the index as child sessions.
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
 import { median } from "../../stats/index.ts";
@@ -17,14 +17,14 @@ import { scoreWorkflowCase, verifyEntries, type CaseScore, type ScoreCaseDeps } 
 import { validateCase } from "../../workflows/seed/bugs.ts";
 import { WorkflowStore } from "../../workflows/store.ts";
 import { DETAIL_KINDS, runSummary } from "../../workflows/viewer.ts";
-import { buildWorkflowTree } from "../../workflows/tree.ts";
+import { buildWorkflowTree, markStalled } from "../../workflows/tree.ts";
 import { totalTokens } from "../../workflows/metrics.ts";
 import type { DeploymentRule, WorkflowCase, WorkflowDriver,WorkflowFramework, WorkflowNode, WorkflowRun, WorkflowVariant } from "../../workflows/types.ts";
 import { sortableId } from "../../core/ids.ts";
 import { jobConfig, taskFingerprint } from "../../jobs/config.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { finishJob, openJob, resumeField, resumeNote, retryFlag, trialTimeout } from "../jobs.ts";
-import { jsonArg, num, oneLine, list, requireConsent, resolveSession, str, withContext } from "../common.ts";
+import { jsonArg, num, oneLine, list, requireConsent, resolveSession, shellQuote, str, withContext } from "../common.ts";
 import { ago, clean, CliError, duration, plural, tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -163,11 +163,11 @@ async function importRuns(c: CommandContext): Promise<number> {
     spin.stop();
   }
   if (out.json) {
-    out.data({ found: r.found, imported: r.imported.map(runJson), skipped: r.skipped, errors: r.errors });
+    out.data({ found: r.found, imported: r.imported.map(runJson), skipped: r.skipped, copies: r.copies, errors: r.errors });
     return r.errors.length && !r.imported.length && r.found ? 1 : 0;
   }
   for (const run of r.imported) out.print(`${run.id}\t${clean(run.name)}\t${run.status}\t${run.stats.agents} agents`);
-  out.ok(`Imported ${plural(r.imported.length, "workflow run")} (${r.skipped} unchanged, ${r.found} found)`);
+  out.ok(`Imported ${plural(r.imported.length, "workflow run")} (${r.skipped} unchanged, ${r.copies ? `${plural(r.copies, "copy", "copies")} of another session's run, ` : ""}${r.found} found)`);
   for (const e of r.errors) out.warn(`Couldn't import ${e.path}: ${e.error}`);
   return r.errors.length && !r.imported.length && r.found ? 1 : 0;
 }
@@ -178,7 +178,8 @@ function nodeLine(n: WorkflowNode): string {
   const dur = n.startedAt !== undefined && n.endedAt !== undefined ? duration(n.endedAt - n.startedAt) : "-";
   const attempt = n.attempt !== undefined && (n.attempts ?? 1) > 1 ? ` #${n.attempt}` : "";
   const label = n.kind === "wait" && n.name === "wait" ? "wait" : `${n.kind} ${clean(n.name) || "(unnamed)"}${attempt}`;
-  const parts = [label, n.status, dur];
+  const parts = [label, n.stalledMs !== undefined && n.status === "running" ? "stalled" : n.status, dur];
+  if (n.stalledMs !== undefined) parts.push(`no activity for ${duration(n.stalledMs)}`);
   if (n.cacheHit) parts.push("replayed on resume");
   if (n.resume) parts.push(n.resume === "wait" ? "resumed after wait" : `resumed after ${n.resume}`);
   if (n.lost) parts.push(n.lostMs ? `lost, then down ${duration(n.lostMs)}` : "lost");
@@ -215,6 +216,7 @@ async function show(c: CommandContext): Promise<number> {
   const id = c.positionals[0];
   if (!id) throw new UsageError("Missing <run>", { reason: "missing_argument" });
   const { run, nodes } = await getRunOrSession(c, id);
+  const stalled = run.status === "running" ? markStalled(nodes, Date.now(), (n) => transcriptMtime(run, n)) : 0;
   const gantt = buildGantt(run, nodes);
   if (out.json) {
     const full = c.flags.tree === true;
@@ -227,7 +229,7 @@ async function show(c: CommandContext): Promise<number> {
   }
   out.row("Run", `${run.id} (${run.framework})`);
   out.row("Workflow", clean(run.name));
-  out.row("Status", run.status, run.status === "ok" ? "ok" : run.status === "running" ? "none" : "fail");
+  out.row("Status", stalled ? `${run.status} (${plural(stalled, "agent")} stalled)` : run.status, run.status === "ok" ? "ok" : run.status === "running" && !stalled ? "none" : "fail");
   out.row("Wall", `${duration(wallOf(run))}${segmentsText(run.stats)}${run.stats.criticalPathMs !== undefined ? `, critical path ${duration(run.stats.criticalPathMs)}${run.stats.criticalPathExact ? "" : " (approx)"}` : ""}`);
   out.row("Cost", `${usd(run.stats.costUsd)}, ${tokens(totalTokens(run.stats.tokens))} tokens`);
   if (run.resumedFrom) out.row("Resumed from", `${run.resumedFrom} (${run.stats.cacheHits} cached)`);
@@ -245,6 +247,21 @@ async function show(c: CommandContext): Promise<number> {
   out.note();
   for (const l of renderTree(nodes, c.flags.tree === true)) out.print(l);
   return 0;
+}
+
+/** When a Claude Code agent's transcript was last written (its file's mtime), read at show time. */
+function transcriptMtime(run: WorkflowRun, n: WorkflowNode): number | undefined {
+  const dir = run.source?.kind === "journal" ? run.source.path : undefined;
+  if (!dir) return undefined;
+  for (const f of [n.agentId ? `agent-${n.agentId}.jsonl` : undefined, "journal.jsonl"]) {
+    if (!f) continue;
+    try {
+      return statSync(join(dir, f)).mtimeMs;
+    } catch {
+      // not written yet, or moved: try the journal
+    }
+  }
+  return undefined;
 }
 
 const pct = (x: number | undefined) => (x === undefined || !Number.isFinite(x) ? "-" : `${(x * 100).toFixed(0)}%`);
@@ -497,7 +514,7 @@ async function validateCases(c: CommandContext, cases: readonly WorkflowCase[], 
     throw new CliError(`${plural(bad.length, "seeded bug")} failed validation`, {
       reason: "invalid_cases",
       details: bad,
-      next: ["Fix the bug patches or tests, or run without the check:", `coding.sh workflows run ${workflow} … --no-validate`],
+      next: ["Fix the bug patches or tests, or run without the check:", `coding.sh workflows run ${shellQuote(workflow)} … --no-validate`],
     });
   }
   if (checked) c.out.note(`Validated ${plural(checked, "seeded bug")}`);
@@ -529,7 +546,7 @@ async function runExperiment(c: CommandContext): Promise<number> {
   try {
     cases = await loadCases(dir, workflow, store.blobs, split);
   } catch (e) {
-    throw new CliError(`Can't read cases from ${dir}: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_cases", next: ["Point at the cases directory:", `coding.sh workflows run ${workflow} --cases <dir> --variant …`] });
+    throw new CliError(`Can't read cases from ${dir}: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_cases", next: ["Point at the cases directory:", `coding.sh workflows run ${shellQuote(workflow)} --cases <dir> --variant …`] });
   }
   if (!cases.length) throw new CliError(`No cases in ${dir}${split ? ` for split ${split}` : ""}`, { reason: "no_cases", next: ["Add cases as TOML files:", `${dir}/<case>.toml`] });
   if (c.flags.validate !== false) await validateCases(c, cases, store, workflow);
@@ -537,7 +554,7 @@ async function runExperiment(c: CommandContext): Promise<number> {
   const est = await estimateCost(store, workflow, jobs);
   if (est) out.note(`Estimated cost ${usd(est.total)} (${plural(jobs, "run")} × median ${usd(est.perRun)} over ${plural(est.basis, "past run")})`);
   else out.note(`${plural(jobs, "run")}; no past runs of ${workflow} to estimate cost from`);
-  await confirmCost(c, `Run ${plural(jobs, "workflow run")}`, est?.total, `coding.sh workflows run ${workflow} … --yes`);
+  await confirmCost(c, `Run ${plural(jobs, "workflow run")}`, est?.total, `coding.sh workflows run ${shellQuote(workflow)} … --yes`);
   const driver = driverFor(c, driverKind);
   // Durable: each finished run is checkpointed; --resume continues an interrupted experiment.
   const config = jobConfig({
@@ -600,7 +617,7 @@ async function runExperiment(c: CommandContext): Promise<number> {
   }
   out.ok(`Ran ${plural(result.runs.length, "workflow run")}${failed ? `, ${failed} failed` : ""}${infra ? `, ${infra} hit infrastructure errors` : ""}`);
   resumeNote(c, job);
-  if (variants.length >= 2) out.next("Compare two variants", `coding.sh workflows compare ${result.experimentId} --baseline ${variants[0]!.name} --candidate ${variants[1]!.name}`);
+  if (variants.length >= 2) out.next("Compare two variants", `coding.sh workflows compare ${result.experimentId} --baseline ${shellQuote(variants[0]!.name)} --candidate ${shellQuote(variants[1]!.name)}`);
   return 0;
 }
 
@@ -737,7 +754,7 @@ async function replay(c: CommandContext): Promise<number> {
       throw new UsageError(`Can't read --base-script ${JSON.stringify(baseFlag)}`, { reason: "invalid_value" });
     }
   } else if (base.run.script) baseScript = await store.getText(base.run.script);
-  if (baseScript === undefined) throw new CliError(`Run ${id} has no captured script`, { reason: "missing_script", next: ["Pass the script the run used:", `coding.sh workflows replay ${id} --script ${scriptFlag} --base-script <path>`] });
+  if (baseScript === undefined) throw new CliError(`Run ${id} has no captured script`, { reason: "missing_script", next: ["Pass the script the run used:", `coding.sh workflows replay ${shellQuote(id)} --script ${shellQuote(scriptFlag)} --base-script <path>`] });
   const args = str(c.flags.args) !== undefined ? await jsonArg(str(c.flags.args)!, "--args") : undefined;
   const dryRun = c.flags["dry-run"] === true;
   const opts = { base, baseScript, script, editedScript, driver: driverFor(c, "claude"), store, dryRun, ...(args !== undefined ? { args } : {}) };
@@ -745,7 +762,7 @@ async function replay(c: CommandContext): Promise<number> {
   let res = predicted;
   if (!dryRun) {
     const p = predicted.prediction;
-    await confirmCost(c, `Replay ${id} (${p.total - p.hits} of ${p.total} agent calls re-run)`, p.estimatedUsd, `coding.sh workflows replay ${id} --script ${scriptFlag} --yes`);
+    await confirmCost(c, `Replay ${id} (${p.total - p.hits} of ${p.total} agent calls re-run)`, p.estimatedUsd, `coding.sh workflows replay ${shellQuote(id)} --script ${shellQuote(scriptFlag)} --yes`);
     const spin = out.spin(`Replaying ${id}`);
     try {
       res = await replayWorkflow(opts);

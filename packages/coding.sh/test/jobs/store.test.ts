@@ -7,7 +7,7 @@ import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { configChanges, jobConfig, taskFingerprint } from "../../src/jobs/config.ts";
-import { backoffMs, DEFAULT_STOP_AFTER, infraKind, infraStopFor, infraStopText, retryAfterMs, retryPolicy, voidText, withRetries } from "../../src/jobs/retry.ts";
+import { backoffMs, DEFAULT_STOP_AFTER, infraKind, infraKindsText, infraStopFor, infraStopText, retryAfterMs, retryPolicy, voidText, withRetries } from "../../src/jobs/retry.ts";
 import { JobStore, liveStatus, parseLines, progressOf, STALE_MS, type JobHeader } from "../../src/jobs/store.ts";
 
 const root = mkdtempSync(join(tmpdir(), "csh-jobs-"));
@@ -127,7 +127,9 @@ describe("retries: infrastructure errors only", () => {
   it("classifies rate limits, 5xx, network errors and exit 75; never the task's own failures", () => {
     assert.equal(infraKind("node agent.mjs: exited 1: HTTP 429 Too Many Requests"), "rate-limit");
     assert.equal(infraKind("Error: rate limit exceeded"), "rate-limit");
-    assert.equal(infraKind('{"type":"overloaded_error"}'), "rate-limit");
+    assert.equal(infraKind('{"type":"overloaded_error"}'), "overloaded", "a 529 is the provider's load, not this caller's rate limit");
+    assert.equal(infraKind("HTTP 529"), "overloaded");
+    assert.equal(infraKindsText({ overloaded: 10 }), "overloaded 10");
     assert.equal(infraKind("API error: 503 Service Unavailable"), "server");
     assert.equal(infraKind("HTTP 502 Bad Gateway"), "server");
     assert.equal(infraKind("connect ECONNREFUSED 127.0.0.1:443"), "network");

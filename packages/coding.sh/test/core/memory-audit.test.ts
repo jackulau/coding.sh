@@ -114,6 +114,17 @@ describe("memory audit: synthetic sessions", () => {
     assert.equal(skillListingBytes("no frontmatter"), undefined);
   });
 
+  it("a file added after every session started is not flagged never-read; one added before them is", () => {
+    const sessions = [session("s1", [], { startedAt: 10 }), session("s2", [], { startedAt: 50 })];
+    const late = "~/app/.claude/skills/demo/SKILL.md";
+    const early = "~/app/.claude/rules/tests.md";
+    const a = auditMemory(sessions, [file(late, 400, { since: 100 }), file(early, 400, { since: 20, scoped: true })], { home: HOME });
+    assert.deepEqual(row(a, late).flags, []);
+    assert.equal(row(a, late).loaded, 0);
+    assert.deepEqual(row(a, early).flags, ["never-read"], "s2 started after it was added and did not read it");
+    assert.equal(a.totals.neverRead, 1);
+  });
+
   it("flags never-read and write-only files", () => {
     assert.deepEqual(row(a, `${MEM}/stale.md`).flags, ["never-read"]);
     // notes.md: written by s1 and s2; s2 read it, but s2 wrote it too.
@@ -276,6 +287,26 @@ describe("harness audit over a store and a temp HOME", () => {
     assert.deepEqual(a.files.find((f) => f.path.endsWith("/memory/stale.md"))!.flags, ["never-read"]);
     assert.equal(a.files.find((f) => f.path === "~/app/pkg/deep/CLAUDE.md")!.loaded, 1, "the child ran in pkg/deep");
     assert.equal(a.files.find((f) => f.path === "~/app/CLAUDE.md")!.loaded, 1, "root and child are one session");
+  });
+
+  it("a skill committed after a session started was not loaded at that session's start", async () => {
+    const repo = join(home, "repo");
+    mkdirSync(join(repo, ".claude", "skills", "demo"), { recursive: true });
+    writeFileSync(join(repo, ".claude", "skills", "demo", "SKILL.md"), "---\nname: demo\ndescription: Demo\n---\nsteps\n");
+    const added = Date.UTC(2026, 10, 5) / 1000;
+    const git = (...a: string[]) =>
+      assert.equal(spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...a], { cwd: repo, env: { ...env, GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_DATE: `${added} +0000`, GIT_COMMITTER_DATE: `${added} +0000` } }).status, 0, a.join(" "));
+    git("init", "-q");
+    git("add", "-A");
+    git("commit", "-qm", "add the skill");
+    const index = new MemoryIndexStore();
+    const s = (id: string, startedAt: number): Session => ({ id, agent: "claude-code", cwd: repo, repo: { root: repo }, startedAt, stats: { events: 0, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 } }) as Session;
+    await index.upsertSession(s("before", added * 1000 - 86400_000));
+    await index.upsertSession(s("after", added * 1000 + 86400_000));
+    const a = await memoryAudit(index, { env });
+    const demo = a.files.find((f) => f.path.endsWith("/repo/.claude/skills/demo/SKILL.md"));
+    assert.ok(demo, a.files.map((f) => f.path).join(", "));
+    assert.equal(demo.loaded, 1, "only the session that started after the commit");
   });
 
   it("coding.sh harness audit prints the table and --json the report", () => {

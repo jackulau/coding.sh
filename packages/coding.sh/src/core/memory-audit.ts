@@ -33,6 +33,8 @@ export interface MemoryFileInfo {
   scoped?: boolean;
   /** What loading it puts in context when that is less than the file: a skill's name and description. */
   loadBytes?: number;
+  /** When the file first existed (ms): its first commit, or when it was made if git does not track it. A session that started before it never loaded it at start. */
+  since?: number;
 }
 
 /** The events of one session that the audit reads. */
@@ -340,6 +342,8 @@ export function auditMemory(sessions: readonly MemorySession[], files: readonly 
   const startLoad = (k: string, s: MemorySession) => {
     const f = onDisk.get(k);
     if (!f || f.scoped) return;
+    // A session that started before the file existed could not load it.
+    if (f.since !== undefined && s.startedAt < f.since) return;
     const t = touch(k, s.rootId ?? s.id);
     if (!t.loaded) t.loaded = t.loadedAtStart = true;
   };
@@ -419,7 +423,8 @@ export function auditMemory(sessions: readonly MemorySession[], files: readonly 
     // write-only: written, and no session that did not write it ever loaded or read it.
     if (wrote > 0 && otherUse === 0) flags.push("write-only");
     else if (f && kind === "skill" && loaded > 0 && read === 0) flags.push("loaded-not-read");
-    else if (f && loaded === 0 && read === 0) flags.push("never-read");
+    // A file added after every session in the window started was never there to read: no flag.
+    else if (f && loaded === 0 && read === 0 && !(f.since !== undefined && sessions.every((s) => s.startedAt < f.since!))) flags.push("never-read");
     const tokens = f ? Math.ceil(f.bytes / 4) : undefined;
     const loadTokens = f ? Math.ceil((f.loadBytes ?? f.bytes) / 4) * loaded : undefined;
     rows.push({
