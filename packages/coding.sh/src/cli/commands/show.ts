@@ -10,11 +10,12 @@ import { sessionOutline, phaseLabel, storedOutline, type Outline, type Phase } f
 import { costNote } from "../../core/pricing.ts";
 import { failureFlags } from "../../core/sessions.ts";
 import { SKILL_EVENT_KINDS, SKILL_TAG_PREFIX, skillUse, type SkillUseReport } from "../../core/skills-use.ts";
+import { pageTree, subagentsOf, type TreeNode } from "../../core/tree.ts";
 import type { AgentEvent, Session } from "../../core/types.ts";
 import type { DurableStats } from "../../schema/index.ts";
 import { positiveInt } from "../args.ts";
 import { loadCall, resolveCall } from "../../proxy/calls.ts";
-import { autoIngest, oneLine, resolveSession, sessionJson, withContext, notFoundWithBacklog, pendingField, readIngest } from "../common.ts";
+import { autoIngest, fieldsFlag, oneLine, pickFields, resolveSession, sessionJson, withContext, notFoundWithBacklog, pendingField, readIngest } from "../common.ts";
 import { ago, clean, CliError, duration, localTime, tokens, usd, type Output } from "../output.ts";
 import { printCall } from "./diff-calls.ts";
 import type { CommandContext } from "../types.ts";
@@ -22,21 +23,23 @@ import type { IndexStore } from "../../core/types.ts";
 import type { SessionDerail } from "../../schema/index.ts";
 import type { FileDiff } from "../../core/snapshot.ts";
 
-interface Tree {
-  session: Session;
-  children: Tree[];
-}
+/** Subagent sessions `show` lists, the first in tree order (as `tree` prints them); `tree` has them all. */
+const SUBAGENT_JSON_LIMIT = 50;
+const SUBAGENT_TEXT_LIMIT = 500;
 
-async function subagentTree(index: IndexStore, id: string, depth = 0, seen = new Set<string>()): Promise<Tree[]> {
-  if (depth > 5 || seen.has(id)) return [];
-  seen.add(id);
-  const kids = await index.listSessions({ parentSessionId: id, limit: 500 });
-  kids.sort((a, b) => a.startedAt - b.startedAt);
-  return Promise.all(kids.map(async (k) => ({ session: k, children: await subagentTree(index, k.id, depth + 1, seen) })));
-}
+const countTree = (t: readonly TreeNode[]): number => t.reduce((n, x) => n + 1 + countTree(x.children), 0);
 
-function treeJson(t: Tree[]): unknown[] {
+function treeJson(t: readonly TreeNode[]): unknown[] {
   return t.map((x) => ({ session: sessionJson(x.session), subagents: treeJson(x.children) }));
+}
+
+/** An event for --json without what `session` already says for every one of them: the session id, the agent and the cwd. */
+function eventJson(e: AgentEvent, s: Session): Record<string, unknown> {
+  const { sessionId: _id, agent, cwd, ...rest } = e;
+  const out: Record<string, unknown> = rest;
+  if (agent !== s.agent) out.agent = agent;
+  if (cwd !== undefined && cwd !== s.cwd) out.cwd = cwd;
+  return out;
 }
 
 function str(v: unknown): string | undefined {
@@ -279,7 +282,7 @@ export function durableSteps(d: DurableStats, t0: number): string[] {
   return lines.sort((a, b) => a[0] - b[0]).map(([, l]) => l);
 }
 
-function printTree(out: Output, t: Tree[], depth = 1): void {
+function printTree(out: Output, t: readonly TreeNode[], depth = 1): void {
   for (const x of t) {
     const s = x.session;
     const d = s.endedAt !== undefined ? duration(s.endedAt - s.startedAt) : "-";
@@ -321,6 +324,9 @@ export function startedText(ts: number, now = Date.now()): string {
   return rel.endsWith("ago") || rel === "just now" ? `${localTime(ts, now)} (${rel})` : localTime(ts, now);
 }
 
+/** The top-level fields of `show --json` (a session, or a model call), for --fields. */
+const SHOW_FIELDS = ["session", "snapshot", "eventCount", "events", "phases", "days", "subagentCount", "subagents", "subagentsTruncated", "subagentsRest", "skills", "pending", "call", "request", "response"];
+
 /** Sessions with more events than this show as phases unless --all or --limit is given. */
 const DEFAULT_LIMIT = 200;
 
@@ -329,6 +335,7 @@ export async function run(c: CommandContext): Promise<number> {
   const explicitLimit = positiveInt(c.flags.limit, "limit");
   const limit = explicitLimit ?? DEFAULT_LIMIT;
   const all = c.flags.all === true;
+  const fields = fieldsFlag(c, SHOW_FIELDS);
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
     const ref = c.positionals[0]!;
@@ -341,7 +348,10 @@ export async function run(c: CommandContext): Promise<number> {
       const call = await resolveCall(ctx.index, ref).catch(() => undefined);
       if (!call) throw notFoundWithBacklog(err, backlog);
       const loaded = await loadCall(ctx.blobs, call);
-      if (out.json) out.data({ call: call, request: loaded.request ?? null, response: loaded.response ?? null });
+      if (out.json) {
+        const doc = { call: call, request: loaded.request ?? null, response: loaded.response ?? null };
+        out.data(fields ? pickFields(doc, fields) : doc);
+      }
       else printCall(out, loaded, all);
       return 0;
     }
@@ -351,9 +361,12 @@ export async function run(c: CommandContext): Promise<number> {
     const derails = s.stats.derails ?? [];
     const stored = all ? undefined : storedOutline(s);
     const full = all || (phased && !stored) ? await ctx.index.listEvents(s.id) : undefined;
-    const events = full && !all ? full.slice(0, limit) : (full ?? (await ctx.index.listEvents(s.id, { limit })));
+    // --json of a phased session lists no events, so it reads none.
+    const events = full && !all ? full.slice(0, limit) : (full ?? (out.json && phased ? [] : await ctx.index.listEvents(s.id, { limit })));
     const outline = stored ?? (full ? sessionOutline(full, derails) : events.length >= s.stats.events ? sessionOutline(events, derails) : undefined);
-    const tree = await subagentTree(ctx.index, s.id);
+    // The walk `tree` does, so the count here is the count there.
+    const tree = await subagentsOf(ctx.index, s);
+    const subagentCount = countTree(tree);
     const changes = await snapshotChanges(s, c.env);
     const changed = new Set(events.filter((e) => e.kind === "file.change" && typeof e.payload.path === "string").map((e) => e.payload.path as string));
     // A HEAD-based diff can include edits from before the session; count it only against a real start snapshot.
@@ -361,7 +374,24 @@ export async function run(c: CommandContext): Promise<number> {
     const filesChanged = Math.max(s.stats.filesChanged, changed.size);
     const skills = await sessionSkills(ctx.index, s);
     if (out.json) {
-      out.data({ session: sessionJson(s), snapshot: changes ?? null, events: all ? full : events, phases: outline?.phases ?? [], days: outline?.days ?? [], subagents: treeJson(tree), skills: skills?.used ?? [], ...pendingField(backlog) });
+      // A phased session answers with its phases, as the text does; --all or --limit lists the events.
+      const listed = phased ? [] : ((all ? full : events) ?? []);
+      const subagents = pageTree(tree, 0, SUBAGENT_JSON_LIMIT);
+      const doc: Record<string, unknown> = {
+        session: sessionJson(s, { derailEvents: true }),
+        snapshot: changes ?? null,
+        eventCount: s.stats.events,
+        events: listed.map((e) => eventJson(e, s)),
+        phases: outline?.phases ?? [],
+        days: outline?.days ?? [],
+        subagentCount,
+        subagents: treeJson(subagents.roots),
+      };
+      // The count alone does not say where the rest are.
+      if (subagents.next !== undefined) Object.assign(doc, { subagentsTruncated: true, subagentsRest: `coding.sh tree ${s.id} --json` });
+      doc.skills = skills?.used ?? [];
+      Object.assign(doc, pendingField(backlog));
+      out.data(fields ? pickFields(doc, fields) : doc);
       return 0;
     }
     const lat = s.stats.latency;
@@ -424,7 +454,8 @@ export async function run(c: CommandContext): Promise<number> {
     if (tree.length) {
       out.print();
       out.print(out.style("Subagents", "bold"));
-      printTree(out, tree);
+      printTree(out, pageTree(tree, 0, SUBAGENT_TEXT_LIMIT).roots);
+      if (subagentCount > SUBAGENT_TEXT_LIMIT) out.note(`Showing the first ${SUBAGENT_TEXT_LIMIT} of ${subagentCount.toLocaleString("en-US")} subagents; coding.sh tree ${s.id} lists them all`);
     }
     return 0;
   });

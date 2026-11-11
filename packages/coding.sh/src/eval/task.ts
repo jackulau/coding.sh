@@ -628,6 +628,12 @@ export function verifierPathWarnings(task: Pick<EvalTask, "verifier">): string[]
   return [...out];
 }
 
+/** The id a task.json is stored under: its own `id`, else `task_<hash of name>`. Undefined with neither. */
+export function taskJsonId(json: { id?: unknown; name?: unknown }): string | undefined {
+  if (typeof json.id === "string" && json.id) return json.id;
+  return typeof json.name === "string" && json.name ? `task_${sha256Hex(json.name).slice(0, 16)}` : undefined;
+}
+
 /**
  * Read a task dir. Blob refs are sha256 of content (the BlobStore contract),
  * so they are correct with or without `blobs`; pass `blobs` to also store them.
@@ -639,7 +645,7 @@ export async function importTaskDir(dir: string, blobs?: BlobStore, opts: Import
   const json = JSON.parse(await readFile(join(dir, "task.json"), "utf8")) as Partial<TaskJson>;
   if (json.format !== undefined && json.format !== TASK_FORMAT) throw new Error(`${dir}/task.json: unsupported format ${JSON.stringify(json.format)} (want ${TASK_FORMAT})`);
   if (opts.start) json.start = opts.start;
-  if (!json.id && json.name) json.id = `task_${sha256Hex(json.name).slice(0, 16)}`;
+  if (!json.id && json.name) json.id = taskJsonId(json);
   if (!json.id || !json.start?.snapshot || !json.verifier) throw new Error(`${dir}/task.json: missing ${!json.id ? "name" : !json.verifier ? "verifier" : "start.snapshot (add a repo/ dir)"}`);
   const store = async (data: Uint8Array): Promise<BlobRef> => (blobs ? blobs.put(data) : sha256Hex(data));
   const instruction = (await readFile(join(dir, "instruction.md"), "utf8")).replace(/\n$/, "");

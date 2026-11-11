@@ -148,6 +148,29 @@ describe("readPage", () => {
     assert.equal(q.description, "a");
     assert.equal(q.jsonLdErrors, 1);
   });
+  test("a raw '>' inside a quoted attribute value does not end the tag", () => {
+    assert.equal(readPage('<meta name="description" content="a > b">').description, "a > b");
+    assert.equal(readPage("<meta name='description' content='Fast -> faster: a > b' >").description, "Fast -> faster: a > b");
+    const p = readPage(
+      `<html data-note="x > y" lang="en"><head><title data-x="1 > 0">T > U</title>
+<link data-x="a > b" rel="canonical" href="/docs">
+<meta content="it's > that" name=description><meta name=robots content=it's><meta property="og:title" content="A => B">
+<script data-x="a > b" type="application/ld+json">{"@type":"Article"}</script></head></html>`,
+      "https://x.dev/",
+    );
+    assert.equal(p.lang, "en");
+    assert.equal(p.title, "T > U");
+    assert.equal(p.canonical, "https://x.dev/docs");
+    assert.equal(p.description, "it's > that");
+    assert.deepEqual(p.social, { "og:title": "A => B" }, "the apostrophe in the unquoted value before it opens nothing");
+    assert.deepEqual(p.jsonLdTypes, ["Article"]);
+  });
+  test("diffParity sees a difference after a raw '>', and reads &gt; and > the same", () => {
+    const side = (html: string): ParitySide => ({ input: "x", page: { redirects: [], ...readPage(html) } });
+    const meta = (content: string) => `<meta name="description" content="${content}">`;
+    assert.deepEqual(diffParity(side(meta("Fast -> faster: a > b")), side(meta("Fast -> faster: a > c"))), [{ field: "description", a: "Fast -> faster: a > b", b: "Fast -> faster: a > c" }]);
+    assert.deepEqual(diffParity(side(meta("a &gt; b")), side(meta("a > b"))), []);
+  });
   test("diffParity on identical sides is empty", () => {
     const side: ParitySide = { input: "x", page: { redirects: [], social: {}, hreflang: 0, jsonLdTypes: [], jsonLdErrors: 0 } };
     assert.deepEqual(diffParity(side, structuredClone(side)), []);

@@ -62,8 +62,8 @@ finds that subagent and `--where is:child` lists subagents.
 | `skill` | session | Skill tag (flag skill:<name>) | `skill:pdf` |
 | `hook` | session | Whose hooks added text to the context (flag hook:<source>): plugin:<name>, plugin, settings or unknown | `hook:plugin:terse` |
 | `hook.tokens` | session | Tokens hooks added to the context (characters / 4) | `hook.tokens>500` |
-| `since` | session | Started at or after: 7d, 12h or a date | `since:7d` |
-| `until` | session | Started before: 7d, 12h or a date | `until:2026-11-01` |
+| `since` | session | Started at or after: 7d, 12h, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight | `since:7d` |
+| `until` | session | Started before (exclusive): 7d, 12h, today or a date in local time. until:2026-11-01 leaves that day out | `until:2026-11-01` |
 | `duration` | session | Wall time of an ended session (30s, 10m, 2h) | `duration>10m` |
 | `turns` | session | User turns | `turns>=20` |
 | `tools` | session | Tool calls | `tools>100` |
@@ -92,6 +92,14 @@ finds that subagent and `--where is:child` lists subagents.
 | `sort` | query | Order by started, duration, turns, tools, tool.errors, llm.errors, files, events, tests.passed, tests.failed, tokens, tokens.in, tokens.out, cost; - for descending | `sort:-cost` |
 | `limit` | query | Maximum rows | `limit:50` |
 
+`since:` and `until:` read a date without a zone in this machine's local time: `since:2026-11-09`
+starts at local midnight, the same instant as `since:2026-11-09T00:00:00`. A date with `Z` or an
+offset (`2026-11-09T00:00:00Z`) is that instant. `today` and `yesterday` are local midnights, and
+`until` is exclusive. `--since` and `--until` on every command read their value the same way. When
+a date or a day word is given, `sessions`, `usage` and `stats` print the window they resolved to on
+stderr (`Window: 2026-11-09 00:00 (UTC-06:00) to now, local time`) and carry it in `--json` as
+`window: { since, until, utcOffset }`.
+
 A key that does not exist, a bad value, an unclosed quote or parenthesis, or an `OR` with nothing
 after it is a usage error (exit 2, reasons `unknown_key`, `bad_value`, `unterminated_quote`,
 `unbalanced_parens`, `dangling_or`, `dangling_not`, `bad_directive`, `empty_group`, `too_long`).
@@ -119,10 +127,13 @@ On the SQLite index a query becomes one SQL statement, with every value bound as
 The event keys `kind`, `tool`, `ok` and `mcp` read indexes, not the events: a session-level
 clause such as `tool:Bash ok:false` looks up the matching events once and keeps their sessions,
 and facets on `kind`, `tool` and `mcp` read a small table of each session's distinct values.
-`error`, `event.duration` and bare words read the payload of every candidate event, so pair them
-with an indexed key (`kind:tool.end error:timeout`) on a large store. A store written by an
-older version is upgraded on first open, with progress on stderr; a 740,000-event store from
-index schema v2 took 20 s on the test desktop.
+`event.duration` and `error` read indexes too, so a session-level clause with one of them alone
+(`--where 'event.duration>60s'`, `--where 'error:timeout'`) does not read the events: the
+duration index holds every timed event, and the error index holds only the events that have an
+error text. Bare words read the payload of every candidate event, so pair them with an indexed
+key (`kind:tool.end timeout`) on a large store. A store written by an older version is upgraded
+on first open, with progress on stderr; a 740,000-event store from index schema v2 took 20 s on
+the test desktop.
 
 The Postgres and ClickHouse store plugins also run queries in their own database: every key, `has:`,
 `is:`, bare words (whole words, the last one also as a prefix, as their `search` matches), `sort:`,

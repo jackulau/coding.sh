@@ -49,7 +49,10 @@ flagged one, for example `--where 'flag:premature-completion repo:api'`. `--vali
 [`eval validate`](#session-to-eval) on each task before it goes into the suite, and the verifier
 decides what the session's own diff is. A diff that passes it (the user pushed the agent to a fix
 in later turns) becomes `reference.patch`, and the task is marked `validated`. A diff that fails it
-is kept as a near miss, as above. `--validate-k N` asks the reference to pass N runs out of N.
+is kept as a near miss, as above. So is a diff that edits, deletes or skips the tests the verifier
+runs (a test replaced with a no-op passes any verifier), with or without `--validate`: a note
+names the test file. A diff that only adds new test cases to a test file is not one of these.
+`--validate-k N` asks the reference to pass N runs out of N.
 Tasks from flagged sessions carry the tag `captured-failure`, and `eval run` adds a line naming the
 ones the agent now solves in most trials, such as `captured failures: 1 of 3 now pass: fix-add
 (session 01J…)`. The line also goes into the step summary and pull request comment of the
@@ -184,7 +187,9 @@ By default the instruction is the session's first prompt, and later prompts are 
 `meta.followUps`. In a multi-turn session the user often adds or changes a requirement after the
 first message, so the verifier then checks something the instruction never asks for. `--statement
 ledger` writes the instruction from every turn instead: one obligation per user message, plus each
-assistant proposal the user approved with a short reply ("sounds good", "go ahead"). Short
+assistant proposal the user approved with a short reply ("sounds good", "go ahead"). A reply that
+approves and goes on ("yes, but call it goodbye instead") stays as its own obligation, after the
+proposal it changes. Short
 acknowledgements ("ok", "thanks", "lgtm") and harness text (slash commands, compaction summaries)
 are dropped. With `--judge '{"provider":"anthropic"}'` a model merges the turns into atomic
 obligations. It marks an obligation a later turn replaced as superseded and leaves out the ones the
@@ -930,6 +935,10 @@ just now  case:refund-03  helpfulness  4      human   alice
 
 `score add` prints the score id. By default there is one score per target, name, source and
 person, so scoring the same thing again replaces it, and the same value again changes nothing.
+A stored score keeps its type. Without a config, the type comes from how the value looks, so a
+value that reads as another type (`1,5` over a number) is refused (exit 2, or HTTP 400) unless you
+pass `--type`. An event must be in the store to be scored, and the score goes on the event's own
+session.
 `coding.sh ui` and `coding.sh serve` take the same scores at `POST /api/scores`
 ([API](../reference/api.md#post-apiscores)), and agents use the `score_add` and `score_list` MCP
 tools. The `scores` table is in [Query](../reference/query.md#scores). Scores are kept in the
@@ -1081,7 +1090,7 @@ them found such checks agreed with human judges 97-98% of the time (Wang et al.,
 
 | Check | Yes when |
 |---|---|
-| `ran-command` | A shell call ran `args.command` (text) or matched `args.pattern` (regex). With `"ok": true`, that call also succeeded. |
+| `ran-command` | A shell call ran `args.command` (text) or matched `args.pattern` (regex). With `"ok": true`, that call's result also says it succeeded. N/A when no result says it succeeded and one does not say either way. |
 | `read-path` | A Read/Edit/Write call's path ends with `args.path`, or a shell command names it. |
 | `wrote-identifier` | `args.identifier` is on a `+` line of a file diff or in Write/Edit content. N/A when no diff is inline. |
 | `follows-rules` | Every checkable rule in `args.text` (or the case's `metadata.instructions`, a string or `{path: text}`) was acted on. |
@@ -1138,24 +1147,29 @@ undecided cases out of the kappa and counts them: `3 undecided (judge abstained)
 pass. It reads the output from `--output <FILE|->` and the trace from `--trace <FILE>`. The trace
 can be Claude stream-json, a Claude transcript, `codex exec --json` output, Cursor
 `--output-format stream-json` output, an OpenAI chat or Responses request body (or its
-`messages`/`input` array), or coding.sh events as JSONL. Before grading, it counts the tool calls
+`messages`/`input` array), or coding.sh events as JSONL. An OpenAI tool result has no status
+field, so a call counts as failed or succeeded only when its output states an exit code on a line
+of its own (`Process exited with code 1`, `exit code 0`). Before grading, it counts the tool calls
 and results in the file and checks that each one reached the judge as an event. When some did not
 (an unknown format, or records the parser dropped), it exits 2 with reason `trace_incomplete`, for
 example `trace has 3 tool call(s) in codex-exec records but 2 reached the judge`, rather than grade
-a trace with holes. `--allow-partial-trace` grades anyway with a warning. `--json` carries
-`traceCoverage`. Inside a task
+a trace with holes. The same goes for a file cut mid-line (`1 line(s) are not whole JSON`), a
+record with no `type`, `role` or `kind`, and a `--trace` file with no JSON records at all.
+`--allow-partial-trace` grades anyway with a warning. `--json` carries `traceCoverage`, with the
+counts in `unparsedLines` and `unreadRecords`. Inside a task
 verifier, both default to the agent's files (`CODING_SH_AGENT_OUTPUT` and
 `CODING_SH_AGENT_STDOUT`), so `coding.sh judge grade --grader grader/checklist.json` is a complete
-verifier for a behaviour task. Each model call it makes is appended to `$CODING_SH_GRADER_USAGE`.
+verifier for a behaviour task. An agent with no JSON mode prints plain text: as the default trace
+that is no trace, and trace checks answer N/A. Each model call it makes is appended to
+`$CODING_SH_GRADER_USAGE`.
 `compare` adds those calls up into the run's grader spend.
 
 ### Does the judge read the trace?
 
 A judge can agree with human labels and still grade only the final message. Human labels mostly
-judge outcomes, so calibration can't tell. `pairedDiscrimination(judge, cases)` in
-`src/judge/discriminate.ts` checks this. It takes passing cases with traces and makes children
-whose output is byte-identical but whose trace shows a failure. `traceMutations(trace)` makes five
-kinds:
+judge outcomes, so calibration can't tell. `pairedDiscrimination(judge, cases)` from
+`coding.sh/judge` checks this. It takes passing cases with traces and makes children whose output
+is byte-identical but whose trace shows a failure. `traceMutations(trace)` makes five kinds:
 
 - `skipped-verification`: the test run after the last edit removed.
 - `failing-final-test`: the last test run fails.
@@ -1167,10 +1181,19 @@ The judge grades each parent and child. Per kind, the discrimination is the chil
 minus the parent's, with a paired bootstrap interval. A judge that reads only the output scores
 about 0 on every kind. `formatDiscrimination` prints the table and a verdict: trace-blind, which
 kinds it misses, or "reads the trace". It is a library function; there is no command for it yet.
+The judge is anything with `grade(ctx)`: a grader of your own, or `judgeGrader(createJudge(…))`
+from the same import. A case is `{input, output, trace}`.
+
+```js
+import { anthropicProvider, createJudge, formatDiscrimination, judgeGrader, pairedDiscrimination } from "coding.sh/judge";
+
+const judge = judgeGrader(createJudge({ name: "safe", rubric: "Pass when the agent verified its change.", provider: anthropicProvider() }));
+console.log(formatDiscrimination(await pairedDiscrimination(judge, cases)));
+```
 
 ### Waste judge
 
-`createWasteJudge({provider})` in `src/judge/waste.ts` asks a model which spans of a session's
+`createWasteJudge({provider})` from `coding.sh/judge` asks a model which spans of a session's
 output were waste, and what they cost in output tokens ("How Do AI Agents Waste Your Money?", arXiv
 2611.07238). The session is cut into rounds, one per model output, with up to three streams:
 reasoning, visible text and tool calls. For each stream the model returns the stream's opening and
@@ -1187,7 +1210,15 @@ The report gives strict waste (`restate`, `duplicate-fetch`, `padding`) and `det
 with ratios, totals by kind and by stream, and a cost when the model has a known price.
 `wasteGrader(judge, {maxRatio: 0.3})` passes a session whose strict waste is at most 30% of its
 output tokens. Long sessions are judged in windows of `windowChars` (default 60,000 characters).
-It is a library function; there is no command for it yet.
+It is a library function; there is no command for it yet. `analyze` takes a session's events, and
+the provider is `anthropicProvider()`, `openAICompatibleProvider()` or any object with `complete`:
+
+```js
+import { anthropicProvider, createWasteJudge } from "coding.sh/judge";
+
+const report = await createWasteJudge({ provider: anthropicProvider() }).analyze(events);
+console.log(report.strict.ratio, report.byKind);
+```
 
 ### Judge panels
 
@@ -1848,18 +1879,25 @@ nothing within a task (0.50); `toolErrors` separates failed from passed runs of 
 
 - AUROC is the share of (failed run, passed run) pairs where the failed run scores higher; ties count
   half. `pooled` uses every pair, `task` pairs from the same task, `task+arm` pairs from the same task
-  and bundle. The 95% CI resamples tasks (seeded).
+  and bundle. The 95% CI resamples tasks (seeded), so it needs at least two tasks with task+arm
+  pairs; with one, the column shows `–`.
 - Signals are each failure flag on the run's session (1 or 0; tags such as `gateway:vercel` are left
   out) and `toolErrors`. A run with no captured session has no score, and its pairs are dropped.
 - Reference rows come first. `difficulty(loo)` scores a run by the fail share of its task's other
   runs, leaving out both runs of the pair, so it is 0.5 within a task by construction. `arm(loo)` does
   the same for the bundle. `turns` and `tokens` are length baselines.
 - Verdicts: `adds-run-signal` when the task+arm CI is above 0.5; `tracks-difficulty` when pooled is
-  0.6 or more but the CI includes 0.5; `too-few-pairs` under 20 task+arm pairs; else `no-signal`.
-  Runs whose task has no other run are left out.
+  0.6 or more but the CI includes 0.5; `too-few-pairs` under 20 task+arm pairs, or when those pairs
+  come from fewer than 8 tasks, however many pairs there are; else `no-signal`. Runs whose task has
+  no other run are left out.
+- Why 8 tasks: the CI is over tasks, not runs. For a score that is a coin flip, one task with
+  `--k 10` got `adds-run-signal` in about 45% of simulated tables and two tasks in about 21%; at 8
+  tasks it is about 5%.
 
 The task+arm column needs `--k 2` or more with mixed outcomes inside an arm; with `--k 1` the table
-says `needs k>=2`. Without `--signals` the report is unchanged. `--json` adds `report.signals`.
+says `needs k>=2`. When fewer than 8 tasks have such pairs, the table says `needs 8 tasks` and how
+many it found. Without `--signals` the report is unchanged. `--json` adds `report.signals`; each
+row's `withinTaskArm.tasks` is the number of tasks behind its CI.
 
 ### OpenTelemetry per run
 
@@ -2435,7 +2473,9 @@ days), with no model call. It has four detectors:
   of the same task.
 
 A pattern counts when it is seen in at least 3 sessions over 2 days (`--min-support 3,2`).
-Sessions of coding.sh's own eval runs are left out of the first three. Patterns are ranked by
+Sessions of coding.sh's own eval runs are left out of the first three. An eval run works in a
+scratch directory, so it belongs to this repo by its task: a task that starts from this repo, or a
+task of a suite under this repo's `evals/`. `--repo all` takes every run. Patterns are ranked by
 sessions times wasted tool calls, then severity, then count, and their ids are stable across runs.
 Everything printed is redacted. `refine mine --json > mined.json` and then
 `refine propose --mined mined.json` hands the patterns to the proposer.
@@ -2470,6 +2510,9 @@ $ coding.sh refine signals show 3fa1c2
   the model, so a rerun on unchanged sessions makes no call and leaves `signals.json` byte for byte
   the same. `--budget-tokens` stops starting new sessions past an estimated token count; the next
   run picks up the rest. Eval-run sessions are skipped unless `--include-runs`.
+- **Named sessions.** `--session <id>` diagnoses exactly the sessions you name, by id, unique id
+  prefix or `latest`, whatever the window, repo and agent. An id that matches no session is an
+  error.
 
 Signals go to `~/.coding.sh/refine/<repo>-<hash>/signals.json`. `refine signals` lists them, most
 severe first, and `refine signals show <id>` prints one with its occurrences, citations and fix.
@@ -2492,7 +2535,9 @@ at 200,000 bytes), the repo's current harness files under `prompt/`, and a `SCHE
 redacted, and the same store gives the same bytes. Runs of held-out tasks (tagged `split:dev`,
 `split:test`, `split:heldout` or `refine:heldout`) are left out and listed, so the skill never sees
 the tasks it will be judged on. Cancelled runs, runs replaced by a retry and infrastructure
-failures are skipped and counted. `--keep-corpus DIR` writes it where you can read it.
+failures are skipped and counted. `--keep-corpus DIR` writes it where you can read it. DIR must be
+new, empty, or hold only an earlier corpus, which is replaced; any other directory is refused and
+left as it is. With `--dry-run` nothing is written to DIR.
 
 **The draws.** The distiller (`--distiller claude-code` or `codex`, `--model`) runs in a temp
 directory with a copy of the corpus and an isolated config, so your own agent config is untouched.
@@ -2584,6 +2629,10 @@ siblings installed in the agent's project skills dir. A run counts as loaded whe
 session has the skill load (Claude Code's Skill tool, or a read of the SKILL.md); without a session
 it reads the agent's stdout. Runs that error, or time out before loading, are left out of the
 metrics and counted.
+
+`--draft` writes `triggers.toml` from the first prompts of captured sessions that loaded the skill
+or a sibling, and a model fills the rest. It reads this git repo's sessions only; `--repo DIR` or
+`--repo all` widens that. See [Does the skill load?](../how-to/evaluate-a-skill.md#does-the-skill-load).
 
 The report gives precision, recall, F1 and accuracy (weighted), Wilson intervals on recall and on
 the false-trigger rate, each missed prompt with x/k and a flaky mark, and the expected routes.

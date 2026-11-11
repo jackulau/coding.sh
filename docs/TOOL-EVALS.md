@@ -224,7 +224,11 @@ there, or it cannot catch a break. The command exits 1 when any task does not ho
 - A variant that changes only what the agent reads (`descriptions`, `paramDescriptions`,
   `hideTools`, `bundle`, `outputCap`, `promptCache`) needs `--driver`: the reference commands never
   see those fields. With `--driver`, the kinded tasks run as agent trials (`-k`, default 1) under
-  the cost gate, and the experiment id is printed. Trials that recorded an error are left out.
+  the cost gate, and the experiment id is printed. A trial where the agent never worked on the
+  task is left out: one that recorded an error (the agent could not start, or exited non-zero
+  before its first turn) or failed on infrastructure (the agent is not logged in, a setup step
+  failed). A task with no trial left is reported as `couldn't run on <variant>` with the reason,
+  such as `infra: auth`, and does not hold.
 
 `run` splits each arm's pass rate by kind (`arms[].kinds` in `--json`), and `compare` splits the
 comparison (§8.2).

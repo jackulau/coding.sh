@@ -5,8 +5,8 @@ import { failureFlags, isEmptySession } from "../../core/sessions.ts";
 import { facetCounts, findSessions } from "../../query/run.ts";
 import { FACET_KEYS, scopesSubagents, type Query } from "../../query/where.ts";
 import type { Session } from "../../schema/index.ts";
-import { parseSince, positiveInt, UsageError } from "../args.ts";
-import { agentScope, agentsFlag, autoIngest, pendingField, queryCliError, readIngest, num, oneLine, sessionJson, str, whereFlag, withContext, type IngestBacklog } from "../common.ts";
+import { parseSinceWhen, positiveInt, UsageError } from "../args.ts";
+import { agentScope, agentsFlag, autoIngest, fieldsFlag, pendingField, pickFields, queryCliError, readIngest, num, oneLine, SESSION_FIELDS, sessionJson, str, timeWindow, whereFlag, windowJson, windowNote, withContext, type IngestBacklog } from "../common.ts";
 import { ago, clean, duration } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { noSessionsNext } from "../first-session.ts";
@@ -27,9 +27,12 @@ function facetKeys(v: unknown, eventIndex: boolean): string[] | undefined {
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
   const limit = positiveInt(c.flags.limit, "limit") ?? num(c.flags.limit) ?? 20;
-  const since = str(c.flags.since) !== undefined ? parseSince(str(c.flags.since)!) : undefined;
+  const sinceWhen = str(c.flags.since) !== undefined ? parseSinceWhen(str(c.flags.since)!) : undefined;
+  const since = sinceWhen?.ms;
   const repo = str(c.flags.repo);
   const where = whereFlag(c);
+  const window = timeWindow({ since: sinceWhen }, where);
+  const fields = fieldsFlag(c, SESSION_FIELDS);
   const agents = agentsFlag(c);
   // Several agents: an `agent:a,b` clause on the query (facets, --where), or one listing per agent.
   const scope = agentScope(agents, where);
@@ -43,7 +46,9 @@ export async function run(c: CommandContext): Promise<number> {
       ...(str(c.flags.project) ? { project: str(c.flags.project)! } : {}),
       ...(str(c.flags.flag) ? { flag: str(c.flags.flag)! } : {}),
     };
+    windowNote(out, window);
     const facets = facetKeys(c.flags.facets, ctx.index.queryFacets !== undefined || ctx.index.kind === "memory");
+    if (facets && fields) throw new UsageError("--fields picks from the session rows: drop --facets", { reason: "invalid_argument" });
     if (facets) return printFacets(c, await counts(ctx.index, scope.where ?? {}, facets, filter, positiveInt(c.flags.limit, "limit") ?? 10), backlog);
     let sessions: Session[];
     if (where) sessions = await query(ctx.index, scope.where!, filter, positiveInt(c.flags.limit, "limit") ?? where.limit ?? 20);
@@ -52,7 +57,11 @@ export async function run(c: CommandContext): Promise<number> {
       sessions = each.flat().sort((a, b) => b.startedAt - a.startedAt).slice(0, limit);
     } else sessions = await listPlain(ctx.index, filter, limit, c.flags.empty === true);
     if (out.json) {
-      out.data({ sessions: sessions.map(sessionJson), ...pendingField(backlog) });
+      // Rows are a digest; --fields picks from the whole session (stats.phases, each derail's event).
+      const rows = fields ? sessions.map((s) => pickFields(sessionJson(s, { derailEvents: true, phases: true }), fields)) : sessions.map((s) => sessionJson(s));
+      const doc: Record<string, unknown> = { sessions: rows };
+      if (window.since !== undefined || window.until !== undefined) doc.window = windowJson(window);
+      out.data({ ...doc, ...pendingField(backlog) });
       return 0;
     }
     if (!sessions.length) {

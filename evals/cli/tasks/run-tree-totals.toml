@@ -1,0 +1,18 @@
+id = "run-tree-totals"
+split = "dev"
+tags = ["tree", "subagents", "aggregate", "json"]
+instruction = """
+Session ${answers.ids.y3} handed work to subagents. For the whole run (that session and every subagent under it), how many agents took part, and how many tool calls did they make in total? Answer with a single JSON object like {"agents": N, "toolCalls": N}.
+"""
+
+reference = ['''
+coding.sh tree ${answers.ids.y3} --json | node -e 'const t=JSON.parse(require("fs").readFileSync(0)).totals;console.log(JSON.stringify({agents:t.sessions,toolCalls:t.toolCalls}))'
+''']
+
+# From the fixture spec: y3 makes 1 tool call itself and starts 3 subagents that make 2, 1 and 1.
+[[check]]
+kind = "output"
+json = { agents = 4, toolCalls = 5 }
+
+[expect]
+minTargetCalls = 1

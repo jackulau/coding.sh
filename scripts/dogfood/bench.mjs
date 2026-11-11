@@ -2,21 +2,24 @@
 // Performance budgets (docs/design/dogfood.md §3.5). Every benchmark runs in a temp
 // HOME / CODING_SH_HOME, never against the live home.
 //
-//   node scripts/dogfood/bench.mjs [hook|ingest|store|help|viewer|replay|proxy|proxy-session|collector]... [--baseline <dist dir>] [--calls N] [--json] [--check]
+//   node scripts/dogfood/bench.mjs [hook|ingest|store|help|viewer|replay|proxy|proxy-session|collector|harness-audit]... [--baseline <dist dir>] [--calls N] [--json] [--check]
 //
 // `viewer` also runs `replay` (session replay through the viewer API).
 // --check exits 1 when a result misses its budget in TARGETS (CI runs it for the proxy).
 //
 // With --baseline, the hook, help and proxy-session benchmarks interleave the
 // baseline build with the candidate (A B A B ...) and report a bootstrap CI on
-// the median difference, so machine noise is paired.
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+// the median difference, so machine noise is paired. So does harness-audit, which
+// needs the 3.6 GB store of bench-where.mjs: `--store <index.db>` reuses one
+// (`bench-where.mjs gen <index.db> --memory`); without it the store is written to the
+// temp dir first, which takes minutes.
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import http from "node:http";
 import net from "node:net";
 import { join, resolve } from "node:path";
 import { benchCollector } from "./bench-collector.mjs";
-import { bootstrapMedianDiff, CLI, DIST, isolatedEnv, log, median, nearestRank, parseArgs, prng, quantile, round, sh, shAsync, tempDir } from "./lib/util.mjs";
+import { bootstrapMedianDiff, CLI, DIST, isolatedEnv, log, median, nearestRank, parseArgs, prng, quantile, REPO, round, sh, shAsync, tempDir } from "./lib/util.mjs";
 
 export const TARGETS = {
   "perf.hook": { target: 10, unit: "ms", dir: "max" },
@@ -38,6 +41,9 @@ export const TARGETS = {
   "perf.collectorSpans": { target: 5000, unit: "spans/s", dir: "min" },
   "perf.collectorP95": { target: 100, unit: "ms", dir: "max" },
   "perf.collectorRss": { target: 200, unit: "MB", dir: "max" },
+  // `coding.sh harness audit` over every session of the bench-where.mjs store (3,600 sessions, 1.4M events, 3.6 GB).
+  "perf.harnessAudit": { target: 1500, unit: "ms", dir: "max" },
+  "perf.harnessAuditRss": { target: 200, unit: "MB", dir: "max" },
 };
 export function meets(key, value) {
   const t = TARGETS[key];
@@ -852,6 +858,70 @@ export async function benchReplay({ cli = CLI, events = 12_000, runs = 3 } = {})
   }
 }
 
+/**
+ * perf.harnessAudit, perf.harnessAuditRss: `coding.sh harness audit --since 90d --json` over the store
+ * bench-where.mjs writes with --memory, every session in the window. The median wall time of n runs after
+ * one that warms the file cache, with the bootstrap 95% CI of that median, and the highest peak RSS of any
+ * run (the process's own ru_maxrss, written on exit by a preload). The store is only read: nothing waits in
+ * the temp home's spool and background ingest is off.
+ */
+export function benchHarnessAudit({ cli = CLI, baseline, store, n = 7, events, sessions } = {}) {
+  const root = tempDir("csh-bench-audit-");
+  try {
+    const env = isolatedEnv(root, { CODING_SH_NO_AUTO_INGEST: "1", CODING_SH_NO_UPDATE_CHECK: "1", NO_COLOR: "1" });
+    mkdirSync(env.CODING_SH_HOME, { recursive: true });
+    const db = join(env.CODING_SH_HOME, "index.db");
+    if (store) symlinkSync(resolve(store), db);
+    else {
+      const size = [];
+      if (events) size.push("--events", String(events));
+      if (sessions) size.push("--sessions", String(sessions));
+      const gen = sh(process.execPath, ["--no-warnings", join(REPO, "scripts", "dogfood", "bench-where.mjs"), "gen", db, "--memory", ...size], { env });
+      if (gen.code !== 0) throw new Error(`bench-where gen exited ${gen.code}: ${gen.stderr.slice(-300)}`);
+    }
+    const preload = join(root, "rss.cjs");
+    const rssFile = join(root, "rss.txt");
+    writeFileSync(preload, `process.on("exit", () => { try { require("node:fs").writeFileSync(${JSON.stringify(rssFile)}, String(process.resourceUsage().maxRSS)); } catch {} });\n`);
+    let report;
+    const once = (path) => {
+      const r = sh(process.execPath, ["--no-warnings", "--require", preload, path, "harness", "audit", "--since", "90d", "--json"], { env, cwd: root });
+      if (r.code !== 0) throw new Error(`harness audit exited ${r.code}: ${r.stderr.slice(-300)}`);
+      report = JSON.parse(r.stdout);
+      return { ms: r.ms, rssMb: Number(readFileSync(rssFile, "utf8")) / 1024 };
+    };
+    const base = baseline ? join(baseline, "cli.mjs") : undefined;
+    once(cli);
+    const candReport = report;
+    if (base) once(base);
+    const baseReport = report;
+    const cand = [];
+    const baseRuns = [];
+    for (let i = 0; i < n; i++) {
+      if (base) baseRuns.push(once(base));
+      cand.push(once(cli));
+    }
+    const ms = cand.map((r) => r.ms);
+    // `since` is the time of the run, so it differs between two runs of one build.
+    const stable = (r) => JSON.stringify({ ...r, since: undefined });
+    // The median against itself shifted to zero: the bootstrap CI of one sample's median.
+    const ci = bootstrapMedianDiff(ms.map(() => 0), ms).ci;
+    const out = {
+      "perf.harnessAudit": round(median(ms), 0),
+      "perf.harnessAuditRss": round(Math.max(...cand.map((r) => r.rssMb)), 0),
+      detail: { n, ci95: ci.map((x) => round(x, 0)), minMs: round(Math.min(...ms), 0), maxMs: round(Math.max(...ms), 0), sessions: candReport.sessions, files: candReport.totals?.files, storeMB: Math.round(statSync(store ? resolve(store) : db).size / 1e6) },
+    };
+    if (base) {
+      const baseMs = baseRuns.map((r) => r.ms);
+      const d = bootstrapMedianDiff(baseMs, ms);
+      out.baseline = { "perf.harnessAudit": round(median(baseMs), 0), "perf.harnessAuditRss": round(Math.max(...baseRuns.map((r) => r.rssMb)), 0), sameReport: stable(baseReport) === stable(candReport) };
+      out.paired = { "perf.harnessAudit": { diff: round(d.diff, 0), ci: d.ci.map((x) => round(x, 0)), unit: "ms (candidate − baseline)" } };
+    }
+    return out;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 export async function runBenches(which = ["hook", "ingest", "help", "viewer"], opts = {}) {
   const out = {};
   const errors = {};
@@ -874,6 +944,7 @@ export async function runBenches(which = ["hook", "ingest", "help", "viewer"], o
   if (which.includes("proxy")) await step("proxy", () => benchProxy(opts));
   if (which.includes("proxy-session")) await step("proxy-session", () => benchProxySession(opts));
   if (which.includes("collector")) await step("collector", () => benchCollector({ ...(opts.clients ? { clients: opts.clients } : {}), ...(opts.seconds ? { seconds: opts.seconds } : {}), ...(opts.dist ? { dist: opts.dist } : {}), ...(opts.sessions ? { sessions: opts.sessions } : {}) }));
+  if (which.includes("harness-audit")) await step("harness-audit", () => benchHarnessAudit({ baseline: opts.baseline || undefined, store: opts.store || undefined, n: opts.runs || undefined, events: opts.events || undefined, sessions: opts.sessions || undefined }));
   return { results: out, errors };
 }
 
@@ -881,7 +952,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const args = parseArgs(process.argv.slice(2), { booleans: ["json", "check"] });
   const which = args._.length ? args._ : ["hook", "ingest", "help", "viewer"];
   const baseline = args.baseline ? resolve(args.baseline) : undefined;
-  const r = await runBenches(which, { baseline, events: args.events ? Number(args.events) : undefined, calls: args.calls ? Number(args.calls) : undefined, pairs: args.pairs ? Number(args.pairs) : undefined, clients: args.clients ? Number(args.clients) : undefined, seconds: args.seconds ? Number(args.seconds) : undefined, dist: args.dist ? resolve(args.dist) : undefined, sessions: args.sessions });
+  const r = await runBenches(which, { baseline, events: args.events ? Number(args.events) : undefined, calls: args.calls ? Number(args.calls) : undefined, pairs: args.pairs ? Number(args.pairs) : undefined, clients: args.clients ? Number(args.clients) : undefined, seconds: args.seconds ? Number(args.seconds) : undefined, dist: args.dist ? resolve(args.dist) : undefined, sessions: args.sessions, store: args.store, runs: args.runs ? Number(args.runs) : undefined });
   process.stdout.write(JSON.stringify(r, null, args.json ? 0 : 2) + "\n");
   const missed = Object.values(r.results).flatMap((x) => Object.entries(x).filter(([k, v]) => k.startsWith("perf.") && meets(k, v) === false));
   for (const [k, v] of missed) log(`over budget: ${k} ${v} ${TARGETS[k].unit} (target ${TARGETS[k].dir === "max" ? "≤" : "≥"} ${TARGETS[k].target})`);

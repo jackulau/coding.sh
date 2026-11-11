@@ -20,7 +20,9 @@
 //
 // A pattern counts when it is seen in at least `minSupport.sessions` sessions
 // over `minSupport.days` UTC days (default 3 and 2). Sessions with a runId
-// (coding.sh's own eval runs) are left out of the first three. Ranking:
+// (coding.sh's own eval runs) are left out of the first three. Under a repo
+// filter an eval run counts by its task (the repo the task starts from, or a
+// suite in the repo), since its session runs in a scratch directory. Ranking:
 // sessions × (wasted tool calls, else 1), then severity, then evidence count,
 // then id. Ids are sha256(kind + signature)[:12], stable across runs.
 // Everything that leaves this module goes through the redactor.
@@ -385,10 +387,19 @@ export function redactFindings(xs: readonly MinedFinding[]): MinedFinding[] {
 }
 
 export interface MineOptions {
-  index: Pick<IndexStore, "listSessions" | "listEvents"> & Partial<Pick<IndexStore, "listRuns">>;
+  index: Pick<IndexStore, "listSessions" | "listEvents"> & Partial<Pick<IndexStore, "listRuns" | "getTask">>;
   agents?: readonly string[];
-  /** Only sessions whose cwd or repo root is under this directory. */
+  /**
+   * Only sessions whose cwd or repo root is under this directory. An eval run
+   * works in a scratch directory under the coding.sh home, so it counts by its
+   * task instead: the repo the task starts from, or `repoTaskIds`.
+   */
   repo?: string;
+  /**
+   * With `repo`: ids of the tasks of the suites that live in it. A suite task
+   * that starts from an empty tree names no repo of its own.
+   */
+  repoTaskIds?: ReadonlySet<string>;
   /** Epoch ms. */
   since?: number;
   minSupport?: Partial<MinSupport>;
@@ -401,7 +412,10 @@ export interface MineOptions {
 
 export interface MineResult {
   findings: MinedFinding[];
+  /** Sessions read for the first three detectors (eval runs are not among them). */
   analyzed: number;
+  /** Eval-run sessions read for the eval-failure detector. */
+  evalRuns: number;
   /** Patterns seen below minSupport. */
   belowSupport: number;
   minSupport: MinSupport;
@@ -417,26 +431,38 @@ const under = (dir: string, p: string | undefined): boolean => {
 /** Mines the window: flags, error signatures, repeated instructions and eval failures, ranked and redacted. */
 export async function mineFindings(o: MineOptions): Promise<MineResult> {
   const min: MinSupport = { ...DEFAULT_MIN_SUPPORT, ...o.minSupport };
-  const keep = (s: Session) => (o.since === undefined || s.startedAt >= o.since) && (!o.agents?.length || o.agents.includes(String(s.agent))) && (!o.repo || under(o.repo, s.cwd) || under(o.repo, s.repo?.root));
-  const sessions = (await o.index.listSessions({ parentSessionId: null, runId: null, ...(o.since !== undefined ? { since: o.since } : {}), limit: o.maxSessions ?? 2000 })).filter((s) => !s.runId && keep(s));
+  const inWindow = (s: Session) => (o.since === undefined || s.startedAt >= o.since) && (!o.agents?.length || o.agents.includes(String(s.agent)));
+  const inRepo = (s: Session) => !o.repo || under(o.repo, s.cwd) || under(o.repo, s.repo?.root);
+  const sessions = (await o.index.listSessions({ parentSessionId: null, runId: null, ...(o.since !== undefined ? { since: o.since } : {}), limit: o.maxSessions ?? 2000 })).filter((s) => !s.runId && inWindow(s) && inRepo(s));
   const events = new Map<string, AgentEvent[]>();
   for (const s of sessions) events.set(s.id, await o.index.listEvents(s.id, { kinds: ["user.message", "tool.start", "tool.end"] }));
   const all: MinedFinding[] = [...flagMined(sessions), ...errorSignatureFindings(sessions, events), ...repeatedInstructionFindings(sessions, events)];
+  let evalRuns = 0;
   if (o.evalRuns !== false && o.index.listRuns) {
     const runs = (await o.index.listRuns()).filter((r) => r.sessionId && (o.since === undefined || r.startedAt >= o.since));
+    // The repo of a run is the repo of its task. A task that is gone, or a store that cannot look one up, leaves the session's own directory.
+    const taskInRepo = new Map<string, boolean | undefined>();
+    if (o.repo) {
+      for (const id of new Set(runs.map((r) => r.taskId))) {
+        const root = o.repoTaskIds?.has(id) ? o.repo : (await o.index.getTask?.(id))?.start.repoRoot;
+        taskInRepo.set(id, root === undefined ? undefined : under(o.repo, root));
+      }
+    }
+    const taskOf = new Map(runs.map((r) => [r.sessionId!, r.taskId]));
     const runSessions = new Map<string, Session>();
     const runEvents = new Map<string, AgentEvent[]>();
-    const want = new Set(runs.map((r) => r.sessionId!));
     for (const s of await o.index.listSessions({ ...(o.since !== undefined ? { since: o.since } : {}), limit: 5000 })) {
-      if (!want.has(s.id) || !keep({ ...s, startedAt: s.startedAt })) continue;
+      const taskId = taskOf.get(s.id);
+      if (taskId === undefined || !inWindow(s) || !(taskInRepo.get(taskId) ?? inRepo(s))) continue;
       runSessions.set(s.id, s);
       runEvents.set(s.id, await o.index.listEvents(s.id, { kinds: ["tool.start", "tool.end"] }));
     }
     all.push(...evalFailureFindings(runs.filter((r) => runSessions.has(r.sessionId!)), runSessions, runEvents));
+    evalRuns = runSessions.size;
   }
   const supported = all.filter((f) => f.support.sessions >= min.sessions && f.support.days >= min.days);
   const ranked = rankFindings(redactFindings(supported));
-  return { findings: o.limit === undefined ? ranked : ranked.slice(0, o.limit), analyzed: sessions.length, belowSupport: all.length - supported.length, minSupport: min, ...(o.since !== undefined ? { since: o.since } : {}) };
+  return { findings: o.limit === undefined ? ranked : ranked.slice(0, o.limit), analyzed: sessions.length, evalRuns, belowSupport: all.length - supported.length, minSupport: min, ...(o.since !== undefined ? { since: o.since } : {}) };
 }
 
 const KIND_TEXT: Record<MinedKind, string> = { flag: "flag", "error-signature": "error", "repeated-instruction": "instruction", "eval-failure": "eval", diagnosis: "diagnosis" };

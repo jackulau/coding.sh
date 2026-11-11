@@ -32,7 +32,7 @@
 // session gives what the gateway billed without double counting. Event ids are
 // derived from the llm.call id, so re-running is a no-op.
 import { hashParts } from "../../core/ids.ts";
-import { buildSession } from "../../core/sessions.ts";
+import { storeEnrichment } from "../../core/ingest.ts";
 import type { IndexStore } from "../../core/types.ts";
 import type { AgentEvent, Session } from "../../schema/index.ts";
 import { pool } from "../../runner/experiment.ts";
@@ -392,10 +392,6 @@ export async function enrichSessions(o: EnrichOptions): Promise<EnrichReport> {
   const touched = [...new Set(out.map((e) => e.sessionId))];
   r.touchedSessions = touched;
   if (o.dryRun || !out.length) return r;
-  await index.putEvents(out);
-  for (const id of touched) {
-    const all = await index.listEvents(id);
-    if (all.length) await index.upsertSession(buildSession(all, await index.getSession(id)));
-  }
+  await storeEnrichment(index, out);
   return r;
 }

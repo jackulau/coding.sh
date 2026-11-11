@@ -76,7 +76,7 @@ Every command accepts these.
 | [`purge`](#codingsh-purge) | Maintain | Remove a leaked secret from the store: events, search, blobs, spool, eval runs |
 | [`config`](#codingsh-config) | Maintain | Read and write ~/.coding.sh/config.toml |
 | [`update`](#codingsh-update) | Maintain | Install the latest coding.sh release |
-| [`upgrade-store`](#codingsh-upgrade-store) | Maintain | Migrate the store for this install when another install owns it |
+| [`upgrade-store`](#codingsh-upgrade-store) | Maintain | Migrate the store for this install, or put back the index from before a migration |
 | [`version`](#codingsh-version) | Maintain | Print the version |
 
 ## `coding.sh init`
@@ -131,7 +131,7 @@ coding.sh doctor [options]
 | `-a, --agent <AGENT>` |  | Only this agent (repeatable, or a comma list: a,b) |
 | `--port <PORT>` | `4318` | OTLP receiver port to check. |
 | `--conformance` |  | Instead: read each agent's transcripts and check the events against coding.sh's invariants (read-only) |
-| `--since <WHEN>` | `7d` | With --conformance, only transcripts after this time: 7d, 12h, 30m or a date. |
+| `--since <WHEN>` | `7d` | With --conformance, only transcripts after this time: 7d, 12h, 30m or a date (local time) |
 | `--max-events <N>` | `200000` | With --conformance, stop each agent after this many events. |
 
 ```sh
@@ -141,6 +141,7 @@ coding.sh doctor --conformance
 coding.sh doctor --conformance --agent codex --since 30d --json
 ```
 
+- A row marked ! is a warning, and --json lists each one under warnings with the command that fixes it. An agent is one when no hook for this coding.sh home is in its config or something blocks the hook; the last line then reads N agents not capturing. The exit code and ok in --json are 1 and false only when the spool or the store fails.
 - --conformance runs each agent's backfill over the transcripts on this machine and checks the events: ids, timestamps, tool and subagent pairing, parent links, usage and prompts. It only reads: blobs are hashed and dropped, SQLite sources are read from a copy, and the coding.sh store is not opened. Exits 1 when any agent has a violation.
 
 ## `coding.sh status`
@@ -225,7 +226,7 @@ coding.sh ingest [options]
 | `--backfill` |  | Also import agents' local transcript history. |
 | `--rebuild` |  | Re-parse every stored session (of --agent) from its transcript and spool with the current adapters. |
 | `-a, --agent <AGENT>` |  | Only this agent (repeatable, or a comma list: a,b) |
-| `--since <WHEN>` |  | Only after this time: 7d, 12h, 30m or a date. |
+| `--since <WHEN>` |  | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
 | `--background` |  | Don't wait for another ingest; exit quietly if one is running. With --backfill, imports history unless another import is running. |
 
 ```sh
@@ -285,7 +286,8 @@ coding.sh collector import --clickhouse http://127.0.0.1:8123/?database=otel
 ```
 
 - Prints the OTEL_\* environment to stdout; status goes to stderr.
-- import keeps its place per table and starts the next run an hour before it (a root span lands after its children); a span stored once is never stored again.
+- import keeps its place per table and row filter (--all, each --where) and starts the next run an hour before it (a root span lands after its children); --from-start or a --since on the command line reads from --since again. A span stored once is never stored again.
+- import tries a dropped connection or a 502, 503 or 504 three more times. A run that still fails keeps the pages it read, with their sessions, and prints the command that reads the rest.
 
 ### `coding.sh collector import`
 
@@ -299,7 +301,8 @@ coding.sh collector import [options]
 |---|---|---|
 | `--clickhouse <URL>` |  | ClickHouse HTTP URL, e.g. http://127.0.0.1:8123/?database=otel (user and password from the URL or CLICKHOUSE_USER / CLICKHOUSE_PASSWORD) |
 | `--table <TABLE>` | `otel_traces` | Table to read (db.table also names the database) |
-| `--since <WHEN>` | `7d` | Only spans that started after this: a duration (7d, 12h) or a date. |
+| `--since <WHEN>` | `7d` | Only spans that started after this: a duration (7d, 12h) or a date. When given, the run reads from there again instead of resuming. |
+| `--from-start` |  | Read from --since again instead of resuming after the last span imported (nothing is stored twice) |
 | `--where <SQL>` |  | Extra ClickHouse condition on the rows, e.g. "ServiceName = 'claude-code'". |
 | `--all` |  | Read every span, not only traces with an agent span (gen_ai.\*, OpenInference, Vercel AI SDK, Claude Code, eve) |
 | `--dry-run` |  | Show the exact changes without writing anything. |
@@ -307,6 +310,7 @@ coding.sh collector import [options]
 ```sh
 coding.sh collector import --clickhouse http://127.0.0.1:8123/?database=otel
 coding.sh collector import --clickhouse https://ch.example.com:8443/ --table otel.otel_traces --since 30d --dry-run
+coding.sh collector import --clickhouse http://127.0.0.1:8123/?database=otel --from-start
 ```
 
 ## `coding.sh proxy`
@@ -485,13 +489,14 @@ coding.sh sessions [options]
 |---|---|---|
 | `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
 | `-r, --repo <PATH>` |  | Only sessions in this repo root. |
-| `--since <WHEN>` |  | Only after this time: 7d, 12h, 30m or a date. |
+| `--since <WHEN>` |  | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
 | `-n, --limit <N>` | `20` | Maximum rows. |
 | `--subagents` |  | Include subagent sessions (a --where with id:, parent:, is:root or is:child picks them itself) |
 | `--empty` |  | Include sessions with no turn, tool call or model call (hidden by default) |
 | `--project <ID>` |  | Only sessions in this serve project (default: all) |
 | `--flag <NAME>` |  | Only sessions with this flag: looping, failure-streak, churn, no-progress, stalled, context-thrash, premature-completion, duplicate-fetch, …, or a tag such as skill:&lt;name&gt;. |
 | `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
+| `--fields <PATHS>` |  | With --json: print only these fields, as a comma list of dotted paths (id,title,stats.usage.costUsd). A path through a list picks from each item. Repeatable. |
 | `--facets [<KEYS>]` |  | Count sessions per value instead of listing them: agent, model, provider, repo, launch, branch, flag, skill, hook, kind, tool, mcp (default: agent, model, repo, flag, skill, tool) |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
@@ -505,6 +510,7 @@ coding.sh sessions --agent codex --since 7d
 - --where: key:value clauses, AND by default; OR between clauses; ( ) to group; - to negate; a,b for either value; \* as a wildcard in text; &gt; &gt;= &lt; &lt;= and a..b on numbers. Bare words search prompts, replies and tool calls (every word in one event).
 - Session keys: agent, model, provider, repo, launch, branch, dir, title, id, run, parent, flag, skill, hook, hook.tokens, since, until, duration, turns, tools, tool.errors, llm.errors, files, events, tests.passed, tests.failed, tokens, tokens.in, tokens.out, cost, cache.breaks, cache.lost, cache.cost, unapproved, has, is. Event keys (the session has a matching event; event keys in one group match the same event): kind, tool, ok, mcp, error, event.duration. Also sort:-cost and limit:N. Full list with examples: docs/reference/query.md.
 - --facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).
+- With --json each session is a digest: its stats without stats.phases, and each derail without the event it started at (eventId, index). show &lt;id&gt; --json has both, and --fields stats.phases or --fields stats.derails prints them here.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
 ## `coding.sh show`
@@ -524,6 +530,7 @@ coding.sh show <SESSION> [options]
 | `-n, --limit <N>` |  | List the first N events (default 200; a longer session shows as phases) |
 | `--all` |  | List every event, with phase and day lines and derail markers. |
 | `-f, --follow` |  | Keep printing new events as a running session goes on (Ctrl-C to stop) |
+| `--fields <PATHS>` |  | With --json: print only these fields, as a comma list of dotted paths (session.id,session.stats.usage,phases). A path through a list picks from each item. Repeatable. |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ```sh
@@ -535,6 +542,7 @@ coding.sh show 'latest#-1'
 ```
 
 - A session with more than 200 events shows one line per phase: the start, each resume, compaction and long idle gap, with where it derailed.
+- With --json a session with more than 200 events prints events: [] next to eventCount and phases; --limit N or --all lists the events. An event leaves out sessionId, agent and cwd when they equal the session's. subagents lists the first 50 subagent sessions and subagentCount is how many there are; when more are left, subagentsRest is the command that pages them all (tree --json).
 - A model call logged by coding.sh proxy shows its system prompt, tools, settings, cache use, usage and cost (--all: the whole system prompt).
 
 ## `coding.sh tree`
@@ -552,15 +560,19 @@ coding.sh tree <SESSION|RUN> [options]
 | Option | Default | Description |
 |---|---|---|
 | `--run` |  | Read the argument as a run id (CODING_SH_RUN_ID), not a session. |
+| `-n, --limit <N>` | `50` | With --json: most nodes in one page. |
+| `--cursor <CURSOR>` |  | With --json: the nextCursor of the last page. |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ```sh
 coding.sh tree latest
 coding.sh tree 9f1c2e
 coding.sh tree my-fanout-123 --run
+coding.sh tree latest --json --limit 100
 ```
 
 - From any session, the tree is its top-level agent and every subagent under it, with per-node model, cost, tokens, duration and tool calls, and the run's totals and worst flag.
+- With --json the tree comes a page at a time: 50 nodes, depth-first, with nextCursor and truncated: true when more are left. totals and worst cover the whole tree on every page. A node whose parent was on an earlier page is at the top level of its page; depth and parentSessionId say where it hangs. Nodes are session digests, as in sessions --json.
 - Separate agent processes group into one run when they share a run id: set CODING_SH_RUN_ID on the orchestrator that launches your fan-out, then pass that id.
 
 ## `coding.sh replay`
@@ -622,7 +634,7 @@ coding.sh attribution [action] [options]
 |---|---|---|
 | `--repo <DIR>` |  | A directory in the git repository (default: the current one) |
 | `--rev <REV>` | `HEAD` | Branch or commit to walk back from. |
-| `--since <WHEN>` |  | Only commits after this time: 30d, 12h or a date (default: the first captured session in the repo) |
+| `--since <WHEN>` |  | Only commits after this time: 30d, 12h or a date in local time (default: the first captured session in the repo) |
 | `--all` |  | Also list commits with no agent lines. |
 | `-n, --limit <N>` | `50` | Maximum rows. |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
@@ -633,7 +645,7 @@ coding.sh attribution --since 7d --rev main
 coding.sh attribution --json
 ```
 
-- Matches the lines each commit added to the lines each captured session added: the diff from its start state to its end snapshot, else its own edit tool calls. A whole-file match (patch id) or a same-file line match counts; moved long lines count at lower confidence; braces and blank lines only follow a matched neighbor. A rebased commit still matches.
+- Matches the lines each commit added to the lines each captured session added: the diff from its start state to its end snapshot, and its own edit tool calls for the files that diff does not hold. A whole-file match (patch id) or a same-file line match counts; moved long lines count at lower confidence; braces and blank lines only follow a matched neighbor. A rebased commit still matches.
 - A session gets credit for commits authored or committed from its start to 21 days later; of two sessions that wrote a line, the later one. Lines no session wrote belong to no session: a person wrote them, or an agent coding.sh did not capture.
 - Reads git only (log, diff, blame, notes). git-ai notes (refs/notes/ai), when present, credit lines no captured session matched. Each commit's result is kept in the store's key/value table.
 - --json: one document with totals, the sessions credited and per commit its attributions (path, line ranges, session, agent, model, confidence, method). export --json: {version, records}.
@@ -653,7 +665,7 @@ coding.sh attribution export [options]
 | `--viewer-url <URL>` | `http://127.0.0.1:4319` | Viewer base URL for each session link. |
 | `--repo <DIR>` |  | A directory in the git repository (default: the current one) |
 | `--rev <REV>` | `HEAD` | Branch or commit to walk back from. |
-| `--since <WHEN>` |  | Only commits after this time: 30d, 12h or a date (default: the first captured session in the repo) |
+| `--since <WHEN>` |  | Only commits after this time: 30d, 12h or a date in local time (default: the first captured session in the repo) |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ```sh
@@ -754,7 +766,7 @@ coding.sh usage [options]
 | `--by <GROUP>` | `agent` | Group rows by. One of: `agent`, `model`, `agent-model`, `day`, `repo`. |
 | `--cache` |  | Prompt-cache economics instead: hit rate, read vs write tokens, read:write ratio, breaks and their cost, with what to change. |
 | `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
-| `--since <WHEN>` | `30d` | Only after this time: 7d, 12h, 30m or a date. |
+| `--since <WHEN>` | `30d` | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
 | `-n, --limit <N>` | `20` | Maximum rows. |
 | `--reprice` |  | Recompute estimated costs from the current price table first. |
 | `--baseline` |  | With --by agent or agent-model: a VS PUBLISHED column, each agent's published prompt-cache hit rate (Requesty, Apr 2026) and the points yours is above or below it; - for an agent the dataset does not list. |
@@ -768,6 +780,8 @@ coding.sh usage --cache --by model
 coding.sh usage --by agent-model --since 90d
 coding.sh usage --by model --where 'repo:coding-sh tool:Bash'
 ```
+
+- Totals cover every session in the window. A scan that stops at 100,000 sessions says so under the table (Stopped after 100,000 sessions) and sets window.truncated in --json; cache doctor does the same.
 
 ## `coding.sh cache`
 
@@ -784,7 +798,8 @@ coding.sh cache <action>
 - Hit rate is cache reads / all prompt tokens, the CACHE READ column of coding.sh usage, over the same sessions. The breaks are the ones coding.sh show and usage count, so tokens and USD match theirs.
 - Each break gets the first change between its two calls, in the order the cache reads a request: model-switch; tools-added, tools-removed, tools-reordered, tools-changed; system-volatile-line (a line that differs only in its numbers, such as a timestamp), system-changed; history-rewritten (compaction); then idle (a wait past the cache lifetime) or other. Idle and other are not counted as avoidable.
 - Grade: 60% the hit rate against 90%, 40% the share of prompt tokens re-billed for avoidable causes (a quarter or more scores 0). A 90+, B 80+, C 70+, D 60+, else F.
-- Tool and system prompt causes need the requests: calls logged by coding.sh proxy in capture mode full. Without them a break is classified from hashes, the model and timing, and the report says how many were.
+- Tool and system prompt causes need the requests: calls logged by coding.sh proxy in capture mode full. Without them a break is classified from hashes, message counts, the model and timing, and the report says how many were.
+- --limit bounds only the sessions whose stored requests are read. The hit rate, breaks, tokens, USD and grade cover every session in the window, and the grade is the same at any --limit wherever the hashes and counts show the change. A session with stored requests past the limit is classified as one without them is, from hashes, message counts, the model and timing: a tools or system prompt change is named without its detail (tools-changed, system-changed), and a history edit that keeps the message count reads as other. --json has sessionsNotRead and breaksNotRead. A session with no stored requests reads the same at any --limit.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
 ### `coding.sh cache doctor`
@@ -798,8 +813,8 @@ coding.sh cache doctor [options]
 | Option | Default | Description |
 |---|---|---|
 | `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
-| `--since <WHEN>` | `30d` | Only after this time: 7d, 12h, 30m or a date. |
-| `-n, --limit <N>` | `200` | Read the events of at most this many sessions with breaks, costliest first. |
+| `--since <WHEN>` | `30d` | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
+| `-n, --limit <N>` | `200` | Read the stored requests of at most this many sessions with breaks, costliest first; the totals, the causes and the grade cover every session. |
 | `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
@@ -822,8 +837,8 @@ coding.sh stats [options]
 | `-m, --measure <MEASURE>` | `sessions` | What the trend shows. One of: `sessions`, `failures`, `failure-rate`, `cost`, `tokens`, `tool-calls`, `tool-errors`, `tool-error-rate`, `llm-calls`, `llm-p95`, `ttft-p50`. |
 | `--by <GROUP>` |  | One row per group, with its trend (default: one row per day or week) One of: `agent`, `model`, `repo`, `flag`. |
 | `--per <BUCKET>` | `day` | Bucket size. One of: `day`, `week`. |
-| `--since <WHEN>` | `30d` | Only after this time: 7d, 12h, 30m or a date. |
-| `--until <WHEN>` |  | Only before this time: 7d, 12h or a date (default: now) |
+| `--since <WHEN>` | `30d` | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
+| `--until <WHEN>` |  | Only before this time (exclusive): 7d, 12h, today or a date in local time; --until 2026-11-09 leaves that day out (default: now) |
 | `--all` |  | Count subagent sessions as their own rows (default: top-level sessions only) |
 | `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
@@ -887,7 +902,7 @@ coding.sh export [what] [options]
 | `--force` |  | With --evidence, write into a directory that is not empty. |
 | `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
 | `-r, --repo <PATH>` |  | Only sessions in this repo root. |
-| `--since <WHEN>` |  | Only after this time: 7d, 12h, 30m or a date. |
+| `--since <WHEN>` |  | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
 | `--flag <NAME>` |  | Only sessions with this flag or tag, as in coding.sh sessions --flag. |
 | `--subagents` |  | Include subagent sessions (and their events and labels). A --where with id:, parent:, is:root or is:child picks them itself. |
 | `--project <ID>` |  | Only sessions in this serve project (default: all) |
@@ -996,7 +1011,7 @@ coding.sh eval init [name] [options]
 | `--verifier <CMD>` |  | With --sessions: command that passes only when a task is solved (default: guessed per session) |
 | `--hidden-test <GLOB>` |  | With --sessions: test files to hide from the agent (repeatable) |
 | `--where <QUERY>` |  | Tasks from the sessions this query matches (sessions --where syntax), instead of every failed or flagged one. |
-| `--validate` |  | With --sessions or --where: validate each task before it goes into the suite. A session diff that passes the verifier becomes the reference and the task is marked validated; one that fails it is kept as a near miss. |
+| `--validate` |  | With --sessions or --where: validate each task before it goes into the suite. A session diff that passes the verifier becomes the reference and the task is marked validated; one that fails it, or that changes the tests the verifier runs, is kept as a near miss. |
 | `--validate-k <N>` | `1` | With --validate: the session's end state must pass N of N verifier runs. |
 | `--skill <DIR>` |  | Should / should-not trigger prompts for this skill. |
 | `--should <PROMPT>` |  | With --skill: a prompt that should load it (repeatable) |
@@ -1226,6 +1241,7 @@ coding.sh eval trigger <SKILL> [options]
 | `--draft-model <MODEL>` |  | With --draft: the model. |
 | `--n <N>` | `8` | With --draft: prompts per side. |
 | `--since <AGE>` | `90d` | With --draft: how far back to look for sessions. |
+| `--repo <DIR|all>` |  | With --draft: sessions under this directory, or all (default: this git repo) |
 | `--no-traces` |  | With --draft: draft from SKILL.md only, without reading captured sessions. |
 | `--force` |  | With --draft: replace an existing triggers.toml. An agent passes it only once the user approves. |
 | `--dry-run` |  | With --draft: print the draft without writing it. |
@@ -1796,6 +1812,8 @@ coding.sh score <action>
 
 - Labels are human scores: a pass or fail label is a boolean score, and judge calibrate reads human boolean scores as labels.
 - A value outside its config's range or categories is refused (exit 2). The viewer and serve take the same scores at /api/scores.
+- A stored score keeps its type: a value that reads as another type is refused (exit 2) unless --type is given or the name has a config.
+- An event must be in the store to be scored. Its session is its own: --session with another session is refused (exit 2).
 
 ### `coding.sh score add`
 
@@ -1817,7 +1835,7 @@ coding.sh score add <TARGET> <NAME> <VALUE> [options]
 | `--comment <TEXT>` |  | Why this score. |
 | `--source <SOURCE>` | `human` | Who gave it. One of: `human`, `judge`, `code`, `api`, `monitor`. |
 | `--config <ID>` |  | Check the value against this config (default: the config with the score's name) |
-| `--session <ID>` |  | The session an event, case or run belongs to. |
+| `--session <ID>` |  | The session a case or run belongs to (an event's own session is looked up) |
 | `--judge-version <VERSION>` |  | Judge version that produced the score. |
 | `--id <ID>` |  | Score id; adding the same id again replaces it (default: one per target, name, source and person) |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
@@ -1825,7 +1843,7 @@ coding.sh score add <TARGET> <NAME> <VALUE> [options]
 ```sh
 coding.sh score add latest outcome true
 coding.sh score add 4f2a helpfulness 4 --comment 'fixed it first try'
-coding.sh score add event:evt_123 correct false --source code --session 4f2a
+coding.sh score add event:evt_123 correct false --source code
 ```
 
 ### `coding.sh score list`
@@ -1842,7 +1860,7 @@ coding.sh score list [options]
 | `--name <NAME>` |  | Only this score name. |
 | `--source <SOURCE>` |  | Only this source. One of: `human`, `judge`, `code`, `api`, `monitor`. |
 | `--session <ID>` |  | Only scores on this session or its events. |
-| `--since <WHEN>` |  | Only after this time: 7d, 12h, 30m or a date. |
+| `--since <WHEN>` |  | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
 | `-n, --limit <N>` | `50` | Maximum rows. |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
@@ -1915,7 +1933,7 @@ coding.sh judge grade [options]
 | `-g, --grader <JSON|FILE>` |  | Grader spec, the same JSON as `exp run --grader` (llm, llm-checklist with trace checks, contains, regex, …) |
 | `--output <FILE|->` |  | The output to grade (default: $CODING_SH_AGENT_OUTPUT, the agent's final answer in a verifier) |
 | `--trace <FILE>` |  | Claude stream-json or transcript, codex exec --json, Cursor stream-json, OpenAI chat messages or Responses items, or coding.sh events as JSONL (default: $CODING_SH_AGENT_STDOUT) |
-| `--allow-partial-trace` |  | Grade even when tool calls in --trace did not reach the judge (otherwise exit 2, trace_incomplete) |
+| `--allow-partial-trace` |  | Grade even when --trace has cut lines, records the judge does not read, or tool calls that did not reach it (otherwise exit 2, trace_incomplete) |
 | `--input <TEXT|@FILE>` |  | The task input shown to a judge. |
 | `--metadata <JSON|FILE>` |  | Case metadata, e.g. {"instructions": "…"} for follows-rules. |
 | `--diff <FILE|->` |  | The agent's work as a unified diff, for agent-slop (default: $CODING_SH_AGENT_DIFF in a verifier) |
@@ -2631,7 +2649,7 @@ coding.sh improve [action] [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `--since <WHEN>` | `14d` | Only sessions (check: changes) after this time: 7d, 12h or a date. |
+| `--since <WHEN>` | `14d` | Only sessions (check: changes) after this time: 7d, 12h, today or a date (local time) |
 | `--repo <DIR|all>` |  | Only sessions under this directory, or all (default: this git repo) |
 | `-a, --agent <AGENT>` |  | Only this agent (repeatable, or a comma list: a,b) |
 | `--headless` |  | Include headless sessions (claude -p, an Agent SDK, codex exec), left out by default. |
@@ -2652,7 +2670,7 @@ coding.sh improve check
 - A failed compound line (&&, ;, \|, a loop) counts against the part that failed: the one its error names, the tool whose error it is, the part timeout stopped, or the last part of a pipeline. When nothing singles one out, the issue says compound command.
 - When sessions ran on the repo's current harness version (the newest commit that changed AGENTS.md or another instructions file, a rule or a skill) and none of them had an issue, the issue is marked 'Not seen since &lt;commit&gt;', goes last, and points at improve check instead of a new line.
 - check reads the git history of AGENTS.md, the Claude Code and Gemini instructions files, .claude/rules, .cursor/rules and skills. A session counts for the newest such commit its starting HEAD contains, so uncommitted edits count from the commit that keeps them. Sessions with no recorded HEAD, and sessions with no tool call outside MCP servers (a chat, or asking coding.sh about a change), are left out.
-- check compares sessions with a failure flag before and after each change (overall and per flag), and, for each added line that names a command, flag, path or identifier, the share of sessions that acted on it. Two-sided Fisher exact tests at p ≤ 0.1: more flagged sessions is Regressed (exit 1); fewer flagged sessions, or one flag falling (Holm-adjusted) with no other rising, is Helped. A new line the agent follows while flagged sessions stay put is Followed, no effect yet. More tool calls or wall time per session (median 1.25x, permutation p ≤ 0.1) with no fall is Costlier; both suggest refine test git:&lt;previous&gt; to test the harness without the change. Under 5 sessions after a change without a clear result is Too early to tell.
+- check compares sessions with a failure flag before and after each change (overall and per flag), and, for each added line that names a command, flag, path or identifier, the share of sessions that acted on it. Two-sided Fisher exact tests at p ≤ 0.1: more flagged sessions is Regressed (exit 1); fewer flagged sessions, or one flag falling (Holm-adjusted) with no other rising significantly, is Helped, and its line names any flag that rose. A new line the agent follows while flagged sessions stay put is Followed, no effect yet. More tool calls or wall time per session (median 1.25x, permutation p ≤ 0.1) with no fall is Costlier; both suggest refine test git:&lt;previous&gt; to test the harness without the change. Under 5 sessions after a change without a clear result is Too early to tell.
 - Under each change, check lists the sessions after it that still have a failure flag, newest first, with their flags (5, or all with --sessions; --json has every flagged session before and after).
 - exp ab (the replay A/B that improve suggests) needs ANTHROPIC_API_KEY, OPENAI_API_KEY, or Claude Code or Codex logged in (it runs on your subscription then). Without any of them, commit the change and let improve check judge it on new sessions.
 
@@ -2670,7 +2688,7 @@ coding.sh improve fix <ISSUE> [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `--since <WHEN>` | `14d` | Only sessions (check: changes) after this time: 7d, 12h or a date. |
+| `--since <WHEN>` | `14d` | Only sessions (check: changes) after this time: 7d, 12h, today or a date (local time) |
 | `--repo <DIR|all>` |  | Only sessions under this directory, or all (default: this git repo) |
 | `-a, --agent <AGENT>` |  | Only this agent (repeatable, or a comma list: a,b) |
 | `--headless` |  | Include headless sessions (claude -p, an Agent SDK, codex exec), left out by default. |
@@ -2693,7 +2711,7 @@ coding.sh improve check [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `--since <WHEN>` | `30d` | Only sessions (check: changes) after this time: 7d, 12h or a date. |
+| `--since <WHEN>` | `30d` | Only sessions (check: changes) after this time: 7d, 12h, today or a date (local time) |
 | `--repo <DIR|all>` |  | Only sessions under this directory, or all (default: this git repo) |
 | `-a, --agent <AGENT>` |  | Only this agent (repeatable, or a comma list: a,b) |
 | `--headless` |  | Include headless sessions (claude -p, an Agent SDK, codex exec), left out by default. |
@@ -2770,7 +2788,7 @@ coding.sh harness audit [options]
 | Option | Default | Description |
 |---|---|---|
 | `-a, --agent <AGENT>` |  | Only this agent's sessions and files. |
-| `--since <WHEN>` | `30d` | Only after this time: 7d, 12h, 30m or a date. |
+| `--since <WHEN>` | `30d` | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
 | `--limit <N>` | `40` | Files to list, flagged first. |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
@@ -3160,7 +3178,7 @@ coding.sh refine mine [options]
 |---|---|---|
 | `--since <DURATION|DATE>` | `30d` | Sessions started since. |
 | `--agent <AGENT>` |  | Only sessions of this agent (repeatable, or a comma list) |
-| `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
+| `--repo <DIR|all>` |  | Only sessions under this directory, and eval runs of tasks that start from it or of the suites under its evals/ (default: this git repo) |
 | `--min-support <SESSIONS[,DAYS]>` | `3,2` | Keep a pattern seen in at least this many sessions over this many days. |
 | `-n, --limit <N>` | `20` | Most patterns shown. |
 
@@ -3217,7 +3235,7 @@ coding.sh refine distill [options]
 | `--max-cost <USD>` | `5` | Start no new draw once distiller spend reaches this. |
 | `--min-episodes <N>` | `20` | Refuse a corpus with fewer episodes. |
 | `--min-failures <N>` | `5` | Refuse a corpus with fewer failing or flagged episodes. |
-| `--keep-corpus <DIR>` |  | Write the corpus here and keep it (an empty or new directory) |
+| `--keep-corpus <DIR>` |  | Write the corpus here and keep it: an empty or new directory, or one that holds only an earlier corpus, which is replaced. Nothing is written there with --dry-run. |
 | `--dry-run` |  | Write the corpus to a temp dir, print its counts and the plan; start no agent. |
 | `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
 
@@ -3240,7 +3258,7 @@ coding.sh refine diagnose [options]
 | `--since <DURATION|DATE>` | `7d` | Sessions started since. |
 | `--agent <AGENT>` |  | Only sessions of this agent (repeatable, or a comma list) |
 | `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
-| `--session <ID>` |  | Exactly these sessions (repeatable; ignores --since) Takes a comma list too (a,b). |
+| `--session <ID>` |  | Exactly these sessions: an id, a prefix or latest (repeatable; ignores --since, --repo and --agent) Takes a comma list too (a,b). |
 | `--max-sessions <N>` | `50` | Most sessions diagnosed, newest first. |
 | `--budget-tokens <N>` |  | Stop starting uncached sessions past this many estimated input tokens; the next run picks up the rest. |
 | `--provider <PROVIDER>` |  | anthropic, openai, claude-code or codex (default: the API whose key is set; with none, a $0 plan) |
@@ -3261,12 +3279,13 @@ coding.sh refine diagnose --session 7f3a9c --provider claude-code --json
 List the Signals refine diagnose wrote, or show one with its cited evidence and fix.
 
 ```text
-coding.sh refine signals [show]
+coding.sh refine signals [show] [id]
 ```
 
 | Argument | Required | Description |
 |---|---|---|
 | `show` | no | show &lt;id&gt;: one Signal's occurrences, citations and fix. |
+| `id` | no | With show: the Signal id, or a prefix of it. |
 
 ```sh
 coding.sh refine signals
@@ -3343,7 +3362,7 @@ coding.sh gateway enrich [options]
 |---|---|---|
 | `--gateway <NAME>` |  | Only this gateway. One of: `vercel`, `openrouter`, `litellm`, `cloudflare`, `portkey`, `helicone`, `requesty`, `ramp`, `truefoundry`, `kong`, `bifrost`, `martian`, `cliproxyapi`. |
 | `-s, --session <ID>` |  | Only this session (repeatable; or latest) Takes a comma list too (a,b). |
-| `--since <WHEN>` | `30d` | Sessions after this time: 7d, 12h, 30m or a date. |
+| `--since <WHEN>` | `30d` | Sessions after this time: 7d, 12h, 30m, today or a date (local time) |
 | `-n, --limit <N>` | `500` | Maximum rows. |
 | `--offline` |  | Use only the cache and drained traces; no API calls. |
 | `--dry-run` |  | Show the exact changes without writing anything. |
@@ -3391,6 +3410,7 @@ coding.sh purge --rule 'sk-ant-api03-[A-Za-z0-9_-]{80,}' --dry-run
 - Every copy becomes [redacted:purged]: event payloads (the full-text index is updated), session titles and stats, labels, eval docs and settings. Blobs holding a value are rewritten under their new hash and every reference follows. Spool, judge-cache and eval run files (~/.coding.sh/runs) keep their length (the value becomes asterisks) so ingest offsets stay valid. A run's .git directory and files over 64 MB are left alone.
 - --rule takes a JavaScript regular expression. Each distinct match of 8 or more characters is purged like a --literal value; shorter matches are left alone, and a rule that matches over 10,000 distinct values is refused.
 - Then the search index is merged, and the index and the blob pack (blobs/pack.db) are VACUUMed, so the old bytes leave the files. If another process is reading one of them (the viewer, serve, a sqlite3 shell), its old bytes stay until that process closes: purge says which file and exits 1, and the same purge run again finishes the job. Values shorter than 8 characters are refused. Only the SQLite store is supported.
+- A copy of the index kept next to it by an upgrade (index.db.v&lt;N&gt;.bak) or by upgrade-store --restore (index.db.v&lt;N&gt;.undone) holds the value too. Purge deletes these copies instead of rewriting them, so upgrade-store --restore can no longer put one back; --dry-run names them. If one can't be deleted, purge names it and exits 1.
 - Rotate the secret as well: copies in the agent's own transcripts, shell history or git are not touched.
 
 ## `coding.sh config`
@@ -3467,7 +3487,7 @@ coding.sh update --check
 
 ## `coding.sh upgrade-store`
 
-Migrate the store for this install when another install owns it.
+Migrate the store for this install, or put back the index from before a migration.
 
 ```text
 coding.sh upgrade-store [options]
@@ -3475,14 +3495,17 @@ coding.sh upgrade-store [options]
 
 | Option | Default | Description |
 |---|---|---|
+| `--restore` |  | Put back the index kept from before the last migration (index.db.v&lt;N&gt;.bak); the index it replaces is kept too. |
 | `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
 
 ```sh
 coding.sh upgrade-store
+coding.sh upgrade-store --restore
 ```
 
-- The store's owner is the coding.sh that ~/.coding.sh/bin/cli-path names: init and update write it, and hooks start it. Only the owner migrates the index on its own.
-- Migrations are one-way, so the old owner may not open the store after. This command also points the hooks at the running coding.sh.
+- The store's owner is the coding.sh that ~/.coding.sh/bin/cli-path names: init and update write it, and hooks start it. The index migrates on its own only for the owner, and only for a release newer than the coding.sh that last wrote it.
+- Migrations are one-way, so an older coding.sh may not open the store after. Every migration first keeps a copy of the index next to it (index.db.v&lt;N&gt;.bak), and this command also makes bin/cli-path name the running coding.sh.
+- --restore puts that copy back and keeps the index it replaces (index.db.v&lt;N&gt;.undone). Any coding.sh that knows the copy's schema can run it, including one the migration left unable to open the store.
 
 ## `coding.sh version`
 

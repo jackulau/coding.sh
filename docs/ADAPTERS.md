@@ -132,6 +132,7 @@ order.
 - **Codex:** new hooks fire only once the user trusts them by hash, and `codex exec` skips untrusted hooks silently. Eval runs pass `--dangerously-bypass-hook-trust`. For user installs, `doctor` reports untrusted hooks and tells the user to run `/hooks`. Never write trust hashes ourselves.
 - **Codex:** `-s read-only` fires no hooks. SessionEnd has a 1s default and a 3s hard cap. The sandbox blocks network from hooks (spool-to-file is safe). Tool names `shell_command`/`apply_patch` changed upstream, so normalize defensively.
 - **Claude Code:** the model reads as unknown when large tool results fill the transcript tail; scan backwards further. `SubagentStop` lacks `tool_use_id`. Old `Task` matchers never fire; use `Agent`.
+- **Claude Code:** a `Stop` line's model calls and replies are read from the transcript it names: the turn from the last prompt at or before the Stop to the next prompt, within the last 8 MB of the file. A `claude -p --resume` or a queued prompt can write the next prompt within 2 s of the Stop, so the window ends there. When the transcript is gone (an eval run's temporary home) or the turn is no longer in the last 8 MB, the adapter says so (`NormalizeContext.missing`) and a re-parse keeps the session's stored hook rows.
 - **Claude Code:** files a Bash command edits (`sed -i`, heredoc writes, `tee`) are in the tool result's `toolUseResult.bashEditDiff` (per-file hunks, plus `changedFiles` past the first few), which becomes `file.change`. It is on by default only in auto and bypass-permissions modes; `CLAUDE_CODE_BASH_EDIT_DIFF=true` or the `bashEditDiffEnabled` setting turns it on elsewhere. The diff lists every file that changed while the command ran, including ones it never touched (a `git rebase`, a test run's output, another agent in the same checkout), so `test-tamper` only counts a file the command names.
 - **Claude Code:** context loaded mid-session is only in transcript `attachment` lines, never in hooks: `nested_memory` (Claude Code's instructions file from a subdirectory), `dynamic_skill` (a nested `.claude/skills` became available) and `invoked_skills` (skills restored after a compaction). A Skill call's "Base directory for this skill" line names the skill's folder. Each becomes a `notification` with `payload.kind: "harness.loaded"` and `loadedBy`, paths and skill names (never the text). Live windows read them too; the attachment's uuid keys the event, so backfill and live capture store it once.
 - **Claude Code:** a model fallback is only in the transcript, as a `system` line. `model_fallback` (`originalModel`, `fallbackModel`, `trigger` such as `overloaded`, `direction`) is written when the main model kept failing and Claude Code moved to `--fallback-model` for the rest of the turn; `model_refusal_fallback` is written when a refusal was routed to another model. Each becomes a `notification` with `payload.kind: "model.fallback"`, tags the session `model:fallback`, and makes the model change around it a `model:switch`, the switch back on the next turn included. Live windows read them too, keyed by the line's uuid. Verified by `scripts/e2e/claude-fallback-capture.mjs` (Claude Code 2.1.319, a stub model that answers 529 overloaded); the stub cannot make the API route a refusal, so 2.1.319 writes `model_refusal_no_fallback` there and the `model_refusal_fallback` tests build the record by hand in the same shape.
@@ -213,9 +214,18 @@ node "<~/.coding.sh/bin/hook.mjs>" <agent-id> <EventName> [flags]
   `--reply`, `CODING_SH_RUN_ID`, a T3 Code env marker, a model base URL other than a loopback one
   (the `init --proxy` proxy) on a port no gateway uses, a session start while `init --proxy` is
   installed, a relative `CODING_SH_HOME`, a value it cannot copy into JSON as is, or a write that
-  fails.
+  fails. It waits for `hook.mjs` and exits 0 whatever node does. When node is not on the agent's
+  `PATH` or cannot run `hook.mjs`, that event is not captured, and `--echo-continue` still gets its
+  reply.
 - Hooks installed by an older version run `node …/hook.mjs` and keep working. Run `coding.sh init`
   again to switch them to `hook.sh`. Codex asks you to review changed hooks in `/hooks` once.
+- Claude Code runs every hook command its settings files register for an event. With coding.sh
+  hooks in two files whose commands differ (user settings on `hook.sh`, a project's
+  `.claude/settings.local.json` still on `node …/hook.mjs`), each event is spooled twice. The lines
+  of one firing (the same payload, at most 2 s apart) get the same event ids, so the event is stored
+  once. The same prompt sent again later is a second event. `coding.sh init` reports project hooks
+  in the current directory and at the root of its repository, and skips the user install unless
+  `--force`.
 - The command path is quoted.
 - Each entry is tagged with a marker (`"_codingsh": true` where JSON allows, or a `# coding.sh` comment
   in TOML) so `uninstall` removes only our entries. Where the format has no room for a marker,

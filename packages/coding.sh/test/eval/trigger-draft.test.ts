@@ -112,7 +112,7 @@ async function skillTree() {
 describe("mineTriggerPrompts", () => {
   it("takes the first real prompt of root sessions: pdf ones are positives, docx/xlsx ones are negatives", async () => {
     const index = await fakeIndex();
-    const m = await mineTriggerPrompts(index, { skill: "pdf", siblings: ["docx", "xlsx"], now: NOW });
+    const m = await mineTriggerPrompts(index, { skill: "pdf", siblings: ["docx", "xlsx"], repo: "all", now: NOW });
     assert.deepEqual(m.should.map((p) => p.source), ["trace:p1", "trace:p2", "trace:p3"]);
     assert.deepEqual(m.shouldNot.map((p) => [p.source, p.expectSkill]), [["trace:d1", "docx"], ["trace:d2", "docx"]]);
     assert.ok(!JSON.stringify(m).includes(SECRET), "the key is redacted");
@@ -125,8 +125,46 @@ describe("mineTriggerPrompts", () => {
     const r = session("long", ["skill:pdf"], "x".repeat(2000));
     await index.upsertSession(r.s);
     await index.putEvents(r.events);
-    const m = await mineTriggerPrompts(index, { skill: "pdf", siblings: [], now: NOW });
+    const m = await mineTriggerPrompts(index, { skill: "pdf", siblings: [], repo: "all", now: NOW });
     assert.equal(m.should[0]!.prompt.length, 500);
+  });
+});
+
+describe("mineTriggerPrompts: one repo's sessions", () => {
+  /** Repos A and B each have a session that loaded pdf and one that loaded docx. */
+  async function twoRepos(): Promise<MemIndex> {
+    const index = new MemIndex();
+    const rows = [
+      session("a-pdf", ["skill:pdf"], "Merge the invoices in ./billing", { cwd: "/work/a", repo: { root: "/work/a", head: "h" } }),
+      session("a-docx", ["skill:docx"], "Write the release memo", { cwd: "/work/a/docs", repo: { root: "/work/a", head: "h" } }),
+      session("a-cwd", ["skill:pdf"], "Split the handbook by chapter", { cwd: "/work/a/pkg" }),
+      session("b-pdf", ["skill:pdf"], "Fill in the ACME contract for the Zebra deal", { cwd: "/work/b", repo: { root: "/work/b", head: "h" } }),
+      session("b-docx", ["skill:docx"], "Draft the Zebra offer letter", { cwd: "/work/b", repo: { root: "/work/b", head: "h" } }),
+      session("ab-pdf", ["skill:pdf"], "Sign the lease", { cwd: "/work/ab", repo: { root: "/work/ab", head: "h" } }),
+      session("nowhere", ["skill:pdf"], "A session with no directory"),
+    ];
+    for (const r of rows) {
+      await index.upsertSession(r.s);
+      await index.putEvents(r.events);
+    }
+    return index;
+  }
+  const sources = (m: Awaited<ReturnType<typeof mineTriggerPrompts>>) => [...m.should, ...m.shouldNot].map((p) => p.source).sort();
+
+  it("a draft for repo A holds no prompt captured in repo B", async () => {
+    const index = await twoRepos();
+    const m = await mineTriggerPrompts(index, { skill: "pdf", siblings: ["docx"], repo: "/work/a", now: NOW });
+    assert.deepEqual(sources(m), ["trace:a-cwd", "trace:a-docx", "trace:a-pdf"], "by repo root or by cwd, and /work/ab is not under /work/a");
+    assert.equal(m.sessions, 3);
+    assert.ok(!JSON.stringify(m).includes("Zebra"));
+    const toml = renderTriggerToml({ skill: "pdf", should: m.should, shouldNot: m.shouldNot }, { version: "0.0.0", date: "2026-11-08" });
+    assert.ok(!/trace:(b-|ab-|nowhere)/.test(toml));
+    assert.deepEqual(sources(await mineTriggerPrompts(index, { skill: "pdf", siblings: ["docx"], repo: "/work/b/", now: NOW })), ["trace:b-docx", "trace:b-pdf"]);
+  });
+
+  it("repo all reads every repo", async () => {
+    const m = await mineTriggerPrompts(await twoRepos(), { skill: "pdf", siblings: ["docx"], repo: "all", now: NOW });
+    assert.deepEqual(sources(m), ["trace:a-cwd", "trace:a-docx", "trace:a-pdf", "trace:ab-pdf", "trace:b-docx", "trace:b-pdf", "trace:nowhere"]);
   });
 });
 
@@ -138,7 +176,7 @@ describe("draftTriggerSpec", () => {
     assert.match(card.body, /Use pypdf/);
     const siblings = [await readSkill(join(root, "docx")), await readSkill(join(root, "xlsx"))];
     const index = await fakeIndex();
-    const mined = await mineTriggerPrompts(index, { skill: "pdf", siblings: siblings.map((s) => s.name), now: NOW });
+    const mined = await mineTriggerPrompts(index, { skill: "pdf", siblings: siblings.map((s) => s.name), repo: "all", now: NOW });
     const p = mock(REPLY);
     const cache = new MemoryJudgeCache();
     const d = await draftTriggerSpec(card, siblings, mined, { provider: p, cache });

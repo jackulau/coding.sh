@@ -1,9 +1,12 @@
 // Two sessions for the ClickHouse how-to (docs/how-to/self-host-team.md): one clean run, one that
 // failed tool calls and tests. Shared by test/docs/clickhouse-howto.test.ts and the Docker-gated
 // deploy/test/clickhouse.test.mjs, which sends it through a real collector into ClickHouse.
+// `open` is an earlier row of each session, as serve and the collector send it while a session
+// is still open: fewer events, a lower cost, no failed tests yet. The doc's queries must skip it.
+import type { OpenSession } from "../../src/core/types.ts";
 import type { AgentEvent, Session } from "../../src/schema/index.ts";
 
-export function clickhouseFixture(now = Date.now()): { batch: AgentEvent[]; sessions: Session[] } {
+export function clickhouseFixture(now = Date.now()): { batch: AgentEvent[]; sessions: Session[]; open: OpenSession[] } {
   const t0 = now - 60_000;
   const ev = (o: Partial<AgentEvent> & Pick<AgentEvent, "id" | "sessionId" | "kind" | "ts">): AgentEvent => ({ v: 0, agent: "claude-code", payload: {}, ...o });
   const ok: Session = {
@@ -77,5 +80,9 @@ export function clickhouseFixture(now = Date.now()): { batch: AgentEvent[]; sess
     llm(failed, 2, t0 + 31_000, 0.65),
     ev({ id: `${failed.id}-end`, sessionId: failed.id, agent: failed.agent, kind: "session.end", ts: failed.endedAt! }),
   ];
-  return { batch, sessions: [ok, failed] };
+  const earlier = (s: Session, lastEventAt: number, costUsd: number): OpenSession => {
+    const { endedAt: _endedAt, ...row } = s;
+    return { session: { ...row, stats: { ...s.stats, events: 3, turns: 1, toolCalls: 1, toolErrors: 0, testsFailed: 0, usage: { inputTokens: 6_000, outputTokens: 700, costUsd } }, flags: [] }, lastEventAt };
+  };
+  return { batch, sessions: [ok, failed], open: [earlier(ok, t0 + 3_000, 0.2), earlier(failed, t0 + 8_000, 0.6)] };
 }

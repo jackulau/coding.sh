@@ -2,7 +2,9 @@
 //
 // Mapping (OpenTelemetry GenAI semantic conventions, pinned below because the
 // gen_ai.* namespace is still "Development"):
-//   session              → span "invoke_agent {agent}"   (root, emitted with session.end)
+//   session              → span "invoke_agent {agent}"   (root, emitted with session.end; the server
+//                                                          mirror also sends it for a session still open,
+//                                                          see writeOpenSessions)
 //   tool.start/tool.end  → span "execute_tool {tool}"    (child, emitted with tool.end)
 //   assistant.message    → span "chat {model}"           (child, carries token usage)
 // Token usage follows the GenAI gen_ai.usage.* attributes: input_tokens counts the
@@ -14,7 +16,7 @@
 // Trace and span ids are derived from session/event ids, so a re-sent batch
 // produces identical spans and backends can de-duplicate.
 import type { AgentEvent, Session, Usage } from "../schema/index.ts";
-import type { BlobStore, Sink, SinkAck, SinkConfig } from "../core/types.ts";
+import type { BlobStore, OpenSession, Sink, SinkAck, SinkConfig } from "../core/types.ts";
 import { hashParts } from "../core/ids.ts";
 import { sessionToMetadata, toMetadata } from "../core/redact.ts";
 import { postJson } from "./post.ts";
@@ -103,6 +105,19 @@ function content(v: unknown): string | undefined {
   return s.length > MAX_CONTENT ? `${s.slice(0, MAX_CONTENT)}…` : s;
 }
 
+/** Subagent sessions join their parent's trace (walking up as far as the batch knows). */
+function rootIn(sessionsById: Map<string, Session>): (id: string) => string {
+  return (id) => {
+    let cur = id;
+    for (let i = 0; i < 16; i++) {
+      const parent = sessionsById.get(cur)?.parent?.sessionId;
+      if (!parent) break;
+      cur = parent;
+    }
+    return cur;
+  };
+}
+
 /** Converts a batch to OTLP spans. Pure; exported for tests and custom exporters. */
 export function toOtlpSpans(batch: AgentEvent[], sessions: Session[], mode: "full" | "metadata"): OtlpSpan[] {
   const full = mode === "full";
@@ -119,16 +134,7 @@ export function toOtlpSpans(batch: AgentEvent[], sessions: Session[], mode: "ful
   const hasLlmCalls = new Set(events.filter((e) => e.kind === "llm.call").map((e) => e.sessionId));
   for (const s of sessions) if (s.stats.latency?.llmCalls) hasLlmCalls.add(s.id);
 
-  // Subagent sessions join their parent's trace (walking up as far as the batch knows).
-  const rootOf = (id: string): string => {
-    let cur = id;
-    for (let i = 0; i < 16; i++) {
-      const parent = sessionsById.get(cur)?.parent?.sessionId;
-      if (!parent) break;
-      cur = parent;
-    }
-    return cur;
-  };
+  const rootOf = rootIn(sessionsById);
 
   const spans: OtlpSpan[] = [];
   for (const e of events) {
@@ -247,17 +253,34 @@ function sessionSpan(s: Session, endMs: number, full: boolean, traceId: string):
   };
 }
 
-/** The OTLP ExportTraceServiceRequest body for a batch. */
-export function toOtlpRequest(batch: AgentEvent[], sessions: Session[], mode: "full" | "metadata") {
+/**
+ * The invoke_agent span of each session that is still open: the trace and span
+ * id its session.end will send, so the spans already sent under it have a parent
+ * and the later span is the same span again, with more in it. It ends at the
+ * row's endedAt, else at the last event written.
+ */
+export function toOtlpOpenSessionSpans(open: OpenSession[], mode: "full" | "metadata"): OtlpSpan[] {
+  const full = mode === "full";
+  const rows = open.map((o) => ({ ...o, session: full ? o.session : sessionToMetadata(o.session) }));
+  const rootOf = rootIn(new Map(rows.map((o) => [o.session.id, o.session])));
+  return rows.map((o) => sessionSpan(o.session, o.lastEventAt, full, traceIdFor(rootOf(o.session.id))));
+}
+
+function request(spans: OtlpSpan[]) {
   return {
     resourceSpans: [
       {
         resource: { attributes: attrs({ "service.name": "coding.sh", "telemetry.sdk.name": "coding.sh", "telemetry.sdk.language": "nodejs" }) },
-        scopeSpans: [{ scope: SCOPE, schemaUrl: SEMCONV_SCHEMA_URL, spans: toOtlpSpans(batch, sessions, mode) }],
+        scopeSpans: [{ scope: SCOPE, schemaUrl: SEMCONV_SCHEMA_URL, spans }],
         schemaUrl: SEMCONV_SCHEMA_URL,
       },
     ],
   };
+}
+
+/** The OTLP ExportTraceServiceRequest body for a batch. */
+export function toOtlpRequest(batch: AgentEvent[], sessions: Session[], mode: "full" | "metadata") {
+  return request(toOtlpSpans(batch, sessions, mode));
 }
 
 export function otlpTracesUrl(endpoint: string): string {
@@ -290,6 +313,11 @@ export class OtlpSink implements Sink {
     const body = toOtlpRequest(batch, sessions, this.mode);
     if (!body.resourceSpans[0]!.scopeSpans[0]!.spans.length) return { ok: true };
     return postJson(this.url, body, { headers: this.headers, timeoutMs: this.opts.timeoutMs, fetch: this.opts.fetch });
+  }
+
+  async writeOpenSessions(open: OpenSession[], _blobs: BlobStore): Promise<SinkAck> {
+    if (!open.length) return { ok: true };
+    return postJson(this.url, request(toOtlpOpenSessionSpans(open, this.mode)), { headers: this.headers, timeoutMs: this.opts.timeoutMs, fetch: this.opts.fetch });
   }
 }
 

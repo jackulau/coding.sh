@@ -1,0 +1,19 @@
+id = "mcp-find-session"
+split = "dev"
+tags = ["mcp", "search"]
+instruction = """
+Agents read coding.sh through its MCP server. Start that server over stdio and, using only MCP tool calls (not the other coding.sh commands), find the session where I asked to split the terraform state. Reply with its session id.
+"""
+
+reference = ['''
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"reference","version":"0"}}}' '{"jsonrpc":"2.0","method":"notifications/initialized"}' '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search","arguments":{"query":"split the terraform state"}}}' | coding.sh mcp | node -e 'for(const l of require("fs").readFileSync(0,"utf8").trim().split("\n")){const m=JSON.parse(l);if(m.id===2)console.log(m.result.structuredContent.hits[0].sessionId)}'
+''']
+
+# y4 also mentions terraform ("bump the terraform aws provider to v6").
+[[check]]
+kind = "output"
+contains = ["${answers.ids.w2}"]
+absent = ["${answers.ids.y4}"]
+
+[expect]
+minTargetCalls = 1

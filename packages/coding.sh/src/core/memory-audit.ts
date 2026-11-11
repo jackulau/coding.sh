@@ -11,10 +11,15 @@
 // - wrote: a file.change, an edit tool, or a shell write (> file, tee, sed -i).
 // Paths under a home directory are keyed `~/…`, so sessions recorded on another
 // machine (or user) match the files here. Pure: the caller lists the files.
+//
+// What an event says is read in one place (memoryOps), so the audit can take a
+// session's events or what the session fold kept of them (Session.stats.memoryUse,
+// core/memory-use.ts) and count the same.
 import { posix } from "node:path";
-import type { AgentEvent } from "../schema/index.ts";
+import type { AgentEvent, MemoryUse } from "../schema/index.ts";
 import { harnessItem, parseFrontmatter } from "./exposure.ts";
 import { shellWrites, stripHeredocs } from "./intent.ts";
+import { HARNESS_LOADED, INPUT_PATH_KEYS, MEMORY_PATH_TEXT, SKILL_TOOL } from "./memory-events.ts";
 import { commandOf } from "./sessions.ts";
 
 export type MemoryKind = "memory" | "context" | "rule" | "skill";
@@ -40,6 +45,8 @@ export interface MemorySession {
   repoRoot?: string;
   startedAt: number;
   events: readonly Pick<AgentEvent, "kind" | "ts" | "payload">[];
+  /** The session's stats.memoryUse, from a session folded with it: read instead of `events`. */
+  uses?: readonly MemoryUse[];
 }
 
 export interface MemoryRow {
@@ -93,7 +100,6 @@ const AUTO_MEMORY = /(?:^|\/)\.claude\/projects\/[^/]+\/memory\/.+\.md$/;
 const READ_TOOLS = new Set(["read", "view", "read_file", "read_many_files", "notebookread", "open_file"]);
 const EDIT_TOOLS = /^(?:write|edit|multiedit|multi_edit|notebookedit|notebook_edit|str_replace|str_replace_editor|str_replace_based_edit_tool|search_replace|replace|edit_file|write_file|create_file|write_to_file|replace_in_file|delete_file)$/;
 const SHELL_READERS = new Set(["cat", "head", "tail", "sed", "less", "more", "nl", "bat"]);
-const SKILL_TOOL = "skill";
 /** A home directory in a recorded path: macOS, Linux, Windows user dirs and root's. */
 const HOME_DIR = /^(?:\/Users\/[^/]+|\/home\/[^/]+|\/root|[A-Za-z]:\/Users\/[^/]+)(?=\/|$)/;
 
@@ -152,7 +158,7 @@ function ancestors(dir: string, top?: string): string[] {
 const isAbs = (p: string) => p.startsWith("/") || p.startsWith("~/") || /^[A-Za-z]:\//.test(p);
 
 /** An absolute path for a path an event names, relative ones against the session's cwd. */
-function resolvePath(p: string, cwd: string | undefined): string | undefined {
+export function resolvePath(p: string, cwd: string | undefined): string | undefined {
   const s = slash(p.trim());
   if (!s || /[$`*?]/.test(s)) return undefined;
   if (isAbs(s)) return posix.normalize(s);
@@ -165,7 +171,7 @@ const strs = (v: unknown): string[] => (typeof v === "string" && v ? [v] : Array
 const inputPath = (input: unknown): string | undefined => {
   if (!input || typeof input !== "object") return undefined;
   const i = input as Record<string, unknown>;
-  for (const k of ["file_path", "filePath", "path", "absolute_path", "target_file", "notebook_path"]) if (typeof i[k] === "string" && i[k]) return i[k] as string;
+  for (const k of INPUT_PATH_KEYS) if (typeof i[k] === "string" && i[k]) return i[k] as string;
   return undefined;
 };
 
@@ -221,6 +227,64 @@ export function shellPaths(cmd: string): { reads: string[]; writes: string[] } {
   }
   const writes = shellWrites(cmd).flatMap((w) => (w.renamedTo ? [w.path, w.renamedTo] : [w.path]));
   return { reads, writes };
+}
+
+/** A skill's name as its directory has it: without the plugin it came from (`tools:pdf` is `pdf`). */
+const skillName = (name: string): string => name.split(":").pop()!;
+
+/**
+ * What one event says about memory and instruction files, in the order the
+ * audit counts it: a path as the event wrote it (the audit resolves it against
+ * the session's directory), or a skill by name.
+ */
+export function memoryOps(e: Pick<AgentEvent, "kind" | "ts" | "payload">): MemoryUse[] {
+  const p = e.payload ?? {};
+  const out: MemoryUse[] = [];
+  const path = (use: MemoryUse["use"], path: string | undefined) => {
+    if (path) out.push({ use, path, ts: e.ts });
+  };
+  const skill = (by: "tool" | "harness", name: string) => {
+    if (skillName(name)) out.push({ use: "read", skill: skillName(name), by, ts: e.ts });
+  };
+  if (e.kind === "notification") {
+    if (p.kind !== HARNESS_LOADED) return out;
+    const by = p.loadedBy;
+    if (by === "nested_memory") for (const f of strs(p.paths)) path("loaded", f);
+    else if (by === "dynamic_skill") {
+      const dir = str(p.dir);
+      if (dir) for (const name of strs(p.skills)) path("loaded", `${dir}/${name}/SKILL.md`);
+    } else if (by === "skill" || by === "invoked_skills") {
+      // The skill's body entered the context: it was read.
+      const sources = strs(p.sources).filter(isAbs);
+      for (const dir of sources) path("read", `${dir}/SKILL.md`);
+      if (!sources.length) for (const name of strs(p.skills)) skill("harness", name);
+    }
+    return out;
+  }
+  if (e.kind === "file.change") {
+    path("wrote", str(p.path));
+    path("wrote", str(p.movedTo));
+    return out;
+  }
+  if (e.kind !== "tool.start" || p.wrapper === true) return out;
+  const tool = (str(p.tool) ?? "").toLowerCase();
+  const input = p.input;
+  if (tool === SKILL_TOOL) {
+    const i = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
+    for (const name of strs(i.skill ?? i.name ?? i.command)) skill("tool", name);
+    return out;
+  }
+  const file = inputPath(input);
+  if (file && READ_TOOLS.has(tool)) path("read", file);
+  else if (file && EDIT_TOOLS.test(tool)) path("wrote", file);
+  const cmd = file ? undefined : commandOf(input);
+  // A command without the text names no memory file (core/memory-events.ts): not worth parsing.
+  if (cmd?.includes(MEMORY_PATH_TEXT)) {
+    const sh = shellPaths(cmd);
+    for (const r of sh.reads) path("read", r);
+    for (const w of sh.writes) path("wrote", w);
+  }
+  return out;
 }
 
 interface Touch {
@@ -305,47 +369,13 @@ export function auditMemory(sessions: readonly MemorySession[], files: readonly 
         }
       }
     }
-    for (const e of s.events) {
-      const p = e.payload ?? {};
-      if (e.kind === "notification" && p.kind === "harness.loaded") {
-        const by = p.loadedBy;
-        if (by === "nested_memory") for (const path of strs(p.paths)) mark(path, s, "loaded", e.ts);
-        else if (by === "dynamic_skill") {
-          const dir = str(p.dir);
-          if (dir) for (const name of strs(p.skills)) mark(`${dir}/${name}/SKILL.md`, s, "loaded", e.ts);
-        } else if (by === "skill" || by === "invoked_skills") {
-          // The skill's body entered the context: it was read.
-          const sources = strs(p.sources).filter(isAbs);
-          for (const dir of sources) mark(`${dir}/SKILL.md`, s, "read", e.ts);
-          if (!sources.length) for (const name of strs(p.skills)) for (const k of skillsByName.get(name.split(":").pop()!) ?? []) mark(k, s, "read", e.ts);
-        }
-        continue;
-      }
-      if (e.kind === "file.change") {
-        mark(str(p.path), s, "wrote", e.ts);
-        if (str(p.movedTo)) mark(str(p.movedTo), s, "wrote", e.ts);
-        continue;
-      }
-      if (e.kind !== "tool.start" || p.wrapper === true) continue;
-      const tool = (str(p.tool) ?? "").toLowerCase();
-      const input = p.input;
-      if (tool === SKILL_TOOL) {
-        const i = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
-        for (const name of strs(i.skill ?? i.name ?? i.command)) {
-          // Skill names a dir under the agent's or the project's skills: the ones this session could see.
-          const visible = (skillsByName.get(name.split(":").pop()!) ?? []).filter((k) => k.startsWith(`${claudeDir}/`) || (!!s.cwd && ancestors(slash(s.cwd)).map(key).some((d) => k.startsWith(`${d}/.claude/skills/`))));
-          for (const k of visible) mark(k, s, "read", e.ts);
-        }
-        continue;
-      }
-      const path = inputPath(input);
-      if (path && READ_TOOLS.has(tool)) mark(path, s, "read", e.ts);
-      else if (path && EDIT_TOOLS.test(tool)) mark(path, s, "wrote", e.ts);
-      const cmd = path ? undefined : commandOf(input);
-      if (cmd) {
-        const sh = shellPaths(cmd);
-        for (const r of sh.reads) mark(r, s, "read", e.ts);
-        for (const w of sh.writes) mark(w, s, "wrote", e.ts);
+    for (const op of s.uses ?? s.events.flatMap(memoryOps)) {
+      if (op.path !== undefined) mark(op.path, s, op.use, op.ts);
+      else if (op.skill !== undefined) {
+        let named = skillsByName.get(op.skill) ?? [];
+        // A Skill call names a dir under the agent's or the project's skills: the ones this session could see.
+        if (op.by === "tool") named = named.filter((k) => k.startsWith(`${claudeDir}/`) || (!!s.cwd && ancestors(slash(s.cwd)).map(key).some((d) => k.startsWith(`${d}/.claude/skills/`))));
+        for (const k of named) mark(k, s, "read", op.ts);
       }
     }
   }

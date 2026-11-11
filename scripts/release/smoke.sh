@@ -78,14 +78,16 @@ const s3 = await import("coding.sh-store-s3"); const pg = await import("coding.s
 if (typeof s3.blobStore !== "function" || typeof pg.indexStore !== "function" || typeof ch.indexStore !== "function") throw new Error("plugin factory missing");
 console.log("store-s3, store-postgres and store-clickhouse load");')
 
-step "coding.sh types: a TypeScript consumer of coding.sh/schema and coding.sh/store"
+step "coding.sh types: a TypeScript consumer of coding.sh/schema, coding.sh/store and coding.sh/judge"
 cd "$W/app"
 printf '{"name":"app","private":true,"type":"module"}\n' >package.json
 npm i --silent --no-fund --no-audit "$CLI" "$(ls "$W"/pack/codingdotsh-sdk-*.tgz)"
 cat >check.ts <<'EOF'
 import type { BlobStore, IndexStore } from "coding.sh/store";
+import { createWasteJudge, pairedDiscrimination, type DiscriminationReport, type WasteReport } from "coding.sh/judge";
 import { observe, trace, span, flush, init, stats } from "@codingdotsh/sdk";
 export type T = [BlobStore, IndexStore, typeof observe, typeof trace, typeof span, typeof flush, typeof init, typeof stats];
+export type J = [typeof createWasteJudge, typeof pairedDiscrimination, DiscriminationReport, WasteReport];
 EOF
 "$ROOT/node_modules/.bin/tsc" --noEmit --strict --skipLibCheck false --module nodenext --moduleResolution nodenext --target es2022 --types node --typeRoots "$ROOT/node_modules/@types" check.ts
 echo "types resolve"
@@ -93,6 +95,13 @@ node --input-type=module -e '
 const { default: s } = await import("coding.sh/schema.json", { with: { type: "json" } });
 if (s.$id !== "https://coding.sh/schema.json" || !s.$defs?.AgentEvent || !s.$defs?.Session) throw new Error("coding.sh/schema.json lacks AgentEvent or Session");
 console.log("coding.sh/schema.json resolves");'
+node --input-type=module -e '
+const j = await import("coding.sh/judge");
+for (const name of ["pairedDiscrimination", "traceMutations", "createWasteJudge"]) if (typeof j[name] !== "function") throw new Error("coding.sh/judge lacks " + name);
+const trace = [{ id: "e1", kind: "tool.start", payload: { tool: "Bash", toolUseId: "t1", input: { command: "npm test" } } }, { id: "e2", kind: "test.result", payload: { passed: 1, failed: 0 } }];
+const report = await j.pairedDiscrimination({ grade: async () => ({ score: 1, pass: true }) }, [{ input: "fix it", output: "done", trace }], { iters: 20 });
+if (!(report.pooled.n > 0) || report.pooled.discrimination !== 0) throw new Error("pairedDiscrimination: " + JSON.stringify(report.pooled));
+console.log("coding.sh/judge resolves: pairedDiscrimination and createWasteJudge are functions");'
 
 step "@codingdotsh/sdk: import and send a trace to a local coding.sh serve"
 "$B" serve --port 0 >"$W/serve.out" 2>"$W/serve.err" &

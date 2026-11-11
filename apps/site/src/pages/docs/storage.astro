@@ -139,7 +139,8 @@ interface Sink {
   <ul>
     <li><strong><code>otlp</code></strong>: OTLP/HTTP JSON. A session becomes an <code>invoke_agent</code> span, tools <code>execute_tool</code> spans and replies <code>chat</code> spans, with <code>gen_ai.*</code> attributes pinned to semconv 1.37.0. Span ids derive from event ids, so a resent batch de-duplicates.</li>
     <li><strong><code>http</code></strong>: posts coding.sh/trace JSON as is, for a collector or relay that speaks it.</li>
-    <li>Sinks mirror hook events at ingest, and events from the <a href="/docs/otel">OTLP receiver</a>. <code>coding.sh serve</code> mirrors every batch it commits to the sinks in its own config, so a team can set one there instead of on each laptop.</li>
+    <li>Sinks mirror every event local ingest stores, from hooks and from imported transcripts, and events from the <a href="/docs/otel">OTLP receiver</a>.</li>
+    <li><code>coding.sh serve</code> mirrors every batch it commits to the sinks in its own config, so a team can set one there instead of on each laptop.</li>
   </ul>
 
   <h2 id="remote">Plugging in a remote store</h2>

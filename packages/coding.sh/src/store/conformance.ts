@@ -15,6 +15,7 @@ import type { BlobStore, EvalTask, HarnessBundle, IndexStore, Label, RunResult, 
 import { defaultConfig } from "../core/config.ts";
 import { gc } from "../core/gc.ts";
 import { sha256Hex } from "../core/ids.ts";
+import { MEMORY_EVENT_KINDS, memoryEventOf } from "../core/memory-events.ts";
 import { pricesFor } from "../core/pricing.ts";
 import { createRedactor } from "../core/redact.ts";
 import { loadCall } from "../proxy/calls.ts";
@@ -119,6 +120,21 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
       assert.deepEqual(await s.putEvents([]), { inserted: 0 });
       const c = fixtureEvent();
       assert.deepEqual(await s.putEvents([a, c, c]), { inserted: 1 });
+    }));
+
+    it("putEventsReturningIds, where the store has it, names exactly the events it inserted", withStore(async (s) => {
+      if (!s.putEventsReturningIds) return;
+      const [a, b, c, d] = [fixtureEvent(), fixtureEvent(), fixtureEvent(), fixtureEvent()];
+      const first = await s.putEventsReturningIds([a, b]);
+      assert.deepEqual({ inserted: first.inserted, ids: [...first.ids].sort() }, { inserted: 2, ids: [a.id, b.id].sort() });
+      assert.deepEqual(await s.putEventsReturningIds([a, b]), { inserted: 0, ids: [] });
+      assert.deepEqual(await s.putEventsReturningIds([]), { inserted: 0, ids: [] });
+      // A batch that overlaps stored events, with an id repeated in it: only the new ids, each once.
+      const half = await s.putEventsReturningIds([b, c, a, d, c]);
+      assert.deepEqual({ inserted: half.inserted, ids: [...half.ids].sort() }, { inserted: 2, ids: [c.id, d.id].sort() });
+      // The events are stored as putEvents stores them.
+      assert.deepEqual(await s.putEvents([a, b, c, d]), { inserted: 0 });
+      assert.equal((await s.listEvents(a.sessionId)).length, 4);
     }));
 
     it("round-trips every event field", withStore(async (s) => {
@@ -472,6 +488,33 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
         await s.deleteBefore(Date.now() + 1e12);
         assert.equal(await s.getSessionFold("fa"), undefined, "retention drops the fold");
       }
+    }));
+
+    it("optional memoryEvents: the harness audit's narrow read is memoryEventOf over listEvents", withStore(async (s) => {
+      if (!s.memoryEvents) return;
+      const tool = (sessionId: string, ts: number, name: string, input: unknown, more: Record<string, unknown> = {}) => fixtureEvent({ sessionId, ts, kind: "tool.start", payload: { tool: name, input, callId: `c${ts}`, ...more } });
+      await s.putEvents([
+        tool("ma", 3000, "Read", { file_path: "/repo/CLAUDE.md", limit: 20 }),
+        tool("ma", 1000, "Edit", { file_path: "/repo/AGENTS.md", old_string: "a", new_string: "b" }, { wrapper: true }),
+        tool("ma", 2000, "Bash", { command: "cat .claude/rules/tests.md", description: null }),
+        tool("ma", 2000, "shell", "tee notes.md"),
+        tool("ma", 2500, "SKILL", { skill: "pdf" }),
+        tool("ma", 2600, "Bash", { command: "ls" }),
+        fixtureEvent({ sessionId: "ma", ts: 2700, kind: "tool.end", payload: { tool: "Read", output: "CLAUDE.md" } }),
+        fixtureEvent({ sessionId: "ma", ts: 2800, kind: "file.change", payload: { path: "a.txt", movedTo: "GEMINI.md", op: "rename" } }),
+        fixtureEvent({ sessionId: "ma", ts: 2900, kind: "file.change", payload: { path: "src/a.ts" } }),
+        fixtureEvent({ sessionId: "ma", ts: 500, kind: "notification", payload: { kind: "harness.loaded", loadedBy: "nested_memory", paths: ["/repo/pkg/CLAUDE.md"], hook: "InstructionsLoaded" } }),
+        fixtureEvent({ sessionId: "ma", ts: 600, kind: "notification", payload: { kind: "permission", message: "harness.loaded CLAUDE.md" } }),
+        tool("mb", 1500, "Read", { path: "/repo/GEMINI.md" }),
+        tool("mc", 1600, "Read", { path: "/repo/CLAUDE.md" }),
+      ]);
+      const expected = async (id: string) => (await s.listEvents(id, { kinds: MEMORY_EVENT_KINDS })).flatMap((e) => memoryEventOf(e) ?? []);
+      const got = await s.memoryEvents(["ma", "mb", "none"]);
+      assert.deepEqual(got.filter((e) => e.sessionId === "ma"), await expected("ma"), "a session's rows, in listEvents order");
+      assert.deepEqual(got.filter((e) => e.sessionId === "mb"), await expected("mb"));
+      assert.equal(got.length, 8, "only the sessions asked for, and only events that can name a memory file");
+      assert.deepEqual(got.find((e) => e.ts === 1000)?.payload, { tool: "Edit", wrapper: true, input: { file_path: "/repo/AGENTS.md" } }, "only the fields the audit reads");
+      assert.deepEqual(await s.memoryEvents([]), []);
     }));
 
     it("optional sessionsWithoutRow lists sessions with events and no row, by id, with their least agent", withStore(async (s) => {

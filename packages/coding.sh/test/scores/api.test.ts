@@ -6,6 +6,7 @@ import { after, before, describe, it } from "node:test";
 import { createViewerHandler } from "../../src/viewer/server.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
+import { sdkEventId } from "../../src/server/project.ts";
 import { fixtureSession } from "../../src/store/conformance.ts";
 import type { IndexStore } from "../../src/core/types.ts";
 
@@ -48,7 +49,11 @@ for (const [kind, open] of [
       await index.upsertSession(fixtureSession({ id: "s1" }));
       await index.upsertSession(fixtureSession({ id: "s2", startedAt: 1_700_000_100_000 }));
       await index.upsertSession(fixtureSession({ id: "demo/s3", project: "demo" }));
-      await index.putEvents([{ id: "e1", v: 0, sessionId: "s1", ts: 1_700_000_000_001, agent: "claude-code", kind: "notification", payload: {} }]);
+      await index.putEvents([
+        { id: "e1", v: 0, sessionId: "s1", ts: 1_700_000_000_001, agent: "claude-code", kind: "notification", payload: {} },
+        // As serve stores an event an SDK client sent as "c1" with the demo project's key.
+        { id: sdkEventId("demo", "c1"), v: 0, sessionId: "demo/s3", ts: 1_700_000_000_002, agent: "claude-code", kind: "notification", payload: {}, project: "demo" },
+      ]);
       const handler = await createViewerHandler({
         index,
         blobs: new MemoryBlobStore(),
@@ -115,6 +120,11 @@ for (const [kind, open] of [
       }
       assert.equal((await post("/api/scores", { sessionId: "missing", name: "ok", value: 1 })).status, 404);
       assert.equal((await post("/api/scores", { target: "event", targetId: "nope", name: "ok", value: 1 })).status, 404);
+      assert.equal((await post("/api/scores", { target: "event", targetId: "nope", sessionId: "s1", name: "ok", value: 1 })).status, 404, "a sessionId does not stand in for the event");
+      const other = await post("/api/scores", { target: "event", targetId: "e1", sessionId: "s2", name: "ok", value: 1 });
+      assert.equal(other.status, 400);
+      assert.match(other.json().error, /event e1 belongs to session s1, not s2/);
+      assert.equal((await post("/api/scores", { target: "event", targetId: "e1", sessionId: "demo/s3", name: "ok", value: 1 }, scoped)).status, 404, "a scoped key cannot put another project's event under its own session");
       assert.deepEqual((await get("/api/scores")).json().items, [], "nothing was stored");
     });
 
@@ -143,6 +153,12 @@ for (const [kind, open] of [
       assert.equal(ev.status, 201);
       assert.equal(ev.json().sessionId, "s1", "an event's session is looked up");
       assert.equal(ev.json().dataType, "boolean");
+      assert.equal((await post("/api/scores", { target: "event", targetId: "e1", sessionId: "s1", name: "correct", value: false, source: "code" })).status, 200, "its own sessionId is fine");
+      // A stored score keeps its type: only dataType (or a config) changes it.
+      const retyped = await post("/api/scores", { target: "event", targetId: "e1", name: "correct", value: "no", source: "code" });
+      assert.equal(retyped.status, 400);
+      assert.match(retyped.json().error, /correct is a boolean score on event e1.*dataType/);
+      assert.equal((await get("/api/scores?name=correct")).json().items[0].value, false);
       const cat = await post("/api/scores", { target: "case", targetId: "case-1", sessionId: "s2", name: "tone", value: "neutral" });
       assert.equal(cat.status, 201);
       assert.equal(cat.json().configId, "tone");
@@ -183,6 +199,11 @@ for (const [kind, open] of [
       assert.deepEqual((await get("/api/scores", scoped)).json().items.map((s: { sessionId: string }) => s.sessionId), ["demo/s3"]);
       assert.equal((await get("/api/scores?sessionId=s1", scoped)).status, 404);
       assert.equal((await get("/api/score-configs", scoped)).status, 200);
+      // An SDK client's own event id: read as the stored id, and its session is still the event's own.
+      const sdk = await post("/api/scores", { target: "event", targetId: "c1", sessionId: "demo/s3", name: "correct", value: true }, scoped);
+      assert.equal(sdk.status, 201);
+      assert.deepEqual([sdk.json().targetId, sdk.json().sessionId], [sdkEventId("demo", "c1"), "demo/s3"]);
+      assert.equal((await post("/api/scores", { target: "event", targetId: "c1", sessionId: "s1", name: "correct", value: true })).status, 404, "c1 is not an event of the default project");
     });
   });
 }

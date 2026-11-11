@@ -2,7 +2,7 @@
 // the line format and the worst-flag choice can be unit-tested without a store.
 import { failureFlags } from "../core/sessions.ts";
 import { FLAG_DIAGNOSIS } from "../refine/taxonomy.ts";
-import { usd } from "./output.ts";
+import { ago, usd } from "./output.ts";
 
 // Defect first, then risk, then inefficiency (src/refine/severity.ts NATURE_ORDER).
 const NATURE_RANK: Record<string, number> = { defect: 0, risk: 1, inefficiency: 2 };
@@ -29,11 +29,19 @@ export interface StatuslineInput {
   sessionCostUsd?: number;
   todayCostUsd?: number;
   flags?: readonly string[];
+  /** Since when the ingest the hook starts has been failing (core/ingest-health.ts); unset while it works. */
+  ingestStoppedSince?: number;
+}
+
+/** `! ingest stopped 4h ago`: the costs on the line are then as old as that. */
+export function ingestStoppedPart(since: number, now = Date.now()): string {
+  return `! ingest stopped ${ago(since, { now })}`;
 }
 
 /**
  * One compact line: `model  ·  $x session  ·  $y today  ·  ! worst-flag`.
- * The flag part is dropped when there is no real failure to report.
+ * The flag part is dropped when there is no real failure to report; a stopped
+ * ingest adds `! ingest stopped 4h ago`.
  */
 export function statuslineLine(input: StatuslineInput): string {
   const parts: string[] = [];
@@ -42,5 +50,6 @@ export function statuslineLine(input: StatuslineInput): string {
   parts.push(`${usd(input.todayCostUsd ?? 0)} today`);
   const worst = input.flags ? worstFailureFlag(input.flags) : undefined;
   if (worst) parts.push(`! ${worst}`);
+  if (input.ingestStoppedSince !== undefined) parts.push(ingestStoppedPart(input.ingestStoppedSince));
   return parts.join("  ·  ");
 }

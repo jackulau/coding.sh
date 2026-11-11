@@ -10,7 +10,7 @@ import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { parseWhere } from "../../src/query/where.ts";
 import { bucketStart, bucketTimes, computeMetrics, DAY_MS, MetricsError, metricsOf, metricRow, type MetricsSpec } from "../../src/viewer/metrics.ts";
-import { startViewer, type Viewer } from "../../src/viewer/server.ts";
+import { metricsParams, startViewer, type Viewer } from "../../src/viewer/server.ts";
 import { FakeBlobs, metricFixtures } from "./fakes.ts";
 
 const GOLDEN = new URL("./fixtures/metrics.golden.json", import.meta.url);
@@ -180,11 +180,29 @@ describe("GET /api/metrics", () => {
     assert.equal(w.body.tzOffsetMin, -120);
   });
 
+  test("a date without a zone is midnight in the request's tz, so the edge days are whole", async () => {
+    const now = Date.UTC(2026, 10, 10, 12);
+    const at = (qs: string) => metricsParams(new URLSearchParams(qs), now);
+    assert.equal(new Date(at("since=2026-11-09&tz=360").since).toISOString(), "2026-11-09T06:00:00.000Z");
+    assert.equal(new Date(at("since=7d&until=2026-11-10&tz=360").until).toISOString(), "2026-11-10T06:00:00.000Z");
+    assert.equal(new Date(at("since=yesterday&tz=-120").since).toISOString(), "2026-11-08T22:00:00.000Z");
+    // A zone in the value, epoch ms and an age name an instant: tz moves none of them.
+    assert.equal(at("since=2026-11-09T00:00:00Z&tz=360").since, Date.UTC(2026, 10, 9));
+    assert.equal(at(`since=${T0}&tz=360`).since, T0);
+    assert.equal(at("since=7d&tz=360").since, now - 7 * DAY_MS);
+    // 2026-10-12 in UTC-6 is one bucket with its evening session (m09, 01:00 UTC on the 13th).
+    const r = await get("/api/metrics?since=2026-10-12&until=2026-10-13&tz=360&scope=all");
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.buckets, [Date.UTC(2026, 9, 12, 6)]);
+    assert.deepEqual(r.body.all.sessions, [3]);
+    assert.equal((await get("/api/metrics?since=2026-10-13&until=2026-10-14&tz=360&scope=all")).body.totals.sessions, 0);
+  });
+
   test("bad params are 400s that say why", async () => {
     const cases: [string, RegExp][] = [
       ["bucket=hour", /bucket must be day or week/],
       ["by=tool", /by must be one of agent, model, repo, flag/],
-      ["since=yesterday", /since must be/],
+      ["since=someday", /since must be/],
       [`since=${T0}&until=${T0}`, /since must be before until/],
       [`since=${T0 - 900 * DAY_MS}&until=${T0}`, /more than 400 day buckets; use bucket=week/],
       ["tz=999", /tz must be/],

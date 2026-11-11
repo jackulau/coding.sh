@@ -5,9 +5,14 @@ import { openContext, type Context } from "../core/context.ts";
 import type { IngestError } from "../core/ingest.ts";
 import type { EvalTask, Session } from "../core/types.ts";
 import type { GateOpts } from "../stats/tests.ts";
-import { andQuery, parseWhere, QueryError, QueryUnsupported, type Node, type Query } from "../query/where.ts";
+import { andQuery, parseWhere, QueryError, QueryUnsupported, timeBounds, type Node, type Query } from "../query/where.ts";
+import { utcOffset, wallText, type When } from "../query/time.ts";
 import { runningCli } from "../mcp/launch.ts";
-import { StoreOwnerError, UPGRADE_STORE } from "../core/store-guard.ts";
+import { StoreOwnerError, StoreVersionError, UPGRADE_STORE } from "../core/store-guard.ts";
+import { spoolSize } from "../core/ingest-health.ts";
+import { paths } from "../core/paths.ts";
+import { listBackups, StoreNewerError } from "../store/upgrade.ts";
+import { version } from "./meta.ts";
 import { acquireLock, isLocked, wakeMarker } from "../core/lock.ts";
 import { spawnBackgroundIngest } from "../spool/kick.ts";
 import { UsageError, type FlagValue } from "./args.ts";
@@ -21,6 +26,8 @@ export async function withContext<T>(c: CommandContext, fn: (ctx: Context) => Pr
     ctx = await openContext({ env: c.env, cwd: c.cwd });
   } catch (e) {
     if (e instanceof StoreOwnerError) throw storeOwnedError(e);
+    if (e instanceof StoreVersionError) throw storeVersionError(e);
+    if (e instanceof StoreNewerError) throw storeNewerError(e, c.env);
     throw new CliError(`Couldn't open the coding.sh store: ${e instanceof Error ? e.message : String(e)}`, {
       reason: "store_unavailable",
       next: ["Check the [store] section of the config:", "coding.sh config path"],
@@ -40,6 +47,35 @@ export function storeOwnedError(e: StoreOwnerError): CliError {
     askUser: true,
     next: ["Migrate it for this install (hooks then run this one):", UPGRADE_STORE],
     data: { path: e.path, from: e.from, to: e.to, version: e.version, owner: e.owner, ownerVersion: e.ownerVersion ?? null },
+  });
+}
+
+/** Pending migrations this build is not the one to run on its own: the user decides on `coding.sh upgrade-store`. */
+export function storeVersionError(e: StoreVersionError): CliError {
+  return new CliError(e.detail, {
+    reason: "store_version",
+    askUser: true,
+    next: ["Migrate it with this build (a copy of the index is kept, and --restore puts it back):", UPGRADE_STORE],
+    data: { path: e.path, from: e.from, to: e.to, version: e.version, writer: e.writer ?? null },
+  });
+}
+
+/**
+ * A store a newer coding.sh migrated. Says what the person fears first (nothing is
+ * lost: the hook keeps spooling), how much waits, and which coding.sh opens it.
+ */
+export function storeNewerError(e: StoreNewerError, env: NodeJS.ProcessEnv): CliError {
+  const p = paths(env);
+  const spool = spoolSize(p.spool);
+  const by = e.writer ? `, written by coding.sh ${e.writer.version}` : "";
+  const waiting = spool.files ? `${plural(spool.files, "capture file")} wait${spool.files === 1 ? "s" : ""} in the spool (${p.spool})` : `new captures wait in the spool (${p.spool})`;
+  // The index from before the migration, when this coding.sh can open it.
+  const backup = listBackups(e.path).find((b) => b.schema <= e.known);
+  const restore = backup ? ` To go back instead, ${UPGRADE_STORE} --restore puts back the index from before the migration (v${backup.schema}).` : "";
+  return new CliError(`${e.path} uses index schema v${e.schema}${by}, but this coding.sh ${version()} only knows up to v${e.known}. Your captures are safe: ${waiting} and ${spool.files === 1 ? "is" : "are"} indexed once a coding.sh that knows v${e.schema} runs.${restore}`, {
+    reason: "store_newer",
+    next: [`Install ${e.writer ? `coding.sh ${e.writer.version} or newer` : `a coding.sh that knows index schema v${e.schema}`}:`, "coding.sh update"],
+    data: { path: e.path, schema: e.schema, known: e.known, version: version(), writer: e.writer?.version ?? null, spool: { path: p.spool, files: spool.files }, backup: backup?.path ?? null },
   });
 }
 
@@ -120,6 +156,15 @@ export function notFoundWithBacklog(e: unknown, b: IngestBacklog): unknown {
   const data = { ...(e.data && typeof e.data === "object" ? (e.data as Record<string, unknown>) : {}), ...pendingField(b) };
   return new CliError(`${e.message}; it may be in the ${plural(b.pendingFiles, "file")} not yet ingested. Retry in a moment, or pass --fresh`, { reason: e.reason, exitCode: e.exitCode, next: e.next, details: e.details, data });
 }
+
+/** Sessions a window's totals (`usage`, `cache doctor`) read before they stop and say so: CODING_SH_SCAN_CAP when it is a whole number >= 1, else the default (100,000). */
+export function scanCap(env: NodeJS.ProcessEnv): number | undefined {
+  const raw = env.CODING_SH_SCAN_CAP?.trim();
+  return raw && /^\d+$/.test(raw) && Number(raw) >= 1 ? Number(raw) : undefined;
+}
+
+/** `Stopped after 100,000 sessions: narrow --since or --where.`: the totals above it cover only the newest sessions. */
+export const stoppedAfter = (cap: number): string => `Stopped after ${cap.toLocaleString("en-US")} sessions: narrow --since or --where.`;
 
 /** The read budget: CODING_SH_READ_BUDGET_MS when it is a number >= 0, else READ_INGEST_BUDGET_MS. */
 export function readBudgetMs(env: NodeJS.ProcessEnv): number {
@@ -337,6 +382,42 @@ export function whereFlag(c: CommandContext): Query | undefined {
   }
 }
 
+/**
+ * The window a command read: what --since / --until and a since: / until: clause every match
+ * of --where must meet resolved to. `local`: a bound was written as a day or a clock time
+ * without a zone (2026-11-09, today), so this machine's zone decided the instant.
+ */
+export interface TimeWindow {
+  since?: number;
+  until?: number;
+  local: boolean;
+}
+
+export function timeWindow(flags: { since?: When | undefined; until?: When | undefined }, where?: Query): TimeWindow {
+  const q = timeBounds(where);
+  const since = Math.max(flags.since?.ms ?? -Infinity, q.since ?? -Infinity);
+  const until = Math.min(flags.until?.ms ?? Infinity, q.until ?? Infinity);
+  const w: TimeWindow = { local: Boolean(flags.since?.zoned || flags.until?.zoned || q.zoned) };
+  if (Number.isFinite(since)) w.since = since;
+  if (Number.isFinite(until)) w.until = until;
+  return w;
+}
+
+/** `window` in --json: the bounds as instants, and the UTC offset a date without a zone was read in. */
+export function windowJson(w: TimeWindow, now = Date.now()): { since?: string; until?: string; utcOffset: string } {
+  const bounds: { since?: string; until?: string } = {};
+  if (w.since !== undefined) bounds.since = new Date(w.since).toISOString();
+  if (w.until !== undefined) bounds.until = new Date(w.until).toISOString();
+  return { ...bounds, utcOffset: utcOffset(new Date(w.since ?? w.until ?? now).getTimezoneOffset()) };
+}
+
+/** One line on stderr saying which instants a day word or a date without a zone became; silent for ages (7d). */
+export function windowNote(out: Output, w: TimeWindow): void {
+  if (!w.local || (w.since === undefined && w.until === undefined)) return;
+  const at = (ms: number) => `${wallText(ms)} (UTC${utcOffset(new Date(ms).getTimezoneOffset())})`;
+  out.note(w.since === undefined ? `Window: before ${at(w.until!)}, local time` : `Window: ${at(w.since)} to ${w.until === undefined ? "now" : at(w.until)}, local time`);
+}
+
 /** QueryError → exit 2 with reason, offset and a hint; QueryUnsupported → exit 1 (unsupported_store); anything else as is. */
 export function queryCliError(e: unknown, raw?: string): unknown {
   if (e instanceof QueryError) {
@@ -482,7 +563,24 @@ export function oneLine(s: string | undefined, n = 80): string {
   return t.length > n ? t.slice(0, n - 1) + "…" : t;
 }
 
-export function sessionJson(s: Session): Record<string, unknown> {
+/** What a session's --json keeps past the digest. */
+export interface SessionJsonKeep {
+  /** Each derail's event locators (`eventId`, `index`): for `show`, where the events are. */
+  derailEvents?: boolean;
+  /** `stats.phases`: for --fields, which picks from the whole session. */
+  phases?: boolean;
+}
+
+/**
+ * A session for --json. List and tree rows are a digest: `stats.phases` is left out (`show --json`
+ * has the phases at its top level) and a derail says what happened and when, without the event
+ * it started at. Every other stat is as stored.
+ */
+export function sessionJson(s: Session, keep: SessionJsonKeep = {}): Record<string, unknown> {
+  const { phases, derails, ...rest } = s.stats;
+  const stats: Record<string, unknown> = rest;
+  if (derails) stats.derails = keep.derailEvents ? derails : derails.map(({ eventId: _e, index: _i, ...d }) => d);
+  if (keep.phases && phases) stats.phases = phases;
   return {
     id: s.id,
     agent: s.agent,
@@ -498,6 +596,39 @@ export function sessionJson(s: Session): Record<string, unknown> {
     durationMs: s.endedAt !== undefined ? s.endedAt - s.startedAt : null,
     parentSessionId: s.parent?.sessionId ?? null,
     flags: s.flags,
-    stats: s.stats,
+    stats,
   };
+}
+
+/** The fields of one session in --json, for --fields. */
+export const SESSION_FIELDS = ["id", "agent", "provider", "project", "title", "model", "cwd", "repo", "branch", "startedAt", "endedAt", "durationMs", "parentSessionId", "flags", "stats"] as const;
+
+/**
+ * --fields: the paths to keep of a --json document (`id,title,stats.usage.costUsd`), or undefined
+ * without the flag. The first name of each path must be one of `known`.
+ */
+export function fieldsFlag(c: CommandContext, known: readonly string[]): string[][] | undefined {
+  const raw = list(c.flags.fields);
+  if (!raw.length) return undefined;
+  if (!c.out.json) throw new UsageError("--fields picks from the --json document: add --json", { reason: "invalid_argument" });
+  const paths = raw.map((f) => f.split("."));
+  for (const [i, p] of paths.entries()) {
+    if (p.some((k) => !k)) throw new UsageError(`--fields: ${JSON.stringify(raw[i])} is not a field path (id, stats.usage.costUsd)`, { reason: "invalid_argument" });
+    if (!known.includes(p[0]!)) throw new UsageError(`--fields: no field ${JSON.stringify(p[0])}. Fields: ${known.join(", ")}`, { reason: "invalid_argument" });
+  }
+  return paths;
+}
+
+/** `doc` with only the listed paths. A path through a list picks from each item; a path that names nothing is left out. */
+export function pickFields(doc: unknown, paths: readonly (readonly string[])[]): unknown {
+  if (paths.some((p) => !p.length)) return doc;
+  if (Array.isArray(doc)) return doc.map((x) => pickFields(x, paths)).filter((x) => x !== undefined);
+  if (!doc || typeof doc !== "object") return undefined;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(doc)) {
+    const under = paths.filter((p) => p[0] === k).map((p) => p.slice(1));
+    const picked = under.length ? pickFields(v, under) : undefined;
+    if (picked !== undefined) out[k] = picked;
+  }
+  return out;
 }

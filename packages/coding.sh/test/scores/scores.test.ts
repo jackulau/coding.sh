@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
 import type { ScoreConfig } from "../../src/core/types.ts";
-import { addScore, checkValue, defaultScoreId, parseScore, parseScoreConfig, ScoreError, scoreFilter } from "../../src/scores/scores.ts";
+import { addScore, addScoreConfig, checkValue, defaultScoreId, parseScore, parseScoreConfig, ScoreError, scoreFilter } from "../../src/scores/scores.ts";
+import { fixtureSession } from "../../src/store/conformance.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 
 const d = { by: "me", source: "api" as const, now: 1000 };
@@ -62,6 +63,34 @@ describe("scores", () => {
     assert.deepEqual(scoreFilter((k) => ({ target: "event", since: "5", name: "x" })[k]), { target: "event", name: "x", since: 5 });
     assert.equal(status(() => scoreFilter((k) => ({ since: "yesterday" })[k])), 400);
     assert.equal(status(() => scoreFilter((k) => ({ source: "robot" })[k])), 400);
+  });
+
+  it("an event score needs a stored event, and its session is the event's own", async () => {
+    const index = new MemoryIndexStore();
+    await index.upsertSession(fixtureSession({ id: "s1" }));
+    await index.upsertSession(fixtureSession({ id: "s2" }));
+    await index.putEvents([{ id: "e1", v: 0, sessionId: "s1", ts: 1, agent: "claude-code", kind: "notification", payload: {} }]);
+    const ev = (targetId: string, sessionId?: string) => addScore(index, { target: "event", targetId, name: "correct", value: false, sessionId }, d);
+    await assert.rejects(ev("nope", "s1"), (e) => e instanceof ScoreError && e.status === 404 && /event not found: nope/.test(e.message));
+    await assert.rejects(ev("e1", "s2"), (e) => e instanceof ScoreError && e.status === 400 && /session s1, not s2/.test(e.message));
+    assert.deepEqual(await index.listScores({}), [], "nothing was stored");
+    assert.equal((await ev("e1", "s1")).score.sessionId, "s1");
+    assert.equal((await ev("e1")).changed, false, "the same score without a sessionId");
+  });
+
+  it("a stored score keeps its type unless the type is given or the name has a config", async () => {
+    const index = new MemoryIndexStore();
+    await index.upsertSession(fixtureSession({ id: "s1" }));
+    const add = (value: unknown, more: Record<string, unknown> = {}) => addScore(index, { sessionId: "s1", name: "n1", value, ...more }, d);
+    const first = (await add(-5)).score;
+    await assert.rejects(add("1,5"), (e) => e instanceof ScoreError && e.status === 400 && /n1 is a numeric score on session s1/.test(e.message) && /--type/.test(e.message) && /score config n1/.test(e.message));
+    assert.deepEqual(await index.listScores({ name: "n1" }), [first], "the stored row is unchanged");
+    assert.equal((await add(2)).score.value, 2, "another value of the same type replaces");
+    const typed = await add("1,5", { dataType: "categorical" });
+    assert.deepEqual([typed.created, typed.score.id, typed.score.dataType, typed.score.value], [false, first.id, "categorical", "1,5"]);
+    // A config says what the name's type is, so it may retype the stored score.
+    await addScoreConfig(index, { name: "n1", dataType: "numeric" }, 0);
+    assert.equal((await add(3)).score.dataType, "numeric");
   });
 
   it("a store without scores answers 501", async () => {

@@ -276,10 +276,28 @@ function clipMiddle(s: string, max: number): string {
   return `${s.slice(0, head)}\n…[${s.length - max} characters omitted]…\n${s.slice(s.length - tail)}`;
 }
 
-/** Events that belong to the session's own turn sequence: no subagent internals, no calls nested in a wrapper. */
-export function topLevel(sorted: readonly AgentEvent[]): AgentEvent[] {
+/**
+ * The subagent a session belongs to, when the session is a subagent's own
+ * (`<parent>:sub:<agent>`): its session.start names the subagent, and so does
+ * every other event of it. Undefined for a top-level session, where an event
+ * with a subagentId is a subagent's internals.
+ */
+export function ownSubagentId(sorted: readonly AgentEvent[]): string | undefined {
+  const start = sorted.find((e) => e.kind === "session.start");
+  const linked = start && typeof start.payload.parentSessionId === "string" && typeof start.payload.subagentId === "string" ? start.payload.subagentId : undefined;
+  if (start?.subagentId ?? linked) return start?.subagentId ?? linked;
+  // No session.start that says so: a session whose every event is a subagent's is that subagent's.
+  return sorted.length && sorted.every((e) => e.subagentId) ? sorted[0]!.subagentId : undefined;
+}
+
+/**
+ * Events that belong to the session's own turn sequence: no subagent internals, no calls nested
+ * in a wrapper. In a subagent's own session (`own`, read from the events by default) its events
+ * are the turn sequence, and only the subagents it started in turn are internals.
+ */
+export function topLevel(sorted: readonly AgentEvent[], own: string | undefined = ownSubagentId(sorted)): AgentEvent[] {
   const wrappers = new Set(sorted.filter((e) => e.kind === "tool.start" && e.payload.wrapper === true).map((e) => e.id));
-  return sorted.filter((e) => !e.subagentId && !(e.parentId && wrappers.has(e.parentId)));
+  return sorted.filter((e) => (!e.subagentId || e.subagentId === own) && !(e.parentId && wrappers.has(e.parentId)));
 }
 
 /** The shell tool each agent offers, so the next turn can run a check even when the prefix never did. */

@@ -3,6 +3,7 @@
 // the flag says so), and `--` to end
 // option parsing. Unknown options and extra positionals are usage errors raised
 // before any work happens.
+import { parseWhen, type When } from "../query/time.ts";
 
 export type FlagType = "boolean" | "string" | "number" | "list";
 
@@ -230,17 +231,23 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
   return { flags, positionals, rest, sawDashDash };
 }
 
-/** Parses "7d", "12h", "30m", "90s", an ISO date, or epoch ms into an epoch-ms instant. */
+/**
+ * `--since` / `--until`: "7d", "12h", "30m", "90s" (that long ago), `today`, `yesterday`, a date
+ * or epoch ms, as an epoch-ms instant. A date without a zone is local time: `2026-11-09` is
+ * local midnight (src/query/time.ts, the reader `--where since:` uses too).
+ */
 export function parseSince(v: string, now = Date.now()): number {
-  const m = /^(\d+(?:\.\d+)?)\s*(s|m|h|d|w)$/.exec(v.trim());
-  if (m) {
-    const unit = { s: 1e3, m: 60e3, h: 3600e3, d: 86400e3, w: 7 * 86400e3 }[m[2] as "s" | "m" | "h" | "d" | "w"];
-    return now - Number(m[1]) * unit;
-  }
-  if (/^\d{12,}$/.test(v)) return Number(v);
+  return parseSinceWhen(v, now).ms;
+}
+
+/** parseSince, plus whether the value named a day or a clock time in the local zone. */
+export function parseSinceWhen(v: string, now = Date.now(), flag = "since"): When {
+  const w = parseWhen(v, { now });
+  if (w) return w;
+  // Other spellings Date.parse reads ("Nov 9 2026"): local time already.
   const t = Date.parse(v);
-  if (Number.isNaN(t)) throw new UsageError(`--since must be a duration (7d, 12h, 30m) or a date, got ${JSON.stringify(v)}`);
-  return t;
+  if (Number.isNaN(t)) throw new UsageError(`--${flag} must be a duration (7d, 12h, 30m), today, yesterday or a date (2026-11-09, local time), got ${JSON.stringify(v)}`);
+  return { ms: t, zoned: true };
 }
 
 /** A duration such as 30m, 12h, 7d or 2w, in ms (e.g. `--reuse-max-age`). */

@@ -69,7 +69,8 @@ Cloudflare's account and gateway id also come from a base URL like
   that id.
 - **Ramp Router, Requesty**: no lookup API. A cost the call already carried (`usage.cost` in the response, mapped to
   `billedCostUsd`) is used as the record.
-- **CLIProxyAPI**: by session id, or by time and model, from its usage queue ([below](#cliproxyapi)).
+- **CLIProxyAPI**: by session id, or by time and model when the record names no session, from its usage queue
+  ([below](#cliproxyapi)).
 
 ```sh
 coding.sh gateway status                       # gateways with a key, config, routing or sessions
@@ -126,6 +127,11 @@ when its URL env var (`LITELLM_PROXY_API_BASE`, `LITELLM_PROXY_URL`, `KONG_PROXY
 `CLIPROXYAPI_URL`) names the same host as the agent's base URL. CLIProxyAPI is also detected by its default port:
 any base URL on port 8317, unless the host belongs to another gateway.
 
+After `coding.sh init --proxy` the agent's base URL is the coding.sh proxy, and the gateway is the URL the proxy
+chains to ([Capture with the proxy](../how-to/capture-with-proxy.md#already-using-a-gateway-or-cliproxyapi)). The
+proxy tags each call it logs with that gateway, and `gateway status` and `doctor` read the chained URL from
+`~/.coding.sh/proxy-installs.json`, so the session tag and the reported route stay the same.
+
 ## CLIProxyAPI
 
 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) serves Claude Code, Codex and other agents from
@@ -153,17 +159,28 @@ A record joins an llm call:
 
 1. **By session id.** CLIProxyAPI records the client's session id as a UUID: Claude Code's session id, Codex's
    thread id. That is the coding.sh session id; Claude Code subagent sessions (`<id>:sub:<agent>`) count as the same
-   session. The record goes to the nearest call within 5 minutes of the request, skipping calls whose model differs
-   (when both name one).
-2. **By time and model**, when the record has no session id or no session with its id is stored: the only call
-   with the same model within 30 seconds of the request. When two calls fit, the record is not joined.
+   session. The record goes to a call within 5 minutes of the request, skipping calls whose model differs (when
+   both name one): the call whose token counts equal the record's, else the nearest.
+2. **By time and model**, only when the record has no session id: the only call with the same model within 30
+   seconds of the request. When several calls fit, the record joins the only one whose token counts equal its
+   own, or nothing. These records join after every record that names a session, so they never take a call another
+   record names.
+
+A failed request (`failed`, or a status of 400 or more) joins only a call that failed, with the same status when
+one has it, and a request that answered joins only a call that did not fail. An agent retries a failed request and
+its transcript keeps only the call that answered, so the failed record usually has no call. It is kept for a day,
+then dropped; the calls after it keep their own records.
+
+A record whose session id is not in the store joins nothing. It is another client's request, or a session that is
+not captured yet, and it is kept for the next run.
 
 Each joined call gets one companion span (`cliproxyapi.generation`, source `gateway`). Running the command again
 adds nothing. The span carries what the record has:
 
 - reasoning effort, service tier (requested, effective, response and upstream), speed and inference region;
 - time to first token and latency, compaction and fork marks, failure and status code;
-- tokens, and the upstream-reported cost (`cost_details.cost`, for example from OpenRouter) as `billedCostUsd`;
+- tokens, and the upstream-reported cost (`cost_details.cost`, for example from OpenRouter) as `billedCostUsd`.
+  A record with no cost bills nothing: the call's cost stays an estimate (`stats.usage.estimatedCostUsd`);
 - `accountHash`, the account that served it, as 16 hex characters. CLIProxyAPI's credential index already is a
   hash and is kept as is (the proxy stores it as `upstreamAuth`). Any other value is hashed.
 

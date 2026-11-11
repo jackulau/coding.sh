@@ -247,6 +247,19 @@ describe("refine diagnose", () => {
     assert.deepEqual(all.plan.sessions.map((s) => s.id).sort(), ["a", "r"]);
   });
 
+  it("sessionIds names exactly those sessions; an id that is not in the index rejects instead of planning nothing", async () => {
+    const index = await store([{ id: "a", day: 0, steps: editMiss("a") }, { id: "b", day: 1, steps: fine() }, { id: "r", day: 2, steps: editMiss("r"), runId: "run_1" }]);
+    const named = await run(index, freshDir(), undefined, { filter: { since: T0 + 30 * DAY, repo: "/elsewhere", sessionIds: ["b", "r"] } });
+    assert.deepEqual(named.plan.sessions.map((s) => s.id), ["b", "r"]);
+    await assert.rejects(run(index, freshDir(), undefined, { filter: { sessionIds: ["a", "nope-nope"] } }), /No session "nope-nope" in the index/);
+    // A prefix is not an id here: the CLI resolves prefixes before it calls.
+    const provider = scripted();
+    const dir = freshDir();
+    await assert.rejects(run(index, dir, provider, { filter: { sessionIds: ["a", "nope"] } }), /No session "nope" in the index/);
+    assert.equal(provider.calls.length, 0, "no call is made for the sessions that were found");
+    assert.equal(existsSync(signalsFile(dir)), false);
+  });
+
   it("keeps injected tool output inside <trace>, escaped, under the untrusted-content preamble", async () => {
     const steps: Step[] = [
       ["session.start", {}],

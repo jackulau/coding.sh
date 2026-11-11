@@ -11,9 +11,15 @@ import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { auditMemory, claudeProjectSlug, homeKey, memoryKind, shellPaths, skillListingBytes, type MemoryFileInfo, type MemorySession } from "../../src/core/memory-audit.ts";
-import { listMemoryFiles, memoryAudit } from "../../src/core/memory-files.ts";
-import type { AgentEvent, Session } from "../../src/schema/index.ts";
+import { MEMORY_EVENT_KINDS, MEMORY_INPUT_KEYS, MEMORY_PAYLOAD_KEYS, memoryEventOf, type MemoryEvent } from "../../src/core/memory-events.ts";
+import { listMemoryFiles, memoryAudit, memoryEventsOf, memoryUseFolded } from "../../src/core/memory-files.ts";
+import { foldMemoryUse, memoryUseOf, memoryUseOfEvents, memoryUseState } from "../../src/core/memory-use.ts";
+import { REFOLD_CURSOR } from "../../src/core/ingest.ts";
+import { buildSession, foldStamp } from "../../src/core/sessions.ts";
+import type { IndexStore } from "../../src/core/types.ts";
+import type { AgentEvent, MemoryUse, Session } from "../../src/schema/index.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
+import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { pathOf } from "../_bin.ts";
 import { FIXTURES, collect, testCtx, tmpEnv } from "../adapters/_helpers.ts";
 
@@ -285,5 +291,302 @@ describe("harness audit over a store and a temp HOME", () => {
     assert.match(text.stdout, /stale\.md/);
     assert.match(text.stdout + text.stderr, /never read/);
     assert.match(cli(["harness", "audit", "--since", "nope"]).stderr, /--since/);
+  });
+});
+
+describe("harness audit: the narrow read (IndexStore.memoryEvents)", () => {
+  const APP = "/home/me/app";
+  const MEM = "/home/me/.claude/projects/-home-me-app/memory";
+  let root = "";
+  let real: AgentEvent[] = [];
+  let all: AgentEvent[] = [];
+  let sessions: Session[] = [];
+  const stores: IndexStore[] = [];
+
+  // Every field the audit reads, on events it uses and on events it has no use for.
+  const synthetic = (): AgentEvent[] => {
+    let i = 0;
+    const e = (sessionId: string, kind: string, payload: Record<string, unknown>, ts?: number): AgentEvent => {
+      i++;
+      return { id: `syn-${i}`, v: 0, sessionId, agent: "claude-code", kind: kind as AgentEvent["kind"], ts: ts ?? 5000 + i, payload };
+    };
+    const tool = (sessionId: string, name: unknown, input: unknown, more: Record<string, unknown> = {}) => e(sessionId, "tool.start", { tool: name, input, callId: `c${i}`, ...more });
+    const loaded = (sessionId: string, payload: Record<string, unknown>) => e(sessionId, "notification", { kind: "harness.loaded", hook: "InstructionsLoaded", ...payload });
+    return [
+      tool("x1", "Read", { file_path: `${APP}/CLAUDE.md`, offset: 3, limit: 5 }),
+      tool("x1", "Edit", { file_path: ".claude/rules/tests.md", old_string: "aaa", new_string: "bbb" }),
+      tool("x1", "Write", { filePath: `${APP}/src/a.ts`, content: "see CLAUDE.md" }),
+      tool("x1", "view", { path: `${MEM}/deploy.md` }),
+      tool("x1", "str_replace_editor", { absolute_path: `${MEM}/notes.md`, command: "str_replace" }),
+      tool("x1", "edit_file", { target_file: `${APP}/AGENTS.md` }),
+      tool("x1", "NotebookRead", { notebook_path: `${APP}/nb.ipynb`, note: "not CLAUDE.md" }),
+      tool("x1", "Read", { file_path: null, path: `${APP}/GEMINI.md` }, { wrapper: null }),
+      tool("x1", "Bash", { command: `cat ${MEM}/deploy.md`, description: "read the deploy notes" }),
+      tool("x1", "shell", { cmd: ["cat", "AGENTS.override.md"] }),
+      tool("x1", "exec", { script: `echo x > ${MEM}/new.md` }),
+      tool("x1", "run", { commandLine: "sed -i s/a/b/ .claude/rules/style.md" }),
+      tool("x1", "shell", `tee ${MEM}/teed.md`),
+      tool("x1", "REPL", { code: `bash("cat ${MEM}/cell.md")` }),
+      tool("x1", "Bash", { command: `cat ${MEM}/wrapped.md` }, { wrapper: true }),
+      tool("x1", "Skill", { skill: "pdf" }),
+      tool("x1", "skill", { name: "greet", args: "x" }),
+      tool("x1", "SKILL", { command: "tools:pdf" }),
+      tool("x1", "Skill", "pdf"),
+      tool("x1", "Bash", ["cat CLAUDE.md"]),
+      tool("x1", undefined, { command: "cat CLAUDE.local.md" }),
+      // No use to the audit: nothing names a memory or instruction file.
+      tool("x1", "Bash", { command: "ls -la" }),
+      tool("x1", "Read", { path: "notes.txt" }),
+      tool("x1", "Bash", null),
+      e("x1", "tool.end", { tool: "Read", output: `${APP}/CLAUDE.md` }),
+      e("x1", "message.assistant", { text: "I read CLAUDE.md" }),
+      e("x1", "notification", { kind: "permission", message: "harness.loaded CLAUDE.md" }),
+      e("x1", "file.change", { path: "src/a.ts", op: "modify" }),
+      e("x1", "file.change", { path: `${APP}/CLAUDE.md`, op: "modify", additions: 3 }),
+      e("x1", "file.change", { path: "old.txt", movedTo: ".claude/rules/moved.md", op: "rename" }),
+      loaded("x1", { loadedBy: "nested_memory", paths: [`${APP}/pkg/CLAUDE.md`, `${APP}/pkg/deep/CLAUDE.md`] }),
+      loaded("x1", { loadedBy: "dynamic_skill", dir: `${APP}/pkg/.claude/skills`, skills: ["lint"] }),
+      loaded("x1", { loadedBy: "skill", sources: ["/home/me/.claude/skills/pdf"], skills: ["pdf"] }),
+      loaded("x1", { loadedBy: "invoked_skills", skills: ["tools:greet"] }),
+      // Two events at one time keep the order they were stored in.
+      tool("x2", "Edit", { file_path: `${MEM}/tie.md` }, { ts: 0 }),
+      e("x2", "file.change", { path: `${MEM}/tie.md` }, 9000),
+      e("x2", "tool.start", { tool: "Read", input: { file_path: `${MEM}/tie.md` } }, 9000),
+      e("x2", "tool.start", { tool: "Read", input: { file_path: `${MEM}/early.md` } }, 4000),
+      e("x3", "message.user", { text: "nothing for the audit" }),
+    ];
+  };
+  const files = [
+    file("~/app/CLAUDE.md"),
+    file("~/app/pkg/CLAUDE.md"),
+    file("~/.claude/projects/-home-me-app/memory/deploy.md"),
+    file("~/.claude/projects/-home-me-app/memory/unused.md"),
+    file("~/.claude/skills/pdf/SKILL.md", 600, { loadBytes: 80 }),
+    file("~/.claude/skills/greet/SKILL.md", 600, { loadBytes: 80 }),
+    file("/work/demo/CLAUDE.md"),
+    file("/work/demo/.claude/skills/greet/SKILL.md"),
+    file("~/.claude/skills/hello/SKILL.md"),
+  ];
+  const memorySessions = (events: (id: string) => MemorySession["events"]): MemorySession[] => sessions.map((s) => ({ id: s.id, agent: s.agent, startedAt: s.startedAt, cwd: s.cwd!, events: events(s.id) }));
+
+  before(async () => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), "csh-audit-narrow-")));
+    mkdirSync(join(root, "home"));
+    const env = tmpEnv();
+    try {
+      process.env.CLAUDE_CONFIG_DIR = join(FIXTURES, "claude-code", "real", "config");
+      real = await collect(claudeCode.backfill!(testCtx().ctx));
+    } finally {
+      env.restore();
+    }
+    all = [...real, ...synthetic()];
+    const ids = [...new Set(all.map((e) => e.sessionId))];
+    sessions = ids.map((id, i) => ({ id, agent: "claude-code", cwd: /^x\d$/.test(id) ? APP : "/work/demo", startedAt: 100 + i, stats: { events: 0, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 }, flags: [] }));
+    for (const store of [new MemoryIndexStore(), await SqliteIndexStore.open(join(root, "index.db"))]) {
+      for (const s of sessions) await store.upsertSession(s);
+      await store.putEvents(all);
+      stores.push(store);
+    }
+  });
+  after(async () => {
+    for (const s of stores) await s.close?.();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("the fixtures hold events of every kind the audit reads, and the real capture", () => {
+    assert.ok(real.some((e) => e.kind === "notification" && e.payload.kind === "harness.loaded"), "the real capture's loads");
+    for (const kind of MEMORY_EVENT_KINDS) assert.ok(all.some((e) => e.kind === kind), kind);
+    assert.equal(stores.length, 2);
+    assert.ok(stores.every((s) => typeof s.memoryEvents === "function"), "both stores have the narrow read");
+  });
+
+  it("gives the events the audit can use, with only the fields it reads, in listEvents order", async () => {
+    const ids = [...sessions.map((s) => s.id), "no-such-session"];
+    for (const store of stores) {
+      const name = store.constructor.name;
+      const got = new Map<string, MemoryEvent[]>(ids.map((id) => [id, []]));
+      for (const e of await store.memoryEvents!(ids)) got.get(e.sessionId)!.push(e);
+      for (const id of ids) {
+        const whole = await store.listEvents(id, { kinds: MEMORY_EVENT_KINDS });
+        assert.deepEqual(got.get(id), whole.flatMap((e) => memoryEventOf(e) ?? []), `${name}: ${id}`);
+      }
+      const x1 = got.get("x1")!;
+      assert.equal(x1.length, 27, `${name}: 21 tool calls, 2 file changes and 4 loads of x1; not ls, notes.txt, a null input, the other notification or src/a.ts`);
+      assert.deepEqual(x1[1]!.payload, { tool: "Edit", input: { file_path: ".claude/rules/tests.md" } }, `${name}: an edit's text is left out`);
+      assert.deepEqual(x1[2]!.payload, { tool: "Write", input: { filePath: `${APP}/src/a.ts` } }, `${name}: a file's content is left out`);
+      assert.deepEqual(x1[7]!.payload, { tool: "Read", input: { path: `${APP}/GEMINI.md` } }, `${name}: a null is not a value`);
+      assert.deepEqual(x1[12]!.payload, { tool: "shell", input: `tee ${MEM}/teed.md` }, `${name}: a bare command`);
+      assert.deepEqual(x1[14]!.payload, { tool: "Bash", wrapper: true, input: { command: `cat ${MEM}/wrapped.md` } }, `${name}: wrapper stays a boolean`);
+      assert.deepEqual(x1[19]!.payload, { tool: "Bash" }, `${name}: an input that is a list has nothing the audit reads`);
+      assert.deepEqual(x1.at(-4)!.payload, { kind: "harness.loaded", loadedBy: "nested_memory", paths: [`${APP}/pkg/CLAUDE.md`, `${APP}/pkg/deep/CLAUDE.md`] }, name);
+      assert.deepEqual(got.get("x2")!.map((e) => [e.ts, e.kind, (e.payload.input as { file_path?: string } | undefined)?.file_path ?? e.payload.path]), [[4000, "tool.start", `${MEM}/early.md`], [5035, "tool.start", `${MEM}/tie.md`], [9000, "file.change", `${MEM}/tie.md`], [9000, "tool.start", `${MEM}/tie.md`]], `${name}: by time, then as stored`);
+      assert.deepEqual(got.get("x3"), [], name);
+      assert.deepEqual(await store.memoryEvents!([]), [], name);
+      assert.deepEqual((await store.memoryEvents!(["x2"])).map((e) => e.sessionId), ["x2", "x2", "x2", "x2"], `${name}: only the sessions asked for`);
+    }
+  });
+
+  it("the audit over the narrow read equals the audit over whole events", async () => {
+    const opts = { home: "/home/me" };
+    const reports = [];
+    for (const store of stores) {
+      const name = store.constructor.name;
+      const whole = new Map<string, AgentEvent[]>();
+      for (const s of sessions) whole.set(s.id, await store.listEvents(s.id));
+      const narrow = await memoryEventsOf(store, sessions.map((s) => s.id));
+      const full = auditMemory(memorySessions((id) => whole.get(id)!), files, opts);
+      assert.deepEqual(auditMemory(memorySessions((id) => narrow.get(id)!), files, opts), full, name);
+      // The same again through a store with no narrow read: listEvents, one session at a time.
+      const plain = Object.create(store) as IndexStore;
+      plain.memoryEvents = undefined;
+      const byList = await memoryEventsOf(plain, sessions.map((s) => s.id));
+      assert.deepEqual([...byList], [...narrow], `${name}: the listEvents path gives the same events`);
+      const env = { HOME: join(root, "home") };
+      assert.deepEqual(await memoryAudit(store, { env }), await memoryAudit(plain, { env }), name);
+      reports.push(full);
+    }
+    assert.deepEqual(reports[1], reports[0], "SQLite and memory stores agree");
+    const a = reports[0]!;
+    // The report is a real one: loads, reads and writes from both the synthetic sessions and the capture.
+    const at = (p: string) => {
+      const r = row(a, p);
+      return { loaded: r.loaded, read: r.read, wrote: r.wrote };
+    };
+    assert.deepEqual(at("~/app/CLAUDE.md"), { loaded: 3, read: 1, wrote: 1 }, "x1, x2 and x3 ran in the app");
+    assert.deepEqual(at("~/app/pkg/CLAUDE.md"), { loaded: 1, read: 0, wrote: 0 });
+    assert.deepEqual(at("~/.claude/projects/-home-me-app/memory/deploy.md"), { loaded: 0, read: 1, wrote: 0 });
+    assert.deepEqual(at("~/.claude/projects/-home-me-app/memory/cell.md"), { loaded: 0, read: 1, wrote: 0 });
+    assert.deepEqual(at("~/.claude/projects/-home-me-app/memory/teed.md"), { loaded: 0, read: 0, wrote: 1 });
+    assert.deepEqual(at("~/.claude/projects/-home-me-app/memory/tie.md"), { loaded: 0, read: 1, wrote: 1 });
+    assert.deepEqual(at("~/app/.claude/rules/moved.md"), { loaded: 0, read: 0, wrote: 1 });
+    assert.deepEqual(at("~/.claude/skills/pdf/SKILL.md"), { loaded: sessions.length, read: 1, wrote: 0 }, "a user skill is listed in every session");
+    assert.equal(a.files.some((f) => f.path.endsWith("/wrapped.md")), false, "a wrapper's call is not the agent's");
+    assert.equal(row(a, "/work/demo/.claude/skills/greet/SKILL.md").read, 2, "the capture's Skill call, and x1's invoked_skills load by name");
+  });
+
+  it("the audit reads no payload field the narrow read leaves out", () => {
+    const seen = { payload: new Map<string, Set<string>>(), input: new Set<string>() };
+    const spy = <T extends object>(o: T, keys: Set<string>): T => new Proxy(o, { get: (t, k, r) => (typeof k === "string" && keys.add(k), Reflect.get(t, k, r)) });
+    const events = (id: string) =>
+      all
+        .filter((e) => e.sessionId === id)
+        .map((e) => {
+          const keys = seen.payload.get(e.kind) ?? seen.payload.set(e.kind, new Set()).get(e.kind)!;
+          const input = e.payload.input;
+          const payload = { ...e.payload };
+          if (input && typeof input === "object" && !Array.isArray(input)) payload.input = spy(input, seen.input);
+          return { kind: e.kind, ts: e.ts, payload: spy(payload, keys) };
+        });
+    auditMemory(memorySessions(events), files, { home: "/home/me" });
+    for (const [kind, keys] of seen.payload) {
+      const read = [...keys].filter((k) => k !== "input" && k !== "kind");
+      assert.deepEqual(read.filter((k) => !(MEMORY_PAYLOAD_KEYS[kind] ?? []).includes(k)), [], `${kind}: fields the audit read that MEMORY_PAYLOAD_KEYS lacks`);
+    }
+    assert.ok(seen.payload.get("tool.start")!.has("input") && seen.payload.get("file.change")!.has("movedTo") && seen.payload.get("notification")!.has("sources"), "the audit did read the events");
+    assert.deepEqual([...seen.input].filter((k) => !MEMORY_INPUT_KEYS.includes(k)), [], "input fields the audit read that MEMORY_INPUT_KEYS lacks");
+    assert.deepEqual([...MEMORY_INPUT_KEYS].filter((k) => !seen.input.has(k)), [], "and every field in MEMORY_INPUT_KEYS is one it reads");
+  });
+
+  // EZ-6: the session fold keeps what the audit reads (stats.memoryUse), so the audit reads session rows.
+  it("the audit over the sessions' stats.memoryUse equals the audit over whole events", async () => {
+    const opts = { home: "/home/me" };
+    for (const store of stores) {
+      const name = store.constructor.name;
+      const whole = new Map<string, AgentEvent[]>();
+      for (const s of sessions) whole.set(s.id, await store.listEvents(s.id));
+      // The rows as ingest writes them: folded from the stored events (the synthetic ones carry no cwd: the row's stands).
+      const folded = sessions.map((s) => buildSession(whole.get(s.id)!, s));
+      const list = (from: (s: Session) => Partial<MemorySession>): MemorySession[] => folded.map((s) => ({ id: s.id, agent: s.agent, startedAt: s.startedAt, cwd: s.cwd!, events: [], ...from(s) }));
+      const full = auditMemory(list((s) => ({ events: whole.get(s.id)! })), files, opts);
+      assert.deepEqual(auditMemory(list((s) => ({ uses: s.stats.memoryUse ?? [] })), files, opts), full, name);
+      assert.ok(full.files.some((f) => f.read > 0) && full.files.some((f) => f.wrote > 0) && full.files.some((f) => f.loaded > f.loadedAtStart), `${name}: a real report`);
+      const x1 = folded.find((s) => s.id === "x1")!.stats.memoryUse!;
+      assert.ok(x1.every((u) => (u.path !== undefined) !== (u.skill !== undefined)), "a path or a skill name");
+      assert.ok(x1.every((u) => u.path === undefined || (/^\/home\/me\//.test(u.path) && memoryKind(u.path))), "only memory and instruction files, resolved against the session's directory");
+      assert.deepEqual(x1.filter((u) => u.skill).map((u) => [u.skill, u.by]), [["greet", "tool"], ["pdf", "tool"], ["greet", "harness"]], "pdf, greet, then tools:pdf: a skill named twice is kept where it was last named");
+      assert.equal(folded.find((s) => s.id === "x3")!.stats.memoryUse, undefined, "absent when the events name none");
+    }
+  });
+
+  it("memoryAudit reads the session rows once the store is folded by this build, and no events", async () => {
+    const env = { HOME: join(root, "home") };
+    for (const store of [new MemoryIndexStore(), await SqliteIndexStore.open(join(root, "folded.db"))]) {
+      const name = store.constructor.name;
+      try {
+        await store.putEvents(all);
+        for (const s of sessions) await store.upsertSession(buildSession(await store.listEvents(s.id), s));
+        assert.equal(await memoryUseFolded(store), false, `${name}: a store whose rows may predate the fold`);
+        const fromEvents = await memoryAudit(store, { env });
+        await store.setCursor(REFOLD_CURSOR, foldStamp());
+        const rowsOnly = Object.create(store) as IndexStore;
+        rowsOnly.listEvents = () => Promise.reject(new Error("read the events"));
+        rowsOnly.memoryEvents = () => Promise.reject(new Error("read the events"));
+        assert.deepEqual(await memoryAudit(rowsOnly, { env }), fromEvents, name);
+        assert.ok(fromEvents.totals.sessionsReading > 0 && fromEvents.totals.sessionsWriting > 0, name);
+        // Rows another fold wrote are not trusted.
+        await store.setCursor(REFOLD_CURSOR, foldStamp() + 1);
+        await assert.rejects(memoryAudit(rowsOnly, { env }), /read the events/, name);
+      } finally {
+        await store.close?.();
+      }
+    }
+  });
+});
+
+describe("stats.memoryUse: what the fold keeps of a session's events", () => {
+  const MEM = "/home/me/.claude/projects/-home-me-app/memory";
+  let i = 0;
+  const e = (kind: string, payload: Record<string, unknown>, ts: number): AgentEvent => ({ id: `mu-${++i}`, v: 0, sessionId: "s", agent: "claude-code", kind: kind as AgentEvent["kind"], ts, payload });
+  const tool = (name: string, input: unknown, ts: number) => e("tool.start", { tool: name, input }, ts);
+  const fold = (events: AgentEvent[], cwd: (i: number) => string | undefined, final: string | undefined): MemoryUse[] | undefined => {
+    const s = memoryUseState();
+    events.forEach((ev, n) => foldMemoryUse(s, ev, cwd(n)));
+    return memoryUseOf(s, final);
+  };
+
+  it("one entry per use of a file, at its first place with its last time; files that are no memory are left out", () => {
+    const events = [
+      tool("Read", { file_path: `${MEM}/a.md` }, 10),
+      tool("Write", { file_path: "/home/me/app/docs/guide.md", content: "x" }, 11),
+      tool("Edit", { file_path: `${MEM}/a.md` }, 12),
+      tool("Bash", { command: `cat ${MEM}/b.md ${MEM}/a.md` }, 13),
+      tool("Read", { file_path: "/home/me/app/src/a.ts" }, 14),
+      e("file.change", { path: `${MEM}/a.md` }, 15),
+      tool("Read", { file_path: "/home/me/app/CLAUDE.md/" }, 16),
+    ];
+    assert.deepEqual(memoryUseOfEvents(events, "/home/me/app"), [
+      { use: "read", path: `${MEM}/a.md`, ts: 13 },
+      { use: "wrote", path: `${MEM}/a.md`, ts: 15 },
+      { use: "read", path: `${MEM}/b.md`, ts: 13 },
+      { use: "read", path: "/home/me/app/CLAUDE.md/", ts: 16 },
+    ]);
+    assert.equal(memoryUseOfEvents([tool("Read", { file_path: "/home/me/app/src/a.ts" }, 1), e("user.message", { text: "CLAUDE.md" }, 2)], "/home/me/app"), undefined);
+  });
+
+  it("a relative path waits for the session's directory, and joins the same file named in full", () => {
+    const events = [tool("Read", { file_path: "CLAUDE.md" }, 1), tool("Read", { file_path: "notes.md" }, 2), tool("Read", { file_path: "/home/me/app/CLAUDE.md" }, 3), tool("Edit", { file_path: ".claude/rules/x.md" }, 4)];
+    const want = [
+      { use: "read", path: "/home/me/app/CLAUDE.md", ts: 3 },
+      { use: "wrote", path: "/home/me/app/.claude/rules/x.md", ts: 4 },
+    ];
+    // The directory known from the third event on, from the start, and only when the session is built (a previous row's).
+    assert.deepEqual(fold(events, (n) => (n >= 2 ? "/home/me/app" : undefined), "/home/me/app"), want);
+    assert.deepEqual(fold(events, () => "/home/me/app", "/home/me/app"), want);
+    assert.deepEqual(fold(events, () => undefined, "/home/me/app"), want);
+    assert.deepEqual(fold(events, () => undefined, undefined), [{ use: "read", path: "/home/me/app/CLAUDE.md", ts: 3 }], "no directory: only paths written in full");
+    // In a memory directory, any .md is a memory file.
+    assert.deepEqual(fold([tool("Read", { file_path: "notes.md" }, 2)], () => undefined, MEM), [{ use: "read", path: `${MEM}/notes.md`, ts: 2 }]);
+  });
+
+  it("the state survives the fold's save and is the same shape as a fresh one", () => {
+    const s = memoryUseState();
+    foldMemoryUse(s, tool("Read", { file_path: `${MEM}/a.md` }, 10), "/home/me/app");
+    foldMemoryUse(s, tool("Skill", { skill: "tools:pdf" }, 11), "/home/me/app");
+    const back = JSON.parse(JSON.stringify(s)) as typeof s;
+    foldMemoryUse(back, tool("Read", { file_path: `${MEM}/a.md` }, 12), "/home/me/app");
+    assert.deepEqual(memoryUseOf(back, "/home/me/app"), [
+      { use: "read", path: `${MEM}/a.md`, ts: 12 },
+      { use: "read", skill: "pdf", by: "tool", ts: 11 },
+    ]);
   });
 });

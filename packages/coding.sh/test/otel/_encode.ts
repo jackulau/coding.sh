@@ -160,3 +160,47 @@ export function otlpSpan(traceId: string, spanId: string, parentSpanId: string |
 export function otlpTraces(serviceName: string, spans: J[]): J {
   return { resourceSpans: [{ resource: { attributes: [sAttr("service.name", serviceName)] }, scopeSpans: [{ scope: { name: "test" }, spans }] }] };
 }
+
+/** An ExportLogsServiceRequest (OTLP/JSON) holding one log record. */
+export function otlpLogs(serviceName: string, body: string, attributes: J[]): J {
+  const record = { timeUnixNano: nanos(0), observedTimeUnixNano: nanos(0), severityNumber: 9, body: { stringValue: body }, attributes };
+  return { resourceLogs: [{ resource: { attributes: [sAttr("service.name", serviceName)] }, scopeLogs: [{ scope: { name: "test" }, logRecords: [record] }] }] };
+}
+
+/**
+ * Secrets as an agent prints them: a .env dump and a JSON config line. `canaries`
+ * are the values no stored blob or event may hold. Built at run time, so the
+ * repo holds no secret-shaped literal.
+ */
+export function secretOutput(): { text: string; canaries: string[] } {
+  const dbPassword = ["Xk29fLq8", "ZpW3vTr7"].join("");
+  const stripeKey = ["qZ8xLm3NvB", "7cR2tY9wK4"].join("");
+  const apiKey = ["Jq7Rz2Lw9X", "c4Vb6Nm1Ks"].join("");
+  const password = ["pL9xQ2", "mZ7vK4"].join("");
+  const text = ["line one", `DB_PASSWORD=${dbPassword}`, `export STRIPE_SECRET_KEY="${stripeKey}"`, JSON.stringify({ api_key: apiKey, password })].join("\n");
+  return { text, canaries: [dbPassword, stripeKey, apiKey, password] };
+}
+
+/**
+ * Spans and a log record that carry secretOutput() where redacting the serialized
+ * JSON misses it: a tool result string (escaped newlines and quotes in the source
+ * span), an oversize structured tool result (the same in its content blob), and a
+ * log body.
+ */
+export function secretRequests(traceId: string): { traces: J; logs: J; canaries: string[] } {
+  const { text, canaries } = secretOutput();
+  const tool = (spanId: string, callId: string, result: string) =>
+    otlpSpan(traceId, spanId, "a000000000000001", "execute_tool Bash", [
+      sAttr("gen_ai.operation.name", "execute_tool"),
+      sAttr("gen_ai.tool.name", "Bash"),
+      sAttr("gen_ai.tool.call.id", callId),
+      sAttr("gen_ai.tool.call.arguments", JSON.stringify({ command: "cat .env", env: { api_key: canaries[2] } })),
+      sAttr("gen_ai.tool.call.result", result),
+    ], 10, 20);
+  const spans = [
+    otlpSpan(traceId, "a000000000000001", undefined, "invoke_agent ops", [sAttr("gen_ai.operation.name", "invoke_agent")], 0, 100),
+    tool("a000000000000002", "c1", text),
+    tool("a000000000000003", "c2", JSON.stringify({ stdout: text, log: "x".repeat(6000) })),
+  ];
+  return { traces: otlpTraces("sec-app", spans), logs: otlpLogs("sec-app", text, [sAttr("session.id", traceId)]), canaries };
+}

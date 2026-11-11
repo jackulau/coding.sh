@@ -11,11 +11,18 @@
 // Without stored requests (capture mode metadata, or transcript-only sessions) the diff falls back
 // to the hashes and counts the events keep, or to the break's own cause; those breaks are counted
 // as degraded and the report says so.
+//
+// The totals, the causes and the grade cover every session in the window: each session with breaks
+// has its calls read (BREAK_EVENT_KINDS). `--limit` only bounds how many sessions get their stored
+// requests read as well. Past it a break is classified as a degraded one is, from what its two
+// events keep, so a session with no stored requests reads the same at any --limit, and one with
+// them keeps its avoidable share wherever the hashes and counts show the change (a history edit
+// that keeps the message count is the case only the requests show). Those breaks are `notRead`.
 import { findCacheBreaks, CACHE_BREAK_FIX, type CacheBreak } from "../core/cache-breaks.ts";
 import { byTime } from "../core/sessions.ts";
 import type { BlobStore } from "../core/types.ts";
-import { diffCalls, loadCall, type LineOp } from "../proxy/calls.ts";
-import type { AgentEvent } from "../schema/index.ts";
+import { diffCalls, loadCall, type LineOp, type LoadedCall } from "../proxy/calls.ts";
+import type { AgentEvent, CacheBreakCause, CacheBreakStats } from "../schema/index.ts";
 
 export type CacheCause =
   | "model-switch"
@@ -49,12 +56,23 @@ export const CACHE_CAUSE_FIX: Record<CacheCause, string> = {
   other: "same prefix within the cache lifetime: the entry may have been evicted, or the cache breakpoints moved",
 };
 
+/**
+ * The events a session's breaks and their causes are read from. findCacheBreaks takes tool.end too,
+ * but only to say where an idle wait was (CacheBreak.idle), which this report leaves out.
+ */
+export const BREAK_EVENT_KINDS: string[] = ["llm.call", "context.compact"];
+
+/** True for a call whose request the proxy stored (capture mode full). */
+export const hasStoredRequest = (e: AgentEvent): boolean => e.kind === "llm.call" && typeof e.payload.requestRef === "string";
+
 /** A break and its structural cause. */
-export interface ClassifiedBreak extends CacheBreak {
+export interface ClassifiedBreak extends Omit<CacheBreak, "idle"> {
   sessionId: string;
   structural: CacheCause;
-  /** Classified without both stored requests (hashes, or the break's own cause). */
+  /** Classified without both requests because they are not stored: from hashes, message counts, the model and timing. */
   degraded: boolean;
+  /** Both requests are stored but were not read (--limit): classified as a degraded break is. */
+  notRead?: boolean;
 }
 
 /** A line with its numbers and long hex runs blanked: two lines that differ only there are one volatile line. */
@@ -78,9 +96,10 @@ function twins(events: readonly AgentEvent[]): Map<string, AgentEvent> {
 
 /**
  * The cache breaks of one session, as stats.cacheBreaks counts them, each with its structural cause.
- * `events` may come in any order.
+ * `events` may come in any order; BREAK_EVENT_KINDS are enough. `requests: false` leaves the stored
+ * requests unread: every break is classified from its two events alone.
  */
-export async function sessionBreaks(blobs: BlobStore, events: readonly AgentEvent[]): Promise<ClassifiedBreak[]> {
+export async function sessionBreaks(blobs: BlobStore, events: readonly AgentEvent[], opts: { requests?: boolean } = {}): Promise<ClassifiedBreak[]> {
   const sorted = byTime([...events]);
   // The calls stats count: without the proxy's copies when another capture path recorded them (core/sessions.ts).
   const proxied = sorted.some((e) => e.kind === "llm.call" && e.source === "proxy");
@@ -91,8 +110,10 @@ export async function sessionBreaks(blobs: BlobStore, events: readonly AgentEven
   const byId = new Map(sorted.map((e) => [e.id, e]));
   const twin = twins(sorted);
   const stored = (e: AgentEvent): AgentEvent => (e.source !== "proxy" && typeof e.payload.requestId === "string" ? (twin.get(e.payload.requestId) ?? e) : e);
+  const unread = opts.requests === false;
+  const load = async (e: AgentEvent): Promise<LoadedCall> => (unread ? { event: e } : loadCall(blobs, e));
   const out: ClassifiedBreak[] = [];
-  for (const b of breaks) {
+  for (const { idle: _idle, ...b } of breaks) {
     const prev = byId.get(b.prevEventId);
     const cur = byId.get(b.eventId);
     const sessionId = cur?.sessionId ?? prev?.sessionId ?? "";
@@ -100,8 +121,11 @@ export async function sessionBreaks(blobs: BlobStore, events: readonly AgentEven
       out.push({ ...b, sessionId, structural: fallback(b), degraded: true });
       continue;
     }
-    const d = diffCalls(await loadCall(blobs, stored(prev)), await loadCall(blobs, stored(cur)));
+    const [a, c] = [stored(prev), stored(cur)];
+    const d = diffCalls(await load(a), await load(c));
     const t = d.tools;
+    // Fewer messages than the call before: the history was rewritten, and the counts show it without the requests.
+    const shrank = d.messages.b > 0 && d.messages.b < d.messages.a;
     let structural: CacheCause;
     if (d.model || b.cause === "model-switch") structural = "model-switch";
     else if (t.added.length) structural = "tools-added";
@@ -109,14 +133,44 @@ export async function sessionBreaks(blobs: BlobStore, events: readonly AgentEven
     else if (t.reordered) structural = "tools-reordered";
     else if (!t.same) structural = "tools-changed";
     else if (!d.system.same) structural = volatileLine(d.system.lines) ? "system-volatile-line" : "system-changed";
-    else if (d.messages.rewritten || b.cause === "compaction") structural = "history-rewritten";
+    else if (d.messages.rewritten || shrank || b.cause === "compaction") structural = "history-rewritten";
     else structural = b.cause === "idle" ? "idle" : "other";
-    out.push({ ...b, sessionId, structural, degraded: d.content !== "full" });
+    const notRead = unread && hasStoredRequest(a) && hasStoredRequest(c);
+    const row: ClassifiedBreak = { ...b, sessionId, structural, degraded: d.content !== "full" && !notRead };
+    if (notRead) row.notRead = true;
+    out.push(row);
   }
   return out;
 }
 
-const fallback = (b: CacheBreak): CacheCause => (b.cause === "compaction" ? "history-rewritten" : b.cause === "model-switch" ? "model-switch" : b.cause === "idle" ? "idle" : "other");
+/** The structural cause a stored cause stands for when the two requests cannot be compared. */
+const structuralOf = (c: CacheBreakCause): CacheCause => (c === "compaction" ? "history-rewritten" : c === "model-switch" ? "model-switch" : c === "idle" ? "idle" : "other");
+const fallback = (b: Pick<CacheBreak, "cause">): CacheCause => structuralOf(b.cause);
+
+/** Breaks, tokens and USD over every session in the window, from their stored stats. */
+export interface BreakTotals {
+  breaks: number;
+  lostTokens: number;
+  /** Absent when a session has a break on a model with no price. */
+  extraUsd?: number;
+}
+
+/** The stored totals `usage` adds up, over the sessions' stats.cacheBreaks. */
+export function breakTotals(stats: Iterable<CacheBreakStats>): BreakTotals {
+  let breaks = 0;
+  let lost = 0;
+  let usd = 0;
+  let unpriced = false;
+  for (const b of stats) {
+    breaks += b.count;
+    lost += b.lostTokens;
+    if (b.extraUsd === undefined) unpriced = true;
+    else usd += b.extraUsd;
+  }
+  const t: BreakTotals = { breaks, lostTokens: lost };
+  if (breaks && !unpriced) t.extraUsd = round(usd, 6);
+  return t;
+}
 
 export interface CauseRow {
   cause: CacheCause;
@@ -128,7 +182,7 @@ export interface CauseRow {
   avoidable: boolean;
   fix: string;
   /** The costliest break of this cause: the two calls to pass to `coding.sh diff-calls`. */
-  example: { a: string; b: string; command: string };
+  example?: { a: string; b: string; command: string };
 }
 
 export interface CacheHealth {
@@ -144,8 +198,10 @@ export interface CacheHealth {
   avoidableTokens: number;
   avoidableShare?: number;
   causes: CauseRow[];
-  /** Breaks classified without both stored requests. */
+  /** Breaks classified without both requests because they are not stored. */
   degraded: number;
+  /** Breaks whose stored requests were not read (--limit), classified as a degraded break is. Absent when there are none. */
+  breaksNotRead?: number;
 }
 
 const round = (n: number, d: number) => Math.round(n * 10 ** d) / 10 ** d;
@@ -160,15 +216,25 @@ export function cacheScore(hitRate: number, avoidableShare: number): { score: nu
   return { score, grade };
 }
 
-/** The report: breaks aggregated per cause, ranked by extra USD, then tokens, then cache order. */
-export function cacheHealth(o: { hitRate?: number; promptTokens: number; breaks: readonly ClassifiedBreak[] }): CacheHealth {
-  const by = new Map<CacheCause, { count: number; sessions: Set<string>; lost: number; usd: number; unpriced: boolean; top?: ClassifiedBreak }>();
+/**
+ * The report: breaks aggregated per cause, ranked by extra USD, then tokens, then cache order.
+ * `breaks` are every session's, so the avoidable share and the grade cover the window. `totals`
+ * (every session's stored stats) is the headline; without it the headline is the sum of `breaks`.
+ */
+export function cacheHealth(o: { hitRate?: number; promptTokens: number; breaks: readonly ClassifiedBreak[]; totals?: BreakTotals }): CacheHealth {
+  interface Row { count: number; sessions: Set<string>; lost: number; usd: number; unpriced: boolean; top?: ClassifiedBreak }
+  const by = new Map<CacheCause, Row>();
+  const rowOf = (cause: CacheCause): Row => {
+    let r = by.get(cause);
+    if (!r) by.set(cause, (r = { count: 0, sessions: new Set<string>(), lost: 0, usd: 0, unpriced: false }));
+    return r;
+  };
   let lost = 0;
   let usd = 0;
   let unpriced = false;
   let avoidable = 0;
   for (const b of o.breaks) {
-    const r = by.get(b.structural) ?? { count: 0, sessions: new Set<string>(), lost: 0, usd: 0, unpriced: false };
+    const r = rowOf(b.structural);
     r.count++;
     r.sessions.add(b.sessionId);
     r.lost += b.lostTokens;
@@ -179,33 +245,43 @@ export function cacheHealth(o: { hitRate?: number; promptTokens: number; breaks:
     }
     const cost = (x: ClassifiedBreak) => x.extraUsd ?? 0;
     if (!r.top || cost(b) > cost(r.top) || (cost(b) === cost(r.top) && b.lostTokens > r.top.lostTokens)) r.top = b;
-    by.set(b.structural, r);
     lost += b.lostTokens;
     if (AVOIDABLE.has(b.structural)) avoidable += b.lostTokens;
   }
-  const causes: CauseRow[] = [...by].map(([cause, r]) => ({
-    cause,
-    count: r.count,
-    sessions: r.sessions.size,
-    lostTokens: r.lost,
-    ...(r.unpriced ? {} : { extraUsd: round(r.usd, 6) }),
-    avoidable: AVOIDABLE.has(cause),
-    fix: CACHE_CAUSE_FIX[cause],
-    example: { a: r.top!.prevEventId, b: r.top!.eventId, command: `coding.sh diff-calls ${r.top!.prevEventId} ${r.top!.eventId}` },
-  }));
+  const notRead = o.breaks.filter((b) => b.notRead).length;
+  const causes: CauseRow[] = [...by].map(([cause, r]) => {
+    const row: CauseRow = {
+      cause,
+      count: r.count,
+      sessions: r.sessions.size,
+      lostTokens: r.lost,
+      ...(r.unpriced ? {} : { extraUsd: round(r.usd, 6) }),
+      avoidable: AVOIDABLE.has(cause),
+      fix: CACHE_CAUSE_FIX[cause],
+    };
+    if (r.top) row.example = { a: r.top.prevEventId, b: r.top.eventId, command: `coding.sh diff-calls ${r.top.prevEventId} ${r.top.eventId}` };
+    return row;
+  });
   causes.sort((x, y) => (y.extraUsd ?? 0) - (x.extraUsd ?? 0) || y.lostTokens - x.lostTokens || CACHE_CAUSES.indexOf(x.cause) - CACHE_CAUSES.indexOf(y.cause));
+  let totals = o.totals;
+  if (!totals) {
+    totals = { breaks: o.breaks.length, lostTokens: lost };
+    if (totals.breaks && !unpriced) totals.extraUsd = round(usd, 6);
+  }
   const share = o.promptTokens > 0 ? avoidable / o.promptTokens : undefined;
   const graded = o.hitRate !== undefined ? cacheScore(o.hitRate, share ?? 0) : undefined;
-  return {
+  const health: CacheHealth = {
     ...(o.hitRate !== undefined ? { hitRate: o.hitRate } : {}),
     ...(graded ? graded : {}),
     promptTokens: o.promptTokens,
-    breaks: o.breaks.length,
-    lostTokens: lost,
-    ...(o.breaks.length && !unpriced ? { extraUsd: round(usd, 6) } : {}),
+    breaks: totals.breaks,
+    lostTokens: totals.lostTokens,
+    ...(totals.extraUsd !== undefined ? { extraUsd: totals.extraUsd } : {}),
     avoidableTokens: avoidable,
     ...(share !== undefined ? { avoidableShare: round(share, 4) } : {}),
     causes,
     degraded: o.breaks.filter((b) => b.degraded).length,
   };
+  if (notRead) health.breaksNotRead = notRead;
+  return health;
 }

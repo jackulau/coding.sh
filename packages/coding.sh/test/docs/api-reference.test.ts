@@ -2,11 +2,20 @@
 // no route table to import, so this reads the dispatchers in src/server/serve.ts,
 // src/viewer/server.ts and src/otel/receiver.ts and fails when a route is added
 // or removed without updating the doc's "## Routes" table.
+//
+// The page also says every example ran against the server it describes. The last
+// suite starts that server, sends the page's /v1/ingest example and runs each
+// example that reads the session it made.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { generateKey } from "../../src/server/auth.ts";
+import { resolveServeConfig } from "../../src/server/config.ts";
+import { createLogger } from "../../src/server/log.ts";
+import { startServe, type ServeHandle } from "../../src/server/serve.ts";
 
 const pkg = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const repo = join(pkg, "..", "..");
@@ -163,5 +172,94 @@ describe("docs/reference/api.md", () => {
     assert.ok(doc.startsWith("# REST API reference\n"), "title");
     assert.ok(doc.includes("Site version: [coding.sh/docs/api](https://coding.sh/docs/api)."), "site link");
     assert.ok(!/acme/i.test(doc), "no banned names");
+  });
+});
+
+/** The ```json block printed right under the ```sh block that `at` is in, or undefined. */
+function responseUnder(doc: string, at: number): string | undefined {
+  const rest = doc.slice(doc.indexOf("\n```\n", at) + 5);
+  return /^\n```json\n([\s\S]*?)\n```\n/.exec(rest)?.[1];
+}
+
+/** The key each shell variable of "Running the examples" holds, and the environment the server starts with. */
+function exampleSetup(doc: string): { keys: Record<string, string>; env: Record<string, string> } {
+  const at = doc.indexOf("**Running the examples.**");
+  const block = /\n```sh\n([\s\S]*?)\n```\n/.exec(doc.slice(at))?.[1];
+  assert.ok(at >= 0 && block, "api.md says how the example server was started");
+  const keys: Record<string, string> = {};
+  for (const m of block.matchAll(/^(\w+)=\$\(coding\.sh serve keygen( --read)?\b/gm)) keys[m[1]!] = generateKey(m[2] ? "read" : "ingest");
+  const env: Record<string, string> = {};
+  for (const m of block.matchAll(/^(CODING_SH_\w+)="([^"]*)"/gm)) env[m[1]!] = m[2]!.replace(/\$(\w+)/g, (_, name: string) => keys[name] ?? assert.fail(`$${name} is not set above`));
+  return { keys, env };
+}
+
+/** Whether `got` is what the page prints: the same JSON, with an id the page cuts short (`"54b366d0…"`) matching by its start. */
+function printedAs(got: unknown, shown: unknown): boolean {
+  if (typeof shown === "string" && shown.endsWith("…")) return typeof got === "string" && got.startsWith(shown.slice(0, -1));
+  if (Array.isArray(shown)) return Array.isArray(got) && got.length === shown.length && shown.every((v, i) => printedAs(got[i], v));
+  if (shown && typeof shown === "object") {
+    if (!got || typeof got !== "object" || Array.isArray(got)) return false;
+    const [a, b] = [got as Record<string, unknown>, shown as Record<string, unknown>];
+    return Object.keys(a).length === Object.keys(b).length && Object.keys(b).every((k) => k in a && printedAs(a[k], b[k]));
+  }
+  return got === shown;
+}
+
+describe("docs/reference/api.md examples", () => {
+  const doc = readFileSync(DOC_PATH, "utf8");
+  const SESSION = "/api/sessions/team%2Fchat-1";
+  const reads = [...doc.matchAll(/^curl -sS "\$CSH(\/[^"]*)" -H "Authorization: Bearer \$(\w+)"$/gm)]
+    .filter((m) => m[1]!.startsWith(SESSION))
+    .map((m) => ({ path: m[1]!, key: m[2]!, shown: responseUnder(doc, m.index) }));
+  let root = "";
+  let server: ServeHandle | undefined;
+  let keys: Record<string, string> = {};
+  const get = async (path: string, key: string) => {
+    const res = await fetch(server!.url + path, { headers: { authorization: `Bearer ${keys[key] ?? assert.fail(`$${key} is not a key of the example server`)}` } });
+    return { status: res.status, text: await res.text() };
+  };
+
+  before(async () => {
+    // The documented server: a fresh CODING_SH_HOME, the documented keys, the SQLite store.
+    root = mkdtempSync(join(tmpdir(), "csh-api-doc-"));
+    mkdirSync(join(root, "home"));
+    const setup = exampleSetup(doc);
+    keys = setup.keys;
+    const cfg = resolveServeConfig({ port: 0 }, { HOME: join(root, "home"), CODING_SH_HOME: join(root, "data"), ...setup.env });
+    server = await startServe(cfg, { log: createLogger({ format: "json", write: () => {} }), enrichSpan: false });
+
+    // The page's /v1/ingest example: the batch that makes team/chat-1.
+    const post = /^curl -sS -X POST "\$CSH\/v1\/ingest" \\\n  -H "Authorization: Bearer \$(\w+)" \\\n(?:  .*\\\n)*  --data-binary @- <<'EOF'\n([\s\S]*?)\nEOF\n/m.exec(doc);
+    assert.ok(post && post[2]!.includes('"chat-1"'), "api.md has the /v1/ingest example that sends chat-1");
+    const res = await fetch(`${server.url}/v1/ingest`, { method: "POST", headers: { authorization: `Bearer ${keys[post[1]!]}`, "content-type": "application/json" }, body: post[2]! });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), JSON.parse(responseUnder(doc, post.index) ?? "null"), "the /v1/ingest example prints what the server answers");
+  });
+  after(async () => {
+    await server?.shutdown().catch(() => {});
+    if (root) rmSync(root, { recursive: true, force: true });
+  });
+
+  it("finds the examples that read team/chat-1", () => {
+    assert.ok(reads.length >= 5, `found ${reads.length}`);
+    for (const sub of ["", "/events", "/outline", "/rows"]) assert.ok(reads.some((r) => r.path.split("?")[0] === SESSION + sub), `an example of GET ${SESSION}${sub}`);
+  });
+
+  it("answers every example that reads team/chat-1", async () => {
+    const wrong: string[] = [];
+    for (const r of reads) {
+      // 200, unless the page prints an error under the example (`{"error":"session not found","status":404}`).
+      const shown = /^\{"error":.*"status":(\d+)\}$/.exec(r.shown ?? "");
+      const got = await get(r.path, r.key);
+      if (got.status !== Number(shown?.[1] ?? 200)) wrong.push(`${r.path} with $${r.key}: ${got.status} ${got.text.slice(0, 200)}`);
+    }
+    assert.deepEqual(wrong, [], `these examples of docs/reference/api.md do not answer as the page says:\n${wrong.join("\n")}`);
+  });
+
+  it("prints the rows the server answers", async () => {
+    const r = reads.find((x) => x.path.startsWith(`${SESSION}/rows`))!;
+    const got = await get(r.path, r.key);
+    assert.ok(r.shown, "the rows example prints its response");
+    assert.ok(printedAs(JSON.parse(got.text), JSON.parse(r.shown)), `GET ${r.path} answers\n${got.text}\nand docs/reference/api.md prints\n${r.shown}`);
   });
 });

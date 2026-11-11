@@ -52,7 +52,8 @@ export function captureHealth({ home = process.env.CODING_SH_LIVE_HOME ?? join(h
     const sessions = cs(["sessions", "--since", `${sinceHours}h`, "--limit", "10000"]).sessions.filter((s) => inRepo(s.cwd) && !s.parentSessionId);
     if (!sessions.length) return { value: null, reason: `no sessions under ${repo} in the last ${sinceHours} h` };
     const rows = sessions.map((s) => {
-      const kinds = new Set(cs(["show", s.id]).events.map((e) => e.kind));
+      // --all: a session over 200 events prints no events without it.
+      const kinds = new Set(cs(["show", s.id, "--all"]).events.map((e) => e.kind));
       const missing = [];
       if (!kinds.has("session.start")) missing.push("session.start");
       if (!kinds.has("tool.start") && !kinds.has("tool.end")) missing.push("tool events");

@@ -110,7 +110,9 @@ for (const name of ["webapp", "api", "infra", "calc", "strings"]) {
   mkdirSync(REPOS[name], { recursive: true });
 }
 writeFileSync(join(REPOS.calc, "calc.mjs"), "export const add = (a, b) => a - b;\n");
-writeFileSync(join(REPOS.calc, "test.mjs"), 'import { add } from "./calc.mjs";\nif (add(2, 3) !== 5) {\n  console.error("add(2, 3) should be 5");\n  process.exit(1);\n}\n');
+// An assert call, so `eval validate` has an expected value to flip for its impossible variant.
+// (With an `if` and a console.error("… should be 5") it flipped the message and called the verifier gameable.)
+writeFileSync(join(REPOS.calc, "test.mjs"), 'import assert from "node:assert/strict";\nimport { add } from "./calc.mjs";\nassert.equal(add(2, 3), 5);\n');
 writeFileSync(join(REPOS.strings, "slug.mjs"), 'export const slugify = (s) => s.trim().replace(/\\s+/g, "-");\n');
 writeFileSync(join(REPOS.strings, "test.mjs"), 'import { slugify } from "./slug.mjs";\nif (slugify(" Hello World ") !== "hello-world") process.exit(1);\n');
 for (const name of ["calc", "strings"]) {
@@ -299,7 +301,9 @@ function wrapped(key, repo, at0, prompt, file, content) {
     const [agent, name] = f.split("/");
     const newName = name.replace(/^\d{4}-\d{2}-\d{2}/, new Date(at0).toISOString().slice(0, 10));
     rmSync(join(SPOOL, f));
-    writeFileSync(join(SPOOL, agent, newName), lines.map((l) => JSON.stringify(l)).join("\n") + "\n", { mode: 0o600 });
+    // Append: the wrapper's file is per day (no pid), so two runs rebased to the same UTC day
+    // share it (r3 and r2 on a Monday). Runs are created oldest first, so the file stays in order.
+    appendFileSync(join(SPOOL, agent, newName), lines.map((l) => JSON.stringify(l)).join("\n") + "\n", { mode: 0o600 });
   }
   const s = { key, id: r.sessionId, agent: "wrapper", cwd: REPOS[repo], repo, start: at0, end, prompt, tools: [], llm: [], subagents: [], wrapper: true };
   wrapperSessions.push(s);
@@ -350,8 +354,13 @@ for (const [name, args] of [
   ["tweak", ["--acc", "0.6"]],
   ["nightly", ["--fail", "error: model endpoint returned 529 overloaded_error"]],
 ]) {
-  const r = cliJson(["exp", "run", "--dataset", "arith", "--name", name, "--task", JSON.stringify({ kind: "command", command: process.execPath, args: [solver, ...args], output: "text" }), "--grader", JSON.stringify({ kind: "exact" })]);
-  exps[name] = { id: r.experiment.id, passRate: name === "nightly" ? 0 : accOf(Number(args[1])) };
+  // nightly fails on every case. The CLI reads "529 overloaded" as an infrastructure error:
+  // without these flags it retries each case and stops the run after 5 in a row, so only 8 of
+  // the 40 cases run. `exp run` exits 1 when every run errors, so that exit is expected here.
+  const broken = name === "nightly";
+  const r = JSON.parse(cli(["exp", "run", "--dataset", "arith", "--name", name, ...(broken ? ["--retries", "0", "--stop-after-infra", "0"] : []), "--task", JSON.stringify({ kind: "command", command: process.execPath, args: [solver, ...args], output: "text" }), "--grader", JSON.stringify({ kind: "exact" }), "--json"], { allowFail: broken }).stdout);
+  if (broken && r.experiment.summary.errors !== arith.length) throw new Error(`fixture: nightly should fail on every case, got ${r.experiment.summary.errors} errors in ${arith.length} cases`);
+  exps[name] = { id: r.experiment.id, passRate: broken ? 0 : accOf(Number(args[1])) };
 }
 
 // ---------------------------------------------------------------- harness bundles

@@ -5,6 +5,9 @@
 // took it over mid-run (that one re-runs for the hook's wake-up marker, and
 // the next read's lazy ingest picks up anything else). It also re-parses
 // sessions stored by an older adapter parse, once per upgrade (core/reparse.ts).
+// Nobody sees its output, so when it fails (a store this coding.sh can't open)
+// it leaves the marker `status`, the status line and `doctor` print as "ingest
+// stopped" (core/ingest-health.ts); the next ingest that works removes it.
 // `--background --backfill` is what init starts when its import budget runs out:
 // it imports the rest of the history under paths.importLock (one at a time).
 //
@@ -13,17 +16,19 @@
 // The foreground run also folds sessions that have events but no row, and rows
 // tagged fold:error (core/ingest.ts repairSessions): the repair `doctor` names.
 import { parseSince } from "../args.ts";
-import { list, lockContention, str, tailIngest, underImportLock, withContext } from "../common.ts";
+import { list, lockContention, oneLine, str, tailIngest, underImportLock, withContext } from "../common.ts";
 import { CliError, plural, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import type { Context } from "../../core/context.ts";
 import type { IngestResult } from "../../core/ingest.ts";
 import type { ReparseResult } from "../../core/reparse.ts";
+import { markIngestStopped, type IngestStopped } from "../../core/ingest-health.ts";
+import { paths } from "../../core/paths.ts";
 import { healHookBin } from "../hookbin.ts";
+import { version } from "../meta.ts";
 import { pickAdapters } from "./init.ts";
 
 export async function run(c: CommandContext): Promise<number> {
-  const { out } = c;
   const agents = list(c.flags.agent);
   if (agents.length) pickAdapters(agents);
   const since = str(c.flags.since) !== undefined ? parseSince(str(c.flags.since)!) : undefined;
@@ -31,6 +36,33 @@ export async function run(c: CommandContext): Promise<number> {
   const rebuild = c.flags.rebuild === true;
   // After `npm i -g` of a newer version, bring ~/.coding.sh/bin up to this CLI.
   await healHookBin(c.env);
+  if (!background) return ingest(c, { agents, since, background, rebuild });
+  try {
+    return await ingest(c, { agents, since, background, rebuild });
+  } catch (e) {
+    markIngestStopped(paths(c.env).ingestStopped, ingestFailure(e));
+    throw e;
+  }
+}
+
+/** Why a background ingest failed, as the marker keeps it. */
+function ingestFailure(e: unknown): Omit<IngestStopped, "since" | "at" | "failures"> {
+  const ce = e instanceof CliError ? e : undefined;
+  const why =
+    ce?.reason === "store_newer"
+      ? "a newer coding.sh migrated the store, and this one can't open it"
+      : ce?.reason === "store_owned" || ce?.reason === "store_version"
+        ? "the store needs a migration that this coding.sh runs only when asked"
+        : oneLine(e instanceof Error ? e.message : String(e), 120);
+  const failure: Omit<IngestStopped, "since" | "at" | "failures"> = { reason: ce?.reason ?? "error", why, version: version() };
+  const next = ce?.next[1];
+  if (next) failure.next = next;
+  return failure;
+}
+
+async function ingest(c: CommandContext, o: { agents: string[]; since: number | undefined; background: boolean; rebuild: boolean }): Promise<number> {
+  const { out } = c;
+  const { agents, since, background, rebuild } = o;
   return withContext(c, async (ctx) => {
     if (background) {
       let r: IngestResult | undefined;

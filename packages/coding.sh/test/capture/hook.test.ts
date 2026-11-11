@@ -501,6 +501,104 @@ describeSh("hook.sh", () => {
     }
     assert.ok(!existsSync(join(h, "spool", "errors.log")));
   });
+
+  test("a closed stdin is an empty payload under sh, bash, dash and zsh: exit 0 at once, silent, no process left reading", () => {
+    const h = freshHome();
+    // A shell started with fd 0 closed (node cannot start one: `<&-` in a wrapper does).
+    const closed = (shell: string, event: string, env: Record<string, string> = {}) => {
+      const r = spawnSync("/bin/sh", ["-c", 'exec "$0" "$@" <&-', shell, HOOK_SH, "claude-code", event], { env: { PATH: SH_PATH, NODE_LOG, CODING_SH_HOME: h, ...env }, encoding: "utf8", timeout: 5000 });
+      // A hook that hung leaves a child the timeout's kill does not reach: find it by its command line, and end it.
+      const ps = spawnSync("ps", ["-A", "-ww", "-o", "pid=", "-o", "command="], { encoding: "utf8" }).stdout;
+      const left = ps.split("\n").filter((l) => l.includes(`${HOOK_SH} claude-code ${event}`));
+      for (const l of left) spawnSync("kill", ["-9", l.trim().split(/\s+/)[0]!]);
+      assert.deepEqual({ code: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr, left }, { code: 0, signal: null, stdout: "", stderr: "", left: [] }, `${shell} ${event}`);
+    };
+    const shells = ["sh", "bash", "dash", "zsh"].flatMap((name) => ["/bin", "/usr/bin"].map((d) => join(d, name)).filter((p) => existsSync(p)).slice(0, 1));
+    assert.ok(shells.includes("/bin/sh"));
+    const events: string[] = [];
+    nodeStarts();
+    for (const shell of shells) {
+      const name = shell.slice(shell.lastIndexOf("/") + 1);
+      // CODING_SH_HOOK_REEXEC: sh and dash stay themselves (no move to /bin/bash).
+      for (const [tag, env] of [["", {}], ["-self", { CODING_SH_HOOK_REEXEC: "1" }]] as [string, Record<string, string>][]) {
+        events.push(`closed-${name}${tag}`);
+        closed(shell, events.at(-1)!, env);
+        closed(shell, `disabled-${name}${tag}`, { ...env, CODING_SH_DISABLE: "1" });
+      }
+    }
+    assert.equal(nodeStarts(), 0);
+    // What hook.mjs writes with stdin closed: one line, an empty payload, no error.
+    const lines = readLines(h, "claude-code");
+    assert.deepEqual(lines.map((l) => l.event).sort(), events.sort());
+    for (const l of lines) assert.equal(l.raw, "", l.event);
+    assert.ok(!existsSync(join(h, "spool", "errors.log")));
+  });
+
+  test("a call handed to hook.mjs exits 0 and answers --echo-continue when node is missing, fails or has no hook.mjs", () => {
+    const h = freshHome();
+    const notDir = join(tmp("csh-notdir-"), "file");
+    writeFileSync(notDir, "");
+    // Each reason hook.sh hands a call on, before and after it has read the payload.
+    const cases: [string, string[], Record<string, string>][] = [
+      ["eval run", ["claude-code", "Stop"], { CODING_SH_RUN_ID: "r1" }],
+      ["host app", ["claude-code", "Stop"], { T3CODE_THREAD_ID: "t" }],
+      ["gateway port", ["claude-code", "Stop"], { ANTHROPIC_BASE_URL: "http://127.0.0.1:8317" }],
+      ["remote base URL", ["claude-code", "Stop"], { ANTHROPIC_BASE_URL: "https://ai-gateway.vercel.sh" }],
+      ["loopback base URL and a gateway's variable", ["claude-code", "Stop"], { ANTHROPIC_BASE_URL: "http://127.0.0.1:4000", LITELLM_PROXY_URL: "http://127.0.0.1:4000" }],
+      ["one argument", ["claude-code"], {}],
+      ["no arguments", [], {}],
+      ["--reply", ["claude-code", "Stop", "--reply", "{}"], {}],
+      ["odd agent id", ["Claude", "Stop"], {}],
+      ["odd parent session id", ["claude-code", "Stop"], { CLAUDE_CODE_SESSION_ID: "a b" }],
+      ["relative home", ["claude-code", "Stop"], { CODING_SH_HOME: "rel/home" }],
+      ["backslash in home", ["claude-code", "Stop"], { CODING_SH_HOME: `${h}\\x` }],
+      ["a write that fails", ["claude-code", "Stop"], { CODING_SH_HOME: join(notDir, "home") }],
+    ];
+    // PATH with the tools the fast path needs and: no node; a node that fails (a version manager's shim); a node that cannot start.
+    const tools = (name: string, node?: { text: string; mode: number }) => {
+      const bin = tmp(`csh-${name}-`);
+      for (const tool of ["cat", "date", "mkdir", "wc"]) symlinkSync(spawnSync("/bin/sh", ["-c", `command -v ${tool}`], { encoding: "utf8" }).stdout.trim(), join(bin, tool));
+      if (node) writeFileSync(join(bin, "node"), node.text, { mode: node.mode });
+      return bin;
+    };
+    const paths: [string, string, string][] = [
+      ["no node", tools("nonode"), HOOK_SH],
+      ["node exits 1", tools("badnode", { text: "#!/bin/sh\nexit 1\n", mode: 0o755 }), HOOK_SH],
+      ["node is not executable", tools("noexec", { text: "", mode: 0o644 }), HOOK_SH],
+    ];
+    // A working node, and no hook.mjs beside hook.sh.
+    const alone = join(tmp("csh-shalone-"), "hook.sh");
+    copyFileSync(HOOK_SH_SRC, alone);
+    paths.push(["no hook.mjs", SH_PATH, alone]);
+    for (const [how, PATH, script] of paths)
+      for (const [why, args, env] of cases)
+        // CODING_SH_HOOK_REEXEC: sh and dash stay themselves (no move to /bin/bash).
+        for (const self of [{}, { CODING_SH_HOOK_REEXEC: "1" }] as Record<string, string>[])
+          for (const echo of ["", "flag", "env"]) {
+            // Two arguments make --echo-continue the third; a --reply is hook.mjs's to check and print.
+            if (echo && args.includes("--reply")) continue;
+            if (echo === "flag" && args.length < 2) continue;
+            const argv = [script, ...args];
+            const childEnv: Record<string, string> = { PATH, NODE_LOG, CODING_SH_HOME: h, ...env, ...self };
+            if (echo === "flag") argv.push("--echo-continue");
+            if (echo === "env") childEnv.CODING_SH_ECHO_CONTINUE = "1";
+            const r = spawnSync("/bin/sh", argv, { input: '{"session_id":"s1","cwd":"/work/demo"}', cwd: dirname(notDir), env: childEnv, encoding: "utf8", timeout: 10_000 });
+            assert.deepEqual({ code: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr }, { code: 0, signal: null, stdout: echo ? '{"continue":true}\n' : "", stderr: "" }, `${how}; ${why}; echo: ${echo || "none"}; ${JSON.stringify(self)}`);
+          }
+    // Nothing ran hook.mjs, so nothing was captured or logged.
+    assert.equal(existsSync(join(h, "spool")), false);
+  });
+
+  test("a call handed to hook.mjs records the pid and ppid of the hook process, and replies once", () => {
+    const h = freshHome();
+    nodeStarts();
+    const r = spawnSync("/bin/sh", [HOOK_SH, "claude-code", "Stop", "--echo-continue"], { input: '{"session_id":"s1"}', env: { PATH: SH_PATH, NODE_LOG, CODING_SH_HOME: h, CODING_SH_RUN_ID: "r1" }, encoding: "utf8" });
+    assert.deepEqual({ code: r.status, stdout: r.stdout, stderr: r.stderr }, { code: 0, stdout: '{"continue":true}\n', stderr: "" });
+    assert.equal(nodeStarts(), 1);
+    const [line, ...rest] = readLines(h, "claude-code");
+    assert.equal(rest.length, 0);
+    assert.deepEqual({ runId: line?.runId, pid: line?.pid, ppid: line?.ppid }, { runId: "r1", pid: r.pid, ppid: process.pid });
+  });
 });
 
 describe("hook.mjs", () => {

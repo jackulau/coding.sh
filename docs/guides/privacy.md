@@ -50,6 +50,10 @@ headers = { Authorization = "Bearer ${OTEL_TOKEN}" }
   variables that hold a place rather than a secret (`PWD`, `OLDPWD`, names ending in `_PATH`,
   `_DIR`, `_FILE` or `_SOCK`, such as `SSH_AUTH_SOCK`) and values that are existing paths on this
   machine, so a path such as your working directory is not replaced wherever it appears.
+  A source span or log record that `coding.sh serve` or `coding.sh collector --keep-raw` keeps as
+  a blob is redacted one string at a time, and a string that holds JSON as JSON, so the blob hides
+  what its events hide. Blobs stored before 0.1.6 were redacted as one text and can hold a
+  `NAME=value` line or a JSON field in clear: remove such a value with `coding.sh purge` (below).
 - **Personal data** is opt-in: `redact = ["secrets", "pii"]` also replaces email addresses, phone
   numbers, card numbers, IBANs and national ids (US SSN, UK National Insurance number, Canadian
   SIN) with `[redacted:<kind>]`. Card numbers must have a known issuer prefix and pass the Luhn
@@ -74,7 +78,11 @@ headers = { Authorization = "Bearer ${OTEL_TOKEN}" }
   if the database or its search index is damaged. If another process holds a read on one of them
   (the viewer, `serve`, a `sqlite3` shell, a backup), SQLite keeps the old bytes until it closes:
   purge waits a few seconds (`CODING_SH_PURGE_WAIT_MS` sets how long), then says which file still
-  holds them and exits 1. Close that process and run the same purge again. Purge with coding.sh
+  holds them and exits 1. Close that process and run the same purge again. A copy of the index
+  kept next to it by an upgrade (`index.db.v<N>.bak`) or by `upgrade-store --restore`
+  (`index.db.v<N>.undone`) holds the value too. Purge deletes these copies instead of rewriting
+  them, so `upgrade-store --restore` can no longer put one back; `--dry-run` names them, and
+  purge exits 1 if one can't be deleted. Purge with coding.sh
   0.1.5 or newer: an older purge does not see blobs in the pack. Values shorter than 8 characters
   are refused, the values are never printed, and only the SQLite store is supported. Rotate the
   secret as well: the agent's own transcripts, shell history and git are not touched.

@@ -167,6 +167,19 @@ function featureDisabled(env = process.env): boolean {
   }
 }
 
+/** Where config.toml switches hooks off, for doctor: `<file>:<line>` of the `hooks = false` line, or the file when the line can't be told. */
+function featureDisabledAt(env = process.env): string {
+  const file = join(codexHome(env), "config.toml");
+  let table = "";
+  for (const [i, raw] of (readTextIfExists(file) ?? "").split("\n").entries()) {
+    const line = raw.replace(/#.*$/, "").trim();
+    const head = /^\[\s*([^\]]+?)\s*\]$/.exec(line);
+    if (head) table = head[1]!;
+    else if (table === "features" ? /^(codex_)?hooks\s*=\s*false\b/.test(line) : table === "" && /^features\s*(\.\s*(codex_)?hooks\s*=\s*false\b|=\s*\{[^}]*\b(codex_)?hooks\s*=\s*false\b)/.test(line)) return `${file}:${i + 1}`;
+  }
+  return file;
+}
+
 // ---------------------------------------------------------------- usage
 
 /** Codex usage: OpenAI-style (input includes cached reads/writes; output includes reasoning). */
@@ -1000,7 +1013,7 @@ export const codex: Adapter = {
       hooked: () => hasOurHooks(CODEX_AGENT, file),
       notes: () => {
         const notes: string[] = [];
-        if (featureDisabled()) notes.push("hooks are disabled in config.toml ([features] hooks = false); coding.sh hooks will not run");
+        if (featureDisabled()) notes.push(`hooks are disabled in config.toml ([features] hooks = false); coding.sh hooks will not run. Set it to true or delete the line: ${featureDisabledAt()}`);
         if (hasOurHooks(CODEX_AGENT, file)) {
           const untrusted = untrustedHooks(file);
           if (untrusted.length) notes.push(`${untrusted.length} coding.sh hook(s) not trusted yet (${[...new Set(untrusted)].join(", ")}). ${TRUST_NOTE}`);

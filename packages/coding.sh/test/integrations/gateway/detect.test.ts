@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -7,6 +7,7 @@ import { buildSession, failureFlags } from "../../../src/core/sessions.ts";
 import { createRedactor } from "../../../src/core/redact.ts";
 import { detectGatewaySetups, gatewaySettings } from "../../../src/integrations/gateway/config.ts";
 import { gatewayFromEnv, generationIdOf, isGatewayEvent, isGatewayUrl, isGenerationId } from "../../../src/integrations/gateway/ids.ts";
+import { applyProxyInstall, planProxyInstall, type ProxyAgent } from "../../../src/proxy/install.ts";
 import type { AgentEvent } from "../../../src/schema/index.ts";
 import { GEN_ID } from "./_fixtures.ts";
 
@@ -100,6 +101,43 @@ describe("gateway config (read-only scan, settings)", () => {
     assert.equal(codex.active, true, "selected by a profile");
     assert.match(codex.detail, /model_providers\.vercel\.base_url → ai-gateway\.vercel\.sh\/codex\/v1, key from \$AI_GATEWAY_API_KEY/);
     assert.ok(!JSON.stringify(found).includes(SECRET));
+  });
+
+  it("follows init --proxy to the base URL the coding.sh proxy goes on to", async () => {
+    const home = tmp();
+    const env: NodeJS.ProcessEnv = { HOME: home, USERPROFILE: home, CODING_SH_HOME: join(home, ".coding.sh"), CLAUDE_CONFIG_DIR: join(home, ".claude"), CODEX_HOME: join(home, ".codex"), XDG_CONFIG_HOME: join(home, ".config") };
+    const PROXY = "http://127.0.0.1:4320";
+    const claude = join(home, ".claude", "settings.json");
+    const codex = join(home, ".codex", "config.toml");
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    mkdirSync(join(home, ".codex"), { recursive: true });
+    // Both agents call a CLIProxyAPI on its default port, as before init --proxy.
+    writeFileSync(claude, JSON.stringify({ env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:8317" } }, null, 2));
+    writeFileSync(codex, ['model_provider = "cliproxy"', "", "[model_providers.cliproxy]", 'name = "CLIProxyAPI"', 'base_url = "http://127.0.0.1:8317/v1"', 'env_key = "CLIPROXY_KEY"', 'wire_api = "responses"', ""].join("\n"));
+    const direct = detectGatewaySetups(env);
+    assert.deepEqual(direct.map((f) => [f.gateway, f.agent, f.detail]), [
+      ["cliproxyapi", "claude-code", "ANTHROPIC_BASE_URL → 127.0.0.1"],
+      ["cliproxyapi", "codex", "model_providers.cliproxy.base_url → 127.0.0.1/v1, key from $CLIPROXY_KEY"],
+    ]);
+
+    // init --proxy: each config now holds the proxy's URL, and proxy-installs.json the URL behind it.
+    for (const agent of ["claude-code", "codex"] as ProxyAgent[]) await applyProxyInstall(agent, planProxyInstall(agent, { url: PROXY, env })!, PROXY, env);
+    assert.equal(JSON.parse(readFileSync(claude, "utf8")).env.ANTHROPIC_BASE_URL, PROXY);
+    assert.match(readFileSync(codex, "utf8"), /base_url = "http:\/\/127\.0\.0\.1:4320\/v1"/);
+    const chained = detectGatewaySetups(env);
+    assert.deepEqual(chained.map((f) => [f.gateway, f.agent, f.where, f.detail, f.active]), [
+      ["cliproxyapi", "claude-code", claude, "ANTHROPIC_BASE_URL → 127.0.0.1 (through the coding.sh proxy)", true],
+      ["cliproxyapi", "codex", codex, "model_providers.cliproxy.base_url → 127.0.0.1/v1 (through the coding.sh proxy), key from $CLIPROXY_KEY", true],
+    ]);
+
+    // A base URL changed by hand since is read as it stands: the record no longer describes it.
+    writeFileSync(claude, JSON.stringify({ env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:9999" } }));
+    assert.deepEqual(detectGatewaySetups(env).map((f) => f.agent), ["codex"]);
+    // The proxy with nothing behind it (no chain) routes through no gateway.
+    const plain = tmp();
+    const plainEnv: NodeJS.ProcessEnv = { HOME: plain, USERPROFILE: plain, CODING_SH_HOME: join(plain, ".coding.sh"), CLAUDE_CONFIG_DIR: join(plain, ".claude"), CODEX_HOME: join(plain, ".codex"), XDG_CONFIG_HOME: join(plain, ".config") };
+    await applyProxyInstall("claude-code", planProxyInstall("claude-code", { url: PROXY, env: plainEnv })!, PROXY, plainEnv);
+    assert.deepEqual(detectGatewaySetups(plainEnv), []);
   });
 
   it("reads the key from env first, then [gateway] in config.toml (with ${VAR})", () => {

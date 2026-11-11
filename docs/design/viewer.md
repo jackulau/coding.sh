@@ -397,6 +397,13 @@ warm median of five:
 
 Text and `error:` read payloads and stay the slow keys; pair them with an indexed key. Turns (item 4) are left to V-7.
 
+**`event.duration` and `error` alone (landed, EZ-5).** Migration v11 adds `events_duration(duration_ms, session_id)
+WHERE duration_ms IS NOT NULL` and a text column `events.error` (`payload.error` when it is text, written at insert,
+filled for old rows by the migration, rewritten by purge) with `events_error(error, session_id) WHERE error IS NOT
+NULL`. The compiled `error` clause is `(e.error IS NOT NULL AND e.error LIKE …)`: SQLite uses a partial index only
+when the query repeats its condition. `sessions --where 'event.duration>60s'` and `--where 'error:*timeout*'` on a
+1.4M-event store went from 840 ms and 2,733 ms to under 5 ms each; text stays the slow key.
+
 ## 10. Gaps against the current code
 
 Paths under packages/coding.sh/src.

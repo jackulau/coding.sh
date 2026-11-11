@@ -478,7 +478,7 @@ history has started, so step 0 is done.
 | 3 | Built: `src/adapters/claude-code.ts`, fixtures in `packages/coding.sh/test/fixtures/adapters/claude-code`, checked by `scripts/dogfood/conformance.mjs`. |
 | 4 | Built: the OTLP receiver (`src/otel`) and `scripts/dogfood/claude-otel.json`. Open: `mise.toml`. |
 | 5 | Built: the CLI (`src/cli`) and `scripts/dogfood/cli-guidelines.mjs` for `cli.guidelines`. |
-| 6 | Built: tool evals (`src/toolevals`), `evals/cli` (25 dev tasks, `fixtures/make-home.mjs`) and `scripts/dogfood/cli-suite.mjs`. The held-out tasks live outside the repo (`heldoutDir` in `evals/cli/suite.toml`) and are written by a human. |
+| 6 | Built: tool evals (`src/toolevals`), `evals/cli` (37 dev tasks, `fixtures/make-home.mjs`) and `scripts/dogfood/cli-suite.mjs`. The held-out tasks live outside the repo (`heldoutDir` in `evals/cli/suite.toml`) and are written by a human. |
 | 7 | Built: `src/adapters/codex.ts`. The project `.codex/hooks.json` is installed per machine, not committed. |
 | 8 | Open: `harvest.mjs` and the replay of promoted tasks; `score.mjs` reports `replay.success` as skipped. |
 | 9 | Partly built: `scripts/dogfood/site.mjs` runs Lighthouse and the JS budget. Open: the council script (`site.council` is skipped). |

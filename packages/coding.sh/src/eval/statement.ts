@@ -8,7 +8,8 @@
 // agent was never told about: a built-in false reject.
 //
 //   requirementCandidates  user turns (acknowledgements and harness text dropped) and
-//                          assistant proposals the user approved, each with its event id
+//                          assistant proposals the user approved, each with its event id;
+//                          an approval that goes on keeps the user's words after the proposal
 //   deterministicLedger    offline: one surviving obligation per candidate
 //   draftStatement         a model merges them into atomic obligations, marks the ones
 //                          a later turn replaced (superseded) and the ones the session
@@ -58,14 +59,27 @@ export class StatementError extends Error {
 export const ACK_MAX = 40;
 /** Pure acknowledgements: ok, yes, continue, go on, thanks, lgtm, proceed, y. */
 export const ACK_RE = /^\s*(?:ok(?:ay)?|k|yes|yep|yeah|y|continue|go on|thanks?(?: you)?|thx|ty|lgtm|proceed|cool|great|nice)(?:[\s,]+(?:thanks?|please|go on|continue))?\s*[.!]*\s*$/i;
-/** A short reply that approves the assistant's last proposal: yes, do it, sounds good, go ahead, approved. */
-export const APPROVAL_RE = /^\s*(?:(?:yes|yep|yeah|ok(?:ay)?)[\s,!.]*)?(?:yes|do it|sounds good|go ahead|approved?|please do|let'?s do it|ship it)\b[\s\S]{0,30}$/i;
+const APPROVE = String.raw`yes|yep|yeah|do it|sounds good(?: to me)?|go ahead|approved?|please do|let'?s do it|ship it`;
+const COURTESY = String.raw`ok(?:ay)?|please|thanks?(?: you)?|thx|ty`;
+/**
+ * A bare approval of the assistant's last proposal: nothing but approval words (yes, do it,
+ * sounds good, go ahead, approved), courtesy words (ok, please, thanks) and punctuation.
+ * "ok" and "thanks" alone are acknowledgements, not approvals (see isBareApproval).
+ */
+export const APPROVAL_RE = new RegExp(String.raw`^[\s,.!;:]*(?:(?:${APPROVE}|${COURTESY})(?:[\s,.!;:]+|$))+$`, "i");
+const APPROVE_WORD_RE = new RegExp(String.raw`\b(?:${APPROVE})\b`, "i");
+/**
+ * A reply that opens with an approval and goes on: "yes, but call it goodbye instead".
+ * After yes/yep/yeah anything may follow. The other phrases are also plain imperatives
+ * ("do it again for shout.js"), so they count only before punctuation or a conjunction.
+ */
+const APPROVAL_HEAD_RE = new RegExp(String.raw`^\s*(?:(?:yes|yep|yeah)\b|(?:ok(?:ay)?[\s,!.]*)?(?:${APPROVE})(?=\s*[,.!;:]|\s+(?:but|and|except|though|however|just|only|with)\b))`, "i");
 /** Text a harness injects as a user turn: compaction summaries and slash-command wrappers. */
 const INJECTED_RE = /^\s*(?:This session is being continued from a previous conversation|<command-|Caveat: The messages below were generated)/;
 
 const textOf = (e: AgentEvent): string | undefined => (typeof e.payload.text === "string" && e.payload.text.trim() ? e.payload.text.trim() : undefined);
 const isAck = (t: string): boolean => t.length < ACK_MAX && ACK_RE.test(t);
-const isApproval = (t: string): boolean => t.length < 60 && APPROVAL_RE.test(t);
+const isBareApproval = (t: string): boolean => APPROVAL_RE.test(t) && APPROVE_WORD_RE.test(t);
 
 /** Requirement sources in a session, in order. Pure. */
 export function requirementCandidates(events: readonly AgentEvent[]): RequirementCandidate[] {
@@ -82,11 +96,13 @@ export function requirementCandidates(events: readonly AgentEvent[]): Requiremen
     if (!text || isSyntheticPrompt(text) || INJECTED_RE.test(text)) continue;
     const proposal = lastAssistant;
     lastAssistant = undefined;
-    if (proposal && isApproval(text)) {
+    const bare = isBareApproval(text);
+    if (proposal && (bare || APPROVAL_HEAD_RE.test(text))) {
       out.push({ eventId: proposal.id, ts: proposal.ts, kind: "approved-proposal", text: textOf(proposal)! });
-      continue;
-    }
-    if (isAck(text)) continue;
+      // A bare approval adds nothing of its own. One that goes on ("yes, but call it
+      // goodbye instead") amends the proposal: the user's words stay, after it.
+      if (bare || isAck(text)) continue;
+    } else if (isAck(text)) continue;
     out.push({ eventId: e.id, ts: e.ts, kind: "user", text });
   }
   return out;

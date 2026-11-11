@@ -5,8 +5,8 @@
 // or week. With --by: one row per group with its totals and a trend of the
 // chosen measure. --json prints the MetricSeries document.
 import { computeMetrics, METRIC_MEASURES, MetricsError, measureAt, measureOf, type MetricBucket, type MetricGroup, type MetricLine, type MetricMeasure, type MetricTotals } from "../../viewer/metrics.ts";
-import { parseSince, UsageError } from "../args.ts";
-import { autoIngest, pendingField, queryCliError, readIngest, str, whereFlag, withContext } from "../common.ts";
+import { parseSinceWhen, UsageError } from "../args.ts";
+import { autoIngest, pendingField, queryCliError, readIngest, str, timeWindow, whereFlag, windowJson, windowNote, withContext } from "../common.ts";
 import { duration, tokens, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -57,10 +57,13 @@ export async function run(c: CommandContext): Promise<number> {
   const by = str(c.flags.by) as MetricGroup | undefined;
   const per = (str(c.flags.per) ?? "day") as MetricBucket;
   const now = Date.now();
-  const until = str(c.flags.until) !== undefined ? parseSince(str(c.flags.until)!, now) : now;
-  const since = parseSince(str(c.flags.since) ?? "30d", now);
+  const untilWhen = str(c.flags.until) !== undefined ? parseSinceWhen(str(c.flags.until)!, now, "until") : { ms: now, zoned: false };
+  const sinceWhen = parseSinceWhen(str(c.flags.since) ?? "30d", now);
+  const until = untilWhen.ms;
+  const since = sinceWhen.ms;
   if (!(since < until)) throw new UsageError("--since must be before --until", { reason: "invalid_argument" });
   const where = whereFlag(c);
+  const window = timeWindow({ since: sinceWhen, until: untilWhen }, where);
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
     let m;
@@ -79,9 +82,10 @@ export async function run(c: CommandContext): Promise<number> {
       throw queryCliError(e);
     }
     if (out.json) {
-      out.data({ ...m, measure, ...pendingField(backlog) });
+      out.data({ ...m, window: windowJson(window), measure, ...pendingField(backlog) });
       return 0;
     }
+    windowNote(out, window);
     if (!m.totals.sessions) {
       out.note(`No sessions from ${bucketLabel(m.since, "day")} to ${bucketLabel(until, "day")}${where ? " matching the query" : ""}`);
       return 0;

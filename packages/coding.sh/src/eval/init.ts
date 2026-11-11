@@ -22,13 +22,14 @@ import type { BlobStore, IndexStore, Session } from "../core/types.ts";
 import { parseCases, formatFromPath, slugify } from "../datasets/dataset.ts";
 import type { ChatProvider } from "../judge/providers.ts";
 import { toPosix } from "../runner/fsutil.ts";
-import type { SnapshotOps } from "../runner/git.ts";
+import { snapshotOps, type SnapshotOps } from "../runner/git.ts";
 import { insideDir } from "./decision.ts";
 import { CANDIDATE_POOL, rankSessions, rejectSummary } from "./candidates.ts";
 import { draftCases, draftTriggers, type DraftedCase } from "./draft.ts";
 import { type SuitePurpose } from "./report.ts";
 import { DEFAULT_TRIALS, SUITE_FILE, SUITES_DIR, type SuiteKind, type SuiteSpec } from "./suite-spec.ts";
 import { draftTaskFromSession, exportTaskDir } from "./task.ts";
+import { referenceTestEdits } from "./test-edits.ts";
 import { validateTask } from "./validate.ts";
 import { sessionMatcher } from "../query/run.ts";
 import type { Query } from "../query/where.ts";
@@ -77,7 +78,8 @@ export interface InitOpts {
   /**
    * Validate each drafted task (eval/validate.ts) before it goes into the suite. The verifier
    * decides what the session's own diff is: the reference when it passes the end state, a near
-   * miss when it fails it. Tasks that pass validation get status "validated".
+   * miss when it fails it. Tasks that pass validation get status "validated". A diff that
+   * changes the verifier's own tests (eval/test-edits.ts) is a near miss either way.
    */
   validate?: { workRoot: string; k?: number; passToPass?: boolean; env?: Record<string, string> };
   // skill
@@ -336,7 +338,13 @@ async function fromSessions(o: InitOpts, deps: InitDeps, name: string, _dir: str
     // verifier must fail, not the reference solution it must pass. With
     // validation, the verifier decides: a diff that passes it is a reference.
     let failed = isFlagged(s) && !!task.referencePatch;
-    if (o.validate && task.referencePatch && task.verifier.command) {
+    // Neither holds for a diff that changes the verifier's own tests: it passes
+    // the verifier whatever the code does, so it is a near miss before any run.
+    const testEdits = task.referencePatch && task.verifier.command && (o.validate || !failed) ? await referenceTestEdits(task, (await deps.blobs.getText(task.referencePatch)) ?? "", await snapshotOps(deps.git)) : [];
+    if (testEdits.length) {
+      failed = true;
+      notes.push(`${d}: the session's diff changes the tests the verifier runs (${[...new Set(testEdits.map((f) => `${f.kind} ${f.path}`))].join(", ")}), so it is kept as a near miss, not the reference; add reference.patch, a fix that leaves the tests alone, then coding.sh eval validate`);
+    } else if (o.validate && task.referencePatch && task.verifier.command) {
       const v = await validateTask({ task, blobs: deps.blobs, workRoot: o.validate.workRoot, k: o.validate.k ?? 1, ...(deps.git ? { git: deps.git } : {}), ...(o.validate.passToPass === false ? { passToPass: false } : {}), ...(o.validate.env ? { env: o.validate.env } : {}) });
       failed = !v.report.ok && v.report.referencePasses.passed === 0 && isFlagged(s);
       if (v.report.ok) {

@@ -290,6 +290,26 @@ that answers with a retryable error (429, 5xx, a network error) is retried with 
 error drops that batch and counts it in `coding_sh_sink_events_total{result="failed"}`. On a team,
 set the forward or a sink once on serve instead of on every laptop.
 
+A sink gets only the events a batch newly stored. A request that is posted again (a client retry
+answered `"inserted":0`) sends nothing to the sinks, and a batch that overlaps stored events sends
+the new ones. This holds for serve and for `coding.sh collector`. A commit that fails after its
+events were written answers 503 and sends nothing; the sinks get those events when the retry
+commits. The store names the ids it inserted through the optional `putEventsReturningIds` (SQLite
+and the memory store have it). With a store that lacks it, serve reads the stored events of the
+sessions a tick touches before the write, once per tick and only while a forward or a sink is set.
+
+The `otlp` sink sends a session's `invoke_agent` span with its `session.end`. An OTLP session keyed
+by a conversation id (Claude Code, Codex, `gen_ai.conversation.id`, Agent Runs) never gets one, so
+serve and `coding.sh collector` also send the span for a session that is still open: once none of
+its events were mirrored for 10 seconds, and every 60 seconds while it stays busy. It has the trace
+and span id the final span has, so the `chat` and `execute_tool` spans sent before it have their
+parent. Each send repeats that span id with newer totals. A backend that keeps every span it
+receives, such as ClickHouse `otel_traces`, then holds several rows for one session: take the latest
+per span id, as the
+[ClickHouse queries](how-to/self-host-team.md#export-to-clickhouse-through-an-opentelemetry-collector)
+do. The serverless handler sends open sessions in the flush after each request, since no timer runs
+between requests. On shutdown serve sends them within the drain window.
+
 ## 2. Native ingest API
 
 The full reference for every route, with examples and errors, is [reference/api.md](reference/api.md).

@@ -1,17 +1,22 @@
 import assert from "node:assert/strict";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { AgentEvent, EventKind, Session } from "../../src/schema/index.ts";
-import type { Adapter, BlobBatch, BlobStore, Config, Sink, SinkAck } from "../../src/core/types.ts";
+import type { Adapter, BlobBatch, BlobStore, Config, OpenSession, Sink, SinkAck } from "../../src/core/types.ts";
 import { defaultConfig } from "../../src/core/config.ts";
-import { backfill, ingest, sinkCursorKey, sinkRetryKey } from "../../src/core/ingest.ts";
+import { backfill, childLinker, ingest, recomputeSession, SINK_BEHIND, SINK_CURRENT, sinkBackfillKey, sinkCursorKey, sinkRetryKey, storeEnrichment } from "../../src/core/ingest.ts";
+import { paths } from "../../src/core/paths.ts";
+import type { RepoResolver } from "../../src/core/repo-state.ts";
 import { acquireLock, isStale, LockBusyError, LockLostError } from "../../src/core/lock.ts";
 import { kickIngest } from "../../src/spool/kick.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { wrapperAdapter } from "../../src/adapters/more/wrapper.ts";
+import { claudeCode } from "../../src/adapters/claude-code.ts";
+import { cliProxyEvent } from "../../src/integrations/gateway/cliproxyapi.ts";
+import { FIXTURES, local, tmpEnv } from "../adapters/_helpers.ts";
 
 const roots: string[] = [];
 after(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true })));
@@ -752,5 +757,336 @@ describe("sessions with events and no row (RT-11)", () => {
     await index.putEvents(threeSessions);
     await index.upsertSession({ id: "a", agent: "fake", startedAt: base, stats: { events: 3, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0 }, flags: [] });
     assert.deepEqual(await index.sessionsWithoutRow!(), [{ sessionId: "bad", agent: "fake" }, { sessionId: "c", agent: "fake" }]);
+  });
+});
+
+/** A sink that also takes refreshed session records (as otlp does), and keeps every row it got in order. */
+class RecordSink extends RecordingSink {
+  opened: OpenSession[][] = [];
+  rows: Session[] = [];
+  override async write(events: AgentEvent[], sessions: Session[]): Promise<SinkAck> {
+    if (this.ack.ok) this.rows.push(...sessions);
+    return super.write(events, sessions);
+  }
+  async writeOpenSessions(open: OpenSession[]): Promise<SinkAck> {
+    if (this.ack.ok) {
+      this.opened.push(open);
+      this.rows.push(...open.map((o) => o.session));
+    }
+    return this.ack;
+  }
+  /** Requests the sink answered. */
+  get calls(): number {
+    return this.batches.length + this.opened.length;
+  }
+}
+
+describe("transcript import sends to the sinks (qa:server-7)", () => {
+  const SID = "11111111-2222-4333-8444-555555555555";
+  const sinkConfig = (name: string, o: Partial<Config["sinks"][number]> = {}): Config["sinks"][number] => ({ kind: "x", name, endpoint: "", mode: "full", ...o });
+
+  /** The Claude Code fixture home: its transcripts, and (with `hooks`) the spool its hooks wrote. */
+  async function claudeHome(hooks: boolean) {
+    const env = tmpEnv();
+    process.env.CLAUDE_CONFIG_DIR = join(FIXTURES, "claude-code", "config");
+    if (hooks) {
+      const dir = join(env.dataHome, "spool", "claude-code");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "2026-11-01.jsonl"), local(readFileSync(join(FIXTURES, "claude-code", "hooks.spool.jsonl"), "utf8")));
+    }
+    const config = defaultConfig(process.env);
+    config.sinks = [sinkConfig("team")];
+    const index = await SqliteIndexStore.open(join(env.root, "idx.db"));
+    const sink = new RecordSink("team", "full");
+    const base = { config, index, blobs: new MemoryBlobStore(), sinks: [sink], env: process.env };
+    return {
+      index,
+      sink,
+      spool: () => ingest({ ...base, adapters: new Map([[claudeCode.id, claudeCode]]) }),
+      transcripts: () => backfill({ ...base, adapters: [claudeCode] }),
+      async close() {
+        await index.close();
+        env.restore();
+      },
+    };
+  }
+
+  /** What the sink holds of a session must be what the store holds: every model call, and its totals on the last row sent. */
+  async function assertSinkHasSession(index: SqliteIndexStore, sink: RecordSink, id: string) {
+    const stored = (await index.getSession(id))!;
+    const calls = (await index.listEvents(id, { kinds: ["llm.call"] })).map((e) => e.id);
+    assert.ok(calls.length > 0);
+    const sent = new Set(sink.events.map((e) => e.id));
+    assert.deepEqual(calls.filter((c) => !sent.has(c)), [], "every stored model call reached the sink");
+    assert.deepEqual(sink.rows.findLast((r) => r.id === id)?.stats.usage, stored.stats.usage, "the last row the sink got has the stored usage");
+  }
+
+  it("a hooked Claude Code session: the events its transcript adds reach the sink, with the session's new totals", async () => {
+    const h = await claudeHome(true);
+    try {
+      const sp = await h.spool();
+      assert.ok(sp.events > 0);
+      const viaSpool = h.sink.events.length;
+      const bf = await h.transcripts();
+      assert.ok(bf.events > 0, "the transcript holds events no hook window had");
+      assert.deepEqual(bf.sinks, [{ name: "team", sent: bf.events, ok: true }]);
+      assert.equal(h.sink.events.length, viaSpool + bf.events, "only what the import stored is sent");
+      const ids = h.sink.events.map((e) => e.id);
+      assert.equal(new Set(ids).size, ids.length, "no event twice");
+      await assertSinkHasSession(h.index, h.sink, SID);
+      assert.ok(h.sink.opened.flat().some((o) => o.session.id === SID), "its record is refreshed: no session.end came with the new events");
+
+      const calls = h.sink.calls;
+      assert.equal((await h.spool()).events, 0);
+      const again = await h.transcripts();
+      assert.deepEqual([again.events, again.sinks], [0, [{ name: "team", sent: 0, ok: true }]]);
+      assert.equal(h.sink.calls, calls, "a second ingest sends nothing");
+    } finally {
+      await h.close();
+    }
+  });
+
+  it("a home with transcripts only sends its sessions", async () => {
+    const h = await claudeHome(false);
+    try {
+      const bf = await h.transcripts();
+      assert.ok(bf.events > 0);
+      assert.equal(h.sink.events.length, bf.events);
+      await assertSinkHasSession(h.index, h.sink, SID);
+      const calls = h.sink.calls;
+      await h.transcripts();
+      assert.equal(h.sink.calls, calls, "a second import sends nothing");
+    } finally {
+      await h.close();
+    }
+  });
+
+  const base = 1_700_000_000_000;
+  const ev = (sessionId: string, kind: EventKind, ts: number, payload: Record<string, unknown> = {}): AgentEvent => ({ id: `t-${sessionId}-${kind}-${ts}`, v: 0, sessionId, ts: base + ts, agent: "hist", kind, cwd: "/work/demo", payload });
+  interface TFile {
+    mtimeMs: number;
+    events: AgentEvent[];
+  }
+  /** A transcript adapter: asks `changed` before each file, then yields its events. `reads` gets each file read. */
+  const historian = (files: Map<string, TFile>, reads: string[]): Adapter => ({
+    ...fakeAdapter,
+    id: "hist",
+    async *backfill(_ctx, o) {
+      for (const [path, f] of files) {
+        if (o?.changed && !(await o.changed({ path, size: f.events.length, mtimeMs: f.mtimeMs }))) continue;
+        reads.push(path);
+        yield* f.events;
+      }
+    },
+  });
+  const A = "/t/a.jsonl";
+  const threeEvents = () => [ev("a", "session.start", 0), ev("a", "user.message", 1000, { text: "secret prompt" }), ev("a", "assistant.message", 2000, { text: "ok" })];
+
+  it("sends only what is new as a file grows, in the sink's batches; a failed sink gets the file once it is back", async () => {
+    const t = setup();
+    let now = 1_000_000;
+    const good = new RecordSink("good", "full");
+    const meta = new RecordSink("meta", "metadata");
+    const down = new RecordSink("down", "full");
+    down.ack = { ok: false, error: "503", retryAfterMs: 60_000 };
+    t.config.sinks = [sinkConfig("good", { batchSize: 2 }), sinkConfig("meta", { mode: "metadata" }), sinkConfig("down")];
+    const files = new Map<string, TFile>([[A, { mtimeMs: base, events: threeEvents() }]]);
+    const reads: string[] = [];
+    const opts = { config: t.config, index: t.index, blobs: t.blobs, env: t.env, adapters: [historian(files, reads)], sinks: [good, meta, down], now: () => now };
+    const cursor = (sink: string) => t.index.getCursor(sinkBackfillKey(sink, "hist", A));
+
+    const r = await backfill(opts);
+    assert.equal(r.events, 3, "a failing sink does not stop the import");
+    assert.deepEqual(r.sinks?.map((s) => [s.name, s.ok, s.sent]), [["good", true, 3], ["meta", true, 3], ["down", false, 0]]);
+    assert.deepEqual(good.batches.map((b) => b.events.length), [2, 1], "batchSize respected");
+    assert.equal(good.batches[0]!.sessions[0]!.title, "secret prompt", "the rows sent are folded from what was stored");
+    assert.deepEqual(good.opened.map((o) => o.map((s) => s.session.id)), [["a"]], "no session.end among them: the record is refreshed");
+    assert.ok(!JSON.stringify([meta.batches, meta.opened]).includes("secret"), "metadata sinks never see content");
+    assert.ok(r.errors.some((e) => e.sink === "down"));
+    assert.equal(await t.index.getCursor(sinkRetryKey("down")), now + 60_000);
+    assert.deepEqual([await cursor("good"), await cursor("down")], [base, SINK_BEHIND]);
+
+    // Nothing changed: nothing is read (the failed sink is backing off) or sent.
+    reads.length = 0;
+    await backfill(opts);
+    assert.deepEqual([reads, good.calls], [[], 3]);
+
+    // The file grows: the healthy sinks get the new event alone.
+    files.get(A)!.events.push(ev("a", "session.end", 3000));
+    files.get(A)!.mtimeMs += 1000;
+    down.ack = { ok: true };
+    const grown = await backfill(opts);
+    assert.equal(grown.events, 1);
+    assert.deepEqual(good.batches.at(-1)!.events.map((e) => e.kind), ["session.end"]);
+    assert.equal(good.opened.length, 1, "the session.end carries the record");
+    assert.equal(down.calls, 0, "still backing off");
+
+    // After the backoff the file is read again for the sink that lacks it, though the index has it all.
+    now += 61_000;
+    reads.length = 0;
+    const caught = await backfill(opts);
+    assert.deepEqual([caught.events, reads], [0, [A]]);
+    assert.deepEqual(down.events.map((e) => e.kind), ["session.start", "user.message", "assistant.message", "session.end"]);
+    assert.equal(good.events.length, 4, "healthy sinks get no duplicates");
+    assert.equal(await cursor("down"), base + 1000);
+    reads.length = 0;
+    await backfill(opts);
+    assert.deepEqual([reads, down.events.length], [[], 4]);
+  });
+
+  it("an import that dies after storing leaves the sink owed, and the next one sends it", async () => {
+    const t = setup();
+    let fail = true;
+    class DiesOnce extends MemoryIndexStore {
+      override async upsertSession(s: Session): Promise<void> {
+        if (fail) throw new Error("killed");
+        return super.upsertSession(s);
+      }
+    }
+    const index = new DiesOnce();
+    const sink = new RecordSink("team", "full");
+    t.config.sinks = [sinkConfig("team")];
+    const opts = { config: t.config, index, blobs: t.blobs, env: t.env, adapters: [historian(new Map([[A, { mtimeMs: base, events: threeEvents() }]]), [])], sinks: [sink] };
+    await assert.rejects(backfill(opts), /killed/);
+    assert.equal((await index.listEvents("a")).length, 3, "stored");
+    assert.equal(sink.calls, 0, "not sent");
+    assert.equal(await index.getCursor(sinkBackfillKey("team", "hist", A)), SINK_BEHIND);
+    assert.ok(!existsSync(paths(t.env).sinkLock), "the lock is released");
+    fail = false;
+    const r = await backfill(opts);
+    assert.equal(r.events, 0, "the store had them");
+    assert.equal(sink.events.length, 3, "the sink gets them all the same");
+    assert.equal(await index.getCursor(sinkBackfillKey("team", "hist", A)), base);
+  });
+
+  it("an adapter that reports no files: the sink gets what each run stores", async () => {
+    const t = setup();
+    const events = threeEvents();
+    const noFiles: Adapter = { ...fakeAdapter, id: "hist", async *backfill() { yield* events; } };
+    const sink = new RecordSink("team", "full");
+    t.config.sinks = [sinkConfig("team")];
+    const opts = { config: t.config, index: t.index, blobs: t.blobs, env: t.env, adapters: [noFiles], sinks: [sink] };
+    await backfill(opts);
+    assert.equal(sink.events.length, 3);
+    assert.equal(await t.index.getCursor(sinkBackfillKey("team", "hist")), SINK_CURRENT);
+    events.push(ev("a", "user.message", 5000, { text: "again" }));
+    await backfill(opts);
+    assert.deepEqual(sink.events.map((e) => e.payload.text).filter(Boolean), ["secret prompt", "ok", "again"]);
+    const calls = sink.calls;
+    await backfill(opts);
+    assert.equal(sink.calls, calls);
+  });
+
+  it("with sinks, one import at a time: a second one reads nothing while the first holds the lock", async () => {
+    const t = setup();
+    const sink = new RecordSink("team", "full");
+    t.config.sinks = [sinkConfig("team")];
+    const reads: string[] = [];
+    const opts = { config: t.config, index: t.index, blobs: t.blobs, env: t.env, adapters: [historian(new Map([[A, { mtimeMs: base, events: threeEvents() }]]), reads)], sinks: [sink] };
+    const held = await acquireLock(paths(t.env).sinkLock);
+    try {
+      // A budgeted read does not wait, and says nothing.
+      const read = await backfill({ ...opts, deadline: Date.now() + 60_000 });
+      assert.deepEqual([read.busy, read.events, read.errors, reads], [true, 0, [], []]);
+      const asked = await backfill({ ...opts, lock: { waitMs: 0 } });
+      assert.equal(asked.busy, true);
+      assert.match(asked.errors[0]!.message, /another import .* is sending to the sinks/);
+      assert.equal((await t.index.listEvents("a")).length, 0, "nothing stored that the other import would not know to send");
+      // Without sinks there is nothing to keep apart.
+      const { sinks: _sinks, ...plain } = opts;
+      assert.equal((await backfill({ ...plain, adapters: [historian(new Map([["/t/b.jsonl", { mtimeMs: base, events: [ev("b", "session.start", 0)] }]]), [])] })).events, 1);
+    } finally {
+      held.release();
+    }
+    const r = await backfill(opts);
+    assert.deepEqual([r.busy, r.events, sink.events.length], [undefined, 3, 3]);
+  });
+});
+
+describe("gateway enrichment stored while a session is folded (qa:proxy-6)", () => {
+  const S = "cf4357a6-33fb-4129-9d01-2e28c54914e0";
+  const T0 = 1_762_000_000_000;
+  const start: AgentEvent = { id: "start", v: 0, sessionId: S, ts: T0, agent: "claude-code", kind: "session.start", source: "transcript", cwd: "/work/demo", payload: {} };
+  // Priced from tokens, as the transcript adapter stores it.
+  const call: AgentEvent = { id: "call-1", v: 0, sessionId: S, ts: T0 + 1000, agent: "claude-code", kind: "llm.call", source: "transcript", model: "claude-sonnet-4-5", payload: { costEstimated: true }, usage: { inputTokens: 120, outputTokens: 30, costUsd: 0.0016 } };
+  /** What `gateway enrich --gateway cliproxyapi` stores for the call: the upstream billed $0.10. */
+  const billed = () => cliProxyEvent(call, { ts: T0 + 900, sessionId: S, model: "claude-sonnet-4-5", costUsd: 0.1 }, "client-session-id");
+  const cost = (s: Session | undefined) => Math.round((s?.stats.usage?.costUsd ?? 0) * 1e6) / 1e6;
+
+  for (const kind of ["sqlite", "memory"] as const) {
+    it(`${kind}: a fold that waits on git while the billed cost is stored writes a row that has it`, async () => {
+      const t = setup();
+      const index = kind === "sqlite" ? await SqliteIndexStore.open(join(t.root, "index.db")) : t.index;
+      try {
+        await index.putEvents([start, call]);
+        // A background re-parse or refold: it has read the session's events and now waits for git.
+        let atGit!: () => void;
+        const waiting = new Promise<void>((r) => (atGit = r));
+        let release!: () => void;
+        const git = new Promise<void>((r) => (release = r));
+        const repo: RepoResolver = {
+          async start() {
+            atGit();
+            await git;
+            return undefined;
+          },
+        };
+        const folding = recomputeSession(index, S, { linker: childLinker(index), repo });
+        await waiting;
+        assert.deepEqual(await storeEnrichment(index, [billed()]), [S]);
+        assert.equal(cost(await index.getSession(S)), 0.1);
+        release();
+        assert.equal(await folding, true);
+        const row = await index.getSession(S);
+        assert.ok(row?.flags.includes("gateway:cliproxyapi"), `the fold kept the tag: ${JSON.stringify(row?.flags)}`);
+        assert.equal(cost(row), 0.1, "the session costs what the upstream billed, not the estimate");
+      } finally {
+        await index.close();
+      }
+    });
+  }
+
+  it("storeEnrichment stores the events and the rows as one transaction, and never takes the ingest lock", async () => {
+    const t = setup();
+    const home = paths(t.env);
+    /** A store whose writes can fail, and that says what ran inside its transaction. */
+    class Store extends MemoryIndexStore {
+      log: string[] = [];
+      failUpsert = false;
+      private open = false;
+      async transaction<T>(fn: () => Promise<T>): Promise<T> {
+        this.open = true;
+        try {
+          return await fn();
+        } finally {
+          this.open = false;
+        }
+      }
+      override async putEvents(batch: AgentEvent[]) {
+        this.log.push(`put ${this.open}`);
+        return super.putEvents(batch);
+      }
+      override async upsertSession(s: Session) {
+        this.log.push(`upsert ${this.open}`);
+        if (this.failUpsert) throw new Error("disk full");
+        return super.upsertSession(s);
+      }
+    }
+    const index = new Store();
+    await index.putEvents([start, call]);
+    index.log = [];
+    // An ingest in another process holds the lock: a background ingest that found it held by this write would exit.
+    const ingesting = await acquireLock(home.ingestLock);
+    try {
+      assert.deepEqual(await storeEnrichment(index, [billed()]), [S]);
+      ingesting.assertHeld();
+    } finally {
+      ingesting.release();
+    }
+    assert.deepEqual(index.log, ["put true", "upsert true"]);
+    assert.equal(cost(await index.getSession(S)), 0.1);
+    assert.deepEqual(await storeEnrichment(index, []), [], "nothing to store");
+    index.failUpsert = true;
+    await assert.rejects(storeEnrichment(index, [billed()]), /disk full/);
   });
 });

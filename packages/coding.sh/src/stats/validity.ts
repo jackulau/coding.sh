@@ -13,6 +13,11 @@
 // and the verdict reads the within-task-and-arm AUROC with a task-cluster
 // bootstrap CI. Run-blind reference rows (difficulty, arm, turns, tokens) come
 // first, so a signal is read against what difficulty and length alone reach.
+//
+// The CI resamples tasks, so it is only as good as the number of tasks behind
+// it: one task gives the same value on every draw, and with a coin-flip score a
+// CI over 2 tasks sits above 0.5 in about 1 table in 5. Below `minTasks` tasks
+// there is no verdict, however many pairs those tasks hold.
 import type { Session } from "../schema/index.ts";
 import { mulberry32 } from "./prng.ts";
 import { quantileSorted } from "./summary.ts";
@@ -35,8 +40,8 @@ export interface SignalValidity {
   /** AUROC over every (failed, passed) pair; NaN when there is no pair. */
   pooled: number;
   withinTask: { auroc: number; pairs: number };
-  /** Same task and arm, with a task-cluster bootstrap CI. */
-  withinTaskArm: { auroc: number; pairs: number; ci: [number, number] };
+  /** Same task and arm; `tasks` counts the tasks that hold such a pair. The task-cluster bootstrap CI is NaN with fewer than 2 of them. */
+  withinTaskArm: { auroc: number; pairs: number; tasks: number; ci: [number, number] };
   verdict: SignalVerdict;
   /** A reference row (difficulty, arm, length), not a trace signal. */
   reference?: true;
@@ -48,6 +53,8 @@ export interface SignalValidityOpts {
   seed?: number;
   /** Fewer within-task-and-arm pairs than this → too-few-pairs (default 20). */
   minPairs?: number;
+  /** Fewer tasks holding such a pair than this → too-few-pairs, whatever the pair count (default 8). */
+  minTasks?: number;
   /** Two-sided CI level (default 0.05 → 95%). */
   alpha?: number;
   /** Score keys read as reference rows rather than signals (default turns, tokens). */
@@ -58,6 +65,8 @@ export interface SignalValidityOpts {
 export const DIFFICULTY_REF = "difficulty(loo)";
 export const ARM_REF = "arm(loo)";
 const LENGTH_REFS: readonly string[] = ["turns", "tokens"];
+/** Default `minTasks`: at 8 tasks a coin-flip score gets adds-run-signal in about 5% of tables (45% at 1, 21% at 2). */
+export const MIN_SIGNAL_TASKS = 8;
 
 /** A flag with a colon is a tag (gateway:vercel, skill:pdf), not a failure symptom. */
 function isFailureFlag(f: string): boolean {
@@ -117,6 +126,7 @@ export function signalValidity(input: readonly SignalRow[], opts: SignalValidity
   const iters = opts.iters ?? 1000;
   const seed = opts.seed ?? 1;
   const minPairs = opts.minPairs ?? 20;
+  const minTasks = opts.minTasks ?? MIN_SIGNAL_TASKS;
   const alpha = opts.alpha ?? 0.05;
   const refs = new Set(opts.references ?? LENGTH_REFS);
   // A run whose task has no other run can't be compared within its task, and has no difficulty.
@@ -191,11 +201,12 @@ export function signalValidity(input: readonly SignalRow[], opts: SignalValidity
     }
     const aw = armW.reduce((s, x) => s + x, 0);
     const ap = armP.reduce((s, x) => s + x, 0);
+    const at = armP.reduce((s, x) => s + (x > 0 ? 1 : 0), 0);
     const within = ap ? aw / ap : NaN;
     const ci = clusterCi(armW, armP, iters, seed, alpha);
     const pooled = pp ? pw / pp : NaN;
-    const verdict: SignalVerdict = ap < minPairs ? "too-few-pairs" : ci[0] > 0.5 ? "adds-run-signal" : pooled >= 0.6 && ci[0] <= 0.5 && ci[1] >= 0.5 ? "tracks-difficulty" : "no-signal";
-    const out: SignalValidity = { signal, n, pooled, withinTask: { auroc: tp ? tw / tp : NaN, pairs: tp }, withinTaskArm: { auroc: within, pairs: ap, ci }, verdict };
+    const verdict: SignalVerdict = ap < minPairs || at < minTasks ? "too-few-pairs" : ci[0] > 0.5 ? "adds-run-signal" : pooled >= 0.6 && ci[0] <= 0.5 && ci[1] >= 0.5 ? "tracks-difficulty" : "no-signal";
+    const out: SignalValidity = { signal, n, pooled, withinTask: { auroc: tp ? tw / tp : NaN, pairs: tp }, withinTaskArm: { auroc: within, pairs: ap, tasks: at, ci }, verdict };
     if (reference) out.reference = true;
     return out;
   });
@@ -219,10 +230,14 @@ function countScored(rows: readonly SignalRow[], key: string): number {
   return n;
 }
 
-/** Percentile CI of Σwins/Σpairs over tasks resampled with replacement (seeded). */
+/**
+ * Percentile CI of Σwins/Σpairs over tasks resampled with replacement (seeded).
+ * NaN with fewer than 2 tasks: one task is the same value on every draw, a
+ * zero-width interval that says nothing about other tasks.
+ */
 function clusterCi(wins: readonly number[], pairs: readonly number[], iters: number, seed: number, alpha: number): [number, number] {
   const use = pairs.flatMap((p, t) => (p > 0 ? [t] : []));
-  if (!use.length) return [NaN, NaN];
+  if (use.length < 2) return [NaN, NaN];
   const rand = mulberry32(seed);
   const m = use.length;
   const draws: number[] = [];
@@ -243,14 +258,20 @@ function clusterCi(wins: readonly number[], pairs: readonly number[], iters: num
 /** The headline under the table: pooled AUROC mostly measures task difficulty. */
 export const SIGNALS_CAPTION = "pooled AUROC mostly measures task difficulty (arXiv 2611.08285: difficulty-only 0.92 vs trajectory 0.62); trust within-task+arm";
 
-/** The table: reference rows first, then signals; `repeated: false` adds the k ≥ 2 hint. */
-export function formatSignalValidity(v: readonly SignalValidity[], o: { repeated?: boolean } = {}): string {
+/**
+ * The table: reference rows first, then signals; `repeated: false` adds the k ≥ 2 hint.
+ * When pairs exist but come from fewer than `minTasks` tasks, a line says why no row has a verdict.
+ */
+export function formatSignalValidity(v: readonly SignalValidity[], o: { repeated?: boolean; minTasks?: number } = {}): string {
   const lines = ["signals  " + SIGNALS_CAPTION];
   if (o.repeated === false) lines.push("  needs k>=2: no task has two runs in the same arm, so within-task+arm AUROC can't be computed (rerun with -k 3)");
   if (!v.length) {
     lines.push("  no task has two runs, so no signal can be checked within a task");
     return lines.join("\n");
   }
+  const minTasks = o.minTasks ?? MIN_SIGNAL_TASKS;
+  const tasks = Math.max(...v.map((r) => r.withinTaskArm.tasks));
+  if (tasks > 0 && tasks < minTasks) lines.push(`  needs ${minTasks} tasks: ${tasks === 1 ? "1 task has" : `${tasks} tasks have`} a failed and a passed run in the same arm, and the 95% CI resamples tasks, so no row gets a verdict (add tasks)`);
   const f = (x: number) => (Number.isFinite(x) ? x.toFixed(2) : "–");
   const head = ["signal", "n", "pooled", "task", "task+arm", "95% CI", "pairs", "verdict"];
   const body = v.map((r) => [

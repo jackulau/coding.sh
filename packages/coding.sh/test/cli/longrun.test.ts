@@ -90,13 +90,79 @@ describe("a 12-hour session", () => {
     assert.match(text, /back after \d+ min idle/);
     assert.match(text, /── \w{3}, Nov 4 ──/, "the UTC day boundary");
     for (const p of m.derails) assert.ok(text.includes(`⚠ ${p.flag}`), `derail ${p.flag} under its phase`);
-    const json = JSON.parse(cli("show", m.sessionId, "--json")) as { phases: { kind: string }[]; days: unknown[]; events: unknown[] };
+    const json = JSON.parse(cli("show", m.sessionId, "--json")) as { phases: { kind: string }[]; days: unknown[]; eventCount: number };
     assert.equal(json.phases.filter((p) => p.kind === "compaction").length, m.compactions);
     assert.equal(json.phases[0]!.kind, "start");
     assert.equal(json.days.length, 1);
     const all = cli("show", m.sessionId, "--all");
-    assert.ok(all.split("\n").length > json.events.length * 0.5, "--all lists every event");
+    assert.ok(all.split("\n").length > json.eventCount * 0.5, "--all lists every event");
     assert.match(all, /── phase 2: /);
+  });
+
+  // What an agent pays to read one answer: the --json documents are digests.
+  test("show --json answers with the phases in under 25 KB: no events, and the phases once", () => {
+    const out = cli("show", m.sessionId, "--json");
+    assert.ok(Buffer.byteLength(out) < 25_000, `show --json is ${Buffer.byteLength(out)} bytes`);
+    const doc = JSON.parse(out) as { session: Session; eventCount: number; events: unknown[]; phases: unknown[]; subagentCount: number; subagents: unknown[] };
+    assert.deepEqual(doc.events, [], "a phased session lists no events, as the text does");
+    assert.ok(doc.eventCount > 200);
+    assert.equal(doc.eventCount, doc.session.stats.events);
+    assert.ok(doc.phases.length > m.compactions, "the phases are at the top level");
+    assert.equal(doc.session.stats.phases, undefined, "and not a second time under session.stats");
+    assert.equal(doc.subagentCount, doc.subagents.length);
+    // show says where each derail starts; the event is one --limit away.
+    assert.ok(doc.session.stats.derails!.every((d) => typeof d.eventId === "string" && typeof d.index === "number"));
+  });
+
+  test("show --json --limit lists events without what the session says for all of them; --all lists every one", () => {
+    const doc = JSON.parse(cli("show", m.sessionId, "--json", "--limit", "3")) as { session: Session; eventCount: number; events: (Partial<AgentEvent> & { kind: string })[] };
+    assert.equal(doc.events.length, 3);
+    assert.deepEqual(doc.events.map((e) => e.kind)[0], "session.start");
+    for (const e of doc.events) {
+      assert.deepEqual({ sessionId: e.sessionId, agent: e.agent, cwd: e.cwd }, { sessionId: undefined, agent: undefined, cwd: undefined });
+      assert.ok(typeof e.id === "string" && typeof e.ts === "number" && e.payload !== undefined, "the rest of the event is as stored");
+    }
+    assert.equal(doc.session.cwd, "/work/longrun");
+    const all = JSON.parse(cli("show", m.sessionId, "--json", "--all")) as { eventCount: number; events: unknown[] };
+    assert.equal(all.events.length, all.eventCount);
+  });
+
+  test("each sessions --json row is under 2 KB: stats without phases, derails without their event", () => {
+    const { sessions } = JSON.parse(cli("sessions", "--json", "--limit", "10")) as { sessions: Session[] };
+    assert.ok(sessions.length >= 2);
+    for (const s of sessions) {
+      const bytes = Buffer.byteLength(JSON.stringify(s));
+      assert.ok(bytes < 2048, `the row of ${s.id} is ${bytes} bytes`);
+      assert.equal(s.stats.phases, undefined);
+    }
+    const main = sessions.find((s) => s.id === m.sessionId)!;
+    assert.equal(main.stats.derails!.length, m.derails.length);
+    for (const d of main.stats.derails!) assert.deepEqual(Object.keys(d).filter((k) => k === "eventId" || k === "index"), [], "a row's derail says what happened and when");
+    assert.ok(main.stats.usage && main.stats.latency && main.stats.events > 200, "every other stat is as stored");
+  });
+
+  test("--fields picks paths of the --json document, from the whole session", () => {
+    const rows = (JSON.parse(cli("sessions", "--json", "--limit", "10", "--fields", "id,stats.usage.costUsd,stats.phases.kind,stats.derails.eventId")) as { sessions: { id: string; stats: { usage?: { costUsd?: number }; phases?: { kind: string }[]; derails?: { eventId: string }[] } }[] }).sessions;
+    const main = rows.find((r) => r.id === m.sessionId)!;
+    assert.deepEqual(Object.keys(main), ["id", "stats"]);
+    assert.deepEqual(Object.keys(main.stats).sort(), ["derails", "phases", "usage"]);
+    assert.deepEqual(Object.keys(main.stats.usage!), ["costUsd"]);
+    assert.equal(main.stats.phases![0]!.kind, "start");
+    assert.deepEqual(Object.keys(main.stats.phases![0]!), ["kind"]);
+    assert.equal(main.stats.derails!.length, m.derails.length);
+    assert.ok(main.stats.derails!.every((d) => typeof d.eventId === "string"));
+
+    const shown = JSON.parse(cli("show", m.sessionId, "--json", "--fields", "session.id,eventCount,phases.kind")) as Record<string, unknown>;
+    assert.deepEqual(Object.keys(shown), ["session", "eventCount", "phases"]);
+    assert.deepEqual(shown.session, { id: m.sessionId });
+
+    const fail = (...args: string[]) => spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { env, encoding: "utf8" });
+    const unknown = fail("sessions", "--json", "--fields", "nope");
+    assert.equal(unknown.status, 2);
+    assert.match(JSON.parse(unknown.stderr.trim().split("\n").at(-1)!).message, /no field "nope"\. Fields: id, agent/);
+    const text = fail("sessions", "--fields", "id");
+    assert.equal(text.status, 2);
+    assert.match(text.stderr, /add --json/);
   });
 
   test("show --follow prints the tail and the derails, and stops once the session has ended", () => {

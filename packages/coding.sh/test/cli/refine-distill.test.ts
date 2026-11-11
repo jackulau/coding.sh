@@ -98,6 +98,51 @@ describe("refine distill", () => {
     assert.deepEqual(seen(), []);
   });
 
+  it("--keep-corpus with --dry-run writes nothing into the directory, and never clears one that is not a corpus", (t) => {
+    if (!posix) return t.skip("the fake claude is a shebang script");
+    const snapshot = (dir: string): Record<string, string> => {
+      const out: Record<string, string> = {};
+      const walk = (d: string) => {
+        for (const e of readdirSync(d, { withFileTypes: true })) e.isDirectory() ? walk(join(d, e.name)) : (out[join(d, e.name).slice(dir.length + 1)] = readFileSync(join(d, e.name), "utf8"));
+      };
+      walk(dir);
+      return out;
+    };
+    // The user's own directory, with a file that happens to be named SCHEMA.md.
+    const d = join(root, "mine");
+    mkdirSync(join(d, ".git"), { recursive: true });
+    mkdirSync(join(d, "src"));
+    writeFileSync(join(d, ".git", "HEAD"), "ref: refs/heads/main\n");
+    writeFileSync(join(d, "NOTES.md"), "x\n");
+    writeFileSync(join(d, "SCHEMA.md"), "x\n");
+    writeFileSync(join(d, "src", "a.js"), "x\n");
+    const before = snapshot(d);
+    for (const flags of [["--dry-run"], ["--yes"]]) {
+      const r = cli(["refine", "distill", "--experiment", "exp_big", "--keep-corpus", d, ...flags]);
+      assert.equal(r.status, 1, r.stdout + r.stderr);
+      assert.match(r.stderr, /is not empty and holds no corpus/);
+      assert.deepEqual(snapshot(d), before, `${flags[0]} left the directory as it was`);
+    }
+    // A new directory is not made by a dry run; the counts are still printed.
+    const fresh = join(root, "fresh-corpus");
+    const dry = cli(["refine", "distill", "--experiment", "exp_small", "--keep-corpus", fresh, "--dry-run"]);
+    assert.equal(dry.status, 0, dry.stdout + dry.stderr);
+    assert.match(dry.stdout, /Corpus: 8 episodes from experiment exp_small/);
+    assert.match(dry.stdout, /Would refuse: the corpus has 8 episodes/);
+    assert.equal(existsSync(fresh), false);
+    // A real run keeps the corpus there; a later dry run of another experiment leaves it byte for byte.
+    assert.equal(cli(["refine", "distill", "--experiment", "exp_small", "--keep-corpus", fresh, "--yes"]).status, 1);
+    const kept = snapshot(fresh);
+    assert.equal(kept["episodes.jsonl"]!.split("\n").filter(Boolean).length, 8);
+    const again = cli(["refine", "distill", "--experiment", "exp_big", "--keep-corpus", fresh, "--dry-run", "--json"]);
+    assert.equal(again.status, 0, again.stdout + again.stderr);
+    const plan = JSON.parse(again.stdout) as { corpus: { episodes: number; dir: string } };
+    assert.deepEqual([plan.corpus.episodes, plan.corpus.dir], [30, fresh]);
+    assert.deepEqual(snapshot(fresh), kept);
+    assert.deepEqual(readdirSync(join(root, "tmp")).filter((n) => n.startsWith("csh-distill-")), [], "the work dir is removed");
+    assert.deepEqual(seen(), []);
+  });
+
   it("refuses a corpus under 20 episodes with a next step", (t) => {
     if (!posix) return t.skip("the fake claude is a shebang script");
     const r = cli(["refine", "distill", "--experiment", "exp_small", "--yes"]);

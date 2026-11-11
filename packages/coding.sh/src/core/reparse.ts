@@ -14,7 +14,9 @@
 // - hook rows (source hook/wrapper, or one the spool's normalize gives):
 //   re-normalized from the spool lines still on disk (gc keeps them
 //   retention.keepSpoolDays, 7 by default), when those lines span the stored
-//   hook rows' whole time range;
+//   hook rows' whole time range and every transcript they read rows from can
+//   still be read (NormalizeContext.missing: a Stop line's model calls come
+//   from the transcript it names, and an eval run's is deleted with its home);
 // - anything else (OTel, SDK batches, gateway companions): kept as is.
 // The two capture paths are then deduped as ingest does (message-copies.ts:
 // live wins), and also by tool call id, which matches a transcript row to a
@@ -320,9 +322,11 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
     const profileFor = profileCache(config, env, error);
     const spoolEvents = new Map<string, AgentEvent[]>();
     const spoolSources = new Set(SPOOL_SOURCES);
+    // Sessions a line read rows for from a transcript that can't be read again: those rows can't be rebuilt.
+    const unreadable = new Set<string>();
     if (spoolAdapters.size && existsSync(spoolDir)) {
       progress({ phase: "spool" });
-      const normalize = spoolNormalizer({ adapters, blobs: blobStore, env, profileFor, error, excluded: () => {} });
+      const normalize = spoolNormalizer({ adapters, blobs: blobStore, env, profileFor, error, excluded: () => {}, missing: (_path, sessionId) => void unreadable.add(sessionId) });
       for (const file of await listSpoolFiles(spoolDir)) {
         for await (const rec of readSpoolFile(spoolDir, file.path, 0, { onError: () => {} })) {
           const a = adapters.get(rec.line.agent) ?? (isWrapperLine(rec.line) ? adapters.get("wrapper") : undefined);
@@ -379,7 +383,7 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
       const span = (rows: AgentEvent[]) => [Math.min(...rows.map((e) => e.ts)), Math.max(...rows.map((e) => e.ts))] as const;
       const replaceBf = bfRows.length > 0 && transcript !== undefined && transcript.length > 0;
       let replaceSpool = false;
-      if (spoolRows.length && spool.length) {
+      if (spoolRows.length && spool.length && !unreadable.has(id)) {
         const [from, to] = span(spoolRows);
         const [sFrom, sTo] = span(spool);
         replaceSpool = sFrom <= from + SPAN_SLACK_MS && sTo >= to - SPAN_SLACK_MS;
@@ -411,7 +415,8 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
       }
       const why: string[] = [];
       if (bfRows.length) why.push("its transcript is gone");
-      if (spoolRows.length) why.push(spool.length ? "the spool lines left don't cover its hook rows" : "its spool lines were removed by gc (retention.keepSpoolDays)");
+      if (spoolRows.length && unreadable.has(id)) why.length || why.push("the transcript its hook lines read is gone, or has grown past their turns");
+      else if (spoolRows.length) why.push(spool.length ? "the spool lines left don't cover its hook rows" : "its spool lines were removed by gc (retention.keepSpoolDays)");
       if (!why.length) why.push("its rows were not made by an adapter (OTel or SDK)");
       const deduped = stored.length - final.length;
       const reason = `${why.join("; ")}${deduped > 0 ? `; ${deduped} duplicate row${deduped === 1 ? "" : "s"} removed` : ""}`;

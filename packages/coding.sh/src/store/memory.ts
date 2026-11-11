@@ -22,6 +22,7 @@ import type {
   WriterLock,
 } from "../core/types.ts";
 import { sha256Hex } from "../core/ids.ts";
+import { memoryEventOf, type MemoryEvent } from "../core/memory-events.ts";
 import { labelToScore, scoreToLabel } from "../scores/labels.ts";
 import {
   assertBlobRef,
@@ -118,13 +119,23 @@ export class MemoryIndexStore implements IndexStore {
   }
 
   async putEvents(batch: AgentEvent[]): Promise<{ inserted: number }> {
-    let inserted = 0;
+    return { inserted: this.insertEvents(batch).length };
+  }
+
+  async putEventsReturningIds(batch: AgentEvent[]): Promise<{ inserted: number; ids: string[] }> {
+    const ids = this.insertEvents(batch);
+    return { inserted: ids.length, ids };
+  }
+
+  /** Stores the events whose id is new; returns those ids. */
+  private insertEvents(batch: AgentEvent[]): string[] {
+    const ids: string[] = [];
     for (const e of batch) {
       if (this.events.has(e.id)) continue;
       this.events.set(e.id, { seq: this.seq++, event: normProject(clone(e)) });
-      inserted++;
+      ids.push(e.id);
     }
-    return { inserted };
+    return ids;
   }
 
   async replaceSessionEvents(sessionId: string, removeIds: string[], add: AgentEvent[]): Promise<{ removed: number; inserted: number }> {
@@ -155,6 +166,17 @@ export class MemoryIndexStore implements IndexStore {
       .sort((a, b) => a.event.ts - b.event.ts || a.seq - b.seq)
       .map((r) => clone(r.event));
     return page(rows, opts.limit, opts.offset);
+  }
+
+  async memoryEvents(sessionIds: readonly string[]): Promise<MemoryEvent[]> {
+    const ids = new Set(sessionIds);
+    return [...this.events.values()]
+      .filter(({ event: e }) => ids.has(e.sessionId))
+      .sort((a, b) => a.event.ts - b.event.ts || a.seq - b.seq)
+      .flatMap(({ event: e }) => {
+        const m = memoryEventOf(e);
+        return m ? [clone(m)] : [];
+      });
   }
 
   async search(text: string, opts: SearchOpts = {}): Promise<SearchHit[]> {

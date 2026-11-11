@@ -6,7 +6,8 @@
 # It writes the same SpoolLine (core/types.ts) hook.mjs writes, without starting
 # node: a node start costs about 30 ms, this script a few ms. Same contract:
 # - Exits 0 and prints nothing, except `{"continue":true}` for --echo-continue
-#   (or CODING_SH_ECHO_CONTINUE=1). stderr goes to /dev/null.
+#   (or CODING_SH_ECHO_CONTINUE=1). stderr goes to /dev/null. Both hold when a
+#   call is handed to hook.mjs and node cannot run it.
 # - No network, no git. Files 0600, dirs 0700.
 # - Anything it does not handle goes to hook.mjs with the same arguments and
 #   stdin: --reply, an eval run (CODING_SH_RUN_ID), a host app (T3 Code), a
@@ -46,18 +47,42 @@ if [ -z "${BASH_VERSION-}${ZSH_VERSION-}${CODING_SH_HOOK_REEXEC-}" ] && [ -x /bi
 fi
 LC_ALL=C
 
+# A closed fd 0 is no payload: open it on /dev/null, so every read below sees
+# an empty one. Left closed, the pipe of a $(…) takes fd 0, bash leaves it open
+# in the child, and $(< /dev/stdin) or $(cat) reads the pipe it writes to and
+# never ends. The test is a dup of fd 0 onto fd 3, undone at once (a `<&0`
+# tests nothing: shells skip a dup onto the same fd); the braces keep dash,
+# which exits on a failed redirection of `:` or `true`, running.
+{ :; } 3<&0 || exec </dev/null
+
 case $0 in */*) d=${0%/*} ;; *) d=. ;; esac
 
-# Hand the whole call to hook.mjs (stdin untouched). exec keeps the pid and
-# ppid hook.mjs records those of the hook process the agent started.
+# node did not run hook.mjs to its end: it is not on the agent's PATH (127),
+# it cannot load hook.mjs, or it died. The event is not captured; the agent
+# still gets exit 0 and the --echo-continue reply (a --reply is hook.mjs's to
+# check and print). The arguments are read here, since a call can be handed on
+# before the script has parsed them.
+no_node() {
+  [ "${CODING_SH_ECHO_CONTINUE-}" = 1 ] && echo=1
+  for a in "$@"; do
+    [ "$a" = --echo-continue ] && echo=1
+  done
+  [ -n "${echo-}" ] && printf '{"continue":true}\n'
+  exit 0
+}
+# Hand the whole call to hook.mjs (stdin untouched) and wait for it. Not an
+# exec: node's exit status must never be the hook's. --sh-pids gives hook.mjs
+# the pid and ppid to record, those of the hook process the agent started.
 to_node() {
-  exec node "$d/hook.mjs" "$@"
+  node "$d/hook.mjs" "--sh-pids=$$,$PPID" "$@" || no_node "$@"
+  exit 0
 }
 # The same with the payload already read (cat dropped its trailing newlines).
 to_node_with() {
-  exec node "$d/hook.mjs" "$@" <<PAYLOAD
+  node "$d/hook.mjs" "--sh-pids=$$,$PPID" "$@" <<PAYLOAD || no_node "$@"
 $raw
 PAYLOAD
+  exit 0
 }
 
 [ $# -ge 2 ] || to_node "$@"

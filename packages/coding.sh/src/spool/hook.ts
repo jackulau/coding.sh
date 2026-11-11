@@ -23,6 +23,10 @@
 //   answer a permission question with "allow": that would pre-empt the user's
 //   own approval. Invalid JSON prints nothing (logged), which agents treat as
 //   "no opinion" on non-permission events.
+// - `--sh-pids=<pid>,<ppid>` comes from hook.sh when it hands a call on: it
+//   waits for this process instead of exec'ing it (so a node that cannot run
+//   never fails the agent), and the line records the pid and ppid of the hook
+//   process the agent started, not this child's.
 // - CODING_SH_DISABLE=1: drain stdin and exit without writing anything.
 // - CODING_SH_HOME overrides the data dir; CODING_SH_RUN_ID is recorded as runId.
 // - A host app's env marker (T3 Code, see ./host.ts) is recorded as host.
@@ -115,12 +119,17 @@ function main(): void {
   const argv = process.argv.slice(2);
   const echo = argv.includes("--echo-continue") || env.CODING_SH_ECHO_CONTINUE === "1";
   let reply: string | undefined;
+  let pid = process.pid;
+  let ppid = process.ppid;
   const pos: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--reply") reply = argv[++i] ?? "";
     else if (a.startsWith("--reply=")) reply = a.slice("--reply=".length);
-    else if (!a.startsWith("--")) pos.push(a);
+    else if (a.startsWith("--sh-pids=")) {
+      const m = /^([1-9]\d{0,9}),([1-9]\d{0,9})$/.exec(a.slice("--sh-pids=".length));
+      if (m) [pid, ppid] = [Number(m[1]), Number(m[2])];
+    } else if (!a.startsWith("--")) pos.push(a);
   }
   const agent = pos[0] || "unknown";
   const event = pos[1] || "unknown";
@@ -145,8 +154,8 @@ function main(): void {
         agent,
         event,
         ts: Date.now(),
-        pid: process.pid,
-        ppid: process.ppid,
+        pid,
+        ppid,
         cwd: typeof payloadCwd === "string" && payloadCwd ? payloadCwd : process.cwd(),
         raw: inlineable ? raw : undefined,
       };

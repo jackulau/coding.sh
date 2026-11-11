@@ -60,6 +60,11 @@ function within(cwd: string | undefined, root: string | undefined): boolean {
   return c === r || c.startsWith(r + "/") || c.startsWith(r + "\\");
 }
 
+/** True when session `s` had started by `ts` and had not ended before it: it can have started a session at `ts`. */
+export function openAt(s: Pick<Session, "startedAt" | "endedAt">, ts: number): boolean {
+  return s.startedAt <= ts && (s.endedAt === undefined || s.endedAt >= ts);
+}
+
 /** The parent link for a new session started from another session's shell call, if one matches. */
 export async function matchSpawnedParent(index: Pick<IndexStore, "listSessions" | "listEvents">, child: Session): Promise<NonNullable<Session["parent"]> | undefined> {
   if (child.parent || child.runId || !AGENT_CLI[child.agent] || !child.cwd) return undefined;
@@ -67,7 +72,7 @@ export async function matchSpawnedParent(index: Pick<IndexStore, "listSessions" 
   const candidates = (await index.listSessions({ since: start - LOOKBACK_MS, until: start + 1, limit: MAX_CANDIDATES })).filter((s) => s.id !== child.id && !s.runId && s.parent?.sessionId !== child.id);
   let best: { link: NonNullable<Session["parent"]>; ts: number } | undefined;
   for (const s of candidates) {
-    if (s.endedAt !== undefined && s.endedAt < start) continue;
+    if (!openAt(s, start)) continue;
     const events = await index.listEvents(s.id, { kinds: ["tool.start", "tool.end"] });
     const ends = new Map<string, number>();
     for (const e of events) if (e.kind === "tool.end" && typeof e.payload.toolUseId === "string") ends.set(e.payload.toolUseId, e.ts);

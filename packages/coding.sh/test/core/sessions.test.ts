@@ -419,6 +419,19 @@ describe("session usage rollup", () => {
     assert.deepEqual(rollupUsage([snap]).usage, { outputTokens: 5, costUsd: 0.5, estimatedCostUsd: 0.5 });
   });
 
+  // qa:proxy-4: `gateway enrich --gateway cliproxyapi` with usage records that have no cost made the estimate read as billed.
+  it("a gateway companion with no cost leaves the call's estimate an estimate; one with a billed cost clears it", () => {
+    const estimated = ev("llm.call", { costEstimated: true }, { usage: { inputTokens: 10, costUsd: 0.25 } });
+    const noCost = ev("span", { gateway: "cliproxyapi", promptTokens: 10 }, { source: "gateway", parentId: estimated.id });
+    assert.deepEqual(rollupUsage([estimated, noCost]).usage, { inputTokens: 10, costUsd: 0.25, estimatedCostUsd: 0.25 });
+    assert.equal(buildSession([estimated, noCost]).stats.usage?.estimatedCostUsd, 0.25);
+    // Billed exactly what was estimated: no correction in usage, and still a bill.
+    const same = ev("span", { gateway: "cliproxyapi", billedCostUsd: 0.25 }, { source: "gateway", parentId: estimated.id });
+    assert.deepEqual(rollupUsage([estimated, same]).usage, { inputTokens: 10, costUsd: 0.25 });
+    const more = ev("span", { gateway: "cliproxyapi", billedCostUsd: 1 }, { source: "gateway", parentId: estimated.id, usage: { costUsd: 0.75 } });
+    assert.deepEqual(buildSession([estimated, more]).stats.usage, { inputTokens: 10, costUsd: 1 });
+  });
+
   it("a gateway companion of a call that was not counted is dropped with it", () => {
     const outer = llm("a", undefined, { inputTokens: 100, costUsd: 0.01 });
     const inner = llm("b", "a", { inputTokens: 100, costUsd: 0.01 });

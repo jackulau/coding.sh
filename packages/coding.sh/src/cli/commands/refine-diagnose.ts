@@ -13,7 +13,7 @@ import { refineDir } from "../../refine/ledger.ts";
 import { readSignals, type Signal, type SignalsDoc } from "../../refine/signals.ts";
 import { catalogHash } from "../../refine/taxonomy.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
-import { list, str, withContext } from "../common.ts";
+import { list, resolveSession, str, withContext } from "../common.ts";
 import { plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { gitRoot, providerDefaultModel } from "./exp-ab.ts";
@@ -57,7 +57,7 @@ export async function refineDiagnose(c: CommandContext): Promise<number> {
   const repoFlag = str(c.flags.repo);
   const repo = repoFlag === "all" ? undefined : repoFlag ? resolve(c.cwd, repoFlag) : root;
   const agents = list(c.flags.agent);
-  const sessionIds = list(c.flags.session);
+  const sessionRefs = list(c.flags.session);
   const maxSessions = positiveInt(c.flags["max-sessions"], "max-sessions") ?? 50;
   const tokenBudget = positiveInt(c.flags["budget-tokens"], "budget-tokens");
   const concurrency = positiveInt(c.flags.concurrency, "concurrency");
@@ -69,6 +69,12 @@ export async function refineDiagnose(c: CommandContext): Promise<number> {
     provider = providerFromSpec(spec, { env: c.env });
   }
   return withContext(c, async (ctx) => {
+    // --session takes what `show` takes: an id, a unique prefix or latest. A miss is an error, never an empty plan.
+    const sessionIds: string[] = [];
+    for (const ref of sessionRefs) {
+      const { id } = await resolveSession(ctx, ref);
+      if (!sessionIds.includes(id)) sessionIds.push(id);
+    }
     const r: DiagnoseRunResult = await diagnoseRun({
       index: ctx.index,
       dir,
@@ -142,16 +148,18 @@ export async function refineSignals(c: CommandContext): Promise<number> {
       out.data(s);
       return 0;
     }
-    out.row("Signal", `${s.id}  ${s.title}`);
-    out.row("Severity", `${s.severity.score} ${s.severity.level} (${s.severity.drivingNature}; ${s.severity.parts.map((p) => `${p.nature} ${p.score}`).join(", ")})`);
-    out.row("Type", s.typeIds.join(", "));
-    out.row("Component", `${s.component.type} ${s.component.name}`);
-    out.row("Sessions", `${s.population.affected} of ${s.population.analyzed} analyzed, ${day(s.firstSeen)} to ${day(s.lastSeen)}`);
-    out.row("Status", s.status === "quiet" ? `quiet (${s.analyzedSinceLastSeen} analyzed since; not evidence a fix worked)` : "open");
+    // The Signal is the answer, so its header goes to stdout with the occurrences.
+    const row = (label: string, value: string) => out.print(`${label.padEnd(16)}${value}`);
+    row("Signal", `${s.id}  ${s.title}`);
+    row("Severity", `${s.severity.score} ${s.severity.level} (${s.severity.drivingNature}; ${s.severity.parts.map((p) => `${p.nature} ${p.score}`).join(", ")})`);
+    row("Type", s.typeIds.join(", "));
+    row("Component", `${s.component.type} ${s.component.name}`);
+    row("Sessions", `${s.population.affected} of ${s.population.analyzed} analyzed, ${day(s.firstSeen)} to ${day(s.lastSeen)}`);
+    row("Status", s.status === "quiet" ? `quiet (${s.analyzedSinceLastSeen} analyzed since; not evidence a fix worked)` : "open");
     if (s.remediation) {
-      out.row("Fix", `${s.remediation.action} (${s.remediation.surface}, ${s.remediation.intent})`);
-      if (s.remediation.sessions.affected.length) out.row("Re-test on", s.remediation.sessions.affected.join(" "));
-      if (s.remediation.sessions.preserved.length) out.row("Must still pass", s.remediation.sessions.preserved.join(" "));
+      row("Fix", `${s.remediation.action} (${s.remediation.surface}, ${s.remediation.intent})`);
+      if (s.remediation.sessions.affected.length) row("Re-test on", s.remediation.sessions.affected.join(" "));
+      if (s.remediation.sessions.preserved.length) row("Must still pass", s.remediation.sessions.preserved.join(" "));
     }
     out.print();
     for (const o of s.occurrences) {

@@ -25,11 +25,12 @@ afterEach(() => {
   t.restore();
 });
 
-async function init(cwd: string, flags: Record<string, string | boolean>): Promise<{ code: number; stderr: string }> {
+async function init(cwd: string, flags: Record<string, string | string[] | boolean>, json = false): Promise<{ code: number; stderr: string; stdout: string }> {
   let stderr = "";
-  const out = new Output({ json: false, env: process.env, stdout: { write: () => true, isTTY: false }, stderr: { write: (s: string) => ((stderr += s), true), isTTY: false }, stdin: { isTTY: false } });
+  let stdout = "";
+  const out = new Output({ json, env: process.env, stdout: { write: (s: string) => ((stdout += s), true), isTTY: false }, stderr: { write: (s: string) => ((stderr += s), true), isTTY: false }, stdin: { isTTY: false } });
   const c: CommandContext = { flags: { agent: ["cursor"], yes: true, mcp: false, ...flags }, positionals: [], rest: [], out, env: process.env, cwd, debug: false, signal: new AbortController().signal };
-  return { code: await run(c), stderr };
+  return { code: await run(c), stderr, stdout };
 }
 
 describe("init with coding.sh hooks already in the other scope", () => {
@@ -58,6 +59,31 @@ describe("init with coding.sh hooks already in the other scope", () => {
     const r = await init(proj, { scope: "user" });
     assert.match(r.stderr, /skipping hooks: already installed in project scope/);
     assert.ok(!existsSync(join(t.home, ".cursor", "hooks.json")));
+  });
+
+  // qa:capture-10: the repo root's .claude/settings.local.json and the user's settings both run in a
+  // session started at the root; init run from packages/app looked only at packages/app/.claude.
+  test("user-scope init in a subdirectory of a repo reports project-scope hooks at the repo root", async () => {
+    const repo = join(t.root, "repo");
+    const sub = join(repo, "packages", "app");
+    mkdirSync(sub, { recursive: true });
+    writeFile(join(repo, ".git", "HEAD"), "ref: refs/heads/main\n");
+    const local = join(repo, ".claude", "settings.local.json");
+    await init(repo, { agent: ["claude-code"], scope: "project", import: false });
+    assert.match(readFileSync(local, "utf8"), /hook\.(?:mjs|sh)/);
+
+    const plan = await init(sub, { agent: ["claude-code"], scope: "user", import: false, "dry-run": true }, true);
+    const agent = (JSON.parse(plan.stdout) as { agents: { id: string; otherScope: unknown; skipped: boolean }[] }).agents[0]!;
+    assert.deepEqual([agent.id, agent.otherScope, agent.skipped], ["claude-code", { scope: "project", files: [local] }, true]);
+
+    const r = await init(sub, { agent: ["claude-code"], scope: "user", import: false });
+    assert.equal(r.code, 0);
+    assert.match(r.stderr, /skipping hooks: already installed in project scope \(.*settings\.local\.json\)/);
+    assert.ok(!existsSync(join(t.home, ".claude", "settings.json")), "user hooks not written");
+    // Outside the repo nothing is in the way.
+    const outside = join(t.root, "elsewhere");
+    mkdirSync(outside, { recursive: true });
+    assert.doesNotMatch((await init(outside, { agent: ["claude-code"], scope: "user", import: false, "dry-run": true })).stderr, /skipping hooks|also hooked in/);
   });
 
   test("a project dir that is the home directory is not a conflict with itself", async () => {

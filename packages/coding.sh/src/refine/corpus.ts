@@ -15,7 +15,7 @@
 // refine:heldout) are never written: the gate that later tests the skill runs
 // on them, and a skill distilled from them would be scored on its own source.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createRedactor, type Redactor } from "../core/redact.ts";
 import type { AgentEvent, IndexStore, RunResult, Session } from "../core/types.ts";
@@ -180,12 +180,37 @@ The full timeline of the episode: every event with its kind, time and text, capp
 The harness files the agent ran with now (CLAUDE.md, AGENTS.md, skills). Read-only.
 `;
 
-/** Clears `dir` when it holds an earlier corpus; refuses any other non-empty directory. */
-function prepareDir(dir: string): void {
-  if (existsSync(dir) && readdirSync(dir).length) {
-    if (!existsSync(join(dir, "SCHEMA.md"))) throw new Error(`${dir} is not empty and holds no corpus: pick an empty or new directory`);
-    rmSync(dir, { recursive: true, force: true });
+/** Everything a corpus holds at its top level. */
+const CORPUS_ENTRIES: readonly string[] = ["episodes", "episodes.jsonl", "prompt", "SCHEMA.md", "tool_calls.jsonl"];
+const SCHEMA_HEADING = SCHEMA_MD.slice(0, SCHEMA_MD.indexOf("\n"));
+
+function startsWithSchemaHeading(file: string): boolean {
+  try {
+    return readFileSync(file, "utf8").startsWith(SCHEMA_HEADING);
+  } catch {
+    return false; // missing, or not a file
   }
+}
+
+/**
+ * The entries of `dir` a corpus written there would replace: none for an empty
+ * or new directory, the corpus entries of an earlier corpus. Throws for any
+ * other non-empty directory. An earlier corpus is a directory that holds
+ * nothing but corpus entries and whose SCHEMA.md opens with the corpus heading:
+ * a file named SCHEMA.md next to other work is not one. Writes nothing.
+ */
+export function corpusDirEntries(dir: string): string[] {
+  const entries = existsSync(dir) ? readdirSync(dir) : [];
+  if (!entries.length) return [];
+  if (!entries.every((e) => CORPUS_ENTRIES.includes(e)) || !startsWithSchemaHeading(join(dir, "SCHEMA.md"))) {
+    throw new Error(`${dir} is not empty and holds no corpus: pick an empty or new directory`);
+  }
+  return entries;
+}
+
+/** Removes an earlier corpus from `dir`, entry by entry; the directory itself and anything else are never removed. */
+function prepareDir(dir: string): void {
+  for (const e of corpusDirEntries(dir)) rmSync(join(dir, e), { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
 }
 

@@ -14,7 +14,7 @@ import { isVerifyToolStart } from "../core/sessions.ts";
 import type { ResourceLogs, ResourceSpans } from "../otel/model.ts";
 import type { SpanEnricher } from "../otel/map.ts";
 import { traceKvKey } from "../otel/map.ts";
-import { createOtlpPipeline, HttpError, type OtlpPipeline, rebuildSessions, RPC, type Signal } from "../otel/receiver.ts";
+import { createOtlpPipeline, HttpError, InsertedEvents, type OtlpPipeline, rebuildSessions, RPC, type Signal } from "../otel/receiver.ts";
 import { WRITER_TICK_EVENTS } from "./config.ts";
 import type { Logger } from "./log.ts";
 import type { ServeMetrics } from "./metrics.ts";
@@ -43,6 +43,12 @@ export interface CommittedEntry {
   entry: QueueEntry;
   /** Events as stored: mapped, scoped to the project, redacted, priced. */
   events: AgentEvent[];
+  /**
+   * The ones of `events` this commit newly stored: what goes on to [[sinks]], so
+   * a retried request is mirrored once. An id repeated inside one tick belongs
+   * to the first request that carries it.
+   */
+  insertedEvents: AgentEvent[];
   /** The rebuilt sessions those events touch. */
   sessions: Session[];
 }
@@ -95,6 +101,8 @@ export class IngestQueue {
   private readonly metadata: boolean;
   /** Sessions written by a failed tick, rebuilt by the next good one. */
   private readonly dirty = new Set<string>();
+  /** Which events a tick newly stored, for onCommit; it also carries the ones a failed tick stored to the retry. */
+  private readonly insertedEvents = new InsertedEvents();
   private queuedEvents = 0;
   private queuedBytes = 0;
   /** Observed write rate, events/second (EWMA). */
@@ -341,6 +349,8 @@ export class IngestQueue {
   private async tick(batch: Pending[]): Promise<void> {
     const started = performance.now();
     const { store, metrics, log } = this.o;
+    // The ids this tick's put inserted, until onCommit has them: a tick that fails after its put owes them.
+    let newIds: Set<string> | undefined;
     try {
       const prepared: { events: AgentEvent[]; rejected: number; message: string }[] = [];
       for (const p of batch) prepared.push(await this.prepare(p.entry));
@@ -366,7 +376,10 @@ export class IngestQueue {
       for (const e of unique) this.dirty.add(e.sessionId);
       const dirtyKv = this.o.dirtyKv !== false && !!store.kvSet;
       if (this.dirty.size && dirtyKv) await store.kvSet!(DIRTY_KEY, JSON.stringify([...this.dirty]));
-      const { inserted } = unique.length ? await store.putEvents(unique) : { inserted: 0 };
+      let inserted = 0;
+      // Only what runs after the commit asks which events were new (a store may have to read for it).
+      if (this.o.onCommit) ({ inserted, ids: newIds } = await this.insertedEvents.put(store, unique));
+      else if (unique.length) ({ inserted } = await store.putEvents(unique));
       // Every touched session is rebuilt once, from all its stored events. Rebuild
       // keys off the batch, not `inserted`, so a retried batch repairs its sessions too.
       const rebuilt = await rebuildSessions(store, this.dirty);
@@ -390,10 +403,12 @@ export class IngestQueue {
       });
       if (this.o.onCommit) {
         const byId = new Map(rebuilt.map((s) => [s.id, s]));
+        const fresh = newIds ?? new Set<string>();
+        newIds = undefined;
         const committed = batch.map((p, i): CommittedEntry => {
           const events = prepared[i]!.events;
           const ids = new Set(events.map((e) => e.sessionId));
-          return { entry: p.entry, events, sessions: [...ids].flatMap((id) => (byId.has(id) ? [byId.get(id)!] : [])) };
+          return { entry: p.entry, events, insertedEvents: this.insertedEvents.take(events, fresh), sessions: [...ids].flatMap((id) => (byId.has(id) ? [byId.get(id)!] : [])) };
         });
         try {
           this.o.onCommit(committed);
@@ -407,6 +422,7 @@ export class IngestQueue {
         this.rate = this.rate === 0 ? r : 0.8 * this.rate + 0.2 * r;
       }
     } catch (err) {
+      if (newIds) this.insertedEvents.owe(newIds);
       metrics?.storeErrors.inc();
       log?.error("writer tick failed", { error: (err as Error).message, requests: batch.length });
       const e = new HttpError(503, RPC.UNAVAILABLE, `store unavailable: ${(err as Error).message}`, { "Retry-After": "2" });

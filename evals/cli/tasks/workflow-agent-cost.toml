@@ -1,0 +1,35 @@
+id = "workflow-agent-cost"
+split = "dev"
+tags = ["workflows", "cost", "state"]
+instruction = """
+A Claude Code workflow run is saved on disk under ${fixtures}/workflow/projects. Load it into coding.sh. Then tell me what the run cost in total, and which of its agents cost the most, with that agent's cost in USD.
+"""
+
+reference = ['''
+coding.sh workflows import ${fixtures}/workflow/projects > /dev/null
+id=$(coding.sh workflows list --json | node -e 'console.log(JSON.parse(require("fs").readFileSync(0)).runs[0].id)')
+coding.sh workflows show "$id" --json | node -e 'const r=JSON.parse(require("fs").readFileSync(0)).run;const a=r.stats.perAgent.sort((x,y)=>y.costUsd-x.costUsd)[0];console.log("The run cost $"+r.costUsd.toFixed(2)+" in total. The most expensive agent was "+a.label+" at $"+a.costUsd.toFixed(2)+".")'
+''']
+
+[[check]]
+kind = "state"
+command = "coding.sh workflows list --json"
+jsonPath = "$.runs"
+where = { name = "review" }
+pick = "agents"
+equals = 6
+
+# From fixtures/make-workflow.mjs: six agents at 0.12, 0.21, 0.34, 0.06, 0.07 and 0.15 USD.
+[[check]]
+kind = "output"
+contains = ["find-leaks"]
+number = 0.34
+tolerance = 0.0001
+
+[[check]]
+kind = "output"
+number = 0.95
+tolerance = 0.0001
+
+[expect]
+minTargetCalls = 3

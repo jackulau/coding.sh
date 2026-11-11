@@ -5,6 +5,7 @@
 //   mined positives   the first prompt of each root session that loaded the skill
 //   mined negatives   the first prompt of each root session that loaded a sibling
 //                     skill and not this one, with expect_skill = that sibling
+//                     (both from sessions of one repo: the file is committed there)
 //   drafted           one model call fills each side to n: implicit positives that
 //                     avoid the skill's name, near misses that share its words, and
 //                     prompts a sibling owns
@@ -19,10 +20,11 @@ import { sha256Hex } from "../core/ids.ts";
 import { createRedactor, type Redactor } from "../core/redact.ts";
 import { isRealPrompt } from "../core/sessions.ts";
 import { SKILL_TAG_PREFIX } from "../core/skills-use.ts";
-import type { IndexStore } from "../core/types.ts";
+import type { IndexStore, Session } from "../core/types.ts";
 import type { JudgeCache } from "../judge/cache.ts";
 import { extractJson } from "../judge/extract.ts";
 import type { ChatProvider } from "../judge/providers.ts";
+import { insideDir } from "./decision.ts";
 import { DraftError } from "./draft.ts";
 import { sameSkill, skillFrontmatter, type SkillSource } from "./trigger.ts";
 
@@ -31,6 +33,8 @@ export const MINE_SINCE_MS = 90 * 86_400_000;
 export const MINE_LIMIT = 20;
 export const MINED_MAX_CHARS = 500;
 const BODY_MAX = 4096;
+/** `repo` value that reads sessions from every repo (`--repo all`). */
+export const ALL_REPOS = "all";
 
 export interface SkillCard {
   name: string;
@@ -59,7 +63,7 @@ export interface DraftPrompt {
 export interface MinedPrompts {
   should: DraftPrompt[];
   shouldNot: DraftPrompt[];
-  /** Root sessions looked at. */
+  /** Root sessions looked at (in `repo`). */
   sessions: number;
 }
 
@@ -75,16 +79,21 @@ function cut(s: string, max = MINED_MAX_CHARS): string {
  * (newest first) that loaded `skill` (a positive) or a sibling but not `skill`
  * (a negative that expects the sibling). Skill use comes from the sessions'
  * `skill:<name>` tags, so only matching sessions' events are read.
+ *
+ * `repo` is required because the draft is a file people commit: only sessions
+ * whose cwd or repo root is that directory or under it are read, so a prompt
+ * typed in another project never lands in this one. "all" reads every repo.
  */
 export async function mineTriggerPrompts(
   index: IndexStore,
-  o: { skill: string; siblings: readonly string[]; since?: number; limit?: number; now?: number; redactor?: Redactor },
+  o: { skill: string; siblings: readonly string[]; repo: string; since?: number; limit?: number; now?: number; redactor?: Redactor },
 ): Promise<MinedPrompts> {
   const now = o.now ?? Date.now();
   const since = now - (o.since ?? MINE_SINCE_MS);
   const limit = o.limit ?? MINE_LIMIT;
   const red = o.redactor ?? createRedactor();
-  const sessions = (await index.listSessions({ parentSessionId: null, runId: null, since })).filter((s) => !s.parent && !s.runId && s.startedAt >= since).sort((a, b) => b.startedAt - a.startedAt || a.id.localeCompare(b.id));
+  const here = (s: Session) => o.repo === ALL_REPOS || insideDir(o.repo, s.cwd) || insideDir(o.repo, s.repo?.root);
+  const sessions = (await index.listSessions({ parentSessionId: null, runId: null, since })).filter((s) => !s.parent && !s.runId && s.startedAt >= since && here(s)).sort((a, b) => b.startedAt - a.startedAt || a.id.localeCompare(b.id));
   const out: MinedPrompts = { should: [], shouldNot: [], sessions: sessions.length };
   const seen = new Set<string>();
   for (const s of sessions) {

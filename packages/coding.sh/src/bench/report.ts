@@ -11,7 +11,7 @@ import { verifySeed, type SeedCheck } from "./commit.ts";
 import { pooledGap, type PooledGap } from "./stats.ts";
 import { contentChanges, historyRuns, otherRuns, protocolBreaks, series, vsSeries, type ContentChange } from "./store.ts";
 import type { AnchorResult, BenchRun, ContenderSummary, FrozenCase, Metric, PairComparison, SeriesPoint } from "./types.ts";
-import { excludesZero, type GridAnalysis } from "./grid.ts";
+import { excludesZero, gridNotes, starred, type GridAnalysis, type Interval } from "./grid.ts";
 import type { Specialization } from "./specialization.ts";
 
 export interface ReportOpts {
@@ -447,7 +447,7 @@ function gridSection(g: GridAnalysis | undefined): string {
         `<tr><td>${esc(m)}</td>${g.harnesses
           .map((h) => {
             const c = cellAt(m, h);
-            const sig = excludesZero(c.dp);
+            const sig = starred(g, c.dp);
             return `<td class="num"><span class="strong">${pct(c.p)}</span><div class="${sig ? (c.dp.est > 0 ? "win" : "neg") : "meta"}">${pp(c.dp.est)} pp${sig ? "*" : ""}</div><div class="meta">${pp(c.dp.lo)} to ${pp(c.dp.hi)}</div></td>`;
           })
           .join("")}</tr>`,
@@ -461,14 +461,17 @@ function gridSection(g: GridAnalysis | undefined): string {
     g.dropped.length === g.models.length ? "" : `${esc(gap.top)} leads ${esc(gap.second)} by ${Number.isFinite(gap.est) ? gap.est.toFixed(1) : "–"} (95% CI ${Number.isFinite(gap.lo) ? gap.lo.toFixed(1) : "–"} to ${Number.isFinite(gap.hi) ? gap.hi.toFixed(1) : "–"})${excludesZero(gap) ? "." : ": not a clear lead."}`,
     ...g.reversals.map((r) => `Rank reversal: ${esc(r.models[0])} leads ${esc(r.models[1])} under ${esc(r.harnesses[0])}, ${esc(r.models[1])} leads under ${esc(r.harnesses[1])}.`),
     ...g.cells.filter((c) => excludesZero(c.dv) && c.dv.est < 0).map((c) => `${esc(c.model)} with ${esc(c.harness)} completes cleanly ${pp(c.dv.est).replace("−", "")} pp less often than its model and harness predict.`),
-    ...g.notes.map(esc),
+    ...gridNotes(g).map(esc),
   ];
+  // Records stored before regret had an interval show the table without that column.
+  const withCi = g.lomo.some((x) => x.regretCi);
+  const range = (e: Interval | undefined) => (e ? `${e.lo.toFixed(1)} to ${e.hi.toFixed(1)}` : "–");
   const lomo = g.lomo.length
-    ? `<h3>Leave one model out</h3><p class="meta">Pick the harness with the best Cross-Model Fit over the other models, then see how far it falls short of the held-out model's best harness (points of joint rate).</p><div class="scroll"><table><thead><tr><th>Held-out model</th><th>Picked</th><th>Its best</th><th class="num">Regret</th></tr></thead><tbody>${g.lomo.map((x) => `<tr><td>${esc(x.model)}</td><td>${esc(x.pick)}</td><td>${esc(x.best)}</td><td class="num">${x.regret.toFixed(1)}</td></tr>`).join("")}</tbody></table></div><p class="meta">Mean regret ${Number.isFinite(g.meanRegret) ? g.meanRegret.toFixed(1) : "–"} points.</p>`
+    ? `<h3>Leave one model out</h3><p class="meta">Pick the harness with the best Cross-Model Fit over the other models, then see how far it falls short of the held-out model's best harness (points of joint rate).${withCi ? " The interval makes the pick again in each bootstrap draw. One that starts at 0 means the shortfall may be noise." : ""}</p><div class="scroll"><table><thead><tr><th>Held-out model</th><th>Picked</th><th>Its best</th><th class="num">Regret</th>${withCi ? `<th class="num">95% CI</th>` : ""}</tr></thead><tbody>${g.lomo.map((x) => `<tr><td>${esc(x.model)}</td><td>${esc(x.pick)}</td><td>${esc(x.best)}</td><td class="num">${x.regret.toFixed(1)}</td>${withCi ? `<td class="num">${range(x.regretCi)}</td>` : ""}</tr>`).join("")}</tbody></table></div><p class="meta">Mean regret ${Number.isFinite(g.meanRegret) ? g.meanRegret.toFixed(1) : "–"} points${g.meanRegretCi ? ` (95% CI ${range(g.meanRegretCi)})` : ""}.</p>`
     : "";
   return `<section id="grid">
   <h2>Model × harness</h2>
-  <p class="sub">The contenders form a grid of ${g.models.length} models and ${g.harnesses.length} harnesses over ${g.cases} paired cases. Each cell shows the pass rate and the interaction: how far it sits from what its model and harness predict on their own. * marks a 95% interval (case bootstrap, ${g.draws} draws) that excludes 0.</p>
+  <p class="sub">The contenders form a grid of ${g.models.length} models and ${g.harnesses.length} harnesses over ${g.cases} paired cases. Each cell shows the pass rate and the interaction: how far it sits from what its model and harness predict on their own. * marks a cell whose own 95% interval (case bootstrap, ${g.draws} draws) excludes 0. The marks are not adjusted for the number of cells.</p>
   <div class="scroll"><table class="grid"><thead>${head}</thead><tbody>${body}</tbody></table></div>
   <h3>Cross-model fit</h3>
   <p class="meta">100 × the geometric mean, over models, of each harness's joint rate (passed and completed cleanly) as a share of that model's best harness. 100 means it is every model's best harness.</p>

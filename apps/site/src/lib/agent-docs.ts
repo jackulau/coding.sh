@@ -81,7 +81,8 @@ automatically with Claude Code, Codex, Cursor, OpenCode and older Gemini CLI ins
 - Everything is under \`~/.coding.sh\` (\`CODING_SH_HOME\` moves it): \`spool/\` raw hook events, \`index.db\` SQLite
   index, \`blobs/\` zstd payloads.
 - \`coding.sh sessions --since 1d --json\` lists sessions, newest first.
-- \`coding.sh show latest --json\` prints one session's timeline, with subagents and latency.
+- \`coding.sh show latest --json\` prints one session's timeline, with subagents and latency. Over 200 events it
+  prints \`events: []\` with \`eventCount\`; add \`--limit N\` or \`--all\` for the events.
 - \`coding.sh ingest --backfill --since 30d\` imports transcripts from before \`init\`.
 - \`coding.sh ui\` opens the local viewer on 127.0.0.1.
 - Agent frameworks (Vercel AI SDK, OpenAI Agents SDK, LangGraph, ...) export OTLP to \`coding.sh collector\` on

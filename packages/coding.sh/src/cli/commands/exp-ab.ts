@@ -929,7 +929,6 @@ async function watchLoop(c: CommandContext, armB: Arm, rerun: (b: Arm) => Promis
   if (!dirs.length) throw new UsageError(`--watch needs B to be files on disk (B is ${armB.label})`, { reason: "invalid_argument" });
   c.interruptExit?.(0);
   const stop = c.drain ?? c.signal;
-  process.stderr.write(`Watching ${dirs.map((w) => relative(c.cwd, w.dir) || ".").join(", ")} for changes to B; Ctrl-C to stop.\n`);
   let current = armB;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let running = false;
@@ -977,6 +976,8 @@ async function watchLoop(c: CommandContext, armB: Arm, rerun: (b: Arm) => Promis
         watchers.push(watch(w.dir, () => schedule()));
       }
     }
+    // Said once the watchers are set: an edit made the moment this line shows is seen.
+    process.stderr.write(`Watching ${dirs.map((w) => relative(c.cwd, w.dir) || ".").join(", ")} for changes to B; Ctrl-C to stop.\n`);
     if (stop.aborted) return finish();
     stop.addEventListener("abort", () => (running ? undefined : finish()), { once: true });
   });

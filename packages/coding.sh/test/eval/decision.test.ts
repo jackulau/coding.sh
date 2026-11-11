@@ -110,6 +110,32 @@ describe("freezePrefix", () => {
     assert.ok(!JSON.stringify(p).includes("abcdefghijklmnopqrstuvwxyz"), "secret redacted");
   });
 
+  it("keeps a subagent session's own events and drops the events of a subagent it started", async () => {
+    // A subagent's own session (<parent>:sub:<agent>): every event carries its subagentId.
+    const own = (e: AgentEvent): AgentEvent => ({ ...e, subagentId: "agent-1" });
+    const ev: AgentEvent[] = sessionEvents("parent:sub:agent-1", { cwd: CWD, startedAt: T0 }, [
+      ["session.start", { parentSessionId: "parent", subagentId: "agent-1" }],
+      ["user.message", { text: "Count the lines in notes.txt." }],
+      ["tool.start", { tool: "Bash", toolUseId: "wc", input: { command: "wc -l notes.txt" } }],
+      ["tool.end", { tool: "Bash", toolUseId: "wc", ok: true, output: "3 notes.txt" }],
+      ["assistant.message", { text: "notes.txt has 3 lines." }],
+    ]).map(own);
+    ev.splice(3, 0, { ...ev[2]!, id: "nested", subagentId: "agent-2", payload: { tool: "Bash", toolUseId: "nested", input: { command: "rm -rf /" } } });
+    const cut = ev.at(-1)!.id;
+    const p = await freezePrefix(ev, cut, new MemBlobs());
+    assert.deepEqual(prefixProblems(p), []);
+    assert.deepEqual(
+      p.messages.map((m) => m.role),
+      ["user", "assistant", "tool"],
+    );
+    assert.equal((p.messages[0] as { text: string }).text, "Count the lines in notes.txt.");
+    assert.ok(!JSON.stringify(p).includes("rm -rf"), "the nested subagent's internals left out");
+    assert.deepEqual(await recordedAction(ev, cut, new MemBlobs()), { type: "text" });
+    // The same holds when the session.start was never captured.
+    const headless = await freezePrefix(ev.slice(1), cut, new MemBlobs());
+    assert.deepEqual(headless.messages, p.messages);
+  });
+
   it("elides the oldest turns over the size cap and says so", async () => {
     const steps: [AgentEvent["kind"], Record<string, unknown>][] = [["user.message", { text: "start" }]];
     for (let i = 0; i < 20; i++) {

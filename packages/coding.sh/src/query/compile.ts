@@ -6,7 +6,7 @@
 // FROM events e WHERE …)`; positive event clauses in one AND group share one
 // subquery (the same event), a negated one becomes NOT IN. The subquery is not
 // correlated, so SQLite runs it once on an event index (events_tool_ok,
-// events_ok, events_kind_ts, events_mcp), not once per session. Event level (`events e` joined to
+// events_ok, events_kind_ts, events_mcp, events_duration, events_error), not once per session. Event level (`events e` joined to
 // `sessions s`): every clause applies to the event or its session. Semantics
 // match src/query/match.ts, the scan fallback.
 import { ftsQuery } from "../store/common.ts";
@@ -56,7 +56,8 @@ class Compiler {
       return `EXISTS (SELECT 1 FROM json_each(${def.multi.from}) j WHERE ${any})`;
     }
     const parts = def.sql.flatMap((expr) => c.values.map((v) => this.valueSql(def, c, v, expr)));
-    const sql = parts.length === 1 ? parts[0]! : `(${parts.join(" OR ")})`;
+    const any = parts.length === 1 ? parts[0]! : `(${parts.join(" OR ")})`;
+    const sql = def.present ? `(${def.present} AND ${any})` : any;
     return negated && !def.notNull ? `coalesce(${sql}, 0)` : sql;
   }
 

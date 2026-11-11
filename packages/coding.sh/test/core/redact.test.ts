@@ -254,13 +254,15 @@ describe("toMetadata", () => {
       cwd: "/x",
       repo: { root: "/x", head: "h" },
       startedAt: 1,
-      stats: { events: 1, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0 },
+      stats: { events: 1, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0, memoryUse: [{ use: "read", path: "/secret/CLAUDE.md", ts: 1 }] },
       flags: ["compaction"],
       parent: { sessionId: "p" },
     };
     const m = sessionToMetadata(s);
     assert.equal(m.title, undefined);
     assert.equal(m.cwd, undefined);
+    assert.equal(m.stats.memoryUse, undefined, "the paths of the memory files it used");
+    assert.equal(s.stats.memoryUse?.length, 1, "input untouched");
     assert.deepEqual(m.repo, { root: "", head: "h" });
     assert.deepEqual(m.flags, ["compaction"]);
     assert.deepEqual(m.parent, { sessionId: "p" });

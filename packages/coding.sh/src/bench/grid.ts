@@ -14,6 +14,13 @@
 //   model's best harness, in points;
 // - 95% intervals from a bootstrap that resamples cases (trials of a case move
 //   together), seeded with mulberry32.
+//
+// Point estimates alone overstate all of this: a 3 × 3 grid of 60 cases whose
+// cells are all truly equal still shows some order flip between two models in
+// 95% of runs, and a mean regret near 5 points. So a rank reversal is listed
+// only when the interval of both gaps excludes 0 (about 1% of those runs), regret
+// carries an interval, and no Δp is starred under STAR_MIN_CASES paired cases.
+// The stars are per cell: with every cell equal, about 5% of cells still get one.
 import { mulberry32 } from "../stats/prng.ts";
 import { quantile } from "../stats/summary.ts";
 import type { Cell } from "./types.ts";
@@ -26,6 +33,11 @@ export interface GridAxes {
 
 export interface Est {
   est: number;
+  lo: number;
+  hi: number;
+}
+
+export interface Interval {
   lo: number;
   hi: number;
 }
@@ -60,17 +72,34 @@ export interface GridAnalysis {
   crossFit: (Est & { harness: string })[];
   /** Top harness minus the runner-up, on the Cross-Model Fit scale. */
   crossFitGap: Est & { top: string; second: string };
-  /** Pairs of models whose order flips between two harnesses: models[0] leads under harnesses[0], models[1] under harnesses[1]. */
+  /** Pairs of models whose order flips between two harnesses: models[0] leads under harnesses[0], models[1] under harnesses[1]. Listed only when the 95% interval of both pass-rate gaps excludes 0. */
   reversals: { models: [string, string]; harnesses: [string, string] }[];
-  /** Leave-one-model-out: the harness picked from the other models, and the held-out model's shortfall in points (0-100). */
-  lomo: { model: string; pick: string; best: string; regret: number }[];
+  /** Leave-one-model-out: the harness picked from the other models, and the held-out model's shortfall in points (0-100), with its 95% interval (see `regretCi` below). */
+  lomo: { model: string; pick: string; best: string; regret: number; regretCi?: Interval }[];
   meanRegret: number;
+  /**
+   * 95% interval of the mean regret, from the same bootstrap draws. Each draw makes every pick again and measures it
+   * against the held-out model's best harness in the full run. Regret cannot be negative, so the bounds stop at 0: an
+   * interval that starts at 0 means the shortfall may be noise. Absent when there is no regret to report.
+   */
+  meanRegretCi?: Interval;
   /** Models left out of the fit numbers because no harness ever passed cleanly with them. */
   dropped: string[];
   notes: string[];
 }
 
 export type GridResult = GridAnalysis | { skipped: string };
+
+/**
+ * Fewer paired cases than this and no Δp is starred: a percentile bootstrap over a handful of cases is too narrow to
+ * call an interaction. The same count routing headroom needs (`specialization`).
+ */
+export const STAR_MIN_CASES = 20;
+
+/** Bounds this close to 0 are 0: the residuals of a 2 × 2 grid are ±the same number, and rounding put a bound of 0 at ±1e-16 in some cells only. */
+const ZERO_TOL = 1e-9;
+
+const fewCasesNote = (n: number) => `${n} paired cases: under ${STAR_MIN_CASES}, so no cell is starred`;
 
 /** Failure modes that are not a clean completion. */
 const INVALID = new Set(["timeout", "crash", "http-error", "error", "empty"]);
@@ -187,6 +216,21 @@ export function gridAnalysis(cells: readonly Cell[], contenders: readonly { name
   const order = harnesses.map((_, hi) => hi).sort((a, b) => cf[b]! - cf[a]! || a - b);
   const top = order[0]!;
   const second = order[1]!;
+  /** The harness with the highest value, the first one on ties. */
+  const firstBest = (value: (hi: number) => number) => {
+    let at = 0;
+    for (let hi = 1; hi < H; hi++) if (value(hi) > value(at)) at = hi;
+    return at;
+  };
+  /** Leave-one-model-out pick: the best Cross-Model Fit over the other models. */
+  const pickFor = (fit: readonly number[], rest: readonly number[]) => {
+    const c = crossFitOf(fit, rest);
+    return firstBest((hi) => c[hi]!);
+  };
+  // Each kept model held out in turn: the pick from the others, and its own best harness.
+  const held = keep.length >= 2 ? keep.map((mi) => ({ mi, rest: keep.filter((x) => x !== mi), bestH: firstBest((hi) => j[mi * H + hi]!) })) : [];
+  const pairs: [number, number][] = [];
+  for (let a = 0; a < M; a++) for (let b = a + 1; b < M; b++) pairs.push([a, b]);
 
   // Case bootstrap.
   const rand = mulberry32(seed);
@@ -194,22 +238,41 @@ export function gridAnalysis(cells: readonly Cell[], contenders: readonly { name
   const bDv: number[][] = Array.from({ length: K }, () => []);
   const bCf: number[][] = Array.from({ length: H }, () => []);
   const bGap: number[] = [];
+  // Pass-rate gap between the two models of a pair, per harness: pairs × harnesses.
+  const bLead: number[][] = Array.from({ length: pairs.length * H }, () => []);
+  const bRegret: number[][] = held.map(() => []);
+  const bMeanRegret: number[] = [];
   const pick = new Array<number>(n);
   for (let d = 0; d < draws; d++) {
     for (let i = 0; i < n; i++) pick[i] = Math.floor(rand() * n);
-    const rp = residuals(means(P, pick));
+    const mp = means(P, pick);
+    const rp = residuals(mp);
     const rv = residuals(means(V, pick));
     for (let g = 0; g < K; g++) {
       bDp[g]!.push(rp[g]!);
       bDv[g]!.push(rv[g]!);
     }
+    for (const [q, [a, b]] of pairs.entries()) for (let hi = 0; hi < H; hi++) bLead[q * H + hi]!.push(mp[a * H + hi]! - mp[b * H + hi]!);
     if (keep.length) {
-      const c = crossFitOf(fitOf(means(J, pick), keep), keep);
+      const jb = means(J, pick);
+      const fb = fitOf(jb, keep);
+      const c = crossFitOf(fb, keep);
       for (let hi = 0; hi < H; hi++) bCf[hi]!.push(c[hi]!);
       bGap.push(c[top]! - c[second]!);
+      // The pick is made again in the draw and measured against the best harness of the full run. Choosing the best
+      // again in each draw as well makes every draw's regret positive, and the interval then excludes 0 on noise.
+      let sum = 0;
+      for (const [x, o] of held.entries()) {
+        const r = 100 * (jb[o.mi * H + o.bestH]! - jb[o.mi * H + pickFor(fb, o.rest)]!);
+        bRegret[x]!.push(r);
+        sum += r;
+      }
+      if (held.length) bMeanRegret.push(sum / held.length);
     }
   }
   const ci = (est: number, xs: number[]): Est => (xs.length ? { est, lo: quantile(xs, 0.025), hi: quantile(xs, 0.975) } : { est, lo: NaN, hi: NaN });
+  // Regret is 0 or more, so its bounds stop at 0; they are also widened to hold the estimate, which a draw's different pick can leave just outside.
+  const regretCi = (est: number, xs: number[]): Interval => ({ lo: Math.max(0, Math.min(quantile(xs, 0.025), est)), hi: Math.max(quantile(xs, 0.975), est) });
 
   const out: GridCell[] = [];
   for (let mi = 0; mi < M; mi++) {
@@ -221,35 +284,34 @@ export function gridAnalysis(cells: readonly Cell[], contenders: readonly { name
     }
   }
 
+  // A reversal needs both gaps beyond noise: which model leads under each harness, +1 or −1, or 0 when the interval holds 0.
   const reversals: GridAnalysis["reversals"] = [];
-  for (let a = 0; a < M; a++) {
-    for (let b = a + 1; b < M; b++) {
-      for (let h1 = 0; h1 < H; h1++) {
-        for (let h2 = h1 + 1; h2 < H; h2++) {
-          const d1 = p[a * H + h1]! - p[b * H + h1]!;
-          const d2 = p[a * H + h2]! - p[b * H + h2]!;
-          if (!(d1 * d2 < 0)) continue;
-          reversals.push(d1 > 0 ? { models: [models[a]!, models[b]!], harnesses: [harnesses[h1]!, harnesses[h2]!] } : { models: [models[b]!, models[a]!], harnesses: [harnesses[h1]!, harnesses[h2]!] });
-        }
+  for (const [q, [a, b]] of pairs.entries()) {
+    const leads = harnesses.map((_, hi) => {
+      const e = ci(p[a * H + hi]! - p[b * H + hi]!, bLead[q * H + hi]!);
+      return excludesZero(e) ? (e.lo > 0 ? 1 : -1) : 0;
+    });
+    for (let h1 = 0; h1 < H; h1++) {
+      for (let h2 = h1 + 1; h2 < H; h2++) {
+        if (!(leads[h1]! * leads[h2]! < 0)) continue;
+        reversals.push(leads[h1]! > 0 ? { models: [models[a]!, models[b]!], harnesses: [harnesses[h1]!, harnesses[h2]!] } : { models: [models[b]!, models[a]!], harnesses: [harnesses[h1]!, harnesses[h2]!] });
       }
     }
   }
 
-  const lomo: GridAnalysis["lomo"] = [];
-  if (keep.length >= 2) {
-    for (const mi of keep) {
-      const rest = keep.filter((x) => x !== mi);
-      const c = crossFitOf(f, rest);
-      const pickH = harnesses.map((_, hi) => hi).sort((x, y) => c[y]! - c[x]! || x - y)[0]!;
-      const bestH = harnesses.map((_, hi) => hi).sort((x, y) => j[mi * H + y]! - j[mi * H + x]! || x - y)[0]!;
-      lomo.push({ model: models[mi]!, pick: harnesses[pickH]!, best: harnesses[bestH]!, regret: 100 * (j[mi * H + bestH]! - j[mi * H + pickH]!) });
-    }
-  }
+  const lomo: GridAnalysis["lomo"] = held.map((o, x) => {
+    const pickH = pickFor(f, o.rest);
+    const row: GridAnalysis["lomo"][number] = { model: models[o.mi]!, pick: harnesses[pickH]!, best: harnesses[o.bestH]!, regret: 100 * (j[o.mi * H + o.bestH]! - j[o.mi * H + pickH]!) };
+    if (bRegret[x]!.length) row.regretCi = regretCi(row.regret, bRegret[x]!);
+    return row;
+  });
+  const meanRegret = lomo.length ? lomo.reduce((a, x) => a + x.regret, 0) / lomo.length : NaN;
   const notes: string[] = [];
+  if (n < STAR_MIN_CASES) notes.push(fewCasesNote(n));
   for (const m of dropped) notes.push(`${m} never passed cleanly with any harness, so it is left out of the fit, Cross-Model Fit and regret`);
   const skippedContenders = contenders.filter((c) => !(c.axes?.model && c.axes?.harness)).map((c) => c.name);
   if (skippedContenders.length) notes.push(`not on the grid (no model or harness): ${skippedContenders.join(", ")}`);
-  return {
+  const analysis: GridAnalysis = {
     models,
     harnesses,
     cases: n,
@@ -261,24 +323,36 @@ export function gridAnalysis(cells: readonly Cell[], contenders: readonly { name
     crossFitGap: { top: harnesses[top]!, second: harnesses[second]!, ...ci(cf[top]! - cf[second]!, bGap) },
     reversals,
     lomo,
-    meanRegret: lomo.length ? lomo.reduce((a, x) => a + x.regret, 0) / lomo.length : NaN,
+    meanRegret,
     dropped,
     notes,
   };
+  if (bMeanRegret.length) analysis.meanRegretCi = regretCi(meanRegret, bMeanRegret);
+  return analysis;
 }
 
-/** The CI excludes 0. */
-export const excludesZero = (e: Est) => e.lo > 0 || e.hi < 0;
+/** The CI excludes 0, by more than rounding. */
+export const excludesZero = (e: Est) => e.lo > ZERO_TOL || e.hi < -ZERO_TOL;
+
+/** A cell's Δp gets a star: its own 95% CI excludes 0, in a grid of STAR_MIN_CASES or more paired cases. Not adjusted for the number of cells. */
+export const starred = (g: Pick<GridAnalysis, "cases">, e: Est) => g.cases >= STAR_MIN_CASES && excludesZero(e);
+
+/** The grid's notes, with the too-few-cases one for a record stored before it existed. */
+export function gridNotes(g: Pick<GridAnalysis, "cases" | "notes">): string[] {
+  const few = fewCasesNote(g.cases);
+  return g.cases < STAR_MIN_CASES && !g.notes.includes(few) ? [few, ...g.notes] : g.notes;
+}
 
 const sgn = (x: number, d = 1) => (Number.isFinite(x) ? `${x >= 0 ? "+" : "-"}${Math.abs(x).toFixed(d)}` : "-");
 const fx = (x: number, d = 1) => (Number.isFinite(x) ? x.toFixed(d) : "-");
+const ciText = (e: Interval) => `95% CI ${fx(e.lo)} to ${fx(e.hi)}`;
 
 /** Text for `bench show`: a heading, the models × harnesses table of Δp, and the fit, reversal and regret lines. */
 export function gridText(g: GridAnalysis): { heading: string; columns: string[]; rows: string[][]; lines: string[] } {
   const cellAt = (m: string, h: string) => g.cells.find((c) => c.model === m && c.harness === h)!;
   const rows = g.models.map((m) => [m, ...g.harnesses.map((h) => {
     const c = cellAt(m, h);
-    return `${(c.p * 100).toFixed(1)}% ${sgn(c.dp.est * 100)}${excludesZero(c.dp) ? "*" : ""}`;
+    return `${(c.p * 100).toFixed(1)}% ${sgn(c.dp.est * 100)}${starred(g, c.dp) ? "*" : ""}`;
   })]);
   const lines = [
     g.dropped.length === g.models.length
@@ -288,10 +362,13 @@ export function gridText(g: GridAnalysis): { heading: string; columns: string[];
   for (const r of g.reversals) lines.push(`Rank reversal: ${r.models[0]} leads ${r.models[1]} under ${r.harnesses[0]}, ${r.models[1]} leads under ${r.harnesses[1]}.`);
   const vBad = g.cells.filter((c) => excludesZero(c.dv) && c.dv.est < 0);
   if (vBad.length) lines.push(`Completes cleanly less often than the margins predict: ${vBad.map((c) => `${c.model} + ${c.harness} ${sgn(c.dv.est * 100)} pp`).join("; ")}.`);
-  if (g.lomo.length) lines.push(`Leave-one-model-out regret: ${g.lomo.map((x) => `${x.model} ${fx(x.regret)} pts (picks ${x.pick}${x.pick === x.best ? ", its best" : `, best ${x.best}`})`).join("; ")}; mean ${fx(g.meanRegret)}.`);
-  lines.push(...g.notes);
+  if (g.lomo.length)
+    lines.push(
+      `Leave-one-model-out regret: ${g.lomo.map((x) => `${x.model} ${fx(x.regret)} pts (${x.regretCi ? `${ciText(x.regretCi)}; ` : ""}picks ${x.pick}${x.pick === x.best ? ", its best" : `, best ${x.best}`})`).join("; ")}; mean ${fx(g.meanRegret)}${g.meanRegretCi ? ` (${ciText(g.meanRegretCi)})` : ""}.`,
+    );
+  lines.push(...gridNotes(g));
   return {
-    heading: `Model × harness grid: ${g.cases} cases; pass rate and interaction Δp in pp (* = 95% CI excludes 0)`,
+    heading: `Model × harness grid: ${g.cases} cases; pass rate and interaction Δp in pp (* = this cell's 95% CI excludes 0, not adjusted for the number of cells)`,
     columns: ["MODEL", ...g.harnesses.map((h) => h.toUpperCase())],
     rows,
     lines,

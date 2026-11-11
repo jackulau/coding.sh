@@ -192,6 +192,160 @@ describe("CLIProxyAPI usage queue", () => {
     assert.equal(await count(), n);
   });
 
+  // One Claude Code session whose claude-sonnet-4-5 calls are priced from tokens, as the transcript adapter stores them.
+  const MINE = "cf4357a6-33fb-4129-9d01-2e28c54914e0";
+  const sonnetCall = (id: string, ts: number, usage: AgentEvent["usage"] = { inputTokens: 120, outputTokens: 30, costUsd: 0.00081 }): AgentEvent => ({ id, v: 0, sessionId: MINE, ts, agent: "claude-code", kind: "llm.call", source: "transcript", model: "claude-sonnet-4-5", payload: { costEstimated: true }, usage });
+  /** A call the API refused, as the coding.sh proxy stores it. */
+  const failedCall = (id: string, ts: number, statusCode: number): AgentEvent => ({ id, v: 0, sessionId: MINE, ts, agent: "claude-code", kind: "llm.call", source: "proxy", model: "claude-sonnet-4-5", payload: { requestModel: "claude-sonnet-4-5", statusCode, ok: false, error: `HTTP ${statusCode}` } });
+  async function sonnetIndex(callTimes: number[]): Promise<MemoryIndexStore> {
+    const index = new MemoryIndexStore();
+    await index.putEvents([{ id: "start", v: 0, sessionId: MINE, ts: callTimes[0]!, agent: "claude-code", kind: "session.start", source: "transcript", payload: {} }, ...callTimes.map((ts, i) => sonnetCall(`call-${i + 1}`, ts))]);
+    await index.upsertSession(buildSession(await index.listEvents(MINE)));
+    return index;
+  }
+  const sonnetRecord = (startMs: number, cost: number, sessionId?: string, extra: Record<string, unknown> = {}) => {
+    const over: Parameters<typeof record>[0] = { startMs, latencyMs: 200, model: "claude-sonnet-4-5", extra: { auth_index: "14899a1658859567", cost_details: { cost, is_byok: false }, ...extra } };
+    if (sessionId) over.sessionId = sessionId;
+    return record(over);
+  };
+
+  it("never joins a record that names a session the store does not have", async () => {
+    const OTHER = "725bb139-30c7-48ee-ade7-2a4338d9a4bf";
+    const index = await sonnetIndex([T0, T0 + 120_000]);
+    stub.queue = [
+      sonnetRecord(T0 - 200, 0.01, MINE),
+      sonnetRecord(T0 + 120_000 - 200, 0.02, MINE),
+      // Another client of the same CLIProxyAPI: same model, 5 s before the first call, a session this store never saw.
+      sonnetRecord(T0 - 5000, 9.99, OTHER, { auth_index: "feedfacefeedface", tokens: { input_tokens: 99999, output_tokens: 30, total_tokens: 100029 } }),
+    ];
+    const sessions = await index.listSessions({ limit: 100 });
+    const r = await enrichFromCliProxyApi({ index, sessions, drain: drainFrom(stub.url), redactor: createRedactor(), now: NOW });
+    assert.deepEqual([r.errors, r.drained, r.joined, r.bySessionId, r.byTimeModel, r.kept], [[], 3, 2, 2, 0, 1]);
+    assert.equal(r.billedUsd, 0.03);
+    const spans = (await index.listEvents(MINE)).filter((e) => e.source === "gateway");
+    assert.deepEqual(
+      spans.map((e) => [e.parentId, e.payload.billedCostUsd, e.payload.promptTokens, e.payload.accountHash, e.payload.linkedBy]).sort(),
+      [
+        ["call-1", 0.01, 120, "14899a1658859567", "client-session-id"],
+        ["call-2", 0.02, 120, "14899a1658859567", "client-session-id"],
+      ],
+      "each call carries its own record",
+    );
+    assert.equal(Math.round(((await index.getSession(MINE))!.stats.usage?.costUsd ?? 0) * 1e6) / 1e6, 0.03, "the session costs what its two records billed");
+    const kept = JSON.parse((await index.kvGet!(PENDING_KEY))!) as { sessionId?: string }[];
+    assert.deepEqual(kept.map((u) => u.sessionId), [OTHER], "the other client's record waits for its own session");
+
+    // A record with no session id still joins the one call with its model at that time.
+    await index.putEvents([sonnetCall("call-3", T0 + 600_000)]);
+    await index.upsertSession(buildSession(await index.listEvents(MINE)));
+    stub.queue = [sonnetRecord(T0 + 600_000 - 200, 0.04)];
+    const anon = await enrichFromCliProxyApi({ index, sessions, drain: drainFrom(stub.url), redactor: createRedactor(), now: NOW });
+    assert.deepEqual([anon.drained, anon.carried, anon.joined, anon.bySessionId, anon.byTimeModel, anon.kept], [1, 1, 1, 0, 1, 1]);
+    const third = (await index.listEvents(MINE)).find((e) => e.source === "gateway" && e.parentId === "call-3")!;
+    assert.deepEqual([third.payload.linkedBy, third.payload.billedCostUsd], ["time-model", 0.04]);
+  });
+
+  it("joins a record that names a session before an older one that goes by time and model", async () => {
+    const index = await sonnetIndex([T0]);
+    stub.queue = [
+      // No session id, and the older request: read first, it would take the only call at that time.
+      sonnetRecord(T0 - 400, 9.99),
+      // The call's own record.
+      sonnetRecord(T0 - 200, 0.01, MINE),
+    ];
+    const r = await enrichFromCliProxyApi({ index, sessions: await index.listSessions({ limit: 100 }), drain: drainFrom(stub.url), now: NOW });
+    assert.deepEqual([r.errors, r.joined, r.bySessionId, r.byTimeModel, r.kept], [[], 1, 1, 0, 1]);
+    const [span] = (await index.listEvents(MINE)).filter((e) => e.source === "gateway");
+    assert.deepEqual([span!.parentId, span!.payload.linkedBy, span!.payload.billedCostUsd], ["call-1", "client-session-id", 0.01]);
+  });
+
+  // A request CLIProxyAPI's upstream refused: no tokens, no cost, the status in `fail`.
+  const refused = (startMs: number, statusCode: number, sessionId?: string) =>
+    sonnetRecord(startMs, 0, sessionId, { latency_ms: 40, failed: true, fail: { status_code: statusCode, body: '{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}' }, tokens: { input_tokens: 0, output_tokens: 0, total_tokens: 0 }, cost_details: undefined, request_id: `req-${statusCode}` });
+  const gatewaySpans = async (index: MemoryIndexStore) =>
+    (await index.listEvents(MINE)).filter((e) => e.source === "gateway").map((e) => [e.parentId, e.payload.requestId, e.payload.failed, e.payload.statusCode, e.payload.promptTokens, e.payload.linkedBy]).sort();
+  const pendingIds = async (index: MemoryIndexStore) => (JSON.parse((await index.kvGet!(PENDING_KEY))!) as { requestId?: string }[]).map((u) => u.requestId);
+
+  it("joins a failed request only to a call that failed, so the records after it keep their own calls", async () => {
+    // The agent retried a 529: its transcript holds the two calls that answered, the queue holds three records.
+    const index = await sonnetIndex([T0, T0 + 120_000]);
+    stub.queue = [refused(T0 - 3000, 529, MINE), sonnetRecord(T0 - 200, 0.01, MINE, { request_id: "req-1" }), sonnetRecord(T0 + 120_000 - 200, 0.02, MINE, { request_id: "req-2" })];
+    const sessions = await index.listSessions({ limit: 100 });
+    const r = await enrichFromCliProxyApi({ index, sessions, drain: drainFrom(stub.url), redactor: createRedactor(), now: NOW });
+    assert.deepEqual([r.errors, r.drained, r.joined, r.bySessionId, r.kept], [[], 3, 2, 2, 1]);
+    const own = [
+      ["call-1", "req-1", undefined, undefined, 120, "client-session-id"],
+      ["call-2", "req-2", undefined, undefined, 120, "client-session-id"],
+    ];
+    assert.deepEqual(await gatewaySpans(index), own, "each call that answered carries its own record");
+    assert.equal(r.billedUsd, 0.03);
+    assert.deepEqual(await pendingIds(index), ["req-529"], "the failed request waits for a call that failed");
+    assert.ok(!(await index.kvGet!(PENDING_KEY))!.includes("overloaded_error"), "the error body is not kept");
+
+    // The failed call is captured (the coding.sh proxy logs it): the kept record joins it, and only it.
+    await index.putEvents([failedCall("call-529", T0 - 2960, 529)]);
+    await index.upsertSession(buildSession(await index.listEvents(MINE)));
+    const second = await enrichFromCliProxyApi({ index, sessions, now: NOW });
+    assert.deepEqual([second.carried, second.joined, second.bySessionId, second.kept], [1, 1, 1, 0]);
+    assert.deepEqual(await gatewaySpans(index), [...own, ["call-529", "req-529", true, 529, undefined, "client-session-id"]]);
+  });
+
+  it("never joins a request that answered to a failed call, or a failed request by time and model to a call that answered", async () => {
+    const index = new MemoryIndexStore();
+    await index.putEvents([failedCall("call-500", T0, 500), sonnetCall("call-ok", T0 + 600_000)]);
+    await index.upsertSession(buildSession(await index.listEvents(MINE)));
+    stub.queue = [
+      // It answered, and the only call near it failed.
+      sonnetRecord(T0 - 200, 0.01, MINE, { request_id: "req-1" }),
+      // No session id, refused, and the only call with its model at that time answered.
+      refused(T0 + 600_000 - 200, 529),
+    ];
+    const sessions = await index.listSessions({ limit: 100 });
+    const r = await enrichFromCliProxyApi({ index, sessions, drain: drainFrom(stub.url), now: NOW });
+    assert.deepEqual([r.errors, r.drained, r.joined, r.kept], [[], 2, 0, 2]);
+    assert.deepEqual(await gatewaySpans(index), []);
+
+    // Their own calls arrive: each record joins the call with its outcome (a 529 goes to the 529, not the nearer 500).
+    await index.putEvents([sonnetCall("call-1", T0 + 100), failedCall("call-500b", T0 + 600_000 - 100, 500), failedCall("call-529", T0 + 600_000 + 4000, 529)]);
+    await index.upsertSession(buildSession(await index.listEvents(MINE)));
+    const second = await enrichFromCliProxyApi({ index, sessions, now: NOW });
+    assert.deepEqual([second.joined, second.bySessionId, second.byTimeModel, second.kept], [2, 1, 1, 0]);
+    assert.deepEqual(await gatewaySpans(index), [
+      ["call-1", "req-1", undefined, undefined, 120, "client-session-id"],
+      ["call-529", "req-529", true, 529, undefined, "time-model"],
+    ]);
+  });
+
+  it("gives a record the call that reports its token counts, ahead of a nearer one", async () => {
+    // Two requests at once (a subagent beside its parent): both calls fall inside both requests.
+    const index = await sonnetIndex([T0]);
+    const big = { inputTokens: 100, cacheReadTokens: 800, outputTokens: 200 };
+    await index.putEvents([sonnetCall("call-2", T0 + 50, big)]);
+    await index.upsertSession(buildSession(await index.listEvents(MINE)));
+    // CLIProxyAPI counts the cached part inside input_tokens; the transcript counts it apart.
+    const bigTokens = { input_tokens: 900, output_tokens: 200, cached_tokens: 800, total_tokens: 1100 };
+    stub.queue = [
+      // The older request is call-2's: by time alone it would take call-1, and leave call-2 to the other record.
+      { ...sonnetRecord(T0 - 2000, 0.05, MINE, { request_id: "req-2", tokens: bigTokens }), latency_ms: 2100 },
+      { ...sonnetRecord(T0 - 1900, 0.01, MINE, { request_id: "req-1" }), latency_ms: 2000 },
+    ];
+    const sessions = await index.listSessions({ limit: 100 });
+    const r = await enrichFromCliProxyApi({ index, sessions, drain: drainFrom(stub.url), now: NOW });
+    assert.deepEqual([r.errors, r.joined, r.bySessionId, r.kept], [[], 2, 2, 0]);
+    assert.deepEqual(await gatewaySpans(index), [
+      ["call-1", "req-1", undefined, undefined, 120, "client-session-id"],
+      ["call-2", "req-2", undefined, undefined, 900, "client-session-id"],
+    ]);
+
+    // No session id and two free calls with the model within 30 s: the one with the record's token counts.
+    await index.putEvents([sonnetCall("call-3", T0 + 600_000), sonnetCall("call-4", T0 + 601_000, big)]);
+    await index.upsertSession(buildSession(await index.listEvents(MINE)));
+    stub.queue = [sonnetRecord(T0 + 600_000 - 200, 0.05, undefined, { request_id: "req-4", tokens: bigTokens })];
+    const anon = await enrichFromCliProxyApi({ index, sessions, drain: drainFrom(stub.url), now: NOW });
+    assert.deepEqual([anon.joined, anon.byTimeModel, anon.kept], [1, 1, 0]);
+    assert.deepEqual((await gatewaySpans(index)).at(-1), ["call-4", "req-4", undefined, undefined, 900, "time-model"]);
+  });
+
   it("keeps popped records until their session is captured, redacted", async () => {
     const index = new MemoryIndexStore();
     const secret = ["sk-ant-api03-", "B".repeat(80), "BB"].join("");

@@ -149,7 +149,7 @@ export function fitRasch(y: Outcomes, o: { l2?: number; maxIter?: number; tol?: 
 export interface HeadroomStats {
   /** Mean over trial indexes of the share of cases some contender passed. */
   oracle: number;
-  /** Mean over trial indexes of the best single contender's pass rate in that trial. */
+  /** The best single contender's pass rate over every trial: `rates[bestIndex]`. */
   best: number;
   /** oracle − best. */
   gap: number;
@@ -176,26 +176,23 @@ export function headroomStats(y: Outcomes): HeadroomStats {
     rates[c] = n && trials ? pass / (n * trials) : 0;
   }
   let oracle = 0;
-  let best = 0;
   for (let t = 0; t < trials; t++) {
     let any = 0;
-    const per = new Array<number>(k).fill(0);
     for (let i = 0; i < n; i++) {
       let hit = 0;
-      for (let c = 0; c < k; c++) {
-        const v = y[i]![c]![t]!;
-        per[c] = per[c]! + v;
-        if (v) hit = 1;
-      }
+      for (let c = 0; c < k; c++) if (y[i]![c]![t]!) hit = 1;
       any += hit;
     }
     oracle += any / n;
-    best += Math.max(...per) / n;
   }
   oracle = trials ? oracle / trials : NaN;
-  best = trials ? best / trials : NaN;
   let bestIndex = 0;
   for (let c = 1; c < k; c++) if (rates[c]! > rates[bestIndex]! + EPS) bestIndex = c;
+  // One contender for the whole run, not whichever led each trial: the best of each trial
+  // averages above every contender's own rate once the lead changes hands, and is not what
+  // "running the best one everywhere" gets. Simulated tables go through here too, so the
+  // reference is on the same definition.
+  const best = trials ? rates[bestIndex]! : NaN;
   let splits = 0;
   let upsets = 0;
   for (let a = 0; a < k; a++) {
@@ -234,7 +231,7 @@ export interface Specialization {
   seed: number;
   /** The best single contender over the whole run and its pass rate. */
   best: { contender: string; rate: number };
-  /** Any-contender pass rate and the best single contender's, both means over trial indexes. */
+  /** Any-contender pass rate (mean over trial indexes of the share of cases some contender passed) and the best single contender's pass rate over every trial, equal to `best.rate`. */
   oracle: number;
   bestSingle: number;
   /** oracle − bestSingle. */

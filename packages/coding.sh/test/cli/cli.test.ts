@@ -1246,8 +1246,11 @@ describe("doctor on a dogfood machine", () => {
     mkdirSync(other);
     hook(other);
     const r = run(h.home, ["doctor", "--agent", "claude-code"]);
-    assert.match(r.stderr, /^✓ Claude Code\s+v2\.1\.319, events arriving, hook not in user config, last event /m);
-    assert.doesNotMatch(r.stderr, /Capture the agents without hooks/);
+    // Events alone are not capture (EZ-2): the row says they arrive, stays a warning and names the fix.
+    assert.match(r.stderr, /^! Claude Code\s+v2\.1\.319, events arriving, hook not in user config, last event /m);
+    assert.doesNotMatch(r.stderr, /not hooked/);
+    assert.match(r.stderr, /Capture the agents without hooks:\n\s+coding\.sh init --agent claude-code/);
+    assert.equal(r.stdout, "1 agent not capturing\n");
   });
 
   it("a stale hook bin gets `update --refresh-bin`, not init, and the next ingest refreshes it", () => {

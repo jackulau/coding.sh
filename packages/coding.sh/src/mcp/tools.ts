@@ -8,7 +8,7 @@ import type { Session } from "../core/types.ts";
 import { failureFlags } from "../core/sessions.ts";
 import { createRedactor } from "../core/redact.ts";
 import { loadReplay, snapshotBaseline, type Replay } from "../core/replay.ts";
-import { buildRunTree, buildSessionTree, worstFirst, worstNode, type Tree, type TreeNode } from "../core/tree.ts";
+import { buildRunTree, buildSessionTree, pageTree, TREE_PAGE_NODES, worstFirst, worstNode, type Tree, type TreeNode } from "../core/tree.ts";
 import { parseSince } from "../cli/args.ts";
 import { version } from "../cli/meta.ts";
 import { noSessionsHint } from "../cli/first-session.ts";
@@ -60,7 +60,7 @@ export interface ToolCtx {
 // turn, and the schema already carries defaults and bounds (LIMIT's default and maximum).
 const AGENT = { type: "string", description: "Only this agent, e.g. claude-code, codex, cursor, opencode, t3code." };
 const REPO = { type: "string", description: "Only sessions under this path, or in repos with this folder name." };
-const SINCE = (d: string) => ({ type: "string", description: `Window start: 30m, 12h, 7d, 2w or an ISO date. Default ${d}.` });
+const SINCE = (d: string) => ({ type: "string", description: `Window start: 30m, 12h, 7d, today or a local date. Default ${d}.` });
 const UNTIL = { type: "string", description: "Window end. Default now." };
 const LIMIT = (d: number, max: number) => ({ type: "integer", minimum: 1, maximum: max, default: d, description: "Max rows." });
 const CURSOR = { type: "string", description: "nextCursor from the last call." };
@@ -101,16 +101,18 @@ const DIGEST_OUT = out(
 );
 const NODE_OUT: Obj = out({ type: S, sessionId: S, children: arr({ $ref: "#/$defs/node" }) });
 const TREE_NODE_OUT: Obj = out(
-  { sessionId: S, role: S, agent: S, model: S, title: S, depth: I, costUsd: N, inputTokens: I, outputTokens: I, durationMs: N, toolCalls: I, toolErrors: I, flags: arr(S), children: arr({ $ref: "#/$defs/treeNode" }) },
+  { sessionId: S, parentSessionId: S, role: S, agent: S, model: S, title: S, depth: I, costUsd: N, inputTokens: I, outputTokens: I, durationMs: N, toolCalls: I, toolErrors: I, flags: arr(S), children: arr({ $ref: "#/$defs/treeNode" }) },
   ["sessionId", "depth", "children"],
 );
 
-/** One session_tree node: the session's own numbers plus its subagents. */
-function treeNodeJson(n: TreeNode): Obj {
+/** One session_tree node: the session's own numbers plus its subagents. `top`: a page's top level, where a subagent names its parent (it was on an earlier page). */
+function treeNodeJson(n: TreeNode, top = false): Obj {
   const s = n.session;
   const u = s.stats.usage;
+  const head: Obj = { sessionId: s.id };
+  if (top && n.depth > 0 && s.parent?.sessionId) head.parentSessionId = s.parent.sessionId;
   return {
-    sessionId: s.id,
+    ...head,
     role: n.depth === 0 ? "root" : (s.parent?.type ?? "subagent"),
     agent: s.agent,
     ...(s.model ? { model: s.model } : {}),
@@ -123,7 +125,7 @@ function treeNodeJson(n: TreeNode): Obj {
     toolCalls: s.stats.toolCalls,
     toolErrors: s.stats.toolErrors,
     flags: worstFirst(s.flags),
-    children: n.children.map(treeNodeJson),
+    children: n.children.map((c) => treeNodeJson(c)),
   };
 }
 
@@ -171,7 +173,7 @@ function when(a: Obj, k: string, now: number, dflt?: string): number | undefined
   try {
     return parseSince(v, now);
   } catch {
-    throw new ToolError(`Invalid ${k} ${JSON.stringify(v)}: use a duration like 30m, 12h, 7d, 2w or an ISO date like 2026-01-31.`);
+    throw new ToolError(`Invalid ${k} ${JSON.stringify(v)}: use a duration like 30m, 12h, 7d, 2w, today, yesterday or a date like 2026-01-31 (local time).`);
   }
 }
 
@@ -649,8 +651,8 @@ export function buildTools(): ToolDef<ToolCtx>[] {
       name: "session_tree",
       title: "Whole multi-agent run as a tree",
       description:
-        "A whole multi-agent run as one tree: from any session, its top-level agent and every subagent; or with run:true a fan-out sharing a run id. Each node has model, cost, tokens, duration and flags. Also rolled-up totals, the worst flag, and worst (the node to fix first).",
-      inputSchema: input({ sessionId: SESSION_ID, run: { type: "boolean", default: false, description: "Read sessionId as a run id (CODING_SH_RUN_ID) instead of a session." } }, ["sessionId"]),
+        "A whole multi-agent run as one tree: from any session, its top-level agent and every subagent; or with run:true a fan-out sharing a run id. Each node has model, cost, tokens, duration and flags. Paged; totals, the worst flag and worst (the node to fix first) cover the whole tree.",
+      inputSchema: input({ sessionId: SESSION_ID, run: { type: "boolean", default: false, description: "Read sessionId as a run id (CODING_SH_RUN_ID) instead of a session." }, limit: LIMIT(TREE_PAGE_NODES, 200), cursor: CURSOR }, ["sessionId"]),
       outputSchema: {
         ...out(
           {
@@ -658,6 +660,8 @@ export function buildTools(): ToolDef<ToolCtx>[] {
             totals: out({ sessions: I, costUsd: N, inputTokens: I, outputTokens: I, toolCalls: I, toolErrors: I, filesChanged: I, durationMs: N, flags: arr(S) }, ["sessions"]),
             worst: out({ sessionId: S, role: S, flags: arr(S) }),
             tree: arr({ $ref: "#/$defs/treeNode" }),
+            nextCursor: S,
+            truncated: B,
           },
           ["totals", "tree"],
         ),
@@ -678,7 +682,9 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         }
         const worst = worstNode(tree.roots);
         const t = tree.totals;
-        return {
+        // A page of nodes; a subagent whose parent was on an earlier page is at the top, with parentSessionId.
+        const page = pageTree(tree.roots, cursorArg(a), numArg(a, "limit", TREE_PAGE_NODES));
+        const doc: Obj = {
           ...(tree.runId ? { runId: tree.runId } : {}),
           totals: {
             sessions: t.sessions,
@@ -693,8 +699,10 @@ export function buildTools(): ToolDef<ToolCtx>[] {
             flags: t.flags,
           },
           ...(worst ? { worst: { sessionId: worst.session.id, role: worst.depth === 0 ? "root" : (worst.session.parent?.type ?? "subagent"), flags: worstFirst(worst.session.flags) } } : {}),
-          tree: tree.roots.map(treeNodeJson),
+          tree: page.roots.map((n) => treeNodeJson(n, true)),
         };
+        if (page.next !== undefined) Object.assign(doc, { nextCursor: String(page.next), truncated: true });
+        return doc;
       },
     },
     {

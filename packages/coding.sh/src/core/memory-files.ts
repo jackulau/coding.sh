@@ -2,16 +2,20 @@
 // and instruction files on disk (read-only): the agents' user dirs (Claude
 // auto-memory, ~/.claude, ~/.codex, ~/.agents, ~/.gemini) and the directories
 // the sessions ran in, their parents up to the home, and nested CLAUDE.md or
-// AGENTS.md a few levels below. Then auditMemory over the sessions' events.
+// AGENTS.md a few levels below. Then auditMemory over what the sessions' events
+// say: from the session rows (stats.memoryUse) when every stored session was
+// folded by this build, else from the events themselves.
 import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentId } from "../schema/index.ts";
 import type { IndexStore } from "./types.ts";
+import { REFOLD_CURSOR } from "./ingest.ts";
+import { foldStamp } from "./sessions.ts";
 import { auditMemory, homeKey, isScoped, memoryKind, skillListingBytes, type MemoryAudit, type MemoryFileInfo, type MemorySession } from "./memory-audit.ts";
+import { MEMORY_EVENT_KINDS, memoryEventOf, type MemoryEvent } from "./memory-events.ts";
 
-/** Event kinds the audit reads. */
-export const MEMORY_EVENT_KINDS = ["tool.start", "notification", "file.change"];
+export { MEMORY_EVENT_KINDS };
 
 const CONTEXT_NAMES = ["CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", "AGENTS.override.md", "GEMINI.md", ".claude/CLAUDE.md"];
 const SKIP_DIRS = new Set(["node_modules", "dist", "build", "target", "vendor", "out", "coverage", "__pycache__"]);
@@ -172,6 +176,33 @@ export interface MemoryAuditOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+/**
+ * What the audit reads of each session's events (core/memory-events.ts), by
+ * session id: one narrow read when the store has it (IndexStore.memoryEvents),
+ * else each session's events of the three kinds, narrowed here.
+ */
+export async function memoryEventsOf(index: IndexStore, sessionIds: readonly string[]): Promise<Map<string, MemoryEvent[]>> {
+  const by = new Map<string, MemoryEvent[]>(sessionIds.map((id) => [id, []]));
+  if (index.memoryEvents) {
+    for (const e of await index.memoryEvents(sessionIds)) by.get(e.sessionId)?.push(e);
+    return by;
+  }
+  for (const [id, list] of by) {
+    for (const e of await index.listEvents(id, { kinds: MEMORY_EVENT_KINDS })) {
+      const m = memoryEventOf(e);
+      if (m) list.push(m);
+    }
+  }
+  return by;
+}
+
+/**
+ * Whether every session row in the store carries this build's stats.memoryUse: the refold cursor
+ * (core/reparse.ts) holds this build's fold stamp once all were folded by it. Until then, or in a
+ * store nothing keeps that cursor for, the audit reads the events.
+ */
+export const memoryUseFolded = async (index: IndexStore): Promise<boolean> => (await index.getCursor(REFOLD_CURSOR)) === foldStamp();
+
 /** The harness audit over a store: sessions since `since` (subagents folded into their root), files on disk. */
 export async function memoryAudit(index: IndexStore, o: MemoryAuditOptions = {}): Promise<MemoryAudit & { since?: number; agent?: string }> {
   const dirs = memoryDirs(o.env);
@@ -187,11 +218,13 @@ export async function memoryAudit(index: IndexStore, o: MemoryAuditOptions = {})
     return cur;
   };
   // A subagent counts as its root session but keeps its own directory (a worktree, say) and events.
+  const events = (await memoryUseFolded(index)) ? undefined : await memoryEventsOf(index, all.map((s) => s.id));
   const list: MemorySession[] = [];
   for (const s of all) {
     const root = rootOf(s.id);
-    const events = await index.listEvents(s.id, { kinds: MEMORY_EVENT_KINDS });
-    list.push({ id: s.id, agent: s.agent, startedAt: s.startedAt, events, ...(root !== s.id ? { rootId: root } : {}), ...(s.cwd ? { cwd: s.cwd } : {}), ...(s.repo?.root ? { repoRoot: s.repo.root } : {}) });
+    const m: MemorySession = { id: s.id, agent: s.agent, startedAt: s.startedAt, events: events?.get(s.id) ?? [], ...(root !== s.id ? { rootId: root } : {}), ...(s.cwd ? { cwd: s.cwd } : {}), ...(s.repo?.root ? { repoRoot: s.repo.root } : {}) };
+    if (!events) m.uses = s.stats.memoryUse ?? [];
+    list.push(m);
   }
   const cwds = [...new Set(list.map((s) => s.cwd).filter((c): c is string => !!c))].map((c) => localPath(homeKey(c, dirs.home), dirs.home));
   const keep = (f: MemoryFileInfo) => !o.agent || forAgent(f.key, o.agent);

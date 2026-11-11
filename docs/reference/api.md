@@ -526,8 +526,8 @@ curl -sS "$CSH/api/sessions/team%2Fchat-1" -H "Authorization: Bearer $READ_KEY"
 ```
 
 The fields below are grouped by topic: cost, parent and model, model switches, proxy calls, API
-errors, waste and cache breaks, launch and forks, hooks and redaction, unapproved actions,
-and tool errors and fold errors.
+errors, waste and cache breaks, launch and forks, hooks and redaction, memory and instruction files,
+unapproved actions, and tool errors and fold errors.
 
 **Cost.**
 
@@ -552,8 +552,9 @@ fast, long-context or US-only rates (`batch+long-context` for both).
 | `stats.models` | Model calls per model, subagent calls included (`{"claude-sonnet-5-5": 3, "claude-sonnet-5": 2}`). Absent when one model or none made them |
 | `stats.modelSwitch` | The session's first model switch, described below |
 
-A `"harness"` child's `session.start` payload also carries `parentSessionId`, `parentAgent`,
-`subagentType: "harness"`, and `parentToolCallId` when Codex started it.
+A harness link named by the child's hook (`spawnedBy`) has no `eventId`. It is set only when that
+session is in the store and was open when the child started, and the child's `session.start`
+payload does not carry it.
 
 **Model switches.** `stats.modelSwitch` (`from`, `to`, `at`, `trigger`) is the last call on `from`,
 then the first call on `to` at `at`, in the same scope (the main thread, or one subagent). A change
@@ -605,6 +606,7 @@ response has them, and `parentSessionId` through `upstreamAuth` when the client 
 | `forkedFromSessionId`, `subagentKind` | Named by Codex |
 | `accountHash` | 16 hex characters of the sha256 of the account id |
 | `upstreamAuth` | CLIProxyAPI's credential index |
+| `gateway` | The gateway's id (for example `cliproxyapi`), when the upstream the call went on to is a known gateway. It tags the session `gateway:<id>` |
 
 A session seen only through the proxy takes its `parent` from its calls' `parentSessionId`. When the
 session also has model calls from the agent's transcript or OpenTelemetry, those count toward
@@ -670,6 +672,20 @@ transient error.
 - A vendor token kind adds the `secret:exposed` tag to `flags`.
 - A vendor-shaped value that is plainly made up counts as `placeholder-key`, which adds no tag: a published example key, EXAMPLE, test or stub after the prefix, a repeated character or chunk, or eight consecutive characters.
 - Events stored before redaction counting existed are counted from the `[redacted:<kind>]` markers in their payload.
+
+**Memory and instruction files.** `stats.memoryUse` lists the memory and instruction files the
+session's events name (AGENTS.md and the other agents' instruction files, Claude auto-memory, rules,
+skills). It is what `coding.sh harness audit` counts.
+
+| Field | Meaning |
+|---|---|
+| `use` | `loaded`, `read` or `wrote` |
+| `path`, `ts` | The file's absolute path, and the last time of that use |
+| `skill`, `by` | Instead of `path`, for a skill an event names without a path: its name, and `tool` (a Skill tool call) or `harness` (the agent's own record of loaded skills) |
+
+- Files the agent loads at start without an event are not in it.
+- It is absent when the events name none, and metadata sinks do not get it. See
+  [Memory and instruction files](../guides/explore.md#memory-and-instruction-files).
 
 **Unapproved actions.**
 
@@ -798,20 +814,28 @@ Open a fold by asking for its range with `after=<from - 1>&fold=0`. `next`, when
 `after` of the next page. A `turn`, `after` or `limit` out of range is a 400.
 
 ```sh
-curl -sS "$CSH/api/sessions/team%2Fchat-1/rows?turn=2&limit=3" -H "Authorization: Bearer $READ_KEY"
+curl -sS "$CSH/api/sessions/team%2Fchat-1/rows?turn=0&limit=3" -H "Authorization: Bearer $READ_KEY"
 ```
 
 ```json
 {
-  "turn": {"n": 2, "start": 672, "end": 1839, "ts": 1793874002000, "endTs": 1793876402000, "turnId": "7dc2…",
-           "prompt": "fix the flaky test", "tools": 380, "calls": 96, "failures": 3, "subagents": 0, "compactions": 0},
+  "turn": {"n": 0, "start": 0, "end": 4, "ts": 1793872800000, "endTs": 1793872803000, "tools": 1, "calls": 1,
+           "failures": 0, "subagents": 0, "compactions": 0, "prompt": "Where is order 1042?"},
   "rows": [
-    {"i": 672, "id": "54b3…", "kind": "user.message", "ts": 1793874002000, "label": "fix the flaky test"},
-    {"i": 673, "id": "9a1f…", "kind": "llm.call", "ts": 1793874004000, "label": "claude-opus-5-5", "durationMs": 2100},
-    {"fold": {"from": 674, "to": 701, "events": 28, "tools": 12, "calls": 4}}
+    {"i": 0, "id": "d4c45c89…", "kind": "user.message", "ts": 1793872800000, "label": "Where is order 1042?"},
+    {"i": 1, "id": "0889ecc3…", "kind": "llm.call", "ts": 1793872801000, "label": "gpt-4o", "durationMs": 900},
+    {"i": 2, "id": "54b366d0…", "kind": "tool.start", "ts": 1793872802000, "label": "lookup_order"}
   ],
-  "next": 701
+  "next": 2
 }
+```
+
+`chat-1` is one turn of five events, so nothing in it folds; `turn` also has a `turnId` when the
+events carry one. A long session answers the same way, with a `fold` row for each folded run and
+`next` while the turn has more rows. A fold row, as a fragment that is not from `chat-1`:
+
+```json
+{"fold": {"from": 674, "to": 701, "events": 28, "tools": 12, "calls": 4}}
 ```
 
 ### `GET /api/sessions/{id}/tree`
@@ -973,8 +997,10 @@ and `openai-compatible` (chat completions), both from `OPENAI_API_KEY` and `OPEN
 
 `GET /api/playground/calls/{id}?session=` rebuilds an `llm.call` event. With a request the proxy
 stored, `source` is `request` and `response` is the recorded answer. Without one, `source` is
-`transcript` and the request is the conversation before the call. Both are redacted. A call with
-neither gets 404 with reason `no_request`.
+`transcript` and the request is the conversation before the call.
+
+In a subagent's own session that is the subagent's conversation: its prompt and its own tool calls, without those of a
+subagent it started. Both are redacted. A call with neither gets 404 with reason `no_request`.
 
 ```json
 {
@@ -1148,11 +1174,11 @@ viewer's Explore page and `coding.sh stats --json`. Parameters:
 
 | param | default | meaning |
 |---|---|---|
-| `since`, `until` | 30 days before `until`; now | epoch ms, a date, or an age such as `7d` |
+| `since`, `until` | 30 days before `until`; now | epoch ms, a date, or an age such as `7d`. A date without a zone (`2026-11-09`, `yesterday`) is midnight in `tz`, so `until=2026-11-10` keeps the whole of the 9th there |
 | `bucket` | `day` | `day` or `week` (weeks start on Monday); at most 400 buckets |
 | `by` | none | `agent`, `model`, `repo` or `flag`: one series per group |
 | `groups` | 6 | how many groups get their own series (1 to 50); the rest add up in `other` |
-| `tz` | 0 | minutes behind UTC, as `Date#getTimezoneOffset` gives; buckets start at local midnight |
+| `tz` | 0 | minutes behind UTC, as `Date#getTimezoneOffset` gives (360 for UTC-6); buckets start at local midnight. Without `tz` the buckets are UTC days and a date is read in the server's zone, so send `tz` with a date |
 | `scope` | `all` | `top` leaves out subagent sessions |
 | `where`, `project` | | as on `/api/sessions` |
 
@@ -1323,9 +1349,9 @@ Body (JSON, up to 1 MB):
 | `targetId` | Id of what is scored. For a session, `sessionId` works in its place |
 | `name` | 1-100 characters of letters, digits and `_.:/-` (or the config's name, with `configId`) |
 | `value` | A number (`numeric`), `true` or `false` (`boolean`, 0 and 1 work too), or a string (`categorical`, `text`) |
-| `dataType` | `numeric`, `boolean`, `categorical` or `text`. Default: the config's, else the value's type |
+| `dataType` | `numeric`, `boolean`, `categorical` or `text`. Default: the config's, else the value's type. Needed to change the type of a stored score whose name has no config |
 | `source` | `human`, `judge`, `code`, `api` (default) or `monitor` |
-| `sessionId` | The session an event, case or run belongs to. An event's session is looked up when left out |
+| `sessionId` | The session a case or run belongs to. An event's session is looked up; a `sessionId` that is not the event's session is a 400 |
 | `configId` | Check the value against this config. Default: the config with the score's `name`, if any |
 | `judgeVersion`, `calibrated` | The judge version that gave the score, and whether it passed calibration |
 | `comment` | Up to 4,000 characters |
@@ -1335,6 +1361,7 @@ Body (JSON, up to 1 MB):
 `by` is the caller, as for labels. A value outside its config's `min`/`max` or `categories` gets 400.
 
 - Posting the same id with the same content again changes nothing and answers 200 with the stored score (its first `ts` kept).
+- A stored score keeps its type: a value of another type is a 400 unless the body gives `dataType` or the name has a config.
 - An event id an SDK client sent to `/v1/ingest` works as `targetId` with its `sessionId` (serve stores such ids hashed with the project).
 - A project-scoped key may only score its project's sessions and their events.
 
@@ -1353,7 +1380,7 @@ curl -sS -X POST "$CSH/api/scores" \
 |---|---|---|
 | 201 | stored | the score |
 | 200 | the id already held a score: replaced, or unchanged when the content is the same | the score |
-| 400 | bad field, a value outside the config, invalid JSON | `{"error":"value 7 is above helpfulness's maximum 5","status":400}` |
+| 400 | bad field, a value outside the config, a value of another type than the stored score, a `sessionId` that is not the event's session, invalid JSON | `{"error":"value 7 is above helpfulness's maximum 5","status":400}` |
 | 403 | an `Origin` header that is not this server | `{"error":"forbidden origin","status":403}` |
 | 404 | session or event missing, or outside the key's project | `{"error":"session not found: team/chat-9","status":404}` |
 | 413 | body over 1 MB | `{"error":"request body exceeds 1 MB","status":413}` |

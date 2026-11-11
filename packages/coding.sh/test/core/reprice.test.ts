@@ -78,6 +78,17 @@ for (const [name, open] of [["memory", async () => new MemoryIndexStore()], ["sq
       await store.close();
     });
 
+    it("prices a call whose gateway companion carries no cost: nothing billed it", async () => {
+      const store = await open();
+      const evs = [ev("call", { model: "claude-opus-4-5", usage: { inputTokens: M } }), ev("gw", { kind: "span", source: "gateway", parentId: "call", payload: { gateway: "cliproxyapi", promptTokens: M } })];
+      await store.putEvents(evs);
+      await store.upsertSession(buildSession(evs));
+      assert.deepEqual(await repriceStored(store), { ran: true, events: 1, sessions: 1 });
+      const u = (await store.getSession("s1"))!.stats.usage!;
+      assert.deepEqual([u.costUsd, u.estimatedCostUsd], [5, 5]);
+      await store.close();
+    });
+
     it("prices stored 2026 models, records the sibling a fallback used, and drops it when the model gets its own row", async () => {
       const store = await open();
       const evs = [

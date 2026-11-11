@@ -178,7 +178,7 @@ instructions in nearly every session, but only 2 of 7 changes stopped the action
 
 | Verdict | When |
 |---|---|
-| Helped | fewer flagged sessions (p ≤ 0.1), or one flag fell (Holm p ≤ 0.1) while no other flag rose and the flagged share did not rise. When sessions also got costlier, the reason says "It also added work" |
+| Helped | fewer flagged sessions (p ≤ 0.1), or one flag fell (Holm p ≤ 0.1) while no other flag rose significantly and the flagged share did not rise. A flag that rose is named in the line: `repeated-tool-failure rose 4 to 8 of 12, not significant`. When sessions also got costlier, the reason says "It also added work" |
 | Followed, no effect yet | the agent follows a new line more (p ≤ 0.1), but flagged sessions did not fall |
 | Costlier | sessions after it make at least 1.25 times the tool calls or take 1.25 times as long (median, p ≤ 0.1), and flagged sessions did not fall |
 | Regressed | more flagged sessions (p ≤ 0.1); `check` exits 1. This is the only verdict that exits 1 |

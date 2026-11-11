@@ -6,17 +6,21 @@
 // a line the agent wrote once is credited once, and a person who later types
 // the same line again in another commit is not credited to the agent.
 //
-// Per commit, per file, in order:
-// 1. patch-id fast path: when the file's change (removed + added lines,
+// Per commit, in passes over all of its files, so a line is matched in its
+// own file before any other file may take it:
+// 1. patch-id fast path: when a file's change (removed + added lines,
 //    whitespace and line numbers ignored) equals what one session did to the
 //    same file, every added line is that session's. A rebase keeps the id.
 // 2. line hash: each non-trivial added line goes to an eligible session whose
-//    pool has the same line in the same file; else, for long lines (24+
-//    characters), to one that has it in another file (a moved file).
-// 3. trivial lines (`}`, `else`, blank) go to the session of the nearest
+//    pool has the same line in the same file.
+// 3. moved: a long line (24+ characters) still unmatched goes to a session
+//    that has it left in another file (a moved file). A person's copy of an
+//    agent's line in a second file is not a move: the agent's own file took
+//    the line in pass 2.
+// 4. trivial lines (`}`, `else`, blank) go to the session of the nearest
 //    matched line in the same run of added lines, when that session's pool
 //    has them too. On their own they never match.
-// 4. git-ai notes, when present, credit lines the steps above left unmatched.
+// 5. git-ai notes, when present, credit lines the steps above left unmatched.
 //
 // A session is eligible for a commit when it started before the commit (10
 // minutes of clock skew allowed) and the commit was authored or committed
@@ -36,7 +40,7 @@ export type SourceVia = "snapshot" | "snapshot-head" | "replay";
 
 export interface SourceFile {
   path: string;
-  /** Keys of the lines the session added to this file, in order. */
+  /** Keys of the lines the session added to this file, one per line (a line added twice is there twice). */
   keys: LineKey[];
   /** filePatchId of what the session did to this file (snapshot sources). */
   patchId?: string;
@@ -184,67 +188,77 @@ export function matchCommits(commits: readonly CommitPatch[], sessions: readonly
     const t1 = Math.max(c.authoredAt, c.committedAt);
     const eligible = pools.filter((p) => p.src.startedAt - skewMs <= t1 && t0 <= p.src.startedAt + windowMs);
     const gitAi = c.note ? parseGitAiNote(c.note) : [];
-    let added = 0;
-    const attributions: Attribution[] = [];
+    // Text files that add lines, in the commit's order, each with one hit slot per added line.
+    const files = c.files.filter((f) => !f.binary && !f.deleted && f.added.length).map((f) => ({ f, hits: new Array<LineHit | undefined>(f.added.length), whole: false }));
 
-    for (const f of c.files) {
-      if (f.binary || f.deleted || !f.added.length) continue;
-      added += f.added.length;
-      const hits: (LineHit | undefined)[] = new Array(f.added.length);
-
-      // 1. patch-id fast path
+    // 1. patch-id fast path
+    for (const w of files) {
+      const { f, hits } = w;
       const pid = filePatchId(f);
-      if (pid) {
-        for (const p of eligible) {
-          const sf = p.file.get(f.path);
-          if (sf?.patchId !== pid) continue;
-          const m = p.byPath.get(f.path);
-          const need = new Map<LineKey, number>();
-          for (const a of f.added) need.set(a.key, (need.get(a.key) ?? 0) + 1);
-          if (![...need].every(([k, n]) => (m?.get(k) ?? 0) >= n)) continue;
-          const conf = fileConfidence(p, f.path);
-          f.added.forEach((a, i) => {
-            take(p, f.path, a.key);
-            hits[i] = { pool: p, conf, method: "patch-id" };
-          });
-          break;
-        }
-      }
-
-      // 2. line hash, same file first, then (long lines) any file of the session
-      if (!hits[0]) {
+      if (!pid) continue;
+      for (const p of eligible) {
+        const sf = p.file.get(f.path);
+        if (sf?.patchId !== pid) continue;
+        const m = p.byPath.get(f.path);
+        const need = new Map<LineKey, number>();
+        for (const a of f.added) need.set(a.key, (need.get(a.key) ?? 0) + 1);
+        if (![...need].every(([k, n]) => (m?.get(k) ?? 0) >= n)) continue;
+        const conf = fileConfidence(p, f.path);
         f.added.forEach((a, i) => {
-          if (isTrivialKey(a.key)) return;
-          for (const p of eligible) {
-            if (take(p, f.path, a.key)) {
-              hits[i] = { pool: p, conf: fileConfidence(p, f.path), method: "line-hash" };
-              return;
-            }
-          }
-          if (!isLongKey(a.key)) return;
-          for (const p of eligible) {
-            const from = takeAnywhere(p, a.key);
-            if (from !== undefined) {
-              hits[i] = { pool: p, conf: fileConfidence(p, from) * MOVED_FACTOR, method: "moved" };
-              return;
-            }
-          }
+          take(p, f.path, a.key);
+          hits[i] = { pool: p, conf, method: "patch-id" };
         });
+        w.whole = true;
+        break;
+      }
+    }
 
-        // 3. trivial lines follow the nearest matched line in the same run of added lines
-        f.added.forEach((a, i) => {
-          if (hits[i] || !isTrivialKey(a.key)) return;
-          for (const j of neighbors(f.added, i)) {
-            const h = hits[j];
-            if (!h?.pool || isTrivialKey(f.added[j]!.key)) continue;
-            if (take(h.pool, f.path, a.key)) hits[i] = { pool: h.pool, conf: h.conf * TRIVIAL_FACTOR, method: h.method };
+    // 2. line hash in the same file, for every file before any line may match across files
+    for (const { f, hits, whole } of files) {
+      if (whole) continue;
+      f.added.forEach((a, i) => {
+        if (isTrivialKey(a.key)) return;
+        for (const p of eligible) {
+          if (take(p, f.path, a.key)) {
+            hits[i] = { pool: p, conf: fileConfidence(p, f.path), method: "line-hash" };
             return;
           }
-        });
-      }
+        }
+      });
+    }
 
-      // 4. git-ai notes fill what is left
-      if (gitAi.length) {
+    // 3. moved: a long line still unmatched takes what a session has left of it in any file
+    for (const { f, hits, whole } of files) {
+      if (whole) continue;
+      f.added.forEach((a, i) => {
+        if (hits[i] || !isLongKey(a.key)) return;
+        for (const p of eligible) {
+          const from = takeAnywhere(p, a.key);
+          if (from !== undefined) {
+            hits[i] = { pool: p, conf: fileConfidence(p, from) * MOVED_FACTOR, method: "moved" };
+            return;
+          }
+        }
+      });
+    }
+
+    // 4. trivial lines follow the nearest matched line in the same run of added lines
+    for (const { f, hits, whole } of files) {
+      if (whole) continue;
+      f.added.forEach((a, i) => {
+        if (hits[i] || !isTrivialKey(a.key)) return;
+        for (const j of neighbors(f.added, i)) {
+          const h = hits[j];
+          if (!h?.pool || isTrivialKey(f.added[j]!.key)) continue;
+          if (take(h.pool, f.path, a.key)) hits[i] = { pool: h.pool, conf: h.conf * TRIVIAL_FACTOR, method: h.method };
+          return;
+        }
+      });
+    }
+
+    // 5. git-ai notes fill what is left
+    if (gitAi.length) {
+      for (const { f, hits } of files) {
         const lineIdx = new Map(f.added.map((a, i) => [a.line, i]));
         for (const g of gitAi) {
           if (g.path !== f.path || !g.sessionId) continue;
@@ -260,9 +274,10 @@ export function matchCommits(commits: readonly CommitPatch[], sessions: readonly
           }
         }
       }
-
-      attributions.push(...group(c.sha, f.path, f.added, hits));
     }
+
+    const added = files.reduce((n, { f }) => n + f.added.length, 0);
+    const attributions = files.flatMap(({ f, hits }) => group(c.sha, f.path, f.added, hits));
     out.push({
       commit: c.sha,
       parents: c.parents,

@@ -26,7 +26,7 @@ export { createEDetector, eDetector, plateauRoundsNeeded } from "./edetector.ts"
 export type { EBet, EDetector, EDetectorOpts, EDetectorResult } from "./edetector.ts";
 export { gainShares, passAtK, passAllK, protocolFront, rankAgreement, seqCurve, unchangedRate } from "./seqk.ts";
 export type { ProtocolPoint, RankAgreement, RankFlip, SeqCase, SeqPoint } from "./seqk.ts";
-export { ARM_REF, DIFFICULTY_REF, formatSignalValidity, hasRepeatedAttempts, signalRows, signalValidity, SIGNALS_CAPTION } from "./validity.ts";
+export { ARM_REF, DIFFICULTY_REF, formatSignalValidity, hasRepeatedAttempts, MIN_SIGNAL_TASKS, signalRows, signalValidity, SIGNALS_CAPTION } from "./validity.ts";
 export type { SignalRow, SignalValidity, SignalValidityOpts, SignalVerdict } from "./validity.ts";
 export { balancedOrder, budgetTasks, coverageFeasible, groupSizesOf, isCovered, requiredPerGroup } from "./coverage.ts";
 export type { CoverageOpts, GroupRequirement } from "./coverage.ts";

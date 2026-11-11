@@ -243,8 +243,10 @@ export const BUILTIN_PREDICATES: Readonly<Record<string, TracePredicate>> = Obje
   },
   // Rule compliance from actions alone (arXiv 2610.04832 §5.2.2), for `llm-checklist` items with no model call.
   "ran-command": {
-    version: "1",
-    description: "A tool call ran a shell command containing args.command (or matching args.pattern); with args.ok, that call also succeeded.",
+    // 2: with args.ok, only a result that says ok counts as success; a result that does not say is N/A.
+    version: "2",
+    description:
+      "A tool call ran a shell command containing args.command (or matching args.pattern); with args.ok, that call's result also says it succeeded. N/A when no result says it succeeded and one does not say either way.",
     validateArgs(args) {
       commandMatcher(args);
     },
@@ -259,12 +261,17 @@ export const BUILTIN_PREDICATES: Readonly<Record<string, TracePredicate>> = Obje
       if (!hits.length) return { answer: false, explanation: `never ran ${what}` };
       if (args.ok !== true) return { answer: true, explanation: `ran ${what} in ${hits[0]!.id}`, eventIds: [hits[0]!.id] };
       const endOf = (start: TraceEvent) => ctx.trace.find((e) => e.kind === "tool.end" && payload(start).toolUseId !== undefined && payload(e).toolUseId === payload(start).toolUseId);
+      // A result with no ok (an OpenAI tool message that states no exit code) is unknown, not a success.
       const good = hits.find((h) => {
         const e = endOf(h);
-        return !!e && payload(e).ok !== false;
+        return !!e && payload(e).ok === true;
       });
       if (good) return { answer: true, explanation: `ran ${what} in ${good.id} and it succeeded`, eventIds: [good.id] };
       const ends = hits.map(endOf).filter((e): e is TraceEvent => !!e);
+      const silent = ends.filter((e) => typeof payload(e).ok !== "boolean");
+      if (silent.length) {
+        return { answer: null, explanation: `ran ${what} but the trace does not say whether it succeeded (${hits.length}x, ${silent.length} result(s) with no status or exit code)`, eventIds: [...hits, ...ends].map((e) => e.id) };
+      }
       return { answer: false, explanation: `ran ${what} but it never succeeded (${hits.length}x, ${ends.length} with a result)`, eventIds: [...hits, ...ends].map((e) => e.id) };
     },
   },

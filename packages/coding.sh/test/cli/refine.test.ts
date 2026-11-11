@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { appendLedger, refineDir, type TestEntry } from "../../src/refine/ledger.ts";
+import { putSession, sessionEvents } from "../helpers-decision.ts";
 
 const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const root = realpathSync(mkdtempSync(join(tmpdir(), "csh-refine-")));
@@ -125,5 +127,86 @@ describe("cli refine", () => {
     assert.equal(r.status, 1);
     assert.match(r.stderr, /invalid regex/);
     assert.match(r.stderr, /config\.toml/);
+  });
+
+  it("log and apply name the canary for a round it rejected or left inconclusive; a keep shows why it was kept", () => {
+    const e = setup("log-canary");
+    const KEPT = "cost / run -23% [-23%, -23%], p 0.016 with quality held: pass rate 100% → 100%";
+    const arm = (cost: number, size: number) => ({ pass: 1, cost, tokens: 1000, wall: 1000, size });
+    const round = (n: number, id: string, verdict: TestEntry["verdict"], stage: TestEntry["stage"], reasons: string[]): TestEntry => ({
+      op: "test",
+      id,
+      round: n,
+      at: `2026-11-0${n}T00:00:00.000Z`,
+      candidate: { label: "draft", source: "file", files: [{ path: "AGENTS.md", sha: `sha${n}` }], added: [], removedCount: 3 },
+      base: [{ path: "AGENTS.md", sha: "base" }],
+      guardTasks: [],
+      verdict,
+      stage,
+      reasons,
+      suite: { name: "chores", tasks: 6, k: 2, primary: "cost", experiment: `exp_${n}`, base: "a", cand: "b" },
+      objectives: {
+        list: ["cost"],
+        margin: 0.02,
+        minGain: 0.1,
+        branch: "efficiency",
+        quality: { base: 1, cand: 1, mean: 0, lo: 0, hi: 0, lower: 0, pHold: 0.016, nonInferior: true, p: 1, better: false, regressions: [], n: 6 },
+        metrics: [],
+        arms: { base: arm(0.18, 2000), cand: arm(0.14, 100) },
+        gains: [0.23],
+        warnings: [],
+      },
+      cost: { usd: 1, unpriced: 0 },
+    });
+    const dir = refineDir(e.env, e.repo);
+    appendLedger(dir, round(1, "r_rejected01", "reject", "canary", [KEPT, "canary-regression: small: hard regression on chore-0 (the base passed every attempt, the candidate at most a third)"]));
+    appendLedger(dir, round(2, "r_spendcap02", "inconclusive", "canary", [KEPT, "canary: small stopped at the spend cap with 13 runs not started; inconclusive"]));
+    appendLedger(dir, round(3, "r_plainkeep3", "keep", "done", [KEPT, "canary: small held (pass rate +0.0 pts, lower bound +0.0 pts)"]));
+
+    const log = e.cli("refine", "log");
+    assert.equal(log.status, 0, log.stderr);
+    const reason = (id: string) => log.stdout.split("\n").find((l) => l.split("\t")[1] === id)?.split("\t").at(-1);
+    assert.match(reason("r_rejected01")!, /^canary-regression: small: hard regression on chore-0/);
+    assert.match(reason("r_spendcap02")!, /^canary: small stopped at the spend cap/);
+    assert.equal(reason("r_plainkeep3"), KEPT);
+
+    const apply = e.cli("refine", "apply", "r_rejected01");
+    assert.equal(apply.status, 1);
+    assert.match(apply.stderr, /r_rejected01 was not kept \(reject: canary-regression: small/);
+  });
+
+  it("diagnose --session takes an id prefix as show does; an unknown id is not_found, never an empty plan", async () => {
+    const e = setup("diagnose-session");
+    const ids = ["093c2aed-1a94-4767-8adf-94d342d3abf2", "41ca9884-851f-49ea-87e8-2669e4907423", "41ca9884-0000-4000-8000-000000000000"];
+    const { openContext } = await import("../../src/core/context.ts");
+    const ctx = await openContext({ env: e.env, cwd: e.repo });
+    try {
+      // Another repo, 40 days back: --session names the session whatever the window and the repo are.
+      for (const [i, id] of ids.entries()) {
+        await putSession(ctx.index, sessionEvents(id, { cwd: "/work/elsewhere", startedAt: Date.now() - 40 * 86_400_000 + i * 1000 }, [["session.start", {}], ["user.message", { text: "List the files." }], ["assistant.message", { text: "Here they are." }]]));
+      }
+    } finally {
+      await ctx.close();
+    }
+    const plan = (...session: string[]) => {
+      const r = e.cli("refine", "diagnose", ...session.flatMap((s) => ["--session", s]), "--dry-run", "--json");
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      return (JSON.parse(r.stdout) as { sessions: { id: string }[] }).sessions.map((s) => s.id);
+    };
+    assert.deepEqual(plan("093c2aed"), [ids[0]]);
+    assert.deepEqual(plan(ids[0]!), [ids[0]]);
+    assert.deepEqual(plan("093c2aed", ids[0]!, "41ca9884-85"), [ids[0], ids[1]], "a session named twice is planned once");
+    assert.deepEqual(plan("latest"), [ids[2]]);
+
+    const miss = e.cli("refine", "diagnose", "--session", "nope-nope", "--dry-run");
+    assert.equal(miss.status, 1, miss.stdout + miss.stderr);
+    assert.match(miss.stderr, /Can't find session "nope-nope"/);
+    assert.doesNotMatch(miss.stdout + miss.stderr, /No session to diagnose/);
+    const missJson = e.cli("refine", "diagnose", "--session", ids[0]!, "--session", "nope-nope", "--dry-run", "--json");
+    assert.equal(missJson.status, 1, missJson.stdout + missJson.stderr);
+    assert.match(missJson.stderr, /"reason":"not_found"/);
+    const ambiguous = e.cli("refine", "diagnose", "--session", "41ca9884", "--dry-run", "--json");
+    assert.equal(ambiguous.status, 1, ambiguous.stdout + ambiguous.stderr);
+    assert.match(ambiguous.stderr, /"reason":"ambiguous"/);
   });
 });
