@@ -224,7 +224,7 @@ function writeTranscript(s, t0) {
   let t = t0;
   s.llm.forEach((c, i) => {
     t += c.ms;
-    rows.push({ type: "assistant", uuid: uuid(`${s.key}:a${i}`), timestamp: new Date(t).toISOString(), cwd: s.cwd, sessionId: s.id, version: "2.1.319", message: { id: `msg_${uuid(`${s.key}:m${i}`).slice(0, 12)}`, role: "assistant", model: s.model, content: [{ type: "text", text: i === s.llm.length - 1 ? s.reply : "Working on it." }], usage: { input_tokens: c.in, output_tokens: c.out } } });
+    rows.push({ type: "assistant", uuid: uuid(`${s.key}:a${i}`), timestamp: new Date(t).toISOString(), cwd: s.cwd, sessionId: s.id, version: "2.1.319", message: { id: `msg_${uuid(`${s.key}:m${i}`).slice(0, 12)}`, role: "assistant", model: s.model, content: i === s.llm.length - 1 ? [{ type: "text", text: s.reply }] : [{ type: "text", text: "Working on it." }, { type: "tool_use", id: `toolu_${i}`, name: "Bash", input: { command: "true" } }], usage: { input_tokens: c.in, output_tokens: c.out } } });
     if (i < s.llm.length - 1) {
       t += 1;
       rows.push({ type: "user", uuid: uuid(`${s.key}:r${i}`), timestamp: new Date(t).toISOString(), cwd: s.cwd, sessionId: s.id, message: { role: "user", content: [{ type: "tool_result", tool_use_id: `toolu_${i}`, content: "ok" }] } });
