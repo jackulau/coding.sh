@@ -1,7 +1,6 @@
 ---
 import DocsLayout from "../../components/docs/DocsLayout.astro";
 import Code from "../../components/docs/Code.astro";
-import Tag from "../../components/docs/Tag.astro";
 
 // Tool list and config shapes follow packages/coding.sh/src/mcp/tools.ts and
 // src/adapters/_shared/mcp.ts (what `coding.sh init` writes for each agent).
@@ -75,11 +74,10 @@ const gemini = `// ~/.gemini/settings.json
 
 <DocsLayout>
   <p>
-    <code>coding.sh mcp</code> is a local MCP server over stdio. An agent can read the sessions captured on this machine, including its own,
-    and answer "what failed last time?" or "what did this cost?" from real traces. Nothing leaves your machine.
+    Any AI agent with MCP can ask it "what failed last time?" or "what did this cost?" and get the answer from its own sessions.
   </p>
 
-  <h2 id="automatic">You don't set it up <Tag status="built" /></h2>
+  <h2 id="automatic">You don't set it up</h2>
   <p>
     The install script runs <code>coding.sh init</code>, which adds capture hooks and the MCP server for every agent it finds. It registers
     the server at user scope with Claude Code, Codex, Cursor, OpenCode and older Gemini CLI installs, backing up each file first.
@@ -126,7 +124,7 @@ const gemini = `// ~/.gemini/settings.json
     </table>
   </div>
   <p>
-    See <a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/improve.md">Improve your agent every week</a>. Resources:
+    See <a href="/docs/improve">What to fix first</a>. Resources:
     <code>codingsh://latest</code> and <code>codingsh://session/&lt;id&gt;</code>, each a Markdown digest of one session.
   </p>
 
@@ -146,4 +144,11 @@ const gemini = `// ~/.gemini/settings.json
   <Code title="json" code={opencode} />
   <h3 id="gemini">Gemini CLI (older installs)</h3>
   <Code title="json" code={gemini} />
+
+  <h2 id="next">Next steps</h2>
+  <ul>
+    <li><a href="/docs/explore">Find and read runs</a>: the same sessions from the command line and the viewer.</li>
+    <li><a href="/docs/query">Query language</a>: the <code>where</code> filter that <code>sessions_list</code>, <code>search</code> and <code>usage</code> take.</li>
+    <li><a href="/docs/improve">What to fix first</a>: the loop behind the <code>improve</code> tool.</li>
+  </ul>
 </DocsLayout>

@@ -3,8 +3,9 @@
 Every HTTP route that `coding.sh serve` answers, with auth, parameters, responses and errors.
 Site version: [coding.sh/docs/api](https://coding.sh/docs/api).
 
-The design notes behind these routes live in [PRODUCTION.md](../PRODUCTION.md). Server settings are in
-[config.md](config.md#serve), and a full team setup is in [self-host-team.md](../how-to/self-host-team.md).
+Server settings are in the [Configuration reference](config.md#serve).
+[Trace an app in production](../PRODUCTION.md) and [Self-host for a team](../how-to/self-host-team.md)
+show a full setup.
 
 ## Basics
 
@@ -376,7 +377,7 @@ Auth: a `*` read key or basic auth (or nothing, on a loopback bind with no keys)
 every project and their labels name them, so a project-scoped read key gets 403
 `{"error":"metrics need a read key for every project (\"*\") or basic auth","status":403}`.
 Prometheus text format (`text/plain; version=0.0.4`). The metric names are
-listed in [PRODUCTION.md](../PRODUCTION.md#17-metrics-and-logs).
+listed in [Production apps](../PRODUCTION.md#17-metrics-and-logs).
 
 ```sh
 curl -sS "$CSH/metrics" -H "Authorization: Bearer $READ_KEY"
@@ -1664,7 +1665,7 @@ A run carries these fields when they apply:
 | `repair.pass` | The outcome after the last round. `pass` on the run stays the first attempt's |
 | `repair.rounds[]` | `n`, `pass`, `verifierExit`, `verifierOutput`, `durationMs`, `usage`, `sessionId`, `diffBlob`; `unchanged` when the round changed no file, `tamper` when its diff tampers with tests, `namesParsed` with signal `names` |
 | `agentVersion` | The agent release the run started on (the adapter's detected version). Absent when the adapter can't tell, and on older runs |
-| `isolation` | How the verifier's tree was built ([verifier isolation](../guides/evals.md#verifier-isolation)): `carried`, `stripped` and `skipped`, below. Absent with `--no-isolation`, on a task without a verifier command, and on older runs |
+| `isolation` | How the verifier's tree was built: `carried`, `stripped` and `skipped`, below. Absent with `--no-isolation`, on a task without a verifier command, and on older runs |
 | `isolation.carried` | The agent's changes applied to the fresh start tree |
 | `isolation.stripped` | Each change left out, with `path`, `why` (`hook`, `config`, `scripts`, `verifier`, `dependency`, `symlink` or `special`) and `change` (`add`, `modify` or `delete`) |
 | `isolation.skipped` | Why the tree could not be isolated |

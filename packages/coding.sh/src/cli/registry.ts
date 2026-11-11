@@ -72,7 +72,7 @@ const WHERE = (what: string): FlagSpec => ({ name: "where", type: "string", dash
 /** Help notes for the query language, generated from its key table. */
 const WHERE_NOTES: string[] = [
   "--where: key:value clauses, AND by default; OR between clauses; ( ) to group; - to negate; a,b for either value; * as a wildcard in text; > >= < <= and a..b on numbers. Bare words search prompts, replies and tool calls (every word in one event).",
-  `Session keys: ${keyDocs().filter((k) => k.level === "session").map((k) => k.name).join(", ")}. Event keys (the session has a matching event; event keys in one group match the same event): ${keyDocs().filter((k) => k.level === "event").map((k) => k.name).join(", ")}. Also sort:-cost and limit:N. Full list with examples: docs/reference/query.md.`,
+  `Session keys: ${keyDocs().filter((k) => k.level === "session").map((k) => k.name).join(", ")}. Event keys (the session has a matching event; event keys in one group match the same event): ${keyDocs().filter((k) => k.level === "event").map((k) => k.name).join(", ")}. Also sort:-cost and limit:N. Full list with examples: https://coding.sh/docs/query.`,
 ];
 const GATEWAY_NAME: FlagSpec = { name: "gateway", type: "string", value: "<NAME>", choices: GATEWAY_IDS, desc: "Only this gateway" };
 

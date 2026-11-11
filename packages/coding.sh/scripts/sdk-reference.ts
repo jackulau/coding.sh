@@ -732,11 +732,11 @@ export function renderSdkReference(): string {
     "",
     "<!-- Generated from packages/sdk and packages/sdk-python by packages/coding.sh/scripts/sdk-reference.ts. Do not edit by hand. -->",
     "",
-    "Both SDKs send to a server you run with `coding.sh serve` ([production guide](../PRODUCTION.md), [serverless apps](../production/serverless.md)). Without `CODING_SH_URL` they do nothing. They never change return values, errors or stream behavior, and never throw into your app. The SDKs do not price calls; the server does.",
+    "Both SDKs send to a server you run with `coding.sh serve` ([production guide](https://coding.sh/docs/production), [serverless apps](https://coding.sh/docs/deploy)). Without `CODING_SH_URL` they do nothing. They never change return values, errors or stream behavior, and never throw into your app. The SDKs do not price calls; the server does.",
     "",
     "## Environment variables",
     "",
-    "Both SDKs read the same variables. Options passed to `init()` win over them. Every other variable coding.sh reads is in the [configuration reference](config.md).",
+    "Both SDKs read the same variables. Options passed to `init()` win over them. Every other variable coding.sh reads is in the [configuration reference](https://coding.sh/docs/config).",
     "",
     ...envTable(),
     `## TypeScript: \`${tsPkg.name}\``,
@@ -744,9 +744,9 @@ export function renderSdkReference(): string {
     ...TS_INTRO(tsPkg.engines?.node ?? ""),
     "### Exports",
     "",
-    "| Name | Kind | Source |",
-    "|---|---|---|",
-    ...ts_.map((e) => `| [\`${e.name}\`](#${slug(tsHeading(e))}) | ${e.kind} | \`packages/sdk/src/${e.file}\` |`),
+    "| Name | Kind |",
+    "|---|---|",
+    ...ts_.map((e) => `| [\`${e.name}\`](#${slug(tsHeading(e))}) | ${e.kind} |`),
     "",
   ];
   for (const e of ts_.filter((x) => x.kind === "function")) out.push(...renderTsExport(e, anchors, tsOptions));
@@ -762,9 +762,9 @@ export function renderSdkReference(): string {
     "",
     "Everything in `coding_sh.__all__`:",
     "",
-    "| Name | Kind | Source |",
-    "|---|---|---|",
-    ...py.map((a) => `| [\`coding_sh.${a.name}\`](#${slug(pyHeading("coding_sh.", a))}) | ${a.kind} | \`packages/sdk-python/src/coding_sh/${a.file}\` |`),
+    "| Name | Kind |",
+    "|---|---|",
+    ...py.map((a) => `| [\`coding_sh.${a.name}\`](#${slug(pyHeading("coding_sh.", a))}) | ${a.kind} |`),
     "",
   );
   for (const a of py) out.push(...renderPy("coding_sh.", a, a.name === "init" ? pyOptions : undefined));
@@ -772,7 +772,7 @@ export function renderSdkReference(): string {
   out.push(
     "### `coding_sh.otel`",
     "",
-    "For apps that already emit OpenTelemetry gen_ai spans. Needs `pip install coding-sh[otel]`. `configure()` picks the endpoint from its `url` argument, then `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT`, then `CODING_SH_URL` with `CODING_SH_INGEST_KEY`. See [plain OpenTelemetry](../PRODUCTION.md#43-plain-opentelemetry-no-sdk).",
+    "For apps that already emit OpenTelemetry gen_ai spans. Needs `pip install coding-sh[otel]`. `configure()` picks the endpoint from its `url` argument, then `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT`, then `CODING_SH_URL` with `CODING_SH_INGEST_KEY`. See [OpenTelemetry](https://coding.sh/docs/otel).",
     "",
     "| Name | Kind |",
     "|---|---|",

@@ -1,7 +1,6 @@
 ---
 import DocsLayout from "../../components/docs/DocsLayout.astro";
 import Code from "../../components/docs/Code.astro";
-import Tag from "../../components/docs/Tag.astro";
 // The kinds come straight from the package, so this list can't drift from the code.
 import { EVENT_KINDS, KNOWN_AGENTS, SCHEMA_ID, SCHEMA_VERSION } from "../../../../../packages/coding.sh/src/schema/index.ts";
 
@@ -82,9 +81,10 @@ if (!validEvent(event)) console.error(validEvent.errors);`;
 
 <DocsLayout>
   <p>
-    Every adapter and the OTLP receiver normalize into one format, <code>{SCHEMA_ID}</code> version {SCHEMA_VERSION}. Its names follow
-    OpenTelemetry's GenAI conventions where they exist, and it exports to OTLP through the <a href="/docs/storage#sinks">otlp sink</a>.
+    Every adapter, SDK and the OTLP receiver write one format, <code>{SCHEMA_ID}</code> version {SCHEMA_VERSION}. Its names follow
+    OpenTelemetry's GenAI conventions where they exist.
   </p>
+  <p>It exports to OTLP through the <a href="/docs/storage#sinks">otlp sink</a>.</p>
   <div class="note">
     <p>
       <strong>v0 is a draft.</strong> A breaking change will bump the version. Raw source payloads are kept as blobs, so events can always be
@@ -115,7 +115,8 @@ if (!validEvent(event)) console.error(validEvent.errors);`;
   <h2 id="rules">Rules</h2>
   <ul>
     <li><strong>Pairing.</strong> <code>tool.start</code> and <code>tool.end</code> pair by session and <code>payload.toolUseId</code>; <code>subagent.start</code> and <code>subagent.end</code> by session and <code>payload.subagentId</code>. <code>llm.call</code> has no pair.</li>
-    <li><strong>Usage.</strong> An event's <code>usage</code> holds the tokens and cost of that event only, so summing a session's events gives its total. A running or final total an agent reports goes in <code>payload.reportedUsage</code>, never in <code>usage</code>, to avoid double counting.</li>
+    <li><strong>Usage.</strong> An event's <code>usage</code> holds the tokens and cost of that event only, so summing a session's events gives its total.</li>
+    <li><strong>Reported totals.</strong> A running or final total an agent reports goes in <code>payload.reportedUsage</code>, never in <code>usage</code>, so it is not counted twice.</li>
     <li><strong>Size.</strong> Payloads stay under 4 KB. Anything larger moves to a blob, referenced from <code>blobs</code>.</li>
     <li><strong>Subagents.</strong> A child session links to its parent through its <code>session.start</code> payload <code>&#123; parentSessionId, subagentId &#125;</code>, or through <code>childSessionId</code> on the parent's subagent events.</li>
   </ul>
@@ -130,21 +131,17 @@ if (!validEvent(event)) console.error(validEvent.errors);`;
   <h2 id="package">From code</h2>
   <p>The CLI package exports the constants under <code>coding.sh/schema</code>:</p>
   <Code title="javascript" code={importSchema} />
-  <p>
-    TypeScript types ship with it (<code>dist/types/schema/index.d.ts</code>, from <code>packages/coding.sh/src/schema/index.ts</code>)
-    <Tag status="built" />.
-  </p>
+  <p>TypeScript types for every interface on this page ship with the package.</p>
 
   <h2 id="json-schema">JSON Schema</h2>
   <p>
-    A JSON Schema (draft 2020-12) for <code>AgentEvent</code> and <code>Session</code> ships as <code>coding.sh/schema.json</code>
-    <Tag status="built" />. It is served at <a href="/schema.json">coding.sh/schema.json</a>, its <code>$id</code>, and lives in the repository as
-    <a href="https://github.com/jackulau/coding.sh/blob/main/packages/coding.sh/src/schema/trace.schema.json"><code>src/schema/trace.schema.json</code></a>.
-    The root accepts either type; validate one with <code>#/$defs/AgentEvent</code> or <code>#/$defs/Session</code>.
+    A JSON Schema (draft 2020-12) for <code>AgentEvent</code> and <code>Session</code> ships as <code>coding.sh/schema.json</code>. It is
+    also served at <a href="/schema.json">coding.sh/schema.json</a>, its <code>$id</code>.
   </p>
+  <p>The root accepts either type. Validate one with <code>#/$defs/AgentEvent</code> or <code>#/$defs/Session</code>.</p>
   <Code title="javascript" code={jsonSchema} />
   <ul>
-    <li><strong>Generated.</strong> <code>scripts/json-schema.ts</code> writes it from the TypeScript types, with their doc comments as descriptions. A test fails when it is stale.</li>
+    <li><strong>Generated.</strong> It is written from the TypeScript types, with their doc comments as descriptions.</li>
     <li><strong>Closed objects.</strong> A field the types don't name fails validation. <code>payload</code> and map fields such as <code>stats.models</code> stay open.</li>
     <li><strong>Payloads.</strong> The per-kind payload conventions above are in the <code>payload</code> description, not enforced.</li>
     <li><strong>Tested.</strong> Every event the adapters produce from their recorded fixtures, every OTLP fixture, and the sessions built from them validate against it.</li>

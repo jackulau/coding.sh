@@ -117,7 +117,7 @@ headers = { Authorization = "Bearer ${CODING_SH_INGEST_KEY}" }
 
 The `otlp` sink sends a session as one `invoke_agent` span when the session ends. From
 `coding.sh collector` and `coding.sh serve` it also sends that span while a session is open, so a
-session that never ends has one ([Forward and sinks](../PRODUCTION.md#19-forward-and-sinks)).
+session that never ends has one ([Forward and sinks](https://coding.sh/docs/production)).
 Local ingest sends it again when a transcript import adds events to a session without ending it,
 so the span has the session's totals.
 
@@ -172,7 +172,7 @@ A call goes to the tier it recorded (`batch`, `flex`, `priority`), or `fast` for
 the standard rates.
 
 An override replaces the whole built-in row, tiers included, so add the tier tables you want to
-keep. See [Where cost comes from](../how-to/expensive-sessions.md#where-cost-comes-from).
+keep. See [Where cost comes from](https://coding.sh/docs/cost#where-cost-comes-from).
 
 ## `[gateway]`
 
@@ -188,22 +188,22 @@ Vercel AI Gateway. Other gateways get their own table, `[gateway.<name>]`, with 
 | `default` | | Top level only: the gateway a bare `compare --gateway` uses. |
 | `accountId`, `gatewayId` | | `[gateway.cloudflare]` only: where the logs live. `CLOUDFLARE_ACCOUNT_ID` also works. |
 
-Keys are never printed or stored. See [LLM gateways](../integrations/ai-gateway.md).
+Keys are never printed or stored. See [LLM gateways](https://coding.sh/docs/ai-gateway).
 
 ## `[refine]`
 
 Which harness lines an edit may not delete, reword or relax (`coding.sh refine check`,
 `refine test`, `refine run` and `exp ab`), and which `refine propose` marks READ-ONLY. See
-[Protected safety lines](../guides/evals.md#protected-safety-lines). Also how far a listed cost may
+[Protected safety lines](https://coding.sh/docs/evals). Also how far a listed cost may
 rise for a pass-rate gain in `refine test|run --suite`; see
-[Climbing on an eval suite](../guides/evals.md#climbing-on-an-eval-suite).
+[Climbing on an eval suite](https://coding.sh/docs/evals).
 
 | Key | Default | What |
 |---|---|---|
 | `protect` | `[]` | Regexes. An AGENTS.md or other instruction-file, rule or skill line matching one is protected; the line is tested without its list marker or bold, so `"^Use pnpm"` matches `- Use pnpm`. A repo config's patterns are added to yours. |
 | `autoProtect` | `true` | Protect gate-word + safety-topic lines ("Never run `git push --force`") automatically. Honoured only in your user config. |
 | `maxCostRise` | `"50%"` | The default of `--max-cost-rise`: how far a listed cost, tokens, time, turns or size objective may rise for a significant pass-rate gain. `"100%"`, `"none"`, or a number: below 1 a fraction (`0.5` is +50%), from 1 up percent (`150` is +150%). A repo config can lower it but not raise it. |
-| `canary_model` | none | The model `refine test --suite` and `refine run --suite` re-test kept candidates under when `--canary-model` is not given, and the default for `refine recheck --model`. See [Canary re-test](../guides/evals.md#canary-re-test). Honoured only in your user config. |
+| `canary_model` | none | The model `refine test --suite` and `refine run --suite` re-test kept candidates under when `--canary-model` is not given, and the default for `refine recheck --model`. See [Canary re-test](https://coding.sh/docs/evals). Honoured only in your user config. |
 
 ```toml
 [refine]
@@ -215,7 +215,7 @@ protect = ["^Use pnpm", "staging"]
 Read by `coding.sh proxy` and `coding.sh init --proxy`. Flags on `coding.sh proxy` win over these,
 and these win over the upstream `init --proxy` chained through (the base URL an agent used before,
 kept in `~/.coding.sh/proxy-installs.json`). See
-[Capture with the proxy](../how-to/capture-with-proxy.md#already-using-a-gateway-or-cliproxyapi).
+[Capture with the proxy](https://coding.sh/docs/how-to/capture-with-proxy#5-record-claude-code-and-codex).
 
 | Key | Default | What |
 |---|---|---|
@@ -228,7 +228,7 @@ kept in `~/.coding.sh/proxy-installs.json`). See
 ## `[serve]`
 
 Read only by `coding.sh serve`. Every key has an environment variable, which wins over the file.
-[PRODUCTION.md §1.1](../PRODUCTION.md#11-config) has the full rules.
+[Production](https://coding.sh/docs/production) has the full rules.
 
 | Key | Env | Default | What |
 |---|---|---|---|
@@ -245,7 +245,7 @@ Read only by `coding.sh serve`. Every key has an environment variable, which win
 | `[serve.viewer]` `read_keys` | `CODING_SH_READ_KEYS` | | Read keys: `[{ project = "*", key = "sha256:<hex>", name = "alice" }]`. `name` (optional) is recorded as the author of that key's labels. |
 | `[serve.viewer]` `basic_user`, `basic_password_sha256` | `CODING_SH_BASIC_AUTH` (`user:password`) | | Basic auth for the viewer. |
 | `capture.mode` | `CODING_SH_CAPTURE_MODE` | `full` | `metadata` drops content on ingest. |
-| `[serve.forward]` `endpoint` | `CODING_SH_FORWARD_URL` | unset (no forward) | OTLP/HTTP collector that serve sends every committed trace to, as JSON. `/v1/traces` is added unless the URL already ends in it. `${ENV}` works in the file. [PRODUCTION.md §1.9](../PRODUCTION.md#19-forward-and-sinks) |
+| `[serve.forward]` `endpoint` | `CODING_SH_FORWARD_URL` | unset (no forward) | OTLP/HTTP collector that serve sends every committed trace to, as JSON. `/v1/traces` is added unless the URL already ends in it. `${ENV}` works in the file. [Forward and sinks](https://coding.sh/docs/production) |
 | `[serve.forward]` `headers` | `CODING_SH_FORWARD_HEADERS` (`k=v,k2=v2`, URL-encoded values) | | Headers for the collector, such as an API key. The variable's entries are added to the table's. |
 | `[serve.forward]` `mode` | `CODING_SH_FORWARD_MODE` | `capture.mode` | `metadata` sends ids, names, models, tokens, timings and status only. `full` sends attributes after redaction. |
 | `[serve.forward]` `max_buffer_spans` | `CODING_SH_FORWARD_MAX_BUFFER_SPANS` | `20000` | Spans kept in memory while the collector is down. Past it the oldest are dropped and counted. |
@@ -254,7 +254,7 @@ Read only by `coding.sh serve`. Every key has an environment variable, which win
 
 | File | Used by | Reference |
 |---|---|---|
-| `coding.sh.toml` at the repo root | `coding.sh toolevals` (targets, drivers, variants, `[toolevals] confirmAboveUsd`, default 5) | [TOOL-EVALS.md](../TOOL-EVALS.md) |
+| `coding.sh.toml` at the repo root | `coding.sh toolevals` (targets, drivers, variants, `[toolevals] confirmAboveUsd`, default 5) | [Tool evals](https://coding.sh/docs/tool-evals) |
 | `bench/<name>.toml` or `~/.coding.sh/benchmarks/<name>.toml` | `coding.sh bench` | `coding.sh bench new --help` |
 | An experiment spec (JSON) | `coding.sh exp run <spec>` | [Evals](https://coding.sh/docs/evals) |
 | A harness TOML | `coding.sh harness snapshot --file` | `coding.sh harness snapshot --help` |
@@ -268,7 +268,7 @@ Read only by `coding.sh serve`. Every key has an environment variable, which win
 | `CODING_SH_HOME` | Data directory. Default `~/.coding.sh`. Use a temp dir in tests and CI to keep runs out of your history. |
 | `CODING_SH_STORE_URL` | Index store for every command; same as `--store`. Skips the automatic ingest of the local spool. |
 | `CODING_SH_BLOB_URL` | Blob store; same as `--blobs`. |
-| `CODING_SH_DEV_REAL_STORE=1` | Lets coding.sh run from a source checkout (`src/*.ts`, or a `dist/` built inside it) open the default home. Without it, or `CODING_SH_HOME` or a store URL, such a run stops before it opens anything. Migrations still wait for the install that owns the store ([Troubleshooting](../troubleshooting.md#a-store-another-codingsh-cant-open)). |
+| `CODING_SH_DEV_REAL_STORE=1` | Lets coding.sh run from a source checkout (`src/*.ts`, or a `dist/` built inside it) open the default home. Without it, or `CODING_SH_HOME` or a store URL, such a run stops before it opens anything. Migrations still wait for the install that owns the store ([Store version errors](https://coding.sh/docs/troubleshooting#store-version-errors)). |
 | `CODING_SH_SCAN_CAP` | How many sessions `usage` and `cache doctor` read for a window's totals before they stop and say so (`Stopped after N sessions`, `truncated` in `--json`). Default `100000`. Tests set a small one. |
 | `CODING_SH_PURGE_WAIT_MS` | How long `purge` waits for another process's read of the index or the blob pack before it reports that the old bytes stay. Default `10000` for the index checkpoint before VACUUM and `5000` after it. Tests set a short wait. |
 | `DATABASE_URL` | `coding.sh serve` only: the store when it is a `postgres://` URL and `CODING_SH_STORE_URL` is unset. |
@@ -296,7 +296,7 @@ Read these in your agent or script to tie its output to a run.
 | `CODING_SH_AGENT`, `CODING_SH_AGENT_OUTPUT`, `CODING_SH_AGENT_STDOUT`, `CODING_SH_AGENT_DIFF` | `compare`, `exp run` eval tasks (verifier only) | The agent adapter id, a file with the agent's final answer, a file with its whole stdout (for Claude Code, stream-json with every tool call), and a file with its work-tree diff (taken before hidden files land; `judge grade` reads it for `agent-slop`). The files sit outside the work tree. `CODING_SH_SESSION_ID` is set too when the run produced a session. |
 | `CODING_SH_GRADER_USAGE` | `compare`, `exp run` eval tasks (verifier only) | A JSONL file. `judge grade` appends one row per model call (model, tokens, cost) so the run's judge spend counts in `compare`'s spend lines and `--max-cost`. |
 | `CODING_SH_CASE_ID`, `CODING_SH_TRIAL` | `exp run` command tasks | The case id and trial number. |
-| `CODING_SH_ATTEMPT`, `CODING_SH_SEQ_K` | `exp run --seq K` command tasks | This attempt (from 1) and K, the most attempts a case gets. With `envelope = true` stdin carries them too, with the earlier attempts' feedback in `history`. See [Sequential attempts](../guides/evals.md#sequential-attempts-with-feedback). |
+| `CODING_SH_ATTEMPT`, `CODING_SH_SEQ_K` | `exp run --seq K` command tasks | This attempt (from 1) and K, the most attempts a case gets. With `envelope = true` stdin carries them too, with the earlier attempts' feedback in `history`. See [Sequential attempts](https://coding.sh/docs/evals). |
 | `CODING_SH_WORKFLOW_RUN_ID` | `workflows run`, `workflows replay` | Workflow run id. |
 | `CODING_SH_BENCH`, `CODING_SH_BENCH_SEED`, `CODING_SH_BENCH_DATE`, `CODING_SH_BENCH_RUN_ID`, `CODING_SH_BENCH_CASES` | `bench run` command sources | Benchmark name, seed, date, run id and number of cases to print. |
 | `CODING_SH_BENCH_NOW` | you, in tests | Make `bench run` act as if it started at this time (ISO time or epoch ms), to simulate daily runs. |
@@ -365,7 +365,16 @@ Read by `@codingdotsh/sdk` and the Python `coding_sh` package when they send to 
 ### Where agents keep their files
 
 Adapters look in each agent's default location, or where these point:
-`CLAUDE_CONFIG_DIR` (Claude Code), `CODEX_HOME` (Codex), `OPENCODE_CONFIG_DIR` and `OPENCODE_DB`
-(OpenCode), `CURSOR_CONFIG_DIR` and `CURSOR_DATA_DIR` (Cursor), `GEMINI_CLI_HOME` (Gemini CLI),
-`COPILOT_HOME` (Copilot CLI), `PI_CODING_AGENT_DIR` and `PI_CODING_AGENT_SESSION_DIR` (Pi),
-`GOOSE_PATH_ROOT` (Goose), `T3CODE_HOME` (T3 Code), and `XDG_CONFIG_HOME` / `XDG_DATA_HOME`.
+
+| Agent | Variables |
+|---|---|
+| Claude Code | `CLAUDE_CONFIG_DIR` |
+| Codex | `CODEX_HOME` |
+| OpenCode | `OPENCODE_CONFIG_DIR`, `OPENCODE_DB` |
+| Cursor | `CURSOR_CONFIG_DIR`, `CURSOR_DATA_DIR` |
+| Gemini CLI | `GEMINI_CLI_HOME` |
+| Copilot CLI | `COPILOT_HOME` |
+| Pi | `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR` |
+| Goose | `GOOSE_PATH_ROOT` |
+| T3 Code | `T3CODE_HOME` |
+| Any | `XDG_CONFIG_HOME`, `XDG_DATA_HOME` |

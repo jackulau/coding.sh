@@ -1,14 +1,11 @@
-# Query and export
+# Query language
 
-Two commands read the store directly:
+Every `--where` key, operator and facet that sessions, usage, stats and the viewer's filter bar
+accept, with examples.
 
-- `coding.sh sql "<query>"` runs one read-only SQL query against the SQLite index.
-- `coding.sh export sessions|events|labels` streams rows as JSONL or CSV, with the same filters as
-  `coding.sh sessions`.
-
-Both read what is stored, and that text was redacted at ingest. To pick sessions without SQL, use
-the [`--where` filter](#filter-with---where), which `sessions`, `search`, `usage`, `export`, the
-viewer API and the MCP tools share.
+`--where` takes space-separated terms. Every term must match, and a leading `-` negates one. The
+same query works in `coding.sh sessions`, `search`, `usage`, `stats`, `export`, the viewer's filter
+bar, the viewer API and the MCP tools. For SQL over the index, see [`coding.sh sql`](#codingsh-sql).
 
 ## Filter with `--where`
 
@@ -16,55 +13,60 @@ viewer API and the MCP tools share.
 coding.sh sessions --where 'agent:codex cost>0.5 since:7d'
 coding.sh sessions --where 'tool:Bash ok:false -flag:compaction'
 coding.sh sessions --where '(model:claude-* OR provider:openai) has:tests sort:-cost limit:5'
-coding.sh sessions --facets model,tool --where 'repo:coding-sh'
 coding.sh search migration --where 'agent:codex kind:tool.end'
 coding.sh usage --by model --where 'repo:coding-sh tool:Bash'
 coding.sh export events --where 'agent:codex tool.errors>0' > events.jsonl
 ```
 
-A query is a list of clauses. Clauses are and-ed. Between clauses:
+### Operators
 
-- `OR` (upper case) means either side; `( )` groups.
-- `-` before a clause negates it: `-flag:compaction`, `-(agent:codex tool:Bash)`.
-- `a,b` matches either value: `agent:codex,gemini`.
-- `*` is a wildcard in text values: `model:claude-*`. Text matches ignore ASCII case.
-- Numbers take `>`, `>=`, `<`, `<=`, `:` (equal) and ranges `a..b`. `k`, `M` and `B` scale
-  counts (`tokens>1M`); durations need a unit (`duration>10m`, `event.duration>=30s`); `cost` may
-  start with `$`.
-- Values with spaces go in double quotes: `title:"fix the build"`.
-- Bare words search prompts, replies and tool calls, like `coding.sh search`. Every word must
-  match within one event, as a whole word; the last word may also start a longer one.
-- `sort:` and `limit:` set the order and the row count. They go at the top level only.
+| Form | Means | Example |
+|---|---|---|
+| `key:value` | The key has this value. Text matches ignore ASCII case. | `agent:codex` |
+| a space | Both terms match. | `agent:codex tool:Bash` |
+| `OR` | Either side matches. Upper case only. | `agent:codex OR agent:gemini` |
+| `( )` | Groups terms. | `(model:claude-* OR provider:openai) has:tests` |
+| `-` | Negates a term or a group. | `-flag:compaction`, `-(agent:codex tool:Bash)` |
+| `a,b` | Either value. | `agent:codex,gemini` |
+| `*` | A wildcard in a text value. | `model:claude-*` |
+| `>` `>=` `<` `<=` | Compares a number. `:` means equal. | `turns>=20` |
+| `a..b` | A range, both ends included. | `turns:3..5` |
+| `k` `M` `B` | Scale a count. | `tokens>1M` |
+| `30s` `10m` `2h` | A duration needs a unit. | `duration>10m` |
+| `$` | A cost may start with `$`. | `cost>$0.5` |
+| `"…"` | A value with spaces. | `title:"fix the build"` |
+| a bare word | Searches prompts, replies and tool calls. Every word must match within one event. | `timeout` |
 
-Session keys test the session. Event keys test its events: a session matches when it has a
-matching event, and event keys in the same and-group must match the same event. So
-`tool:Bash ok:false` means a failed Bash call, not a Bash call and some other failure.
-`-tool:Bash` means no Bash call at all. In `coding.sh search`, event keys test the hit itself.
+`sort:` and `limit:` set the order and the row count, and go at the top level only. A query is at
+most 2,000 characters.
 
-`sessions` and `export` leave out subagent sessions unless you pass `--subagents`. A query with
-`id:`, `parent:`, `is:root` or `is:child` decides that itself, so `--where id:<a subagent's id>`
-finds that subagent and `--where is:child` lists subagents.
+Session keys test the session. Event keys test its events: a session matches when one of its
+events matches, and event keys in one group must match the same event. So `tool:Bash ok:false` is
+a failed Bash call, and `-tool:Bash` means no Bash call at all. In `coding.sh search`, event keys
+test each hit.
+
+### Session keys
 
 | Key | Level | Matches | Example |
 |---|---|---|---|
-| `agent` | session | Agent id | `agent:codex` |
+| `agent` | session | Agent id, or the service name of an SDK or OpenTelemetry app | `agent:codex` |
 | `model` | session | Main model | `model:claude-sonnet-*` |
 | `provider` | session | Model provider | `provider:anthropic` |
-| `repo` | session | Repo root path, or its name (else the working directory's name; tmp for the macOS temp dir) | `repo:coding-sh` |
-| `launch` | session | How the agent was launched: headless (claude -p, an SDK, codex exec) or interactive | `launch:headless` |
+| `repo` | session | Repo root path, or its name (else the working directory's name) | `repo:coding-sh` |
+| `launch` | session | `headless` (`claude -p`, an SDK, `codex exec`) or `interactive` | `launch:headless` |
 | `branch` | session | Git branch | `branch:main` |
 | `dir` | session | Working directory | `dir:/work/*` |
 | `title` | session | Title contains (case-insensitive) | `title:deploy` |
 | `id` | session | Session id | `id:01H*` |
 | `run` | session | Eval run id | `run:run_*` |
-| `parent` | session | Parent session id (subagent sessions) | `parent:abc123` |
-| `flag` | session | Any flag or tag | `flag:no-verification` |
-| `skill` | session | Skill tag (flag skill:<name>) | `skill:pdf` |
-| `hook` | session | Whose hooks added text to the context (flag hook:<source>): plugin:<name>, plugin, settings or unknown | `hook:plugin:terse` |
+| `parent` | session | Parent session id, for subagent sessions | `parent:abc123` |
+| `flag` | session | Any [flag or tag](#flags-and-derails) | `flag:no-verification` |
+| `skill` | session | Skill tag (`skill:<name>`) | `skill:pdf` |
+| `hook` | session | Whose hooks added text to the context: `plugin:<name>`, `plugin`, `settings` or `unknown` | `hook:plugin:terse` |
 | `hook.tokens` | session | Tokens hooks added to the context (characters / 4) | `hook.tokens>500` |
-| `since` | session | Started at or after: 7d, 12h, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight | `since:7d` |
-| `until` | session | Started before (exclusive): 7d, 12h, today or a date in local time. until:2026-11-01 leaves that day out | `until:2026-11-01` |
-| `duration` | session | Wall time of an ended session (30s, 10m, 2h) | `duration>10m` |
+| `since` | session | Started at or after: `7d`, `12h`, `today`, `yesterday` or a date | `since:7d` |
+| `until` | session | Started before (exclusive): `7d`, `12h`, `today` or a date | `until:2026-11-01` |
+| `duration` | session | Wall time of an ended session | `duration>10m` |
 | `turns` | session | User turns | `turns>=20` |
 | `tools` | session | Tool calls | `tools>100` |
 | `tool.errors` | session | Failed tool calls | `tool.errors>0` |
@@ -73,79 +75,186 @@ finds that subagent and `--where is:child` lists subagents.
 | `events` | session | Events captured | `events<10` |
 | `tests.passed` | session | Passing tests seen | `tests.passed>0` |
 | `tests.failed` | session | Failing tests seen | `tests.failed>0` |
-| `tokens` | session | All tokens: input, output, cache read and write (k, M suffixes) | `tokens>1M` |
+
+### Cost and token keys
+
+| Key | Level | Matches | Example |
+|---|---|---|---|
+| `tokens` | session | All tokens: input, output, cache read and cache write | `tokens>1M` |
 | `tokens.in` | session | Input tokens | `tokens.in>100k` |
 | `tokens.out` | session | Output tokens | `tokens.out>10k` |
-| `cost` | session | Cost in USD, reported or estimated | `cost>0.5` |
-| `cache.breaks` | session | Prompt-cache breaks: calls whose cached prefix was gone, so the prompt was billed again | `cache.breaks>0` |
+| `cost` | session | Cost in USD, reported or estimated ([where it comes from](https://coding.sh/docs/cost#where-cost-comes-from)) | `cost>0.5` |
+| `cache.breaks` | session | Model calls whose cached prompt prefix was gone, so the prompt was billed again | `cache.breaks>0` |
 | `cache.lost` | session | Prompt tokens billed again after a cache break | `cache.lost>10k` |
 | `cache.cost` | session | Extra USD the cache breaks cost over cache-read prices | `cache.cost>0.1` |
-| `unapproved` | session | Destructive or paid commands the agent ran without the user approving them (flag `unapproved-action`) | `unapproved>0` |
-| `kind` | event | Event kind | `kind:tool.end` |
+
+### Tool and event keys
+
+| Key | Level | Matches | Example |
+|---|---|---|---|
+| `unapproved` | session | Destructive or paid commands the agent ran without the user approving them | `unapproved>0` |
+| `kind` | event | Event kind (`tool.end`, `llm.call`, `user.message`, …; see [Trace format](https://coding.sh/docs/trace-format#kinds)) | `kind:tool.end` |
 | `tool` | event | Tool name | `tool:Bash` |
-| `ok` | event | Tool call or model call succeeded | `ok:false` |
+| `ok` | event | The tool call or model call succeeded | `ok:false` |
 | `mcp` | event | MCP server of a tool call | `mcp:github` |
 | `error` | event | Error message contains (case-insensitive) | `error:ENOENT` |
-| `event.duration` | event | Event duration (30s, 2m) | `event.duration>30s` |
-| `has` | session | Has tests (test results seen), cost (a cost), repo (a git repo), error (a failed tool or model call), title (a title) | `has:tests` |
-| `is` | session | Is root (a top-level session), child (a subagent session), flagged (has a failure flag, one with no colon), run (from an eval run), ended (has an end) | `is:root` |
-| `sort` | query | Order by started, duration, turns, tools, tool.errors, llm.errors, files, events, tests.passed, tests.failed, tokens, tokens.in, tokens.out, cost; - for descending | `sort:-cost` |
+| `event.duration` | event | Event duration | `event.duration>30s` |
+
+### has, is, sort and limit
+
+| Key | Level | Matches | Example |
+|---|---|---|---|
+| `has` | session | Has `tests` (test results seen), `cost`, `repo` (a git repo), `error` (a failed tool or model call) or `title` | `has:tests` |
+| `is` | session | Is `root` (top level), `child` (a subagent), `flagged` (a flag with no colon), `run` (from an eval run) or `ended` | `is:root` |
+| `sort` | query | Order by `started` or any number key above; `-` for descending | `sort:-cost` |
 | `limit` | query | Maximum rows | `limit:50` |
 
-`since:` and `until:` read a date without a zone in this machine's local time: `since:2026-11-09`
-starts at local midnight, the same instant as `since:2026-11-09T00:00:00`. A date with `Z` or an
-offset (`2026-11-09T00:00:00Z`) is that instant. `today` and `yesterday` are local midnights, and
-`until` is exclusive. `--since` and `--until` on every command read their value the same way. When
-a date or a day word is given, `sessions`, `usage` and `stats` print the window they resolved to on
-stderr (`Window: 2026-11-09 00:00 (UTC-06:00) to now, local time`) and carry it in `--json` as
-`window: { since, until, utcOffset }`.
+`sessions` and `export` leave out subagent sessions unless you pass `--subagents`. A query with
+`id:`, `parent:`, `is:root` or `is:child` decides that itself, so `--where is:child` lists
+subagents.
 
-A key that does not exist, a bad value, an unclosed quote or parenthesis, or an `OR` with nothing
-after it is a usage error (exit 2, reasons `unknown_key`, `bad_value`, `unterminated_quote`,
-`unbalanced_parens`, `dangling_or`, `dangling_not`, `bad_directive`, `empty_group`, `too_long`).
-The message points at the character:
+### Dates and times
+
+A date without a zone is local time: `since:2026-11-09` starts at local midnight. A date with `Z`
+or an offset (`2026-11-09T00:00:00Z`) is that instant. `today` and `yesterday` are local midnights,
+and `until` leaves its own day out. `--since` and `--until` on every command read values the same
+way.
+
+When you give a date or a day word, `sessions`, `usage` and `stats` print the window they used on
+stderr, such as `Window: 2026-11-09 00:00 (UTC-06:00) to now, local time`, and put it in `--json` as
+`window`.
+
+### Errors
+
+A bad query exits 2 and points at the character:
 
 ```text
+$ coding.sh sessions --where 'agent:codex modle:x'
 ✗ --where: unknown key "modle" at character 13
   Query           agent:codex modle:x
                               ^
     did you mean model:?
 ```
 
+| Reason | Means |
+|---|---|
+| `unknown_key` | No such key. To search for the word itself, quote it. |
+| `bad_value` | The key does not take this value. The message gives one it takes. |
+| `unterminated_quote`, `unbalanced_parens` | A quote or parenthesis is not closed. |
+| `dangling_or`, `dangling_not`, `empty_group` | `OR`, `-` or `( )` has nothing to work on. |
+| `bad_directive` | `sort:` or `limit:` is inside a group, an `OR` or a `-`. |
+| `too_long` | The query is over 2,000 characters. |
+
 With `--json` the error carries `reason`, `next` and `data.offset` (0-based). The viewer API
-answers 400 with `reason`, `offset` and `next`; the MCP tools return a tool error that names the
-character. The viewer's query bar ([Viewer](../guides/explore.md#viewer)) takes the same queries
-and shows that error under the bar.
+answers 400 with `reason`, `offset` and `next`, and the viewer shows the error under its filter bar.
 
-`--facets` counts sessions per value of each key instead of listing them: `agent`, `model`,
-`provider`, `repo`, `branch`, `flag`, `skill`, `kind`, `tool` and `mcp`. Each key is counted over
-the query without that key's own top-level clauses, so `--facets agent --where agent:codex` still
-shows every agent. `--limit` sets the values per key (default 10). A count is the number of
-sessions, not events.
-
+:::more Queries on Postgres, ClickHouse and other stores
 On the SQLite index a query becomes one SQL statement, with every value bound as a parameter.
-The event keys `kind`, `tool`, `ok` and `mcp` read indexes, not the events: a session-level
-clause such as `tool:Bash ok:false` looks up the matching events once and keeps their sessions,
-and facets on `kind`, `tool` and `mcp` read a small table of each session's distinct values.
-`event.duration` and `error` read indexes too, so a session-level clause with one of them alone
-(`--where 'event.duration>60s'`, `--where 'error:timeout'`) does not read the events: the
-duration index holds every timed event, and the error index holds only the events that have an
-error text. Bare words read the payload of every candidate event, so pair them with an indexed
-key (`kind:tool.end timeout`) on a large store. A store written by an older version is upgraded
-on first open, with progress on stderr; a 740,000-event store from index schema v2 took 20 s on
-the test desktop.
+`kind`, `tool`, `ok`, `mcp`, `event.duration` and `error` read indexes. Bare words read every
+candidate event, so pair them with an indexed key (`kind:tool.end timeout`) on a large store.
 
-The Postgres and ClickHouse store plugins also run queries in their own database: every key, `has:`,
-`is:`, bare words (whole words, the last one also as a prefix, as their `search` matches), `sort:`,
-`limit:` and `--facets`.
-A plugin older than coding.sh fails on a key it doesn't know, with reason `unsupported_store`.
-Event results (`GET /api/events`) need the SQLite or memory store; on a plugin they fail with
-reason `unsupported_store`.
-Any other store plugin answers session keys by reading sessions a page at a time, the newest
-20,000 at most (`coding.sh sessions` says so on stderr when it stops there); event keys and bare
-words there fail with reason `unsupported_store`.
+The Postgres and ClickHouse store plugins run every key, `has:`, `is:`, bare words, `sort:`,
+`limit:` and `--facets` in their own database. A plugin older than coding.sh fails on a key it
+does not know, with reason `unsupported_store`. Event rows (`GET /api/events`) need the SQLite
+store.
+
+Any other store plugin answers session keys by reading at most the newest 20,000 sessions; event
+keys and bare words fail there with `unsupported_store`.
+:::
+
+## Flags and derails
+
+coding.sh checks each session for failure patterns at every ingest and keeps them as flags.
+`coding.sh sessions --flag <name>` or `--where flag:<name>` lists the sessions that have one.
+
+```sh
+coding.sh sessions --flag no-verification
+coding.sh sessions --where 'is:flagged since:7d'
+```
+
+| Flag | Set when the session |
+|---|---|
+| `premature-completion` | Stopped while the last test run was failing, and the agent's last words did not say so. |
+| `repeated-tool-failure` | Had the same tool fail three times in a row with similar input. A search that found nothing is not a failure. |
+| `no-verification` | Changed files, but no test, type check, lint or build ran. |
+| `compaction` | Had its context compacted. |
+| `test-tamper` | Edited a test or test config to hide failures: a skip marker, a deleted test file, or an assertion change that alone turned a run green. |
+| `duplicate-fetch` | Repeated three or more read-only calls in one context with the same result and no edit in between. |
+| `skill-copy-conflict` | Used two copies of one skill, such as the project's and a personal one. |
+| `refusal` | Had a model call stop on a refusal (`refusal`, `content_filter` or `safety`). |
+| `text-tool-call` | Had the model write a tool call out as text, so it never ran. |
+| `unapproved-action` | Ran a destructive or paid command that the user's turn did not approve, such as `git reset --hard` or `git push --force`. |
+| `step-retried`, `resumed` | Is a durable workflow run that retried a step, or continued after a crash. Notes, not failures. |
+
+For `unapproved-action`, a turn approves a command when it asks for it, says yes to the agent, or
+gives leave in advance. A Claude Code permission prompt counts too. Dry runs, read-only commands
+and a package manager's own `-y` are never flagged.
+
+### Derails
+
+A derail is a point where a long run went off the rails. Each one records the event and time it
+started, and shows in `show` and on the viewer's timeline. A session gets at most 25.
+
+| Derail | Set when | Threshold |
+|---|---|---|
+| `looping` | The same tool call returns the same result again and again, with no edit in between. | 5 times within 10 calls |
+| `failure-streak` | Tool calls fail one after another. Interrupted calls and exits that are an answer (a search that found nothing) don't count. | 5 in a row |
+| `churn` | An edit to a file is undone, then undone again. | 2 reverts within 60 min |
+| `no-progress` | A long stretch of calls with no edit, no file-writing command, no subagent and no better test result, while the context grows. | 80 calls, 40% repeats, context up 1.5x |
+| `stalled` | A tool call sat with nothing else happening, then failed or never finished. | 15 min |
+| `context-thrash` | Automatic compactions come back to back. Manual ones don't count. | Under 3 min or 15 tool calls apart |
+
+Never flagged: polling a background job (`sleep`, `wait`, BashOutput), driving a browser or desktop
+through MCP, waiting on a subagent or on the user, and long tool calls that succeed.
+
+### Tags
+
+A flag with a colon is a tag, not a failure. `is:flagged` and the failure rate in `stats` leave
+tags out.
+
+| Tag | Added when the session |
+|---|---|
+| `skill:<name>` | Used a skill, through the Skill tool or a file in the skill's folder. |
+| `hook:<source>` | Got text in its context from another hook, such as `hook:plugin:terse`. |
+| `gateway:<id>` | Sent model calls through an LLM gateway, such as `gateway:vercel`. |
+| `secret:exposed` | Had a vendor token replaced by redaction. The agent and its provider saw it, so rotate it. |
+| `model:switch` | Changed model mid-session. |
+| `model:fallback` | Recorded a fallback to another model, such as Claude Code's `--fallback-model`. |
+| `cache:low` | Wrote a prompt cache of at least 4,096 tokens over three or more turns, and read back less than it wrote. |
+| `fold:error` | Could not be folded into stats. `coding.sh ingest` tries again. |
+
+## Facets
+
+`--facets` counts sessions per value of each key instead of listing them.
+
+```sh
+coding.sh sessions --facets agent,flag
+```
+
+```text
+AGENT             SESSIONS
+claude-code       28
+codex             14
+coding-sh-triage  8
+opencode          5
+
+FLAG             SESSIONS
+no-verification  6
+```
+
+| Option | Default |
+|---|---|
+| Keys | `agent`, `model`, `provider`, `repo`, `launch`, `branch`, `flag`, `skill`, `hook`, `kind`, `tool`, `mcp` |
+| With no keys | `agent`, `model`, `repo`, `flag`, `skill`, `tool` |
+| `--limit` | 10 values per key |
+
+Each key is counted over the query without that key's own top-level terms, so
+`--facets agent --where agent:codex` still shows every agent. A count is a number of sessions, not
+events. The MCP tool `sessions_list` takes `facets` too.
 
 ## `coding.sh sql`
+
+One read-only SQL query against the SQLite index.
 
 ```sh
 coding.sh sql "select agent, count(*) as n from sessions group by agent"
@@ -153,25 +262,20 @@ coding.sh sql "select tool, count(*) from events where kind = 'tool.end' and ok 
 coding.sh sql "select id, json_extract(stats, '$.usage.costUsd') as cost from sessions order by cost desc limit 10" --json
 ```
 
-The output is a table, CSV with `--csv`, or one JSON document with `--json`
-(`{columns, rows, rowCount, truncated}`, each row an object keyed by column name).
+| Flag | Default | What it does |
+|---|---|---|
+| `--csv` | | Print CSV instead of a table. |
+| `--json` | | One document: `{columns, rows, rowCount, truncated}`. |
+| `--limit` | 1000 | Rows returned. A note on stderr says when rows were cut. |
+| `--timeout` | 10 | Seconds before the query is stopped. |
 
-The query is read-only in three ways:
-
-- Only one statement is accepted, and it must start with `SELECT` or `WITH`. `INSERT`, `UPDATE`,
-  `DELETE`, `REPLACE INTO`, `DROP`, `CREATE`, `ALTER`, `ATTACH`, `DETACH`, `PRAGMA`, `VACUUM` and
-  `REINDEX` outside quotes and comments are rejected. These exit 2. `replace()` the function and
-  table-valued pragmas such as `pragma_table_info('sessions')` are allowed.
-- The index is opened read-only (`SQLITE_OPEN_READONLY`).
-- `PRAGMA query_only` is on, so even a temporary table cannot be created.
-
-The query runs in a child process. It is killed after `--timeout` seconds (default 10), and at most
-`--limit` rows are returned (default 1000; a note on stderr says when rows were cut).
-
-`sql` reads only the SQLite index. With a Postgres or ClickHouse store it exits 1 and points to
-`coding.sh export`, which works on every store, or to the database's own client.
+Only one statement that starts with `SELECT` or `WITH` is accepted; anything that writes exits 2.
+The index is opened read-only, with `PRAGMA query_only` on. `sql` reads only the SQLite index:
+with a Postgres or ClickHouse store, use `coding.sh export` or the database's own client.
 
 ## `coding.sh export`
+
+Streams sessions, events or labels as JSONL (the default) or CSV.
 
 ```sh
 coding.sh export sessions --since 30d --format csv > sessions.csv
@@ -179,16 +283,13 @@ coding.sh export events --agent codex --since 7d > events.jsonl
 coding.sh export labels --format csv
 ```
 
-Filters: `--agent`, `--repo`, `--since`, `--flag`, `--project`, `--subagents` and `--limit` (the N
-newest matching sessions). They pick sessions; `events` and `labels` export the rows of those
-sessions. Subagent sessions are left out unless you pass `--subagents` or a `--where` with `id:`,
-`parent:`, `is:root` or `is:child`. With no filter at all,
-`export labels` exports every label, including labels on eval cases.
+The filters `--agent`, `--repo`, `--since`, `--flag`, `--project`, `--where`, `--subagents` and
+`--limit` (the N newest sessions) pick sessions; `events` and `labels` export the rows of those
+sessions. With no filter, `export labels` exports every label, including labels on eval cases.
 
 JSONL rows are the stored objects (`Session`, `AgentEvent`, `Label` in the
-[trace format](https://coding.sh/docs/trace-format)), one per line. CSV has the fixed columns below.
-Text cells that start with `=`, `+`, `-` or `@` get a leading `'`, so a spreadsheet shows them
-instead of running them as formulas.
+[trace format](https://coding.sh/docs/trace-format)). CSV has these columns. A text cell that starts
+with `=`, `+`, `-` or `@` gets a leading `'`, so a spreadsheet shows it instead of running it.
 
 | Export | CSV columns |
 |---|---|
@@ -196,31 +297,25 @@ instead of running them as formulas.
 | `events` | id, session_id, ts, kind, agent, model, tool, ok, duration_ms, turn_id, subagent_id, input_tokens, output_tokens, cost_usd, payload (JSON) |
 | `labels` | id, session_id, case_id, criterion, value, note, by, ts |
 
-Rows are read a page at a time and written as they come, so memory stays flat on a large store.
-
 ### Evidence folders
 
-`export --evidence <dir>` writes the raw trace of each matching session to a folder, for a person or
-a model to read as files:
+`export --evidence <dir>` writes each matching session's raw trace to a folder, for a person or a
+model to read as files:
 
 ```sh
 coding.sh export --evidence traces/ --where 'flag:repeated-tool-failure' --limit 20
 ```
 
-`<dir>/index.md` lists the sessions. Each session gets its own folder with `session.json` (the
-session row), `events.jsonl` (its events), `tools/NNNN-<tool>.txt` (each tool call's input and full
-output, read back from the blob store when the event clipped it) and `index.md` (the session's
-stats, flags and a timeline that links each tool call to its file). Everything goes through the
-`secrets` redactor and your `capture.redact` and `capture.redactPatterns` first. Each tool file is
-cut at 200 KB and each `events.jsonl` at 5 MB, with a note saying how much was left out. The same
-store and filters give the same bytes on every run. The filters are the ones above; `export
-sessions --evidence` is the same as `export --evidence`. The command stops with `target_exists`
-when the folder is not empty, unless you pass `--force`.
+`<dir>/index.md` lists the sessions. Each session gets a folder with `session.json`,
+`events.jsonl`, one `tools/NNNN-<tool>.txt` per tool call with its full output, and an `index.md`
+with stats, flags and a timeline. Everything is redacted again first. A tool file is cut at 200 KB
+and `events.jsonl` at 5 MB. A folder that is not empty stops it with `target_exists`, unless you
+pass `--force`.
 
 ## Tables
 
-The SQLite index keeps these tables. Times are milliseconds since the epoch. Columns holding JSON
-are text: read them with `json_extract(col, '$.path')` or `json_each(col)`.
+The SQLite index keeps these tables. Times are milliseconds since the epoch. Columns that hold
+JSON are text: read them with `json_extract(col, '$.path')` or `json_each(col)`.
 
 ### `sessions`
 
@@ -324,11 +419,10 @@ A view over `scores`: a person's boolean scores (`pass` or `fail`) and categoric
 | `started_at` | Start time |
 | `doc` | The full run as JSON |
 
-`session_facets` holds each session's distinct `kind`, `tool` and `mcp` values (`key`, `value`,
-`session_id`), kept in step with `events`. Other tables (`tasks`, `bundles`, `datasets`,
-`experiments`, `judges`, `kv`, `cursors`) hold eval and bookkeeping state as JSON in a `doc`
-column. `events_fts` is the full-text index behind
-`coding.sh search`. List every table with:
+`session_facets` holds each session's distinct `kind`, `tool` and `mcp` values. Other tables
+(`tasks`, `bundles`, `datasets`, `experiments`, `judges`, `kv`, `cursors`) hold eval and bookkeeping
+state as JSON in a `doc` column. `events_fts` is the full-text index behind `coding.sh search`.
+List every table with:
 
 ```sh
 coding.sh sql "select name, sql from sqlite_schema where type = 'table'"
