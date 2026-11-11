@@ -62,5 +62,5 @@ send your sessions anywhere.
 
 ## Read more
 
-- [Storage, sinks and privacy](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md) lists everything that is captured and every setting that changes it.
+- [Storage, sinks and privacy](https://coding.sh/docs/privacy) lists everything that is captured and every setting that changes it.
 - [Concepts](https://coding.sh/docs/concepts) defines the words coding.sh uses: sessions, events, flags and the rest.
