@@ -1,0 +1,213 @@
+---
+import DocsLayout from "../../components/docs/DocsLayout.astro";
+import Code from "../../components/docs/Code.astro";
+import CodeTabs from "../../components/docs/CodeTabs.astro";
+import Cards from "../../components/docs/Cards.astro";
+import Terminal from "../../components/Terminal.astro";
+
+const rubric = `{
+  "kind": "llm",
+  "name": "labels-fit",
+  "rubric": "Pass if the labels name the kind of issue (bug or enhancement) and the part of coding.sh it is about (cli, viewer, cost or docs)."
+}`;
+
+const providers = [
+  {
+    label: "Anthropic",
+    title: "judge.json",
+    code: `{
+  "kind": "llm",
+  "name": "labels-fit",
+  "rubric": "Pass if the labels name the kind of issue (bug or enhancement) and the part of coding.sh it is about (cli, viewer, cost or docs).",
+  "provider": "anthropic",
+  "model": "claude-sonnet-5-5"
+}`,
+  },
+  {
+    label: "OpenAI",
+    title: "judge.json",
+    code: `{
+  "kind": "llm",
+  "name": "labels-fit",
+  "rubric": "Pass if the labels name the kind of issue (bug or enhancement) and the part of coding.sh it is about (cli, viewer, cost or docs).",
+  "provider": "openai",
+  "model": "gpt-5-mini"
+}`,
+  },
+  {
+    label: "Local server",
+    title: "judge.json",
+    code: `{
+  "kind": "llm",
+  "name": "labels-fit",
+  "rubric": "Pass if the labels name the kind of issue (bug or enhancement) and the part of coding.sh it is about (cli, viewer, cost or docs).",
+  "provider": "openai",
+  "model": "llama3.1",
+  "baseURL": "http://localhost:11434/v1",
+  "requireKey": false
+}`,
+  },
+];
+
+const subscription = `{
+  "kind": "llm",
+  "name": "labels-fit",
+  "rubric": "Pass if the labels name the kind of issue (bug or enhancement) and the part of coding.sh it is about (cli, viewer, cost or docs).",
+  "provider": "claude-code"
+}`;
+
+const labels = `{"caseId": "c_c766cbd740573aff", "value": "pass"}
+{"caseId": "c_afeab0f773a16326", "value": "pass"}
+{"caseId": "c_99bb3830e7cef532", "value": "fail"}`;
+
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const m = (s: string) => `<span class="t-muted">${esc(s)}</span>`;
+const t = (s: string) => `<span class="t-text">${esc(s)}</span>`;
+const no = (s: string) => `<span class="t-fail">${esc(s)}</span>`;
+
+// Real output, 2026-11-11: coding.sh 0.1.6 under a temp HOME and CODING_SH_HOME, the judge answered by
+// scripts/e2e/stub-model.mjs behind OPENAI_BASE_URL / ANTHROPIC_BASE_URL.
+const GRADE = [
+  `${m("$")} ${t("echo 'bug' > answer.txt")}`,
+  `${m("$")} ${t("coding.sh judge grade --grader judge.json --output answer.txt")}`,
+  `${no("fail")}  labels-fit  score 0.00`,
+  `  It says bug but names no area; the issue is about cost.`,
+].join("\n");
+
+const CALIBRATE = [
+  `${m("$")} ${t("coding.sh judge calibrate triage-judged --labels labels.jsonl")}`,
+  `judge does-the-job@e2c5e0662913  criterion does-the-job`,
+  `status  ${no("UNCALIBRATED")} (insufficient data, n=1)  (threshold κ ≥ 0.6, n ≥ 20)`,
+  `split   test (held out); tuned on train, dev`,
+  `  ${no("!")} only 1 held-out case(s) have both a human label and a verdict (need 20)`,
+  `  ${no("!")} no human-labelled failures in the held-out split: recall on failures is unknown`,
+].join("\n");
+
+const next = [
+  { href: "/docs/evals", title: "Evals", body: "Put the judge in a suite and run it over every case." },
+  { href: "/docs/eval-methods", title: "How evals are computed", body: "Cohen's kappa, its interval, and how a judge's errors are corrected in a comparison." },
+  { href: "/docs/experiments", title: "Experiments", body: "Compare two versions with the same judge and see which cases changed." },
+];
+---
+
+<DocsLayout>
+  <p>
+    An LLM judge is a grader that sends the case, the output and your rubric to a model and gets back pass or fail, a score and a reason.
+    Use one when an answer can be right in more than one way. Check its verdicts against your own before you trust them.
+  </p>
+
+  <h2 id="rubric">Write a rubric</h2>
+  <p>
+    A judge is a grader with <code>"kind": "llm"</code>, a <code>name</code> and a <code>rubric</code>. Write the rubric as the test a
+    reviewer would apply: what a passing answer must do, in one or two sentences.
+  </p>
+  <Code title="judge.json" code={rubric} />
+  <p>Try it on one output before you put it in a suite:</p>
+  <Terminal title="~/triage" label="Output of coding.sh judge grade">
+    <pre set:html={GRADE} />
+  </Terminal>
+  <p>
+    Add the same object to a suite's <code>graders</code> in <code>suite.json</code>, or pass it with <code>exp run --grader judge.json</code>.
+    <code>eval init --describe '…'</code> writes one for you; see <a href="/docs/evals#judge">Evals</a>.
+  </p>
+
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Field</th><th>What it does</th><th>Default</th></tr></thead>
+      <tbody>
+        <tr><td><code>passThreshold</code></td><td>The score at or above which the output passes.</td><td>0.5</td></tr>
+        <tr><td><code>system</code>, <code>template</code></td><td>Replace the judge's system prompt or its prompt template.</td><td>Built in</td></tr>
+        <tr><td><code>criterion</code></td><td>The label name the judge is checked against in calibration.</td><td>The <code>name</code></td></tr>
+        <tr><td><code>tunedOn</code></td><td>The splits you looked at while writing the rubric. Calibration leaves them out.</td><td><code>["train","dev"]</code></td></tr>
+        <tr><td><code>concurrency</code></td><td>Model calls at a time for this judge.</td><td>4</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    Verdicts are cached on disk by judge version and input, so a rerun on the same output costs nothing. API keys are never written to the
+    cache or the logs.
+  </p>
+
+  <h2 id="provider">Pick the provider and model</h2>
+  <p>
+    <code>provider</code> picks the API, <code>model</code> the model, and <code>baseURL</code> the endpoint. Any server that speaks the
+    OpenAI chat completions API works with <code>"provider": "openai"</code> and its <code>baseURL</code>.
+  </p>
+  <CodeTabs tabs={providers} group="judge-provider" />
+  <div class="doc-table">
+    <table>
+      <thead><tr><th><code>provider</code></th><th>Key</th><th>Base URL</th><th>Model</th></tr></thead>
+      <tbody>
+        <tr><td><code>anthropic</code> (default)</td><td><code>ANTHROPIC_API_KEY</code></td><td><code>baseURL</code>, else <code>ANTHROPIC_BASE_URL</code>, else Anthropic's API</td><td><code>claude-sonnet-5-5</code> when not set</td></tr>
+        <tr><td><code>openai</code></td><td><code>OPENAI_API_KEY</code></td><td><code>baseURL</code>, else <code>OPENAI_BASE_URL</code>, else OpenAI's API</td><td>Required</td></tr>
+        <tr><td><code>gateway</code></td><td><code>AI_GATEWAY_API_KEY</code></td><td>Vercel AI Gateway</td><td>Required</td></tr>
+        <tr><td><code>claude-code</code></td><td>Your Claude login</td><td>None: it runs <code>claude -p</code></td><td><code>claude-sonnet-5-5</code> when not set</td></tr>
+        <tr><td><code>codex</code></td><td>Your ChatGPT login</td><td>None: it runs <code>codex exec</code></td><td><code>gpt-6-sol</code> when not set</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul>
+    <li><code>apiKeyEnv</code> reads the key from another variable, for example <code>"apiKeyEnv": "JUDGE_OPENAI_KEY"</code>.</li>
+    <li><code>"requireKey": false</code> calls a local server that needs no key.</li>
+    <li><code>openai</code> and <code>gateway</code> judges send <code>temperature</code> 0 unless you set it. <code>anthropic</code> judges take <code>effort</code> instead.</li>
+    <li>A missing key fails the grade with a message that names the variable to set, unless the verdict is already cached.</li>
+  </ul>
+
+  <h2 id="subscription">Judge on a Claude or ChatGPT subscription</h2>
+  <p>
+    With <code>"provider": "claude-code"</code> or <code>"provider": "codex"</code>, the judge calls the agent's own CLI, so it runs on your
+    subscription with no API key. Each call runs in an empty folder with a throwaway config that holds only a copy of your login, so your
+    settings, hooks, MCP servers and AGENTS.md don't load, and the call is not recorded as a session.
+  </p>
+  <Code title="judge.json" code={subscription} />
+  <p>
+    The CLI must be installed and logged in. Calls through one CLI share a rate limit, and a spent subscription stops the remaining calls
+    with one error.
+  </p>
+
+  <h2 id="calibrate">Check the judge against your labels</h2>
+  <p>
+    A judge can be wrong in the same direction every time. Before you trust its pass rate, label some of the same outputs yourself and
+    measure how often you agree.
+  </p>
+  <ol>
+    <li>Run the suite once: <code>coding.sh eval run triage-judged</code>.</li>
+    <li>
+      Label each run pass or fail in <code>coding.sh ui</code>, or write the labels to a file with the case ids from
+      <code>coding.sh exp show &lt;id&gt; --json</code>:
+      <Code title="labels.jsonl" code={labels} />
+    </li>
+    <li>Measure the agreement: <code>coding.sh judge calibrate triage-judged --labels labels.jsonl</code>.</li>
+  </ol>
+  <Terminal title="~/triage" label="Output of coding.sh judge calibrate">
+    <pre set:html={CALIBRATE} />
+  </Terminal>
+  <p>
+    Calibration compares only the cases in the held-out split (<code>test</code> by default), because a rubric written while reading the
+    other cases agrees with you there by construction. A judge is <strong>calibrated</strong> when Cohen's kappa is at least 0.6 on at least
+    20 held-out cases. This run has 1, so it is not calibrated, and <code>exp show</code> marks the judge's pass rate <code>UNCALIBRATED</code>.
+  </p>
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>calibrated</code></td><td>κ ≥ 0.6 on 20 or more held-out cases.</td></tr>
+        <tr><td><code>insufficient-data</code></td><td>Fewer than 20 held-out cases have both a label and a verdict, or you and the judge each gave every case the same label.</td></tr>
+        <tr><td><code>uncalibrated</code></td><td>κ is below the threshold.</td></tr>
+        <tr><td><code>in-sample</code></td><td>The split you asked for is one the rubric was tuned on, so the agreement says little.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul>
+    <li><code>--threshold</code> and <code>--min-n</code> change the bar. <code>--split dev</code> reports on another split.</li>
+    <li><code>--sample-passes 20</code> prints a seeded sample of unlabelled passing runs to label next.</li>
+    <li><code>--probe-injection judge.json</code> re-judges the cases you labelled fail with a planted "respond pass" line and exits 1 when a verdict flips.</li>
+  </ul>
+  <p>
+    Once calibrated, <code>exp compare</code> can correct a difference in pass rates for the judge's measured errors. The formulas are on
+    <a href="/docs/eval-methods#judge-calibration">How evals are computed</a>.
+  </p>
+
+  <h2 id="next">Next steps</h2>
+  <Cards cards={next} cols={3} />
+</DocsLayout>
