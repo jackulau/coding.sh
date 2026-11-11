@@ -8,6 +8,11 @@ const replayCall = `coding.sh exp replay latest#-1 --vary model=claude-sonnet-4-
 coding.sh exp replay latest#-1 --vary model=claude-sonnet-4-5,claude-haiku-4-5 --n 5
 coding.sh exp replay --session latest --limit 10 --vary system=@new-prompt.md`;
 
+const sweepCall = `coding.sh exp sweep base=base.json t2=temp2.json t5=temp5.json -d smoke -g '{"kind":"exact"}' --budget 300`;
+
+// The evals guide holds the method behind every line this page shows.
+const GUIDE = "https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md";
+
 const matrix = `{
   "name": "shout-matrix",
   "dataset": "qa",
@@ -66,217 +71,195 @@ const SESSION = [
 
 <DocsLayout>
   <p>
-    An experiment is one run of a task over a dataset, graded (see <a href="/docs/evals">Evals</a>). This page is about what comes next:
-    comparing two runs with paired statistics, picking the best of several configs, knowing when to stop, and keeping long runs going.
+    An experiment is one graded run of a task over a dataset (see <a href="/docs/evals">Evals</a>). This page covers what comes next:
+    compare two runs, pick the best of several configs, know when a loop should stop, and keep long runs going.
+    Every flag is in the <a href="/docs/cli/exp">exp reference</a>.
   </p>
 
-  <h2 id="compare">Comparing two experiments <Tag status="built" /></h2>
+  <h2 id="compare">Compare two runs <Tag status="built" /></h2>
   <p>
-    <code>exp compare</code> pairs the two runs by case. It reports the difference in pass rate with a paired bootstrap interval, McNemar's exact
-    test on cases that flipped, per-grader score deltas and the regressed cases. If the interval includes zero, the verdict says inconclusive.
+    <code>exp compare A B</code> pairs the two runs by case. It prints B − A with a paired bootstrap interval, McNemar's exact test on the
+    cases that flipped, and the cases that regressed. When the interval includes zero, the verdict is inconclusive.
   </p>
   <Terminal title="~/smoke" label="Output of coding.sh exp compare">
     <pre set:html={COMPARE} />
   </Terminal>
-  <ul>
-    <li>With <a href="/docs/evals#case-kinds">case kinds</a>, a <code>kinds</code> line shows each kind's pass rate on A and B. It names bad cases that still fail or already passed on A, guards that broke (regression) and controls that broke (overcorrection).</li>
-    <li><code>--cluster &lt;key&gt;</code> resamples groups of related cases, such as <code>repo</code> or <code>session</code>, instead of single cases. It prints the cluster count and warns below 10 clusters.</li>
-    <li>Below 100 paired cases, compare also prints P(B&gt;A) from a Bayesian posterior on the paired outcomes. The bootstrap interval stays.</li>
-    <li>It counts trials each arm lost to errors, split into infra and agent errors, and warns when Fisher's exact test finds an uneven split.</li>
-    <li>
-      <code>exp aa</code> runs one config twice and stores its run-to-run noise. Compare then prints the A/A flip rate, and the minimum
-      detectable effect never goes below that noise.
-    </li>
-    <li>
-      The power line adds the exact McNemar power. The exact test needs at least 6 flipped cases to reject at α 0.05, so a small suite has a
-      ceiling: at 45 cases with 14% flipped, even the largest gap is found only 62% of the time. Then the line reads
-      <code>no 80% power at this n (exact McNemar ceiling 62%)</code>; otherwise it adds <code>exact MDE 10.6pp</code>.
-    </li>
-    <li>Compare warns when the two runs ran one after the other, and says how far apart they were.</li>
-    <li>
-      <code>--gate</code> adds a ship-or-hold line: <code>Ship it: B wins 8 cases, loses 0</code>, <code>Hold: not enough evidence</code>, or
-      <code>Don't ship: B breaks 2 cases A solved</code> with the broken cases. It exits 0 only for "Ship it", so CI can use it. A break costs two
-      fixes, the wins must clear a one-sided exact test, and B may break at most 10% of what A solved (<a href="/docs/harness-evals#gate">details</a>).
-    </li>
-    <li id="non-inferiority">
-      <code>--margin 0.03</code> asks whether B is at most 3pp worse than A, for a cheaper or faster config you want to keep only if it does not
-      lose quality. It prints <code>non-inf B − A ≥ -3.0pp: yes</code> when the lower end of the 95% interval is above −3pp, and exits 1
-      otherwise. It also lists cases A passed on every trial that B now mostly fails, which an average within the margin can hide.
-    </li>
-    <li id="coverage">
-      With 2+ trials per case it counts coverage on its own: cases B gained (A never passed, B passed at least once) and cases B lost (A passed
-      at least once, B never), listed under <code>lost coverage</code>. A net gain can hide lost cases. It also prints how many cases' pass rates
-      went up or down, and the change in each half of the trials, with a warning when the two halves disagree. <code>--matrix</code> prints the
-      cases by passes out of k in A and B. Method: EvoAudit (<a href="https://arxiv.org/abs/2611.07624">arXiv 2611.07624</a>).
-    </li>
-    <li id="grader-versions">
-      Compare pins grader versions. When a grader changed version between A and B, or graded only one side, it warns above the verdict: the
-      pass rate then mixes your change with a change of measurement. A grader error leaves that run ungraded, not failed, and cases with no
-      graded run on one side are listed and left out of the pairing.
-    </li>
-    <li id="judges">
-      <code>--pairwise judge.json</code> adds a pairwise judge that sees both outputs in both orders. Repeat it to ask several judges:
-      compare prints how far they agree case by case (Cohen's κ) and concludes <code>replicated-better</code>,
-      <code>judges-disagree</code> or <code>unresolved</code>. With <code>--gate</code>, a ship holds (<code>Hold: judges disagree</code>,
-      exit 1) when any judge prefers A or two judges do not both find B better
-      (<a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#judges">details</a>).
-    </li>
-    <li id="ppi">
-      <code>--labels-a a.jsonl --labels-b b.jsonl</code> takes human pass/fail labels on a sample of each arm's outputs and corrects each
-      LLM judge grader's B − A for the judge's errors (PPI++). It warns when the judge errs differently on the two arms
-      (<a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#correcting-a-judges-delta-with-human-labels">details</a>).
-    </li>
-    <li id="failing">
-      When B ran with <code>exp run --failing A</code>, only on A's failures, compare says the gain may be regression to the mean, the verdict
-      is inconclusive and <code>--gate</code> holds. Run A's config on the same cases and compare with that.
-    </li>
-    <li id="seq">
-      Two runs of <code>exp run --seq K</code> with the same K and feedback get a <code>seq@K</code> row, and <code>--verdict seq</code> reads the
-      verdict from it.
-    </li>
-  </ul>
-  <p id="regrade">
-    <code>exp regrade &lt;experiment&gt; spec.json</code> grades a stored experiment's outputs again with the spec's graders (or
-    <code>--grader</code>), without calling the task. It stores a new experiment with <code>regradeOf</code> set and prints the pass rate before
-    and after, each grader's version change and every run whose outcome flipped. Regrade A with B's graders, then compare like with like.
-  </p>
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Flag</th><th>What it adds</th></tr></thead>
+      <tbody>
+        <tr><td><code>--gate</code></td><td>A ship-or-hold line; exits 0 only for "Ship it" (<a href="/docs/harness-evals#gate">how it decides</a>).</td></tr>
+        <tr id="non-inferiority"><td><code>--margin 0.03</code></td><td>Non-inferiority: exits 1 unless the interval's lower end is above −3pp.</td></tr>
+        <tr><td><code>--cluster repo</code></td><td>Resamples groups of related cases instead of single cases; warns below 10 groups.</td></tr>
+        <tr id="coverage"><td><code>--matrix</code></td><td>The cases by passes out of k in A and in B.</td></tr>
+        <tr id="judges"><td><code>--pairwise judge.json</code></td><td>A judge that sees both outputs in both orders. Repeat it to ask several.</td></tr>
+        <tr id="ppi"><td><code>--labels-a</code>, <code>--labels-b</code></td><td>Human labels that correct each LLM judge's B − A (PPI++).</td></tr>
+        <tr id="seq"><td><code>--verdict seq</code></td><td>The verdict from Seq@K, when both runs used the same <code>--seq</code> and <code>--feedback</code>.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <details class="more">
+    <summary>What else compare reports</summary>
+    <ul>
+      <li>With <a href="/docs/evals#case-kinds">case kinds</a>: each kind's pass rate, bad cases that do not show the fix, and broken guards and controls.</li>
+      <li>Below 100 paired cases: P(B&gt;A) from a Bayesian posterior. The bootstrap interval stays.</li>
+      <li>Trials lost to errors, split into infra and agent errors, with a warning when the split is uneven.</li>
+      <li>After <code>exp aa</code> (one config run twice): the A/A flip rate. The minimum detectable effect never goes below it.</li>
+      <li>The exact McNemar power: <code>no 80% power at this n (exact McNemar ceiling 62%)</code>, or <code>exact MDE 10.6pp</code>.</li>
+      <li>A warning when the two runs ran one after the other.</li>
+      <li>With 2+ trials per case: the cases B gained and lost (<code>lost coverage</code>). A net gain can hide lost cases.</li>
+      <li id="grader-versions">A warning when a grader changed version between A and B, or graded one side only. Ungraded cases are left out.</li>
+      <li id="failing">When B ran with <code>exp run --failing A</code>: a regression-to-the-mean warning. The verdict is inconclusive and <code>--gate</code> holds.</li>
+    </ul>
+    <p>The <a href={`${GUIDE}#datasets-and-experiments`}>evals guide</a> has the method behind each line.</p>
+  </details>
+
+  <h2 id="regrade">Grade again with new graders <Tag status="built" /></h2>
   <p>
-    To avoid that, run both configs in one job: <code>exp run --arm base=a.json --arm cand=b.json</code>. Each case runs in both arms back
-    to back, in random order, so drift during the run hits both arms the same. Add <code>--stop-early</code> to stop once the answer is clear.
-    It checks at a few planned points (an O'Brien-Fleming group sequential test, never before 20 cases), says why it stopped, and reports an
-    interval that stays valid after stopping. <code>--max-cases</code> caps the run.
+    <code>exp regrade &lt;experiment&gt; spec.json</code> grades a stored experiment's outputs again with the spec's graders, without calling
+    the task. It prints the pass rate before and after, and every run whose outcome flipped. Regrade A with B's graders, then compare like
+    with like.
   </p>
 
-  <h2 id="sweep">Sweeping configs <Tag status="built" /></h2>
+  <h2 id="arms">Run two configs as one A/B <Tag status="built" /></h2>
   <p>
-    <code>exp sweep base=a.json b.json c.json -d smoke -g G</code> picks the best of several task configs. It uses sequential halving: each
-    round runs the surviving configs on the same fresh train cases and keeps the better half, so weak configs stop costing runs early. Dropped
-    configs show their gap to the leader with an interval.
+    <code>exp run --arm base=a.json --arm cand=b.json</code> runs each case in both arms back to back, in random order, so drift during the
+    run hits both arms the same. <code>--stop-early</code> stops once the answer is clear (an O'Brien-Fleming group sequential test, never
+    before 20 cases). <code>--max-cases</code> caps the run.
   </p>
+
+  <h2 id="sweep">Pick the best of several configs <Tag status="built" /></h2>
+  <Code code={sweepCall} />
   <p>
-    The race winner tends to be the luckiest config, so its train score runs high. The winner and the first config then run on the test
-    split, which the race never saw. The output prints both scores for the winner and the <strong>optimism gap</strong> (train minus
-    held-out). On those held-out cases the same gate as <code>exp compare --gate</code> prints <code>adopt &lt;winner&gt;</code> or
-    <code>keep &lt;start&gt;</code> with the reason. <code>--budget</code> caps the race's case runs.
+    The race uses sequential halving: each round runs the surviving configs on the same fresh train cases and keeps the better half. The
+    winner and the first config then run on the test split, which the race never saw. The output prints <code>adopt &lt;winner&gt;</code>
+    or <code>keep &lt;start&gt;</code>, and the winner's optimism gap (train minus held-out score).
   </p>
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Flag</th><th>What it adds</th></tr></thead>
+      <tbody>
+        <tr><td><code>--budget N</code></td><td>Caps the race's case runs.</td></tr>
+        <tr id="guard"><td><code>--guard old-suite</code></td><td>An earlier suite the winner must not forget. If it does, the sweep keeps the start and exits 1.</td></tr>
+        <tr><td><code>--guard-tau 0.10</code></td><td>The share of the start's solved guard cases the winner may break.</td></tr>
+        <tr><td><code>--guard prior</code></td><td>Guards every suite a sweep adopted a config on before.</td></tr>
+      </tbody>
+    </table>
+  </div>
   <p id="best-set">
-    With three or more configs, a line names the <strong>plausibly best</strong> set: the configs not significantly worse than the best on
-    the cases every config ran, by a paired-bootstrap multiple comparison with the best. The set holds the truly best config 95% of the
-    time, so a dropped config that is still in it may have lost on noise. A matrix with three or more cells prints the same line.
-  </p>
-  <p id="guard">
-    <code>--guard old-suite</code> (repeatable) makes sure the winner does not forget an earlier suite. The start and winning configs run on it
-    too, and when the winner breaks more than <code>--guard-tau</code> (default 10%) of the guard cases the start solved, the sweep keeps the
-    start config and exits 1, even if the target suite alone would ship. Each sweep that ships is remembered, and <code>--guard prior</code>
-    guards every suite a sweep adopted a config on before.
+    With three or more configs, a line names the <strong>plausibly best</strong> set: the configs not significantly worse than the best. It
+    holds the truly best config 95% of the time, so a dropped config still in it may have lost on noise.
   </p>
 
-  <h2 id="matrix">Matrix <Tag status="built" /></h2>
+  <h2 id="matrix">Run every combination <Tag status="built" /></h2>
   <p>
-    A spec with <code>"matrix"</code> runs every combination of its axes against one baseline cell. Each axis is a JSON Pointer into the
-    spec and a list of values. <code>"variants"</code> names cells by hand instead, with <code>"vary"</code> listing the pointers they may
-    change. A cell may change only <code>/task/…</code> and <code>/trials</code>; graders, dataset and split are refused. A cell that differs
-    from the baseline anywhere else is refused before anything runs, and <code>--plan</code> prints the cells without running them.
+    A spec with <code>"matrix"</code> runs every combination of its axes against one baseline cell. Each axis is a JSON Pointer into the spec
+    and a list of values (<code>"variants"</code> names cells by hand instead). A cell may change only <code>/task/…</code> and
+    <code>/trials</code>; anything else is refused before it runs.
   </p>
   <Code title="matrix.json" code={matrix} />
   <p>
-    <code>exp run matrix.json</code> runs the cells interleaved, case by case in random order. Each cell is stored as its own experiment and
-    compared with the baseline, and the McNemar p-values are Holm-adjusted over the cells, so a big sweep doesn't produce a winner by chance.
-    <code>exp compare</code> on the baseline and a cell gives its per-case diff. <code>--cell</code> runs some cells and
-    <code>--resume</code> picks up an interrupted matrix.
+    <code>exp run matrix.json</code> runs the cells interleaved and compares each with the baseline. The p-values are Holm-adjusted over the
+    cells, so a big matrix doesn't produce a winner by chance.
   </p>
   <Code code={matrixOut} />
-  <p>
-    <code>--reuse baseline</code> copies the baseline cell's finished case-trials from earlier experiments instead of running them again,
-    so several matrices against one baseline pay for it once (<code>--reuse all</code> copies any cell's). A case-trial is copied only when
-    the case, the task spec and the files it runs, the graders, the trial number and the trial timeout are all the same, and it finished
-    without an error within <code>--reuse-max-age</code> (default 7 days). <code>--plan</code> prints how many each cell would copy and
-    run. The comparisons then warn that the copies did not run interleaved with the new case-trials.
-  </p>
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Flag</th><th>What it adds</th></tr></thead>
+      <tbody>
+        <tr><td><code>--plan</code></td><td>Prints the cells and what each changes; runs nothing.</td></tr>
+        <tr><td><code>--cell NAME</code></td><td>Runs only these cells. The baseline always runs.</td></tr>
+        <tr><td><code>--reuse baseline</code></td><td>Copies the baseline's finished case-trials from earlier experiments (<code>all</code>: any cell's).</td></tr>
+        <tr><td><code>--reuse-max-age 7d</code></td><td>Copies only case-trials that started this recently.</td></tr>
+        <tr><td><code>--resume</code></td><td>Picks up an interrupted matrix.</td></tr>
+      </tbody>
+    </table>
+  </div>
 
-  <h2 id="plateau">When to stop a loop <Tag status="built" /></h2>
+  <h2 id="plateau">Know when to stop a loop <Tag status="built" /></h2>
   <p>
-    A loop that tries one candidate after another needs a stop rule. Tag each round with <code>exp run … --series NAME</code>; it prints
-    <code>series NAME: continue, incumbent v4 …</code> or <code>series NAME: stop, ship v2 … (the plateau began at round 3)</code>.
-    <code>exp plateau --series NAME</code> prints one row per round and exits 0 (continue), 3 (stop) or 2 (too few experiments).
+    Tag each round with <code>exp run … --series NAME</code>. It prints <code>series NAME: continue, incumbent v4 …</code> or
+    <code>series NAME: stop, ship v2 … (the plateau began at round 3)</code>. <code>exp plateau --series NAME</code> prints one row per round
+    and exits 0 (continue), 3 (stop) or 2 (too few experiments).
   </p>
-  <p>
-    Each round compares the candidate with the incumbent on the cases both ran. A restart e-detector (Yin, Liu and Qi, arXiv 2610.04756)
-    stops once the gains stay below ε (<code>--eps</code>, default 0.05) and names the incumbent before the plateau as the version to ship.
-    <code>--gate greedy</code> keeps a candidate only when it beats the incumbent; <code>--gate chain</code> keeps every one. False alarms
-    come on average no sooner than every 1/δ rounds (20 at <code>--delta 0.05</code>): an average run length, not an error rate. It warns on
-    a dataset version change, thin rounds, a small eval that can't see ε, and a stop chosen on dev (confirm it on test).
-  </p>
+  <details class="more">
+    <summary>How it decides</summary>
+    <p>
+      Each round compares the candidate with the incumbent on the cases both ran. A restart e-detector (Yin, Liu and Qi, arXiv 2610.04756)
+      stops once the gains stay below ε (<code>--eps</code>, default 0.05) and names the incumbent before the plateau as the version to ship.
+    </p>
+    <p>
+      <code>--gate greedy</code> keeps a candidate only when it beats the incumbent; <code>--gate chain</code> keeps every one. False alarms
+      come on average no sooner than every 1/δ rounds (20 at <code>--delta 0.05</code>): an average run length, not an error rate.
+    </p>
+  </details>
 
-  <h2 id="resume">Long runs: resume and retries <Tag status="built" /></h2>
+  <h2 id="resume">Resume a long run <Tag status="built" /></h2>
   <p>
     <code>exp run</code>, <code>exp aa</code>, <code>exp sweep</code>, <code>compare</code>, <code>bench run</code> and
     <code>workflows run</code> save each trial as it finishes. After Ctrl-C, a crash or a reboot, run the same command with
-    <code>--resume</code> and only the unfinished trials run. The seed, order and <code>--stop-early</code> looks come from the checkpoint, so
-    the resumed run stops at the same point and gives the same verdict as one that was never interrupted. If the dataset, graders, task or
-    agent script changed, it refuses to resume and names what changed. The first Ctrl-C lets the trials in flight finish; the second stops
-    them.
+    <code>--resume</code>. Only the unfinished trials run, and the verdict matches a run that was never interrupted. If the dataset, graders,
+    task or agent script changed, it refuses and names what changed.
   </p>
-  <p>
-    <code>exp run</code> also stores the experiment so far while it runs. After a crash, <code>exp list</code> marks it
-    <code>(partial)</code>, and <code>exp run … --resume &lt;experiment&gt;</code> runs only what is left; <code>--retry-errors</code> also
-    runs its task errors again. <code>--failing &lt;experiment&gt;</code>, <code>--errors-from</code>, <code>--case</code>,
-    <code>--sample N --seed S</code> and <code>--first-n</code> run part of a dataset.
-  </p>
-  <p id="seq-attempts">
-    <code>exp run --seq 3 --feedback reasons</code> tries a failing case-trial again with feedback, up to 3 attempts, and reports the Seq@1..3
-    curve, where the gain lands, how often a revision repeated itself and, with 2+ trials, pass@k against seq@k by cost. The pass rate stays
-    the first attempt's. Feedback is <code>bit</code>, the failed graders' reasons, or <code>critic=&lt;grader&gt;</code>, and never shows
-    the expected answer (<a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#sequential-attempts-with-feedback">details</a>).
-  </p>
-  <p>
-    <code>--retries N</code> (default 3) retries rate limits, 5xx and network errors with backoff. Task failures are never retried, since
-    that would inflate the pass rate. A trial that still hits infrastructure errors is left out of the pass rate and runs again on
-    <code>--resume</code>. <code>--trial-timeout</code> caps each trial. <code>exp status</code> shows each run's progress, ETA and cost so
-    far.
-  </p>
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Flag</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>--resume &lt;experiment&gt;</code></td><td>Runs what is left of a stored run that <code>exp list</code> marks <code>(partial)</code>.</td></tr>
+        <tr><td><code>--retry-errors</code></td><td>With <code>--resume</code>: also runs its task errors again.</td></tr>
+        <tr><td><code>--retries N</code></td><td>Retries rate limits, 5xx and network errors (default 3). Task failures are never retried.</td></tr>
+        <tr><td><code>--trial-timeout SEC</code></td><td>Caps each trial, retries included.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p><code>exp status</code> shows each run's progress, ETA and cost so far.</p>
 
-  <h2 id="sessions">Sessions and watch <Tag status="built" /></h2>
+  <h2 id="subset">Run part of a dataset, or retry with feedback <Tag status="built" /></h2>
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Flag</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>--failing</code>, <code>--case</code>, <code>--sample</code>, <code>--first-n</code></td><td>Run part of a dataset.</td></tr>
+        <tr id="seq-attempts"><td><code>--seq 3 --feedback reasons</code></td><td>Tries a failing case-trial again with feedback, up to 3 attempts. The pass rate stays the first attempt's (<a href="/docs/cli/exp#cmd-exp-run">modes</a>).</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="sessions">See each run's delta as you iterate <Tag status="built" /></h2>
   <p>
-    <code>coding.sh exp session new --name &lt;topic&gt;</code> starts a session in the current folder. Every <code>exp run</code> there or
-    below joins it and, as it finishes, is compared with the previous run on the same dataset, so the delta prints without an
-    <code>exp compare</code>. It names the files that changed since that run. Runs on different dataset versions are not paired.
-    <code>exp session note</code> records the hypothesis before a run and the reading after it, and <code>exp session summary</code> prints
-    the timeline. <code>--no-session</code> keeps a run out.
+    <code>exp session new --name &lt;topic&gt;</code> starts a session in the current folder. Each <code>exp run</code> there then prints its
+    delta against the previous run on the same dataset, and names the files that changed. <code>exp session note</code> records a hypothesis
+    or a reading, and <code>exp session summary</code> prints the timeline.
   </p>
   <Terminal title="~/shout" label="Output of coding.sh exp run in a session and with --watch">
     <Fragment set:html={SESSION} />
   </Terminal>
   <p>
-    <code>exp run spec.json --watch</code> reruns whenever the spec, the agent script, a grader file or a <code>watch</code> entry changes.
-    A save mid-run aborts that run and stores nothing from it. A change to the graders alone regrades the last outputs with no agent calls.
-    A spec that fails to parse is reported and watching goes on. Enter reruns, <code>q</code> quits.
+    <code>--watch</code> reruns whenever the spec, the agent script or a grader file changes. A change to the graders alone regrades the last
+    outputs with no agent calls. Enter reruns, <code>q</code> quits.
   </p>
 
-  <h2 id="metrics">Metric A/B <Tag status="built" /></h2>
+  <h2 id="metrics">Compare two numeric commands <Tag status="built" /></h2>
   <p>
     <code>exp metrics --arm base='node bench.mjs a' --arm cand='node bench.mjs b'</code> compares two commands that print numbers, such as
-    <code>&#123;"lcp_ms": 2310, "js_bytes": 48211&#125;</code>, instead of pass/fail. The arms run in interleaved pairs (11 by default), one run
-    at a time, with half the pairs running A first.
+    <code>&#123;"lcp_ms": 2310&#125;</code>. The arms run in interleaved pairs (11 by default). For each metric it prints both medians, the
+    paired difference with a 95% interval, and a verdict.
   </p>
   <p>
-    For each metric it prints both medians, the median paired difference with a 95% bootstrap interval, and a verdict. Lower is better unless
-    you name the metric in <code>--higher</code>. A change counts only when the interval excludes zero and a sign test still passes after
-    correcting for the number of metrics, so an A/A run stays quiet. <code>--fail-on-worse</code> exits 1 for CI.
+    Lower is better unless you name the metric in <code>--higher</code>. A change counts only when the interval excludes zero and a corrected
+    sign test agrees, so an A/A run stays quiet. <code>--fail-on-worse</code> exits 1 for CI.
   </p>
 
-  <h2 id="exp-replay">Replay a model call <Tag status="built" /></h2>
+  <h2 id="exp-replay">Replay one model call <Tag status="built" /></h2>
   <p>
-    <code>exp ab</code> replays a whole turn with the agent. <code>exp replay</code> replays one model call: the exact request
-    <a href="/docs/how-to/capture-with-proxy">the proxy</a> logged, sent again with the model, the system prompt or any request field
-    changed. One <code>--vary</code> value changes arm B and keeps arm A as recorded; two values set both.
+    <code>exp replay</code> sends a call that <a href="/docs/how-to/capture-with-proxy">the proxy</a> logged again, with the model, the system
+    prompt or any request field changed. One <code>--vary</code> value changes arm B and keeps arm A as recorded; two values set both.
+    (<code>exp ab</code> replays a whole turn instead.)
   </p>
   <Code code={replayCall} />
   <p>
-    Each reply is graded by whether its first action (a tool call by name, or text) matches the one the agent took;
-    <code>--criterion</code> adds an LLM judge. The two arms are experiments, so the report is the paired comparison of
-    <code>exp compare</code>. It calls the API with your own <code>ANTHROPIC_API_KEY</code> or <code>OPENAI_API_KEY</code>, never the
-    agent's login, and stops before any call when the key is not set. <code>--dry-run</code> prints the call count and an estimated cost
-    without a key.
+    A reply passes when its first action (a tool call by name, or text) matches the agent's; <code>--criterion</code> adds an LLM judge. The
+    report is the paired comparison of <code>exp compare</code>. It uses your own <code>ANTHROPIC_API_KEY</code> or
+    <code>OPENAI_API_KEY</code>, never the agent's login. <code>--dry-run</code> prints the call count and a cost estimate without a key.
   </p>
 </DocsLayout>

@@ -8,8 +8,7 @@ Two things pull in opposite directions:
   tool calls and code, and a style instruction is mostly about prose, so the drop can be smaller
   than the replies suggest.
 - **Input goes up.** The instruction is sent with every request and written to the prompt cache.
-  A one-line rule adds a few tokens. A plugin that injects a style guide at session start and a
-  reminder on each prompt can add thousands.
+  A one-line rule adds a few tokens; a plugin that injects a style guide can add thousands.
 
 Which one wins depends on your tasks, your model and how long your sessions are. This guide runs
 your tasks with and without the terse mode and reports pass rate, cost, output tokens and input
@@ -109,9 +108,9 @@ dir = ".."
 Be concise. Give the answer and the evidence for it. Don't restate the task or summarize what you did.
 ```
 
-`dir = ".."` reads your repo's AGENTS.md, `.claude/`, `.mcp.json` and the other usual
-harness files, relative to the TOML file. Your user-level files, such as Claude Code's user-level instructions file and skills in `~/.claude`,
-are read only when you list them: write the same `include = [...]` in both TOMLs, for example
+`dir = ".."` reads your repo's AGENTS.md, `.claude/`, `.mcp.json` and the other usual harness
+files, relative to the TOML file. User-level files in `~/.claude` are read only when you list them,
+with the same `include = [...]` in both TOMLs, for example
 `include = ["AGENTS.md", ".claude/**", ".mcp.json", "~/.claude/skills/**"]`. `[files]` adds one
 file on top. Snapshot both:
 
@@ -140,10 +139,9 @@ coding.sh compare base concise --tag suite:terse --k 3 --dry-run
 coding.sh compare base concise --tag suite:terse --k 3 --gate --promote --max-cost 20 --yes
 ```
 
-`--k 3` runs each task three times per arm. Each run starts from a fresh copy of the task in its
-own config directory, so your `~/.claude` is not changed. `--max-cost 20` stops starting new runs
-once the finished ones cost $20. With the example tasks, pass `--tag plugin-ab --by suite:` to also
-gate the code and explain suites one at a time.
+`--k 3` runs each task three times per arm, each from a fresh copy in its own config directory, so
+your `~/.claude` is not changed. `--max-cost 20` stops starting new runs once the finished ones cost
+$20. With the example tasks, `--tag plugin-ab --by suite:` also gates each suite on its own.
 
 For a plugin, B is A plus the plugin:
 
@@ -159,12 +157,11 @@ coding.sh compare base --with plugin:<name> --tag suite:terse --k 3 --gate --pro
 - **Pass rate.** Each arm's pass rate has a Wilson interval, and the verdict line gives B − A with a
   paired bootstrap interval over tasks. `--gate` says ship, hold or don't ship, and names the tasks
   B broke.
-- **Cost.** The `pareto:` line from `--promote` gives B's cost change against A with a 95% interval,
-  and the quality change with its interval:
-  `pareto: support <S> < 0.70 → hold (cost <change> [<low>, <high>], quality <change> [<low>, <high>])`.
-  It uses USD when at least 80% of each arm's runs report a cost, else tokens. "Promote" means B is
-  credibly cheaper while giving up at most `--eps-q` of pass rate (default 0.1), or credibly better
-  with a cost rise within `--eps-c` (default: no limit).
+- **Cost.** The `pareto:` line from `--promote` gives B's cost change and quality change against A,
+  each with a 95% interval. It uses USD when at least 80% of each arm's runs report a cost, else
+  tokens.
+- **Promote.** B is credibly cheaper while giving up at most `--eps-q` of pass rate (default 0.1),
+  or credibly better with a cost rise within `--eps-c` (default: no limit).
 - **Tokens.** The `tokens / run` row counts input, output, cache reads and cache writes together.
   `cost / solved` divides each arm's cost by the tasks it solved.
 - **The one-item gate.** For the rule-file arm, the report adds a line that reads KEEP, RECHECK,
@@ -198,9 +195,10 @@ the subquery.
 
 A terse mode saves money only when the drop in `output` is worth more than the rise in `cache_write`
 and `input`. On Opus 5.5 an output token costs $20 per million, and a cache-write token $5 (5-minute
-cache) or $8 (1-hour cache). An output token costs more, but the instruction is written to the cache
-in every session. In our run, 1,800 more cache-write tokens cost $0.0144 per run and 150 fewer
-output tokens saved $0.0031.
+cache) or $8 (1-hour cache).
+
+An output token costs more, but the instruction is written to the cache in every session. In our
+run, 1,800 more cache-write tokens cost $0.0144 per run and 150 fewer output tokens saved $0.0031.
 
 These are means, without intervals. `examples/plugin-ab` prints a 95% interval for each token type,
 from a bootstrap over tasks, but it runs a plugin arm only.
@@ -218,10 +216,11 @@ coding.sh exp replay --session latest --limit 10 --vary system=@terse-system.md 
 ```
 
 `--vary system=@file` replaces the whole system prompt in arm B, so start from the recorded one:
-`show <call> --all` prints it, and `terse-system.md` is that text plus your line. The report gives
-each arm's cost per call and output tokens per call, and whether each reply takes the same first
-action the agent took. A replay measures single calls, not whole runs: it does not show whether the
-task still gets done. See [Replay a model call](evals.md#replay-a-model-call).
+`show <call> --all` prints it, and `terse-system.md` is that text plus your line.
+
+The report gives each arm's cost and output tokens per call, and whether each reply takes the same
+first action the agent took. A replay measures single calls, not whole runs: it does not show
+whether the task still gets done. See [Replay a model call](evals.md#replay-a-model-call).
 
 ## What this does not tell you
 
