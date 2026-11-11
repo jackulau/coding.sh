@@ -19,7 +19,9 @@ export interface AdapterRow {
   /** Where `ingest --backfill` reads history from; undefined = no backfill. */
   backfill?: string;
   /** Headless command the eval runner drives. */
-  headless: string;
+  headless?: string;
+  /** Plain text shown instead, when there is no command of its own. */
+  headlessNote?: string;
   /** How a subagent shows up. */
   subagents: string;
 }
@@ -70,7 +72,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
     note: "0.1.7, driving Pi",
     live: "its Codex and Claude Code hooks, tagged as T3",
     backfill: "~/.t3/userdata/statev2.sqlite (and v1 state.sqlite)",
-    headless: "none (desktop app; it runs codex app-server or the Claude Agent SDK)",
+    headlessNote: "None. It is a desktop app that runs codex app-server or the Claude Agent SDK.",
     subagents: "Subagent threads become child sessions",
   },
   {
@@ -154,9 +156,9 @@ export const ADAPTER_ROWS: AdapterRow[] = [
     name: "Any other command",
     id: "wrapper",
     status: "tested",
-    note: "covered by CI; there is no third-party agent to check against",
+    note: "works the same way for any command",
     live: "coding.sh run -- <cmd>",
-    headless: "the command itself",
+    headlessNote: "The command you pass to coding.sh run",
     subagents: "None",
   },
 ];

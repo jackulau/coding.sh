@@ -121,10 +121,10 @@ A grader that asks a model. Trust it only after you check it against your own pa
 
 | | Eval suite (`eval run`) | Experiment (`exp run`) | A/B on sessions (`exp ab`) |
 |---|---|---|---|
-| What runs | Your coding agent, on tasks in a copy of your repo, each checked by a command | Your task, a command or an HTTP endpoint, on each case of a dataset | A model writes the agent's next turn at the moments it went wrong, with and without your edit |
-| Built from | `eval init --sessions`: your failed or flagged sessions | A dataset | Your recent sessions |
-| You get | pass@k for each task. A regression suite exits 1 when a task fails most trials | A pass rate per grader. `exp compare` says better, worse or inconclusive | A ship or hold verdict for your edit |
-| Reach for it when | You want real repo tasks to keep passing as the agent or its setup changes | You changed a prompt, a model or a tool in your own agent | You edited AGENTS.md, a rule or a skill and want a check before you commit |
+| What runs | Any command, such as your own agent or a coding agent, on each case, checked by graders | Your task, a command or an HTTP endpoint, on each case of a dataset | A model writes the agent's next turn at the moments it went wrong, with and without your edit |
+| Built from | `eval init --cases` with a cases file, or `eval init --sessions` from flagged sessions | A dataset | Your recent sessions |
+| You get | pass@k for each case. A regression suite exits 1 when a case fails most trials | A pass rate per grader. `exp compare` says better, worse or inconclusive | A ship or hold verdict for your edit |
+| Reach for it when | You want the same cases to keep passing, on every machine and in CI | You changed a prompt, a model or a tool in your own agent | You edited AGENTS.md, a rule or a skill and want a check before you commit |
 
 Start with [Evals](https://coding.sh/docs/evals),
 [Experiments](https://coding.sh/docs/experiments) or

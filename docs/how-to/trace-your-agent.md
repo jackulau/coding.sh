@@ -379,7 +379,12 @@ console.log(text);
 await flush();
 ```
 
+With `coding.sh serve` or `coding.sh collector` running, set the address in the terminal where you
+run the script. Without `CODING_SH_URL` nothing is recorded, and no error is printed.
+
 ```sh
+export CODING_SH_URL=http://127.0.0.1:4318
+export CODING_SH_SERVICE=coding-sh-triage    # the agent name in the output below
 node ai-sdk.mjs "Add a --json flag to coding.sh usage"
 coding.sh show latest
 ```
