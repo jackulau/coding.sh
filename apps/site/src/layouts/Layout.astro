@@ -41,13 +41,14 @@ const {
 
 const isHome = Astro.url.pathname === "/";
 const jsonLd = [
-  ...(isHome ? [websiteSchema(), organizationSchema()] : []),
-  softwareSchema(),
+  ...(isHome ? [websiteSchema(), organizationSchema(), softwareSchema()] : []),
   ...(breadcrumbs.length ? [breadcrumbSchema([{ name: "Home", path: "/" }, ...breadcrumbs])] : []),
   ...schemas,
 ];
 
 const ogImageURL = new URL(image, Astro.site).toString();
+// A blog post's headline is its h1: the title without the " · coding.sh blog" suffix.
+const postHeadline = title.replace(/ · coding\.sh blog$/, "");
 
 // Markdown twin of this page, written by scripts/gen-agent-text.mjs at build
 // time. Routes it skips get no link, so the alternate never dangles.
@@ -135,17 +136,17 @@ const markdownURL = noindex || isAgentExcluded(Astro.url.pathname)
           set:html={JSON.stringify({
             "@context": "https://schema.org",
             "@type": "BlogPosting",
-            headline: title,
+            headline: postHeadline,
             description: description,
             image: ogImageURL,
             inLanguage: "en-US",
-            isPartOf: { "@type": "Blog", "@id": `${SITE_URL}/blog#blog` },
+            isPartOf: { "@type": "Blog", "@id": `${SITE_URL}/blog#blog`, name: `${SITE.name} blog`, url: `${SITE_URL}/blog` },
             ...(article.tags?.length ? { keywords: article.tags.join(", ") } : {}),
             datePublished: article.publishedTime,
             dateModified: article.modifiedTime || article.publishedTime,
             author: { "@type": "Organization", name: SITE.name, url: SITE_URL },
             publisher: { "@type": "Organization", name: SITE.name, url: SITE_URL },
-            mainEntityOfPage: { "@type": "WebPage", "@id": canonicalURL.toString() },
+            mainEntityOfPage: { "@type": "WebPage", "@id": canonicalURL.toString(), name: postHeadline, url: canonicalURL.toString() },
           })}
         />
       )

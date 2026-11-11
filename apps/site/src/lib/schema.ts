@@ -84,8 +84,10 @@ export function techArticleSchema(page: { path: string; title: string; summary: 
     image: new URL(page.image ?? "/og-image.png", SITE_URL).toString(),
     author: { "@type": "Organization", name: SITE.name, url: SITE_URL },
     publisher: { "@type": "Organization", name: SITE.name, url: SITE_URL, logo: `${SITE_URL}/icon-512.png` },
-    isPartOf: { "@id": `${SITE_URL}/#website` },
-    about: { "@id": `${SITE_URL}/#software` },
+    // The full WebSite and SoftwareApplication nodes are on the home page only,
+    // so these references carry their own type, name and url.
+    isPartOf: { "@type": "WebSite", "@id": `${SITE_URL}/#website`, name: SITE.name, url: `${SITE_URL}/` },
+    about: { "@type": "SoftwareApplication", "@id": `${SITE_URL}/#software`, name: SITE.name, url: SITE_URL },
   };
 }
 
