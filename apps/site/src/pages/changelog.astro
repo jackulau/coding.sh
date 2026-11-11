@@ -11,7 +11,8 @@ import { REPO_URL } from "../data/site";
 import { releases } from "../lib/changelog";
 import "../styles/changelog.css";
 
-const count = releases.length;
+// Shipped releases only: the Unreleased section is not one yet.
+const count = releases.filter((r) => /^\d/.test(r.date)).length;
 const oldest = releases[releases.length - 1];
 ---
 
