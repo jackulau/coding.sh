@@ -55,4 +55,22 @@ describe("viewer feel in a browser", { skip: chrome ? false : "no Chrome/Chromiu
       await page.close();
     }
   });
+
+  test("the query suggestions appear at once and do not replay an entrance per keystroke", async () => {
+    await open();
+    try {
+      const type = (q: string) => page.eval(`(() => { const i = document.getElementById('q'); i.focus(); i.value = ${JSON.stringify(q)}; i.dispatchEvent(new Event('input')); })()`);
+      await type("agent:");
+      await page.waitFor("document.querySelector('.qbar-pop')", "suggestions");
+      await page.eval("window.__runs = 0; document.addEventListener('transitionrun', (e) => { if (e.target.classList?.contains('qbar-pop')) window.__runs++; }, true)");
+      await type("agent:c");
+      await sleep(400);
+      await type("agent:cl");
+      await sleep(400);
+      assert.equal(await page.eval("window.__runs"), 0);
+      assert.equal(await page.eval("getComputedStyle(document.querySelector('.qbar-pop')).transitionDuration"), "0s");
+    } finally {
+      await page.close();
+    }
+  });
 });
