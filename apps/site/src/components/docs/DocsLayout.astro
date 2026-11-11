@@ -156,6 +156,37 @@ const showOutline = outline.length >= 2;
           }
         </nav>
       </details>
+      {/* Keep the current page in view: in the sidebar in the first frame, in
+          the menu when it opens. A click on a visible link leaves the sidebar
+          where it was. Runs again after each page swap (data-astro-rerun).
+          The first centring waits for the frame, so it reads the layout the
+          frame does anyway and adds none while the page is still parsing.
+          Under 1024px the sidebar is hidden, so it waits until the window is
+          wide enough to show it. */}
+      <script is:inline data-astro-rerun>
+        {
+          const c = (l) => {
+            const a = l && l.querySelector("[aria-current=page]");
+            if (!a) return;
+            const d = a.getBoundingClientRect().top - l.getBoundingClientRect().top;
+            if (d < 0 || d + a.offsetHeight > l.clientHeight - 24) l.scrollTop += d - (l.clientHeight - a.offsetHeight) / 2;
+          };
+          const t = document.querySelector(".docs__toc");
+          const m = document.querySelector("[data-docs-menu]");
+          const wide = matchMedia("(min-width: 1024px)");
+          const side = () => c(document.querySelector(".docs__toc"));
+          if (wide.matches) requestAnimationFrame(side);
+          else wide.addEventListener("change", side, { once: true });
+          m && m.addEventListener("toggle", () => m.open && c(m.querySelector(".docs__menu-list")));
+          document.addEventListener("astro:before-swap", () => {
+            const s = t && t.scrollTop;
+            document.addEventListener("astro:after-swap", () => {
+              const n = document.querySelector(".docs__toc");
+              if (n) (n.scrollTop = s), c(n);
+            }, { once: true });
+          }, { once: true });
+        }
+      </script>
 
       <main id="main" class="doc" data-pagefind-body>
         {page.searchTerms && <span hidden data-pagefind-meta="keywords[data-terms]" data-terms={page.searchTerms.join(", ")} />}
@@ -338,6 +369,9 @@ const showOutline = outline.length >= 2;
       min-height: 0;
       overflow-y: auto;
       overscroll-behavior: contain;
+      /* The scroll position carried across a page swap stays put while the
+         fonts settle; anchoring would move the list by a wrapped row. */
+      overflow-anchor: none;
       scrollbar-width: thin;
       scrollbar-color: var(--line-strong) transparent;
       padding-bottom: 1rem;
@@ -450,7 +484,12 @@ const showOutline = outline.length >= 2;
   .docs__menu[open] .docs__menu-chev {
     transform: rotate(180deg);
   }
+  /* The list scrolls inside the open menu, so it never runs screens long:
+     with the bar and the search (6.5rem) the open menu is at most 70dvh. */
   .docs__menu-list {
+    max-height: min(70dvh - 6.5rem, 32rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 0.25rem 1rem 1rem;
     border-top: 1px solid var(--line);
   }
