@@ -4,9 +4,11 @@
 import type { APIRoute } from "astro";
 import { releases, esc } from "../lib/changelog";
 import { SITE_URL } from "../data/site";
+import { pageLastmod } from "../lib/lastmod.mjs";
 
-// Unreleased versions have no date yet; they carry the build date until they ship.
-const when = (date: string) => (/^\d{4}-\d{2}-\d{2}$/.test(date) ? `${date}T00:00:00Z` : new Date().toISOString().replace(/\.\d+Z$/, "Z"));
+// Unreleased versions have no date yet; they carry the last commit to CHANGELOG.md
+// (its notes page's lastmod) until they ship.
+const when = (date: string, slug: string) => (/^\d{4}-\d{2}-\d{2}$/.test(date) ? `${date}T00:00:00Z` : pageLastmod(`/changelog/${slug}`).replace(/\.\d+Z$/, "Z"));
 
 export const GET: APIRoute = () => {
   const entries = releases.map((r) => {
@@ -25,12 +27,12 @@ export const GET: APIRoute = () => {
     <title>coding.sh ${esc(r.version)}${r.date ? ` (${esc(r.dateLabel)})` : ""}</title>
     <id>${id}</id>
     <link href="${url}"/>
-    <updated>${when(r.date)}</updated>
+    <updated>${when(r.date, r.slug)}</updated>
     <summary>${esc(r.summaryText)}</summary>
     <content type="html">${esc(html)}</content>
   </entry>`;
   });
-  const updated = releases.length ? when(releases[0].date) : new Date().toISOString().replace(/\.\d+Z$/, "Z");
+  const updated = releases.length ? when(releases[0].date, releases[0].slug) : new Date().toISOString().replace(/\.\d+Z$/, "Z");
   const body = `<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <title>coding.sh changelog</title>
