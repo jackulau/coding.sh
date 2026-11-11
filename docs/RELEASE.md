@@ -208,7 +208,12 @@ After deploying, check:
 curl -sI https://coding.sh/install | grep -i content-type     # text/plain; charset=utf-8
 curl -fsSL https://coding.sh/install | head -3                 # the installer, not HTML
 curl -s https://coding.sh/llms.txt | head -3
+curl -sI https://coding.sh/schema.json | grep -i content-type  # application/schema+json
+curl -s https://coding.sh/schema.json | cmp - packages/coding.sh/src/schema/trace.schema.json && echo "schema matches"
 ```
+
+The trace schema's `$id` is that URL, so a release whose site was not deployed leaves it stale or
+missing.
 
 
 ## Known issues to weigh before a release
