@@ -421,3 +421,63 @@ describe("codex skill loads (real capture, Codex 0.167.0)", () => {
     assert.deepEqual(s.flags.filter((f) => f.startsWith("skill:")), ["skill:release-notes"]);
   });
 });
+
+describe("codex failed shell commands keep their exit code", () => {
+  const FID = "01a1c3af-11f0-7373-9e9e-b435226b24a9";
+  const HEAD = (code: number) => `Chunk ID: 5a1c3f\nWall time: 0.0940 seconds\nProcess exited with code ${code}\nOriginal token count: 12\nOutput:\n`;
+  const FAILED = `${HEAD(127)}/bin/bash: line 1: shopctl: command not found\n`;
+  const rec = (type: string, payload: Record<string, unknown>, ms = 0) => JSON.stringify({ timestamp: new Date(1793527200000 + ms).toISOString(), type, payload });
+  const call = (id: string, command: string, ms: number) => rec("response_item", { type: "function_call", name: "exec_command", arguments: JSON.stringify({ cmd: command }), call_id: id }, ms);
+  const output = (id: string, text: string, ms: number) => rec("response_item", { type: "function_call_output", call_id: id, output: text }, ms);
+  const rolloutPath = (lines: string[]) => {
+    const path = join(mkdtempSync(join(tmpdir(), "codex-exit-")), `rollout-2026-11-01T10-00-00-${FID}.jsonl`);
+    writeFileSync(path, lines.join("\n") + "\n");
+    return path;
+  };
+  const meta = rec("session_meta", { id: FID, cwd: "/work/demo" });
+  const endOf = (events: AgentEvent[], id: string) => events.find((e) => e.kind === "tool.end" && e.payload.toolUseId === id)!;
+
+  it("rollout: the exit code in the output header makes the call fail, and the session counts it", async () => {
+    const path = rolloutPath([meta, call("call_f", "shopctl migrate --check", 100), output("call_f", FAILED, 200), call("call_g", "ls", 300), output("call_g", `${HEAD(0)}a\n`, 400)]);
+    const events = await convertRollout(testCtx().ctx, path, { mode: "full" });
+    assert.deepEqual([endOf(events, "call_f").payload.ok, endOf(events, "call_f").payload.exitCode], [false, 127]);
+    assert.deepEqual([endOf(events, "call_g").payload.ok, endOf(events, "call_g").payload.exitCode], [true, 0]);
+    assert.equal(buildSession(events).stats.toolErrors, 1);
+  });
+
+  it("rollout: output text that only prints the phrase does not set an exit code", async () => {
+    const text = `${HEAD(0)}Process exited with code 3\n`;
+    const events = await convertRollout(testCtx().ctx, rolloutPath([meta, call("call_p", "echo", 100), output("call_p", text, 200)]), { mode: "full" });
+    assert.deepEqual([endOf(events, "call_p").payload.ok, endOf(events, "call_p").payload.exitCode], [true, 0]);
+  });
+
+  const hookLine = (response: unknown, transcript: string) => ({
+    v: 0,
+    agent: "codex",
+    event: "PostToolUse",
+    ts: 1793527200300,
+    pid: 1,
+    ppid: 1,
+    cwd: "/work/demo",
+    raw: { session_id: FID, cwd: "/work/demo", hook_event_name: "PostToolUse", model: "gpt-5.5", transcript_path: transcript, turn_id: "t1", tool_name: "Bash", tool_use_id: "call_f", tool_input: { command: "shopctl migrate --check" }, tool_response: response },
+  });
+
+  it("hook: a Bash response whose header says the command exited nonzero fails", async () => {
+    const out = await codex.normalize(hookLine(FAILED, "") as never, testCtx().ctx);
+    const e = endOf(out, "call_f");
+    assert.deepEqual([e.payload.ok, e.payload.exitCode], [false, 127]);
+  });
+
+  it("hook: a plain-text response takes the exit code from the rollout tail", async () => {
+    const path = rolloutPath([meta, call("call_f", "shopctl migrate --check", 100), output("call_f", FAILED, 250)]);
+    const out = await codex.normalize(hookLine("/bin/bash: line 1: shopctl: command not found\n", path) as never, testCtx().ctx);
+    const e = endOf(out, "call_f");
+    assert.deepEqual([e.payload.ok, e.payload.exitCode], [false, 127]);
+    assert.equal(buildSession(out).stats.toolErrors, 1);
+  });
+
+  it("hook: a plain-text response with no exit anywhere stays ok", async () => {
+    const out = await codex.normalize(hookLine("fine\n", "") as never, testCtx().ctx);
+    assert.equal(endOf(out, "call_f").payload.ok, true);
+  });
+});
