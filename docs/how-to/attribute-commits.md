@@ -78,9 +78,11 @@ Session links point at `http://127.0.0.1:4319/#/s/<id>` unless you pass `--viewe
 ## How matching works
 
 For each session, coding.sh takes the lines it added: the diff from its start state to its end
-snapshot. It keeps a file of that diff only when the session's tools named the file, or the session
-ran a shell or subagent call, which can write files nothing names. A session with none of these is
-credited nothing. A named file takes the lines its edit steps added, not the diff.
+snapshot.
+
+It keeps a file of that diff only when the session's tools named the file, or the session ran a
+shell or subagent call, which can write files nothing names. A session with neither is credited
+nothing. A named file takes the lines its edit steps added, not the diff.
 
 For a named file the diff does not hold, it uses the session's own edit tool calls. That is every
 such file when there is no end snapshot, and a file whose change had left the tree by then.
