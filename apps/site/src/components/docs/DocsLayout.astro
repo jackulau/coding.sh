@@ -375,6 +375,14 @@ const showOutline = outline.length >= 2;
       scrollbar-width: thin;
       scrollbar-color: var(--line-strong) transparent;
       padding-bottom: 1rem;
+      /* Room for the links' 12px left bleed (the current-page marker), so
+         the scroller does not clip it. */
+      padding-left: 0.75rem;
+      margin-left: -0.75rem;
+    }
+    /* The ring sits inside the link, so the scroller cannot clip it. */
+    .docs__toc .docs__link:focus-visible {
+      outline-offset: -2px;
     }
   }
   .docs__group + .docs__group {
