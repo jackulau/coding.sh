@@ -3317,9 +3317,10 @@ function eventRowEl(ev, i) {
 }
 
 function syncActive(lb) {
-  const opts = lb.querySelectorAll("[role=option]");
-  opts.forEach((o, i) => o.setAttribute("aria-selected", String(i === list.active)));
-  const el = opts[list.active];
+  const el = lb.querySelectorAll("[role=option]")[list.active];
+  // Flip the two rows that change, as the timeline does: a key never rewrites every row.
+  for (const o of lb.querySelectorAll('[role=option][aria-selected="true"]')) if (o !== el) o.setAttribute("aria-selected", "false");
+  if (el && el.getAttribute("aria-selected") !== "true") el.setAttribute("aria-selected", "true");
   if (el) {
     lb.setAttribute("aria-activedescendant", el.id);
     el.scrollIntoView({ block: "nearest" });

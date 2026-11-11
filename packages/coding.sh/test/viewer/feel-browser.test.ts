@@ -109,4 +109,22 @@ describe("viewer feel in a browser", { skip: chrome ? false : "no Chrome/Chromiu
       index.sessions.delete("NEW-1");
     }
   });
+
+  test("a j or k key flips two rows, not every row", async () => {
+    await open();
+    try {
+      await key("j");
+      await page.eval("window.__w = 0; new MutationObserver((r) => { window.__w += r.filter((x) => x.attributeName === 'aria-selected').length; }).observe(document.querySelector('[role=listbox]'), { attributes: true, subtree: true })");
+      await key("j");
+      await sleep(50);
+      assert.equal(await page.eval("window.__w"), 2);
+      assert.equal(await page.eval("document.querySelectorAll('.row[aria-selected=true]').length"), 1);
+      await key("k");
+      await sleep(50);
+      assert.equal(await page.eval("window.__w"), 4);
+      assert.match(await page.eval("document.querySelector('[role=listbox]').getAttribute('aria-activedescendant')"), /^opt-/);
+    } finally {
+      await page.close();
+    }
+  });
 });
