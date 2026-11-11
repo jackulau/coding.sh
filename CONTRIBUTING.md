@@ -3,6 +3,15 @@
 Thanks for helping. Bug reports, adapter verification reports ("agent X works on a live install")
 and pull requests are all welcome. Coding agents working on the repo: read [AGENTS.md](AGENTS.md).
 
+<p>
+  <a href="#setup">Setup</a> ·
+  <a href="#layout">Layout</a> ·
+  <a href="#rules">Rules</a> ·
+  <a href="#lint-and-git-hooks">Lint and git hooks</a> ·
+  <a href="#adding-an-agent">Adding an agent</a> ·
+  <a href="#pull-requests">Pull requests</a>
+</p>
+
 ## Setup
 
 Node 22.15 or newer.
@@ -61,7 +70,13 @@ Docs index: [docs/README.md](docs/README.md). Start with [docs/design/architectu
 ## Lint and git hooks
 
 `npm run lint` (from the repo root) runs `scripts/lint/slop.mjs`, a zero-dependency check for
-patterns that read as unreviewed agent output:
+patterns that read as unreviewed agent output. Exit 0 means clean, 1 means findings, 2 means a
+usage error.
+
+<details>
+<summary>Rules, the allowlist and the opt-in git hooks</summary>
+
+<br>
 
 | Rule | Flags |
 | --- | --- |
@@ -72,8 +87,7 @@ patterns that read as unreviewed agent output:
 | `site-placeholder` | visible "planned", "coming soon", "sample data", a bare "Sample" label, TODO or lorem ipsum on the site: text and visible attributes in `apps/site/src`, and the repo docs and changelog the site renders. Code, comments, `alt` text and `<code>` are not read |
 
 It reads every file git does not ignore, and skips `node_modules`, `dist`, `fixtures` and hidden
-folders other than `.github`. Exit 0 means clean, 1 means findings, 2 means a usage error.
-`--json` prints one document, `--rule <id>` runs one rule, `--staged` reads the staged version of
+folders other than `.github`. `--json` prints one document, `--rule <id>` runs one rule, `--staged` reads the staged version of
 staged files, and `--help --json` lists flags and rules as data.
 
 Code that existed when the lint landed is listed in `scripts/lint/allowlist.json`. Each entry names
@@ -98,6 +112,8 @@ undo it.
 Skip a hook once with `--no-verify`, or set `CODING_SH_SKIP_HOOKS=1`.
 `node scripts/hooks/run.mjs pre-commit --dry-run` prints what a hook would run. The lint and hook
 tests run with `npm run lint:test`.
+
+</details>
 
 ## Adding an agent
 
