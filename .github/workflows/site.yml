@@ -87,6 +87,19 @@ jobs:
             echo "$p $code"; [ "$code" = 200 ] || exit 1
           done
 
+      # The build ships no analytics script, but Cloudflare's edge adds its Web
+      # Analytics beacon when that is on for the zone. This only warns.
+      - name: Analytics beacon
+        if: steps.creds.outputs.ok == 'true'
+        continue-on-error: true
+        run: |
+          n=$(curl -s -H 'Accept: text/html' https://coding.sh/ | grep -c cloudflareinsights || true)
+          if [ "${n:-0}" != 0 ]; then
+            echo "::warning::The live home page has Cloudflare's analytics beacon (cloudflareinsights). Turn off Web Analytics injection for the zone, or say in docs/perf.md what it collects."
+          else
+            echo "No analytics beacon on the live home page."
+          fi
+
       # Ping IndexNow (Bing, Yandex and others) with every URL in the live sitemap.
       - name: IndexNow
         if: steps.creds.outputs.ok == 'true'
