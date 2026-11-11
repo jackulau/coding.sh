@@ -185,7 +185,7 @@ and Render handle TLS for you: see [Deploy coding.sh serve](../production/deploy
 Open `http://<server>:4318/?t=csh_rk_…`, or open `http://<server>:4318` and paste the read key
 into the form. A cookie keeps you signed in until the browser closes.
 
-![The team viewer's session list: five Claude Code sessions, each with its title, model, tool count, tokens, cost and duration, and four with a test result](shot:docs/team-list "Sessions from two machines that connected with --remote-mode full.")
+![The team viewer's session list: five Claude Code sessions, each with its title, model, tool count, tokens, cost and duration, and four with a test result](shot:docs/team-list "The team viewer's session list, with sessions sent by machines that connected with --remote-mode full.")
 
 - **Metadata mode** sends no prompt text, so a session has no title: the list shows
   *Untitled session*, with its agent, model, tools, tokens, cost and duration.
