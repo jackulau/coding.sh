@@ -3927,6 +3927,16 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   const rpBtn = h("button", { class: "btn btn-sm btn-ghost rp-toggle", type: "button", "aria-pressed": "false", "aria-keyshortcuts": "Shift+R", title: "Replay step by step (Shift+R)", onclick: () => (rp.on ? exitReplay() : enterReplay()) }, "Replay");
   const tools = h("div", { class: "tl-tools" }, head, failNav, derailNav, queryNav, h("span", { class: "spacer" }),
     h("div", { class: "find" }, findInput, findCount), h("label", { class: "find-only" }, onlyBox, h("span", null, "Only matches")), rpBtn, foldBtn, wfBtn);
+  // The ‹ › buttons are built once and only their label changes, so a click never loses hover or focus to a rebuild.
+  const navPair = (nav, noun, move, keys) => {
+    const lbl = h("span", { class: "lbl" });
+    const btn = (dir, word, key) => h("button", { type: "button", "aria-label": word + " " + noun, "aria-keyshortcuts": key, title: word + " " + noun + (key ? " (" + key + ")" : ""), onclick: () => move(dir) }, dir < 0 ? "‹" : "›");
+    nav.replaceChildren(lbl, btn(-1, "Previous", keys[0]), btn(1, "Next", keys[1]));
+    return lbl;
+  };
+  const derailLbl = navPair(derailNav, "derail", (d) => jumpDerail(d), []);
+  const queryLbl = navPair(queryNav, "match", (d) => jumpQuery(d), ["N", "n"]);
+  const failLbl = navPair(failNav, "failure", (d) => jumpFail(d), ["[", "]"]);
   const timeline = h("div", { class: "timeline" }, tl, map, tailPill);
   const narrow = window.matchMedia("(max-width: 860px)");
 
@@ -3949,23 +3959,14 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     const dpos = derailIdx.indexOf(activeItem);
     const dcur = dpos >= 0 ? meta[activeItem].derail[0] : derailIdx.length ? meta[derailIdx[0]].derail[0] : null;
     derailNav.title = dcur ? dcur.flag + ": " + dcur.detail : "";
-    derailNav.replaceChildren(
-      h("span", { class: "lbl" }, (dpos >= 0 ? fmtNum(dpos + 1) + " / " : "") + plural(derailIdx.length, "derail")),
-      h("button", { type: "button", "aria-label": "Previous derail", title: "Previous derail", onclick: () => jumpDerail(-1) }, "‹"),
-      h("button", { type: "button", "aria-label": "Next derail", title: "Next derail", onclick: () => jumpDerail(1) }, "›"));
+    derailLbl.textContent = (dpos >= 0 ? fmtNum(dpos + 1) + " / " : "") + plural(derailIdx.length, "derail");
     queryNav.hidden = queryIdx.length === 0;
     const qpos = queryIdx.indexOf(activeItem);
     queryNav.title = where;
-    queryNav.replaceChildren(
-      h("span", { class: "lbl" }, (qpos >= 0 ? fmtNum(qpos + 1) + " / " : "") + plural(queryIdx.length, "match", "matches")),
-      h("button", { type: "button", "aria-label": "Previous match", "aria-keyshortcuts": "N", title: "Previous match (N)", onclick: () => jumpQuery(-1) }, "‹"),
-      h("button", { type: "button", "aria-label": "Next match", "aria-keyshortcuts": "n", title: "Next match (n)", onclick: () => jumpQuery(1) }, "›"));
+    queryLbl.textContent = (qpos >= 0 ? fmtNum(qpos + 1) + " / " : "") + plural(queryIdx.length, "match", "matches");
     failNav.hidden = failIdx.length === 0;
     const pos = failIdx.indexOf(activeItem);
-    failNav.replaceChildren(
-      h("span", { class: "lbl" }, (pos >= 0 ? fmtNum(pos + 1) + " / " : "") + plural(failIdx.length, "failure")),
-      h("button", { type: "button", "aria-label": "Previous failure", "aria-keyshortcuts": "[", title: "Previous failure ([)", onclick: () => jumpFail(-1) }, "‹"),
-      h("button", { type: "button", "aria-label": "Next failure", "aria-keyshortcuts": "]", title: "Next failure (])", onclick: () => jumpFail(1) }, "›"));
+    failLbl.textContent = (pos >= 0 ? fmtNum(pos + 1) + " / " : "") + plural(failIdx.length, "failure");
     const anyFold = rows.some((r) => typeof r !== "number");
     foldBtn.textContent = foldsOff ? "Fold quiet" : anyFold ? "Expand all" : "Fold quiet";
     foldBtn.setAttribute("aria-pressed", String(!foldsOff));
