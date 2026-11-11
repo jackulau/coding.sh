@@ -10,8 +10,8 @@ export interface AdapterRow {
   name: string;
   /** Agent id used by --agent and in the trace. */
   id: string;
-  /** verified: real sessions; real-install: real binary against a stub model; fixture-tested: recorded payloads only. */
-  status: "verified" | "real-install" | "fixture-tested" | "tested";
+  /** verified: real sessions; real-install: real binary against a stub model; not-live: recorded payloads only, no live install yet. */
+  status: "verified" | "real-install" | "not-live" | "tested";
   /** How live events reach the spool. */
   live: string;
   /** Where `ingest --backfill` reads history from; undefined = no backfill. */
@@ -53,7 +53,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "Cursor CLI",
     id: "cursor",
-    status: "fixture-tested",
+    status: "not-live",
     live: "hooks.json, partial in -p mode",
     backfill: "agent-transcripts/*.jsonl (undocumented format)",
     headless: "agent -p --output-format stream-json",
@@ -80,7 +80,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "Gemini CLI, older installs",
     id: "gemini-cli",
-    status: "fixture-tested",
+    status: "not-live",
     live: "settings.json hooks",
     backfill: "tmp/<slug>/chats/*.jsonl",
     headless: "gemini -p -o stream-json",
@@ -98,7 +98,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "Amp",
     id: "amp",
-    status: "fixture-tested",
+    status: "not-live",
     live: "plugin",
     headless: "amp -x --stream-json",
     subagents: "Task, oracle, librarian, finder tool calls span the subagent",
@@ -154,6 +154,6 @@ export const PLANNED_AGENTS = ["Cline CLI", "Kiro CLI", "Qwen Code", "Crush"] as
 export const STATUS_LABEL: Record<AdapterRow["status"], string> = {
   verified: "Verified on real sessions",
   "real-install": "Verified on a real install",
-  "fixture-tested": "Fixture-tested",
+  "not-live": "Not run live",
   tested: "Tested",
 };

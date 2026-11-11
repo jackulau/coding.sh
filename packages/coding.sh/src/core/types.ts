@@ -720,7 +720,7 @@ export interface Adapter {
    * otherwise only the coding.sh entry is removed.
    */
   uninstallMcp?(opts: { name: string; dryRun: boolean }): Promise<FileChange[]>;
-  /** Pure-ish: spool line → events. Fixture-tested. */
+  /** Pure-ish: spool line → events. Tested on fixtures. */
   normalize(line: SpoolLine, ctx: NormalizeContext): Promise<AgentEvent[]>;
   /** Import historical sessions from the agent's local transcripts. */
   backfill?(ctx: NormalizeContext, opts?: BackfillOpts): AsyncIterable<AgentEvent>;

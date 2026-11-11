@@ -1,11 +1,11 @@
 name: Agent support
-description: Ask for a new agent, or tell us whether a fixture-tested adapter works on a live install
+description: Ask for a new agent, or tell us whether an adapter works on a live install
 labels: [adapter]
 body:
   - type: markdown
     attributes:
       value: |
-        Eight adapters are fixture-tested but nobody has run them against a live install yet: OpenCode, Cursor CLI, GitHub Copilot CLI, Factory Droid, Goose, Pi, Amp and T3 Code (Aider through `coding.sh run`).
+        Two adapters have not been run on a live install yet: Cursor CLI and Amp. Both need an account login.
         A short "it works" report helps as much as a bug report. We'll move the agent to "Verified" in the README and credit you.
   - type: dropdown
     id: kind

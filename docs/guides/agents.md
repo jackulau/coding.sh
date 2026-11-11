@@ -10,14 +10,14 @@ agent's hook config, payload ids and known breakage, see [ADAPTERS.md](../ADAPTE
 | Claude Code | hooks + transcript, subagents | yes | yes | Verified on real sessions |
 | Codex CLI | hooks + rollout files, subagents | yes | yes | Verified on real sessions. Codex runs new hooks only after you approve them once with `/hooks`. |
 | Antigravity CLI (`agy`, formerly Gemini CLI) | hooks + transcript | yes | no | Verified on real sessions |
-| Gemini CLI, older installs | hooks + chat files, subagents | yes | yes | Fixture-tested |
+| Gemini CLI, older installs | hooks + chat files, subagents | yes | yes | Not run live |
 | OpenCode | plugin + session database | yes | yes | Verified on a real install (1.19.5) |
-| Cursor CLI | hooks + transcript | yes | yes | Fixture-tested. In `-p` mode Cursor does not fire `stop` or `beforeSubmitPrompt`. Not run live: `agent` needs a Cursor login or `CURSOR_API_KEY`, and it only talks to Cursor's own API, so a local model can't stand in. |
+| Cursor CLI | hooks + transcript | yes | yes | Not run live: `agent` needs a Cursor login or `CURSOR_API_KEY`, and it only talks to Cursor's own API, so a local model can't stand in. In `-p` mode Cursor does not fire `stop` or `beforeSubmitPrompt`. |
 | GitHub Copilot CLI | hooks + session state | yes | no | Verified on a real install (1.0.107) |
 | Factory Droid | hooks + transcript | yes | no | Verified on a real install (1.6.0). `droid exec` fires no `UserPromptSubmit`, so the prompt comes from the transcript. |
 | Goose | plugin hooks + session database | yes | no | Verified on a real install (1.57.0). Hooks carry no model or tool output; history import adds them. |
 | Pi | extension + transcript | yes | no | Verified on a real install (1.5.0) |
-| Amp | plugin | no | no | Fixture-tested. Not run live: `amp` needs an ampcode.com login and has no local model option. |
+| Amp | plugin | no | no | Not run live: `amp` needs an ampcode.com login and has no local model option. |
 | T3 Code | reads its local store on every ingest | yes | no | Verified on a real install (0.1.7, driving Pi) |
 | Aider | wrapper (`coding.sh run -- aider …`), with each reply's tokens and cost read from Aider's analytics log while it runs; eval runs parse its token and cost lines | no | no | Verified on a real install (0.86.2) |
 | Anything else | `coding.sh run -- <cmd>`: shadow-git snapshots before and after | no | no | Tested |
@@ -32,7 +32,7 @@ What the statuses mean:
   Copilot CLI and Aider, CI repeats that run on Linux and Windows on every change
   ([`scripts/e2e/real-capture.mjs`](../../scripts/e2e/real-capture.mjs)). The other agents have
   not been checked on Windows yet.
-- **Fixture-tested**: CI tests the adapter against hook payloads, transcripts or session stores
+- **Not run live**: CI tests the adapter against hook payloads, transcripts or session stores
   that follow the agent's documented format, plus its install and uninstall. It has not yet been
   checked against a live install of that agent. Reports are welcome.
 - **Tested**: covered by CI tests. There is no third-party agent to verify against.

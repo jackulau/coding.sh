@@ -294,7 +294,7 @@ interface Adapter {
   detect(): Promise<{ installed: boolean; version?: string; configDir?: string }>;
   install(opts: InstallOpts): Promise<Change[]>;  // returns exact file edits, supports --dry-run
   uninstall(): Promise<Change[]>;
-  normalize(raw: SpoolLine): AgentEvent[];      // pure, fixture-tested
+  normalize(raw: SpoolLine): AgentEvent[];      // pure, tested on fixtures
   backfill?(since?: Date): AsyncIterable<AgentEvent>;  // import local transcripts
   run?(task: RunSpec): Promise<RunResult>;      // headless driver
   overlay?(bundle: HarnessBundle, dir: string): Promise<RunEnv>;

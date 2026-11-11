@@ -45,7 +45,7 @@ Verified on real sessions: **Claude Code**, **Codex CLI** (approve the hooks onc
 **Antigravity CLI** (formerly Gemini CLI).
 Verified on a real install (current release against a local stub model): OpenCode, GitHub
 Copilot CLI, Factory Droid, Goose, Pi, T3 Code, Aider.
-Fixture-tested: Cursor CLI, Amp (both need an account login).
+Not run live yet: Cursor CLI, Amp (both need an account login).
 Any other command: `coding.sh run -- <cmd>` takes shadow-git snapshots before and after.
 Agent frameworks and apps can also send OpenTelemetry to `coding.sh collector`.
 

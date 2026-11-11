@@ -131,12 +131,12 @@ cost. The TypeScript SDK and the store plugins are on npm; the Python SDK isn't 
 | Codex CLI | hooks, rollout files, subagents | Verified on real sessions |
 | Antigravity CLI (formerly Gemini CLI) | hooks, transcript | Verified on real sessions |
 | OpenCode | plugin, session database | Verified on a real install |
-| Cursor CLI | hooks, transcript | Fixture-tested |
+| Cursor CLI | hooks, transcript | Not run live |
 | GitHub Copilot CLI | hooks, session state | Verified on a real install |
 | Factory Droid | hooks, transcript | Verified on a real install |
 | Goose | plugin hooks, session database | Verified on a real install |
 | Pi | extension, transcript | Verified on a real install |
-| Amp | plugin | Fixture-tested |
+| Amp | plugin | Not run live |
 | T3 Code | its local store | Verified on a real install |
 | Aider | `coding.sh run -- aider …` | Verified on a real install |
 | Any other command | `coding.sh run -- <cmd>` | Tested |
@@ -145,9 +145,10 @@ cost. The TypeScript SDK and the store plugins are on npm; the Python SDK isn't 
 Verified on a real install means the agent's current release was installed and run through a
 session against a local stub model, its hooks fired and the recorded session was checked, and the
 captured payloads are now CI fixtures. For OpenCode, Pi, Goose, Factory Droid, GitHub Copilot CLI
-and Aider, CI repeats that run on Linux and Windows on every change. Fixture-tested means CI checks
-the adapter against the agent's documented formats, but nobody has run it against a live install yet. Cursor CLI and Amp
-are still in that state because both need an account login. If you use one of them, a short
+and Aider, CI repeats that run on Linux and Windows on every change. Not run live means CI checks
+the adapter against the agent's documented formats, but nobody has run it against a live install
+yet. Cursor CLI and Amp are in that state because both need an account login. If you use one of
+them, a short
 [agent support report](https://github.com/jackulau/coding.sh/issues/new?template=agent-support.yml)
 saying whether it works moves it to "Verified". Per-agent details, including which agents get the
 MCP server, are in [docs/guides/agents.md](docs/guides/agents.md). Guides for one agent:
@@ -172,7 +173,8 @@ coding.sh is pre-1.0 (latest: 0.1.4), so expect rough edges. What isn't done yet
   Git Bash) and real OpenCode, Pi, Goose, Factory Droid, GitHub Copilot CLI and Aider sessions
   against a stub model. Capture from Claude Code, Codex CLI, Antigravity CLI, Cursor CLI, Amp and
   T3 Code has not been checked on Windows yet.
-- Two adapters, Cursor CLI and Amp, are fixture-tested only (see [Supported agents](#supported-agents)).
+- Two adapters, Cursor CLI and Amp, have not been run on a live install yet. Both need an account
+  login (see [Supported agents](#supported-agents)).
 
 Changes are listed in [CHANGELOG.md](CHANGELOG.md) and on the
 [releases page](https://github.com/jackulau/coding.sh/releases).
@@ -182,7 +184,7 @@ Changes are listed in [CHANGELOG.md](CHANGELOG.md) and on the
 - **Questions and ideas:** [Discussions](https://github.com/jackulau/coding.sh/discussions).
 - **Bugs:** [open an issue](https://github.com/jackulau/coding.sh/issues/new/choose). The bug form
   asks for the output of `coding.sh doctor`, which answers most first questions.
-- **A new agent, or a report on a fixture-tested one:** the
+- **A new agent, or a report on one not run live yet:** the
   [agent support form](https://github.com/jackulau/coding.sh/issues/new?template=agent-support.yml).
 - **Security issues:** report them privately through [SECURITY.md](SECURITY.md), not as an issue.
 
