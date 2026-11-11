@@ -1565,17 +1565,23 @@ const SHA_RE = /^[0-9a-f]{64}$/;
 const nf = new Intl.NumberFormat();
 function fmtNum(n) { return nf.format(n ?? 0); }
 function plural(n, one, many) { return fmtNum(n) + " " + (n === 1 ? one : many || one + "s"); }
+/** 1234 → "1.2k", 12345 → "12k", 999950 → "1.0M" (never "1000k"), 1.5e9 → "1.5B". */
 function fmtCompact(n) {
   if (!n) return "0";
-  if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M";
-  if (n >= 1e3) return (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + "k";
-  return String(n);
+  if (n < 1e3) return String(n);
+  const fmt = (x) => { const one = x.toFixed(1); return parseFloat(one) >= 10 ? x.toFixed(0) : one; };
+  let v = n / 1e3, u = 0;
+  while (parseFloat(fmt(v)) >= 1000 && u < 3) { v /= 1e3; u++; }
+  return fmt(v) + "kMBT"[u];
 }
 function fmtCost(usd) {
   if (usd === undefined || usd === null) return "";
   if (usd === 0) return "$0";
   // One API request often costs a fraction of a cent: show the real figure, not "<$0.01".
   if (usd < 0.0001) return "<$0.0001";
+  // Thousands get a separator; past $100k a column cannot hold the digits, so it reads "$123k" or "$12M".
+  if (usd >= 1e5) return "$" + fmtCompact(usd);
+  if (usd >= 1e3) return "$" + nf.format(Math.round(usd));
   return "$" + usd.toFixed(usd < 0.01 ? 4 : usd < 10 ? 2 : 0);
 }
 const EST_TITLE = "Estimated from list prices";
@@ -1616,6 +1622,7 @@ function fmtDuration(ms) {
   const m = Math.floor(s / 60);
   if (m < 60) return m + "m " + (s % 60) + "s";
   const hr = Math.floor(m / 60);
+  if (hr >= 24) return Math.floor(hr / 24) + "d " + (hr % 24) + "h";
   return hr + "h " + (m % 60) + "m";
 }
 function fmtClock(ms) {

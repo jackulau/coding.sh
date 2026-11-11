@@ -36,3 +36,33 @@ test("relative times: past, a minute of skew, and the future", () => {
   assert.equal(f.fmtRel(now + 3 * 3600_000 + 500), "in 3h");
   assert.equal(f.fmtRel(now + 2 * 86400_000 + 500), "in 2d");
 });
+
+test("compact counts never read 1000k, and reach billions", () => {
+  assert.equal(f.fmtCompact(0), "0");
+  assert.equal(f.fmtCompact(999), "999");
+  assert.equal(f.fmtCompact(1000), "1.0k");
+  assert.equal(f.fmtCompact(1234), "1.2k");
+  assert.equal(f.fmtCompact(9999), "10k");
+  assert.equal(f.fmtCompact(12_345), "12k");
+  assert.equal(f.fmtCompact(999_950), "1.0M");
+  assert.equal(f.fmtCompact(999_999_999), "1.0B");
+  assert.equal(f.fmtCompact(1.5e9), "1.5B");
+});
+
+test("costs get a thousands separator, and compact past $100k", () => {
+  assert.equal(f.fmtCost(0.00004), "<$0.0001");
+  assert.equal(f.fmtCost(0.0042), "$0.0042");
+  assert.equal(f.fmtCost(1.5), "$1.50");
+  assert.equal(f.fmtCost(42.4), "$42");
+  assert.equal(f.fmtCost(1234.5), "$1,235");
+  assert.equal(f.fmtCost(99_999.4), "$99,999");
+  assert.equal(f.fmtCost(123_456), "$123k");
+  assert.equal(f.fmtCost(12_345_678.9), "$12M");
+});
+
+test("long durations roll up to days", () => {
+  assert.equal(f.fmtDuration(90_000), "1m 30s");
+  assert.equal(f.fmtDuration(23 * 3600e3 + 59 * 60e3), "23h 59m");
+  assert.equal(f.fmtDuration(24 * 3600e3), "1d 0h");
+  assert.equal(f.fmtDuration(1284 * 3600e3 + 12 * 60e3), "53d 12h");
+});
