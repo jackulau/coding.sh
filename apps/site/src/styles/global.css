@@ -203,6 +203,8 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: clip;
+  /* A word longer than its line breaks instead of running off a phone screen. */
+  overflow-wrap: break-word;
   font-feature-settings: "ss01" 0;
 }
 
