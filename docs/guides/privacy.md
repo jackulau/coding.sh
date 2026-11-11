@@ -8,7 +8,7 @@ Everything lives in `~/.coding.sh` (override it with `CODING_SH_HOME`):
 |---|---|
 | `index.db` | SQLite index of sessions and events (`node:sqlite`, no native deps) |
 | `blobs/` | content-addressed, zstd-compressed blobs (large prompts and tool output) |
-| `spool/` | hook payloads: unredacted until ingested; after ingest, long payloads are redacted in place and short ones stay as written until `gc` |
+| `spool/` | hook payloads: unredacted until ingested; after ingest, payloads in `raw/` files are redacted in place and payloads inside a spool line stay as written until `gc` |
 | `repos/` | shadow git objects for repo snapshots (your repository's refs are never touched) |
 | `bin/hook.sh`, `bin/hook.mjs` | the hook agents run (`hook.sh` outside Windows, which hands what it does not cover to `hook.mjs`) |
 | `backups/` | copies of every agent config file before coding.sh edited it |
@@ -109,10 +109,13 @@ headers = { Authorization = "Bearer ${OTEL_TOKEN}" }
   pass `--host`.
 - **Raw spool.** The hook writes the agent's payload to `~/.coding.sh/spool` (mode 600) unredacted,
   to stay fast. Hooks share one spool file per agent per UTC day.
-  - A long or multi-line payload gets its own file under `spool/<agent>/raw/`. Once ingest has
-    stored its line, ingest rewrites that file with secrets redacted, in every capture mode. The
-    file stays because a re-parse reads it again.
-  - A one-line payload of up to about 1 KB sits inside the spool file and stays as written.
+  - The shell hook handles most calls. It gives a payload its own file under `spool/<agent>/raw/`
+    unless the payload is one line of up to about 1 KB.
+  - Once ingest has stored the line, it rewrites that file with secrets redacted, in every capture
+    mode. The file stays because a re-parse reads it again.
+  - A payload inside the spool file stays as written: a short one-line payload, and any payload up
+    to 256 KB from a call the node hook handles (an eval run, a reply to the agent, a gateway base
+    URL).
   - `coding.sh gc` deletes ingested spool files and their `raw/` files older than 7 days
     (`[retention] keepSpoolDays`), never the current day's file. `coding.sh purge` removes a value
     from the spool sooner.
