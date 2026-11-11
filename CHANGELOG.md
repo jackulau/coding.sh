@@ -9,6 +9,10 @@ grouped by area, with links to the docs for the details.
 
 ## [0.1.7] - Unreleased
 
+### Added
+
+- **Evals.** `coding.sh exp compare A B --given <grader>` compares only the cases where that grader passes in both runs, and reads every other grader's paired delta, bootstrap interval and McNemar test over them. It prints how many cases it kept and dropped and says the deltas are conditioned on the gate; `--json` adds `comparison.given`. With a `terminated` grader this separates "finished more answers" from "got more of the finished answers right". [Compare an edited model with its base](docs/guides/evals.md#compare-an-edited-model-with-its-base)
+
 ### Changed
 
 - **Docs.** The docs home, the home page FAQ and llms.txt say what coding.sh does (it records prompts, model calls, tool calls, file changes and cost, shows each run in a local viewer, and turns failed runs into evals) instead of comparing it with other products. Other products are named only on the compare pages and where they are an integration, and a site test fails on a page that pitches coding.sh through another product. [Docs](https://coding.sh/docs)
