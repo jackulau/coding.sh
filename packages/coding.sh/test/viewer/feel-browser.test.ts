@@ -183,4 +183,18 @@ describe("viewer feel in a browser", { skip: chrome ? false : "no Chrome/Chromiu
       await page.close();
     }
   });
+
+  test("nothing moves while idle, and the focus ring on / and the caret rotations have no dead transitions", async () => {
+    await open();
+    try {
+      assert.deepEqual(await page.eval("document.getAnimations().filter((a) => a.playState === 'running').map((a) => a.animationName || a.transitionProperty)"), []);
+      assert.equal(await page.eval("getComputedStyle(document.getElementById('q')).transitionDuration"), "0s");
+      assert.equal(await page.eval("getComputedStyle(document.querySelector('.facet-head .caret')).transitionDuration"), "0s");
+      // The loading bar sweeps only while it is showing.
+      await page.eval("document.querySelector('.loading-bar').classList.add('on')");
+      assert.ok((await page.eval("document.getAnimations().filter((a) => a.animationName === 'sweep' && a.playState === 'running').length")) >= 1);
+    } finally {
+      await page.close();
+    }
+  });
 });
