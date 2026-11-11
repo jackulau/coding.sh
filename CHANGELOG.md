@@ -11,7 +11,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
-- **Tests.** The viewer's browser tests no longer hang when Chrome closes its DevTools connection before it answers: a waiting call fails at once, and any call fails after 30 s. This was the cause of Windows CI jobs that ran into their time limit. [Contributing](https://github.com/jackulau/coding.sh/blob/main/CONTRIBUTING.md)
+- **Tests.** The viewer's browser tests no longer hang when Chrome closes its DevTools connection before it answers: a waiting call fails at once, and any call fails after 30 s. The helper also lets go of Chrome's pipe after closing it, and the CI runner makes each test file exit once its tests are done, so a handle left open can no longer hold a Windows job until its time limit. [Contributing](https://github.com/jackulau/coding.sh/blob/main/CONTRIBUTING.md)
 
 ## [0.1.6] - 2026-11-11
 

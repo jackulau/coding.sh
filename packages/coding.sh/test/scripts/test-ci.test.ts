@@ -13,7 +13,8 @@ function run(files: Record<string, string>, names: string[]) {
     for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body);
     const env: NodeJS.ProcessEnv = { ...process.env, SHARD: "", FLAKE_FLAG: join(dir, "flag") };
     delete env.NODE_TEST_CONTEXT; // else the inner node --test reports to this test run instead of its own stdout
-    const r = spawnSync(process.execPath, [RUNNER, ...names], { cwd: dir, encoding: "utf8", env });
+    // A hung run is killed after 60 s and reads as a failure, not a stuck test.
+    const r = spawnSync(process.execPath, [RUNNER, ...names], { cwd: dir, encoding: "utf8", env, timeout: 60_000 });
     return { code: r.status, out: r.stdout + r.stderr };
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -24,6 +25,8 @@ const FLAKY = `import { it } from "node:test"; import { existsSync, writeFileSyn
 it("fails the first time only", () => { if (!existsSync(process.env.FLAKE_FLAG!)) { writeFileSync(process.env.FLAKE_FLAG!, "1"); throw new Error("under load"); } });`;
 const BROKEN = `import { it } from "node:test"; it("always fails", () => { throw new Error("real"); });`;
 const GREEN = `import { it } from "node:test"; it("passes", () => {});`;
+// A test that passes but leaves a handle open, as a browser's pipe can on Windows.
+const LEAKY = `import { it } from "node:test"; it("passes and leaks a timer", () => { setInterval(() => {}, 1000); });`;
 
 describe("scripts/test-ci.mjs", () => {
   it("passes when a failed file passes alone, and says so as a warning", () => {
@@ -43,5 +46,9 @@ describe("scripts/test-ci.mjs", () => {
     const r = run({ "c.test.ts": GREEN }, ["c.test.ts"]);
     assert.equal(r.code, 0, r.out);
     assert.doesNotMatch(r.out, /Rerunning/);
+  });
+  it("finishes when a passing file leaves a handle open", () => {
+    const r = run({ "l.test.ts": LEAKY }, ["l.test.ts"]);
+    assert.equal(r.code, 0, r.out);
   });
 });

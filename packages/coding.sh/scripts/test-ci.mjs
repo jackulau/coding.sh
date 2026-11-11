@@ -10,7 +10,9 @@ import { join, relative } from "node:path";
 
 const MAX_RERUN = 5;
 const shard = process.env.SHARD;
-const node = (args) => spawnSync(process.execPath, ["--no-warnings", "--test", ...args], { stdio: "inherit" }).status ?? 1;
+// --test-force-exit: a file whose tests are done exits even if a handle (a browser's pipe) is
+// still open, so a leak can't hold the job until its time limit cancels it.
+const node = (args) => spawnSync(process.execPath, ["--no-warnings", "--test", "--test-force-exit", ...args], { stdio: "inherit" }).status ?? 1;
 
 const dir = mkdtempSync(join(tmpdir(), "coding-sh-test-ci-"));
 const failedPath = join(dir, "failed.txt");
