@@ -716,6 +716,15 @@ Three `notification` kinds carry the events behind these stats:
 | `fork` | `toolUseId` (the parent's Agent call) and `inheritedTokens` |
 | `hook.context` | `hookEvent`, `hookName`, `hookSource`, `command`, `chars`, `tokens` and `text` (clipped). Metadata mode keeps only `hookEvent`, `hookSource`, `chars` and `tokens` |
 
+One more `notification` kind records weight edits. The Python SDK's `coding_sh.weights_edit()` sends it, and any client can post it to `/v1/ingest`. It adds no stat and no flag; the event shows in the session's events. Redaction runs on `tensor` and `note` like on any payload.
+
+| `payload.kind` | Fields |
+|---|---|
+| `weights.edit` | `tensor` (string, the tensor's name), `shape` (array of non-negative integers, at most 16), `changed` (integer, the weights that differ, at most the product of `shape`), `l2` (number >= 0, the L2 norm of edited minus base), `maxAbs` (number >= 0, the largest absolute value of that change), `baseSha256` and `editedSha256` (64 lowercase hex characters, the tensor's hash before and after) and `note` (string, optional, left out in metadata mode) |
+
+- The caller computes the hashes and norms. The SDK checks the values, drops an invalid edit with one warning, and never raises into the app. `coding_sh.weights_delta()` computes `shape`, `changed`, `l2` and `max_abs` for two small array-likes in pure Python.
+- The server does not check these fields. It stores the payload as sent.
+
 A missing session, or one outside a scoped key's project, gets 404:
 
 ```sh

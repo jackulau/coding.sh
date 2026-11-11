@@ -9,6 +9,10 @@ grouped by area, with links to the docs for the details.
 
 ## [0.1.7] - Unreleased
 
+### Added
+
+- **SDK.** `coding_sh.weights_edit()` in the Python SDK records each weight edit a script makes as one `notification` event with `payload.kind: "weights.edit"`: tensor name, shape, weights changed, L2 and max-abs of the change, and the base and edited sha256. It adds no event kind, and `coding_sh.weights_delta()` computes the counts and norms for small arrays without numpy. [Docs](https://coding.sh/docs/reference/api)
+
 ### Changed
 
 - **Docs.** The docs home, the home page FAQ and llms.txt say what coding.sh does (it records prompts, model calls, tool calls, file changes and cost, shows each run in a local viewer, and turns failed runs into evals) instead of comparing it with other products. Other products are named only on the compare pages and where they are an integration, and a site test fails on a page that pitches coding.sh through another product. [Docs](https://coding.sh/docs)
