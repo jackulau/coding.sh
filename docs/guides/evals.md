@@ -1428,6 +1428,13 @@ removed (`-`) and changed (`~`), model, flags, env names (never values) and plug
 longer than 20 lines collapses into directories with their file counts, such as
 `+ .claude/skills/ (412 files)`. `--json` keeps every path in `report.bundleDiff`.
 
+With one task in both arms, `compare` has no tasks to resample or pair. It leaves out the task
+bootstrap, McNemar and `tasks needed`, and reads the runs of that task: the interval is the Newcombe
+interval of the difference of the two pass rates, the test is Fisher's exact test, and the verdict
+is `inconclusive` or `no significant difference` for this task only, never better or worse. A
+7 of 10 against 1 of 10 gives about 17 to 81 points and p of 0.02. `--json` adds `report.oneTask`
+with the counts, `diff` and `fisherP`; `report.diff` and `report.mcnemar` keep their fields.
+
 `coding.sh compare A --without .claude/skills/pdf` tests one piece of a harness. B is A minus that
 path: a skill, `AGENTS.md`, another instruction file or `.mcp.json`. The path is also deleted from each task's
 repo. The report adds `effect of <path> = A − B` with its CI. `--without` can be repeated.
@@ -1852,7 +1859,8 @@ flaky tasks       2/4                   1/4                   t2, t3, t4
 Under the power line, `tasks needed` is how many paired tasks would detect the observed effect at
 80% power and α 0.05. It uses Connor's sample size for McNemar's test on the discordant tasks:
 `tasks needed 29 for the observed +25.0 pp at 80% power (McNemar, 1 of 4 tasks discordant; this
-run has 4)`. With no discordant task, or as many won as lost, it reads `—` with the reason.
+run has 4)`. With no discordant task, or as many won as lost, it reads `—` with the reason. With
+only one task in both arms the line is left out: one task gives no estimate of how many tasks.
 
 `--json` has these in `report.efficiency`, `report.reliability` and `report.plan`.
 

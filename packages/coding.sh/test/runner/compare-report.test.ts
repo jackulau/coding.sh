@@ -137,3 +137,51 @@ describe("compare: efficiency, reliability and tasks needed", () => {
     for (const re of [/^pass@3 +75\.0% +100\.0%/m, /^pass\^3 +25\.0% +75\.0%/m, /^flaky tasks +2\/4 +1\/4/m, /^cost \/ solved +\$0\.20\d* +\$0\.24/m, /^tasks needed 29 /m]) assert.match(text, re);
   });
 });
+
+describe("compare: one task", () => {
+  // 1 of 10 against 7 of 10 on a single task (the ticket's example, candidate better).
+  const one = [...arm("A", { t1: "PFFFFFFFFF" }, 0.1, 1000), ...arm("B", { t1: "PPPPPPPFFF" }, 0.1, 1000)];
+  const r = compare(one, { baseline: "A", candidate: "B", iters: 400 });
+  const text = formatCompare(r);
+
+  it("reads the runs: Newcombe interval about 17 to 81 points and Fisher p about 0.02", () => {
+    assert.ok(r.oneTask);
+    close(r.oneTask.diff.p, 0.6);
+    assert.ok(Math.abs(r.oneTask.diff.lo - 0.17) < 0.005 && Math.abs(r.oneTask.diff.hi - 0.81) < 0.005, `${r.oneTask.diff.lo} ${r.oneTask.diff.hi}`);
+    assert.ok(Math.abs(r.oneTask.fisherP - 0.0198) < 0.001);
+    assert.notEqual(r.oneTask.diff.lo, r.oneTask.diff.hi);
+  });
+
+  it("prints no task bootstrap, McNemar, tasks-needed line or trust-the-bootstrap note, and says what the numbers are", () => {
+    assert.match(text, /\+60\.0 pp \[\+17\.\d, \+80\.\d pp\]/);
+    assert.match(text, /Fisher p = 0\.020/);
+    assert.match(text, /runs of one task.*says nothing about other tasks/);
+    assert.doesNotMatch(text, /McNemar|tasks needed|the one to trust|\[\+?60\.0, \+?60\.0/);
+    assert.ok(!r.notes.some((n) => /one to trust/.test(n)));
+  });
+
+  it("the verdict agrees with the interval and is never better or worse from one task", () => {
+    assert.equal(r.verdict.kind, "inconclusive");
+    assert.match(r.verdict.text, /\+60\.0 pp pass rate on this task.*CI \[\+17\.\d pp, \+80\.\d pp\] \(Newcombe\), Fisher p = 0\.020; says nothing about other tasks/);
+    assert.doesNotMatch(r.verdict.text, /McNemar|bootstrap|underpowered/);
+  });
+
+  it("keeps the existing JSON fields and plans no task count", () => {
+    assert.equal(r.diff.lo, r.diff.hi, "the task bootstrap field is unchanged");
+    assert.equal(r.plan.tasksNeeded, null);
+    assert.ok("mcnemar" in r);
+  });
+
+  it("an even split on one task is no difference, with an interval that spans 0", () => {
+    const even = compare([...arm("A", { t1: "PPPPPFFFFF" }, 0.1, 1000), ...arm("B", { t1: "PPPPFFFFFF" }, 0.1, 1000)], { baseline: "A", candidate: "B", iters: 400 });
+    assert.equal(even.verdict.kind, "no-difference");
+    assert.ok(even.oneTask && even.oneTask.diff.lo < 0 && even.oneTask.diff.hi > 0);
+  });
+
+  it("two tasks keep the task bootstrap, McNemar and the note", () => {
+    const two = compare([...arm("A", { t1: "PPP", t2: "FFF" }, 0.1, 1000), ...arm("B", { t1: "PPP", t2: "PPP" }, 0.1, 1000)], { baseline: "A", candidate: "B", iters: 400 });
+    assert.equal(two.oneTask, undefined);
+    assert.match(formatCompare(two), /McNemar/);
+    assert.ok(two.notes.some((n) => /one to trust/.test(n)));
+  });
+});
