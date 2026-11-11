@@ -10,6 +10,9 @@ coding.sh eval export <task> --out ./tasks/retry --format harbor
 coding.sh harness snapshot --agent claude-code --name base
 coding.sh compare base candidate --k 3`;
 
+// The evals guide holds the method behind every line this page shows.
+const GUIDE = "https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md";
+
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const m = (s: string) => `<span class="t-muted">${esc(s)}</span>`;
 const t = (s: string) => `<span class="t-text">${esc(s)}</span>`;
@@ -72,209 +75,163 @@ const TRIGGER = [
 
 <DocsLayout>
   <p>
-    The harness is everything around the model: AGENTS.md, rules, skills, the agent and its flags. These commands test a
-    change to it before you keep it, on the sessions you already have or on tasks replayed from your repo.
+    The harness is everything around the model: AGENTS.md, rules, skills, the agent and its flags. These commands test a change to it before
+    you keep it, on the sessions you already have or on tasks replayed from your repo.
   </p>
 
   <h2 id="exp-ab">A/B a harness edit on your sessions <Tag status="built" /></h2>
   <p>
-    You changed a line in AGENTS.md and want to know if it helps before you commit it. <code>coding.sh exp ab</code> answers that from
-    the sessions you already have, with no eval tasks to write. It finds the moments in your recent sessions where the agent went wrong:
-    it said it was done without running anything, ended a turn while its tests were failing, or retried a failed command unchanged. It
-    replays the next turn at each of those moments twice, once with your committed files and once with your edit, and a judge scores both
-    turns.
+    You changed a line in AGENTS.md and want to know if it helps. <code>coding.sh exp ab</code> finds the moments in your recent sessions
+    where the agent went wrong, such as saying it was done without running anything. It replays the next turn twice, once with your committed
+    files and once with your edit, and a judge scores both.
   </p>
   <Terminal title="~/repo" label="Output of coding.sh exp ab">
     <Fragment set:html={AB} />
   </Terminal>
   <p>
-    The verdict line is the same ship gate <code>compare --gate</code> uses, and <code>--gate</code> makes it the exit code. The noise floor
-    comes from the control arm: how often your committed files alone produce a different turn from the one recorded in the session. A
-    difference smaller than that may just be replay noise. Use <code>--dry-run</code> to see the cases and a cost estimate before anything is
-    called, and <code>--max-cost</code> to cap the spend. Responses are cached, so rerunning with unchanged files is free.
-    <code>--watch</code> reruns each time you save, one line per run. See
-    <a href="/docs/how-to/test-agents-md-change">Test an AGENTS.md change in five minutes</a>.
+    The noise floor is how often your committed files alone produce a different turn from the recorded one. A smaller difference may be
+    replay noise. Responses are cached, so a rerun with unchanged files is free.
   </p>
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Flag</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>--dry-run</code></td><td>Shows the cases and a cost estimate; calls nothing.</td></tr>
+        <tr><td><code>--max-cost</code></td><td>Caps the spend.</td></tr>
+        <tr><td><code>--gate</code></td><td>Makes the verdict line the exit code.</td></tr>
+        <tr><td><code>--watch</code></td><td>Reruns each time you save, one line per run.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>The walkthrough is <a href="/docs/how-to/test-agents-md-change">Test an AGENTS.md change in five minutes</a>.</p>
 
-  <h2 id="protected">Protected safety lines <Tag status="built" /></h2>
+  <h2 id="protected">Keep safety lines from being dropped <Tag status="built" /></h2>
   <p>
-    A pass-rate A/B can't see the harm of dropping a safety rule: if no case needed "Never run <code>git push --force</code>", deleting it
-    costs nothing, and neither does rewording it into "only ask when the path is ambiguous". So <code>coding.sh refine check</code> checks a
-    harness edit by text (default: git <code>HEAD</code> against your working tree) and exits 1 when it deletes or rewords a protected line
-    (<code>protected-line</code>) or adds an exception that relaxes one (<code>relaxes-protected</code>). <code>exp ab</code> runs the same check
-    on its arms, warns before any model call, and with <code>--gate</code> fails the run.
+    A pass-rate A/B can't see the harm of deleting "Never run <code>git push --force</code>" if no case needed it.
+    <code>coding.sh refine check</code> compares a harness edit by text (default: git <code>HEAD</code> against your working tree) and exits 1
+    when it deletes, rewords or relaxes a protected line. <code>exp ab</code> runs the same check and warns before any model call.
   </p>
   <p>
     A line is protected inside a <code>&lt;!-- coding.sh:protect --&gt;</code> block, when it matches a <code>[refine] protect</code> regex, or
-    when one sentence pairs a gate word (never, don't, must not; or only, ask, confirm, verify at its start) with a safety topic
-    (credentials, secrets, <code>.env</code>, prod, deploy, push, <code>--force</code>, delete, <code>rm -rf</code>, migrations, owner, …).
-    <code>coding.sh refine protected</code> lists them. <code>--allow-protected-edit AGENTS.md:3</code> allows one edit on purpose. See
-    <a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#protected-safety-lines">Protected safety lines</a>.
+    when one sentence pairs a word like never or must not with a safety topic such as credentials, deploy or <code>rm -rf</code>.
+    <code>refine protected</code> lists them, and <code>--allow-protected-edit AGENTS.md:3</code> allows one edit on purpose
+    (<a href={`${GUIDE}#protected-safety-lines`}>details</a>).
   </p>
 
-  <h2 id="refine">Refine loop <Tag status="built" /></h2>
+  <h2 id="refine">Improve AGENTS.md in tested rounds <Tag status="built" /></h2>
   <p>
-    <code>coding.sh refine</code> improves AGENTS.md, rules and skills in tested rounds. <code>refine propose</code> asks a model
-    for lines that address your sessions' most severe flags, with the file's protected lines marked READ-ONLY and earlier rejected edits listed.
-    You can also write the edit yourself. <code>refine test</code> then decides each candidate in stages: the protected-line check and two
-    critics on the added lines (harmful instructions, near duplicates) before any model call, then an A/B against your current files on the
-    decision points <code>exp ab</code> mines, through the same ship gate. Last comes the guard: the decision points earlier kept edits won must
-    not go from solved to unsolved.
+    <code>refine test</code> decides each candidate edit in stages: the protected-line check and two critics on the added lines, then an A/B
+    on the decision points <code>exp ab</code> mines, through the same ship gate. Last comes the guard: what earlier kept edits won must stay
+    solved.
   </p>
   <Terminal title="~/repo" label="Output of coding.sh refine test and refine log">
     <Fragment set:html={REFINE} />
   </Terminal>
-  <p>
-    Here the second edit wins its own decision points but drops the line the first edit added, so the guard rejects it.
-    <code>refine apply</code> writes a kept candidate with a backup and never commits. <code>refine rollback</code> restores the backup byte for
-    byte. <code>refine log</code> shows every round with its verdict, effect CI, guard result, cost and reason. <code>refine run</code> loops
-    propose, test and apply until <code>--rounds</code>, <code>--max-cost</code> or the plateau detector says stop. <code>--dry-run</code>
-    shows the plan, the guard size and the cost first. See
-    <a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#refine-loop">Refine loop</a>.
-  </p>
+  <p>Here the second edit wins its own decision points but drops the line the first edit added, so the guard rejects it.</p>
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>refine propose</code></td><td>Asks a model for lines that address your sessions' most severe flags.</td></tr>
+        <tr><td><code>refine apply</code></td><td>Writes a kept candidate with a backup. Never commits.</td></tr>
+        <tr><td><code>refine rollback</code></td><td>Restores the backup byte for byte.</td></tr>
+        <tr><td><code>refine log</code></td><td>Every round with its verdict, effect, guard result, cost and reason.</td></tr>
+        <tr><td><code>refine run</code></td><td>Loops propose, test and apply until <code>--rounds</code>, <code>--max-cost</code> or a plateau.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>See <a href={`${GUIDE}#refine-loop`}>Refine loop</a> in the evals guide.</p>
 
-  <h2 id="triggers">Skill triggers <Tag status="built" /></h2>
+  <h2 id="triggers">Check that a skill loads <Tag status="built" /></h2>
   <p>
-    A skill only helps when the agent loads it. <code>coding.sh eval trigger &lt;skill-dir&gt;</code> reads a <code>triggers.toml</code> next to
-    the skill with <code>[[should]]</code> prompts the skill is for and <code>[[should_not]]</code> near misses. It runs each prompt k times in a
-    fresh empty directory with the skill and its sibling skills installed, and reads from each captured session whether the agent loaded the
-    skill. It reports precision, recall, F1 and Wilson intervals, and lists the prompts it missed or loaded by mistake. A near miss can name the
-    sibling that should take it (<code>expect_skill</code>). <code>--description</code> or <code>--candidate DIR</code> runs a second arm with the
-    same prompts in the same order and adds a paired bootstrap CI on accuracy and the prompts that flipped.
+    A skill only helps when the agent loads it. <code>eval trigger &lt;skill-dir&gt;</code> reads a <code>triggers.toml</code> of
+    <code>[[should]]</code> prompts and <code>[[should_not]]</code> near misses. It runs each prompt k times with the agent (Claude Code by default)
+    and reads from the captured session whether the skill loaded. <code>--description</code> or <code>--candidate DIR</code> adds a second arm to compare.
   </p>
   <Terminal title="~/repo" label="Output of coding.sh eval trigger with a description A/B">
     <Fragment set:html={TRIGGER} />
   </Terminal>
   <p>
-    The output above is the CI check with real Claude Code against a stub model. Eight prompts can't show a change of this size, so the verdict
-    holds. <code>--min-f1</code> and <code>--fail-on regression</code> set the exit code for CI. See
-    <a href="https://github.com/jackulau/coding.sh/blob/main/docs/how-to/evaluate-a-skill.md#does-the-skill-load">Does the skill load?</a>.
+    The output above is the CI check with real Claude Code against a stub model. Eight prompts can't show a change of this size, so the verdict holds. <code>--min-f1</code> and <code>--fail-on regression</code> set the
+    exit code for CI. See <a href="https://github.com/jackulau/coding.sh/blob/main/docs/how-to/evaluate-a-skill.md#does-the-skill-load">Does
+    the skill load?</a>.
   </p>
 
-  <h2 id="repo-replay">Repo-replay tasks <Tag status="partial" /></h2>
+  <h2 id="repo-replay">Replay tasks from your repo <Tag status="partial" /></h2>
   <p>
-    For coding agents, a task is the repository snapshot from before the agent ran, the first prompt as the instruction, setup commands and a
-    verifier command. Before a task counts, <code>eval validate</code> checks the verifier:
-  </p>
-  <ol>
-    <li>Doing nothing fails.</li>
-    <li>The reference solution (the session's own diff, or a later fix) passes <code>k</code> runs out of <code>k</code> (default 5), so flaky tests fail validation.</li>
-    <li>Near-miss variants of the reference, generated by mutating its patch, fail.</li>
-    <li>Nothing leaks: hidden test files are copied in only when the verifier runs, and follow-up prompts that steer toward the answer stay out of the instruction.</li>
-  </ol>
-  <p>
-    It also flags gold-only coupling: a hidden test that names a helper or file only the reference adds, when the instruction never mentions
-    it. A valid fix that names things differently would fail. These show as notes; <code>--strict-coupling</code> makes them fail validation.
-    <code>eval crosscheck &lt;task&gt;</code> works from the other side: a reviewer model reads the instruction and each stored run's diff and
-    says whether the change is valid. Where it disagrees with the verifier, it reports a false reject or a false accept, and stores the counts
-    on the task in the same shape as a human verifier audit. <code>--solver &lt;bundle&gt;</code> solves the task once first, and
-    <code>--max</code> caps the model calls (default 5).
-  </p>
-  <p id="witness">
-    <code>eval audit &lt;task&gt; --experiment &lt;id&gt; --witness &lt;file&gt; --witness-cmd &lt;cmd&gt;</code> checks passing runs with a
-    test for a requirement the verifier skips. The witness must pass the reference 3/3; then every passing run is rebuilt from its diff, the
-    verifier must still pass, and a witness that fails twice in a row refutes the run:
-    <code>claude-tdd: passes 6/10, refuted 3, audited pass rate 30% (3/10)</code>. A witness refuting over half the passes is ambiguous
-    and not counted. No model calls (TestJack, <a href="https://arxiv.org/abs/2610.10619">arXiv 2610.10619</a>).
-    <code>--promote</code> adds the witness to the verifier.
-  </p>
-  <p>
-    Harness bundles (agent, model, flags, env and files such as <code>AGENTS.md</code>, identified by a content hash)
-    are what <code>compare</code> A/B tests: it runs both bundles on validated tasks in isolated worktrees and reports per-arm Wilson
-    intervals, a paired bootstrap interval, McNemar's test, cost, token, turn and latency deltas, and the first step where the two traces diverge. Tasks export
-    in coding.sh's own layout or Harbor's.
-  </p>
-  <p id="gate">
-    <code>compare A B --gate</code> answers "should I ship B?" in one line: <code>Ship it: B wins 9 tasks, loses 0</code>,
-    <code>Hold: not enough evidence</code>, or <code>Don't ship: B breaks 3 tasks A solved</code>, with the broken tasks listed. It exits 0
-    only for "Ship it". A break costs two fixes (<code>--lambda</code>), the wins must clear a one-sided exact test (<code>--gate-alpha</code>,
-    default 0.05), and B may break at most 10% of the tasks A solved (<code>--tau</code>). This is the SAGE accept-or-abstain rule
-    (<a href="https://arxiv.org/abs/2609.36043">arXiv 2609.36043</a>). Passes that tampered with tests count as fails for the gate.
-    <code>--gate --by suite:</code> also gates each group of tasks (by their first tag with that prefix), so a pooled "Ship it" can't hide
-    one suite collapsing: any group's "Don't ship" blocks. The report also splits each arm's failed runs by the agent's own last test run
-    (<code>A fails 12: own tests green 7 (58%), red 3, stale 1, none 1</code>): green fails are silent misses, where the agent's tests passed
-    and the verifier's did not.
-  </p>
-  <p id="tamper">
-    Passing runs that edited, deleted or skipped tests or the verifier's files still count as passes, so compare links each such change to
-    the tool call that made it and splits those passes: <code>tampered passes B 3: disclosed 2, stealth 1</code>. Disclosed means the agent
-    said it was changing the test before or with the call; stealth means it didn't (EPISTEME,
-    <a href="https://arxiv.org/abs/2611.06563">arXiv 2611.06563</a>). Each pass gets a line with the run, file, tool, event id and the
-    agent's words; <code>--json</code> has them under <code>tamperAttribution</code>.
-  </p>
-  <p id="audited">
-    After <a href="#witness"><code>eval audit</code></a>, compare shows each audited arm's raw and audited pass rate:
-    <code>audited pass B 60% → 30% (3 refuted, coverage 100%)</code>. <code>compare A B --audited</code> counts refuted passes as fails
-    and labels the verdict <code>verdict (audited)</code>, with a note when that changes it. It needs every pass in both arms replayed;
-    otherwise the raw verdict stands and a note says what the audit covers.
-  </p>
-  <p id="promote">
-    <code>compare A B --promote</code> keeps a B that is cheaper at the same quality, which the verdict calls "no significant difference". It
-    prints <code>pareto: support 0.86 ≥ 0.70 → promote (cost-cut: cost -38% …)</code> or <code>→ hold</code>, and exits 0 only on promote.
-    The support is the share of bootstrap draws (over tasks and attempts) where B gains quality without costing more than
-    <code>--eps-c</code>, or costs less while losing at most <code>--eps-q</code> of pass rate. Cost is USD, or tokens when too few runs are
-    priced. Method: ParetoSaddler (<a href="https://arxiv.org/abs/2611.02079">arXiv 2611.02079</a>).
-  </p>
-  <p id="item-gate">
-    When B adds or removes one rule, skill or context file and nothing else (<code>--without</code> counts), the report adds a one-item gate:
-    <code>item gate k=3 τ=.34 m=2: KEEP · G=1.67 net +4 runs D=.33 fired 11/36 · S=9 tasks</code>. It scores only the tasks where the item
-    reached the agent's context, read from each run's trace. An addition is KEEP, RECHECK (re-run the tasks that dropped), KILL or RERUN; a
-    removal is ACCEPT (only when the agent passes at least 80% of the exposed tasks without it), REJECT, UNMEASURED (it never fired, or
-    the pass rate without it is under 80%, so keep it), UNCOVERED (neither arm solves the tasks: repair the item or check the tasks) or RERUN. <code>--item-gate</code> makes it set the exit code. Method:
-    Cortex (<a href="https://arxiv.org/abs/2610.14216">arXiv 2610.14216</a>).
-  </p>
-  <p id="plugins">
-    A claude-code bundle can carry Claude Code plugins, the whole plugin directory: <code>harness snapshot --agent claude-code --plugin terse</code>
-    (an installed name, <code>name@marketplace</code> or a plugin directory; repeatable), or <code>plugins = [...]</code> in a harness TOML.
-    <code>compare A --with plugin:terse</code> runs A against A plus the plugin in one command, and <code>--without plugin:&lt;name&gt;</code>
-    drops one. Each run loads the plugin with <code>--plugin-dir</code> from its own home; your Claude config is never changed.
-  </p>
-  <p id="hand-written">
-    A task can also be written by hand: a directory with <code>task.json</code>, <code>instruction.md</code>, an optional <code>repo/</code>
-    start tree and <code>tests/</code> for hidden files. <code>eval import tasks/*/</code> loads them as drafts, and
-    <code>compare A B --tag &lt;tag&gt;</code> runs them. The verifier gets the agent's final answer and its whole stdout as files
-    (<code>CODING_SH_AGENT_OUTPUT</code>, <code>CODING_SH_AGENT_STDOUT</code>), so <code>judge grade --grader checklist.json</code> can grade
-    what the agent said and which commands it ran. <code>--max-cost 15</code> stops starting runs once agent and judge spend reach $15;
-    the report shows both as <code>agent spend</code> and <code>grader spend</code>. The <a href="/docs/how-to/evaluate-a-skill">Evaluate an
-    Agent Skill</a> guide walks through it.
-  </p>
-  <p id="reuse">
-    <code>compare A B --reuse baseline</code> copies A's finished runs from earlier comparisons instead of running them again, so comparing
-    several candidates against one baseline pays for the baseline once. A run is reused only when its task (instruction, verifier, hidden
-    files), bundle, agent version, attempt and timeout are all the same, keyed by content, and only when it finished without an error inside
-    <code>--reuse-max-age</code> (default 7 days). <code>--dry-run</code> prints how many runs each arm would reuse and run. The report notes
-    that reused runs did not run interleaved with the new ones.
-  </p>
-  <p id="release">
-    Each run records the agent release it started on, checked at most once a minute, so an auto-update mid-comparison shows. When the arms
-    ran on different releases, the report adds <code>agent claude-code 2.1.316 ×12 2.1.319 ×12 release differs</code> and a note that
-    the delta mixes the change with the release. <code>--gate</code> repeats it, and <code>--promote</code> holds and exits 1
-    (<code>pareto.refused: "release_confound"</code>). <code>--json</code> has <code>report.agentVersions</code>. Releases change the
-    agent's own prompt and tools often (<a href="https://arxiv.org/abs/2610.37332">arXiv 2610.37332</a>).
+    A repo-replay task is the repository from before the agent ran, the first prompt as the instruction, and a verifier command.
+    <code>compare</code> runs two harness bundles on those tasks in isolated worktrees.
   </p>
   <Code code={replay} />
-  <p id="iterate">
-    <code>--experiment exp_01 --retry-errors</code> runs again, in place, the runs of a stored comparison that errored or failed on
-    infrastructure; the old runs stay, marked superseded, so each task, arm and attempt counts once. <code>--failing exp_01</code> runs
-    only the tasks A failed in <code>exp_01</code> (<code>exp_01@bundle</code> for another arm). The difference holds on those tasks, but both
-    pass rates are conditioned on A having failed them, and the report says so. <code>--sample 20 --seed 7</code> runs the same random
-    20 tasks for the same seed.
+  <p>Before a task counts, <code>eval validate</code> checks the verifier:</p>
+  <ol>
+    <li>Doing nothing fails.</li>
+    <li>The reference solution passes <code>k</code> runs out of <code>k</code> (default 5), so flaky tests fail validation.</li>
+    <li>Near-miss variants of the reference, made by mutating its patch, fail.</li>
+    <li>Nothing leaks: hidden tests are copied in only when the verifier runs.</li>
+  </ol>
+  <p>
+    A bundle is the agent, model, flags, env and files such as AGENTS.md, identified by a content hash. The report gives each arm's pass
+    rate, the paired difference, McNemar's test, the cost, token and latency deltas, and the first step where the traces diverge.
   </p>
-  <p id="repair">
-    <code>compare A B --repair 2</code> also measures how well the agent fixes its own failure. When the verifier fails, the agent gets
-    "Verification failed." in its own session (Claude Code <code>--resume</code>, <code>codex exec resume</code>) and tries again, up to 2
-    rounds. The hidden tests are out of the work tree while it works. <code>--repair-signal names</code> adds the failing test names read from
-    the verifier output. A round that edits, deletes or skips tests does not count as a repair. <code>--false-alarm 0.2</code> tells a
-    seeded 20% of passing runs they failed, to measure what a wrong signal breaks. The report adds, per arm, Seq@k (the share of tasks
-    solved by the k-th attempt), the repair rate, where the gain lands (EGS, LGS), rounds that changed nothing, cost to solve and, with
-    <code>--k 2</code> or more, a cost front against k independent attempts. <code>--repair-verdict</code> moves the verdict to the
-    outcome after repair.
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Command</th><th>What it adds</th></tr></thead>
+      <tbody>
+        <tr><td><code>eval crosscheck &lt;task&gt;</code></td><td>A reviewer model judges each run's diff and reports where it disagrees with the verifier.</td></tr>
+        <tr id="witness"><td><code>eval audit &lt;task&gt; --experiment &lt;id&gt; --witness &lt;file&gt; --witness-cmd &lt;cmd&gt;</code></td><td>A test for a requirement the verifier skips; it can refute passing runs.</td></tr>
+        <tr id="hand-written"><td><code>eval import tasks/*/</code></td><td>Loads hand-written tasks (<code>task.json</code>, <code>instruction.md</code>, <code>repo/</code>, <code>tests/</code>) as drafts. Run them with <code>compare A B --tag &lt;tag&gt;</code> (<a href="/docs/how-to/evaluate-a-skill">walkthrough</a>).</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="gate">Gate a change in CI</h2>
+  <p>
+    <code>compare A B --gate</code> answers "should I ship B?" in one line: <code>Ship it: B wins 9 tasks, loses 0</code>,
+    <code>Hold: not enough evidence</code>, or <code>Don't ship: B breaks 3 tasks A solved</code>. It exits 0 only for "Ship it".
   </p>
+  <p>
+    A break costs two fixes (<code>--lambda</code>), the wins must clear a one-sided exact test (<code>--gate-alpha</code>, default 0.05), and
+    B may break at most 10% of the tasks A solved (<code>--tau</code>). This is the SAGE accept-or-abstain rule
+    (<a href="https://arxiv.org/abs/2609.36043">arXiv 2609.36043</a>). Passes that tampered with tests count as fails.
+  </p>
+
+  <h2 id="options">More compare options</h2>
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Flag</th><th>What it adds</th></tr></thead>
+      <tbody>
+        <tr><td><code>--gate --by suite:</code></td><td>Also gates each group of tasks; any group's "Don't ship" blocks.</td></tr>
+        <tr id="promote"><td><code>--promote</code></td><td>Exits 0 only when B is credibly better, or cheaper within <code>--eps-q</code> of A's pass rate.</td></tr>
+        <tr id="audited"><td><code>--audited</code></td><td>Counts passes a witness refuted as fails. Needs every pass audited.</td></tr>
+        <tr id="item-gate"><td><code>--item-gate</code></td><td>Exits 0 on KEEP or ACCEPT from the one-item gate (when B adds or removes one item).</td></tr>
+        <tr id="plugins"><td><code>--with plugin:terse</code></td><td>B is A plus a Claude Code plugin. Your Claude config is never changed.</td></tr>
+        <tr id="reuse"><td><code>--reuse baseline</code></td><td>Copies A's finished runs from earlier comparisons, so the baseline is paid for once.</td></tr>
+        <tr id="iterate"><td><code>--experiment exp_01 --retry-errors</code></td><td>Reruns, in place, the runs that errored or failed on infrastructure.</td></tr>
+        <tr><td><code>--failing exp_01</code></td><td>Runs only the tasks A failed in that comparison.</td></tr>
+        <tr id="repair"><td><code>--repair 2</code></td><td>Tells the agent its verifier failed and lets it try again, up to 2 rounds.</td></tr>
+        <tr><td><code>--max-cost 15</code></td><td>Stops starting runs once agent and judge spend reach $15.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <details class="more">
+    <summary>What else compare reports</summary>
+    <ul>
+      <li id="tamper">Passing runs that edited, deleted or skipped tests, each linked to the tool call: <code>tampered passes B 3: disclosed 2, stealth 1</code>.</li>
+      <li>Each arm's failed runs by the agent's own last test run. Green fails are silent misses: the agent's tests passed and the verifier's did not.</li>
+      <li id="release">A note when the arms ran on different agent releases. <code>--promote</code> then holds and exits 1.</li>
+      <li>After <code>eval audit</code>: each arm's raw and audited pass rate, as in <code>audited pass B 60% → 30% (3 refuted, coverage 100%)</code>.</li>
+    </ul>
+    <p>
+      The method behind each line, and every flag above, is in <a href={`${GUIDE}#harness-ab`}>Harness A/B</a> and the
+      <a href="/docs/cli/compare">compare reference</a>.
+    </p>
+  </details>
+
   <div class="note">
     <p>
       <strong>Known gap.</strong> A hook-captured session starts from the commit that was checked out when it began, so uncommitted changes at
-      that point are missing and <code>eval new</code> warns. <code>coding.sh run --</code> snapshots the whole working tree before and after,
-      and takes the instruction from the command's prompt argument, or from <code>--instruction</code>.
+      that point are missing and <code>eval new</code> warns. <code>coding.sh run --</code> snapshots the whole working tree before and after.
     </p>
   </div>
 </DocsLayout>

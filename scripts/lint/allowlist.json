@@ -3152,12 +3152,6 @@
     },
     {
       "rule": "site-placeholder",
-      "path": "apps/site/src/pages/docs/evals.astro",
-      "max": 1,
-      "reason": "describes what the agent-slop grader flags (placeholder text)"
-    },
-    {
-      "rule": "site-placeholder",
       "path": "apps/site/src/pages/docs/index.astro",
       "max": 3,
       "reason": "baseline 2026-11-08: labels a feature that is not built; drop the label when it ships"

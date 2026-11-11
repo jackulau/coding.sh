@@ -45,8 +45,7 @@ coding.sh toolevals traces <target> --from <experiment> --out traces/`;
 <DocsLayout>
   <div class="note">
     <p>
-      <strong>Built.</strong> <code>coding.sh toolevals</code> lives in <code>packages/coding.sh/src/toolevals</code>, with tests in
-      <code>test/toolevals</code>. The full spec is <a href={SPEC_URL}>docs/TOOL-EVALS.md</a>; every flag is in the
+      <strong>Built.</strong> The full spec is <a href={SPEC_URL}>docs/TOOL-EVALS.md</a>; every flag is in the
       <a href="/docs/cli/toolevals">CLI reference</a>.
     </p>
   </div>
@@ -58,6 +57,13 @@ coding.sh toolevals traces <target> --from <experiment> --out traces/`;
     <code>--json</code> output, and keep the changes that raise the score or hold it at lower cost.
   </p>
   <p>Every metric comes from captured traces plus an agent-independent tap on the tool. Nothing is self-reported by the agent.</p>
+
+  <h2 id="cli">Commands</h2>
+  <Code code={cli} />
+  <p>
+    <code>show</code> prints one trial's metrics, tap records and session tree. <code>traces</code> writes an MCP server's failing traces
+    and per-tool health to a directory, from an experiment's dev trials or from captured sessions (<code>--sessions 'since:30d'</code>).
+  </p>
 
   <h2 id="concepts">Concepts</h2>
   <div class="doc-table">
@@ -96,26 +102,24 @@ coding.sh toolevals traces <target> --from <experiment> --out traces/`;
   <h2 id="experiments">Experiments</h2>
   <p>
     An experiment is tasks × variants × drivers × k attempts, interleaved so provider drift hits every arm equally. Compare pairs by task and
-    uses the same paired bootstrap and McNemar's test as <a href="/docs/experiments#compare">dataset experiments</a>. It also prints
-    <code>p (perm)</code>, a task-paired permutation test on the same per-task differences, exact up to 20 tasks, which holds its level at
-    the 5-11 tasks a suite often has, where bootstrap intervals run too narrow. A description-compression mode
-    shortens MCP tool descriptions one tool at a time on the dev split, keeps each cut only if it is non-inferior, and confirms the result on
-    the held-out split.
+    uses the same paired bootstrap and McNemar's test as <a href="/docs/experiments#compare">dataset experiments</a>.
+  </p>
+  <p>
+    It also prints <code>p (perm)</code>, a task-paired permutation test, exact up to 20 tasks. It holds its level at the 5-11 tasks a suite
+    often has, where bootstrap intervals run too narrow.
+  </p>
+  <p>
+    <code>toolevals compress</code> shortens MCP tool descriptions one tool at a time on the dev split, keeps each cut only if it is
+    non-inferior, and confirms the result on the held-out split.
   </p>
 
   <h2 id="kinds">Task kinds</h2>
   <p>
     A task that tests a change can carry a <code>kind</code>. A <code>bad</code> task fails on the old variant and passes on the new one.
     <code>guard</code> and <code>control</code> tasks pass on both; a control that breaks means the change overcorrected.
-    <code>toolevals validate &lt;target&gt; --against &lt;variant&gt;</code> reports a bad task that passes on the old variant, since it does not
-    reproduce the failure. It runs the reference commands, or agent trials with <code>--driver</code> when the variant changes only what
-    the agent reads. <code>run</code> and <code>compare</code> split results by kind.
   </p>
-
-  <h2 id="cli">Commands</h2>
-  <Code code={cli} />
   <p>
-    <code>show</code> prints one trial's metrics, tap records and session tree. <code>traces</code> writes an MCP server's failing traces
-    and per-tool health to a directory, from an experiment's dev trials or from captured sessions (<code>--sessions 'since:30d'</code>).
+    <code>toolevals validate &lt;target&gt; --against &lt;variant&gt;</code> reports a bad task that already passes on the old variant, since it
+    does not reproduce the failure. <code>run</code> and <code>compare</code> split results by kind.
   </p>
 </DocsLayout>

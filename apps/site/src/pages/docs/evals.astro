@@ -57,6 +57,9 @@ const moved = {
   "/docs/harness-evals": ["exp-ab", "protected", "refine", "triggers", "repo-replay", "witness", "gate", "tamper", "audited", "promote", "item-gate", "plugins", "hand-written", "reuse", "release", "iterate", "repair"],
 };
 
+// The evals guide holds the method behind every line this page shows.
+const GUIDE = "https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md";
+
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const m = (s: string) => `<span class="t-muted">${esc(s)}</span>`;
 const t = (s: string) => `<span class="t-text">${esc(s)}</span>`;
@@ -96,48 +99,44 @@ const RUN = [
 
 <DocsLayout>
   <p>
-    There are two kinds of eval. <strong>Dataset experiments</strong> run any agent, in any language, over a set of cases and grade the outputs.
-    <strong>Repo-replay tasks</strong> re-run a coding agent from the repository state before a real session and check the result with a
-    validated verifier.
+    There are two kinds of eval. <strong>Dataset experiments</strong> run any agent, in any language, over a set of cases and grade the
+    outputs. <strong>Repo-replay tasks</strong> re-run a coding agent from the repository state before a real session and check the result
+    with a validated verifier.
   </p>
   <p>
-    <a href="/docs/experiments">Experiments</a> covers comparing two runs, sweeps, matrices and long runs.
-    <a href="/docs/harness-evals">Harness evals</a> covers testing an AGENTS.md, rule or skill change and repo-replay tasks.
+    <a href="/docs/experiments">Experiments</a> covers comparing two runs, sweeps and long runs. <a href="/docs/harness-evals">Harness
+    evals</a> covers testing an AGENTS.md, rule or skill change, and repo-replay tasks.
   </p>
 
   <h2 id="first-eval">Your first eval in 5 minutes <Tag status="built" /></h2>
   <p>
-    <code>coding.sh eval init</code> writes a suite to <code>evals/&lt;name&gt;/</code> in your repo and prints the command that runs it.
-    <code>coding.sh eval run</code> runs every suite there, or the ones you name, and prints a report. In a terminal, <code>eval init</code>
-    with no flags asks what you want to test.
+    <code>eval init</code> writes a suite to <code>evals/&lt;name&gt;/</code> in your repo. <code>eval run</code> runs every suite there, or
+    the ones you name, and prints a report. In a terminal, <code>eval init</code> with no flags asks what you want to test.
   </p>
   <p>
     <strong>Your agent's failed sessions.</strong> Up to 10 flagged sessions from this repo in the last 14 days become repo tasks: the repo
-    before the session, its first prompt, and your verifier. The failed diff is kept as a near miss the verifier must fail, not as the answer.
-    This is a capability suite, so <code>eval run</code> reports the score and exits 0.
+    before the session, its first prompt, and your verifier. The failed diff is kept as a near miss the verifier must fail.
   </p>
   <Code code={firstSessions} />
   <p>
-    <strong>A skill.</strong> Prompts where the agent should load the skill and prompts where it should not, drafted by a model with
-    <code>--draft</code> and marked DRAFT for you to review. <code>eval run</code> runs each in Claude Code and reads from the captured session
-    whether the skill loaded. It exits 1 when a prompt is wrong in most of its trials.
+    <strong>A skill.</strong> Prompts where the agent should load the skill and prompts where it should not, drafted by a model and marked
+    DRAFT for you to review. <code>eval run</code> runs each in Claude Code and checks whether the skill loaded.
   </p>
   <Code code={firstSkill} />
   <p>
     <strong>An app or a prompt.</strong> Cases of <code>&#123;"input", "expected"&#125;</code> and a command (or <code>--url</code>) that
-    answers one. Short expected answers get an <code>exact</code> grader; long ones, or none, get an LLM judge to calibrate. <code>eval init</code>
-    also prints a GitHub Actions workflow that runs the suite on every pull request.
+    answers one. <code>eval init</code> also prints a GitHub Actions workflow that runs the suite on every pull request.
   </p>
   <Code code={firstApp} />
   <Terminal title="~/proj" label="Output of coding.sh eval run">
     <pre set:html={SUITE} />
   </Terminal>
   <p>
-    Each task runs k times (3 by default). pass@k is the chance that at least one of k trials passes and pass^k that all k pass; a
-    <strong>flaky</strong> task counts for the first and against the second. Each failed trial links its captured session, so you can read
-    the transcript before changing anything. The report warns when a suite has fewer than 20 tasks and when a capability suite is saturated (90%
-    of tasks pass every trial). The <a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#your-first-eval-in-5-minutes">evals
-    guide</a> maps each step of Anthropic's
+    Each task runs k times (3 by default). pass@k counts a task when any of its k trials passes, and pass^k only when all of them pass, so a
+    <strong>flaky</strong> task counts for the first and against the second. Each failed trial links its captured session.
+  </p>
+  <p>
+    The <a href={`${GUIDE}#your-first-eval-in-5-minutes`}>evals guide</a> maps each step of Anthropic's
     <a href="https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents">Demystifying evals for AI agents</a> roadmap to a command.
   </p>
 
@@ -145,27 +144,35 @@ const RUN = [
   <p>
     A dataset is a list of cases: <code>input</code>, optional <code>expected</code>, <code>tags</code>, <code>metadata</code> and a
     <code>split</code> (<code>train</code>, <code>dev</code> or <code>test</code>). Every change makes a new version whose id is a hash of
-    the cases, so the same cases always give the same version and an experiment records exactly what it ran on.
+    the cases, so an experiment records exactly what it ran on.
   </p>
   <Code code={dataset} />
   <p id="case-kinds">
-    When a dataset tests a change, a case can carry a <code>kind</code>. A <code>bad</code> case reproduces the failure the change is for: it
-    fails before the change and passes after. A <code>guard</code> case covers behavior that already works and must keep passing. A
-    <code>control</code> case is one where the fix must not kick in, so a failure there means the change overcorrected. Set it in the case
-    or with <code>dataset add --kind</code>. <code>exp run</code> prints the pass rate per kind, and
-    <a href="/docs/experiments#compare"><code>exp compare</code></a> names the bad cases fixed and the guards and controls that broke.
+    When a dataset tests a change, give each case a <code>kind</code> (in the case, or with <code>dataset add --kind</code>). <code>exp
+    run</code> prints the pass rate per kind, and <a href="/docs/experiments#compare"><code>exp compare</code></a> names the bad cases fixed
+    and the guards and controls that broke.
   </p>
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Kind</th><th>Before the change</th><th>After the change</th></tr></thead>
+      <tbody>
+        <tr><td><code>bad</code></td><td>Fails: it reproduces the failure the change is for.</td><td>Passes.</td></tr>
+        <tr><td><code>guard</code></td><td>Passes: behavior that already works.</td><td>Passes.</td></tr>
+        <tr><td><code>control</code></td><td>Passes: the fix must not kick in here.</td><td>Passes; a failure means the change overcorrected.</td></tr>
+      </tbody>
+    </table>
+  </div>
 
   <h2 id="tasks">What gets run</h2>
   <p>The task is the agent under test. Two kinds work from the CLI:</p>
   <ul>
     <li>
-      <strong><code>command</code></strong>: any executable. The case input arrives as JSON on stdin; stdout is the output (parsed as JSON when
-      it is JSON). <code>CODING_SH_RUN_ID</code>, <code>CODING_SH_CASE_ID</code> and <code>CODING_SH_TRIAL</code> are in its environment.
+      <strong><code>command</code></strong>: any executable. The case input arrives as JSON on stdin; stdout is the output.
+      <code>CODING_SH_RUN_ID</code>, <code>CODING_SH_CASE_ID</code> and <code>CODING_SH_TRIAL</code> are in its environment.
     </li>
     <li>
       <strong><code>http</code></strong>: a POST of the input as JSON to a URL; the response (or a JSON path into it) is the output. Header
-      values can come from environment variables so secrets stay out of spec files.
+      values can come from environment variables, so secrets stay out of spec files.
     </li>
   </ul>
   <Code title="agent.mjs" code={agent} />
@@ -174,13 +181,16 @@ const RUN = [
     <pre set:html={RUN} />
   </Terminal>
   <p>
-    With one trial per case the interval is a Wilson interval; with <code>--trials</code> above 1 it is a bootstrap over cases. Options can also
-    live in a JSON spec file: <code>coding.sh exp run spec.json</code>.
+    With one trial per case the interval is a Wilson interval; with <code>--trials</code> above 1 it is a bootstrap over cases. Options can
+    also live in a JSON spec file: <code>coding.sh exp run spec.json</code>.
   </p>
   <Code title="spec.json" code={spec} />
 
   <h2 id="graders">Graders <Tag status="built" /></h2>
-  <p>Deterministic graders come first. Each grader's config is hashed into a version, so a changed grader is a different grader.</p>
+  <p>
+    Deterministic graders come first. Each grader's config is hashed into a version, so a changed grader is a different grader. Every field
+    is in <a href={`${GUIDE}#grader-fields`}>Grader fields</a>.
+  </p>
   <div class="doc-table">
     <table>
       <thead><tr><th>Kind</th><th>Passes when</th></tr></thead>
@@ -192,14 +202,14 @@ const RUN = [
         <tr><td><code>json-path</code></td><td>A JSON path into the output equals a value or the same path in <code>expected</code>.</td></tr>
         <tr><td><code>numeric</code></td><td>The first number in the output is within an absolute or relative tolerance.</td></tr>
         <tr><td><code>similarity</code></td><td>Normalized edit-distance similarity is at least the threshold (default 0.8).</td></tr>
-        <tr><td><code>progress</code></td><td>The run's trace derailed at most <code>maxDerails</code> times (default 0). The score is the share of the run before its first derail: looping, failure-streak, churn, no-progress, stalled or context-thrash.</td></tr>
-        <tr><td><code>executability</code></td><td>The run's trace has at most <code>maxInvalid</code> invalid tool calls (default 0): calls the harness refused to run, such as a bad argument, an unknown tool, an edit of a file not read yet, a string to replace that is not there, a missing file or command, or a denied call. A test that runs and exits 1 is failed, not invalid. The score is the share of tool calls before the first invalid one; <code>kinds</code> counts only some kinds.</td></tr>
-        <tr><td><code>agent-slop</code></td><td>The lines the agent's diff adds have at most <code>maxErrors</code> error findings (default 0): placeholder or elided code, <code>as any</code>, <code>@ts-ignore</code>, empty catches, <code>debugger</code>, focused tests. Warnings (debug prints, skipped tests, barrel files, placeholder text, narrating comments) count against <code>maxWarnings</code> when set. The score falls with findings per 100 added lines. <code>coding.sh judge slop latest</code> runs the same rules on a captured session, run or experiment.</td></tr>
+        <tr><td><code>progress</code></td><td>The run's trace derailed (looping, churn, stalling and the like) at most <code>maxDerails</code> times (default 0).</td></tr>
+        <tr><td><code>executability</code></td><td>The trace has at most <code>maxInvalid</code> tool calls the harness refused to run (default 0).</td></tr>
+        <tr><td><code>agent-slop</code></td><td>The lines the agent's diff adds have at most <code>maxErrors</code> findings such as <code>as any</code> or empty catches (default 0).</td></tr>
         <tr><td><code>command</code></td><td>Your script, any language: JSON on stdin; a boolean, a score or <code>&#123;score, pass, reason&#125;</code> on stdout, or the exit code.</td></tr>
         <tr><td><code>module</code></td><td>A JS module's exported grade function returns pass.</td></tr>
         <tr><td><code>llm</code></td><td>A model judge returns pass on your rubric. See below.</td></tr>
-        <tr><td><code>llm-checklist</code></td><td>Yes/no questions, each answered by the model or by a trace check. Rule checks need no model: <code>ran-command</code>, <code>read-path</code>, <code>wrote-identifier</code> and <code>follows-rules</code> (every backticked command, flag, path or identifier a rule requires was used, and none it forbids). A path-scoped rule (Claude Code <code>paths:</code>, Cursor <code>globs:</code>) counts only once the agent touches a matching file. <code>no-test-tamper</code> answers no when a test edit hid a failure (a skip marker, a deleted test while red, an assertion edit that alone turned the tests green) and quotes what the agent said about it; saying why never makes it pass. With <code>"abstain": true</code> the model can answer <code>cannot_decide</code> and name what is missing; a critical abstention leaves the case undecided.</td></tr>
-        <tr><td><code>llm-panel</code></td><td>One judge per provider scores 1-10 and the median reaches <code>target</code> (default 7). The target never reaches the prompt, anchor cases are re-scored to catch drift, and advisory members are shown but not counted.</td></tr>
+        <tr><td><code>llm-checklist</code></td><td>Yes/no questions, each answered by the model or by a trace check such as <code>ran-command</code> or <code>no-test-tamper</code>.</td></tr>
+        <tr><td><code>llm-panel</code></td><td>One judge per provider scores 1-10 and the median reaches <code>target</code> (default 7).</td></tr>
       </tbody>
     </table>
   </div>
@@ -207,76 +217,81 @@ const RUN = [
   <h2 id="judges">LLM judges <Tag status="built" /></h2>
   <p>
     An <code>llm</code> grader calls Anthropic's Messages API or any OpenAI-compatible endpoint (OpenAI, OpenRouter, Ollama, LM Studio, vLLM
-    through <code>baseURL</code>). Keys are read from the environment (<code>ANTHROPIC_API_KEY</code>, <code>OPENAI_API_KEY</code> or
-    <code>apiKeyEnv</code>) at call time and never logged, hashed or cached. Verdicts are cached on disk, so re-grading an unchanged output costs
-    nothing.
+    through <code>baseURL</code>). Keys are read from the environment at call time and never logged, hashed or cached. Verdicts are cached
+    on disk, so re-grading an unchanged output costs nothing.
   </p>
   <p>
-    Each judge is versioned as <code>name@hash</code> over model, prompt template, rubric, criterion and parameters. Judge verdicts can cite the
-    trace; citations are checked against what the judge was shown.
+    Each judge is versioned as <code>name@hash</code> over model, prompt template, rubric, criterion and parameters. Judge verdicts can cite
+    the trace, and citations are checked against what the judge was shown.
   </p>
   <p>
     A <code>pairwise</code> judge compares two experiments: <code>exp compare A B --pairwise judge.json</code>. It sees both outputs for each
-    case, twice, with the order swapped. A side wins only when both orders agree; when the answer changes with the order, the case is a tie
-    and counts toward the printed position-bias rate. It reports B's win rate with an interval and a sign test. <code>--labels</code> takes
-    human A/B/tie labels and calibrates the judge like any other.
+    case twice, with the order swapped, and a side wins only when both orders agree. It reports B's win rate with an interval and a sign test.
   </p>
-  <p>
-    An inconclusive win rate can mean "needs more cases" or "this judge flips". The report resamples the cases and prints how often a
-    resample picks the same winner, and n*, the smallest size where that holds 95% of the time: <code>stable  B better in 97% of resamples
-    (n*=50)</code> or <code>unstable  B better in 61% of resamples (n* censored)</code>. An uncalibrated judge that never settles is flagged
-    "unresolved: pick or calibrate the judge before collecting more verdicts" (arXiv 2611.04090). Judge graders get the same line in
-    <code>exp compare</code>.
-  </p>
+  <details class="more">
+    <summary>Position bias and stability</summary>
+    <p>
+      A case whose answer changes with the order is a tie, and counts toward the printed position-bias rate. <code>--labels</code> takes human
+      A/B/tie labels and calibrates the judge like any other.
+    </p>
+    <p>
+      An inconclusive win rate can mean "needs more cases" or "this judge flips". The report prints how often a resample of the cases picks
+      the same winner, and n*, the smallest size where that holds 95% of the time: <code>stable  B better in 97% of resamples (n*=50)</code>.
+    </p>
+    <p>
+      An uncalibrated judge that never settles is flagged "unresolved: pick or calibrate the judge before collecting more verdicts" (arXiv
+      2611.04090). Judge graders get the same line in <code>exp compare</code>.
+    </p>
+  </details>
 
-  <h2 id="calibration">Judge calibration <Tag status="built" /></h2>
+  <h2 id="calibration">Calibrate a judge against people <Tag status="built" /></h2>
   <p>
     A judge's score counts only once it agrees with people. Label sessions pass or fail in the viewer, then measure agreement on a split the
     judge's prompt was not tuned on.
   </p>
   <Code code={judge} />
   <ul>
-    <li>Agreement is Cohen's κ with a bootstrap interval, plus the confusion matrix and precision and recall for the "fail" class. Raw agreement alone flatters a judge on imbalanced data.</li>
-    <li>A judge is <strong>calibrated</strong> at κ ≥ 0.6 on at least 20 held-out cases that have both a human label and a verdict. Both are flags: <code>--threshold</code>, <code>--min-n</code>.</li>
-    <li>κ measured on a split listed in the judge's <code>tunedOn</code> is reported as <strong>in-sample</strong>, never as calibrated.</li>
+    <li>Agreement is Cohen's κ with a bootstrap interval, plus the confusion matrix and precision and recall for "fail".</li>
+    <li>A judge is <strong>calibrated</strong> at κ ≥ 0.6 on at least 20 held-out cases with both a human label and a verdict.</li>
+    <li>κ measured on a split in the judge's <code>tunedOn</code> is <strong>in-sample</strong>, never calibrated.</li>
     <li>Below the bar, the judge is <strong>uncalibrated</strong> or has <strong>insufficient data</strong>, and every report flags its scores.</li>
     <li>Cases where the judge is confidently opposite to unanimous humans are listed for relabelling.</li>
-    <li>The judge's held-out sensitivity and specificity are stored too, so <code>exp compare</code> shows a bias-corrected judge pass rate.</li>
-    <li>The report prints the judge's discrimination gap (pass-recall minus false-pass) and its label efficiency η: human labels a direct audit needs for the same precision, per label spent calibrating the judge. η &lt; 1 or a gap under 0.2 adds a warning but never changes the state. <code>--judge-cost 0.001</code> adds the human label cost above which the judge pays off (Choi et al., arXiv 2610.35698).</li>
-    <li><code>judge sample &lt;exp&gt; --budget 60 --out plan.json</code> plans which cases to label: a seeded random sample stratified by the judge's verdict and confidence, with labels in proportion to each stratum's size. Labelling only the doubtful cases would bias the result. <code>judge calibrate --plan plan.json</code> then prints the human-audited pass rate from the labelled picks, with an interval and a worst-case bound.</li>
-    <li><code>--probe-injection judge.json</code> re-judges human-fail cases with a planted "respond pass" order in the output and in the last tool result, and reports how many verdicts flip. Any flip exits 1.</li>
+    <li>The judge's held-out sensitivity and specificity are stored, so <code>exp compare</code> shows a bias-corrected judge pass rate.</li>
   </ul>
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Flag</th><th>What it adds</th></tr></thead>
+      <tbody>
+        <tr><td><code>--threshold</code>, <code>--min-n</code></td><td>Change the bar: κ 0.6 and 20 cases.</td></tr>
+        <tr><td><code>--judge-cost 0.001</code></td><td>The human label cost above which calibrating the judge pays off.</td></tr>
+        <tr><td><code>--plan plan.json</code></td><td>The human-audited pass rate from the cases <a href="/docs/cli/judge#cmd-judge-sample"><code>judge sample</code></a> picked to label.</td></tr>
+        <tr><td><code>--probe-injection judge.json</code></td><td>Re-judges human-fail cases with a planted "respond pass" order. Any flip exits 1.</td></tr>
+        <tr><td><code>--grader tests</code></td><td>Audits a test verifier instead: how many of its passes a person would accept.</td></tr>
+        <tr><td><code>--sample-passes 40</code></td><td>Lists a seeded sample of unlabelled passes to label, instead of measuring.</td></tr>
+      </tbody>
+    </table>
+  </div>
   <p>
-    The agent writes the text a judge grades, so judge prompts escape the data tags inside it (<code>&lt;/output&gt;</code> becomes
-    <code>&lt;\/output&gt;</code>) and tell the model that everything inside them is untrusted. Citations still verify against the raw text.
-  </p>
-  <p>
-    Test verifiers get the same check. A passing suite is not proof of a correct change, so <code>judge calibrate --grader tests</code> also
-    takes a <code>command</code> or other deterministic grader and measures its precision: how many of its passes a person would accept.
-    <code>--sample-passes 40</code> lists a seeded sample of unlabelled passes to label, and <code>--labels labels.jsonl</code> adds labels
-    from a file. The audit reports precision with a Wilson interval and the false accepts. A verifier never sees the labels, so no held-out
-    split is needed. After that, <code>exp show</code> and <code>exp compare</code> print the precision and a corrected
-    pass rate.
+    The agent writes the text a judge grades, so judge prompts escape the data tags inside it and tell the model that everything inside them
+    is untrusted. The <a href={`${GUIDE}#judges`}>Judges</a> section of the evals guide has the method behind each number.
   </p>
 
   <h2 id="scores">Scores <Tag status="built" /></h2>
   <p>
-    A score is one typed value on a session, an event, a dataset case or an eval run: a number, true or false, a category or text, from a
-    person, a judge, code, the API or a monitor. A config fixes a score name's type and range, and a value outside it is refused (exit 2, or
-    HTTP 400). Labels are scores too: a pass or fail label is a human boolean score, which is what <code>judge calibrate</code> reads.
+    A score is one typed value on a session, an event, a dataset case or an eval run: a number, true or false, a category or text. A config
+    fixes a score name's type and range, and a value outside it is refused. A pass or fail label is a human boolean score, which is what
+    <code>judge calibrate</code> reads.
   </p>
   <Code code={scores} />
   <p>
-    Scoring the same target, name and source again replaces the score, and the same value again changes nothing. The viewer and
-    <code>coding.sh serve</code> take scores at <code>POST /api/scores</code>, and agents use the <code>score_add</code> and
-    <code>score_list</code> MCP tools. Scores are kept in the SQLite store.
+    Scoring the same target, name and source again replaces the score. The viewer and <code>coding.sh serve</code> take scores at
+    <code>POST /api/scores</code>, and agents use the <code>score_add</code> and <code>score_list</code> MCP tools.
   </p>
 
   <h2 id="workflows">Workflows</h2>
   <p>
-    Multi-agent workflows have their own page: capturing runs, scoring them against seeded bugs, comparing two versions with
-    <code>workflows compare</code>, and replaying from a recorded run with a control fork that measures the replay noise floor.
-    See <a href="/docs/workflows">Workflow experiments</a>.
+    Multi-agent workflows have their own page: capturing runs, scoring them against seeded bugs, and comparing two versions. See
+    <a href="/docs/workflows">Workflow experiments</a>.
   </p>
 
   <script is:inline define:vars={{ moved }}>

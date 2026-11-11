@@ -27,10 +27,9 @@ prints its answer. To report cost, tokens or the model it used, it can print an 
 {"output": 42, "usage": {"costUsd": 0.002, "inputTokens": 900, "outputTokens": 12}, "model": "small-2"}
 ```
 
-`usage` can also carry `cacheReadTokens` and `cacheWriteTokens`. Input and output tokens are kept
-apart in every record, so the report can show both.
-
-The definition lives in `bench/answers.toml`. Edit it to change sampling, limits or contenders.
+`usage` can also carry `cacheReadTokens` and `cacheWriteTokens`. The definition lives in
+`bench/answers.toml`; edit it to change sampling, limits or contenders. Every command and flag is in
+the [CLI reference](https://coding.sh/docs/cli/bench).
 
 ## Sources
 
@@ -42,14 +41,11 @@ The definition lives in `bench/answers.toml`. Edit it to change sampling, limits
 | `urls` | a sitemap, a URL list file, or `urls = [...]` | public |
 | `dataset` | a sample of an existing coding.sh dataset | private |
 
-The GitHub window is on `created_at`. An old issue that got a comment yesterday is not a new case.
-
-For `urls`, each sampled page is fetched once when the sample is frozen. Its body is stored, and
-its hash is part of the case list, so the frozen set records what the page said that morning.
-Graders compare against that snapshot. Contenders still get the URL and fetch it themselves.
-
-A `sessions` source can't be used with agent contenders yet. Those cases need the repo as it was
-when the session started, so use `coding.sh eval` for session replays.
+The GitHub window is on `created_at`, so an old issue with a new comment is not a new case. A
+`urls` page is fetched once when the sample is frozen, and graders compare against that snapshot;
+contenders still get the URL and fetch it themselves.
+A `sessions` source can't be used with agent contenders yet; use `coding.sh eval` for session
+replays.
 
 ## Contenders
 
@@ -59,108 +55,62 @@ Two or more, each with a `name`:
 - `url = "https://…"`: an HTTP endpoint that gets the input as a JSON body. Put keys in `headerEnv`.
 - `agent = "claude-code"` (with `model`, `harness`, `prompt`): a coding agent, run headless.
 
-`costPerRun` sets a fixed price per call for contenders that don't report cost. `version` is a label
-that gets recorded with each run. Agent versions are detected.
+| Field | What it does |
+| --- | --- |
+| `costPerRun` | A fixed price per call, for contenders that don't report cost. |
+| `version` | A label recorded with each run. Agent versions are detected. |
+| `axes = { model = "…", harness = "…" }` | Places the contender on the [model × harness grid](#model--harness-grid). Agent contenders get axes on their own. Labels only: changing them keeps the history. |
 
-`axes = { model = "…", harness = "…" }` places a contender on the
-[model × harness grid](#model--harness-grid). Agent contenders get their axes on their own: the
-harness is the agent id (plus ` +<harness>` when one is set), and the model is the configured one, or
-else the one their calls reported most often. Axes are labels: changing them keeps the contender's
-history and the protocol hash.
-
-Each call's cost records where it came from, checked in this order:
-
-1. **reported**: the contender's own `costUsd`.
-2. **costPerRun**: the fixed price in the definition.
-3. **price table**: tokens times the model's list price. This uses the same table as the rest of
-   coding.sh, with your `[prices."<model>"]` overrides from the config. The run records when the
-   table's prices were last checked.
-4. **unknown**: no cost, no price and no tokens to price. These calls count as unknown, not as free.
-
-`bench show` and the report list the mix for each contender, for example "8 reported, 4 price table".
+A call's cost is the contender's own `costUsd`, else `costPerRun`, else tokens times the model's
+list price (with your `[prices."<model>"]` overrides). A call with none of these is unknown, not
+free, and `bench show` lists the mix per contender.
 
 ## Fairness
 
-- **One frozen set.** Before any contender runs, the sample is saved as a dataset version
-  (`bench-<name>`). Its sha256 is recorded, and every contender runs exactly that set.
-- **Random, interleaved order.** Cases are shuffled by the seed, and the contender order is shuffled
-  for each case. No contender always goes first, and a slow hour hits everyone.
-- **Same limits.** `timeoutMs` and `retries` are set once, at the top of the file, and apply to every
-  contender. A per-contender timeout is an error.
-- **Exclusions are shared.** A 401, 402 or 429, a quota or rate-limit error, or a grader that fails
-  twice means the case couldn't be measured. It is dropped for every contender, so comparisons stay
-  paired, and the count is shown. Above 2% the run is marked degraded. Above 10% no winner is
-  declared. Timeouts and crashes are failures, not exclusions.
-- **Fresh by default.** A case tested in an earlier counted run is never sampled again
-  (`fresh = false` to allow repeats). The ledger keeps two things for each tested case: its key and
-  a hash of its content. So the same content under a new key is not fresh either. For `urls` the
-  content is the page body: a page that was already tested under another URL is swapped for the next
-  candidate. Caps such as `maxPerHost = 3` and `maxPerOrg` apply after the seeded shuffle, so they
-  keep a random few, not the first few.
-- **No rerunning until it looks good.** History counts the first complete plain `bench run` for each
-  date. A run with `--seed`, `--cases` or `--date`, a second run on the same day, a run stopped by
-  the budget and an interrupted run are all kept and listed, but never charted. They also don't use
-  up fresh cases.
-- **Published inputs.** The seed, the case list, its sha256, each case's content hash, every
-  contender's model and version, and the coding.sh version are in each run record. When a key comes
-  back with different content (an edited issue, a changed page), `bench history` and the report say
-  so: scores on either side of the change measure different things.
-- **A seed nobody can predict.** With a public source and `seed = "date"`, anyone can compute
-  tomorrow's sample. `seed = "secret"` fixes that; see [Secret seeds](#secret-seeds).
-- **Secrets stay out.** Cases are redacted with the same secret scanner as capture before they are
-  frozen. Outputs are redacted before they are stored.
+- **One frozen set.** The sample is saved as dataset `bench-<name>`, with its sha256, before any
+  contender runs.
+- **Random, interleaved order.** Cases are shuffled by the seed, and the contender order is
+  shuffled for each case, so a slow hour hits everyone.
+- **Same limits.** `timeoutMs` and `retries` are set once, at the top of the file, for everyone.
+- **Shared exclusions.** A 401, 402 or 429, a quota error, or a grader that fails twice drops the
+  case for every contender. Above 10% no winner is declared. Timeouts and crashes are failures.
+- **Fresh by default.** A case tested in an earlier counted run is never sampled again, even under a
+  new key with the same content. `fresh = false` allows repeats.
+- **Seeded caps.** `maxPerHost = 3` and `maxPerOrg` apply after the seeded shuffle, so they keep a
+  random few, not the first few.
+- **No rerunning until it looks good.** History counts the first complete plain `bench run` per
+  date. Runs with `--seed`, `--cases` or `--date`, same-day reruns and stopped runs are kept but
+  never charted.
+- **Published inputs.** Each run record holds the seed, the case list and its hash, and every
+  version. A case whose content changed under the same key is flagged.
+- **A seed nobody can predict.** With a public source, `seed = "secret"` stops anyone from
+  computing tomorrow's sample; see [Secret seeds](#secret-seeds).
+- **Secrets stay out.** Cases and outputs are redacted with the capture secret scanner before they
+  are stored.
 
 ## Statistics
 
-The leaderboard shows each pass rate with a 95% interval. With one trial per case that is a Wilson
-interval. With several trials it is a bootstrap that resamples cases, because the trials of one case
-are not independent.
-
-Each pair gets a paired bootstrap interval for the pass-rate gap. That interval is not adjusted for
-the number of pairs. The verdict uses an exact McNemar test on the cases where only one side passed,
-Holm-adjusted across pairs. Contenders whose difference is not significant share a place. Latency and
-cost also get a geometric-mean ratio over cases both answered.
+Each pass rate gets a 95% interval: Wilson with one trial per case, a bootstrap over cases with
+several. Each pair gets a paired bootstrap interval for the gap, not adjusted for the number of
+pairs. The verdict uses an exact McNemar test, Holm-adjusted across pairs. Contenders whose
+difference is not significant share a place.
 
 `bench new` and `run --dry-run` print the smallest gap your case count can detect and how many cases
 a 10-point gap needs. Small benchmarks only find big differences.
 
-One day is a small sample. `bench history --vs <contender>` and the report also pool each
-contender's daily gaps over the last `window` counted runs (default 28, set in the definition so it
-is chosen before you see results). They show:
+One day is a small sample, so `bench history --vs <contender>` and the report also pool the daily
+gaps over the last `window` counted runs (default 28). The pooled gap has a 95% interval that lets
+the true gap vary by day (DerSimonian-Laird with the Hartung-Knapp correction).
 
-- the pooled gap with a 95% interval that allows the true gap to vary from day to day
-  (DerSimonian-Laird, with the Hartung-Knapp correction);
-- where one more day's gap should land (from 5 runs on);
-- I², the share of the day-to-day spread that is real rather than noise.
-
-Pooling stops at a protocol change or a change to the contender, the same places where the trend
-lines break.
-
-Every day draws new cases, so some days are harder than others. The report's difficulty chart shows
-the mean pass rate over all contenders per day. When every contender drops on the same day, the
-sample was probably harder. An anchor set makes that clear.
+They also show where the next day's gap should land (from 5 runs on) and I², the share of the spread
+that is real. Pooling stops at a protocol change or a change to the contender. When every contender
+drops on the same day, the sample was probably harder; an [anchor set](#anchor-set) shows it.
 
 ## Routing headroom
 
 Some contender usually passes a case the best one fails, so "pick the right contender per case"
 always looks better than running the best one everywhere. Most of that gap is run noise. With 20 or
-more counted cases and two or more contenders, each run checks it against a reference with no
-specialization:
-
-- **Gap**: the share of cases any contender passed minus the best single contender's pass rate
-  (both averaged over trial indexes).
-- **Upsets**: of the cases where two contenders with different pass rates split, the share the
-  weaker one won.
-- **Reference**: a Rasch model (one ability per contender, one difficulty per case) fitted to the
-  same outcomes, then simulated 500 times. Each simulated case draws its difficulty from what its own
-  outcomes say, so easy cases stay easy. The run shows where the gap and upset rate land in 95% of
-  those simulations, and a p-value for each.
-- **Verdict**: "contenders specialize" when the smaller p-value, Holm-adjusted over the two, is below
-  0.05. Otherwise per-case routing is unlikely to beat running the best contender alone. With several
-  trials, a specialized run also lists up to 10 cases a weaker contender won in two or more trials.
-
-Three contenders on 50 cases where none specializes: an 18-point raw gap, inside the band that noise
-alone gives.
+more counted cases and two or more contenders, each run tests it:
 
 ```text
 Routing headroom: any contender 88.0% vs best single (claude) 70.0%: gap 18.0 pp; with no specialization expect 8.0-26.0 pp (p 0.44).
@@ -168,35 +118,16 @@ Upsets 31.7% of 60 split cells (expected 17.8%-42.1%, p 0.40).
 No evidence of specialization: per-case routing is unlikely to beat running claude alone.
 ```
 
-When no two contenders with different pass rates split a case, the upset rate is undefined and
-shows as `-`. The check is deterministic: the same cells give the same numbers. It is somewhat
-conservative: on simulated benches with no specialization, the gap stayed inside the 95% band every
-time. The record's `specialization` field holds it; it is absent when the check is skipped.
+The gap is the share of cases any contender passed minus the best contender's pass rate. Upsets are
+the split cases the weaker contender won. Both are checked against 500 simulations of a Rasch model
+with no specialization (one ability per contender, one difficulty per case). The verdict is
+"contenders specialize" when the smaller p-value, Holm-adjusted over the two, is below 0.05.
 
 ## Model × harness grid
 
-When contenders cover two or more models and two or more harnesses, with exactly one contender for
-each combination, the run reads them as a grid instead of a flat list. A harness that is best with
-one model can be worst with another, and a flat ranking hides that. Contenders without both axes are
-left off the grid. Each cell gets:
-
-- **p**: the pass rate (each case's share of passing trials, averaged over cases).
-- **v**: the share of attempts that completed cleanly (no timeout, crash, HTTP error, error or empty
-  answer). **J**: passed and completed cleanly.
-- **Δp and Δv**: the interaction, `x(m,h) − x(m,·) − x(·,h) + x(·,·)` with equal-weight margins. A
-  positive Δp means this model does better with this harness than the model and the harness do on
-  their own.
-- **F**: J as a share of the model's best J over harnesses.
-
-Then, per harness, **Cross-Model Fit** = 100 × the geometric mean of F over models (0 when any F is
-0): 100 means it is every model's best harness. A model that never passed cleanly with any harness is
-left out of the fit numbers, with a note. **Leave-one-model-out regret** picks the harness with the
-best Cross-Model Fit over the other models and reports how many points of J the held-out model loses
-against its own best harness. **Rank reversals** list each pair of models whose order flips between
-two harnesses.
-
-Intervals are 95% from 2,000 case bootstrap draws (the trials of a case move together). `bench show`
-stars a Δp whose interval excludes 0:
+When contenders cover two or more models and two or more harnesses, with one contender per
+combination, the run reads them as a grid. A harness that is best with one model can be worst with
+another, and a flat ranking hides that.
 
 ```text
 Model × harness grid: 40 cases; pass rate and interaction Δp in pp (* = 95% CI excludes 0)
@@ -208,8 +139,18 @@ Rank reversal: m1 leads m2 under h1, m2 leads under h2.
 Leave-one-model-out regret: m1 35.0 pts (picks h2, best h1); m2 35.0 pts (picks h1, best h2); mean 35.0.
 ```
 
-An incomplete grid (a missing or duplicated combination, one model or one harness) is skipped, and
-the record has no `grid` field.
+| Number | Meaning |
+| --- | --- |
+| p | Pass rate: each case's share of passing trials, averaged over cases. |
+| v | Share of attempts that completed cleanly (no timeout, crash, error or empty answer). |
+| J | Passed and completed cleanly. |
+| Δp, Δv | Interaction, `x(m,h) − x(m,·) − x(·,h) + x(·,·)`, equal-weight margins. Positive: the pair beats its parts. |
+| F | J as a share of the model's best J over harnesses. |
+| Cross-Model Fit | Per harness, 100 × the geometric mean of F (0 when any F is 0). 100: every model's best. |
+| Leave-one-model-out regret | Points of J a held-out model loses when the harness is picked by fit on the others. |
+| Rank reversal | Two models whose order flips between two harnesses. |
+
+Intervals are 95% from 2,000 case bootstrap draws. An incomplete grid is skipped.
 
 ## Anchor set
 
@@ -219,16 +160,11 @@ cases = 30
 version = "1"
 ```
 
-The anchor set is a fixed sample that runs every day next to the fresh cases. It is picked once,
-from the first run's pool, and stored in the run records. After that, every run reuses it until you
-change `version` or `cases`. Anchor cases are scored apart from the fresh ones: the leaderboard,
-verdicts, history and freshness ledger use fresh cases only. The anchor numbers have their own
-column, chart and head-to-head table.
+The anchor set is a fixed sample that runs every day next to the fresh cases, until you change
+`version` or `cases`. It is scored apart: the leaderboard, verdicts and history use fresh cases.
 
-The anchor trend has no day-to-day difficulty in it, so you can read it straight. If fresh pass rates
-drop and the anchor holds, the day was harder. If both drop, the contenders got worse. Because the
-cases never change, they can leak into training data over time. Bump `version` now and then, and
-always read the anchor next to the fresh numbers.
+If fresh pass rates drop and the anchor holds, the day was harder. If both drop, the contenders got
+worse. Fixed cases can leak into training data, so bump `version` now and then.
 
 ```sh
 coding.sh bench history answers --anchor
@@ -242,16 +178,11 @@ seed = "secret"
 ```
 
 Each date's salt is an HMAC of `<name>:<date>` under a key in `CODING_SH_BENCH_SEED_KEY` (rename it
-with `seedKeyEnv`). Keep the key out of the repo; in CI it is a secret. The seed is
-`<name>:<date>:<salt>`.
+with `seedKeyEnv`). Keep the key out of the repo; in CI it is a secret.
 
-Each run reveals its own salt in the record and the report, and publishes the sha256 of the next
-date's salt. When the next run reveals its salt, anyone can check that it hashes to the value
-published the day before. That shows the sample was fixed before the run, not picked after looking.
-`bench show` runs the check and exits 1 if it fails. `run --dry-run` hides the salt.
-
-The same key and date always give the same seed. Lose the key and the chain breaks: the next run
-can't match what the last one published.
+Each run reveals its own salt and publishes the sha256 of the next date's salt, so anyone can check
+that a sample was fixed before its run. `bench show` runs the check and exits 1 if it fails.
+`run --dry-run` hides the salt. Lose the key and the chain breaks.
 
 ## Budget
 
@@ -259,74 +190,48 @@ can't match what the last one published.
 budget_usd = 5
 ```
 
-Before running, coding.sh estimates the cost from `costPerRun` or from each contender's average in
-its last run. Above the budget, the run does not start. During the run, no call starts if it could
-cross the cap. A run that stops at the cap is saved as incomplete and stays out of history.
-`bench schedule --install-cron` and `--workflow-out` refuse to install a benchmark without a budget.
+A run whose estimated cost is over the budget does not start, and no call starts that could cross
+the cap. A run stopped at the cap is saved as incomplete. `bench schedule --install-cron` and
+`--workflow-out` refuse a benchmark without a budget.
 
-## Resuming a run
+## Resume a run
 
 ```sh
 coding.sh bench run answers --resume             # the latest incomplete run
 coding.sh bench run answers --resume --run 2026-11-04
 ```
 
-A run stopped by the budget or by Ctrl-C can be finished later. `--resume` reads the stored record
-and keeps its seed, its frozen cases and its job order. It keeps every call that finished and runs
-only the rest. The record keeps its id, and spend continues from the stored total. To let a
-budget-stopped run finish, raise `budget_usd` first. The budget is not part of the protocol, so
-changing it is allowed.
-
-`--resume` refuses when the protocol or a contender's definition changed since the run started. In
-that case the stored cells and the new ones would not be comparable. Once finished, the run counts
-for its original date, unless another run has counted for that date in the meantime. Then it is
-kept as adhoc.
+`--resume` keeps the run's seed, frozen cases and job order, and runs only the calls that did not
+finish. To finish a budget-stopped run, raise `budget_usd` first. It refuses when the protocol or a
+contender's definition changed since the run started. A resumed run counts for its original date,
+unless another run has counted for that date since.
 
 ## The report
 
 `coding.sh bench report <name> --out <dir>` writes `index.html` and `report.json`. The page is one
-self-contained file with no scripts and no external assets, so you can publish the folder as is.
+self-contained file with no scripts, so you can publish the folder as is.
 
-- **Leaderboard**: the latest counted run, with places, pass rate, latency, cost (and where it came
-  from), tokens in and out, and errors. With an anchor set, its pass rate is a column.
-- **Trend**: pass rate, median latency and cost per day. A dashed line marks a protocol change
-  (sampling, source, graders or limits): the values on either side are not comparable. Adding a
-  contender is not a protocol change.
-- **Gap to the reference**: each contender's pass-rate gap to `reference` (default: the first
-  contender), on the cases both ran that day. Easy and hard days cancel out here. Below it, the gap
-  pooled over the window.
-- **Difficulty**: the mean pass rate per day, for fresh cases and the anchor set.
-- **Anchor set**: its leaderboard, trend, gap chart and head-to-head table, when the definition has
-  one.
-- **Head to head**: every pair, with the paired interval, McNemar and Holm p-values.
-- **Routing headroom**: the any-contender gap against the band a no-specialization reference
-  predicts, and the verdict. See [Routing headroom](#routing-headroom).
-- **Model × harness**: when the contenders form a grid, the pass rate and Δp per cell, Cross-Model
-  Fit per harness, rank reversals and leave-one-model-out regret. See
-  [Model × harness grid](#model--harness-grid).
-- **Where each contender fails**: failure reasons per contender, then its worst cases with a link
-  to the session when there is one.
-- **Method and audit**: source, sampling, seed (with the revealed salt, its check and the next
-  commitment for a secret seed), limits, exclusions, cost sources, versions, cases whose content
-  changed, the case list and every run, including the ones not charted.
+| Section | Shows |
+| --- | --- |
+| Leaderboard | Places, pass rate, latency, cost and its source, tokens and errors. |
+| Trend | Pass rate, latency and cost per day; a dashed line marks a protocol change (sampling, source, graders or limits; adding a contender is not one). |
+| Gap to the reference | Each contender's daily and pooled gap to `reference` (default: the first contender). |
+| Difficulty, Anchor set | Mean pass rate per day; the anchor set's own charts and tables. |
+| Head to head | Every pair, with the paired interval, McNemar and Holm p-values. |
+| Routing headroom, Model × harness | The checks above. |
+| Failures | Failure reasons, then the worst cases with session links. |
+| Method and audit | Source, seed, limits, exclusions, cost sources, versions and every run. |
 
-Reports are safe to publish by default. Local paths are removed. For private benchmarks, case
-inputs, outputs and session links are left out and only case ids are listed. The sha256 still pins
-the set. `--include-private` adds them back for a copy you keep locally.
+Reports leave out local paths. For private benchmarks they also leave out case inputs, outputs and
+session links; `--include-private` adds them back for a copy you keep.
 
-`coding.sh bench history <name> --vs <contender>` prints the same paired gaps in the terminal.
+## Regrade after a grader fix
 
-## Regrading
+After you fix a grader, `coding.sh bench regrade <name>` (or `--all`) scores the stored outputs again
+without calling the contenders. History uses the newest regrade of each day. A stored input whose
+hash no longer matches is a warning on the new record.
 
-Every answer is stored in full. After you fix a grader, `coding.sh bench regrade <name>` (or
-`--all`) scores the stored outputs again and writes new records. Contenders are not called, and
-history uses the newest regrade of each day.
-
-Before scoring, regrade checks the stored inputs. The case list must still hash to the recorded
-sha256, each case must still match its content hash, and each page snapshot on disk must still have
-the body hash pinned at freeze. A mismatch is a warning on the new record.
-
-## Scheduling
+## Run it every day
 
 ```sh
 coding.sh bench schedule answers                 # print a cron line and a GitHub Actions workflow
@@ -334,13 +239,9 @@ coding.sh bench schedule answers --install-cron  # add the line to your crontab,
 coding.sh bench schedule answers --workflow-out .github/workflows/bench-answers.yml
 ```
 
-Printing is the default. `--install-cron` adds or replaces only this benchmark's marked line.
-
-The workflow pins the coding.sh version it was generated with. It has an `env:` block for every
-secret the definition reads (`tokenEnv`, `apiKeyEnv`, `headerEnv`, and the seed key for
-`seed = "secret"`), and it defaults to a
-self-hosted runner, which keeps run records on disk. On a hosted runner it restores history from
-the previous run's artifact and uploads it again after the run.
+`--install-cron` adds or replaces only this benchmark's marked line. The workflow pins the coding.sh
+version, lists every secret the definition reads, and defaults to a self-hosted runner, which keeps
+run records on disk. On a hosted runner it carries history between runs as an artifact.
 
 ## Files
 
@@ -353,5 +254,4 @@ bench/<name>.toml                          definition (or ~/.coding.sh/benchmark
 
 History, freshness and reports are rebuilt from these records alone, so you can copy the folder
 between machines. Each run also stores one experiment per contender, so `coding.sh exp compare`
-works on benchmark runs. Agents can read the list, results and history with the `benchmarks` MCP
-tool.
+works on benchmark runs. Agents can read results with the `benchmarks` MCP tool.

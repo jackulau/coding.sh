@@ -18,19 +18,15 @@ coding.sh workflows show <run> --tree
 coding.sh workflows stats <run>
 ```
 
-`show` prints the run tree with time, cost and status per node. `--gantt` prints the timeline as
-tab-separated text instead. `stats` reports wall time, the critical path, how many agents ran at
-once, how long agents sat idle at barriers, failed and null agents, schema retries, cache hits on a
-resumed run, and cost per phase. An agent you stopped (Claude Code writes "[Request interrupted by
-user]" into its transcript) shows as `cancelled`, and one a resume ran again under the same label
-shows as `superseded`. `show` and `stats` list both apart from failures.
+`show` prints the run tree with time, cost and status per node (`--gantt` prints the timeline).
+`stats` reports wall time, the critical path, how many agents ran at once, idle time at barriers,
+failed agents, schema retries, cache hits on a resumed run, and cost per phase.
 
-`coding.sh ui` shows the same runs at `#/workflows`. A run's page draws one bar per agent, grouped
-by phase, with the critical path outlined, idle time at barriers shaded, and a strip of how many
-agents ran at once against the cap. A bar links to that agent's session. A side panel shows time
-and cost per phase and the metrics `stats` prints. On a phone the page opens as a table. The page
-reads the documents `workflows show --json` and `show --gantt --json` print, from
-`/api/workflows/<run>` and `/api/workflows/<run>/gantt`.
+An agent you stopped shows as `cancelled`, and one a resume ran again under the same label as
+`superseded`; both are listed apart from failures.
+
+`coding.sh ui` shows the same runs at `#/workflows`: one bar per agent, grouped by phase, with the
+critical path outlined and idle time at barriers shaded. A bar links to that agent's session.
 
 ## Cases
 
@@ -48,13 +44,13 @@ file = "hidden/seeded-1.json"    # kept outside the workflow's working tree
 ```
 
 For a review workflow, the truth is a set of bugs planted in a clean snapshot. A finding matches a
-bug when it names the same file and a line within 5 of the bug's lines (`--slack`). The run's score
-is the F1 of its findings against the bugs. `coding.sh workflows score <run> --case seeded-1` scores
+bug when it names the same file and a line within 5 of the bug's lines (`--slack`). The score is
+the F1 of the findings against the bugs. `coding.sh workflows score <run> --case seeded-1` scores
 one run by hand.
 
-A `[start]` table names the tree the workflow works on. Paths are relative to the case file. The
-truth file may not sit inside `repoRoot` or `snapshot`, because the workflow's agents could read
-it there; the case fails to load if it does. Keep it in `hidden/` next to `cases/`.
+A `[start]` table names the tree the workflow works on, with paths relative to the case file. The
+truth file may not sit inside `repoRoot` or `snapshot`, where the agents could read it; keep it in
+`hidden/` next to `cases/`.
 
 ```toml
 [start]
@@ -62,13 +58,12 @@ repoRoot = "../../../.."
 snapshot = "/tmp/seeded-1"       # the clean tree with the bugs applied
 ```
 
-When a case has a snapshot and its bugs have a `test`, `workflows run` checks each bug before any
-run starts: the test must fail on the snapshot and pass with the bug's patch reverted. A bug that
-fails the check stops the run with the case and bug named. `--no-validate` skips the check.
+When a bug has a `test`, `workflows run` checks it before any run starts: the test must fail on the
+snapshot and pass with the bug's patch reverted. `--no-validate` skips the check.
 
-For a fix workflow, the truth is a verifier. `command = "npm test"` scores 1 when it exits 0 and 0
-otherwise. Named tests score the share that pass, and a test marked `before = "pass"` that fails
-after the run is reported as a regression:
+For a fix workflow, the truth is a verifier. `command = "npm test"` scores 1 when it exits 0. Named
+tests score the share that pass, and a `before = "pass"` test that fails after the run is a
+regression:
 
 ```toml
 [truth]
@@ -94,9 +89,8 @@ rubric = "Names the three sources and the one claim they disagree on."
 judge = "anthropic"              # or "<provider>:<model>", or a table like a grader's
 ```
 
-The score is the judge's. It is marked uncalibrated, and `score` warns, until that exact judge
-version has a calibration from `coding.sh judge calibrate`. `workflows run` scores every case kind
-the same way `score` does.
+The score is marked uncalibrated until that exact judge version has a calibration from
+`coding.sh judge calibrate`.
 
 ## Run an experiment
 
@@ -105,15 +99,12 @@ coding.sh workflows run review -v base=wf/review.js -v cand=wf/review-v2.js -k 3
 ```
 
 Each `-v` is a variant: a name and a script for the Claude Code driver, or a name and a command for
-`--driver command`. A command gets `--args <json>`, runs with `CODING_SH_WORKFLOW_RUN_ID` set, and
-prints its output as JSON. The verifier and judge cases above cost their commands' time and the
-judge's tokens per run. `-k` runs each case that many times per variant. Attempts alternate
-between variants (base, cand, base, cand, …) so a slow afternoon or a rate limit hits both alike.
-One job runs at a time by default, because a workflow already fans out.
+`--driver command` (it gets `--args <json>` and prints its output as JSON). `-k` runs each case that
+many times per variant. Attempts alternate between variants, so a slow afternoon hits both alike.
 
-The command prints the estimated cost from past runs and asks before spending more than the
-confirm threshold (`--yes` skips the question). It prints the experiment id at the end. If it is
-interrupted, run it again with `--resume`: finished runs are kept and only the rest run.
+It prints the estimated cost and asks before spending more than the confirm threshold (`--yes`
+skips the question). After an interruption, run it again with `--resume`: only the unfinished runs
+run.
 
 ## Compare two variants
 
@@ -129,21 +120,17 @@ The comparison pairs runs by case, so each case is compared with itself:
   is a score at or above the case's threshold, or `--threshold`, or 0.5.
 - **Cost, wall time and critical path.** The median per case in each variant, and a paired interval
   for the difference.
-- **Pareto.** Each variant's quality, cost and wall time. A variant is marked dominated when another
-  is at least as good on all three and better on one. Near-equal noisy variants can trade places on
-  those means, so each variant also gets P(front): the share of bootstrap draws (runs and cases
-  reweighted) in which no other variant beats it on both quality and cost, shown as `front 0.93` or
-  `dominated by base (front 0.41)`. When no run records cost, P(front) uses wall time. A variant
-  that reports cost on fewer than 80% of its scored runs gets no P(front), and a note says why.
+- **Pareto.** Each variant's quality, cost and wall time, and P(front) (`front 0.93`): the share of
+  bootstrap draws where no other variant beats it on both quality and cost, or wall time when no
+  run records cost.
 - **Phases.** Where the cost and time moved, phase by phase.
 
 The first line is the verdict. It says "candidate better" or "candidate worse" only when the
-bootstrap interval excludes zero and McNemar's test agrees. When they disagree it says
-"inconclusive" and suggests more cases or attempts. A result that is not significant with fewer
-than 10 paired cases is marked "underpowered". Runs whose last attempt still failed on a rate
-limit, a server error or the network are left out, because they never measured the workflow
-(`--resume` runs them again). Cases that ran in only one variant are listed and left
-out too. `--json` returns the whole report.
+bootstrap interval excludes zero and McNemar's test agrees; otherwise "inconclusive". A result that
+is not significant with fewer than 10 paired cases is marked "underpowered".
+
+Runs that still failed on a rate limit, a server error or the network are left out (`--resume` runs
+them again), and so are cases that ran in only one variant. `--json` returns the whole report.
 
 ### Pick a variant to deploy
 
@@ -154,20 +141,17 @@ end with `--select` (ParetoSaddler, arXiv 2611.02079):
 coding.sh workflows compare <experiment> --baseline base --candidate cand --select min-cost --q-drop 10
 ```
 
-- `--select min-cost` picks the cheapest variant whose quality interval stays above a floor. The
-  floor is `--q-min 0.7`, or `--q-drop 10`, meaning 10 points below the baseline's mean quality.
-  The default is `--q-drop 10`. If no variant clears the floor, nothing is picked and the reason
-  names the closest one.
+- `--select min-cost` picks the cheapest variant whose quality interval stays above a floor:
+  `--q-min 0.7`, or `--q-drop 10` (the default), 10 points below the baseline's mean. If none
+  clears it, nothing is picked.
 - `--select weighted --lambda 2` picks the highest quality minus λ × cost per run in USD (per second
   of wall time when no run records cost). `--lambda 0` picks the highest quality.
 - `--select pareto` picks the highest-quality and the cheapest variant among those on the front in
-  at least half the draws. That is two variants on a real trade-off and one when a variant wins on
-  both.
+  at least half the draws.
 
 The pick prints as a `deploy:` line, for example
 `deploy: cand (min-cost: cheapest of 2 with quality lower bound ≥ base's 0.800 − 10 pp = 0.700: $0.0500, quality lower bound 0.720)`.
-`--json` adds it as `deployment`, alongside `pFront` on each variant and `frontierAxes`. `--seed`
-fixes the bootstrap, so the same runs always give the same report.
+`--seed` fixes the bootstrap, so the same runs always give the same report.
 
 ## Replays
 
@@ -180,9 +164,8 @@ coding.sh workflows replay <run> --script wf/review-v2.js --dry-run   # predicte
 coding.sh workflows replay <run> --script wf/review-v2.js
 ```
 
-The cache follows call order. An edit to the first stage re-runs everything. Inside a pipeline,
-items interleave across stages, so an edit to stage 2 can also re-run stage 1 for later items.
-`--dry-run` prints how many calls will be served from the record before anything runs.
+The cache follows call order, so an edit to the first stage re-runs everything. Inside a pipeline,
+an edit to stage 2 can also re-run stage 1 for later items. `--dry-run` prints how many calls the record will serve.
 
 A variant in an experiment can resume too:
 
@@ -192,10 +175,9 @@ coding.sh workflows run review \
   -v '{"name":"cand","script":"wf/review-v2.js","resumeFromRunId":"<run>"}'
 ```
 
-A command-driver variant can fork the same way, when the program supports it. A variant with
-`fromCheckpoint` gets `--from-checkpoint <id>` after `--args` (for example a LangGraph fork from a
-stored checkpoint), and one with `replayFrom` gets `--replay-from <node>`. The program decides what
-the flags mean; coding.sh only passes them:
+A command-driver variant can fork too, when the program supports it. `fromCheckpoint` passes
+`--from-checkpoint <id>` (for example a LangGraph checkpoint) and `replayFrom` passes
+`--replay-from <node>`. The program decides what the flags mean:
 
 ```sh
 coding.sh workflows run graph --driver command \
@@ -209,32 +191,22 @@ more recorded runs per case, so the comparison also varies over the recorded run
 ## The control fork
 
 A replayed candidate differs from a fresh baseline in two ways: the edit, and the replay itself.
-The cached prefix and an environment that changed since the recording can both move the outcome. Comparing the candidate with fresh baseline runs mixes the two effects.
-
-The fix is a control: a variant that resumes the unedited script from the same recorded runs. The
-control and the candidate then differ only in the edit. Compare the candidate against the control
-(`--baseline control --candidate cand`).
-
-When the candidate resumes from recorded runs and no baseline run resumes from the same ones,
-`workflows compare` adds a note that starts with "no control fork". Treat that comparison as a mix
-of the edit and the replay.
+The fix is a control: a variant that resumes the unedited script from the same recorded runs, so
+the two differ only in the edit. Compare against it (`--baseline control --candidate cand`).
+Without one, `workflows compare` adds a note that starts with "no control fork".
 
 ## The replay noise floor
 
-With a control in place, `workflows compare` also checks how stable replays are. It compares each
-control replay's outcome with the outcome of the run it resumed from. The script is the same, so
-any change is caused by the replay alone:
+With a control in place, `workflows compare` compares each control replay's outcome with the run it
+resumed from. The script is the same, so any change is caused by the replay alone:
 
 ```text
 replay noise floor: 1 of 8 control replay(s) changed outcome from their source run (13%); differences below that are replay drift
 ```
 
-Read the candidate's result against that number. If replays alone change the outcome of 13% of
-cases, a candidate that changes 10% of outcomes has not shown that the edit did anything. `--json`
-reports the same check as `control`: `sources` (the recorded runs the candidate resumes from),
-`controlRuns`, and `drift` with `n`, `changed` and `rate`. The drift needs a score for both the
-control replay and its source run in the experiment. When the source runs were scored somewhere
-else, `control` lists the fork but has no `drift`.
+Read the candidate's result against that number. If replays alone change 13% of outcomes, a
+candidate that changes 10% has not shown that the edit did anything. The check needs the source
+runs scored in the same experiment. `--json` reports it as `control`.
 
 ## Reference
 
