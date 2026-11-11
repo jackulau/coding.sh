@@ -15,7 +15,7 @@ import { acceptanceGate, clusterSignFlip, fisherExact, hardRegressions, mcnemar,
 import type { ReplayNoise } from "./continuation.ts";
 import { llmReplayNote, type ComparisonLlmReplay } from "../llmcache/report.ts";
 import { pairedPower, passHatK, type NoisePrior, type PowerAnalysis } from "./power.ts";
-import { caseRates } from "./run.ts";
+import { caseRates, summarizeRuns } from "./run.ts";
 import { directionStability, type DirectionStability } from "./stability.ts";
 import { outcomesByCase, turnover, type Turnover } from "./turnover.ts";
 import type { HumanLabel } from "../judge/calibrate.ts";
@@ -333,6 +333,19 @@ export interface Comparison {
   verdictOn?: "pass" | "seq";
   /** TB-12: the comparison split by case kind (bad fixed, guards and controls broken); absent when no paired case has a kind. */
   kinds?: KindComparisonReport;
+  /** Present with the given option (`exp compare --given`): every number above is over the kept cases only. */
+  given?: ComparisonGiven;
+}
+
+/** `exp compare --given <grader>`: the cases where that grader passes in both arms are compared, the rest are dropped. */
+export interface ComparisonGiven {
+  grader: string;
+  /** Cases that ran on both sides and passed the gate grader on both (a majority of trials). */
+  kept: number;
+  /** Cases that ran on both sides and did not. */
+  dropped: number;
+  /** Plain words: the deltas hold among the kept cases, not on the whole dataset. */
+  note: string;
 }
 
 export interface ComparisonReplay extends ReplayNoise {
@@ -384,6 +397,8 @@ export interface ComparisonSeqK {
 }
 
 export interface CompareOpts {
+  /** Compare only the cases where this grader passes in both arms (a majority of each arm's trials); see ComparisonGiven. */
+  given?: string;
   /** "seq": read the verdict from the Seq@K difference instead of the first-attempt pass rate, when both sides have one. */
   verdictOn?: "pass" | "seq";
   iters?: number;
@@ -491,8 +506,44 @@ function seqKCompare(
   return { seqK: { k: qa.k, feedback: qa.feedback, n: ids.length, a: mean(ra), b: mean(rb), diff: { mean: d.mean, lo: d.lo, hi: d.hi, n: d.n } } };
 }
 
+/** Grader ids that graded both experiments: the ones `--given` can gate on. */
+export function givenGraders(a: Pick<ExperimentResult, "graders">, b: Pick<ExperimentResult, "graders">): string[] {
+  return a.graders.map((g) => g.id).filter((id) => b.graders.some((g) => g.id === id));
+}
+
+/** Both experiments cut down to the cases where the gate grader passes in both, and how many cases that kept and dropped. */
+function givenCases(a: ExperimentResult, b: ExperimentResult, grader: string): { a: ExperimentResult; b: ExperimentResult; given: ComparisonGiven } {
+  const have = givenGraders(a, b);
+  if (!have.includes(grader)) {
+    throw new RangeError(`no grader named ${JSON.stringify(grader)} in both experiments${have.length ? `; graders in both: ${have.join(", ")}` : "; they share no grader"}`);
+  }
+  const sa = graderPassShares(a, grader);
+  const sb = graderPassShares(b, grader);
+  const ran = [...new Set(a.runs.map((r) => r.caseId))].filter((id) => b.runs.some((r) => r.caseId === id));
+  // Majority of trials, as in the per-case outcomes McNemar reads.
+  const keep = new Set(ran.filter((id) => (sa.get(id) ?? 0) >= 0.5 && (sb.get(id) ?? 0) >= 0.5));
+  const cut = (r: ExperimentResult): ExperimentResult => {
+    const runs = r.runs.filter((x) => keep.has(x.caseId));
+    return { ...r, runs, summary: summarizeRuns(runs, r.graders, r.trials) };
+  };
+  const kept = keep.size;
+  const dropped = ran.length - kept;
+  return {
+    a: cut(a),
+    b: cut(b),
+    given: {
+      grader,
+      kept,
+      dropped,
+      note: `conditioned on ${grader}: only the ${kept} case(s) where ${grader} passes in both A and B are compared, ${dropped} dropped. The deltas describe those cases, not the whole dataset`,
+    },
+  };
+}
+
 export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opts: CompareOpts = {}): Comparison {
   if (!opts.force) for (const x of [a, b]) if (x.status === "cancelled") throw new IncompleteExperimentError(x);
+  let given: ComparisonGiven | undefined;
+  if (opts.given !== undefined) ({ a, b, given } = givenCases(a, b, opts.given));
   const boot = { iters: opts.iters ?? 10_000, seed: opts.seed ?? 0x5eed, alpha: opts.alpha ?? 0.05 };
   const ra = caseRates(a.runs);
   const rb = caseRates(b.runs);
@@ -719,6 +770,7 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
   if (sk.seqK) out.seqK = sk.seqK;
   if (sk.seqNote) out.seqNote = sk.seqNote;
   if (opts.verdictOn === "seq") out.verdictOn = sk.seqK ? "seq" : "pass";
+  if (given) out.given = given;
   const kindOf = new Map<string, CaseKind>();
   for (const r of [...a.runs, ...b.runs]) if (r.kind) kindOf.set(r.caseId, r.kind);
   const caseKinds = kindOf.size ? compareKinds(kindOf, ra, rb) : undefined;
