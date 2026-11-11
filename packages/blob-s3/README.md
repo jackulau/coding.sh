@@ -1,5 +1,17 @@
 # coding.sh-store-s3
 
+<p align="center">
+  <a href="https://www.npmjs.com/package/coding.sh-store-s3"><img src="https://img.shields.io/npm/v/coding.sh-store-s3?label=npm" alt="npm version"></a>
+  <a href="https://github.com/jackulau/coding.sh/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
+  <a href="https://github.com/jackulau/coding.sh/actions/workflows/ci.yml"><img src="https://github.com/jackulau/coding.sh/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
+</p>
+
+<p align="center">
+  <a href="https://coding.sh">coding.sh</a> ·
+  <a href="https://github.com/jackulau/coding.sh/blob/main/docs/reference/stores.md">Stores reference</a> ·
+  <a href="https://github.com/jackulau/coding.sh/tree/main/packages/blob-s3">Source</a>
+</p>
+
 S3 blob store for [coding.sh](https://coding.sh): AWS S3, Cloudflare R2, MinIO, or any S3-compatible
 endpoint. Zero dependencies (SigV4 on `node:crypto`, `fetch`, zstd from `node:zlib`).
 

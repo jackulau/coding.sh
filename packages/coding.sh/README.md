@@ -2,7 +2,20 @@
   <img src="https://raw.githubusercontent.com/jackulau/coding.sh/main/.github/assets/banner.png" alt="coding.sh: see what your AI agents did, and what it cost. Every prompt, tool call, file change and cost, kept on your machine. Below the headline, the top of one Claude Code session in the coding.sh viewer, with its model, duration, estimated cost, a '31 passed' test badge and its first file edits." width="100%">
 </p>
 
-Docs: [coding.sh/docs](https://coding.sh/docs) · Quickstart: [coding.sh/docs/quickstart](https://coding.sh/docs/quickstart)
+<p align="center">
+  <a href="https://github.com/jackulau/coding.sh/actions/workflows/ci.yml"><img src="https://github.com/jackulau/coding.sh/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
+  <a href="https://www.npmjs.com/package/coding.sh"><img src="https://img.shields.io/npm/v/coding.sh?label=npm" alt="npm version"></a>
+  <a href="https://github.com/jackulau/coding.sh/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D22.15-brightgreen" alt="Node 22.15 or newer">
+</p>
+
+<p align="center">
+  <a href="https://coding.sh/docs">Docs</a> ·
+  <a href="https://coding.sh/docs/quickstart">Quickstart</a> ·
+  <a href="#commands">Commands</a> ·
+  <a href="#agents">Agents</a> ·
+  <a href="https://github.com/jackulau/coding.sh">Source</a>
+</p>
 
 # coding.sh
 
@@ -27,25 +40,40 @@ coding.sh          # opens the viewer
 
 `init` points each detected agent's hooks at `~/.coding.sh/bin/hook.sh` (`hook.mjs` on Windows)
 and registers the coding.sh MCP server with Claude Code, Codex, Cursor, OpenCode and Gemini CLI.
-Every config file it edits is backed up first. `coding.sh init --dry-run` shows the plan (agents, files, blockers) without writing
-anything; add `--diff` for the exact edits. After that, use your agents as usual. New sessions appear without an ingest step.
+Every config file it edits is backed up first. After that, use your agents as usual. New sessions
+appear without an ingest step.
+
+| Command | What it does |
+|---|---|
+| `coding.sh init --dry-run` | Shows the plan (agents, files, blockers) without writing anything. `--diff` adds the exact edits. |
+| `coding.sh uninstall` | Restores the agent configs. Captured data in `~/.coding.sh` is kept. |
+| `coding.sh update` | Installs the latest release. |
+
+<details>
+<summary>npx only, and the update check</summary>
+
+<br>
 
 With `npx` only, the hook is copied to a stable path, but the MCP entry points at the npx cache,
 so a global install is the sturdier choice for daily use.
 
 Commands print one dim line when a newer release is out (checked in the background, at most once a
-day). `coding.sh update` installs it. Turn the check off with `NO_UPDATE_NOTIFIER=1`,
-`CODING_SH_NO_UPDATE_CHECK=1` or `[update] check = false` in `~/.coding.sh/config.toml`.
+day). Turn the check off with `NO_UPDATE_NOTIFIER=1`, `CODING_SH_NO_UPDATE_CHECK=1` or
+`[update] check = false` in `~/.coding.sh/config.toml`.
+
+</details>
 
 ## Agents
 
-Verified on real sessions: **Claude Code**, **Codex CLI** (approve the hooks once with `/hooks`),
-**Antigravity CLI** (formerly Gemini CLI).
-Verified on a real install (current release against a local stub model): OpenCode, GitHub
-Copilot CLI, Factory Droid, Goose, Pi, T3 Code, Aider.
-Not run live yet: Cursor CLI, Amp (both need an account login).
-Any other command: `coding.sh run -- <cmd>` takes shadow-git snapshots before and after.
-Agent frameworks and apps can also send OpenTelemetry to `coding.sh collector`.
+| Status | Agents |
+|---|---|
+| Verified on real sessions | Claude Code, Codex CLI (approve the hooks once with `/hooks`), Antigravity CLI (formerly Gemini CLI) |
+| Verified on a real install (current release against a local stub model) | OpenCode, GitHub Copilot CLI, Factory Droid, Goose, Pi, T3 Code, Aider |
+| Not run live (both need an account login) | Cursor CLI, Amp |
+| Any other command | `coding.sh run -- <cmd>` takes shadow-git snapshots before and after |
+
+Agent frameworks and apps can also send OpenTelemetry to `coding.sh collector`. The per-agent
+table is in [docs/guides/agents.md](https://github.com/jackulau/coding.sh/blob/main/docs/guides/agents.md).
 
 ## Any agent over OpenTelemetry
 
@@ -60,13 +88,13 @@ OpenInference, Vercel AI SDK spans and Claude Code, Codex and Gemini CLI log eve
 
 | Group | Commands |
 |---|---|
-| Capture | `init`, `doctor`, `status`, `ingest [--backfill]`, `run -- <cmd>`, `collector`, `proxy`, `serve`, `uninstall` |
-| Explore | `sessions`, `show <id\|latest>`, `search <text>`, `usage`, `stats`, `diff-calls`, `cache doctor`, `export`, `ui`, `mcp` |
-| Evaluate | `eval new\|validate\|list\|export`, `dataset`, `exp run\|compare\|replay`, `score`, `judge calibrate`, `toolevals`, `workflows`, `bench new\|run\|history\|report\|schedule` |
+| Capture | `init`, `doctor`, `status`, `statusline`, `ingest [--backfill]`, `run -- <cmd>`, `collector`, `proxy`, `serve`, `uninstall` |
+| Explore | `sessions`, `show <id\|latest>`, `tree`, `replay`, `attribution`, `blame`, `diff-calls`, `search <text>`, `usage`, `cache doctor`, `stats`, `sql`, `export`, `ui`, `mcp` |
+| Evaluate | `eval new\|validate\|list\|export`, `dataset`, `exp run\|compare\|replay`, `score`, `judge`, `toolevals`, `workflows`, `bench new\|run\|history\|report\|schedule` |
 | Harness | `improve`, `harness snapshot\|list`, `compare A B`, `refine` |
-| Maintain | `gateway`, `gc`, `purge`, `config`, `update`, `version` |
+| Maintain | `gateway`, `gc`, `purge`, `config`, `update`, `upgrade-store`, `version` |
 
-Every command takes `--json` and `--help`.
+Every command takes `--json` and `--help`. The full reference is in [docs/reference/cli.md](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md).
 
 ## Privacy
 

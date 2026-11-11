@@ -1,5 +1,18 @@
 # coding-sh (Python SDK)
 
+<p align="center">
+  <a href="https://pypi.org/project/coding-sh/"><img src="https://img.shields.io/pypi/v/coding-sh?label=PyPI" alt="PyPI version"></a>
+  <a href="https://github.com/jackulau/coding.sh/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
+  <a href="https://github.com/jackulau/coding.sh/actions/workflows/ci.yml"><img src="https://github.com/jackulau/coding.sh/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
+</p>
+
+<p align="center">
+  <a href="https://coding.sh">coding.sh</a> ·
+  <a href="https://coding.sh/docs">Docs</a> ·
+  <a href="https://github.com/jackulau/coding.sh/blob/main/docs/production/README.md">Production guide</a> ·
+  <a href="https://github.com/jackulau/coding.sh/tree/main/packages/sdk-python">Source</a>
+</p>
+
 Send LLM calls, traces and tool spans from any Python service to a
 [coding.sh](https://coding.sh) server (`coding.sh serve`). Stdlib only, Python 3.9+.
 
