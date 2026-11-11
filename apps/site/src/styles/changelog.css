@@ -130,6 +130,9 @@
   max-width: 46rem;
 }
 .cl-card {
+  /* A long unbroken word wraps in the card instead of widening it. */
+  min-width: 0;
+  overflow-wrap: break-word;
   scroll-margin-top: calc(var(--nav-h) + 2rem);
   padding: 2rem 2.25rem 2.25rem;
   background: var(--term);
