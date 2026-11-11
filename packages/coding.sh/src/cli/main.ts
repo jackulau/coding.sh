@@ -24,7 +24,7 @@ export const BIN = "coding.sh";
 const STOP_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
 const SIGNAL_EXIT: Partial<Record<NodeJS.Signals, number>> = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 };
 
-export const SUMMARY = "Open-source, local-first observability and evals for any AI agent. Coding agents first-class.";
+export const SUMMARY = "Records what your AI agents do: every prompt, model call, tool call, file change and what it cost.";
 const GROUPS: CommandSpec["group"][] = ["Capture", "Explore", "Evaluate", "Harness", "Maintain"];
 
 // ------------------------------------------------------------ help rendering
