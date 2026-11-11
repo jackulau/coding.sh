@@ -4085,6 +4085,24 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     selectRow(Math.max(0, Math.min(rows.length - 1, r)), false, true);
   });
 
+  // A held j or k moves the row highlight at once; the pane and the URL follow at most once per 80 ms
+  // (the first press is not delayed). Safari throws after 100 replaceState calls in 30 s.
+  let stepTimer = 0, stepAt = -1e9, stepItem = -1;
+  function paintStep() {
+    stepTimer = 0;
+    stepAt = performance.now();
+    renderPane(pane, items[stepItem], session, ctx);
+    history.replaceState(null, "", sessionHref(session.id, items[stepItem].id, where));
+  }
+  function showStep(i) {
+    stepItem = i;
+    if (stepTimer) return;
+    const wait = stepAt + 80 - performance.now();
+    if (wait <= 0) paintStep();
+    else stepTimer = setTimeout(paintStep, wait);
+  }
+  function cancelStep() { clearTimeout(stepTimer); stepTimer = 0; }
+
   function selectRow(r, fromPointer, center) {
     r = Math.max(0, Math.min(rows.length - 1, r));
     const prev = rendered.get(activeRow);
@@ -4097,12 +4115,9 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     if (el) { el.setAttribute("aria-selected", "true"); tl.setAttribute("aria-activedescendant", el.id); }
     if (typeof x === "number") {
       // Replaying: the replay drives the pane and the URL; a row picked by hand jumps the replay there.
-      if (rp.on) { if (!rp.syncing) rpFromItem(x); }
-      else {
-        renderPane(pane, items[x], session, ctx);
-        history.replaceState(null, "", sessionHref(session.id, items[x].id, where));
-      }
-    } else if (!rp.on) foldPane(x);
+      if (rp.on) { cancelStep(); if (!rp.syncing) rpFromItem(x); }
+      else showStep(x);
+    } else if (!rp.on) { cancelStep(); foldPane(x); }
     renderTools();
     // Single-column layout: the detail sits below the step list, so a tap
     // brings it into view. Keyboard stepping (j/k) leaves the scroll alone.
@@ -4120,6 +4135,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     selectRow(rowOf[i], false, center);
   }
   function foldPane(x) {
+    delete pane.dataset.item;
     pane.replaceChildren(
       h("div", { class: "pane-top" }, h("p", { class: "meta" }, "Folded steps")),
       h("h2", { class: "pane-title" }, plural(x.to - x.from, "quiet step")),
@@ -4409,6 +4425,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     delete keys.fallback;
     renderHint();
     const x = rows[activeRow];
+    delete pane.dataset.item;
     if (typeof x === "number") {
       renderPane(pane, items[x], session, ctx);
       history.replaceState(null, "", sessionHref(session.id, items[x].id, where));
@@ -4706,7 +4723,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     renderWindow(true); renderMap();
   };
   window.addEventListener("resize", onResize);
-  cleanup = () => { clearInterval(tailTimer); clearTimeout(rp.timer); rp.playing = false; rp.on = false; window.removeEventListener("resize", onResize); };
+  cleanup = () => { clearInterval(tailTimer); clearTimeout(rp.timer); cancelStep(); rp.playing = false; rp.on = false; window.removeEventListener("resize", onResize); };
 }
 
 function latencyText(lat) {
@@ -5469,6 +5486,9 @@ function kpi(label, value, tone, title) {
 
 function renderPane(pane, item, session, ctx) {
   const v = itemView(item);
+  // The pane starts at the top for a new step; the Raw toggle redraws the same step where it is.
+  const sameStep = pane.dataset.item === item.id;
+  pane.dataset.item = item.id;
   const nodes = [];
   const ts = item.ts;
   const rawEvents = [item.start, item.end, item.ev].filter(Boolean);
@@ -5485,7 +5505,7 @@ function renderPane(pane, item, session, ctx) {
     nodes.push(h("h2", { class: "pane-title" }, v.label));
     for (const ev of rawEvents) nodes.push(section(ev.kind + " · " + short(ev.id, 16), jsonTree(ev, true)));
     pane.replaceChildren(...nodes);
-    pane.scrollTop = 0;
+    if (!sameStep) pane.scrollTop = 0;
     return;
   }
 
@@ -5598,7 +5618,7 @@ function renderPane(pane, item, session, ctx) {
     if (refs.length) nodes.push(section("stored content", h("div", { class: "stack" }, refs.map((r, i) => blobView(r, item.type === "file.change" && typeof p.diff !== "string" && i === 0)))));
   }
   pane.replaceChildren(...nodes);
-  pane.scrollTop = 0;
+  if (!sameStep) pane.scrollTop = 0;
 }
 
 // ------------------------------------------------------------ experiments
