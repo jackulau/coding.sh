@@ -1540,7 +1540,7 @@ export const COMMANDS: CommandSpec[] = [
           { name: "max", type: "number", value: "<N>", desc: "Most traces to keep", default: "200" },
           { name: "no-tools", type: "boolean", desc: "Don't connect to the server to list its tools" },
         ],
-        examples: ["coding.sh toolevals traces acme --sessions 'since:30d' --out traces-acme", "coding.sh toolevals traces acme --from texp_01J… --arm base@agent:claude-code --out traces-acme"],
+        examples: ["coding.sh toolevals traces coding-sh --sessions 'since:30d' --out traces-coding-sh", "coding.sh toolevals traces coding-sh --from texp_01J… --arm base@agent:claude-code --out traces-coding-sh"],
       },
     ],
     notes: ["Arms are named <variant>@<driver>.", "Runs above [toolevals] confirmAboveUsd (default $5) need --yes when not on a TTY."],
