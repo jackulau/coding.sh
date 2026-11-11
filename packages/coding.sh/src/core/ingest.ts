@@ -74,7 +74,8 @@ import { createRedactor, noteBlobHits, redactBlobValue, redactEventCounted, reda
 import { buildSession, byTime, FLAGS, foldSession, foldStamp, isBackfillEvent, isFoldState, isRealPrompt, isVerifyToolStart, sessionOf, sessionState, type SessionState } from "./sessions.ts";
 import { copyFilter } from "./message-copies.ts";
 import { priceEvent, pricesFor } from "./pricing.ts";
-import { listSpoolFiles, readSpoolFile, type SpoolFile } from "./spool-read.ts";
+import { listSpoolFiles, readSpoolFile, resolveRawFile, type SpoolFile } from "./spool-read.ts";
+import { scrubRawFile } from "./spool-scrub.ts";
 import { repoResolver, type RepoResolver } from "./repo-state.ts";
 import { snapshot } from "./snapshot.ts";
 import { isWrapperLine } from "../adapters/more/wrapper.ts";
@@ -425,6 +426,8 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     readPos: number;
     active: Sink[];
     window: LineEvents[];
+    /** Side files of the lines read, scrubbed once the local cursor is past their line. */
+    raws: { path: string; nextOffset: number; cwd: string | undefined }[];
   }
   let open: FileRun[] = [];
   let pending: AgentEvent[] = [];
@@ -455,6 +458,15 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     pending = [];
     touched.clear();
     for (const f of open) f.local = Math.max(f.local, f.readPos);
+    // The lines are committed: their side files keep the payload for a re-parse, with secrets redacted.
+    for (const f of open) {
+      const done = f.raws.filter((r) => r.nextOffset <= f.local);
+      f.raws = f.raws.filter((r) => r.nextOffset > f.local);
+      for (const r of done) {
+        fence();
+        await scrubRawFile(r.path, profileFor(r.cwd).redactor);
+      }
+    }
     await snapshotEnded();
     for (const f of open) {
       for (const sink of f.active) await sendToSink(sink, f.file, f.window, f.readPos);
@@ -509,7 +521,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     if (start >= file.size) continue;
 
     readAny = true;
-    const fr: FileRun = { file, local, readPos: start, active, window: [] };
+    const fr: FileRun = { file, local, readPos: start, active, window: [], raws: [] };
     open.push(fr);
     const keepWindow = active.length > 0;
     const reader = readSpoolFile(spoolDir, file.path, start, {
@@ -521,6 +533,13 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     for await (const rec of reader) {
       const events = await durations(await normalize(rec.line, rec.source, rec.offset));
       fr.readPos = rec.nextOffset;
+      if (rec.line.rawFile) {
+        try {
+          fr.raws.push({ path: resolveRawFile(spoolDir, file.path, rec.line.rawFile), nextOffset: rec.nextOffset, cwd: rec.line.cwd });
+        } catch {
+          // Outside the spool directory: never ours to rewrite.
+        }
+      }
       if (rec.offset >= fr.local) {
         result.lines++;
         // A prompt a backfill already stored stays out of the local index (sinks still get it).

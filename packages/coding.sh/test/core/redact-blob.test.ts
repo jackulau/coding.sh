@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { rawBlob as sharedRawBlob } from "../../src/adapters/_shared/normalize.ts";
 import { rawBlob as moreRawBlob } from "../../src/adapters/more/_util.ts";
-import type { Config } from "../../src/core/config.ts";
+import { defaultConfig } from "../../src/core/config.ts";
 import { normalizeContext } from "../../src/core/ingest.ts";
 import { createRedactor, redactForBlob, redactionTally } from "../../src/core/redact.ts";
 
@@ -10,7 +10,7 @@ import { createRedactor, redactForBlob, redactionTally } from "../../src/core/re
 const SECRET = ["wJalrXUtnFEMI", "/K7MDENG/bPxRfiCYEXAMPLEKEY"].join("");
 
 const redactor = createRedactor({ redact: ["secrets"] });
-const config = { capture: { maxInlineBytes: 1000 } } as unknown as Config;
+const config = defaultConfig({ CODING_SH_HOME: "/work/demo/.coding.sh", HOME: "/home/user" });
 
 function context() {
   const stored: string[] = [];
