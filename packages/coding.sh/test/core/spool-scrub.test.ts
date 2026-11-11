@@ -49,7 +49,7 @@ describe("a spool side file after ingest", () => {
     const after = readFileSync(file, "utf8");
     assert.ok(!after.includes(SECRET), after);
     assert.equal(JSON.parse(after).hook_event_name, "PostToolUse");
-    assert.equal(statSync(file).mode & 0o777, 0o600);
+    if (process.platform !== "win32") assert.equal(statSync(file).mode & 0o777, 0o600);
     assert.ok(readFileSync(t.spool, "utf8").includes(file));
   });
 
