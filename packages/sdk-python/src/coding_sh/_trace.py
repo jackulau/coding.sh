@@ -178,11 +178,12 @@ def error_text(exc: BaseException) -> str:
     return clip(type(exc).__name__ + (": " + msg if msg else "")) or type(exc).__name__
 
 
-def emit(event: Dict[str, Any]) -> None:
+def emit(event: Dict[str, Any]) -> bool:
+    """Queue one event. True when it was queued; never raises."""
     try:
-        _get().enqueue(event)
+        return bool(_get().enqueue(event))
     except Exception:
-        pass
+        return False
 
 
 # ---------------------------------------------------------------------------- context

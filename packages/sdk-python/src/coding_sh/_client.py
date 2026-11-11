@@ -218,18 +218,20 @@ class Transport:
 
     # ------------------------------------------------------------------ public
 
-    def enqueue(self, event: Dict[str, Any]) -> None:
+    def enqueue(self, event: Dict[str, Any]) -> bool:
+        """True when the event was queued; False when it was dropped or the SDK is off."""
         if not self.cfg.enabled:
-            return
+            return False
         try:
             data = dumps(event).encode("utf-8")
         except Exception as e:  # pragma: no cover - dumps has a repr fallback
             self._debug("event not serializable: %s", type(e).__name__)
-            return
+            return False
         warn = False
+        queued = False
         with self._cv:
             if self._closed:
-                return
+                return False
             if len(data) + len(self._envelope_head) + 2 > MAX_BATCH_BYTES or len(self._q) >= self.cfg.max_queue:
                 self._dropped += 1
                 now = time.monotonic()
@@ -238,11 +240,13 @@ class Transport:
                     warn = True
             else:
                 self._q.append(data)
+                queued = True
                 if len(self._q) >= self.cfg.max_batch:
                     self._cv.notify_all()
                 self._ensure_thread()
         if warn:
             log.warning("coding.sh: event queue full or event too large; dropping events (dropped=%d)", self._dropped)
+        return queued
 
     def flush(self, timeout: Optional[float] = None) -> bool:
         """Block until everything queued so far is sent (or given up). True when drained."""
