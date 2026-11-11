@@ -7,7 +7,6 @@
   <a href="https://www.npmjs.com/package/coding.sh"><img src="https://img.shields.io/npm/v/coding.sh?label=npm" alt="npm version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D22.15-brightgreen" alt="Node 22.15 or newer">
-  <a href="https://github.com/jackulau/coding.sh/stargazers"><img src="https://img.shields.io/github/stars/jackulau/coding.sh?style=flat&logo=github&label=stars" alt="GitHub stars"></a>
 </p>
 
 <p align="center">
@@ -47,10 +46,9 @@ Run `npx coding.sh` again to open the viewer on your sessions.
   <sub>One Claude Code session in the local viewer (<code>coding.sh ui</code>), with the diff it made and the tests it ran.</sub>
 </p>
 
-coding.sh records what your agents do: prompts, tool calls, file changes, model calls, latency and
-tokens. It goes into a SQLite index on your machine. You browse it in a local viewer, query it from
-the CLI or from your agents over MCP, turn failures into evals, and compare changes with paired
-statistics. Capture, storage and the viewer stay on your machine unless you add a remote sink.
+Each session goes into a SQLite index on your machine, with its latency and tokens. You browse it in
+a local viewer, query it from the CLI or from your agents over MCP, turn failures into evals, and
+compare changes with paired statistics. No session data leaves your machine unless you add a remote sink.
 
 No runtime dependencies. Node 22.15 or newer.
 
@@ -92,7 +90,7 @@ clear that cache. Installing from source, updates and uninstall:
 |---|---|---|
 | **Record** | Captures each session, including subagents, from hooks and transcripts. Wraps any other agent. Takes OpenTelemetry from frameworks and apps. | `coding.sh init`, `coding.sh run -- <cmd>`, `coding.sh collector` |
 | **Measure** | Turns, tool calls, model calls, tokens, latency and outcome for every session. Flags sessions that edited code and never ran a check. | `coding.sh sessions`, `coding.sh usage`, `coding.sh improve` |
-| **Compare** | Turns a failed session into a replayable eval. Runs experiments with code graders or calibrated LLM judges. A/B tests prompts, harness files and models with paired statistics. | `coding.sh eval new`, `coding.sh exp compare` |
+| **Evaluate** | Turns a failed session into a replayable eval. Runs experiments with code graders or calibrated LLM judges. A/B tests prompts, harness files and models with paired statistics. | `coding.sh eval new`, `coding.sh exp compare` |
 | **Benchmark** | Draws new cases every day, runs every contender on the same frozen set, and writes a static report. | `coding.sh bench` |
 | **Production** | One server for ingest, the viewer and the API, backed by SQLite, Postgres or ClickHouse. SDKs for API apps. | `coding.sh serve` |
 
@@ -129,18 +127,7 @@ More in [docs/guides/explore.md](docs/guides/explore.md).
 </details>
 
 <details>
-<summary><b>Measure</b>: what each session carries</summary>
-
-<br>
-
-Every session has its turns, tool calls, model calls, tokens, latency and outcome. Sessions that
-edited code and never ran a check get a `no-verification` flag. `coding.sh improve` says what to
-fix first and the line that fixes it.
-
-</details>
-
-<details>
-<summary><b>Compare</b>: evals, experiments and paired statistics</summary>
+<summary><b>Evaluate</b>: evals, experiments and paired statistics</summary>
 
 <br>
 
