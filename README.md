@@ -158,8 +158,8 @@ MCP server, are in [docs/guides/agents.md](docs/guides/agents.md). Guides for on
 With no sinks configured, no session data leaves your machine. The only default network request is
 a daily update check, which `CODING_SH_NO_UPDATE_CHECK=1` turns off. Secrets are redacted at
 ingest, before anything is written to the index, blobs or sinks. The hook first writes the agent's
-payload unredacted to `~/.coding.sh/spool` (mode 600). Ingest redacts the long payloads kept in
-`spool/<agent>/raw/` in place; a short payload stays unredacted inside its spool line until
+payload unredacted to `~/.coding.sh/spool` (mode 600). Ingest redacts the payloads kept in
+`spool/<agent>/raw/` in place; a payload written inside its spool line stays unredacted until
 `coding.sh gc` deletes the file after 7 days. Remote sinks send metadata only unless you opt in to
 full content. Details in [docs/guides/privacy.md](docs/guides/privacy.md).
 
