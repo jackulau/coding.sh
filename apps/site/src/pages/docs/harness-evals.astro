@@ -1,237 +1,242 @@
 ---
 import DocsLayout from "../../components/docs/DocsLayout.astro";
 import Code from "../../components/docs/Code.astro";
-import Terminal from "../../components/Terminal.astro";
-import Tag from "../../components/docs/Tag.astro";
+import Cards from "../../components/docs/Cards.astro";
+
+// Every output below is real: coding.sh's own AGENTS.md and 16 seeded sessions of coding.sh work
+// (Claude Code, Codex and OpenCode transcripts ingested by the real adapters), replayed with the
+// packed CLI against scripts/e2e/stub-model.mjs under a throwaway HOME and CODING_SH_HOME, 2026-11-11.
+
+const refineCmd = `coding.sh refine test ./drafts/AGENTS.md`;
+
+const refineOut = `r_7190429ee2  ./drafts/AGENTS.md (AGENTS.md; +1 line)
+  protected  ok (0 protected lines in place)
+  critics    ok
+  dev        16 decision points | effect +100pp [+100pp, +100pp] | B wins 16, loses 0; A solved 0
+  preserved  gained 16, lost 0, 0 tasks regressed
+  verdict    keep: dev: Ship it: B wins 16 decision points, loses 0; guard: no earlier kept wins to hold
+
+Spent $0.03 (32 of 32 next-turn calls cached, 32 judge calls)
+
+  Write the kept edit to your files (with a backup):
+    coding.sh refine apply r_7190429ee2`;
+
+const protectedCmd = `coding.sh refine protected`;
+
+const protectedOut = `WHERE	WHY	LINE
+AGENTS.md:131	auto	Never run \`git push --force\` on main.
+  1 protected line in 1 file (current files; auto-protect on, 0 patterns)`;
+
+const checkCmd = `coding.sh refine check`;
+
+const checkOut = `protected-line: AGENTS.md:131 "Never run \`git push --force\` on main." (auto)
+✗ 1 protected-line problem from A (git:HEAD) to B (your edits); a pass-rate A/B can't see this harm
+
+  Restore the line, or allow this edit on purpose:
+    coding.sh refine check --allow-protected-edit AGENTS.md:131`;
+
+const marker = `<!-- coding.sh:protect -->
+Never print the contents of .env files.
+<!-- coding.sh:protect end -->`;
+
+const trigger = `coding.sh eval trigger .claude/skills/pdf --draft --dry-run
+coding.sh eval trigger .claude/skills/pdf -k 3 --yes
+coding.sh eval trigger .claude/skills/pdf --description @new-description.txt --fail-on regression --yes`;
 
 const replay = `coding.sh eval new latest --verifier 'npm test' --hidden-test 'test/retry.spec.ts'
 coding.sh eval validate <task> --k 5
-coding.sh eval export <task> --out ./tasks/retry --format harbor
 coding.sh harness snapshot --agent claude-code --name base
-coding.sh compare base candidate --k 3`;
-
-// The evals guide holds the method behind every line this page shows.
-const GUIDE = "https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md";
-
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-const m = (s: string) => `<span class="t-muted">${esc(s)}</span>`;
-const t = (s: string) => `<span class="t-text">${esc(s)}</span>`;
-const ok = (s: string) => `<span class="t-pass">${esc(s)}</span>`;
-const no = (s: string) => `<span class="t-fail">${esc(s)}</span>`;
-
-// Real output of scripts/e2e/exp-ab-capture.mjs (2026-11-07): three Claude Code sessions against a stub
-// model.
-const AB = [
-  `${m("$")} ${t("coding.sh exp ab")}`,
-  `A: git:HEAD   B: your edits   model: claude-sonnet-5-5`,
-  `3 decision points from 3 sessions | A 0/3 -> B ${ok("3/3")} | fixed 3, broke 0 | paired p=0.25 | <$0.01, 0/6 cached`,
-  `Hold: not enough evidence (B wins 3, loses 0; needs 8+ wins with no losses)`,
-  `Replay noise floor 0% (A's turn differs from the recorded one in 0/3); B moved +100 points, above it`,
-  "",
-  `Fixed (A failed, B passed):`,
-  `  unverified-claim "Make pad.js pad on the left."  ${m("coding.sh show 8f0e1e52-bdc1-4da0-a03b-14edf6dfcf77")}`,
-  `  unverified-claim "Make clamp.js clamp to the upper bound too."  ${m("coding.sh show 9c1792df-6267-4b30-9f24-7a7307740543")}`,
-  `  unverified-claim "Make range.js include its end value."  ${m("coding.sh show fe48a450-8867-48ec-b946-3b4d0cb6c780")}`,
-  "",
-  `Full comparison: coding.sh exp compare exp_01M6VXZSFPM2QK12ANN6Z269WP exp_01M6VXZSFSZ25HD2HXXVY40BXV`,
-].join("\n");
-
-// Real output of scripts/e2e/refine-loop.mjs with its instructions file named AGENTS.md and the draft at ./drafts/AGENTS.md
-// (run 2026-11-09 against a stub model and a throwaway HOME).
-// With the script's default file name the same run prints r_3123c2cbef and r_b25de6ab68; nothing else differs.
-const REFINE = [
-  `${m("$")} ${t("coding.sh refine test ./drafts/AGENTS.md --behavior unchanged-retry")}`,
-  `r_3b577b3897  ./drafts/AGENTS.md (AGENTS.md; +1 line)`,
-  `  protected  ${ok("ok")} (1 protected line in place)`,
-  `  critics    ${ok("ok")}`,
-  `  dev        8 decision points | effect +100pp [+100pp, +100pp] | B wins 8, loses 0; A solved 0`,
-  `  guard      8 tasks earlier kept edits won (0 from this run, 8 rerun) | ${no("forgets kept edit r_e67f549cae")}`,
-  `  preserved  gained 8, lost 0, 0 tasks regressed`,
-  `  verdict    ${no("reject")}: dev: Ship it: B wins 8 decision points, loses 0; guard: forgets kept edit r_e67f549cae`,
-  "",
-  `${m("$")} ${t("coding.sh refine log")}`,
-  m(`ROUND  CANDIDATE     VERDICT        EFFECT (95% CI)          GUARD                 COST   REASON`),
-  `1      r_e67f549cae  ${ok("keep, applied")}  +100pp [+100pp, +100pp]  no tasks              $0.02  dev: Ship it: B wins 8 decision points, loses 0`,
-  `2      r_3b577b3897  ${no("reject")}         +100pp [+100pp, +100pp]  forgets r_e67f549cae  $0.02  guard: forgets kept edit r_e67f549cae`,
-].join("\n");
-const TRIGGER = [
-  `${m("$")} ${t('coding.sh eval trigger skills/pdf --description "Use when the user mentions pdf, invoice, scanned." --yes')}`,
-  `A (current): pdf on claude-code, k=1`,
-  `  precision 67%  recall 50%  F1 0.57  accuracy 63%`,
-  `  missed:`,
-  `    should     loaded 0/1  "Make the invoice searchable"`,
-  `    should_not false trigger 1/1  "Explain in one line what a pdf is"`,
-  `  expected routes: docx 1/1`,
-  `B (--description): pdf on claude-code, k=1`,
-  `  precision 80%  recall 100%  F1 0.89  accuracy 88%`,
-  "",
-  `B vs A over 8 prompts: recall 2/4→4/4 · false triggers 1/4→1/4 · Δacc +25 pp (95% CI +0 to +63)`,
-  `  flip ${ok("better")} should     skipped → loaded  "Make the invoice searchable"`,
-  `  flip ${ok("better")} should     skipped → loaded  "OCR this scanned invoice"`,
-  `  ${m("note: 4 should and 4 should_not prompts: only a large change can show; aim for 10+ per side")}`,
-  `No clear difference`,
-].join("\n");
+coding.sh harness snapshot --agent claude-code --dir ../candidate --name candidate
+coding.sh compare base candidate --k 3 --gate`;
 ---
 
 <DocsLayout>
   <p>
-    The harness is everything around the model: AGENTS.md, rules, skills, the agent and its flags. These commands test a change to it before
-    you keep it, on the sessions you already have or on tasks replayed from your repo.
+    The harness is everything around the model: AGENTS.md, rules, skills, the agent and its flags. This page covers the tools that test a
+    harness change before you keep it. To test one edit to AGENTS.md, start with
+    <a href="/docs/how-to/test-agents-md-change">Test an AGENTS.md change</a>.
   </p>
 
-  <h2 id="exp-ab">A/B a harness edit on your sessions <Tag status="built" /></h2>
+  <h2 id="refine">Refine AGENTS.md in tested rounds</h2>
   <p>
-    You changed a line in AGENTS.md and want to know if it helps. <code>coding.sh exp ab</code> finds the moments in your recent sessions
-    where the agent went wrong, such as saying it was done without running anything. It replays the next turn twice, once with your committed
-    files and once with your edit, and a judge scores both.
+    <code>refine test</code> decides one candidate edit in stages: the protected-line check, two critics on the added lines (is it harmless,
+    is it a duplicate), the same A/B as <code>exp ab</code> on your decision points, and a guard. The guard reruns the decision points earlier
+    kept edits won; the candidate must not lose them.
   </p>
-  <Terminal title="~/repo" label="Output of coding.sh exp ab">
-    <Fragment set:html={AB} />
-  </Terminal>
+  <Code code={refineCmd} />
+  <Code title="output" code={refineOut} />
   <p>
-    The noise floor is how often your committed files alone produce a different turn from the recorded one. A smaller difference may be
-    replay noise. Responses are cached, so a rerun with unchanged files is free.
+    The verdict is <code>keep</code>, <code>reject</code> or <code>inconclusive</code>, and the command exits 0 when a candidate is kept.
+    <code>refine apply</code> writes it to your files and never commits.
   </p>
-  <div class="doc-table">
-    <table>
-      <thead><tr><th>Flag</th><th>What it does</th></tr></thead>
-      <tbody>
-        <tr><td><code>--dry-run</code></td><td>Shows the cases and a cost estimate; calls nothing.</td></tr>
-        <tr><td><code>--max-cost</code></td><td>Caps the spend.</td></tr>
-        <tr><td><code>--gate</code></td><td>Makes the verdict line the exit code.</td></tr>
-        <tr><td><code>--watch</code></td><td>Reruns each time you save, one line per run.</td></tr>
-      </tbody>
-    </table>
-  </div>
-  <p>The walkthrough is <a href="/docs/how-to/test-agents-md-change">Test an AGENTS.md change in five minutes</a>.</p>
-
-  <h2 id="protected">Keep safety lines from being dropped <Tag status="built" /></h2>
-  <p>
-    A pass-rate A/B can't see the harm of deleting "Never run <code>git push --force</code>" if no case needed it.
-    <code>coding.sh refine check</code> compares a harness edit by text (default: git <code>HEAD</code> against your working tree) and exits 1
-    when it deletes, rewords or relaxes a protected line. <code>exp ab</code> runs the same check and warns before any model call.
-  </p>
-  <p>
-    A line is protected inside a <code>&lt;!-- coding.sh:protect --&gt;</code> block, when it matches a <code>[refine] protect</code> regex, or
-    when one sentence pairs a word like never or must not with a safety topic such as credentials, deploy or <code>rm -rf</code>.
-    <code>refine protected</code> lists them, and <code>--allow-protected-edit AGENTS.md:3</code> allows one edit on purpose
-    (<a href={`${GUIDE}#protected-safety-lines`}>details</a>).
-  </p>
-
-  <h2 id="refine">Improve AGENTS.md in tested rounds <Tag status="built" /></h2>
-  <p>
-    <code>refine test</code> decides each candidate edit in stages: the protected-line check and two critics on the added lines, then an A/B
-    on the decision points <code>exp ab</code> mines, through the same ship gate. Last comes the guard: what earlier kept edits won must stay
-    solved.
-  </p>
-  <Terminal title="~/repo" label="Output of coding.sh refine test and refine log">
-    <Fragment set:html={REFINE} />
-  </Terminal>
-  <p>Here the second edit wins its own decision points but drops the line the first edit added, so the guard rejects it.</p>
   <div class="doc-table">
     <table>
       <thead><tr><th>Command</th><th>What it does</th></tr></thead>
       <tbody>
-        <tr><td><code>refine propose</code></td><td>Asks a model for lines that address your sessions' most severe flags.</td></tr>
-        <tr><td><code>refine apply</code></td><td>Writes a kept candidate with a backup. Never commits.</td></tr>
-        <tr><td><code>refine rollback</code></td><td>Restores the backup byte for byte.</td></tr>
-        <tr><td><code>refine log</code></td><td>Every round with its verdict, effect, guard result, cost and reason.</td></tr>
-        <tr><td><code>refine run</code></td><td>Loops propose, test and apply until <code>--rounds</code>, <code>--max-cost</code> or a plateau.</td></tr>
+        <tr><td><code>refine propose</code></td><td>Asks a model for lines that address your sessions' most severe flags, and stores them as a candidate.</td></tr>
+        <tr><td><code>refine test</code></td><td>Tests candidates: a file, a directory, <code>git:REV</code> or a stored <code>r_…</code> id.</td></tr>
+        <tr><td><code>refine apply</code></td><td>Writes a kept candidate, with a backup of what it replaces.</td></tr>
+        <tr><td><code>refine rollback</code></td><td>Puts the backup back.</td></tr>
+        <tr><td><code>refine log</code></td><td>Every round: verdict, effect with its interval, guard result, cost and reason.</td></tr>
+        <tr><td><code>refine run</code></td><td>Loops propose, test and apply.</td></tr>
       </tbody>
     </table>
   </div>
-  <p>See <a href={`${GUIDE}#refine-loop`}>Refine loop</a> in the evals guide.</p>
-
-  <h2 id="triggers">Check that a skill loads <Tag status="built" /></h2>
+  <div class="doc-table">
+    <table>
+      <thead><tr><th><code>refine run</code> flag</th><th>Default</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>--rounds</code></td><td>3</td><td>The most rounds.</td></tr>
+        <tr><td><code>--max-cost</code></td><td>none</td><td>Refuses to start over this estimate, and stops once spent.</td></tr>
+        <tr><td><code>--candidate</code></td><td>none</td><td>Tests these files in order instead of asking the proposer. Repeatable.</td></tr>
+        <tr><td><code>--target</code></td><td>AGENTS.md</td><td>The file the proposal edits, or a skill directory for its SKILL.md.</td></tr>
+        <tr><td><code>--provider</code></td><td>anthropic</td><td>Who proposes, writes the next turn and judges: <code>openai</code>, <code>openai-compatible</code>, or <code>claude-code</code> / <code>codex</code> on your subscription.</td></tr>
+        <tr><td><code>--proposer-model</code></td><td><code>--judge-model</code>, else <code>--model</code></td><td>The model that writes the edit.</td></tr>
+        <tr><td><code>--proposer-command</code></td><td>none</td><td>A shell command that writes the edit instead: the prompt on stdin, the JSON reply on stdout.</td></tr>
+        <tr><td><code>--suite</code></td><td>none</td><td>Judges candidates on an eval suite of repo tasks instead of decision points.</td></tr>
+        <tr><td><code>--until-plateau</code></td><td>off</td><td>With <code>--suite</code>: keeps going until the gains stop.</td></tr>
+      </tbody>
+    </table>
+  </div>
   <p>
-    A skill only helps when the agent loads it. <code>eval trigger &lt;skill-dir&gt;</code> reads a <code>triggers.toml</code> of
-    <code>[[should]]</code> prompts and <code>[[should_not]]</code> near misses. It runs each prompt k times with the agent (Claude Code by default)
-    and reads from the captured session whether the skill loaded. <code>--description</code> or <code>--candidate DIR</code> adds a second arm to compare.
-  </p>
-  <Terminal title="~/repo" label="Output of coding.sh eval trigger with a description A/B">
-    <Fragment set:html={TRIGGER} />
-  </Terminal>
-  <p>
-    The output above is the CI check with real Claude Code against a stub model. Eight prompts can't show a change of this size, so the verdict holds. <code>--min-f1</code> and <code>--fail-on regression</code> set the
-    exit code for CI. See <a href="https://github.com/jackulau/coding.sh/blob/main/docs/how-to/evaluate-a-skill.md#does-the-skill-load">Does
-    the skill load?</a>.
+    With no API key, the provider is a logged-in Claude Code, else Codex. Rejected candidates and their reasons go into the next proposal, so
+    the proposer does not repeat them.
   </p>
 
-  <h2 id="repo-replay">Replay tasks from your repo <Tag status="partial" /></h2>
+  <h2 id="protected">Keep safety lines from being dropped</h2>
+  <p>
+    A pass-rate A/B can't see the harm of deleting "Never run <code>git push --force</code>" when no case needed it. So coding.sh protects
+    such lines by their text. <code>refine protected</code> lists them:
+  </p>
+  <Code code={protectedCmd} />
+  <Code title="output" code={protectedOut} />
+  <p>
+    <code>refine check</code> compares a harness edit with git <code>HEAD</code> and exits 1 when the edit deletes, rewords or relaxes a
+    protected line. <code>refine test</code> rejects such an edit, and <code>exp ab</code> warns about it (with <code>--gate</code>, it fails).
+  </p>
+  <Code code={checkCmd} />
+  <Code title="output" code={checkOut} />
+  <p>A line is protected in any of three ways:</p>
+  <ul>
+    <li>It sits inside a marker block.</li>
+    <li>It matches a <code>[refine] protect</code> regex in your config.</li>
+    <li>It pairs a gate word such as never, don't, must not or only with a safety topic such as credentials, deploy, push, <code>--force</code> or <code>rm -rf</code>.</li>
+  </ul>
+  <Code title="AGENTS.md" code={marker} />
+  <p>
+    Set <code>[refine] autoProtect = false</code> in your user config to keep only marker blocks and patterns.
+    <code>--allow-protected-edit AGENTS.md:131</code> allows one edit on purpose.
+  </p>
+
+  <h2 id="triggers">Check that a skill loads</h2>
+  <p>
+    An agent loads a skill when a prompt matches its <code>description</code>. <code>eval trigger</code> reads a
+    <code>triggers.toml</code> next to the skill, with <code>[[should]]</code> prompts and <code>[[should_not]]</code> near misses. It runs
+    each prompt with the agent and reads from the captured session whether the skill loaded, then prints precision, recall and F1.
+  </p>
+  <Code code={trigger} />
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Flag</th><th>Default</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>--draft</code></td><td>off</td><td>Writes <code>triggers.toml</code> from captured sessions that loaded the skill, then a model fills each side.</td></tr>
+        <tr><td><code>--description</code></td><td>none</td><td>A/B: the same skill with only its description replaced.</td></tr>
+        <tr><td><code>--candidate</code></td><td>none</td><td>A/B: another version of the skill, installed under the same name.</td></tr>
+        <tr><td><code>-a</code>, <code>--agent</code></td><td>claude-code</td><td>The agent to probe.</td></tr>
+        <tr><td><code>-k</code></td><td>the spec's k, else 3</td><td>Runs per prompt and arm.</td></tr>
+        <tr><td><code>--min-f1</code></td><td>none</td><td>Exits 1 when the tested arm's F1 is under this.</td></tr>
+        <tr><td><code>--fail-on regression</code></td><td>off</td><td>Exits 1 when B answers fewer prompts right than A.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    A real run, with its output, is in <a href="/docs/how-to/evaluate-a-skill#does-the-skill-load">Evaluate a skill</a>.
+  </p>
+
+  <h2 id="repo-replay">Replay tasks from your repo</h2>
   <p>
     A repo-replay task is the repository from before the agent ran, the first prompt as the instruction, and a verifier command.
-    <code>compare</code> runs two harness bundles on those tasks in isolated worktrees.
+    <code>compare</code> runs two harness snapshots on those tasks in isolated worktrees and grades every run.
   </p>
   <Code code={replay} />
-  <p>Before a task counts, <code>eval validate</code> checks the verifier:</p>
+  <p>Before a task counts, <code>eval validate</code> checks its verifier:</p>
   <ol>
     <li>Doing nothing fails.</li>
     <li>The reference solution passes <code>k</code> runs out of <code>k</code> (default 5), so flaky tests fail validation.</li>
-    <li>Near-miss variants of the reference, made by mutating its patch, fail.</li>
-    <li>Nothing leaks: hidden tests are copied in only when the verifier runs.</li>
+    <li>Variants of the reference made by mutating its patch fail.</li>
+    <li>Hidden tests are copied in only when the verifier runs.</li>
   </ol>
   <p>
-    A bundle is the agent, model, flags, env and files such as AGENTS.md, identified by a content hash. The report gives each arm's pass
-    rate, the paired difference, McNemar's test, the cost, token and latency deltas, and the first step where the traces diverge.
+    A snapshot holds the agent, model, flags, env and files such as AGENTS.md, under a content hash. The report gives each arm's pass rate, the
+    paired difference, cost, token and latency deltas, and the first step where the traces diverge.
   </p>
   <div class="doc-table">
     <table>
       <thead><tr><th>Command</th><th>What it adds</th></tr></thead>
       <tbody>
         <tr><td><code>eval crosscheck &lt;task&gt;</code></td><td>A reviewer model judges each run's diff and reports where it disagrees with the verifier.</td></tr>
-        <tr id="witness"><td><code>eval audit &lt;task&gt; --experiment &lt;id&gt; --witness &lt;file&gt; --witness-cmd &lt;cmd&gt;</code></td><td>A test for a requirement the verifier skips; it can refute passing runs.</td></tr>
-        <tr id="hand-written"><td><code>eval import tasks/*/</code></td><td>Loads hand-written tasks (<code>task.json</code>, <code>instruction.md</code>, <code>repo/</code>, <code>tests/</code>) as drafts. Run them with <code>compare A B --tag &lt;tag&gt;</code> (<a href="/docs/how-to/evaluate-a-skill">walkthrough</a>).</td></tr>
+        <tr id="witness"><td><code>eval audit &lt;task&gt;</code></td><td>Runs a test for a requirement the verifier skips; it can refute passing runs.</td></tr>
+        <tr id="hand-written"><td><code>eval import tasks/*/</code></td><td>Loads hand-written tasks as drafts. Run them with <code>compare A B --tag &lt;tag&gt;</code>.</td></tr>
       </tbody>
     </table>
+  </div>
+  <div class="note">
+    <p>
+      A session captured by the hook starts from the commit checked out when it began, so uncommitted changes at that point are missing, and
+      <code>eval new</code> warns. <code>coding.sh run --</code> snapshots the whole working tree before and after.
+    </p>
   </div>
 
   <h2 id="gate">Gate a change in CI</h2>
   <p>
-    <code>compare A B --gate</code> answers "should I ship B?" in one line: <code>Ship it: B wins 9 tasks, loses 0</code>,
-    <code>Hold: not enough evidence</code>, or <code>Don't ship: B breaks 3 tasks A solved</code>. It exits 0 only for "Ship it".
+    <code>compare A B --gate</code> prints one line: <code>Ship it: B wins 9 tasks, loses 0</code>, <code>Hold: not enough evidence</code>,
+    or <code>Don't ship: B breaks 3 tasks A solved</code>. It exits 0 only on Ship it, so it can fail a CI job. Passes that tampered with
+    tests count as fails.
   </p>
-  <p>
-    A break costs two fixes (<code>--lambda</code>), the wins must clear a one-sided exact test (<code>--gate-alpha</code>, default 0.05), and
-    B may break at most 10% of the tasks A solved (<code>--tau</code>). This is the SAGE accept-or-abstain rule
-    (<a href="https://arxiv.org/abs/2609.36043">arXiv 2609.36043</a>). Passes that tampered with tests count as fails.
-  </p>
-
-  <h2 id="options">More compare options</h2>
   <div class="doc-table">
     <table>
-      <thead><tr><th>Flag</th><th>What it adds</th></tr></thead>
+      <thead><tr><th>Flag</th><th>Default</th><th>What it does</th></tr></thead>
       <tbody>
-        <tr><td><code>--gate --by suite:</code></td><td>Also gates each group of tasks; any group's "Don't ship" blocks.</td></tr>
-        <tr id="promote"><td><code>--promote</code></td><td>Exits 0 only when B is credibly better, or cheaper within <code>--eps-q</code> of A's pass rate.</td></tr>
-        <tr id="audited"><td><code>--audited</code></td><td>Counts passes a witness refuted as fails. Needs every pass audited.</td></tr>
-        <tr id="item-gate"><td><code>--item-gate</code></td><td>Exits 0 on KEEP or ACCEPT from the one-item gate (when B adds or removes one item).</td></tr>
-        <tr id="plugins"><td><code>--with plugin:terse</code></td><td>B is A plus a Claude Code plugin. Your Claude config is never changed.</td></tr>
-        <tr id="reuse"><td><code>--reuse baseline</code></td><td>Copies A's finished runs from earlier comparisons, so the baseline is paid for once.</td></tr>
-        <tr id="iterate"><td><code>--experiment exp_01 --retry-errors</code></td><td>Reruns, in place, the runs that errored or failed on infrastructure.</td></tr>
-        <tr><td><code>--failing exp_01</code></td><td>Runs only the tasks A failed in that comparison.</td></tr>
-        <tr id="repair"><td><code>--repair 2</code></td><td>Tells the agent its verifier failed and lets it try again, up to 2 rounds.</td></tr>
-        <tr><td><code>--max-cost 15</code></td><td>Stops starting runs once agent and judge spend reach $15.</td></tr>
+        <tr><td><code>--k</code></td><td>1</td><td>Attempts per task and arm.</td></tr>
+        <tr><td><code>--lambda</code></td><td>2</td><td>What breaking one solved task costs, in fixed tasks.</td></tr>
+        <tr><td><code>--gate-alpha</code></td><td>0.05</td><td>The one-sided significance level the wins must clear.</td></tr>
+        <tr><td><code>--tau</code></td><td>0.10</td><td>The largest share of A's solved tasks B may break.</td></tr>
+        <tr><td><code>--by suite:</code></td><td>none</td><td>Also gates each group of tasks; any group's Don't ship blocks.</td></tr>
+        <tr id="promote"><td><code>--promote</code></td><td>off</td><td>Exits 0 when B is credibly better, or cheaper within <code>--eps-q</code> (0.1) of A's pass rate.</td></tr>
+        <tr id="item-gate"><td><code>--item-gate</code></td><td>shown for one-item edits</td><td>When B adds or removes one rule, skill or file: exits 0 on KEEP or ACCEPT.</td></tr>
+        <tr id="audited"><td><code>--audited</code></td><td>off</td><td>Counts passes that <code>eval audit</code> refuted as fails.</td></tr>
+        <tr id="plugins"><td><code>--with plugin:NAME</code></td><td>none</td><td>B is A plus a Claude Code plugin. Your own agent config is not changed.</td></tr>
+        <tr id="reuse"><td><code>--reuse baseline</code></td><td>none</td><td>Copies A's finished runs from earlier comparisons, so you pay for the baseline once.</td></tr>
+        <tr id="repair"><td><code>--repair</code></td><td>none</td><td>Tells the agent its verifier failed and lets it try again, up to N rounds.</td></tr>
+        <tr><td><code>--max-cost</code></td><td>none</td><td>Starts no new run once agent and judge spend reach this.</td></tr>
       </tbody>
     </table>
   </div>
+  <p>
+    To run this on every pull request, see <a href="/docs/how-to/ci-regressions">Catch a regression in CI</a>. Every flag is in the
+    <a href="/docs/cli/compare">compare reference</a>.
+  </p>
+
   <details class="more">
-    <summary>What else compare reports</summary>
-    <ul>
-      <li id="tamper">Passing runs that edited, deleted or skipped tests, each linked to the tool call: <code>tampered passes B 3: disclosed 2, stealth 1</code>.</li>
-      <li>Each arm's failed runs by the agent's own last test run. Green fails are silent misses: the agent's tests passed and the verifier's did not.</li>
-      <li id="release">A note when the arms ran on different agent releases. <code>--promote</code> then holds and exits 1.</li>
-      <li>After <code>eval audit</code>: each arm's raw and audited pass rate, as in <code>audited pass B 60% → 30% (3 refuted, coverage 100%)</code>.</li>
-    </ul>
+    <summary>How the gate decides</summary>
     <p>
-      The method behind each line, and every flag above, is in <a href={`${GUIDE}#harness-ab`}>Harness A/B</a> and the
-      <a href="/docs/cli/compare">compare reference</a>.
+      The gate counts the tasks B fixed and the tasks B broke. Each break costs <code>--lambda</code> fixes. Ship it needs the net gain to
+      clear a one-sided exact test at <code>--gate-alpha</code>, with breaks under <code>--tau</code> of A's solved tasks. With no losses that
+      takes at least 8 wins.
+    </p>
+    <p>
+      It says Don't ship when B broke a task and either the breaks pass <code>--tau</code> or the net gain is not positive. Anything else
+      holds. The formulas are on <a href="/docs/eval-methods">How evals are computed</a>.
     </p>
   </details>
 
-  <div class="note">
-    <p>
-      <strong>Known gap.</strong> A hook-captured session starts from the commit that was checked out when it began, so uncommitted changes at
-      that point are missing and <code>eval new</code> warns. <code>coding.sh run --</code> snapshots the whole working tree before and after.
-    </p>
-  </div>
+  <h2 id="next">Next steps</h2>
+  <Cards
+    cards={[
+      { href: "/docs/how-to/test-agents-md-change", title: "Test an AGENTS.md change", body: "One edit, replayed on the turns your agent got wrong." },
+      { href: "/docs/how-to/evaluate-a-skill", title: "Evaluate a skill", body: "Whole tasks with and without a skill, graded by checks and a judge." },
+      { href: "/docs/improve", title: "What to fix first", body: "The problems in your sessions, ranked, each with a line to add." },
+      { href: "/docs/how-to/ci-regressions", title: "Catch a regression in CI", body: "The GitHub Action and `compare --gate` on pull requests." },
+    ]}
+  />
 </DocsLayout>
