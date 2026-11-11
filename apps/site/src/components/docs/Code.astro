@@ -76,8 +76,35 @@ const text = code.replace(/^\n+|\s+$/g, "");
     white-space: pre;
     tab-size: 2;
   }
+  .code__body:focus-visible {
+    outline: 2px solid var(--text);
+    outline-offset: -2px;
+  }
   .code__body code {
     font: inherit;
     color: inherit;
   }
 </style>
+
+<script>
+  // Copy is handled for every block by the delegated handler in Nav.astro.
+  // A body wider than its box scrolls sideways; only then is it a tab stop, so
+  // keyboard users can scroll it with the arrow keys (WCAG 2.1.1). No edge
+  // fade: the border is an inset shadow on the pre, and a mask would fade it too.
+  // A ResizeObserver reports after the browser's own layout, so the widths are
+  // read without forcing one; all reads come before any write, and a body is
+  // written only when its state changes.
+  const watch = new ResizeObserver((entries) => {
+    const bodies = entries.map((e) => e.target as HTMLElement);
+    const over = bodies.map((pre) => pre.scrollWidth > pre.clientWidth + 1);
+    bodies.forEach((pre, i) => {
+      if (over[i] === pre.hasAttribute("tabindex")) return;
+      if (over[i]) pre.tabIndex = 0;
+      else pre.removeAttribute("tabindex");
+    });
+  });
+  document.addEventListener("astro:page-load", () => {
+    watch.disconnect();
+    for (const pre of document.querySelectorAll(".code__body")) watch.observe(pre);
+  });
+</script>
