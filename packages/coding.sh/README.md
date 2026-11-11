@@ -6,8 +6,8 @@ Docs: [coding.sh/docs](https://coding.sh/docs) · Quickstart: [coding.sh/docs/qu
 
 # coding.sh
 
-coding.sh records what your agents do (prompts, tool calls, file changes, model calls, latency and
-token usage) into a SQLite index on your machine. You browse it in a local viewer, query it from
+coding.sh records what your AI agents do: every prompt, model call, tool call, file change and what it cost.
+It keeps them in a SQLite index on your machine. You browse it in a local viewer, query it from
 the CLI or from your agents over MCP, turn failures into evals, and compare changes with paired
 statistics. Zero runtime dependencies. Node 22.15 or newer.
 
