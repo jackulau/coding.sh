@@ -42,6 +42,8 @@ describe("viewer feel in a browser", { skip: chrome ? false : "no Chrome/Chromiu
   });
   async function open(hash = "#/", w = 1280, h = 800) {
     page = await browser.newPage();
+    // A runner whose system setting is "reduce motion" (Windows Server, hosted macOS) would turn every motion rule off.
+    await page.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
     await page.viewport(w, h);
     await page.goto(v.url);
     await page.waitFor("document.querySelector('[role=listbox]')", "sessions list");
@@ -196,6 +198,8 @@ describe("viewer feel in a browser", { skip: chrome ? false : "no Chrome/Chromiu
   test("nothing moves while idle, and the focus ring on / and the caret rotations have no dead transitions", async () => {
     await open();
     try {
+      // Idle is after the first paint's colour transitions (150 ms at most) have ended; a loop would still be running.
+      await sleep(500);
       assert.deepEqual(await page.eval("document.getAnimations().filter((a) => a.playState === 'running').map((a) => a.animationName || a.transitionProperty)"), []);
       assert.equal(await page.eval("getComputedStyle(document.getElementById('q')).transitionDuration"), "0s");
       assert.equal(await page.eval("getComputedStyle(document.querySelector('.facet-head .caret')).transitionDuration"), "0s");
