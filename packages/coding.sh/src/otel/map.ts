@@ -33,7 +33,7 @@
 import type { AgentEvent, AgentId, BlobRef, EventKind, Usage, UsageNumberKey } from "../schema/index.ts";
 import { SCHEMA_VERSION } from "../schema/index.ts";
 import { hashParts, sha256Hex } from "../core/ids.ts";
-import { noteBlobHits, type RedactionTally, type Redactor, redactionTally } from "../core/redact.ts";
+import { noteBlobHits, type RedactionTally, type Redactor, redactBlobValue, redactionTally } from "../core/redact.ts";
 import { geoValue, tierValue } from "../core/pricing.ts";
 import { anthropicPriceHints } from "../adapters/_shared/normalize.ts";
 import { type DurableTag, durableOf, durableSessionId } from "./durable.ts";
@@ -617,39 +617,6 @@ function truncateUtf8(s: string, maxBytes: number): string {
 
 const serialize = (v: unknown): string => (typeof v === "string" ? v : JSON.stringify(v) ?? "");
 
-/** A new value with `f` applied to every string in it (keys are kept). */
-function mapStrings(v: unknown, f: (s: string) => string, depth = 0): unknown {
-  if (typeof v === "string") return f(v);
-  if (depth > 64 || v === null || typeof v !== "object" || v instanceof Uint8Array) return v;
-  if (Array.isArray(v)) return v.map((x) => mapStrings(x, f, depth + 1));
-  const out: Record<string, unknown> = {};
-  for (const [k, x] of Object.entries(v)) Object.defineProperty(out, k, { value: mapStrings(x, f, depth + 1), writable: true, enumerable: true, configurable: true });
-  return out;
-}
-
-/** JSON documents inside strings are followed this deep (a tool result inside a messages attribute). */
-const JSON_STRING_DEPTH = 3;
-
-/**
- * Redacts a value for a blob: every string on its own (Redactor.value), and a
- * string that holds a JSON document as that document, the way the mapping reads
- * it (maybeJson), so a source span hides what its events hide. Such a string is
- * rewritten, as compact JSON, only when that found something.
- */
-function redactForBlob(r: Redactor, v: unknown, tally: RedactionTally, level = 0): unknown {
-  if (level >= JSON_STRING_DEPTH) return r.value(v, tally);
-  const docs = mapStrings(v, (s) => {
-    const doc = maybeJson(s);
-    if (typeof doc !== "object" || doc === null) return s;
-    const found = redactionTally();
-    const clean = JSON.stringify(redactForBlob(r, doc, found, level + 1));
-    if (clean === JSON.stringify(doc)) return s;
-    for (const [k, n] of Object.entries(found.kinds)) tally.kinds[k] = (tally.kinds[k] ?? 0) + n;
-    return clean;
-  });
-  return r.value(docs, tally);
-}
-
 /** A stored blob: its ref and the text behind it (redacted when the context has a redactor). */
 interface StoredBlob {
   ref: BlobRef;
@@ -674,7 +641,7 @@ class Blobs {
     return (await this.store(v, undefined, false)).ref;
   }
   /**
-   * Redacts `v` (redactForBlob), then serializes; the JSON text gets the string
+   * Redacts `v` (redactBlobValue), then serializes; the JSON text gets the string
    * rules too, as it did before. `counted`: the hits count for the event that
    * points at the blob (redactEventCounted). Not for a source span, which several
    * events share and whose content they count inline.
@@ -686,8 +653,7 @@ class Blobs {
       return { ref: await this.ctx.blob(text), text };
     }
     const tally = redactionTally();
-    const clean = redactForBlob(r, v, tally);
-    const text = typeof clean === "string" ? clean : r.string(serialize(clean), tally);
+    const text = redactBlobValue(r, v, tally);
     const ref = await this.ctx.blob(text);
     if (counted) noteBlobHits(ref, tally.kinds);
     return { ref, text };

@@ -616,6 +616,12 @@ export interface DetectResult {
 export interface NormalizeContext {
   /** Store large strings as blobs; returns ref. */
   blob(data: string | Uint8Array): Promise<BlobRef>;
+  /**
+   * Store a value as a blob: every string in it is redacted before it is
+   * serialized (a `NAME=value` after a newline needs the raw string), then the
+   * text as `blob` does. Adapters keep a raw source payload this way.
+   */
+  blobValue?(value: unknown): Promise<BlobRef>;
   maxInlineBytes: number;
   /** Stable id helper: sha256 of parts joined. */
   id(...parts: (string | number)[]): string;

@@ -124,6 +124,7 @@ function shrinkStrings(v: object, limit: number): unknown {
 
 /** Raw source payload as a blob (convention: blobs[0] of the first event of a line). */
 export function rawBlob(ctx: NormalizeContext, raw: unknown): Promise<BlobRef> {
+  if (ctx.blobValue) return ctx.blobValue(raw ?? "null");
   return ctx.blob(typeof raw === "string" ? raw : JSON.stringify(raw) ?? "null");
 }
 

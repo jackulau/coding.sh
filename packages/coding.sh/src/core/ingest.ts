@@ -70,7 +70,7 @@ import { deserialize, serialize } from "node:v8";
 import { dirname, join } from "node:path";
 import { hashParts, sha256Hex } from "./ids.ts";
 import { paths } from "./paths.ts";
-import { createRedactor, noteBlobHits, redactEventCounted, redactionTally, sessionToMetadata, toMetadata, type RedactionTally, type Redactor } from "./redact.ts";
+import { createRedactor, noteBlobHits, redactBlobValue, redactEventCounted, redactionTally, sessionToMetadata, toMetadata, type RedactionTally, type Redactor } from "./redact.ts";
 import { buildSession, byTime, FLAGS, foldSession, foldStamp, isBackfillEvent, isFoldState, isRealPrompt, isVerifyToolStart, sessionOf, sessionState, type SessionState } from "./sessions.ts";
 import { copyFilter } from "./message-copies.ts";
 import { priceEvent, pricesFor } from "./pricing.ts";
@@ -713,6 +713,13 @@ export function normalizeContext(profile: CaptureProfile, blobs: Pick<BlobStore,
       const tally = redactionTally();
       const clean = redactBlob(data, profile.redactor, tally);
       // Metadata mode keeps no content locally either: hand back the ref, store nothing.
+      const ref = metadata ? sha256Hex(clean) : await blobs.put(clean);
+      noteBlobHits(ref, tally.kinds);
+      return ref;
+    },
+    blobValue: async (value) => {
+      const tally = redactionTally();
+      const clean = redactBlobValue(profile.redactor, value, tally);
       const ref = metadata ? sha256Hex(clean) : await blobs.put(clean);
       noteBlobHits(ref, tally.kinds);
       return ref;

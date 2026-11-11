@@ -699,6 +699,7 @@ export async function emitText(em: Emitter, ctx: NormalizeContext, kind: "user.m
 /** Raw payload blob (blobs[0] on the first event of a line, per the schema). */
 export async function rawBlob(ctx: NormalizeContext, raw: unknown): Promise<string | undefined> {
   if (raw === undefined || raw === null) return undefined;
+  if (ctx.blobValue) return ctx.blobValue(raw);
   return ctx.blob(typeof raw === "string" ? raw : JSON.stringify(raw));
 }
 
