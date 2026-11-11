@@ -299,6 +299,36 @@ function statusLine(output: unknown): string {
   return (typeof output === "string" ? output : textOf(output)).split("\n", 1)[0] ?? "";
 }
 
+/**
+ * The exit code in a shell output's header ("Chunk ID: …\nWall time: …\nProcess exited with code 127\nOutput:\n…"),
+ * the form Codex gives the model and the hook. Only the lines before "Output:" count, so a command that prints the
+ * phrase does not set it.
+ */
+export function exitCodeOfText(output: unknown): number | undefined {
+  if (typeof output !== "string") return undefined;
+  for (const line of output.split("\n", 6)) {
+    if (line === "Output:") return undefined;
+    const m = /^Process exited with code (-?\d+)$/.exec(line);
+    if (m) return Number(m[1]);
+  }
+  return undefined;
+}
+
+/** The exit code the rollout tail holds for a call: a finished command item, or the call's output text. */
+function exitCodeFromTail(recs: unknown[], callId: string): number | undefined {
+  for (let i = recs.length - 1; i >= 0; i--) {
+    const p = obj(obj(recs[i]).payload);
+    if (p.type === "item_completed" && obj(p.item).id === callId) {
+      const it = obj(p.item);
+      return num(it.exit_code);
+    }
+    if (p.call_id === callId && (p.type === "function_call_output" || p.type === "custom_tool_call_output" || p.type === "local_shell_call_output")) {
+      return exitCodeOfText(p.output);
+    }
+  }
+  return undefined;
+}
+
 const runningCell = (status: string) => /^Script running with cell ID (\S+)/.exec(status)?.[1];
 
 /** A cell's output chunk for a command that exited nonzero (`text(await tools.exec_command(…))` prints the result JSON). */
@@ -704,8 +734,8 @@ export class CodexRolloutConverter {
       const tool = call?.tool ?? "unknown";
       const parsed = parseMaybeJson(p.output);
       const meta = obj(obj(parsed).metadata);
-      const exit = num(meta.exit_code) ?? num(obj(parsed).exit_code);
       const wrapper = call?.wrapper;
+      const exit = num(meta.exit_code) ?? num(obj(parsed).exit_code) ?? (wrapper ? undefined : exitCodeOfText(p.output));
       // A cell is ok when its script finished (or still runs) and every tool it called succeeded:
       // no failed nested record (now or later, see failCell) and no printed result with a nonzero exit.
       const ok = wrapper
@@ -855,7 +885,8 @@ export async function normalizeCodexLine(line: SpoolLine, ctx: NormalizeContext)
       // tool_response is what the tool produced, before Codex cut it for the model: no `cut` here (the rollout has it).
       const resp = raw.tool_response;
       const r = obj(resp);
-      const exit = num(r.exit_code) ?? num(r.exitCode);
+      // Bash's tool_response is the output text, with the exit code in its header; the rollout tail is the fallback.
+      const exit = num(r.exit_code) ?? num(r.exitCode) ?? exitCodeOfText(resp) ?? (typeof resp === "string" && tool === "Bash" ? exitCodeFromTail(await tail(), toolUseId) : undefined);
       const ok = (exit ?? 0) === 0 && r.success !== false && r.error == null;
       const text = outputText(resp) ?? "";
       const o = await clipText(ctx, text);
@@ -1002,7 +1033,7 @@ export const codex: Adapter = {
   // 3 (0.1.2): a hook SessionStart records how Codex was launched (originator, launch) from the rollout.
   // 4 (0.1.2): tool.end records a tool output Codex cut before the model saw it (cut).
   // 5 (0.1.5): a subagent thread's task (the agent mail addressed to it) is its user.message, so it has a title. A tool call that loads a skill names it (payload.skill).
-  parseVersion: 5,
+  parseVersion: 6,
 
   detect() {
     const home = codexHome();
