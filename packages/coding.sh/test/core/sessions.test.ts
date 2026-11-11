@@ -441,3 +441,29 @@ describe("session usage rollup", () => {
     assert.deepEqual(r.duplicate, { calls: 1, tokens: 100, costUsd: 0.03 });
   });
 });
+
+describe("a session captured over OTLP logs and from its transcript", () => {
+  const call = (id: string, source: string, ts: number, inputTokens: number): AgentEvent => ({
+    id, v: 0, sessionId: "dual", ts, agent: "claude-code", kind: "llm.call", source, durationMs: 100, model: "claude-sonnet-4-5",
+    usage: { inputTokens, outputTokens: 10 }, payload: { provider: "anthropic", ok: true },
+  });
+  const logs = [call("l1", "otel-log", 1000, 100), call("l2", "otel-log", 2000, 200)];
+  const transcript = [call("t1", "transcript", 1001, 100), call("t2", "transcript", 2001, 200)];
+  const totals = (events: AgentEvent[]) => {
+    const s = buildSession(events);
+    return { input: s.stats.usage?.inputTokens, output: s.stats.usage?.outputTokens, calls: s.stats.latency?.llmCalls, models: s.stats.models };
+  };
+
+  it("counts each model call once, in either order", () => {
+    const want = totals(transcript);
+    assert.equal(want.input, 300);
+    assert.equal(want.calls, 2);
+    assert.deepEqual(totals([...logs, ...transcript]), want);
+    assert.deepEqual(totals([...transcript, ...logs]), want);
+    assert.deepEqual(totals([logs[0]!, transcript[0]!, logs[1]!, transcript[1]!]), want);
+  });
+
+  it("counts the logs' calls when only they arrive", () => {
+    assert.deepEqual(totals(logs), { input: 300, output: 20, calls: 2, models: totals(transcript).models });
+  });
+});

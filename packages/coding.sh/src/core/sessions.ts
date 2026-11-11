@@ -81,6 +81,9 @@ export function billedCallOf(e: AgentEvent): string | undefined {
 /** A model call logged by `coding.sh proxy`. */
 const isProxyCall = (e: AgentEvent): boolean => e.kind === "llm.call" && e.source === "proxy";
 
+/** A model call or tool event the agent's OTLP logs carry (`otel-log`): a copy of what its transcript records, when the session has one. */
+const isOtelLogCopy = (e: AgentEvent): boolean => e.source === "otel-log" && (e.kind === "llm.call" || e.kind === "tool.start" || e.kind === "tool.end");
+
 export const TITLE_MAX = 280;
 /** Cap on Session.traceIds (a long-lived conversation can span many traces). */
 export const MAX_TRACE_IDS = 256;
@@ -452,7 +455,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * new derivation. A new or retyped sub-state changes the stamp by itself; a
  * new optional field or a change of meaning still needs the bump.
  */
-export const SESSION_FOLD_VERSION = 18; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory).
+export const SESSION_FOLD_VERSION = 19; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory). 19: a session with transcript model calls counts them, not the copies its OTLP logs carry (sansOtel, transcriptCalls).
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -541,6 +544,16 @@ export interface SessionState {
   sansProxy?: { usage: UsageState; latency: LatencyState; outline: OutlineState; cacheBreaks: CacheBreakState };
   /** A model call from a capture path other than the proxy. */
   otherCalls?: boolean;
+  /**
+   * An agent's OTLP logs (source "otel-log") repeat the model calls and tool
+   * events its transcript records. When the session has transcript model
+   * calls, those count, and usage, latency, phases, cache breaks and models
+   * come from this copy of their folds, which skips the logs' copies (and the
+   * proxy's calls). Made at the first log copy, whichever source came first.
+   */
+  sansOtel?: { usage: UsageState; latency: LatencyState; outline: OutlineState; cacheBreaks: CacheBreakState; models: ModelState };
+  /** A model call from a transcript (or another recorded history). */
+  transcriptCalls?: boolean;
   skills: SkillState;
   /** Memory and instruction files the events name (stats.memoryUse, core/memory-use.ts). */
   memory: MemoryUseState;
@@ -709,12 +722,23 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
   const proxyCall = isProxyCall(e);
   if (proxyCall) s.sansProxy ??= structuredClone({ usage: s.usage, latency: s.latency, outline: s.outline, cacheBreaks: s.cacheBreaks });
   else if (e.kind === "llm.call" && !isEnrichment(e)) s.otherCalls = true;
+  const otelCopy = isOtelLogCopy(e);
+  if (e.kind === "llm.call" && !isEnrichment(e) && isBackfillEvent(e)) s.transcriptCalls = true;
+  if (otelCopy) s.sansOtel ??= { ...structuredClone({ usage: (s.sansProxy ?? s).usage, latency: (s.sansProxy ?? s).latency, outline: (s.sansProxy ?? s).outline, cacheBreaks: (s.sansProxy ?? s).cacheBreaks }), models: structuredClone(s.models) };
   const sans = proxyCall ? undefined : s.sansProxy;
   if (sans) {
     foldUsage(sans.usage, e);
     foldLatency(sans.latency, e);
     foldOutline(sans.outline, e, index, failure);
     foldCacheBreaks(sans.cacheBreaks, e);
+  }
+  const sansOtel = proxyCall || otelCopy ? undefined : s.sansOtel;
+  if (sansOtel) {
+    foldUsage(sansOtel.usage, e);
+    foldLatency(sansOtel.latency, e);
+    foldOutline(sansOtel.outline, e, index, failure);
+    foldCacheBreaks(sansOtel.cacheBreaks, e);
+    foldModels(sansOtel.models, e);
   }
   foldUsage(s.usage, e);
   foldLatency(s.latency, e);
@@ -833,8 +857,9 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
   if (!s.simple && !sorted) throw new Error("sessionOf needs the events of a session with spans or enrichment");
   const id = first?.sessionId ?? prev!.id;
   // The folds that count: without the proxy's copies when another capture path recorded the calls.
-  const counted = s.sansProxy && s.otherCalls ? s.sansProxy : s;
-  const { usage, duplicate } = s.simple ? usageOf(counted.usage) : rollupUsage(counted === s ? sorted! : sorted!.filter((e) => !isProxyCall(e)));
+  const sansOtel = s.sansOtel && s.transcriptCalls ? s.sansOtel : undefined;
+  const counted = sansOtel ?? (s.sansProxy && s.otherCalls ? s.sansProxy : s);
+  const { usage, duplicate } = s.simple ? usageOf(counted.usage) : rollupUsage(counted === s ? sorted! : sorted!.filter((e) => !isProxyCall(e) && !(sansOtel && isOtelLogCopy(e))));
   const derails = derailsOf(s.derails);
   // A session.end followed by later captured activity was reopened (resumed
   // under the same id): it is not ended, whatever an earlier build stored.
@@ -899,7 +924,7 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
   if (Object.keys(usage).length) session.stats.usage = usage;
   if (duplicate) session.stats.duplicateUsage = duplicate;
   if (s.llmErrors) session.stats.llmErrors = { ...s.llmErrors };
-  const modelFold = s.otherCalls ? s.models : s.proxyModels;
+  const modelFold = sansOtel ? sansOtel.models : s.otherCalls ? s.models : s.proxyModels;
   const models = modelsOf(modelFold);
   if (models) session.stats.models = models;
   const modelSwitch = modelSwitchOf(modelFold);
