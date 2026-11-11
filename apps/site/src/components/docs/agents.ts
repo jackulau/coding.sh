@@ -12,6 +12,8 @@ export interface AdapterRow {
   id: string;
   /** verified: real sessions; real-install: real binary against a stub model; not-live: recorded payloads only, no live install yet. */
   status: "verified" | "real-install" | "not-live" | "tested";
+  /** Shown after the status: the version run, or why it has not been run live. */
+  note?: string;
   /** How live events reach the spool. */
   live: string;
   /** Where `ingest --backfill` reads history from; undefined = no backfill. */
@@ -45,6 +47,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
     name: "OpenCode",
     id: "opencode",
     status: "real-install",
+    note: "1.19.5",
     live: "plugin (2.x and 1.x)",
     backfill: "opencode.db (1.x and 2.x), JSON storage (older 1.x)",
     headless: "opencode run --format json",
@@ -54,6 +57,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
     name: "Cursor CLI",
     id: "cursor",
     status: "not-live",
+    note: "it needs a Cursor login or CURSOR_API_KEY",
     live: "hooks.json, partial in -p mode",
     backfill: "agent-transcripts/*.jsonl (undocumented format)",
     headless: "agent -p --output-format stream-json",
@@ -63,6 +67,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
     name: "T3 Code",
     id: "t3code",
     status: "real-install",
+    note: "0.1.7, driving Pi",
     live: "its Codex and Claude Code hooks, tagged as T3",
     backfill: "~/.t3/userdata/statev2.sqlite (and v1 state.sqlite)",
     headless: "none (desktop app; it runs codex app-server or the Claude Agent SDK)",
@@ -81,6 +86,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
     name: "Gemini CLI, older installs",
     id: "gemini-cli",
     status: "not-live",
+    note: "Gemini CLI moved to Antigravity CLI; this adapter reads sessions from older installs",
     live: "settings.json hooks",
     backfill: "tmp/<slug>/chats/*.jsonl",
     headless: "gemini -p -o stream-json",
@@ -90,6 +96,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
     name: "GitHub Copilot CLI",
     id: "copilot-cli",
     status: "real-install",
+    note: "1.0.107",
     live: "hooks/coding-sh.json",
     backfill: "session-state/<id>/events.jsonl",
     headless: "copilot -p --output-format=json",
@@ -99,6 +106,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
     name: "Amp",
     id: "amp",
     status: "not-live",
+    note: "it needs an ampcode.com login",
     live: "plugin",
     headless: "amp -x --stream-json",
     subagents: "Task, oracle, librarian, finder tool calls span the subagent",
@@ -107,6 +115,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
     name: "Pi",
     id: "pi",
     status: "real-install",
+    note: "1.5.0",
     live: "extension",
     backfill: "sessions/--<cwd>--/*.jsonl",
     headless: "pi -p --mode json",
@@ -116,6 +125,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
     name: "Factory Droid",
     id: "droid",
     status: "real-install",
+    note: "1.6.0",
     live: "hooks.json",
     backfill: "sessions/-<cwd>/*.jsonl",
     headless: "droid exec -o json",
@@ -125,6 +135,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
     name: "Goose",
     id: "goose",
     status: "real-install",
+    note: "1.57.0",
     live: "plugin hooks.json",
     backfill: "sessions.db",
     headless: "goose run --output-format stream-json",
@@ -134,6 +145,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
     name: "Aider",
     id: "aider",
     status: "real-install",
+    note: "0.86.2",
     live: "coding.sh run -- aider … (each reply's tokens and cost from Aider's analytics log)",
     headless: "aider --message … --yes-always --no-stream",
     subagents: "None",
@@ -142,6 +154,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
     name: "Any other command",
     id: "wrapper",
     status: "tested",
+    note: "covered by CI; there is no third-party agent to check against",
     live: "coding.sh run -- <cmd>",
     headless: "the command itself",
     subagents: "None",

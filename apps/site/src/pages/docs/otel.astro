@@ -1,207 +1,406 @@
 ---
 import DocsLayout from "../../components/docs/DocsLayout.astro";
 import Code from "../../components/docs/Code.astro";
-import Terminal from "../../components/Terminal.astro";
+import CodeTabs from "../../components/docs/CodeTabs.astro";
+import Cards from "../../components/docs/Cards.astro";
 
-// Setup snippets follow the header comment of packages/coding.sh/src/otel/receiver.ts.
-const startReal = `coding.sh collector`;
+// Every example and output on this page was run on 2026-11-11 against scripts/e2e/stub-model.mjs,
+// with a packed build of coding.sh 0.1.6, a temp HOME and CODING_SH_HOME, and `coding.sh collector`.
+// The OpenAI Agents SDK, LangGraph and app.py outputs were recorded again with the stub answering as
+// gpt-5-mini (its model name, token counts near a real call, about 100 output tokens a second).
+// openai-agents 0.24.0 + openinference-instrumentation-openai-agents 2.8.0; langgraph 1.2.20 +
+// openinference-instrumentation-langchain 0.1.83; @anthropic-ai/claude-agent-sdk 0.3.322;
+// Agent Runs through scripts/e2e/agent-runs-capture.mjs --receiver.
 
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-const m = (s: string) => `<span class="t-muted">${esc(s)}</span>`;
-const t = (s: string) => `<span class="t-text">${esc(s)}</span>`;
-const COLLECTOR = [
-  `${m("$")} ${t("coding.sh collector")}`,
-  "export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318",
-  "export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf",
-  "export OTEL_TRACES_EXPORTER=otlp",
-  "export OTEL_LOGS_EXPORTER=otlp",
-  "export CLAUDE_CODE_ENABLE_TELEMETRY=1",
-  m("  Ready on http://127.0.0.1:4318"),
-  m("  Press Ctrl-C to stop"),
-].join("\n");
-
-const claudeEnv = `export CLAUDE_CODE_ENABLE_TELEMETRY=1
+const collectorOut = `export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+export OTEL_TRACES_EXPORTER=otlp
 export OTEL_LOGS_EXPORTER=otlp
-export OTEL_EXPORTER_OTLP_PROTOCOL=http/json        # or http/protobuf
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
-export OTEL_LOG_USER_PROMPTS=1         # prompt text (session titles); off by default
-export OTEL_LOG_TOOL_DETAILS=1         # tool_parameters (Bash commands, file paths)
-export OTEL_LOGS_EXPORT_INTERVAL=1000  # ms, default 5000
-# optional, beta: spans too. Model/tool calls seen in both logs and spans
-# are de-duplicated by request_id / tool_use_id.
-export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1 OTEL_TRACES_EXPORTER=otlp`;
+export CLAUDE_CODE_ENABLE_TELEMETRY=1
+  Ready on http://127.0.0.1:4318
+  Press Ctrl-C to stop`;
 
-const agentSdkTs = `// options.env replaces the environment, so spread process.env into it
-query({
-  prompt,
-  options: {
-    env: {
-      ...process.env,
-      CLAUDE_CODE_ENABLE_TELEMETRY: "1",
-      OTEL_LOGS_EXPORTER: "otlp",
-      OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf",
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:4318",
-    },
-  },
-});`;
+const agentsInstall = `pip install openai-agents openinference-instrumentation-openai-agents \\
+  opentelemetry-sdk opentelemetry-exporter-otlp-proto-http`;
 
-const aiSdkSetup = `// instrumentation.ts
-// npm i @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-proto
-import { NodeSDK } from "@opentelemetry/sdk-node";
-import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
-
-const sdk = new NodeSDK({
-  serviceName: "my-agent",
-  traceExporter: new OTLPTraceExporter({ url: "http://127.0.0.1:4318/v1/traces" }),
-});
-sdk.start(); // short scripts: await sdk.shutdown() before exit to flush`;
-
-const aiSdkCall = `// AI SDK 6 and earlier: per call
-await generateText({
-  model,
-  prompt,
-  experimental_telemetry: {
-    isEnabled: true,
-    functionId: "my-agent",
-    metadata: { sessionId: "chat-123" },
-  },
-});
-
-// AI SDK 7: once at startup (npm i @ai-sdk/otel); the per-call option is \`telemetry\`
-import { registerTelemetry } from "ai";
-import { OpenTelemetry } from "@ai-sdk/otel";
-registerTelemetry(new OpenTelemetry());`;
-
-const nextjs = `// Next.js: registerOTel from @vercel/otel, with the endpoint in the environment
-// OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
-registerOTel({ serviceName: "my-agent" });`;
-
-const openaiPy = `# pip install openai-agents openinference-instrumentation-openai-agents \\
-#   opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
+const agentsPy = `from agents import Agent, Runner, function_tool
 from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-provider = TracerProvider(resource=Resource.create({"service.name": "my-agent"}))
-provider.add_span_processor(
-    BatchSpanProcessor(OTLPSpanExporter(endpoint="http://127.0.0.1:4318/v1/traces"))
+provider = TracerProvider(resource=Resource.create({"service.name": "coding-sh-triage"}))
+provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint="http://127.0.0.1:4318/v1/traces")))
+OpenAIAgentsInstrumentor().instrument(tracer_provider=provider)  # also replaces OpenAI's own trace upload
+
+@function_tool
+def list_labels() -> list[str]:
+    """The repo's labels."""
+    return ["bug", "cli", "docs", "sdk", "viewer"]
+
+agent = Agent(
+    name="triage",
+    instructions="Pick labels for this GitHub issue. Call list_labels first. Answer with the labels only.",
+    model="gpt-5-mini",
+    tools=[list_labels],
 )
-OpenAIAgentsInstrumentor().instrument(tracer_provider=provider)
-# OPENAI_AGENTS_DISABLE_TRACING=1 also stops uploads to OpenAI's tracing backend.`;
+result = Runner.run_sync(agent, "Viewer search misses tool output")
+print(result.final_output)
+provider.shutdown()  # sends the spans before the script exits`;
 
-const openaiTs = `// npm i @arizeai/openinference-instrumentation-openai-agents \\
-//   @opentelemetry/exporter-trace-otlp-proto
-// Register a NodeTracerProvider with
-//   new BatchSpanProcessor(new OTLPTraceExporter({ url: "http://127.0.0.1:4318/v1/traces" }))
-// then:
-new OpenAIAgentsInstrumentation({ tracerProvider }).manuallyInstrument(agents);`;
+const agentsTree = `187809985675330cbb4e3553051c023a
+  1 subagent  ·  3.7s  ·  1 tool calls  ·  $0.0006
+  in 144  out 306  cache -
 
-const langchain = `# OpenInference: pip install openinference-instrumentation-langchain
-# (plus the TracerProvider / OTLPSpanExporter setup from the OpenAI Agents SDK example)
+187809985675330cbb4e3553051c023a  coding-sh-triage  3.7s  0 tools
+  └ otel-sub-187809985675330cbb4e3553051c023a-bd63609e80df1b97  triage  gpt-5-mini  3.7s  1 tools  $0.0006`;
+
+const agentsChild = `otel-sub-187809985675330cbb4e3553051c023a-bd63609e80df1b97
+  Session       otel-sub-187809985675330cbb4e3553051c023a-bd63609e80df1b97
+  Agent         coding-sh-triage  gpt-5-mini
+  Repo          -
+  Started       Nov 11 08:56 (16s ago)
+  Duration      3.7s
+  Turns         0, 1 tool calls, 0 files changed
+  Tokens        in 144  out 306  cache -  $0.0006 (estimated)
+  Latency       2 llm calls, p50 1.6s, p95 2.1s; tools 4ms (p95 4ms)
+  Parent        187809985675330cbb4e3553051c023a
+
+    +0ms  span        turn
+    +0ms  session.start
+    +3ms  llm         gpt-5-mini 2.1s in 71 out 152 $0.0003 est
+   +2.1s  tool        list_labels   ok 4ms
+   +2.1s  span        turn
+   +2.1s  llm         gpt-5-mini 1.6s in 73 out 154 $0.0003 est
+   +3.7s  assistant   bug, viewer
+   +3.7s  session.end completed`;
+
+const graphInstall = `pip install langgraph langchain-openai openinference-instrumentation-langchain \\
+  opentelemetry-sdk opentelemetry-exporter-otlp-proto-http`;
+
+const graphPy = `from langchain_core.tools import tool
+from langchain_openai import ChatOpenAI
+from langgraph.prebuilt import create_react_agent
 from openinference.instrumentation.langchain import LangChainInstrumentor
-LangChainInstrumentor().instrument(tracer_provider=provider)`;
-
-const langsmith = `# or LangSmith's OTel exporter: pip install "langsmith[otel]"
-export LANGSMITH_OTEL_ENABLED=true LANGSMITH_TRACING=true LANGSMITH_OTEL_ONLY=true
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 OTEL_SERVICE_NAME=my-agent
-# LangGraph thread_id metadata (langsmith.metadata.thread_id) groups traces into one session.`;
-
-const pythonEnv = `# pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318   # base URL: the SDK appends /v1/traces
-export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf           # the Python HTTP exporter speaks protobuf only
-export OTEL_SERVICE_NAME=my-agent                          # becomes the agent id (kebab-cased)
-# A signal-specific OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is used verbatim: include /v1/traces.`;
-
-const pythonCode = `from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
-provider = TracerProvider()
-provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
-trace.set_tracer_provider(provider)
-# logs: from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter`;
+provider = TracerProvider(resource=Resource.create({"service.name": "coding-sh-triage"}))
+provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint="http://127.0.0.1:4318/v1/traces")))
+LangChainInstrumentor().instrument(tracer_provider=provider)
+
+@tool
+def list_labels() -> list[str]:
+    """The repo's labels."""
+    return ["bug", "cli", "docs", "sdk", "viewer"]
+
+agent = create_react_agent(ChatOpenAI(model="gpt-5-mini"), [list_labels],
+                           prompt="Pick labels for this GitHub issue. Call list_labels first. Answer with the labels only.")
+result = agent.invoke({"messages": [("user", "Proxy log is empty after init --proxy")]})
+print(result["messages"][-1].content)
+provider.shutdown()`;
+
+const graphOut = `Proxy log is empty after init --proxy
+  Session       bea36ccfe274b971fd63a638ef3593ae
+  Agent         coding-sh-triage
+  Repo          -
+  Started       Nov 11 08:55 (6s ago)
+  Duration      3.6s
+  Turns         1, 1 tool calls, 0 files changed
+  Latency       tools 1ms (p95 1ms)
+
+    +0ms  session.start
+    +0ms  user        Proxy log is empty after init --proxy
+    +4ms  subagent    start  Proxy log is empty after init --proxy
+   +2.0s  subagent    end 2.0s
+   +2.0s  span        tools
+   +2.0s  tool        list_labels   ok 1ms
+   +2.0s  subagent    start  Proxy log is empty after init --proxy
+   +3.6s  subagent    end 1.5s
+   +3.6s  turn.end
+   +3.6s  session.end completed
+
+Subagents
+  └ otel-sub-bea36ccfe274b971fd63a638ef3593ae-f63c06845b1c6832  coding-sh-triage  2.0s  0 tools  Proxy log is empty after init --proxy
+  └ otel-sub-bea36ccfe274b971fd63a638ef3593ae-71cbc79f34fb0280  coding-sh-triage  1.5s  0 tools  Proxy log is empty after init --proxy`;
+
+const langsmithEnv = `pip install "langsmith[otel]"
+export LANGSMITH_OTEL_ENABLED=true LANGSMITH_TRACING=true LANGSMITH_OTEL_ONLY=true
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 OTEL_SERVICE_NAME=coding-sh-triage`;
+
+const langsmithCall = `agent.invoke({"messages": [("user", "Proxy log is empty after init --proxy")]},
+             {"configurable": {"thread_id": "issue-901"}, "metadata": {"thread_id": "issue-901"}})`;
+
+const langsmithOut = `ID         AGENT             STARTED  DURATION  TURNS  TOOLS  TITLE
+issue-901  coding-sh-triage  12s ago  878ms     0      1      LangGraph`;
+
+const claudeSdk = `import { query } from "@anthropic-ai/claude-agent-sdk";
+
+const prompt = process.argv[2] ?? "Write hello.txt";
+for await (const msg of query({
+  prompt,
+  options: {
+    env: {
+      ...process.env, // options.env replaces the environment, so keep yours
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1",
+      OTEL_LOGS_EXPORTER: "otlp",
+      OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:4318",
+      OTEL_LOG_USER_PROMPTS: "1", // prompt text, used as the session title
+      OTEL_LOGS_EXPORT_INTERVAL: "1000",
+    },
+  },
+})) {
+  if (msg.type === "result") console.log(msg.result);
+}`;
+
+const claudeSdkOut = `ID                                    AGENT        STARTED  DURATION  TURNS  TOOLS  TITLE
+a3d1261b-fb5a-46a2-a110-4545fe7768fd  claude-code  8s ago   2.5s      1      0      Label this issue: Viewer search misses tool o…`;
+
+const claudeEnv = `export CLAUDE_CODE_ENABLE_TELEMETRY=1
+export OTEL_LOGS_EXPORTER=otlp
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+export OTEL_LOG_USER_PROMPTS=1         # prompt text (session titles); off by default
+export OTEL_LOG_TOOL_DETAILS=1         # tool parameters (commands, file paths)
+export OTEL_LOGS_EXPORT_INTERVAL=1000  # ms, default 5000`;
+
+const pyInstall = `pip install "coding-sh[otel]" openai openinference-instrumentation-openai`;
+
+const pyApp = `from openai import OpenAI
+from openinference.instrumentation.openai import OpenAIInstrumentor
+from coding_sh.otel import configure
+
+provider = configure(service="coding-sh-triage", url="http://127.0.0.1:4318")  # TracerProvider + OTLP exporter
+OpenAIInstrumentor().instrument(tracer_provider=provider)  # one span per OpenAI call
+
+res = OpenAI().chat.completions.create(
+    model="gpt-5-mini",
+    messages=[{"role": "user", "content": "Label this issue: Viewer search misses tool output"}],
+)
+print(res.choices[0].message.content)
+provider.shutdown()  # sends the spans before the script exits`;
+
+const pyOut = `Label this issue: Viewer search misses tool output
+  Session       9b72688aa02430dd189b9609e2f4ddff
+  Agent         coding-sh-triage  gpt-5-mini
+  Repo          -
+  Started       Nov 11 08:55 (3s ago)
+  Duration      1.8s
+  Turns         1, 0 tool calls, 0 files changed
+  Tokens        in 14  out 154  cache -  $0.0003 (estimated)
+  Latency       1 llm calls, p50 1.8s, p95 1.8s
+
+    +0ms  session.start
+    +0ms  user        Label this issue: Viewer search misses tool output
+    +0ms  llm         gpt-5-mini 1.8s in 14 out 154 $0.0003 est
+   +1.8s  assistant   bug, viewer
+   +1.8s  turn.end
+   +1.8s  session.end completed`;
+
+const otelEnv = `export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318   # base URL: the SDK appends /v1/traces
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+export OTEL_SERVICE_NAME=coding-sh-triage                  # becomes the agent name`;
+
+const envProvider = `provider = TracerProvider()  # reads OTEL_SERVICE_NAME
+provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))  # reads OTEL_EXPORTER_OTLP_ENDPOINT
+OpenAIInstrumentor().instrument(tracer_provider=provider)`;
+
+const harness = `// instrumentation.ts (durable-harness)
+import { agentRuns } from "durable-harness/instrumentation/otel";
+import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+
+export const tracing = agentRuns({
+  spanProcessors: [new BatchSpanProcessor(new OTLPTraceExporter({ url: "http://127.0.0.1:4318/v1/traces" }))],
+});
+export function register() {
+  tracing.register();
+}`;
+
+const eve = `// agent/instrumentation/coding-sh.ts (eve)
+import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+import { otelIntegration } from "eve/instrumentation/otel";
+
+export default otelIntegration({
+  spanProcessors: [new BatchSpanProcessor(new OTLPTraceExporter({ url: "http://127.0.0.1:4318/v1/traces" }))],
+});`;
+
+const agentRunsOut = `What is the weather in Paris?
+  Session       wrun_demo
+  Agent         durable-harness  0.0.2  claude-sonnet-4-5
+  Repo          -
+  Started       Nov 11 04:39 (29m ago)
+  Duration      246ms
+  Turns         1, 1 tool calls, 0 files changed
+  Tokens        in 450  out 65  cache 1.9k  $0.0035 (estimated)
+  Latency       2 llm calls, p50 1ms, p95 172ms; tools 41ms (p95 41ms)
+
+    +0ms  session.start
+    +0ms  user        What is the weather in Paris?
+   +13ms  notification
+   +16ms  llm         claude-sonnet-4-5 172ms in 400 out 40 $0.0020 est
+  +241ms  tool        get_weather   ok 41ms
+  +241ms  notification
+  +242ms  llm         claude-sonnet-4-5 1ms in 50 out 25 $0.0014 est
+  +243ms  assistant   It is 18 C and clear in Paris.
+  +246ms  turn.end`;
+
+const grouping = `from openinference.instrumentation import using_session
+
+for question in ["Viewer search misses tool output", "Which labels fit?"]:
+    with using_session("issue-777"):  # both runs become turns of the session issue-777
+        result = Runner.run_sync(agent, question)`;
 ---
 
 <DocsLayout>
   <p>
-    <code>coding.sh collector</code> (alias <code>otel</code>) runs a local OTLP/HTTP receiver. Anything that exports OpenTelemetry traces
-    or logs can send to it, and each run shows up as a session next to your coding-agent sessions.
-  </p>
-  <p>
-    For a step-by-step path that also covers the SDKs and evals, see <a href="/docs/how-to/trace-your-agent">Trace your own agent</a>.
+    Start a receiver, point your framework's OpenTelemetry exporter at it, and run your agent. One trace becomes one
+    <a href="/docs/concepts">session</a>: model-call spans become model calls with tokens and cost, and tool spans become tool calls.
   </p>
 
   <h2 id="start">Start the receiver</h2>
-  <Code code={startReal} />
-  <p>It runs in the foreground. The environment for an exporter goes to stdout; status goes to stderr.</p>
-  <Terminal title="coding.sh collector" label="Output of coding.sh collector">
-    <pre set:html={COLLECTOR} />
-  </Terminal>
-  <ul>
-    <li>Routes: <code>POST /v1/traces</code>, <code>/v1/logs</code> (mapped to events) and <code>/v1/metrics</code> (accepted, then dropped).</li>
-    <li>Bodies: <code>application/x-protobuf</code> or <code>application/json</code>, optionally gzip, deflate or br encoded.</li>
-    <li>It binds to 127.0.0.1. <code>--host</code> changes the interface and <code>--port 0</code> picks any free port.</li>
-    <li>Secrets are redacted before anything is stored, the same as for hook events.</li>
-  </ul>
+  <Code code="coding.sh collector" />
+  <Code title="output" code={collectorOut} />
   <p>
-    The receiver reads OpenTelemetry GenAI conventions (<code>gen_ai.*</code>), OpenInference (<code>openinference.span.kind</code>,
-    <code>llm.*</code>, <code>tool.*</code>), the Vercel AI SDK (<code>ai.*</code>), and Claude Code, Codex and older Gemini CLI log events
-    (<code>claude_code.api_request</code> and similar).
+    Leave it running and start your agent in another terminal. <code>coding.sh sessions</code> lists the runs and <code>coding.sh ui</code>
+    opens them in the viewer. <code>coding.sh serve</code> takes OTLP on the same port and adds the viewer; run one or the other.
   </p>
 
-  <h2 id="claude-code">Claude Code and the Claude Agent SDK</h2>
-  <p>The Agent SDK inherits Claude Code's environment variables.</p>
-  <Code code={claudeEnv} />
-  <p>Agent SDK in TypeScript:</p>
-  <Code title="typescript" code={agentSdkTs} />
-  <p>
-    In Python, <code>ClaudeAgentOptions(env=&#123;...&#125;)</code> takes the same keys and is merged over <code>os.environ</code>. Don't use the
-    console exporter under the SDK: it corrupts the SDK's stdout channel.
-  </p>
-
-  <h2 id="vercel-ai-sdk">Vercel AI SDK</h2>
-  <Code title="instrumentation.ts" code={aiSdkSetup} />
-  <Code title="typescript" code={aiSdkCall} />
-  <Code title="typescript" code={nextjs} />
+  <details class="more" id="receiver">
+    <summary>What the receiver accepts</summary>
+    <ul>
+      <li><code>POST /v1/traces</code> and <code>/v1/logs</code>, as protobuf or JSON, optionally gzip, deflate or br encoded. <code>/v1/metrics</code> is accepted and dropped.</li>
+      <li>OpenTelemetry GenAI attributes (<code>gen_ai.*</code>), OpenInference, the Vercel AI SDK (<code>ai.*</code>), and the log events of Claude Code, Codex and older Gemini CLI.</li>
+      <li>It binds to <code>127.0.0.1</code>. <code>--port 0</code> picks a free port. <code>--keep-raw</code> also keeps each source span.</li>
+      <li>Secrets are removed before anything is stored, as for every other session.</li>
+    </ul>
+  </details>
 
   <h2 id="openai-agents">OpenAI Agents SDK</h2>
-  <p>Through OpenInference. Python:</p>
-  <Code title="python" code={openaiPy} />
-  <p>TypeScript:</p>
-  <Code title="typescript" code={openaiTs} />
+  <p>Install the SDK with the OpenInference instrumentor, and register it before the agent runs:</p>
+  <Code code={agentsInstall} />
+  <Code title="triage_agent.py" code={agentsPy} />
+  <div class="note">
+    <p>
+      Don't set <code>OPENAI_AGENTS_DISABLE_TRACING</code>. It turns off the Agents SDK's tracing, so these spans stop too and nothing reaches
+      coding.sh. The instrumentor already replaces OpenAI's own trace upload.
+    </p>
+  </div>
+  <p><code>python triage_agent.py</code> prints <code>bug, viewer</code>. Then <code>coding.sh tree latest</code> shows how the run was stored:</p>
+  <Code title="output" code={agentsTree} />
+  <p>
+    Today a run arrives as two sessions. The root session stands for the run and has no title, model or cost. The agent's work, its model
+    calls, tool calls and cost, is in a child session named after the agent. <code>coding.sh sessions</code> lists only the root; add
+    <code>--subagents</code> to list both, or open the child:
+  </p>
+  <Code code="coding.sh show otel-sub-187809985675330cbb4e3553051c023a-bd63609e80df1b97" />
+  <Code title="output" code={agentsChild} />
 
   <h2 id="langgraph">LangChain and LangGraph</h2>
-  <Code title="python" code={langchain} />
-  <Code code={langsmith} />
+  <p>The OpenInference instrumentor records LangChain and LangGraph runs:</p>
+  <Code code={graphInstall} />
+  <Code title="triage_graph.py" code={graphPy} />
+  <p>
+    <code>coding.sh show latest</code> prints the run. The root session takes its title from the first user message and holds the tool calls.
+    Each model step of the graph is a child session.
+  </p>
+  <Code title="output" code={graphOut} />
+  <details class="more" id="langsmith">
+    <summary>Send with LangSmith's OpenTelemetry exporter instead</summary>
+    <p>LangSmith can export OpenTelemetry only, with no LangSmith account. Set these and run the graph without the instrumentor:</p>
+    <Code code={langsmithEnv} />
+    <p>A LangGraph <code>thread_id</code> in the run's metadata becomes the session id, so every run of a thread is one session:</p>
+    <Code title="python" code={langsmithCall} />
+    <Code title="output" code={langsmithOut} />
+  </details>
+
+  <h2 id="claude-agent-sdk">Claude Agent SDK</h2>
+  <p>The Agent SDK runs Claude Code, which exports its own telemetry when you pass these variables:</p>
+  <Code code="npm install @anthropic-ai/claude-agent-sdk" />
+  <Code title="claude-agent.mjs" code={claudeSdk} />
+  <Code code={`node claude-agent.mjs "Label this issue: Viewer search misses tool output"\ncoding.sh sessions`} />
+  <p>
+    The run is recorded under the agent <code>claude-code</code>, titled with the prompt. In Python, <code>ClaudeAgentOptions(env=&#123;...&#125;)</code>
+    takes the same keys. Don't use the console exporter under the SDK: it writes to the channel the SDK reads.
+  </p>
+  <Code title="output" code={claudeSdkOut} />
+  <details class="more" id="claude-code">
+    <summary>Claude Code in a terminal</summary>
+    <p>
+      <code>coding.sh init</code> records Claude Code with hooks, which needs nothing here (see <a href="/docs/agents">Coding agents</a>). To
+      also send its telemetry, export these before you start it:
+    </p>
+    <Code code={claudeEnv} />
+  </details>
+
+  <h2 id="vercel-ai-sdk">Vercel AI SDK</h2>
+  <p>
+    The coding.sh SDK's <code>aiSdkTracer()</code> sends the AI SDK's spans with no OpenTelemetry setup. The complete example, for AI SDK 7
+    and earlier versions, is in <a href="/docs/how-to/trace-your-agent#trace-the-vercel-ai-sdk">Trace your agent with the SDK</a>. An app
+    that already registers a tracer provider can point its OTLP exporter at <code>http://127.0.0.1:4318/v1/traces</code> instead.
+  </p>
 
   <h2 id="python">Any Python app</h2>
-  <Code code={pythonEnv} />
-  <Code title="python" code={pythonCode} />
+  <p>
+    <code>coding_sh.otel.configure()</code> builds the tracer provider and the exporter. Any OpenTelemetry instrumentation then sends to
+    coding.sh; here, OpenInference's for the OpenAI client:
+  </p>
+  <Code code={pyInstall} />
+  <Code title="app.py" code={pyApp} />
+  <Code title="output" code={pyOut} />
+  <details class="more" id="env">
+    <summary>Configure with environment variables instead</summary>
+    <p>The OpenTelemetry SDK reads these. A signal-specific <code>OTEL_EXPORTER_OTLP_TRACES_ENDPOINT</code> is used as is, so include <code>/v1/traces</code>.</p>
+    <Code code={otelEnv} />
+    <p>The provider and exporter then need no arguments:</p>
+    <Code title="app.py" code={envProvider} />
+  </details>
+
+  <h2 id="agent-runs">Vercel Agent Runs and eve</h2>
+  <p>
+    eve and durable-harness trace each agent turn for Vercel Agent Runs. Add the receiver as one more span processor, and each run is also
+    a coding.sh session; Agent Runs keeps its copy.
+  </p>
+  <CodeTabs
+    group="agent-runs"
+    tabs={[
+      { label: "durable-harness", title: "instrumentation.ts", code: harness },
+      { label: "eve", title: "agent/instrumentation/coding-sh.ts", code: eve },
+    ]}
+  />
+  <p>
+    Each run (<code>agent.run.id</code>) is one session under the agent <code>eve</code> or <code>durable-harness</code>. A durable-harness turn
+    with one tool call, in <code>coding.sh show wrun_demo</code>:
+  </p>
+  <Code title="output" code={agentRunsOut} />
+  <p>
+    A session's <code>traceAudience</code> decides what the spans record. With the default capture, <code>private</code> and
+    <code>unknown</code> sessions record models, tools, timing and usage, but no prompts or replies.
+  </p>
 
   <h2 id="grouping">Group traces into one session</h2>
   <p>
-    One trace is one session. Set <code>gen_ai.conversation.id</code> or <code>session.id</code> on spans (AI SDK:
-    <code>metadata.sessionId</code>), and every trace with that id becomes a turn of one session. With OpenInference:
-    <code>with using_session("chat-123"):</code>.
+    Set <code>gen_ai.conversation.id</code> or <code>session.id</code> on the spans, and every trace with that id becomes a turn of one
+    session. The AI SDK takes <code>metadata.sessionId</code>. With OpenInference, wrap the runs in <code>using_session</code>:
   </p>
+  <Code title="python" code={grouping} />
   <p>Tag eval runs with <code>OTEL_RESOURCE_ATTRIBUTES=coding_sh.run_id=&lt;id&gt;</code>.</p>
 
   <details class="more" id="sessions">
     <summary>How spans become sessions</summary>
     <p>
-      Spans from <a href="https://github.com/vercel/eve">eve</a> agents are recognized and enriched.
+      Model-call spans become <code>llm.call</code> events with duration, model and token usage. Tool spans become <code>tool.start</code> and
+      <code>tool.end</code>. Nested agent spans become subagents with their own child session. Usage is read only from model-call spans,
+      because agent spans usually repeat their children's totals.
     </p>
     <p>
-      Model-call spans become <code>llm.call</code> events with duration, model and token usage. Tool spans become
-      <code>tool.start</code>/<code>tool.end</code>. Nested agent spans become subagents with their own child session. Usage is read only from
-      model-call spans, because agent spans usually repeat their children's totals.
-    </p>
-    <p>
-      Spans arrive out of order, so after each batch the touched sessions are rebuilt from all their events. Event ids derive from the trace
-      and span ids, so exporter retries insert nothing.
+      Spans arrive out of order, so after each batch the sessions they touch are rebuilt from all their events. Event ids come from the trace
+      and span ids, so an exporter's retries store nothing twice.
     </p>
     <div class="doc-table">
       <table>
@@ -209,54 +408,51 @@ trace.set_tracer_provider(provider)
         <tbody>
           <tr>
             <td><code>gen_ai.usage.reasoning.output_tokens</code>, AI SDK <code>reasoningTokens</code>, Codex <code>reasoning_token_count</code>, Gemini CLI <code>thoughts_token_count</code></td>
-            <td><code>payload.reasoningTokens</code> on the <code>llm.call</code>. Part of the output tokens, so totals do not change.</td>
+            <td>The reasoning tokens of the model call. They are part of the output tokens, so totals do not change.</td>
           </tr>
           <tr>
             <td><code>gen_ai.skill.name</code> on a tool span</td>
-            <td><code>payload.skill</code>, with <code>skillSource</code> and <code>skillResource</code>.</td>
+            <td>The skill, with its source and resource. The session gets a <code>skill:&lt;name&gt;</code> tag.</td>
           </tr>
           <tr>
             <td><code>gen_ai.skill.script.exit_code</code></td>
-            <td><code>exitCode</code> on <code>tool.end</code>.</td>
+            <td>The tool call's exit code.</td>
           </tr>
           <tr>
             <td>Claude Code <code>skill_activated</code>, Codex <code>codex.skill_invocation</code></td>
             <td>The skill, recorded as invoked.</td>
           </tr>
           <tr>
-            <td><code>gen_ai.conversation.compacted</code></td>
-            <td>One <code>context.compact</code> event per session.</td>
-          </tr>
-          <tr>
-            <td>Claude Code <code>compaction</code></td>
-            <td>A <code>context.compact</code> event with <code>tokensBefore</code>, <code>tokensAfter</code>, <code>ok</code> and the duration.</td>
+            <td><code>gen_ai.conversation.compacted</code>, Claude Code <code>compaction</code></td>
+            <td>A compaction event; Claude Code's also has the tokens before and after.</td>
           </tr>
           <tr>
             <td><code>gen_ai.main_agent.name</code> on the resource</td>
             <td>The agent name, ahead of <code>service.name</code>.</td>
           </tr>
           <tr>
-            <td>Claude Code <code>agent_id</code>, <code>parent_agent_id</code></td>
-            <td>Tags a subagent's events. The parent is kept as <code>payload.parentAgentId</code>.</td>
-          </tr>
-          <tr>
-            <td>Codex <code>codex.agent_response</code></td>
-            <td>Links a subagent's thread to the parent thread (<code>parent.conversation.id</code>).</td>
+            <td>Claude Code <code>agent_id</code>, <code>parent_agent_id</code>; Codex <code>codex.agent_response</code></td>
+            <td>Links a subagent's events to its parent.</td>
           </tr>
         </tbody>
       </table>
     </div>
-    <p>
-      Each skill becomes a <code>skill:&lt;name&gt;</code> tag on the session. Placeholder names such as <code>custom_skill</code> are skipped.
-      A reported cache read or write of 0 is left out.
-    </p>
   </details>
 
-  <h2 id="forward">Forward and sinks</h2>
+  <h2 id="forward">Forward to another collector</h2>
   <p>
-    Configured <a href="/docs/storage#sinks">sinks</a> mirror events received over OTLP, in both <code>coding.sh collector</code> and
-    <code>coding.sh serve</code>. <code>coding.sh serve</code> can also forward every trace it commits to another OTLP collector: set
-    <code>CODING_SH_FORWARD_URL</code>. See
-    <a href="https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md#19-forward-and-sinks">Forward and sinks</a>.
+    Configured <a href="/docs/storage#sinks">sinks</a> get a copy of every event received over OTLP, in <code>collector</code> and
+    <code>serve</code>. <code>coding.sh serve</code> can also forward every trace it stores to another OTLP collector: set
+    <code>CODING_SH_FORWARD_URL</code>. See <a href="/docs/production">Trace an app in production</a>.
   </p>
+
+  <h2 id="next">Next steps</h2>
+  <Cards
+    cards={[
+      { href: "/docs/how-to/trace-your-agent", title: "Trace your agent with the SDK", body: "Wrap an OpenAI or Anthropic client in TypeScript or Python." },
+      { href: "/docs/evals", title: "Evals", body: "Score your agent on a set of cases." },
+      { href: "/docs/production", title: "Trace an app in production", body: "Run `coding.sh serve` with keys and a database." },
+      { href: "/docs/how-to/trace-durable-workflow", title: "Trace a durable workflow", body: "One session across crashes, retries and deploys." },
+    ]}
+  />
 </DocsLayout>

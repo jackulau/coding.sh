@@ -128,7 +128,7 @@ when its URL env var (`LITELLM_PROXY_API_BASE`, `LITELLM_PROXY_URL`, `KONG_PROXY
 any base URL on port 8317, unless the host belongs to another gateway.
 
 After `coding.sh init --proxy` the agent's base URL is the coding.sh proxy, and the gateway is the URL the proxy
-chains to ([Capture with the proxy](../how-to/capture-with-proxy.md#already-using-a-gateway-or-cliproxyapi)). The
+chains to ([Capture with the proxy](../how-to/capture-with-proxy.md#5-record-claude-code-and-codex)). The
 proxy tags each call it logs with that gateway, and `gateway status` and `doctor` read the chained URL from
 `~/.coding.sh/proxy-installs.json`, so the session tag and the reported route stay the same.
 

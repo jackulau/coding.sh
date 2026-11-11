@@ -1,23 +1,64 @@
 ---
 import DocsLayout from "../../components/docs/DocsLayout.astro";
 import Code from "../../components/docs/Code.astro";
+import Cards from "../../components/docs/Cards.astro";
 import { ADAPTER_ROWS, PLANNED_AGENTS, STATUS_LABEL } from "../../components/docs/agents";
 import AgentLogo from "../../components/AgentLogo.astro";
 
-const proxy = `coding.sh init --proxy              # Claude Code and Codex
-eval "$(coding.sh proxy env)"        # any other client`;
+// Outputs on this page are real runs of coding.sh 0.1.6 (packed from the repo) under a temp HOME on
+// 2026-11-11; the repo path in the `run` output is scrubbed to /work/demo.
+
+const setup = `npx coding.sh          # or: coding.sh init
+coding.sh doctor       # checks each agent's capture`;
+
+const statusInstall = `coding.sh statusline install`;
+const statusBlock = `"statusLine": { "type": "command", "command": "coding.sh statusline", "padding": 0 }`;
+const statusTry = `echo '{"session_id":"a3d1261b-fb5a-46a2-a110-4545fe7768fd","model":{"display_name":"Opus 5.5"}}' | coding.sh statusline`;
+const statusOut = `Opus 5.5  ·  $0.0011 session  ·  $0.2867 today`;
+
+const t3 = `coding.sh sessions --where agent:t3code
+coding.sh sessions --where 'agent:t3code provider:codex'
+coding.sh usage --by agent-model --since 30d`;
+const t3Eval = `coding.sh eval init --session <session-id> --agent codex --verifier 'npm test'`;
+
+const pi = `coding.sh init --agent pi
+coding.sh sessions --where agent:pi`;
+const piEval = `coding.sh eval init --sessions --agent pi --verifier 'npm test'
+coding.sh eval run failures --yes`;
+
+const run = `coding.sh run -- sh -c 'echo "# Notes" > NOTES.md'
+coding.sh show latest`;
+const runOut = `✓ Captured session e155e2c8-38c9-45e4-b2ae-88c8bea490bf (1.0s, exit 0)
+e155e2c8-38c9-45e4-b2ae-88c8bea490bf
+  Session       e155e2c8-38c9-45e4-b2ae-88c8bea490bf
+  Agent         wrapper
+  Repo          /work/demo (master)
+  Started       Nov 11 05:22 (19s ago)
+  Duration      7.5s
+  Turns         0, 0 tool calls, 1 files changed
+  Flags         no-verification
+  Snapshot      8f8a330 → efe2b4d: 1 file (+1 -0): NOTES.md
+
+    +0ms  session.start
+   +7.5s  file        add NOTES.md
+   +7.5s  session.end exit`;
+
 const hook = `/bin/sh "/Users/you/.coding.sh/bin/hook.sh" <agent-id> <EventName>   # absolute, quoted path
 node "C:/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>      # on Windows`;
 ---
 
 <DocsLayout>
   <p>
-    What coding.sh captures from each agent, and how. Each agent has an adapter that installs capture, maps the agent's events into the
-    <a href="/docs/trace-format">trace format</a>, imports past sessions and drives the agent headless for eval runs, in an isolated config so
-    your own setup is never touched. Agents without hooks are recorded by wrapping the command: <code>coding.sh run -- &lt;cmd&gt;</code>.
+    <code>coding.sh init</code> finds the coding agents on your machine, installs capture for each one, and imports their past sessions.
+    Your own agent is recorded with the <a href="/docs/how-to/trace-your-agent">SDK</a> or <a href="/docs/otel">OpenTelemetry</a> instead.
+  </p>
+  <Code code={setup} />
+  <p>
+    <code>coding.sh sessions</code> then lists every agent's sessions together. Each adapter keeps your agent's config as it was, apart
+    from the entries it adds, and <code>coding.sh uninstall</code> removes only those.
   </p>
 
-  <h2 id="matrix">Matrix</h2>
+  <h2 id="matrix">Supported agents</h2>
   <div class="doc-table doc-table--stack">
     <table>
       <thead>
@@ -25,8 +66,7 @@ node "C:/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>      # on Win
           <th>Agent</th>
           <th>Status</th>
           <th>Live capture</th>
-          <th>Backfill</th>
-          <th>Headless runs</th>
+          <th>Past sessions</th>
         </tr>
       </thead>
       <tbody>
@@ -38,38 +78,142 @@ node "C:/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>      # on Win
                 <br />
                 <code class="t-muted">{a.id}</code>
               </td>
-              <td data-label="Status">{STATUS_LABEL[a.status]}</td>
-              <td data-label="Live capture">{a.live}</td>
-              <td data-label="Backfill">{a.backfill ?? "None"}</td>
-              <td data-label="Headless runs">
-                <code>{a.headless}</code>
+              <td data-label="Status">
+                <span>{STATUS_LABEL[a.status]}{a.note && <span class="t-muted">{a.status === "not-live" || a.status === "tested" ? `: ${a.note}` : ` (${a.note})`}</span>}</span>
               </td>
+              <td data-label="Live capture">{a.live}</td>
+              <td data-label="Past sessions">{a.backfill ?? "None"}</td>
             </tr>
           ))
         }
       </tbody>
     </table>
   </div>
-  <div class="doc-table">
-    <table>
-      <thead><tr><th>Status</th><th>Means</th></tr></thead>
-      <tbody>
-        <tr><td>Verified on real sessions</td><td>Checked against real sessions of the agent.</td></tr>
-        <tr><td>Verified on a real install</td><td>The current release ran a session against a local stub model; its hooks fired, the session was checked, and the payloads are CI fixtures.</td></tr>
-        <tr><td>Not run live</td><td>CI checks it against the agent's documented and recorded formats. Nobody has run it on a live install yet.</td></tr>
-      </tbody>
-    </table>
-  </div>
+  <details class="more" id="statuses">
+    <summary>What the statuses mean</summary>
+    <div class="doc-table">
+      <table>
+        <thead><tr><th>Status</th><th>Means</th></tr></thead>
+        <tbody>
+          <tr><td>Verified on real sessions</td><td>Checked against sessions from a live install of the agent, as well as the CI tests.</td></tr>
+          <tr><td>Verified on a real install</td><td>The release in brackets ran a session against a local stand-in model, its hooks fired, and our tests now replay that session.</td></tr>
+          <tr><td>Not run live</td><td>Nobody has run it on a live install yet, for the reason given. A report that it works moves it to verified.</td></tr>
+          <tr><td>Tested</td><td>Covered by CI tests.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      If you use an agent that is not run live, an <a href="https://github.com/jackulau/coding.sh/issues/new?template=agent-support.yml">agent support report</a>
+      saying whether it worked moves it to verified.
+    </p>
+  </details>
+  <details class="more" id="headless">
+    <summary>The commands eval runs use</summary>
+    <div class="doc-table">
+      <table>
+        <thead><tr><th>Agent</th><th>Headless command</th></tr></thead>
+        <tbody>
+          {
+            ADAPTER_ROWS.map((a) => (
+              <tr>
+                <td class="nowrap">{a.name}</td>
+                <td><code>{a.headless}</code></td>
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+    </div>
+  </details>
+
+  <h2 id="claude-code">Claude Code</h2>
   <p>
-    If you use an agent that is not run live yet, an <a href="https://github.com/jackulau/coding.sh/issues/new?template=agent-support.yml">agent support report</a>
-    saying whether it worked moves it to verified.
+    <code>init</code> adds hooks to <code>settings.json</code> and registers the coding.sh MCP server. Past sessions come from the
+    transcripts under <code>projects/</code>.
+  </p>
+  <h3 id="status-line">Show cost and flags in the status line</h3>
+  <p>This puts the model, the session's cost, today's cost across all sessions, and the worst failure flag under the prompt:</p>
+  <Code code={statusInstall} />
+  <p>It writes this block into your Claude Code <code>settings.json</code>, and the line appears on the next turn:</p>
+  <Code title="settings.json" code={statusBlock} />
+  <p>Claude Code runs the command each turn with the session id on stdin. To see the line yourself:</p>
+  <Code code={statusTry} />
+  <Code title="output" code={statusOut} />
+  <ul>
+    <li>A flag shows only for a real failure, never for a tag such as <code>skill:pdf</code>. The flag part is left out when there is none.</li>
+    <li><code>install</code> won't replace another tool's status line. <code>--force</code> replaces it and keeps the old one for <code>uninstall</code>.</li>
+    <li><code>coding.sh statusline uninstall</code> puts <code>settings.json</code> back as it was before <code>install</code>.</li>
+    <li>The command needs coding.sh on your <code>PATH</code>. With no store or unexpected input it prints nothing and exits 0.</li>
+  </ul>
+
+  <h2 id="codex">Codex CLI</h2>
+  <p>
+    Codex runs new hooks only after you approve them. After <code>init</code>, start <code>codex</code>, run <code>/hooks</code> and approve the
+    coding.sh hooks once. coding.sh never approves them for you; eval runs pass <code>--dangerously-bypass-hook-trust</code> inside their own
+    <code>CODEX_HOME</code>.
+  </p>
+
+  <h2 id="t3-code">T3 Code</h2>
+  <p>
+    T3 Code is a desktop app that runs other agents: Codex, Claude Code, OpenCode, Cursor, Pi, Grok and ACP agents. It needs no hooks.
+    coding.sh reads copies of its databases (<code>statev2.sqlite</code>, and the older <code>state.sqlite</code>) before each read and never
+    writes to them.
+  </p>
+  <Code code={t3} />
+  <ul>
+    <li>Each thread is one session under the agent <code>t3code</code>. Its <code>provider</code> names the agent T3 Code ran.</li>
+    <li>A thread that ran Codex or Claude Code is the same session as that agent's own transcript, so it shows once. Let <code>init</code> set up those two agents for live capture.</li>
+    <li>For Grok and ACP agents, the content and the tokens per turn come from T3 Code's store.</li>
+    <li>Switching a thread to another agent, and a T3 subagent thread, each make a child session.</li>
+    <li>T3 Code has no headless mode, so an eval runs the agent it ran. Pass <code>--agent</code>:</li>
+  </ul>
+  <Code code={t3Eval} />
+  <p>
+    coding.sh finds T3 Code when <code>~/.t3/userdata</code> exists (<code>$T3CODE_HOME/userdata</code> when set) or, on macOS, when it is
+    in <code>/Applications</code>. It has not been run on Windows yet.
+  </p>
+
+  <h2 id="pi">Pi</h2>
+  <p>
+    <code>init</code> writes one file, the extension <code>~/.pi/agent/extensions/coding-sh.ts</code>, and imports the sessions in
+    <code>~/.pi/agent/sessions</code>. Pi loads extensions when a session starts, so start a new one to record live.
+  </p>
+  <Code code={pi} />
+  <ul>
+    <li>The extension only listens: it can't block or change a prompt or a tool call.</li>
+    <li>Each model call keeps Pi's own cost, so Pi's figures are not estimates.</li>
+    <li>Thinking blocks are not stored. Pi has no subagents.</li>
+    <li><code>--scope project</code> writes <code>.pi/extensions/coding-sh.ts</code>, which Pi loads headless only in a trusted project or with <code>--approve</code>.</li>
+  </ul>
+  <p>Evals run <code>pi --mode json --approve</code> in their own agent directory with a copy of your <code>auth.json</code>:</p>
+  <Code code={piEval} />
+
+  <h2 id="other-notes">Other agents</h2>
+  <ul>
+    <li><strong>Cursor CLI</strong> also runs Claude Code hooks from <code>.claude/settings.json</code>. The Claude Code adapter drops those, so each Cursor event is stored once.</li>
+    <li><strong>Antigravity CLI</strong> (<code>agy</code>) replaced Gemini CLI. Use the <code>antigravity</code> adapter; <code>gemini-cli</code> still reads older installs.</li>
+    <li><strong>Amp</strong> keeps threads on its servers, so there are no past sessions to import.</li>
+    <li><strong>Goose</strong> hooks carry no model or tool output. Importing past sessions adds them.</li>
+    <li><strong>Aider</strong> has no hooks. Run it as <code>coding.sh run -- aider …</code>, which reads each reply's tokens and cost from Aider's analytics log.</li>
+  </ul>
+
+  <h2 id="run">Record any other command</h2>
+  <p>
+    <code>coding.sh run -- &lt;cmd&gt;</code> records any command as a session: start, end, exit code, duration and the files it changed,
+    from git snapshots taken before and after. It records no prompts, tool calls or tokens.
+  </p>
+  <Code code={run} />
+  <Code title="output" code={runOut} />
+  <p>
+    {PLANNED_AGENTS.join(", ")} have no adapter yet; record them this way. Kiro's OpenTelemetry export is daily account totals, so the
+    receiver can't use it.
   </p>
 
   <h2 id="subagents">Subagents</h2>
   <p>
-    A subagent appears as <code>subagent.start</code> and <code>subagent.end</code> events in the parent session, paired by
-    <code>subagentId</code>. When the agent keeps a separate transcript or session for the subagent, that becomes a child session whose
-    <code>parent</code> points back. <code>coding.sh sessions --subagents</code> lists child sessions.
+    A subagent is a <code>subagent.start</code> and <code>subagent.end</code> pair in the parent session. When the agent keeps a separate
+    transcript for it, that becomes a child session. <code>coding.sh sessions --subagents</code> lists child sessions and
+    <code>coding.sh tree &lt;id&gt;</code> shows the tree.
   </p>
   <div class="doc-table">
     <table>
@@ -92,47 +236,32 @@ node "C:/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>      # on Win
     </table>
   </div>
 
-  <h2 id="hook">The hook command</h2>
-  <p>Every adapter installs the same command:</p>
-  <Code code={hook} />
-  <ul>
-    <li>It exits 0 every time and prints nothing, unless an agent's protocol requires a reply (Cursor's <code>beforeSubmitPrompt</code> gets <code>&#123;"continue":true&#125;</code>).</li>
-    <li>It never answers a permission question. Where an agent treats a hook's silence or exit code as a decision (Cursor's permission events, Copilot's <code>preToolUse</code>, Antigravity's <code>PreToolUse</code>, Amp's <code>tool.call</code>), that event is not registered at all.</li>
-    <li>Entries are marked (<code>"_codingsh": true</code> where the format allows) so <code>uninstall</code> removes only ours. Where a format has no room for a marker, ownership is recorded in <code>~/.coding.sh/installs.json</code>.</li>
-    <li>The original file is backed up to <code>~/.coding.sh/backups</code> before every edit.</li>
-  </ul>
+  <details class="more" id="hook">
+    <summary>The hook command</summary>
+    <p>Every adapter installs the same command:</p>
+    <Code code={hook} />
+    <ul>
+      <li>It exits 0 every time and prints nothing, unless an agent's protocol needs a reply (Cursor's <code>beforeSubmitPrompt</code> gets <code>&#123;"continue":true&#125;</code>).</li>
+      <li>It never answers a permission question. Events where an agent reads a hook's silence or exit code as a decision are not registered.</li>
+      <li>Entries are marked (<code>"_codingsh": true</code> where the format allows), or listed in <code>~/.coding.sh/installs.json</code>, so <code>uninstall</code> removes only ours.</li>
+      <li>The original file is backed up to <code>~/.coding.sh/backups</code> before every edit.</li>
+    </ul>
+  </details>
 
-  <h2 id="notes">Agent notes</h2>
-  <ul>
-    <li><strong>Codex</strong> runs new hooks only after you trust them with <code>/hooks</code>. coding.sh never writes trust hashes; eval runs pass <code>--dangerously-bypass-hook-trust</code> inside an isolated <code>CODEX_HOME</code>.</li>
-    <li><strong>Cursor</strong> also runs Claude Code hooks from <code>.claude/settings.json</code>. Those payloads are dropped by the Claude Code adapter, so each Cursor event is captured once.</li>
-    <li><strong>Amp</strong> keeps threads server-side, so there is no local backfill.</li>
-    <li>
-      <strong>Kiro CLI</strong> has no adapter yet. Wrap it:
-      <code>coding.sh run -- kiro-cli chat --v3 --no-interactive --trust-all-tools "…"</code>. That records start, end, exit code,
-      duration and file changes, but not prompts, tool calls or tokens.
-    </li>
-    <li>
-      Kiro's OpenTelemetry export is a daily push of account totals, not per-session spans, so the local OTLP receiver can't use it. The
-      Kiro IDE is not captured.
-    </li>
-    <li><strong>Antigravity CLI</strong> (<code>agy</code>) replaced Gemini CLI. Record it with the <code>antigravity</code> adapter; <code>gemini-cli</code> still reads sessions from older installs.</li>
-  </ul>
-
-  <h2 id="proxy">Model API proxy</h2>
+  <h2 id="proxy">Record every model call</h2>
   <p>
-    Hooks and transcripts record what an agent did. To also record what it sent the model (the full system prompt, tool definitions
-    and messages of every call), route it through the local proxy:
-  </p>
-  <Code code={proxy} />
-  <p>
-    <code>init --proxy</code> points Claude Code and Codex at <code>coding.sh proxy</code> on <code>127.0.0.1:4320</code> and starts it. Each
-    call lands in the session the hooks capture. An agent that already calls a gateway keeps calling it, through the proxy. See
-    <a href="/docs/how-to/capture-with-proxy">Capture with the proxy</a>.
+    Hooks and transcripts record what an agent did. To also keep what it sent the model, the full system prompt, tools and messages of each
+    call, run <code>coding.sh init --proxy</code>. See <a href="/docs/how-to/capture-with-proxy">Log every model call with the proxy</a>.
   </p>
 
-  <h2 id="other-agents">Other agents</h2>
-  <p>{PLANNED_AGENTS.join(", ")} have no adapter yet. Record them with <code>coding.sh run -- &lt;cmd&gt;</code>, which keeps the start, end, exit code, duration and file changes.</p>
+  <h2 id="next">Next steps</h2>
+  <Cards
+    cards={[
+      { href: "/docs/explore", title: "Find and read runs", body: "Search, filter and open the sessions you recorded." },
+      { href: "/docs/how-to/capture-with-proxy", title: "Log every model call", body: "See why the prompt cache missed and compare two calls." },
+      { href: "/docs/evals", title: "Evals", body: "Turn sessions that went wrong into cases and score a change." },
+    ]}
+  />
 </DocsLayout>
 
 <style>

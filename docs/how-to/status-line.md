@@ -22,10 +22,11 @@ This writes a `statusLine` block into your Claude Code `settings.json`:
 Claude Code shows the line on the next turn. It looks like this:
 
 ```text
-Opus 4.8  ·  $0.42 session  ·  $6.18 today  ·  ! no-verification
+Opus 5.5  ·  $0.0011 session  ·  $0.2867 today
 ```
 
-The flag part is dropped when there is nothing to report. Only real failures show — a tag with a
+A session with a failure flag adds it at the end (`  ·  ! no-verification`). The flag part is
+dropped when there is nothing to report. Only real failures show — a tag with a
 colon (`gateway:vercel`, `skill:pdf`) and context-only flags (`compaction`, `model:switch`) are
 not failures. Among the rest, a defect outranks a risk, which outranks an inefficiency, so the one
 most worth your attention is the one you see.
@@ -49,7 +50,7 @@ unexpected it prints nothing and exits 0, so the status line never disrupts the 
 Print the line yourself to see it, or pass `--json` for the parts:
 
 ```sh
-echo '{"session_id":"<id>","model":{"display_name":"Opus 4.8"}}' | coding.sh statusline
+echo '{"session_id":"<id>","model":{"display_name":"Opus 5.5"}}' | coding.sh statusline
 echo '{"session_id":"<id>"}' | coding.sh statusline --json
 ```
 

@@ -10,17 +10,17 @@ agent's hook config, payload ids and known breakage, see [ADAPTERS.md](../ADAPTE
 | Claude Code | hooks + transcript, subagents | yes | yes | Verified on real sessions |
 | Codex CLI | hooks + rollout files, subagents | yes | yes | Verified on real sessions. Codex runs new hooks only after you approve them once with `/hooks`. |
 | Antigravity CLI (`agy`, formerly Gemini CLI) | hooks + transcript | yes | no | Verified on real sessions |
-| Gemini CLI, older installs | hooks + chat files, subagents | yes | yes | Not run live |
+| Gemini CLI, older installs | hooks + chat files, subagents | yes | yes | Not run live: Gemini CLI moved to Antigravity CLI; this adapter reads sessions from older installs. |
 | OpenCode | plugin + session database | yes | yes | Verified on a real install (1.19.5) |
-| Cursor CLI | hooks + transcript | yes | yes | Not run live: `agent` needs a Cursor login or `CURSOR_API_KEY`, and it only talks to Cursor's own API, so a local model can't stand in. In `-p` mode Cursor does not fire `stop` or `beforeSubmitPrompt`. |
+| Cursor CLI | hooks + transcript | yes | yes | Not run live: it needs a Cursor login or `CURSOR_API_KEY`. In `-p` mode Cursor does not fire `stop` or `beforeSubmitPrompt`. |
 | GitHub Copilot CLI | hooks + session state | yes | no | Verified on a real install (1.0.107) |
 | Factory Droid | hooks + transcript | yes | no | Verified on a real install (1.6.0). `droid exec` fires no `UserPromptSubmit`, so the prompt comes from the transcript. |
 | Goose | plugin hooks + session database | yes | no | Verified on a real install (1.57.0). Hooks carry no model or tool output; history import adds them. |
 | Pi | extension + transcript | yes | no | Verified on a real install (1.5.0) |
-| Amp | plugin | no | no | Not run live: `amp` needs an ampcode.com login and has no local model option. |
+| Amp | plugin | no | no | Not run live: it needs an ampcode.com login. |
 | T3 Code | reads its local store on every ingest | yes | no | Verified on a real install (0.1.7, driving Pi) |
 | Aider | wrapper (`coding.sh run -- aider …`), with each reply's tokens and cost read from Aider's analytics log while it runs; eval runs parse its token and cost lines | no | no | Verified on a real install (0.86.2) |
-| Anything else | `coding.sh run -- <cmd>`: shadow-git snapshots before and after | no | no | Tested |
+| Anything else | `coding.sh run -- <cmd>`: shadow-git snapshots before and after | no | no | Tested: covered by CI; there is no third-party agent to check against. |
 
 What the statuses mean:
 
@@ -39,8 +39,8 @@ What the statuses mean:
 
 Import past sessions with `coding.sh ingest --backfill [--since 30d]`.
 
-Guides for one agent: [coding.sh with T3 Code](../use-cases/t3-code.md) and
-[coding.sh with Pi](../use-cases/pi.md).
+What T3 Code and Pi sessions record, the Claude Code status line (`coding.sh statusline install`)
+and `coding.sh run -- <cmd>` are on the site: [Record coding agents](https://coding.sh/docs/agents).
 
 ## Model API proxy
 
@@ -85,4 +85,4 @@ tokens or calls to the session's stats, whichever source arrived first.
 Point any SDK at the base URL, or set a signal-specific endpoint such as
 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces`.
 
-Framework notes: [LLM gateways](../integrations/ai-gateway.md), [eve](../integrations/eve.md).
+Framework notes: [Trace a framework with OpenTelemetry](https://coding.sh/docs/otel), [LLM gateways](../integrations/ai-gateway.md), [eve](../integrations/eve.md).

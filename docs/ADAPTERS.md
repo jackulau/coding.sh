@@ -92,7 +92,7 @@ Harness surfaces:
 ## Replay
 
 `coding.sh replay` rebuilds the files a session touched from its tool calls (see
-[Explore](guides/explore.md#replay)). What each agent's capture gives it, checked on the fixtures in
+[Explore](guides/explore.md#replay-a-session)). What each agent's capture gives it, checked on the fixtures in
 `test/fixtures/adapters` by `test/core/replay.test.ts`:
 
 | Agent | Content known from | Left unknown |

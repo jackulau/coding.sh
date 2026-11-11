@@ -1,259 +1,446 @@
-# Trace your own agent
+# Trace your agent with the SDK
 
-Record the agent you built (OpenAI Agents SDK, LangGraph, Vercel AI SDK, Claude Agent SDK, or plain
-Python or TypeScript) on your machine, then turn its runs into evals and compare two versions.
+Wrap your OpenAI or Anthropic client, mark tool calls and conversations, and see each run in the
+viewer. TypeScript and Python.
 Site version: [coding.sh/docs/how-to/trace-your-agent](https://coding.sh/docs/how-to/trace-your-agent).
 
-There are two ways in:
+The SDK sends each run of your agent to `coding.sh serve` on your machine. A run is a session: the
+prompt, every model call with its tokens, latency and cost, every tool call, and the answer. The
+example here is an agent that picks labels for coding.sh's own GitHub issues.
 
-| Your agent | Send with | Local receiver |
-|---|---|---|
-| Already uses OpenTelemetry, or a framework with an OTel instrumentation | its OTLP exporter | `coding.sh collector` |
-| Plain TypeScript or Python | the coding.sh SDK | `coding.sh serve` |
+## Record your first run
 
-Both write to the same local store as your coding-agent sessions, so `coding.sh sessions`, `show`,
-`search`, `ui`, datasets and experiments work on them the same way.
+Install coding.sh and the SDK, and start the local server:
 
-## Option 1: OpenTelemetry into the collector
-
-Start the receiver. It prints the environment an exporter needs and listens on `127.0.0.1:4318`:
-
-```sh
-coding.sh collector
+```sh tab=TypeScript title=shell
+npm install -g coding.sh
+npm install @codingdotsh/sdk openai
 ```
 
-Point your exporter at it. In Python:
-
-```sh
-pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
-export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-export OTEL_SERVICE_NAME=support-agent
+```sh tab=Python title=shell
+npm install -g coding.sh
+pip install coding-sh openai
 ```
-
-```python
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-
-provider = TracerProvider()
-provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
-trace.set_tracer_provider(provider)
-```
-
-Then turn on your framework's instrumentation. The setup for the OpenAI Agents SDK, LangChain and
-LangGraph, the Vercel AI SDK and the Claude Agent SDK is on
-[OpenTelemetry](https://coding.sh/docs/otel). The collector reads the GenAI semantic conventions
-(`gen_ai.*`), OpenInference and the AI SDK's `ai.*` attributes.
-
-The collector stores each span's events, not the span itself. Start it with `--keep-raw` to also
-keep every source span as a blob on its event.
-
-One trace becomes one session. Spans with the same `gen_ai.conversation.id` or `session.id` become
-turns of one session. Model-call spans become model calls with tokens and latency; tool spans
-become tool calls.
-
-In Node, set the service name on the resource. A bare `NodeTracerProvider` ignores
-`OTEL_SERVICE_NAME`, and the session is then recorded under the agent name `otel`:
-
-```js
-import { BatchSpanProcessor, NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
-import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
-import { resourceFromAttributes } from "@opentelemetry/resources";
-
-const provider = new NodeTracerProvider({
-  resource: resourceFromAttributes({ "service.name": "support-agent" }),
-  spanProcessors: [new BatchSpanProcessor(new OTLPTraceExporter())],
-});
-provider.register();
-// ... your agent ...
-await provider.shutdown(); // flushes spans before a short script exits
-```
-
-To check the collector without an agent, post one OTLP JSON file to it:
-
-```sh
-curl -fsSL -o genai-semconv.json \
-  https://raw.githubusercontent.com/jackulau/coding.sh/main/packages/coding.sh/test/fixtures/otel/genai-semconv.json
-curl -s -X POST -H 'content-type: application/json' --data @genai-semconv.json \
-  http://127.0.0.1:4318/v1/traces
-coding.sh sessions
-```
-
-```text
-ID                                AGENT        STARTED                   DURATION  TURNS  TOOLS         TITLE
-5b8efff798038103d269b633813fc60c  weather-bot  2026-01-01T00:00:00.000Z  5.0s      1      2 (1 failed)  What's the weather in Paris?
-```
-
-## Option 2: the SDK into a local serve
-
-The SDKs send to `coding.sh serve`, which takes both the SDK's format and OTLP on one port. On
-your machine it binds to `127.0.0.1:4318` and needs no keys. Stop the collector first if it is
-running; they use the same port.
 
 ```sh
 coding.sh serve
 ```
 
-The TypeScript SDK is on npm. The Python SDK is not on PyPI yet, so install it from a checkout:
-
-```sh
-npm install @codingdotsh/sdk                                        # in your agent's folder
-git clone https://github.com/jackulau/coding.sh ~/src/coding.sh
-pip install ~/src/coding.sh/packages/sdk-python                    # Python
-```
-
-Tell the SDK where to send. Without `CODING_SH_URL` it does nothing.
+It logs two JSON lines (`store opened`, then `listening`), prints `http://127.0.0.1:4318` and keeps
+running. It takes traces from the SDK and from
+OpenTelemetry, keeps them in `~/.coding.sh`, and serves the viewer on the same address. In another
+terminal, tell the SDK where to send:
 
 ```sh
 export CODING_SH_URL=http://127.0.0.1:4318
-export CODING_SH_SERVICE=support-agent    # the agent name in sessions
+export CODING_SH_SERVICE=coding-sh-triage    # the agent name in the session list
 ```
 
-### TypeScript
+Without `CODING_SH_URL` the SDK does nothing, so the same code is safe to ship. Wrap the client
+once. Every call through it is recorded:
 
-`agent.mjs`. The two stand-in functions are where your tool and model call go. It takes a question
-on the command line, or a case on stdin when `coding.sh exp run` calls it (used below).
+```js tab=TypeScript title=triage.mjs
+import OpenAI from "openai";
+import { observe } from "@codingdotsh/sdk";
 
-```js
-import { readFileSync } from "node:fs";
-import { flush, span, trace } from "@codingdotsh/sdk";
+const openai = observe(new OpenAI()); // records every call: prompt, answer, tokens, latency, cost
 
-// Stand-ins for your tool and model call.
-const lookupOrder = async (id) => ({ id, status: "shipped" });
-const answer = async (question, order) => (order ? `Order ${order.id} is ${order.status}.` : "Let me check on that.");
+const issue = process.argv[2] ?? "Viewer search misses tool output";
+const res = await openai.chat.completions.create({
+  model: "gpt-5-mini",
+  messages: [
+    { role: "system", content: "Pick labels for this GitHub issue from the repo's label list. Answer with the labels only." },
+    { role: "user", content: issue },
+  ],
+});
+console.log(res.choices[0].message.content);
+```
 
-// A question from the command line, or a case from `coding.sh exp run` on stdin (as JSON).
-const question = process.argv[2] ?? JSON.parse(readFileSync(0, "utf8"));
-const useTools = process.env.USE_TOOLS !== "0";
+```python tab=Python title=triage.py
+import sys
+import coding_sh
+from openai import OpenAI
 
-const reply = await trace(
-  "support-reply",
-  async () => {
-    const id = Number(question.match(/\d+/)?.[0]);
-    const order = useTools && id ? await span("tool", "lookup_order", () => lookupOrder(id), { input: { id } }) : undefined;
-    return answer(question, order);
-  },
-  { input: question },
-);
-console.log(reply);
+client = coding_sh.observe(OpenAI())  # records every call: prompt, answer, tokens, latency, cost
+
+issue = sys.argv[1] if len(sys.argv) > 1 else "Viewer search misses tool output"
+res = client.chat.completions.create(
+    model="gpt-5-mini",
+    messages=[
+        {"role": "system", "content": "Pick labels for this GitHub issue from the repo's label list. Answer with the labels only."},
+        {"role": "user", "content": issue},
+    ],
+)
+print(res.choices[0].message.content)
+coding_sh.flush()  # send before the script exits
+```
+
+`observe()` also takes an Anthropic client: see [Use Anthropic](#use-anthropic). In Python it takes
+`AsyncOpenAI` and `AsyncAnthropic` too. Run the agent, then list the sessions:
+
+```sh tab=TypeScript title=shell
+node triage.mjs "Viewer search misses tool output"
+coding.sh sessions
+```
+
+```sh tab=Python title=shell
+python triage.py "Viewer search misses tool output"
+coding.sh sessions
+```
+
+```text
+bug, viewer
+ID                                AGENT             STARTED  DURATION  TURNS  TOOLS  TITLE
+2fe7283ac26adbe28d51840412f44206  coding-sh-triage  3s ago   2.1s      1      0      Viewer search misses tool output
+```
+
+Open `http://127.0.0.1:4318` and click the row to see the run step by step.
+
+![The coding.sh viewer showing one coding-sh-triage run titled "Viewer search misses tool output": the gpt-5-mini call from OpenAI selected, with 34 input and 195 output tokens, its duration and cost, and the answer "bug, viewer".](shot:docs/sdk-session "One run in the viewer.")
+
+`coding.sh show <id>` prints the same run in the terminal:
+
+```text
+Viewer search misses tool output
+  Session       2fe7283ac26adbe28d51840412f44206
+  Agent         coding-sh-triage  gpt-5-mini
+  Repo          -
+  Started       Nov 11 08:52 (4s ago)
+  Duration      2.1s
+  Turns         1, 0 tool calls, 0 files changed
+  Tokens        in 34  out 195  cache -  $0.0004 (estimated)
+  Latency       1 llm calls, p50 2.1s, p95 2.1s
+
+    +0ms  session.start
+    +0ms  user        Viewer search misses tool output
+    +0ms  llm         gpt-5-mini 2.1s in 34 out 195 $0.0004 est
+   +2.1s  assistant   bug, viewer
+   +2.1s  turn.end
+   +2.1s  session.end completed
+```
+
+## Use Anthropic
+
+Wrap `new Anthropic()` the same way. The call takes `system` and `max_tokens` as their own fields,
+and the answer is in `content[0].text`:
+
+```sh tab=TypeScript title=shell
+npm install @codingdotsh/sdk @anthropic-ai/sdk
+```
+
+```sh tab=Python title=shell
+pip install coding-sh anthropic
+```
+
+```js tab=TypeScript title=triage.mjs
+import Anthropic from "@anthropic-ai/sdk";
+import { observe } from "@codingdotsh/sdk";
+
+// observe() records each call: the messages, the answer, tokens, latency and cost.
+const anthropic = observe(new Anthropic());
+
+const issue = process.argv[2] ?? "Viewer search misses tool output";
+const res = await anthropic.messages.create({
+  model: "claude-sonnet-5-5",
+  max_tokens: 1024,
+  system: "Pick labels for this GitHub issue from the repo's label list. Answer with the labels only.",
+  messages: [{ role: "user", content: issue }],
+});
+console.log(res.content[0].text);
+```
+
+```python tab=Python title=triage.py
+import sys
+
+import coding_sh
+from anthropic import Anthropic
+
+# observe() records each call: the messages, the answer, tokens, latency and cost.
+client = coding_sh.observe(Anthropic())
+
+issue = sys.argv[1] if len(sys.argv) > 1 else "Viewer search misses tool output"
+res = client.messages.create(
+    model="claude-sonnet-5-5",
+    max_tokens=1024,
+    system="Pick labels for this GitHub issue from the repo's label list. Answer with the labels only.",
+    messages=[{"role": "user", "content": issue}],
+)
+print(res.content[0].text)
+coding_sh.flush()  # send before the script exits
+```
+
+With `ANTHROPIC_API_KEY` set, `node triage.mjs` prints `bug, viewer`, and `coding.sh show latest`
+prints:
+
+```text
+Viewer search misses tool output
+  Session       9089cc9c3411d2bfff80f5ba2dac60de
+  Agent         coding-sh-triage  claude-sonnet-5-5
+  Repo          -
+  Started       Nov 11 08:52 (2s ago)
+  Duration      1.2s
+  Turns         1, 0 tool calls, 0 files changed
+  Tokens        in 32  out 5  cache -  $0.0001 (estimated)
+  Latency       1 llm calls, p50 1.2s, p95 1.2s
+
+    +0ms  session.start
+    +0ms  user        Viewer search misses tool output
+    +0ms  llm         claude-sonnet-5-5 1.2s in 32 out 5 $0.0001 est
+   +1.2s  assistant   bug, viewer
+   +1.2s  turn.end
+   +1.2s  session.end completed
+```
+
+## Record tool calls
+
+Put the agent's turn in `trace()` and each tool run in `span("tool", name, ...)`. The model calls
+inside join the same session, in order:
+
+```js tab=TypeScript title=agent.mjs
+import OpenAI from "openai";
+import { observe, span, trace } from "@codingdotsh/sdk";
+
+const openai = observe(new OpenAI());
+const tools = [{ type: "function", function: { name: "list_labels", description: "The repo's labels", parameters: { type: "object", properties: {} } } }];
+const listLabels = async () => ["bug", "cli", "docs", "sdk", "viewer"]; // your real tool goes here
+
+const issue = process.argv[2] ?? "Viewer search misses tool output";
+const labels = await trace("triage", async () => {
+  const messages = [
+    { role: "system", content: "Pick labels for this GitHub issue. Call list_labels first. Answer with the labels only." },
+    { role: "user", content: issue },
+  ];
+  for (;;) {
+    const { choices } = await openai.chat.completions.create({ model: "gpt-5-mini", messages, tools });
+    const msg = choices[0].message;
+    if (!msg.tool_calls) return msg.content; // the answer ends the turn
+    messages.push(msg);
+    for (const call of msg.tool_calls) {
+      const out = await span("tool", call.function.name, listLabels); // one tool call in the session
+      messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(out) });
+    }
+  }
+}, { input: issue });
+console.log(labels);
+```
+
+```python tab=Python title=agent.py
+import json
+import sys
+import coding_sh
+from openai import OpenAI
+
+client = coding_sh.observe(OpenAI())
+tools = [{"type": "function", "function": {"name": "list_labels", "description": "The repo's labels", "parameters": {"type": "object", "properties": {}}}}]
+
+def list_labels():  # your real tool goes here
+    return ["bug", "cli", "docs", "sdk", "viewer"]
+
+issue = sys.argv[1] if len(sys.argv) > 1 else "Viewer search misses tool output"
+with coding_sh.trace("triage", input=issue) as t:
+    messages = [
+        {"role": "system", "content": "Pick labels for this GitHub issue. Call list_labels first. Answer with the labels only."},
+        {"role": "user", "content": issue},
+    ]
+    while True:
+        msg = client.chat.completions.create(model="gpt-5-mini", messages=messages, tools=tools).choices[0].message
+        if not msg.tool_calls:
+            break  # the answer ends the turn
+        messages.append(msg)
+        for call in msg.tool_calls:
+            with coding_sh.span("tool", call.function.name) as s:  # one tool call in the session
+                out = list_labels()
+                s.set_output(out)
+            messages.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(out)})
+    t.set_output(msg.content)
+print(msg.content)
+coding_sh.flush()
+```
+
+`coding.sh show latest`:
+
+```text
+Viewer search misses tool output
+  Session       cb5c85ec9f30cff3d8f6c85fd548b978
+  Agent         coding-sh-triage  gpt-5-mini
+  Repo          -
+  Started       Nov 11 08:52 (4s ago)
+  Duration      4.0s
+  Turns         1, 1 tool calls, 0 files changed
+  Tokens        in 201  out 370  cache -  $0.0008 (estimated)
+  Latency       2 llm calls, p50 1.9s, p95 2.1s; tools 0ms (p95 0ms)
+
+    +0ms  session.start
+    +0ms  user        Viewer search misses tool output
+    +2ms  llm         gpt-5-mini 2.1s in 94 out 184 $0.0004 est
+   +2.1s  tool        list_labels   ok 0ms
+   +2.1s  llm         gpt-5-mini 1.9s in 107 out 186 $0.0004 est
+   +4.0s  assistant   bug, viewer
+   +4.0s  turn.end
+   +4.0s  session.end completed
+```
+
+A failed tool, one that throws, is marked failed with its error, and the error still reaches your
+code. Use `span("step", name, ...)` for a step that is not a tool, such as a rerank.
+
+## Record a conversation
+
+Each `trace()` is its own session. Give the traces of one conversation the same session id, and
+each becomes a turn of one session:
+
+```js tab=TypeScript title=chat.mjs
+import OpenAI from "openai";
+import { observe, trace } from "@codingdotsh/sdk";
+
+const openai = observe(new OpenAI());
+const messages = [{ role: "system", content: "You help triage coding.sh issues. Be brief." }];
+
+for (const question of ["Viewer search misses tool output", "Which labels fit?"]) {
+  // Every trace with the same sessionId is one turn of one session.
+  await trace("chat", async () => {
+    messages.push({ role: "user", content: question });
+    const { choices } = await openai.chat.completions.create({ model: "gpt-5-mini", messages });
+    messages.push(choices[0].message);
+    return choices[0].message.content;
+  }, { sessionId: "issue-640", input: question });
+}
+```
+
+```python tab=Python title=chat.py
+import coding_sh
+from openai import OpenAI
+
+client = coding_sh.observe(OpenAI())
+messages = [{"role": "system", "content": "You help triage coding.sh issues. Be brief."}]
+
+for question in ["Viewer search misses tool output", "Which labels fit?"]:
+    # Every trace with the same session_id is one turn of one session.
+    with coding_sh.trace("chat", session_id="issue-640", input=question) as t:
+        messages.append({"role": "user", "content": question})
+        res = client.chat.completions.create(model="gpt-5-mini", messages=messages)
+        answer = res.choices[0].message.content
+        messages.append({"role": "assistant", "content": answer})
+        t.set_output(answer)
+
+coding_sh.flush()
+```
+
+`coding.sh show issue-640`:
+
+```text
+Viewer search misses tool output
+  Session       issue-640
+  Agent         coding-sh-triage  gpt-5-mini
+  Repo          -
+  Started       Nov 11 08:52 (4s ago)
+  Duration      3.2s
+  Turns         2, 0 tool calls, 0 files changed
+  Tokens        in 83  out 304  cache -  $0.0006 (estimated)
+  Latency       2 llm calls, p50 1.4s, p95 1.7s
+  Phases        2 (1 resume)
+
+    +0ms  session.start
+    +0ms  user        Viewer search misses tool output
+   +40ms  llm         gpt-5-mini 1.7s in 32 out 165 $0.0003 est
+   +1.8s  assistant   A viewer bug: search skips the output of tool calls.
+   +1.8s  turn.end
+   +1.8s  session.start
+   +1.8s  user        Which labels fit?
+   +1.8s  llm         gpt-5-mini 1.4s in 51 out 139 $0.0003 est
+   +3.2s  assistant   bug, viewer
+   +3.2s  turn.end
+```
+
+In a web app, use your conversation or chat id. `withSession(id, fn)` in TypeScript and
+`coding_sh.with_session(id)` in Python do the same for code you don't wrap in `trace()`.
+
+## Trace the Vercel AI SDK
+
+`aiSdkTracer()` turns the AI SDK's telemetry into a session. It needs no OpenTelemetry packages.
+
+```sh
+npm install @codingdotsh/sdk ai @ai-sdk/openai @ai-sdk/otel
+```
+
+```js title=ai-sdk.mjs
+import { generateText } from "ai";
+import { openai } from "@ai-sdk/openai";
+import { OpenTelemetry } from "@ai-sdk/otel";
+import { aiSdkTracer, flush } from "@codingdotsh/sdk";
+
+const issue = process.argv[2] ?? "Viewer search misses tool output";
+const { text } = await generateText({
+  model: openai("gpt-5-mini"),
+  system: "Pick labels for this GitHub issue from the repo's label list. Answer with the labels only.",
+  prompt: issue,
+  telemetry: { integrations: new OpenTelemetry({ tracer: aiSdkTracer() }) }, // sends the AI SDK's spans to coding.sh
+});
+console.log(text);
 await flush();
 ```
 
 ```sh
-node agent.mjs "Where is order 42?"
-node agent.mjs "Has order 7 shipped yet?"
-```
-
-With a real model client, wrap it once and every call is recorded with model, tokens and latency:
-`const openai = observe(new OpenAI())` (or `new Anthropic()`). For the Vercel AI SDK, pass
-`aiSdkTracer()` as the tracer. See the [SDK reference](../reference/sdk.md).
-
-### Python
-
-`agent.py`:
-
-```python
-import sys
-import coding_sh
-
-# Stand-ins for your tool and model call.
-def lookup_order(order_id):
-    return {"id": order_id, "status": "shipped"}
-
-def answer(question, order):
-    return f"Order {order['id']} is {order['status']}."
-
-question = sys.argv[1] if len(sys.argv) > 1 else "Where is order 42?"
-with coding_sh.trace("support-reply", session_id="chat-456", input=question) as t:
-    with coding_sh.span("tool", "lookup_order", input={"id": 42}) as s:
-        order = lookup_order(42)
-        s.set_output(order)
-    reply = answer(question, order)
-    t.set_output(reply)
-print(reply)
-coding_sh.flush(timeout=5)
-```
-
-`session_id` makes every trace with that id a turn of one conversation; leave it out and each trace
-is its own session. With a real client: `client = coding_sh.observe(OpenAI())`, which also works
-with `AsyncOpenAI`, `Anthropic` and `AsyncAnthropic`.
-
-### Look at the runs
-
-```sh
-coding.sh sessions --agent support-agent
-coding.sh show chat-456
-coding.sh ui                                # the same sessions in the viewer
+node ai-sdk.mjs "Add a --json flag to coding.sh usage"
+coding.sh show latest
 ```
 
 ```text
-Where is order 42?
-  Session       chat-456
-  Agent         support-agent
-  Turns         1, 1 tool calls, 0 files changed
+enhancement, cli
+Add a --json flag to coding.sh usage
+  Session       96da5cf3d55982ad3a64d454a97e80fb
+  Agent         coding-sh-triage  gpt-5-mini
+  Repo          -
+  Started       Nov 11 08:52 (3s ago)
+  Duration      1.9s
+  Turns         1, 0 tool calls, 0 files changed
+  Tokens        in 56  out 184  cache -  $0.0004 (estimated)
+  Latency       1 llm calls, p50 1.9s, p95 1.9s
 
     +0ms  session.start
-    +0ms  user        Where is order 42?
-    +1ms  tool        lookup_order   ok 0ms
-    +1ms  turn.end
+    +0ms  user        Add a --json flag to coding.sh usage
+   +12ms  span        step 1
+   +13ms  llm         gpt-5-mini 1.9s in 56 out 184 $0.0004 est
+   +1.9s  assistant   enhancement, cli
+   +1.9s  turn.end
+   +1.9s  session.end completed
 ```
 
-## Turn the runs into an eval
+This is AI SDK 7. On AI SDK 6 and earlier, pass the tracer per call instead:
+`experimental_telemetry: { isEnabled: true, tracer: aiSdkTracer() }`.
 
-Each session's first input becomes a case:
+Inside a `trace()` or `withSession()`, the AI SDK's calls join that session. `aiSdkTracer({
+sessionId })` sets one for every call.
 
-```sh
-coding.sh dataset add support --session <session-id> --session <session-id>
-coding.sh dataset list
-```
+## Already on OpenTelemetry?
 
-A case made from a session has no expected answer, so grade it with a check you can state. Here the
-reply must say whether the order shipped:
+If your agent already exports OpenTelemetry, or runs on the OpenAI Agents SDK, LangGraph or the
+Claude Agent SDK, send its traces to coding.sh instead. See
+[Trace a framework with OpenTelemetry](https://coding.sh/docs/otel).
 
-```sh
-coding.sh exp run --dataset support --name with-tools \
-  --task '{"kind":"command","command":"node","args":["agent.mjs"]}' \
-  --grader '{"kind":"contains","value":["shipped"]}'
-```
+:::more coding.sh serve or coding.sh collector?
+Both take OpenTelemetry traces on `127.0.0.1:4318` and write to the same local store, so run one at
+a time. A second one on the same port stops with "port 4318 is in use"; `--port 0` picks a free
+port.
 
-`exp run` sends each case's input to the command as JSON on stdin and grades what it prints. For an
-agent behind HTTP, use `{"kind":"http","url":"http://127.0.0.1:3000/api/agent","responsePath":"$.output"}`.
-For open-ended answers, use an LLM judge:
-`{"kind":"llm","name":"helpful","rubric":"Pass if the reply answers the question."}` with
-`ANTHROPIC_API_KEY` set. See [Evals](https://coding.sh/docs/evals).
+| | `coding.sh serve` | `coding.sh collector` |
+|---|---|---|
+| Takes | the SDK and OTLP | OTLP |
+| Viewer | on the same address | run `coding.sh ui` (port 4319) |
+| Ingest keys and Postgres | yes | no |
 
-## Compare two versions
+Use `serve` for the SDK. The collector prints the `OTEL_*` exports an exporter needs, which is
+handy for frameworks.
+:::
 
-Change the agent (a prompt, a model, a tool), run the same dataset again, and compare case by case.
-Here the second version skips the tool:
+## Turn runs into evals
 
-```sh
-USE_TOOLS=0 coding.sh exp run --dataset support --name no-tools \
-  --task '{"kind":"command","command":"node","args":["agent.mjs"]}' \
-  --grader '{"kind":"contains","value":["shipped"]}'
-coding.sh exp compare with-tools no-tools
-```
+Each session can become an eval case, and two versions of your agent can be compared on the same
+cases. See [Evals](https://coding.sh/docs/evals).
 
-```text
-A with-tools exp_01M6T953P384HSAZNNEY1H3PJ6  pass 100.0%
-B no-tools exp_01M6T953ZKX40TWB5MFZRMJBVN  pass 0.0%
+## Next steps
 
-B − A   -100.0pp [-100.0pp, -100.0pp] (2 paired cases, 95% paired bootstrap)
-mcnemar p=0.500  2 regressed, 0 improved
-verdict B is worse
-```
-
-With two cases the result is only a smoke test; `exp compare` says so. Add cases, or `"trials": 3`
-in an experiment file, before you trust a small difference. To run this on every pull request, see
-[Catch a regression in CI](ci-regressions.md).
-
-The agent keeps tracing while `exp run` calls it, so each eval run is also a session you can open
-with `coding.sh show`.
-
-## In production
-
-Run `coding.sh serve` on a server with keys and a database, and set `CODING_SH_URL` and
-`CODING_SH_INGEST_KEY` in your app. See [Self-host for a team](self-host-team.md),
-[Production](https://coding.sh/docs/production) and the [REST API reference](../reference/api.md).
+- [Evals](https://coding.sh/docs/evals): score your agent on a set of cases.
+- [Trace a framework with OpenTelemetry](https://coding.sh/docs/otel): the OpenAI Agents SDK,
+  LangGraph and the Claude Agent SDK.
+- [Trace an app in production](https://coding.sh/docs/production): `serve` with keys and a database.
+- [SDK reference](../reference/sdk.md): every export and option.
