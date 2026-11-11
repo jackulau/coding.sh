@@ -84,6 +84,7 @@ grouped by area, with links to the docs for the details.
 
 ### Changed
 
+- **Docs.** An adapter that nobody has run on a live install is now labelled "Not run live" in the README, the agents guide and the site. Only Cursor CLI and Amp are in that state; both need an account login. [Agents](https://coding.sh/docs/agents)
 - **Improve.** `improve check` says Helped only when failures fall: the flagged share, or one flag (Holm-adjusted) with no other rising significantly in its place. A new line the agent follows while flagged sessions stay put is now "Followed, no effect yet", and a change after which sessions make 1.25x the tool calls or take 1.25x as long, with no fall, is "Costlier"; both suggest `refine test git:<previous>` to test the harness without it. `--json` adds `work` and `next`. Regressed and its exit 1 are unchanged. [Improve](https://github.com/jackulau/coding.sh/blob/main/docs/guides/improve.md#5-did-it-help).
 - **Tool evals.** The model driver's 16 KB tool-output cap is structure-aware by default: JSON stays valid and keeps every key, and logs keep whole lines; output under the cap is unchanged. `outputCap = { mode = "prefix" }` on a driver or variant brings back the old byte cut for an A/B, and the report counts cuts and broken-JSON cuts. [Tool evals](https://github.com/jackulau/coding.sh/blob/main/docs/TOOL-EVALS.md#42-model-driver-agent-free)
 - **Sessions.** `stats.toolErrors`, `repeated-tool-failure` and the `failure-streak` derail count only real failures. A search that found nothing (`grep`, `rg` exiting 1 with no output), a probe that answered no (`test -f`, `command -v`) and a `diff` that found differences are counted in the new `stats.benignToolErrors`, and a stopped call in `stats.interruptedToolCalls`. Stored sessions are counted again on the next ingest. [API](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md#get-apisessionsid).
@@ -533,7 +534,7 @@ It also runs as a server on SQLite or Postgres, with SDKs for apps that call mod
 - **Capture.** `coding.sh collector` takes OTLP/HTTP traces and logs, protobuf or JSON, on 127.0.0.1:4318. [OTLP setup](https://coding.sh/docs/otel).
 - **Capture.** The receiver reads OTel GenAI semconv, OpenInference, the Vercel AI SDK, and Claude Code, Codex and Gemini CLI logs.
 - **Agents.** Verified on real sessions: Claude Code, Codex and Antigravity. [Agent matrix](https://coding.sh/docs/agents).
-- **Agents.** Fixture-tested so far: opencode, cursor, gemini-cli, copilot-cli, amp, pi, droid, goose, t3code and aider.
+- **Agents.** Checked in CI against recorded payloads, not run live yet: opencode, cursor, gemini-cli, copilot-cli, amp, pi, droid, goose, t3code and aider.
 - **Agents.** Every adapter has fixture tests, and an `ingest --backfill` path where the agent keeps history.
 - **Agents.** T3 Code threads import from its local store; Codex and Claude Code runs in T3 count once, agent in `provider`.
 - **Agents.** `coding.sh usage --by agent-model` compares tokens per turn and cache-read share across harnesses.
