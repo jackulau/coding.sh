@@ -5,59 +5,59 @@ import { faqSchema } from "../../lib/schema";
 
 const FAQ: { id: string; q: string; a: string }[] = [
   {
-    id: "name",
-    q: "How do you say coding.sh, and is it the same as “coding shell”?",
-    a: `It is one tool with one name. The <code>.sh</code> is a domain, and because <code>.sh</code> files are shell scripts it reads as “coding shell”, so people also write it coding shell, coding sh or codingsh. They all mean this tool, which records what your AI agents do and runs from your shell.`,
-  },
-  {
-    id: "status",
-    q: "Can I use it today?",
-    a: `Yes, if you accept early software (v0.1.4): capture, the viewer, datasets, graders, judges and comparisons work, and the package's test suite passes. Nothing has a stable interface yet, and drafting repo-replay tasks from real sessions is still blocked (see <a href="/docs/harness-evals#repo-replay">Evals</a>).`,
+    id: "own-agent",
+    q: "Does it work with my own agent, not only coding agents?",
+    a: `Yes. Wrap your OpenAI or Anthropic client with the TypeScript or Python SDK, or send OpenTelemetry traces from the OpenAI Agents SDK, LangGraph, the Vercel AI SDK, the Claude Agent SDK or your own code. See the <a href="/docs/quickstart#your-agent">quickstart</a> and <a href="/docs/otel">OpenTelemetry</a>. For evals, any program that reads JSON on stdin or answers HTTP can be the task.`,
   },
   {
     id: "network",
     q: "Does anything leave my machine?",
-    a: `Not unless you configure a <a href="/docs/storage#sinks">sink</a>, and sinks default to metadata mode, which sends no prompts, code or tool output. The receiver binds to 127.0.0.1. LLM judges call the provider you configure, with your key, only when you run an experiment that uses one.`,
+    a: `Your sessions stay on your machine unless you connect a team server or a <a href="/docs/storage#sinks">sink</a>, and a sink sends metadata only (no prompts, code or tool output) unless you set <code>mode = "full"</code>. The viewer and the local server listen on 127.0.0.1. Commands check once a day for a new release; <code>CODING_SH_NO_UPDATE_CHECK=1</code> turns that off. A judge calls your model provider only when you run it.`,
+  },
+  {
+    id: "status",
+    q: "Can I use it today?",
+    a: `Yes. Recording, the viewer, cost, datasets, graders, judges and experiments work, and <code>coding.sh eval init --sessions</code> turns your failed sessions into repo tasks (see <a href="/docs/evals">Evals</a>). coding.sh is new, so commands and file formats can still change between releases. The <a href="/docs/roadmap">Roadmap</a> lists the gaps.`,
   },
   {
     id: "secrets",
     q: "What about secrets in my sessions?",
-    a: "Redaction runs before anything is written: API keys with known vendor prefixes, bearer tokens, and values next to secret-looking names (OPENAI_API_KEY=…, password: …) become [redacted:kind]. You can add your own patterns, exclude repositories entirely, or switch to metadata mode.",
+    a: `Redaction runs at ingest, before anything goes into the index, the blobs or a sink: API keys with known vendor prefixes, bearer tokens, and values next to secret-looking names (OPENAI_API_KEY=…, password: …) become [redacted:kind]. Until then the hook's spool files hold raw events, readable only by your user. You can add your own patterns, exclude repositories, or set <code>capture.mode</code> to <code>metadata</code>. See <a href="/docs/privacy">Privacy</a>.`,
   },
   {
     id: "slow",
     q: "Will the hooks slow my agent down?",
-    a: "The hook reads stdin, appends one line to a file and exits. It makes no network calls, runs no git commands, spawns nothing and parses nothing beyond JSON.parse. Normalization happens later, at ingest. If capture fails, the hook still exits 0 and logs the failure.",
+    a: "The hook reads the event the agent sends, appends one line to a file and exits 0. On macOS and Linux a small shell script does this without starting Node. It makes no network calls and runs no git commands. At the end of a turn it starts a background ingest and doesn't wait for it. If capture fails, the hook still exits 0 and logs the error.",
   },
   {
     id: "config",
     q: "Will it mess with my agent configs?",
-    a: "init shows every edit with --dry-run, backs up each file before changing it, marks its own entries, and uninstall removes only those. It never answers a permission prompt for you. Eval runs use isolated config directories, so your global setup is not touched. For Codex, coding.sh never writes hook trust; you approve the hooks yourself.",
-  },
-  {
-    id: "otel",
-    q: "My agent isn't a coding agent. Does it work?",
-    a: `Yes. Anything that exports OpenTelemetry traces works through <code>coding.sh collector</code>: the Vercel AI SDK, the Claude Agent SDK, the OpenAI Agents SDK, LangGraph, or your own code. See <a href="/docs/otel">OpenTelemetry</a>. For evals, any program that reads JSON on stdin or answers HTTP can be the task.`,
+    a: "init shows every edit with --dry-run, backs up each file before changing it, and marks its own entries. uninstall removes only those, and restores a file byte for byte if nothing else edited it. The hook never answers a permission prompt for you. For Codex, coding.sh never writes hook trust; you approve the hooks yourself with /hooks.",
   },
   {
     id: "unsupported",
     q: "My coding agent isn't supported.",
-    a: `Wrap it: <code>coding.sh run -- &lt;your agent command&gt;</code> records repository snapshots before and after and every changed file. If it has hooks, an adapter is the most useful contribution; a recorded session from it helps too. Open an <a href="${ISSUES_URL}">issue</a>.`,
+    a: `Wrap it: <code>coding.sh run -- &lt;your agent command&gt;</code> records the run as a session, with the repository before and after and every changed file. If the agent has hooks, an adapter is the most useful contribution, and a recorded session from it helps too. Open an <a href="${ISSUES_URL}/new?template=agent-support.yml">agent support</a> issue.`,
   },
   {
     id: "judge",
     q: "Why does my LLM judge say uncalibrated?",
-    a: `A judge's scores count only after it agrees with human labels: Cohen's κ of at least 0.6 on 20 or more held-out cases it wasn't tuned on. Label sessions in <code>coding.sh ui</code> and run <code>coding.sh judge calibrate</code>. See <a href="/docs/evals#calibration">calibration</a>.`,
+    a: `A judge's scores count only after it agrees with human labels: Cohen's κ of at least 0.6 on 20 or more held-out cases it wasn't tuned on. Label sessions in <code>coding.sh ui</code> and run <code>coding.sh judge calibrate</code>. See <a href="/docs/judges#calibrate">Check the judge against your labels</a>.`,
   },
   {
     id: "data",
     q: "Where is my data, and how do I delete it?",
-    a: `In <code>~/.coding.sh</code> (or <code>CODING_SH_HOME</code>). <code>coding.sh gc</code> applies retention; deleting the directory removes everything. <code>coding.sh uninstall</code> removes the hooks and keeps the data.`,
+    a: `In <code>~/.coding.sh</code> (or <code>CODING_SH_HOME</code>). <code>coding.sh gc</code> deletes what is past its retention; deleting the directory removes everything. <code>coding.sh uninstall</code> removes the hooks and keeps the data.`,
   },
   {
     id: "license",
     q: "What is the license?",
     a: `${LICENSE}. The source is on <a href="${REPO_URL}">GitHub</a>.`,
+  },
+  {
+    id: "name",
+    q: "How do you say coding.sh, and is it the same as “coding shell”?",
+    a: `It is one tool with one name. The <code>.sh</code> is a domain, and because <code>.sh</code> files are shell scripts it reads as “coding shell”, so people also write it coding shell, coding sh or codingsh. They all mean this tool: it records what your AI agents do, on your machine, and checks your changes against those runs.`,
   },
 ];
 ---

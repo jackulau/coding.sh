@@ -43,7 +43,7 @@ page. If something here is out of date, open an issue.
   step by step.
 - **Why a session cost what it did.** `coding.sh show` gives a session's tokens, cache reads and
   latency next to its steps, so a high cost points at the turns that caused it. See
-  [Find your most expensive sessions](../how-to/expensive-sessions.md).
+  [Find your most expensive sessions](../how-to/track-cost.md).
 - **Billed cost when you have it.** A cost the agent or an LLM gateway reports is used before an
   estimate, and estimates are marked with `~`.
 - **From cost to fixes.** Flags mark failures and waste, `coding.sh improve` proposes a line for
@@ -66,7 +66,7 @@ Yes. ccusage reads the agents' logs and coding.sh reads them too; neither change
 Both price tokens with list prices unless a real cost is available, and their price tables and
 rules differ, for example for long-context, cache-write and fast-mode rates. coding.sh shows which
 model price it used on each call. See
-[where cost comes from](../how-to/expensive-sessions.md#where-cost-comes-from).
+[where cost comes from](../how-to/track-cost.md#where-cost-comes-from).
 
 ## Sources
 

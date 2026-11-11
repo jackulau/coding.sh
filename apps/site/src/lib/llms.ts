@@ -1,7 +1,7 @@
 // Agent-facing text for /llms.txt.
-import { SITE_URL, SITE, NAV_PAGES, REPO_URL, LICENSE, SOURCE_STEPS, CLI_PATH, INSTALL_SH, RELEASE_TGZ } from "../data/site";
+import { SITE_URL, SITE, NAV_PAGES, REPO_URL, LICENSE, SOURCE_STEPS, CLI_PATH, INSTALL_SH, RELEASE_TGZ, VERSION } from "../data/site";
 import { FRAMEWORKS, OTLP_ENDPOINT } from "../data/agents";
-import { DOC_PAGES } from "../components/docs/nav";
+import { DOC_GROUPS, type DocPage } from "../components/docs/nav";
 import { ADAPTER_ROWS, PLANNED_AGENTS, STATUS_LABEL } from "../components/docs/agents";
 import { cliReference } from "../components/docs/cli-help";
 
@@ -29,6 +29,14 @@ Full reference: ${abs("/docs/cli")}
 - Commands that write config ask first; pass \`--yes\` to confirm without a prompt (\`init --dry-run\` prints every edit and writes nothing).`;
 }
 
+/** The docs by group, as in the sidebar; sub pages (the REST API read pages, the comparisons) indented under their parent. */
+function docsSection(): string {
+  const row = (p: DocPage, indent = "") => `${indent}- [${p.title}](${abs(p.path)}): ${p.summary}`;
+  return DOC_GROUPS.map(
+    (g) => `### ${g.label}\n\n${g.pages.map((p) => [row(p), ...(p.children ?? []).map((c) => row(c, "  "))].join("\n")).join("\n")}`,
+  ).join("\n\n");
+}
+
 export function llmsText(): string {
   return `# ${SITE.name}
 
@@ -36,7 +44,7 @@ export function llmsText(): string {
 
 Also written coding shell, coding sh or codingsh (the \`.sh\` reads as "shell"); the CLI runs as \`coding.sh\` or \`codingsh\`. One tool.
 
-Status: ${SITE.version}, ${LICENSE} licensed. Source: ${REPO_URL}
+Status: v${VERSION}, ${LICENSE} licensed. coding.sh is new: commands and file formats can still change between releases. Source: ${REPO_URL}
 
 ## Install
 
@@ -48,8 +56,8 @@ coding.sh doctor --json # check the install
 
 The installer is ${abs("/install")} (plain text; read it before piping it to sh). It runs \`npm install -g\`: from npm when
 the registry has coding.sh, otherwise on the release tarball, e.g. \`npm i -g ${RELEASE_TGZ}\`. Env: CODING_SH_YES=1 skips the prompt, CODING_SH_NO_INIT=1 installs only,
-CODING_SH_NO_UI=1 skips the viewer, CODING_SH_VERSION=v0.1.0 pins a release,
-CODING_SH_SOURCE=github skips npm.
+CODING_SH_NO_UI=1 skips the viewer, CODING_SH_VERSION=v<version> pins a release, CODING_SH_TARBALL=<path or url> installs that tarball,
+CODING_SH_SOURCE=npm|github forces a source.
 From source: \`${SOURCE_STEPS.join(" && ")}\`; the CLI builds to ${CLI_PATH}.
 
 Full prose for every page is at ${abs("/llms-full.txt")}; each page also serves a Markdown copy at <page>.md (the home page at /index.md).
@@ -61,30 +69,36 @@ ${NAV_PAGES.map((p) => `- [${p.title}](${abs(p.path)}): ${p.summary}`).join("\n"
 
 ## Docs
 
-${DOC_PAGES.map((p) => `- [${p.title}](${abs(p.path)}): ${p.summary}`).join("\n")}
+${docsSection()}
 
-## What it is for
+## What it does
 
-coding.sh records what AI agents do (prompts, model calls, tool calls, file changes, cost), shows each run in a
-local viewer, and turns runs that went wrong into evals. Everything stays on your machine. Pre-alpha: what is built is covered by the package's tests; items marked planned do not exist yet.
+coding.sh records what your AI agents do, so you can see each run on your machine and test changes against the runs
+that went wrong.
 
-1. Record (built): a local OTLP receiver (\`coding.sh collector\`, ${OTLP_ENDPOINT}) for ${FRAMEWORKS.join(", ")};
-   model-call latency per call. For coding agents, hooks capture prompts, tool calls, file changes
-   and subagents (as child sessions). \`coding.sh run --\` snapshots the working tree before and after;
-   hook-captured sessions in a git repository start from the commit checked out at session start.
-2. Evals (built): datasets with deterministic graders, command graders and LLM judges; judges are calibrated
-   against human labels with Cohen's kappa on a held-out split, and uncalibrated judges are flagged in every
-   report. Repo-replay tasks (partial): validation (do-nothing fails, reference passes k of k, near-misses
-   fail, no leakage), harness bundles, compare and drafting a task from a captured session are built.
-3. Compare (built): two experiments paired by case, with a paired bootstrap CI of the difference and McNemar's
-   test on flipped cases; harness compare adds per-arm Wilson intervals and the first step where traces diverge.
-4. Storage (built): SQLite index and a content-addressed, zstd-compressed blob store by default; OTLP and HTTP
-   sinks, metadata-only by default; third-party stores and sinks load as npm plugins. The Postgres, ClickHouse and S3
-   store plugins are on npm (coding.sh-store-postgres, coding.sh-store-clickhouse, coding.sh-store-s3) and used by
-   \`coding.sh serve\`. The core is one npm package with zero runtime dependencies, Node 22.15 or newer.
-5. Tool evals (built): \`coding.sh toolevals\` scores how well agents use a CLI, MCP server or HTTP API.
-   Workflows (built): \`coding.sh workflows\` captures, scores and compares multi-agent runs.
-   Trace format (built): TypeScript types (\`coding.sh/schema\`) and a JSON Schema (\`coding.sh/schema.json\`, ${abs("/schema.json")}).
+1. Record your own agent with the TypeScript and Python SDKs, or with OpenTelemetry through the local OTLP receiver
+   (\`coding.sh collector\`, ${OTLP_ENDPOINT}): ${FRAMEWORKS.join(", ")}. Each model call keeps its latency.
+   Coding agents are recorded through their hooks, with no code changes: prompts, tool calls, file changes and
+   subagents (as child sessions). \`coding.sh run --\` records any other command and snapshots the working tree
+   before and after; a hook-captured session in a git repository starts from the commit checked out at session start.
+2. Read the runs in the terminal (\`coding.sh sessions\`, \`coding.sh show\`), in the local viewer (\`coding.sh ui\`), or
+   from your agent over MCP.
+3. Evaluate on datasets with deterministic graders, command graders and LLM judges. Judges are calibrated against
+   human labels with Cohen's kappa on a held-out split, and an uncalibrated judge is flagged in every report. A failed
+   session becomes an eval case or a repo-replay task, checked before it is kept (doing nothing fails, the reference
+   passes k of k, near-misses fail, no leakage).
+4. Compare two experiments paired by case, with a paired bootstrap interval of the difference and McNemar's test on
+   flipped cases; harness compare adds per-arm Wilson intervals and the first step where the traces diverge.
+5. Storage: a SQLite index and a content-addressed, zstd-compressed blob store by default; OTLP and HTTP sinks,
+   metadata-only by default; stores and sinks load as npm plugins. \`coding.sh serve\` keeps sessions in Postgres or
+   ClickHouse with coding.sh-store-postgres, coding.sh-store-clickhouse and coding.sh-store-s3. One npm package with
+   zero runtime dependencies, on Node 22.15 or newer.
+6. Also: \`coding.sh toolevals\` scores how well agents use a CLI, MCP server or HTTP API; \`coding.sh workflows\`
+   captures, scores and compares multi-agent runs; the trace format ships as TypeScript types (\`coding.sh/schema\`) and
+   a JSON Schema (\`coding.sh/schema.json\`, ${abs("/schema.json")}).
+
+Comparison pages, one per tool, each with a feature table, where the other tool is the better choice, and sources:
+${abs("/docs/compare")}
 
 ## Coding agents (adapters in code)
 

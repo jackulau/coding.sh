@@ -1,8 +1,12 @@
 # coding.sh compared with other tools
 
-coding.sh is an MIT-licensed CLI and local viewer for recording AI agents and running evals on
-them. It captures coding agents such as Claude Code, Codex and Cursor through their hooks, keeps
-the data on your machine unless you add a sink, and has no hosted cloud.
+How coding.sh compares with Langfuse, LangSmith, Braintrust, AgentOps, Laminar and ccusage, and
+when each one is the better choice. Site version: [coding.sh/docs/compare](https://coding.sh/docs/compare).
+
+coding.sh records what any AI agent does and runs evals on those runs. Your own agent sends its runs
+with the TypeScript or Python SDK or with OpenTelemetry. Coding agents such as Claude Code, Codex
+and Cursor are recorded through their hooks, with no code changes. It runs on your machine, or as
+one server for a team. It is MIT licensed and has no hosted cloud.
 
 The tools below overlap with it in different ways, and most do things coding.sh does not. Each
 page has a feature table and says where the other tool is the better choice. All were checked
@@ -24,6 +28,8 @@ date, open an issue.
 
 - **Runs with no services.** One npm package and a SQLite file on your machine. A team server is
   one `coding.sh serve` process. See [Self-host for a team](../how-to/self-host-team.md).
+- **Records your own agent and coding agents in one list.** Your agent through the SDK or
+  OpenTelemetry; see [Trace your agent](../how-to/trace-your-agent.md).
 - **Captures coding agents from their hooks**, imports sessions recorded before it was installed,
   and links subagents to their parent session. See [Coding agents](https://coding.sh/docs/agents).
 - **Reports statistics on every comparison.** Two runs are paired case by case, with a bootstrap
@@ -45,8 +51,9 @@ date, open an issue.
 ### What is the best open-source alternative to LangSmith or Braintrust?
 
 It depends on what you need. Langfuse and Laminar are open-source platforms with a server and a
-UI for production apps. coding.sh is open source and local-first, and fits best when the agents
-you want to watch and test are coding agents on your own machine or your team's.
+UI for production apps. coding.sh is open source too. It suits you when you want the traces and
+evals of any agent, your own or a coding agent, on your machine or on one team server, with no
+other services to run.
 
 ### Can I use coding.sh with one of these tools?
 
