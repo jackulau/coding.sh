@@ -1,0 +1,117 @@
+---
+// Prose tabs: two or more paths through the same page (the quickstart's
+// "Your agent" and "Coding agent"). The slot holds one <div data-tab="<id>">
+// per tab, written exactly like that. Each panel gets the tab's id, so
+// /docs/quickstart#coding-agent opens that tab, and so does a link to any
+// heading inside it. Picking a tab updates the hash. Without JS the panels
+// stack, each under its label. Search and the .md twin read every panel.
+// The layout's "On this page" rail lists the tab labels (data-toc), not the
+// headings inside the panels (marked data-in-tabs).
+interface Tab {
+  /** Panel id and URL hash, e.g. "your-agent". */
+  id: string;
+  label: string;
+}
+interface Props {
+  /** Names this block, e.g. "path". */
+  id: string;
+  tabs: Tab[];
+}
+const { id, tabs } = Astro.props;
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+let html = await Astro.slots.render("default");
+for (const t of tabs) {
+  if (!/^[a-z0-9][\w-]*$/i.test(t.id)) throw new Error(`Tabs ${id}: tab id "${t.id}" must be a plain slug`);
+  const open = new RegExp(`<div\\b([^>]*?)\\sdata-tab="${t.id}"([^>]*)>`);
+  const m = html.match(open);
+  if (!m) throw new Error(`Tabs ${id}: no <div data-tab="${t.id}"> panel in the slot`);
+  // Keep the author's other attributes (Astro's scope ids, a class); the panel's id is the tab id.
+  let attrs = `${m[1]}${m[2]}`.replace(/\sid="[^"]*"/, "");
+  let klass = "tabs__panel";
+  attrs = attrs.replace(/\sclass="([^"]*)"/, (_, c: string) => ((klass += ` ${c}`), ""));
+  html = html.replace(
+    open,
+    `<div class="${klass}" data-tab="${t.id}" id="${t.id}" role="tabpanel" aria-labelledby="tab-${id}-${t.id}"${attrs}><p class="tabs__label" data-pagefind-ignore>${esc(t.label)}</p>`,
+  );
+}
+// h2s inside a panel stay out of the "On this page" rail.
+html = html.replace(/<h2 (id="[^"]*")/g, "<h2 $1 data-in-tabs");
+---
+
+<div class="tabs" data-tabs={id} data-toc={JSON.stringify(tabs)}>
+  <div class="tabs__list" role="tablist" aria-label={tabs.map((t) => t.label).join(" or ")} hidden data-agent-skip data-pagefind-ignore>
+    {
+      tabs.map((t, i) => (
+        <button type="button" class="tabs__tab" role="tab" id={`tab-${id}-${t.id}`} aria-controls={t.id} aria-selected={i === 0 ? "true" : "false"} tabindex={i === 0 ? 0 : -1} data-for={t.id}>
+          {t.label}
+        </button>
+      ))
+    }
+  </div>
+  <Fragment set:html={html} />
+</div>
+
+<script>
+  const tabsOf = (root: Element) => [...root.querySelectorAll<HTMLButtonElement>(":scope > .tabs__list > [role=tab]")];
+  const panelsOf = (root: Element) => [...root.querySelectorAll<HTMLElement>(":scope > [role=tabpanel]")];
+
+  function select(root: HTMLElement, id: string) {
+    for (const t of tabsOf(root)) {
+      const on = t.dataset.for === id;
+      t.setAttribute("aria-selected", String(on));
+      t.tabIndex = on ? 0 : -1;
+    }
+    for (const p of panelsOf(root)) p.hidden = p.id !== id;
+    document.dispatchEvent(new CustomEvent("docs:tab"));
+  }
+
+  /** The hash names a panel, or a heading inside one: open that tab and bring it into view. */
+  function fromHash(scroll: boolean) {
+    let hash = location.hash.slice(1);
+    try {
+      hash = decodeURIComponent(hash);
+    } catch {
+      /* keep it as written */
+    }
+    if (!hash) return;
+    for (const root of document.querySelectorAll<HTMLElement>("[data-tabs][data-ready]")) {
+      const panels = panelsOf(root);
+      const el = document.getElementById(hash);
+      const panel = panels.find((p) => p.id === hash) ?? (el?.closest<HTMLElement>("[role=tabpanel]") || undefined);
+      if (!panel || !panels.includes(panel)) continue;
+      select(root, panel.id);
+      if (scroll) (panel.id === hash ? root : el!).scrollIntoView();
+    }
+  }
+
+  function pick(root: HTMLElement, id: string) {
+    select(root, id);
+    history.replaceState(history.state, "", `#${id}`);
+  }
+
+  function setup() {
+    for (const root of document.querySelectorAll<HTMLElement>("[data-tabs]:not([data-ready])")) {
+      const tabs = tabsOf(root);
+      const list = root.querySelector<HTMLElement>(":scope > .tabs__list");
+      if (!list || !tabs.length) continue;
+      list.hidden = false;
+      root.dataset.ready = "";
+      select(root, tabs[0]!.dataset.for!);
+      tabs.forEach((t, i) => {
+        t.addEventListener("click", () => pick(root, t.dataset.for!));
+        t.addEventListener("keydown", (e) => {
+          const to = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: tabs.length - 1 }[e.key];
+          if (to === undefined) return;
+          e.preventDefault();
+          const next = tabs[(to + tabs.length) % tabs.length]!;
+          pick(root, next.dataset.for!);
+          next.focus();
+        });
+      });
+    }
+    fromHash(true);
+  }
+  document.addEventListener("astro:page-load", setup);
+  addEventListener("hashchange", () => fromHash(true));
+</script>

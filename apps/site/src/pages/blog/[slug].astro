@@ -1,10 +1,10 @@
 ---
 // /blog/<slug>: one post from src/content/blog/<slug>.md. The header matches the
-// changelog's; the body uses the docs prose (styles/doc.css) and <Code> blocks.
+// changelog's; the body uses the docs prose (styles/doc.css) and the docs blocks (MdDoc).
 import Layout from "../../layouts/Layout.astro";
 import Nav from "../../components/Nav.astro";
 import CubeField from "../../components/CubeField.astro";
-import Code from "../../components/docs/Code.astro";
+import MdDoc from "../../components/docs/MdDoc.astro";
 import { getPosts, type Post } from "../../lib/blog";
 import "../../styles/changelog.css";
 import "../../styles/doc.css";
@@ -55,7 +55,7 @@ const { post, newer, older } = Astro.props;
 
     <div class="wrap blog-post">
       <article class="doc">
-        {post.blocks.map((b) => (b.kind === "code" ? <Code code={b.code} title={b.title} /> : <Fragment set:html={b.html} />))}
+        <MdDoc blocks={post.blocks} />
       </article>
 
       {

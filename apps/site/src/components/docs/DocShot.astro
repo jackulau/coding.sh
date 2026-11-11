@@ -1,0 +1,31 @@
+---
+// A real screenshot of the viewer on a docs page, with a caption.
+// `name` is a path under src/assets without the extension ("docs/sdk-session",
+// "product/hero-session"); <name>.webp and the phone crop <name>-m.webp both
+// have to exist, or the build fails here. No placeholder ever ships.
+import type { ImageMetadata } from "astro";
+import Shot from "../Shot.astro";
+
+interface Props {
+  name: string;
+  /** What the image shows and which item is selected. */
+  alt: string;
+  caption?: string;
+  /** Label centered in the window bar, e.g. "coding.sh ui". */
+  bar?: string;
+}
+const { name, alt, caption, bar } = Astro.props;
+
+const files = import.meta.glob<{ default: ImageMetadata }>("../../assets/**/*.webp", { eager: true });
+const at = (n: string) => files[`../../assets/${n}.webp`]?.default;
+const src = at(name);
+const srcMobile = at(`${name}-m`);
+const missing = [!src && `${name}.webp`, !srcMobile && `${name}-m.webp`].filter(Boolean);
+if (missing.length) throw new Error(`DocShot: src/assets/${missing.join(" and src/assets/")} missing; make it with apps/site/scripts/shots`);
+if (!alt.trim()) throw new Error(`DocShot ${name}: alt text is required`);
+---
+
+<figure class="docshot">
+  <Shot src={src!} srcMobile={srcMobile!} alt={alt} bar={bar} sizes="(min-width: 1024px) 46rem, 100vw" />
+  {caption && <figcaption>{caption}</figcaption>}
+</figure>
