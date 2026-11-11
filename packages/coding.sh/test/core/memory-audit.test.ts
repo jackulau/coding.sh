@@ -295,7 +295,7 @@ describe("harness audit over a store and a temp HOME", () => {
     writeFileSync(join(repo, ".claude", "skills", "demo", "SKILL.md"), "---\nname: demo\ndescription: Demo\n---\nsteps\n");
     const added = Date.UTC(2026, 10, 5) / 1000;
     const git = (...a: string[]) =>
-      assert.equal(spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...a], { cwd: repo, env: { ...env, GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_DATE: `${added} +0000`, GIT_COMMITTER_DATE: `${added} +0000` } }).status, 0, a.join(" "));
+      assert.equal(spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...a], { cwd: repo, env: { ...env, PATH: process.env.PATH ?? env.PATH, GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_DATE: `${added} +0000`, GIT_COMMITTER_DATE: `${added} +0000` } }).status, 0, a.join(" "));
     git("init", "-q");
     git("add", "-A");
     git("commit", "-qm", "add the skill");
