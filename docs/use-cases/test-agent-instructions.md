@@ -1,8 +1,8 @@
 # Test an AGENTS.md, rule or skill change
 
-You changed AGENTS.md, a rule or a skill, and want to know whether it helped. coding.sh
-answers that from the sessions it has already recorded, or from tasks you give it. Some checks are
-free and wait for new sessions. Others call a model now and cost a little.
+You changed AGENTS.md, a rule or a skill, and want to know whether it helped. coding.sh answers
+from the sessions it has already recorded, or from tasks you give it. Some checks are free and
+wait for new sessions; others call a model now and cost a little.
 
 ## Pick a method
 
@@ -10,11 +10,11 @@ free and wait for new sessions. Others call a model now and cost a little.
 |---|---|---|
 | What should I change first? | `coding.sh improve` | a week or so of sessions |
 | Did a committed change help on real work? | `coding.sh improve check` | sessions before and after the commit |
-| Does my uncommitted edit fix the moments the agent got wrong? | `coding.sh exp ab` | an Anthropic or OpenAI API key |
+| Does my uncommitted edit fix the moments the agent got wrong? | `coding.sh exp ab` | an API key, or a logged-in Claude Code or Codex |
 | Does a skill change what the agent does on whole tasks? | `coding.sh compare` | tasks, harness snapshots, agent and judge spend |
 | Does the agent load my skill when it should? | `coding.sh eval trigger` | a `triggers.toml` of prompts |
 
-## Before and after, on new sessions
+## Compare sessions before and after a change
 
 ```sh
 coding.sh improve              # issues ranked, each with a line to add
@@ -23,11 +23,11 @@ git commit AGENTS.md -m "AGENTS.md: run the tests before saying done"
 coding.sh improve check        # after a few sessions
 ```
 
-coding.sh records the git HEAD each session starts at. `improve check` compares the sessions before
-a change with the sessions after it: the share of sessions with a failure flag, and, for each new
-line that names a command, path or identifier, how often the agent did what it says. The verdicts
-are Helped, Regressed, No clear change and Too early to tell. It makes no model calls. It exits 1 on
-Regressed, so it can run in CI or a cron job.
+coding.sh records the git HEAD each session starts at. `improve check` compares the sessions
+before a change with those after it: the share with a failure flag and, for a new line that names
+a command, path or identifier, how often the agent did what it says. Verdicts include Helped, Regressed, No clear change and Too early to tell.
+
+It makes no model calls, and it exits 1 on Regressed, so it can run in CI or a cron job.
 
 ## Replay the moments it went wrong
 
@@ -36,12 +36,14 @@ coding.sh exp ab --dry-run      # the decision points it found, and the cost est
 coding.sh exp ab --max-cost 1
 ```
 
-`exp ab` finds decision points in your recent sessions: the agent said it was done without running
-anything, ended a turn while tests failed, or retried a failed command unchanged. For each one, the
-model writes the agent's next turn twice, once with your committed file and once with your edit,
-and a judge scores both. Nothing runs in your repo. The answer is "Ship it", "Hold" or "Don't
-ship". `--gate` exits 0 only on "Ship it", and `--watch` reruns on every save. It needs
-`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. A Claude subscription is not enough.
+`exp ab` finds moments where the agent said it was done without running anything, ended a turn
+while tests failed, or retried a failed command unchanged. The model writes the next turn twice,
+with your committed file and with your edit, and a judge scores both. Nothing runs in your repo.
+
+The answer is "Ship it", "Hold" or "Don't ship". `--gate` exits 0 only on "Ship it", and `--watch`
+reruns on every save. It uses `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, or with neither, a
+logged-in Claude Code or Codex. Walkthrough:
+[Test an AGENTS.md change in five minutes](../how-to/test-agents-md-change.md).
 
 ## Run whole tasks with and without a skill
 
@@ -53,8 +55,7 @@ coding.sh compare no-skill with-skill --tag skill-eval --gate --k 3 --max-cost 1
 
 `compare` runs the real agent on each task in both setups and grades every run. The pass-rate
 difference comes with a 95% paired bootstrap interval, and the gate reads "Ship it", "Hold" or
-"Don't ship". With `--without <path>` it removes one file from a setup and reads "Keep it" or
-"Drop it". Use this when the skill's value is in behaviour across a whole task.
+"Don't ship". `--without <path>` removes one file from a setup and reads "Keep it" or "Drop it".
 
 ## Check that a skill loads
 
@@ -72,8 +73,8 @@ prompts that should and should not load it and reports precision, recall and F1.
 
 ### Does this work for other agents' instruction files and Cursor rules?
 
-Yes. `exp ab` and `improve check` read AGENTS.md, GEMINI.md, Claude Code's instructions file, rules under
-`.claude/rules/` or `.cursor/rules/`, and a skill's SKILL.md.
+Yes. `exp ab` and `improve check` read AGENTS.md, GEMINI.md, Claude Code's instructions file, rules
+under `.claude/rules/` or `.cursor/rules/`, and a skill's SKILL.md.
 
 ### Can I test a draft without editing the repo?
 

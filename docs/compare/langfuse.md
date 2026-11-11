@@ -1,10 +1,12 @@
 # coding.sh vs Langfuse
 
 Langfuse is an open-source platform for tracing, evaluating and managing the prompts of LLM
-applications. It runs as a hosted cloud or as a self-hosted server. coding.sh is a CLI and local
-viewer that records AI agents on your machine, with coding agents such as Claude Code and Codex
-captured through their hooks. Both are open source and both do evals. They differ in where the data
-lives, what it takes to run them, and who they are built for.
+applications, as a hosted cloud or a self-hosted server. coding.sh is a CLI and local viewer that
+records AI agents on your machine, with coding agents such as Claude Code and Codex captured
+through their hooks.
+
+Both are open source and both do evals. They differ in where the data lives, what it takes to run
+them, and who they are built for.
 
 Checked against Langfuse's docs on 7 November 2026. Sources are at the end of the page. If
 something here is out of date, open an issue.

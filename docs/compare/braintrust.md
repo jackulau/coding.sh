@@ -49,8 +49,8 @@ coding.sh.
 - **Open source and local.** The whole tool is MIT licensed. Runs and traces stay on your disk, no
   account is needed, and nothing is sent anywhere unless you add a sink.
 - **Statistics on every comparison.** `coding.sh exp compare` pairs two runs case by case and
-  reports a bootstrap interval of the difference; `--gate` turns it into a ship-or-hold exit code.
-  A result inside the noise is reported as inconclusive rather than as a win.
+  reports a bootstrap interval of the difference. A result inside the noise is inconclusive, not a
+  win, and `--gate` gives a ship-or-hold exit code.
 - **Calibrated judges.** An LLM judge counts only after it agrees with human labels on held-out
   cases; uncalibrated judges are flagged in every report.
 - **Coding tasks that replay.** An eval task starts from the repository as it was before the agent
