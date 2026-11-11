@@ -64,7 +64,12 @@ jobs:
           HAS_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
         run: |
           if [ "$HAS_TOKEN" = "true" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"
-          else echo "::notice::CLOUDFLARE_API_TOKEN is not set; built and checked, deploy skipped (run: gh secret set CLOUDFLARE_API_TOKEN)"; fi
+          else
+            # A green run with no deploy reads as "the site is live". Say it is not, on the run page and in the log.
+            echo "::warning title=Site not deployed::CLOUDFLARE_API_TOKEN is not set; built and checked, deploy skipped (run: gh secret set CLOUDFLARE_API_TOKEN)"
+            echo "### Site not deployed" >> "$GITHUB_STEP_SUMMARY"
+            echo "The build and checks passed, but \`CLOUDFLARE_API_TOKEN\` is not set, so https://coding.sh still serves the previous deploy." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Deploy
         if: steps.creds.outputs.ok == 'true'
