@@ -29,6 +29,14 @@ const BUDGET = {
     "/docs/troubleshooting/": 30 * KB,
     other: 26 * KB,
   },
+  // Brotli q11 of all inline <style> and of all inline JS (<script> without
+  // src, JSON-LD left out) per page. The CSS and the small scripts live in the
+  // page, so these are the only checks that see them apart from the HTML total.
+  // About 10% over the largest page of each group in the 2026-11-10 build;
+  // docs and blog CSS reset to that after the docs rebuild of 2026-11-11 (tabs,
+  // code tabs and the on-this-page rail; quickstart 8.1KB CSS and 4.0KB JS).
+  inlineCss: { home: 8 * KB, docs: 8.9 * KB, changelog: 7.1 * KB, blog: 8.8 * KB, other: 5.5 * KB },
+  inlineJs: { home: 2.7 * KB, docs: 4.4 * KB, changelog: 2.6 * KB, blog: 2.1 * KB, other: 1.4 * KB },
   preloadFonts: 28.5 * KB, // woff2 bytes preloaded by one page (26.0KB today)
   moduleScripts: 1, // external <script type="module" src> per page
   // The cards are lossless PNG (gen-og.mjs, compressionLevel 9). Palette
@@ -78,6 +86,26 @@ for (const p of pages) {
   const max = BUDGET.htmlBrotli[p.path] ?? BUDGET.htmlBrotli.other;
   if (size > max) fail(p.path, `HTML is ${fmt(size)} brotli, budget ${fmt(max)}`);
   if (size / max > (worstHtml.size / worstHtml.max || 0)) worstHtml = { path: p.path, size, max };
+}
+
+// 1b. Inline CSS and inline JS on the wire, per page.
+const group = (path) =>
+  path === "/" ? "home" : path.startsWith("/docs/") ? "docs" : path.startsWith("/changelog/") ? "changelog" : path.startsWith("/blog/") ? "blog" : "other";
+const brotli = (text) => brotliCompressSync(Buffer.from(text), { params: { [constants.BROTLI_PARAM_QUALITY]: 11 } }).length;
+const worstInline = { css: { size: 0 }, js: { size: 0 } };
+for (const p of pages) {
+  const css = [...p.html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)].map((m) => m[1]).join("\n");
+  const js = [...p.html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)]
+    .filter(([, a]) => !attr(`<s ${a}>`, "src") && ["module", "text/javascript", undefined].includes(attr(`<s ${a}>`, "type")))
+    .map((m) => m[2])
+    .join("\n");
+  for (const [kind, text, budget] of [["css", css, BUDGET.inlineCss], ["js", js, BUDGET.inlineJs]]) {
+    const size = brotli(text);
+    const max = budget[group(p.path)];
+    if (size > max) fail(p.path, `inline ${kind === "css" ? "CSS" : "JS"} is ${fmt(size)} brotli, budget ${fmt(max)} (${group(p.path)})`);
+    const w = worstInline[kind];
+    if (size / max > (w.size / w.max || 0)) worstInline[kind] = { path: p.path, size, max };
+  }
 }
 
 // 2. Preloaded fonts.
@@ -192,6 +220,8 @@ for (const f of ogFiles) {
 
 console.log(`perf-budget: ${pages.length} pages, ${imgCount} images, ${ogFiles.length} OG cards`);
 console.log(`  html     ${worstHtml.path} ${fmt(worstHtml.size)} of ${fmt(worstHtml.max)} (closest to budget)`);
+console.log(`  css      ${worstInline.css.path} inline ${fmt(worstInline.css.size)} of ${fmt(worstInline.css.max)} (closest to budget)`);
+console.log(`  js       ${worstInline.js.path} inline ${fmt(worstInline.js.size)} of ${fmt(worstInline.js.max)} (closest to budget)`);
 console.log(`  fonts    ${worstFonts.path ?? "-"} preloads ${fmt(worstFonts.size)} of ${fmt(BUDGET.preloadFonts)}`);
 console.log(`  scripts  ${worstScripts.path ?? "-"} has ${worstScripts.n} of ${BUDGET.moduleScripts} external modules`);
 console.log(`  rest     ${restFaces} *-rest font faces checked`);
