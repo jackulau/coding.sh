@@ -1,125 +1,193 @@
 ---
 import DocsLayout from "../../components/docs/DocsLayout.astro";
 import Code from "../../components/docs/Code.astro";
-import { REPO_URL } from "../../data/site";
+import Cards from "../../components/docs/Cards.astro";
+import Terminal from "../../components/Terminal.astro";
 
-const SPEC_URL = `${REPO_URL}/blob/main/docs/TOOL-EVALS.md`;
+const task = `id = "count-commits"
+target = "git"
+split = "dev"                                  # "dev" or "heldout"
+instruction = "How many commits are on the current branch of the repo in this folder? Reply with the number only."
+reference = ["git rev-list --count HEAD"]      # a scripted solution: shows the task can be done
 
-const target = `[toolevals.targets.codingsh]
-kind = "cli"
-bin = "coding.sh"                              # the name the agent types
-command = ["node", "/abs/path/dist/cli.mjs"]   # the real binary plus prefix args
-docs = ["docs/**/*.md", "README.md"]           # reads of these count as doc lookups
-usageExitCodes = [2]                           # exit codes that mean "usage error"
-helpCrawl = true                               # crawl --help of every subcommand for surface size`;
-
-const task = `# evals/toolevals/codingsh/tasks/slowest-tool.toml
-id = "slowest-tool"
-target = "codingsh"
-split = "dev"                 # "dev" | "heldout"
-instruction = """
-Find the slowest tool call in yesterday's sessions. Reply with the session id and the tool name.
-"""
-
-[[check]]
-kind = "output"
-contains = ["\${answers.slowest.sessionId}", "\${answers.slowest.tool}"]
+[setup]
+commands = [
+  "git init -q -b main",
+  "git -c user.name=demo -c user.email=demo@example.com commit -q --allow-empty -m one",
+  "git -c user.name=demo -c user.email=demo@example.com commit -q --allow-empty -m two",
+]
 
 [budget]
-turns = 25
-costUsd = 0.50
+turns = 10
+wallMs = 120000
 
-[expect]
-minTargetCalls = 2            # reference count for the efficiency ratio`;
+[[check]]
+kind = "output"                                # the agent's final reply
+equals = "2"
+normalize = ["trim"]
 
-const cli = `coding.sh toolevals init --cli <bin>
-coding.sh toolevals surface <target>
-coding.sh toolevals run <target> --driver agent:claude-code --driver model:anthropic/<model> -k 3
-coding.sh toolevals validate <target> --against old-build
-coding.sh toolevals compare <experiment> --baseline base@agent:claude-code --candidate help-v2@agent:claude-code
-coding.sh toolevals compress <target> --driver agent:claude-code
-coding.sh toolevals show <trial>
-coding.sh toolevals traces <target> --from <experiment> --out traces/`;
+[[check]]
+kind = "calls"                                 # the calls the tap recorded
+must = [{ tool = "rev-list" }]`;
+
+const variant = `# evals/toolevals/git/variants/new-build.toml
+command = ["/opt/git-next/bin/git"]`;
+
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const m = (s: string) => `<span class="t-muted">${esc(s)}</span>`;
+const t = (s: string) => `<span class="t-text">${esc(s)}</span>`;
+const ok = (s: string) => `<span class="t-pass">${esc(s)}</span>`;
+
+// Real output, 2026-11-11: coding.sh 0.1.6 under a temp HOME and CODING_SH_HOME, the model driver
+// answered by scripts/e2e/stub-model.mjs (baseUrl in the driver table).
+const INIT = [
+  `${m("$")} ${t("coding.sh toolevals init --cli git")}`,
+  `  Crawling the git surface…`,
+  `${ok("✓")} Added target git to coding.sh.toml`,
+  `  surface 2161 B, 1 item(s), ~541 tokens`,
+  `  3 starter tasks (draft) in evals/toolevals/git/tasks`,
+].join("\n");
+
+const VALIDATE = [
+  `${m("$")} ${t("coding.sh toolevals validate git")}`,
+  `  Validating git/count-commits…`,
+  `${ok("✓")} git/count-commits (marked validated)`,
+  `1/1 task(s) valid`,
+].join("\n");
+
+const RUN = [
+  `${m("$")} ${t("coding.sh toolevals run git --driver model:anthropic/claude-sonnet-5-5 -k 3")}`,
+  `  3 trials (1 task x 1 arm x k=3), estimated $0.300`,
+  `arm                                     passes  success (95% CI)        pass^k  pass@k  errors`,
+  `base@model:anthropic/claude-sonnet-5-5  3/3     100.0% [43.9%, 100.0%]  1       1       0`,
+  `texp_01M758K9HJMDNAF2FMN65EP736`,
+].join("\n");
+
+const SHOW = [
+  `${m("$")} ${t("coding.sh toolevals show trial_01M758K9Q5WPJ8YGZ3ZKAZ3SK7")}`,
+  `trial_01M758K9Q5WPJ8YGZ3ZKAZ3SK7  ${ok("PASS")}`,
+  `task count-commits · arm base@model:anthropic/claude-sonnet-5-5 · attempt 1`,
+  `  ${ok("✓")} output`,
+  `  ${ok("✓")} calls`,
+  "",
+  `turns 3 (llm.call) · tool calls 2 · target calls 2 · invalid 0 (0.0%) · failed 0`,
+  `help lookups 0 · retries 0 · self-corrections 0 · recovery —`,
+  `tokens 450 · cost — (none) · wall 5.7s`,
+  "",
+  `tap`,
+  `  ${ok("ok")}       379ms    log --oneline`,
+  `  ${ok("ok")}       444ms    rev-list --count HEAD`,
+].join("\n");
+
+const next = [
+  { href: "/docs/evals", title: "Evals", body: "Score your own agent on a set of cases, with the same pass@k and pass^k." },
+  { href: "/docs/judges", title: "LLM judges", body: "Grade a reply with a model when there is no exact answer, and check it against your labels." },
+  { href: "/docs/eval-methods", title: "How evals are computed", body: "The paired bootstrap, the sign-flip test and McNemar's test that compare arms." },
+];
 ---
 
 <DocsLayout>
-  <div class="note">
-    <p>
-      <strong>Built.</strong> The full spec is <a href={SPEC_URL}>docs/TOOL-EVALS.md</a>; every flag is in the
-      <a href="/docs/cli/toolevals">CLI reference</a>.
-    </p>
-  </div>
-
-  <h2 id="goal">The goal</h2>
   <p>
-    Turn "agents misuse my tool" into a number. A tool eval runs tasks against one target (a CLI, an MCP server or an HTTP API), lets agents
-    attempt them, and scores how well they used the tool. Then you change the tool's help text, flag names, MCP descriptions or
-    <code>--json</code> output, and keep the changes that raise the score or hold it at lower cost.
-  </p>
-  <p>Every metric comes from captured traces plus an agent-independent tap on the tool. Nothing is self-reported by the agent.</p>
-
-  <h2 id="cli">Commands</h2>
-  <Code code={cli} />
-  <p>
-    <code>show</code> prints one trial's metrics, tap records and session tree. <code>traces</code> writes an MCP server's failing traces
-    and per-tool health to a directory, from an experiment's dev trials or from captured sessions (<code>--sessions 'since:30d'</code>).
+    A tool eval measures how well agents use one tool: a CLI, an MCP server or an HTTP API. Agents attempt tasks that need the tool, a tap
+    between them and the tool records every call, and you compare versions of the tool's help text, descriptions or output on the same
+    tasks.
   </p>
 
-  <h2 id="concepts">Concepts</h2>
+  <h2 id="first-run">The shortest run</h2>
+  <p>This run measures how well an agent uses <code>git</code>. Any CLI on your <code>PATH</code> works the same way.</p>
+
+  <h3 id="init">1. Add the target</h3>
+  <Terminal title="~/proj" label="Output of coding.sh toolevals init">
+    <pre set:html={INIT} />
+  </Terminal>
+  <p>
+    <code>init</code> writes the target to <code>coding.sh.toml</code>, measures the help an agent would have to read, and writes three
+    draft tasks to fill in. <code>--mcp '&lt;command&gt;'</code>, <code>--mcp-url</code> and <code>--http</code> add the other kinds of
+    target.
+  </p>
+
+  <h3 id="task">2. Write a task</h3>
+  <Code title="evals/toolevals/git/tasks/count-commits.toml" code={task} />
+
+  <h3 id="validate">3. Check the task</h3>
+  <Terminal title="~/proj" label="Output of coding.sh toolevals validate">
+    <pre set:html={VALIDATE} />
+  </Terminal>
+  <p>
+    A task is valid when its checks fail on the sandbox after setup alone, the <code>reference</code> commands pass them, and the
+    instruction does not give the answer away.
+  </p>
+
+  <h3 id="run">4. Run it</h3>
+  <Terminal title="~/proj" label="Output of coding.sh toolevals run">
+    <pre set:html={RUN} />
+  </Terminal>
+  <p>
+    A driver is what attempts the task. <code>model:&lt;provider&gt;/&lt;model&gt;</code> is a model in a built-in tool loop with one
+    <code>shell</code> tool, and <code>agent:claude-code</code> or <code>agent:codex</code> is the coding agent itself. Each
+    (variant, driver) pair is an arm, named <code>&lt;variant&gt;@&lt;driver&gt;</code>. Runs estimated above $5 ask first; pass
+    <code>--yes</code> when not on a terminal.
+  </p>
+  <Terminal title="~/proj" label="Output of coding.sh toolevals show">
+    <pre set:html={SHOW} />
+  </Terminal>
+
+  <h2 id="tasks">Tasks</h2>
+  <p>
+    Every check must pass and the trial must stay within its <code>[budget]</code> (turns, tokens, wall time, cost). Tasks in the
+    <code>dev</code> split are the ones you tune against; <code>heldout</code> tasks confirm a change at the end.
+  </p>
   <div class="doc-table">
     <table>
-      <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+      <thead><tr><th>Check</th><th>Passes when</th></tr></thead>
       <tbody>
-        <tr><td>Target</td><td>The tool under test: a CLI, an MCP server (stdio or HTTP), or an HTTP API.</td></tr>
-        <tr><td>Variant</td><td>A named version of the target's surface, such as <code>base</code> or <code>help-v2</code>.</td></tr>
-        <tr><td>Task</td><td>An instruction, sandbox setup, success checks and a budget. Each belongs to the <code>dev</code> or <code>heldout</code> split.</td></tr>
-        <tr><td>Driver</td><td>What attempts the task: a coding agent through its adapter (<code>agent:claude-code</code>) or a raw model in a built-in tool loop (<code>model:anthropic/…</code>).</td></tr>
-        <tr><td>Tap</td><td>A recorder between driver and target: a PATH shim for a CLI, a JSON-RPC proxy for MCP, a reverse proxy for HTTP.</td></tr>
-        <tr><td>Arm</td><td>A (variant, driver) pair. Comparisons pair arms by task.</td></tr>
+        <tr><td><code>output</code></td><td>The final reply matches <code>equals</code>, <code>contains</code>, <code>regex</code> or <code>jsonPath</code>.</td></tr>
+        <tr><td><code>command</code></td><td>A command exits 0 in the sandbox after the agent stops.</td></tr>
+        <tr><td><code>state</code></td><td>Files exist or contain a value, or a command's output matches.</td></tr>
+        <tr><td><code>calls</code></td><td>The tap recorded the calls in <code>must</code>, none in <code>mustNot</code>, at most <code>max</code>, in <code>order</code>.</td></tr>
+        <tr><td><code>judge</code></td><td>An LLM judge passes the reply. Marked uncalibrated until it is <a href="/docs/judges#calibrate">checked against your labels</a>.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p id="kinds">
+    A task that tests a change can carry a <code>kind</code>: <code>bad</code> fails on the old version and should pass on the new one,
+    <code>guard</code> and <code>control</code> pass on both. <code>toolevals validate git --against &lt;variant&gt;</code> checks that each
+    bad task really fails on the old version.
+  </p>
+
+  <h2 id="metrics">Metrics</h2>
+  <p>Every metric comes from the trial's trace and the tap. None is reported by the agent.</p>
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Metric</th><th>What it counts</th></tr></thead>
+      <tbody>
+        <tr><td>Success</td><td>Trials that passed every check within budget, with a 95% Wilson interval, plus pass@k and pass^k per task.</td></tr>
+        <tr><td>Target calls</td><td>Calls to the tool the tap recorded, and the share that were invalid (unknown flag, unknown command, missing argument, schema error) or failed.</td></tr>
+        <tr><td>First call correct</td><td>Whether the agent's first real call to the tool succeeded.</td></tr>
+        <tr><td>Retries, self-corrections</td><td>Calls repeated after an invalid or failed one, and the repeats that then worked.</td></tr>
+        <tr><td>Help lookups</td><td><code>--help</code> calls, man pages and doc files read, and the bytes of help read.</td></tr>
+        <tr><td>Efficiency</td><td>Target calls divided by the task's <code>expect.minTargetCalls</code>. 1.0 is the fewest possible.</td></tr>
+        <tr><td>Cost and time</td><td>Turns, tokens, dollars, wall time, model latency and the tool's own latency.</td></tr>
+        <tr><td>Surface</td><td>Bytes and tokens of the help pages or MCP tool descriptions an agent has to read (<code>toolevals surface</code>).</td></tr>
+        <tr><td>Subagents</td><td>Calls made inside subagents and their share of tokens.</td></tr>
       </tbody>
     </table>
   </div>
 
-  <h2 id="targets">Targets and tasks</h2>
-  <Code title="coding.sh.toml" code={target} />
-  <Code title="task.toml" code={task} />
-  <p>
-    Checks can be a <code>command</code> that must exit 0, <code>state</code> assertions on files or command output, the final
-    <code>output</code>, or a <code>judge</code> (flagged uncalibrated until it passes <a href="/docs/evals#calibration">calibration</a>).
-    Before use, a task must fail when nothing is done, pass a scripted reference, and not leak its answer in the instruction.
-  </p>
-
-  <h2 id="metrics">Metrics</h2>
+  <h2 id="experiments">Compare two versions of the tool</h2>
+  <p>A variant is a named version of the tool: another build, other environment variables, other MCP descriptions or fewer MCP tools.</p>
+  <Code title="evals/toolevals/git/variants/new-build.toml" code={variant} />
   <ul>
-    <li><strong>Success</strong>: pass rate with a Wilson interval, pass@k and pass^k.</li>
-    <li><strong>Correctness of calls</strong>: invalid calls and their reasons (unknown flag, unknown command, schema violation), retries, self-corrections, and whether the first call was right.</li>
-    <li><strong>Help seeking</strong>: <code>--help</code> calls, doc reads and bytes of help read.</li>
-    <li><strong>Cost</strong>: turns, tokens, dollars, wall time, model-call latency and the target's own latency.</li>
-    <li><strong>Surface</strong>: bytes and estimated tokens of the help pages or MCP tool descriptions an agent has to read.</li>
-    <li><strong>Subagents</strong>: target calls made inside subagents, and their share of tokens.</li>
+    <li><code>coding.sh toolevals run git --variant base --variant new-build --driver agent:claude-code -k 3</code> runs every arm, interleaved, so a change in the model's speed hits both.</li>
+    <li><code>coding.sh toolevals compare &lt;experiment&gt; --baseline base@agent:claude-code --candidate new-build@agent:claude-code</code> pairs the arms by task.</li>
+    <li><code>coding.sh toolevals compress &lt;mcp target&gt;</code> shortens MCP tool descriptions one tool at a time, keeps a cut only while success holds, and confirms the result on the held-out tasks.</li>
+    <li><code>coding.sh toolevals traces &lt;mcp target&gt; --sessions 'since:30d' --out traces/</code> exports an MCP server's failing traces and per-tool health from your recorded sessions.</li>
   </ul>
-
-  <h2 id="experiments">Experiments</h2>
   <p>
-    An experiment is tasks × variants × drivers × k attempts, interleaved so provider drift hits every arm equally. Compare pairs by task and
-    uses the same paired bootstrap and McNemar's test as <a href="/docs/experiments#compare">dataset experiments</a>.
-  </p>
-  <p>
-    It also prints <code>p (perm)</code>, a task-paired permutation test, exact up to 20 tasks. It holds its level at the 5-11 tasks a suite
-    often has, where bootstrap intervals run too narrow.
-  </p>
-  <p>
-    <code>toolevals compress</code> shortens MCP tool descriptions one tool at a time on the dev split, keeps each cut only if it is
-    non-inferior, and confirms the result on the held-out split.
+    <code>compare</code> uses the paired bootstrap and McNemar's test, plus a sign-flip test that is exact up to 20 tasks. See
+    <a href="/docs/eval-methods#comparing-two-runs">How evals are computed</a>.
   </p>
 
-  <h2 id="kinds">Task kinds</h2>
-  <p>
-    A task that tests a change can carry a <code>kind</code>. A <code>bad</code> task fails on the old variant and passes on the new one.
-    <code>guard</code> and <code>control</code> tasks pass on both; a control that breaks means the change overcorrected.
-  </p>
-  <p>
-    <code>toolevals validate &lt;target&gt; --against &lt;variant&gt;</code> reports a bad task that already passes on the old variant, since it
-    does not reproduce the failure. <code>run</code> and <code>compare</code> split results by kind.
-  </p>
+  <h2 id="next">Next steps</h2>
+  <Cards cards={next} cols={3} />
 </DocsLayout>

@@ -1,64 +1,53 @@
 ---
 import DocsLayout from "../../components/docs/DocsLayout.astro";
 import Code from "../../components/docs/Code.astro";
+import Cards from "../../components/docs/Cards.astro";
 import Terminal from "../../components/Terminal.astro";
-import Tag from "../../components/docs/Tag.astro";
 
-const firstSessions = `coding.sh eval init --sessions --verifier 'npm test'
-coding.sh eval run failures --yes`;
+const cases = `{"input": "Viewer search misses tool output", "expected": "bug, viewer"}
+{"input": "Add a --json flag to coding.sh usage", "expected": "enhancement, cli"}
+{"input": "Codex sessions show no cost", "expected": "bug, cost"}`;
 
-const firstSkill = `coding.sh eval init --skill .claude/skills/pdf --draft
-coding.sh eval run pdf --yes`;
+const agent = `import OpenAI from "openai";
+import { observe } from "@codingdotsh/sdk";
 
-const firstApp = `coding.sh eval init triage --cases cases.jsonl --command 'node triage.mjs'
-# no cases yet: describe the app and have a model draft them
-coding.sh eval init triage --describe 'Labels a support ticket billing, bug or other' \\
-  --command 'node triage.mjs' --draft
-coding.sh eval run triage`;
+const openai = observe(new OpenAI()); // records each call: prompt, answer, tokens, cost
 
-const dataset = `coding.sh dataset add smoke \\
-  --case '{"input":"2+2","expected":"4"}' \\
-  --case '{"input":"3*3","expected":"9"}'
-coding.sh dataset import cases.jsonl --name support   # JSONL, JSON or CSV
-coding.sh dataset add regressions --session <session-id>   # a case from a captured session`;
+// eval run sends each case's input as JSON on stdin; from a terminal, pass the issue as an argument
+let stdin = "";
+if (!process.argv[2]) for await (const chunk of process.stdin) stdin += chunk;
+const issue = process.argv[2] ?? JSON.parse(stdin);
 
-const agent = `// agent.mjs: reads the case input as JSON on stdin, prints its answer
-let s = "";
-for await (const chunk of process.stdin) s += chunk;
-const input = JSON.parse(s);
-console.log(String(eval(input)));`;
+const res = await openai.chat.completions.create({ model: "gpt-5-mini", messages: [
+  { role: "system", content: "Pick labels for this GitHub issue from the repo's label list. Answer with the labels only." },
+  { role: "user", content: issue } ] });
+console.log(res.choices[0].message.content);`;
 
-const run = `coding.sh exp run --dataset smoke --name base \\
-  --task '{"kind":"command","command":"node","args":["agent.mjs"]}' \\
-  --grader '{"kind":"exact"}'`;
+const init = `coding.sh eval init triage --cases cases.jsonl --command 'node triage.mjs'`;
 
-const spec = `{
-  "name": "support-v2",
-  "dataset": "support",
-  "split": "test",
-  "trials": 3,
-  "task": { "kind": "http", "url": "http://127.0.0.1:3000/api/agent", "responsePath": "$.output" },
-  "graders": [
-    { "kind": "contains", "value": ["refund"] },
-    { "kind": "llm", "name": "helpful", "rubric": "Pass if the reply resolves the customer's issue.", "tunedOn": ["dev"] }
-  ]
+const judgeCases = `{"input": "Viewer search misses tool output"}
+{"input": "Add a --json flag to coding.sh usage"}
+{"input": "Codex sessions show no cost"}`;
+
+const judgeInit = `coding.sh eval init triage-judged --cases issues.jsonl --command 'node triage.mjs' \\
+  --describe 'Pass if the labels name the kind of issue (bug or enhancement) and the part of coding.sh it is about (cli, viewer, cost or docs).'
+coding.sh eval run triage-judged -k 1`;
+
+const judgeSpec = `"graders": [
+  {
+    "kind": "llm",
+    "name": "does-the-job",
+    "rubric": "Pass when the output does this, correctly and completely: Pass if the labels name the kind of issue (bug or enhancement) and the part of coding.sh it is about (cli, viewer, cost or docs)."
+  }
+]`;
+
+const judgeOpenai = `{
+  "kind": "llm",
+  "name": "does-the-job",
+  "provider": "openai",
+  "model": "gpt-5-mini",
+  "rubric": "Pass when the output does this, …"
 }`;
-
-const judge = `coding.sh ui                                   # label sessions pass / fail
-coding.sh judge calibrate <experiment> --criterion outcome --split test`;
-
-const scores = `coding.sh score config helpfulness --type numeric --min 0 --max 5
-coding.sh score add case:refund-03 helpfulness 4 --comment "named the refund window"
-coding.sh score list --name helpfulness`;
-
-// Sections that moved to their own pages. An old /docs/evals#<id> link follows its section.
-const moved = {
-  "/docs/experiments": ["compare", "non-inferiority", "coverage", "grader-versions", "regrade", "sweep", "matrix", "plateau", "resume", "sessions", "metrics", "exp-replay"],
-  "/docs/harness-evals": ["exp-ab", "protected", "refine", "triggers", "repo-replay", "witness", "gate", "tamper", "audited", "promote", "item-gate", "plugins", "hand-written", "reuse", "release", "iterate", "repair"],
-};
-
-// The evals guide holds the method behind every line this page shows.
-const GUIDE = "https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md";
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const m = (s: string) => `<span class="t-muted">${esc(s)}</span>`;
@@ -66,91 +55,245 @@ const t = (s: string) => `<span class="t-text">${esc(s)}</span>`;
 const ok = (s: string) => `<span class="t-pass">${esc(s)}</span>`;
 const no = (s: string) => `<span class="t-fail">${esc(s)}</span>`;
 
-// Real output of scripts/e2e/eval-init-capture.mjs (2026-11-07): Claude Code against a stub model that
-// writes the right fix in one trial and a wrong one in the other.
-const SUITE = [
-  `${m("$")} ${t("coding.sh eval run failures -k 2 --yes")}`,
-  `failures  capability suite · 1 task · 2 trials each`,
-  `pass@1  50.0% [9.5%, 90.5%]  (1/2 trials, 95% Wilson)`,
-  `pass@2  ${ok("100.0%")}  ${m("a task counts when any of 2 trials passes")}`,
-  `pass^2  ${no("0.0%")}  ${m("a task counts only when all 2 trials pass")}`,
+// Real output, 2026-11-11: coding.sh 0.1.6 from a packed build, a temp HOME and CODING_SH_HOME,
+// triage.mjs answered by scripts/e2e/stub-model.mjs (as gpt-5-mini) behind OPENAI_BASE_URL. Step 5 is
+// the same suite after the system-prompt fix, and the judged suite ran with the OpenAI judge shown.
+const INIT = [
+  `${m("$")} ${t(init)}`,
+  `${ok("✓")} Wrote regression suite triage (cases) to evals/triage`,
+  `  evals/triage/suite.json`,
+  `${no("!")} 3 cases: grow toward 20 to 50 from real failures; a small suite only shows large changes`,
   "",
-  `task                     passed         first failure`,
-  m(`-----------------------  ------  -----  ---------------------------`),
-  `make-sum-js-add-its-two     1/2  ${no("flaky")}  coding.sh show 4fd72079-09a`,
+  `  Regression suite: should pass nearly every time. \`eval run\` exits 1 when a task fails most of its trials.`,
+  `  Trials: 3 per case; the report gives pass@3 (passed at least once) and pass^3 (passed every time).`,
   "",
-  no(`flaky: make-sum-js-add-its-two. These pass some trials and fail others; pass^2 counts them as failures.`),
-  m(`1 task: a suite this small only shows large changes; grow it toward 20 to 50 tasks from real failures`),
+  `  Run it:`,
+  `    coding.sh eval run triage`,
+  "",
+  `  To run it on every pull request, save this as .github/workflows/evals-triage.yml:`,
+  `name: evals (triage)`,
+  `on: pull_request`,
+  m(`…`),
 ].join("\n");
 
-// Real output of the commands above (run 2026-11-06 against a throwaway CODING_SH_HOME).
 const RUN = [
-  `${m("$")} ${t("coding.sh exp run --dataset smoke --name base …")}`,
-  `${t("base")}  exp_01M6SAJYC5RM7A5TCT65R3SFSM`,
-  `dataset smoke@8db025860cd0b8da  task command: node agent.mjs  trials 1`,
-  `pass    ${ok("100.0%")} [34.2%, 100.0%] (2/2, 95% Wilson)`,
-  `latency median 32ms, p90 32ms, max 32ms`,
+  `${m("$")} ${t("coding.sh eval run triage")}`,
   "",
-  `grader  kind     pass  95% CI           mean score  errors  trust`,
-  m(`------  -----  ------  ---------------  ----------  ------  -------------`),
-  `exact   exact  ${ok("100.0%")}  [34.2%, 100.0%]        1.00       0  deterministic`,
+  `triage  regression suite · 3 cases · 3 trials each`,
+  `pass@1  66.7% [35.4%, 87.9%]  (6/9 trials, 95% Wilson)`,
+  `pass@3  66.7%  ${m("a case counts when any of 3 trials passes")}`,
+  `pass^3  66.7%  ${m("a case counts only when all 3 trials pass")}`,
+  "",
+  `case                                  passed         first failure`,
+  m(`------------------------------------  ------  -----  --------------------------------------`),
+  `Codex sessions show no cost              0/3  ${no("never")}  exact: expected "bug, cost", got "bug"`,
+  `Add a --json flag to coding.sh usage     3/3  ${ok("ok")}`,
+  `Viewer search misses tool output         3/3  ${ok("ok")}`,
+  "",
+  no(`never passed: Codex sessions show no cost. Read its transcript or output first: a case no trial passes is most often a broken case or grader, not a weak agent.`),
+  m(`3 cases: a suite this small only shows large changes; grow it toward 20 to 50 cases from real failures`),
+  no(`regression suite: Codex sessions show no cost fails most trials`),
+  `experiment exp_01M75HB4GTTGK0S04PB0VXSKY2`,
 ].join("\n");
+
+const fixed = `{ role: "system", content: "Pick labels for this GitHub issue from these labels: bug, enhancement, cli, viewer, cost, docs. Answer with the labels only." },`;
+
+const RUN2 = [
+  `${m("$")} ${t("coding.sh eval run triage")}`,
+  "",
+  `triage  regression suite · 3 cases · 3 trials each`,
+  `pass@1  100.0% [70.1%, 100.0%]  (9/9 trials, 95% Wilson)`,
+  m(`…`),
+  `Add a --json flag to coding.sh usage     3/3  ${ok("ok")}`,
+  `Codex sessions show no cost              3/3  ${ok("ok")}`,
+  `Viewer search misses tool output         3/3  ${ok("ok")}`,
+  m(`…`),
+  `experiment exp_01M75HBMX4HBKBXWPPB696R4B5`,
+].join("\n");
+
+const compare = `coding.sh exp compare exp_01M75HB4GTTGK0S04PB0VXSKY2 exp_01M75HBMX4HBKBXWPPB696R4B5`;
+
+const COMPARE = [
+  `${m("$")} ${t(compare)}`,
+  `A triage exp_01M75HB4GTTGK0S04PB0VXSKY2  pass 66.7%`,
+  `B triage exp_01M75HBMX4HBKBXWPPB696R4B5  pass 100.0%`,
+  m(`…`),
+  `B − A   +33.3pp [0.0pp, +100.0pp] (3 paired cases, 95% paired bootstrap)`,
+  `mcnemar p=1.000  0 regressed, 1 improved  sign-flip p=1.000 over 3 cases`,
+  m(`…`),
+  `verdict inconclusive (CI includes 0)`,
+  m(`…`),
+  no(`! only 3 paired cases (< 200): small suites detect only large effects and their intervals can under-cover; add cases or trials before trusting a null result`),
+  m(`…`),
+  `improvements 1`,
+  `case                 A     B       Δ`,
+  m(`------------------  --  ----  ------`),
+  `c_4e1e9ed337bf6b6d  0%  100%  ${ok("+100pp")}`,
+].join("\n");
+
+const JUDGED = [
+  `${m("$")} ${t("coding.sh eval run triage-judged -k 1")}`,
+  "",
+  `triage-judged  regression suite · 3 cases · 1 trial each`,
+  `pass@1  100.0% [43.9%, 100.0%]  (3/3 trials, 95% Wilson)`,
+  "",
+  `case                                  passed      first failure`,
+  m(`------------------------------------  ------  --  -------------`),
+  `Add a --json flag to coding.sh usage     1/1  ${ok("ok")}`,
+  `Codex sessions show no cost              1/1  ${ok("ok")}`,
+  `Viewer search misses tool output         1/1  ${ok("ok")}`,
+  m(`…`),
+].join("\n");
+
+const next = [
+  { href: "/docs/judges", title: "LLM judges", body: "Write a rubric, pick the provider and model, and check the judge against your own labels." },
+  { href: "/docs/how-to/session-to-eval", title: "Turn failed runs into evals", body: "Keep the runs that went wrong as cases, so every later change is tested against them." },
+  { href: "/docs/experiments", title: "Experiments", body: "Run two versions on the same cases and see, in the compare view, what got better and what broke." },
+  { href: "/docs/how-to/ci-regressions", title: "Catch a regression in CI", body: "Run the suite on every pull request and fail the job when a case breaks." },
+];
+
+// Sections that moved to their own pages. An old /docs/evals#<id> link follows its section.
+const moved = {
+  "/docs/judges": ["judges", "calibration", "scores"],
+  "/docs/experiments": ["compare", "non-inferiority", "coverage", "grader-versions", "regrade", "sweep", "matrix", "plateau", "resume", "sessions", "metrics", "exp-replay", "tasks"],
+  "/docs/harness-evals": ["exp-ab", "protected", "refine", "triggers", "repo-replay", "witness", "gate", "tamper", "audited", "promote", "item-gate", "plugins", "hand-written", "reuse", "release", "iterate", "repair"],
+};
 ---
 
 <DocsLayout>
   <p>
-    There are two kinds of eval. <strong>Dataset experiments</strong> run any agent, in any language, over a set of cases and grade the
-    outputs. <strong>Repo-replay tasks</strong> re-run a coding agent from the repository state before a real session and check the result
-    with a validated verifier.
-  </p>
-  <p>
-    <a href="/docs/experiments">Experiments</a> covers comparing two runs, sweeps and long runs. <a href="/docs/harness-evals">Harness
-    evals</a> covers testing an AGENTS.md, rule or skill change, and repo-replay tasks.
+    An eval has three parts: <a href="/docs/concepts">cases</a> (an input and, when you have one, the expected answer), the task (the
+    command that answers one case) and graders (what decides pass or fail).
   </p>
 
-  <h2 id="first-eval">Your first eval in 5 minutes <Tag status="built" /></h2>
+  <h2 id="first-eval">Step by step</h2>
   <p>
-    <code>eval init</code> writes a suite to <code>evals/&lt;name&gt;/</code> in your repo. <code>eval run</code> runs every suite there, or
-    the ones you name, and prints a report. In a terminal, <code>eval init</code> with no flags asks what you want to test.
+    This eval tests the triage agent from the <a href="/docs/quickstart">Quickstart</a>, which labels coding.sh's GitHub issues. Any
+    program that reads an input and prints an answer works the same way, in any language.
   </p>
+
+  <h3 id="write-cases">1. Write the cases</h3>
+  <p>One JSON object per line: the issue title as <code>input</code>, and the labels you expect as <code>expected</code>.</p>
+  <Code title="cases.jsonl" code={cases} />
+
+  <h3 id="read-stdin">2. Let the agent read a case</h3>
   <p>
-    <strong>Your agent's failed sessions.</strong> Up to 10 flagged sessions from this repo in the last 14 days become repo tasks: the repo
-    before the session, its first prompt, and your verifier. The failed diff is kept as a near miss the verifier must fail.
+    <code>eval run</code> sends each case's input to your command as JSON on stdin and grades what it prints. The quickstart agent takes the
+    issue as an argument, so add the three lines that read stdin:
   </p>
-  <Code code={firstSessions} />
-  <p>
-    <strong>A skill.</strong> Prompts where the agent should load the skill and prompts where it should not, drafted by a model and marked
-    DRAFT for you to review. <code>eval run</code> runs each in Claude Code and checks whether the skill loaded.
-  </p>
-  <Code code={firstSkill} />
-  <p>
-    <strong>An app or a prompt.</strong> Cases of <code>&#123;"input", "expected"&#125;</code> and a command (or <code>--url</code>) that
-    answers one. <code>eval init</code> also prints a GitHub Actions workflow that runs the suite on every pull request.
-  </p>
-  <Code code={firstApp} />
-  <Terminal title="~/proj" label="Output of coding.sh eval run">
-    <pre set:html={SUITE} />
+  <Code title="triage.mjs" code={agent} />
+
+  <h3 id="init">3. Create the suite</h3>
+  <Code code={init} />
+  <Terminal title="~/triage" label="Output of coding.sh eval init">
+    <pre set:html={INIT} />
   </Terminal>
   <p>
-    Each task runs k times (3 by default). pass@k counts a task when any of its k trials passes, and pass^k only when all of them pass, so a
-    <strong>flaky</strong> task counts for the first and against the second. Each failed trial links its captured session.
-  </p>
-  <p>
-    The <a href={`${GUIDE}#your-first-eval-in-5-minutes`}>evals guide</a> maps each step of Anthropic's
-    <a href="https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents">Demystifying evals for AI agents</a> roadmap to a command.
+    This writes <code>evals/triage/suite.json</code> in your repo, so the suite is reviewed like code. The expected answers are short, so it
+    grades with <code>exact</code>, ignoring case and extra spaces. The output ends with a GitHub Actions workflow that runs the suite on
+    every pull request; see <a href="#every-change">Run it on every change</a>.
   </p>
 
-  <h2 id="datasets">Datasets <Tag status="built" /></h2>
+  <h3 id="run">4. Run it</h3>
+  <Code code="coding.sh eval run triage" />
+  <Terminal title="~/triage" label="Output of coding.sh eval run">
+    <pre set:html={RUN} />
+  </Terminal>
+
+  <h3 id="report">Read the report</h3>
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Line</th><th>What it tells you</th></tr></thead>
+      <tbody>
+        <tr><td><code>pass@1</code></td><td>The share of all trials that passed, with a 95% interval. Each case runs 3 times by default (<code>-k</code>).</td></tr>
+        <tr><td><code>pass@3</code></td><td>The share of cases that passed at least once in 3 trials.</td></tr>
+        <tr><td><code>pass^3</code></td><td>The share of cases that passed every trial. Use it when the agent must work every time.</td></tr>
+        <tr><td>Case rows</td><td>Each case by its input, its passed trials, and the first failure's reason. <code>flaky</code> marks a case that passed some trials.</td></tr>
+        <tr><td><code>never passed</code></td><td>A case no trial passed. Check the case and the grader before you blame the agent.</td></tr>
+        <tr><td><code>experiment</code></td><td>The stored run. <code>coding.sh exp show &lt;id&gt;</code> lists every trial.</td></tr>
+      </tbody>
+    </table>
+  </div>
   <p>
-    A dataset is a list of cases: <code>input</code>, optional <code>expected</code>, <code>tags</code>, <code>metadata</code> and a
-    <code>split</code> (<code>train</code>, <code>dev</code> or <code>test</code>). Every change makes a new version whose id is a hash of
-    the cases, so an experiment records exactly what it ran on.
+    Here the agent answers "bug" for "Codex sessions show no cost", and the case expects "bug, cost". This is a regression suite, so
+    <code>eval run</code> exits 1 while any case fails most of its trials.
   </p>
-  <Code code={dataset} />
+
+  <h3 id="fix">5. Fix it and compare</h3>
+  <p>
+    The system prompt asks for labels "from the repo's label list" but never gives the list, so the model doesn't know <code>cost</code> is
+    a label. Name the labels in the system message of <code>triage.mjs</code>:
+  </p>
+  <Code title="triage.mjs" code={fixed} />
+  <p>Run the suite again:</p>
+  <Terminal title="~/triage" label="Output of coding.sh eval run after the fix">
+    <pre set:html={RUN2} />
+  </Terminal>
+  <p>Each run is stored as an experiment. Compare the two, case by case:</p>
+  <Code code={compare} />
+  <Terminal title="~/triage" label="Output of coding.sh exp compare">
+    <pre set:html={COMPARE} />
+  </Terminal>
+  <p>
+    The fix passes the case that failed and breaks none. With 3 cases, the verdict stays inconclusive: a suite this small shows that a case
+    changed, not that the change will hold. Add cases from real failures before you rely on the verdict. Reading the comparison is covered
+    in <a href="/docs/experiments">Experiments</a>.
+  </p>
+
+  <h2 id="judge">Grade without an exact answer</h2>
+  <p>
+    When an answer can be right in more than one way, leave out <code>expected</code> and describe a good answer with
+    <code>--describe</code>. <code>eval init</code> then grades with an LLM judge that uses your description as its rubric.
+  </p>
+  <Code title="issues.jsonl" code={judgeCases} />
+  <Code code={judgeInit} />
+  <Terminal title="~/triage" label="Output of coding.sh eval run with a judge">
+    <pre set:html={JUDGED} />
+  </Terminal>
+  <p>The grader it writes to <code>evals/triage-judged/suite.json</code>:</p>
+  <Code title="suite.json" code={judgeSpec} />
+  <p>
+    The judge calls Anthropic with <code>ANTHROPIC_API_KEY</code> by default. With only an OpenAI key, add <code>provider</code> and
+    <code>model</code> to the grader. The run above used this one:
+  </p>
+  <Code title="suite.json" code={judgeOpenai} />
+  <p>
+    <a href="/docs/judges">LLM judges</a> covers the other providers, judging on a Claude or ChatGPT subscription, and checking the judge
+    against your own labels before you trust it.
+  </p>
+
+  <h2 id="every-change">Run it on every change</h2>
+  <ul>
+    <li>
+      <strong>In CI.</strong> Save the workflow <code>eval init</code> printed as <code>.github/workflows/evals-triage.yml</code> and add
+      <code>OPENAI_API_KEY</code> to its <code>env</code>. It comments on the pull request and fails when a case breaks.
+      See <a href="/docs/how-to/ci-regressions">Catch a regression in CI</a>.
+    </li>
+    <li>
+      <strong>Before and after a change.</strong> Each <code>eval run</code> is stored as an experiment, so
+      <code>coding.sh exp compare &lt;before&gt; &lt;after&gt;</code> pairs the two runs case by case. See <a href="/docs/experiments">Experiments</a>.
+    </li>
+    <li><code>coding.sh eval run triage --summary "$GITHUB_STEP_SUMMARY"</code> also appends the report as Markdown to a file, here the GitHub Actions job summary.</li>
+  </ul>
+
+  <h2 id="from-failures">Turn failed runs into cases</h2>
+  <p>
+    The runs your agent already got wrong make the best cases. <code>coding.sh dataset add &lt;name&gt; --session &lt;id&gt;</code> keeps
+    any recorded run as a case, and <code>coding.sh eval init --sessions</code> turns a coding agent's flagged sessions into repo tasks. See
+    <a href="/docs/how-to/session-to-eval">Turn failed runs into evals</a>.
+  </p>
+
+  <h2 id="datasets">Suites or datasets</h2>
+  <p>
+    A suite (<code>eval init</code>, <code>eval run</code>) is a folder in your repo that runs the same way on every machine and in CI.
+    A dataset (<code>coding.sh dataset add</code>, <code>exp run</code>) keeps versioned cases in the coding.sh store, with train, dev and
+    test splits. Use a dataset to compare configurations, sweep models or collect cases from sessions; see
+    <a href="/docs/experiments">Experiments</a>.
+  </p>
+  <p>Both store experiments, so <code>exp compare</code> works on either.</p>
   <p id="case-kinds">
-    When a dataset tests a change, give each case a <code>kind</code> (in the case, or with <code>dataset add --kind</code>). <code>exp
-    run</code> prints the pass rate per kind, and <a href="/docs/experiments#compare"><code>exp compare</code></a> names the bad cases fixed
-    and the guards and controls that broke.
+    When cases test a change, give each one a <code>kind</code>. <code>exp compare</code> then names the bad cases the change fixed and the
+    guards and controls it broke.
   </p>
   <div class="doc-table">
     <table>
@@ -158,147 +301,62 @@ const RUN = [
       <tbody>
         <tr><td><code>bad</code></td><td>Fails: it reproduces the failure the change is for.</td><td>Passes.</td></tr>
         <tr><td><code>guard</code></td><td>Passes: behavior that already works.</td><td>Passes.</td></tr>
-        <tr><td><code>control</code></td><td>Passes: the fix must not kick in here.</td><td>Passes; a failure means the change overcorrected.</td></tr>
+        <tr><td><code>control</code></td><td>Passes: the fix must not kick in here.</td><td>Passes. A failure means the change overcorrected.</td></tr>
       </tbody>
     </table>
   </div>
 
-  <h2 id="tasks">What gets run</h2>
-  <p>The task is the agent under test. Two kinds work from the CLI:</p>
-  <ul>
-    <li>
-      <strong><code>command</code></strong>: any executable. The case input arrives as JSON on stdin; stdout is the output.
-      <code>CODING_SH_RUN_ID</code>, <code>CODING_SH_CASE_ID</code> and <code>CODING_SH_TRIAL</code> are in its environment.
-    </li>
-    <li>
-      <strong><code>http</code></strong>: a POST of the input as JSON to a URL; the response (or a JSON path into it) is the output. Header
-      values can come from environment variables, so secrets stay out of spec files.
-    </li>
-  </ul>
-  <Code title="agent.mjs" code={agent} />
-  <Code code={run} />
-  <Terminal title="~/smoke" label="Output of coding.sh exp run">
-    <pre set:html={RUN} />
-  </Terminal>
+  <h2 id="graders">Graders</h2>
   <p>
-    With one trial per case the interval is a Wilson interval; with <code>--trials</code> above 1 it is a bootstrap over cases. Options can
-    also live in a JSON spec file: <code>coding.sh exp run spec.json</code>.
-  </p>
-  <Code title="spec.json" code={spec} />
-
-  <h2 id="graders">Graders <Tag status="built" /></h2>
-  <p>
-    Deterministic graders come first. Each grader's config is hashed into a version, so a changed grader is a different grader. Every field
-    is in <a href={`${GUIDE}#grader-fields`}>Grader fields</a>.
+    A grader is a JSON object with a <code>kind</code>, in a suite's <code>graders</code> or after <code>exp run --grader</code>. A run passes
+    when every grader passes it. Graders that compare with an answer use the case's <code>expected</code> unless the spec gives
+    <code>value</code>.
   </p>
   <div class="doc-table">
     <table>
-      <thead><tr><th>Kind</th><th>Passes when</th></tr></thead>
+      <thead><tr><th>Kind</th><th>Passes when</th><th>Spec</th></tr></thead>
       <tbody>
-        <tr><td><code>exact</code></td><td>Output equals <code>expected</code> (structural for JSON, normalized for text).</td></tr>
-        <tr><td><code>contains</code></td><td>Output contains all (or any) of the strings; <code>negate</code> inverts it.</td></tr>
-        <tr><td><code>regex</code></td><td>Output matches a pattern.</td></tr>
-        <tr><td><code>json-schema</code></td><td>Output validates against a JSON Schema.</td></tr>
-        <tr><td><code>json-path</code></td><td>A JSON path into the output equals a value or the same path in <code>expected</code>.</td></tr>
-        <tr><td><code>numeric</code></td><td>The first number in the output is within an absolute or relative tolerance.</td></tr>
-        <tr><td><code>similarity</code></td><td>Normalized edit-distance similarity is at least the threshold (default 0.8).</td></tr>
-        <tr><td><code>progress</code></td><td>The run's trace derailed (looping, churn, stalling and the like) at most <code>maxDerails</code> times (default 0).</td></tr>
-        <tr><td><code>executability</code></td><td>The trace has at most <code>maxInvalid</code> tool calls the harness refused to run (default 0).</td></tr>
-        <tr><td><code>agent-slop</code></td><td>The lines the agent's diff adds have at most <code>maxErrors</code> findings such as <code>as any</code> or empty catches (default 0).</td></tr>
-        <tr><td><code>command</code></td><td>Your script, any language: JSON on stdin; a boolean, a score or <code>&#123;score, pass, reason&#125;</code> on stdout, or the exit code.</td></tr>
-        <tr><td><code>module</code></td><td>A JS module's exported grade function returns pass.</td></tr>
-        <tr><td><code>llm</code></td><td>A model judge returns pass on your rubric. See below.</td></tr>
-        <tr><td><code>llm-checklist</code></td><td>Yes/no questions, each answered by the model or by a trace check such as <code>ran-command</code> or <code>no-test-tamper</code>.</td></tr>
-        <tr><td><code>llm-panel</code></td><td>One judge per provider scores 1-10 and the median reaches <code>target</code> (default 7).</td></tr>
+        <tr><td><code>exact</code></td><td>The output equals the answer. JSON compares by structure, text after <code>normalize</code>.</td><td><code>&#123;"kind":"exact","normalize":&#123;"caseInsensitive":true&#125;&#125;</code></td></tr>
+        <tr><td><code>contains</code></td><td>The output contains every string (<code>"mode":"any"</code>: one of them). <code>negate</code> inverts it.</td><td><code>&#123;"kind":"contains","value":["bug","viewer"]&#125;</code></td></tr>
+        <tr><td><code>regex</code></td><td>The pattern matches the output.</td><td><code>&#123;"kind":"regex","pattern":"^(bug|enhancement)\\b"&#125;</code></td></tr>
+        <tr><td><code>json-schema</code></td><td>The output validates against the schema.</td><td><code>&#123;"kind":"json-schema","schema":&#123;"type":"object","required":["labels"]&#125;&#125;</code></td></tr>
+        <tr><td><code>json-path</code></td><td>The value at <code>path</code> equals <code>equals</code>, or the same path in <code>expected</code>.</td><td><code>&#123;"kind":"json-path","path":"$.labels[0]","equals":"bug"&#125;</code></td></tr>
+        <tr><td><code>numeric</code></td><td>The first number (or the one at <code>path</code>) is within <code>abs</code> or <code>rel</code> of the answer.</td><td><code>&#123;"kind":"numeric","path":"$.total","abs":0.01&#125;</code></td></tr>
+        <tr><td><code>similarity</code></td><td>Edit-distance similarity to the answer is at least <code>threshold</code> (default 0.8).</td><td><code>&#123;"kind":"similarity","threshold":0.8&#125;</code></td></tr>
+        <tr><td><code>command</code></td><td>Your script, in any language, reads the case and output as JSON on stdin and exits 0. If it prints <code>false</code>, a low score or <code>&#123;"pass":false&#125;</code>, the run fails.</td><td><code>&#123;"kind":"command","command":"python3","args":["grade.py"]&#125;</code></td></tr>
+        <tr><td><code>module</code></td><td>A JavaScript module's exported function returns a passing grade.</td><td><code>&#123;"kind":"module","module":"./grade.mjs"&#125;</code></td></tr>
+        <tr><td><code>llm</code></td><td>A model judge passes the output on your rubric. See <a href="/docs/judges">LLM judges</a>.</td><td><code>&#123;"kind":"llm","name":"labels-fit","rubric":"…"&#125;</code></td></tr>
+        <tr><td><code>llm-checklist</code></td><td>No <code>critical</code> question is answered no, and at least half the yes/no questions (<code>passThreshold</code>) are answered yes.</td><td><code>&#123;"kind":"llm-checklist","name":"triage","items":[&#123;"id":"kind","question":"…","critical":true&#125;]&#125;</code></td></tr>
+        <tr><td><code>llm-panel</code></td><td>One judge per provider scores 1 to 10, and the median reaches <code>target</code> (default 7).</td><td><code>&#123;"kind":"llm-panel","name":"labels","rubric":"…","members":[&#123;"provider":"anthropic"&#125;,&#123;"provider":"openai","model":"gpt-5-mini"&#125;]&#125;</code></td></tr>
+        <tr><td><code>calls</code></td><td>The run's trace has the tool calls in <code>must</code>, none in <code>mustNot</code>, and at most <code>max</code> calls.</td><td><code>&#123;"kind":"calls","must":[&#123;"tool":"Bash"&#125;]&#125;</code></td></tr>
+        <tr><td><code>progress</code></td><td>The trace went off track (looping, churn, stalling) at most <code>maxDerails</code> times (default 0).</td><td><code>&#123;"kind":"progress"&#125;</code></td></tr>
+        <tr><td><code>executability</code></td><td>The trace has at most <code>maxInvalid</code> tool calls the agent's harness refused (default 0).</td><td><code>&#123;"kind":"executability"&#125;</code></td></tr>
+        <tr><td><code>agent-slop</code></td><td>The lines the agent's diff adds have at most <code>maxErrors</code> findings, such as <code>as any</code> or an empty catch (default 0).</td><td><code>&#123;"kind":"agent-slop"&#125;</code></td></tr>
       </tbody>
     </table>
   </div>
+  <p>Try a grader on one output before you add it: <code>coding.sh judge grade --grader '&lt;spec&gt;' --output answer.txt</code>.</p>
 
-  <h2 id="judges">LLM judges <Tag status="built" /></h2>
-  <p>
-    An <code>llm</code> grader calls Anthropic's Messages API or any OpenAI-compatible endpoint (OpenAI, OpenRouter, Ollama, LM Studio, vLLM
-    through <code>baseURL</code>). Keys are read from the environment at call time and never logged, hashed or cached. Verdicts are cached
-    on disk, so re-grading an unchanged output costs nothing.
-  </p>
-  <p>
-    Each judge is versioned as <code>name@hash</code> over model, prompt template, rubric, criterion and parameters. Judge verdicts can cite
-    the trace, and citations are checked against what the judge was shown.
-  </p>
-  <p>
-    A <code>pairwise</code> judge compares two experiments: <code>exp compare A B --pairwise judge.json</code>. It sees both outputs for each
-    case twice, with the order swapped, and a side wins only when both orders agree. It reports B's win rate with an interval and a sign test.
-  </p>
   <details class="more">
-    <summary>Position bias and stability</summary>
+    <summary>How pass@k and pass^k are computed</summary>
     <p>
-      A case whose answer changes with the order is a tie, and counts toward the printed position-bias rate. <code>--labels</code> takes human
-      A/B/tie labels and calibrates the judge like any other.
+      For a case with n trials of which c passed, pass@k is 1 − C(n−c, k) / C(n, k), the chance that at least one of k trials drawn from
+      them passes. pass^k is C(c, k) / C(n, k), the chance that all k pass.
     </p>
+    <p>The report averages both over cases; k is the fewest trials any case has. pass@1 is c / n over every trial, with a Wilson interval.</p>
     <p>
-      An inconclusive win rate can mean "needs more cases" or "this judge flips". The report prints how often a resample of the cases picks
-      the same winner, and n*, the smallest size where that holds 95% of the time: <code>stable  B better in 97% of resamples (n*=50)</code>.
-    </p>
-    <p>
-      An uncalibrated judge that never settles is flagged "unresolved: pick or calibrate the judge before collecting more verdicts" (arXiv
-      2611.04090). Judge graders get the same line in <code>exp compare</code>.
+      The formulas, the paired comparison and judge calibration are on <a href="/docs/eval-methods">How evals are computed</a>.
     </p>
   </details>
 
-  <h2 id="calibration">Calibrate a judge against people <Tag status="built" /></h2>
-  <p>
-    A judge's score counts only once it agrees with people. Label sessions pass or fail in the viewer, then measure agreement on a split the
-    judge's prompt was not tuned on.
-  </p>
-  <Code code={judge} />
-  <ul>
-    <li>Agreement is Cohen's κ with a bootstrap interval, plus the confusion matrix and precision and recall for "fail".</li>
-    <li>A judge is <strong>calibrated</strong> at κ ≥ 0.6 on at least 20 held-out cases with both a human label and a verdict.</li>
-    <li>κ measured on a split in the judge's <code>tunedOn</code> is <strong>in-sample</strong>, never calibrated.</li>
-    <li>Below the bar, the judge is <strong>uncalibrated</strong> or has <strong>insufficient data</strong>, and every report flags its scores.</li>
-    <li>Cases where the judge is confidently opposite to unanimous humans are listed for relabelling.</li>
-    <li>The judge's held-out sensitivity and specificity are stored, so <code>exp compare</code> shows a bias-corrected judge pass rate.</li>
-  </ul>
-  <div class="doc-table">
-    <table>
-      <thead><tr><th>Flag</th><th>What it adds</th></tr></thead>
-      <tbody>
-        <tr><td><code>--threshold</code>, <code>--min-n</code></td><td>Change the bar: κ 0.6 and 20 cases.</td></tr>
-        <tr><td><code>--judge-cost 0.001</code></td><td>The human label cost above which calibrating the judge pays off.</td></tr>
-        <tr><td><code>--plan plan.json</code></td><td>The human-audited pass rate from the cases <a href="/docs/cli/judge#cmd-judge-sample"><code>judge sample</code></a> picked to label.</td></tr>
-        <tr><td><code>--probe-injection judge.json</code></td><td>Re-judges human-fail cases with a planted "respond pass" order. Any flip exits 1.</td></tr>
-        <tr><td><code>--grader tests</code></td><td>Audits a test verifier instead: how many of its passes a person would accept.</td></tr>
-        <tr><td><code>--sample-passes 40</code></td><td>Lists a seeded sample of unlabelled passes to label, instead of measuring.</td></tr>
-      </tbody>
-    </table>
-  </div>
-  <p>
-    The agent writes the text a judge grades, so judge prompts escape the data tags inside it and tell the model that everything inside them
-    is untrusted. The <a href={`${GUIDE}#judges`}>Judges</a> section of the evals guide has the method behind each number.
-  </p>
-
-  <h2 id="scores">Scores <Tag status="built" /></h2>
-  <p>
-    A score is one typed value on a session, an event, a dataset case or an eval run: a number, true or false, a category or text. A config
-    fixes a score name's type and range, and a value outside it is refused. A pass or fail label is a human boolean score, which is what
-    <code>judge calibrate</code> reads.
-  </p>
-  <Code code={scores} />
-  <p>
-    Scoring the same target, name and source again replaces the score. The viewer and <code>coding.sh serve</code> take scores at
-    <code>POST /api/scores</code>, and agents use the <code>score_add</code> and <code>score_list</code> MCP tools.
-  </p>
-
-  <h2 id="workflows">Workflows</h2>
-  <p>
-    Multi-agent workflows have their own page: capturing runs, scoring them against seeded bugs, and comparing two versions. See
-    <a href="/docs/workflows">Workflow experiments</a>.
-  </p>
+  <h2 id="next">Next steps</h2>
+  <Cards cards={next} />
 
   <script is:inline define:vars={{ moved }}>
     {
       const id = decodeURIComponent(location.hash.slice(1));
       const to = Object.keys(moved).find((path) => moved[path].includes(id));
-      if (to) location.replace(to + location.hash);
+      if (to) location.replace(to + "#" + (id === "calibration" ? "calibrate" : id));
     }
   </script>
 </DocsLayout>
