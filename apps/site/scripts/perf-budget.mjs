@@ -20,13 +20,14 @@ const BUDGET = {
   // reference continues on (/docs/api/read is 26.3KB with the 0.1.6 routes) and
   // troubleshooting, which gains an entry per failure a new feature can show
   // (27.8KB with the 0.1.6 entries). Raised from 26KB for those three.
+  // Troubleshooting is 30.5KB after the docs rebuild of 2026-11-11, so 33KB.
   htmlBrotli: {
     "/": 24.5 * KB,
     "/docs/cli/": 30 * KB,
     "/docs/api/": 30 * KB,
     "/docs/api/read/": 30 * KB,
     "/docs/api/read/search/": 30 * KB,
-    "/docs/troubleshooting/": 30 * KB,
+    "/docs/troubleshooting/": 33 * KB,
     other: 26 * KB,
   },
   // Brotli q11 of all inline <style> and of all inline JS (<script> without
@@ -142,9 +143,12 @@ for (const p of pages) {
 }
 
 // 4. Images: the first screenshot is the LCP candidate, and every image reserves its box.
+// A docs screenshot (DocShot, <figure class="docshot">) sits below the page's
+// lede and loads lazily, so the rule is for the first .shot outside one.
 let imgCount = 0;
 for (const p of pages) {
-  const shotAt = p.html.search(/<figure\b[^>]*\sclass\s*=\s*"(?:[^"]*\s)?shot(?:\s[^"]*)?"/i);
+  const shotRe = /<figure\b[^>]*\sclass\s*=\s*"(?:[^"]*\s)?shot(?:\s[^"]*)?"/gi;
+  const shotAt = [...p.html.matchAll(shotRe)].find((m) => !/<figure\b[^>]*\sclass\s*=\s*"(?:[^"]*\s)?docshot(?:\s[^"]*)?"[^>]*>\s*$/i.test(p.html.slice(Math.max(0, m.index - 200), m.index)))?.index ?? -1;
   if (shotAt >= 0) {
     const img = p.html.slice(shotAt).match(/<img\b[^>]*>/i)?.[0] ?? "";
     if (attr(img, "loading") !== "eager" || attr(img, "fetchpriority") !== "high")
