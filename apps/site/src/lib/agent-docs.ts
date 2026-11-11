@@ -131,7 +131,7 @@ export function agentsMd() {
 # coding.sh agent setup
 
 > coding.sh records every agent run on the user's machine (prompts, tool calls, file changes, subagents, model
-> latency), turns failures into evals and compares changes with paired statistics. Local-first, MIT licensed.
+> latency), turns failures into evals and compares changes with paired statistics. Everything stays on the user's machine; MIT licensed.
 
 Follow these steps in order. Ask the user before step 2 unless they already asked you to set coding.sh up.
 
@@ -143,12 +143,12 @@ More: ${abs("/llms.txt")} (index), ${abs("/llms-full.txt")} (every page), ${abs(
 export function skillMd() {
   return `---
 name: coding-sh
-description: Install and use coding.sh, local traces and evals for AI agents. Use when the user wants to record agent sessions, inspect what an agent did, or run evals and compare a prompt, harness or model change.
+description: Install and use coding.sh, which records what AI agents do and turns failed runs into evals. Use when the user wants to record agent sessions, inspect what an agent did, or run evals and compare a prompt, harness or model change.
 ---
 
 # coding.sh
 
-Local-first traces and evals for AI agents. Canonical workflow: ${abs("/agents.md")}
+coding.sh records what AI agents do, on the user's machine, and turns failed runs into evals. Canonical workflow: ${abs("/agents.md")}
 
 ${WORKFLOW}`;
 }

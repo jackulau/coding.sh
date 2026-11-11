@@ -12,6 +12,7 @@ grouped by area, with links to the docs for the details.
 ### Changed
 
 - **Docs.** The docs home, the home page FAQ and llms.txt say what coding.sh does (it records prompts, model calls, tool calls, file changes and cost, shows each run in a local viewer, and turns failed runs into evals) instead of comparing it with other products. Other products are named only on the compare pages and where they are an integration, and a site test fails on a page that pitches coding.sh through another product. [Docs](https://coding.sh/docs)
+- **Docs.** `--help`, the package descriptions, the README, the site's description and llms.txt say what coding.sh records instead of "open-source, local-first observability and evals for any AI agent", and the site's status line shows the current release (it said v0.1.4). A site test fails on stacked category words in published text. [Docs](https://coding.sh/docs)
 
 ### Fixed
 

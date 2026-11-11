@@ -32,7 +32,7 @@ export const DOC_GROUPS: DocGroup[] = [
         path: "/docs",
         label: "Overview",
         title: "coding.sh docs",
-        summary: "Docs for coding.sh, open-source observability and evals for AI agents: what is built today, what is planned, and where to start.",
+        summary: "Docs for coding.sh: record what your AI agents do, read each run in a local viewer, and turn failed runs into evals.",
       },
       {
         path: "/docs/install",

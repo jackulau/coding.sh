@@ -1,7 +1,7 @@
 {
   "name": "coding.sh-store-s3",
   "version": "0.1.1",
-  "description": "S3, R2 and MinIO blob store for coding.sh, observability and evals for any AI agent (s3:// URLs). Zero dependencies.",
+  "description": "S3, R2 and MinIO blob store for coding.sh (s3:// URLs). Zero dependencies.",
   "license": "MIT",
   "author": "coding.sh contributors",
   "type": "module",
