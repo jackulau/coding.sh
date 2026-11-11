@@ -99,7 +99,7 @@ itself. Each call is a fresh process in a throwaway cwd (`Deno.makeTempDir({pref
 
 | Child | Hooks fire? | Why |
 |---|---|---|
-| `cli:claude-code` (default) | Likely yes (inference) | Args are `-p --output-format json --strict-mcp-config --disallowedTools ...`. `--bare` is the only flag that skips hooks, and it is opt-in (`cli_minimal`): "--bare additionally skips hooks, CLAUDE.md discovery, plugins" |
+| `cli:claude-code` (default) | Likely yes (inference) | Args are `-p --output-format json --strict-mcp-config --disallowedTools ...`. `--bare` is the only flag that skips hooks, and it is opt-in (`cli_minimal`). Its source comment says it also skips instruction-file discovery and plugins. |
 | `cli:codex` | No | Args include `--ephemeral --ignore-user-config`, so the user's hooks config is not read (inference) |
 | `cli:opencode` | No hooks exist for it | coding.sh imports its store instead |
 | `acp:claude-code` | Likely yes (inference) | Bridge spawns Claude Code with a `.claude/settings.json` written to the temp cwd; user hooks still merge unless overridden |
