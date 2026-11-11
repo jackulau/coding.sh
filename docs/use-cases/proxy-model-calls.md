@@ -1,12 +1,11 @@
 # Log every model call your agent makes
 
 `coding.sh proxy` is a local pass-through for the Anthropic and OpenAI APIs. Point Claude Code,
-Codex or your own client at it, and every LLM call is logged with its full request (system prompt,
-tool definitions, messages) and response (content, stop reason, usage, timings), inside the
-session it belongs to. Then you can read one call, see why the prompt cache missed, and replay a
-call with another model.
+Codex or your own client at it, and every model call is logged with its full request and response,
+inside the session it belongs to. Use it to read one call, see why the prompt cache missed, or
+replay a call with another model.
 
-## How it works
+## Set it up
 
 ```sh
 curl -fsSL https://coding.sh/install | sh
@@ -16,8 +15,7 @@ coding.sh init --proxy
 `init --proxy` sets `ANTHROPIC_BASE_URL=http://127.0.0.1:4320` in Claude Code's `settings.json`,
 adds a `coding-sh` model provider to Codex's `config.toml`, and starts the proxy in the background.
 Each changed file is backed up first, and `coding.sh uninstall --proxy` restores it. If the agent
-already calls a gateway or CLIProxyAPI, the proxy sits in front of it: calls are logged, then go to
-the same URL as before.
+already calls a gateway or CLIProxyAPI, calls are logged and then go to the same URL as before.
 
 Other clients, including your own scripts and SDKs, use the environment:
 
@@ -26,7 +24,7 @@ coding.sh proxy --background
 eval "$(coding.sh proxy env)"        # sets ANTHROPIC_BASE_URL and OPENAI_BASE_URL
 ```
 
-## What it forwards
+The proxy forwards by path:
 
 | Path | Goes to |
 |---|---|
@@ -35,9 +33,9 @@ eval "$(coding.sh proxy env)"        # sets ANTHROPIC_BASE_URL and OPENAI_BASE_U
 | Codex signed in with ChatGPT | the ChatGPT backend |
 | any other path | passed through untouched, not logged |
 
-The client's own auth headers go upstream unchanged and are never stored. The proxy holds no keys
-and sends one upstream request per client request. Streams pass through as they arrive, and if
-logging fails the call still succeeds.
+The client's auth headers go upstream unchanged and are never stored. The proxy holds no keys and
+sends one upstream request per client request. Streams pass through as they arrive, and if logging
+fails the call still succeeds.
 
 ## Read a call
 
@@ -50,19 +48,22 @@ A call shows its model, status, timings, usage with cache reads and writes, esti
 size and hash of the system prompt, and the tools. In the viewer (`coding.sh ui`), a proxy call in
 the timeline opens to the same view.
 
-## Why did the prompt cache miss?
+## See why the prompt cache missed
 
 ```sh
 coding.sh diff-calls 'latest#-1'            # this call against the one before it
 coding.sh diff-calls <call-a> <call-b>
 ```
 
-`diff-calls` compares two requests in the order the prompt cache reads them: model, settings, tool
-definitions, system prompt (line by line), then messages. When the second call read much less from
-the cache than the first one cached, a `Why` line names the first difference. For a system prompt
-edit it also gives the share of the prompt after the change, which the cache could not read, and
-when that is over 20% it says to move the dynamic content to the end. When nothing in the prefix
-changed, the cause is the gap between the calls or an evicted cache entry.
+`diff-calls` compares two requests in the order the prompt cache reads them: model, settings,
+tools, system prompt (line by line), then messages.
+
+When the second call read much less from the cache than the first one cached, a `Why` line names
+the first difference. For a system prompt edit it gives the share of the prompt after the change,
+which the cache could not read. Over 20%, it says to move the dynamic content to the end.
+
+When nothing in the prefix changed, the cause is the gap between the calls or an evicted cache
+entry.
 
 ## Replay a call with another model
 
@@ -78,8 +79,7 @@ agent's login. `--dry-run` needs no key and prints the number of calls and an es
 
 - `init --proxy` routes Claude Code and Codex only. Other agents need a client that honours
   `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL`.
-- It speaks the Anthropic Messages and OpenAI Chat Completions and Responses shapes. Other paths
-  pass through unlogged.
+- It logs the Anthropic Messages and OpenAI Chat Completions and Responses shapes only.
 - In capture mode `metadata`, only hashes, counts, tool names, usage and timings are kept. `show`
   and `diff-calls` then compare hashes, and `exp replay` has nothing to send.
 - Every turn sends the whole conversation again, so a long session stores its messages once per

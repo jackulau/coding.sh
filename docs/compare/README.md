@@ -1,13 +1,13 @@
 # coding.sh compared with other tools
 
 coding.sh is an MIT-licensed CLI and local viewer for recording AI agents and running evals on
-them. Coding agents such as Claude Code, Codex and Cursor are captured through their hooks with no
-code changes, and the data stays on your machine unless you send it somewhere. It has no hosted
-cloud. The tools below overlap with it in different ways, and most of them do things coding.sh
-does not. Each page has a feature table and says where the other tool is the better choice.
+them. It captures coding agents such as Claude Code, Codex and Cursor through their hooks, keeps
+the data on your machine unless you add a sink, and has no hosted cloud.
 
-All pages were checked against each tool's own docs on 7 November 2026, and each lists its
-sources. If something is out of date, open an issue.
+The tools below overlap with it in different ways, and most do things coding.sh does not. Each
+page has a feature table and says where the other tool is the better choice. All were checked
+against each tool's own docs on 7 November 2026 and list their sources. If something is out of
+date, open an issue.
 
 ## Summary
 

@@ -1,21 +1,16 @@
 # Track Claude Code and Codex cost per session
 
 coding.sh reads the token counts that Claude Code, Codex and other coding agents write to their
-own transcripts, and turns them into tokens and cost per session, per repo, per agent and per
-model. It runs on your machine. Nothing is sent anywhere unless you add a sink.
+own transcripts, and turns them into tokens and cost per session, repo, agent and model. It runs
+on your machine. Nothing is sent anywhere unless you add a sink.
 
-## How it works
+## Get totals
 
-Install it and let it set up capture for the agents it finds:
+Install it, import the sessions from before you installed, and ask for totals:
 
 ```sh
 curl -fsSL https://coding.sh/install | sh
-coding.sh ingest --backfill --since 30d      # also import sessions from before you installed
-```
-
-Then ask for totals:
-
-```sh
+coding.sh ingest --backfill --since 30d
 coding.sh usage --since 30d                  # by agent (the default)
 coding.sh usage --since 30d --by repo
 coding.sh usage --since 30d --by agent-model
@@ -23,9 +18,10 @@ coding.sh usage --since 7d --by day
 ```
 
 Each row shows sessions, turns, total and output tokens, tokens per turn and the cache-read share.
-A `COST` column appears when at least one session in the window has a cost.
+A `COST` column appears when at least one session in the window has a cost. All options:
+[coding.sh usage](https://coding.sh/docs/cli/usage).
 
-To find the sessions that cost the most and open one:
+## Find the sessions that cost the most
 
 ```sh
 coding.sh sessions --where 'sort:-cost limit:5'
@@ -37,37 +33,43 @@ opens the same session in the local viewer.
 
 ## Where the dollar figure comes from
 
-Coding agents' transcripts carry tokens, not dollars. Each model call's cost comes from the first
-of these that exists:
+Transcripts carry tokens, not dollars. Each model call's cost comes from the first of these that
+exists:
 
 1. the bill from an LLM gateway, after `coding.sh gateway enrich`;
-2. a cost the agent reports itself: Claude Code headless runs (`total_cost_usd`), OpenCode, Pi, or
-   an OpenTelemetry span with a cost attribute;
-3. an estimate: input, output, cache-read and cache-write tokens times the model's list price.
+2. a cost the agent reports: Claude Code headless runs (`total_cost_usd`), OpenCode, Pi, or an
+   OpenTelemetry span with a cost attribute;
+3. an estimate: each kind of token times the model's list price.
 
-Estimates are always marked: `~` in `usage`, `est` on a call and `(estimated)` on the session in
-`show`, and `estimatedCostUsd` in `--json`. The price table covers current Claude, OpenAI and
-Gemini models and common open models. It applies long-context rates per call, and batch, flex,
-priority and fast tiers when the agent records them. A model with no price keeps no cost, never
-$0, and `usage` names it with the fix: a `[prices."<model>"]` table in `~/.coding.sh/config.toml`.
+Estimates are always marked:
+
+| Where | Mark |
+|---|---|
+| `usage` | `~` before the figure |
+| a call in `show` | `est` |
+| a session in `show` | `(estimated)` |
+| `--json` | `estimatedCostUsd` |
+
+The price table covers current Claude, OpenAI and Gemini models and common open models, with
+long-context rates and the batch, flex, priority and fast tiers when the agent records them. A
+model with no price keeps no cost, never $0. `usage` names it and the fix: a `[prices."<model>"]`
+table in `~/.coding.sh/config.toml`.
 
 ## Which agents report tokens
 
-Claude Code and Codex record tokens for every session, as do OpenCode, Pi, Factory Droid, GitHub
-Copilot CLI, Goose, Amp, T3 Code and the Antigravity CLI. For Antigravity, Goose and Copilot the
-hooks carry no token counts. Those come from the agent's own history files, which
-`coding.sh ingest --backfill` imports.
-
-Cursor CLI reports no token usage, in its hooks or its stream output, so Cursor sessions have no
-tokens or cost. A command recorded with `coding.sh run -- <cmd>` has none either, unless the
-agent is Aider, whose token and cost lines are parsed in eval runs.
+| Agent | Tokens |
+|---|---|
+| Claude Code, Codex, OpenCode, Pi, Factory Droid, Amp, T3 Code | Every session |
+| Antigravity CLI, Goose, GitHub Copilot CLI | From their history files, imported by `coding.sh ingest --backfill`; their hooks carry none |
+| Cursor CLI | None, in its hooks or its stream output, so no cost either |
+| `coding.sh run -- <cmd>` | None, except Aider's token and cost lines in eval runs |
 
 ## What it does not do
 
 - It does not read your invoice. Unless a gateway or the agent reports a cost, the figure is an
   estimate at list price.
-- It does not know your plan. On a flat subscription, read the estimate as what the same tokens
-  would cost at API list prices, not as what you paid.
+- It does not know your plan. On a flat subscription, the estimate is what the same tokens would
+  cost at API list prices, not what you paid.
 - It cannot add tokens an agent never wrote down.
 
 ## Questions
@@ -79,15 +81,14 @@ Below the table, `usage` says how many sessions have no cost and names up to fiv
 
 ### Can I see cost from inside Claude Code?
 
-Yes. `coding.sh init` registers an MCP server, and its `usage` tool returns the same totals as the
-command, with estimates marked. It takes the same `where` filter as `--where`.
+Yes. `coding.sh init` registers an MCP server whose `usage` tool returns the same totals, with
+estimates marked. It takes the same `where` filter as `--where`.
 
 ### Why are cache reads left out of tokens per turn?
 
-Every model call re-reads the whole context, so cache reads grow with the number of calls rather
-than the work done. `TOK/TURN` counts input, output and cache-write tokens of top-level sessions per
-user turn; subagents' tokens are left out, like their turns. The `CACHE READ` column shows the
-cache-read share on its own.
+Every model call re-reads the whole context, so cache reads grow with the number of calls, not the
+work done. `TOK/TURN` counts input, output and cache-write tokens of top-level sessions per user
+turn, leaving subagents out. The `CACHE READ` column shows the cache-read share.
 
 ### Prices changed. Do old sessions update?
 

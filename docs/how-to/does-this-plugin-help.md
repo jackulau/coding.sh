@@ -1,9 +1,8 @@
 # Does this plugin help me?
 
-You installed a Claude Code plugin, or you are about to. It adds hooks that put text in the
-context, skills, agents or MCP servers. Does it make your agent better at your work, and what does
-it cost in tokens? This recipe answers both: first from the sessions you already have, then with a
-paired A/B on your own tasks.
+A Claude Code plugin adds hooks that put text in the context, skills, agents or MCP servers. Does
+it make your agent better at your work, and what does it cost in tokens? This recipe answers both:
+first from the sessions you already have, then with a paired A/B on your own tasks.
 
 You need: coding.sh capturing your Claude Code sessions (`coding.sh init`), the plugin installed
 or in a directory, and a repo under git with a few tasks the agent should solve.
@@ -33,10 +32,12 @@ each injected text on the timeline:
 Hook context  4 texts, ~52 tokens: plugin:terse ~29 (2), unknown ~12 (1), settings ~11 (1)
 ```
 
-The source is `plugin:<name>` when the hook's command belongs to an installed plugin,
-`settings` for a hook in your settings files, `plugin` for a plugin hook whose plugin is not
-installed any more (or was loaded with `--plugin-dir`), and `unknown` when Claude Code did not
-record which hook it was (UserPromptSubmit hooks, as of Claude Code 2.1.319).
+| Source | The hook |
+|---|---|
+| `plugin:<name>` | belongs to an installed plugin |
+| `settings` | is in your settings files |
+| `plugin` | belongs to a plugin no longer installed, or loaded with `--plugin-dir` |
+| `unknown` | was not recorded by Claude Code (UserPromptSubmit hooks, as of Claude Code 2.1.319) |
 
 Scripts and SDK runs (`claude -p`, the Agent SDKs) differ from sessions at a keyboard, so look at
 them apart. `launch:headless` and `launch:interactive` split them:
