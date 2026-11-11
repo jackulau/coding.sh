@@ -589,6 +589,58 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
   };
 }
 
+/** A new value with `f` applied to every string in it (keys are kept). */
+function mapStrings(v: unknown, f: (s: string) => string, depth = 0): unknown {
+  if (typeof v === "string") return f(v);
+  if (depth > 64 || v === null || typeof v !== "object" || v instanceof Uint8Array) return v;
+  if (Array.isArray(v)) return v.map((x) => mapStrings(x, f, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [k, x] of Object.entries(v)) Object.defineProperty(out, k, { value: mapStrings(x, f, depth + 1), writable: true, enumerable: true, configurable: true });
+  return out;
+}
+
+/** The document in a string that looks like a JSON object or array; anything else is undefined. */
+function jsonDocument(s: string): object | undefined {
+  const t = s.trim();
+  if (!(t.startsWith("{") || t.startsWith("["))) return undefined;
+  try {
+    const doc: unknown = JSON.parse(t);
+    return typeof doc === "object" && doc !== null ? doc : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** JSON documents inside strings are followed this deep (a tool result inside a messages attribute). */
+const JSON_STRING_DEPTH = 3;
+
+/**
+ * Redacts a value for a blob: every string on its own (Redactor.value), and a
+ * string that holds a JSON document as that document, so a blob hides what the
+ * events hide. Such a string is rewritten, as compact JSON, only when that found
+ * something. Redacting the serialized text alone misses a `NAME=value` after a
+ * newline: in JSON text the name follows the `n` of `\n`, with no word break.
+ */
+export function redactForBlob(r: Redactor, v: unknown, tally: RedactionTally, level = 0): unknown {
+  if (level >= JSON_STRING_DEPTH) return r.value(v, tally);
+  const docs = mapStrings(v, (s) => {
+    const doc = jsonDocument(s);
+    if (doc === undefined) return s;
+    const found = redactionTally();
+    const clean = JSON.stringify(redactForBlob(r, doc, found, level + 1));
+    if (clean === JSON.stringify(doc)) return s;
+    for (const [k, n] of Object.entries(found.kinds)) tally.kinds[k] = (tally.kinds[k] ?? 0) + n;
+    return clean;
+  });
+  return r.value(docs, tally);
+}
+
+/** The text of a blob for `v`: redactForBlob, then serialized, and the string rules on that text too. */
+export function redactBlobValue(r: Redactor, v: unknown, tally: RedactionTally): string {
+  const clean = redactForBlob(r, v, tally);
+  return typeof clean === "string" ? clean : r.string(JSON.stringify(clean) ?? "", tally);
+}
+
 // Redaction hits found in blob content, by blob ref (the content hash): the event
 // that points at an offloaded tool output counts what was redacted inside it.
 // Only refs with hits are kept, and only the most recent few thousand.
