@@ -34,6 +34,9 @@ export function findChrome(env: NodeJS.ProcessEnv = process.env, platform: NodeJ
   return known.find((p) => existsSync(p));
 }
 
+/** Longest a DevTools call may wait for its answer; a page eval that awaits a slow promise stays well under it. */
+const SEND_TIMEOUT_MS = 30_000;
+
 type Pending = { resolve: (v: any) => void; reject: (e: Error) => void };
 
 class Cdp {
@@ -41,8 +44,20 @@ class Cdp {
   private pending = new Map<number, Pending>();
   private listeners = new Set<(method: string, params: any, sessionId?: string) => void>();
   private ws: WebSocket;
+  private closed = false;
   private constructor(ws: WebSocket) {
     this.ws = ws;
+    // Chrome can close the socket before it answers (Browser.close does on Windows). Fail the
+    // calls still waiting, or a test waits on them until the CI job's time limit cancels it.
+    const fail = () => {
+      this.closed = true;
+      for (const [id, p] of this.pending) {
+        this.pending.delete(id);
+        p.reject(new Error("CDP connection closed before Chrome answered"));
+      }
+    };
+    ws.addEventListener("close", fail);
+    ws.addEventListener("error", fail);
     ws.addEventListener("message", (m) => {
       const msg = JSON.parse(String(m.data));
       if (msg.method) for (const l of this.listeners) l(msg.method, msg.params, msg.sessionId);
@@ -62,9 +77,18 @@ class Cdp {
     return new Cdp(ws);
   }
   send(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<any> {
+    if (this.closed) return Promise.reject(new Error(`CDP ${method}: the connection is closed`));
     const id = ++this.id;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`CDP ${method}: no answer from Chrome in ${SEND_TIMEOUT_MS / 1000} s`));
+      }, SEND_TIMEOUT_MS);
+      const done = <A extends unknown[]>(f: (...a: A) => void) => (...a: A) => {
+        clearTimeout(timer);
+        f(...a);
+      };
+      this.pending.set(id, { resolve: done(resolve), reject: done(reject) });
       this.ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
     });
   }
