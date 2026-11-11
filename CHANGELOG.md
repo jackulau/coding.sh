@@ -11,6 +11,7 @@ grouped by area, with links to the docs for the details.
 
 ### Added
 
+- **SDK.** `coding_sh.weights_edit()` in the Python SDK records each weight edit a script makes as one `notification` event with `payload.kind: "weights.edit"`: tensor name, shape, weights changed, L2 and max-abs of the change, and the base and edited sha256. It adds no event kind, and `coding_sh.weights_delta()` computes the counts and norms for small arrays without numpy. [Docs](https://coding.sh/docs/api)
 - **Evals.** `coding.sh exp compare A B --given <grader>` compares only the cases where that grader passes in both runs, and reads every other grader's paired delta, bootstrap interval and McNemar test over them. It prints how many cases it kept and dropped and says the deltas are conditioned on the gate; `--json` adds `comparison.given`. With a `terminated` grader this separates "finished more answers" from "got more of the finished answers right". [Compare an edited model with its base](docs/guides/evals.md#compare-an-edited-model-with-its-base)
 
 ### Changed

@@ -429,6 +429,8 @@ Everything in `coding_sh.__all__`:
 | [`coding_sh.flush`](#coding_shflush) | function |
 | [`coding_sh.shutdown`](#coding_shshutdown) | function |
 | [`coding_sh.stats`](#coding_shstats) | function |
+| [`coding_sh.weights_edit`](#coding_shweights_edittensor-shape-changed-l2-max_abs-base_sha256-edited_sha256-) | function |
+| [`coding_sh.weights_delta`](#coding_shweights_deltabase-edited) | function |
 
 ### `coding_sh.__version__`
 
@@ -571,6 +573,57 @@ def shutdown(timeout: Optional[float] = 2.0) -> bool
 ```python
 def stats() -> Dict[str, int]
 ```
+
+### `coding_sh.weights_edit(tensor, shape, changed, l2, max_abs, base_sha256, edited_sha256, ...)`
+
+Record one weight edit as a `notification` event with `payload.kind` "weights.edit".
+
+tensor: the tensor's name. shape: its dimensions. changed: how many weights differ. l2, max_abs: the L2 norm and the largest absolute value of the change (edited minus base). base_sha256, edited_sha256: 64-hex hashes of the tensor before and after. note: free text, kept only in full capture mode.
+
+Returns True only when the event was queued. Returns False when a value is invalid, with one warning per process. Returns False without a warning when the SDK is off or shut down or the queue is full. Never raises.
+
+A note that is not a string is dropped with one warning; the edit is still recorded. Outside trace() and with_session() the edit gets a session of its own, so group a run of edits inside one.
+
+```python
+def weights_edit(
+    tensor: str,
+    shape: Sequence[int],
+    changed: int,
+    l2: float,
+    max_abs: float,
+    base_sha256: str,
+    edited_sha256: str,
+    note: Optional[str] = None,
+) -> bool
+```
+
+| Parameter | Type | Default |
+|---|---|---|
+| `tensor` | `str` | required |
+| `shape` | `Sequence[int]` | required |
+| `changed` | `int` | required |
+| `l2` | `float` | required |
+| `max_abs` | `float` | required |
+| `base_sha256` | `str` | required |
+| `edited_sha256` | `str` | required |
+| `note` | `Optional[str]` | `None` |
+
+### `coding_sh.weights_delta(base, edited)`
+
+{shape, changed, l2, max_abs} for two array-likes of the same shape, in pure Python.
+
+Takes nested lists, tuples, ranges, or anything with `.tolist()` (numpy, torch), up to 16 levels deep, holding finite numbers. Generators are not accepted. It is slow on large tensors: compute big ones with your own library and pass the numbers to weights_edit().
+
+A pure helper you call on purpose, unlike the never-raise weights_edit(): it raises ValueError on bad input (a shape mismatch, ragged or too deep nesting, a non-number, None, NaN or inf, or an argument that is not a sequence or array).
+
+```python
+def weights_delta(base: Sequence[Any], edited: Sequence[Any]) -> Dict[str, Any]
+```
+
+| Parameter | Type | Default |
+|---|---|---|
+| `base` | `Sequence[Any]` | required |
+| `edited` | `Sequence[Any]` | required |
 
 ### `coding_sh.otel`
 
