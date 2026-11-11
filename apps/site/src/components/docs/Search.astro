@@ -242,15 +242,19 @@ const list = `search-${id}-list`;
     return pagefind;
   }
 
+  // Pagefind indexes /docs/x/ (the file); the site serves /docs/x and
+  // redirects the slash form, so drop it. "/" itself stays.
+  const tidy = (url: string) => url.replace(/(.)\/(?=#|$)/, "$1");
+
   // The best-matching section of a page: the heading with the most hits.
   function toHit(d: ResultData): Hit {
     const title = d.meta?.title ?? d.url;
     const subs = (d.sub_results ?? []).filter((s) => s.url.includes("#"));
     const best = subs.sort((a, b) => (b.locations?.length ?? 0) - (a.locations?.length ?? 0))[0];
     if (best && best.title && best.title !== title) {
-      return { url: best.url, title, section: best.title, excerpt: best.excerpt };
+      return { url: tidy(best.url), title, section: best.title, excerpt: best.excerpt };
     }
-    return { url: d.url, title, excerpt: d.excerpt };
+    return { url: tidy(d.url), title, excerpt: d.excerpt };
   }
 
   function setup(root: HTMLElement) {
