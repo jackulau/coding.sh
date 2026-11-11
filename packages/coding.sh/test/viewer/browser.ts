@@ -227,6 +227,10 @@ export async function launchBrowser(chrome: string): Promise<Browser> {
           resolve();
         });
       });
+      // On Windows, Chrome's helper processes can outlive chrome.exe and keep its stderr pipe
+      // open. Let go of the pipe and the child, or this test file's process never exits.
+      child.stderr?.destroy();
+      child.unref();
       // On Windows, Chrome's helpers can hold the profile for a moment after it exits.
       try {
         rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
