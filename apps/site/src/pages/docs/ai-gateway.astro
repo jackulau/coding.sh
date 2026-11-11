@@ -1,7 +1,7 @@
 ---
 import DocsLayout from "../../components/docs/DocsLayout.astro";
 import Code from "../../components/docs/Code.astro";
-import Tag from "../../components/docs/Tag.astro";
+import Cards from "../../components/docs/Cards.astro";
 
 // Follows docs/integrations/ai-gateway.md and packages/coding.sh/src/integrations/gateway (providers.ts lists the gateways).
 const claude = `// ~/.claude/settings.json
@@ -21,10 +21,14 @@ base_url = "https://ai-gateway.vercel.sh/codex/v1"
 env_key = "AI_GATEWAY_API_KEY"
 wire_api = "responses"`;
 
-const aiSdk = `const { text } = await generateText({
-  model: "openai/gpt-5", // any creator/model, billed through the gateway
+const aiSdk = `import { generateText } from "ai";
+import { OpenTelemetry } from "@ai-sdk/otel";
+import { aiSdkTracer } from "@codingdotsh/sdk";
+
+const { text } = await generateText({
+  model: "openai/gpt-5", // a creator/model string goes through AI Gateway (AI_GATEWAY_API_KEY)
   prompt,
-  experimental_telemetry: { isEnabled: true },
+  telemetry: { integrations: new OpenTelemetry({ tracer: aiSdkTracer() }) }, // sends the spans to coding.sh
 });`;
 
 const sdk = `// TypeScript
@@ -67,8 +71,8 @@ const GATEWAY_ROWS = [
 
 <DocsLayout>
   <p>
-    An LLM gateway gives you one key for many models. coding.sh tags sessions that went through one, adds what each call cost and which
-    provider served it, and runs A/B experiments across models with that one key.
+    coding.sh notices when a session's model calls went through a gateway and tags the session. With the gateway's key it adds what each
+    call was billed and which provider served it, and <code>compare --gateway</code> runs models from many providers with that one key.
   </p>
 
   <h2 id="supported">Supported gateways</h2>
@@ -111,25 +115,28 @@ const GATEWAY_ROWS = [
   <h3 id="codex">Codex</h3>
   <Code title="toml" code={codex} />
   <h3 id="ai-sdk">AI SDK</h3>
-  <p>Send its telemetry to <code>coding.sh collector</code>, as on the <a href="/docs/otel">OpenTelemetry</a> page.</p>
-  <Code title="ts" code={aiSdk} />
+  <p>
+    Trace it with <code>aiSdkTracer()</code> from the coding.sh SDK. Set <code>CODING_SH_URL</code> first, as in
+    <a href="/docs/how-to/trace-your-agent#trace-the-vercel-ai-sdk">Trace your agent with the SDK</a>.
+  </p>
+  <Code title="app.mjs" code={aiSdk} />
   <p>OpenCode uses its built-in <code>vercel</code> or <code>openrouter</code> provider, and Pi uses <code>vercel-ai-gateway</code> or <code>openrouter</code>.</p>
 
-  <h2 id="use">Tag sessions and add billed cost <Tag status="built" /></h2>
+  <h2 id="use">Tag sessions and add billed cost</h2>
   <Code code={cmds} />
   <p>
     Detection is read-only. coding.sh never prints or stores your keys, and re-running <code>enrich</code> makes no new API calls. Cloudflare, Portkey and Helicone need the log id from their
     response header: the SDKs record it, agents don't keep it. See <a href="/docs/cli/gateway">coding.sh gateway</a> for every option.
   </p>
 
-  <h2 id="compare">Compare models through a gateway <Tag status="built" /></h2>
+  <h2 id="compare">Compare models through a gateway</h2>
   <Code code={compareCmds} />
   <p>
     A bare <code>--gateway</code> uses <code>[gateway] default</code>, else the gateway with a key, else Vercel. See
     <a href="/docs/cli/compare">coding.sh compare</a>.
   </p>
 
-  <h2 id="sdk">Trace an app that calls a gateway <Tag status="built" /></h2>
+  <h2 id="sdk">Trace an app that calls a gateway</h2>
   <p>
     Apps traced with the <a href="/docs/sdk">TypeScript or Python SDK</a> detect every gateway in the table on each model call. The call
     records the gateway and its request id, so the session is tagged and <code>gateway enrich</code> can look it up.
@@ -153,7 +160,7 @@ const GATEWAY_ROWS = [
     </p>
   </details>
 
-  <h2 id="drains">Trace drains <Tag status="partial" /></h2>
+  <h2 id="drains">Trace drains</h2>
   <p>
     Vercel Pro and Enterprise plans can drain one OpenTelemetry trace per gateway request. Tunnel to <code>coding.sh collector</code> and use
     <code>&lt;tunnel&gt;/v1/traces</code> as the drain URL. Each request becomes one model call with its billed cost, and failovers are not
@@ -163,4 +170,13 @@ const GATEWAY_ROWS = [
     OpenTelemetry exports from LiteLLM, Cloudflare, Portkey, OpenRouter (Broadcast), TrueFoundry and Bifrost are tagged with their gateway
     and cost.
   </p>
+
+  <h2 id="next">Next steps</h2>
+  <Cards
+    cards={[
+      { href: "/docs/cost", title: "Track cost", body: "Where each cost figure comes from, per session and per model." },
+      { href: "/docs/how-to/compare-agents", title: "Compare agents", body: "Run the same tasks on two models or agents and read the difference." },
+      { href: "/docs/how-to/capture-with-proxy", title: "Log every model call", body: "Keep each call's full request, even behind a gateway." },
+    ]}
+  />
 </DocsLayout>

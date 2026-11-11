@@ -28,7 +28,12 @@ each send OpenTelemetry to the local collector, in TypeScript and, for Temporal,
 in Python. Nothing else is needed on the coding.sh side. Every engine was checked with a real
 run: a step that fails once, a worker killed mid-step, a sleep, and a restart on a new version.
 
-## Start the collector
+## Before you start
+
+- coding.sh is installed: `npm i -g coding.sh`.
+- Your workflow runs on one of the engines in the table under step 2.
+
+## 1. Start the collector
 
 ```sh
 coding.sh collector
@@ -36,7 +41,7 @@ coding.sh collector
 
 It listens on `127.0.0.1:4318` and takes OTLP over HTTP, as JSON or protobuf.
 
-## Engines
+## 2. Trace your engine
 
 In every engine, register a tracer provider in each process with its own `service.instance.id`
 and a `service.version` for the release. That is how coding.sh tells a crash from a deploy.
@@ -51,7 +56,7 @@ and a `service.version` for the release. That is how coding.sh tells a crash fro
 | LangGraph | nodes | the `thread_id` | an `interrupt()` is a wait |
 | Cloudflare Workflows | spans you make per `step.do` | the `workflow.run.id` you set | a span with `workflow.wait.name` |
 
-## Vercel Workflow SDK
+### Vercel Workflow SDK
 
 The Workflow SDK traces itself when `@opentelemetry/api` is installed and a tracer provider is
 registered before your code loads. Install the SDK packages next to `workflow`:
@@ -81,15 +86,20 @@ process.once("SIGTERM", () => provider.shutdown().finally(() => process.exit(0))
 ```
 
 Start the server with it: `node --import ./otel.mjs .output/server/index.mjs`. Model calls made
-with the AI SDK inside a step show up under that step when `experimental_telemetry` is on:
+with the AI SDK inside a step show up under that step when telemetry is on. In AI SDK 7,
+`new OpenTelemetry()` from `@ai-sdk/otel` uses the provider you registered:
 
 ```js
+import { OpenTelemetry } from "@ai-sdk/otel";
+
 export async function search(outline) {
   "use step";
-  const { text } = await generateText({ model, prompt: outline, experimental_telemetry: { isEnabled: true } });
+  const { text } = await generateText({ model, prompt: outline, telemetry: { integrations: new OpenTelemetry() } });
   return text;
 }
 ```
+
+In AI SDK 6, pass `experimental_telemetry: { isEnabled: true }` instead.
 
 Both `WORKFLOW_TRACE_MODE=linked` (the default) and `continuous` work. On the local world, a run
 recovers after a crash only if something calls the world's `start()` at startup. With Nitro, a
@@ -104,7 +114,7 @@ export default definePlugin(async () => {
 });
 ```
 
-## Temporal
+### Temporal
 
 Add the OpenTelemetry plugin to both the client and the worker. Then the trace context is stored
 in the workflow's history, and every later worker continues the same trace.
@@ -167,7 +177,7 @@ with opentelemetry.trace.get_tracer(__name__).start_as_current_span("sleep pause
     await workflow.sleep(timedelta(seconds=6))
 ```
 
-## Other engines
+### Other engines
 
 **Inngest.** Add `extendedTracesMiddleware()` from `inngest/experimental` to the client, after your
 provider is registered. Pin one copy of the OpenTelemetry API, or Inngest's own copy silently
@@ -230,7 +240,7 @@ first; its built-in provider has no process id.
 fails. In a Workflow, `ctx.step.name`, `ctx.step.count` and `ctx.attempt` come with each `step.do`
 callback. `wrangler dev` exports no traces, so post OTLP/HTTP JSON to the collector yourself.
 
-## Read the run
+## 3. Read the run
 
 `coding.sh sessions` lists the run once, titled with the workflow's name, and `coding.sh show <id>`
 prints it as at the top of this page.
@@ -261,5 +271,9 @@ during those replays out of the session's tokens and cost, so a resumed run isn'
 - A local Cloudflare Workflow is not picked up again after `wrangler dev` restarts until you call
   `pause()` and `resume()`, so that wait shows as downtime.
 
-The span names and attributes behind all this, per engine, are in
-[research/durable-workflows.md](../research/durable-workflows.md).
+## Next steps
+
+- [Trace a framework with OpenTelemetry](https://coding.sh/docs/otel): agent frameworks, sent to the
+  same collector.
+- [Workflows](https://coding.sh/docs/workflows): every `coding.sh workflows` command.
+- [Evals](https://coding.sh/docs/evals): turn a run that went wrong into a case.

@@ -1,58 +1,158 @@
-# Capture every model call with the proxy
+# Log every model call with the proxy
 
-`coding.sh proxy` is a local pass-through for the Anthropic and OpenAI APIs. Hooks and transcripts
-tell you what the agent did; the proxy logs what it sent: the full request and response of each
-model call, inside the session the hooks capture. Use it to read one call, see why the prompt cache
-missed, or replay a call with another model.
+Route any client through a local Anthropic or OpenAI proxy to keep every prompt, see why the prompt
+cache missed, and replay a call.
 
-```sh
-coding.sh init --proxy
-coding.sh show latest#-1             # the last model call of the latest session
-```
+`coding.sh proxy` passes each request on to the Anthropic or OpenAI API unchanged and logs the full
+request and response as a model call in a session. It works for your own app, an SDK script, or a
+coding agent.
 
-```text
-Call      a4fb172f03ccdc78f519aacac03bee434cccfd4f8f117ca0fbdd3d928ef41cb9
-Session   74b28a32-318c-4593-b1b9-da2fe007bee3 (linked by header)
-Client    claude-code  2.1.319  anthropic  messages
-Model     claude-sonnet-4-5
-Status    200  end_turn  stream  4.1s  first byte 812ms  first token 1.2s
-Usage     in 120  out 30  cache read 41.2k write 380 (99% hit)  $0.0181 est
-System    27,146 chars, 219 lines  #414f8391e6e8126f
-Tools     19  #8d0e5c2a91b7f3e4  Task, Bash, Glob, Grep, Read, Edit, Write, …
-Messages  3
-```
+## Before you start
 
-## 1. Connect
+- coding.sh is installed: `npm i -g coding.sh`.
+- Your client reads `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL`. The Anthropic and OpenAI SDKs do.
 
-`init --proxy` installs the hooks as usual, and also:
-
-- sets `ANTHROPIC_BASE_URL=http://127.0.0.1:4320` in the `env` block of Claude Code's `settings.json`;
-- adds a `coding-sh` model provider to Codex's `config.toml` (`base_url = "http://127.0.0.1:4320/v1"`)
-  and selects it;
-- starts the proxy in the background (log: `~/.coding.sh/proxy.log`).
-
-Each changed file is backed up first. `--agent claude-code --proxy` routes one agent only. When a
-Claude Code or Codex session starts, the hook restarts a stopped proxy
-(`CODING_SH_NO_PROXY_AUTOSTART=1` turns that off).
-
-Other clients, including your own scripts and SDKs, use the environment:
+## 1. Start the proxy
 
 ```sh
 coding.sh proxy --background
-eval "$(coding.sh proxy env)"        # ANTHROPIC_BASE_URL and OPENAI_BASE_URL
 ```
 
-Check it:
+```text title=output
+http://127.0.0.1:4320
+  Started in the background (pid 8622); log: ~/.coding.sh/proxy.log
+```
+
+## 2. Point your client at it
 
 ```sh
-coding.sh proxy status
-coding.sh doctor                     # the proxy line: running or not, and which agents route through it
+eval "$(coding.sh proxy env)"
 ```
 
-### Already using a gateway or CLIProxyAPI?
+This sets two variables:
 
-If the agent already calls another base URL, `init --proxy` puts the proxy in front of it. The
-calls are logged, then go on to the same URL as before:
+```text title=output
+export ANTHROPIC_BASE_URL=http://127.0.0.1:4320
+export OPENAI_BASE_URL=http://127.0.0.1:4320/v1
+```
+
+Run your app as usual. This script labels a GitHub issue. The `x-coding-sh-session` header puts
+every call it makes in one session:
+
+```js title=label.mjs
+import Anthropic from "@anthropic-ai/sdk";
+
+// Reads ANTHROPIC_BASE_URL, so every call goes through the proxy. The header puts the calls in one session.
+const client = new Anthropic({ defaultHeaders: { "x-coding-sh-session": "triage-1" } });
+const issue = process.argv[2] ?? "Viewer search misses tool output";
+const date = process.env.TODAY ?? new Date().toISOString().slice(0, 10);
+const msg = await client.messages.create({
+  model: "claude-sonnet-5-5",
+  max_tokens: 100,
+  system: `Pick labels for this GitHub issue from the repo's label list. Answer with the labels only.\nToday's date is ${date}.`,
+  messages: [{ role: "user", content: issue }],
+});
+console.log(msg.content[0].text);
+```
+
+Run it twice, a day apart (here `TODAY` stands in for the clock):
+
+```sh
+TODAY=2026-11-10 node label.mjs
+TODAY=2026-11-11 node label.mjs
+```
+
+## 3. Read a call
+
+```sh
+coding.sh show 'triage-1#-1'       # the last model call of the session
+```
+
+```text title=output
+Viewer search misses tool output
+Call      9222031d912bfc31409a00794b3bb063ad43887e4d74bda3520f0d31dc88ee79
+Session   triage-1 (linked by header)
+Client    anthropic  JS  anthropic  messages
+Model     claude-sonnet-5-5
+Status    200  end_turn  4ms  first byte 4ms
+Usage     in 4  out 30  cache read 0 write 42k (0% hit)  $0.1043 est
+System    118 chars, 2 lines  #0aab22e09299839e
+          Pick labels for this GitHub issue from the repo's label list. Answer with the labels only.
+          Today's date is 2026-11-11.
+Messages  1
+Settings  max_tokens=100
+```
+
+`#3` is a session's third call and `#-1` its last. A call id works in full or as a prefix of 6 or
+more characters, and `--all` prints the whole system prompt. In the viewer (`coding.sh ui`), a
+proxy call in the timeline opens to the same view.
+
+## 4. See why the prompt cache missed
+
+The second call read nothing from the cache and cost about 20 times as much. `diff-calls` compares it with
+the call before it, in the order the cache reads a request: model, settings, tools, system prompt,
+then messages.
+
+```sh
+coding.sh diff-calls 'triage-1#-1'
+```
+
+```text title=output
+a  19379f9905a0  claude-sonnet-5-5  10:42:49  in 4 out 30  cache read 41k write 380 (99% hit)  $0.0053
+b  9222031d912b  claude-sonnet-5-5  10:42:51  in 4 out 30  cache read 0 write 42k (0% hit)  $0.1043
+
+Model     same
+Settings  same
+Tools     same
+System    changed from line 2 (2% of a's system prompt comes after the change)
+            Pick labels for this GitHub issue from the repo's label list. Answer with the labels only.
+          - Today's date is 2026-11-10.
+          + Today's date is 2026-11-11.
+Messages  1 → 1, b extends a (1 shared)
+Cache     miss: b read 0 of the 41k a cached, and wrote 42k
+Why       the system prompt changed (first change: - Today's date is 2026-11-10.)
+```
+
+`coding.sh diff-calls <call-a> <call-b>` compares any two calls. To rank every cache break over
+the last 30 days by what it cost:
+
+```sh
+coding.sh cache doctor
+```
+
+```text title=output
+Prompt cache: 49% hit rate, grade F (34/100)
+25 sessions in the last 30d: 1 cache breaks re-billed 41k of 171k prompt tokens (~$0.0988 extra), 41k of them avoidable (24% of all prompt tokens)
+
+CAUSE	BREAKS	SESSIONS	RE-BILLED	EXTRA
+system-volatile-line	1	1	41k	~$0.0988
+
+1. system-volatile-line: keep changing values (dates, times, counters) out of the static system prompt; pass them in the next user or tool message
+   e.g. coding.sh diff-calls 19379f9905a0740374c048a229f37996044c90cfbf838d8cc679e1edb25da89c 9222031d912bfc31409a00794b3bb063ad43887e4d74bda3520f0d31dc88ee79
+```
+
+## 5. Record Claude Code and Codex
+
+`init --proxy` points Claude Code and Codex at the proxy and starts it, next to the usual hooks.
+Each call then lands in the session the hooks record. `--dry-run` lists the edits first:
+
+```sh
+coding.sh init --proxy --agent claude-code,codex --dry-run
+```
+
+The edits it lists:
+
+- Claude Code: `ANTHROPIC_BASE_URL=http://127.0.0.1:4320` in the `env` block of `settings.json`.
+- Codex: a `coding-sh` model provider in `config.toml`, selected.
+- Each file is backed up first. `coding.sh uninstall --proxy` puts it back and keeps the hooks.
+
+When a Claude Code or Codex session starts, the hook restarts a stopped proxy.
+`CODING_SH_NO_PROXY_AUTOSTART=1` turns that off. `coding.sh doctor` shows which agents route
+through the proxy.
+
+:::more Already using a gateway or CLIProxyAPI?
+If the agent already calls another base URL, `init --proxy` puts the proxy in front of it. Calls are
+logged, then go on to the same URL:
 
 | Before | After | Upstream |
 |---|---|---|
@@ -60,182 +160,79 @@ calls are logged, then go on to the same URL as before:
 | `ANTHROPIC_BASE_URL=https://gw.example.com/anthropic` | `http://127.0.0.1:4320/anthropic` | `https://gw.example.com` |
 | `[model_providers.cliproxy]` `base_url = "http://127.0.0.1:8317/v1"` | `base_url = "http://127.0.0.1:4320/v1"` | `http://127.0.0.1:8317` |
 
-- It reads Claude Code's `ANTHROPIC_BASE_URL` from `settings.json`, else from the environment.
-- For Codex it reads your own `model_provider`'s `base_url`, else `openai_base_url`, else
-  `OPENAI_BASE_URL`. Your provider stays selected; only its `base_url` changes.
-- Behind CLIProxyAPI, each call records `upstreamAuth` from its `X-CPA-TRACE-ID` header: a hash that
-  groups calls by credential without storing the credential.
-- `init --proxy --force` replaces the URL instead of chaining. A URL with a query string or
-  credentials is never chained: `init` stops and asks for `--force`.
+For Codex, your own provider stays selected; only its `base_url` changes. A URL with a query
+string or credentials is never chained: `init` stops and asks for `--force`, which replaces the
+URL instead.
 
-`init` prints the URL it chains through, and `doctor` shows it. `uninstall --proxy` puts the old
-value back.
+For your own client, pass `--anthropic-upstream` or `--openai-upstream`, or set them under
+`[proxy]` in the [config](../reference/config.md). When the upstream is a known gateway, the
+session keeps its `gateway:<name>` tag ([LLM gateways](../integrations/ai-gateway.md)).
+:::
 
-## 2. What it forwards
+## Read the result
 
+| `Why` says | Do |
+|---|---|
+| the system prompt changed | Keep dates, ids and counters out of the system prompt. Pass them in a user or tool message. |
+| the tool definitions changed | Keep the tool list and its order the same between calls. |
+| the model changed | Each model has its own cache. Expect a miss on a switch. |
+| the history was rewritten | A compaction or an edit to older messages. Expect one miss after it. |
+| N min passed between the calls | The default cache lasts 5 minutes. |
+| same prefix and within 5 min | The cache entry was evicted, or the cache breakpoints moved. |
+
+## If something goes wrong
+
+| Symptom | Check |
+|---|---|
+| Each call is its own `proxy-<hash>` session | Send `x-coding-sh-session: <id>`. Claude Code and Codex send their session id themselves. |
+| `diff-calls` says "is the first model call of its session; name two calls" | The call has no earlier call in its session. Pass two call ids. |
+| Nothing is logged | `coding.sh proxy status`, then check that the client reads the base URL from step 2. |
+| Port 4320 is in use | `coding.sh proxy --port 0` picks a free port; `proxy env` prints it. |
+
+:::more What the proxy forwards and stores
 | Path | Goes to |
 |---|---|
-| `/v1/messages`, `/v1/messages/count_tokens` | the Anthropic upstream (default `https://api.anthropic.com`) |
-| `/v1/chat/completions`, `/v1/responses`, `/v1/responses/compact` | the OpenAI upstream (default `https://api.openai.com`) |
-| Codex signed in with ChatGPT | the ChatGPT backend (`https://chatgpt.com/backend-api/codex`) |
-| any other path | passed through untouched, not logged |
+| `/v1/messages`, `/v1/messages/count_tokens` | the Anthropic API, or the upstream you set |
+| `/v1/chat/completions`, `/v1/responses` | the OpenAI API, or the upstream you set |
+| Codex signed in with ChatGPT | the ChatGPT backend |
+| any other path | passed through, not logged |
 
-The client's own auth headers go upstream unchanged. The proxy holds no keys, sends one upstream
-request per client request, and streams replies through without buffering. If logging fails, the
-call still succeeds.
+The proxy holds no keys. Your auth headers go upstream unchanged and are never stored. Streams pass
+through as they arrive, and a logging failure never fails the call. Measured overhead on a Linux
+desktop: 0.34 ms per streamed chunk and 1.96 ms to the first byte.
 
-To send calls on to a gateway by hand, pass `--anthropic-upstream` or `--openai-upstream`, or set
-them under `[proxy]` in the [config](../reference/config.md). A flag wins over the config, and the
-config wins over the URL `init --proxy` chained through.
+In capture mode `full` (the default) each call keeps its request and response bodies after
+[redaction](../guides/privacy.md). The system prompt, tools and older messages are stored once and
+shared between calls. In mode `metadata` only hashes, usage and timings are kept, so `show` and
+`diff-calls` compare hashes.
+:::
 
-When the URL behind the proxy is a known gateway, each call the proxy logs names it (`gateway` in
-the call's payload), so the session keeps its `gateway:<name>` tag. `gateway status` and `doctor`
-report the route too, marked "through the coding.sh proxy"
-([LLM gateways](../integrations/ai-gateway.md)).
-
-Measured overhead on a Linux desktop: 0.34 ms per streamed chunk (95% CI 0.28 to 0.39 ms) and
-1.96 ms to the first byte (95% CI 1.66 to 2.49 ms).
-
-## 3. Read a call
-
+:::more Replay a call with another model
 ```sh
-coding.sh show <session>#3           # the session's third call
-coding.sh show <call-id> --all       # the whole system prompt
+coding.sh exp replay 'triage-1#-1' --vary model=claude-sonnet-5-5,claude-haiku-4-5 --n 5 --dry-run
 ```
 
-A call id works in full or as a unique prefix of 6 or more characters. `#-1` is the last call. In
-the viewer (`coding.sh ui`), a proxy call in the timeline opens to its system prompt, tools and
-last messages.
+`exp replay` sends the logged request again, once per arm and trial, varying the model, the system
+prompt (`--vary system=@new-prompt.md`) or any body field. It uses your own `ANTHROPIC_API_KEY` or
+`OPENAI_API_KEY`, never the agent's login. `--dry-run` needs no key and prints the call count and an
+estimated cost. Every flag: [coding.sh exp](https://coding.sh/docs/cli/exp).
+:::
 
-Each call is an `llm.call` event with source `proxy`. It joins a session this way:
-
-| Client | Session |
-|---|---|
-| Claude Code | the `x-claude-code-session-id` header, else `metadata.user_id` |
-| Codex | its `session-id` (or `thread-id`) header |
-| Any client | `x-coding-sh-session: <id>`, when sent |
-| Otherwise | a `proxy-<hash>` session per conversation, or the session of `previous_response_id` |
-
-When the hooks also log the same call, the session counts its tokens and cost once, and `show`, the
-viewer and the MCP session tools show it as one line. `show --json` and `GET /api/sessions/{id}/events` return both copies.
-
-## 4. Why did the cache miss?
-
-```sh
-coding.sh diff-calls latest#-1                 # this call against the one before it
-coding.sh diff-calls <call-a> <call-b>
-```
-
-`diff-calls` compares two requests in the order the prompt cache reads them: model, tools, system
-prompt (line by line), then messages. `Why` names the first difference:
-
-```text
-a  3c81f0a9d2e4  claude-sonnet-4-5  16:02:11  in 4 out 212  cache read 40.8k write 380 (99% hit)  $0.0188
-b  77d2e0b15a9c  claude-sonnet-4-5  16:09:40  in 4 out 96  cache read 0 write 41.6k (0% hit)  $0.1574
-
-Model     same
-Settings  same
-Tools     same
-System    changed from line 2 (2% of a's system prompt comes after the change)
-            Use the tools available to you.
-          - Today's date is 2026-11-06.
-          + Today's date is 2026-11-07.
-Messages  12 → 14, b extends a (12 shared)
-Cache     miss: b read 0 of the 41.2k a cached, and wrote 41.6k
-Why       the system prompt changed (first change: - Today's date is 2026-11-06.)
-```
-
-Everything after the first change is billed again. When more than 20% of the prompt comes after
-it, `Why` suggests moving dynamic content (timestamps, session ids) to the end. When nothing in the
-prefix changed, the cause is a gap of over five minutes, or an evicted cache entry.
-
-`coding.sh cache doctor` ranks every cache break over a window by cost
-([Prompt cache health](../guides/explore.md#prompt-cache-health)). The viewer has the same diff
-under "Compare with the previous call", and the API has
-[`GET /api/calls/{id}/diff`](../reference/api.md#get-apicallsiddiff).
-
-## 5. Replay a call with another model or prompt
-
-```sh
-coding.sh exp replay latest#-1 --vary model=claude-sonnet-4-5,claude-haiku-4-5 --n 5 --dry-run
-coding.sh exp replay latest#-1 --vary model=claude-sonnet-4-5,claude-haiku-4-5 --n 5
-coding.sh exp replay latest#-1 --vary system=@new-prompt.md
-coding.sh exp replay --session latest --limit 10 --vary model=claude-haiku-4-5
-```
-
-`exp replay` sends the logged request again, once per arm and trial. One `--vary` value changes
-arm B only; two set A and B. Each reply passes when its first action matches the agent's:
-
-```text
-A model=claude-sonnet-4-5   B model=claude-haiku-4-5   1 call × 3
-  A $0.0065/call  30 out tokens  2.1s
-  B $0.0021/call  12 out tokens  0.9s
-
-A replay-9a63788b-a exp_…  pass 100.0%
-B replay-9a63788b-b exp_…  pass 0.0%
-B − A   -100.0pp [-100.0pp, -100.0pp] (1 paired cases, 95% paired bootstrap)
-
-First action per call (recorded → A | B):
-  9a63788b95fd  Bash → Bash ×3 | text ×3
-
-Full comparison: coding.sh exp compare exp_… exp_…
-```
-
-| Option | What it adds |
-|---|---|
-| `--vary <field>=…` | Any request body field, such as `temperature=0,1` or `thinking.budget_tokens=1024,8192` |
-| `--criterion "..."` | An LLM judge on each reply |
-| `--grader` | Any grader from `coding.sh eval` |
-| `--dry-run` | The call count and an estimated cost; needs no key |
-| `--max-cost` | Refuses a run whose estimate is higher |
-
-Replays use your own `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, never the agent's login. For
-Anthropic, a `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) also works. Without one, `exp replay` stops before calling
-anything. Every flag: [coding.sh exp](https://coding.sh/docs/cli/exp).
-
-## 6. Fork a session at a step
-
-```sh
-coding.sh replay latest --step 7 --fork --with AGENTS.md=fixed.md -k 3
-coding.sh replay latest --step 7 --fork --with AGENTS.md=fixed.md --run --verify "npm test"
-coding.sh replay latest --step 7 --fork --with AGENTS.md=fixed.md --save-case forks
-```
-
-`--fork` swaps the instruction-file text in the model call behind a step, sends it again, and
-prints the recorded next action beside the forked one. `--run` goes on from there with Claude Code in a
-copy of the repo, and `--save-case` keeps the step as an eval case. See
-[Fork from a step](../guides/explore.md#fork-from-a-step).
-
-## What is stored
-
-In capture mode `full` (the default), after redaction:
-
-| Part | What |
-|---|---|
-| Request | the body; system prompt, tools and older messages are stored once and shared between calls |
-| Response | the body (for a stream, the message rebuilt from its events) |
-| Headers | an allowlist: `anthropic-version`, `anthropic-beta`, `user-agent`, session ids, `request-id`, rate limits, `retry-after` |
-| Event | model, status, stop reason, usage with cache, estimated cost, latency, time to first byte and token, error class, prompt and tool hashes |
-| When sent | reasoning effort, service tier, speed, thinking budget, and `compaction: true` for a compacting call |
-| Where it sits | a Claude Code subagent's own session, Codex parent and forked threads, and the account as a 16-character hash |
-
-Auth headers (`Authorization`, `x-api-key`, cookies) are never stored, and neither is the account
-id. In capture mode `metadata`, only the event is kept, with no prompt or response text: `show` and
-`diff-calls` then compare hashes, and `exp replay` has nothing to send. See
-[Privacy](../guides/privacy.md).
-
-## For a team
-
-`coding.sh serve` mounts the same proxy at `/proxy/`. Point agents at
+:::more For a team
+`coding.sh serve` mounts the same proxy at `/proxy/`. Point clients at
 `https://obs.example.com/proxy` and send an ingest key in `x-coding-sh-key`; the calls land in that
-key's project. See [Team](../guides/team.md#the-model-api-proxy).
+key's project. See [Self-host for a team](https://coding.sh/docs/how-to/self-host-team).
+:::
 
 ## Undo
 
 ```sh
-coding.sh uninstall --proxy          # stop routing agents through the proxy, keep the hooks
+coding.sh uninstall --proxy        # stop routing agents through the proxy, keep the hooks
 coding.sh proxy stop
 ```
 
-`coding.sh uninstall` also removes the routing. Both restore each agent's config byte for byte when
-nothing else changed it.
+## Next steps
+
+- [Find and read runs](https://coding.sh/docs/explore): search and open the calls you logged.
+- [Track cost](https://coding.sh/docs/cost): where each cost figure comes from.
+- [Record coding agents](https://coding.sh/docs/agents): hooks for each agent.
