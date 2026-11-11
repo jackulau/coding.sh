@@ -15,7 +15,10 @@ test("ci.yml runs the static gate, Postgres, the Python SDK and the release smok
   for (const job of ["gate-static", "store-postgres", "python-sdk", "release-smoke"]) assert.ok(jobs(ci).has(job), `${job} job`);
   assert.match(ci, /node scripts\/gate\.mjs --static --strict/);
   assert.match(ci, /CODING_SH_TEST_PG_URL: postgres:\/\/postgres:ci@127\.0\.0\.1:5432\/coding/);
-  assert.match(ci, /python: \["3\.9", "3\.13"\]/);
+  // The SDK's floor (pyproject requires-python) and the newest; 3.9 has no build for ubuntu-latest.
+  assert.match(ci, /- \{ python: "3\.9", os: ubuntu-24\.04 \}/);
+  assert.match(ci, /- \{ python: "3\.13", os: ubuntu-latest \}/);
+  assert.match(read("packages/sdk-python/pyproject.toml"), /requires-python = ">=3\.9"/);
   assert.match(ci, /sh scripts\/release\/smoke\.sh/);
   assert.match(ci, /packages\/blob-s3\n\s+run: npm run check/);
 });

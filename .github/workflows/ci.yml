@@ -203,12 +203,15 @@ jobs:
 
   python-sdk:
     name: python sdk / python ${{ matrix.python }}
-    runs-on: ubuntu-latest
+    # pyproject allows Python 3.9, which has no build for ubuntu-latest (26.04); it runs on 24.04.
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.9", "3.13"]
+        include:
+          - { python: "3.9", os: ubuntu-24.04 }
+          - { python: "3.13", os: ubuntu-latest }
     steps:
       - uses: actions/checkout@v5
 
