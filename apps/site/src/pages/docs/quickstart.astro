@@ -68,9 +68,8 @@ const SHOW = [
     <code>init</code> may not be recorded; restart it. Until the first session lands, the viewer says "Waiting for your first session".
   </p>
   <p>
-    Each hook appends one line to <code>~/.coding.sh/spool</code> and exits 0. It makes no network calls and prints nothing, because several
-    agents read hook output as a decision or as text for the model. If capture fails, the failure goes to <code>spool/errors.log</code> and
-    the agent carries on.
+    Each hook appends one line to <code>~/.coding.sh/spool</code> and exits 0, with no network calls and no output. If capture fails, the
+    error goes to <code>spool/errors.log</code> and the agent carries on.
   </p>
 
   <h2 id="explore">3. Look at what was captured</h2>
@@ -84,21 +83,30 @@ const SHOW = [
     Every command takes <code>--json</code>.
   </p>
   <p>
-    A session over 200 events shows one line per phase: the start, each resume, compaction and long idle gap, with any derails
-    (looping, failure-streak, churn, no-progress, stalled, context-thrash) under the phase they started in. <code>show --all</code> lists every
-    event, <code>show latest --follow</code> prints new events as a session runs, and <code>sessions --flag looping</code> finds sessions by derail. <code>--where</code> filters by any field
-    (<a href="https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md#filter-with---where">keys</a>), and <code>--facets</code> counts sessions per value.
-    The viewer's session list takes the same query in its filter bar, with completions and a sidebar of counts, and its Events tab lists the matching events.
-    <a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#long-sessions">Long sessions</a> has the thresholds.
+    <code>--where</code> filters by any field (<a href="https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md#filter-with---where">keys</a>),
+    and <code>--facets</code> counts sessions per value. The viewer's filter bar takes the same query.
   </p>
+  <details class="more" id="long">
+    <summary>Long sessions</summary>
+    <p>
+      A session over 200 events shows one line per phase: the start, each resume, compaction and long idle gap. Derails (looping,
+      failure-streak, churn, no-progress, stalled, context-thrash) sit under the phase they started in.
+    </p>
+    <p>
+      <code>show --all</code> lists every event, <code>show latest --follow</code> prints new events as a session runs, and
+      <code>sessions --flag looping</code> finds sessions by derail.
+      <a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#long-sessions">Long sessions</a> has the thresholds.
+    </p>
+  </details>
 
   <h2 id="mcp">4. Ask your agent</h2>
   <p>
     <code>init</code> also registers the coding.sh MCP server with the agents that support MCP (Claude Code, Codex, Cursor, OpenCode
-    and others), so the agent can read its own history. In a new session, ask it things like "what failed in my last session?" or
-    "which tools are slowest this week?". It calls tools such as <code>session_current</code>, <code>failures</code>,
-    <code>latency</code> and <code>improve</code>. <code>coding.sh mcp config</code> prints how to register it by hand, and
-    <a href="/docs/mcp">MCP</a> lists every tool.
+    and others), so the agent can read its own history. In a new session, ask it "what failed in my last session?" or "which tools are
+    slowest this week?".
+  </p>
+  <p>
+    <code>coding.sh mcp config</code> prints how to register it by hand, and <a href="/docs/mcp">MCP</a> lists every tool.
   </p>
 
   <h2 id="backfill">5. Import past sessions</h2>

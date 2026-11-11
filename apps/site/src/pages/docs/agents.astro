@@ -4,22 +4,17 @@ import Code from "../../components/docs/Code.astro";
 import { ADAPTER_ROWS, PLANNED_AGENTS, STATUS_LABEL } from "../../components/docs/agents";
 import AgentLogo from "../../components/AgentLogo.astro";
 
-const hook = `node "/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>   # absolute, quoted path`;
+const proxy = `coding.sh init --proxy              # Claude Code and Codex
+eval "$(coding.sh proxy env)"        # any other client`;
+const hook = `/bin/sh "/Users/you/.coding.sh/bin/hook.sh" <agent-id> <EventName>   # absolute, quoted path
+node "C:/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>      # on Windows`;
 ---
 
 <DocsLayout>
   <p>
-    Each agent has an adapter in <code>packages/coding.sh/src/adapters</code>. An adapter installs capture, normalizes the agent's events into
-    the <a href="/docs/trace-format">trace format</a>, imports past sessions, drives the agent headless for eval runs, and isolates its config
-    during those runs so your own setup is never touched.
-  </p>
-  <p>
-    <strong>Verified on real sessions</strong> means the adapter has been checked against real sessions of the agent.
-    <strong>Verified on a real install</strong> means the agent's current release was installed and run through a session against a local
-    stub model, its hooks fired and the recorded session was checked, and the captured payloads are now CI fixtures.
-    <strong>Fixture-tested</strong> means CI checks it against the agent's documented and recorded formats, but nobody has run it on a
-    live install yet. If you use one of those, an <a href="https://github.com/jackulau/coding.sh/issues/new?template=agent-support.yml">agent support report</a>
-    saying whether it worked moves it to verified. Agents without hooks are recorded by wrapping the command: <code>coding.sh run -- &lt;cmd&gt;</code>.
+    What coding.sh captures from each agent, and how. Each agent has an adapter that installs capture, maps the agent's events into the
+    <a href="/docs/trace-format">trace format</a>, imports past sessions and drives the agent headless for eval runs, in an isolated config so
+    your own setup is never touched. Agents without hooks are recorded by wrapping the command: <code>coding.sh run -- &lt;cmd&gt;</code>.
   </p>
 
   <h2 id="matrix">Matrix</h2>
@@ -55,6 +50,20 @@ const hook = `node "/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>  
       </tbody>
     </table>
   </div>
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Status</th><th>Means</th></tr></thead>
+      <tbody>
+        <tr><td>Verified on real sessions</td><td>Checked against real sessions of the agent.</td></tr>
+        <tr><td>Verified on a real install</td><td>The current release ran a session against a local stub model; its hooks fired, the session was checked, and the payloads are CI fixtures.</td></tr>
+        <tr><td>Fixture-tested</td><td>CI checks it against the agent's documented and recorded formats. Nobody has run it on a live install yet.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    If you use a fixture-tested agent, an <a href="https://github.com/jackulau/coding.sh/issues/new?template=agent-support.yml">agent support report</a>
+    saying whether it worked moves it to verified.
+  </p>
 
   <h2 id="subagents">Subagents</h2>
   <p>
@@ -99,11 +108,13 @@ const hook = `node "/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>  
     <li><strong>Cursor</strong> also runs Claude Code hooks from <code>.claude/settings.json</code>. Those payloads are dropped by the Claude Code adapter, so each Cursor event is captured once.</li>
     <li><strong>Amp</strong> keeps threads server-side, so there is no local backfill.</li>
     <li>
-      <strong>Kiro CLI</strong> has no adapter yet, so record it with the wrapper:
-      <code>coding.sh run -- kiro-cli chat --v3 --no-interactive --trust-all-tools "…"</code> records the session's start, end, exit code,
-      duration and file changes, but not its prompts, tool calls or tokens. Kiro's OpenTelemetry export is a daily, admin-configured
-      push of account totals to a public endpoint, not per-session spans, so the local OTLP receiver can't use it. The Kiro IDE is not
-      captured.
+      <strong>Kiro CLI</strong> has no adapter yet. Wrap it:
+      <code>coding.sh run -- kiro-cli chat --v3 --no-interactive --trust-all-tools "…"</code>. That records start, end, exit code,
+      duration and file changes, but not prompts, tool calls or tokens.
+    </li>
+    <li>
+      Kiro's OpenTelemetry export is a daily push of account totals, not per-session spans, so the local OTLP receiver can't use it. The
+      Kiro IDE is not captured.
     </li>
     <li><strong>Antigravity CLI</strong> (<code>agy</code>) replaced Gemini CLI. Record it with the <code>antigravity</code> adapter; <code>gemini-cli</code> still reads sessions from older installs.</li>
   </ul>
@@ -111,12 +122,13 @@ const hook = `node "/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>  
   <h2 id="proxy">Model API proxy</h2>
   <p>
     Hooks and transcripts record what an agent did. To also record what it sent the model (the full system prompt, tool definitions
-    and messages of every call), route it through the local proxy with <code>coding.sh init --proxy</code>. It points Claude Code
-    (<code>ANTHROPIC_BASE_URL</code> in <code>settings.json</code>) and Codex (a <code>coding-sh</code> provider in
-    <code>config.toml</code>) at <code>coding.sh proxy</code> on <code>127.0.0.1:4320</code> and starts it. Both agents name their
-    session on every call, so each call lands in the session their hooks capture. An agent that already calls a gateway or
-    CLIProxyAPI keeps calling it, through the proxy. Other clients use
-    <code>eval "$(coding.sh proxy env)"</code>. See <a href="/docs/how-to/capture-with-proxy">Capture with the proxy</a>.
+    and messages of every call), route it through the local proxy:
+  </p>
+  <Code code={proxy} />
+  <p>
+    <code>init --proxy</code> points Claude Code and Codex at <code>coding.sh proxy</code> on <code>127.0.0.1:4320</code> and starts it. Each
+    call lands in the session the hooks capture. An agent that already calls a gateway keeps calling it, through the proxy. See
+    <a href="/docs/how-to/capture-with-proxy">Capture with the proxy</a>.
   </p>
 
   <h2 id="other-agents">Other agents</h2>

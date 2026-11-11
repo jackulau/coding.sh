@@ -50,9 +50,8 @@ What it cost:
   serves the build over HTTP/2 with brotli, like production.
 - **Pairs:** the old build and the new one run in 11 interleaved pairs after one warm-up. Half the
   pairs run the old build first.
-- **When a change counts:** the 95% bootstrap interval of the median paired difference must
-  exclude zero, and a sign test must agree after correcting for the number of metrics. A byte
-  count that is the same in every run is exact.
+- **When a change counts:** the 95% bootstrap interval of the median paired difference excludes
+  zero, and a sign test agrees after correcting for the number of metrics.
 
 [scripts/perf/lighthouse.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/lighthouse.mjs) takes one sample and prints numbers.
 `coding.sh exp metrics` repeats it and does the statistics. To run it on your own site, build
@@ -74,42 +73,55 @@ See [Experiments](https://coding.sh/docs/experiments#metrics) for the metric A/B
 
 ## Budgets in CI
 
-[.github/workflows/site-perf.yml](https://github.com/jackulau/coding.sh/blob/main/.github/workflows/site-perf.yml) builds the base and head
-commits and runs 9 pairs. It fails when a gated metric gets worse by an amount that matters, or
-when a page goes over its budget in [scripts/perf/budgets.json](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/budgets.json).
-The budgets sit about 10% above the numbers above. Pull requests run on GitHub's hosted runners
-and skip the load-time budgets, which only hold on our own machine. Pushes to main run on the one
-desk runner labelled `perf`, so two perf runs never overlap, but CI and deploys run beside it on
-the desk's second runner. Our machine runs other jobs too, so each sample also records
-`cpu_busy`, the share of the machine's CPU in use while that page loaded. A load-time budget
-counts only the samples where it was 0.5 or less (`--quiet-cpu`). When fewer than half the pairs
-were quiet, the run says so in a warning and skips that budget. The deploy also checks page
-weight, fonts, scripts and images in the build (`npm run perf:budget` in apps/site).
+[.github/workflows/site-perf.yml](https://github.com/jackulau/coding.sh/blob/main/.github/workflows/site-perf.yml) builds the base and
+head commits and runs 9 pairs. It fails when a gated metric gets worse by an amount that matters,
+or when a page goes over its budget in
+[scripts/perf/budgets.json](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/budgets.json). The budgets sit about 10%
+above the numbers above. The rules are in
+[scripts/perf/gate.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/gate.mjs), with tests in `scripts/perf/test`.
+
+| Where | What runs |
+|---|---|
+| Pull requests | GitHub's hosted runners. Load-time budgets are skipped: they only hold on our own machine. |
+| Pushes to main | The one desk runner labelled `perf`, so two perf runs never overlap. CI and deploys run beside it. |
+| Deploys | `npm run perf:budget` in apps/site checks page weight, fonts, scripts and images in the build. |
+
+The desk runs other jobs, so each sample records `cpu_busy`, the share of CPU in use while the
+page loaded. A load-time budget counts only samples at 0.5 or less (`--quiet-cpu`). When fewer
+than half the pairs were quiet, the run warns and skips that budget.
+
+### When a gated metric fails
 
 The gated metrics are mobile LCP, mobile layout shift, mobile startup requests, and the script,
-font and stylesheet bytes. A gated metric fails when both of these hold:
+font and stylesheet bytes. One fails when both hold:
 
 - **It is significant.** The test in "When a change counts" above calls it worse.
 - **It is big enough to matter.** The median paired difference is at least the metric's minimum
-  effect. For a load time that is 3% of the old median or 20 ms, whichever is larger: 49 ms on
-  the home page's mobile LCP (about 1.65 s), 27 ms on a docs page (about 0.9 s). For layout
-  shift it is 3% or 0.01. Bytes and request counts have no minimum: a fixed build gives the same
-  number every run, so one added byte of script is real and fails.
+  effect, in the table below.
+
+| Metric | Minimum effect |
+|---|---|
+| Load time | 3% of the old median or 20 ms, whichever is larger: 49 ms on the home page's mobile LCP (about 1.65 s), 27 ms on a docs page (about 0.9 s) |
+| Layout shift | 3% or 0.01 |
+| Bytes and request counts | None: a fixed build gives the same number every run, so one added byte of script fails |
 
 Nine quiet pairs can find a shift much smaller than anyone would notice. A version bump that
 changed no page once failed on a 15 ms (0.9%) slower home LCP, with a 95% interval of 8 to 39 ms.
-That difference now passes and the run prints it as too small to count. A 10% slower LCP is
-165 ms on the home page and still fails.
+That now passes as too small to count. A 10% slower LCP is 165 ms on the home page and still fails.
+
+### When a budget fails
 
 A budget is checked against the low end of the 95% bootstrap interval of the head build's median
-(over the quiet samples, for a load time), not against the median itself. The budget fails only
-when the samples show the page is over it. A median of 130.5 ms against a budget of 130 ms, with
-samples from 112 to 150 ms, is noise and passes. Samples from 150 to 170 ms against the same
-budget fail. Bytes and request counts give the same number in every run, so their interval has
-no width and one byte over still fails. We chose the interval over a fixed margin because it
-follows the noise of each run: on a quiet machine the interval is narrow and the check is close
-to the median, and on a busy one it widens instead of failing at random. The rules are in
-[scripts/perf/gate.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/gate.mjs), with tests in `scripts/perf/test`.
+(over the quiet samples, for a load time), so it fails only when the samples show the page is over.
+
+| Samples, budget 130 ms | Result |
+|---|---|
+| Median 130.5 ms, samples from 112 to 150 ms | Noise: passes |
+| Samples from 150 to 170 ms | Fails |
+| Bytes and request counts, one byte over | Fails: the interval has no width |
+
+The interval follows each run's noise: narrow on a quiet machine, wider on a busy one instead of
+failing at random. That is why it is used over a fixed margin.
 
 ## What we took from X's rewrite
 
@@ -132,44 +144,19 @@ smaller site.
 
 ## Store ingest
 
-Two changes to the SQLite index speed ingest, with no change to what is stored:
+Two changes to the SQLite index speed ingest, with no change to what is stored. Each was
+confirmed in an in-process A/B, where machine load cancels out.
 
-- **A bigger page cache.** Each index connection sets `PRAGMA cache_size = -16000` (16 MB, up from
-  the ~2 MB default) and `PRAGMA temp_store = MEMORY`. Both are bounded RAM that is freed when the
-  connection closes and change nothing on disk or in the file's locking, so read-only connections
-  and Windows are unaffected. A few thousand events spill the default cache, so ingest and the
-  reads that fold a session stop re-decoding pages this keeps resident.
-- **Fewer facet probes.** A session repeats the same handful of `kind`/`tool`/`mcp` facet values
-  across hundreds of events. Each repeat was an `INSERT OR IGNORE` that no-ops on
-  `session_facets`' primary key but still probes the b-tree. Ingest now skips the tuples it has
-  already issued in a batch; the facet table is byte-for-byte identical (a test asserts it equals a
-  full rebuild).
+| Change | What it does | Measured |
+|---|---|---|
+| A bigger page cache | Each index connection sets `PRAGMA cache_size = -16000` (16 MB, up from the ~2 MB default) and `PRAGMA temp_store = MEMORY`. Nothing changes on disk. | The per-session events read: 10.51 ms median against 11.38 ms, 95% interval of the difference [0.82, 0.90] ms, about 7.6% faster |
+| Fewer facet probes | Ingest skips the `kind`/`tool`/`mcp` facet tuples it already issued in a batch. The facet table is byte-for-byte identical (a test checks it). | A facet-heavy 30k-event batch: 1.51 ms median against 18.63 ms, 95% interval of the difference [17.07, 17.15] ms. A 20k-event session issues 360 facet rows instead of 39,880 probes |
 
-Measured with [scripts/dogfood/bench.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/dogfood/bench.mjs),
-which ingests a byte-identical synthetic corpus through the candidate and the origin/main build in
-interleaved pairs and reports a 95% bootstrap interval on the median events/s difference. On the
-desk, which runs other jobs (an unpaired ingest there swings 2-3x between runs), the pairing is
-what carries signal, not the absolute throughput:
-
-A paired ingest of a 50k-event corpus (6 pairs) on the desk put the candidate at a 66.0 s
-median against 76.2 s for origin/main, about +15% throughput — but the desk was busy and the
-95% interval on the per-second difference, [-86.5, +569.5] ev/s, straddles zero, so the
-wall-clock run is **inconclusive**, not a result. Each change was instead confirmed in
-isolation, where machine load cancels out:
-
-- **Facet probes.** An in-process A/B that inserts the same facet-heavy 30k-event batch with and
-  without the in-batch skip (120 pairs, identical schema) ran the candidate in a 1.51 ms median
-  against 18.63 ms, a +17.12 ms difference with a 95% interval of [17.07, 17.15] ms — the facet
-  inserts a busy session repeats cost roughly 12x less. The reduction is deterministic: a 20k-event
-  session issues 360 facet rows instead of 39,880 `INSERT OR IGNORE` probes, about 110x fewer, and
-  the stored table is identical either way.
-- **Page cache.** An in-process A/B that opens two read-only connections differing only in the
-  cache pragmas and times the real per-session read `SELECT * FROM events WHERE session_id = ?
-  ORDER BY ts, rowid` (40 sessions x 200 iterations, interleaved) read in a 10.51 ms median against
-  11.38 ms, a +0.87 ms difference with a 95% interval of [0.82, 0.90] ms — about 7.6% faster reads
-  once a session no longer fits the default cache.
-
-To re-run the loop (baseline is origin/main built into its own dist):
+A paired wall-clock ingest of a 50k-event corpus (6 pairs) on the busy desk put the candidate at
+66.0 s against 76.2 s for origin/main, but the 95% interval, [-86.5, +569.5] ev/s, straddles zero:
+**inconclusive**, not a result.
+[scripts/dogfood/bench.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/dogfood/bench.mjs) runs the paired ingest. To re-run it
+(baseline is origin/main built into its own dist):
 
 ```sh
 DESK_DIR=coding-sh-perf .claude/bin/desk run \
@@ -179,20 +166,13 @@ DESK_DIR=coding-sh-perf .claude/bin/desk run \
 ### Small blobs in a pack
 
 The two changes above left ingest at about 1,700 events/s and the store at 5.5 MB per 1,000
-events, against budgets of 5,000 and 2. A profile of the 100k-event benchmark corpus showed both
-had one cause: every hook line's raw payload is a blob, so the corpus wrote 100,000 blob files.
-Each compresses to about 200 bytes but takes a whole 4 KiB disk block, so 410 MB of the 552 MB
-store was blob files that held about 20 MB. Each also cost a temp file, a rename and directory
-fsyncs, and that file work, not parsing or the index, was most of the ingest time.
+events, against budgets of 5,000 and 2. Both had one cause: every hook line's raw payload is a
+blob, so the 100k-event corpus wrote 100,000 blob files. Each takes a whole 4 KiB disk block, and
+the file work, not parsing or the index, was most of the ingest time.
 
-A blob that compresses to under 4 KiB is now a row of `blobs/pack.db`, a SQLite file (WAL,
-`synchronous=FULL`, `fullfsync` on macOS, so a put that returns is on disk as a file was). An
-ingest checkpoint writes its rows in one transaction, and a write that cannot get the pack's lock
-within 500 ms writes its blobs as files instead. Larger blobs stay files. Reads look in the
-pack, then for a file, so a store written before reads as it did; `gc --compact` moves its small
-blob files into the pack, and `purge` and `gc --compact` rewrite the pack (VACUUM) so a deleted
-row leaves no bytes behind. Nothing else about what is stored changes: the same blobs, refs and
-index rows.
+A blob that compresses to under 4 KiB is now a row of `blobs/pack.db`, a SQLite file. Larger blobs
+stay files. Reads look in the pack, then for a file, so an older store reads as it did, and
+`gc --compact` moves its small blob files into the pack.
 
 Paired on the desk (`bench.mjs ingest store --baseline`, 8 interleaved pairs, a 100k-event corpus,
 32 cores, load average 7 at the start, falling to 2 by the end):
@@ -204,23 +184,19 @@ Paired on the desk (`bench.mjs ingest store --baseline`, 8 interleaved pairs, a 
 | Index | 142.6 MB | 142.6 MB | unchanged |
 | Blobs | 409.6 MB in 100,000 files | 30.2 MB in one file | |
 
-An earlier run on a quieter desk (load 0.3 to 1.4), before a one-line change to how the pack keeps
-a row's mtime, gave +4,525 events/s, 95% CI [4,487, 4,579], and the same store sizes. A rerun after
-the pack's lock wait became 500 ms with a file fallback gave 6,131 against 1,696 events/s, +4,435,
-95% CI [4,400, 4,498], with the same store sizes and no fallback files (one ingest writes alone).
+A write that cannot get the pack's lock within 500 ms writes its blobs as files instead. A rerun
+with that fallback gave 6,131 against 1,696 events/s, +4,435, 95% CI [4,400, 4,498], with the same
+store sizes.
 
 The store is now mostly the index (1.43 MB per 1,000 events). The largest part left there is
 `search_extra`, which copies each `tool.end` output for full-text search (22.6 MB of the 142.6).
-The other costs the profile showed are small next to the file work: a new zstd context per blob
-(about 1 s per 100k blobs) and the index's commit.
 
 ## OTLP collector
 
 `coding.sh collector` stores concurrent OTLP requests together:
 
-- **Group commit.** Requests that arrive while a write runs wait for it, then the next write maps
-  and stores all of them at once, in one SQLite transaction. Each request still gets its own
-  answer, with only its own events and sessions, and a request whose spans fail to map fails alone.
+- **Group commit.** Requests that arrive while a write runs wait for it, then the next write stores
+  them all in one SQLite transaction. Each request still gets its own answer, and a request whose spans fail to map fails alone.
 - **Blob batch.** The blobs a group writes (large payloads) go through the blob store's batch API
   and are flushed once, before the events that point at them are stored.
 - **No raw span blobs by default.** The collector used to keep every source span as a blob on its
@@ -230,11 +206,10 @@ The other costs the profile showed are small next to the file work: a new zstd c
   stored instead of reading them back. A test checks the two builds are equal.
 
 [scripts/dogfood/bench.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/dogfood/bench.mjs) `collector` starts the built
-collector in a temp home and runs 8 clients, each posting 61-span OTLP/JSON requests (an
-`invoke_agent` span with 30 model calls and 30 tool calls) one at a time over a kept-alive
-connection. It reports spans/s, request latency percentiles, the collector's peak RSS and its CPU
-time per 1,000 spans. `--sessions request` (the default) makes each request a session of its own;
-`--sessions client` makes each client one session that grows by 61 spans a request.
+collector in a temp home and runs 8 clients, each posting 61-span OTLP/JSON requests one at a
+time. It reports spans/s, request latency percentiles, peak RSS and CPU time per 1,000 spans.
+`--sessions request` (the default) makes each request a session; `--sessions client` makes each
+client one session that grows by 61 spans a request.
 
 ```sh
 DESK_DIR=coding-sh-otel .claude/bin/desk run "node scripts/dogfood/bench.mjs collector --seconds 8"
@@ -254,31 +229,27 @@ Nov 8, 2026, with the desk's load average between 10 and 55 (other jobs):
 
 The targets are 5,000 spans/s, a p95 under 100 ms and 200 MB of RSS. Throughput and RSS meet
 them; the p95 does not. A request that arrives during a write waits for that write and then its
-own, so the p95 is about twice the p50. In a profile of the new build, SQLite's inserts and
-commit take about 40% of the time, rebuilding sessions 13% and mapping spans 11%.
+own, so the p95 is about twice the p50.
 
-Long sessions are not faster. Every write rebuilds each session it touched from all of its
-events, so the cost of a request grows with the size of its session, and peak RSS in that mode
-reached about 250 MB in both builds. When the desk was busier (load average above 40) both builds
-fell to about 1,250 spans/s.
+Long sessions are not faster. Every write rebuilds each session it touched from all its events,
+so a request costs more as its session grows, and peak RSS in that mode reached about 250 MB in
+both builds.
 
 ## Hook
 
 Agents run the hook on every tool call, so its cost adds to every step. Outside Windows the hook
-is `hook.sh`, a POSIX sh script that writes the spool line without starting node. `node -e 0`
-alone costs about 25 ms on the desk. `node scripts/dogfood/bench.mjs hook` times `/bin/sh
-dist/hook.sh` against `/bin/true`, interleaved, 200 calls each, and reports the difference
-(`perf.hookSh`, `perf.hookShP95`; budget 3 ms and 5 ms).
+is `hook.sh`, a POSIX sh script that writes the spool line without starting node, which alone
+costs about 25 ms on the desk. `node scripts/dogfood/bench.mjs hook` times it against `/bin/true`,
+200 interleaved calls each (`perf.hookSh`, `perf.hookShP95`; budget 3 ms and 5 ms).
 
-On Debian and Ubuntu `/bin/sh` is dash, and the hook runs itself again under bash 5. bash in POSIX
-mode reads a pipe or socket one byte per `read(2)`, about 1 ms per KB, so the hook used to read only
-the first 2 KB with the `read` builtin and the rest with `cat`, a process start. In 160 Claude Code
-PostToolUse hook lines from one machine, half were over 2.5 KB and a tenth over 11 KB. The
-hook now turns POSIX mode off around one `read -N 262144`, which reads in blocks.
+On Debian and Ubuntu `/bin/sh` is dash, and the hook runs itself again under bash 5. bash in
+POSIX mode reads a pipe or socket one byte per `read(2)`, about 1 ms per KB, and half of
+160 real Claude Code PostToolUse hook lines were over 2.5 KB. The hook now turns POSIX mode off
+around one `read -N 262144`, which reads in blocks.
 
 Desk, WSL Ubuntu, bash 5.3, Node 24, Nov 9, 2026. Difference over `/bin/true`, median / p95, 100
-interleaved calls per row. Socket stdin is how Node agents (Claude Code, Gemini CLI) call hooks; Codex gives a pipe; the pipe
-rows feed the hook from `cat`, with the same `cat` in front of `/bin/true`.
+interleaved calls per row. Node agents (Claude Code, Gemini CLI) give the hook a socket; Codex
+gives a pipe.
 
 | Payload | Before | After |
 | --- | --- | --- |
@@ -295,11 +266,10 @@ about 8.5 ms more than `node -e ""`; Windows and the cases `hook.sh` hands on pa
 
 ## Long sessions
 
-[scripts/perf/longrun.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/longrun.mjs) generates a synthetic 12-hour Claude Code session with no
-real data in it: about 42,000 events in the main session, 26 compactions, 16 subagents, resumes
-and a day boundary. It ingests the session from transcripts and from hook spool files, then times
-`show`, `show --all`, `sessions`, `sessions --flag`, `search`, the viewer API, MCP reads and a live
-hook ingest on top of the full session. Run it on the desk:
+[scripts/perf/longrun.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/longrun.mjs) generates a synthetic 12-hour Claude Code
+session: about 42,000 events, 26 compactions, 16 subagents, resumes and a day boundary. It
+ingests it, then times `show`, `sessions`, `search`, the viewer API, MCP reads and a live hook
+ingest on top of it. Run it on the desk:
 
 ```sh
 DESK_DIR=wt-longrun .claude/bin/desk run "node scripts/perf/longrun.mjs --budgets scripts/perf/longrun-budgets.json"
@@ -311,8 +281,8 @@ It prints one JSON object of numbers and exits 1 when a number goes over its bud
 stops scaling linearly or derail detection gets slow.
 
 Before is origin/main on Nov 7, 2026 and after is this change, both on the desk with the same
-fixture. The desk runs other jobs, so ingest varies 2 to 3 times between runs: the spool row is
-the median of 3 interleaved runs, and the live row the median of 10 ingests of 4 hook lines each.
+fixture. The spool row is the median of 3 interleaved runs, and the live row the median of 10
+ingests of 4 hook lines each.
 
 | Step | Before | After |
 | --- | --- | --- |
@@ -329,12 +299,12 @@ the median of 3 interleaved runs, and the live row the median of 10 ingests of 4
 | MCP `session_get`, last turns | the first 20,000 events only | the last 20,000 events, 0.33 s |
 
 A live ingest no longer rebuilds the session from all its events. Ingest saves the session's
-stats, flags and derail detectors with the session, about 15 minutes behind its newest event, and
-folds in only what came after. Out of 0.46 s, folding takes about 0.08 s; the rest is starting
-Node and loading the CLI. In three runs interleaved with two of the commit before this change,
-that commit took 1.16 s per live ingest. The spool row is mostly disk time, and the desk's disk swings it from 34 s
-to 128 s between runs of the same build.
-Phases are stored with the session at ingest, so `show` and the viewer never rescan the events.
+stats, flags and derail detectors about 15 minutes behind its newest event, and folds in only what
+came after. Out of 0.46 s, folding takes about 0.08 s; the rest is starting Node and loading the
+CLI. Phases are stored with the session at ingest, so `show` and the viewer never rescan events.
+
+The spool row is mostly disk time, and the desk's disk swings it from 34 s to 128 s between runs
+of the same build.
 
 In Chrome, with all 30,155 steps loaded, the timeline scrolls with a p95 of 11 ms per jump and
 9 ms per wheel step. No task during the background load ran longer than 0.1 s.
