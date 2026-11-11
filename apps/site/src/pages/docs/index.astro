@@ -1,157 +1,104 @@
 ---
+// The docs home: what coding.sh does for the reader, then one card per way to a
+// first trace. The H1 and the lede come from nav.ts. No status inventory, source
+// paths or other products here (the Roadmap and Compare pages hold those).
 import DocsLayout from "../../components/docs/DocsLayout.astro";
-import Tag from "../../components/docs/Tag.astro";
-import { DOC_GROUPS } from "../../components/docs/nav";
-import { REPO_URL, ISSUES_URL, NPM_URL } from "../../data/site";
+import Cards from "../../components/docs/Cards.astro";
+import DocShot from "../../components/docs/DocShot.astro";
+import { diagram } from "../../components/docs/markdown";
+import { ISSUES_URL } from "../../data/site";
 
-const groups = DOC_GROUPS.map((g) => ({ ...g, pages: g.pages.filter((p) => p.path !== "/docs") })).filter((g) => g.pages.length);
+const start = [
+  {
+    href: "/docs/quickstart#your-agent",
+    title: "Your own agent",
+    body: "TypeScript or Python. Wrap your OpenAI or Anthropic client, run your agent, open the run.",
+  },
+  {
+    href: "/docs/quickstart#coding-agent",
+    title: "A coding agent",
+    body: "Claude Code, Codex, Cursor and others. One install line adds hooks. Your next session is recorded, no code changes.",
+  },
+  {
+    href: "/docs/evals#first-eval",
+    title: "Your first eval",
+    body: "Write three cases, run your agent on each one and grade what it prints. No recorded runs needed.",
+  },
+  {
+    href: "/docs/how-to/self-host-team",
+    title: "A team",
+    body: "Run one container, connect each machine with `coding.sh init --remote`, and open the team viewer.",
+  },
+];
+
+const tasks = [
+  { href: "/docs/explore", title: "See what a run did", body: "Each step in order: prompts, model calls, tool calls with their output, file diffs and subagents." },
+  { href: "/docs/cost", title: "Track cost", body: "Tokens and cost per session, agent, model, repo and day." },
+  { href: "/docs/how-to/session-to-eval", title: "Turn failures into evals", body: "Keep a run that went wrong as a test case, so the next change is checked against it." },
+  { href: "/docs/experiments", title: "Compare two versions", body: "Run both on the same cases and see what got better, what broke, and whether it is noise." },
+  { href: "/docs/how-to/test-agents-md-change", title: "Test an AGENTS.md change", body: "Replay the moments your agent went wrong with and without your edit, and get a verdict." },
+  { href: "/docs/mcp", title: "Let your agent read its runs", body: "Ask your agent what failed last time. It reads its own history over MCP." },
+];
+
+const howItWorks = diagram(
+  "how-it-works",
+  "Your agent, through the SDK or OpenTelemetry and coding.sh serve, and coding agents, through hooks, send their runs to ~/.coding.sh on your disk, with secrets removed first. The viewer, the CLI, your agent over MCP, and evals and experiments all read from there. A team server is optional.",
+);
 ---
 
 <DocsLayout>
+  <p>
+    Open a run in the local viewer to see what happened, step by step. Turn the runs that went wrong into evals, and rerun them after you
+    change a prompt, a model or AGENTS.md.
+  </p>
+
+  <h2 id="first-trace">Start here</h2>
+  <p>Pick what you have. Each path takes a few minutes.</p>
+  <Cards cols={2} cards={start} />
   <div class="note">
-    <p><strong>Pre-alpha.</strong> Install it with <code>curl -fsSL https://coding.sh/install | sh</code>. Every command, flag and file format can still change. This page lists what exists in the code today and what is only planned.</p>
+    <p>
+      Already on a framework? The OpenAI Agents SDK, LangGraph, the Vercel AI SDK, the Claude Agent SDK and any OpenTelemetry exporter can
+      send traces to coding.sh. See <a href="/docs/otel">Frameworks (OpenTelemetry)</a>. Deploying an app? See
+      <a href="/docs/production">Production apps</a>.
+    </p>
   </div>
+  <DocShot
+    name="product/hero-session"
+    bar="coding.sh ui"
+    alt="The coding.sh viewer showing a Claude Code session on the coding.sh repo: its title, agent, model, duration and cost, then each step in order with its time. The failed npm test step and its result, 41 passed and 1 failed, are highlighted."
+    caption="A coding agent's session in the viewer. The failed test run is highlighted."
+  />
 
-  <h2 id="what">What it is</h2>
+  <h2 id="what">What you can do with it</h2>
+  <Cards cols={2} cards={tasks} />
+
+  <h2 id="how">How it works</h2>
+  <Fragment set:html={howItWorks} />
+  <ul>
+    <li>
+      Your agent sends its runs with the SDK or OpenTelemetry to <code>coding.sh serve</code>, a local server you start once.
+    </li>
+    <li>A coding agent is recorded by a hook that writes one line to a local file and exits, so it adds only milliseconds to each step.</li>
+    <li>coding.sh removes secrets, then stores each run as a session in <code>~/.coding.sh</code> on your machine.</li>
+    <li>
+      You read sessions in the terminal, in the viewer (<code>coding.sh ui</code>), or through your agent over MCP. Evals and experiments run
+      on the same sessions.
+    </li>
+    <li>
+      Your sessions stay on your machine unless you connect a team server or a sink. The only request coding.sh makes on its own is a daily
+      check for a new release, which <code>CODING_SH_NO_UPDATE_CHECK=1</code> turns off.
+    </li>
+  </ul>
+
+  <h2 id="status">Status</h2>
   <p>
-    coding.sh records what your AI agents do: every prompt, model call, tool call, file change and what it cost. You read
-    each run in a local viewer, find the ones that went wrong, and turn them into evals that check your next change.
-    Everything stays on your machine.
+    coding.sh is new and changes fast. Commands and file formats can still change between releases. The <a href="/docs/roadmap">Roadmap</a>
+    lists what is still missing. The <a href="/changelog">Changelog</a> lists what changed.
   </p>
+
+  <h2 id="help">Get help</h2>
   <p>
-    It works with any agent. Your own agent, built on the OpenAI Agents SDK, LangGraph, the Vercel AI SDK, the Claude Agent SDK or plain
-    code, sends traces over OpenTelemetry or the TypeScript and Python SDKs. For coding agents, adapters capture prompts, tool
-    calls, model calls, file changes and subagents from Claude Code, Codex and ten other agents with no code changes.
-  </p>
-
-  <h2 id="start">Start here</h2>
-  <div class="doc-table">
-    <table>
-      <thead>
-        <tr><th>You have</th><th>Start with</th></tr>
-      </thead>
-      <tbody>
-        <tr><td>Your own agent or LLM app</td><td><a href="/docs/how-to/trace-your-agent">Trace your own agent</a>: OpenTelemetry or the SDK, then evals on those runs.</td></tr>
-        <tr><td>A coding agent (Claude Code, Codex, Cursor and others)</td><td><a href="/docs/quickstart">Quickstart</a>: one install line adds the hooks.</td></tr>
-        <tr><td>An app in production</td><td><a href="/docs/production">Production</a>: <code>coding.sh serve</code> on SQLite or Postgres.</td></tr>
-      </tbody>
-    </table>
-  </div>
-  <p>New to the terms? Read <a href="/docs/concepts">Concepts</a>.</p>
-
-  <h2 id="status">What is built</h2>
-  <div class="doc-table">
-    <table>
-      <thead>
-        <tr><th>Area</th><th>Status</th><th>What exists</th></tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>Coding-agent capture</td>
-          <td><Tag status="built" /></td>
-          <td>Hook, plugin and extension adapters for 12 agents, and a wrapper for any other command. <code>src/adapters</code>. <a href="/docs/agents">Matrix</a>.</td>
-        </tr>
-        <tr>
-          <td>OTLP receiver</td>
-          <td><Tag status="built" /></td>
-          <td><code>coding.sh collector</code> on 127.0.0.1:4318: OTLP/HTTP, JSON or protobuf, GenAI, OpenInference and AI SDK attributes. <a href="/docs/otel">Setup</a>.</td>
-        </tr>
-        <tr>
-          <td>TypeScript and Python SDKs</td>
-          <td><Tag status="built" /></td>
-          <td>Wrap OpenAI and Anthropic clients, trace turns and tool calls, AI SDK tracer. TypeScript on npm as <code>@codingdotsh/sdk</code>, Python on PyPI as <code>coding-sh</code>. <a href="/docs/sdk">Reference</a>.</td>
-        </tr>
-        <tr>
-          <td>Explore</td>
-          <td><Tag status="built" /></td>
-          <td><code>sessions</code>, <code>show</code>, <code>search</code> (SQLite FTS5) and a local viewer, <code>coding.sh ui</code>.</td>
-        </tr>
-        <tr>
-          <td>Datasets and experiments</td>
-          <td><Tag status="built" /></td>
-          <td>Versioned datasets, nine deterministic grader kinds plus LLM judges, paired comparison with a bootstrap CI and McNemar's test. <a href="/docs/evals">Evals</a>.</td>
-        </tr>
-        <tr>
-          <td>Judge calibration</td>
-          <td><Tag status="built" /></td>
-          <td>Cohen's κ against human labels on a held-out split; uncalibrated judges are flagged.</td>
-        </tr>
-        <tr>
-          <td>Repo-replay tasks</td>
-          <td><Tag status="partial" /></td>
-          <td>Task drafting, verifier validation, harness bundles and A/B compare exist. Sessions recorded with <code>coding.sh run --</code> carry repo snapshots and can become tasks; hook-captured sessions can't yet. <a href="/docs/harness-evals#repo-replay">Details</a>.</td>
-        </tr>
-        <tr>
-          <td>Storage and sinks</td>
-          <td><Tag status="built" /></td>
-          <td>SQLite index, zstd blob store, OTLP and HTTP sinks, plugin loading for other stores. <a href="/docs/storage">Storage</a>.</td>
-        </tr>
-        <tr>
-          <td>Postgres, ClickHouse and S3 stores</td>
-          <td><Tag status="built" /></td>
-          <td>Plugin packages on npm, used by <code>coding.sh serve</code>: <code>coding.sh-store-postgres</code>, <code>coding.sh-store-clickhouse</code> and <code>coding.sh-store-s3</code>. <a href="/docs/production">Production</a>.</td>
-        </tr>
-        <tr>
-          <td>Tool evals</td>
-          <td><Tag status="built" /></td>
-          <td><code>coding.sh toolevals</code> scores how well agents use a CLI, MCP server or HTTP API, with taps, model and agent drivers, paired compare and description compression. <code>src/toolevals</code>. <a href="/docs/tool-evals">Tool evals</a>.</td>
-        </tr>
-        <tr>
-          <td>Workflows</td>
-          <td><Tag status="built" /></td>
-          <td><code>coding.sh workflows</code> captures multi-agent runs as one tree, scores them and compares two versions. <code>src/workflows</code>. <a href="/docs/workflows">Workflows</a>.</td>
-        </tr>
-        <tr>
-          <td>npm package</td>
-          <td><Tag status="built" /></td>
-          <td><a href={NPM_URL}><code>coding.sh</code> on npm</a>, with TypeScript types for <code>coding.sh/schema</code> and <code>coding.sh/store</code>. The install line takes the latest GitHub release.</td>
-        </tr>
-        <tr>
-          <td>Trace format JSON Schema</td>
-          <td><Tag status="built" /></td>
-          <td>A JSON Schema for <a href="/docs/trace-format#json-schema">coding.sh/trace</a>, generated from the TypeScript types, ships as <code>coding.sh/schema.json</code> and is served at <a href="/schema.json">coding.sh/schema.json</a>.</td>
-        </tr>
-        <tr>
-          <td>Kiro, Cline CLI, Qwen Code and Crush adapters</td>
-          <td><Tag status="planned" /></td>
-          <td>No adapter yet. Record these agents with <code>coding.sh run -- &lt;cmd&gt;</code> for now. <a href="/docs/agents">Matrix</a>.</td>
-        </tr>
-        <tr>
-          <td>One <code>bench</code> noun and <code>coding.sh try</code></td>
-          <td><Tag status="planned" /></td>
-          <td>One command over <code>eval</code>, <code>exp</code> and <code>compare</code>. Today those three commands do the work. <code>coding.sh bench</code> runs dynamic <a href="/docs/benchmarks">benchmarks</a>.</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-
-  <h2 id="how">How it fits together</h2>
-  <ol>
-    <li><strong>Capture.</strong> Your own agent sends OpenTelemetry spans to <code>coding.sh collector</code>, or SDK events to <code>coding.sh serve</code>. A coding agent's hook runs <code>~/.coding.sh/bin/hook.mjs</code>, which appends one JSON line to a local spool file and exits 0. No network, no daemon, nothing parsed on the hot path.</li>
-    <li><strong>Ingest.</strong> <code>coding.sh ingest</code> (and every read command, before it reads) normalizes spool lines into <a href="/docs/trace-format">coding.sh/trace</a> events, redacts secrets, and writes them to the index and blob store.</li>
-    <li><strong>Explore.</strong> List, inspect and search sessions in the terminal or in the local viewer.</li>
-    <li><strong>Evaluate.</strong> Turn cases into datasets, run any agent over them, grade the outputs, and compare two runs case by case.</li>
-  </ol>
-
-  <h2 id="pages">Pages</h2>
-  {
-    groups.map((g) => (
-      <>
-        <h3>{g.label}</h3>
-        <ul>
-          {g.pages.map((p) => (
-            <li>
-              <a href={p.path}>{p.label}</a>: {p.summary}
-            </li>
-          ))}
-        </ul>
-      </>
-    ))
-  }
-
-  <h2 id="help">Help and contributing</h2>
-  <p>
-    The source is on <a href={REPO_URL}>GitHub</a>. Bugs and questions go to <a href={ISSUES_URL}>issues</a>. The most useful
-    contribution right now is a recorded session from an agent version the adapters haven't seen yet.
+    Run <code>coding.sh doctor</code> to check your setup. <a href="/docs/troubleshooting">Troubleshooting</a> covers sessions that don't show
+    up. Bugs and questions go to <a href={ISSUES_URL}>GitHub issues</a>.
   </p>
 </DocsLayout>

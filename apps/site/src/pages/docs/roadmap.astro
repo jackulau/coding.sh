@@ -1,0 +1,75 @@
+---
+// What coding.sh can't do yet, and what to use until it can. The agent lists come
+// from components/docs/agents.ts, so they change when an adapter lands or is run
+// live. A line that calls something planned must name a feature in FEATURES
+// (test/status-claims.test.mjs), which fails once the code is there.
+import DocsLayout from "../../components/docs/DocsLayout.astro";
+import Code from "../../components/docs/Code.astro";
+import { ADAPTER_ROWS, PLANNED_AGENTS } from "../../components/docs/agents";
+import { ISSUES_URL } from "../../data/site";
+
+const list = (names: readonly string[]) =>
+  names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+const noAdapter = list(PLANNED_AGENTS);
+const notLive = ADAPTER_ROWS.filter((a) => a.status === "not-live");
+const AGENT_ISSUE = `${ISSUES_URL}/new?template=agent-support.yml`;
+const wrap = `coding.sh run --agent my-agent -- ./my-agent --task 42`;
+---
+
+<DocsLayout>
+  <p>
+    Each entry says what to use in the meantime. Something you need that isn't here? Open a
+    <a href={`${ISSUES_URL}/new?template=feature.yml`}>feature request</a>.
+  </p>
+
+  <h2 id="adapters">Agents with no adapter</h2>
+  <p>
+    {noAdapter} have no adapter, so coding.sh doesn't read their hooks or transcripts. Until one lands, record a run with
+    <code>coding.sh run --</code>. It keeps the command as a session with its duration, its exit code and what changed in the repo:
+  </p>
+  <Code code={wrap} />
+  <p>
+    To see the agent's model calls as well, point its API base URL at <a href="/docs/how-to/capture-with-proxy">the proxy</a>, if the
+    agent lets you set one. To ask for an adapter, open an <a href={AGENT_ISSUE}>agent support</a> issue.
+  </p>
+
+  <h2 id="not-live">Adapters not run live</h2>
+  <p>
+    Nobody has run these adapters on a live install yet:
+  </p>
+  <ul>
+    {
+      notLive.map((a) => (
+        <li>
+          <strong>{a.name}.</strong> {a.note ? `${a.note[0]!.toUpperCase()}${a.note.slice(1)}.` : null}
+        </li>
+      ))
+    }
+  </ul>
+  <p>
+    If you use one of them, run <code>coding.sh doctor</code> after a session and tell us what it shows in an
+    <a href={AGENT_ISSUE}>agent support</a> issue. A short "it works" helps as much as a bug report.
+  </p>
+
+  <h2 id="windows">Capture on Windows</h2>
+  <p>
+    CI runs the tests and the installer on Windows, and records OpenCode, Pi, Goose, Factory Droid, GitHub Copilot CLI and Aider there
+    against a stub model. Capture from Claude Code, Codex CLI, Antigravity CLI, Cursor CLI, Amp and T3 Code has not been checked on Windows.
+    Under WSL, coding.sh works as it does on Linux.
+  </p>
+
+  <h2 id="repo-tasks">Repo tasks from hook sessions</h2>
+  <p>
+    A session recorded by hooks becomes a repo task from the commit that was checked out when it started. Changes that were not committed
+    at that point are missing, and <code>coding.sh eval new</code> says so. For the exact starting state, record the run with
+    <code>coding.sh run --</code>, which snapshots the whole working tree. See <a href="/docs/how-to/session-to-eval">Turn failed runs into
+    evals</a>.
+  </p>
+
+  <h2 id="bench">One <code>bench</code> command and <code>coding.sh try</code></h2>
+  <p>
+    One <code>bench</code> command over evals, experiments and agent comparisons, and <code>coding.sh try</code> for a first run. Today
+    <code>coding.sh eval</code>, <code>coding.sh exp</code> and <code>coding.sh compare</code> do this work, and <code>coding.sh bench</code>
+    runs <a href="/docs/benchmarks">benchmarks</a> on fresh cases.
+  </p>
+</DocsLayout>

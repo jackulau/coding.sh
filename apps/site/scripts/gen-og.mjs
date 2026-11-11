@@ -100,9 +100,9 @@ async function png(name, spec) {
 
 await png("og-image", { title: "Traces and evals for AI agents.", sub: "Open source, local-first, MIT licensed." });
 await png("og/changelog", { kicker: "changelog", title: "Changelog", sub: "Every release, newest first." });
-// The kicker names the section: comparisons and use cases are found from search
-// as often as from the docs.
-const kicker = (path) => (path.startsWith("/docs/compare") ? "compare" : path.startsWith("/docs/use-cases/") ? "use case" : "docs");
+// The kicker names the section: comparisons are found from search as often as
+// from the docs; every other docs page is "docs", whatever its path.
+const kicker = (path) => (path === "/docs/compare" || path.startsWith("/docs/compare/") ? "compare" : "docs");
 await png("og/blog", { kicker: "blog", title: "Blog", sub: "Notes on how coding.sh works and why." });
 for (const p of posts) await png(`og/blog-${p.slug}`, { kicker: "blog", title: p.title, sub: "coding.sh blog" });
 for (const p of DOC_PAGES) {

@@ -1,84 +1,119 @@
 ---
+// Install, check and remove coding.sh. The install script is the repo root's
+// install.sh (served at /install); its options are read from that file. The
+// outputs are from a packed build on a temp home.
 import DocsLayout from "../../components/docs/DocsLayout.astro";
 import Code from "../../components/docs/Code.astro";
-import { SOURCE_STEPS, CLI_PATH, INSTALL_SH, RELEASE_TGZ } from "../../data/site";
+import CodeTabs from "../../components/docs/CodeTabs.astro";
+import Terminal from "../../components/Terminal.astro";
+import { SOURCE_STEPS, INSTALL_SH } from "../../data/site";
 
-const build = [...SOURCE_STEPS].join("\n");
-const npmTgz = `npm i -g ${RELEASE_TGZ}\ncoding.sh init`;
-const env = `CODING_SH_YES=1 sh -c "$(curl -fsSL https://coding.sh/install)"   # no prompt (init --yes)
-CODING_SH_VERSION=v0.1.0 ...   # pin a release
-CODING_SH_NO_INIT=1 ...        # install only, run init later
-CODING_SH_NO_UI=1 ...          # don't open the viewer
-CODING_SH_SOURCE=github ...    # skip npm, install the GitHub release tarball`;
-const alias = `# from the repository root: put the CLI on your shell
-alias coding.sh="node $PWD/${CLI_PATH}"
-coding.sh --version`;
-const rebuild = `npm run build -w coding.sh   # rebuild only the CLI after a git pull`;
-const remove = `coding.sh uninstall --dry-run   # show exactly what would be removed
-coding.sh uninstall --yes       # remove coding.sh hooks from every agent
+const install = [
+  { label: "Script", title: "shell", code: INSTALL_SH },
+  { label: "npm", title: "shell", code: "npm install -g coding.sh\ncoding.sh init" },
+  { label: "npx", title: "shell", code: "npx coding.sh init" },
+];
+const noPrompt = `curl -fsSL https://coding.sh/install | CODING_SH_YES=1 CODING_SH_NO_UI=1 sh`;
+const source = `${SOURCE_STEPS[0]} && cd coding.sh
+npm install && npm run build -w coding.sh
+npm install -g ./packages/coding.sh   # puts coding.sh on your PATH, linked to this checkout
+coding.sh init`;
+
+const DOCTOR = `$ coding.sh doctor
+  Checking agents…
+✓ Claude Code     installed, hooked in ~/.claude/settings.json, no events yet
+! Codex CLI       v0.167.0, hooked but not firing, no events yet
+…
+✓ Hook            ~/.coding.sh/bin/hook.mjs
+✓ Spool           ~/.coding.sh/spool writable
+✓ Store           sqlite sqlite://~/.coding.sh/index.db
+…`;
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const term = (s: string) =>
+  s
+    .split("\n")
+    .map((l) => (l.startsWith("$ ") ? `<span class="t-muted">$</span> <span class="t-text">${esc(l.slice(2))}</span>` : esc(l)))
+    .join("\n");
+
+const remove = `coding.sh uninstall --dry-run   # show what would change
+coding.sh uninstall --yes       # remove the hooks and MCP entries from every agent
 npm uninstall -g coding.sh      # remove the CLI
-rm -rf ~/.coding.sh             # optional: delete captured data too`;
+rm -rf ~/.coding.sh             # optional: delete your recorded sessions too`;
 ---
 
 <DocsLayout>
-  <h2 id="one-line">One line</h2>
-  <Code code={INSTALL_SH} />
+  <CodeTabs group="install" tabs={install} />
   <p>
-    The script checks for Node 22.15+, installs the latest release with <code>npm i -g</code> (from npm once the package is published there, otherwise the GitHub release tarball), runs <code>coding.sh init</code> (it detects your
-    agents, shows the plan and asks before writing anything), then opens the viewer. Read it first at <a href="/install">coding.sh/install</a>.
+    The script checks for Node 22.15 or newer and installs coding.sh from npm. If npm does not have the release or can't be reached, it takes the tarball from
+    the GitHub release instead. Then it runs <code>coding.sh init</code>, which finds your agents, shows one plan and asks once before it
+    writes anything. Last, it opens the viewer. Read the script at <a href="/install">coding.sh/install</a>.
   </p>
-  <Code title="options" code={env} />
-
-  <h2 id="requirements">Requirements</h2>
-  <ul>
-    <li><strong>Node.js 22.15 or newer.</strong> The index uses the built-in <code>node:sqlite</code>, and blobs use the built-in zstd in <code>node:zlib</code>, so there are no native dependencies to compile.</li>
-    <li><strong>git</strong>, for repository snapshots.</li>
-    <li>CI runs on Linux, macOS and Windows. On Windows, run the installer from Git Bash (it comes with <a href="https://gitforwindows.org">Git for Windows</a>). Eval task commands need its <code>sh</code> too.</li>
-  </ul>
   <p>
-    On Windows, CI checks capture from real OpenCode, Pi, Goose, Factory Droid and GitHub Copilot CLI sessions. The other agents have not been
-    checked there yet.
+    <code>npx coding.sh init</code> works too. The MCP server it registers then runs from the npx cache, so install globally if you want it
+    to survive <code>npm cache clean</code>.
   </p>
 
-  <h2 id="npm">With npm</h2>
-  <p>The same release tarball the script installs:</p>
-  <Code code={npmTgz} />
-
-  <h2 id="source">From source</h2>
-  <Code title="build from source" code={build} />
-  <p>The CLI builds to <code>{CLI_PATH}</code>: one file, zero runtime dependencies. Put it on your shell:</p>
-  <Code code={alias} />
-  <Code code={rebuild} />
-
-  <h2 id="check">Check the install</h2>
-  <p>
-    <code>coding.sh doctor</code> checks every agent it detects, whether hooks are in place, whether the spool and store are writable, and
-    whether the OTLP port is free. Add <code>--json</code> for one machine-readable document.
-  </p>
-  <Code code="coding.sh doctor" />
-
-  <h2 id="data">Where data lives</h2>
-  <p>Everything is under <code>~/.coding.sh</code>. Set <code>CODING_SH_HOME</code> to move it (tests and eval runs do).</p>
+  <h2 id="options">Script options</h2>
+  <p>Set these on the <code>sh</code> side of the pipe:</p>
+  <Code code={noPrompt} />
   <div class="doc-table">
     <table>
-      <thead><tr><th>Path</th><th>Holds</th></tr></thead>
+      <thead><tr><th>Variable</th><th>What it does</th></tr></thead>
       <tbody>
-        <tr><td><code>bin/hook.sh</code>, <code>bin/hook.mjs</code></td><td>The hook every agent calls: <code>hook.sh</code> outside Windows, <code>hook.mjs</code> on Windows and for what <code>hook.sh</code> hands on. <code>init</code> copies them here.</td></tr>
-        <tr><td><code>spool/</code></td><td>Raw hook events, one JSON line each, until ingest. Errors go to <code>spool/errors.log</code>.</td></tr>
-        <tr><td><code>index.db</code></td><td>SQLite index: sessions, events, tasks, runs, labels.</td></tr>
-        <tr><td><code>blobs/</code></td><td>Content-addressed, zstd-compressed payloads.</td></tr>
-        <tr><td><code>repos/</code></td><td>Shadow git repositories for snapshots. Your own refs are never touched.</td></tr>
-        <tr><td><code>backups/</code></td><td>A copy of every agent config file before coding.sh edits it.</td></tr>
-        <tr><td><code>config.toml</code></td><td>Your config. <code>coding.sh config get</code> prints the effective values.</td></tr>
+        <tr><td><code>CODING_SH_VERSION</code></td><td>Install this release instead of the latest. Give its tag, as listed on the GitHub releases page.</td></tr>
+        <tr><td><code>CODING_SH_TARBALL</code></td><td>Install this tarball, a path or a URL: a mirror, a machine without internet, or a build you packed.</td></tr>
+        <tr><td><code>CODING_SH_SOURCE</code></td><td><code>npm</code> or <code>github</code>: install from that source only. By default npm comes first.</td></tr>
+        <tr><td><code>CODING_SH_YES=1</code></td><td>Run <code>init --yes</code>, with no prompt.</td></tr>
+        <tr><td><code>CODING_SH_NO_INIT=1</code></td><td>Install only. Run <code>coding.sh init</code> later.</td></tr>
+        <tr><td><code>CODING_SH_NO_UI=1</code></td><td>Don't open the viewer at the end.</td></tr>
       </tbody>
     </table>
   </div>
+  <p>Without a terminal (an agent's shell, CI), the script installs only and prints the next command, unless <code>CODING_SH_YES=1</code> is set.</p>
+
+  <h2 id="requirements">Requirements</h2>
+  <ul>
+    <li><strong>Node.js 22.15 or newer.</strong> coding.sh uses the SQLite and zstd built into Node, so nothing native is compiled.</li>
+    <li><strong>git</strong>, for the repository snapshots that <code>coding.sh run</code> and repo-replay evals take.</li>
+    <li>
+      <strong>Windows:</strong> run the script from Git Bash, which comes with <a href="https://gitforwindows.org">Git for Windows</a>. Eval
+      commands need its <code>sh</code> too. Under WSL, coding.sh works as it does on Linux.
+    </li>
+  </ul>
+
+  <h2 id="check">Check the install</h2>
   <p>
-    Set <code>CODING_SH_DISABLE=1</code> in an agent's environment to turn capture off for that process: the hook drains its input and
-    writes nothing.
+    <code>coding.sh doctor</code> checks each agent it finds, whether its hooks are in place and firing, and whether the spool and the store
+    are writable. A row marked <code>!</code> is a warning, with the command that fixes it.
+  </p>
+  <Terminal title="shell" label="Output of coding.sh doctor"><pre set:html={term(DOCTOR)} /></Terminal>
+  <p>
+    Here Codex is waiting for you to approve its hooks with <code>/hooks</code>. Add <code>--json</code> for one machine-readable document.
+  </p>
+
+  <h2 id="updates">Update</h2>
+  <p>
+    <code>coding.sh update</code> installs the latest release. Commands print one line when a newer release is out. That check runs in the
+    background at most once a day; <code>CODING_SH_NO_UPDATE_CHECK=1</code> turns it off.
+  </p>
+
+  <h2 id="data">Where your data lives</h2>
+  <p>
+    Everything is in <code>~/.coding.sh</code>. Set <code>CODING_SH_HOME</code> to keep it somewhere else. To turn recording off for one
+    agent process, set <code>CODING_SH_DISABLE=1</code> in its environment. <a href="/docs/storage">Storage</a> lists what each file holds.
   </p>
 
   <h2 id="uninstall">Uninstall</h2>
   <Code code={remove} />
-  <p><code>uninstall</code> removes only entries coding.sh added and leaves captured data in place.</p>
+  <p>
+    <code>uninstall</code> restores each agent config file as it was before <code>init</code>, if nothing else has edited it since. Otherwise
+    it removes only the coding.sh entries. Your recorded sessions stay until you delete <code>~/.coding.sh</code>.
+  </p>
+
+  <details class="more" id="source">
+    <summary>Install from source</summary>
+    <p>To run the code on the main branch, or to work on coding.sh:</p>
+    <Code title="build from source" code={source} />
+    <p>Or skip the global install and run <code>node packages/coding.sh/dist/cli.mjs</code> from the checkout.</p>
+  </details>
 </DocsLayout>

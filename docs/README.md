@@ -1,62 +1,94 @@
 # coding.sh docs
 
 The user docs live at [coding.sh/docs](https://coding.sh/docs). This folder holds the same
-material in Markdown, plus design specs and research.
+material in Markdown, plus design specs and research. The sections below follow the groups of the
+site's sidebar.
 
 Building your own agent? Start with [how-to/trace-your-agent.md](how-to/trace-your-agent.md).
 Using a coding agent? Start with [guides/install.md](guides/install.md). [concepts.md](concepts.md)
 has the terms, and [troubleshooting.md](troubleshooting.md) helps when something is wrong.
 
-## Guides
+## Get started
 
 | Doc | What |
 |---|---|
-| [guides/install.md](guides/install.md) | installer, npm, from source, what `init` changes, updates, uninstall |
-| [guides/agents.md](guides/agents.md) | supported agents with status, history import, the OpenTelemetry receiver |
-| [guides/explore.md](guides/explore.md) | the CLI, the viewer and the MCP server |
-| [guides/improve.md](guides/improve.md) | improve your agent every week: what to fix first, the line that fixes it, whether it helped |
-| [guides/evals.md](guides/evals.md) | session to eval, datasets, experiments, judges, harness A/B |
-| [guides/terse-mode.md](guides/terse-mode.md) | does a terse mode (a be-concise rule, skill or plugin) save money on your tasks: pass rate, cost, output tokens and input overhead |
-| [guides/benchmarks.md](guides/benchmarks.md) | daily benchmarks on fresh cases: sources, fairness, budget, report, schedule |
-| [guides/privacy.md](guides/privacy.md) | what is stored where, sinks, redaction and privacy |
-| [guides/team.md](guides/team.md) | one self-hosted server for a team: keys per person and service, shared viewer login, agents and apps sending to it, retention |
+| [guides/install.md](guides/install.md) | the install line, npm, what `init` changes, updates, uninstall |
+| [concepts.md](concepts.md) | sessions, turns, events and subagents; datasets, experiments, graders and judges |
 
-## How-to
-
-Short recipes you can run as written.
+## Record
 
 | Doc | What |
 |---|---|
-| [how-to/trace-your-agent.md](how-to/trace-your-agent.md) | trace your own agent with OpenTelemetry or the SDKs, then eval and compare it |
-| [how-to/capture-with-proxy.md](how-to/capture-with-proxy.md) | log every model call through a local API proxy, see why the prompt cache missed, replay a call with another model |
+| [how-to/trace-your-agent.md](how-to/trace-your-agent.md) | trace your own agent with the TypeScript or Python SDK |
+| [guides/agents.md](guides/agents.md) | the coding agents coding.sh records, with status, history import and the OpenTelemetry receiver |
+| [how-to/status-line.md](how-to/status-line.md) | put your session cost, today's cost and the worst flag in the Claude Code status line |
+| [how-to/capture-with-proxy.md](how-to/capture-with-proxy.md) | log every model call through a local API proxy, see why the prompt cache missed, replay a call |
+| [integrations/ai-gateway.md](integrations/ai-gateway.md) | LLM gateways (Vercel, OpenRouter, LiteLLM, Cloudflare, Portkey, Helicone, ...): routing, billed cost, experiments |
 | [how-to/trace-durable-workflow.md](how-to/trace-durable-workflow.md) | trace a Vercel Workflow or Temporal run as one session, with attempts, waits and resumes |
-| [how-to/tee-agent-runs.md](how-to/tee-agent-runs.md) | send an eve or durable-harness agent's Agent Runs spans to coding.sh too, as sessions with turns, tools and usage |
-| [how-to/test-agents-md-change.md](how-to/test-agents-md-change.md) | test an AGENTS.md change in five minutes, on your own sessions |
+| [how-to/tee-agent-runs.md](how-to/tee-agent-runs.md) | send an eve or durable-harness agent's Agent Runs spans to coding.sh too |
+| [integrations/eve.md](integrations/eve.md) | eve agents: live spans, imports and evals |
+
+## Look at runs
+
+| Doc | What |
+|---|---|
+| [guides/explore.md](guides/explore.md) | find and read runs: the CLI, the viewer and the MCP server |
+| [how-to/track-cost.md](how-to/track-cost.md) | tokens and cost per session, agent, model, repo and day |
+| [use-cases/replay-agent-session.md](use-cases/replay-agent-session.md) | replay a session step by step |
+| [how-to/attribute-commits.md](how-to/attribute-commits.md) | see which agent session wrote the lines of each commit |
+
+## Evaluate
+
+| Doc | What |
+|---|---|
+| [guides/evals.md](guides/evals.md) | cases, the task under test, graders and LLM judges |
+| [how-to/session-to-eval.md](how-to/session-to-eval.md) | turn a failed run into an eval case or repo task |
+| [TOOL-EVALS.md](TOOL-EVALS.md) | tool evals: how well agents use a CLI, MCP server or API |
+| [guides/benchmarks.md](guides/benchmarks.md) | daily benchmarks on fresh cases: sources, fairness, budget, report, schedule |
+
+## Experiment
+
+| Doc | What |
+|---|---|
 | [how-to/compare-agents.md](how-to/compare-agents.md) | compare two coding agents on your repo |
 | [how-to/replay-llm-calls.md](how-to/replay-llm-calls.md) | record a run's model calls and replay them up to the first changed call |
+| [guides/workflows.md](guides/workflows.md) | capture, score and compare multi-agent workflow runs |
 | [how-to/ci-regressions.md](how-to/ci-regressions.md) | catch a regression in CI |
-| [how-to/expensive-sessions.md](how-to/expensive-sessions.md) | find your most expensive sessions |
-| [how-to/status-line.md](how-to/status-line.md) | put your session cost, today's cost and the worst flag in the Claude Code status line |
-| [how-to/session-to-eval.md](how-to/session-to-eval.md) | turn a real session into an eval task or dataset case |
-| [how-to/evaluate-a-skill.md](how-to/evaluate-a-skill.md) | test whether an Agent Skill changes what the agent does |
-| [how-to/does-this-plugin-help.md](how-to/does-this-plugin-help.md) | see what a Claude Code plugin adds to your sessions, then A/B it on your own tasks |
-| [how-to/attribute-commits.md](how-to/attribute-commits.md) | see which agent session wrote the lines of each commit, per line with `blame`, and export Agent Trace records |
-| [how-to/self-host-team.md](how-to/self-host-team.md) | self-host for a team: run one container, connect each machine, open the viewer |
 
-## Use cases
-
-One page per job, each pointing on to the how-to or guide that covers it in full.
+## Improve your agent
 
 | Doc | What |
 |---|---|
-| [use-cases/claude-code-cost.md](use-cases/claude-code-cost.md) | track Claude Code and Codex cost per session, repo and model |
-| [use-cases/replay-agent-session.md](use-cases/replay-agent-session.md) | replay a Claude Code or Codex session step by step |
-| [use-cases/test-agent-instructions.md](use-cases/test-agent-instructions.md) | test an AGENTS.md, rule or skill change, and which method to pick |
-| [use-cases/evals-from-failures.md](use-cases/evals-from-failures.md) | build an eval suite from your agent's failed sessions |
-| [use-cases/self-hosted-observability.md](use-cases/self-hosted-observability.md) | open-source, self-hosted LLM observability on one machine or one server |
-| [use-cases/proxy-model-calls.md](use-cases/proxy-model-calls.md) | log every model call your agent makes through a local proxy |
-| [use-cases/t3-code.md](use-cases/t3-code.md) | coding.sh with T3 Code: its threads next to your other sessions, cost by model, flags and evals |
-| [use-cases/pi.md](use-cases/pi.md) | coding.sh with Pi: history across tools, Pi's own cost per call, flags and evals with Pi as the agent |
+| [guides/improve.md](guides/improve.md) | what to fix first, the AGENTS.md line that fixes it, and whether it helped |
+| [how-to/test-agents-md-change.md](how-to/test-agents-md-change.md) | test an AGENTS.md change on your own sessions |
+| [how-to/evaluate-a-skill.md](how-to/evaluate-a-skill.md) | test whether an Agent Skill changes what the agent does |
+| [how-to/does-this-plugin-help.md](how-to/does-this-plugin-help.md) | see what a Claude Code plugin adds to your sessions, then A/B it on your own tasks |
+| [guides/terse-mode.md](guides/terse-mode.md) | does a terse mode save money on your tasks |
+
+## Run for a team
+
+| Doc | What |
+|---|---|
+| [how-to/self-host-team.md](how-to/self-host-team.md) | run one container, connect each machine, open the team viewer |
+| [guides/team.md](guides/team.md) | keys per person and service, the shared viewer login, retention |
+| [production/README.md](production/README.md) | run `coding.sh serve` on a database and send traces from a deployed app |
+| [production/deploy.md](production/deploy.md) | deploy serve: Compose, Fly.io, Railway, Render, serverless (one file per host in [production/](production/)) |
+| [PRODUCTION.md](PRODUCTION.md) | the full serve, SDK and store contract |
+| [guides/privacy.md](guides/privacy.md) | what is stored where, redaction, metadata mode, purge |
+
+## Reference
+
+| Doc | What |
+|---|---|
+| [reference/cli.md](reference/cli.md) | every command and option, generated from the CLI registry |
+| [reference/sdk.md](reference/sdk.md) | the TypeScript and Python SDKs, generated from their source |
+| [reference/api.md](reference/api.md) | the REST API of `coding.sh serve` |
+| [reference/query.md](reference/query.md) | the query language, `coding.sh sql` and `coding.sh export`, and the index's tables |
+| [reference/config.md](reference/config.md) | every config key and environment variable |
+| [reference/stores.md](reference/stores.md) | the Postgres and ClickHouse stores for `coding.sh serve` |
+| [reference/eval-methods.md](reference/eval-methods.md) | how evals are computed: pass@k, paired intervals, McNemar, the gate, judge calibration |
+| [troubleshooting.md](troubleshooting.md) | doctor checks, missing sessions, every error reason |
+| [ADAPTERS.md](ADAPTERS.md) | per-agent integration matrix: hook configs, payload ids, known breakage |
 
 ## Compare
 
@@ -79,30 +111,6 @@ sources. Checked against each tool's docs; each page says when.
 |---|---|
 | [case-studies/vercel-security-audit.md](case-studies/vercel-security-audit.md) | an A/B eval of a third-party Agent Skill, with a stub CLI and two-step grading |
 
-## Production
-
-| Doc | What |
-|---|---|
-| [production/README.md](production/README.md) | run `coding.sh serve` on a database, in three steps |
-| [production/](production/) | deploy recipes: Compose, Fly, Railway, Render, serverless |
-| [PRODUCTION.md](PRODUCTION.md) | the full serve, SDK and store contract |
-| [integrations/ai-gateway.md](integrations/ai-gateway.md) | LLM gateways (Vercel, OpenRouter, LiteLLM, Cloudflare, Portkey, Helicone, ...): routing, billed cost, experiments |
-| [integrations/eve.md](integrations/eve.md) | eve agents: live spans, imports and evals |
-
-## Reference
-
-| Doc | What |
-|---|---|
-| [reference/cli.md](reference/cli.md) | every command and option, generated from the CLI registry |
-| [reference/sdk.md](reference/sdk.md) | the TypeScript and Python SDKs, generated from their source |
-| [reference/api.md](reference/api.md) | the REST API of `coding.sh serve` |
-| [reference/query.md](reference/query.md) | `coding.sh sql` and `coding.sh export`, and the index's tables and columns |
-| [reference/config.md](reference/config.md) | every config key and environment variable |
-| [troubleshooting.md](troubleshooting.md) | doctor checks, missing sessions, every error reason |
-| [concepts.md](concepts.md) | the terms: session, event, flag, dataset, experiment, judge and more |
-| [ADAPTERS.md](ADAPTERS.md) | per-agent integration matrix: hook configs, payload ids, known breakage |
-| [TOOL-EVALS.md](TOOL-EVALS.md) | tool evals spec: how well agents use a CLI, MCP server or API |
-
 ## Design
 
 Specs and plans. Each one states its status at the top.
@@ -120,6 +128,7 @@ Specs and plans. Each one states its status at the top.
 
 | Doc | What |
 |---|---|
-| [RELEASE.md](RELEASE.md) | release checklist for npm, GitHub and the site |
+| [RELEASE.md](RELEASE.md) | release checklist for npm, PyPI, GitHub and the site |
 | [ease.md](ease.md) | the ease benchmark: installer to first captured session, for a person and for an agent reading agents.md |
+| [perf.md](perf.md) | how the coding.sh site was made faster on slow phones, measured with `coding.sh exp metrics` |
 | [research/](research/) | landscape and competitor research |
