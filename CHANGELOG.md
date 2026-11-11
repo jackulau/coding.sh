@@ -34,6 +34,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Stores.** A `file:///C:/...` blob URL and a `sqlite://user:password@/path` index URL open the path they name on Windows, and the user and password are no longer read as a folder. See [stores](docs/reference/stores.md).
 - **Capture.** Model calls no longer show impossible speeds such as 3750 tok/s. A hook reading a transcript from mid-response, or late Codex lines, gave a call a start time inside the response; such a call now has no duration, time to first token or speed. A Claude Code call gets them back when the import reads the whole transcript. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#known-breakage-to-design-around)
 - **Tests.** The viewer's browser tests no longer hang when Chrome drops its DevTools connection: a waiting call fails at once, and any call fails after 30 s. The helper lets go of Chrome's pipe after closing it, and the CI runner ends each test file once its tests finish, so an open handle cannot hold a Windows job. [Contributing](https://github.com/jackulau/coding.sh/blob/main/CONTRIBUTING.md)
 - **Capture.** A blob store outage no longer drops spool events while the cursor moves on, and a full disk no longer leaves a torn spool line or loses the whole line `hook.sh` appends after one. Ingest redacts short payloads inside the spool file once their day has passed. A session run with `CODING_SH_DISABLE=1` no longer comes back through backfill. [Privacy](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md)
