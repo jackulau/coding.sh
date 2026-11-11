@@ -78,11 +78,12 @@ Session links point at `http://127.0.0.1:4319/#/s/<id>` unless you pass `--viewe
 ## How matching works
 
 For each session, coding.sh takes the lines it added: the diff from its start state to its end
-snapshot, which sees every write, Bash and subagents included.
+snapshot. It keeps a file of that diff only when the session's tools named the file, or the session
+ran a shell or subagent call, which can write files nothing names. A session with none of these is
+credited nothing. A named file takes the lines its edit steps added, not the diff.
 
-For a file the session's tools named that this diff does not hold, it uses the session's own edit
-tool calls. That is every such file when there is no end snapshot, and a file whose change had left
-the tree by then (committed on a branch, then another branch checked out).
+For a named file the diff does not hold, it uses the session's own edit tool calls. That is every
+such file when there is no end snapshot, and a file whose change had left the tree by then.
 
 Then it walks each commit, oldest first, in passes over the files the commit changed:
 
@@ -95,7 +96,7 @@ Then it walks each commit, oldest first, in passes over the files the commit cha
 | git-ai | [git-ai](https://github.com/git-ai-project/git-ai) notes (`refs/notes/ai`) credit lines no session matched, to that agent with no session link | 0.9 |
 
 The source sets the starting confidence: 1 from a pre-agent snapshot, 0.9 from HEAD at the
-session's start, 0.8 from edit tool calls. A file the session's tools never named gives 0.85x.
+session's start, 0.8 from edit tool calls. A file the session's tools never named gives 0.85x (only a shell or subagent call allows one).
 
 - A session's line is credited once. A person who types the same line in a later commit, or copies
   it into another file of the same commit, owns that copy.
@@ -118,3 +119,7 @@ as code text.
 - Content that redaction changed in a stored tool call does not match the committed line.
 - A session with neither an end snapshot nor edit tool calls has nothing to match. Live capture
   takes the end snapshot when ingest runs soon after the turn ends.
+- A session that ran a shell or subagent call can still be credited a file a person wrote by hand
+  before its end snapshot (the tree at ingest), at lower confidence.
+- A file written only by a tool coding.sh does not read as an edit (some MCP tools) is not credited,
+  unless the session also ran a shell or subagent call.

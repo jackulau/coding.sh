@@ -256,9 +256,9 @@ describe("sources", () => {
       assert.deepEqual(rec.attributions.map((a) => [a.path, a.sessionId, a.lines, a.confidence]), [["src/temp.ts", s.id, 7, 0.8]]);
     });
 
-    test("an end snapshot that holds only another file: that file stays the snapshot's, the written file comes from the Write call", async () => {
+    test("an end snapshot that holds only another file: a note nothing named is not the session's, the written file comes from the Write call", async () => {
       const { s, source, rec } = await committedElsewhere("csh-attr-branch-other-", { "notes.md": "a note left in the tree on main\n" });
-      assert.deepEqual(source?.files.map((f) => [f.path, f.via, f.edited]), [["notes.md", "snapshot-head", undefined], ["src/temp.ts", "replay", true]]);
+      assert.deepEqual(source?.files.map((f) => [f.path, f.via, f.edited]), [["src/temp.ts", "replay", true]]);
       assert.deepEqual(rec.attributions.map((a) => [a.path, a.sessionId, a.lines, a.confidence]), [["src/temp.ts", s.id, 7, 0.8]]);
     });
   });

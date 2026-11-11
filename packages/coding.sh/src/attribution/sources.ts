@@ -11,6 +11,10 @@
 //   branch checked out). Each edit step gives the lines it added itself
 //   (editStepKeys); what a read shows that no step wrote is someone else's
 //   edit and is left out.
+// The tree diff holds whatever changed in that window, a person's typing
+// included, so a file is kept only when the session's tools named it, or it
+// ran a shell or subagent call (which can write files nothing names). With no
+// such call, a named file takes the lines its edit steps added, not the diff.
 // The files a file.change event or an edit tool named are marked `edited`;
 // the matcher trusts lines in other files a little less.
 //
@@ -31,7 +35,7 @@ export interface SourceContext {
 }
 
 /** Bump when a stored source would be built differently. */
-const SOURCE_VERSION = 3;
+const SOURCE_VERSION = 4;
 const kvKey = (id: string) => `attribution:source:${id}`;
 
 function real(p: string): string {
@@ -103,6 +107,13 @@ export async function editStepKeys(replay: Replay, root: string): Promise<Map<st
   return out;
 }
 
+function sameKeys(a: LineKey[], b: LineKey[]): boolean {
+  if (a.length !== b.length) return false;
+  const x = [...a].sort();
+  const y = [...b].sort();
+  return x.every((k, i) => k === y[i]);
+}
+
 function fingerprint(s: Session): string {
   return [SOURCE_VERSION, s.repo?.root ?? "", s.repo?.snapshot ?? s.repo?.head ?? "", s.endSnapshot ?? "", s.stats.events].join("|");
 }
@@ -168,15 +179,29 @@ async function buildFiles(ctx: SourceContext, s: Session): Promise<SourceFile[]>
       if (p) edited.add(p);
     }
   }
+  // A shell or subagent call can write files nothing names; without one the session wrote only the files its tools named.
+  // A session with no stored events at all says nothing about what it ran: its diff stands as it is.
+  const mayWriteUnnamed = !replay.steps.length || replay.steps.some((st) => st.kind === "shell" || st.kind === "subagent");
+  // The tree diff from the start to the end snapshot also holds what a person typed in that window (and what
+  // another session left uncommitted), so a file the session could not have written is not its own.
+  for (const p of [...files.keys()]) {
+    if (!edited.has(p) && !mayWriteUnnamed) files.delete(p);
+  }
   for (const p of edited) {
     const f = files.get(p);
     if (f) f.edited = true;
   }
-  // A snapshot diff that exists says nothing about a file it lacks: the end snapshot is of the tree as it was
-  // when ingest ran, which can be another branch than the one the session's work was committed on.
-  if ([...edited].some((p) => !files.has(p))) {
+  // The session's own edit steps give what it added; the tree diff for a named file also holds a person's lines
+  // when no shell or subagent call can explain them, so the steps win then. A file the snapshot diff lacks (no end
+  // snapshot, a partial one, or a tree that moved to another branch) comes from the steps alone.
+  if (edited.size) {
     for (const [p, keys] of await editStepKeys(replay, root)) {
-      if (!files.has(p)) files.set(p, { path: p, keys, via: "replay", edited: true });
+      const f = files.get(p);
+      if (!f) files.set(p, { path: p, keys, via: "replay", edited: true });
+      else if (!mayWriteUnnamed && !sameKeys(f.keys, keys)) {
+        f.keys = keys;
+        delete f.patchId;
+      }
     }
   }
   return [...files.values()].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
