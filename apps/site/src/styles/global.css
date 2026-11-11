@@ -490,12 +490,13 @@ a {
   border: 0;
 }
 
+/* Just under the fixed header (--nav-h counts the notch), so it never covers the logo. */
 .skip-link {
   position: fixed;
-  top: calc(0.75rem + var(--safe-t));
+  top: calc(var(--nav-h) + 0.5rem);
   left: max(0.75rem, var(--safe-l));
   z-index: 60;
-  transform: translateY(-200%);
+  transform: translateY(calc(-100% - var(--nav-h) - 1rem));
 }
 .skip-link:focus-visible {
   transform: none;
