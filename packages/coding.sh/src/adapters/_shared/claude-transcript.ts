@@ -17,6 +17,16 @@
 // result that triggered the request); ttft ≈ first block line − start;
 // duration ≈ last block line − start. Approximate (line write times), but
 // derived only from the transcript, so deterministic.
+//
+// The start is known only when what was read shows it: the call's api-request
+// record, or, in a transcript with no api-request records (older Claude Code),
+// a request boundary before its first block (a prompt, a compact summary, or the
+// tool_result of a tool_use read earlier). A window read from the middle of a
+// response (a hook's tail of a large transcript, the first lines after a cut)
+// starts on a line written during the response, and every block line carries the
+// message's final usage, so timing from it would give the whole response's tokens
+// to a few lines. Such a call has no durationMs, ttftMs or tokensPerSec; it is
+// stamped at its first block. The full transcript's copy, with the same id, has them.
 import type { AgentEvent, AgentId, Usage } from "../../schema/index.ts";
 import { tierValue } from "../../core/pricing.ts";
 import type { NormalizeContext } from "../../core/types.ts";
@@ -85,6 +95,8 @@ const HOOK_TEXT_MAX = 1024;
 interface PendingCall {
   msgId: string;
   startTs: number;
+  /** The start is known (see the header): duration, ttft and speed are reported. */
+  timed: boolean;
   /** The API's request id (`req_…`, the response's request-id header), as the proxy and OTel record it. */
   requestId?: string;
   /** Id of the api-request record Claude Code wrote when it sent the request. */
@@ -178,7 +190,13 @@ export class ClaudeTranscriptConverter {
   private pending?: PendingCall;
   /** The latest api-request record not yet matched to a response: the next call's exact start. */
   private request?: { ts: number; id?: string };
+  /** An api-request record was read: requests are recorded, so a call without one has no known start. */
+  private requestsRecorded = false;
   private lastNonAssistantTs?: number;
+  /** A request boundary (prompt, compact summary, answered tool_use) was read since the last call began. */
+  private boundary = false;
+  /** tool_use ids read so far: a tool_result answering one is a request boundary. */
+  private asked = new Set<string>();
   private lastTs = 0;
   private tools = new Map<string, ToolUse>();
   private turnId?: string;
@@ -274,6 +292,7 @@ export class ClaudeTranscriptConverter {
     if (!ts) return;
     await this.flushCall();
     this.request = { ts, id: str(e.id) };
+    this.requestsRecorded = true;
   }
 
   /** Notes the entry's cwd and version; in full mode the first entry also starts the session. */
@@ -341,13 +360,22 @@ export class ClaudeTranscriptConverter {
     const model = str(m.model);
     if (model && !SKIP_MODELS.has(model)) this.model = model;
     if (this.pending && this.pending.msgId !== msgId) await this.flushCall();
+    // A model call after a slash command: it was a prompt command, so it opens a turn, and the call is in it.
+    if (this.command) await this.commandTurn();
     if (!this.pending && !(model && SKIP_MODELS.has(model))) {
+      // A request recorded after this line (a line written out of order) is the next call's.
       const req = this.request && this.request.ts <= ts ? this.request : undefined;
-      this.pending = { msgId, startTs: req?.ts ?? this.lastNonAssistantTs ?? ts, requestId: str(e.requestId), apiRequestId: req?.id, firstTs: ts, lastTs: ts, requestModel: str(e.requestedModel) };
-      this.request = undefined;
+      if (req) this.request = undefined;
+      const prev = this.lastNonAssistantTs;
+      const timed = req !== undefined || (!this.requestsRecorded && this.boundary && prev !== undefined && prev <= ts);
+      this.pending = { msgId, startTs: req?.ts ?? (timed ? prev! : ts), timed, requestId: str(e.requestId), apiRequestId: req?.id, firstTs: ts, lastTs: ts, requestModel: str(e.requestedModel) };
+      this.boundary = false;
     }
     if (this.pending) {
-      this.pending.lastTs = ts;
+      // A block line stamped before the call's start was not written as it streamed: the times say nothing.
+      if (ts < this.pending.startTs) this.pending.timed = false;
+      this.pending.firstTs = Math.min(this.pending.firstTs, ts);
+      this.pending.lastTs = Math.max(this.pending.lastTs, ts);
       if (model && !SKIP_MODELS.has(model)) this.pending.model = model;
       this.pending.usage = anthropicUsage(m.usage) ?? this.pending.usage;
       this.pending.serviceTier = tierValue(obj(m.usage).service_tier) ?? this.pending.serviceTier;
@@ -358,14 +386,13 @@ export class ClaudeTranscriptConverter {
       this.pending.gatewaySessionId = str(routing.clientSessionId) ?? this.pending.gatewaySessionId;
       this.pending.servedProvider = str(routing.finalProvider) ?? this.pending.servedProvider;
     }
-    // A model call after a slash command: it was a prompt command, so it opens a turn.
-    if (this.command) await this.commandTurn();
     const em = this.em(ts, lineNo);
     const uuid = str(e.uuid) ?? `line-${lineNo}`;
     let i = 0;
     for (const b of arr(m.content)) {
       const bi = i++;
       if (!isObj(b)) continue;
+      if (b.type === "tool_use" && str(b.id)) this.asked.add(b.id as string);
       if (b.type === "text" && str(b.text)) {
         const t = await clipText(this.ctx, b.text as string);
         em.emit("assistant.message", { text: t.value, truncated: t.truncated || undefined, messageId: msgId }, { key: [uuid, bi], blobs: blobList(t.blob) });
@@ -401,6 +428,9 @@ export class ClaudeTranscriptConverter {
     }
     // Hooks never see what the harness loaded, so live windows record it too.
     if (e.isMeta === true && e.sourceToolUseID !== undefined) await this.skillBase(e, ts, lineNo);
+    // The next request goes out after a compaction's summary, or after the results of a response read here.
+    // A tool_result whose tool_use was not read may belong to a response still being written.
+    if (e.isCompactSummary === true || arr(obj(e.message).content).some((b) => isObj(b) && b.type === "tool_result" && this.asked.has(str(b.tool_use_id) ?? ""))) this.boundary = true;
     if (this.opts.mode !== "full") return;
     const em = this.em(ts, lineNo);
     for (const b of arr(obj(e.message).content)) {
@@ -427,6 +457,7 @@ export class ClaudeTranscriptConverter {
     this.turnId = this.ctx.id(this.opts.agent, this.opts.sessionId, "turn", key);
     this.turnStartTs = ts;
     this.turnEnded = false;
+    this.boundary = true;
     if (this.opts.mode !== "full" && !this.opts.prompts) return;
     const em = this.em(ts, lineNo);
     await emit(em);
@@ -443,6 +474,8 @@ export class ClaudeTranscriptConverter {
     if (kind === "command") {
       await this.localCommand();
       this.command = { ts, lineNo, uuid, promptId: str(e.promptId), command: tag(text, "command-name") ?? tag(text, "command-message") ?? "command", args: tag(text, "command-args") };
+      // A prompt command's request goes out after it.
+      this.boundary = true;
       return;
     }
     if (kind === "output") {
@@ -667,8 +700,9 @@ export class ClaudeTranscriptConverter {
     const p = this.pending;
     if (!p) return;
     this.pending = undefined;
-    const em = this.em(p.startTs, `call-${p.msgId}`);
-    const durationMs = Math.max(0, p.lastTs - p.startTs);
+    // Untimed: stamped at its first block, the earliest line known to be part of it.
+    const em = this.em(p.timed ? p.startTs : p.firstTs, `call-${p.msgId}`);
+    const durationMs = p.timed ? p.lastTs - p.startTs : undefined;
     const out = p.usage?.outputTokens;
     em.emit(
       "llm.call",
@@ -676,9 +710,9 @@ export class ClaudeTranscriptConverter {
         provider: "anthropic",
         requestModel: p.requestModel,
         responseModel: p.model,
-        ttftMs: Math.max(0, p.firstTs - p.startTs),
+        ttftMs: p.timed ? p.firstTs - p.startTs : undefined,
         stopReason: p.stopReason,
-        tokensPerSec: out && durationMs > 0 ? Math.round((out / (durationMs / 1000)) * 10) / 10 : undefined,
+        tokensPerSec: out && durationMs ? Math.round((out / (durationMs / 1000)) * 10) / 10 : undefined,
         ok: true,
         messageId: p.msgId,
         requestId: p.requestId,

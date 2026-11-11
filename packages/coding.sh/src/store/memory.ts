@@ -160,6 +160,20 @@ export class MemoryIndexStore implements IndexStore {
     return found;
   }
 
+  async fillCallTiming(events: AgentEvent[]): Promise<string[]> {
+    const changed = new Set<string>();
+    for (const e of events) {
+      const r = this.events.get(e.id);
+      if (e.kind !== "llm.call" || e.durationMs === undefined || !r || r.event.kind !== "llm.call" || r.event.durationMs !== undefined) continue;
+      const { ttftMs: _t, tokensPerSec: _s, ...payload } = r.event.payload;
+      if (e.payload.ttftMs !== undefined) payload.ttftMs = e.payload.ttftMs;
+      if (e.payload.tokensPerSec !== undefined) payload.tokensPerSec = e.payload.tokensPerSec;
+      r.event = { ...r.event, ts: e.ts, durationMs: e.durationMs, payload };
+      changed.add(r.event.sessionId);
+    }
+    return [...changed];
+  }
+
   async listEvents(sessionId: string, opts: { kinds?: string[]; limit?: number; offset?: number } = {}): Promise<AgentEvent[]> {
     const rows = [...this.events.values()]
       .filter(({ event: e }) => e.sessionId === sessionId && (!opts.kinds?.length || opts.kinds.includes(e.kind)))

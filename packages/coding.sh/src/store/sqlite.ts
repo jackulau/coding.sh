@@ -1140,6 +1140,23 @@ export class SqliteIndexStore implements IndexStore {
     });
   }
 
+  async fillCallTiming(events: AgentEvent[]): Promise<string[]> {
+    const timed = events.filter((e) => e.kind === "llm.call" && e.durationMs !== undefined);
+    if (!timed.length) return [];
+    // json_patch: a null removes the key (RFC 7396).
+    const update = this.stmt("UPDATE events SET ts = ?, duration_ms = ?, payload = json_patch(payload, ?) WHERE id = ? AND kind = 'llm.call' AND duration_ms IS NULL");
+    const dropFold = this.stmt("DELETE FROM kv WHERE key = ?");
+    return this.tx(() => {
+      const changed = new Set<string>();
+      for (const e of timed) {
+        const patch = JSON.stringify({ ttftMs: e.payload.ttftMs ?? null, tokensPerSec: e.payload.tokensPerSec ?? null });
+        if (Number(update.run(e.ts, e.durationMs!, patch, e.id).changes)) changed.add(e.sessionId);
+      }
+      for (const id of changed) dropFold.run(foldKey(id));
+      return [...changed];
+    });
+  }
+
   async listEvents(sessionId: string, opts: { kinds?: string[]; limit?: number; offset?: number } = {}): Promise<AgentEvent[]> {
     const params: (string | number)[] = [sessionId];
     let sql = `SELECT ${eventCols("events")} FROM events WHERE session_id = ?`;

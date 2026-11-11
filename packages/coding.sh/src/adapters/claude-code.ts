@@ -680,7 +680,10 @@ export const claudeCode: Adapter = {
   // 14 (0.1.6): a hook event's id comes from the firing (payload hash and a 2 s time slot), not its spool line, so
   //    a firing spooled twice is one event; a Stop line reads its own turn even when the next prompt is already in
   //    the transcript (a late ingest, a re-parse).
-  parseVersion: 14,
+  // 15 (0.1.7): an llm.call whose start the lines read don't show (a window that opens mid-response, a line written
+  //    out of order) has no durationMs, ttftMs or tokensPerSec; an api-request record stamped after a response's
+  //    first line is left for the next call; a prompt command's call is one llm.call, in its own turn.
+  parseVersion: 15,
 
   detect() {
     const dir = claudeConfigDir();

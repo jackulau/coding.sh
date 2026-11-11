@@ -1659,6 +1659,8 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
           });
           inserted = fresh.length - before;
         } else ({ inserted } = await index.putEvents(events));
+        // A model call a hook stored first, from part of the response, has no timing: this copy read all of it.
+        if (index.fillCallTiming && inserted < events.length && (await index.fillCallTiming(events)).length) touched.add(id);
         if (inserted) touched.add(id);
         stored += inserted;
         result.events += inserted;

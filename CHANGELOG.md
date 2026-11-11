@@ -16,6 +16,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Capture.** Model calls no longer show impossible speeds such as 3750 tok/s. A Claude Code hook that read a transcript from the middle of a response, or Codex lines written seconds late, gave a call a start time during the response. Such a call now has no duration, time to first token or speed. A Claude Code call gets them back when the import reads the whole transcript, and the re-parse after the upgrade repairs calls older versions stored. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#known-breakage-to-design-around)
 - **Tests.** The viewer's browser tests no longer hang when Chrome closes its DevTools connection before it answers: a waiting call fails at once, and any call fails after 30 s. The helper also lets go of Chrome's pipe after closing it, and the CI runner makes each test file exit once its tests are done, so a handle left open can no longer hold a Windows job until its time limit. [Contributing](https://github.com/jackulau/coding.sh/blob/main/CONTRIBUTING.md)
 
 ## [0.1.6] - 2026-11-11
