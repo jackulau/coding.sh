@@ -13,8 +13,11 @@
 //   (Anthropic only: `tools: [{ name, args }, …]` asks for several tool calls in one message, run in parallel;
 //   `pauseMs` streams each content block after the first that much later, so the agent runs a tool mid-message.)
 //   (Anthropic only: a decision's `usage` replaces the prompt-side usage, e.g. cache_read_input_tokens,
-//   and its `stop` the stop_reason, e.g. "refusal".)
+//   and its `output_tokens` the 30 output tokens; its `stop` the stop_reason, e.g. "refusal".)
 //   (Responses only: `tool: { name, input: "<text>" }` is a freeform custom tool call, e.g. Codex's code-mode `exec`.)
+//   (Chat completions only: a decision's `model` names the model the response reports. Chat completions and
+//   responses: its `usage` replaces the usage block, so a docs run shows the token counts a real call has.)
+//   (Any API: `delayMs` answers that much later, so the call's speed is one a real model reaches.)
 //   ({ error: { status, headers?, body } }) answers with that HTTP error instead (a 429 with rate-limit headers, a 529).
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
@@ -79,13 +82,14 @@ async function sse(res, chunks, named, pauseMs = 0) {
 }
 
 function chat(body, res, d) {
-  const base = { id: id("chatcmpl"), created: Math.floor(Date.now() / 1000), model: MODEL };
+  const base = { id: id("chatcmpl"), created: Math.floor(Date.now() / 1000), model: d.model ?? MODEL };
+  const used = d.usage ?? usage;
   const callId = id("call");
   if (!body.stream) {
     const message = d.tool
       ? { role: "assistant", content: d.text ?? null, tool_calls: [{ id: callId, type: "function", function: { name: d.tool.name, arguments: JSON.stringify(d.tool.args) } }] }
       : { role: "assistant", content: d.text };
-    return json(res, { ...base, object: "chat.completion", choices: [{ index: 0, message, finish_reason: d.tool ? "tool_calls" : "stop" }], usage });
+    return json(res, { ...base, object: "chat.completion", choices: [{ index: 0, message, finish_reason: d.tool ? "tool_calls" : "stop" }], usage: used });
   }
   const chunk = (delta, finish_reason = null) => ({ ...base, object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason }] });
   const chunks = [chunk({ role: "assistant", content: "" })];
@@ -95,7 +99,7 @@ function chat(body, res, d) {
     chunks.push(chunk({ tool_calls: [{ index: 0, function: { arguments: JSON.stringify(d.tool.args) } }] }));
     chunks.push(chunk({}, "tool_calls"));
   } else chunks.push(chunk({}, "stop"));
-  chunks.push({ ...base, object: "chat.completion.chunk", choices: [], usage });
+  chunks.push({ ...base, object: "chat.completion.chunk", choices: [], usage: used });
   sse(res, chunks, false);
 }
 
@@ -107,8 +111,8 @@ function anthropic(body, res, d) {
   const content = [...(d.text ? [{ type: "text", text: d.text }] : []), ...calls.map((t) => ({ type: "tool_use", id: id("toolu"), name: t.name, input: t.args }))];
   const stop = d.stop ?? (calls.length ? "tool_use" : "end_turn");
   // A scenario may set the prompt side of usage (cache reads and writes) to script cache behaviour.
-  const prompt = d.usage ?? { input_tokens: 120 };
-  if (!body.stream) return json(res, { id: mid, type: "message", role: "assistant", model, content, stop_reason: stop, stop_sequence: null, usage: { ...prompt, output_tokens: 30 } });
+  const { output_tokens: outTokens = 30, ...prompt } = d.usage ?? { input_tokens: 120 };
+  if (!body.stream) return json(res, { id: mid, type: "message", role: "assistant", model, content, stop_reason: stop, stop_sequence: null, usage: { ...prompt, output_tokens: outTokens } });
   const ev = [{ type: "message_start", message: { id: mid, type: "message", role: "assistant", model, content: [], stop_reason: null, stop_sequence: null, usage: { ...prompt, output_tokens: 1 } } }];
   content.forEach((c, index) => {
     if (c.type === "tool_use") {
@@ -120,7 +124,7 @@ function anthropic(body, res, d) {
     }
     ev.push({ type: "content_block_stop", index });
   });
-  ev.push({ type: "message_delta", delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: 30 } });
+  ev.push({ type: "message_delta", delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: outTokens } });
   ev.push({ type: "message_stop" });
   sse(res, ev, true, d.pauseMs);
 }
@@ -135,7 +139,7 @@ function responses(body, res, d) {
     ...(d.text ? [{ type: "message", id: id("msg"), role: "assistant", status: "completed", content: [{ type: "output_text", text: d.text, annotations: [] }] }] : []),
     ...(d.tool ? [call(d.tool)] : []),
   ];
-  const u = { input_tokens: 120, output_tokens: 30, total_tokens: 150, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } };
+  const u = d.usage ?? { input_tokens: 120, output_tokens: 30, total_tokens: 150, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } };
   const resp = { id: id("resp"), object: "response", created_at: Math.floor(Date.now() / 1000), model: body.model || MODEL, status: "completed", output, usage: u };
   if (!body.stream) return json(res, resp);
   const ev = [{ type: "response.created", response: { ...resp, status: "in_progress", output: [] } }];
@@ -167,7 +171,11 @@ export function startStub({ port = 0, decide: custom } = {}) {
       if (req.method === "GET" && /models$/.test(url)) return json(res, { object: "list", data: [{ id: MODEL, object: "model", owned_by: "stub" }] });
       const answer = (fn) => {
         const d = pick(body);
+        if (d.delayMs) return void setTimeout(() => (d.error ? fail(d) : fn(body, res, d)), d.delayMs);
         if (!d.error) return fn(body, res, d);
+        fail(d);
+      };
+      const fail = (d) => {
         res.writeHead(d.error.status, { "content-type": "application/json", ...d.error.headers });
         res.end(JSON.stringify(d.error.body ?? { type: "error", error: { type: "api_error", message: `stub: ${d.error.status}` } }));
       };
