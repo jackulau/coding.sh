@@ -32,6 +32,8 @@ export interface InitOptions {
 export interface Config {
   /** Base URL without a trailing slash, or undefined when the SDK is off. */
   url: string | undefined;
+  /** Set when a URL was given but is not an http(s) URL: the SDK is off, and says why once. */
+  urlProblem?: string;
   key: string | undefined;
   service: string | undefined;
   capture: CaptureMode;
@@ -62,11 +64,26 @@ export function baseUrl(u: string | undefined): string | undefined {
   return s.replace(/\/+$/, "").replace(/\/v1\/(ingest|traces)$/, "");
 }
 
+/** Why `base` cannot be a server URL, or undefined when it can. Never repeats credentials from the URL. */
+function urlProblem(base: string): string | undefined {
+  const shown = base.replace(/\/\/[^@/]*@/, "//…@");
+  try {
+    const u = new URL(base);
+    if (u.protocol === "http:" || u.protocol === "https:") return undefined;
+  } catch {
+    // not a URL at all
+  }
+  return `the server URL ${JSON.stringify(shown)} is not an http:// or https:// URL, so the SDK is off. Set CODING_SH_URL to something like http://localhost:4318`;
+}
+
 export function resolveConfig(opts: InitOptions = {}, e: Env = env()): Config {
   const disabled = opts.disabled ?? truthy(e.CODING_SH_DISABLED);
   const capture = opts.capture ?? (e.CODING_SH_CAPTURE_MODE?.trim() === "metadata" ? "metadata" : "full");
+  const base = disabled ? undefined : baseUrl(opts.url ?? e.CODING_SH_URL);
+  const problem = base === undefined ? undefined : urlProblem(base);
   return {
-    url: disabled ? undefined : baseUrl(opts.url ?? e.CODING_SH_URL),
+    url: problem ? undefined : base,
+    ...(problem ? { urlProblem: problem } : {}), // slop-allow conditional-empty-spread: scripts/sdk-reference.ts reads the fields of this returned literal
     key: opts.key ?? (e.CODING_SH_INGEST_KEY?.trim() || undefined),
     service: opts.service ?? (e.CODING_SH_SERVICE?.trim() || e.OTEL_SERVICE_NAME?.trim() || undefined),
     capture: capture === "metadata" ? "metadata" : "full",

@@ -31,7 +31,7 @@ class _Base(unittest.TestCase):
         self.llm.close()
 
 
-@unittest.skipUnless(HAS_OPENAI, "openai not installed")
+@unittest.skipUnless(HAS_OPENAI or support.REQUIRE_ALL, "openai not installed")
 class RealOpenAITest(_Base):
     def _client(self, cls_name: str = "OpenAI"):  # noqa: ANN202
         import openai
@@ -121,7 +121,7 @@ class RealOpenAITest(_Base):
         self.assertEqual(kinds(events), ["session.start", "user.message", "llm.call", "assistant.message", "tool.start", "tool.end", "turn.end"])
 
 
-@unittest.skipUnless(HAS_ANTHROPIC, "anthropic not installed")
+@unittest.skipUnless(HAS_ANTHROPIC or support.REQUIRE_ALL, "anthropic not installed")
 class RealAnthropicTest(_Base):
     def _client(self, cls_name: str = "Anthropic"):  # noqa: ANN202
         import anthropic

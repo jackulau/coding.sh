@@ -290,8 +290,8 @@ interface TraceOptions {
 | Field | Type | Description |
 |---|---|---|
 | `sessionId` | `string` | Groups the turns of one conversation into one session. Default: the trace is its own session. |
-| `userId` | `string` | Your user's id, stored on the session. |
-| `metadata` | `Record<string, unknown>` | Any JSON object, stored on the session. |
+| `userId` | `string` | Your user's id, recorded on the turn's session.start event. |
+| `metadata` | `Record<string, unknown>` | Any JSON object, recorded on the turn's session.start event. |
 | `input` | `unknown` | The turn's input (a prompt string, or any JSON value); becomes the session's user.message. |
 
 ### `TraceHandle`
@@ -484,7 +484,9 @@ def observe(client: Any) -> Any
 
 A unit of work: `with coding_sh.trace("checkout", session_id=conv_id, input=prompt) as t:`.
 
-Also a decorator (sync or async). The yielded object has set_input(), set_output(), session_id and trace_id. A decorated function's return value becomes the output.
+user_id and metadata are recorded on the trace's session.start event.
+
+Also a decorator (sync or async). The yielded object has set_input(), set_output(), session_id and trace_id. A decorated function's return value becomes the output, and its arguments the input (a single argument as it is, several by name) unless input= is given.
 
 ```python
 def trace(
@@ -493,7 +495,7 @@ def trace(
     user_id: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
     input: Any = None,
-) -> _ScopeCM
+) -> _ScopeCM[_Trace]
 ```
 
 | Parameter | Type | Default |
@@ -511,7 +513,7 @@ A tool call (`span("tool", "lookup_order")`) or a step (`span("step", "rerank")`
 Context manager or decorator; as a decorator, the call's arguments become the input and its return value the output.
 
 ```python
-def span(kind: str, name: str, input: Any = None) -> _ScopeCM
+def span(kind: str, name: str, input: Any = None) -> _ScopeCM[_Span]
 ```
 
 | Parameter | Type | Default |

@@ -47,7 +47,7 @@ MSGS = [{"role": "user", "content": "ping"}]
 COMPARED = ("events", "turns", "toolCalls", "toolErrors", "filesChanged")
 
 
-@unittest.skipUnless(HAS_OTEL and _node_ok(), "needs node >= 22.6, the core package and opentelemetry")
+@unittest.skipUnless((HAS_OTEL and _node_ok()) or support.REQUIRE_ALL, "needs node >= 22.6, the core package and opentelemetry")
 class GoldenTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -151,7 +151,10 @@ class GoldenTest(unittest.TestCase):
             self.assertEqual(sdk[k], otel[k], k)
         self.assertEqual(sdk["usage"], otel["usage"])
         self.assertEqual(sdk["latency"]["llmCalls"], otel["latency"]["llmCalls"])
-        self.assertEqual(sdk["usage"], {"inputTokens": 3000, "outputTokens": 1500, "cacheReadTokens": 700})
+        tokens = {k: sdk["usage"][k] for k in ("inputTokens", "outputTokens", "cacheReadTokens")}
+        self.assertEqual(tokens, {"inputTokens": 3000, "outputTokens": 1500, "cacheReadTokens": 700})
+        # The two gpt-4o-mini calls are priced from the built-in table on both paths; claude-x is not.
+        self.assertAlmostEqual(sdk["usage"]["costUsd"], 0.00093, places=8)
         self.assertEqual((sdk["turns"], sdk["toolCalls"], sdk["latency"]["llmCalls"]), (2, 1, 3))
 
 

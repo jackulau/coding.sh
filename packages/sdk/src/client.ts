@@ -13,6 +13,9 @@ let exitHooked = false;
 /** Counts carried over from transports replaced by a later init(). */
 const carried: Omit<TransportStats, "queued"> = { sent: 0, dropped: 0, failed: 0 };
 
+/** URL problems already reported, so a repeated init() does not repeat the warning. */
+const warnedUrls = new Set<string>();
+
 const EXIT_FLUSH_MS = 5000;
 
 function hookExit(): void {
@@ -21,12 +24,16 @@ function hookExit(): void {
   // beforeExit fires when the loop runs dry (not on process.exit): flush once, bounded.
   process.on("beforeExit", () => {
     const t = state?.transport;
-    if (t && t.stats().queued > 0 && t.enabled) void t.close(EXIT_FLUSH_MS);
+    if (t && t.stats().queued > 0 && t.enabled && !t.skipExitFlush) void t.close(EXIT_FLUSH_MS);
   });
 }
 
 function create(opts?: InitOptions): State {
   const cfg = resolveConfig(opts);
+  if (cfg.urlProblem && !warnedUrls.has(cfg.urlProblem)) {
+    warnedUrls.add(cfg.urlProblem);
+    console.warn(`[coding.sh] ${cfg.urlProblem}`);
+  }
   const transport = new Transport(cfg);
   if (cfg.url) hookExit();
   if (cfg.debug) console.error(`[coding.sh] ${cfg.url ? `sending to ${cfg.url}${cfg.key ? " with an ingest key" : ""}` : "disabled (no CODING_SH_URL)"}`);
@@ -107,4 +114,5 @@ export function stats(): TransportStats {
 export function _reset(): void {
   state = undefined;
   carried.sent = carried.dropped = carried.failed = 0;
+  warnedUrls.clear();
 }

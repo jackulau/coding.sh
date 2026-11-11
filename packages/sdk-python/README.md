@@ -118,4 +118,6 @@ python3 -m unittest discover -s tests -t tests
 ```
 
 The provider tests use fake clients and always run. Tests against the real `openai`, `anthropic`
-and OpenTelemetry packages run when those are installed.
+and OpenTelemetry packages, and the mypy typing check, run when those are installed
+(`pip install '.[otel,openai,anthropic]' mypy`). With `CODING_SH_SDK_REQUIRE_ALL=1`, as in CI and
+`npm run gate`, they fail instead of skipping when a package is missing.

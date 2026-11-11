@@ -114,3 +114,18 @@ test("observation failures never reach the app (unserializable tool input/output
   assert.equal(span("tool", "weird", () => big, { input: cyclic }), big);
   await flush();
 });
+
+test("tool input with a BigInt or a cycle is recorded, not turned into [object Object]", async () => {
+  const input: Record<string, unknown> = { id: 12345678901234567890n, nested: { n: 1n } };
+  input.self = input;
+  const shared = { x: 1 };
+  input.twice = [shared, shared];
+  const sid = await trace("bigint", async (t) => {
+    await span("tool", "lookup", async () => "ok", { input });
+    return t.sessionId;
+  });
+  await flush();
+  const start = serve.events().find((e) => e.sessionId === sid && e.kind === "tool.start")!;
+  assert.deepEqual(start.payload.input, { id: "12345678901234567890", nested: { n: "1" }, self: "[Circular]", twice: [{ x: 1 }, { x: 1 }] });
+  assert.ok(!JSON.stringify(start.payload).includes("[object Object]"));
+});

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import sys
 import unittest
 
 import support  # noqa: F401
@@ -68,12 +69,21 @@ class OtelHelpersTest(unittest.TestCase):
             p.on_start(s)
             self.assertEqual(s.attributes["gen_ai.conversation.id"], "conv-2")
 
-    @unittest.skipIf(HAS_OTEL, "OpenTelemetry is installed")
     def test_configure_without_otel_returns_none(self) -> None:
-        self.assertIsNone(otel.configure(url="http://127.0.0.1:9", key=KEY))
+        # Hide OpenTelemetry (a None entry in sys.modules makes the import fail), so this runs
+        # whether or not the otel extra is installed.
+        hidden = {k: v for k, v in sys.modules.items() if k == "opentelemetry" or k.startswith("opentelemetry.")}
+        try:
+            for k in hidden:
+                del sys.modules[k]
+            sys.modules["opentelemetry"] = None  # type: ignore[assignment]
+            self.assertIsNone(otel.configure(url="http://127.0.0.1:9", key=KEY))
+        finally:
+            del sys.modules["opentelemetry"]
+            sys.modules.update(hidden)
 
 
-@unittest.skipUnless(HAS_OTEL, "opentelemetry-sdk / exporter-otlp-proto-http not installed")
+@unittest.skipUnless(HAS_OTEL or support.REQUIRE_ALL, "opentelemetry-sdk / exporter-otlp-proto-http not installed")
 class OtelExportTest(unittest.TestCase):
     def setUp(self) -> None:
         self.server = IngestServer()
