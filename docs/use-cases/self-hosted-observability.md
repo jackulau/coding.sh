@@ -1,6 +1,6 @@
 # Open-source, self-hosted LLM observability
 
-coding.sh is MIT-licensed observability and evals for AI agents that runs on your own machines. On
+coding.sh records what your AI agents do and turns failed runs into evals, on your own machines, MIT licensed. On
 a laptop it records coding-agent sessions into a local SQLite file. For a team or for production
 apps, one `coding.sh serve` process takes OpenTelemetry traces and SDK events, and serves the
 viewer and an API from a database you run.

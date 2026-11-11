@@ -652,7 +652,7 @@ export OTEL_SERVICE_NAME=checkout-api                              # becomes the
 
 ### 5.1 Serverless (Vercel Functions)
 
-Apps on Vercel are first-class *senders*: the SDK works in Functions with `waitUntil(flush())`, and
+Apps on Vercel can send traces: the SDK works in Functions with `waitUntil(flush())`, and
 the AI Gateway drain posts to serve. The ingest routes can also run as a Function, through
 `createFetchHandler()` from `coding.sh/server` ([serverless.md](production/serverless.md)):
 

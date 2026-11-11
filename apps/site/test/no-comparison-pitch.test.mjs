@@ -3,6 +3,9 @@
 // alternative to Langfuse"). Other products' names appear only on the compare
 // pages, in internal design and research notes, and where they are an
 // integration the reader uses (an OTel exporter, a reporter, a status line).
+// It also never leads with stacked category words ("open-source, local-first
+// observability and evals for any AI agent. Coding agents first-class."): a reader
+// learns what it records and what they do with it.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
@@ -74,6 +77,7 @@ const SITE_WORDS = () => [
   "README.md",
   ...["packages/coding.sh", "packages/sdk", "packages/sdk-python", "packages/store-postgres", "packages/store-clickhouse", "packages/blob-s3"].flatMap((p) => [`${p}/README.md`, `${p}/package.json`]),
   "packages/coding.sh/src/cli/registry.ts",
+  "packages/coding.sh/src/cli/main.ts",
 ].filter((f) => existsSync(join(ROOT, f)));
 
 test("no page explains coding.sh by comparing it with another product", () => {
@@ -106,6 +110,15 @@ test("the built site pitches nothing through another product", { skip: !existsSy
   assert.deepEqual(found, [], `${found.length} built line(s) pitch coding.sh through another product:\n${found.join("\n")}`);
 });
 
+// Category words stacked in place of saying what coding.sh does. A page title may keep "observability" as a search label.
+const CATEGORY = /local-first (?:observability|traces)|\bfirst-class\b|\b(?:observability|traces) and evals for\b/i;
+const TITLE_LINE = /\b(?:title|metaTitle)\s*[=:]|<title>/;
+
+test("no page describes coding.sh with stacked category words", () => {
+  const found = lines(SITE_WORDS(), (f, l) => !/^docs\/(?:research|design)\/|^CHANGELOG\.md$/.test(f) && !TITLE_LINE.test(l) && CATEGORY.test(l));
+  assert.deepEqual(found, [], `${found.length} line(s) describe coding.sh with category words; say what it records and what the reader does with it:\n${found.join("\n")}`);
+});
+
 test("the pitch check catches the sentences it was written for", () => {
   for (const bad of [
     "Think of a local LangSmith, Braintrust or Judgment Labs: traces and evals stay on your disk",
@@ -114,6 +127,12 @@ test("the pitch check catches the sentences it was written for", () => {
     "How it compares with Langfuse, LangSmith and others",
     "An open-source alternative to Langfuse.",
   ]) assert.ok(PITCH.test(bad), bad);
+  for (const bad of [
+    "coding.sh is open-source, local-first observability and evals for any AI agent. Coding agents first-class.",
+    "Docs for coding.sh, open-source observability and evals for AI agents",
+    "Local-first traces and evals for AI agents.",
+  ]) assert.ok(CATEGORY.test(bad), bad);
+  assert.ok(!CATEGORY.test("coding.sh records what your AI agents do: every prompt, model call, tool call, file change and what it cost."));
   for (const ok of [
     "coding.sh records what your AI agents do: every prompt, model call, tool call, file change and what it cost.",
     "Or use LangSmith's OTel exporter: pip install langsmith[otel]",

@@ -1,7 +1,7 @@
 {
   "name": "coding.sh",
   "version": "0.1.6",
-  "description": "Open-source, local-first observability and evals for any AI agent, with coding agents first-class: capture sessions from hooks or OpenTelemetry, browse them in a local viewer, turn failures into evals, and compare changes with paired statistics.",
+  "description": "Record what your AI agents do and what it cost: capture sessions from hooks or OpenTelemetry, read them in a local viewer, turn failures into evals, and compare changes with paired statistics.",
   "license": "MIT",
   "author": "coding.sh contributors",
   "type": "module",

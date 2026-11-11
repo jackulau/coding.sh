@@ -1,7 +1,7 @@
 {
   "name": "coding.sh",
   "short_name": "coding.sh",
-  "description": "Traces and evals for AI agents, on your machine.",
+  "description": "Records what your AI agents do, on your machine.",
   "start_url": "/",
   "display": "browser",
   "background_color": "#000000",

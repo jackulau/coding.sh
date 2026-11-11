@@ -69,7 +69,7 @@ coding.sh records what AI agents do (prompts, model calls, tool calls, file chan
 local viewer, and turns runs that went wrong into evals. Everything stays on your machine. Pre-alpha: what is built is covered by the package's tests; items marked planned do not exist yet.
 
 1. Record (built): a local OTLP receiver (\`coding.sh collector\`, ${OTLP_ENDPOINT}) for ${FRAMEWORKS.join(", ")};
-   model-call latency per call. Coding agents are first-class: hooks capture prompts, tool calls, file changes
+   model-call latency per call. For coding agents, hooks capture prompts, tool calls, file changes
    and subagents (as child sessions). \`coding.sh run --\` snapshots the working tree before and after;
    hook-captured sessions in a git repository start from the commit checked out at session start.
 2. Evals (built): datasets with deterministic graders, command graders and LLM judges; judges are calibrated

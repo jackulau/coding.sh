@@ -48,10 +48,9 @@ export const SITE = {
   // resolve to this site: the words, the run-together form, the npm scope
   // (@codingdotsh) and the CLI's second bin name (codingsh).
   altNames: ["coding shell", "coding sh", "codingsh", "coding dot sh", "codingdotsh", "coding-sh", "coding.sh cli"],
-  tagline: "observability and evals for AI agents, on your machine",
   description:
-    "coding.sh is open-source, local-first observability and evals for AI agents. It records agent runs through coding-agent hooks and a local OpenTelemetry receiver, turns failures into evals with calibrated graders, and compares prompt, harness and model changes with paired statistics. MIT licensed, v0.1.4. Install: curl -fsSL https://coding.sh/install | sh",
-  version: "v0.1.4, early",
+    `coding.sh records what AI agents do (prompts, model calls, tool calls, file changes and cost) through coding-agent hooks and a local OpenTelemetry receiver, keeps it on your machine, turns failures into evals with calibrated graders, and compares prompt, harness and model changes with paired statistics. MIT licensed, v${RELEASE}. Install: curl -fsSL https://coding.sh/install | sh`,
+  version: `v${RELEASE}, early`,
   status: "install with curl -fsSL https://coding.sh/install | sh",
 } as const;
 
