@@ -1,8 +1,13 @@
 // Run: node --no-warnings --test scripts/perf/test/*.test.mjs
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { analyzeMetrics } from "../../../packages/coding.sh/src/experiments/metrics.ts";
+import { analyzeMetrics, metricMatches } from "../../../packages/coding.sh/src/experiments/metrics.ts";
 import { checkBudgets, checkGate, minEffect } from "../gate.mjs";
+import { PAGES } from "../lighthouse.mjs";
+
+const BUDGETS = JSON.parse(readFileSync(new URL("../budgets.json", import.meta.url), "utf8"));
+const fill = (v) => Array(9).fill(v);
 
 // An exp metrics result with one pair per index: arm 0 gets base[i], arm 1 cand[i].
 function result(metrics) {
@@ -82,4 +87,34 @@ test("a timing budget with too few quiet samples is skipped, not failed", () => 
   const b = checkBudgets(r, { "desktop.quickstart.lcp_ms": 130 });
   assert.deepEqual(b.failures, []);
   assert.deepEqual(b.busy, ["desktop.quickstart.lcp_ms (4 of 9)"]);
+});
+
+// Mobile evals layout shift: 0.0039 in 17 of 18 samples of run 42721228885.
+test("evals layout shift at 0.05 fails the gate, and fails its budget when it crept up unseen", () => {
+  const was = fill(0.0039);
+  const now = [0.05, 0.051, 0.049, 0.05, 0.052, 0.05, 0.048, 0.05, 0.05];
+  assert.equal(checkGate(result({ "mobile.evals.cls": { base: was, cand: now } })).failures.length, 1);
+  // Base and head both at 0.05: the A/B sees no change, so only the budget can catch it.
+  const drift = result({ "mobile.evals.cls": { base: now, cand: now } });
+  assert.deepEqual(checkGate(drift).failures, []);
+  const b = checkBudgets(drift, BUDGETS);
+  assert.equal(b.failures.length, 1);
+  assert.match(b.failures[0], /^mobile\.evals\.cls is 0\.05 .*budget 0\.02/);
+});
+
+test("blocking time has its own budget per page", () => {
+  const r = result({ "mobile.home.tbt_ms": { base: fill(30), cand: fill(30) }, "mobile.evals.tbt_ms": { base: fill(55), cand: fill(55) } });
+  const b = checkBudgets(r, BUDGETS);
+  assert.equal(b.checked, 2);
+  assert.equal(b.failures.length, 1);
+  assert.match(b.failures[0], /^mobile\.home\.tbt_ms is 30 .*budget 20/);
+});
+
+test("every page the harness loads has budgets for its load, shift, blocking time, bytes and requests", () => {
+  const patterns = Object.keys(BUDGETS).filter((k) => !k.startsWith("$"));
+  const per = ["mobile.%.lcp_ms", "mobile.%.fcp_ms", "mobile.%.tbt_ms", "mobile.%.dcl_ms", "desktop.%.lcp_ms", "mobile.%.cls", "desktop.%.cls", "mobile.%.html_bytes", "mobile.%.js_bytes", "mobile.%.font_bytes", "mobile.%.startup_requests", "desktop.%.startup_requests"];
+  assert.ok(PAGES.cli, "the CLI reference is measured");
+  for (const page of Object.keys(PAGES)) {
+    for (const name of per.map((m) => m.replace("%", page))) assert.ok(patterns.some((p) => metricMatches(name, [p])), `no budget for ${name}`);
+  }
 });

@@ -4,7 +4,10 @@
 //    --ignore-certificate-errors), like Cloudflare. Over plain HTTP Chrome
 //    would use HTTP/1.1 with 6 connections and refuse brotli.
 //  - brotli (else gzip) for text, compressed once up front and cached on disk by
-//    content hash, so no request pays for compression.
+//    content hash, so no request pays for compression. Brotli runs at quality 4,
+//    the level Cloudflare's edge sends (home HTML 25,796 B here against 25,776 B
+//    live), not 11, which made the lab about 20% lighter than production. Chrome
+//    gets zstd from the edge, about 6% larger again; this server sends no zstd.
 //  - Cloudflare's html_handling "drop-trailing-slash" (apps/site/wrangler.jsonc):
 //    /docs/quickstart serves docs/quickstart.html or docs/quickstart/index.html,
 //    and /docs/quickstart/ redirects to it. Unknown paths get 404.html, status 404.
@@ -58,14 +61,17 @@ function walk(dir, out = []) {
   return out;
 }
 
+const BROTLI_QUALITY = 4;
+
 /** {br, gzip} for one file, from the on-disk cache when the same bytes were compressed before. */
 function compressed(body) {
   const key = createHash("sha256").update(body).digest("hex");
-  const br = join(CACHE, `${key}.br`);
+  // The quality is in the name, so a cache filled at another level is not reused.
+  const br = join(CACHE, `${key}.q${BROTLI_QUALITY}.br`);
   const gz = join(CACHE, `${key}.gz`);
   if (existsSync(br) && existsSync(gz)) return { br: readFileSync(br), gzip: readFileSync(gz) };
   const out = {
-    br: brotliCompressSync(body, { params: { [zc.BROTLI_PARAM_QUALITY]: 11, [zc.BROTLI_PARAM_SIZE_HINT]: body.length } }),
+    br: brotliCompressSync(body, { params: { [zc.BROTLI_PARAM_QUALITY]: BROTLI_QUALITY, [zc.BROTLI_PARAM_SIZE_HINT]: body.length } }),
     gzip: gzipSync(body, { level: 9 }),
   };
   writeFileSync(br, out.br);

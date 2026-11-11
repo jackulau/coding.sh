@@ -33,6 +33,8 @@ export function minEffect(name, baseMedian) {
 }
 
 const r4 = (x) => Math.round(x * 1e4) / 1e4;
+// One decimal for times and bytes, four for a small score like layout shift.
+const short = (x) => (Math.abs(x) < 10 ? r4(x) : Math.round(x * 10) / 10);
 
 /** The --gate check. Returns the failures and the significant changes too small to fail. */
 export function checkGate(result) {
@@ -75,7 +77,7 @@ export function checkBudgets(result, budgets, { skip = [], quietCpu = 0.5 } = {}
       if (!samples.length) continue;
       checked++;
       const { lo } = pairedBootstrapMedian(samples, { seed: result.seed, alpha: result.alpha });
-      if (lo > max) failures.push(`${m.name} is ${Math.round(median(samples) * 10) / 10} (95% CI from ${Math.round(lo * 10) / 10}), budget ${max} (${pattern})`);
+      if (lo > max) failures.push(`${m.name} is ${short(median(samples))} (95% CI from ${short(lo)}), budget ${max} (${pattern})`);
     }
   }
   return { checked, failures, busy };

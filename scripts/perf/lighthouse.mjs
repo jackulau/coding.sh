@@ -7,7 +7,7 @@
 //
 //   node scripts/perf/lighthouse.mjs --dir <built-site> [--profile desktop|mobile]... [--page name|/path]... [--reports <dir>]
 //
-// Pages default to coding.sh's four (PAGES below). Any site works with --page
+// Pages default to coding.sh's five (PAGES below). Any site works with --page
 // /path: the metrics are then keyed by the path ("/" is "home", "/docs/intro"
 // is "docs-intro").
 //
@@ -41,7 +41,7 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { serve } from "./serve.mjs";
 
-const PAGES = { home: "/", quickstart: "/docs/quickstart", evals: "/docs/evals", changelog: "/changelog" };
+export const PAGES = { home: "/", quickstart: "/docs/quickstart", evals: "/docs/evals", changelog: "/changelog", cli: "/docs/cli" };
 const MARK = "first-viewer-row";
 
 async function deps() {
@@ -171,7 +171,7 @@ async function main() {
     },
   });
   if (values.help || !values.dir) {
-    console.error("usage: node scripts/perf/lighthouse.mjs --dir <built-site> [--profile desktop|mobile]... [--page home|quickstart|evals|changelog|/path]... [--reports <dir>]");
+    console.error("usage: node scripts/perf/lighthouse.mjs --dir <built-site> [--profile desktop|mobile]... [--page home|quickstart|evals|changelog|cli|/path]... [--reports <dir>]");
     process.exit(values.help ? 0 : 2);
   }
   const profiles = values.profile?.length ? values.profile : ["desktop", "mobile"];
