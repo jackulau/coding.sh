@@ -78,6 +78,10 @@ ignored. It understands OTel GenAI semantic conventions, OpenInference, Vercel A
 Claude Code, Codex and Gemini CLI log events. Every model call becomes an `llm.call` event with
 model, token usage, duration and time to first token.
 
+A session that also has a transcript (Claude Code logs sent here and the transcript read by
+`coding.sh ingest`) counts the transcript's model calls. The log copies stay stored but add no
+tokens or calls to the session's stats, whichever source arrived first.
+
 Point any SDK at the base URL, or set a signal-specific endpoint such as
 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces`.
 
