@@ -197,4 +197,31 @@ describe("viewer feel in a browser", { skip: chrome ? false : "no Chrome/Chromiu
       await page.close();
     }
   });
+
+  test("a press scales within 0.95 to 0.98; with reduced motion it dims instead", async () => {
+    await open();
+    try {
+      const press = async (sel: string) => {
+        const [x, y] = await page.eval(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+        await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+        await page.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+        await sleep(300);
+        const css = await page.eval(`(() => { const c = getComputedStyle(document.querySelector(${JSON.stringify(sel)})); return [c.transform, c.opacity]; })()`);
+        await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 5, y: 600 });
+        await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+        return css as [string, string];
+      };
+      const [m] = await press("#help");
+      const scale = Number(/matrix\(([\d.]+)/.exec(m)?.[1]);
+      assert.ok(scale >= 0.95 && scale <= 0.98, `icon button pressed scale ${scale}`);
+      await page.close();
+      await open();
+      await page.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+      const [m2, o2] = await press("#help");
+      assert.equal(m2, "none");
+      assert.equal(Number(o2), 0.8);
+    } finally {
+      await page.close();
+    }
+  });
 });
