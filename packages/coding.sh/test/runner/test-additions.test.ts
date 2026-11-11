@@ -120,6 +120,10 @@ describe("pure additions to an existing test file are not tamper", () => {
       "",
     ].join("\n");
     assert.equal(onlyAddsTests("test/add.test.js", patchHunks(patch).get("test/add.test.js") ?? [], post), true);
+    // A file git wrote with CRLF line ends (core.autocrlf on Windows), and a patch of a CRLF file, read the same.
+    const crlf = (s: string) => s.replace(/\n/g, "\r\n");
+    assert.equal(onlyAddsTests("test/add.test.js", patchHunks(patch).get("test/add.test.js") ?? [], crlf(post)), true);
+    assert.equal(onlyAddsTests("test/add.test.js", patchHunks(crlf(patch)).get("test/add.test.js") ?? [], crlf(post)), true);
     // Without the post-image there is nothing to check the placement against.
     assert.equal(onlyAddsTests("test/add.test.js", patchHunks(patch).get("test/add.test.js") ?? [], undefined), false);
   });

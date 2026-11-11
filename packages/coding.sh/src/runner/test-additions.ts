@@ -41,7 +41,8 @@ export function patchHunks(patch: string): Map<string, Hunk[]> {
   let hunk: Hunk | undefined;
   let header = false;
   const unquote = (s: string) => (s.startsWith('"') && s.endsWith('"') ? s.slice(1, -1) : s);
-  for (const line of patch.split("\n")) {
+  // CRLF files: a patch of one, and a checkout under core.autocrlf, carry "\r" at each line end.
+  for (const line of patch.split(/\r?\n/)) {
     if (line.startsWith("diff --git ")) {
       cur = undefined;
       hunk = undefined;
@@ -436,7 +437,7 @@ function slides(hunk: Hunk, start: number, end: number): { at: number; lines: st
 export function onlyAddsTests(path: string, hunks: readonly Hunk[], post: string | undefined): boolean {
   const lang = testLang(path);
   if (!lang || post === undefined || !hunks.length) return false;
-  const postLines = post.split("\n");
+  const postLines = post.split(/\r?\n/);
   let tests = 0;
   for (const h of hunks) {
     const added = h.lines.filter((l) => l.t === "+").map((l) => l.s);
