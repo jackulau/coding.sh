@@ -2574,8 +2574,8 @@ function viewTabs() {
 function summaryLine(s) {
   const parts = [plural(s.sessions, "session")];
   if (s.subagents) parts.push(plural(s.subagents, "subagent"));
-  if (s.toolCalls) parts.push(fmtNum(s.toolCalls) + " tool calls");
-  if (s.llmCalls) parts.push(fmtCompact(s.llmCalls) + " model calls");
+  if (s.toolCalls) parts.push(plural(s.toolCalls, "tool call"));
+  if (s.llmCalls) parts.push((s.llmCalls === 1 ? "1" : fmtCompact(s.llmCalls)) + (s.llmCalls === 1 ? " model call" : " model calls"));
   if (s.costUsd) {
     const est = s.estimatedCostUsd > 0;
     const partial = s.pricedSessions && s.pricedSessions < s.sessions;
@@ -4856,9 +4856,9 @@ function runTreePanel(s, kidCount) {
     const totals = h("div", { class: "rt-totals" },
       h("span", null, h("b", null, fmtNum(t.sessions || 0)), " ", t.sessions === 1 ? "agent" : "agents"),
       t.durationMs ? h("span", null, "wall ", h("b", null, fmtDuration(t.durationMs))) : null,
-      t.toolCalls ? h("span", null, h("b", null, fmtNum(t.toolCalls)), " tool calls") : null,
-      t.toolErrors ? h("span", { class: "err" }, h("b", null, fmtNum(t.toolErrors)), " tool errors") : null,
-      t.filesChanged ? h("span", null, h("b", null, fmtNum(t.filesChanged)), " files changed") : null,
+      t.toolCalls ? h("span", null, h("b", null, fmtNum(t.toolCalls)), t.toolCalls === 1 ? " tool call" : " tool calls") : null,
+      t.toolErrors ? h("span", { class: "err" }, h("b", null, fmtNum(t.toolErrors)), t.toolErrors === 1 ? " tool error" : " tool errors") : null,
+      t.filesChanged ? h("span", null, h("b", null, fmtNum(t.filesChanged)), t.filesChanged === 1 ? " file changed" : " files changed") : null,
       tokensText(u) ? h("span", null, h("b", null, tokensText(u)), " tokens") : null,
       cost.none ? null : h("span", null, h("b", null, cost.text), " total"));
     const worst = data.worst && data.worst.flags && data.worst.flags.length
