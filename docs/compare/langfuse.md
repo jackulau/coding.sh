@@ -29,7 +29,8 @@ something here is out of date, open an issue.
 | Replay a coding session step by step, with files | Yes, `coding.sh replay` | No |
 | Online evals on live traffic | No | Yes |
 | Human annotation queues | No (labels for judge calibration only) | Yes |
-| Prompt management and playground | No | Yes |
+| Prompt management (named, versioned prompts) | No | Yes |
+| Playground for a model call | Yes, in `coding.sh ui` | Yes |
 | Alerts and custom dashboards | No | Yes |
 | SSO and RBAC | No; per-person keys on a team server | Yes; some RBAC is in the paid edition |
 | MCP server | Yes, local | Yes |
