@@ -306,7 +306,7 @@ and span id the final span has, so the `chat` and `execute_tool` spans sent befo
 parent. Each send repeats that span id with newer totals. A backend that keeps every span it
 receives, such as ClickHouse `otel_traces`, then holds several rows for one session: take the latest
 per span id, as the
-[ClickHouse queries](how-to/self-host-team.md#export-to-clickhouse-through-an-opentelemetry-collector)
+[ClickHouse queries](reference/stores.md#export-to-clickhouse-through-an-opentelemetry-collector)
 do. The serverless handler sends open sessions in the flush after each request, since no timer runs
 between requests. On shutdown serve sends them within the drain window.
 

@@ -7,7 +7,7 @@ only, and the keys are for fixed test projects.
 
 For a team, the stacks in `deploy/compose/` are simpler: no `.env` to generate, keys made on first
 start, SQLite, Postgres or ClickHouse. See
-[Self-host for a team](../how-to/self-host-team.md#run-it-with-compose).
+[Self-host for a team](../how-to/self-host-team.md).
 
 ## 3 steps
 
@@ -57,7 +57,7 @@ To add your own app, append a key to `CODING_SH_INGEST_KEYS` in `docker-compose.
   (`stop_grace_period` is 30 s).
 - **ClickHouse.** `docker compose -f docker-compose.yml -f deploy/compose/clickhouse.yml up -d --build --wait`
   runs serve on ClickHouse instead of Postgres, with the `chdata` volume. See
-  [Self-host for a team](../how-to/self-host-team.md#clickhouse).
+  [Postgres and ClickHouse stores](../reference/stores.md#clickhouse).
 - **Data.** Three named volumes: `pgdata`, `minio-data` and `coding-sh-data`. Back up the first two.
 - **Tests.** The Postgres and S3 store suites run against this stack:
   `docker compose up -d postgres minio minio-init`, then `CODING_SH_TEST_PG_URL=postgres://coding:$POSTGRES_PASSWORD@127.0.0.1:5432/coding`.

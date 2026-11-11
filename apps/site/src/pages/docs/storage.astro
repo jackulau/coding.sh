@@ -1,7 +1,6 @@
 ---
 import DocsLayout from "../../components/docs/DocsLayout.astro";
 import Code from "../../components/docs/Code.astro";
-import Tag from "../../components/docs/Tag.astro";
 
 const config = `# ~/.coding.sh/config.toml  (coding.sh config get prints the effective values)
 [store]
@@ -80,11 +79,11 @@ interface Sink {
 
 <DocsLayout>
   <p>
-    coding.sh keeps two stores with different shapes, plus any number of write-only mirrors. All three are interfaces
-    (<code>src/core/types.ts</code>), chosen by URL scheme in the config.
+    coding.sh keeps two stores with different shapes, plus any number of write-only mirrors. Each is an interface, and the
+    config picks the implementation by URL scheme.
   </p>
 
-  <h2 id="index">Index <Tag status="built" /></h2>
+  <h2 id="index">Index</h2>
   <p>
     Small, queryable rows: sessions, events, eval tasks, harness bundles, runs, labels, datasets and experiments. The default is one SQLite file
     through the built-in <code>node:sqlite</code>, in WAL mode, with an FTS5 table over prompt, reply and tool text for
@@ -93,10 +92,10 @@ interface Sink {
   <p>
     <a href="/docs/cli/sql"><code>coding.sh sql "select …"</code></a> runs one read-only query against it.
     <a href="/docs/cli/export"><code>coding.sh export sessions|events|labels</code></a> streams rows as JSONL or CSV, on every store. The tables
-    and columns are in <a href="https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md">Query and export</a>.
+    and columns are in <a href="/docs/query#tables">Query language</a>.
   </p>
 
-  <h2 id="blobs">Blobs <Tag status="built" /></h2>
+  <h2 id="blobs">Blobs</h2>
   <p>
     Large, write-once content: full tool output, raw source payloads, diffs. Event payloads larger than <code>maxInlineBytes</code> (4 KB)
     move to a blob and the event keeps a reference. Each blob is keyed by the sha256 of its uncompressed bytes, so the same
@@ -127,10 +126,10 @@ interface Sink {
   <p>
     Every copy is replaced, in the index, blobs, spool and eval runs: with <code>[redacted:purged]</code> in the index and blobs, with asterisks in spool and eval run files. SQLite store only; rotate the secret too.
     <a href="/docs/cli/purge">purge</a> has the details, and
-    <a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md">Storage, sinks and privacy</a> covers every redaction rule.
+    <a href="/docs/privacy">Privacy and redaction</a> covers every redaction rule.
   </p>
 
-  <h2 id="sinks">Sinks <Tag status="built" /></h2>
+  <h2 id="sinks">Sinks</h2>
   <p>
     A sink mirrors events to somewhere else. Each sink keeps its own cursor and retries with backoff, so a remote that is down never blocks
     local capture. Remote sinks default to <code>metadata</code> mode: content leaves your machine only when you set <code>mode = "full"</code>.
@@ -158,14 +157,14 @@ interface Sink {
   </p>
   <Code title="javascript" code={plugin} />
   <p>
-    The interfaces a plugin implements, abridged. A test suite in <code>src/store/conformance.ts</code> runs against the built-in stores and
-    can be pointed at a new one.
+    The interfaces a plugin implements, abridged. The conformance test suite (<code>coding.sh/store/conformance</code>) runs against the
+    built-in stores and can be pointed at a new one.
   </p>
-  <Code title="src/core/types.ts (abridged)" code={iface} />
+  <Code title="Store interfaces (abridged)" code={iface} />
   <div class="note">
     <p>
       <strong>Postgres, ClickHouse and S3:</strong> <code>coding.sh-store-postgres</code>, <code>coding.sh-store-clickhouse</code> and
-      <code>coding.sh-store-s3</code> (S3, R2, MinIO) are on npm and back <a href="/docs/production">production mode</a>. Install one next to
+      <code>coding.sh-store-s3</code> (S3, R2, MinIO) are on npm and back <a href="/docs/production">production mode</a>; setup is in <a href="/docs/stores">Postgres and ClickHouse stores</a>. Install one next to
       coding.sh. The npm package ships the TypeScript types for <code>coding.sh/store</code> and <code>coding.sh/store/conformance</code>, so a
       plugin built outside the repository imports them.
     </p>

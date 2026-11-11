@@ -6,7 +6,7 @@
 #
 # Then add an otlp sink with endpoint = "http://127.0.0.1:4319" to ~/.coding.sh/config.toml.
 # The collector listens on 4318 inside the network and is published on 4319, so it can share a
-# host with `coding.sh serve` on 4318. See docs/how-to/self-host-team.md.
+# host with `coding.sh serve` on 4318. See docs/reference/stores.md.
 
 services:
   clickhouse:

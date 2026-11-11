@@ -20,7 +20,7 @@ There is no ClickHouse blob store. Blobs stay on `file://` (the default) or on S
 `coding.sh-store-s3`.
 
 When to pick it over Postgres, and how to export to ClickHouse through an OpenTelemetry Collector
-without this plugin: [Self-host for a team](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/self-host-team.md#clickhouse).
+without this plugin: [Stores](https://coding.sh/docs/stores#clickhouse).
 
 ## URL
 

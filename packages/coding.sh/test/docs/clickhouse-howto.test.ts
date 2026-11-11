@@ -1,4 +1,4 @@
-// docs/how-to/self-host-team.md's ClickHouse collector route queries otel_traces by span
+// docs/reference/stores.md's ClickHouse collector route queries otel_traces by span
 // attribute. Every attribute key and span name it names must be one the otlp sink sends, so a
 // renamed attribute fails here instead of silently returning empty columns.
 // The Docker-gated deploy/test/clickhouse.test.mjs runs the same queries against real ClickHouse.
@@ -11,7 +11,7 @@ import { toOtlpOpenSessionSpans, toOtlpRequest } from "../../src/sinks/otlp.ts";
 import { clickhouseFixture } from "./clickhouse-fixture.ts";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
-const doc = readFileSync(join(repo, "docs", "how-to", "self-host-team.md"), "utf8");
+const doc = readFileSync(join(repo, "docs", "reference", "stores.md"), "utf8");
 const section = doc.slice(doc.indexOf("### Export to ClickHouse through an OpenTelemetry Collector"), doc.indexOf("## Next"));
 
 function sent(mode: "full" | "metadata") {
