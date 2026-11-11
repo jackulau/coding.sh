@@ -107,13 +107,13 @@ headers = { Authorization = "Bearer ${OTEL_TOKEN}" }
   or cookies, so no API key or login token is kept. In metadata mode it keeps hashes of the system
   prompt and tools, counts, tool names, usage and timings. The proxy listens on 127.0.0.1 unless you
   pass `--host`.
-- **Raw spool.** The hook writes the agent's raw payload to `~/.coding.sh/spool` (mode 600), unredacted:
-  the hook does no redaction, to stay fast. Hooks share one spool file per agent per UTC day. A payload
-  that is one line of up to about 1 KB sits inline in that file. A longer or multi-line payload goes to
-  its own file under `spool/<agent>/raw/`. Once ingest has stored a line, it rewrites that line's
-  `raw/` file with secrets redacted, in place. It keeps the file because a re-parse and a sink that
-  was behind read it again. This applies in metadata mode too. An inline payload is not rewritten:
-  it stays in the spool file as written. `coding.sh gc` deletes ingested spool files and their `raw/`
-  files older than 7 days (`[retention] keepSpoolDays`), and never the current day's file, which hooks
-  are still writing to. Until then, run `coding.sh purge` to remove a value from the spool as well.
+- **Raw spool.** The hook writes the agent's payload to `~/.coding.sh/spool` (mode 600) unredacted,
+  to stay fast. Hooks share one spool file per agent per UTC day.
+  - A long or multi-line payload gets its own file under `spool/<agent>/raw/`. Once ingest has
+    stored its line, ingest rewrites that file with secrets redacted, in every capture mode. The
+    file stays because a re-parse reads it again.
+  - A one-line payload of up to about 1 KB sits inside the spool file and stays as written.
+  - `coding.sh gc` deletes ingested spool files and their `raw/` files older than 7 days
+    (`[retention] keepSpoolDays`), never the current day's file. `coding.sh purge` removes a value
+    from the spool sooner.
 - **The viewer** binds to 127.0.0.1 and requires the per-process token in the URL it prints.
