@@ -52,6 +52,10 @@ Would make 32 of 32 model calls (0 cached) plus up to 32 judge calls: ~93k input
 
 A decision point is one turn where the agent went wrong. The dry run makes no model calls.
 
+The estimate is rough: four characters per token, a 400-token reply per call and a 200-token judge
+reply, at list price, with no prompt caching. A run can cost less or more, so cap it with
+`--max-cost`. The outputs in steps 2 and 3 come from different runs, so their costs differ.
+
 | Kind | The agent |
 |---|---|
 | `unverified-claim` | said it was done after changing code, without running anything to check |
@@ -108,7 +112,8 @@ lost    A 16/16 (16 ungraded runs)  B 16/16 (16 ungraded runs)  Fisher p=1.000
 
 Fix the judge's model or key, then run `exp ab` again.
 
-![The compare page: AGENTS.md today against a rewrite, with the cases each one fixed and broke](shot:docs/compare "coding.sh's AGENTS.md today against a rewrite, on 20 coding.sh tasks.")
+To see the cases A and B fixed and broke side by side in the viewer, see
+[Compare two versions](https://coding.sh/docs/experiments#compare).
 
 ## 5. Iterate on the wording
 

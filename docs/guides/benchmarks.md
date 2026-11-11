@@ -1,10 +1,10 @@
 # Benchmarks
 
-`coding.sh bench` compares two or more agents or models on new cases every day, drawn from a live
-source, so no contender can be tuned to a fixed test set.
+Compare two or more agents or models on new cases every day, drawn from a live source, so none of
+them can be tuned to a fixed test set. The command is `coding.sh bench`.
 Site version: [coding.sh/docs/benchmarks](https://coding.sh/docs/benchmarks).
 
-Every contender gets the same frozen sample, in shuffled order, and the history shows who is ahead
+Every contender (an agent or model you compare) gets the same frozen sample, in shuffled order, and the history shows who is ahead
 today and over weeks. Runs call your contenders with your credentials and at your cost; set
 `budget_usd` before you schedule one.
 

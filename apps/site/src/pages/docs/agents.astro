@@ -4,6 +4,7 @@ import Code from "../../components/docs/Code.astro";
 import Cards from "../../components/docs/Cards.astro";
 import { ADAPTER_ROWS, PLANNED_AGENTS, STATUS_LABEL } from "../../components/docs/agents";
 import AgentLogo from "../../components/AgentLogo.astro";
+import DocShot from "../../components/docs/DocShot.astro";
 
 // Outputs on this page are real runs of coding.sh 0.1.6 (packed from the repo) under a temp HOME on
 // 2026-11-11; the repo path in the `run` output is scrubbed to /work/demo.
@@ -57,6 +58,12 @@ node "C:/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>      # on Win
     <code>coding.sh sessions</code> then lists every agent's sessions together. Each adapter keeps your agent's config as it was, apart
     from the entries it adds, and <code>coding.sh uninstall</code> removes only those.
   </p>
+  <DocShot
+    name="product/hero-session"
+    bar="coding.sh ui"
+    alt="The coding.sh viewer showing a Claude Code session on the coding.sh repo: its title, agent, model, duration and cost, then each step in order with its time. The failed npm test step and its result, 41 passed and 1 failed, are highlighted."
+    caption="A Claude Code session in the viewer. The failed test run is highlighted."
+  />
 
   <h2 id="matrix">Supported agents</h2>
   <div class="doc-table doc-table--stack">
@@ -96,9 +103,9 @@ node "C:/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>      # on Win
         <thead><tr><th>Status</th><th>Means</th></tr></thead>
         <tbody>
           <tr><td>Verified on real sessions</td><td>Checked against sessions from a live install of the agent, as well as the CI tests.</td></tr>
-          <tr><td>Verified on a real install</td><td>The release in brackets ran a session against a local stand-in model, its hooks fired, and our tests now replay that session.</td></tr>
+          <tr><td>Verified on a real install</td><td>The release in brackets was installed and ran a session, its hooks fired and coding.sh recorded it. It has not been checked on day-to-day sessions yet.</td></tr>
           <tr><td>Not run live</td><td>Nobody has run it on a live install yet, for the reason given. A report that it works moves it to verified.</td></tr>
-          <tr><td>Tested</td><td>Covered by CI tests.</td></tr>
+          <tr><td>Tested</td><td>Works for any command, so there is no agent release to check.</td></tr>
         </tbody>
       </table>
     </div>
@@ -117,7 +124,7 @@ node "C:/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>      # on Win
             ADAPTER_ROWS.map((a) => (
               <tr>
                 <td class="nowrap">{a.name}</td>
-                <td><code>{a.headless}</code></td>
+                <td>{a.headless ? <code>{a.headless}</code> : a.headlessNote}</td>
               </tr>
             ))
           }

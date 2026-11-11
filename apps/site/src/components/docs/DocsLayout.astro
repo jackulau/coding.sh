@@ -72,7 +72,8 @@ const faq = [...questions.matchAll(/<h3 [^>]*>([\s\S]*?)<\/h3>([\s\S]*?)(?=<h3[ 
 const faqSchemas = faq.length ? [faqSchema(faq)] : [];
 
 // "On this page": the h2s outside tab panels, in order, and each Tabs block
-// as its tab labels (Tabs.astro writes them to data-toc).
+// as its tab labels, each followed by its panel's h3 steps (Tabs.astro writes
+// them to data-toc). A step shows only while its tab is open.
 // Astro writes `"` in an attribute as &#34; and the Markdown renderer as &quot;: decode both.
 const NAMED: Record<string, string> = { quot: '"', apos: "'", lt: "<", gt: ">", amp: "&" };
 const unesc = (s: string) =>
@@ -80,10 +81,15 @@ const unesc = (s: string) =>
     d ? String.fromCodePoint(Number(d)) : h ? String.fromCodePoint(parseInt(h, 16)) : (NAMED[n!.toLowerCase()] ?? m),
   );
 const plain = (s: string) => unesc(s.replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim();
-const outline: { id: string; label: string; tab?: boolean }[] = [];
+const outline: { id: string; label: string; tab?: boolean; inTab?: string; closed?: boolean }[] = [];
 for (const m of body.matchAll(/<h2 id="([^"]+)"([^>]*)>([\s\S]*?)<\/h2>|<div class="tabs" data-tabs="[^"]*" data-toc="([^"]*)"/g)) {
   if (m[4] !== undefined) {
-    for (const t of JSON.parse(unesc(m[4])) as { id: string; label: string }[]) outline.push({ id: t.id, label: t.label, tab: true });
+    const tabs = JSON.parse(unesc(m[4])) as { id: string; label: string; steps?: { id: string; label: string }[] }[];
+    for (const t of tabs) {
+      outline.push({ id: t.id, label: t.label, tab: true });
+      // The first tab opens by default, so the others' steps start hidden.
+      for (const st of t.steps ?? []) outline.push({ id: st.id, label: plain(st.label), inTab: t.id, closed: t !== tabs[0] });
+    }
   } else if (!/\bdata-in-tabs\b/.test(m[2]!)) outline.push({ id: m[1]!, label: plain(m[3]!) });
 }
 const showOutline = outline.length >= 2;
@@ -152,6 +158,7 @@ const showOutline = outline.length >= 2;
       </details>
 
       <main id="main" class="doc" data-pagefind-body>
+        {page.searchTerms && <span hidden data-pagefind-meta="keywords[data-terms]" data-terms={page.searchTerms.join(", ")} />}
         {
           markdownURL && (
             <div class="doc__tools" data-agent-skip data-pagefind-ignore>
@@ -192,8 +199,8 @@ const showOutline = outline.length >= 2;
             <p class="onpage__title">On this page</p>
             <ul>
               {outline.map((o) => (
-                <li>
-                  <a href={`#${o.id}`} class:list={["onpage__link", { "onpage__link--tab": o.tab }]}>
+                <li data-in-tab={o.inTab} hidden={o.closed}>
+                  <a href={`#${o.id}`} class:list={["onpage__link", { "onpage__link--tab": o.tab, "onpage__link--step": o.inTab }]}>
                     {o.label}
                   </a>
                 </li>
@@ -231,14 +238,15 @@ const showOutline = outline.length >= 2;
   });
 
   // Marks the section being read in the "On this page" rail: the last target
-  // whose top has passed under the nav. A tab label counts only while its tab
-  // is open.
+  // whose top has passed under the nav. A tab label and its steps count only
+  // while its tab is open, and a closed tab's steps are hidden.
   let queued = 0;
   function mark() {
     queued = 0;
     const rail = document.querySelector<HTMLElement>("[data-onpage]");
     if (!rail || !rail.offsetParent) return;
-    const links = [...rail.querySelectorAll<HTMLAnchorElement>("a[href^='#']")];
+    for (const li of rail.querySelectorAll<HTMLElement>("li[data-in-tab]")) li.hidden = !!document.getElementById(li.dataset.inTab!)?.hidden;
+    const links = [...rail.querySelectorAll<HTMLAnchorElement>("li:not([hidden]) > a[href^='#']")];
     const line = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) + 24 || 96;
     let active: HTMLAnchorElement | undefined;
     for (const a of links) {
@@ -563,6 +571,9 @@ const showOutline = outline.length >= 2;
   }
   .onpage__link--tab {
     padding-left: 1.5rem;
+  }
+  .onpage__link--step {
+    padding-left: 2.25rem;
   }
   .onpage__link[data-active] {
     color: var(--text);

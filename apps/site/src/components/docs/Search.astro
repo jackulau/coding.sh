@@ -233,7 +233,8 @@ const list = `search-${id}-list`;
     if (!pagefind) {
       const url = "/pagefind/pagefind.js";
       pagefind = import(/* @vite-ignore */ url).then(async (pf: Pagefind) => {
-        await pf.options({ excerptLength: 18 });
+        // A page's searchTerms (nav.ts) count like its title.
+        await pf.options({ excerptLength: 18, ranking: { metaWeights: { keywords: 5 } } });
         await pf.init();
         return pf;
       });

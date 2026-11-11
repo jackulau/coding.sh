@@ -340,7 +340,8 @@ for question in ["Viewer search misses tool output", "Which labels fit?"]:
 
   <h2 id="vercel-ai-sdk">Vercel AI SDK</h2>
   <p>
-    The coding.sh SDK's <code>aiSdkTracer()</code> sends the AI SDK's spans with no OpenTelemetry setup. The complete example, for AI SDK 7
+    The coding.sh SDK's <code>aiSdkTracer()</code> sends the AI SDK's spans with no OpenTelemetry setup. Set
+    <code>CODING_SH_URL=http://127.0.0.1:4318</code> where you run your app; without it the SDK records nothing. The complete example, for AI SDK 7
     and earlier versions, is in <a href="/docs/how-to/trace-your-agent#trace-the-vercel-ai-sdk">Trace your agent with the SDK</a>. An app
     that already registers a tracer provider can point its OTLP exporter at <code>http://127.0.0.1:4318/v1/traces</code> instead.
   </p>

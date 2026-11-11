@@ -18,6 +18,8 @@ export interface DocPage {
   metaTitle?: string;
   /** One sentence (at most 155 characters) for meta description, llms.txt and the docs index. */
   summary: string;
+  /** Words readers type to find this page that its title misses. Search ranks them like a title (Search.astro). */
+  searchTerms?: string[];
   /**
    * Sub pages: in DOC_PAGES (llms.txt, social cards, docPage(), redirect
    * targets) but not drawn in the sidebar, which highlights the parent
@@ -160,6 +162,7 @@ export const DOC_GROUPS: DocGroup[] = [
         title: "Run your first eval",
         metaTitle: "Evals for AI agents: cases, graders and judges · coding.sh",
         summary: "Write the cases, point coding.sh at the command that answers one, read the pass rate per case, then fix the failures and compare the two runs.",
+        searchTerms: ["eval", "evals"],
       },
       {
         path: "/docs/judges",
@@ -178,13 +181,13 @@ export const DOC_GROUPS: DocGroup[] = [
         path: "/docs/tool-evals",
         label: "Tool evals",
         title: "Tool evals",
-        summary: "coding.sh toolevals: measure how well agents use a CLI, MCP server or HTTP API, then keep the help, flag and description changes that raise the score.",
+        summary: "See how well agents use your CLI, MCP server or HTTP API, and keep the help and description changes that raise the score, with coding.sh toolevals.",
       },
       {
         path: "/docs/benchmarks",
         label: "Benchmarks",
         title: "Benchmarks",
-        summary: "coding.sh bench: fresh cases every day from a live source, every contender on the same frozen set, and a history of who leads.",
+        summary: "Compare agents or models on new cases every day, so none can be tuned to a fixed test, and see who leads over weeks, with coding.sh bench.",
       },
     ],
   },
@@ -346,7 +349,13 @@ export const DOC_GROUPS: DocGroup[] = [
         title: "How evals are computed",
         summary: "pass@k, paired comparison, bootstrap intervals, McNemar's test, the ship-or-hold gate and judge calibration, each with its formula.",
       },
-      { path: "/docs/troubleshooting", label: "Troubleshooting", title: "Troubleshooting", summary: "What doctor checks, why sessions go missing, and every CLI error reason with its fix." },
+      {
+        path: "/docs/troubleshooting",
+        label: "Troubleshooting",
+        title: "Troubleshooting",
+        summary: "What doctor checks, why sessions go missing, and every CLI error reason with its fix.",
+        searchTerms: ["missing session", "no sessions", "sessions not showing", "not working"],
+      },
       {
         path: "/docs/faq",
         label: "FAQ",

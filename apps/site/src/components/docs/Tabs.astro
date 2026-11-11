@@ -5,8 +5,8 @@
 // /docs/quickstart#coding-agent opens that tab, and so does a link to any
 // heading inside it. Picking a tab updates the hash. Without JS the panels
 // stack, each under its label. Search and the .md twin read every panel.
-// The layout's "On this page" rail lists the tab labels (data-toc), not the
-// headings inside the panels (marked data-in-tabs).
+// The layout's "On this page" rail lists the tab labels (data-toc), each with
+// the h3 steps of its panel; the h2s inside panels stay out (data-in-tabs).
 interface Tab {
   /** Panel id and URL hash, e.g. "your-agent". */
   id: string;
@@ -37,9 +37,19 @@ for (const t of tabs) {
 }
 // h2s inside a panel stay out of the "On this page" rail.
 html = html.replace(/<h2 (id="[^"]*")/g, "<h2 $1 data-in-tabs");
+// Each panel's h3s, for the rail: the HTML from its opening tag to the next panel's.
+const starts = tabs.map((t) => html.indexOf(`id="${t.id}" role="tabpanel"`));
+const toc = tabs.map((t, i) => {
+  const end = starts.filter((n) => n > starts[i]!).sort((a, b) => a - b)[0] ?? html.length;
+  const steps = [...html.slice(starts[i], end).matchAll(/<h3 id="([^"]+)"[^>]*>([\s\S]*?)<\/h3>/g)].map((m) => ({
+    id: m[1]!,
+    label: m[2]!.replace(/<[^>]+>/g, "").trim(),
+  }));
+  return { id: t.id, label: t.label, steps };
+});
 ---
 
-<div class="tabs" data-tabs={id} data-toc={JSON.stringify(tabs)}>
+<div class="tabs" data-tabs={id} data-toc={JSON.stringify(toc)}>
   <div class="tabs__list" role="tablist" aria-label={tabs.map((t) => t.label).join(" or ")} hidden data-agent-skip data-pagefind-ignore>
     {
       tabs.map((t, i) => (
