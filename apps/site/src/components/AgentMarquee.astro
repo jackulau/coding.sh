@@ -30,9 +30,9 @@ const dur = `${(items.length * 3.6).toFixed(1)}s`;
       {
         [0, 1].map((copy) => (
           <ul class="mq__track" role="list" aria-label={copy === 0 ? "Agents coding.sh records" : undefined} aria-hidden={copy === 1 ? "true" : undefined} data-mq-copy={copy}>
-            {items.map((a) => (
+            {items.map((a, i) => (
               <li>
-                <a class="mq__chip hit" href={href} tabindex={copy === 1 ? -1 : undefined} draggable="false">
+                <a class="mq__chip hit" href={href} tabindex={copy === 0 && i === 0 ? undefined : -1} draggable="false">
                   <AgentLogo id={a.id} name={a.name} size={18} fallback />
                 </a>
               </li>
@@ -220,8 +220,8 @@ const dur = `${(items.length * 3.6).toFixed(1)}s`;
       };
       // Keyboard focus: the rail pauses (:focus-within) and the fades drop
       // (CSS), so scrub the rail until the focused chip is the first one in the
-      // view. Only the first copy is focusable, and one copy is exactly one loop,
-      // so the chips after it are the second copy's, the same names in order.
+      // view. Every chip links to the same page, so only the first chip is a tab
+      // stop: one Tab press crosses the row.
       // A mouse click also focuses the chip, but must not move it under the pointer.
       mq.addEventListener("focusin", (e) => {
         const chip = (e.target as HTMLElement).closest<HTMLElement>(".mq__chip");
