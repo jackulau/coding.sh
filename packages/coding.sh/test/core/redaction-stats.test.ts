@@ -17,7 +17,7 @@ import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 
 // Built at runtime so no scanner mistakes this file for a leak.
 const ANT = ["sk", "ant", "api03", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4"].join("-");
-const GH = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+const GH = ["ghp_", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"].join("");
 const KEY_PEM = ["-----BEGIN RSA PRIVATE KEY-----", "MIIEowIBAAKCAQEAx9Kq2Lm8Np4Rt7Vw1Yb3Hd6Gf0Jc5SeU2", "-----END RSA PRIVATE KEY-----"].join("\n");
 
 const r = createRedactor({ redact: ["secrets"] });
@@ -60,7 +60,7 @@ describe("redaction tally", () => {
       ["sk", "ant", "test", "SECRET", "key", "123456"].join("-"),
       ["sk", "ant", "oat01", "stub", "token"].join("-"),
       ["csh", "ik", "a".repeat(43)].join("_"),
-      "ghp_" + "0123456789abcdefghijABCDEFGHIJ012345",
+      ["ghp_", "0123456789abcdefghijABCDEFGHIJ012345"].join(""),
       ["sk", "test", "4eC39HqLyjWDarjtT1zdp7dc"].join("_"),
       ["-----BEGIN RSA PRIVATE KEY-----", "MIIEow", "IBAAKCAQEA", "-----END RSA PRIVATE KEY-----"].join("\n"),
     ];

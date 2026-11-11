@@ -65,7 +65,7 @@ import { isEventKind } from "../schema/index.ts";
 import type { Adapter, BackfillFile, BlobStore, Config, IndexStore, NormalizeContext, OpenSession, Sink, SinkAck, SpoolLine } from "./types.ts";
 import { resolveRepoConfig, isExcluded } from "./config.ts";
 import { acquireLock, LockBusyError, wakeMarker, type Lock, type LockOptions } from "./lock.ts";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { deserialize, serialize } from "node:v8";
 import { dirname, join } from "node:path";
 import { hashParts, sha256Hex } from "./ids.ts";
@@ -74,8 +74,8 @@ import { createRedactor, noteBlobHits, redactBlobValue, redactEventCounted, reda
 import { buildSession, byTime, FLAGS, foldSession, foldStamp, isBackfillEvent, isFoldState, isRealPrompt, isVerifyToolStart, sessionOf, sessionState, type SessionState } from "./sessions.ts";
 import { copyFilter } from "./message-copies.ts";
 import { priceEvent, pricesFor } from "./pricing.ts";
-import { listSpoolFiles, readSpoolFile, resolveRawFile, type SpoolFile } from "./spool-read.ts";
-import { scrubRawFile } from "./spool-scrub.ts";
+import { listSpoolFiles, readSpoolFile, resolveRawFile, spoolFileDay, type SpoolFile } from "./spool-read.ts";
+import { scrubRawFile, scrubSpoolFile } from "./spool-scrub.ts";
 import { repoResolver, type RepoResolver } from "./repo-state.ts";
 import { snapshot } from "./snapshot.ts";
 import { isWrapperLine } from "../adapters/more/wrapper.ts";
@@ -83,6 +83,7 @@ import { rememberTraceSessions } from "../adapters/_shared/traceparent.ts";
 import { traceKvKey } from "../otel/map.ts";
 import { InsertedEvents } from "../otel/receiver.ts";
 import { linkSpawned } from "../spool/spawned.ts";
+import { readDisabledSessions } from "../spool/write.ts";
 import { matchSpawnedParent, openAt } from "../spool/spawned-match.ts";
 
 export const PUT_BATCH = 500;
@@ -157,7 +158,7 @@ export interface IngestResult {
   events: number;
   /** Sessions recomputed and upserted. */
   sessions: number;
-  /** Lines skipped because their cwd matched capture.exclude. */
+  /** Lines skipped because their cwd matched capture.exclude or their session was paused (CODING_SH_DISABLE). */
   excluded: number;
   errors: IngestError[];
   sinks: SinkReport[];
@@ -165,6 +166,8 @@ export interface IngestResult {
   pendingFiles: number;
   /** With `repair`: sessions that had events but no row, or a fold:error row, folded again. Unset when there were none. */
   repaired?: number;
+  /** The blob store write that stopped this ingest (StoreWriteError): the lines from there on wait for the next run. Unset otherwise. */
+  storeWriteFailed?: string;
 }
 
 interface LineEvents {
@@ -298,7 +301,7 @@ function mergeResults(a: IngestResult, b: IngestResult): IngestResult {
     if (s.error !== undefined) prev.error = s.error;
     if (s.retryAt !== undefined) prev.retryAt = s.retryAt;
   }
-  return {
+  const merged: IngestResult = {
     lines: a.lines + b.lines,
     events: a.events + b.events,
     sessions: a.sessions + b.sessions,
@@ -306,8 +309,11 @@ function mergeResults(a: IngestResult, b: IngestResult): IngestResult {
     errors: [...a.errors, ...b.errors].slice(0, MAX_ERRORS + 1),
     sinks,
     pendingFiles: b.pendingFiles,
-    ...(a.repaired || b.repaired ? { repaired: (a.repaired ?? 0) + (b.repaired ?? 0) } : {}),
   };
+  if (a.repaired || b.repaired) merged.repaired = (a.repaired ?? 0) + (b.repaired ?? 0);
+  const failed = b.storeWriteFailed ?? a.storeWriteFailed;
+  if (failed !== undefined) merged.storeWriteFailed = failed;
+  return merged;
 }
 
 /** `fence` throws when this run no longer owns the ingest lock; called before every cursor write and sink send. */
@@ -339,6 +345,14 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
 
   const linker = childLinker(index);
   const normalize = spoolNormalizer({ adapters, blobs: blobStore, env, profileFor, error, excluded: () => result.excluded++, spawned: (child, link) => linker.offer(child, link) });
+  // Sessions a hook call saw with CODING_SH_DISABLE set: none of their events are stored.
+  const paused = readDisabledSessions(spoolDir);
+  const unpaused = (events: AgentEvent[]): AgentEvent[] => {
+    if (!paused.size || !events.some((e) => paused.has(e.sessionId))) return events;
+    const kept = events.filter((e) => !paused.has(e.sessionId));
+    if (!kept.length) result.excluded++;
+    return kept;
+  };
   const repo = repoResolver();
   const versionFor = (agent: string) => parseVersionFor(adapters, agent);
   // Latest live end-of-turn/session ts per session, from lines new in this run.
@@ -448,10 +462,30 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   let pending: AgentEvent[] = [];
   const copies = copyFilter(index);
   let windowEvents = 0;
+  /** Lines counted in `result.lines` since the last checkpoint: uncounted again when it fails. */
+  let windowLines = 0;
   const touched = new Set<string>();
-  const checkpoint = async () => {
+  /**
+   * Commits the window. False when the blob store refused its blobs (a write-behind batch
+   * fails at flush): nothing of the window commits, its cursors stay, and the next run
+   * re-reads it, as when a put fails on its line.
+   */
+  const checkpoint = async (): Promise<boolean> => {
     // Durable blobs first: no committed row may reference one a power loss could take back.
-    await blobBatch?.flush();
+    try {
+      await blobBatch?.flush();
+    } catch (err) {
+      const message = `blob store write failed: ${(err as Error).message}`;
+      error({ message: `${message}; ingest stopped, the next run retries from the last stored line` });
+      result.storeWriteFailed = message;
+      result.lines -= windowLines;
+      windowLines = 0;
+      pending = [];
+      touched.clear();
+      open = [];
+      windowEvents = 0;
+      return false;
+    }
     // Events, the session rows folded from them and the cursors past their lines commit
     // as one transaction (when the store has them), so a crash leaves the index exactly
     // at the previous checkpoint and the next run re-reads from there.
@@ -499,6 +533,8 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     }
     open = [];
     windowEvents = 0;
+    windowLines = 0;
+    return true;
   };
 
   const files = await listSpoolFiles(spoolDir);
@@ -556,7 +592,17 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
       },
     });
     for await (const rec of reader) {
-      const events = await durations(await normalize(rec.line, rec.source, rec.offset));
+      let events: AgentEvent[];
+      try {
+        events = await durations(unpaused(await normalize(rec.line, rec.source, rec.offset)));
+      } catch (err) {
+        if (!(err instanceof StoreWriteError)) throw err;
+        // The blob store is down: the lines read so far commit, this one and the rest wait for the next run.
+        error({ source: rec.source, offset: rec.offset, message: `${err.message}; ingest stopped here, the next run retries from this line` });
+        result.storeWriteFailed = err.message;
+        stopped = true;
+        break;
+      }
       fr.readPos = rec.nextOffset;
       if (rec.line.rawFile) {
         try {
@@ -567,6 +613,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
       }
       if (rec.offset >= fr.local) {
         result.lines++;
+        windowLines++;
         // A prompt a backfill already stored stays out of the local index (sinks still get it).
         for (const e of events) if (!(await copies.isCopy(e))) pending.push(e);
         for (const e of events) {
@@ -580,7 +627,10 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
       // Bounds memory (buffered events, sink windows) and how much work a crash can force us to redo.
       windowEvents += events.length;
       if (windowEvents >= checkpointEvents) {
-        await checkpoint();
+        if (!(await checkpoint())) {
+          stopped = true;
+          break;
+        }
         open = [fr];
         opts.onProgress?.({ filesPending: left });
         if (outOfTime()) {
@@ -592,8 +642,11 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     if (stopped) result.pendingFiles = (fr.readPos < file.size ? 1 : 0) + (await unread(fi + 1));
     else if (local < file.size) left--;
   }
-  await checkpoint();
+  if (!(await checkpoint())) stopped = true;
+  // A window the blob store refused left its cursors where they were: every file short of its end waits.
+  if (result.storeWriteFailed !== undefined) result.pendingFiles = await unread(0);
   opts.onProgress?.({ filesPending: result.pendingFiles });
+  await scrubPastDays(index, spoolDir, files, now(), (cwd) => profileFor(cwd).redactor, () => !stopped && !outOfTime(), fence);
 
   if (opts.repair) {
     fence();
@@ -611,6 +664,28 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   result.sinks.push(...sinkReports(sinkStates));
   if (droppedErrors) result.errors.push({ message: `…and ${droppedErrors} more errors` });
   return result;
+}
+
+/** Cursor key: the size a spool file had when its inline payloads were last redacted (spool-scrub.ts). */
+export const spoolScrubKey = (source: string): string => `scrub:${source}`;
+
+/**
+ * Spool files of a past UTC day that the index has read to their end get their
+ * inline payloads redacted in place, once per size: secrets in short lines then
+ * stay in the spool until the day's first ingest after it, not until gc.
+ */
+async function scrubPastDays(index: IndexStore, spoolDir: string, files: SpoolFile[], now: number, redactorFor: (cwd: string | undefined) => Redactor, more: () => boolean, fence: () => void): Promise<void> {
+  const today = new Date(now).toISOString().slice(0, 10);
+  for (const file of files) {
+    const day = spoolFileDay(file.source.slice(file.source.lastIndexOf("/") + 1));
+    if (!day || day >= today) continue;
+    if (!more()) return;
+    const size = statSync(file.path, { throwIfNoEntry: false })?.size;
+    if (size === undefined || (await index.getCursor(spoolScrubKey(file.source))) === size || (await index.getCursor(file.source)) !== size) continue;
+    fence();
+    await scrubSpoolFile(spoolDir, file.path, redactorFor);
+    await index.setCursor(spoolScrubKey(file.source), size);
+  }
 }
 
 // ---------------------------------------------------------------- sinks
@@ -689,9 +764,14 @@ export interface SpoolNormalizerOptions {
 export function spoolNormalizer(o: SpoolNormalizerOptions): (line: SpoolLine, source: string, offset: number) => Promise<AgentEvent[]> {
   const { adapters, blobs, env, profileFor, error } = o;
   return async (line, source, offset) => {
-    const profile = profileFor(line.cwd);
+    // The shell hook reads the line's cwd without a JSON parser and falls back to its process
+    // cwd when a nested "cwd" (a tool's input) comes first: the payload's own top-level cwd
+    // picks the profile and is checked against capture.exclude too.
+    const top = line.raw && typeof line.raw === "object" && !Array.isArray(line.raw) ? (line.raw as { cwd?: unknown }).cwd : undefined;
+    const payloadCwd = typeof top === "string" && top ? top : undefined;
+    const profile = profileFor(payloadCwd ?? line.cwd);
     const capture = profile.config.capture;
-    if (line.cwd && isExcluded(line.cwd, capture.exclude, env)) {
+    if ((line.cwd && isExcluded(line.cwd, capture.exclude, env)) || (payloadCwd && payloadCwd !== line.cwd && isExcluded(payloadCwd, capture.exclude, env))) {
       o.excluded();
       return [];
     }
@@ -709,6 +789,8 @@ export function spoolNormalizer(o: SpoolNormalizerOptions): (line: SpoolLine, so
     try {
       raw = await adapter.normalize(line, ctx);
     } catch (err) {
+      // The store, not the line: the caller stops before the cursor passes it.
+      if (err instanceof StoreWriteError) throw err;
       error({ source, offset, message: `${adapter.id}.normalize failed: ${(err as Error).message}` });
       return [];
     }
@@ -749,6 +831,26 @@ export function spoolNormalizer(o: SpoolNormalizerOptions): (line: SpoolLine, so
   };
 }
 
+/**
+ * A write to the blob store failed (an S3 endpoint that refuses connections, a full
+ * disk). Unlike a line an adapter cannot parse, the line is fine: spool ingest stops
+ * before its cursor passes the line, so the next run stores it.
+ */
+export class StoreWriteError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "StoreWriteError";
+  }
+}
+
+async function putBlob(blobs: Pick<BlobStore, "put">, data: string | Uint8Array): Promise<string> {
+  try {
+    return await blobs.put(data);
+  } catch (err) {
+    throw new StoreWriteError(`blob store write failed: ${(err as Error).message}`, { cause: err });
+  }
+}
+
 export function normalizeContext(profile: CaptureProfile, blobs: Pick<BlobStore, "put">, metadata: boolean, source?: { file: string; offset: number }): NormalizeContext {
   const ctx: NormalizeContext = {
     maxInlineBytes: profile.config.capture.maxInlineBytes,
@@ -757,14 +859,14 @@ export function normalizeContext(profile: CaptureProfile, blobs: Pick<BlobStore,
       const tally = redactionTally();
       const clean = redactBlob(data, profile.redactor, tally);
       // Metadata mode keeps no content locally either: hand back the ref, store nothing.
-      const ref = metadata ? sha256Hex(clean) : await blobs.put(clean);
+      const ref = metadata ? sha256Hex(clean) : await putBlob(blobs, clean);
       noteBlobHits(ref, tally.kinds);
       return ref;
     },
     blobValue: async (value) => {
       const tally = redactionTally();
       const clean = redactBlobValue(profile.redactor, value, tally);
-      const ref = metadata ? sha256Hex(clean) : await blobs.put(clean);
+      const ref = metadata ? sha256Hex(clean) : await putBlob(blobs, clean);
       noteBlobHits(ref, tally.kinds);
       return ref;
     },
@@ -1487,6 +1589,8 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
   const ctx = normalizeContext(base, blobStore, metadata);
   const copies = copyFilter(index);
   const durations = toolDurationFiller(index);
+  // Sessions a hook call saw with CODING_SH_DISABLE set stay out of the import too.
+  const paused = readDisabledSessions(paths(env).spool);
   // Sessions to recompute: those that received new events, plus every session
   // of a file read for the first time (so sessions imported before file cursors
   // existed get recomputed once) or of an adapter that reports no files.
@@ -1715,6 +1819,10 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
         if (typeof ev === "string") {
           if (ev === "excluded") result.excluded++;
           else error({ message: `${adapter.id}: ${ev}` });
+          continue;
+        }
+        if (paused.has(ev.sessionId)) {
+          result.excluded++;
           continue;
         }
         if (await copies.isCopy(ev)) {

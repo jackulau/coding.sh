@@ -213,6 +213,31 @@ process.exit(await wrapRun({ cmd: process.execPath, args: [${JSON.stringify(chil
     }
   });
 
+  // A SIGINT in the first moments (before the child exists) used to kill the wrapper, and the session with it.
+  test("SIGINT during the start snapshot still records the session, and the command never starts", { skip: process.platform === "win32" && "SIGINT can't be caught on Windows" }, () => {
+    const dir = tmp("csh-early-");
+    const h = join(dir, "home");
+    const child = join(dir, "child.mjs");
+    writeFileSync(child, `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(join(dir, "started"))}, "1");\n`);
+    const driver = join(dir, "driver.ts");
+    writeFileSync(
+      driver,
+      `import { wrapRunDetailed } from ${WRAPPER};
+const run = wrapRunDetailed({ cmd: process.execPath, args: [${JSON.stringify(child)}], cwd: ${JSON.stringify(dir)} });
+process.kill(process.pid, "SIGINT"); // the handler is already in: the first await has not happened
+const r = await run;
+process.exit(r.signal === "SIGINT" ? r.exitCode : 1);
+`,
+    );
+    const r = spawnSync(process.execPath, [...tsNodeArgs(), driver], { env: { ...process.env, CODING_SH_HOME: h }, encoding: "utf8", timeout: 120_000 });
+    assert.equal(r.status, 130, r.stderr);
+    assert.equal(existsSync(join(dir, "started")), false);
+    const ls = lines("wrapper", h);
+    assert.deepEqual(ls.map((l) => l.event), ["session.start", "session.end"]);
+    assert.equal((ls[1]!.raw as { signal?: string; exitCode: number }).signal, "SIGINT");
+    assert.equal((ls[1]!.raw as { exitCode: number }).exitCode, 130);
+  });
+
   test("a wrapper that dies hard takes its child with it", { timeout: 150_000 }, async (t) => {
     const dir = tmp("csh-hard-");
     const pidFile = join(dir, "pid");

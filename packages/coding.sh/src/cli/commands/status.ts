@@ -4,6 +4,7 @@
 // since when ingest is stopped, then fails with the store's error.
 import { ingestStoppedField, readIngestStopped, spoolSize, type IngestStopped } from "../../core/ingest-health.ts";
 import { paths } from "../../core/paths.ts";
+import { maskStoreUrl } from "../../core/store-url.ts";
 import { autoIngest, pendingField, readIngest, oneLine, sessionJson, withContext } from "../common.ts";
 import { ago, bytes, CliError, plural, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -50,13 +51,15 @@ async function status(c: CommandContext): Promise<number> {
     const agents = [...new Set(recent.map((s) => s.agent))].sort();
     const spool = spoolSize(ctx.paths.spool);
     if (out.json) {
-      out.data({ home: ctx.paths.root, store: ctx.config.store.index, last24h: { sessions: recent.length, agents }, spool, latest: latest ? sessionJson(latest) : null, ...pendingField(backlog), ...ingestStoppedField(stopped) });
+      out.data({ home: ctx.paths.root, store: maskStoreUrl(ctx.config.store.index), last24h: { sessions: recent.length, agents }, spool, latest: latest ? sessionJson(latest) : null, ...pendingField(backlog), ...ingestStoppedField(stopped) });
       return 0;
     }
     out.row("Home", ctx.paths.root);
-    out.row("Store", ctx.config.store.index);
+    out.row("Store", maskStoreUrl(ctx.config.store.index));
     out.row("Last 24h", recent.length ? `${plural(recent.length, "session")} from ${agents.join(", ")}` : "No sessions");
-    out.row("Spool", `${plural(spool.files, "file")}, ${bytes(spool.bytes)}`);
+    // Files ingest has yet to read (the same count --json gives as pending.files).
+    const waiting = backlog.pendingFiles ? `, ${plural(backlog.pendingFiles, "file")} not yet ingested${backlog.indexing ? " (ingest running)" : ""}` : "";
+    out.row("Spool", `${plural(spool.files, "file")}, ${bytes(spool.bytes)}${waiting}`);
     ingestRow(out, stopped);
     if (latest) {
       out.print(`${latest.id}  ${latest.agent}  ${ago(latest.startedAt)}  ${oneLine(latest.title, 60)}`);

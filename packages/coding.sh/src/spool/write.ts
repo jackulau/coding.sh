@@ -17,19 +17,25 @@
 // Concurrency: every hook process appends to the same day file. Each line is
 // one write(2) on a descriptor opened with O_APPEND (FILE_APPEND_DATA on
 // Windows), which the kernel places at the end of the file as one unit, so
-// lines from concurrent hooks never interleave on a local filesystem. If the
-// file ends in a torn fragment (a partial write on ENOSPC or EIO left no
-// "\n"), the new line starts with "\n": the fragment becomes a line of its own
-// that readers skip, instead of swallowing the new line.
+// lines from concurrent hooks never interleave on a local filesystem. A write
+// cut short (ENOSPC, EIO) is truncated back off. If the file still ends in a torn
+// fragment (a killed writer left no "\n"), the new line starts with "\n": the
+// fragment becomes a line of its own that readers skip, instead of swallowing
+// the new line.
 //
 // Files are created 0600 and dirs 0700: payloads can hold prompts and secrets.
-import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, fstatSync, ftruncateSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { SpoolLine } from "../core/types.ts";
 import { paths } from "../core/paths.ts";
 
-/** A serialized line above this many bytes moves `raw` to a side file. */
-export const MAX_INLINE_LINE_BYTES = 256 * 1024;
+/**
+ * A serialized line above this many bytes (1024 with its newline, hook.sh's
+ * limit) moves `raw` to a side file. Ingest rewrites side files with their
+ * secrets redacted once it has stored their line (core/spool-scrub.ts); a day
+ * file's short inline lines are redacted in place once the day has passed.
+ */
+export const MAX_INLINE_LINE_BYTES = 1023;
 
 /** Agent ids become directory names: keep them path-safe. */
 export function safeAgentId(agent: string | undefined): string {
@@ -87,7 +93,22 @@ function append(file: string, dir: string, data: string): void {
       const last = Buffer.alloc(1);
       if (readSync(fd, last, 0, 1, size - 1) === 1 && last[0] !== 0x0a) buf = Buffer.concat([Buffer.from("\n"), buf]);
     }
-    for (let off = 0; off < buf.length; ) off += writeSync(fd, buf, off, buf.length - off);
+    let off = 0;
+    try {
+      while (off < buf.length) off += writeSync(fd, buf, off, buf.length - off);
+    } catch (e) {
+      // Cut short (ENOSPC, EIO): take the fragment back off, since hook.sh appends without
+      // looking at the file's end and its next line would be glued onto it. Only when the
+      // file ends where this write stopped: a line another hook appended since stays.
+      if (off > 0) {
+        try {
+          if (fstatSync(fd).size === size + off) ftruncateSync(fd, size);
+        } catch {
+          // the fragment stays; readers skip it as a torn line
+        }
+      }
+      throw e;
+    }
   } finally {
     try {
       closeSync(fd);
@@ -99,6 +120,47 @@ function append(file: string, dir: string, data: string): void {
 
 export function isDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.CODING_SH_DISABLE === "1" || env.CODING_SH_DISABLE === "true";
+}
+
+/**
+ * `spool/disabled-sessions`: one session id per line, from hook calls made while
+ * CODING_SH_DISABLE was set (hook.sh writes it too). Ingest and backfill leave
+ * those sessions out, so a paused session does not come back from its transcript.
+ */
+export function disabledSessionsFile(env: NodeJS.ProcessEnv = process.env): string {
+  return join(paths(env).spool, "disabled-sessions");
+}
+
+const SESSION_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
+
+/** Payload keys that hold the session id, by agent: Claude Code, Codex, Gemini (session_id), Cursor (conversation_id), Copilot (sessionId), Antigravity (conversationId). */
+const SESSION_KEYS = ["session_id", "conversation_id", "sessionId", "conversationId"] as const;
+
+/** The payload's session id (the first of SESSION_KEYS it has), when it is a plain id. */
+export function payloadSessionId(raw: unknown, text: string): string | undefined {
+  let id: unknown;
+  if (raw && typeof raw === "object") id = SESSION_KEYS.map((k) => (raw as Record<string, unknown>)[k]).find((v) => v !== undefined);
+  // Too large to parse: the first one in the text, as hook.sh reads it.
+  else id = /"(?:session_id|conversation_id|sessionId|conversationId)"\s*:\s*"([^"\\]{1,128})"/.exec(text.slice(0, 65536))?.[1];
+  return typeof id === "string" && SESSION_ID_RE.test(id) ? id : undefined;
+}
+
+/** Appends a session id to spool/disabled-sessions. Throws on I/O errors; the hook logs them. */
+export function recordDisabledSession(id: string, env: NodeJS.ProcessEnv = process.env): void {
+  if (!SESSION_ID_RE.test(id)) return;
+  const p = paths(env);
+  append(disabledSessionsFile(env), p.spool, id + "\n");
+}
+
+/** The ids in `<spoolDir>/disabled-sessions` (empty when there is none). */
+export function readDisabledSessions(spoolDir: string): Set<string> {
+  let text: string;
+  try {
+    text = readFileSync(join(spoolDir, "disabled-sessions"), "utf8");
+  } catch {
+    return new Set();
+  }
+  return new Set(text.split("\n").map((l) => l.trim()).filter((l) => SESSION_ID_RE.test(l)));
 }
 
 export interface AppendOptions {

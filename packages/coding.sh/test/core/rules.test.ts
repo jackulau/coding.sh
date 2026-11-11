@@ -37,7 +37,7 @@ describe("extractDirectives", () => {
     assert.equal(one("You MUST call `flushAll` when done").conditional, true);
   });
 
-  it("skips prose, frontmatter, fenced code and stoplisted or short tokens", () => {
+  it("skips prose, frontmatter, fenced code, stoplisted tokens and short tokens that are not commands", () => {
     const text = [
       "---",
       "name: x",
@@ -45,7 +45,7 @@ describe("extractDirectives", () => {
       "---",
       "This project uses `vitest` for tests.",
       "Always keep `src` tidy.",
-      "Run `ls` first.",
+      "Always keep `x` short.",
       "Use the test runner.",
       "```sh",
       "# Always run `npm run lint`",
