@@ -37,14 +37,20 @@ const title = `v${r.version}`;
 const top = [...r.areas].sort((a, b) => b.entries.length - a.entries.length).slice(0, 3).map((a) => a.name);
 const touched = top.length > 1 ? `${top.slice(0, -1).join(", ")} and ${top.at(-1)}` : top[0];
 const changes = `${r.count} ${r.count === 1 ? "change" : "changes"}${r.areas.length === 1 ? ` to ${touched}` : touched ? `, most to ${touched}` : ""}.`;
-const summary = r.summaryText || `What changed in coding.sh ${title}.`;
+// A version still being written ("Unreleased" in CHANGELOG.md) says so.
+const unreleased = !/^\d/.test(r.date);
+const summary = r.summaryText || (unreleased ? `Unreleased changes in coding.sh ${title}${older ? `, since v${older.version}` : ""}.` : `What changed in coding.sh ${title}.`);
 const pageNote = r.pages > 1 ? `page ${page} of ${r.pages}` : "";
 const areas = r.areas.filter((a) => a.page === page);
 // Later pages say which areas they hold, so each page has its own description.
 const names = areas.map((a) => a.name);
 const held = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0];
 const description = clampDescription(
-  page > 1 ? `What changed in coding.sh ${title}, page ${page} of ${r.pages}: every change to ${held}, one line each.` : summary.length < 100 ? `${summary} ${changes}` : summary,
+  page > 1
+    ? `What changed in coding.sh ${title}${unreleased ? " (unreleased)" : ""}, page ${page} of ${r.pages}: every change to ${held}, one line each.`
+    : summary.length < 100
+      ? `${summary} ${changes}`
+      : summary,
 );
 const prev =
   page > 1
