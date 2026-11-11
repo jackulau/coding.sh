@@ -127,17 +127,16 @@ trace.set_tracer_provider(provider)
 
 <DocsLayout>
   <p>
-    <code>coding.sh collector</code> (alias <code>otel</code>) runs a local OTLP/HTTP receiver. Anything that exports OpenTelemetry traces or
-    logs can send them there, and each run shows up as a session next to your coding-agent sessions.
+    <code>coding.sh collector</code> (alias <code>otel</code>) runs a local OTLP/HTTP receiver. Anything that exports OpenTelemetry traces
+    or logs can send to it, and each run shows up as a session next to your coding-agent sessions.
   </p>
   <p>
-    For a step-by-step path that also covers the TypeScript and Python SDKs and runs evals on the traces, see
-    <a href="/docs/how-to/trace-your-agent">Trace your own agent</a>.
+    For a step-by-step path that also covers the SDKs and evals, see <a href="/docs/how-to/trace-your-agent">Trace your own agent</a>.
   </p>
 
   <h2 id="start">Start the receiver</h2>
   <Code code={startReal} />
-  <p>It runs in the foreground. The environment that points an exporter at it goes to stdout; status goes to stderr.</p>
+  <p>It runs in the foreground. The environment for an exporter goes to stdout; status goes to stderr.</p>
   <Terminal title="coding.sh collector" label="Output of coding.sh collector">
     <pre set:html={COLLECTOR} />
   </Terminal>
@@ -147,49 +146,11 @@ trace.set_tracer_provider(provider)
     <li>It binds to 127.0.0.1. <code>--host</code> changes the interface and <code>--port 0</code> picks any free port.</li>
     <li>Secrets are redacted before anything is stored, the same as for hook events.</li>
   </ul>
-
-  <h2 id="sessions">How runs become sessions</h2>
   <p>
-    One trace is one session. When spans carry <code>gen_ai.conversation.id</code> or <code>session.id</code> (AI SDK:
-    <code>metadata.sessionId</code>), every trace with that id becomes a turn of one session. Spans arrive out of order, so after each batch the
-    touched sessions are rebuilt from all their events. Event ids derive from the trace and span ids, so exporter retries insert nothing.
+    The receiver reads OpenTelemetry GenAI conventions (<code>gen_ai.*</code>), OpenInference (<code>openinference.span.kind</code>,
+    <code>llm.*</code>, <code>tool.*</code>), the Vercel AI SDK (<code>ai.*</code>), and Claude Code, Codex and older Gemini CLI log events
+    (<code>claude_code.api_request</code> and similar).
   </p>
-  <p>The receiver understands these attribute dialects:</p>
-  <ul>
-    <li>OpenTelemetry GenAI semantic conventions (<code>gen_ai.*</code>)</li>
-    <li>OpenInference (<code>openinference.span.kind</code>, <code>llm.*</code>, <code>tool.*</code>)</li>
-    <li>Vercel AI SDK (<code>ai.*</code>)</li>
-    <li>Claude Code, Codex and older Gemini CLI log events (<code>claude_code.api_request</code> and similar)</li>
-  </ul>
-  <p>
-    Model-call spans become <code>llm.call</code> events with duration, model and token usage; tool spans become
-    <code>tool.start</code>/<code>tool.end</code>; nested agent spans become subagents with their own child session. Usage is read only from
-    model-call spans, because agent spans usually repeat their children's totals.
-  </p>
-  <p>The receiver also reads these attributes:</p>
-  <ul>
-    <li>
-      Reasoning tokens (<code>gen_ai.usage.reasoning.output_tokens</code>, AI SDK <code>reasoningTokens</code>, Codex
-      <code>reasoning_token_count</code>, Gemini CLI <code>thoughts_token_count</code>) go to <code>payload.reasoningTokens</code> on the
-      <code>llm.call</code>. They are part of the output tokens, so usage totals do not change. A reported cache read or write of 0 is left out.
-    </li>
-    <li>
-      Skills: <code>gen_ai.skill.name</code> on a tool span sets <code>payload.skill</code> (with <code>skillSource</code> and
-      <code>skillResource</code>), and a script's <code>gen_ai.skill.script.exit_code</code> sets <code>exitCode</code> on
-      <code>tool.end</code>. Claude Code's <code>skill_activated</code> and Codex's <code>codex.skill_invocation</code> record the skill as
-      invoked. Each skill becomes a <code>skill:&lt;name&gt;</code> tag on the session. Placeholder names such as
-      <code>custom_skill</code> are skipped.
-    </li>
-    <li>
-      Compaction: <code>gen_ai.conversation.compacted</code> adds one <code>context.compact</code> event per session. Claude Code's
-      <code>compaction</code> event keeps <code>tokensBefore</code>, <code>tokensAfter</code>, <code>ok</code> and the duration.
-    </li>
-    <li>
-      Agents: the resource's <code>gen_ai.main_agent.name</code> names the agent, ahead of <code>service.name</code>. Claude Code's
-      <code>agent_id</code> tags a subagent's events and <code>parent_agent_id</code> is kept as <code>payload.parentAgentId</code>. A Codex
-      subagent's <code>codex.agent_response</code> links its thread to the parent thread (<code>parent.conversation.id</code>).
-    </li>
-  </ul>
 
   <h2 id="claude-code">Claude Code and the Claude Agent SDK</h2>
   <p>The Agent SDK inherits Claude Code's environment variables.</p>
@@ -220,29 +181,82 @@ trace.set_tracer_provider(provider)
   <Code code={pythonEnv} />
   <Code title="python" code={pythonCode} />
 
-  <h2 id="grouping">Sessions and eval runs</h2>
-  <ul>
-    <li>
-      Group traces into one multi-turn session by setting <code>gen_ai.conversation.id</code> (or <code>session.id</code>) on spans. With
-      OpenInference: <code>with using_session("chat-123"):</code>.
-    </li>
-    <li>Tag eval runs with <code>OTEL_RESOURCE_ATTRIBUTES=coding_sh.run_id=&lt;id&gt;</code>.</li>
-    <li>
+  <h2 id="grouping">Group traces into one session</h2>
+  <p>
+    One trace is one session. Set <code>gen_ai.conversation.id</code> or <code>session.id</code> on spans (AI SDK:
+    <code>metadata.sessionId</code>), and every trace with that id becomes a turn of one session. With OpenInference:
+    <code>with using_session("chat-123"):</code>.
+  </p>
+  <p>Tag eval runs with <code>OTEL_RESOURCE_ATTRIBUTES=coding_sh.run_id=&lt;id&gt;</code>.</p>
+
+  <details class="more" id="sessions">
+    <summary>How spans become sessions</summary>
+    <p>
       Spans from <a href="https://github.com/vercel/eve">eve</a> agents are recognized and enriched.
-    </li>
-  </ul>
+    </p>
+    <p>
+      Model-call spans become <code>llm.call</code> events with duration, model and token usage. Tool spans become
+      <code>tool.start</code>/<code>tool.end</code>. Nested agent spans become subagents with their own child session. Usage is read only from
+      model-call spans, because agent spans usually repeat their children's totals.
+    </p>
+    <p>
+      Spans arrive out of order, so after each batch the touched sessions are rebuilt from all their events. Event ids derive from the trace
+      and span ids, so exporter retries insert nothing.
+    </p>
+    <div class="doc-table">
+      <table>
+        <thead><tr><th>Attribute</th><th>What it sets</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>gen_ai.usage.reasoning.output_tokens</code>, AI SDK <code>reasoningTokens</code>, Codex <code>reasoning_token_count</code>, Gemini CLI <code>thoughts_token_count</code></td>
+            <td><code>payload.reasoningTokens</code> on the <code>llm.call</code>. Part of the output tokens, so totals do not change.</td>
+          </tr>
+          <tr>
+            <td><code>gen_ai.skill.name</code> on a tool span</td>
+            <td><code>payload.skill</code>, with <code>skillSource</code> and <code>skillResource</code>.</td>
+          </tr>
+          <tr>
+            <td><code>gen_ai.skill.script.exit_code</code></td>
+            <td><code>exitCode</code> on <code>tool.end</code>.</td>
+          </tr>
+          <tr>
+            <td>Claude Code <code>skill_activated</code>, Codex <code>codex.skill_invocation</code></td>
+            <td>The skill, recorded as invoked.</td>
+          </tr>
+          <tr>
+            <td><code>gen_ai.conversation.compacted</code></td>
+            <td>One <code>context.compact</code> event per session.</td>
+          </tr>
+          <tr>
+            <td>Claude Code <code>compaction</code></td>
+            <td>A <code>context.compact</code> event with <code>tokensBefore</code>, <code>tokensAfter</code>, <code>ok</code> and the duration.</td>
+          </tr>
+          <tr>
+            <td><code>gen_ai.main_agent.name</code> on the resource</td>
+            <td>The agent name, ahead of <code>service.name</code>.</td>
+          </tr>
+          <tr>
+            <td>Claude Code <code>agent_id</code>, <code>parent_agent_id</code></td>
+            <td>Tags a subagent's events. The parent is kept as <code>payload.parentAgentId</code>.</td>
+          </tr>
+          <tr>
+            <td>Codex <code>codex.agent_response</code></td>
+            <td>Links a subagent's thread to the parent thread (<code>parent.conversation.id</code>).</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Each skill becomes a <code>skill:&lt;name&gt;</code> tag on the session. Placeholder names such as <code>custom_skill</code> are skipped.
+      A reported cache read or write of 0 is left out.
+    </p>
+  </details>
 
   <h2 id="forward">Forward and sinks</h2>
-  <ul>
-    <li>
-      Configured <a href="/docs/storage#sinks">sinks</a> mirror events received over OTLP, both in the local <code>coding.sh collector</code>
-      and in <code>coding.sh serve</code>.
-    </li>
-    <li>
-      <code>coding.sh serve</code> can forward every trace it commits to another OTLP collector: set <code>CODING_SH_FORWARD_URL</code>. Spans keep
-      their trace and span ids and gain <code>coding_sh.project</code>. In <code>metadata</code> mode, messages, tool arguments and results,
-      <code>input.value</code> and <code>output.value</code> are not sent.
-      <a href="https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md#19-forward-and-sinks">Forward and sinks</a>.
-    </li>
-  </ul>
+  <p>
+    Configured <a href="/docs/storage#sinks">sinks</a> mirror events received over OTLP, in both <code>coding.sh collector</code> and
+    <code>coding.sh serve</code>. <code>coding.sh serve</code> can also forward every trace it commits to another OTLP collector: set
+    <code>CODING_SH_FORWARD_URL</code>. See
+    <a href="https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md#19-forward-and-sinks">Forward and sinks</a>.
+  </p>
 </DocsLayout>

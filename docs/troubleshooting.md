@@ -69,9 +69,8 @@ Work down this list:
 6. **Are you reading another store?** With `--store` or `CODING_SH_STORE_URL` set, commands skip the
    automatic ingest of your local spool. Run `coding.sh ingest --store <url>` to push it, or unset
    the variable.
-7. **Is it older than `init`?** `init` imports past transcripts, for up to 8 seconds and then in
-   the background, unless you passed `--no-import`. Import them yourself with
-   `coding.sh ingest --backfill` (add `--since 30d` for the last 30 days only). Re-running it adds
+7. **Is it older than `init`?** `init` imports past transcripts unless you passed `--no-import`.
+   Run `coding.sh ingest --backfill` (add `--since 30d` for the last 30 days). Re-running it adds
    nothing new.
 
 ## Your agent's traces don't show up
@@ -94,9 +93,9 @@ For an agent sending over OpenTelemetry or the SDK:
 
 ## Data looks incomplete
 
-- **No model latency or tokens.** Hooks see tool calls, not model calls. Most adapters recover
-  model calls from the agent's transcript after the session ends. For measured latency from Claude
-  Code, turn on its OpenTelemetry export and run `coding.sh collector`.
+- **No model latency or tokens.** Hooks see tool calls, not model calls. Most adapters read model
+  calls from the transcript after the session ends. For Claude Code latency, run `coding.sh collector` and
+  turn on its [OpenTelemetry export](https://coding.sh/docs/otel#claude-code).
 - **No cost.** Most coding-agent transcripts carry tokens, not dollars. See
   [Find your most expensive sessions](how-to/expensive-sessions.md#where-cost-comes-from).
 - **Prompts and tool output are missing.** `capture.mode` is `metadata`, or a repo's
@@ -105,9 +104,9 @@ For an agent sending over OpenTelemetry or the SDK:
   stored. See [Configuration](reference/config.md#capture).
 - **Cursor headless runs have no prompt or reply.** `cursor-agent -p` does not fire the prompt and
   response hooks. This is a Cursor limitation.
-- **`eval new` fails with `has no repo state`.** The session did not run inside a git repository,
-  so there is no start state to replay. Record it with `coding.sh run --` from inside the repository.
-  See [Turn a session into an eval](how-to/session-to-eval.md).
+- **`eval new` fails with `has no repo state`.** The session ran outside a git repository, so
+  there is nothing to replay. Record it with `coding.sh run --` inside the repository. See
+  [Turn a session into an eval](how-to/session-to-eval.md).
 
 ## Check what the adapters read
 
@@ -130,12 +129,12 @@ coding.sh doctor --conformance --json               # one JSON document with eve
 1/2 agents conform
 ```
 
-It only reads. Blobs are hashed and dropped, the adapters read SQLite sources from a temp copy,
-and the coding.sh store is not opened, so nothing is stored. Agents with no transcript files changed
-since `--since` are left out unless you name them with `--agent`. Each agent stops after
-`--max-events` events (200,000 by default) or 60 seconds; the sessions still being read then skip
-the checks that need a whole session. Reports hold ids, counts and short details, never prompt,
-reply or tool text.
+It only reads: nothing is stored, and reports hold ids, counts and short details, never prompt,
+reply or tool text. Agents with no transcript changed since `--since` are left out unless you name
+them with `--agent`.
+
+Each agent stops after `--max-events` events (200,000 by default) or 60 seconds. Sessions still
+being read then skip the checks that need a whole session.
 
 | Rule | What it means |
 |---|---|
@@ -157,36 +156,28 @@ reply or tool text.
 | `backfill-threw` | The backfill threw instead of skipping what it could not read. |
 
 A tool start with no end is counted, not reported: the call was cancelled or is still running.
-The F numbers name the bugs in `docs/research/round-1-self.md` that each rule was written to
-catch. doctor exits 1 when any agent has a violation. Please report one as an issue with the
-`--json` output for that agent.
+The F numbers name the bugs in `docs/research/round-1-self.md` each rule was written to catch.
+doctor exits 1 when any agent has a violation. Please report one as an issue with the `--json`
+output for that agent.
 
 ## Old sessions show doubled counts
 
 Sessions captured before an upgrade keep the rows the older coding.sh parsed. When an adapter's
 parsing changes, coding.sh re-parses that agent's stored sessions in the background, from their
-transcripts and from the hook lines still in the spool. This runs on the next session end, read
-or viewer start after the upgrade. Each session is swapped in one step, so reads never see it half
-done. The re-parse holds the ingest lock for at most a second at a time, and between those holds it
-ingests the hook lines that arrived meanwhile, so a read made while it runs doesn't wait for it and
-new sessions keep showing up. Sessions are marked as they are rebuilt, so a re-parse that is cut
-short (the laptop sleeps, the process is killed) picks up where it stopped. When an upgrade changes
-how stats and flags are worked out (a `test-tamper` or `skill:` fix, say), the same background run
-works them out again for every stored session from the rows it already has. It does this once after
-a switch to any other build of coding.sh (another branch or checkout), and a session's saved
-progress from another build is dropped and worked out again from its events.
+transcripts and the hook lines still in the spool. It starts on the next session end, read or
+viewer start.
 
-- **Do it now.** `coding.sh ingest --rebuild` re-parses every session. Add `--agent pi` for one
-  agent. It prints how many sessions it re-parsed and how many it kept.
-- **Some sessions were kept.** A session whose transcript is gone, and whose hook lines gc removed
-  (`retention.keepSpoolDays`, 7 days by default), keeps its rows. Rows that repeat another row
-  of the same call or prompt are still removed. `coding.sh ingest --rebuild --json` lists each
-  kept session with the reason.
-- **Some sessions were removed.** A session an older coding.sh stored from a copy of another
-  session's transcript (a Claude Code subagent copied into a session that resumed its workflow run,
-  or into a fork) is deleted with its events when the session that wrote it is stored, so its calls
-  and cost count once. A copy that also has rows from hooks, OTel or the SDK, or whose owner is not
-  in the index, is kept. `coding.sh ingest --rebuild` prints how many it removed.
+Reads and new captures keep working while it runs, and each session is swapped in one step. A
+re-parse that is cut short picks up where it stopped. An upgrade that changes stats or flags works
+them out again the same way, from the rows already stored.
+
+- **Do it now.** `coding.sh ingest --rebuild` re-parses every session (`--agent pi` for one agent).
+  It prints how many it re-parsed, kept and removed.
+- **Some sessions were kept.** A session whose transcript and spool lines are both gone keeps its
+  rows, minus duplicates. `coding.sh ingest --rebuild --json` lists each one with the reason.
+- **Some sessions were removed.** A session stored from a copy of another session's transcript (a
+  Claude Code subagent copied into a fork) is deleted, so its cost counts once. A copy with hook,
+  OTel or SDK rows is kept.
 - **Nothing happens.** Re-parse needs the local SQLite index (or a store plugin that supports it),
   and `CODING_SH_NO_AUTO_INGEST=1` turns off the background run. `--rebuild` still works.
 
@@ -197,19 +188,16 @@ leaves every older install that shares it unable to open it (`uses index schema 
 coding.sh only knows up to v8`), and capture stops. Two checks keep that from happening by
 accident:
 
-- **The store has an owner.** It is the coding.sh that `~/.coding.sh/bin/cli-path` names: `init`
-  and `update` write that file, and hooks start that CLI. When another install finds migrations
-  to run (a second global install, an `npx coding.sh@<version>`, a build from source), it stops
-  with `store_owned`, names both versions, and changes nothing. `coding.sh upgrade-store`
-  migrates the store and points the hooks at the install you ran it from. The owner itself, and
-  an upgrade in place (`coding.sh update`, `npm i -g coding.sh`), migrate as before.
-- **A source checkout doesn't open the default home.** coding.sh run from a git checkout (`node
-  src/cli/main.ts`, or a `dist/` built inside it) stops with `source_checkout` unless
-  `CODING_SH_HOME`, `--store` or `CODING_SH_STORE_URL` names a store. Set
-  `CODING_SH_HOME=$(mktemp -d)` for a throwaway home, or `CODING_SH_DEV_REAL_STORE=1` to use the
-  real one. An `npm link` of the checkout counts as an install.
+- **The store has an owner**: the coding.sh that `~/.coding.sh/bin/cli-path` names. Another install
+  that would migrate it stops with `store_owned` and changes nothing. Run `coding.sh upgrade-store`
+  from that install to migrate it and point the hooks there.
+- **A source checkout doesn't open the default home.** It stops with `source_checkout` unless
+  `CODING_SH_HOME`, `--store` or `CODING_SH_STORE_URL` names a store. Use
+  `CODING_SH_HOME=$(mktemp -d)`, or `CODING_SH_DEV_REAL_STORE=1` for the real one.
 
-If a store was already migrated past your install, update that install (`coding.sh update`).
+An upgrade in place (`coding.sh update`, `npm i -g coding.sh`) migrates as before, and an `npm link`
+of a checkout counts as an install. If a store was already migrated past your install, update that
+install (`coding.sh update`).
 
 ## The first command after an upgrade is slow
 
