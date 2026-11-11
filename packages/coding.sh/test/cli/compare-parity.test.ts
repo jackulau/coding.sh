@@ -9,6 +9,7 @@ import { after, before, describe, test } from "node:test";
 import { diffParity, readPage, type ParitySide } from "../../src/cli/commands/compare-parity.ts";
 import { tmpEnv, type TmpEnv } from "../adapters/_helpers.ts";
 import { spawn } from "node:child_process";
+import { main } from "../../src/cli/main.ts";
 import { CLI, cli as cliSync } from "../query/_seed.ts";
 
 /** The CLI, run without blocking this process: the stub servers live here and must keep answering. */
@@ -152,9 +153,15 @@ describe("compare --parity, edge cases", () => {
     assert.equal(readPage("<title>Docs &mdash; caf&eacute; &rsquo;s &#8212;</title>").title, "Docs \u2014 caf\u00e9 \u2019s \u2014");
   });
 
-  test("an empty page argument is a usage error (exit 2), a command that never prints is exit 2", () => {
-    assert.equal(cliSync(["compare", "--parity", "", "x"]).status, 2);
-    assert.equal(cliSync(["compare", "--parity", "false", "false"]).status, 2);
+  test("an empty page argument is a usage error (exit 2), a command that never prints is exit 2", async () => {
+    // In process, so the empty argument reaches the command as written on every platform
+    // (a Windows command line has no portable spelling of an empty argument).
+    const env = { ...process.env, CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1", NO_COLOR: "1" };
+    assert.equal(await main(["compare", "--parity", "", "x"], env), 2);
+    // `false` is no command on Windows; node is on PATH wherever the tests run.
+    const quiet = 'node -e "process.exit(3)"';
+    const r = cliSync(["compare", "--parity", quiet, quiet]);
+    assert.equal(r.status, 2, r.stdout + r.stderr);
   });
 });
 
