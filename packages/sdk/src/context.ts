@@ -129,7 +129,8 @@ function clean(p: Record<string, unknown>): Record<string, unknown> {
   return p;
 }
 
-function emit(span: SpanState, kind: EventKind, ts: number, payload: Record<string, unknown>, extra: Partial<SdkEvent> = {}): SdkEvent {
+/** Queues one event. True when it was queued. */
+function emit(span: SpanState, kind: EventKind, ts: number, payload: Record<string, unknown>, extra: Partial<SdkEvent> = {}): boolean {
   const e: SdkEvent = {
     v: 0,
     id: extra.id ?? uuid(),
@@ -145,8 +146,7 @@ function emit(span: SpanState, kind: EventKind, ts: number, payload: Record<stri
   if (span.trace.conversation) e.turnId = span.trace.traceId;
   for (const [k, v] of Object.entries(extra)) if (v !== undefined && k !== "id") (e as unknown as Record<string, unknown>)[k] = v;
   if (e.durationMs !== undefined) e.durationMs = Math.max(0, Math.round(e.durationMs * 1000) / 1000);
-  enqueue("event", e);
-  return e;
+  return enqueue("event", e);
 }
 
 // ---------------------------------------------------------------- traces

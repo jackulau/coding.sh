@@ -101,8 +101,9 @@ export class Transport {
     return { queued: this.q.length, sent: this.sent, dropped: this.dropped, failed: this.failed };
   }
 
-  enqueue(kind: ItemKind, value: unknown): void {
-    if (!this.enabled) return;
+  /** True when the item was queued; false when it was dropped or the SDK is off or shut down. */
+  enqueue(kind: ItemKind, value: unknown): boolean {
+    if (!this.enabled) return false;
     if (this.q.length >= this.cfg.maxQueue) {
       this.dropped++;
       const now = Date.now();
@@ -110,24 +111,25 @@ export class Transport {
         this.lastDropWarn = now;
         console.warn(`[coding.sh] queue full (${this.cfg.maxQueue} events), dropping new events`);
       }
-      return;
+      return false;
     }
     let json: string;
     try {
       json = JSON.stringify(value);
     } catch {
       this.dropped++;
-      return;
+      return false;
     }
     const bytes = enc.encode(json).length;
     if (bytes > MAX_BATCH_BYTES - 1024) {
       this.dropped++;
       this.warnOnce("too-large", "[coding.sh] dropped an event larger than 4 MiB");
-      return;
+      return false;
     }
     this.q.push({ kind, json, bytes });
     if (this.q.length >= this.cfg.maxBatch) this.kick();
     else this.schedule();
+    return true;
   }
 
   private schedule(): void {

@@ -146,6 +146,31 @@ test("a full queue drops new events, counts them and warns at most once a minute
   assert.equal(stats().sent, 10);
 });
 
+test("enqueue says whether the item was queued", async () => {
+  const ev = (id: string, extra: Record<string, unknown> = {}) => ({ v: 0, id, sessionId: "s", kind: "span", ts: 1, payload: extra });
+  const warns: string[] = [];
+  const orig = console.warn;
+  console.warn = (m: string) => void warns.push(m);
+  try {
+    const off = new Transport(resolveConfig({}, {}));
+    assert.equal(off.enqueue("event", ev("off")), false, "no URL");
+    assert.equal(new Transport(resolveConfig({ url: serve.url, disabled: true }, {})).enqueue("event", ev("disabled")), false, "disabled");
+
+    const t = new Transport(resolveConfig({ url: serve.url, key: KEY, flushIntervalMs: 60_000, maxQueue: 2 }, {}));
+    assert.equal(t.enqueue("event", ev("a")), true);
+    assert.equal(t.enqueue("event", ev("big", { n: 1n })), false, "not serializable");
+    assert.equal(t.enqueue("event", ev("huge", { text: "x".repeat(4 * 1024 * 1024) })), false, "larger than a batch");
+    assert.equal(t.enqueue("event", ev("b")), true);
+    assert.equal(t.enqueue("event", ev("c")), false, "the queue is full");
+    assert.deepEqual(t.stats(), { queued: 2, sent: 0, dropped: 3, failed: 0 });
+    assert.equal(await t.close(2000), true);
+    assert.equal(t.enqueue("event", ev("d")), false, "closed");
+    assert.equal(t.stats().dropped, 3, "an event after close() is not counted as dropped");
+  } finally {
+    console.warn = orig;
+  }
+});
+
 test("server down: flush and close are bounded, the batch is counted failed once, never throws", async () => {
   const t = new Transport(resolveConfig({ url: "http://127.0.0.1:9", flushIntervalMs: 10 }, {}));
   const warns: string[] = [];

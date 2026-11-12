@@ -61,8 +61,9 @@ export function current(): State {
 
 export const config = (): Config => current().cfg;
 
-export function enqueue(kind: ItemKind, value: unknown): void {
-  current().transport.enqueue(kind, value);
+/** Queues one item. True when it was queued; false when it was dropped or the SDK is off or shut down. */
+export function enqueue(kind: ItemKind, value: unknown): boolean {
+  return current().transport.enqueue(kind, value);
 }
 
 /** True when events would be sent anywhere (a URL is configured and the SDK is on). */
