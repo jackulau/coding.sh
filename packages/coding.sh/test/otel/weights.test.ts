@@ -1,11 +1,11 @@
-// A weight edit over OTLP: a span or a log record named `weights.edit` with coding_sh.weights.*
-// attributes becomes the notification the SDKs' weights_edit helpers send, so the session gets
-// the same stat, tag and line whichever way the edit arrived.
+// A weight edit and a weights checkpoint over OTLP: a span or a log record named `weights.edit`
+// or `weights.checkpoint` with coding_sh.weights.* attributes becomes the notification the SDKs'
+// helpers send, so the session gets the same stat, tag and line whichever way it arrived.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { buildSession } from "../../src/core/sessions.ts";
-import { isWeightsEdit, weightsEditText } from "../../src/core/weights.ts";
+import { isWeightsCheckpoint, isWeightsEdit, weightsCheckpointText, weightsEditText } from "../../src/core/weights.ts";
 import { decodeLogsJson, decodeTraceJson } from "../../src/otel/json.ts";
 import { type MapContext, mapLogs, mapTraces, TraceSessionMap } from "../../src/otel/map.ts";
 import { iAttr, otlpLogs, otlpSpan, otlpTraces, sAttr } from "./_encode.ts";
@@ -86,5 +86,68 @@ describe("a weights.edit log record", () => {
     const req = otlpLogs("trainer", "edited one tensor", [sAttr("event.name", "weights.edit"), iAttr("coding_sh.weights.changed", 12)]);
     const events = (await mapLogs(decodeLogsJson(req), ctx())).events;
     assert.deepEqual(events.map((e) => e.payload), [{ kind: "weights.edit", changed: 12 }]);
+  });
+});
+
+const FILE = `58899f90572c${"0".repeat(52)}`;
+const FILE_BASE = `0496e5111097${"f".repeat(52)}`;
+const SAVED: J[] = [sAttr("coding_sh.weights.sha256", FILE.toUpperCase()), sAttr("coding_sh.weights.base_sha256", FILE_BASE), sAttr("coding_sh.weights.note", "after layer 3")];
+const SAVED_PAYLOAD = { kind: "weights.checkpoint", sha256: FILE, baseSha256: FILE_BASE, note: "after layer 3" };
+const checkpoints = (events: AgentEvent[]) => events.filter(isWeightsCheckpoint);
+
+describe("a weights.checkpoint span", () => {
+  it("under a parent span becomes the checkpoint notification, with the hash in lower case", async () => {
+    const events = await spans(
+      otlpSpan(TRACE, "1111111111111111", undefined, "edit run", [], 0, 5000),
+      otlpSpan(TRACE, "2222222222222222", "1111111111111111", "weights.edit", FULL, 1000, 1200),
+      otlpSpan(TRACE, "3333333333333333", "1111111111111111", "weights.checkpoint", SAVED, 2000, 2000),
+    );
+    const own = events.filter((e) => e.spanId === "3333333333333333");
+    assert.deepEqual(own.map((e) => e.kind), ["notification"]);
+    assert.deepEqual(own[0]!.payload, SAVED_PAYLOAD);
+    assert.equal(weightsCheckpointText(own[0]!.payload), "checkpoint 58899f90572c ← 0496e5111097");
+    const s = buildSession(events);
+    assert.deepEqual(s.stats.weightEdits, { events: 1, tensors: 1, weightsChanged: 1204, checkpoints: [FILE] });
+    assert.ok(s.flags.includes("weights:edited") && s.flags.includes("weights:checkpoint"));
+  });
+
+  it("as the root span of its trace still records the checkpoint", async () => {
+    const events = await spans(otlpSpan(TRACE, "1111111111111111", undefined, "weights.checkpoint", SAVED, 0, 0));
+    assert.deepEqual(checkpoints(events).map((e) => e.payload), [SAVED_PAYLOAD]);
+    assert.ok(events.some((e) => e.kind === "session.start"), "the root span still opens the session");
+    assert.deepEqual(buildSession(events).stats.weightEdits, { events: 0, weightsChanged: 0, checkpoints: [FILE] });
+  });
+
+  it("keeps the hash alone when there is no base, and leaves out a base that is not a SHA-256", async () => {
+    const one = async (attrs: J[]) => (await spans(otlpSpan(TRACE, "1111111111111111", undefined, "run", [], 0, 9), otlpSpan(TRACE, "3333333333333333", "1111111111111111", "weights.checkpoint", attrs, 1, 2))).find((e) => e.spanId === "3333333333333333")!.payload;
+    assert.deepEqual(await one([sAttr("coding_sh.weights.sha256", FILE)]), { kind: "weights.checkpoint", sha256: FILE });
+    assert.deepEqual(await one([sAttr("coding_sh.weights.sha256", FILE), sAttr("coding_sh.weights.base_sha256", "abc")]), { kind: "weights.checkpoint", sha256: FILE });
+  });
+
+  it("without a well-formed sha256 is not read as a checkpoint", async () => {
+    for (const attrs of [[], [sAttr("coding_sh.weights.sha256", "abc")], [sAttr("coding_sh.weights.base_sha256", FILE_BASE)], [iAttr("coding_sh.weights.sha256", 7)]]) {
+      const events = await spans(otlpSpan(TRACE, "1111111111111111", undefined, "run", [], 0, 9), otlpSpan(TRACE, "3333333333333333", "1111111111111111", "weights.checkpoint", attrs, 1, 2));
+      assert.deepEqual(checkpoints(events), [], JSON.stringify(attrs));
+      assert.equal(Object.hasOwn(buildSession(events).stats, "weightEdits"), false);
+    }
+  });
+
+  it("a span with another name is not a checkpoint, whatever its attributes", async () => {
+    const events = await spans(otlpSpan(TRACE, "1111111111111111", undefined, "run", [], 0, 9), otlpSpan(TRACE, "4444444444444444", "1111111111111111", "weights.save", SAVED, 1, 2));
+    assert.deepEqual(checkpoints(events), []);
+  });
+});
+
+describe("a weights.checkpoint log record", () => {
+  it("becomes the same notification", async () => {
+    const events = (await mapLogs(decodeLogsJson(otlpLogs("trainer", "weights.checkpoint", [sAttr("session.id", "run-7"), ...SAVED])), ctx())).events;
+    assert.deepEqual(events.map((e) => [e.kind, e.sessionId]), [["notification", "run-7"]]);
+    assert.deepEqual(events[0]!.payload, SAVED_PAYLOAD);
+  });
+
+  it("named by its event.name attribute too", async () => {
+    const req = otlpLogs("trainer", "saved the edited file", [sAttr("event.name", "weights.checkpoint"), sAttr("coding_sh.weights.sha256", FILE)]);
+    const events = (await mapLogs(decodeLogsJson(req), ctx())).events;
+    assert.deepEqual(events.map((e) => e.payload), [{ kind: "weights.checkpoint", sha256: FILE }]);
   });
 });

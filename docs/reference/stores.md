@@ -187,6 +187,7 @@ What lands in `otel_traces`, with `ServiceName = 'coding.sh'`:
 | `execute_tool <tool>` | tool call | `gen_ai.operation.name`, `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.agent.name`; `StatusCode` is `Error` when the call failed |
 | `chat <model>` | model call | `gen_ai.operation.name`, `gen_ai.request.model`, `gen_ai.provider.name`, `gen_ai.usage.*`, `coding_sh.cost_usd` |
 | `weights.edit` | weight edit | under `coding_sh.weights.`: `changed`, `l2` and `max_abs`; `mode = "full"` adds `tensor`, `shape`, `base_sha256`, `edited_sha256` and `note` |
+| `weights.checkpoint` | weights checkpoint | under `coding_sh.weights.`: `sha256` and `base_sha256`, the hashes of the saved file and of its base; `mode = "full"` adds `note` |
 
 `gen_ai.usage.*` is `input_tokens`, `output_tokens`, `cache_read.input_tokens` and
 `cache_write.input_tokens`. `input_tokens` is the whole prompt, cache included; the uncached part
@@ -197,7 +198,7 @@ trace, and `Duration` is in nanoseconds.
 - Map columns store every attribute as a string: cast with `toFloat64OrZero` and `toUInt64OrZero`.
   `coding_sh.session.flags` is a JSON array string.
 - Cost is on the `invoke_agent` span (the session) and on each `chat` span. Sum one, never both.
-- A session that edited weights also has `weight_edits` and `weights_changed` under `coding_sh.stats.`, and one `weights.edit` span per edit.
+- A session that edited weights also has `weight_edits` and `weights_changed` under `coding_sh.stats.`, and one `weights.edit` span per edit. Each checkpoint it recorded is one `weights.checkpoint` span.
 - `mode = "full"` adds prompts, code and tool output as span attributes.
 - The `invoke_agent` span is sent when the session ends. `coding.sh serve` and `coding.sh collector`
   also send it while a session is open: after 10 quiet seconds, and every 60 seconds while busy.

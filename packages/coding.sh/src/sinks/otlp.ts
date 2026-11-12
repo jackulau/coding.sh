@@ -8,6 +8,7 @@
 //   tool.start/tool.end  → span "execute_tool {tool}"    (child, emitted with tool.end)
 //   assistant.message    → span "chat {model}"           (child, carries token usage)
 //   weights.edit         → span "weights.edit"           (child, one per edit: coding_sh.weights.*)
+//   weights.checkpoint   → span "weights.checkpoint"     (child, one per event: coding_sh.weights.sha256, .base_sha256, .note)
 // Token usage follows the GenAI gen_ai.usage.* attributes: input_tokens counts the
 // whole prompt (uncached + cache reads + cache writes), and the cache parts go to
 // cache_read.input_tokens and cache_write.input_tokens (renamed from
@@ -20,7 +21,7 @@ import type { AgentEvent, Session, Usage } from "../schema/index.ts";
 import type { BlobStore, OpenSession, Sink, SinkAck, SinkConfig } from "../core/types.ts";
 import { hashParts } from "../core/ids.ts";
 import { sessionToMetadata, toMetadata } from "../core/redact.ts";
-import { isWeightsEdit, WEIGHTS_EDIT_KIND, weightsEditAttrs } from "../core/weights.ts";
+import { isWeightsCheckpoint, isWeightsEdit, WEIGHTS_CHECKPOINT_KIND, WEIGHTS_EDIT_KIND, weightsCheckpointAttrs, weightsEditAttrs } from "../core/weights.ts";
 import { postJson } from "./post.ts";
 
 export const SEMCONV_SCHEMA_URL = "https://opentelemetry.io/schemas/1.37.0";
@@ -216,17 +217,19 @@ export function toOtlpSpans(batch: AgentEvent[], sessions: Session[], mode: "ful
             : {}),
         }),
       });
-    } else if (isWeightsEdit(e)) {
-      // Metadata mode has already dropped the tensor's name, its shape, both hashes and the note (toMetadata above).
+    } else if (isWeightsEdit(e) || isWeightsCheckpoint(e)) {
+      // Metadata mode has already dropped an edit's tensor name, shape, both hashes and note, and a
+      // checkpoint's note; a checkpoint keeps the hashes of its two files (toMetadata above).
+      const edit = isWeightsEdit(e);
       spans.push({
         traceId,
         spanId: hashParts("otel-span", "weights", e.id).slice(0, 16),
         parentSpanId,
-        name: WEIGHTS_EDIT_KIND,
+        name: edit ? WEIGHTS_EDIT_KIND : WEIGHTS_CHECKPOINT_KIND,
         kind: SPAN_KIND_INTERNAL,
         startTimeUnixNano: nanos(e.ts),
         endTimeUnixNano: nanos(e.ts + (e.durationMs ?? 0)),
-        attributes: attrs({ "gen_ai.agent.name": e.agent, "coding_sh.event.id": e.id, ...weightsEditAttrs(e.payload) }),
+        attributes: attrs({ "gen_ai.agent.name": e.agent, "coding_sh.event.id": e.id, ...(edit ? weightsEditAttrs(e.payload) : weightsCheckpointAttrs(e.payload)) }),
       });
     } else if (e.kind === "session.end") {
       const s = sessionsById.get(e.sessionId);
@@ -264,8 +267,9 @@ function sessionSpan(s: Session, endMs: number, full: boolean, traceId: string):
       "coding_sh.parent.session.id": s.parent?.sessionId,
       "coding_sh.stats.tests_passed": s.stats.testsPassed,
       "coding_sh.stats.tests_failed": s.stats.testsFailed,
-      "coding_sh.stats.weight_edits": s.stats.weightEdits?.events,
-      "coding_sh.stats.weights_changed": s.stats.weightEdits?.weightsChanged,
+      // Absent on a session that recorded a checkpoint and no edit.
+      "coding_sh.stats.weight_edits": s.stats.weightEdits?.events || undefined,
+      "coding_sh.stats.weights_changed": s.stats.weightEdits?.events ? s.stats.weightEdits.weightsChanged : undefined,
       "vcs.ref.head.revision": s.repo?.head || undefined,
       ...(full ? { "coding_sh.session.title": s.title, "coding_sh.repo.root": s.repo?.root } : {}),
     }),

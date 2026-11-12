@@ -35,7 +35,7 @@ import { SCHEMA_VERSION } from "../schema/index.ts";
 import { hashParts, sha256Hex } from "../core/ids.ts";
 import { noteBlobHits, type RedactionTally, type Redactor, redactBlobValue, redactionTally } from "../core/redact.ts";
 import { geoValue, tierValue } from "../core/pricing.ts";
-import { WEIGHTS_EDIT_ATTRS, WEIGHTS_EDIT_KIND, weightsEditOf } from "../core/weights.ts";
+import { WEIGHTS_CHECKPOINT_ATTRS, WEIGHTS_CHECKPOINT_KIND, WEIGHTS_EDIT_ATTRS, WEIGHTS_EDIT_KIND, weightsCheckpointOf, weightsEditOf } from "../core/weights.ts";
 import { anthropicPriceHints } from "../adapters/_shared/normalize.ts";
 import { type DurableTag, durableOf, durableSessionId } from "./durable.ts";
 import {
@@ -819,6 +819,22 @@ function weightsEditDraft(d: Draft, a: Attrs): Draft {
   return d;
 }
 
+/**
+ * The payload of a span or log record named `weights.checkpoint`: `kind` plus the hash of the
+ * saved weights file, the base file's and the note (WEIGHTS_CHECKPOINT_ATTRS), the event the SDKs'
+ * weights_checkpoint helpers send. Without a `coding_sh.weights.sha256` of 64 hex characters the
+ * payload is `kind` alone, which nothing reads as a checkpoint.
+ */
+function weightsCheckpointDraft(d: Draft, a: Attrs): Draft {
+  const K = WEIGHTS_CHECKPOINT_ATTRS;
+  d.payload.kind = WEIGHTS_CHECKPOINT_KIND;
+  Object.assign(d.payload, weightsCheckpointOf({ kind: WEIGHTS_CHECKPOINT_KIND, sha256: str(a, K.sha256), baseSha256: str(a, K.baseSha256), note: str(a, K.note) }));
+  return d;
+}
+
+/** The draft a span or log record of this name fills: a weight edit's or a checkpoint's. Undefined for any other name. */
+const weightsDraft = (name: string | undefined): ((d: Draft, a: Attrs) => Draft) | undefined => (name === WEIGHTS_EDIT_KIND ? weightsEditDraft : name === WEIGHTS_CHECKPOINT_KIND ? weightsCheckpointDraft : undefined);
+
 async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<AgentEvent[]> {
   const { span, traceId, spanId } = c;
   const a = span.attributes;
@@ -864,8 +880,8 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
     return e;
   };
   const draft = () => new Draft(store, max, raw);
-  // A span named weights.edit is a weight edit, whatever else its attributes say.
-  const weightsEdit = span.name === WEIGHTS_EDIT_KIND;
+  // A span named weights.edit or weights.checkpoint is that event, whatever else its attributes say.
+  const weights = weightsDraft(span.name);
   const agentName = str(a, "gen_ai.agent.name", "agent.name") ?? (/^invoke_agent\s+(.+)$/.exec(span.name)?.[1] || undefined);
 
   // ---- model call
@@ -942,7 +958,7 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
     if (prompt) emit(2, "user.message", startMs, await draft().content("text", prompt), {}, promptId ? ccPromptId(c.sessionId, promptId) : undefined);
     if (klass === "llm" || klass === "embedding") await llm(4);
     else if (klass === "tool") await tool(4, 5);
-    if (weightsEdit) emit(12, "notification", startMs, weightsEditDraft(draft(), a));
+    if (weights) emit(12, "notification", startMs, weights(draft(), a));
     const end = draft().set("ok", !failed).set("error", error).set("durationMs", durationMs);
     if (klass !== "llm") await end.content("output", assistantText(outputMessages(a)));
     const reported = klass === "llm" || klass === "embedding" ? undefined : usageOf(a);
@@ -951,8 +967,8 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
     if (!c.conversation) {
       emit(6, "session.end", endMs, draft().set("reason", failed ? "error" : "completed").set("error", error), { durationMs });
     }
-  } else if (weightsEdit) {
-    emit(0, "notification", startMs, weightsEditDraft(draft(), a), durationMs > 0 ? { durationMs } : {});
+  } else if (weights) {
+    emit(0, "notification", startMs, weights(draft(), a), durationMs > 0 ? { durationMs } : {});
   } else if (klass === "llm" || klass === "embedding") {
     await llm(0);
   } else if (klass === "tool") {
@@ -1361,8 +1377,8 @@ async function mapLog(rec: OtelLogRecord, resource: Attrs, scope: OtelScope, ctx
       .set("plugin", str(a, "plugin.name", "skill.plugin_id"))
       .set("event", name);
     emit(0, "notification", ts, d);
-  } else if (suffix === WEIGHTS_EDIT_KIND) {
-    emit(0, "notification", ts, weightsEditDraft(draft(), a));
+  } else if (weightsDraft(suffix)) {
+    emit(0, "notification", ts, weightsDraft(suffix)!(draft(), a));
   } else if (suffix === "agent_response" && content(str(a, "response"))) {
     // Codex: a final answer of the main agent or of a spawned subagent (otel.log_agent_responses).
     const d = draft().set("responseLength", num(a, "response_length")).set("truncated", bool(a, "response_truncated") || undefined);

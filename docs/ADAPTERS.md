@@ -265,6 +265,9 @@ Apps in production don't use an adapter. They send data over the network to `cod
 - A span or a log record named `weights.edit` with `coding_sh.weights.*` attributes is stored as
   the weight edit event the SDKs send (`notification`, `payload.kind: "weights.edit"`); the
   attributes are listed in [reference/api.md](reference/api.md).
+- One named `weights.checkpoint` with `coding_sh.weights.sha256` is stored as the checkpoint event
+  (`payload.kind: "weights.checkpoint"`). Without a hash of 64 hex characters it is not read as a
+  checkpoint.
 - Hooks, transcript backfill and `coding.sh run` stay local. Serve does not take spool lines.
 - The ingest key picks the project, and session ids are stored as `<project>/<sessionId>`.
 - SDK sessions that never send `session.end` have no `endedAt` yet; see the open item in

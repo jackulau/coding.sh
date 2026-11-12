@@ -742,6 +742,9 @@ One more `notification` kind records weight edits. The Python SDK's `coding_sh.w
 - OpenTelemetry out: the `otlp` sink sends one `weights.edit` span per edit with the same attributes, as a child of the session's `invoke_agent` span. That span carries `coding_sh.stats.weight_edits` and `coding_sh.stats.weights_changed`.
 - `[serve.forward]` sends the same span for an edit posted to `/v1/ingest`, and passes on a `weights.edit` span posted to `/v1/traces` as it came. An edit that arrived as a log record is not forwarded.
 - In `metadata` mode the span keeps `coding_sh.weights.changed`, `.l2` and `.max_abs` only.
+- A span or log record named `weights.checkpoint` is read as a checkpoint from `coding_sh.weights.sha256`, `.base_sha256` and `.note`.
+- A checkpoint goes out the same way, as one `weights.checkpoint` span with those three attributes. In `metadata` mode it keeps the two hashes and drops `.note`.
+- A session with a checkpoint and no edit has neither `coding_sh.stats` attribute.
 
 | Attribute | Payload field |
 |---|---|
