@@ -329,6 +329,24 @@ describe("reparse", () => {
     await t.index.close();
   });
 
+  it("a session stored before checkpoints were folded gains the file hashes and the tag on the refold", async () => {
+    const t = await setup();
+    const file = `58899f90${"c".repeat(56)}`;
+    await t.index.replaceSessionEvents!("sdk", [], [
+      { id: "c0", v: 0, sessionId: "sdk", ts: T0, agent: "sdk", kind: "session.start", payload: {} },
+      { id: "c1", v: 0, sessionId: "sdk", ts: T0 + 1, agent: "sdk", kind: "notification", payload: { kind: "weights.checkpoint", sha256: file.toUpperCase(), baseSha256: "d".repeat(64) } },
+    ]);
+    // What fold version 20 stored for it: a checkpoint was a notification like any other.
+    await t.index.upsertSession({ id: "sdk", agent: "sdk", startedAt: T0, stats: { events: 2, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 }, flags: [] });
+    await t.index.setCursor(REFOLD_CURSOR, 20 * 1e9);
+    assert.equal(await t.due(), true);
+    assert.equal((await t.reparse()).refolded, 1);
+    const s = (await t.index.getSession("sdk"))!;
+    assert.deepEqual(s.stats.weightEdits, { events: 0, weightsChanged: 0, checkpoints: [file] });
+    assert.deepEqual(s.flags, ["weights:checkpoint"]);
+    await t.index.close();
+  });
+
   it("one re-parse at a time", async () => {
     const t = await setup();
     const lock = await acquireLock(paths(t.env).reparseLock, { waitMs: 0 });
