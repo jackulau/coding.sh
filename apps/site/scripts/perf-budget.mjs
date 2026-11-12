@@ -21,11 +21,12 @@ const BUDGET = {
   // troubleshooting, which gains an entry per failure a new feature can show
   // (27.8KB with the 0.1.6 entries). Raised from 26KB for those three.
   // Troubleshooting is 30.5KB after the docs rebuild of 2026-11-11, so 33KB.
+  // /docs/api/read is 30.3KB with the weight edit and checkpoint fields, so 33KB.
   htmlBrotli: {
     "/": 24.5 * KB,
     "/docs/cli/": 30 * KB,
     "/docs/api/": 30 * KB,
-    "/docs/api/read/": 30 * KB,
+    "/docs/api/read/": 33 * KB,
     "/docs/api/read/search/": 30 * KB,
     "/docs/troubleshooting/": 33 * KB,
     other: 26 * KB,
