@@ -404,6 +404,20 @@
 .tabs[data-ready] .tabs__label {
   display: none;
 }
+@media (scripting: enabled) {
+  .tabs__label {
+    display: none;
+  }
+}
+/* The tab list is in the markup without `hidden`, and without scripting it and
+   the panels' stacked layout swap places: the list goes, the labels show. With
+   scripting on, the page is laid out as the script leaves it from the first
+   paint, so setting up the tabs moves nothing above the fold. */
+@media (scripting: none) {
+  .tabs__list {
+    display: none;
+  }
+}
 .tabs__panel > h2:first-of-type,
 .tabs__panel > h3:first-of-type {
   margin-top: 1.75rem;
