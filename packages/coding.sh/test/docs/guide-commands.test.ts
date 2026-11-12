@@ -273,11 +273,16 @@ process.stdout.write(JSON.stringify({answer:right?String(n):"?",finish_reason:do
     for (const argv of cmds) assert.doesNotThrow(() => checkArgs(argv), `coding.sh ${argv.join(" ")} parses`);
     assert.deepEqual(cmds.map((c) => c.slice(0, 2).join(" ")), ["dataset import", "exp run", "exp run", "exp compare", "exp compare"]);
     assert.ok(cmds[4]!.includes("--given") && cmds[4]!.includes("terminated"));
+    // Each run names its checkpoint: two different SHA-256s, as literal values.
+    const stamps = [cmds[1]!, cmds[2]!].map((c) => c[c.indexOf("--weights") + 1]!);
+    for (const s of stamps) assert.match(s, /^[0-9a-f]{64}$/, "exp run carries --weights <SHA256>");
+    assert.notEqual(stamps[0], stamps[1], "base and edited are two checkpoints");
     const out: string[] = [];
     for (const argv of cmds) {
       out.push(ok([...argv.map((a) => (/^(?:math\.jsonl|\w+\.json)$/.test(a) ? join(proj, a) : a)), "--json"]).stdout);
     }
-    const graders = (stdout: string) => (JSON.parse(stdout) as { comparison: { graders: GraderDelta[]; given?: { kept: number; dropped: number } } }).comparison;
+    type Side = { weights?: { sha256: string } };
+    const graders = (stdout: string) => (JSON.parse(stdout) as { comparison: { a: Side; b: Side; weightsWarning?: string; graders: GraderDelta[]; given?: { kept: number; dropped: number } } }).comparison;
     const plain = graders(out[3]!);
     assert.deepEqual(plain.graders.map((g) => g.id), ["terminated", "correct"]);
     for (const g of plain.graders) assert.ok(g.diff.mean > 0, `${g.id} is up: ${JSON.stringify(plain)}`);
@@ -286,6 +291,14 @@ process.stdout.write(JSON.stringify({answer:right?String(n):"?",finish_reason:do
     const given = graders(out[4]!);
     assert.deepEqual([given.given?.kept, given.given?.dropped], [2, 2]);
     assert.equal(given.graders.find((g) => g.id === "correct")!.diff.mean, 0);
+    // Both compares carry each side's stamp, in --json whole and in text by its first 12 characters.
+    for (const c of [plain, given]) assert.deepEqual([c.a.weights?.sha256, c.b.weights?.sha256, c.weightsWarning], [...stamps, undefined]);
+    for (const argv of [cmds[3]!, cmds[4]!]) {
+      const text = ok(argv).stdout;
+      assert.match(text, new RegExp(`^A base .*weights ${stamps[0]!.slice(0, 12)}$`, "m"), text);
+      assert.match(text, new RegExp(`^B edited .*weights ${stamps[1]!.slice(0, 12)}$`, "m"), text);
+      for (const s of stamps) assert.ok(recipe.includes("`weights " + s.slice(0, 12) + "`"), "the prose quotes the short stamp compare prints");
+    }
   });
 
   it("fails when the section is gone", () => {

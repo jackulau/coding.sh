@@ -132,6 +132,21 @@ describe("exp run --record / --replay from the CLI", () => {
     assert.match(t.stdout, /LLM calls: 8 \(4 cached, 4 live\)/);
   });
 
+  it("--weights with a control arm is a usage error; with --no-control the replayed run carries the stamp", async () => {
+    const sha = "ab12".repeat(16);
+    const before = stub.calls();
+    // The control arm replays the recorded checkpoint, so one stamp cannot name both arms.
+    const refused = await cli(["exp", "run", spec("wt", "sys A"), "--replay", recId, "--weights", sha]);
+    assert.equal(refused.status, 2, refused.stderr);
+    assert.match(refused.stderr, /--replay with a control arm runs an A\/B; pass --no-control to combine it with --weights/);
+    assert.equal(stub.calls() - before, 0, "nothing ran");
+    const alone = await cli(["exp", "run", spec("wt", "sys A"), "--replay", recId, "--no-control", "--weights", sha, "--json"]);
+    assert.equal(alone.status, 0, alone.stderr);
+    const meta = JSON.parse(alone.stdout).experiment.metadata;
+    assert.deepEqual(meta.weights, { sha256: sha });
+    assert.equal(meta.llm.control, "skipped");
+  });
+
   it("the spec's llm field records too, and flags fail fast with a reason", async () => {
     const r = await cli(["exp", "run", spec("specrec", "sys A", { record: true }), "--json"]);
     assert.equal(r.status, 0, r.stderr);

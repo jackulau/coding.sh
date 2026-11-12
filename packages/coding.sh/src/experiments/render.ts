@@ -22,6 +22,7 @@ import type { ExperimentBlock, ExpSession, SessionBlock } from "./session.ts";
 import { stabilityLine } from "./stability.ts";
 import type { SweepResult } from "./sweep.ts";
 import type { Turnover } from "./turnover.ts";
+import { shortWeights, weightsOf } from "./weights.ts";
 import { fixed, ms, paint, pct, pValue, signedPct, table, truncate, type RenderOpts } from "./text.ts";
 import { formatBestSet } from "../stats/mcb.ts";
 
@@ -112,6 +113,9 @@ export function renderExperiment(r: ExperimentResult, opts: RenderOpts & { verif
   const out: string[] = [];
   out.push(`${paint(r.name, "bold", color)}  ${paint(r.id, "dim", color)}`);
   out.push(`dataset ${r.dataset.name}@${r.dataset.version}${r.dataset.split ? ` (${r.dataset.split})` : ""}  task ${r.task.kind}: ${r.task.ref}  trials ${r.trials}`);
+  // The checkpoint the task ran, as given to exp run --weights: whole, so it can be checked against the file's hash.
+  const weights = weightsOf(r);
+  if (weights) out.push(`weights ${weights}`);
   if (r.status === "cancelled" && s.n === 0) {
     out.push(paint("cancelled before any case run finished: nothing was graded", "yellow", color));
     return out.join("\n");
@@ -250,14 +254,19 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
   const out: string[] = [];
   // A forced compare of a cancelled experiment keeps saying it is partial.
   const partial = (e?: ExperimentResult) => (e?.status === "cancelled" ? `  ${paint(`cancelled: ${e.runs.length} case run${e.runs.length === 1 ? "" : "s"} only`, "yellow", color)}` : "");
+  // Which checkpoint each side ran (exp run --weights), once either side says: the first 12 hex characters, or that it was not recorded.
+  const stamped = c.a.weights !== undefined || c.b.weights !== undefined;
+  const weights = (x: Comparison["a"]) => (stamped ? `  weights ${x.weights ? shortWeights(x.weights.sha256) : "not recorded"}` : "");
   if (c.given && !c.given.kept) {
     const g = c.given;
-    out.push(`${paint("A", "bold", color)} ${c.a.name} ${paint(c.a.id, "dim", color)}`, `${paint("B", "bold", color)} ${c.b.name} ${paint(c.b.id, "dim", color)}`);
+    out.push(`${paint("A", "bold", color)} ${c.a.name} ${paint(c.a.id, "dim", color)}${weights(c.a)}`, `${paint("B", "bold", color)} ${c.b.name} ${paint(c.b.id, "dim", color)}${weights(c.b)}`);
+    if (c.weightsWarning) out.push(paint(`! ${c.weightsWarning}`, "yellow", color));
     out.push(paint(`! --given ${g.grader}: no case passes ${g.grader} in both A and B (${g.dropped} dropped), so there is nothing to compare`, "yellow", color));
     return out.join("\n");
   }
-  out.push(`${paint("A", "bold", color)} ${c.a.name} ${paint(c.a.id, "dim", color)}  pass ${pct(c.a.passRate)}${partial(opts.a)}`);
-  out.push(`${paint("B", "bold", color)} ${c.b.name} ${paint(c.b.id, "dim", color)}  pass ${pct(c.b.passRate)}${partial(opts.b)}`);
+  out.push(`${paint("A", "bold", color)} ${c.a.name} ${paint(c.a.id, "dim", color)}  pass ${pct(c.a.passRate)}${partial(opts.a)}${weights(c.a)}`);
+  out.push(`${paint("B", "bold", color)} ${c.b.name} ${paint(c.b.id, "dim", color)}  pass ${pct(c.b.passRate)}${partial(opts.b)}${weights(c.b)}`);
+  if (c.weightsWarning) out.push(paint(`! ${c.weightsWarning}`, "yellow", color));
   if (c.given) out.push(paint(`! ${c.given.note}`, "yellow", color));
   if (c.datasetWarning) out.push(paint(`! ${c.datasetWarning}`, "yellow", color));
   if (c.gradeWarning) out.push(paint(`! ${c.gradeWarning}`, "yellow", color));

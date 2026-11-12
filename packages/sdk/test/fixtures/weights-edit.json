@@ -1,0 +1,100 @@
+{
+  "about": "What weights_edit() in the Python SDK and weightsEdit() in the TypeScript SDK must both send for the same edit. packages/sdk-python/tests/test_weights.py and packages/sdk/test/weights.test.ts both assert against this file. Recorded from the batches the Python SDK posts to /v1/ingest.",
+  "edit": {
+    "tensor": "layers.3.mlp.down_proj.weight",
+    "shape": [4, 8],
+    "changed": 12,
+    "l2": 0.25,
+    "maxAbs": 0.1,
+    "baseSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "editedSha256": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "note": "rank-1 patch"
+  },
+  "payload": {
+    "kind": "weights.edit",
+    "tensor": "layers.3.mlp.down_proj.weight",
+    "shape": [4, 8],
+    "changed": 12,
+    "l2": 0.25,
+    "maxAbs": 0.1,
+    "baseSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "editedSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "note": "rank-1 patch"
+  },
+  "volatilePayloadKeys": ["traceId", "durationMs", "toolUseId"],
+  "ignoredEventKeys": ["source"],
+  "scenarios": {
+    "alone": {
+      "how": "One edit outside trace(), span() and withSession().",
+      "sessionId": null,
+      "parent": null,
+      "events": [
+        {"kind": "session.start", "keys": ["id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "v"], "payload": {"name": "weights.edit", "traceId": "<volatile>"}},
+        {"kind": "notification", "keys": ["id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "v"]},
+        {"kind": "turn.end", "keys": ["durationMs", "id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "v"], "payload": {"ok": true, "durationMs": "<volatile>"}},
+        {"kind": "session.end", "keys": ["durationMs", "id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "v"], "payload": {"reason": "completed"}}
+      ]
+    },
+    "withSession": {
+      "how": "One edit inside withSession(sessionId).",
+      "sessionId": "run-7",
+      "parent": null,
+      "events": [
+        {"kind": "session.start", "keys": ["id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "turnId", "v"], "payload": {"name": "weights.edit", "traceId": "<volatile>"}},
+        {"kind": "notification", "keys": ["id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "turnId", "v"]},
+        {"kind": "turn.end", "keys": ["durationMs", "id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "turnId", "v"], "payload": {"ok": true, "durationMs": "<volatile>"}}
+      ]
+    },
+    "trace": {
+      "how": "One edit inside trace(\"run\").",
+      "sessionId": null,
+      "parent": "session.start",
+      "events": [
+        {"kind": "session.start", "keys": ["id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "v"], "payload": {"name": "run", "traceId": "<volatile>"}},
+        {"kind": "notification", "keys": ["id", "kind", "parentId", "parentSpanId", "payload", "sessionId", "spanId", "traceId", "ts", "v"]},
+        {"kind": "turn.end", "keys": ["durationMs", "id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "v"], "payload": {"ok": true, "durationMs": "<volatile>"}},
+        {"kind": "session.end", "keys": ["durationMs", "id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "v"], "payload": {"reason": "completed"}}
+      ]
+    },
+    "traceWithSessionId": {
+      "how": "One edit inside trace(\"run\") with sessionId.",
+      "sessionId": "conv-1",
+      "parent": "session.start",
+      "events": [
+        {"kind": "session.start", "keys": ["id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "turnId", "v"], "payload": {"name": "run", "traceId": "<volatile>"}},
+        {"kind": "notification", "keys": ["id", "kind", "parentId", "parentSpanId", "payload", "sessionId", "spanId", "traceId", "ts", "turnId", "v"]},
+        {"kind": "turn.end", "keys": ["durationMs", "id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "turnId", "v"], "payload": {"ok": true, "durationMs": "<volatile>"}}
+      ]
+    },
+    "toolSpan": {
+      "how": "One edit inside span(\"tool\", \"patch\") inside trace(\"run\").",
+      "sessionId": null,
+      "parent": "tool.start",
+      "events": [
+        {"kind": "session.start", "keys": ["id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "v"], "payload": {"name": "run", "traceId": "<volatile>"}},
+        {"kind": "tool.start", "keys": ["id", "kind", "parentId", "parentSpanId", "payload", "sessionId", "spanId", "traceId", "ts", "v"], "payload": {"tool": "patch", "toolUseId": "<volatile>"}},
+        {"kind": "notification", "keys": ["id", "kind", "parentId", "parentSpanId", "payload", "sessionId", "spanId", "traceId", "ts", "v"]},
+        {"kind": "tool.end", "keys": ["durationMs", "id", "kind", "parentId", "parentSpanId", "payload", "sessionId", "spanId", "traceId", "ts", "v"], "payload": {"tool": "patch", "toolUseId": "<volatile>", "ok": true, "durationMs": "<volatile>"}},
+        {"kind": "turn.end", "keys": ["durationMs", "id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "v"], "payload": {"ok": true, "durationMs": "<volatile>"}},
+        {"kind": "session.end", "keys": ["durationMs", "id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "v"], "payload": {"reason": "completed"}}
+      ]
+    },
+    "stepSpan": {
+      "how": "One edit inside span(\"step\", \"patch\") inside trace(\"run\").",
+      "sessionId": null,
+      "parent": "span",
+      "events": [
+        {"kind": "session.start", "keys": ["id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "v"], "payload": {"name": "run", "traceId": "<volatile>"}},
+        {"kind": "notification", "keys": ["id", "kind", "parentId", "parentSpanId", "payload", "sessionId", "spanId", "traceId", "ts", "v"]},
+        {"kind": "span", "keys": ["durationMs", "id", "kind", "parentId", "parentSpanId", "payload", "sessionId", "spanId", "traceId", "ts", "v"], "payload": {"name": "patch", "ok": true}},
+        {"kind": "turn.end", "keys": ["durationMs", "id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "v"], "payload": {"ok": true, "durationMs": "<volatile>"}},
+        {"kind": "session.end", "keys": ["durationMs", "id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "v"], "payload": {"reason": "completed"}}
+      ]
+    }
+  },
+  "delta": {
+    "base": [[0.1, 0.2, 0.3], [1.5, -2.0, 4.0]],
+    "edited": [[0.1, 0.25, 0.3], [1.0, -2.0, 4.75]],
+    "result": {"shape": [2, 3], "changed": 3, "l2": 0.9027735042633894, "maxAbs": 0.75}
+  }
+}

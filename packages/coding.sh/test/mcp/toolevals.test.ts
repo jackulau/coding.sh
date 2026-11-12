@@ -73,7 +73,9 @@ describe("tool evals against the coding.sh MCP server", () => {
     // tree was one 679 KB reply.
     // limitUsed in the output schema of the 21 tools that can return it, and session_replay's paging
     // fields (treeTotal, changesTotal, filesTotal, unchanged, truncated, note), add about 0.95 KB, 0.1 KB of it descriptions.
-    assert.ok(s.surfaceBytes < 43_900, `surface is ${s.surfaceBytes} bytes`);
+    // weights (the checkpoint a run recorded with exp run --weights) on experiments_list rows and on
+    // both sides of experiment_compare adds about 0.2 KB of output schema and 23 bytes of description.
+    assert.ok(s.surfaceBytes < 44_100, `surface is ${s.surfaceBytes} bytes`);
     assert.ok(s.descriptionBytes < 11_850, `descriptions are ${s.descriptionBytes} bytes`);
     for (const it of s.items) assert.ok(it.bytes < 4_000, `${it.name} is ${it.bytes} bytes`);
   });

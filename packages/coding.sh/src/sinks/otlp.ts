@@ -7,6 +7,7 @@
 //                                                          see writeOpenSessions)
 //   tool.start/tool.end  → span "execute_tool {tool}"    (child, emitted with tool.end)
 //   assistant.message    → span "chat {model}"           (child, carries token usage)
+//   weights.edit         → span "weights.edit"           (child, one per edit: coding_sh.weights.*)
 // Token usage follows the GenAI gen_ai.usage.* attributes: input_tokens counts the
 // whole prompt (uncached + cache reads + cache writes), and the cache parts go to
 // cache_read.input_tokens and cache_write.input_tokens (renamed from
@@ -19,6 +20,7 @@ import type { AgentEvent, Session, Usage } from "../schema/index.ts";
 import type { BlobStore, OpenSession, Sink, SinkAck, SinkConfig } from "../core/types.ts";
 import { hashParts } from "../core/ids.ts";
 import { sessionToMetadata, toMetadata } from "../core/redact.ts";
+import { isWeightsEdit, WEIGHTS_EDIT_KIND, weightsEditAttrs } from "../core/weights.ts";
 import { postJson } from "./post.ts";
 
 export const SEMCONV_SCHEMA_URL = "https://opentelemetry.io/schemas/1.37.0";
@@ -214,6 +216,18 @@ export function toOtlpSpans(batch: AgentEvent[], sessions: Session[], mode: "ful
             : {}),
         }),
       });
+    } else if (isWeightsEdit(e)) {
+      // Metadata mode has already dropped the tensor's name, its shape, both hashes and the note (toMetadata above).
+      spans.push({
+        traceId,
+        spanId: hashParts("otel-span", "weights", e.id).slice(0, 16),
+        parentSpanId,
+        name: WEIGHTS_EDIT_KIND,
+        kind: SPAN_KIND_INTERNAL,
+        startTimeUnixNano: nanos(e.ts),
+        endTimeUnixNano: nanos(e.ts + (e.durationMs ?? 0)),
+        attributes: attrs({ "gen_ai.agent.name": e.agent, "coding_sh.event.id": e.id, ...weightsEditAttrs(e.payload) }),
+      });
     } else if (e.kind === "session.end") {
       const s = sessionsById.get(e.sessionId);
       if (!s) continue;
@@ -250,6 +264,8 @@ function sessionSpan(s: Session, endMs: number, full: boolean, traceId: string):
       "coding_sh.parent.session.id": s.parent?.sessionId,
       "coding_sh.stats.tests_passed": s.stats.testsPassed,
       "coding_sh.stats.tests_failed": s.stats.testsFailed,
+      "coding_sh.stats.weight_edits": s.stats.weightEdits?.events,
+      "coding_sh.stats.weights_changed": s.stats.weightEdits?.weightsChanged,
       "vcs.ref.head.revision": s.repo?.head || undefined,
       ...(full ? { "coding_sh.session.title": s.title, "coding_sh.repo.root": s.repo?.root } : {}),
     }),

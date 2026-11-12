@@ -508,7 +508,7 @@ coding.sh sessions --agent codex --since 7d
 ```
 
 - --where: key:value clauses, AND by default; OR between clauses; ( ) to group; - to negate; a,b for either value; \* as a wildcard in text; &gt; &gt;= &lt; &lt;= and a..b on numbers. Bare words search prompts, replies and tool calls (every word in one event).
-- Session keys: agent, model, provider, repo, launch, branch, dir, title, id, run, parent, flag, skill, hook, hook.tokens, since, until, duration, turns, tools, tool.errors, llm.errors, files, events, tests.passed, tests.failed, tokens, tokens.in, tokens.out, cost, cache.breaks, cache.lost, cache.cost, unapproved, has, is. Event keys (the session has a matching event; event keys in one group match the same event): kind, tool, ok, mcp, error, event.duration. Also sort:-cost and limit:N. Full list with examples: https://coding.sh/docs/query.
+- Session keys: agent, model, provider, repo, launch, branch, dir, title, id, run, parent, flag, skill, hook, hook.tokens, weights.edits, weights.changed, since, until, duration, turns, tools, tool.errors, llm.errors, files, events, tests.passed, tests.failed, tokens, tokens.in, tokens.out, cost, cache.breaks, cache.lost, cache.cost, unapproved, has, is. Event keys (the session has a matching event; event keys in one group match the same event): kind, tool, ok, mcp, error, event.duration. Also sort:-cost and limit:N. Full list with examples: https://coding.sh/docs/query.
 - --facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).
 - With --json each session is a digest: its stats without stats.phases, and each derail without the event it started at (eventId, index). show &lt;id&gt; --json has both, and --fields stats.phases or --fields stats.derails prints them here.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
@@ -1515,6 +1515,7 @@ coding.sh exp run [spec] [options]
 | `--replay <EXPERIMENT>` |  | Serve this recorded experiment's model calls again, up to each case-trial's first changed call; later calls run live. Adds the recorded config as a control arm (A) unless --no-control. |
 | `--replay-until <N>` |  | With --replay: serve only calls 1..N from the recording; call N+1 onward runs live. |
 | `--series <NAME>` |  | Tag the experiment as the next round of an iteration loop and print whether the loop should stop (see exp plateau) |
+| `--weights <SHA256>` |  | Record the checkpoint the task ran: the SHA-256 of the weights file, 64 hex characters, which you compute (coding.sh hashes nothing). exp compare shows each side's and warns when both ran the same. With --arm: one per arm, as ARM=&lt;SHA256&gt;. Not with --watch or a matrix spec. Repeatable. |
 | `--watch` |  | Rerun on every change to the spec, the task's script, grader files or --watch-path; a grader-only change regrades the stored outputs. Enter reruns, q quits. |
 | `--watch-path <GLOB>` |  | With --watch: more files whose change reruns the task (repeatable; also the spec's "watch" field) |
 | `--session` | `true` | In an experiment session (exp session new), add the run to its timeline and print the delta against the previous run; --no-session skips it. |
@@ -1537,6 +1538,7 @@ coding.sh exp run matrix.json --cell model=opus,prompt=short
 coding.sh exp run matrix.json --reuse baseline --plan
 coding.sh exp run spec.json --record
 coding.sh exp run cand.json --replay exp_01J… --replay-until 3
+coding.sh exp run edited.json --name edited --weights 5f2c8a1e9b3d4c7f6a0e1d2b3c4f5a6e7d8c9b0a1f2e3d4c5b6a7f8e9d0c1b2a
 ```
 
 ### `coding.sh exp session`

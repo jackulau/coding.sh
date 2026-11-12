@@ -265,11 +265,11 @@ max_buffer_spans = 20000
 ```
 
 - OTLP posted to `/v1/traces` keeps its traceId, spanId and parent ids. Native `/v1/ingest` batches
-  are sent as `invoke_agent`, `execute_tool` and `chat` spans, the same mapping as the `otlp` sink.
+  are sent as `invoke_agent`, `execute_tool`, `chat` and `weights.edit` spans, the same mapping as the `otlp` sink.
   Every resource gets `coding_sh.project` set to the ingest key's project.
 - `metadata` mode keeps an allowlist: gen_ai operation, provider, model, response id and finish
   reasons, tool name, call id and type, agent and conversation ids, token usage, `service.*`,
-  `telemetry.*`, `coding_sh.*` (except the session title and repo root), and numbers and booleans.
+  `telemetry.*`, `coding_sh.*` (except the session title, the repo root, and a weight edit's tensor name, shape, hashes and note), and numbers and booleans.
   Messages, prompts, tool arguments and results, `input.value`, `output.value`, span event
   attributes other than `exception.type`, and status messages are dropped. `full` mode sends every attribute after `capture.redact`.
 - Spans are sent in batches of up to 1,000, about once a second. A network error, 408, 429 or 5xx

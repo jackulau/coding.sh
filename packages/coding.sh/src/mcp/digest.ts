@@ -3,6 +3,7 @@
 import { costNote } from "../core/pricing.ts";
 import { SKILL_EVENT_KINDS, SKILL_TAG_PREFIX, skillUse } from "../core/skills-use.ts";
 import type { IndexStore, Session } from "../core/types.ts";
+import { weightEditsText } from "../core/weights.ts";
 import { clip, countNodes, fmtMs, isRunning, iso, lastActivity, sessionSummary, splitTurns, subagentTree, timeline, turnIndex, type SubagentNode, type TimelineEntry, type TurnInfo } from "./data.ts";
 
 type Obj = Record<string, unknown>;
@@ -112,6 +113,7 @@ export async function sessionMarkdown(index: IndexStore, s: Session, maxEntries 
   if (s.stats.waste) row("Re-fetches", `${s.stats.waste.duplicateFetches} of ${s.stats.waste.readOnlyCalls} read-only calls repeated with the same result (~${s.stats.waste.duplicateFetchTokens} tokens)`);
   const cb = s.stats.cacheBreaks;
   if (cb) row("Cache breaks", `${cb.count}, ${cb.lostTokens} prompt tokens billed again${cb.extraUsd !== undefined ? `, $${cb.extraUsd.toFixed(4)} extra` : ""} (${Object.entries(cb.byCause).map(([k, c]) => `${k} ${c!.count}${k === "idle" && cb.byIdle ? ` (${Object.entries(cb.byIdle).map(([w, i]) => `${w} ${i!.count}`).join(", ")})` : ""}`).join(", ")})`);
+  if (s.stats.weightEdits) row("Weight edits", weightEditsText(s.stats.weightEdits));
   for (const d of s.stats.derails ?? []) row("Derail", `${d.flag} at +${fmtMs(d.ts - s.startedAt)} (event ${d.index + 1}): ${d.detail}`);
   if (s.parent) row("Parent", `\`${s.parent.sessionId}\``);
   if (turns.length > 1) {

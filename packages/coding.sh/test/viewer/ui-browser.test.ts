@@ -628,6 +628,9 @@ describe("viewer UI: timeline, inspector and compare", { skip: chrome ? false : 
   const WORK = "w-1";
   const API = "api-1";
   const CHEAP = "cheap-1";
+  // Two checkpoints' SHA-256s: any 64 hex characters.
+  const SHA_BASE = "ab12".repeat(16);
+  const SHA_EDIT = "cd34".repeat(16);
   const STEPS = "document.querySelectorAll('#steps .st')";
   const selected = "document.querySelector('#steps .st[aria-selected=true]')";
   const stepWhere = (re: string) => `[...${STEPS}].find((t) => new RegExp(${JSON.stringify(re)}).test(t.querySelector('.lbl').textContent))`;
@@ -676,9 +679,15 @@ describe("viewer UI: timeline, inspector and compare", { skip: chrome ? false : 
       ],
     });
     const exps = [cand, base];
+    // Stamped with `exp run --weights`. Reached by id only, so the list stays at two rows.
+    const stamped = [
+      experimentResult("exp-w-base", { name: "base", metadata: { weights: { sha256: SHA_BASE } } }),
+      experimentResult("exp-w-edit", { name: "edited", metadata: { weights: { sha256: SHA_EDIT } } }),
+      experimentResult("exp-w-twin", { name: "twin", metadata: { weights: { sha256: SHA_BASE } } }),
+    ];
     v = await startViewer({
       index, blobs: new FakeBlobs(), port: 0, updateStatus: async () => ({ disabled: "test" }) as any,
-      experiments: { listExperiments: async () => exps, getExperiment: async (id) => exps.find((e) => e.id === id) },
+      experiments: { listExperiments: async () => exps, getExperiment: async (id) => [...exps, ...stamped].find((e) => e.id === id) },
     });
     browser = await launchBrowser(chrome!);
   });
@@ -744,6 +753,21 @@ describe("viewer UI: timeline, inspector and compare", { skip: chrome ? false : 
       assert.equal(v.name, "Changed");
       assert.equal(v.meta, "+3 −1");
       assert.doesNotMatch(v.arg, /\+3/, "the counts are not repeated after the path");
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("a weight edit reads as a row of its own, not a blank Notification", async () => {
+    await open("#/");
+    try {
+      const payload = { kind: "weights.edit", tensor: "layers.3.mlp.down_proj.weight", shape: [4096, 11008], changed: 1204, l2: 0.0183, maxAbs: 0.004, baseSha256: "a".repeat(64), editedSha256: "b".repeat(64) };
+      const v = await page.eval(`eventView({ kind: "notification", payload: ${JSON.stringify(payload)} })`);
+      assert.equal(v.name, "Edited weights");
+      assert.equal(v.arg, "layers.3.mlp.down_proj.weight [4096×11008] · 1,204 of 45,088,768 weights · L2 0.0183 · max 0.004 · aaaaaaaa → bbbbbbbb");
+      assert.equal(v.kindText, "weights.edit");
+      const other = await page.eval(`eventView({ kind: "notification", payload: { kind: "hook.context", text: "x" } })`);
+      assert.equal(other.name, "Notification");
     } finally {
       await page.close();
     }
@@ -848,6 +872,44 @@ describe("viewer UI: timeline, inspector and compare", { skip: chrome ? false : 
       const sides = await page.waitFor("document.querySelector('.cmp-row .side-by-side')?.textContent", "side-by-side outputs");
       assert.match(sides, /baseline/);
       assert.match(sides, /candidate/);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("weights stamp: the experiment page and both compare sides show it; the same stamp twice is a warning", async () => {
+    const stamps = "[...document.querySelectorAll('.vs .side .weights')].map((e) => [e.textContent, e.title])";
+    const notes = "[...document.querySelectorAll('.verdict .alert.note span')].map((e) => e.textContent)";
+    const compare = async (a: string, b: string): Promise<{ stamps: [string, string][]; notes: string[] }> => {
+      await page.eval(`location.hash = "#/experiments/${a}/vs/${b}"`);
+      await page.waitFor(`document.querySelector('.vs .side.a a.pct')?.getAttribute('href') === "#/experiments/${a}" && document.querySelector('.vs .side.b a.pct')?.getAttribute('href') === "#/experiments/${b}"`, `compare ${a} with ${b}`);
+      return page.eval(`({ stamps: ${stamps}, notes: ${notes} })`);
+    };
+    await open("#/experiments/exp-w-base");
+    try {
+      const fact = await page.waitFor("(() => { const e = document.querySelector('.exp-top .fact-line .weights'); return e && [e.textContent, e.title]; })()", "the stamp on the experiment page");
+      assert.equal(fact[0], "weights " + SHA_BASE.slice(0, 12));
+      assert.ok(fact[1].endsWith(SHA_BASE), "the title carries the whole SHA-256");
+
+      const differ = await compare("exp-w-base", "exp-w-edit");
+      assert.deepEqual(differ.stamps.map((x) => x[0]), ["weights " + SHA_BASE.slice(0, 12), "weights " + SHA_EDIT.slice(0, 12)]);
+      assert.ok(differ.stamps[1]![1].endsWith(SHA_EDIT));
+      assert.equal(differ.notes.some((t) => /weights/.test(t)), false, "two different stamps need no warning");
+
+      const same = await compare("exp-w-base", "exp-w-twin");
+      assert.equal(same.notes[0], `A and B ran the same weights (${SHA_BASE.slice(0, 12)}): B − A is not a difference between two models`);
+
+      const oneSided = await compare("exp-base", "exp-w-edit");
+      assert.deepEqual(oneSided.stamps.map((x) => x[0]), ["weights not recorded", "weights " + SHA_EDIT.slice(0, 12)]);
+      assert.match(oneSided.notes[0]!, /^only B records which weights it ran/);
+
+      const neither = await compare("exp-base", "exp-cand");
+      assert.deepEqual(neither.stamps, [], "no stamp on either side: nothing about weights");
+      assert.equal(neither.notes.some((t) => /weights/.test(t)), false);
+
+      await page.eval(`location.hash = "#/experiments/exp-base"`);
+      await page.waitFor("document.querySelector('.exp-top h1')?.getAttribute('title') === 'exp-base'", "an unstamped experiment page");
+      assert.equal(await page.eval("document.querySelector('.exp-top .fact-line .weights')"), null);
     } finally {
       await page.close();
     }

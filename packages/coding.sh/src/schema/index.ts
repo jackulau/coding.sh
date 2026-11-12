@@ -133,6 +133,19 @@ export interface HookContextStats {
   bySource: Record<string, { count: number; tokens: number }>;
 }
 
+/**
+ * Session.stats.weightEdits: weight edits the session recorded (`notification`
+ * events with `payload.kind: "weights.edit"`).
+ */
+export interface WeightEditStats {
+  /** Edits recorded. */
+  events: number;
+  /** Distinct tensor names edited. Unset when no edit kept its name, as in metadata capture. */
+  tensors?: number;
+  /** The edits' `changed` counts added up: a weight two edits changed counts twice. */
+  weightsChanged: number;
+}
+
 /** Why a prompt cache broke: a compaction rewrote the context, the model changed, the cache expired while idle, or something else. */
 export type CacheBreakCause = "compaction" | "model-switch" | "idle" | "other";
 
@@ -376,6 +389,8 @@ export interface Session {
     inheritedTokens?: number;
     /** Text hooks added to the model's context, by source (`plugin:<name>`, `settings`, …). Unset when no hook added any. */
     hookContext?: HookContextStats;
+    /** Weight edits the session recorded; it also tags the session `weights:edited`. Unset when it recorded none. */
+    weightEdits?: WeightEditStats;
     /**
      * Memory and instruction files (AGENTS.md, rules, skills, Claude auto-memory) the
      * session's events name, in the order first seen: what `harness audit` counts

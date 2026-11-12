@@ -64,6 +64,8 @@ test each hit.
 | `skill` | session | Skill tag (`skill:<name>`) | `skill:pdf` |
 | `hook` | session | Whose hooks added text to the context: `plugin:<name>`, `plugin`, `settings` or `unknown` | `hook:plugin:terse` |
 | `hook.tokens` | session | Tokens hooks added to the context (characters / 4) | `hook.tokens>500` |
+| `weights.edits` | session | Weight edits the session recorded | `weights.edits>0` |
+| `weights.changed` | session | Weights those edits changed, added up | `weights.changed>1000` |
 | `since` | session | Started at or after: `7d`, `12h`, `today`, `yesterday` or a date | `since:7d` |
 | `until` | session | Started before (exclusive): `7d`, `12h`, `today` or a date | `until:2026-11-01` |
 | `duration` | session | Wall time of an ended session | `duration>10m` |
@@ -220,6 +222,7 @@ tags out.
 | `secret:exposed` | Had a vendor token replaced by redaction. The agent and its provider saw it, so rotate it. |
 | `model:switch` | Changed model mid-session. |
 | `model:fallback` | Recorded a fallback to another model, such as Claude Code's `--fallback-model`. |
+| `weights:edited` | Recorded a weight edit (`stats.weightEdits`). |
 | `cache:low` | Wrote a prompt cache of at least 4,096 tokens over three or more turns, and read back less than it wrote. |
 | `fold:error` | Could not be folded into stats. `coding.sh ingest` tries again. |
 

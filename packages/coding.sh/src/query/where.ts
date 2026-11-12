@@ -201,6 +201,8 @@ const KEY_LIST: KeyDef[] = [
     facet: {},
   },
   { name: "hook.tokens", level: "session", type: "number", unit: "count", doc: "Tokens hooks added to the context (characters / 4)", example: "hook.tokens>500", sql: [stat("hookContext.tokens")], get: (s) => [num(s.stats?.hookContext?.tokens)] },
+  { name: "weights.edits", level: "session", type: "number", unit: "count", doc: "Weight edits the session recorded", example: "weights.edits>0", sql: [stat("weightEdits.events")], get: (s) => [num(s.stats?.weightEdits?.events)] },
+  { name: "weights.changed", level: "session", type: "number", unit: "count", doc: "Weights those edits changed, added up", example: "weights.changed>1000", sql: [stat("weightEdits.weightsChanged")], get: (s) => [num(s.stats?.weightEdits?.weightsChanged)] },
   { name: "since", level: "session", type: "time", bound: "since", doc: "Started at or after: 7d, 12h, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight", example: "since:7d", sql: ["s.started_at"], notNull: true, get: (s) => [s.startedAt] },
   { name: "until", level: "session", type: "time", bound: "until", doc: "Started before (exclusive): 7d, 12h, today or a date in local time. until:2026-11-01 leaves that day out", example: "until:2026-11-01", sql: ["s.started_at"], notNull: true, get: (s) => [s.startedAt] },
   { name: "duration", level: "session", type: "number", unit: "ms", doc: "Wall time of an ended session (30s, 10m, 2h)", example: "duration>10m", sql: ["(s.ended_at - s.started_at)"], get: (s) => [s.endedAt !== undefined ? s.endedAt - s.startedAt : undefined] },

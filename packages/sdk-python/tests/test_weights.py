@@ -1,7 +1,9 @@
 """weights_edit: one `notification` event with payload.kind "weights.edit" (docs/reference/api.md).
 
-The unit tests read the batch the SDK posts to a fake ingest endpoint. The last test starts a real
-`coding.sh serve` on a temp CODING_SH_HOME and reads the event back, redacted.
+The unit tests read the batch the SDK posts to a fake ingest endpoint. The parity tests check
+those batches against packages/sdk/test/fixtures/weights-edit.json, which the TypeScript SDK's
+weights.test.ts checks too. The last test starts a real `coding.sh serve` on a temp
+CODING_SH_HOME and reads the event back, redacted.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ import subprocess
 import time
 import unittest
 import urllib.request
-from typing import Any, Dict
+from typing import Any, Callable, Dict, List, Optional
 
 import support
 from support import IngestServer, by_kind, collect, start_sdk
@@ -25,6 +27,8 @@ import coding_sh
 A = "a" * 64
 B = "b" * 64
 CLI = os.path.join(support.ROOT, "..", "coding.sh", "src", "cli", "main.ts")
+# What both SDKs must send for the same edit. The TypeScript SDK's tests read the same file.
+FIXTURE = os.path.join(support.ROOT, "..", "sdk", "test", "fixtures", "weights-edit.json")
 NODE = shutil.which("node")
 # Built in pieces so push protection does not flag the test file.
 FAKE_TOKEN = "".join(["ghp_", "0123456789", "abcdefghij", "ABCDEFGHIJ", "klmnop"])
@@ -84,6 +88,22 @@ class FakeFloat:
 
 numbers.Integral.register(FakeInt)
 numbers.Real.register(FakeFloat)
+
+
+class FakeTensor:
+    """A tensor the way torch's are: no numbers ABC, a number only through ndim == 0 and item()."""
+
+    def __init__(self, v: Any, ndim: int = 0) -> None:
+        self.v = v
+        self.ndim = ndim
+
+    def item(self) -> Any:
+        if self.ndim != 0:
+            raise ValueError("only one element tensors can be converted to Python scalars")
+        return self.v
+
+    def __repr__(self) -> str:
+        return "tensor(%r)" % (self.v,)
 
 
 def _edit(**kw: Any) -> bool:
@@ -206,6 +226,25 @@ class WeightsEditTest(unittest.TestCase):
         self.assertIs(_edit(changed=FakeInt(-1)), False)
         self.assertIs(_edit(l2=FakeFloat(float("nan"))), False)
 
+    def test_accepts_zero_dim_tensors(self) -> None:
+        # What delta.norm(), delta.abs().max() and (delta != 0).sum() return in torch.
+        start_sdk(self.server)
+        self.assertTrue(_edit(changed=FakeTensor(12), shape=[FakeTensor(4), 8], l2=FakeTensor(0.25), max_abs=FakeTensor(0.1)))
+        (e,) = by_kind(collect(self.server), "notification")
+        p = e["payload"]
+        self.assertEqual((p["changed"], p["shape"], p["l2"], p["maxAbs"]), (12, [4, 8], 0.25, 0.1))
+        for v in (p["changed"], p["l2"], p["maxAbs"]):
+            self.assertIn(type(v), (int, float))
+
+    def test_refuses_tensors_that_are_not_one_number(self) -> None:
+        start_sdk(self.server)
+        self.assertIs(_edit(l2=FakeTensor([0.25, 0.5], ndim=1)), False)
+        self.assertIs(_edit(changed=FakeTensor(1.5)), False)
+        self.assertIs(_edit(l2=FakeTensor(float("inf"))), False)
+        self.assertIs(_edit(max_abs=FakeTensor("0.1")), False)
+        self.assertIs(_edit(changed=FakeTensor(True)), False)
+        self.assertEqual(by_kind(collect(self.server), "notification"), [])
+
     def test_warns_once_per_process(self) -> None:
         start_sdk(self.server)
         with self.assertLogs("coding_sh", level="WARNING") as cm:
@@ -303,6 +342,125 @@ class WeightsEditTest(unittest.TestCase):
         start_sdk(self.server)
         d = coding_sh.weights_delta([[0.0, 1.0]], [[0.5, 1.0]])
         self.assertTrue(coding_sh.weights_edit("w", base_sha256=A, edited_sha256=B, **d))
+
+
+def _alone(edit: Callable[[], bool], sid: Optional[str]) -> bool:
+    return edit()
+
+
+def _with_session(edit: Callable[[], bool], sid: Optional[str]) -> bool:
+    with coding_sh.with_session(str(sid)):
+        return edit()
+
+
+def _trace(edit: Callable[[], bool], sid: Optional[str]) -> bool:
+    with coding_sh.trace("run", session_id=sid):
+        return edit()
+
+
+def _tool_span(edit: Callable[[], bool], sid: Optional[str]) -> bool:
+    with coding_sh.trace("run"):
+        with coding_sh.span("tool", "patch"):
+            return edit()
+
+
+def _step_span(edit: Callable[[], bool], sid: Optional[str]) -> bool:
+    with coding_sh.trace("run"):
+        with coding_sh.span("step", "patch"):
+            return edit()
+
+
+# One entry per scenario in the fixture; weights.test.ts has the same list.
+SCENARIOS: Dict[str, Callable[[Callable[[], bool], Optional[str]], bool]] = {
+    "alone": _alone,
+    "withSession": _with_session,
+    "trace": _trace,
+    "traceWithSessionId": _trace,
+    "toolSpan": _tool_span,
+    "stepSpan": _step_span,
+}
+
+
+class WeightsEditParityTest(unittest.TestCase):
+    """weights_edit() here and weightsEdit() in the TypeScript SDK send the same events.
+
+    The fixture holds, for one edit in each place it can be recorded, the events in the order
+    they are posted: each event's kind, its keys and its payload. A missing fixture is a failure.
+    """
+
+    fx: Dict[str, Any] = {}
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        with open(FIXTURE, encoding="utf-8") as f:
+            cls.fx = json.load(f)
+
+    def tearDown(self) -> None:
+        coding_sh.shutdown(1.0)
+
+    def _edit(self) -> bool:
+        e = self.fx["edit"]
+        return coding_sh.weights_edit(
+            e["tensor"],
+            shape=e["shape"],
+            changed=e["changed"],
+            l2=e["l2"],
+            max_abs=e["maxAbs"],
+            base_sha256=e["baseSha256"],
+            edited_sha256=e["editedSha256"],
+            note=e["note"],
+        )
+
+    def _posted(self, name: str) -> List[Dict[str, Any]]:
+        server = IngestServer()
+        try:
+            start_sdk(server)
+            self.assertIs(SCENARIOS[name](self._edit, self.fx["scenarios"][name]["sessionId"]), True)
+            return collect(server)
+        finally:
+            coding_sh.shutdown(1.0)
+            server.close()
+
+    def test_every_scenario_in_the_fixture_runs_here(self) -> None:
+        self.assertEqual(sorted(SCENARIOS), sorted(self.fx["scenarios"]))
+
+    def test_the_same_events_as_the_typescript_sdk(self) -> None:
+        volatile = set(self.fx["volatilePayloadKeys"])
+        ignored = set(self.fx["ignoredEventKeys"])
+        for name, sc in self.fx["scenarios"].items():
+            with self.subTest(name):
+                events = self._posted(name)
+                got = [
+                    {
+                        "kind": e["kind"],
+                        "keys": sorted(k for k in e if k not in ignored),
+                        "payload": {k: "<volatile>" if k in volatile else v for k, v in e["payload"].items()},
+                    }
+                    for e in events
+                ]
+                want = [dict(e, payload=self.fx["payload"]) if e["kind"] == "notification" else e for e in sc["events"]]
+                self.assertEqual(got, want)
+
+                # One trace, one session, and the edit hangs off the event the fixture names.
+                first = events[0]
+                (note,) = by_kind(events, "notification")
+                self.assertEqual({e["traceId"] for e in events}, {first["traceId"]})
+                self.assertEqual({e["sessionId"] for e in events}, {sc["sessionId"] or first["sessionId"]})
+                if sc["parent"] is None:
+                    self.assertEqual(note["spanId"], first["spanId"])
+                else:
+                    (parent,) = by_kind(events, sc["parent"])
+                    self.assertEqual(note["parentId"], parent["id"])
+                    self.assertEqual(note["parentSpanId"], parent["spanId"])
+                    self.assertNotEqual(note["spanId"], parent["spanId"])
+                if "turnId" in note:
+                    self.assertEqual(note["turnId"], note["traceId"])
+
+    def test_the_same_delta_as_the_typescript_sdk(self) -> None:
+        d = self.fx["delta"]
+        got = coding_sh.weights_delta(d["base"], d["edited"])
+        got["maxAbs"] = got.pop("max_abs")  # the TypeScript SDK's name for it
+        self.assertEqual(got, d["result"])
 
 
 def _node_ok() -> bool:
