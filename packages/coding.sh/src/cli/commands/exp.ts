@@ -44,7 +44,7 @@ import { sortableId } from "../../core/ids.ts";
 import { jobConfig, taskFingerprint } from "../../jobs/config.ts";
 import type { Job, JobKind } from "../../jobs/store.ts";
 import { positiveInt, UsageError } from "../args.ts";
-import { parseWeights, shortWeights, weightsOf, withWeights } from "../../experiments/weights.ts";
+import { parseWeights, shortWeights, stampedWith, weightsOf, withWeights } from "../../experiments/weights.ts";
 import { finishJob, infraStopNote, openJob, resumeField, resumeNote, retryFlag, statusCommand, trialTimeout } from "../jobs.ts";
 import { gateFlags, jsonArg, list, num, shellQuote, str, withContext } from "../common.ts";
 import { ago, CliError, plural } from "../output.ts";
@@ -1316,17 +1316,23 @@ export async function run(c: CommandContext): Promise<number> {
         const limit = positiveInt(c.flags.limit, "limit") ?? 20;
         const all = await store.listExperiments({ limit });
         if (out.json) {
-          out.data({ experiments: all.map((e) => ({ id: e.id, name: e.name, status: e.status ?? "completed", ...(isCheckpoint(e) ? { partial: true } : {}), dataset: e.dataset, trials: e.trials, runs: e.runs.length, createdAt: new Date(e.createdAt).toISOString(), summary: e.summary })) });
+          // Each row carries the checkpoint its run recorded (exp run --weights); no key when it recorded none.
+          out.data({ experiments: all.map((e) => stampedWith({ id: e.id, name: e.name, status: e.status ?? "completed", ...(isCheckpoint(e) ? { partial: true } : {}), dataset: e.dataset, trials: e.trials, runs: e.runs.length, createdAt: new Date(e.createdAt).toISOString(), summary: e.summary }, weightsOf(e))) });
           return 0;
         }
         if (!all.length) {
           out.note("No experiments");
           return 0;
         }
-        out.table(
-          ["ID", "NAME", "DATASET", "RUNS", "CREATED"],
-          all.map((e) => [e.id, e.status === "cancelled" ? `${e.name} (${isCheckpoint(e) ? "partial" : "cancelled"})` : e.name, `${e.dataset.name}@${e.dataset.version}`, plural(e.runs.length, "run"), ago(e.createdAt)]),
-        );
+        // The WEIGHTS column is there only when a listed run recorded its checkpoint.
+        const stamps = all.map((e) => weightsOf(e));
+        const head = ["ID", "NAME", "DATASET", "RUNS", "CREATED"];
+        const rows = all.map((e) => [e.id, e.status === "cancelled" ? `${e.name} (${isCheckpoint(e) ? "partial" : "cancelled"})` : e.name, `${e.dataset.name}@${e.dataset.version}`, plural(e.runs.length, "run"), ago(e.createdAt)]);
+        if (stamps.some((w) => w !== undefined)) {
+          head.push("WEIGHTS");
+          rows.forEach((r, i) => r.push(stamps[i] ? shortWeights(stamps[i]) : ""));
+        }
+        out.table(head, rows);
         return 0;
       }
     }

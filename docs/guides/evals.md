@@ -807,7 +807,8 @@ as `comparison.a.weights.sha256` and `comparison.b.weights.sha256`. When both si
 stamp, the report warns that `B − A` is not a difference between two models. When only one side
 carries a stamp, it says so, and the other side reads `weights not recorded`. `exp show`, the
 `exp run` summary, the viewer and the MCP tools `experiments_list` and `experiment_compare` show
-the same stamp. `exp run` without `--weights` stores no stamp, and a comparison of two such runs
+the same stamp. `exp list` adds a `WEIGHTS` column when a listed run has one, and its `--json`
+rows carry `weights.sha256`. `exp run` without `--weights` stores no stamp, and a comparison of two such runs
 prints nothing about weights.
 
 The first compare prints a paired delta for `terminated` and one for `correct`, each with its
