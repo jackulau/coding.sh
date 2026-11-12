@@ -109,7 +109,27 @@ const gemini = `// ~/.gemini/settings.json
   </div>
   <p>
     Only <code>eval_from_session</code>, <code>eval_init</code>, <code>score_add</code> and <code>exp_session_note</code> write. Agents ask
-    you before <code>eval_from_session</code> and <code>eval_init</code>. Notes have secrets redacted.
+    you before <code>eval_from_session</code> and <code>eval_init</code>. Notes have secrets redacted. <code>eval_init</code> and
+    <code>score_add</code> are marked destructive, because <code>eval_init</code> with <code>force</code> replaces a suite and a new
+    score replaces the one stored for the same target, name, source and person.
+  </p>
+  <p>
+    A tool answer stays under 25,000 characters. When the rows asked for would be longer, the answer has fewer rows and a
+    <code>limitUsed</code> field, and <code>nextCursor</code> starts at the first row left out. The limit drops rows; it does not cut text.
+    <code>session_replay</code> shows at most 16 KB of a file and of each diff, and says when it cut one.
+  </p>
+
+  <h2 id="protocol">Protocol</h2>
+  <p>
+    The server speaks MCP over stdio. It accepts the stateless 2026-07-28 revision (<code>server/discover</code>, no handshake) and
+    the <code>initialize</code> handshake for 2025-11-25, 2025-06-18 and 2025-03-26. An <code>initialize</code> that asks for another
+    version gets 2025-11-25. In a 2025-03-26 session it accepts JSON-RPC batches; in later versions batches are an error.
+  </p>
+  <p>
+    In 2026-07-28, list and read results carry <code>ttlMs</code> and <code>cacheScope</code>: the tool, prompt and template lists
+    are <code>public</code> for an hour, and resources are <code>private</code> and stale at once. A request cancelled with
+    <code>notifications/cancelled</code> gets no reply. Requests run one at a time, so a cancelled request that has not started
+    never runs.
   </p>
 
   <h2 id="prompts">Prompts and resources</h2>
