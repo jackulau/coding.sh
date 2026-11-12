@@ -114,9 +114,14 @@ const gemini = `// ~/.gemini/settings.json
     score replaces the one stored for the same target, name, source and person.
   </p>
   <p>
-    A tool answer stays under 25,000 characters. When the rows asked for would be longer, the answer has fewer rows and a
-    <code>limitUsed</code> field, and <code>nextCursor</code> starts at the first row left out. The limit drops rows; it does not cut text.
-    <code>session_replay</code> shows at most 16 KB of a file and of each diff, and says when it cut one.
+    A tool answer stays under 25,000 characters. A tool that pages (it has a <code>cursor</code> argument) returns
+    <code>nextCursor</code>, which starts at the first row left out. The others return fewer rows when the answer would be longer, with a
+    <code>limitUsed</code> field. Rows are dropped, not cut.
+  </p>
+  <p>
+    <code>session_replay</code> pages the files of a step, of a range and of the step list with <code>limit</code> and
+    <code>cursor</code>. It cuts the text of a diff, a file or a tool output that does not fit, and says so with
+    <code>truncated: true</code> and the field's own flag. <code>limit: 1</code> gives one file's diff up to 16 KB.
   </p>
 
   <h2 id="protocol">Protocol</h2>
