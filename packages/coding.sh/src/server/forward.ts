@@ -5,7 +5,7 @@
 //
 // - Spans received over OTLP keep their own trace and span ids (they line up
 //   with the app's other spans in the backend). Native /v1/ingest batches are
-//   converted with toOtlpRequest (invoke_agent / execute_tool / chat spans).
+//   converted with toOtlpRequest (invoke_agent / execute_tool / chat / weights.edit spans).
 // - Every resource gets `coding_sh.project`.
 // - Metadata mode is an allowlist (see keepInMetadata); full mode keeps every
 //   attribute and runs serve's redactor over every string.
@@ -17,6 +17,7 @@ import type { Redactor } from "../core/redact.ts";
 import type { OtelValue, ResourceSpans } from "../otel/model.ts";
 import type { OpenSession } from "../core/types.ts";
 import { otlpTracesUrl, toOtlpOpenSessionRequest, toOtlpRequest } from "../sinks/otlp.ts";
+import { WEIGHTS_EDIT_CONTENT_ATTRS } from "../core/weights.ts";
 import { DEFAULT_TIMEOUT_MS, parseRetryAfter, redactUrl } from "../sinks/post.ts";
 import type { ForwardConfig } from "./config.ts";
 import type { Logger } from "./log.ts";
@@ -102,7 +103,8 @@ const KEEP_EXACT = new Set([
   "error.type",
 ]);
 const KEEP_PREFIX = ["gen_ai.usage.", "service.", "telemetry.", "coding_sh."];
-const DROP_EXACT = new Set(["coding_sh.session.title", "coding_sh.repo.root"]);
+// Content under coding_sh.*: the session title, the repo root, and what names a weight edit's tensor and checkpoints.
+const DROP_EXACT = new Set(["coding_sh.session.title", "coding_sh.repo.root", ...WEIGHTS_EDIT_CONTENT_ATTRS]);
 
 const isScalarNonString = (v: AnyValue): boolean => "boolValue" in v || "intValue" in v || "doubleValue" in v;
 

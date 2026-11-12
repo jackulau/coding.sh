@@ -731,6 +731,8 @@ One more `notification` kind records weight edits. The Python SDK's `coding_sh.w
 - A session with a weight edit gets the `weights:edited` tag. `coding.sh sessions --flag weights:edited` lists them, and `--where 'weights.changed>1000'` filters by size.
 - `coding.sh show`, the viewer and the MCP server's `session_get` print one line per edit: the tensor and its shape, the weights changed out of the total, both norms and the first 8 characters of each hash.
 - Metadata mode: the SDK leaves out `note`. A server with `capture.mode = "metadata"` also drops `tensor`, `shape` and both hashes, and keeps `changed`, `l2` and `maxAbs`.
+- OpenTelemetry in: a span or a log record named `weights.edit` sent to `/v1/traces` or `/v1/logs` is read as the same event. Its fields are the attributes `coding_sh.weights.tensor`, `.shape` (an array of integers), `.changed`, `.l2`, `.max_abs`, `.base_sha256`, `.edited_sha256` and `.note`. A malformed attribute is left out and the edit still counts.
+- OpenTelemetry out: the `otlp` sink and `[serve.forward]` send one `weights.edit` span per edit with the same attributes, as a child of the session's `invoke_agent` span, which carries `coding_sh.stats.weight_edits` and `coding_sh.stats.weights_changed`. In `metadata` mode the span keeps `.changed`, `.l2` and `.max_abs` only.
 
 - The caller computes the hashes and norms. The SDK checks the values, drops an invalid edit with one warning, and never raises into the app. Numpy and torch scalars count as numbers.
 - `weights_edit()` returns `True` only when the event was queued. A `note` that is not a string is dropped with a warning, and the edit is still recorded.

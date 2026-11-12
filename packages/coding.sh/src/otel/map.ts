@@ -35,6 +35,7 @@ import { SCHEMA_VERSION } from "../schema/index.ts";
 import { hashParts, sha256Hex } from "../core/ids.ts";
 import { noteBlobHits, type RedactionTally, type Redactor, redactBlobValue, redactionTally } from "../core/redact.ts";
 import { geoValue, tierValue } from "../core/pricing.ts";
+import { WEIGHTS_EDIT_ATTRS, WEIGHTS_EDIT_KIND, weightsEditOf } from "../core/weights.ts";
 import { anthropicPriceHints } from "../adapters/_shared/normalize.ts";
 import { type DurableTag, durableOf, durableSessionId } from "./durable.ts";
 import {
@@ -795,6 +796,29 @@ function errorMessage(span: OtelSpan): string | undefined {
   return ex ? str(ex.attributes, "exception.message", "exception.type") : undefined;
 }
 
+/**
+ * The payload of a span or log record named `weights.edit`: `kind` plus the well-formed
+ * coding_sh.weights.* attributes (WEIGHTS_EDIT_ATTRS), the event the SDKs' weights_edit helpers send.
+ * A number or a shape sent as a string is read as the number or the list it spells.
+ */
+function weightsEditDraft(d: Draft, a: Attrs): Draft {
+  const K = WEIGHTS_EDIT_ATTRS;
+  const w = weightsEditOf({
+    tensor: str(a, K.tensor),
+    shape: maybeJson(a[K.shape]),
+    changed: num(a, K.changed),
+    l2: num(a, K.l2),
+    maxAbs: num(a, K.maxAbs),
+    baseSha256: str(a, K.baseSha256),
+    editedSha256: str(a, K.editedSha256),
+    note: str(a, K.note),
+  });
+  d.payload.kind = WEIGHTS_EDIT_KIND;
+  // Assigned, not set(): an empty shape is a scalar's shape and a zero is a number.
+  Object.assign(d.payload, w);
+  return d;
+}
+
 async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<AgentEvent[]> {
   const { span, traceId, spanId } = c;
   const a = span.attributes;
@@ -840,6 +864,8 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
     return e;
   };
   const draft = () => new Draft(store, max, raw);
+  // A span named weights.edit is a weight edit, whatever else its attributes say.
+  const weightsEdit = span.name === WEIGHTS_EDIT_KIND;
   const agentName = str(a, "gen_ai.agent.name", "agent.name") ?? (/^invoke_agent\s+(.+)$/.exec(span.name)?.[1] || undefined);
 
   // ---- model call
@@ -916,6 +942,7 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
     if (prompt) emit(2, "user.message", startMs, await draft().content("text", prompt), {}, promptId ? ccPromptId(c.sessionId, promptId) : undefined);
     if (klass === "llm" || klass === "embedding") await llm(4);
     else if (klass === "tool") await tool(4, 5);
+    if (weightsEdit) emit(12, "notification", startMs, weightsEditDraft(draft(), a));
     const end = draft().set("ok", !failed).set("error", error).set("durationMs", durationMs);
     if (klass !== "llm") await end.content("output", assistantText(outputMessages(a)));
     const reported = klass === "llm" || klass === "embedding" ? undefined : usageOf(a);
@@ -924,6 +951,8 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
     if (!c.conversation) {
       emit(6, "session.end", endMs, draft().set("reason", failed ? "error" : "completed").set("error", error), { durationMs });
     }
+  } else if (weightsEdit) {
+    emit(0, "notification", startMs, weightsEditDraft(draft(), a), durationMs > 0 ? { durationMs } : {});
   } else if (klass === "llm" || klass === "embedding") {
     await llm(0);
   } else if (klass === "tool") {
@@ -1332,6 +1361,8 @@ async function mapLog(rec: OtelLogRecord, resource: Attrs, scope: OtelScope, ctx
       .set("plugin", str(a, "plugin.name", "skill.plugin_id"))
       .set("event", name);
     emit(0, "notification", ts, d);
+  } else if (suffix === WEIGHTS_EDIT_KIND) {
+    emit(0, "notification", ts, weightsEditDraft(draft(), a));
   } else if (suffix === "agent_response" && content(str(a, "response"))) {
     // Codex: a final answer of the main agent or of a spawned subagent (otel.log_agent_responses).
     const d = draft().set("responseLength", num(a, "response_length")).set("truncated", bool(a, "response_truncated") || undefined);

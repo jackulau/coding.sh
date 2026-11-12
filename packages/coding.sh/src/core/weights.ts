@@ -54,6 +54,30 @@ export function weightsEditOf(p: Record<string, unknown>): WeightsEdit {
   return out;
 }
 
+/**
+ * OTLP: a span or a log record named `weights.edit` carries the edit in these attributes.
+ * otel/map.ts reads them and sinks/otlp.ts writes them, so an edit keeps its fields both ways.
+ */
+export const WEIGHTS_EDIT_ATTRS: Record<keyof WeightsEdit, string> = {
+  tensor: "coding_sh.weights.tensor",
+  shape: "coding_sh.weights.shape",
+  changed: "coding_sh.weights.changed",
+  l2: "coding_sh.weights.l2",
+  maxAbs: "coding_sh.weights.max_abs",
+  baseSha256: "coding_sh.weights.base_sha256",
+  editedSha256: "coding_sh.weights.edited_sha256",
+  note: "coding_sh.weights.note",
+};
+/** The attributes that name the tensor or the checkpoints: metadata capture leaves them out, as it does the payload fields. */
+export const WEIGHTS_EDIT_CONTENT_ATTRS: string[] = (["tensor", "shape", "baseSha256", "editedSha256", "note"] as const).map((k) => WEIGHTS_EDIT_ATTRS[k]);
+
+/** A weights.edit payload as OTLP attributes: the fields that are present and well-formed. */
+export function weightsEditAttrs(p: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(weightsEditOf(p))) out[WEIGHTS_EDIT_ATTRS[k as keyof WeightsEdit]] = v;
+  return out;
+}
+
 export function foldWeightEdits(s: WeightEditState, e: AgentEvent): void {
   if (!isWeightsEdit(e)) return;
   const w = weightsEditOf(e.payload);

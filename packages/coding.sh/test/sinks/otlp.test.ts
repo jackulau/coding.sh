@@ -7,7 +7,7 @@ import { describe, it } from "node:test";
 import type { AgentEvent, Session, Usage } from "../../src/schema/index.ts";
 import { type KeyValue, OtlpSink, toOtlpRequest, toOtlpSpans } from "../../src/sinks/otlp.ts";
 import { decodeTraceJson } from "../../src/otel/json.ts";
-import { mapTraces, TraceSessionMap } from "../../src/otel/map.ts";
+import { type MapContext, mapTraces, TraceSessionMap } from "../../src/otel/map.ts";
 import { startReceiver } from "../../src/otel/receiver.ts";
 import { MemBlobs, MemIndex } from "../otel/_memstore.ts";
 
@@ -151,5 +151,74 @@ describe("otlp sink → OTLP receiver round-trip", () => {
     const spans = toOtlpSpans([parentCall, helper, helper, { ...helper }], sessions, "full").filter((s) => s.name.startsWith("chat"));
     assert.equal(spans.length, 2);
     assert.equal(new Set(spans.map((s) => s.spanId)).size, 2);
+  });
+});
+
+describe("otlp sink: weight edits", () => {
+  const A = "a".repeat(64);
+  const B = "b".repeat(64);
+  const payload = { kind: "weights.edit", tensor: "layers.3.mlp.down_proj.weight", shape: [4096, 11008], changed: 1204, l2: 0.0183, maxAbs: 0.004, baseSha256: A, editedSha256: B, note: "rank-1 edit" };
+  const edit = (id: string, p: Record<string, unknown> = payload): AgentEvent => ({ id, v: 0, sessionId: "otlp-sink-s1", ts: T0 + 2_000, agent: "sdk", kind: "notification", payload: p });
+  const weights = (a: Record<string, unknown>) => Object.fromEntries(Object.entries(a).filter(([k]) => k.startsWith("coding_sh.weights.")));
+  const ctx = (): MapContext => ({ maxInlineBytes: 4096, blob: (d) => new MemBlobs().put(d), traceSessions: new TraceSessionMap() });
+
+  it("sends one weights.edit span per edit, under the session span", () => {
+    const spans = toOtlpSpans([edit("w1"), edit("w2", { ...payload, tensor: "layers.4.mlp.down_proj.weight" })], [], "full");
+    assert.deepEqual(spans.map((s) => s.name), ["weights.edit", "weights.edit"]);
+    assert.notEqual(spans[0]!.spanId, spans[1]!.spanId);
+    assert.equal(spans[0]!.parentSpanId, toOtlpSpans([{ ...edit("end"), kind: "session.end", payload: {} }], [session()], "full")[0]!.spanId);
+    assert.deepEqual(weights(attrsOf(spans[0]!.attributes)), {
+      "coding_sh.weights.tensor": "layers.3.mlp.down_proj.weight",
+      "coding_sh.weights.shape": { arrayValue: { values: [{ intValue: "4096" }, { intValue: "11008" }] } },
+      "coding_sh.weights.changed": 1204,
+      "coding_sh.weights.l2": 0.0183,
+      "coding_sh.weights.max_abs": 0.004,
+      "coding_sh.weights.base_sha256": A,
+      "coding_sh.weights.edited_sha256": B,
+      "coding_sh.weights.note": "rank-1 edit",
+    });
+  });
+
+  it("metadata mode keeps the counts and the norms, and no name, shape, hash or note", () => {
+    const spans = toOtlpSpans([edit("w1")], [], "metadata");
+    assert.equal(spans.length, 1);
+    const a = attrsOf(spans[0]!.attributes);
+    assert.deepEqual(weights(a), { "coding_sh.weights.changed": 1204, "coding_sh.weights.l2": 0.0183, "coding_sh.weights.max_abs": 0.004 });
+    assert.equal(spans[0]!.attributes.some((kv) => kv.key === "coding_sh.weights.shape"), false);
+  });
+
+  it("another notification is not exported", () => {
+    assert.deepEqual(toOtlpSpans([edit("n1", { kind: "hook.context", text: "x" }), edit("n2", { message: "weights.edit" })], [], "full"), []);
+  });
+
+  it("the session span carries the edit and weight counts only when there are edits", () => {
+    const end: AgentEvent = { ...edit("end"), kind: "session.end", payload: {} };
+    const s = session();
+    s.stats.weightEdits = { events: 2, tensors: 2, weightsChanged: 66_560 };
+    s.flags = ["weights:edited"];
+    for (const mode of ["full", "metadata"] as const) {
+      const a = attrsOf(toOtlpSpans([end], [s], mode)[0]!.attributes);
+      assert.equal(a["coding_sh.stats.weight_edits"], 2, mode);
+      assert.equal(a["coding_sh.stats.weights_changed"], 66_560, mode);
+    }
+    const none = attrsOf(toOtlpSpans([end], [session()], "full")[0]!.attributes);
+    assert.equal(Object.hasOwn(none, "coding_sh.stats.weight_edits") || Object.hasOwn(none, "coding_sh.stats.weights_changed"), false);
+  });
+
+  it("the receiver reads an exported edit back as the same payload", async () => {
+    const cases: Record<string, unknown>[] = [
+      payload,
+      { kind: "weights.edit", tensor: "bias", shape: [], changed: 0, l2: 0, maxAbs: 0 },
+      { kind: "weights.edit", tensor: "w", shape: [2, 3], changed: 6, l2: 2, maxAbs: 1 },
+      { kind: "weights.edit", changed: 1204, l2: 0.0183, maxAbs: 0.004 },
+      { kind: "weights.edit" },
+    ];
+    for (const [i, p] of cases.entries()) {
+      const req = JSON.parse(JSON.stringify(toOtlpRequest([edit(`rt${i}`, p)], [], "full")));
+      const { events } = await mapTraces(decodeTraceJson(req), ctx());
+      const back = events.filter((e) => e.kind === "notification");
+      assert.equal(back.length, 1, JSON.stringify(p));
+      assert.deepEqual(back[0]!.payload, p);
+    }
   });
 });

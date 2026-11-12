@@ -182,6 +182,7 @@ What lands in `otel_traces`, with `ServiceName = 'coding.sh'`:
 | `invoke_agent <agent>` | session (an open one can have several rows) | `gen_ai.operation.name`, `gen_ai.agent.name`, `gen_ai.request.model`, `gen_ai.conversation.id` (the session id), `gen_ai.usage.*`, `coding_sh.cost_usd`, `coding_sh.stats.*` (events, turns, tool_calls, tool_errors, files_changed, tests_passed, tests_failed), `coding_sh.session.flags`, `vcs.ref.head.revision` |
 | `execute_tool <tool>` | tool call | `gen_ai.operation.name`, `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.agent.name`; `StatusCode` is `Error` when the call failed |
 | `chat <model>` | model call | `gen_ai.operation.name`, `gen_ai.request.model`, `gen_ai.provider.name`, `gen_ai.usage.*`, `coding_sh.cost_usd` |
+| `weights.edit` | weight edit | under `coding_sh.weights.`: `changed`, `l2` and `max_abs`; `mode = "full"` adds `tensor`, `shape`, `base_sha256`, `edited_sha256` and `note` |
 
 `gen_ai.usage.*` is `input_tokens`, `output_tokens`, `cache_read.input_tokens` and
 `cache_write.input_tokens`. `input_tokens` is the whole prompt, cache included; the uncached part
@@ -192,6 +193,7 @@ trace, and `Duration` is in nanoseconds.
 - Map columns store every attribute as a string: cast with `toFloat64OrZero` and `toUInt64OrZero`.
   `coding_sh.session.flags` is a JSON array string.
 - Cost is on the `invoke_agent` span (the session) and on each `chat` span. Sum one, never both.
+- A session that edited weights also has `weight_edits` and `weights_changed` under `coding_sh.stats.`, and one `weights.edit` span per edit.
 - `mode = "full"` adds prompts, code and tool output as span attributes.
 - The `invoke_agent` span is sent when the session ends. `coding.sh serve` and `coding.sh collector`
   also send it while a session is open: after 10 quiet seconds, and every 60 seconds while busy.
