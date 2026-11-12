@@ -69,9 +69,24 @@ def _sha(v: Any, what: str) -> str:
     return v.lower()
 
 
+# Keys already warned about. The transport's own table starts empty at each init(), and these
+# warnings are once per process, as in the TypeScript SDK.
+_warned: "set[str]" = set()
+
+
+def _reset_warned() -> None:
+    """For tests: warn again."""
+    _warned.clear()
+
+
 def _warn(key: str, msg: str) -> None:
     try:
-        _get()._warn_once(key, msg)
+        t = _get()
+        if key in _warned:
+            t._debug("%s", msg)
+            return
+        _warned.add(key)
+        t._warn_once(key, msg)
     except Exception:
         pass
 

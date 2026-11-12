@@ -6,6 +6,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import { withoutCallerEnv } from "../capture/_helpers.ts";
 import { CLI } from "../query/_seed.ts";
 
 const root = mkdtempSync(join(tmpdir(), "csh-rebuild-redact-"));
@@ -22,7 +23,7 @@ test("ingest --rebuild keeps the Redacted row of a prompt whose spool line was s
   const hookMjs = join(root, "dist", "hook.mjs");
   mkdirSync(join(root, "dist"), { recursive: true });
   writeFileSync(hookMjs, "// stand-in: this test runs hook.sh\n");
-  const env = { ...process.env, CODING_SH_HOOK_SOURCE: hookMjs, PATH: `${bin}:${process.env.PATH}`, HOME: join(root, "h"), CODING_SH_HOME: join(root, "cs"), CLAUDE_CONFIG_DIR: join(root, "c"), CODEX_HOME: join(root, "x"), CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1", NO_COLOR: "1" };
+  const env = { ...withoutCallerEnv(process.env), CODING_SH_HOOK_SOURCE: hookMjs, PATH: `${bin}:${process.env.PATH}`, HOME: join(root, "h"), CODING_SH_HOME: join(root, "cs"), CLAUDE_CONFIG_DIR: join(root, "c"), CODEX_HOME: join(root, "x"), CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1", NO_COLOR: "1" };
   for (const d of [env.HOME, env.CLAUDE_CONFIG_DIR]) mkdirSync(d, { recursive: true });
   const cli = (...args: string[]) => spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { env, encoding: "utf8", timeout: 120_000 });
   const init = cli("init", "--agent", "claude-code", "--yes", "--no-import", "--no-mcp");

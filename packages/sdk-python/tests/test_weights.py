@@ -23,6 +23,7 @@ import support
 from support import IngestServer, by_kind, collect, start_sdk
 
 import coding_sh
+from coding_sh import _weights
 
 A = "a" * 64
 B = "b" * 64
@@ -122,6 +123,7 @@ def _edit(**kw: Any) -> bool:
 
 class WeightsEditTest(unittest.TestCase):
     def setUp(self) -> None:
+        _weights._reset_warned()
         self.server = IngestServer()
 
     def tearDown(self) -> None:
@@ -251,6 +253,15 @@ class WeightsEditTest(unittest.TestCase):
             _edit(changed=-1)
             _edit(changed=-2)
             _edit(l2=-1.0)
+        self.assertEqual(len([r for r in cm.records if "weights_edit dropped" in r.getMessage()]), 1)
+
+    def test_a_second_init_does_not_warn_again(self) -> None:
+        start_sdk(self.server)
+        with self.assertLogs("coding_sh", level="WARNING") as cm:
+            _edit(changed=-1)
+            coding_sh.shutdown(1.0)
+            start_sdk(self.server)
+            _edit(changed=-2)
         self.assertEqual(len([r for r in cm.records if "weights_edit dropped" in r.getMessage()]), 1)
 
     def test_note_that_is_not_a_string_is_dropped_with_a_warning(self) -> None:
@@ -469,12 +480,12 @@ def _node_ok() -> bool:
     try:
         v = subprocess.run([NODE, "-v"], capture_output=True, text=True, timeout=10).stdout.strip().lstrip("v")
         major, minor = (int(x) for x in v.split(".")[:2])
-        return (major, minor) >= (22, 15)
+        return (major, minor) >= (22, 16)
     except Exception:
         return False
 
 
-@unittest.skipUnless(_node_ok(), "needs node >= 22.15 and the core package")
+@unittest.skipUnless(_node_ok(), "needs node >= 22.16 and the core package")
 class WeightsEditServerTest(unittest.TestCase):
     """A real coding.sh serve on a temp CODING_SH_HOME: the event comes back with the secret redacted."""
 
