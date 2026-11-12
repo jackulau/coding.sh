@@ -407,7 +407,7 @@ function toolDefs(): ToolDef<ToolCtx>[] {
       name: "session_get",
       title: "Get a session",
       description:
-        "One session as a digest: summary (with waste: repeated reads and prompt-cache breaks), skills used, per-turn index, and a timeline of prompts, replies, tool calls (with failures and durations), model calls, file changes, tests and weight edits. Pass turn to zoom into one turn; page with cursor.",
+        "A session digest: summary (with waste: repeated reads and prompt-cache breaks), skills used, per-turn index, and a timeline of prompts, replies, tool calls (with failures and durations), model calls, file changes, tests and weight edits. Pass turn to zoom in; page with cursor.",
       inputSchema: input(
         {
           sessionId: SESSION_ID,
