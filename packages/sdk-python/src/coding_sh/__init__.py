@@ -20,7 +20,7 @@ Stdlib only; one daemon thread sends batches, and an atexit flush is bounded to 
 from ._client import __version__
 from ._providers import observe
 from ._trace import current_session_id, flush, init, shutdown, span, stats, trace, with_session
-from ._weights import weights_delta, weights_edit
+from ._weights import weights_checkpoint, weights_delta, weights_edit
 
 __all__ = [
     "__version__",
@@ -34,5 +34,6 @@ __all__ = [
     "shutdown",
     "stats",
     "weights_edit",
+    "weights_checkpoint",
     "weights_delta",
 ]

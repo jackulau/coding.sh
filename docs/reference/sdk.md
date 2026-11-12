@@ -114,8 +114,10 @@ That is AI SDK 7. On AI SDK 6 and older, pass `experimental_telemetry: { isEnabl
 | [`TraceHandle`](#tracehandle) | interface |
 | [`SpanOptions`](#spanoptions) | interface |
 | [`weightsEdit`](#weightseditedit) | function |
+| [`weightsCheckpoint`](#weightscheckpointcheckpoint) | function |
 | [`weightsDelta`](#weightsdeltabase-edited) | function |
 | [`WeightsEdit`](#weightsedit) | interface |
+| [`WeightsCheckpoint`](#weightscheckpoint) | interface |
 | [`WeightsDelta`](#weightsdelta) | interface |
 | [`WeightsArray`](#weightsarray) | type |
 | [`aiSdkTracer`](#aisdktraceropts) | function |
@@ -248,6 +250,24 @@ function weightsEdit(edit: WeightsEdit): boolean
 | Parameter | Type | Default |
 |---|---|---|
 | `edit` | [`WeightsEdit`](#weightsedit) | required |
+
+### `weightsCheckpoint(checkpoint)`
+
+Records one saved weights file as a `notification` event with `payload.kind` "weights.checkpoint". The Python SDK's `weights_checkpoint()` sends the same event.
+
+`sha256` is the hash of the whole file, as your script computed it: the value `coding.sh exp run --weights` takes, so the session that recorded the edits and the experiment that ran the file name each other. `baseSha256` is the hash of the file the edits started from.
+
+Returns true only when the event was queued. Returns false when a value is invalid, with one warning per process. Returns false without a warning when the SDK is off or shut down or the queue is full. Never throws.
+
+A `note` that is not a string is dropped with one warning; the checkpoint is still recorded. Inside `trace()` or `span()` the checkpoint joins that trace. Outside them it gets a session of its own, or a turn of the `withSession()` session, so record it inside the `trace()` that recorded the edits.
+
+```ts
+function weightsCheckpoint(checkpoint: WeightsCheckpoint): boolean
+```
+
+| Parameter | Type | Default |
+|---|---|---|
+| `checkpoint` | [`WeightsCheckpoint`](#weightscheckpoint) | required |
 
 ### `weightsDelta(base, edited)`
 
@@ -390,6 +410,24 @@ interface WeightsEdit {
 | `editedSha256` | `string` | sha256 of the tensor after the edit: 64 hex characters, sent in lowercase. |
 | `note` | `string` | Free text, kept only in full capture mode. |
 
+### `WeightsCheckpoint`
+
+One saved weights file, as `weightsCheckpoint()` records it.
+
+```ts
+interface WeightsCheckpoint {
+  sha256: string;
+  baseSha256?: string;
+  note?: string;
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `sha256` | `string` | sha256 of the whole weights file, the value `coding.sh exp run --weights` takes: 64 hex characters, sent in lowercase. |
+| `baseSha256` | `string` | sha256 of the file the edits started from: 64 hex characters, sent in lowercase. |
+| `note` | `string` | Free text, kept only in full capture mode. |
+
 ### `WeightsDelta`
 
 What `weightsDelta()` returns. It spreads into `weightsEdit()`.
@@ -524,6 +562,7 @@ Everything in `coding_sh.__all__`:
 | [`coding_sh.shutdown`](#coding_shshutdown) | function |
 | [`coding_sh.stats`](#coding_shstats) | function |
 | [`coding_sh.weights_edit`](#coding_shweights_edittensor-shape-changed-l2-max_abs-base_sha256-edited_sha256-) | function |
+| [`coding_sh.weights_checkpoint`](#coding_shweights_checkpointsha256-) | function |
 | [`coding_sh.weights_delta`](#coding_shweights_deltabase-edited) | function |
 
 ### `coding_sh.__version__`
@@ -704,6 +743,31 @@ def weights_edit(
 | `edited_sha256` | `str` | required |
 | `note` | `Optional[str]` | `None` |
 
+### `coding_sh.weights_checkpoint(sha256, ...)`
+
+Record one saved weights file as a `notification` event with `payload.kind` "weights.checkpoint".
+
+sha256: the 64-hex hash of the whole file, as your script computed it. It is the value `coding.sh exp run --weights` takes, so the session that recorded the edits and the experiment that ran the file name each other. base_sha256: the hash of the file the edits started from. note: free text, kept only in full capture mode.
+
+Returns True only when the event was queued. Returns False when a value is invalid, with one warning per process. Returns False without a warning when the SDK is off or shut down or the queue is full. Never raises.
+
+A note that is not a string is dropped with one warning; the checkpoint is still recorded. Outside trace() and with_session() the checkpoint gets a session of its own, so record it inside the one that recorded the edits.
+
+```python
+def weights_checkpoint(
+    sha256: str,
+    *,
+    base_sha256: Optional[str] = None,
+    note: Optional[str] = None,
+) -> bool
+```
+
+| Parameter | Type | Default |
+|---|---|---|
+| `sha256` | `str` | required |
+| `base_sha256` | `Optional[str]` | `None` |
+| `note` | `Optional[str]` | `None` |
+
 ### `coding_sh.weights_delta(base, edited)`
 
 {shape, changed, l2, max_abs} for two array-likes of the same shape, in pure Python.
@@ -799,6 +863,6 @@ A constant: `"gen_ai.conversation.id"`.
 - TypeScript times are in milliseconds (`timeoutMs`, `flushIntervalMs`). Python timeouts are in seconds; only `flush_interval_ms` is in milliseconds.
 - In TypeScript, `trace()`, `span()` and `withSession()` take the function to run. In Python, they are context managers and decorators.
 - `aiSdkTracer()` and `observeFetch()` are TypeScript only. `coding_sh.otel` is Python only.
-- `weightsEdit()` takes one object in TypeScript; `weights_edit()` takes arguments in Python. Both record the same event. `weightsDelta()` returns `maxAbs` where `weights_delta()` returns `max_abs`, and throws a `TypeError` or `RangeError` where Python raises `ValueError`.
+- `weightsEdit()` and `weightsCheckpoint()` take one object in TypeScript; `weights_edit()` and `weights_checkpoint()` take arguments in Python, and `weights_checkpoint()` takes `base_sha256` and `note` by keyword only. Each pair records the same event. `weightsDelta()` returns `maxAbs` where `weights_delta()` returns `max_abs`, and throws a `TypeError` or `RangeError` where Python raises `ValueError`.
 - A weight count or dimension must be an integer below 2^53 in TypeScript; Python takes any integer. Python also takes numpy scalars as numbers, and `weights_delta()` reads anything with `.tolist()`; in TypeScript `weightsDelta()` reads arrays and typed arrays.
 - A long tensor name or note is cut. TypeScript cuts at 64 KiB of UTF-8 and sets `payload.truncated`; Python cuts at 65,536 characters and appends `…[truncated]`.

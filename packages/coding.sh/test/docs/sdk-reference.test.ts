@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { pyOtel, pyPublic, renderSdkReference, SDK_REFERENCE_PATH, tsExports } from "../../scripts/sdk-reference.ts";
+import { pyNamed, pyOtel, pyPublic, renderSdkReference, SDK_REFERENCE_PATH, tsExports } from "../../scripts/sdk-reference.ts";
 
 const repo = new URL("../../../../", import.meta.url);
 
@@ -38,7 +38,7 @@ describe("docs/reference/sdk.md", () => {
       for (const p of e.params) assert.ok(doc.includes(`\`${p.name}\``), `${e.name} parameter ${p.name}`);
       for (const f of e.fields) assert.ok(doc.includes(`| \`${f.name}\` |`), `${e.name}.${f.name}`);
     }
-    for (const a of [...pyPublic(), ...pyOtel()]) for (const p of a.params) assert.ok(doc.includes(`\`${p.name}\``), `${a.name} parameter ${p.name}`);
+    for (const a of [...pyPublic(), ...pyOtel()]) for (const p of pyNamed(a)) assert.ok(doc.includes(`\`${p.name}\``), `${a.name} parameter ${p.name}`);
     for (const v of ["CODING_SH_URL", "CODING_SH_INGEST_KEY", "CODING_SH_SERVICE", "CODING_SH_CAPTURE_MODE", "CODING_SH_DISABLED", "CODING_SH_DEBUG"]) {
       assert.ok(doc.includes(`| \`${v}\` | yes | yes |`), `${v} read by both SDKs`);
     }

@@ -1,4 +1,5 @@
-// Weight edits: one `notification` event per edit, `payload.kind` "weights.edit".
+// Weight edits: one `notification` event per edit, `payload.kind` "weights.edit",
+// and one per saved file, `payload.kind` "weights.checkpoint".
 //
 //   weightsEdit({
 //     tensor: "model.layers.3.mlp.down_proj.weight",
@@ -9,19 +10,22 @@
 //     baseSha256: shaBefore,
 //     editedSha256: shaAfter,
 //   });
+//   weightsCheckpoint({ sha256: shaOfEditedFile, baseSha256: shaOfBaseFile });
 //
 // The caller's script computes the hashes and norms; this module only checks
-// them and sends them. weightsEdit() never throws into the app: a bad value
-// drops the event with a warning (once per process) and it returns false.
-// weightsDelta() is a helper you call on purpose, so it throws on bad input.
-// The Python SDK's weights_edit() sends the same event (packages/sdk-python,
-// _weights.py); test/fixtures/weights-edit.json holds what both must send.
-// Payload fields are in docs/reference/api.md.
+// them and sends them. weightsEdit() and weightsCheckpoint() never throw into
+// the app: a bad value drops the event with a warning (once per process) and
+// they return false. weightsDelta() is a helper you call on purpose, so it
+// throws on bad input. The Python SDK's weights_edit() and weights_checkpoint()
+// send the same events (packages/sdk-python, _weights.py);
+// test/fixtures/weights-edit.json holds what both must send. Payload fields are
+// in docs/reference/api.md.
 import { config, warnOnce } from "./client.ts";
 import { recordNotification } from "./context.ts";
 import { errorMessage, quiet, truncate } from "./util.ts";
 
 const KIND = "weights.edit";
+const CHECKPOINT_KIND = "weights.checkpoint";
 const SHA256 = /^[0-9a-fA-F]{64}$/;
 const MAX_DIMS = 16;
 
@@ -41,6 +45,16 @@ export interface WeightsEdit {
   baseSha256: string;
   /** sha256 of the tensor after the edit: 64 hex characters, sent in lowercase. */
   editedSha256: string;
+  /** Free text, kept only in full capture mode. */
+  note?: string;
+}
+
+/** One saved weights file, as `weightsCheckpoint()` records it. */
+export interface WeightsCheckpoint {
+  /** sha256 of the whole weights file, the value `coding.sh exp run --weights` takes: 64 hex characters, sent in lowercase. */
+  sha256: string;
+  /** sha256 of the file the edits started from: 64 hex characters, sent in lowercase. */
+  baseSha256?: string;
   /** Free text, kept only in full capture mode. */
   note?: string;
 }
@@ -104,11 +118,24 @@ function payloadOf(edit: WeightsEdit): Record<string, unknown> {
   p.maxAbs = norm(maxAbs, "maxAbs");
   p.baseSha256 = sha(baseSha256, "baseSha256");
   p.editedSha256 = sha(editedSha256, "editedSha256");
-  if (note !== undefined && note !== null) {
-    // The edit is still recorded; only the note is dropped.
-    if (typeof note !== "string") quiet(warnOnce)("weights-edit-note", "[coding.sh] weightsEdit ignored a note that is not a string");
-    else if (note && config().capture === "full") put(p, "note", note);
-  }
+  putNote(p, note, "weights-edit-note", "weightsEdit");
+  return p;
+}
+
+/** Sets `note` in full capture mode. One that is not a string is dropped with a warning; the event is still recorded. */
+function putNote(p: Record<string, unknown>, note: unknown, key: string, fn: string): void {
+  if (note === undefined || note === null) return;
+  if (typeof note !== "string") quiet(warnOnce)(key, `[coding.sh] ${fn} ignored a note that is not a string`);
+  else if (note && config().capture === "full") put(p, "note", note);
+}
+
+/** The event payload for a checkpoint. Throws an Error that says which value is invalid. */
+function checkpointPayloadOf(checkpoint: WeightsCheckpoint): Record<string, unknown> {
+  if (typeof checkpoint !== "object" || checkpoint === null) throw new Error("expected an object with sha256");
+  const { sha256, baseSha256, note } = checkpoint as { [K in keyof WeightsCheckpoint]: unknown };
+  const p: Record<string, unknown> = { kind: CHECKPOINT_KIND, sha256: sha(sha256, "sha256") };
+  if (baseSha256 !== undefined && baseSha256 !== null) p.baseSha256 = sha(baseSha256, "baseSha256");
+  putNote(p, note, "weights-checkpoint-note", "weightsCheckpoint");
   return p;
 }
 
@@ -135,6 +162,39 @@ export function weightsEdit(edit: WeightsEdit): boolean {
       return false;
     }
     return recordNotification(KIND, payload);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Records one saved weights file as a `notification` event with `payload.kind`
+ * "weights.checkpoint". The Python SDK's `weights_checkpoint()` sends the same event.
+ *
+ * `sha256` is the hash of the whole file, as your script computed it: the value
+ * `coding.sh exp run --weights` takes, so the session that recorded the edits and
+ * the experiment that ran the file name each other. `baseSha256` is the hash of
+ * the file the edits started from.
+ *
+ * Returns true only when the event was queued. Returns false when a value is
+ * invalid, with one warning per process. Returns false without a warning when
+ * the SDK is off or shut down or the queue is full. Never throws.
+ *
+ * A `note` that is not a string is dropped with one warning; the checkpoint is
+ * still recorded. Inside `trace()` or `span()` the checkpoint joins that trace.
+ * Outside them it gets a session of its own, or a turn of the `withSession()`
+ * session, so record it inside the `trace()` that recorded the edits.
+ */
+export function weightsCheckpoint(checkpoint: WeightsCheckpoint): boolean {
+  try {
+    let payload: Record<string, unknown>;
+    try {
+      payload = checkpointPayloadOf(checkpoint);
+    } catch (err) {
+      quiet(warnOnce)("weights-checkpoint", `[coding.sh] weightsCheckpoint dropped an event: ${errorMessage(err)}`);
+      return false;
+    }
+    return recordNotification(CHECKPOINT_KIND, payload);
   } catch {
     return false;
   }

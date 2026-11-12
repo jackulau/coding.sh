@@ -718,7 +718,7 @@ Three `notification` kinds carry the events behind these stats:
 | `fork` | `toolUseId` (the parent's Agent call) and `inheritedTokens` |
 | `hook.context` | `hookEvent`, `hookName`, `hookSource`, `command`, `chars`, `tokens` and `text` (clipped). Metadata mode keeps only `hookEvent`, `hookSource`, `chars` and `tokens` |
 
-One more `notification` kind records weight edits. The Python SDK's `coding_sh.weights_edit()` and the TypeScript SDK's `weightsEdit()` send it, and any client can post it to `/v1/ingest`. Redaction runs on `tensor` and `note` like on any payload.
+Two more `notification` kinds record weight edits and the file they were saved to. The Python SDK's `coding_sh.weights_edit()` and `coding_sh.weights_checkpoint()` and the TypeScript SDK's `weightsEdit()` and `weightsCheckpoint()` send them, and any client can post them to `/v1/ingest`. Redaction runs on `tensor` and `note` like on any payload.
 
 | `payload.kind` | Fields |
 |---|---|
@@ -759,10 +759,12 @@ One more `notification` kind records weight edits. The Python SDK's `coding_sh.w
 
 - The caller computes the hashes and norms. Each SDK checks the values, drops an invalid edit with one warning, and never raises into the app. In Python, numpy scalars and 0-d tensors (what torch's `.norm()` returns) count as numbers.
 - `weights_edit()` (Python) and `weightsEdit()` (TypeScript) return true only when the event was queued. A `note` that is not a string is dropped with a warning, and the edit is still recorded.
+- `weights_checkpoint(sha256, base_sha256=..., note=...)` (Python) and `weightsCheckpoint({ sha256, baseSha256, note })` (TypeScript) follow the same rules. A `sha256` or a `baseSha256` that is not 64 hex characters drops the event with one warning.
+- Both hashes are sent in lowercase. coding.sh hashes nothing: you compute the file's hash, for example with `hashlib.sha256` or `shasum -a 256`.
 - `coding_sh.weights_delta()` computes `shape`, `changed`, `l2` and `max_abs` for two small array-likes in pure Python. It is a helper you call on purpose, so it raises `ValueError` on bad input.
 - The TypeScript SDK's `weightsDelta()` does the same for nested arrays and typed arrays, and throws a `TypeError` or a `RangeError`.
 - The server stores the payload without validating these fields, after redaction.
-- A call outside `trace()` and `with_session()` (`withSession()` in TypeScript) makes a session of its own, so put a run of edits inside one of them.
+- A call outside `trace()` and `with_session()` (`withSession()` in TypeScript) makes a session of its own, so put a run of edits and its checkpoint inside one of them.
 
 A missing session, or one outside a scoped key's project, gets 404:
 

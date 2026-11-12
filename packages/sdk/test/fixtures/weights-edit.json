@@ -1,5 +1,5 @@
 {
-  "about": "What weights_edit() in the Python SDK and weightsEdit() in the TypeScript SDK must both send for the same edit. packages/sdk-python/tests/test_weights.py and packages/sdk/test/weights.test.ts both assert against this file. Recorded from the batches the Python SDK posts to /v1/ingest.",
+  "about": "What the Python SDK and the TypeScript SDK must both send for the same weight edit (weights_edit() and weightsEdit(): `edit` in, `payload` out) and for the same weights checkpoint (weights_checkpoint() and weightsCheckpoint(): `checkpoint` in, `checkpointPayload` out). packages/sdk-python/tests/test_weights.py and packages/sdk/test/weights.test.ts both assert against this file, running every scenario once for the edit and once for the checkpoint. In a scenario, \"<kind>\" stands for the kind of the event recorded: a session the helper opens by itself is named after it. Recorded from the batches the Python SDK posts to /v1/ingest.",
   "edit": {
     "tensor": "layers.3.mlp.down_proj.weight",
     "shape": [4, 8],
@@ -21,32 +21,43 @@
     "editedSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "note": "rank-1 patch"
   },
+  "checkpoint": {
+    "sha256": "58899F90572C0E1D5A7B3C2F4E6D8091A2B3C4D5E6F708192A3B4C5D6E7F8091",
+    "baseSha256": "0496e5111097ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766",
+    "note": "after the layer 3 patch"
+  },
+  "checkpointPayload": {
+    "kind": "weights.checkpoint",
+    "sha256": "58899f90572c0e1d5a7b3c2f4e6d8091a2b3c4d5e6f708192a3b4c5d6e7f8091",
+    "baseSha256": "0496e5111097ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766",
+    "note": "after the layer 3 patch"
+  },
   "volatilePayloadKeys": ["traceId", "durationMs", "toolUseId"],
   "ignoredEventKeys": ["source"],
   "scenarios": {
     "alone": {
-      "how": "One edit outside trace(), span() and withSession().",
+      "how": "One event outside trace(), span() and withSession().",
       "sessionId": null,
       "parent": null,
       "events": [
-        {"kind": "session.start", "keys": ["id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "v"], "payload": {"name": "weights.edit", "traceId": "<volatile>"}},
+        {"kind": "session.start", "keys": ["id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "v"], "payload": {"name": "<kind>", "traceId": "<volatile>"}},
         {"kind": "notification", "keys": ["id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "v"]},
         {"kind": "turn.end", "keys": ["durationMs", "id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "v"], "payload": {"ok": true, "durationMs": "<volatile>"}},
         {"kind": "session.end", "keys": ["durationMs", "id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "v"], "payload": {"reason": "completed"}}
       ]
     },
     "withSession": {
-      "how": "One edit inside withSession(sessionId).",
+      "how": "One event inside withSession(sessionId).",
       "sessionId": "run-7",
       "parent": null,
       "events": [
-        {"kind": "session.start", "keys": ["id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "turnId", "v"], "payload": {"name": "weights.edit", "traceId": "<volatile>"}},
+        {"kind": "session.start", "keys": ["id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "turnId", "v"], "payload": {"name": "<kind>", "traceId": "<volatile>"}},
         {"kind": "notification", "keys": ["id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "turnId", "v"]},
         {"kind": "turn.end", "keys": ["durationMs", "id", "kind", "payload", "sessionId", "spanId", "traceId", "ts", "turnId", "v"], "payload": {"ok": true, "durationMs": "<volatile>"}}
       ]
     },
     "trace": {
-      "how": "One edit inside trace(\"run\").",
+      "how": "One event inside trace(\"run\").",
       "sessionId": null,
       "parent": "session.start",
       "events": [
@@ -57,7 +68,7 @@
       ]
     },
     "traceWithSessionId": {
-      "how": "One edit inside trace(\"run\") with sessionId.",
+      "how": "One event inside trace(\"run\") with sessionId.",
       "sessionId": "conv-1",
       "parent": "session.start",
       "events": [
@@ -67,7 +78,7 @@
       ]
     },
     "toolSpan": {
-      "how": "One edit inside span(\"tool\", \"patch\") inside trace(\"run\").",
+      "how": "One event inside span(\"tool\", \"patch\") inside trace(\"run\").",
       "sessionId": null,
       "parent": "tool.start",
       "events": [
@@ -80,7 +91,7 @@
       ]
     },
     "stepSpan": {
-      "how": "One edit inside span(\"step\", \"patch\") inside trace(\"run\").",
+      "how": "One event inside span(\"step\", \"patch\") inside trace(\"run\").",
       "sessionId": null,
       "parent": "span",
       "events": [

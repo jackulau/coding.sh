@@ -86,6 +86,9 @@ two. A session that recorded one has the `weights:checkpoint` tag and lists the 
 - In the viewer: a `Saved weights` row on the session page.
 - In the CLI: `coding.sh sessions --where 'weights.checkpoint:58899f90572c*'` finds the session
   that saved a file, and `coding.sh show <id>` prints `checkpoint 58899f90572c ← 0496e5111097`.
+- Recorded by the Python SDK's `coding_sh.weights_checkpoint()`, the TypeScript SDK's
+  `weightsCheckpoint()`, or any OpenTelemetry SDK as a span named `weights.checkpoint`. You compute
+  the hash; coding.sh hashes nothing.
 
 ### Cost
 
