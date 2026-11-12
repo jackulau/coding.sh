@@ -37,6 +37,22 @@ export function findChrome(env: NodeJS.ProcessEnv = process.env, platform: NodeJ
 /** Longest a DevTools call may wait for its answer; a page eval that awaits a slow promise stays well under it. */
 const SEND_TIMEOUT_MS = 30_000;
 
+/** Keys Page.press knows beyond single characters: the DOM code, the virtual key code, and the text a key types (none for a navigation key). */
+const NAMED_KEYS: Record<string, { code: string; vk: number; text?: string }> = {
+  Enter: { code: "Enter", vk: 13, text: "\r" },
+  " ": { code: "Space", vk: 32, text: " " },
+  Tab: { code: "Tab", vk: 9 },
+  Escape: { code: "Escape", vk: 27 },
+  ArrowLeft: { code: "ArrowLeft", vk: 37 },
+  ArrowUp: { code: "ArrowUp", vk: 38 },
+  ArrowRight: { code: "ArrowRight", vk: 39 },
+  ArrowDown: { code: "ArrowDown", vk: 40 },
+  PageUp: { code: "PageUp", vk: 33 },
+  PageDown: { code: "PageDown", vk: 34 },
+  End: { code: "End", vk: 35 },
+  Home: { code: "Home", vk: 36 },
+};
+
 type Pending = { resolve: (v: any) => void; reject: (e: Error) => void };
 
 class Cdp {
@@ -109,6 +125,11 @@ export interface Page {
   /** Poll an expression until it is truthy; returns its value. */
   waitFor<T = any>(expr: string, what?: string, timeoutMs?: number): Promise<T>;
   viewport(width: number, height: number, mobile?: boolean): Promise<void>;
+  /**
+   * Press and release a key as a person would ("Enter", " ", "ArrowDown", "j"). Chrome runs the key's
+   * default action (a button's click, a scroll), which a KeyboardEvent dispatched from the page never does.
+   */
+  press(key: string): Promise<void>;
   /** Uncaught exceptions and console.error calls on this page so far. */
   errors: string[];
   /** A raw DevTools call on this page (Input.dispatchMouseEvent, Network.emulateNetworkConditions, ...). */
@@ -209,6 +230,17 @@ export async function launchBrowser(chrome: string): Promise<Browser> {
         async viewport(width, height, mobile = false) {
           await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: mobile ? 2 : 1, mobile });
           await send("Emulation.setTouchEmulationEnabled", { enabled: mobile });
+        },
+        async press(key) {
+          const named = NAMED_KEYS[key];
+          const code = named ? named.code : /^[a-z]$/i.test(key) ? "Key" + key.toUpperCase() : "";
+          const vk = named ? named.vk : key.toUpperCase().charCodeAt(0);
+          const text = named ? named.text : key;
+          const base = { key, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk };
+          // A headless page is not the focused window until told so, and an unfocused page gets no keys.
+          await send("Emulation.setFocusEmulationEnabled", { enabled: true });
+          await send("Input.dispatchKeyEvent", text === undefined ? { type: "rawKeyDown", ...base } : { type: "keyDown", ...base, text });
+          await send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
         },
         async close() {
           off();

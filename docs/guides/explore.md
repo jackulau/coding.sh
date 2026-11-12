@@ -145,6 +145,9 @@ token for this run of `ui`; the viewer needs it.
   step in its session.
 - **Replay** (<kbd>R</kbd> on a session). Plays the session back one step at a time. See
   [Replay a session](https://coding.sh/docs/use-cases/replay-agent-session).
+- **Keys.** <kbd>?</kbd> lists every shortcut. <kbd>j</kbd> and <kbd>k</kbd> move through the
+  list from anywhere but a text field. A focused button keeps Enter and Space, a focused link
+  keeps Enter, and the arrow keys scroll the step detail when it has focus and more to show.
 
 ## Follow a running session
 

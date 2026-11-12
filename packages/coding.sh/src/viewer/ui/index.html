@@ -1590,8 +1590,33 @@ function append(el, children) {
 }
 /** Empty `el`, then fill it like h() does: null, undefined and false are skipped (the DOM's own replaceChildren would write them as text). */
 function swap(el, ...children) {
-  el.replaceChildren();
-  return append(el, children);
+  return keepFocus(el, () => { el.replaceChildren(); return append(el, children); });
+}
+/**
+ * Redraw inside `root` without dropping keyboard focus onto <body>. When the redraw removes the focused
+ * control, focus goes to the control now in its place (a rebuilt chip or button), else to the nearest
+ * focusable container.
+ */
+function keepFocus(root, redraw) {
+  const was = document.activeElement;
+  if (!was || was === root || !root.contains(was)) return redraw();
+  const path = [];
+  for (let n = was; n !== root; n = n.parentNode) path.unshift([...n.parentNode.children].indexOf(n));
+  const out = redraw();
+  if (was.isConnected) return out;
+  let now = root;
+  for (const i of path) now = now && now.children[i];
+  // A hidden or disabled control refuses focus: the container is next.
+  for (const el of [now && now.tagName === was.tagName ? now : null, root.closest("[tabindex]")]) {
+    if (!el) continue;
+    el.focus({ preventScroll: true });
+    if (document.activeElement === el) break;
+  }
+  return out;
+}
+/** Remove a control that has done its job (a "show more" button), keeping focus as keepFocus does. */
+function drop(el) {
+  if (el.parentNode) keepFocus(el.parentNode, () => el.remove());
 }
 const SVG_NS = "http://www.w3.org/2000/svg";
 /** SVG element; attributes are numbers and class names only, never links. */
@@ -1941,6 +1966,20 @@ function errorPanel(err, retry) {
 function smoothScroll() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
 }
+/**
+ * A key the focused element uses itself, so no page shortcut takes it: Enter on a button, link or
+ * summary, Space on a button or summary, and the scroll keys in a pane that has more to scroll.
+ */
+const SCROLL_KEYS = ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End"];
+function ownKey(e) {
+  const t = e.target;
+  if (!t || !t.closest) return false;
+  if (e.key === "Enter") return !!t.closest("button, a[href], summary");
+  if (e.key === " ") return !!t.closest("button, summary");
+  if (!SCROLL_KEYS.includes(e.key)) return false;
+  const pane = t.closest("[role=region][tabindex]");
+  return !!pane && pane.scrollHeight > pane.clientHeight;
+}
 function typing(e) {
   const t = e.target;
   // A slider (the replay scrubber) takes the page's keys: they do the same thing there.
@@ -1987,9 +2026,10 @@ let viewKeys = { scope: "sessions", actions: {} };
 function setView(node, focus, keys) {
   if (cleanup) { cleanup(); cleanup = null; }
   closeOverlay();
+  // Another page: focus goes to the page itself, not to whichever control sits where the old one was.
+  if (focus || ((!keys || keys.scope !== viewKeys.scope) && main.contains(document.activeElement))) main.focus({ preventScroll: true });
   viewKeys = keys || { scope: "none", actions: {} };
   swap(main, node);
-  if (focus) main.focus({ preventScroll: true });
 }
 function parseHash() {
   const raw = location.hash.replace(/^#\/?/, "");
@@ -2107,6 +2147,7 @@ document.addEventListener("keydown", (e) => {
   }
   chordAt = 0;
   if (e.key === "?") { e.preventDefault(); openHelp(); return; }
+  if (ownKey(e)) return;
   // A mode (replay) can sit on top of its view: its keys first, then the view's.
   for (const scope of viewKeys.fallback ? [viewKeys.scope, viewKeys.fallback] : [viewKeys.scope]) {
     for (const k of KEYMAP) {
@@ -2130,7 +2171,7 @@ function closeOverlay() {
   if (overlay.hidden) return;
   overlay.hidden = true;
   swap(overlay);
-  if (overlayReturn && overlayReturn.isConnected) overlayReturn.focus({ preventScroll: true });
+  (overlayReturn && overlayReturn.isConnected ? overlayReturn : main).focus({ preventScroll: true });
   overlayReturn = null;
 }
 // Keyboard-opened and used many times a day: no open or close animation.
@@ -3086,7 +3127,7 @@ function facetPanel(view) {
         return state === "out" ? chip : h("div", { class: "facet-row" }, chip,
           h("button", { class: "not-btn", type: "button", tabindex: "-1", "aria-label": "Exclude " + name, onclick: () => pick(v, true) }, "not"));
       }),
-      rows.length > FACET_LIMIT ? h("button", { class: "more-link", type: "button", onclick: () => { if (open) list.showAll.delete(key); else list.showAll.add(key); renderSessions(view); } },
+      rows.length > FACET_LIMIT ? h("button", { class: "more-link", type: "button", onclick: () => { if (open) list.showAll.delete(key); else list.showAll.add(key); renderSessions(view); $(`[data-filter="${key}"] .more-link`, view)?.focus({ preventScroll: true }); } },
         open ? "Show fewer" : "Show " + fmtNum(rows.length - FACET_LIMIT) + " more") : null);
     return h("section", { class: "facet", role: "group", "aria-label": label + " filter", "data-filter": key, "data-collapsed": String(collapsed) }, head, items);
   };
@@ -3304,7 +3345,7 @@ function sessionList(view) {
   lb.addEventListener("pointerleave", () => sessionIntent.leave());
   lb.addEventListener("pointerdown", (e) => { const id = rowSid(e); if (id) sessionIntent.press(id); });
   lb.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") {
+    if ((e.key === "Enter" || e.key === " ") && !ownKey(e)) {
       e.preventDefault();
       e.stopPropagation();
       const r = list.rows[list.active];
@@ -3430,7 +3471,7 @@ function eventsList(view) {
   list.events.forEach((ev, i) => lb.append(eventRowEl(ev, i)));
   lb.setAttribute("aria-activedescendant", "opt-" + list.active);
   lb.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") {
+    if ((e.key === "Enter" || e.key === " ") && !ownKey(e)) {
       e.preventDefault();
       e.stopPropagation();
       const ev = list.events[list.active];
@@ -3862,7 +3903,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   const eventsPath = "/api/sessions/" + encodeURIComponent(id) + "/events";
   const viaHit = fromHit === id;
   fromHit = "";
-  const replaceBody = (node) => { view.lastChild.replaceWith(h("div", { class: "wrap" }, node)); };
+  const replaceBody = (node) => keepFocus(view, () => { view.lastChild.replaceWith(h("div", { class: "wrap" }, node)); });
   let session, events, labels, children, parent = null;
   const sessionPath = "/api/sessions/" + encodeURIComponent(id);
   // The session record is asked for once and first: an id that is not in the index is a 404 here and
@@ -5257,7 +5298,7 @@ function jsonLeaf(v, rel) {
     const full = JSON.stringify(rel ? relPath(v) : v);
     if (full.length <= 400) { s.textContent = full; return s; }
     s.textContent = full.slice(0, 300) + "…";
-    const more = h("button", { class: "more", type: "button", onclick: () => { s.textContent = full; more.remove(); } }, "+" + fmtNum(full.length - 300) + " chars");
+    const more = h("button", { class: "more", type: "button", onclick: () => { s.textContent = full; drop(more); } }, "+" + fmtNum(full.length - 300) + " chars");
     return h("span", null, s, " ", more);
   }
   if (typeof v === "number") return h("span", { class: "n" }, String(v));
@@ -5286,7 +5327,7 @@ function jsonNode(key, v, depth, rel) {
         const next = entries.slice(shown, shown + 1000);
         shown += next.length;
         more.before(...next.map(([ck, cv]) => jsonNode(ck, cv, depth + 1, rel)));
-        if (shown >= entries.length) more.remove(); else more.textContent = "show " + fmtNum(entries.length - shown) + " more";
+        if (shown >= entries.length) drop(more); else more.textContent = "show " + fmtNum(entries.length - shown) + " more";
       });
       d.append(h("div", { class: "kv" }, more));
     }
@@ -5471,7 +5512,7 @@ function fileList(text) {
   const show = (k) => swap(ul, ...files.slice(0, k).map((f) => h("li", { class: "truncate", title: f }, relPath(f))));
   show(200);
   const wrap = h("div", { class: "section" }, h("p", { class: "meta" }, plural(files.length, "file")), ul);
-  if (files.length > 200) wrap.append(h("button", { class: "btn btn-sm show-all", type: "button", onclick: (e) => { show(files.length); e.currentTarget.remove(); } }, "Show all " + fmtNum(files.length)));
+  if (files.length > 200) wrap.append(h("button", { class: "btn btn-sm show-all", type: "button", onclick: (e) => { const b = e.currentTarget; show(files.length); drop(b); } }, "Show all " + fmtNum(files.length)));
   return wrap;
 }
 function todoList(todos) {
@@ -5592,7 +5633,7 @@ function blobView(ref, auto) {
           h("button", { class: "btn btn-sm", type: "button", onclick: () => load(true) }, "Load all")));
       }
       swap(body, ...nodes);
-      loadBtn.remove();
+      drop(loadBtn);
       bar.append(h("span", { class: "meta" }, fmtBytes(size || text.length)));
     } catch (e) {
       loadBtn.disabled = false;
@@ -5665,7 +5706,7 @@ function callDiffSection(ev) {
         nodes.push(section("system prompt diff", diffGrid(d.system.lines.map((l) => l.op === "+" ? { t: "add", b: b++, text: l.text } : l.op === "-" ? { t: "del", a: a++, text: l.text } : l.text === "…" ? { t: "hunk", text: "…" } : { t: "ctx", a: a++, b: b++, text: l.text }))));
       }
       swap(body, ...nodes);
-      btn.remove();
+      drop(btn);
     } catch (e) {
       btn.disabled = false;
       swap(body, h("p", { class: "note" }, e.status === 404 ? "This is the first model call of its session." : e.message));
@@ -5998,6 +6039,7 @@ async function showExperiments(seq) {
   if (items.length) {
     lb.setAttribute("aria-activedescendant", "exp-0");
     lb.addEventListener("keydown", (ev) => {
+      if (ownKey(ev)) return;
       if (ev.key === "Enter") { ev.preventDefault(); ev.stopPropagation(); location.hash = expHref(items[active].id); }
       else if (ev.key === " ") { ev.preventDefault(); ev.stopPropagation(); toggleSel(active); }
     });
@@ -6017,7 +6059,7 @@ async function showExperiments(seq) {
       h("div", { class: "stack" }, harness.map((c) => c.node())));
   }
   if (tasks.items.length) body.append(tasksPanel(tasks.items));
-  view.lastChild.replaceWith(body);
+  keepFocus(view, () => view.lastChild.replaceWith(body));
 
   keys.actions = items.length ? {
     down: () => { setActive(active + 1, true); lb.focus({ preventScroll: true }); },
@@ -6250,7 +6292,7 @@ async function showExperiment(seq, id) {
     det.hidden = !det.hidden;
     row.setAttribute("aria-expanded", String(!det.hidden));
   }
-  lb.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); toggle(active); } });
+  lb.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && !ownKey(e)) { e.preventDefault(); e.stopPropagation(); toggle(active); } });
   view.append(
     h("div", { class: "case-tools" }, h("div", { class: "grp" }, h("h2", null, "Cases"), caseMeta), h("div", { class: "grp" }, chips, search)),
     h("div", { class: "panel table case-table" },
@@ -6451,7 +6493,7 @@ async function showCompare(seq, aId, bId) {
     det.hidden = !det.hidden;
     row.setAttribute("aria-expanded", String(!det.hidden));
   }
-  lb.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); toggle(active); } });
+  lb.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && !ownKey(e)) { e.preventDefault(); e.stopPropagation(); toggle(active); } });
   append(view, [
     h("div", { class: "case-tools" }, h("h2", null, "Cases"), chips),
     h("div", { class: "panel table cmp-table" },
@@ -7241,7 +7283,7 @@ async function showBenchmarks(seq) {
     if (scroll) cards[i].scrollIntoView({ block: "nearest" });
   }
   const lb = h("div", { class: "stack bench-list", role: "listbox", tabindex: "0", "aria-label": "Benchmarks. j and k to move, Enter to open.", "aria-activedescendant": "bench-0" }, cards);
-  lb.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); location.hash = benchHref(items[active].name); } });
+  lb.addEventListener("keydown", (e) => { if (e.key === "Enter" && !ownKey(e)) { e.preventDefault(); e.stopPropagation(); location.hash = benchHref(items[active].name); } });
   swap(slot, lb);
   keys.actions = {
     down: () => { setActive(active + 1, true); lb.focus({ preventScroll: true }); },
@@ -7531,7 +7573,7 @@ async function showBenchmark(seq, name) {
     det.hidden = !det.hidden;
     row.setAttribute("aria-expanded", String(!det.hidden));
   }
-  flb.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); toggleF(factive); } });
+  flb.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && !ownKey(e)) { e.preventDefault(); e.stopPropagation(); toggleF(factive); } });
   renderFails();
 
   // ---- run details
