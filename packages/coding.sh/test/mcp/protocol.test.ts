@@ -4,8 +4,9 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { PassThrough } from "node:stream";
+import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
-import { McpServer, serveStdio, ToolError, type ToolDef } from "../../src/mcp/protocol.ts";
+import { clipText, cutChars, McpServer, serveStdio, ToolError, type ToolDef } from "../../src/mcp/protocol.ts";
 
 type Msg = { jsonrpc: string; id: unknown; result?: Record<string, unknown>; error?: { code: number; message: string; data?: Record<string, unknown> } };
 
@@ -100,6 +101,7 @@ describe("caching hints (2026-07-28)", () => {
       assert.equal(typeof r?.result?.ttlMs, "number", `${method} ttlMs`);
       assert.ok((r!.result!.ttlMs as number) >= 0, `${method} ttlMs >= 0`);
       assert.equal(r?.result?.cacheScope, scope, `${method} cacheScope`);
+      if (method === "server/discover") assert.equal(r?.result?.ttlMs, 300_000, "discover carries a per-call update notice, so it is cached for 5 minutes");
     }
     // Legacy results stay as they were.
     w.send({ jsonrpc: "2.0", id: "legacy", method: "tools/list" });
@@ -144,9 +146,11 @@ describe("cancellation (notifications/cancelled)", () => {
 describe("cancellation while a tool holds the event loop", () => {
   // A synchronous store read blocks the loop, so a cancel sits unread in the pipe until it ends.
   it("reads the cancel before it answers or starts the next request", async () => {
-    const child = spawn(process.execPath, ["--no-warnings", new URL("./_blocking-server.ts", import.meta.url).pathname], { stdio: ["pipe", "pipe", "inherit"] });
+    const child = spawn(process.execPath, ["--no-warnings", fileURLToPath(new URL("./_blocking-server.ts", import.meta.url))], { stdio: ["pipe", "pipe", "pipe"] });
     const ids: unknown[] = [];
+    const marks: string[] = [];
     let buf = "";
+    let errBuf = "";
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (c: string) => {
       buf += c;
@@ -156,24 +160,37 @@ describe("cancellation while a tool holds the event loop", () => {
         buf = buf.slice(i + 1);
       }
     });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (c: string) => {
+      errBuf += c;
+      let i: number;
+      while ((i = errBuf.indexOf("\n")) !== -1) {
+        marks.push(errBuf.slice(0, i));
+        errBuf = errBuf.slice(i + 1);
+      }
+    });
     const send = (m: unknown) => child.stdin.write(JSON.stringify(m) + "\n");
-    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    // Waits for the child's signal, not for a time: the machine may be loaded.
+    const until = async (what: string, done: () => boolean) => {
+      for (let i = 0; i < 3000 && !done(); i++) await new Promise((r) => setTimeout(r, 10));
+      assert.ok(done(), `timed out waiting for ${what}`);
+    };
     const exited = new Promise((r) => child.on("exit", r));
     send({ jsonrpc: "2.0", id: "warm", method: "ping" });
-    for (let i = 0; i < 200 && !ids.includes("warm"); i++) await wait(10);
+    await until("warm", () => ids.includes("warm"));
     // "run" is cancelled while it blocks; "queued" is cancelled while it waits behind "first".
-    send({ jsonrpc: "2.0", id: "run", method: "tools/call", params: { name: "block", arguments: { ms: 400 } } });
-    await wait(100);
+    send({ jsonrpc: "2.0", id: "run", method: "tools/call", params: { name: "block", arguments: { ms: 1500 } } });
+    await until("run to block", () => marks.length === 1);
     send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: "run" } });
-    await wait(500);
-    send({ jsonrpc: "2.0", id: "first", method: "tools/call", params: { name: "block", arguments: { ms: 400 } } });
-    await wait(100);
+    await until("run to end", () => marks.length === 2);
+    send({ jsonrpc: "2.0", id: "first", method: "tools/call", params: { name: "block", arguments: { ms: 1500 } } });
+    await until("first to block", () => marks.length === 3);
     send({ jsonrpc: "2.0", id: "queued", method: "ping" });
-    await wait(50);
     send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: "queued" } });
-    await wait(500);
+    await until("first to end", () => marks.length === 4);
+    await until("first's reply", () => ids.includes("first"));
     send({ jsonrpc: "2.0", id: "last", method: "ping" });
-    for (let i = 0; i < 200 && !ids.includes("last"); i++) await wait(10);
+    await until("last", () => ids.includes("last"));
     child.stdin.end();
     await exited;
     assert.deepEqual(ids, ["warm", "first", "last"]);
@@ -197,6 +214,39 @@ describe("JSON-RPC edges", () => {
     const r = await w.reply(null);
     assert.equal(r?.error?.code, -32600);
     await w.close();
+  });
+
+  it("handles a null id on a notifications/ method as a notification", async () => {
+    const w = world();
+    const n = w.out.length;
+    w.send({ jsonrpc: "2.0", id: null, method: "notifications/initialized" });
+    w.send({ jsonrpc: "2.0", id: null, method: "notifications/cancelled", params: { requestId: 9 } });
+    w.send({ jsonrpc: "2.0", id: "after", method: "ping" });
+    assert.ok(await w.reply("after"));
+    assert.equal(w.out.length, n + 1, "the notifications got no reply");
+    assert.equal(w.server.initialized, true);
+    w.send({ jsonrpc: "2.0", id: null, method: "ping" });
+    assert.equal((await w.reply(null))?.error?.code, -32600, "other null-id requests stay invalid");
+    await w.close();
+  });
+
+  it("ignores a cancel for initialize", async () => {
+    const w = world();
+    w.send({ jsonrpc: "2.0", id: "init", method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "t", version: "0" } } });
+    w.send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: "init" } });
+    assert.ok((await w.reply("init"))?.result?.protocolVersion, "initialize is still answered");
+    await w.close();
+  });
+
+  it("clips text without splitting a surrogate pair", () => {
+    const e = "\u{1F600}";
+    for (let pad = 0; pad < 2; pad++) {
+      const s = "a".repeat(pad) + e.repeat(100);
+      const clipped = clipText(s, 100);
+      assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(clipped), `no lone surrogate (pad ${pad})`);
+    }
+    assert.equal(cutChars("a\u{1F600}", 2), "a");
+    assert.equal(cutChars("ab", 5), "ab");
   });
 
   it("accepts batches after a 2025-03-26 handshake, and only then", async () => {

@@ -154,16 +154,25 @@ export const ERROR_TEXT_MAX = 4000;
 export function clipText(s: string, max = ERROR_TEXT_MAX): string {
   if (s.length <= max) return s;
   const keep = Math.floor((max - 40) / 2);
-  return `${s.slice(0, keep)} … [${s.length - 2 * keep} characters cut] … ${s.slice(-keep)}`;
+  const head = cutChars(s, keep);
+  const tail = s.slice(-keep).replace(/^[\uDC00-\uDFFF]/, "");
+  return `${head} … [${s.length - head.length - tail.length} characters cut] … ${tail}`;
+}
+
+/** The first `max` characters of `s`, without half of a surrogate pair at the cut. */
+export function cutChars(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max).replace(/[\uD800-\uDBFF]$/, "");
 }
 
 /**
  * Caching hints on 2026-07-28 results (https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching):
  * the tool, prompt and template lists are fixed for the life of the process and hold no user data;
- * resources are the user's sessions and change with every capture.
+ * resources are the user's sessions and change with every capture. server/discover carries the
+ * instructions, which hold a per-call update notice, so it is cached for less time.
  */
 const CACHE_HINTS: Record<string, { ttlMs: number; cacheScope: "public" | "private" }> = {
-  "server/discover": { ttlMs: 3_600_000, cacheScope: "public" },
+  "server/discover": { ttlMs: 300_000, cacheScope: "public" },
   "tools/list": { ttlMs: 3_600_000, cacheScope: "public" },
   "prompts/list": { ttlMs: 3_600_000, cacheScope: "public" },
   "resources/templates/list": { ttlMs: 3_600_000, cacheScope: "public" },
@@ -233,7 +242,8 @@ export class McpServer<C> {
       if ("result" in msg || "error" in msg) return null;
       return errorResponse(idOk ? (msg.id as RpcId) : null, RPC.INVALID_REQUEST, "Invalid request: missing method");
     }
-    if (!hasId) {
+    // A null id on a notifications/ method is still a notification: no reply.
+    if (!hasId || (msg.id === null && msg.method.startsWith("notifications/"))) {
       this.notification(msg.method);
       return null;
     }
@@ -400,7 +410,7 @@ export function serveStdio<C>(server: McpServer<C>, io: StdioStreams, log: (m: s
       }
     };
     // Requests waiting or running, by id. A cancel marks the entry; a marked request is never answered.
-    const pending = new Map<string, { cancelled: boolean }>();
+    const pending = new Map<string, { cancelled: boolean; method: string }>();
     // A synchronous store read holds the event loop, so a cancel sent meanwhile is still unread in the
     // pipe. Two turns of the loop include one poll for input, which reads it before we start or answer.
     const readInput = () => new Promise<void>((r) => setImmediate(() => setImmediate(r)));
@@ -415,11 +425,12 @@ export function serveStdio<C>(server: McpServer<C>, io: StdioStreams, log: (m: s
       if (parsed && isObj(msg) && msg.method === "notifications/cancelled" && msg.id === undefined) {
         const id = isObj(msg.params) ? msg.params.requestId : undefined;
         const entry = typeof id === "string" || typeof id === "number" ? pending.get(JSON.stringify(id)) : undefined;
-        if (entry) entry.cancelled = true;
+        // initialize can not be cancelled (lifecycle spec).
+        if (entry && entry.method !== "initialize") entry.cancelled = true;
         return;
       }
       const key = parsed && isObj(msg) && typeof msg.method === "string" && (typeof msg.id === "string" || typeof msg.id === "number") ? JSON.stringify(msg.id) : undefined;
-      const entry = { cancelled: false };
+      const entry = { cancelled: false, method: isObj(msg) && typeof msg.method === "string" ? msg.method : "" };
       if (key) pending.set(key, entry);
       chain = chain
         .then(async () => {

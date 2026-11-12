@@ -1,6 +1,7 @@
 // An MCP server on stdio whose `block` tool holds the event loop for `ms`
 // milliseconds, the way a synchronous SQLite read does. protocol.test.ts sends
-// a cancel while it blocks.
+// a cancel while it blocks. It writes "block-start" to stderr as it starts blocking and
+// "block-end" when it stops, so the test waits on those lines, not on timers.
 import { McpServer, serveStdio } from "../../src/mcp/protocol.ts";
 
 const server = new McpServer<unknown>({
@@ -16,9 +17,11 @@ const server = new McpServer<unknown>({
       annotations: { readOnlyHint: true },
       run: async (a) => {
         const end = Date.now() + Number(a.ms ?? 0);
+        process.stderr.write("block-start\n");
         while (Date.now() < end) {
           // hold the event loop
         }
+        process.stderr.write("block-end\n");
         return { done: true };
       },
     },
