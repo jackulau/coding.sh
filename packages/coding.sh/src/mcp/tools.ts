@@ -477,7 +477,7 @@ function toolDefs(): ToolDef<ToolCtx>[] {
           from: { type: "integer", minimum: 1, description: "With to: the first step of a range." },
           to: { type: "integer", minimum: 1, description: "With from: the last step (included); each file's diff over the range." },
           fork: { type: "object", description: 'With step: send its model call again with these files ({"AGENTS.md": text}); recorded vs forked next action. Calls the model.' },
-          limit: { ...LIMIT(100, 1000), description: "Max files per page; fewer give each diff more room." },
+          limit: { ...LIMIT(100, 1000), description: "Max files per page (fewer when they are long)." },
           cursor: CURSOR,
         },
         ["sessionId"],

@@ -28,7 +28,7 @@ describe("fitAnswer", () => {
     const p = pageStep(view({ input }, { tree }), 0, 100, CAP) as Obj;
     assert.ok(len(p) <= CAP, `${len(p)} characters`);
     assert.equal(p.truncated, true);
-    assert.match(p.note, /^Text and lists were cut .* one file's content\.$/);
+    assert.match(p.note, /^Text and lists were cut .* the full text is in the source\.$/);
     assert.equal(p.noteTruncated, undefined);
     assert.equal(p.tree[0].path, tree[0]!.path, "a path is never cut");
     assert.equal(p.detail.inputTruncated, true);
@@ -105,12 +105,51 @@ describe("fitAnswer", () => {
     }
   });
 
-  it("falls back to replacing the largest entry when protected text alone is too long", () => {
-    const p = fitAnswer({ sessionId: "s".repeat(30_000), detail: { output: "x".repeat(500) }, n: 3 }, CAP) as Obj;
+  it("keeps a recorded input's data cuttable: 9,000 numbers or a 40 KB string leave the rest of the answer whole", () => {
+    const tree = [{ path: "a.ts", status: "modified", edits: 1, lastStep: 2 }];
+    const cases: Obj[] = [
+      { input: { data: Array.from({ length: 9000 }, (_, i) => 1000 + i) }, output: "ok" },
+      { input: { from: "a", to: "x".repeat(40_000) }, output: "ok" },
+      { input: { note: "n".repeat(40_000), file: "f".repeat(40_000), id: "i".repeat(40_000), truncated: "t".repeat(40_000) }, output: "ok" },
+      { input: { rows: Array.from({ length: 9000 }, (_, i) => i % 2 === 0) }, output: "ok" },
+    ];
+    for (const [i, detail] of cases.entries()) {
+      const p = pageStep(view(detail, { tree, changes: [{ path: "a.ts", op: "modify", exact: true, diff: "+x\n" }] }), 0, 100, CAP) as Obj;
+      assert.ok(len(p) <= CAP, `case ${i}: ${len(p)} characters`);
+      assert.deepEqual(p.step, step, `case ${i}: the step stays`);
+      assert.equal(p.tree[0].path, "a.ts", `case ${i}: the tree stays`);
+      assert.equal(p.changes[0].diff, "+x\n", `case ${i}: the changes stay`);
+      assert.equal(p.detail.output, "ok", `case ${i}: the output stays`);
+      assert.equal(p.detail.inputTruncated, true);
+    }
+  });
+
+  it("falls back to shrinking the largest entries, keeping their types, when protected text alone is too long", () => {
+    const p = fitAnswer({ sessionId: "s".repeat(30_000), detail: { output: "x".repeat(500) }, n: 3, tree: [{ path: "p" }] }, CAP) as Obj;
     assert.ok(len(p) <= CAP, `${len(p)} characters`);
-    assert.deepEqual(p.sessionId, { truncated: true, chars: 30_002 });
+    assert.equal(typeof p.sessionId, "string", "a string stays a string");
+    assert.equal(p.sessionIdTruncated, true);
     assert.equal(p.truncated, true);
     assert.equal(p.n, 3);
+    assert.ok(Array.isArray(p.tree));
+    const rows = pageStep(view({ output: "ok" }, { tree: [{ path: "p".repeat(1_000_000), status: "added", edits: 1, lastStep: 2 }] }), 0, 100, CAP) as Obj;
+    assert.ok(len(rows) <= CAP, `a 1 MB path: ${len(rows)} characters`);
+    assert.ok(Array.isArray(rows.tree), "a list stays a list");
+    assert.equal(rows.treeTruncated, true);
+    assert.deepEqual(rows.step, step, "the step stays");
+    assert.equal(rows.detail.output, "ok");
+  });
+
+  it("keeps fewer items whole when every item would lose most of its text", () => {
+    for (const n of [105, 124, 200]) {
+      const todos = Array.from({ length: n }, (_, i) => ({ id: i, content: "c".repeat(2000) }));
+      const p = pageStep(view({ input: { todos } }), 0, 100, CAP) as Obj;
+      assert.ok(len(p) <= CAP);
+      const kept = p.detail.input.todos as Obj[];
+      assert.ok(kept.length < n && kept.length >= 8, `${kept.length} of ${n}`);
+      assert.ok(kept.slice(0, kept.length - 1).every((x) => x.content.length === 2000), "the items that stay are whole");
+      assert.ok(len(p) >= CAP * 0.85, `${len(p)} of ${CAP} used`);
+    }
   });
 });
 

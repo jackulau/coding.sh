@@ -16,12 +16,16 @@ import { toolText } from "./protocol.ts";
 
 type Obj = Record<string, unknown>;
 
-/** The smallest share of characters worth cutting a child to; below it the child is dropped instead. */
+/** The smallest budget worth cutting one child to; below it the child is dropped instead. */
 const MIN_SHARE = 200;
+/** When the larger children would each get less than this, the first ones are kept whole instead of every one cut to a stub. */
+const SPLIT_SHARE = 400;
+/** The budget never drops below this on a retry: below it the answer would lose its other entries. */
+const MIN_BUDGET = 1000;
 /** Room kept free for the page's cursor and `limitUsed`. */
 const SLACK = 80;
 
-const NOTE = "Text and lists were cut to keep the answer under 25,000 characters (the fields marked truncated, with their Total). A smaller limit gives each diff more room; step with file gives one file's content.";
+const NOTE = "Text and lists were cut to keep the answer under 25,000 characters (the fields marked truncated, with their Total). One row, or the step itself, was over that on its own; the full text is in the source.";
 
 /** Keys whose text is never cut (ids, paths, names the reader needs to follow the answer). */
 const PROTECTED = new Set(["note", "truncated", "nextCursor", "limitUsed", "sessionId", "id", "eventId", "toolUseId", "n", "path", "file", "kind", "tool", "op", "status", "root", "baseline", "from", "to"]);
@@ -126,8 +130,9 @@ function allocate(root: Obj, infos: Map<object, Info>, budget: number): { out: O
     const rest: number[] = [];
     for (let i = 0; i < n; i++) {
       const v = I.vals[i];
-      // Ids and paths, and numbers, booleans and null (a few characters each), are never cut or dropped.
-      if (!isContainer(v) && (typeof v !== "string" || (I.keys && PROTECTED.has(I.keys[i]!)))) remaining -= cost(i);
+      // At the answer's own levels, ids and paths, and numbers, booleans and null (a few characters each), are never
+      // cut or dropped. Inside a recorded tool input everything may be: it is data of any size.
+      if (!t.inInput && I.keys && !isContainer(v) && (typeof v !== "string" || PROTECTED.has(I.keys[i]!))) remaining -= cost(i);
       else rest.push(i);
     }
     let sum = 0;
@@ -138,7 +143,7 @@ function allocate(root: Obj, infos: Map<object, Info>, budget: number): { out: O
       let left = order.length;
       let pos = 0;
       while (pos < order.length && cost(order[pos]!) <= rem / left) rem -= cost(order[pos++]!), left--;
-      if (left > 0 && rem / left >= MIN_SHARE) {
+      if (left > 0 && rem / left >= SPLIT_SHARE) {
         for (; pos < order.length; pos++) decide[order[pos]!] = Math.max(2, Math.floor(rem / left) - I.over[order[pos]!]!);
       } else if (left > 0) {
         // Too many children for each to get a useful share: keep the first ones whole, cut the next, drop the rest.
@@ -213,21 +218,29 @@ export function fitAnswer(page: Obj, cap: number): Obj {
     }
     const len = jlen(out);
     if (len <= cap) return out;
-    budget -= len - cap + 32;
+    budget = Math.max(MIN_BUDGET, budget - (len - cap + 32));
   }
-  out.truncated = true;
-  out.note = NOTE;
+  out = { ...page, truncated: true, note: NOTE };
+  // Protected text alone is over the cap: shrink the largest top-level entries, keeping each one's type.
   const replaced = new Set<string>();
   for (let len = jlen(out); len > cap; len = jlen(out)) {
     let big: string | undefined;
     let bigSize = 0;
     for (const [k, v] of Object.entries(out)) {
       if (replaced.has(k) || k === "note" || k === "truncated" || k === "nextCursor" || k === "limitUsed") continue;
-      const s = jlen(v);
-      if (s > bigSize) [big, bigSize] = [k, s];
+      const sz = jlen(v);
+      if (sz > bigSize) [big, bigSize] = [k, sz];
     }
     if (big === undefined) break;
-    out[big] = { truncated: true, chars: bigSize };
+    const v = out[big];
+    if (Array.isArray(v)) {
+      if (out[`${big}Total`] === undefined) out[`${big}Total`] = v.length;
+      out[big] = [];
+      out[`${big}Truncated`] = true;
+    } else if (typeof v === "string") {
+      out[big] = cutString(v, 256);
+      out[`${big}Truncated`] = true;
+    } else out[big] = { truncated: true, chars: bigSize };
     replaced.add(big);
   }
   return out;

@@ -120,7 +120,7 @@ const gemini = `// ~/.gemini/settings.json
   </p>
   <p>
     <code>session_replay</code> pages the files of a step, of a range and of the step list with <code>limit</code> and
-    <code>cursor</code>. <code>limit: 1</code> gives one file's diff up to 16 KB.
+    <code>cursor</code>. A diff or file over 16 KB is cut when the replay is built, and flagged <code>diffTruncated</code> or <code>contentTruncated</code>.
   </p>
   <p>
     A page takes whole rows while they fit, so a short page has <code>limitUsed</code> and a <code>nextCursor</code>. It cuts only
@@ -129,8 +129,8 @@ const gemini = `// ~/.gemini/settings.json
   </p>
   <p>
     The answer then has <code>truncated: true</code>, a <code>note</code>, and a flag such as <code>diffTruncated</code> or
-    <code>filesTruncated</code> (with <code>filesTotal</code>, or <code>truncatedKeys</code> on an object) on what was cut. A cut inside a tool input is flagged on
-    <code>detail</code> as <code>inputTruncated</code>.
+    <code>filesTruncated</code> (with <code>filesTotal</code>, or <code>truncatedKeys</code> on an object) on what was cut. A cut inside a tool input is flagged as <code>inputTruncated</code> on the
+    object that holds the input (<code>detail</code>, or <code>action</code> in a fork answer), never inside the input.
   </p>
 
   <h2 id="protocol">Protocol</h2>
