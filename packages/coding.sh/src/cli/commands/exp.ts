@@ -44,6 +44,7 @@ import { sortableId } from "../../core/ids.ts";
 import { jobConfig, taskFingerprint } from "../../jobs/config.ts";
 import type { Job, JobKind } from "../../jobs/store.ts";
 import { positiveInt, UsageError } from "../args.ts";
+import { parseWeights, shortWeights, weightsOf, withWeights } from "../../experiments/weights.ts";
 import { finishJob, infraStopNote, openJob, resumeField, resumeNote, retryFlag, statusCommand, trialTimeout } from "../jobs.ts";
 import { gateFlags, jsonArg, list, num, shellQuote, str, withContext } from "../common.ts";
 import { ago, CliError, plural } from "../output.ts";
@@ -359,6 +360,8 @@ async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string
     if (resumeFrom.status !== "cancelled" && !retryErrors) throw new CliError(`${resumeFrom.id} already finished; nothing to resume (--retry-errors runs its errored case-trials again)`, { reason: "already_complete" });
     jobCtx = { ...c, flags: { ...c.flags, resume: false } };
   }
+  // The weights stamp: the flag's, else the one the run being continued already carries.
+  const weights = resumeFrom ? (weightsFlag(c) ?? weightsOf(resumeFrom)) : (await resumedWeights(c, "exp run", [weightsFlag(c)]))[0];
   const { spec, dataset, graders } = loaded;
   if (gating.adaptive && (spec.trials ?? 1) > 1) throw new UsageError("--samples adaptive sets the trials (2 per case, a 3rd when they disagree); drop trials from the spec or --trials", { reason: "invalid_argument" });
   if (gating.baseline && gating.baseline.dataset.id !== dataset.id) {
@@ -379,8 +382,11 @@ async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string
     ...(gating.llm ? { llm: { mode: gating.llm.mode, source: gating.llm.source, until: gating.llm.until } } : {}),
     ...(selection ? { selection: selection.config } : {}),
     ...(seq ? { seq: { k: seq.k, feedback: str(c.flags.feedback) ?? "reasons", history: seq.history ?? "full" } } : {}),
+    // Undefined parts are not hashed, so a run without a stamp keeps the config hash it had.
+    weights,
   });
   const job = await openJob(jobCtx, { kind: "exp run", name: resumeFrom?.name ?? loaded.name, config, newId: () => sortableId("exp_"), concurrency: spec.concurrency ?? 4 });
+  await rememberWeights(job, [weights]);
   // A resumed job: the partial result it stored also holds case-trials finished before a crash cut the job short.
   const priorId = !resumeFrom && job.scope().state<string>("experimentId");
   if (priorId) {
@@ -401,7 +407,7 @@ async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string
         ...(gating.baseline ? { stopOnRegression: gating.baseline } : {}),
         ...(spec.concurrency ? { concurrency: spec.concurrency } : {}),
         ...(spec.split ? { split: spec.split } : {}),
-        ...(continuation || seriesFlag(c) ? { metadata: { ...(continuation ? { control: "skipped" } : {}), ...(seriesFlag(c) ? { series: seriesFlag(c) } : {}) } } : {}),
+        ...(continuation || seriesFlag(c) || weights ? { metadata: withWeights({ ...(continuation ? { control: "skipped" } : {}), ...(seriesFlag(c) ? { series: seriesFlag(c) } : {}) }, weights) } : {}),
         ...(selection ? { selection: selection.opts } : {}),
         ...(resumeFrom ? { resumeFrom } : {}),
         ...(retryErrors ? { retryErrors } : {}),
@@ -415,7 +421,7 @@ async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string
       }),
     )
     .catch((e: unknown) => {
-      if (e instanceof ResumeMismatchError) throw new CliError(e.message, { reason: "config_changed", next: ["Run it with the original dataset, task, graders, trials and case selection, or start a new run without --resume"] });
+      if (e instanceof ResumeMismatchError) throw new CliError(e.message, { reason: "config_changed", next: ["Run it with the original dataset, task, graders, trials, case selection and --weights (or none, to keep its stamp), or start a new run without --resume"] });
       if (e instanceof RangeError) throw new UsageError(e.message, { reason: "invalid_argument" });
       throw e;
     })
@@ -468,6 +474,76 @@ function seriesFlag(c: CommandContext): string | undefined {
   if (v === undefined) return undefined;
   if (typeof v !== "string" || !v.trim()) throw new UsageError("--series needs a name, e.g. --series prompt-loop", { reason: "invalid_argument" });
   return v.trim();
+}
+
+const WEIGHTS_HELP = "hash the file yourself, e.g. shasum -a 256 model.safetensors";
+
+function weightsValue(v: string): string {
+  const sha = parseWeights(v);
+  if (sha === undefined) {
+    throw new UsageError(`--weights takes the SHA-256 of the checkpoint file: 64 hex characters (got ${JSON.stringify(v.length > 80 ? `${v.slice(0, 80)}…` : v)}); ${WEIGHTS_HELP}`, { reason: "invalid_argument" });
+  }
+  return sha;
+}
+
+/**
+ * `--weights <SHA256>`: the checkpoint a run of one task used, as its user
+ * hashed it. Stored lowercase in `metadata.weights`; undefined without the flag.
+ */
+function weightsFlag(c: CommandContext): string | undefined {
+  const values = list(c.flags.weights);
+  if (c.flags.weights !== undefined && !values.length) throw new UsageError(`--weights takes the SHA-256 of the checkpoint file: 64 hex characters; ${WEIGHTS_HELP}`, { reason: "invalid_argument" });
+  if (!values.length) return undefined;
+  if (values.length > 1) throw new UsageError(`--weights takes one SHA-256 for a run of one task (got ${values.length}); with two --arm options, give one per arm as --weights ARM=<SHA256>`, { reason: "invalid_argument" });
+  const v = values[0]!;
+  const eq = v.indexOf("=");
+  if (eq > 0 && NAME.test(v.slice(0, eq))) throw new UsageError("--weights ARM=<SHA256> needs two --arm options; a run of one task takes --weights <SHA256>", { reason: "invalid_argument" });
+  return weightsValue(v);
+}
+
+/** `--weights ARM=<SHA256>` with two `--arm` options: each arm with the stamp given for it, if any. */
+function armWeights(c: CommandContext, arms: readonly [AbArm, AbArm]): [AbArm, AbArm] {
+  const values = list(c.flags.weights);
+  const of = new Map<string, string>();
+  for (const v of values) {
+    const eq = v.indexOf("=");
+    const arm = eq > 0 ? v.slice(0, eq) : "";
+    if (!NAME.test(arm)) {
+      throw new UsageError(`with --arm, name the arm each stamp belongs to: --weights ${arms[0].name}=<SHA256> --weights ${arms[1].name}=<SHA256>`, { reason: "invalid_argument" });
+    }
+    if (!arms.some((a) => a.name === arm)) throw new UsageError(`--weights ${arm}=…: no arm named ${JSON.stringify(arm)} (arms: ${arms.map((a) => a.name).join(", ")})`, { reason: "invalid_argument" });
+    if (of.has(arm)) throw new UsageError(`--weights names arm ${JSON.stringify(arm)} twice`, { reason: "invalid_argument" });
+    of.set(arm, weightsValue(v.slice(eq + 1)));
+  }
+  return arms.map((a) => (of.has(a.name) ? { ...a, weights: of.get(a.name)! } : a)) as [AbArm, AbArm];
+}
+
+/**
+ * The stamps of the run `--resume <ID>` names, in place of `given` when no
+ * `--weights` was passed: a resumed run keeps the weights its finished
+ * case-trials ran under. A `--weights` that differs from them is refused.
+ * Runs before the job's config is hashed, since the stamps are part of it.
+ * `labels` names the arms of an A/B; a run of one task has one unnamed stamp.
+ */
+async function resumedWeights(c: CommandContext, kind: JobKind, given: (string | undefined)[], labels: readonly string[] = []): Promise<(string | undefined)[]> {
+  const ref = str(c.flags.resume);
+  const v = ref ? await JobStore.forEnv(c.env).find(ref) : undefined;
+  if (!v || v.header.kind !== kind) return given;
+  const stored = Array.isArray(v.header.state.weights) ? (v.header.state.weights as unknown[]) : [];
+  const was = given.map((_, i) => parseWeights(stored[i]));
+  if (given.every((x) => x === undefined)) return was;
+  const i = given.findIndex((x, j) => x !== was[j]);
+  if (i < 0) return given;
+  const text = (x: string | undefined) => (x ? shortWeights(x) : "none");
+  throw new CliError(`Can't resume ${v.header.id}: ${labels[i] ? `arm ${labels[i]}` : "it"} ran weights ${text(was[i])}, and --weights gives ${text(given[i])}. Its finished trials would be stamped with weights they did not run`, {
+    reason: "config_changed",
+    next: ["Resume it without --weights to keep its stamp, or start a new run without --resume"],
+  });
+}
+
+/** Remember a job's stamps (see resumedWeights). Nothing is written when there are none. */
+async function rememberWeights(job: Job, weights: (string | undefined)[]): Promise<void> {
+  if (weights.some((x) => x !== undefined) && job.scope().state("weights") === undefined) await job.scope().setState("weights", weights.map((x) => x ?? null));
 }
 
 /** A stored series: completed experiments tagged `metadata.series`, oldest first. */
@@ -665,7 +741,7 @@ export async function runArms(
 ): Promise<{ result: AbResult; job: Job }> {
   const { spec, dataset, graders } = loaded;
   const config = specConfig(c, loaded, {
-    arms: arms.map((a) => ({ name: a.name, task: taskFingerprint(a.task, c.cwd) })),
+    arms: arms.map((a) => ({ name: a.name, task: taskFingerprint(a.task, c.cwd), weights: a.weights })),
     seed: extra.seed,
     maxCases: extra.maxCases,
     stopEarly: extra.stopEarly,
@@ -673,6 +749,7 @@ export async function runArms(
   const job = await openJob(c, { kind, name: loaded.name, config, newId: () => sortableId("pair_"), concurrency: spec.concurrency ?? 4 });
   // The job id doubles as the pair id, so --resume takes either.
   if (job.header.state.pairId === undefined) await job.scope().setState("pairId", job.id);
+  await rememberWeights(job, arms.map((a) => a.weights));
   const name = job.header.name;
   const label = `${dataset.name} (${arms[0].name} vs ${arms[1].name}, interleaved)`;
   const spin = c.out.spin(`Running ${label}…`);
@@ -881,6 +958,14 @@ export async function run(c: CommandContext): Promise<number> {
           if (matrix || armFlags.length || c.flags.watch === true) throw new UsageError(`${flag} runs one task as a gate; it does not combine with ${matrix ? "a matrix spec" : armFlags.length ? "--arm" : "--watch"}`, { reason: "invalid_argument" });
           if (adaptive && c.flags.trials !== undefined) throw new UsageError("--samples adaptive sets the trials (2 per case, a 3rd when they disagree); drop --trials", { reason: "invalid_argument" });
         }
+        // --weights names one checkpoint for one run: a watch reruns when files change and a matrix runs several configs, so a fixed hash would mislabel them.
+        if (c.flags.weights !== undefined) {
+          const matrix = !!c.positionals[0] && (await isMatrixFile(resolve(c.cwd, c.positionals[0])));
+          if (matrix || c.flags.watch === true) {
+            throw new UsageError(`--weights stamps one run with one checkpoint; it does not combine with ${matrix ? "a matrix spec" : "--watch"}. Run each checkpoint as its own exp run --weights <SHA256>`, { reason: "invalid_argument" });
+          }
+          if (!armFlags.length) weightsFlag(c);
+        }
         // A spec with "matrix" or "variants" runs every cell against its baseline cell.
         if (c.positionals[0] && (await isMatrixFile(resolve(c.cwd, c.positionals[0])))) {
           if (c.flags.seq !== undefined) throw new UsageError("--seq runs one task; it does not combine with a matrix spec", { reason: "invalid_argument" });
@@ -907,7 +992,9 @@ export async function run(c: CommandContext): Promise<number> {
         if (armFlags.length) {
           if (str(c.flags.task)) throw new UsageError("Use either --task or two --arm options, not both", { reason: "invalid_argument" });
           if (c.flags.watch === true) throw new UsageError("--watch reruns one task; for an A/B of harness edits on save use coding.sh exp ab --watch", { reason: "invalid_argument" });
-          const arms = await parseArms(armFlags);
+          const parsed = armWeights(c, await parseArms(armFlags));
+          const armStamps = await resumedWeights(c, "exp ab", parsed.map((a) => a.weights), parsed.map((a) => a.name));
+          const arms = parsed.map(({ weights: _w, ...a }, i) => (armStamps[i] ? { ...a, weights: armStamps[i] } : a)) as [AbArm, AbArm];
           const loaded = await loadSpec(c, store, c.positionals[0], false);
           // X-11: both arms record, or both replay one source at one boundary (A is the control).
           const llmExp = await import("./exp-llm.ts");
@@ -955,8 +1042,8 @@ export async function run(c: CommandContext): Promise<number> {
         // X-11: --replay runs the recorded config as a control arm next to this task, unless --no-control.
         const llm = await llmExp.llmPlan(c, store, c.positionals[0]);
         if (llm?.source && llm.control) {
-          if (adaptive || baseline || seriesFlag(c) !== undefined || picked.length) {
-            throw new UsageError(`--replay with a control arm runs an A/B; pass --no-control to combine it with ${picked.length ? `--${picked[0]}` : "--samples, --stop-on-regression or --series"}`, { reason: "invalid_argument" });
+          if (adaptive || baseline || seriesFlag(c) !== undefined || picked.length || c.flags.weights !== undefined) {
+            throw new UsageError(`--replay with a control arm runs an A/B; pass --no-control to combine it with ${picked.length ? `--${picked[0]}` : c.flags.weights !== undefined ? "--weights" : "--samples, --stop-on-regression or --series"}`, { reason: "invalid_argument" });
           }
           return llmExp.replayWithControl(c, store, llm, c.positionals[0], seed);
         }

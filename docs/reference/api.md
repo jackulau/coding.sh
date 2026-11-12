@@ -1487,6 +1487,7 @@ These fields are present only when they apply:
 | `samples`, `summary.caseVerdicts` | `exp run --samples adaptive` | `"samples": "adaptive"`, and verdicts `passed`, `failed`, `tieBreaks`. The `passRate` interval is then biased, so use the verdicts |
 | `regression` | `--stop-on-regression` stopped the run (status `cancelled`) | `{caseId, baseline}` |
 | `metadata.checkpoint` | A partial record written while the run was going (status `cancelled`) | `done`, `total`, `at` |
+| `metadata.weights` | `exp run --weights <SHA256>` | `sha256`: the SHA-256 of the checkpoint the task ran, 64 hex characters as given to the flag, stored in lowercase. `/api/compare` carries it as `a.weights` and `b.weights`, with `weightsWarning` when both are the same or only one side has one |
 | `metadata.selection` | A run of part of the dataset | `from` (`{kind: "failing"\|"errors", experiment}`), `cases`, `sample`, `seed`, `firstN`, `selected`, `of` |
 | `metadata.seq` | `exp run --seq K` | `k`, `feedback`, `history` |
 | `summary.seq` | `exp run --seq K` | `k`, `feedback`, `history`, `curve` (`[{k, rate, lo, hi}]`, Seq@1..K), `egs`, `lgs`, `unchangedRate`, `costToSolve`; with 2+ trials also `passAtK` (`[{k, rate}]`), `front` (`[{protocol, k, cost, success, overall}]`) and `costUnit` (`usd` or `attempts`) |

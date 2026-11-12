@@ -348,7 +348,11 @@ function fmt(v: number, unit: MetricUnit, signed = false): string {
     return `${sign}${Math.round(a)}B`;
   }
   if (Number.isInteger(a)) return `${sign}${a}`;
-  return `${sign}${Math.abs(a) < 1 ? a.toFixed(3) : a.toFixed(1)}`;
+  if (Math.abs(a) >= 1) return `${sign}${a.toFixed(1)}`;
+  // Below 1: three decimals, or two significant digits where three decimals would read as zero
+  // (a gain per edited weight of 0.0001 is not 0.000).
+  const fixed = a.toFixed(3);
+  return `${sign}${Number(fixed) === 0 ? String(Number(a.toPrecision(2))) : fixed}`;
 }
 
 export function renderMetrics(r: MetricExpResult, opts: RenderOpts): string {

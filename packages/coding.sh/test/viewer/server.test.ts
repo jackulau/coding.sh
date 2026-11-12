@@ -622,6 +622,24 @@ describe("viewer server: experiment compare", () => {
     assert.ok(c.diff.lo <= c.diff.mean && c.diff.mean <= c.diff.hi);
   });
 
+  test("each side carries its weights stamp, and the same stamp twice is a warning", async () => {
+    const [x, y] = ["ab12".repeat(16), "cd34".repeat(16)];
+    await index.putExperiment(experimentResult("w-base", { metadata: { weights: { sha256: x } } }));
+    await index.putExperiment(experimentResult("w-edit", { metadata: { weights: { sha256: y } } }));
+    await index.putExperiment(experimentResult("w-twin", { metadata: { weights: { sha256: x } } }));
+    const cmp = async (a: string, b: string) => (await req(v, `/api/compare?a=${a}&b=${b}`)).json();
+    const differ = await cmp("w-base", "w-edit");
+    assert.deepEqual([differ.a.weights, differ.b.weights, differ.weightsWarning], [{ sha256: x }, { sha256: y }, undefined]);
+    assert.match((await cmp("w-base", "w-twin")).weightsWarning, /^A and B ran the same weights \(ab12ab12ab12\)/);
+    const oneSided = await cmp("base", "w-edit");
+    assert.equal("weights" in oneSided.a, false);
+    assert.match(oneSided.weightsWarning, /^only B records which weights it ran \(cd34cd34cd34\)/);
+    const neither = await cmp("base", "cand");
+    assert.deepEqual(["weights" in neither.a, "weights" in neither.b, "weightsWarning" in neither], [false, false, false]);
+    // The experiment itself is served with its metadata, which the experiment page reads the stamp from.
+    assert.deepEqual((await req(v, "/api/experiments/w-base")).json().metadata, { weights: { sha256: x } });
+  });
+
   test("rejects bad ids and missing experiments", async () => {
     assert.equal((await req(v, "/api/compare?a=base")).status, 400);
     assert.equal((await req(v, "/api/compare?a=..%2Fx&b=base")).status, 400);

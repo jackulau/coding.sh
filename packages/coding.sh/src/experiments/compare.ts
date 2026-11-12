@@ -22,6 +22,7 @@ import type { HumanLabel } from "../judge/calibrate.ts";
 import { graderPpi, labelMajority, type GraderPpi } from "./ppi.ts";
 import type { ReplicationConclusion } from "./replicate.ts";
 import { selectionWarning } from "./select.ts";
+import { stampedWith, weightsOf, weightsWarning, type WeightsStamp } from "./weights.ts";
 
 export interface CaseDelta {
   caseId: string;
@@ -230,8 +231,15 @@ export function clusterMap(cases: readonly Case[], key: string): Map<string, str
 }
 
 export interface Comparison {
-  a: { id: string; name: string; passRate: number };
-  b: { id: string; name: string; passRate: number };
+  /** `weights`: the checkpoint the side ran (`exp run --weights`); absent when it was not stamped. */
+  a: { id: string; name: string; passRate: number; weights?: WeightsStamp };
+  b: { id: string; name: string; passRate: number; weights?: WeightsStamp };
+  /**
+   * Set when both sides carry the same weights stamp and neither is a regrade
+   * of the other, or when only one side carries a stamp. Absent when neither
+   * side is stamped.
+   */
+  weightsWarning?: string;
   /** Set when A and B ran on different dataset versions (pairing still by case id). */
   datasetWarning?: string;
   /** Runs left out because a grader errored or the task still hit an infra error after its retries (outcome unknown), per side. */
@@ -665,9 +673,11 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
       `lost trials are not missing at random, so the paired result may be biased` +
       (infra ? `. ${infra} task error(s) look like infrastructure (timeout, network, HTTP 429/5xx): re-run those cases before trusting the verdict` : "");
   }
+  const wa = weightsOf(a);
+  const wb = weightsOf(b);
   const out: Comparison = {
-    a: { id: a.id, name: a.name, passRate: rateOf(ra) },
-    b: { id: b.id, name: b.name, passRate: rateOf(rb) },
+    a: stampedWith({ id: a.id, name: a.name, passRate: rateOf(ra) }, wa),
+    b: stampedWith({ id: b.id, name: b.name, passRate: rateOf(rb) }, wb),
     ungraded,
     paired: ids.length,
     onlyInA,
@@ -701,6 +711,8 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
   const regrade = b.metadata?.regradeOf === a.id || a.metadata?.regradeOf === b.id;
   const instrument = instrumentText(graders, onlyA, onlyB, regrade);
   if (instrument) out.instrumentWarning = instrument;
+  const sameWeights = weightsWarning(wa, wb, regrade);
+  if (sameWeights) out.weightsWarning = sameWeights;
   const hv = out.turnover.halves;
   if (verdict !== "inconclusive" && hv?.reversed.avg) {
     const span = (t: [number, number]) => (t[0] === t[1] ? `trial ${t[0]}` : `trials ${t[0]}-${t[1]}`);

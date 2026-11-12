@@ -527,10 +527,18 @@ measurement"). To compare two configs graded by different grader versions, regra
 with the newer graders and compare that. `--json` returns the new `experiment` and the `diff`
 (`flips`, `toFail`, `toPass`, `toUngraded`, `fromUngraded`, `graders`).
 
+A regrade keeps the original's [weights stamp](#compare-an-edited-model-with-its-base): the
+outputs came from that checkpoint. `exp compare` of an experiment with its regrade shows the same
+stamp on both sides and does not warn about it.
+
 `coding.sh exp run --arm base=a.json --arm cand=b.json` runs two task configs as one A/B. Cases go
 in a random order, and each case runs in both arms back to back, in random arm order, so drift
 hits both arms the same. Both arms are stored (as `<name>-base` and `<name>-cand`) and share a pair
-id. `--seed` fixes the order, `--max-cases N` runs a random N cases.
+id. `--seed` fixes the order, `--max-cases N` runs a random N cases. With `--arm`, `--weights`
+names the arm each stamp belongs to (`--weights base=<SHA256> --weights cand=<SHA256>`); one arm
+may go without. A bare `--weights <SHA256>` is a usage error there, because two arms rarely run
+one checkpoint. `--replay` with its control arm is an A/B too and refuses `--weights`; with
+`--no-control` it runs one task and takes the stamp.
 
 Add `--stop-early` to stop once the answer is clear. It is a group sequential test with
 O'Brien-Fleming alpha spending at `--looks` (default 4) evenly spaced points of the case budget,
@@ -645,7 +653,8 @@ compare <baseline cell> <cell>` gives the per-case diff of one cell, and treats 
 interleaved. `--cell NAME` (repeatable) runs some cells; the baseline always runs. `--seed` fixes
 the order, `--resume` picks up an interrupted matrix, and `--json` returns `matrix`, `plan`,
 `experiments` (cell to id) and `comparisons` (each with `pHolm` and `holmVerdict`). Up to 256
-cells.
+cells. A matrix spec does not take `--weights`: one stamp cannot name the checkpoint of every
+cell. Run each checkpoint as its own `exp run --weights <SHA256>`.
 
 Several matrices against one baseline pay for the baseline each time. `--reuse baseline` copies
 the baseline cell's finished case-trials from earlier experiments instead of running them again
@@ -779,14 +788,27 @@ count such as tokens used has to become a pass or fail before it is a grader.
 {"kind": "json-path", "name": "correct", "path": "$.answer"}
 ```
 
-Run each model, then compare:
+Run each model, then compare. `--weights` records which checkpoint each task ran: the SHA-256 of
+its weights file, 64 hex characters. You compute it, for example with
+`shasum -a 256 model.safetensors`; coding.sh stores the value and hashes nothing.
 
 ```sh
-coding.sh exp run -d math --task base.json -g terminated.json -g correct.json --name base
-coding.sh exp run -d math --task edited.json -g terminated.json -g correct.json --name edited
+coding.sh exp run -d math --task base.json -g terminated.json -g correct.json --name base \
+  --weights 0496e5111097627dd9de19e48925a9143c6e2566b4f29c3f39ecc908f3b424ee
+coding.sh exp run -d math --task edited.json -g terminated.json -g correct.json --name edited \
+  --weights 58899f90572cba67c56b85687d69714292f845c7830f9971cc1b332ee047b2a7
 coding.sh exp compare base edited
 coding.sh exp compare base edited --given terminated
 ```
+
+Both compares name each side's checkpoint by the first 12 characters of its stamp
+(`weights 0496e5111097` on A, `weights 58899f90572c` on B), and `--json` carries the whole value
+as `comparison.a.weights.sha256` and `comparison.b.weights.sha256`. When both sides carry the same
+stamp, the report warns that `B − A` is not a difference between two models. When only one side
+carries a stamp, it says so, and the other side reads `weights not recorded`. `exp show`, the
+`exp run` summary, the viewer and the MCP tools `experiments_list` and `experiment_compare` show
+the same stamp. `exp run` without `--weights` stores no stamp, and a comparison of two such runs
+prints nothing about weights.
 
 The first compare prints a paired delta for `terminated` and one for `correct`, each with its
 bootstrap interval. If the edited model only stopped looping, `terminated` is up and `correct`
@@ -876,6 +898,12 @@ rounds as a run that was never interrupted.
   script a command task runs) and timeouts, not concurrency. If any of them changed, `--resume`
   refuses and names the parts: `Can't resume exp_…: its config changed since it started
   (dataset, task)`. Mixing trials of two configs would give a result of neither.
+- A [weights stamp](#compare-an-edited-model-with-its-base) is part of the config. `--resume <id>`
+  without `--weights` keeps the stamp the run started with, and with a different `--weights` it
+  refuses: the finished trials would be stamped with weights they did not run. `--resume` with no
+  id matches a run by its config, so pass the same `--weights` again; without it the resume
+  refuses and names `weights` as the part that changed. An `--arm` run keeps and checks one stamp
+  per arm in the same way, and its stamps are in the `arms` part of the config.
 - The first Ctrl-C starts no new trials and lets the ones in flight finish and be saved. The second
   stops them. The exit code is 130, and the command to continue is printed (and is the `resume`
   field of `--json` output).
@@ -904,7 +932,8 @@ rounds as a run that was never interrupted.
   kill then leaves a partial record: `exp list` marks it `(partial)` and `exp show` says how many
   case runs it holds. `exp run … --resume <EXPERIMENT>` continues it when no job has that id: the
   finished case-trials are kept and only the rest run, under the same id. It refuses, and names
-  what changed, when the dataset version, task, graders, trials or case selection differ.
+  what changed, when the dataset version, task, graders, trials, case selection or `--weights`
+  differ. Without `--weights` it keeps the stamp the experiment has.
   `--retry-errors` with `--resume <EXPERIMENT>` also runs its task-errored case-trials again, on a
   finished experiment too.
 
@@ -957,7 +986,8 @@ prints one line and its delta against the run before it:
 - When only the graders changed (a rubric edit, a grader file), the stored outputs of the last run
   are graded again with no task calls (`regrade`). The new experiment records `regradeOf`.
 - A spec that fails to parse is reported and watching goes on. Enter reruns, `q` quits, Ctrl-C
-  exits 0. `--watch` does not combine with `--json`, `--resume` or `--arm`.
+  exits 0. `--watch` does not combine with `--json`, `--resume`, `--arm` or `--weights` (a watch
+  session reruns as the task changes, so one stamp would not stay true).
 
 ## Metric A/B (ms, bytes)
 
@@ -982,6 +1012,42 @@ the same, like the byte count of a fixed build, has no noise: a non-zero delta i
 
 `--json` prints the whole result, runs included. `--fail-on-worse` exits 1 when any metric got
 worse, for CI gates. scripts/perf/ uses it to gate the coding.sh site on Lighthouse metrics.
+
+### An edit's size and gain
+
+To weigh a model edit by what it cost, make each arm one edit, and have its command print how
+many weights the edit changed and what it gained:
+
+```json
+{"edited_weights": 1023, "gain_pp": 29.45, "gain_per_weight": 0.0288}
+```
+
+- `edited_weights`: the number of weights the edit changed. Lower is better, which is the default.
+- `gain_pp`: the gain over the unedited base, in percentage points.
+- `gain_per_weight`: `gain_pp` divided by `edited_weights`.
+
+Your command computes the three numbers. coding.sh treats them like any other metric: it pairs
+the runs and compares them. Name the two gain keys in `--higher`. Without it every metric is
+lower-is-better, and the edit with the larger gain reads as `worse`:
+
+```sh
+coding.sh exp metrics --arm small='python3 edit_report.py small' \
+  --arm wide='python3 edit_report.py wide' --higher 'gain_*'
+```
+
+```
+metric             small     wide                    Δ  95% CI  p (adj)  verdict
+-----------------  -----  -------  -------------------  ------  -------  -------
+edited_weights      1023   294912  +293889 (+28728.2%)  fixed         —  worse
+gain_per_weight ↑  0.029  0.00011      -0.029 (-99.6%)  fixed         —  worse
+gain_pp ↑           29.4     31.2         +1.8 (+5.9%)  fixed         —  better
+```
+
+`↑` marks a metric where higher is better. Here the wide edit changes more weights, gains 1.8
+points more, and gains far less per weight. None of the three names ends in `_ms` or `_bytes`, so
+they print as plain numbers, and a value below 0.0005 keeps two significant digits (`0.00011`)
+and does not print as `0.000`. A command that prints the same numbers on every run has no noise:
+the CI column reads `fixed`, and a non-zero delta is a change.
 
 ## Scores
 
