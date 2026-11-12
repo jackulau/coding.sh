@@ -39,7 +39,7 @@ import {
 import { sessionDigest } from "./digest.ts";
 import { facetCounts, searchWhere } from "../query/run.ts";
 import { andQuery, FACET_KEYS, parseWhere, QueryError, QueryUnsupported, type Query } from "../query/where.ts";
-import { fitAnswer, pageRange, pageStep } from "./replay-page.ts";
+import { fitAnswer, pageIndex, pageRange, pageStep } from "./replay-page.ts";
 import { toolText, ToolError, type ToolDef } from "./protocol.ts";
 import { scoreTools } from "../scores/mcp.ts";
 
@@ -505,7 +505,7 @@ function toolDefs(): ToolDef<ToolCtx>[] {
         if (from !== undefined || to !== undefined) {
           if (from === undefined || to === undefined) throw new ToolError("Pass both from and to for a range.");
           const range = await replay.range(from, to);
-          return fitPage(limit, (n) => pageRange(range, offset, n, REPLAY_TEXT_LIMIT));
+          return pageRange(range, offset, limit, REPLAY_TEXT_LIMIT);
         }
         if (a.fork !== undefined) {
           if (step === undefined) throw new ToolError("fork needs a step.");
@@ -514,15 +514,11 @@ function toolDefs(): ToolDef<ToolCtx>[] {
         const file = strArg(a, "file");
         if (step !== undefined) {
           const view = await replay.at(step, { file });
-          return fitPage(limit, (n) => pageStep(view, offset, n, REPLAY_TEXT_LIMIT));
+          return pageStep(view, offset, limit, REPLAY_TEXT_LIMIT);
         }
         if (file) throw new ToolError("file needs a step.");
         const index = replay.index();
-        return fitPage(limit, (n) => {
-          const page: Obj = { ...index, steps: structuredClone(index.steps.slice(offset, offset + n)), files: index.files.slice(offset, offset + n), total, filesTotal: index.files.length };
-          if (offset + n < Math.max(total, index.files.length)) page.nextCursor = String(offset + n);
-          return fitAnswer(page, REPLAY_TEXT_LIMIT, ["steps", "files"]);
-        });
+        return pageIndex(index, offset, limit, REPLAY_TEXT_LIMIT);
       },
     },
     {

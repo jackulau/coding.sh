@@ -123,12 +123,13 @@ const gemini = `// ~/.gemini/settings.json
     <code>cursor</code>. <code>limit: 1</code> gives one file's diff up to 16 KB.
   </p>
   <p>
-    It cuts only when an answer would still be too long. A list that is not paged (a step's own files, the edits in a tool input)
-    keeps its first items, and the longest text is cut to a common length.
+    A page takes whole rows while they fit, so a short page has <code>limitUsed</code> and a <code>nextCursor</code>. It cuts only
+    when one row, or the rest of the answer, is still too long. Then the room is shared out: short text stays whole, the longest is
+    cut, and a long list keeps its first items. Ids and paths are never cut.
   </p>
   <p>
     The answer then has <code>truncated: true</code>, a <code>note</code>, and a flag such as <code>diffTruncated</code> or
-    <code>filesTruncated</code> (with <code>filesTotal</code>) on what was cut. A cut inside a tool input is flagged on
+    <code>filesTruncated</code> (with <code>filesTotal</code>, or <code>truncatedKeys</code> on an object) on what was cut. A cut inside a tool input is flagged on
     <code>detail</code> as <code>inputTruncated</code>.
   </p>
 

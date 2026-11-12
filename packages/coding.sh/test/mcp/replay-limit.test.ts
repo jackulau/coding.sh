@@ -1,5 +1,5 @@
 // session_replay stays under the 25,000-character limit in every view, with a session that touched
-// 300 files of about 50 KB each: the step list, a step, a step with a file, and ranges. Pages by
+// 300 files of about 2 KB each (and a few of 50 KB): the step list, a step, a step with a file, and ranges. Pages by
 // limit and cursor reach every file exactly once, and cut text says so.
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
@@ -25,13 +25,13 @@ async function call(args: Record<string, unknown>, sessionId = ID): Promise<{ sc
 }
 
 /** Every page of a view, following nextCursor. Each page is checked against the limit. */
-async function pages(args: Record<string, unknown>): Promise<Sc[]> {
+async function pages(args: Record<string, unknown>, sessionId = ID): Promise<Sc[]> {
   const out: Sc[] = [];
   let cursor: string | undefined;
   for (let i = 0; i < 400; i++) {
     const next = { ...args };
     if (cursor) next.cursor = cursor;
-    const { sc, len } = await call(next);
+    const { sc, len } = await call(next, sessionId);
     assert.ok(len <= CHARACTER_LIMIT, `page ${i} of ${JSON.stringify(args)} is ${len} characters`);
     out.push(sc);
     cursor = sc.nextCursor;
@@ -53,8 +53,8 @@ before(async () => {
   const base = { v: 0 as const, sessionId: ID, agent: "claude-code", cwd: w.repo, model: "claude-opus-4-5" };
   const evs: AgentEvent[] = [{ ...base, id: "f-0", ts: t0, kind: "session.start", payload: {} }, { ...base, id: "f-1", ts: t0 + 1, kind: "user.message", payload: { text: "Generate the files" } }];
   for (let i = 0; i < FILES; i++) {
-    // About 50 KB of distinct lines per file.
-    const content = Array.from({ length: 1500 }, (_, l) => `export const v${i}_${l} = ${l * 7919 + i};`).join("\n") + "\n";
+    // About 2 KB of distinct lines per file.
+    const content = Array.from({ length: 60 }, (_, l) => `export const v${i}_${l} = ${l * 7919 + i};`).join("\n") + "\n";
     evs.push({ ...base, id: `f-s${i}`, ts: t0 + 10 + i * 10, kind: "tool.start", payload: { tool: "Write", toolUseId: `w${i}`, input: { file_path: path(i), content } } });
     evs.push({ ...base, id: `f-e${i}`, ts: t0 + 15 + i * 10, kind: "tool.end", payload: { tool: "Write", toolUseId: `w${i}`, ok: true }, durationMs: 5 });
     evs.push({ ...base, id: `f-c${i}`, ts: t0 + 16 + i * 10, kind: "file.change", payload: { path: path(i), op: "add" } });
@@ -88,6 +88,7 @@ before(async () => {
     { tool: "Write", input: { file_path: "src/d.ts", content: "x".repeat(20000) } },
     ...Array.from({ length: 40 }, (_, k) => ({ tool: "Grep", input: { pattern: "x" }, output: "y".repeat(7700 + k * 20) })),
   ]);
+  await put("rv-big", "claude-code", Array.from({ length: 6 }, (_, i) => ({ tool: "Write", input: { file_path: `src/big${i}.ts`, content: Array.from({ length: 1500 }, (_, l) => `export const v${i}_${l} = ${l * 7919 + i};`).join("\n") + "\n" } })));
   await ctx.close();
   c = new RawClient(w.env, w.repo);
   await c.initialize();
@@ -120,8 +121,10 @@ describe("session_replay under the 25,000-character limit", () => {
     once(last.flatMap((p) => (p.tree as { path: string }[]).map((t) => t.path)), FILES, "tree");
     for (const p of last) assert.equal(p.treeTotal, FILES);
     assert.ok(last[0]!.file.content.length > 1000, "the file keeps a useful start");
-    assert.equal(last[0]!.truncated, true, "cut text is reported");
-    assert.equal(last[0]!.file.contentTruncated, true);
+    assert.equal(last[0]!.truncated, undefined, "nothing was cut: whole rows fit");
+    const shrunk = await pages({ step: total, file: path(FILES - 1), limit: 1000 });
+    assert.ok(shrunk[0]!.limitUsed > 0 && shrunk[0]!.limitUsed < 1000, "a page with fewer rows than asked says limitUsed");
+    once(shrunk.flatMap((p) => (p.tree as { path: string }[]).map((t) => t.path)), FILES, "tree, limit 1000");
   });
 
   it("keeps ranges under the limit and reaches every changed file once", async () => {
@@ -130,15 +133,17 @@ describe("session_replay under the 25,000-character limit", () => {
     const wide = await pages({ from: 1, to: FILES + 1 });
     once(wide.flatMap((p) => (p.files as { path: string }[]).map((f) => f.path)), FILES, "files of 1..300");
     assert.ok(wide.every((p) => p.filesTotal === FILES));
-    assert.ok(wide[0]!.truncated === true && wide[0]!.files[0].diffTruncated === true, "cut diffs are flagged");
-    assert.ok(wide[0]!.files[0].diff.length > 100, "a diff keeps its start");
+    assert.ok(wide.length > 1 && wide[0]!.limitUsed > 0, "whole diffs, fewer per page");
+    assert.equal(wide[0]!.truncated, undefined);
   });
 
-  it("gives one file's diff more room with limit 1", async () => {
-    const one = await call({ from: 1, to: FILES + 1, limit: 1 });
-    assert.ok(one.len <= CHARACTER_LIMIT);
-    assert.ok(one.sc.files[0].diff.length > 10_000, `a lone diff is ${one.sc.files[0].diff.length} characters`);
-    assert.equal(one.sc.nextCursor, "1");
+  it("returns each 50 KB file's diff as the replay recorded it (16 KB, flagged), one per page", async () => {
+    const all = await pages({ from: 1, to: 7 }, "rv-big");
+    once(all.flatMap((p) => (p.files as { path: string }[]).map((f) => f.path)), 6, "big files");
+    for (const p of all) {
+      assert.equal(p.files[0].diffTruncated, true, "the replay's own 16 KB cap is flagged");
+      assert.ok(p.files[0].diff.length > 15_000, `a diff is ${p.files[0].diff.length} characters`);
+    }
   });
 });
 
@@ -152,7 +157,7 @@ describe("session_replay cuts only what does not fit", () => {
       assert.equal(sc.detail.inputTruncated, true, "the cut input is flagged on detail");
       assert.equal(sc.detail.input.editsTotal, undefined, "nothing is written inside the recorded input");
       assert.equal(sc.detail.input.editsTruncated, undefined);
-      assert.ok(sc.detail.input.edits.length >= 1 && sc.detail.input.edits.length < 60);
+      assert.ok(sc.detail.input.edits.length >= 1, "at least one edit stays");
     }
   });
 
@@ -164,12 +169,10 @@ describe("session_replay cuts only what does not fit", () => {
       assert.equal(sc.step.filesTotal, 500);
       assert.ok(sc.step.files.length < 500);
     }
-    const list = await call({}, "rv-patch");
-    assert.ok(list.len <= CHARACTER_LIMIT, `step list: ${list.len} characters`);
-    const row = (list.sc.steps as { files?: unknown[]; filesTotal?: number }[]).find((x) => x.filesTotal === 500);
+    const rows: { files?: unknown[]; filesTotal?: number }[] = [];
+    for (const p of await pages({}, "rv-patch")) rows.push(...p.steps);
+    const row = rows.find((x) => x.filesTotal === 500);
     assert.ok(row && row.files!.length < 500, "a step's file list in the step list is capped, with its total");
-    const pages = await pages_({ sessionId: "rv-patch" });
-    assert.ok(pages.every((p) => p.len <= CHARACTER_LIMIT));
   });
 
   it("stays under the limit, note included, for a step whose content and output are near it", async () => {
@@ -195,15 +198,3 @@ describe("session_replay cuts only what does not fit", () => {
     assert.equal(range.sc.files[0].diffTruncated, undefined);
   });
 });
-
-async function pages_(args: { sessionId: string }): Promise<{ len: number }[]> {
-  const out: { len: number }[] = [];
-  let cursor: string | undefined;
-  for (let i = 0; i < 50; i++) {
-    const r = await call(cursor ? { cursor } : {}, args.sessionId);
-    out.push({ len: r.len });
-    cursor = r.sc.nextCursor;
-    if (!cursor) break;
-  }
-  return out;
-}
