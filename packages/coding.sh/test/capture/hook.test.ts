@@ -10,7 +10,7 @@ import { after, before, describe, test } from "node:test";
 import { pathToFileURL } from "node:url";
 import type { SpoolLine } from "../../src/core/types.ts";
 import { MAX_INLINE_LINE_BYTES, SPOOL_FILE_CAP, appendSpool, resolveRaw, safeAgentId, spoolFile } from "../../src/spool/write.ts";
-import { PKG_ROOT, gitc, isolate, makeRepo, removeTmp, tmp, tsNodeArgs } from "./_helpers.ts";
+import { CALLER_ENV, PKG_ROOT, gitc, isolate, makeRepo, removeTmp, tmp, tsNodeArgs } from "./_helpers.ts";
 import { median, pairedRatio, timeMs } from "../helpers-timing.ts";
 
 const HOOK_TS = join(PKG_ROOT, "src", "spool", "hook.ts");
@@ -435,6 +435,16 @@ describeSh("hook.sh", () => {
       for (const port of g.ports ?? []) assert.match(src, new RegExp(`\\| ${port}\\)`), String(port));
     }
     for (const k of BASE_URL_VARS) assert.ok(src.includes(`"\${${k}-}"`), k);
+  });
+
+  test("the tests drop every variable of the calling agent that hook.sh reads", () => {
+    // A suite run inside an agent or a host app inherits its variables. Each one hook.sh reads is
+    // either the test's own to set (OWN) or dropped by isolate() (CALLER_ENV), so a new one cannot slip in.
+    const OWN = ["HOME", "CODING_SH_HOME", "CODING_SH_DISABLE", "CODING_SH_ECHO_CONTINUE", "CODING_SH_HOOK_REEXEC", "CODING_SH_NO_AUTO_INGEST", "CODING_SH_NO_PROXY_AUTOSTART", "BASH_VERSION", "ZSH_VERSION", "SHELLOPTS", "EPOCHREALTIME"];
+    const read = [...new Set([...readFileSync(HOOK_SH_SRC, "utf8").matchAll(/\$\{([A-Z][A-Z0-9_]*)-\}/g)].map((m) => m[1]!))];
+    assert.ok(read.length > 20, "the test's premise: hook.sh reads its variables as ${NAME-}");
+    assert.deepEqual(read.filter((k) => !OWN.includes(k) && !CALLER_ENV.includes(k)), []);
+    for (const k of CALLER_ENV) assert.equal(process.env[k], undefined, k);
   });
 
   test("runs no git and no network tool; the fast path needs only cat, date, mkdir and wc", () => {

@@ -20,6 +20,26 @@ export function removeTmp(): void {
   for (const d of cleanup.splice(0)) rmSync(d, { recursive: true, force: true });
 }
 
+/**
+ * What the agent or host app running the tests may have set, and the hook reads: an eval run, a
+ * host app's thread, a parent agent's session, a model base URL. Left in, they send hook.sh to
+ * hook.mjs and add fields to the spool line, so a suite run inside an agent fails where CI passes.
+ */
+export const CALLER_ENV = [
+  "CODING_SH_RUN_ID", "T3CODE_THREAD_ID", "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+  "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CODEX_TOOL_CALL_ID",
+  "ANTHROPIC_BASE_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE",
+  "LITELLM_PROXY_API_BASE", "LITELLM_PROXY_URL", "LITELLM_BASE_URL", "PORTKEY_GATEWAY_URL", "RAMP_ROUTER_BASE_URL",
+  "TFY_GATEWAY_URL", "KONG_PROXY_URL", "BIFROST_URL", "BIFROST_BASE_URL", "CLIPROXYAPI_URL",
+];
+
+/** `env` without the caller's variables (CALLER_ENV). */
+export function withoutCallerEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out = { ...env };
+  for (const k of CALLER_ENV) delete out[k];
+  return out;
+}
+
 /** Isolate git config and coding.sh data dir for this test process. Returns CODING_SH_HOME. */
 export function isolate(): string {
   const base = tmp("csh-home-");
@@ -29,7 +49,7 @@ export function isolate(): string {
   process.env.GIT_CONFIG_NOSYSTEM = "1";
   process.env.CODING_SH_HOME = join(base, "home");
   delete process.env.CODING_SH_DISABLE;
-  delete process.env.CODING_SH_RUN_ID;
+  for (const k of CALLER_ENV) delete process.env[k];
   return process.env.CODING_SH_HOME;
 }
 
