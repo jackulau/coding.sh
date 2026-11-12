@@ -9,6 +9,8 @@ export const WEIGHTS_EDIT_KIND = "weights.edit";
 export const WEIGHTS_EDITED = "weights:edited";
 /** Distinct tensor names kept per session; `tensors` stops counting there. */
 const TENSORS_MAX = 10_000;
+/** Dimensions a shape may have (what the SDKs accept); a longer one is not read as a shape. */
+const SHAPE_MAX = 16;
 
 /** What the fold keeps. Serializable (node:v8). */
 export interface WeightEditState {
@@ -44,7 +46,7 @@ export function weightsEditOf(p: Record<string, unknown>): WeightsEdit {
     if (v !== undefined) out[k] = v;
   };
   set("tensor", text(p.tensor));
-  if (Array.isArray(p.shape) && p.shape.every((d) => count(d) !== undefined)) out.shape = p.shape as number[];
+  if (Array.isArray(p.shape) && p.shape.length <= SHAPE_MAX && p.shape.every((d) => count(d) !== undefined)) out.shape = p.shape as number[];
   set("changed", count(p.changed));
   set("l2", norm(p.l2));
   set("maxAbs", norm(p.maxAbs));
@@ -97,7 +99,11 @@ export function weightEditsOf(s: WeightEditState | undefined): WeightEditStats |
 export const weightEditFlags = (s: WeightEditState | undefined): string[] => (s?.events ? [WEIGHTS_EDITED] : []);
 
 const int = (n: number): string => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-const real = (n: number): string => String(Number(n.toPrecision(4)));
+/** Four significant digits; a number that rounds past the largest double is written as it is. */
+const real = (n: number): string => {
+  const r = Number(n.toPrecision(4));
+  return String(Number.isFinite(r) ? r : n);
+};
 const short = (sha: string): string => sha.slice(0, 8);
 
 /**
@@ -112,8 +118,10 @@ export function weightsEditText(p: Record<string, unknown>): string {
   const dims = w.shape?.length ? `[${w.shape.join("×")}]` : "";
   if (w.tensor || dims) parts.push([w.tensor, dims].filter(Boolean).join(" "));
   if (w.changed !== undefined) {
-    const total = w.shape?.length ? w.shape.reduce((a, b) => a * b, 1) : undefined;
-    parts.push(`${int(w.changed)}${total !== undefined && Number.isSafeInteger(total) ? ` of ${int(total)}` : ""} ${w.changed === 1 && total === undefined ? "weight" : "weights"}`);
+    // The tensor's size, when the shape gives one the count fits in.
+    const size = w.shape?.length ? w.shape.reduce((a, b) => a * b, 1) : undefined;
+    const total = size !== undefined && Number.isSafeInteger(size) && w.changed <= size ? size : undefined;
+    parts.push(`${int(w.changed)}${total !== undefined ? ` of ${int(total)}` : ""} ${w.changed === 1 && total === undefined ? "weight" : "weights"}`);
   }
   if (w.l2 !== undefined) parts.push(`L2 ${real(w.l2)}`);
   if (w.maxAbs !== undefined) parts.push(`max ${real(w.maxAbs)}`);

@@ -332,7 +332,8 @@ export function timeline(events: AgentEvent[], startedAt: number): TimelineEntry
         push("compact", `context compacted (${str(p.trigger) ?? "auto"})`);
         break;
       case "notification":
-        if (p.kind === WEIGHTS_EDIT_KIND) push("weights", clip(weightsEditText(p), 240));
+        // An edit with no readable field still gets its line: push() leaves out an empty one.
+        if (p.kind === WEIGHTS_EDIT_KIND) push("weights", clip(weightsEditText(p), 240) || "no details recorded");
         else push("notification", clip(str(p.message) ?? str(p.text), 160));
         break;
       default:

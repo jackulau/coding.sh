@@ -3787,14 +3787,15 @@ function weightsEditText(p) {
   const norm = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0;
   const text = (v) => (typeof v === "string" && v ? v : "");
   const int = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  const real = (n) => String(Number(n.toPrecision(4)));
-  const shape = Array.isArray(p.shape) && p.shape.every(count) ? p.shape : undefined;
+  const real = (n) => { const r = Number(n.toPrecision(4)); return String(Number.isFinite(r) ? r : n); };
+  const shape = Array.isArray(p.shape) && p.shape.length <= 16 && p.shape.every(count) ? p.shape : undefined;
   const parts = [];
   const dims = shape && shape.length ? "[" + shape.join("×") + "]" : "";
   if (text(p.tensor) || dims) parts.push([text(p.tensor), dims].filter(Boolean).join(" "));
   if (count(p.changed)) {
-    const total = shape && shape.length ? shape.reduce((a, b) => a * b, 1) : undefined;
-    parts.push(int(p.changed) + (total !== undefined && Number.isSafeInteger(total) ? " of " + int(total) : "") + (p.changed === 1 && total === undefined ? " weight" : " weights"));
+    const size = shape && shape.length ? shape.reduce((a, b) => a * b, 1) : undefined;
+    const total = size !== undefined && Number.isSafeInteger(size) && p.changed <= size ? size : undefined;
+    parts.push(int(p.changed) + (total !== undefined ? " of " + int(total) : "") + (p.changed === 1 && total === undefined ? " weight" : " weights"));
   }
   if (norm(p.l2)) parts.push("L2 " + real(p.l2));
   if (norm(p.maxAbs)) parts.push("max " + real(p.maxAbs));

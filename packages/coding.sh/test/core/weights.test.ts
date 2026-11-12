@@ -67,6 +67,13 @@ describe("weightsEditText", () => {
     assert.equal(weightsEditText({ tensor: "w", shape: [2, "x"], changed: 2 }), "w · 2 weights", "a shape that is not all counts is not shown");
   });
 
+  it("says `of` the tensor's size only when the count fits in it, and reads no shape of more than 16 dimensions", () => {
+    assert.equal(weightsEditText({ tensor: "w", shape: [0, 5], changed: 3 }), "w [0×5] · 3 weights");
+    assert.equal(weightsEditText({ tensor: "w", shape: [2, 3], changed: 7 }), "w [2×3] · 7 weights");
+    assert.equal(weightsEditText({ tensor: "w", shape: Array.from({ length: 17 }, () => 2), changed: 4 }), "w · 4 weights");
+    assert.equal(weightsEditText({ l2: Number.MAX_VALUE }), `L2 ${Number.MAX_VALUE}`, "never Infinity");
+  });
+
   it("keeps four significant digits of a norm", () => {
     assert.equal(weightsEditText({ l2: 0.018300000000000004, maxAbs: 1234.5678 }), "L2 0.0183 · max 1235");
     assert.equal(weightsEditText({ l2: 1e-9 }), "L2 1e-9");

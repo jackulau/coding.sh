@@ -26,6 +26,7 @@ before(async () => {
     { ...base, id: "w-0", ts: t0, kind: "session.start", payload: { name: "edit layer 15" } },
     { ...base, id: "w-1", ts: t0 + 100, kind: "notification", payload: edit("model.layers.15.mlp.down_proj.weight", 65536, A, B) },
     { ...base, id: "w-2", ts: t0 + 200, kind: "notification", payload: edit("model.layers.16.mlp.down_proj.weight", 1024, B, C) },
+    { ...base, id: "w-2b", ts: t0 + 250, kind: "notification", payload: { kind: "weights.edit" } },
     { ...base, id: "w-3", ts: t0 + 300, kind: "session.end", payload: {} },
   ];
   await ctx.index.putEvents(evs);
@@ -45,7 +46,7 @@ describe("weight edits over MCP", () => {
     const r = await c.call("sessions_list", { flag: "weights:edited" });
     const sessions = r.structuredContent!.sessions as { id: string; flags?: string[]; weightEdits?: unknown }[];
     assert.deepEqual(sessions.map((s) => s.id), [SID]);
-    assert.deepEqual(sessions[0]!.weightEdits, { events: 2, tensors: 2, weightsChanged: 66560 });
+    assert.deepEqual(sessions[0]!.weightEdits, { events: 3, tensors: 2, weightsChanged: 66560 });
     assert.ok(sessions[0]!.flags!.includes("weights:edited"));
     const where = await c.call("sessions_list", { where: "weights.changed>1000" });
     assert.deepEqual((where.structuredContent!.sessions as { id: string }[]).map((s) => s.id), [SID]);
@@ -57,21 +58,22 @@ describe("weight edits over MCP", () => {
   it("session_get has one timeline line per edit", async () => {
     const r = await c.call("session_get", { sessionId: SID });
     const d = r.structuredContent as { session: { weightEdits?: unknown }; timeline: { kind: string; text: string }[]; timelineTotal: number };
-    assert.deepEqual(d.session.weightEdits, { events: 2, tensors: 2, weightsChanged: 66560 });
+    assert.deepEqual(d.session.weightEdits, { events: 3, tensors: 2, weightsChanged: 66560 });
     assert.deepEqual(
       d.timeline.map((t) => [t.kind, t.text]),
       [
         ["weights", "model.layers.15.mlp.down_proj.weight [4096×11008] · 65,536 of 45,088,768 weights · L2 0.0183 · max 0.004 · aaaaaaaa → bbbbbbbb"],
         ["weights", "model.layers.16.mlp.down_proj.weight [4096×11008] · 1,024 of 45,088,768 weights · L2 0.0183 · max 0.004 · bbbbbbbb → cccccccc"],
+        ["weights", "no details recorded"],
       ],
     );
-    assert.equal(d.timelineTotal, 2);
+    assert.equal(d.timelineTotal, 3, "an edit with no readable field keeps its line");
   });
 
   it("the session resource has the weight edits row and both lines", async () => {
     const r = await c.request("resources/read", { uri: `codingsh://session/${SID}` });
     const text = (r.result!.contents as { text: string }[])[0]!.text;
-    assert.match(text, /Weight edits.*2 edits, 2 tensors, 66,560 weights changed/);
+    assert.match(text, /Weight edits.*3 edits, 2 tensors, 66,560 weights changed/);
     assert.match(text, /model\.layers\.15\.mlp\.down_proj\.weight \[4096×11008\]/);
     assert.match(text, /model\.layers\.16\.mlp\.down_proj\.weight \[4096×11008\]/);
   });

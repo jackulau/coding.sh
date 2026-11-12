@@ -34,6 +34,12 @@ test("the page and the CLI write the same line for a weight edit", () => {
     { tensor: "w", shape: [1e9, 1e9], changed: 5 },
     { l2: 0.018300000000000004, maxAbs: 1234.5678 },
     { l2: 1e-9, changed: 1234567 },
+    { l2: Number.MAX_VALUE, maxAbs: Number.MAX_VALUE },
+    { tensor: "w", shape: [0, 5], changed: 3 },
+    { tensor: "w", shape: [2, 3], changed: 7 },
+    { tensor: "w", shape: [1], changed: 1 },
+    { tensor: "w", shape: Array.from({ length: 16 }, () => 1), changed: 1 },
+    { tensor: "w", shape: Array.from({ length: 17 }, () => 1), changed: 1 },
   ];
   for (const p of payloads) assert.equal(page(p), weightsEditText(p), JSON.stringify(p));
   assert.equal(page(FULL), "layers.3.mlp.down_proj.weight [4096×11008] · 1,204 of 45,088,768 weights · L2 0.0183 · max 0.004 · aaaaaaaa → bbbbbbbb");
@@ -44,6 +50,7 @@ const ev = (i: number, kind: AgentEvent["kind"], payload: Record<string, unknown
 
 test("the rows route labels a weight edit with that line", () => {
   assert.equal(rowLabel(ev(0, "notification", FULL)), weightsEditText(FULL));
+  assert.equal(rowLabel(ev(2, "notification", { kind: "weights.edit" })), "weights.edit", "an edit with no readable field still has a label");
   assert.equal(rowLabel(ev(1, "notification", { kind: "hook.context", text: "x" })), "notification");
 });
 

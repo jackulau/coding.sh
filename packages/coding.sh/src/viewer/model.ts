@@ -312,7 +312,7 @@ export function rowLabel(e: AgentEvent): string {
     case "span":
       return text(p.name);
     case "notification":
-      return isWeightsEdit(e) ? cut(weightsEditText(p), 200) : e.kind;
+      return isWeightsEdit(e) ? cut(weightsEditText(p), 200) || "weights.edit" : e.kind;
     default:
       return e.kind;
   }
