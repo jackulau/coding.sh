@@ -90,6 +90,22 @@ numbers.Integral.register(FakeInt)
 numbers.Real.register(FakeFloat)
 
 
+class FakeTensor:
+    """A tensor the way torch's are: no numbers ABC, a number only through ndim == 0 and item()."""
+
+    def __init__(self, v: Any, ndim: int = 0) -> None:
+        self.v = v
+        self.ndim = ndim
+
+    def item(self) -> Any:
+        if self.ndim != 0:
+            raise ValueError("only one element tensors can be converted to Python scalars")
+        return self.v
+
+    def __repr__(self) -> str:
+        return "tensor(%r)" % (self.v,)
+
+
 def _edit(**kw: Any) -> bool:
     args: Dict[str, Any] = dict(
         tensor="layers.3.mlp.down_proj.weight",
@@ -209,6 +225,25 @@ class WeightsEditTest(unittest.TestCase):
             self.assertIn(type(v), (int, float))
         self.assertIs(_edit(changed=FakeInt(-1)), False)
         self.assertIs(_edit(l2=FakeFloat(float("nan"))), False)
+
+    def test_accepts_zero_dim_tensors(self) -> None:
+        # What delta.norm(), delta.abs().max() and (delta != 0).sum() return in torch.
+        start_sdk(self.server)
+        self.assertTrue(_edit(changed=FakeTensor(12), shape=[FakeTensor(4), 8], l2=FakeTensor(0.25), max_abs=FakeTensor(0.1)))
+        (e,) = by_kind(collect(self.server), "notification")
+        p = e["payload"]
+        self.assertEqual((p["changed"], p["shape"], p["l2"], p["maxAbs"]), (12, [4, 8], 0.25, 0.1))
+        for v in (p["changed"], p["l2"], p["maxAbs"]):
+            self.assertIn(type(v), (int, float))
+
+    def test_refuses_tensors_that_are_not_one_number(self) -> None:
+        start_sdk(self.server)
+        self.assertIs(_edit(l2=FakeTensor([0.25, 0.5], ndim=1)), False)
+        self.assertIs(_edit(changed=FakeTensor(1.5)), False)
+        self.assertIs(_edit(l2=FakeTensor(float("inf"))), False)
+        self.assertIs(_edit(max_abs=FakeTensor("0.1")), False)
+        self.assertIs(_edit(changed=FakeTensor(True)), False)
+        self.assertEqual(by_kind(collect(self.server), "notification"), [])
 
     def test_warns_once_per_process(self) -> None:
         start_sdk(self.server)

@@ -33,13 +33,28 @@ _SHA256 = re.compile(r"^[0-9a-fA-F]{64}$")
 MAX_DIMS = 16
 
 
+def _scalar(v: Any) -> Any:
+    """A 0-d tensor or array (what torch's `.norm()` and numpy's `np.array(x)` give) as the number
+    it holds. Anything else is returned unchanged, for the checks below to accept or refuse."""
+    if isinstance(v, numbers.Number):
+        return v
+    try:
+        if getattr(v, "ndim", None) == 0 and callable(getattr(v, "item", None)):
+            return v.item()
+    except Exception:
+        pass
+    return v
+
+
 def _count(v: Any, what: str) -> int:
+    v = _scalar(v)
     if isinstance(v, bool) or not isinstance(v, numbers.Integral) or operator.index(v) < 0:
         raise ValueError("%s must be a non-negative integer, got %r" % (what, v))
     return operator.index(v)
 
 
 def _norm(v: Any, what: str) -> float:
+    v = _scalar(v)
     if isinstance(v, bool) or not isinstance(v, numbers.Real):
         raise ValueError("%s must be a finite number >= 0, got %r" % (what, v))
     f = float(v)
