@@ -930,6 +930,10 @@
               "description": "Text hooks added to the model's context, by source (`plugin:<name>`, `settings`, …). Unset when no hook added any.",
               "$ref": "#/$defs/HookContextStats"
             },
+            "weightEdits": {
+              "description": "Weight edits the session recorded; it also tags the session `weights:edited`. Unset when it recorded none.",
+              "$ref": "#/$defs/WeightEditStats"
+            },
             "memoryUse": {
               "description": "Memory and instruction files (AGENTS.md, rules, skills, Claude auto-memory) the\nsession's events name, in the order first seen: what `harness audit` counts\n(core/memory-use.ts). Unset when its events name none.",
               "type": "array",
@@ -1300,6 +1304,29 @@
         "duplicateFetches",
         "duplicateFetchTokens",
         "readOnlyCalls"
+      ],
+      "additionalProperties": false
+    },
+    "WeightEditStats": {
+      "description": "Session.stats.weightEdits: weight edits the session recorded (`notification`\nevents with `payload.kind: \"weights.edit\"`).",
+      "type": "object",
+      "properties": {
+        "events": {
+          "description": "Edits recorded.",
+          "type": "number"
+        },
+        "tensors": {
+          "description": "Distinct tensor names edited. Unset when no edit kept its name, as in metadata capture.",
+          "type": "number"
+        },
+        "weightsChanged": {
+          "description": "The edits' `changed` counts added up: a weight two edits changed counts twice.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "events",
+        "weightsChanged"
       ],
       "additionalProperties": false
     }

@@ -11,6 +11,7 @@ import { costNote } from "../../core/pricing.ts";
 import { failureFlags } from "../../core/sessions.ts";
 import { SKILL_EVENT_KINDS, SKILL_TAG_PREFIX, skillUse, type SkillUseReport } from "../../core/skills-use.ts";
 import { pageTree, subagentsOf, type TreeNode } from "../../core/tree.ts";
+import { WEIGHTS_EDIT_KIND, weightEditsText, weightsEditText } from "../../core/weights.ts";
 import type { AgentEvent, Session } from "../../core/types.ts";
 import type { DurableStats } from "../../schema/index.ts";
 import { positiveInt } from "../args.ts";
@@ -148,6 +149,7 @@ function describe(e: AgentEvent, starts: Map<string, AgentEvent>): string | unde
     case "context.compact":
     case "notification":
       if (p.kind === "harness.loaded") return `harness     ${oneLine(clean(harnessText(p)), 90)}`;
+      if (p.kind === WEIGHTS_EDIT_KIND) return `weights     ${oneLine(clean(weightsEditText(p)), 140)}`;
       if (p.kind === "hook.context") return `hook        ${str(p.hookEvent) ?? ""} ${str(p.hookSource) ?? "unknown"} ~${tokens(typeof p.tokens === "number" ? p.tokens : undefined)} tok  ${oneLine(clean(str(p.text) ?? ""), 70)}`;
       return `${`${e.kind} `.padEnd(12)}${oneLine(clean(str(p.text) ?? str(p.message) ?? str(p.reason) ?? ""), 80)}`;
     default:
@@ -475,6 +477,7 @@ export async function run(c: CommandContext): Promise<number> {
     if (red) rows.push(red);
     const hooks = hookContextRow(s);
     if (hooks) rows.push(hooks);
+    if (s.stats.weightEdits) rows.push(["Weight edits", weightEditsText(s.stats.weightEdits)]);
     if (skills?.used.length) rows.push(["Skills", skillsText(skills)]);
     if (derails.length) rows.push(["Derails", derails.slice(0, 4).map((d) => `${d.flag} at +${duration(Math.max(0, d.ts - s.startedAt))}`).join(", ") + (derails.length > 4 ? ` +${derails.length - 4} more` : "")]);
     for (const [k, v] of rows) out.print(`  ${k.padEnd(14)}${v}`);

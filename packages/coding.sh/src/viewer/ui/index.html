@@ -3780,6 +3780,27 @@ function llmModel(ev) {
 function subagentText(p) {
   return oneLine([p.type, p.description || p.prompt].filter((x) => typeof x === "string" && x).join(" · "));
 }
+// One line for a weights.edit payload; the same text as weightsEditText in core/weights.ts
+// (test/viewer/weights-row.test.ts runs both on the same payloads).
+function weightsEditText(p) {
+  const count = (v) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+  const norm = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0;
+  const text = (v) => (typeof v === "string" && v ? v : "");
+  const int = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const real = (n) => String(Number(n.toPrecision(4)));
+  const shape = Array.isArray(p.shape) && p.shape.every(count) ? p.shape : undefined;
+  const parts = [];
+  const dims = shape && shape.length ? "[" + shape.join("×") + "]" : "";
+  if (text(p.tensor) || dims) parts.push([text(p.tensor), dims].filter(Boolean).join(" "));
+  if (count(p.changed)) {
+    const total = shape && shape.length ? shape.reduce((a, b) => a * b, 1) : undefined;
+    parts.push(int(p.changed) + (total !== undefined && Number.isSafeInteger(total) ? " of " + int(total) : "") + (p.changed === 1 && total === undefined ? " weight" : " weights"));
+  }
+  if (norm(p.l2)) parts.push("L2 " + real(p.l2));
+  if (norm(p.maxAbs)) parts.push("max " + real(p.maxAbs));
+  if (text(p.baseSha256) && text(p.editedSha256)) parts.push(p.baseSha256.slice(0, 8) + " → " + p.editedSha256.slice(0, 8));
+  return parts.join(" · ");
+}
 function eventView(ev) {
   const p = ev.payload || {};
   switch (ev.kind) {
@@ -3814,6 +3835,10 @@ function eventView(ev) {
     case "error": return { name: "Error", arg: clip(oneLine(p.message || p.text), 160), label: clip(oneLine(p.message || p.text) || "Error", 90), tone: "fail", kindText: ev.kind };
     case "context.compact": return { name: "Context compacted", arg: p.trigger ? String(p.trigger) : "", label: "Context compacted" + (p.trigger ? " (" + p.trigger + ")" : ""), tone: "muted", kindText: ev.kind };
     case "notification": {
+      if (p.kind === "weights.edit") {
+        const t = weightsEditText(p);
+        return { name: "Edited weights", arg: clip(t, 200), label: "Edited weights" + (t ? " · " + clip(t, 90) : ""), tone: "text", kindText: "weights.edit" };
+      }
       // Claude Code loading a nested CLAUDE.md or a skill mid-session.
       if (p.kind !== "harness.loaded") return { name: KIND_LABEL[ev.kind], arg: "", label: KIND_LABEL[ev.kind], tone: "muted", kindText: ev.kind };
       const names = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === "string") : []);
@@ -5031,6 +5056,7 @@ function sessionHeader(s, labels, rel) {
           : [st.toolCalls ? h("span", { class: "badge" }, plural(st.toolCalls, "tool call")) : null,
             st.toolErrors ? h("span", { class: "badge fail" }, plural(st.toolErrors, "tool error")) : null],
         st.filesChanged ? h("span", { class: "badge" }, plural(st.filesChanged, "file") + " changed") : null,
+        st.weightEdits ? h("span", { class: "badge", title: fmtNum(st.weightEdits.weightsChanged) + " weights changed" + (st.weightEdits.tensors ? " in " + plural(st.weightEdits.tensors, "tensor") : "") }, plural(st.weightEdits.events, "weight edit")) : null,
         st.turns && !api_ ? h("span", { class: "badge" }, plural(st.turns, "turn")) : null,
         kids.length ? h("span", { class: "badge" }, plural(kids.length, "subagent")) : null,
         s.parent && s.parent.type ? h("span", { class: "badge" }, "subagent · " + s.parent.type) : null,

@@ -718,11 +718,19 @@ Three `notification` kinds carry the events behind these stats:
 | `fork` | `toolUseId` (the parent's Agent call) and `inheritedTokens` |
 | `hook.context` | `hookEvent`, `hookName`, `hookSource`, `command`, `chars`, `tokens` and `text` (clipped). Metadata mode keeps only `hookEvent`, `hookSource`, `chars` and `tokens` |
 
-One more `notification` kind records weight edits. The Python SDK's `coding_sh.weights_edit()` sends it, and any client can post it to `/v1/ingest`. It adds no stat and no flag; the event shows in the session's events. Redaction runs on `tensor` and `note` like on any payload.
+One more `notification` kind records weight edits. The Python SDK's `coding_sh.weights_edit()` sends it, and any client can post it to `/v1/ingest`. Redaction runs on `tensor` and `note` like on any payload.
 
 | `payload.kind` | Fields |
 |---|---|
-| `weights.edit` | `tensor` (string, the tensor's name), `shape` (array of non-negative integers, at most 16), `changed` (integer, the weights that differ, at most the product of `shape`), `l2` (number >= 0, the L2 norm of edited minus base), `maxAbs` (number >= 0, the largest absolute value of that change), `baseSha256` and `editedSha256` (64 lowercase hex characters, the tensor's hash before and after) and `note` (string, optional, left out in metadata mode) |
+| `weights.edit` | `tensor` (string, the tensor's name), `shape` (array of non-negative integers, at most 16), `changed` (integer, the weights that differ, at most the product of `shape`), `l2` (number >= 0, the L2 norm of edited minus base), `maxAbs` (number >= 0, the largest absolute value of that change), `baseSha256` and `editedSha256` (64 lowercase hex characters, the tensor's hash before and after) and `note` (string, optional) |
+
+| Field | Meaning |
+|---|---|
+| `stats.weightEdits` (`events`, `tensors`, `weightsChanged`) | Weight edits the session recorded: how many, how many distinct tensor names, and their `changed` counts added up (a weight two edits changed counts twice). Absent when the session recorded none. `tensors` is absent when no edit kept its name |
+
+- A session with a weight edit gets the `weights:edited` tag. `coding.sh sessions --flag weights:edited` lists them, and `--where 'weights.changed>1000'` filters by size.
+- `coding.sh show`, the viewer and the MCP server's `session_get` print one line per edit: the tensor and its shape, the weights changed out of the total, both norms and the first 8 characters of each hash.
+- Metadata mode: the SDK leaves out `note`. A server with `capture.mode = "metadata"` also drops `tensor`, `shape` and both hashes, and keeps `changed`, `l2` and `maxAbs`.
 
 - The caller computes the hashes and norms. The SDK checks the values, drops an invalid edit with one warning, and never raises into the app. Numpy and torch scalars count as numbers.
 - `weights_edit()` returns `True` only when the event was queued. A `note` that is not a string is dropped with a warning, and the edit is still recorded.

@@ -10,11 +10,12 @@
 import { failureState, foldFailure } from "../core/failures.ts";
 import type { IndexStore } from "../core/types.ts";
 import type { AgentEvent, Session } from "../schema/index.ts";
+import { isWeightsEdit, weightsEditText } from "../core/weights.ts";
 
 /** Bump when the model's shape or its rules change: cached models are rebuilt. */
-export const MODEL_VERSION = 1;
+export const MODEL_VERSION = 2; // 2: a weight edit has its own code, so a fold never hides it.
 
-const KINDS = ["other", "session.start", "session.end", "user.message", "assistant.message", "llm.call", "tool.start", "tool.end", "context.compact", "turn.end", "subagent.start", "subagent.end", "file.change", "test.result", "notification", "span", "error"] as const;
+const KINDS = ["other", "session.start", "session.end", "user.message", "assistant.message", "llm.call", "tool.start", "tool.end", "context.compact", "turn.end", "subagent.start", "subagent.end", "file.change", "test.result", "notification", "span", "error", "weights.edit"] as const;
 const CODE = new Map<string, number>(KINDS.map((k, i) => [k, i]));
 const C = Object.fromEntries(KINDS.map((k, i) => [k, i])) as Record<(typeof KINDS)[number], number>;
 /** Kinds a fold may hide: routine work. Prompts, replies, compactions, subagent edges, file changes and tests stay rows. */
@@ -127,7 +128,7 @@ export function modelBuilder(key = ""): { add(batch: readonly AgentEvent[]): voi
         grown.set(codes);
         codes = grown;
       }
-      const code = CODE.get(e.kind) ?? C.other;
+      const code = isWeightsEdit(e) ? C["weights.edit"] : (CODE.get(e.kind) ?? C.other);
       codes[i] = code;
       const toolFailed = foldFailure(fs, e) !== undefined;
       // A turn opens at the main agent's prompt, or at a turn id not seen before (an agent
@@ -310,6 +311,8 @@ export function rowLabel(e: AgentEvent): string {
       return cut(text(p.message), 200);
     case "span":
       return text(p.name);
+    case "notification":
+      return isWeightsEdit(e) ? cut(weightsEditText(p), 200) : e.kind;
     default:
       return e.kind;
   }

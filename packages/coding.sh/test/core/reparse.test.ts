@@ -311,6 +311,24 @@ describe("reparse", () => {
     await t.index.close();
   });
 
+  it("a session stored before weight edits were folded gains the stat and the tag on the refold", async () => {
+    const t = await setup();
+    const edit = { kind: "weights.edit", tensor: "layers.3.mlp.down_proj.weight", shape: [4, 8], changed: 12, l2: 0.25, maxAbs: 0.1, baseSha256: "a".repeat(64), editedSha256: "b".repeat(64) };
+    await t.index.replaceSessionEvents!("sdk", [], [
+      { id: "w0", v: 0, sessionId: "sdk", ts: T0, agent: "sdk", kind: "session.start", payload: {} },
+      { id: "w1", v: 0, sessionId: "sdk", ts: T0 + 1, agent: "sdk", kind: "notification", payload: edit },
+    ]);
+    // What fold version 19 stored for it: no stat, no tag.
+    await t.index.upsertSession({ id: "sdk", agent: "sdk", startedAt: T0, stats: { events: 2, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 }, flags: [] });
+    await t.index.setCursor(REFOLD_CURSOR, 19 * 1e9);
+    assert.equal(await t.due(), true);
+    assert.equal((await t.reparse()).refolded, 1);
+    const s = (await t.index.getSession("sdk"))!;
+    assert.deepEqual(s.stats.weightEdits, { events: 1, tensors: 1, weightsChanged: 12 });
+    assert.deepEqual(s.flags, ["weights:edited"]);
+    await t.index.close();
+  });
+
   it("one re-parse at a time", async () => {
     const t = await setup();
     const lock = await acquireLock(paths(t.env).reparseLock, { waitMs: 0 });
