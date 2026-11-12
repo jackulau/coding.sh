@@ -144,8 +144,47 @@ export interface RpcResponse {
 const errorResponse = (id: RpcId | null, code: number, message: string, data?: unknown): RpcResponse => ({
   jsonrpc: "2.0",
   id,
-  error: data === undefined ? { code, message } : { code, message, data },
+  error: data === undefined ? { code, message: clipText(message) } : { code, message: clipText(message), data },
 });
+
+/** Longest error text sent back: an error that quotes a huge argument keeps its start and its advice. */
+export const ERROR_TEXT_MAX = 4000;
+
+/** `s` within `max` characters: its start and end, with how much was cut between them. */
+export function clipText(s: string, max = ERROR_TEXT_MAX): string {
+  if (s.length <= max) return s;
+  const keep = Math.floor((max - 40) / 2);
+  const head = cutChars(s, keep);
+  const tail = s.slice(-keep).replace(/^[\uDC00-\uDFFF]/, "");
+  return `${head} … [${s.length - head.length - tail.length} characters cut] … ${tail}`;
+}
+
+/** The first `max` characters of `s`, without half of a surrogate pair at the cut. */
+export function cutChars(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max).replace(/[\uD800-\uDBFF]$/, "");
+}
+
+/**
+ * Caching hints on 2026-07-28 results (https://modelcontextprotocol.io/specification/2026-07-28/server/utilities/caching):
+ * the tool, prompt and template lists are fixed for the life of the process and hold no user data;
+ * resources are the user's sessions and change with every capture. server/discover carries the
+ * instructions, which hold a per-call update notice, so it is cached for less time.
+ */
+const CACHE_HINTS: Record<string, { ttlMs: number; cacheScope: "public" | "private" }> = {
+  "server/discover": { ttlMs: 300_000, cacheScope: "public" },
+  "tools/list": { ttlMs: 3_600_000, cacheScope: "public" },
+  "prompts/list": { ttlMs: 3_600_000, cacheScope: "public" },
+  "resources/templates/list": { ttlMs: 3_600_000, cacheScope: "public" },
+  "resources/list": { ttlMs: 0, cacheScope: "private" },
+  "resources/read": { ttlMs: 0, cacheScope: "private" },
+};
+
+/** These lists come back in one page, so any cursor is one this server never issued. */
+function noCursor(method: string, params: Obj): void {
+  if (params.cursor === undefined || params.cursor === null || params.cursor === "") return;
+  throw new RpcFailure(RPC.INVALID_PARAMS, `Invalid cursor: ${method} returns everything in one page; call it without a cursor.`);
+}
 
 /** Compact text for a structured tool result (the spec's backward-compatible TextContent). */
 export function toolText(structured: unknown): string {
@@ -172,18 +211,39 @@ export class McpServer<C> {
     };
   }
 
-  /** Handles one decoded message. Returns the response, or null for notifications and stray responses. */
-  async handle(msg: unknown): Promise<RpcResponse | null> {
-    if (Array.isArray(msg)) return errorResponse(null, RPC.INVALID_REQUEST, "JSON-RPC batches are not supported; send one message per line");
+  /**
+   * Handles one decoded message. Returns the response, or null for notifications and stray responses.
+   * A batch (an array) is served only in a 2025-03-26 session, the one version whose spec has them;
+   * its reply is the array of its responses, or null when it held only notifications.
+   */
+  handle(msg: Obj): Promise<RpcResponse | null>;
+  handle(msg: unknown): Promise<RpcResponse | RpcResponse[] | null>;
+  async handle(msg: unknown): Promise<RpcResponse | RpcResponse[] | null> {
+    if (Array.isArray(msg)) {
+      if (this.legacyVersion !== "2025-03-26") return errorResponse(null, RPC.INVALID_REQUEST, "JSON-RPC batches are not supported; send one message per line");
+      if (!msg.length) return errorResponse(null, RPC.INVALID_REQUEST, "Invalid request: empty batch");
+      const replies: RpcResponse[] = [];
+      for (const m of msg) {
+        const r = Array.isArray(m) ? errorResponse(null, RPC.INVALID_REQUEST, "Invalid request: a batch holds JSON-RPC objects") : await this.handleOne(m);
+        if (r) replies.push(r);
+      }
+      return replies.length ? replies : null;
+    }
+    return this.handleOne(msg);
+  }
+
+  private async handleOne(msg: unknown): Promise<RpcResponse | null> {
     if (!isObj(msg)) return errorResponse(null, RPC.INVALID_REQUEST, "Invalid request: expected a JSON-RPC object");
-    const hasId = "id" in msg && msg.id !== undefined && msg.id !== null;
+    // A null id is still a request (JSON-RPC 2.0) and gets an answer; MCP ids are strings or numbers.
+    const hasId = "id" in msg && msg.id !== undefined;
     const idOk = typeof msg.id === "string" || (typeof msg.id === "number" && Number.isFinite(msg.id));
     if (typeof msg.method !== "string") {
       // A response to a server→client request (we send none) or garbage.
       if ("result" in msg || "error" in msg) return null;
       return errorResponse(idOk ? (msg.id as RpcId) : null, RPC.INVALID_REQUEST, "Invalid request: missing method");
     }
-    if (!hasId) {
+    // A null id on a notifications/ method is still a notification: no reply.
+    if (!hasId || (msg.id === null && msg.method.startsWith("notifications/"))) {
       this.notification(msg.method);
       return null;
     }
@@ -208,7 +268,7 @@ export class McpServer<C> {
         }
       }
       const result = await this.dispatch(msg.method, params, modern);
-      return { jsonrpc: "2.0", id, result: modern ? this.modernResult(result) : result };
+      return { jsonrpc: "2.0", id, result: modern ? this.modernResult(msg.method, result) : result };
     } catch (e) {
       if (e instanceof RpcFailure) return errorResponse(id, e.code, e.message, e.data);
       this.o.log?.(`internal error in ${msg.method}: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
@@ -218,12 +278,12 @@ export class McpServer<C> {
 
   private notification(method: string): void {
     if (method === "notifications/initialized") this.initialized = true;
-    // notifications/cancelled, roots/list_changed…: requests finish quickly; nothing to do.
+    // notifications/cancelled is handled by the transport (serveStdio); roots/list_changed…: nothing to do.
   }
 
-  private modernResult(r: Obj): Obj {
+  private modernResult(method: string, r: Obj): Obj {
     const meta = isObj(r._meta) ? r._meta : {};
-    return { resultType: "complete", ...r, _meta: { ...meta, [`${META}serverInfo`]: this.o.serverInfo } };
+    return { resultType: "complete", ...CACHE_HINTS[method], ...r, _meta: { ...meta, [`${META}serverInfo`]: this.o.serverInfo } };
   }
 
   private async dispatch(method: string, params: Obj, modern: boolean): Promise<Obj> {
@@ -240,6 +300,7 @@ export class McpServer<C> {
       case "ping":
         return {};
       case "tools/list":
+        noCursor(method, params);
         return {
           tools: this.o.tools.map((t) => ({
             name: t.name,
@@ -261,6 +322,7 @@ export class McpServer<C> {
       case "resources/templates/list": {
         const r = this.o.resources;
         if (!r) throw new RpcFailure(RPC.METHOD_NOT_FOUND, "Method not found: resources/templates/list");
+        noCursor(method, params);
         return { resourceTemplates: r.templates() };
       }
       case "resources/read": {
@@ -268,10 +330,11 @@ export class McpServer<C> {
         if (!r) throw new RpcFailure(RPC.METHOD_NOT_FOUND, "Method not found: resources/read");
         if (typeof params.uri !== "string" || !params.uri) throw new RpcFailure(RPC.INVALID_PARAMS, "resources/read needs a uri");
         const c = await r.read(params.uri);
-        if (!c) throw new RpcFailure(modern ? RPC.INVALID_PARAMS : RPC.RESOURCE_NOT_FOUND, `Resource not found: ${params.uri}`, { uri: params.uri });
+        if (!c) throw new RpcFailure(modern ? RPC.INVALID_PARAMS : RPC.RESOURCE_NOT_FOUND, `Resource not found: ${params.uri}`, { uri: clipText(params.uri, 1000) });
         return { contents: [c] };
       }
       case "prompts/list":
+        noCursor(method, params);
         return { prompts: (this.o.prompts ?? []).map((p) => ({ name: p.name, ...(p.title ? { title: p.title } : {}), description: p.description, ...(p.arguments ? { arguments: p.arguments } : {}) })) };
       case "prompts/get":
         return this.getPrompt(params);
@@ -308,7 +371,7 @@ export class McpServer<C> {
       const structured = await tool.run(args, this.o.context());
       return { content: [{ type: "text", text: toolText(structured) }], structuredContent: structured };
     } catch (e) {
-      if (e instanceof ToolError) return e.error ? { ...errorResult(e.message), structuredContent: { error: { message: e.message, ...e.error } } } : errorResult(e.message);
+      if (e instanceof ToolError) return e.error ? { ...errorResult(e.message), structuredContent: { error: { message: clipText(e.message), ...e.error } } } : errorResult(e.message);
       this.o.log?.(`tool ${name} failed: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
       return errorResult(`${name} failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -316,7 +379,7 @@ export class McpServer<C> {
 }
 
 function errorResult(text: string): Obj {
-  return { content: [{ type: "text", text }], isError: true };
+  return { content: [{ type: "text", text: clipText(text) }], isError: true };
 }
 
 // ------------------------------------------------------------ stdio
@@ -329,31 +392,59 @@ export interface StdioStreams {
 /**
  * Serves newline-delimited JSON-RPC on the streams until input ends. Requests
  * run one at a time in arrival order (handlers share one store connection).
+ * `notifications/cancelled` takes effect on arrival: a waiting request is
+ * skipped and a running one's reply is dropped, since the stdio transport says
+ * a cancelled request gets no further messages
+ * (https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio).
  */
 export function serveStdio<C>(server: McpServer<C>, io: StdioStreams, log: (m: string) => void = () => {}, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     let buf = "";
     let chain = Promise.resolve();
     let ended = false;
-    const write = (m: RpcResponse) => {
+    const write = (m: RpcResponse | RpcResponse[]) => {
       try {
         io.output.write(JSON.stringify(m) + "\n");
       } catch (e) {
         log(`write failed: ${(e as Error).message}`);
       }
     };
+    // Requests waiting or running, by id. A cancel marks the entry; a marked request is never answered.
+    const pending = new Map<string, { cancelled: boolean; method: string }>();
+    // A synchronous store read holds the event loop, so a cancel sent meanwhile is still unread in the
+    // pipe. Two turns of the loop include one poll for input, which reads it before we start or answer.
+    const readInput = () => new Promise<void>((r) => setImmediate(() => setImmediate(r)));
     const onLine = (line: string) => {
-      chain = chain.then(async () => {
-        let msg: unknown;
-        try {
-          msg = JSON.parse(line);
-        } catch {
-          write(errorResponse(null, RPC.PARSE_ERROR, "Parse error: each line must be one JSON-RPC message"));
-          return;
-        }
-        const r = await server.handle(msg);
-        if (r) write(r);
-      });
+      let msg: unknown;
+      let parsed = true;
+      try {
+        msg = JSON.parse(line);
+      } catch {
+        parsed = false;
+      }
+      if (parsed && isObj(msg) && msg.method === "notifications/cancelled" && msg.id === undefined) {
+        const id = isObj(msg.params) ? msg.params.requestId : undefined;
+        const entry = typeof id === "string" || typeof id === "number" ? pending.get(JSON.stringify(id)) : undefined;
+        // initialize can not be cancelled (lifecycle spec).
+        if (entry && entry.method !== "initialize") entry.cancelled = true;
+        return;
+      }
+      const key = parsed && isObj(msg) && typeof msg.method === "string" && (typeof msg.id === "string" || typeof msg.id === "number") ? JSON.stringify(msg.id) : undefined;
+      const entry = { cancelled: false, method: isObj(msg) && typeof msg.method === "string" ? msg.method : "" };
+      if (key) pending.set(key, entry);
+      chain = chain
+        .then(async () => {
+          if (!parsed) return write(errorResponse(null, RPC.PARSE_ERROR, "Parse error: each line must be one JSON-RPC message"));
+          if (key) await readInput();
+          if (entry.cancelled) return;
+          const r = await server.handle(msg);
+          if (key && r) await readInput();
+          if (r && !entry.cancelled) write(r);
+        })
+        .catch((e: unknown) => log(`request failed: ${e instanceof Error ? e.message : String(e)}`))
+        .finally(() => {
+          if (key && pending.get(key) === entry) pending.delete(key);
+        });
     };
     io.output.on?.("error", (e: Error) => log(`stdout: ${e.message}`));
     io.input.setEncoding?.("utf8");

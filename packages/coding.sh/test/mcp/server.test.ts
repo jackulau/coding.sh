@@ -104,7 +104,8 @@ describe("handshake (legacy era)", () => {
       for (const [k, p] of Object.entries((t.inputSchema.properties ?? {}) as Record<string, { description?: string }>)) assert.ok(p.description, `${t.name}.${k} has a description`);
       assert.equal(t.outputSchema.type, "object", `${t.name} outputSchema`);
       assert.equal(t.annotations.readOnlyHint, !["eval_from_session", "eval_init", "exp_session_note", "score_add"].includes(t.name), `${t.name} readOnlyHint`);
-      assert.equal(t.annotations.destructiveHint, false);
+      // eval_init's force replaces a suite; score_add replaces the score for the same target and name.
+      assert.equal(t.annotations.destructiveHint, ["eval_init", "score_add"].includes(t.name), `${t.name} destructiveHint`);
       // session_replay's fork calls the model API.
       assert.equal(t.annotations.openWorldHint, t.name === "session_replay", `${t.name} openWorldHint`);
     }

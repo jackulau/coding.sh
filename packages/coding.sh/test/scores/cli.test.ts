@@ -162,6 +162,7 @@ describe("MCP score tools", () => {
     const items = ((await run(list!, { sessionId: "latest", name: "helpfulness", source: "api" })) as { items: Score[] }).items;
     assert.deepEqual(items.map((s) => s.value), [3]);
     assert.equal(((await run(list!, { limit: 1 })) as { items: Score[] }).items.length, 1);
-    await assert.rejects(run(list!, { since: "yesterday-ish" }), ToolError);
+    // The agent passes since, not the CLI's --since.
+    await assert.rejects(run(list!, { since: "yesterday-ish" }), (e) => e instanceof ToolError && /^Invalid since "yesterday-ish"/.test(e.message) && !e.message.includes("--since"));
   });
 });

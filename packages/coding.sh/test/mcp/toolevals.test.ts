@@ -71,8 +71,10 @@ describe("tool evals against the coding.sh MCP server", () => {
     // session_tree's paging (limit, cursor, nextCursor, truncated and a page-top node's
     // parentSessionId) adds about 0.2 KB within the same budget; without it an 800-subagent
     // tree was one 679 KB reply.
-    assert.ok(s.surfaceBytes < 42_900, `surface is ${s.surfaceBytes} bytes`);
-    assert.ok(s.descriptionBytes < 11_750, `descriptions are ${s.descriptionBytes} bytes`);
+    // limitUsed in the output schema of the 21 tools that can return it, and session_replay's paging
+    // fields (treeTotal, changesTotal, filesTotal, unchanged, truncated, note), add about 0.95 KB, 0.1 KB of it descriptions.
+    assert.ok(s.surfaceBytes < 43_900, `surface is ${s.surfaceBytes} bytes`);
+    assert.ok(s.descriptionBytes < 11_850, `descriptions are ${s.descriptionBytes} bytes`);
     for (const it of s.items) assert.ok(it.bytes < 4_000, `${it.name} is ${it.bytes} bytes`);
   });
 
