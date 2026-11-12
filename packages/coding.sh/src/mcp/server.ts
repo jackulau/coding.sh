@@ -42,9 +42,9 @@ const BASE_INSTRUCTIONS = [
   "For trends use failures (raw tool errors and flags), latency, usage (tokens/cost) and subagents. experiments_list and experiment_compare read eval results.",
   "In an experiment session, call exp_session_note with the hypothesis before each run and the reading after it; exp_session_summary returns the timeline.",
   "To build evals for the user, call eval_init (a suite in evals/<name>/ from failed sessions, a skill's trigger prompts, or cases you write), then tell them its run command.",
-  "eval_from_session, eval_init and exp_session_note write; ask the user before calling eval_from_session or eval_init with confirm: true.",
+  "eval_from_session, eval_init, score_add and exp_session_note write; ask the user before calling eval_from_session or eval_init with confirm: true.",
   'A result with pending: {files, indexing} was answered before every capture was indexed: it covers what is indexed so far; call again shortly for the rest.',
-  "Answers stay under 25,000 characters: one that would be longer has fewer rows and limitUsed; follow nextCursor for the rest.",
+  "Answers stay under 25,000 characters. A tool that pages returns nextCursor for the rest; the others return fewer rows, with limitUsed.",
 ].join(" ");
 
 /** Server instructions, with a one-line notice when the update checker found a newer release. */

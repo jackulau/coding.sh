@@ -39,6 +39,7 @@ import {
 import { sessionDigest } from "./digest.ts";
 import { facetCounts, searchWhere } from "../query/run.ts";
 import { andQuery, FACET_KEYS, parseWhere, QueryError, QueryUnsupported, type Query } from "../query/where.ts";
+import { fitTexts, pageRange, pageStep } from "./replay-page.ts";
 import { toolText, ToolError, type ToolDef } from "./protocol.ts";
 import { scoreTools } from "../scores/mcp.ts";
 
@@ -135,37 +136,56 @@ function treeNodeJson(n: TreeNode, top = false): Obj {
 export const CHARACTER_LIMIT = 25_000;
 
 /**
- * The page `render(limit)` makes, with fewer rows while its text is over CHARACTER_LIMIT. Rows are
- * dropped, never cut, so a cursor of offset + n still points at the first row left out. A shortened
- * page carries `limitUsed`. When no smaller limit makes it shorter (the size is not in the rows, or
- * one row is that long), the shortest page comes back whole.
+ * The page `render(limit)` makes, with fewer rows while its text is over CHARACTER_LIMIT: the largest
+ * n whose page fits. Rows are dropped, never cut, so a cursor of offset + n still points at the first
+ * row left out. A shortened page carries `limitUsed`; one that already fit is returned as it is. When
+ * not even one row fits (the size is in the fixed part of the answer), the page for `limit` comes back
+ * whole with `truncated: true`.
  */
 export async function fitPage(limit: number, render: (n: number) => Obj | Promise<Obj>): Promise<Obj> {
-  let page = await render(limit);
-  let len = toolText(page).length;
-  let used: number | undefined;
-  // n can start above the rows left (the last page), so a try that is no shorter only halves n.
-  for (let n = limit; len > CHARACTER_LIMIT && n > 1; ) {
-    n = Math.max(1, Math.min(Math.floor(n / 2), Math.floor((n * CHARACTER_LIMIT * 0.9) / len)));
-    const smaller = await render(n);
-    const smallerLen = toolText(smaller).length;
-    if (smallerLen < len) [page, len, used] = [smaller, smallerLen, n];
+  const first = await render(limit);
+  const len = toolText(first).length;
+  if (len <= CHARACTER_LIMIT) return first;
+  const tooLong = (): Obj => ({ ...first, truncated: true, note: `This answer is over ${CHARACTER_LIMIT.toLocaleString("en-US")} characters even with one row: most of it is not in the rows.` });
+  if (limit <= 1) return tooLong();
+  const fits = async (n: number): Promise<Obj | undefined> => {
+    const page = { ...(await render(n)), limitUsed: n };
+    return toolText(page).length <= CHARACTER_LIMIT ? page : undefined;
+  };
+  // One row first: when it does not fit, no page does.
+  let best = await fits(1);
+  if (!best) return tooLong();
+  // The length grows with n: bisect for the largest n that fits, probing an estimate first.
+  let lo = 1;
+  let hi = limit;
+  for (let n = Math.min(limit - 1, Math.max(2, Math.floor((limit * CHARACTER_LIMIT * 0.9) / len))); hi - lo > 1; n = lo + Math.floor((hi - lo) / 2)) {
+    const page = await fits(n);
+    if (page) [lo, best] = [n, page];
+    else hi = n;
   }
-  return used === undefined ? page : { ...page, limitUsed: used };
+  return best;
 }
+
+/** The rows a tool with a `limit` returns when none is passed, where the schema's default does not say. */
+const LIMIT_DEFAULTS: Record<string, (a: Obj) => number> = { benchmarks: (a) => (a.metric ? 30 : 5) };
 
 /** A read-only tool with a `limit` argument, run again with a smaller limit when its answer is too long. */
 function withCharacterLimit(t: ToolDef<ToolCtx>): ToolDef<ToolCtx> {
   const limit = (t.inputSchema.properties as Record<string, { default?: unknown }> | undefined)?.limit;
   if (!limit || t.annotations.readOnlyHint !== true || t.annotations.idempotentHint !== true) return t;
+  const outProps = (t.outputSchema.properties ?? {}) as Obj;
   return {
     ...t,
+    outputSchema: { ...t.outputSchema, properties: { ...outProps, limitUsed: I } },
     run(a, c) {
-      const asked = typeof a.limit === "number" ? a.limit : typeof limit.default === "number" ? limit.default : undefined;
-      return asked === undefined ? t.run(a, c) : fitPage(asked, (n) => t.run(n === asked ? a : { ...a, limit: n }, c));
+      const asked = typeof a.limit === "number" ? a.limit : typeof limit.default === "number" ? limit.default : LIMIT_DEFAULTS[t.name]?.(a);
+      return asked === undefined ? t.run(a, c) : fitPage(asked, (n) => t.run(n === a.limit ? a : { ...a, limit: n }, c));
     },
   };
 }
+
+/** What session_replay's text may take of CHARACTER_LIMIT: the rest is for `limitUsed` and the page's own keys. */
+const REPLAY_TEXT_LIMIT = CHARACTER_LIMIT - 60;
 
 const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 
@@ -448,7 +468,7 @@ function toolDefs(): ToolDef<ToolCtx>[] {
       name: "session_replay",
       title: "Replay a session",
       description:
-        "A session as numbered steps, with the files the agent touched rebuilt from its tool calls as of any step. No step: the step list.",
+        "A session as numbered steps, with the files the agent touched rebuilt from its tool calls as of any step. No step: the step list. Paged by files; cut text says truncated.",
       inputSchema: input(
         {
           sessionId: SESSION_ID,
@@ -457,12 +477,12 @@ function toolDefs(): ToolDef<ToolCtx>[] {
           from: { type: "integer", minimum: 1, description: "With to: the first step of a range." },
           to: { type: "integer", minimum: 1, description: "With from: the last step (included); each file's diff over the range." },
           fork: { type: "object", description: 'With step: send its model call again with these files ({"AGENTS.md": text}); recorded vs forked next action. Calls the model.' },
-          limit: LIMIT(100, 1000),
+          limit: { ...LIMIT(100, 1000), description: "Max files per page; fewer give each diff more room." },
           cursor: CURSOR,
         },
         ["sessionId"],
       ),
-      outputSchema: out({ sessionId: S, steps: { description: "The step list, or (with step) how many steps there are." }, files: { type: "array" }, total: I, step: { type: "object" }, changes: { type: "array" }, tree: { type: "array" }, file: { type: "object" }, from: I, to: I, nextCursor: S, trials: { type: "array" } }, ["sessionId"]),
+      outputSchema: out({ sessionId: S, steps: { description: "The step list, or (with step) how many steps there are." }, files: { type: "array" }, total: I, treeTotal: I, changesTotal: I, filesTotal: I, unchanged: arr(S), unchangedTotal: I, step: { type: "object" }, changes: { type: "array" }, tree: { type: "array" }, file: { type: "object" }, from: I, to: I, nextCursor: S, limitUsed: I, truncated: { type: "boolean" }, note: S, trials: { type: "array" } }, ["sessionId"]),
       annotations: { ...READ, idempotentHint: false, openWorldHint: true },
       async run(a, c) {
         const ctx = await c.store();
@@ -480,21 +500,26 @@ function toolDefs(): ToolDef<ToolCtx>[] {
         const step = stepArg("step");
         const from = stepArg("from");
         const to = stepArg("to");
+        const offset = cursorArg(a);
+        const limit = numArg(a, "limit", 100);
         if (from !== undefined || to !== undefined) {
           if (from === undefined || to === undefined) throw new ToolError("Pass both from and to for a range.");
-          return { ...(await replay.range(from, to)) };
+          const range = await replay.range(from, to);
+          return fitPage(limit, (n) => pageRange(range, offset, n, REPLAY_TEXT_LIMIT));
         }
         if (a.fork !== undefined) {
           if (step === undefined) throw new ToolError("fork needs a step.");
-          return { ...(await forkTool(ctx, c.env, s, replay, step, a.fork)) };
+          return fitTexts({ ...(await forkTool(ctx, c.env, s, replay, step, a.fork)) }, REPLAY_TEXT_LIMIT);
         }
         const file = strArg(a, "file");
-        if (step !== undefined) return { ...(await replay.at(step, { file })) };
+        if (step !== undefined) {
+          const view = await replay.at(step, { file });
+          return fitPage(limit, (n) => pageStep(view, offset, n, REPLAY_TEXT_LIMIT));
+        }
         if (file) throw new ToolError("file needs a step.");
         const index = replay.index();
-        const offset = cursorArg(a);
-        const limit = numArg(a, "limit", 100);
-        return fitPage(limit, (n) => ({ ...index, steps: index.steps.slice(offset, offset + n), total, ...(offset + n < total ? { nextCursor: String(offset + n) } : {}) }));
+        const more = (n: number) => offset + n < Math.max(total, index.files.length);
+        return fitPage(limit, (n) => ({ ...index, steps: index.steps.slice(offset, offset + n), files: index.files.slice(offset, offset + n), total, filesTotal: index.files.length, ...(more(n) ? { nextCursor: String(offset + n) } : {}) }));
       },
     },
     {

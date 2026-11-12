@@ -41,6 +41,18 @@ before(async () => {
   evs.push({ ...base, id: "big-end", ts: t0 + 20 * CALLS, kind: "session.end", payload: {} });
   await ctx.index.putEvents(evs);
   await ctx.index.upsertSession(buildSession(evs));
+  // Sixty sessions with long ids and long prompts: a search for "needle" finds one hit in each, with rows
+  // too long for 50 of them to fit.
+  for (let k = 0; k < 60; k++) {
+    const sid = `sess-long-${k}-${"q".repeat(150)}`;
+    const lb = { ...base, sessionId: sid };
+    const lev: AgentEvent[] = [
+      { ...lb, id: `l${k}-0`, ts: t0 + k, kind: "session.start", payload: {} },
+      { ...lb, id: `l${k}-1`, ts: t0 + k + 1, kind: "user.message", payload: { text: `needle ${"w".repeat(900)}` } },
+    ];
+    await ctx.index.putEvents(lev);
+    await ctx.index.upsertSession(buildSession(lev));
+  }
   await ctx.close();
   c = new RawClient(w.env, w.repo);
   await c.initialize();
@@ -92,9 +104,17 @@ describe("the 25,000-character limit", () => {
     assert.equal(steps, total, "the pages hold every step once");
   });
 
-  it("search, sessions_list and session_current stay under the limit", async () => {
+  it("search returns fewer hits when the rows are long, and the cursor walks all of them", async () => {
+    const first = await call("search", { query: "needle", limit: 50 });
+    const sc = first.structuredContent!;
+    assert.ok(first.content[0]!.text.length <= CHARACTER_LIMIT, `search is ${first.content[0]!.text.length} chars`);
+    assert.ok((sc.limitUsed as number) < 50, `the page was shortened (limitUsed ${String(sc.limitUsed)})`);
+    assert.equal((sc.hits as unknown[]).length, sc.limitUsed, "limitUsed is the number of hits");
+    assert.equal(typeof sc.nextCursor, "string", "the rest is behind nextCursor");
+  });
+
+  it("sessions_list and session_current stay under the limit", async () => {
     for (const [name, args] of [
-      ["search", { query: "needle", limit: 50 }],
       ["sessions_list", { limit: 100, includeSubagents: true }],
       ["session_current", { limit: 100 }],
     ] as const) {
