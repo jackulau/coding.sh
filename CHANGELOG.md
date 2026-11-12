@@ -37,6 +37,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **SDK.** `coding_sh.weights_edit()` reads a 0-d tensor or array as the number it holds, so `l2=delta.norm()` records the edit. Before, a torch scalar was refused and the edit was dropped with a warning, though the docs said torch scalars count as numbers. [Docs](https://coding.sh/docs/api)
 - **MCP.** A request cancelled with `notifications/cancelled` gets no reply (a cancel for `initialize` is ignored), a cursor on `tools/list`, `prompts/list` or `resources/templates/list` is an error, a request with a null id gets an error instead of no answer (a null-id `notifications/` message is still a notification), and a 2025-03-26 session accepts batches. [MCP server](https://coding.sh/docs/mcp#protocol)
 - **MCP.** Tool answers stay under 25,000 characters: a longer page has fewer rows and `limitUsed`, and a tool with a `cursor` also returns `nextCursor`. `session_replay` pages its files and cuts text and lists only when an answer would not fit, saying so with `truncated` (a range was 5 million characters). [MCP server](https://coding.sh/docs/mcp#tools)
 - **MCP.** `eval_init` and `score_add` are marked destructive, since both can replace stored data, and `score_list`'s error names its `since` argument instead of the CLI's `--since`. [MCP server](https://coding.sh/docs/mcp#tools)
