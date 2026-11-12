@@ -729,14 +729,29 @@ One more `notification` kind records weight edits. The Python SDK's `coding_sh.w
 | `stats.weightEdits` (`events`, `tensors`, `weightsChanged`) | Weight edits the session recorded: how many, how many distinct tensor names, and their `changed` counts added up (a weight two edits changed counts twice). Absent when the session recorded none. `tensors` is absent when no edit kept its name |
 
 - A session with a weight edit gets the `weights:edited` tag. `coding.sh sessions --flag weights:edited` lists them, and `--where 'weights.changed>1000'` filters by size.
-- `coding.sh show`, the viewer and the MCP server's `session_get` print one line per edit: the tensor and its shape, the weights changed out of the total, both norms and the first 8 characters of each hash. A shape of more than 16 dimensions is not shown, and the total is left out when the count does not fit in the shape. An edit with no readable field still gets a line.
+- `coding.sh show`, the viewer and MCP `session_get` print one line per edit: the tensor and its shape, the weights changed out of the total, both norms and the first 8 characters of each hash.
+- A shape of more than 16 dimensions is not shown, and the total is left out when the count does not fit in the shape. An edit with no readable field still gets a line.
 - Metadata mode: the SDK leaves out `note`. A server with `capture.mode = "metadata"` also drops `tensor`, `shape` and both hashes, and keeps `changed`, `l2` and `maxAbs`.
-- OpenTelemetry in: a span or a log record named `weights.edit` sent to `/v1/traces` or `/v1/logs` is read as the same event. Its fields are the attributes `coding_sh.weights.tensor`, `.shape` (an array of integers), `.changed`, `.l2`, `.max_abs`, `.base_sha256`, `.edited_sha256` and `.note`. A malformed attribute is left out and the edit still counts.
-- OpenTelemetry out: the `otlp` sink sends one `weights.edit` span per edit with the same attributes, as a child of the session's `invoke_agent` span, which carries `coding_sh.stats.weight_edits` and `coding_sh.stats.weights_changed`. `[serve.forward]` sends the same span for an edit posted to `/v1/ingest` and passes on a `weights.edit` span posted to `/v1/traces` as it came; an edit that arrived as a log record is not forwarded. In `metadata` mode the span keeps `.changed`, `.l2` and `.max_abs` only.
+- OpenTelemetry in: a span or log record named `weights.edit`, sent to `/v1/traces` or `/v1/logs`, is read as the same event. Its fields are the attributes below. A malformed one is left out and the edit still counts.
+- OpenTelemetry out: the `otlp` sink sends one `weights.edit` span per edit with the same attributes, as a child of the session's `invoke_agent` span. That span carries `coding_sh.stats.weight_edits` and `coding_sh.stats.weights_changed`.
+- `[serve.forward]` sends the same span for an edit posted to `/v1/ingest`, and passes on a `weights.edit` span posted to `/v1/traces` as it came. An edit that arrived as a log record is not forwarded.
+- In `metadata` mode the span keeps `coding_sh.weights.changed`, `.l2` and `.max_abs` only.
+
+| Attribute | Payload field |
+|---|---|
+| `coding_sh.weights.tensor` | `tensor` |
+| `coding_sh.weights.shape` | `shape`, an array of integers |
+| `coding_sh.weights.changed` | `changed` |
+| `coding_sh.weights.l2` | `l2` |
+| `coding_sh.weights.max_abs` | `maxAbs` |
+| `coding_sh.weights.base_sha256` | `baseSha256` |
+| `coding_sh.weights.edited_sha256` | `editedSha256` |
+| `coding_sh.weights.note` | `note` |
 
 - The caller computes the hashes and norms. Each SDK checks the values, drops an invalid edit with one warning, and never raises into the app. In Python, numpy scalars and 0-d tensors (what torch's `.norm()` returns) count as numbers.
 - `weights_edit()` (Python) and `weightsEdit()` (TypeScript) return true only when the event was queued. A `note` that is not a string is dropped with a warning, and the edit is still recorded.
-- `coding_sh.weights_delta()` computes `shape`, `changed`, `l2` and `max_abs` for two small array-likes in pure Python. It is a helper you call on purpose, so it raises `ValueError` on bad input. The TypeScript SDK's `weightsDelta()` does the same for nested arrays and typed arrays, and throws a `TypeError` or a `RangeError`.
+- `coding_sh.weights_delta()` computes `shape`, `changed`, `l2` and `max_abs` for two small array-likes in pure Python. It is a helper you call on purpose, so it raises `ValueError` on bad input.
+- The TypeScript SDK's `weightsDelta()` does the same for nested arrays and typed arrays, and throws a `TypeError` or a `RangeError`.
 - The server stores the payload without validating these fields, after redaction.
 - A call outside `trace()` and `with_session()` (`withSession()` in TypeScript) makes a session of its own, so put a run of edits inside one of them.
 
