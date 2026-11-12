@@ -126,6 +126,13 @@ jobs:
           CODING_SH_REQUIRE_DIST: "1"
         run: npm run check
 
+      # The Site workflow runs this on main and stops the deploy when a page is over budget.
+      # Running it here, on the same OS and Node as that workflow, fails the pull request instead.
+      - name: Site perf budget
+        if: matrix.shard == 1 && runner.os == 'Linux' && matrix.node == '24.x'
+        working-directory: apps/site
+        run: npm run perf:budget
+
       # The built output holds nothing shaped like a secret.
       - name: Secret scan of the built output
         if: matrix.shard == 1
