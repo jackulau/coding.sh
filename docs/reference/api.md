@@ -734,11 +734,11 @@ One more `notification` kind records weight edits. The Python SDK's `coding_sh.w
 - OpenTelemetry in: a span or a log record named `weights.edit` sent to `/v1/traces` or `/v1/logs` is read as the same event. Its fields are the attributes `coding_sh.weights.tensor`, `.shape` (an array of integers), `.changed`, `.l2`, `.max_abs`, `.base_sha256`, `.edited_sha256` and `.note`. A malformed attribute is left out and the edit still counts.
 - OpenTelemetry out: the `otlp` sink sends one `weights.edit` span per edit with the same attributes, as a child of the session's `invoke_agent` span, which carries `coding_sh.stats.weight_edits` and `coding_sh.stats.weights_changed`. `[serve.forward]` sends the same span for an edit posted to `/v1/ingest` and passes on a `weights.edit` span posted to `/v1/traces` as it came; an edit that arrived as a log record is not forwarded. In `metadata` mode the span keeps `.changed`, `.l2` and `.max_abs` only.
 
-- The caller computes the hashes and norms. The SDK checks the values, drops an invalid edit with one warning, and never raises into the app. Numpy and torch scalars count as numbers.
-- `weights_edit()` returns `True` only when the event was queued. A `note` that is not a string is dropped with a warning, and the edit is still recorded.
-- `coding_sh.weights_delta()` computes `shape`, `changed`, `l2` and `max_abs` for two small array-likes in pure Python. It is a helper you call on purpose, so it raises `ValueError` on bad input.
+- The caller computes the hashes and norms. Each SDK checks the values, drops an invalid edit with one warning, and never raises into the app. In Python, numpy and torch scalars count as numbers.
+- `weights_edit()` (Python) and `weightsEdit()` (TypeScript) return true only when the event was queued. A `note` that is not a string is dropped with a warning, and the edit is still recorded.
+- `coding_sh.weights_delta()` computes `shape`, `changed`, `l2` and `max_abs` for two small array-likes in pure Python. It is a helper you call on purpose, so it raises `ValueError` on bad input. The TypeScript SDK's `weightsDelta()` does the same for nested arrays and typed arrays, and throws a `TypeError` or a `RangeError`.
 - The server stores the payload without validating these fields, after redaction.
-- A call outside `trace()` and `with_session()` makes a session of its own, so put a run of edits inside one of them.
+- A call outside `trace()` and `with_session()` (`withSession()` in TypeScript) makes a session of its own, so put a run of edits inside one of them.
 
 A missing session, or one outside a scoped key's project, gets 404:
 

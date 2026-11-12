@@ -71,8 +71,9 @@ session that recorded one has the `weights:edited` tag and counts its edits in `
 - In the viewer: each edit is a row on the session page, and the header counts them.
 - In the CLI: `coding.sh sessions --flag weights:edited` lists the sessions, and
   `coding.sh show <id>` prints one line per edit.
-- Recorded by the Python SDK's `coding_sh.weights_edit()`, or by any OpenTelemetry SDK as a span
-  named `weights.edit`. The fields are in the [API reference](https://coding.sh/docs/api).
+- Recorded by the Python SDK's `coding_sh.weights_edit()`, the TypeScript SDK's `weightsEdit()`,
+  or any OpenTelemetry SDK as a span named `weights.edit`. The fields are in the
+  [API reference](https://coding.sh/docs/api).
 
 ### Cost
 
