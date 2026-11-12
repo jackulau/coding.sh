@@ -28,7 +28,7 @@ const FULL: J[] = [
   sAttr("coding_sh.weights.note", "rank-1 edit"),
 ];
 const PAYLOAD = { kind: "weights.edit", tensor: "layers.3.mlp.down_proj.weight", shape: [4096, 11008], changed: 1204, l2: 0.0183, maxAbs: 0.004, baseSha256: A, editedSha256: B, note: "rank-1 edit" };
-const LINE = "layers.3.mlp.down_proj.weight [4096×11008] · 1,204 of 45,088,768 weights · L2 0.0183 · max 0.004 · aaaaaaaa → bbbbbbbb";
+const LINE = "layers.3.mlp.down_proj.weight [4096×11008] · 1,204 of 45,088,768 weights · L2 0.0183 · max 0.004 · aaaaaaaaaaaa → bbbbbbbbbbbb";
 
 const ctx = (): MapContext => {
   const blobs = new MemBlobs();

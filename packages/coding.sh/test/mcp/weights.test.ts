@@ -62,8 +62,8 @@ describe("weight edits over MCP", () => {
     assert.deepEqual(
       d.timeline.map((t) => [t.kind, t.text]),
       [
-        ["weights", "model.layers.15.mlp.down_proj.weight [4096×11008] · 65,536 of 45,088,768 weights · L2 0.0183 · max 0.004 · aaaaaaaa → bbbbbbbb"],
-        ["weights", "model.layers.16.mlp.down_proj.weight [4096×11008] · 1,024 of 45,088,768 weights · L2 0.0183 · max 0.004 · bbbbbbbb → cccccccc"],
+        ["weights", "model.layers.15.mlp.down_proj.weight [4096×11008] · 65,536 of 45,088,768 weights · L2 0.0183 · max 0.004 · aaaaaaaaaaaa → bbbbbbbbbbbb"],
+        ["weights", "model.layers.16.mlp.down_proj.weight [4096×11008] · 1,024 of 45,088,768 weights · L2 0.0183 · max 0.004 · bbbbbbbbbbbb → cccccccccccc"],
         ["weights", "no details recorded"],
       ],
     );

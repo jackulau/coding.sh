@@ -764,7 +764,7 @@ describe("viewer UI: timeline, inspector and compare", { skip: chrome ? false : 
       const payload = { kind: "weights.edit", tensor: "layers.3.mlp.down_proj.weight", shape: [4096, 11008], changed: 1204, l2: 0.0183, maxAbs: 0.004, baseSha256: "a".repeat(64), editedSha256: "b".repeat(64) };
       const v = await page.eval(`eventView({ kind: "notification", payload: ${JSON.stringify(payload)} })`);
       assert.equal(v.name, "Edited weights");
-      assert.equal(v.arg, "layers.3.mlp.down_proj.weight [4096×11008] · 1,204 of 45,088,768 weights · L2 0.0183 · max 0.004 · aaaaaaaa → bbbbbbbb");
+      assert.equal(v.arg, "layers.3.mlp.down_proj.weight [4096×11008] · 1,204 of 45,088,768 weights · L2 0.0183 · max 0.004 · aaaaaaaaaaaa → bbbbbbbbbbbb");
       assert.equal(v.kindText, "weights.edit");
       const other = await page.eval(`eventView({ kind: "notification", payload: { kind: "hook.context", text: "x" } })`);
       assert.equal(other.name, "Notification");

@@ -42,7 +42,7 @@ test("the page and the CLI write the same line for a weight edit", () => {
     { tensor: "w", shape: Array.from({ length: 17 }, () => 1), changed: 1 },
   ];
   for (const p of payloads) assert.equal(page(p), weightsEditText(p), JSON.stringify(p));
-  assert.equal(page(FULL), "layers.3.mlp.down_proj.weight [4096×11008] · 1,204 of 45,088,768 weights · L2 0.0183 · max 0.004 · aaaaaaaa → bbbbbbbb");
+  assert.equal(page(FULL), "layers.3.mlp.down_proj.weight [4096×11008] · 1,204 of 45,088,768 weights · L2 0.0183 · max 0.004 · aaaaaaaaaaaa → bbbbbbbbbbbb");
 });
 
 const base = { v: 0, sessionId: "w-1", agent: "sdk" } as const;

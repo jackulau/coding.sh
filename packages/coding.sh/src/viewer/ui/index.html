@@ -3840,9 +3840,11 @@ function weightsEditText(p) {
   }
   if (norm(p.l2)) parts.push("L2 " + real(p.l2));
   if (norm(p.maxAbs)) parts.push("max " + real(p.maxAbs));
-  if (text(p.baseSha256) && text(p.editedSha256)) parts.push(p.baseSha256.slice(0, 8) + " → " + p.editedSha256.slice(0, 8));
+  if (text(p.baseSha256) && text(p.editedSha256)) parts.push(shortWeights(p.baseSha256) + " → " + shortWeights(p.editedSha256));
   return parts.join(" · ");
 }
+/** Every weights hash is written in 12 hex characters (shortWeights in core/weights.ts). */
+function shortWeights(sha) { return String(sha).slice(0, 12); }
 function eventView(ev) {
   const p = ev.payload || {};
   switch (ev.kind) {
@@ -6353,7 +6355,7 @@ function side(cls, role, e, stamped) {
 function weightsFact(w, none) {
   const sha = w && typeof w.sha256 === "string" ? w.sha256 : "";
   if (!sha && !none) return null;
-  return h("span", { class: "meta weights", title: sha ? "SHA-256 of the checkpoint this run recorded with --weights: " + sha : "This run was started without --weights" }, sha ? "weights " + sha.slice(0, 12) : none);
+  return h("span", { class: "meta weights", title: sha ? "SHA-256 of the checkpoint this run recorded with --weights: " + sha : "This run was started without --weights" }, sha ? "weights " + shortWeights(sha) : none);
 }
 /** One decimal, so both sides add up to the difference shown in tenths of a point. */
 function pct1(x) { return ((x || 0) * 100).toFixed(1) + "%"; }

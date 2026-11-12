@@ -85,7 +85,7 @@ describe("weight edits in the CLI", () => {
   it("show prints the Weight edits row and one line per edit", () => {
     const text = cli("show", EDITS);
     assert.match(text, /Weight edits\s+2 edits, 1 tensor, 66,560 weights changed/);
-    assert.match(text, /weights\s+model\.layers\.15\.mlp\.down_proj\.weight \[4096×11008\] · 65,536 of 45,088,768 weights · L2 0\.0183 · max 0\.004 · aaaaaaaa → bbbbbbbb/);
+    assert.match(text, /weights\s+model\.layers\.15\.mlp\.down_proj\.weight \[4096×11008\] · 65,536 of 45,088,768 weights · L2 0\.0183 · max 0\.004 · aaaaaaaaaaaa → bbbbbbbbbbbb/);
     assert.match(text, /weights\s+1,024 weights · L2 0\.002 · max 0\.001/, "an edit captured without its name still says what changed");
     assert.doesNotMatch(text, /^\s*\+\S+\s+notification\s*$/m, "no blank notification line");
     const j = JSON.parse(cli("show", EDITS, "--json")) as { session: { flags: string[]; stats: { weightEdits?: unknown } } };

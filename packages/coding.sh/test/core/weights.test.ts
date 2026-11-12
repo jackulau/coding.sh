@@ -54,7 +54,7 @@ describe("weightsEditText", () => {
   it("names the tensor, its shape, the share of weights changed, both norms and both hashes", () => {
     assert.equal(
       weightsEditText(edit().payload),
-      "layers.3.mlp.down_proj.weight [4096×11008] · 1,204 of 45,088,768 weights · L2 0.0183 · max 0.004 · aaaaaaaa → bbbbbbbb",
+      "layers.3.mlp.down_proj.weight [4096×11008] · 1,204 of 45,088,768 weights · L2 0.0183 · max 0.004 · aaaaaaaaaaaa → bbbbbbbbbbbb",
     );
   });
 

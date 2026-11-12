@@ -3,6 +3,7 @@
 // Session.stats.weightEdits and the `weights:edited` session tag, and read
 // into one line of text for the CLI, the MCP server and the viewer's rows.
 import type { AgentEvent, WeightEditStats } from "../schema/index.ts";
+import { isSha256Hex } from "./ids.ts";
 
 export const WEIGHTS_EDIT_KIND = "weights.edit";
 /** A tag, not a failure: the session recorded at least one weight edit. */
@@ -104,11 +105,19 @@ const real = (n: number): string => {
   const r = Number(n.toPrecision(4));
   return String(Number.isFinite(r) ? r : n);
 };
-const short = (sha: string): string => sha.slice(0, 8);
+
+/** A SHA-256 as stored: trimmed and lowercased; undefined when it is not 64 hex characters. */
+export function parseWeights(v: unknown): string | undefined {
+  const s = typeof v === "string" ? v.trim().toLowerCase() : undefined;
+  return isSha256Hex(s) ? s : undefined;
+}
+
+/** The first 12 hex characters: how every weights hash (a tensor's, a file's) is written in a line of text. */
+export const shortWeights = (sha256: string): string => sha256.slice(0, 12);
 
 /**
  * One line for a weights.edit payload, most useful part first:
- * `layers.3.mlp.down_proj.weight [4096×11008] · 1,204 of 45,088,768 weights · L2 0.0183 · max 0.004 · 9f2c1a7e → 4b1d0c33`.
+ * `layers.3.mlp.down_proj.weight [4096×11008] · 1,204 of 45,088,768 weights · L2 0.0183 · max 0.004 · 9f2c1a7e03b5 → 4b1d0c33a9e2`.
  * A part whose field is missing is left out, so an event captured in metadata mode reads
  * `1,204 weights · L2 0.0183 · max 0.004`.
  */
@@ -125,7 +134,7 @@ export function weightsEditText(p: Record<string, unknown>): string {
   }
   if (w.l2 !== undefined) parts.push(`L2 ${real(w.l2)}`);
   if (w.maxAbs !== undefined) parts.push(`max ${real(w.maxAbs)}`);
-  if (w.baseSha256 && w.editedSha256) parts.push(`${short(w.baseSha256)} → ${short(w.editedSha256)}`);
+  if (w.baseSha256 && w.editedSha256) parts.push(`${shortWeights(w.baseSha256)} → ${shortWeights(w.editedSha256)}`);
   return parts.join(" · ");
 }
 

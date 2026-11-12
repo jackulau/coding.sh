@@ -3,8 +3,11 @@
 // nothing itself; it stores the value in `metadata.weights` and shows it where
 // two experiments are compared, so "base vs edited" names both checkpoints and
 // a comparison of one checkpoint with itself is called out.
-import { isSha256Hex } from "../core/ids.ts";
+import { parseWeights, shortWeights } from "../core/weights.ts";
 import type { ExperimentResult } from "../datasets/types.ts";
+
+// One parser and one 12-character form for every weights hash: core/weights.ts has both.
+export { parseWeights, shortWeights };
 
 /** `ExperimentResult.metadata.weights`. */
 export interface WeightsStamp {
@@ -12,20 +15,11 @@ export interface WeightsStamp {
   sha256: string;
 }
 
-/** A `--weights` value as stored: trimmed and lowercased; undefined when it is not 64 hex characters. */
-export function parseWeights(v: unknown): string | undefined {
-  const s = typeof v === "string" ? v.trim().toLowerCase() : undefined;
-  return isSha256Hex(s) ? s : undefined;
-}
-
 /** The stamp an experiment carries, or undefined (never stamped, or a value that is not a SHA-256). */
 export function weightsOf(e: Pick<ExperimentResult, "metadata"> | undefined): string | undefined {
   const w = e?.metadata?.weights;
   return w && typeof w === "object" ? parseWeights((w as { sha256?: unknown }).sha256) : undefined;
 }
-
-/** The first 12 hex characters, for a line of text. */
-export const shortWeights = (sha256: string): string => sha256.slice(0, 12);
 
 /** Metadata with the stamp set; `metadata` itself when there is no stamp. */
 export function withWeights(metadata: Record<string, unknown> | undefined, sha256: string | undefined): Record<string, unknown> | undefined {
