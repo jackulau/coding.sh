@@ -469,12 +469,12 @@ def _node_ok() -> bool:
     try:
         v = subprocess.run([NODE, "-v"], capture_output=True, text=True, timeout=10).stdout.strip().lstrip("v")
         major, minor = (int(x) for x in v.split(".")[:2])
-        return (major, minor) >= (22, 15)
+        return (major, minor) >= (22, 16)
     except Exception:
         return False
 
 
-@unittest.skipUnless(_node_ok(), "needs node >= 22.15 and the core package")
+@unittest.skipUnless(_node_ok(), "needs node >= 22.16 and the core package")
 class WeightsEditServerTest(unittest.TestCase):
     """A real coding.sh serve on a temp CODING_SH_HOME: the event comes back with the secret redacted."""
 
