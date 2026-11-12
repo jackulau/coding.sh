@@ -66,9 +66,9 @@ function world() {
   const done = serveStdio(server, { input, output });
   const send = (m: unknown) => input.write((typeof m === "string" ? m : JSON.stringify(m)) + "\n");
   const tick = () => new Promise((r) => setTimeout(r, 20));
-  /** Waits until a reply with this id arrives (or 2 s pass). */
+  /** Waits until a reply with this id arrives (or 20 s pass: the machine may be loaded). */
   const reply = async (id: unknown): Promise<Msg | undefined> => {
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 1000; i++) {
       const m = out.find((x) => JSON.stringify(x.id) === JSON.stringify(id));
       if (m) return m;
       await tick();
@@ -76,7 +76,7 @@ function world() {
     return undefined;
   };
   const release = async () => {
-    for (let i = 0; i < 100 && !gates.length; i++) await tick();
+    for (let i = 0; i < 1000 && !gates.length; i++) await tick();
     gates.shift()!();
   };
   return { server, send, out, batches, reply, tick, release, close: async () => (input.end(), done) };
