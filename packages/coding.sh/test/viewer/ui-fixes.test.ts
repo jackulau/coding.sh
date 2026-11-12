@@ -73,7 +73,7 @@ test("the page builds DOM through one helper that skips null, not the DOM's own 
   // replaceChildren(null) writes the text "null"; swap() fills like h() does and skips it.
   const uses = html.match(/replaceChildren\(/g) ?? [];
   assert.equal(uses.length, 1, "only swap() itself calls replaceChildren");
-  assert.match(html, /function swap\(el, \.\.\.children\) \{\s*el\.replaceChildren\(\);\s*return append\(el, children\);/);
+  assert.match(html, /function swap\(el, \.\.\.children\) \{\s*return keepFocus\(el, \(\) => \{ el\.replaceChildren\(\); return append\(el, children\); \}\);/);
 });
 
 /** The top-level arguments of the call whose "(" ends just before `i`. */
