@@ -60,8 +60,8 @@ export function scoreTools(): ToolDef<ToolCtx>[] {
         if (typeof a.since === "string" && a.since) {
           try {
             f.since = parseSince(a.since, c.now());
-          } catch (e) {
-            throw new ToolError(e instanceof Error ? e.message : String(e));
+          } catch {
+            throw new ToolError(`Invalid since ${JSON.stringify(a.since)}: use a duration like 30m, 12h, 7d, today, yesterday or a date like 2026-01-31 (local time).`);
           }
         }
         return { items: await listScores(ctx.index, f).catch((e) => Promise.reject(toolError(e))) };
@@ -88,7 +88,8 @@ export function scoreTools(): ToolDef<ToolCtx>[] {
         additionalProperties: false,
       },
       outputSchema: { type: "object", properties: { score: SCORE_OUT, created: B, changed: B }, required: ["score"] },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      // destructive: a score for the same target, name, source and person replaces the one stored.
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
       async run(a: Obj, c: ToolCtx) {
         const ctx = await c.store();
         const body: Obj = { ...a };

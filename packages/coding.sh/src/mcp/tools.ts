@@ -847,7 +847,8 @@ function toolDefs(): ToolDef<ToolCtx>[] {
         },
         ["name", "dir", "kind", "files", "run"],
       ),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      // destructive: force replaces an existing suite.
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
       async run(a, c) {
         if (a.confirm !== true) throw new ToolError("Not written: this writes an eval suite into the user's project. Ask the user, then call again with confirm: true.");
         const { initSuite, InitError } = await import("../eval/init.ts");
