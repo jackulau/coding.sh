@@ -193,6 +193,18 @@ process.stdout.write(JSON.stringify({answer:right?"ok":"wrong",finish_reason:don
     assert.doesNotMatch(ok(["exp", "show", "plain"]).stdout, /weights/);
   });
 
+  it("exp list shows each run's stamp: short in a WEIGHTS column, whole in --json, and nothing for a run without one", () => {
+    const rows = (JSON.parse(ok(["exp", "list", "--json"]).stdout) as { experiments: { name: string; weights?: { sha256: string } }[] }).experiments;
+    const row = (name: string) => rows.find((r) => r.name === name)!;
+    assert.deepEqual(row("edited").weights, { sha256: EDITED });
+    assert.deepEqual(row("base").weights, { sha256: BASE });
+    assert.equal(Object.hasOwn(row("plain"), "weights"), false);
+    const text = ok(["exp", "list"]).stdout;
+    assert.match(text, /^ID\s+NAME\s+DATASET\s+RUNS\s+CREATED\s+WEIGHTS$/m);
+    assert.match(text, new RegExp(`^exp_\\w+\\s+edited\\s.*\\s${short(EDITED)}$`, "m"));
+    assert.match(text, /^exp_\w+\s+plain\s.*\sago\s*$/m, "a run without a stamp has an empty cell");
+  });
+
   it("exp compare shows both stamps in the header: short in text, whole in --json", () => {
     const text = ok(["exp", "compare", "base", "edited"]).stdout;
     assert.match(text, new RegExp(`^A base exp_\\w+ {2}pass [\\d.]+% {2}weights ${short(BASE)}$`, "m"));
