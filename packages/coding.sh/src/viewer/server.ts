@@ -30,6 +30,7 @@ import { searchableText, searchTerms, snippet } from "../store/common.ts";
 import { andQuery, keyGuide, parseWhere, QueryError, QueryUnsupported, type Node, type Query } from "../query/where.ts";
 import { CallRefError, diffCalls, loadCall, previousCall, resolveCall } from "../proxy/calls.ts";
 import { getUpdateStatus, type UpdateStatus } from "../update/index.ts";
+import { recordStar, STAR_MIN_SESSIONS, starDue } from "../update/star.ts";
 import { WorkflowStore } from "../workflows/store.ts";
 import { WorkflowApiError, workflowsApi, type WorkflowViewSource } from "../workflows/viewer.ts";
 import { BOOT_LIST_PATHS, BOOT_MAX_BYTES, BOOT_SESSION_EVENTS, renderPage, renderSessionsMain, sessionBootPaths } from "./ssr.ts";
@@ -39,6 +40,12 @@ import { computeMetrics, DAY_MS, MAX_GROUPS, METRIC_BUCKETS, METRIC_GROUPS, Metr
 import { parseTime } from "../query/where.ts";
 import { getScoreConfigs, getScores, postScore, postScoreConfig, type ApiReply, type ScoresApiCtx } from "../scores/api.ts";
 import { ScoreError } from "../scores/scores.ts";
+
+/** Where /api/star keeps its state: this machine's coding.sh home. `now` is for tests. */
+export interface StarSource {
+  env: NodeJS.ProcessEnv;
+  now?: () => number;
+}
 
 export interface ViewerOptions {
   index: IndexStore;
@@ -65,6 +72,8 @@ export interface ViewerOptions {
   workflows?: WorkflowViewSource;
   /** Background ingest progress behind /api/ingest (`coding.sh ui`). Without it the route is 404. */
   ingestStatus?: () => IngestStatus | undefined;
+  /** The one-time star prompt behind /api/star (`coding.sh ui` passes its env; it writes <root>/star.json). Without it the route is 404. */
+  star?: StarSource;
   /** Start-snapshot content for replays (`coding.sh ui`, which can read this machine's shadow repos). */
   replayBaseline?: (s: Session) => Baseline | undefined;
   /** Forking a replay at a step (`coding.sh ui` only: it calls the model with this machine's key). Without it /fork is 404. */
@@ -237,6 +246,8 @@ export interface ViewerHandlerOptions {
   workflows?: WorkflowViewSource;
   /** Background ingest progress behind /api/ingest. Default: none (404). */
   ingestStatus?: () => IngestStatus | undefined;
+  /** The star prompt behind /api/star. Default: none (404). */
+  star?: StarSource;
   /** Start-snapshot content for replays. Default: none (replays start from what the session showed). */
   replayBaseline?: (s: Session) => Baseline | undefined;
   /** Forks from a replay step. Default: none (404). */
@@ -268,6 +279,7 @@ export async function createViewerHandler(opts: ViewerHandlerOptions): Promise<V
     benchmarks: opts.benchmarks,
     workflows: opts.workflows,
     ingestStatus: opts.ingestStatus,
+    star: opts.star,
     replayBaseline: opts.replayBaseline,
     fork: opts.fork,
     playground: opts.playground,
@@ -373,6 +385,7 @@ export async function startViewer(opts: ViewerOptions): Promise<Viewer> {
     benchmarks: opts.benchmarks ?? benchmarkDir(opts.env ?? process.env),
     workflows: opts.workflows ?? WorkflowStore.forEnv(opts.env ?? process.env),
     ...(opts.ingestStatus ? { ingestStatus: opts.ingestStatus } : {}),
+    star: opts.star,
     ...(opts.replayBaseline ? { replayBaseline: opts.replayBaseline } : {}),
     ...(opts.fork ? { fork: opts.fork } : {}),
     ...(opts.playground ? { playground: opts.playground } : {}),
@@ -483,6 +496,7 @@ interface ApiCtx {
   benchmarks?: BenchmarkSource;
   workflows?: WorkflowViewSource;
   ingestStatus?: () => IngestStatus | undefined;
+  star?: StarSource;
   replayBaseline?: (s: Session) => Baseline | undefined;
   fork?: ForkSource;
   playground?: PlaygroundSource;
@@ -1073,6 +1087,28 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       // Release notes are remote text: the client only ever renders the version fields.
       const u = await ctx.updateStatus();
       return sendJson(res, 200, { current: u.current, latest: u.latest, updateAvailable: u.updateAvailable && u.disabled === null, url: u.url, command: u.command, checkedAt: u.checkedAt });
+    }
+
+    case "star": {
+      if (id !== undefined) throw new HttpError(404, "not found");
+      // Only `coding.sh ui` passes a star source: it keeps its state in this machine's home.
+      if (!ctx.star) throw new HttpError(404, "not found");
+      const star = ctx.star;
+      if (method === "GET") {
+        if (!starDue(star.env, star.now)) return sendJson(res, 200, { show: false });
+        // Five top-level sessions is the bar (subagents do not count); reading five rows is all the count it needs.
+        const count = (await ctx.index.listSessions({ limit: STAR_MIN_SESSIONS, parentSessionId: null })).length;
+        return sendJson(res, 200, { show: count >= STAR_MIN_SESSIONS });
+      }
+      if (method === "POST") {
+        checkOrigin(req, ctx.checkHost);
+        const body = await readJson(req, res, 1024);
+        const action = body && typeof body === "object" ? (body as Record<string, unknown>).action : undefined;
+        if (action !== "dismiss" && action !== "starred") throw new HttpError(400, 'action must be "dismiss" or "starred"');
+        recordStar(star.env, action, star.now);
+        return sendJson(res, 200, { ok: true });
+      }
+      throw new HttpError(405, "method not allowed");
     }
 
     case "ingest": {
@@ -1722,7 +1758,7 @@ async function readJson(req: IncomingMessage, res: ServerResponse, max = MAX_BOD
   const type = (req.headers["content-type"] ?? "").split(";")[0]?.trim().toLowerCase();
   if (type !== "application/json") throw new HttpError(415, "content-type must be application/json");
   const declared = Number(req.headers["content-length"] ?? 0);
-  const tooBig = `request body exceeds ${Math.round(max / 1024 / 1024)} MB`;
+  const tooBig = `request body exceeds ${max < 1024 * 1024 ? `${Math.round(max / 1024)} KB` : `${Math.round(max / 1024 / 1024)} MB`}`;
   if (declared > max) {
     res.setHeader("Connection", "close");
     throw new HttpError(413, tooBig);

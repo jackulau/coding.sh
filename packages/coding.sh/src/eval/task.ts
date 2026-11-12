@@ -8,7 +8,7 @@ import { join, relative, resolve } from "node:path";
 import { isPlumbing, shellParts } from "../core/failing-command.ts";
 import { hashParts, sha256Hex } from "../core/ids.ts";
 import { stringifyToml } from "../core/toml.ts";
-import type { AgentEvent, BlobRef, BlobStore, EvalTask, IndexStore, Session } from "../core/types.ts";
+import type { AgentEvent, BlobRef, BlobStore, EvalTask, IndexStore, RepoState, Session } from "../core/types.ts";
 import { safeJoin, safeWrite, toPosix } from "../runner/fsutil.ts";
 import { rmrf, snapshotOps, type SnapshotOps } from "../runner/git.ts";
 import { matchAny } from "../runner/glob.ts";
@@ -288,11 +288,31 @@ export async function readInstructionArg(value: string, cwd: string): Promise<st
 
 // ------------------------------------------------------------ drafting
 
-function startOf(session: Session, events: readonly AgentEvent[]): { repoRoot: string; snapshot: string; head: string; partial?: boolean } {
+/** How far back a `coding.sh run` wrapper may have started before the agent session it ran. */
+const WRAPPER_LOOKBACK_MS = 86_400_000;
+
+/**
+ * The start state of the `coding.sh run` wrapper a HEAD-only session ran inside
+ * (a hooked agent under `run --`): a wrapper session in the same repo at the same
+ * HEAD, started before it and not ended before it began. The wrapper snapshotted
+ * the whole working tree just before it started the agent.
+ */
+async function wrapperStart(index: IndexStore, session: Session, repo: RepoState): Promise<RepoState | undefined> {
+  const t = session.startedAt;
+  const near = await index.listSessions({ agent: "wrapper", repoRoot: repo.root, since: t - WRAPPER_LOOKBACK_MS, until: t + 1 });
+  const fits = near.filter((w) => w.id !== session.id && w.agent === "wrapper" && w.repo?.root === repo.root && !!w.repo.snapshot && !w.repo.partial && w.repo.head === repo.head && w.startedAt <= t && (w.endedAt === undefined || w.endedAt >= t));
+  return fits.sort((a, b) => b.startedAt - a.startedAt)[0]?.repo;
+}
+
+async function startOf(index: IndexStore, session: Session, events: readonly AgentEvent[]): Promise<{ repoRoot: string; snapshot: string; head: string; partial?: boolean }> {
   // Only the session.start snapshot (or the session's own repo state, which
   // ingest sets from it) is pre-agent. turn.end / session.end snapshots are not.
+  // A state with a working-tree snapshot wins over a HEAD-only one (hooks do no
+  // git work, so a hooked session's start is HEAD-only unless a wrapper took one).
   const startEvt = events.find((e) => e.kind === "session.start" && e.repo);
-  const repo = startEvt?.repo ?? session.repo;
+  const first = startEvt?.repo ?? session.repo;
+  let repo = [startEvt?.repo, session.repo].find((r) => r?.snapshot) ?? first;
+  if (repo && !repo.snapshot) repo = (await wrapperStart(index, session, repo)) ?? repo;
   if (!repo) throw new Error(`session ${session.id} has no repo state; cannot build a task`);
   const snap = repo.snapshot || repo.head;
   if (!snap) throw new Error(`session ${session.id} has neither a start snapshot nor a HEAD`);
@@ -336,7 +356,7 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
   const followUps = instructionSource === "ledger" ? [] : prompts.slice(instructionSource === "session" ? 1 : 0);
   if (followUps.length) notes.push(`${followUps.length} ${instructionSource === "session" ? "follow-up " : "session "}prompt(s) not included in the instruction; review whether the task needs them`);
 
-  const start = startOf(session, events);
+  const start = await startOf(index, session, events);
   if (start.partial) notes.push("start snapshot is partial or HEAD-only: uncommitted/untracked files at session start may be missing");
   const ops = await snapshotOps(opts.git);
 
@@ -467,7 +487,7 @@ interface TaskJson {
   name: string;
   status: EvalTask["status"];
   sourceSessionId?: string;
-  start: EvalTask["start"];
+  start?: EvalTask["start"];
   setup: string[];
   verifier: { command: string; timeoutMs: number; hiddenFiles: string[] };
   tags: string[];
@@ -543,7 +563,16 @@ const runDirName = (label: string, i: number) => label.replace(/[^A-Za-z0-9._-]+
 /** Where a witness's file lives in an exported task dir (its id keeps two witnesses at one path apart). */
 const witnessFile = (w: Witness) => `${w.id.slice(0, 12)}/${w.path}`;
 
-export async function exportTaskDir(task: EvalTask, dir: string, blobs: BlobStore): Promise<void> {
+export interface ExportTaskOpts {
+  /**
+   * Writes the task's start tree into the given dir. With it, the export holds the
+   * start tree as repo/ and task.json names no path on this machine, so another
+   * home can import it. Without it, task.json points at this home's start snapshot.
+   */
+  materializeStart?: (start: EvalTask["start"], dest: string) => Promise<unknown>;
+}
+
+export async function exportTaskDir(task: EvalTask, dir: string, blobs: BlobStore, opts: ExportTaskOpts = {}): Promise<void> {
   await mkdir(dir, { recursive: true });
   const witnesses = taskWitnesses(task);
   let meta = (task as Partial<DraftedTask>).meta as Record<string, unknown> | undefined;
@@ -557,7 +586,8 @@ export async function exportTaskDir(task: EvalTask, dir: string, blobs: BlobStor
     name: task.name,
     status: task.status,
     sourceSessionId: task.sourceSessionId,
-    start: task.start,
+    // With materializeStart the tree goes in repo/, so task.json names no path on this machine.
+    start: opts.materializeStart ? undefined : task.start,
     setup: task.setup,
     verifier: { command: task.verifier.command, timeoutMs: task.verifier.timeoutMs, hiddenFiles: Object.keys(task.verifier.hiddenFiles).sort() },
     tags: task.tags,
@@ -566,6 +596,12 @@ export async function exportTaskDir(task: EvalTask, dir: string, blobs: BlobStor
     meta,
   };
   await writeFile(join(dir, "task.json"), `${JSON.stringify(json, null, 2)}\n`);
+  if (opts.materializeStart) {
+    const repo = join(dir, "repo");
+    await opts.materializeStart(task.start, repo);
+    // A plain tree: the importing home snapshots it, and a nested .git would only carry this machine's commit.
+    await rmrf(join(repo, ".git"));
+  }
   await writeFile(join(dir, "instruction.md"), task.instruction.endsWith("\n") ? task.instruction : `${task.instruction}\n`);
   for (const [rel, ref] of Object.entries(task.verifier.hiddenFiles)) {
     await safeWrite(join(dir, "tests"), rel, await blobBytes(blobs, ref, `hidden file ${rel}`));

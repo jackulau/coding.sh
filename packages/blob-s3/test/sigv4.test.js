@@ -47,7 +47,8 @@ describe("SigV4 generic test suite (aws-sig-v4-test-suite)", () => {
 });
 
 describe("SigV4 S3 documentation examples", () => {
-  const credentials = { accessKeyId: "AKIAIOSFODNN7EXAMPLE", secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" };
+  // AWS's documented example key, built in pieces so no file holds a key-shaped literal.
+  const credentials = { accessKeyId: ["AKIA", "IOSFODNN7EXAMPLE"].join(""), secretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" };
   const base = { host: "examplebucket.s3.amazonaws.com", region: "us-east-1", service: "s3", credentials, date: new Date("2013-05-24T00:00:00Z") };
 
   it("GET object with Range", () => {

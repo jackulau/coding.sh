@@ -38,8 +38,10 @@ A made-up key, like the ones in docs and test fixtures, is redacted too, but cou
 | `repos/` | Snapshots of the working tree before and after a session. Your repo's own refs are never touched. |
 | `backups/` | A copy of every agent config file before coding.sh edited it. |
 | `config.toml` | Your settings. |
+| `star.json` | When you first ran coding.sh and when the one-time GitHub star prompt was shown, dismissed or clicked. Four timestamps, no network call. |
 
-`CODING_SH_HOME` moves the folder. In full mode, the default, coding.sh keeps prompts, replies,
+`CODING_SH_HOME` moves the folder. Outside Windows, the index, its WAL files, the blob store and
+the index backups are readable by your user only (files 0600, folders 0700). In full mode, the default, coding.sh keeps prompts, replies,
 tool calls with their input and output, file changes, errors, model names, token usage and timing.
 
 - **Nothing leaves your machine by default.** With no sinks, no session data is sent. The only
@@ -130,11 +132,13 @@ timing. It listens on 127.0.0.1 unless you pass `--host`.
 The hook writes what the agent sends to `~/.coding.sh/spool` (mode 600) without redacting it, to
 stay fast. Ingest then stores a redacted copy.
 
-- The shell hook gives a payload its own file under `spool/<agent>/raw/`, unless it is one line
-  of about 1 KB or less. Once ingested, that file is rewritten with secrets redacted, in every
-  capture mode.
-- A payload written inside the day's spool file stays as written: a short one-line payload, and
-  any payload the node hook handles (an eval run, a reply to the agent).
+- Both hooks give a payload its own file under `spool/<agent>/raw/`, unless its spool line fits in
+  about 1 KB. Once ingested, that file is rewritten with secrets redacted, in every capture mode.
+- A short payload inside the day's spool file stays as written until its UTC day has passed and
+  ingest has read the whole file. Then ingest redacts it in place. The line keeps its length, so
+  ingest cursors still hold.
+- With `CODING_SH_DISABLE=1` the hooks write no payload, only the session id, to
+  `spool/disabled-sessions`, so ingest and `ingest --backfill` leave that session out.
 - `coding.sh gc` deletes ingested spool files older than 7 days (`[retention] keepSpoolDays`),
   never the current day's. `coding.sh purge` removes a value sooner.
 

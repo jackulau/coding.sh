@@ -4,15 +4,15 @@
 // Streams stored rows to stdout with the same filters as `coding.sh sessions`
 // (src/query/export.ts). Works on every store. --evidence writes the matching
 // sessions' raw traces as a directory instead (src/core/evidence.ts).
-import { readdirSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readdirSync, rmSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { writeEvidence } from "../../core/evidence.ts";
 import { createRedactor } from "../../core/redact.ts";
 import type { Session } from "../../schema/index.ts";
 import { EXPORT_FORMATS, EXPORT_KINDS, exportRows, sessionsOf, type ExportFormat, type ExportKind } from "../../query/export.ts";
 import { scopesSubagents } from "../../query/where.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
-import { agentScope, agentsFlag, autoIngest, queryCliError, readIngest, str, whereFlag, withContext } from "../common.ts";
+import { agentScope, agentsFlag, autoIngest, queryCliError, readIngest, shellQuote, str, whereFlag, withContext } from "../common.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -33,6 +33,24 @@ function nonEmpty(dir: string): boolean {
   }
 }
 
+/**
+ * What an earlier `--evidence` run left in `dir`: its top-level index.md and each session directory
+ * (the ones holding a session.json). Anything else the directory holds is not ours and stays.
+ */
+function clearEvidence(dir: string): void {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name);
+    if (e.isFile() && e.name === "index.md") rmSync(p);
+    else if (e.isDirectory() && existsSync(join(p, "session.json"))) rmSync(p, { recursive: true });
+  }
+}
+
+/** The command as the user ran it with --force added, each word quoted for the shell. */
+function forceCommand(c: CommandContext, evidence: string): string {
+  const words = (c.argv ?? ["export", "--evidence", evidence]).filter((w) => w !== "--force");
+  return ["coding.sh", ...words.map(shellQuote), "--force"].join(" ");
+}
+
 export async function run(c: CommandContext): Promise<number> {
   const evidence = str(c.flags.evidence);
   if (c.flags.evidence !== undefined && !evidence) throw new UsageError("--evidence needs a directory, e.g. --evidence traces/", { reason: "missing_argument" });
@@ -49,7 +67,7 @@ export async function run(c: CommandContext): Promise<number> {
   const { agent, where } = agentScope(agentsFlag(c), userWhere);
   const dir = evidence ? resolve(c.cwd, evidence) : undefined;
   if (dir && nonEmpty(dir) && c.flags.force !== true) {
-    throw new CliError(`${dir} is not empty`, { reason: "target_exists", askUser: true, next: [`coding.sh export --evidence ${evidence} --force`, "or pick an empty directory"] });
+    throw new CliError(`${dir} is not empty`, { reason: "target_exists", askUser: true, next: ["Replace what is there (sessions from an earlier export are removed):", forceCommand(c, evidence!)] });
   }
   return withContext(c, async (ctx) => {
     await autoIngest(ctx, readIngest(c));
@@ -73,6 +91,8 @@ export async function run(c: CommandContext): Promise<number> {
       } catch (e) {
         throw queryCliError(e);
       }
+      // The directory is rewritten whole: sessions an earlier run left there are not part of this one.
+      if (c.flags.force === true && nonEmpty(dir)) clearEvidence(dir);
       // The capture rules, and always the secret rules: an export is made to be passed on.
       const redactor = createRedactor({ redact: [...new Set(["secrets", ...ctx.config.capture.redact])], patterns: ctx.config.capture.redactPatterns });
       const r = await writeEvidence({ index: ctx.index, blobs: ctx.blobs, sessions, dir, redactor });
@@ -90,5 +110,5 @@ export async function run(c: CommandContext): Promise<number> {
     }).catch((e) => Promise.reject(queryCliError(e)));
     c.out.note(`Exported ${plural(r.rows, kind === "sessions" ? "session" : kind === "events" ? "event" : "label")}`);
     return 0;
-  });
+  }, { create: false });
 }

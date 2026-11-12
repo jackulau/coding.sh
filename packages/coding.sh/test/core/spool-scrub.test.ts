@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -7,6 +7,7 @@ import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { defaultConfig } from "../../src/core/config.ts";
 import { ingest } from "../../src/core/ingest.ts";
 import { createRedactor } from "../../src/core/redact.ts";
+import { reparse } from "../../src/core/reparse.ts";
 import { scrubRawFile } from "../../src/core/spool-scrub.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 
@@ -51,6 +52,28 @@ describe("a spool side file after ingest", () => {
     assert.equal(JSON.parse(after).hook_event_name, "PostToolUse");
     if (process.platform !== "win32") assert.equal(statSync(file).mode & 0o777, 0o600);
     assert.equal(JSON.parse(readFileSync(t.spool, "utf8")).rawFile, file);
+  });
+
+  it("a re-parse of the scrubbed file keeps the session's redaction counts", async () => {
+    const t = setup();
+    // One payload in a side file, one inline (a day that has passed: ingest rewrites its line).
+    writeFileSync(t.spool, t.hook("1-1-rp.json", t.payload(`AWS_SECRET_ACCESS_KEY=${SECRET}`), 1));
+    const inline = JSON.parse(t.payload(`AWS_SECRET_ACCESS_KEY=${SECRET}`));
+    appendFileSync(t.spool, JSON.stringify({ v: 0, agent: "claude-code", event: "PostToolUse", ts: 1_700_000_000_002, pid: 2, cwd: join(t.root, "work"), raw: { ...inline, tool_use_id: "t2" } }) + "\n");
+    const token = ["gh", "p_", "R7kq2Zx9", "Lm4Tv8Wn", "3Hs6Jd1F", "p0Yc5Bg2", "Qe7u"].join("");
+    appendFileSync(t.spool, JSON.stringify({ v: 0, agent: "claude-code", event: "UserPromptSubmit", ts: 1_700_000_000_003, pid: 3, cwd: join(t.root, "work"), raw: { hook_event_name: "UserPromptSubmit", session_id: "s1", cwd: join(t.root, "work"), prompt: `use ${token} to push` } }) + "\n");
+    const index = new MemoryIndexStore();
+    const base = { config: defaultConfig(t.env), index, blobs: new MemoryBlobStore(), env: t.env, adapters: new Map([[claudeCode.id, claudeCode]]) };
+    await ingest({ ...base, lock: false });
+    const first = (await index.getSession("s1"))?.stats.redactions;
+    assert.ok(first && Object.keys(first).length, `counted at ingest: ${JSON.stringify(first)}`);
+    assert.ok(!readFileSync(join(t.raw, "1-1-rp.json"), "utf8").includes(SECRET), "the side file is scrubbed");
+    assert.ok(!readFileSync(t.spool, "utf8").includes(SECRET), "the inline line is scrubbed");
+    assert.ok(!readFileSync(t.spool, "utf8").includes(token), "the prompt line is scrubbed");
+    assert.ok(first["github-token"], "the prompt's token is counted");
+    // The re-parse reads markers, not the secret: the counts the first pass made stay.
+    await reparse({ ...base, all: true });
+    assert.deepEqual((await index.getSession("s1"))?.stats.redactions, first);
   });
 
   it("is left byte for byte when it holds nothing to redact", async () => {

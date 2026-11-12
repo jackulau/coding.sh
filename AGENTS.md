@@ -20,7 +20,8 @@ builds sessions and their flags, `cli/registry.ts` holds every command, flag and
 
 ## Commands
 
-Node 22.15 or newer. Run these from `packages/coding.sh`:
+Node 22.18 or newer: the commands run `.ts` files from source. The published CLI runs on Node 22.16
+or newer (CI checks it in the `runtime-floor` job). Run these from `packages/coding.sh`:
 
 ```sh
 npm run check                                        # typecheck + every test
@@ -89,7 +90,9 @@ set it for the user's store unless they ask.
 
 ## Routines
 
-**Before a commit.** Run `npm run check` in `packages/coding.sh` (and `npm run build && npm run
+**Before a commit.** Run `npm run gate` from the repo root: it runs every check below in one pass,
+in a throwaway home, and prints the command to rerun a failing step (`npm run gate -- --static` skips
+the build and the tests). Or run the pieces: `npm run check` in `packages/coding.sh` (and `npm run build && npm run
 check` in `apps/site` if you touched the site), and `npm run lint` from the repo root (the
 anti-slop lint; exceptions and opt-in git hooks are in CONTRIBUTING.md "Lint and git hooks"). If you touched `.github/workflows`, run
 `actionlint -shellcheck= .github/workflows/*.yml`. Scan the diff and any new fixture for secrets,

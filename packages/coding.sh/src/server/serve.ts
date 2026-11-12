@@ -14,7 +14,6 @@ import { createEveEvalsHandler, EVE_EVALS_PATH } from "../integrations/eve/evals
 import { recorderFor } from "../proxy/index.ts";
 import type { Recorder } from "../proxy/record.ts";
 import { createProxyHandler, type Upstreams } from "../proxy/server.ts";
-import { proxySettings } from "../proxy/state.ts";
 import type { UpdateStatus } from "../update/index.ts";
 import { createAuthenticator, READ_COOKIE } from "./auth.ts";
 import { DRAIN_TIMEOUT_MS, type ServeConfig } from "./config.ts";
@@ -39,7 +38,7 @@ export interface ServeOptions {
   tickEvents?: number;
   /** Drain timeout on shutdown (default 25 s). */
   drainMs?: number;
-  /** Where the /proxy/* routes forward (default: [proxy] in config.toml, then the public APIs). */
+  /** Where the /proxy/* routes forward (default: cfg.proxyUpstreams, the [proxy] table of --config or the proxy's own settings). */
   proxyUpstreams?: Partial<Upstreams>;
   /** Mirror to these instead of opening config.core.sinks (tests). */
   sinks?: Sink[];
@@ -269,7 +268,7 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
     return r;
   };
   const proxyHandler = createProxyHandler({
-    upstreams: o.proxyUpstreams ?? proxySettings(process.env).upstreams,
+    upstreams: o.proxyUpstreams ?? cfg.proxyUpstreams,
     allowRemote: !loopback,
     dropHeaders: [PROXY_KEY_HEADER],
     onError: (e) => log.warn("proxy", { error: e.message }),

@@ -64,7 +64,7 @@ export const WORKFLOWS_COMMAND: CommandSpec = {
       summary: "A/B workflow variants over cases; prints the experiment id",
       args: [{ name: "workflow", desc: "Workflow name (cases live under evals/workflows/<workflow>/cases)", required: true }],
       flags: [
-        { name: "variant", type: "list", value: "<NAME=SCRIPT|JSON>", desc: "Variant: name=script path (claude), name=command (command), or JSON (repeatable)" },
+        { name: "variant", short: "v", type: "list", value: "<NAME=SCRIPT|JSON>", desc: "Variant: name=script path (claude), name=command (command), or JSON (repeatable)" },
         CASES,
         { name: "k", short: "k", type: "number", value: "<N>", desc: "Attempts per case and variant", default: "3" },
         { name: "split", type: "string", value: "<SPLIT>", choices: ["dev", "heldout"], desc: "Only cases in this split" },

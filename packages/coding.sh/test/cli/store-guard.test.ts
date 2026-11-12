@@ -140,8 +140,13 @@ describe("a source checkout never opens the default store by accident", () => {
       assert.equal(r.status, 0, r.stderr);
     }
     assert.ok(existsSync(join(other, "index.db")));
-    const s = run(CHECKOUT_CLI, ["sessions", "--json", "--store", `sqlite://${join(home, "elsewhere.db")}`], home);
+    // A read of a store that does not exist is store_missing, so a write (ingest) creates it first.
+    const store = `sqlite://${join(home, "elsewhere.db")}`;
+    const w = run(CHECKOUT_CLI, ["ingest", "--json", "--store", store], home);
+    assert.equal(w.status, 0, w.stderr);
+    const s = run(CHECKOUT_CLI, ["sessions", "--json", "--store", store], home);
     assert.equal(s.status, 0, s.stderr);
+    assert.ok(existsSync(join(home, "elsewhere.db")));
     assert.equal(existsSync(join(data, "index.db")), false, "--store opened the named store, not the default index");
     const opt = run(CHECKOUT_CLI, ["sessions", "--json"], home, { CODING_SH_DEV_REAL_STORE: "1" });
     assert.equal(opt.status, 0, opt.stderr);

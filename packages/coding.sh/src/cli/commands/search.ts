@@ -1,7 +1,7 @@
 // coding.sh search <text> [--where <query>]
 import { searchWhere } from "../../query/run.ts";
 import { positiveInt } from "../args.ts";
-import { agentScope, agentsFlag, autoIngest, pendingField, queryCliError, readIngest, oneLine, str, whereFlag, withContext } from "../common.ts";
+import { agentScope, agentsFlag, autoIngest, emptyStateNext, pendingField, queryCliError, readIngest, oneLine, str, whereFlag, withContext } from "../common.ts";
 import { ago, clean } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -22,6 +22,7 @@ export async function run(c: CommandContext): Promise<number> {
     }
     if (!hits.length) {
       out.note(`No matches for ${JSON.stringify(text)}`);
+      await emptyStateNext(out, c.env, ctx.index);
       return 0;
     }
     const tty = out.stdoutTTY;
@@ -30,5 +31,5 @@ export async function run(c: CommandContext): Promise<number> {
       hits.map((h) => [h.event.sessionId, h.event.kind, ago(h.event.ts), oneLine(clean(h.snippet), tty ? 80 : 10_000)]),
     );
     return 0;
-  });
+  }, { create: false });
 }

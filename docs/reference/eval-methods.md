@@ -82,7 +82,7 @@ A solved). `solved` is the number of cases A solved.
 |---|---|---|
 | `Ship it: B wins N cases, loses M` | All three conditions hold. | 0 |
 | `Hold: not enough evidence (…)` | Any other failed condition, most often too few wins to pass the significance test. | 1 |
-| `Don't ship: B breaks N cases A solved` | B broke at least one case, and the net gain or the breakage condition fails. | 1 |
+| `Don't ship: B breaks N cases A solved` | B's losses beat chance: an exact one-sided binomial test of the losses among the cases that changed outcome, at p = 1/2, is under α. A group under `--by` or a guard set says it when B broke a case and the net gain or the breakage condition fails. | 1 |
 
 With `--lambda 1 --gate-alpha 1 --tau 1` the gate reduces to "ship when wins exceed losses".
 

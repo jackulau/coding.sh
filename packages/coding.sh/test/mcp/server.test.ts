@@ -314,10 +314,11 @@ describe("tools", () => {
     assert.ok((cmp.warnings as string[]).length > 0, "4 paired cases trigger a small-n warning");
     const gate = cmp.gate as { verdict: string; decision: string; summary: string; losses: number; lostCases: string[] };
     assert.equal(gate.decision, "abstain");
-    assert.equal(gate.verdict, "dont-ship");
+    // Two losses and no wins are within chance: the gate holds.
+    assert.equal(gate.verdict, "hold");
     assert.equal(gate.losses, 2);
     assert.deepEqual([...gate.lostCases].sort(), ["c1", "c3"]);
-    assert.match(gate.summary, /^Don't ship: B breaks 2 cases A solved/);
+    assert.match(gate.summary, /^Hold: not enough evidence \(B wins 0, loses 2; within chance\)/);
     assert.match(await callError("experiment_compare", { baseline: SEED.expA, candidate: "exp-missing" }), /No experiment with id "exp-missing"/);
   });
 

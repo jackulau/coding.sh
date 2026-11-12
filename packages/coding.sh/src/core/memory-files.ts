@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentId } from "../schema/index.ts";
 import type { IndexStore } from "./types.ts";
+import { run } from "./git.ts";
 import { REFOLD_CURSOR } from "./ingest.ts";
 import { foldStamp } from "./sessions.ts";
 import { auditMemory, homeKey, isScoped, memoryKind, skillListingBytes, type MemoryAudit, type MemoryFileInfo, type MemorySession } from "./memory-audit.ts";
@@ -203,6 +204,38 @@ export async function memoryEventsOf(index: IndexStore, sessionIds: readonly str
  */
 export const memoryUseFolded = async (index: IndexStore): Promise<boolean> => (await index.getCursor(REFOLD_CURSOR)) === foldStamp();
 
+/**
+ * When each file in a session's repo first existed: the time of the commit that added it (one
+ * `git log` per repo), or, for a file git does not track, when it was made on disk. Files
+ * outside every repo keep no time: their start-time loads are counted as before.
+ */
+async function addSince(files: MemoryFileInfo[], sessions: readonly MemorySession[], home: string): Promise<void> {
+  const roots = [...new Set(sessions.map((s) => s.repoRoot).filter((r): r is string => !!r))].map((r) => r.replace(/\\/g, "/").replace(/\/+$/, ""));
+  for (const root of roots) {
+    const mine = files.filter((f) => localPath(f.key, home).replace(/\\/g, "/").startsWith(`${root}/`));
+    if (!mine.length) continue;
+    const rel = (f: MemoryFileInfo) => localPath(f.key, home).replace(/\\/g, "/").slice(root.length + 1);
+    const r = await run(["log", "--diff-filter=A", "--format=%x00%ct", "--name-only", "--", ...mine.map(rel)], { cwd: root, allowFail: true, timeoutMs: 10_000 }).catch(() => undefined);
+    if (!r || r.code !== 0) continue;
+    // Newest first: the last time seen for a path is its first add.
+    const added = new Map<string, number>();
+    let ts = 0;
+    for (const line of r.stdout.split("\n")) {
+      if (line.startsWith("\0")) ts = Number(line.slice(1)) * 1000;
+      else if (line.trim()) added.set(line.trim(), ts);
+    }
+    for (const f of mine) {
+      const t = added.get(rel(f));
+      if (t !== undefined) f.since = t;
+      else {
+        const st = stat(localPath(f.key, home));
+        const made = st ? Math.min(st.birthtimeMs || Infinity, st.mtimeMs) : undefined;
+        if (made !== undefined && Number.isFinite(made)) f.since = made;
+      }
+    }
+  }
+}
+
 /** The harness audit over a store: sessions since `since` (subagents folded into their root), files on disk. */
 export async function memoryAudit(index: IndexStore, o: MemoryAuditOptions = {}): Promise<MemoryAudit & { since?: number; agent?: string }> {
   const dirs = memoryDirs(o.env);
@@ -230,6 +263,7 @@ export async function memoryAudit(index: IndexStore, o: MemoryAuditOptions = {})
   const keep = (f: MemoryFileInfo) => !o.agent || forAgent(f.key, o.agent);
   const files = listMemoryFiles(dirs, cwds).filter(keep);
   const opts = { home: dirs.home, claudeDir: homeKey(dirs.claudeDir, dirs.home), codexDir: homeKey(dirs.codexDir, dirs.home) };
+  await addSince(files, list, dirs.home);
   let report = auditMemory(list, files, opts);
   // Files the sessions touched that the listing missed (outside the dirs it walks): stat them here.
   const extra = report.files.filter((r) => !r.exists).flatMap((r) => fileInfo(localPath(r.path, dirs.home), dirs.home) ?? []);

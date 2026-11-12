@@ -96,6 +96,22 @@ describe("CLI shim", () => {
     assert.equal(readTap(tapLog).length, 1);
   });
 
+  it("exits 127 once, without re-entering itself or another shim, when the bare command is on PATH only as shims", async () => {
+    const d = tmp();
+    const tapLog = join(d, "tap.jsonl");
+    writeFileSync(tapLog, "");
+    // Two trials' shims for the same bare command, and no real binary anywhere on PATH.
+    await writeCliShim(join(d, "trial1"), "fake-cli", { command: ["fake-cli", "greet"], env: {}, tapLog, ...cfg });
+    await writeCliShim(join(d, "trial2"), "fake-cli", { command: ["fake-cli", "greet"], env: {}, tapLog, ...cfg });
+    const r = spawnSync("fake-cli", [], { env: { ...process.env, PATH: pathOf(join(d, "trial1"), join(d, "trial2"), dirname(process.execPath)) }, timeout: 10_000 });
+    assert.equal(r.status, 127, `stderr: ${r.stderr}`);
+    assert.match(String(r.stderr), /fake-cli: target command not found on PATH/);
+    // trial1 runs trial2's shim once (it is on PATH), which skips both dirs and stops: one record each, no loop.
+    const tap = readTap(tapLog);
+    assert.equal(tap.length, 2, "each shim runs once, not a chain of shims");
+    assert.deepEqual(tap.map((t) => t.reason), ["not-found", "not-found"]);
+  });
+
   it("durationMs excludes shim startup: matches a direct spawn, not the wall time through the shim (median of 20)", async () => {
     const d = tmp();
     const bin = join(d, "bin");

@@ -140,7 +140,7 @@ function geoRatio(a: Map<string, number>, b: Map<string, number>): number | unde
   return logs.length ? Math.exp(logs.reduce((s, x) => s + x, 0) / logs.length) : undefined;
 }
 
-export function comparePairs(cells: readonly Cell[], contenders: readonly string[], o: { trials: number; dataset: { id: string; version: string }; graders: string[]; iters?: number; noVerdict?: boolean }): PairComparison[] {
+export function comparePairs(cells: readonly Cell[], contenders: readonly string[], o: { trials: number; dataset: { id: string; version: string }; graders: string[]; iters?: number; noVerdict?: boolean | string }): PairComparison[] {
   const pairs: PairComparison[] = [];
   // Leader first: each pair reads "a − b" with a the one that passed more (ties keep definition order).
   const rate = (name: string) => {
@@ -190,9 +190,19 @@ export function comparePairs(cells: readonly Cell[], contenders: readonly string
   const adj = holm(pairs.map((p) => p.p));
   for (const [i, p] of pairs.entries()) {
     p.pAdj = adj[i]!;
-    if (!o.noVerdict && p.pAdj < ALPHA && p.aOnly !== p.bOnly) p.verdict = p.bOnly > p.aOnly ? "b" : "a";
+    if (o.noVerdict) {
+      p.withheld = typeof o.noVerdict === "string" ? o.noVerdict : "no verdict drawn";
+      p.verdict = "no-verdict";
+    }
+    else if (p.pAdj < ALPHA && p.aOnly !== p.bOnly) p.verdict = p.bOnly > p.aOnly ? "b" : "a";
   }
   return pairs;
+}
+
+/** "a ahead", "no significant difference", or "no verdict (<why>)" when the run withheld one. */
+export function pairVerdictText(p: Pick<PairComparison, "a" | "b" | "verdict" | "withheld">): string {
+  if (p.withheld) return `no verdict (${p.withheld})`;
+  return p.verdict === "tie" || p.verdict === "no-verdict" ? "no significant difference" : `${p.verdict === "a" ? p.a : p.b} ahead`;
 }
 
 export interface PowerPlan {
@@ -239,7 +249,7 @@ export function discordanceOf(pairs: readonly PairComparison[]): number | undefi
  * place; otherwise it shares that place.
  */
 export function assignPlaces(summaries: ContenderSummary[], pairs: readonly PairComparison[]): ContenderSummary[] {
-  const sig = (x: string, y: string) => pairs.some((p) => ((p.a === x && p.b === y) || (p.a === y && p.b === x)) && p.verdict !== "tie");
+  const sig = (x: string, y: string) => pairs.some((p) => ((p.a === x && p.b === y) || (p.a === y && p.b === x)) && (p.verdict === "a" || p.verdict === "b"));
   const sorted = [...summaries].sort((x, y) => (y.passRate.p || 0) - (x.passRate.p || 0) || (y.meanScore || 0) - (x.meanScore || 0) || x.contender.localeCompare(y.contender));
   let leader: ContenderSummary | undefined;
   for (const [i, s] of sorted.entries()) {

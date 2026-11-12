@@ -1,0 +1,15 @@
+* {
+  box-sizing: border-box;
+}
+.btn {
+  transition: color 0.2s;
+}
+.list * {
+  margin: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}
+/* * { transition: all 1s; } is only a comment */

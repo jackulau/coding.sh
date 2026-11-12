@@ -117,7 +117,7 @@ describe("witness audit", () => {
     const text = formatAudit(report, [a, b], [neg]);
     assert.match(text, /^B: passes 1\/1, refuted 1, audited pass rate 0% \(0\/1\), replayed 1\/1$/m);
     assert.match(text, new RegExp(`refuted ${b.id} \\(B\\) by test/neg\\.test\\.js: handle negative numbers\\n  add\\(-2, -3\\) is 0, want -5`));
-    assert.deepEqual(await readdir(w.workRoot), [], "replay dirs are cleaned up");
+    assert.deepEqual(await readdir(w.workRoot), ["package.json"], "only the package scope fence is left: replay dirs are cleaned up");
   });
 
   it("rejects a witness that fails on the reference, or that sits on a hidden verifier file", async () => {

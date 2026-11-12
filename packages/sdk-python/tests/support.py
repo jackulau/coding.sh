@@ -13,6 +13,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, List, Optional, Tuple
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# CI and `npm run gate` set this: the typing, golden, otel and real-SDK tests then fail instead of
+# skipping when mypy, Node, otel, openai or anthropic is missing.
+REQUIRE_ALL = os.environ.get("CODING_SH_SDK_REQUIRE_ALL") == "1"
 SRC = os.path.join(ROOT, "src")
 if SRC not in sys.path:
     sys.path.insert(0, SRC)

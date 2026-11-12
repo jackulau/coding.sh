@@ -1,24 +1,44 @@
 // Small runtime helpers with no Node-only imports, so the SDK can load on
-// edge runtimes too (best effort). Node 18 has no global WebCrypto without a
-// flag, so ids fall back to node:crypto there.
+// edge runtimes too (best effort). There is no top-level await: require() of
+// the package works on Node 22+. Ids come from the global WebCrypto; where a
+// runtime has none (Node 18) from node:crypto, taken from
+// process.getBuiltinModule when it exists, else imported in the background.
 
 type Rand = { randomUUID(): string; fill(buf: Uint8Array): void };
 
 const web = (globalThis as { crypto?: Crypto }).crypto;
-const rand: Rand =
-  web && typeof web.randomUUID === "function"
-    ? { randomUUID: () => web.randomUUID(), fill: (b) => void web.getRandomValues(b) }
-    : await (async () => {
-        const c = await import("node:crypto");
-        return { randomUUID: () => c.randomUUID(), fill: (b: Uint8Array) => void c.randomFillSync(b) };
-      })();
+let rand: Rand | undefined =
+  web && typeof web.randomUUID === "function" ? { randomUUID: () => web.randomUUID(), fill: (b) => void web.getRandomValues(b) } : undefined;
+
+type NodeCrypto = { randomUUID(): string; randomFillSync(buf: Uint8Array): unknown };
+const fromNode = (c: NodeCrypto): Rand => ({ randomUUID: () => c.randomUUID(), fill: (b) => void c.randomFillSync(b) });
+
+if (!rand) {
+  const builtin = (globalThis as { process?: { getBuiltinModule?: (id: string) => unknown } }).process?.getBuiltinModule;
+  const c = typeof builtin === "function" ? (builtin("node:crypto") as NodeCrypto | undefined) : undefined;
+  if (c) rand = fromNode(c);
+  else void import("node:crypto").then((m) => (rand = fromNode(m as NodeCrypto)), () => {});
+}
+
+// Only before that import has finished (the first ticks of a Node 18 process): ids that are unique, not secret.
+const fallback: Rand = {
+  randomUUID: () => `${hexOf(4)}-${hexOf(2)}-4${hexOf(2).slice(1)}-a${hexOf(2).slice(1)}-${hexOf(6)}`,
+  fill: (b) => {
+    for (let i = 0; i < b.length; i++) b[i] = Math.floor(Math.random() * 256);
+  },
+};
+function hexOf(bytes: number): string {
+  const b = new Uint8Array(bytes);
+  fallback.fill(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+}
 
 /** Client event id: fixed when the event is created, reused on every retry. */
-export const uuid = (): string => rand.randomUUID();
+export const uuid = (): string => (rand ?? fallback).randomUUID();
 
 function hex(bytes: number): string {
   const b = new Uint8Array(bytes);
-  rand.fill(b);
+  (rand ?? fallback).fill(b);
   let s = "";
   for (const x of b) s += x.toString(16).padStart(2, "0");
   return /^0+$/.test(s) ? hex(bytes) : s;
@@ -65,10 +85,23 @@ export function truncate(s: string, maxBytes = MAX_TEXT_BYTES): { text: string; 
 export function safeJson(v: unknown): string {
   if (typeof v === "string") return v;
   try {
-    return JSON.stringify(v) ?? String(v);
+    return JSON.stringify(v, jsonReplacer()) ?? String(v);
   } catch {
     return String(v);
   }
+}
+
+/** A JSON.stringify replacer: a BigInt becomes its digits, a value inside itself becomes "[Circular]" (a repeat that is no cycle stays). */
+function jsonReplacer(): (this: unknown, key: string, value: unknown) => unknown {
+  const parents: unknown[] = [];
+  return function (this: unknown, _key, value) {
+    if (typeof value === "bigint") return value.toString();
+    if (typeof value !== "object" || value === null) return value;
+    while (parents.length && parents[parents.length - 1] !== this) parents.pop();
+    if (parents.includes(value)) return "[Circular]";
+    parents.push(value);
+    return value;
+  };
 }
 
 /** Error → short message, never a stack or request details. */

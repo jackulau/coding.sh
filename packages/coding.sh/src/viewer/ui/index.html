@@ -1378,6 +1378,29 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 }
 .toast[data-hidden] { opacity: 0; transform: translate(-50%, 6px); pointer-events: none; transition-duration: var(--dur-exit); }
 
+/* ---------- star prompt (once, after real use) ---------- */
+.star-card {
+  position: fixed; right: 1.25rem; bottom: calc(1.25rem + env(safe-area-inset-bottom)); z-index: 35; width: min(26rem, calc(100vw - 2rem));
+  display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 0.7rem; align-items: start; padding: 0.8rem 0.9rem; border-radius: var(--radius);
+  background: var(--raised-2); color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--line-strong), var(--shadow);
+  transform: translateY(0); opacity: 1;
+  transition: opacity var(--dur-enter) var(--ease-out), transform var(--dur-enter) var(--ease-out);
+}
+.star-card[hidden] { display: none; }
+.star-card[data-hidden] { opacity: 0; transform: translateY(8px); pointer-events: none; transition-duration: var(--dur-exit); }
+.star-card .star-icon { width: 18px; height: 18px; margin-top: 1px; color: var(--text-2); }
+.star-card .star-title { font-size: 13.5px; font-weight: 600; line-height: 1.3; }
+.star-card .star-body { grid-column: 2; margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--text-2); }
+.star-card .star-actions { grid-column: 2; display: flex; justify-content: flex-end; gap: 0.4rem; margin-top: 0.45rem; }
+.star-card a.btn { text-decoration: none; }
+@media (max-width: 640px) {
+  .star-card { left: 1rem; right: 1rem; width: auto; bottom: calc(1rem + env(safe-area-inset-bottom)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .star-card, .star-card[data-hidden] { transform: none; }
+}
+
 @media (hover: hover) and (pointer: fine) {
   .bench-card:hover .chev { color: var(--text); }
   .nav a:hover:not([aria-current="page"]) { color: var(--text); transition-duration: var(--dur-hover-in); }
@@ -1522,6 +1545,15 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 <main id="main" tabindex="-1"></main>
 <div class="overlay" id="overlay" hidden></div>
 <div class="toast" id="toast" role="status" aria-live="polite" data-hidden></div>
+<aside class="star-card" id="star" aria-label="Star coding.sh on GitHub" hidden data-hidden>
+  <svg class="star-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.4l1.95 4.1 4.5.6-3.3 3.1.84 4.45L8 11.4l-3.99 2.25.84-4.45-3.3-3.1 4.5-.6z"/></svg>
+  <div class="star-title">Enjoying coding.sh?</div>
+  <p class="star-body">A star on GitHub helps other people find it.</p>
+  <div class="star-actions">
+    <button class="btn btn-sm btn-ghost" id="star-dismiss" type="button">Dismiss</button>
+    <a class="btn btn-sm btn-primary" id="star-go" href="https://github.com/jackulau/coding.sh" target="_blank" rel="noopener noreferrer">Star on GitHub</a>
+  </aside>
+</div>
 
 <script nonce="__CSP_NONCE__">
 "use strict";
@@ -1555,6 +1587,11 @@ function append(el, children) {
     el.append(c instanceof Node ? c : String(c));
   }
   return el;
+}
+/** Empty `el`, then fill it like h() does: null, undefined and false are skipped (the DOM's own replaceChildren would write them as text). */
+function swap(el, ...children) {
+  el.replaceChildren();
+  return append(el, children);
 }
 const SVG_NS = "http://www.w3.org/2000/svg";
 /** SVG element; attributes are numbers and class names only, never links. */
@@ -1668,6 +1705,21 @@ function fmtDate(ts) {
 }
 function fmtDay(ts, withTime) {
   return new Date(ts).toLocaleString(undefined, withTime ? { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" } : { month: "short", day: "numeric" });
+}
+/** "Oct 7 – Nov 5"; with the year on both ends when the range crosses a year or spans 365 days or more. */
+function fmtDayRange(from, to) {
+  const year = new Date(from).getFullYear() !== new Date(to).getFullYear() || to - from >= 365 * 86400e3;
+  const one = (ts) => new Date(ts).toLocaleString(undefined, year ? { month: "short", day: "numeric", year: "numeric" } : { month: "short", day: "numeric" });
+  return one(from) + " – " + one(to);
+}
+/** Where a session ran: its repo root, else its working directory (what the repo facet counts). */
+function repoDir(s) { return (s.repo && s.repo.root) ?? s.cwd; }
+/** The repo column and the repo facet name a session the same way: the last path segment, "tmp" for the macOS temp dir. */
+function repoLabel(s) {
+  const p = repoDir(s);
+  if (p === undefined || p === null) return "";
+  const n = String(p).replace(/\\/g, "/");
+  return /\/var\/folders\/[\s\S]*\/T$/.test(n) ? "tmp" : n.slice(n.lastIndexOf("/") + 1);
 }
 function basename(p) {
   if (!p) return "";
@@ -1936,7 +1988,7 @@ function setView(node, focus, keys) {
   if (cleanup) { cleanup(); cleanup = null; }
   closeOverlay();
   viewKeys = keys || { scope: "none", actions: {} };
-  main.replaceChildren(node);
+  swap(main, node);
   if (focus) main.focus({ preventScroll: true });
 }
 function parseHash() {
@@ -2077,14 +2129,14 @@ function overlayOpen() { return !overlay.hidden; }
 function closeOverlay() {
   if (overlay.hidden) return;
   overlay.hidden = true;
-  overlay.replaceChildren();
+  swap(overlay);
   if (overlayReturn && overlayReturn.isConnected) overlayReturn.focus({ preventScroll: true });
   overlayReturn = null;
 }
 // Keyboard-opened and used many times a day: no open or close animation.
 function openOverlay(dialog, focusEl) {
   overlayReturn = document.activeElement;
-  overlay.replaceChildren(dialog);
+  swap(overlay, dialog);
   overlay.hidden = false;
   (focusEl || dialog).focus();
 }
@@ -2162,7 +2214,7 @@ function openPalette() {
         h("span", { class: "truncate" }, it.label), it.hint ? h("span", { class: "meta" }, it.hint) : null));
     });
     if (!palette.items.length) nodes.push(h("p", { class: "meta palette-group" }, "No matches"));
-    lb.replaceChildren(...nodes);
+    swap(lb, ...nodes);
     sync();
   }
   function sync() {
@@ -2278,6 +2330,61 @@ function applyQuery(query) {
 // ---- the query string, client side: just enough to edit it (terms, clauses, values).
 // The server parses it for real and answers a bad one with a reason and an offset.
 
+/**
+ * A query the parser is sure to refuse (an open quote or parenthesis, a dangling OR), told apart on the
+ * page so typing it costs no request. Null does not mean the server accepts it: unknown keys and bad
+ * values are still its to judge. Reasons and offsets are the server's (src/query/where.ts).
+ */
+function whereProblem(s) {
+  const fail = (reason, message, offset, next) => ({ reason, message, offset, next: next || [] });
+  const quoteEnd = (from) => {
+    for (let j = from + 1; j < s.length; j++) {
+      if (s[j] === "\\" && (s[j + 1] === '"' || s[j + 1] === "\\" || s[j + 1] === "*")) { j++; continue; }
+      if (s[j] === '"') return j + 1;
+    }
+    return -1;
+  };
+  const toks = [];
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (/\s/.test(c)) { i++; continue; }
+    if (c === "(" || c === ")") { toks.push({ k: c, at: i }); i++; continue; }
+    if (c === "-" && i + 1 < s.length && !/[\s)]/.test(s[i + 1])) { toks.push({ k: "-", at: i }); i++; continue; }
+    const start = i;
+    while (i < s.length && !/[\s()]/.test(s[i])) {
+      if (s[i] !== '"') { i++; continue; }
+      const end = quoteEnd(i);
+      if (end < 0) return fail("unterminated_quote", "unterminated quote", i, ['close it with " (or escape a literal quote as \\")']);
+      i = end;
+    }
+    toks.push({ k: s.slice(start, i) === "OR" ? "or" : "word", at: start });
+  }
+  const open = [];
+  let prev = null;
+  for (const t of toks) {
+    if (t.k === "or") {
+      if (!prev || prev.k === "(" || prev.k === "-") return fail("dangling_or", "OR needs a clause on each side", t.at);
+      if (prev.k === "or") return fail("dangling_or", "OR needs a clause on each side", prev.at);
+    } else if (t.k === ")") {
+      if (!open.length) return fail("unbalanced_parens", "unexpected ')'", t.at);
+      if (prev.k === "(") return fail("empty_group", "empty parentheses", open[open.length - 1]);
+      if (prev.k === "or") return fail("dangling_or", "OR needs a clause on each side", prev.at);
+      open.pop();
+    } else if (t.k === "(") open.push(t.at);
+    prev = t;
+  }
+  if (open.length) return fail("unbalanced_parens", "missing ')'", s.length, ["close the '(' at " + open[open.length - 1]]);
+  if (prev && prev.k === "or") return fail("dangling_or", "OR needs a clause on each side", prev.at);
+  return null;
+}
+/**
+ * Query params for the autocomplete's value counts under the rest of the query. A rest the parser
+ * is sure to refuse is left out (counts over everything), so no request is sent that answers 400.
+ */
+function facetValueParams(p, key, limit, prefix, rest) {
+  return { scope: p.scope, since: p.since, until: p.until, keys: key, limit, prefix, where: rest && !whereProblem(rest) ? rest : undefined };
+}
 /** Top-level terms with their offsets: key:value clauses, words, "quoted text", (groups), OR. */
 function whereTerms(s) {
   const out = [];
@@ -2604,7 +2711,7 @@ function renderSessions(view) {
   }
   const col = h("div", { class: "list-col", role: "region", "aria-labelledby": "sessions-h" }, body);
   const showFacets = !nothingCaptured && !list.error && (stats || list.loaded);
-  view.replaceChildren(...(showFacets ? [facetPanel(view), col] : [h("div"), col]));
+  swap(view, ...(showFacets ? [facetPanel(view), col] : [h("div"), col]));
   if (!showFacets) view.firstChild.className = "facets";
   // Rendering moved the bar: typing goes on where it was.
   if (focused && bar.isConnected) {
@@ -2626,7 +2733,7 @@ function viewTabs() {
 }
 function summaryLine(s) {
   const parts = [plural(s.sessions, "session")];
-  if (s.subagents) parts.push(plural(s.subagents, "subagent"));
+  if (s.subagents) parts.push("+ " + plural(s.subagents, "subagent"));
   if (s.toolCalls) parts.push(plural(s.toolCalls, "tool call"));
   if (s.llmCalls) parts.push((s.llmCalls === 1 ? "1" : fmtCompact(s.llmCalls)) + (s.llmCalls === 1 ? " model call" : " model calls"));
   if (s.costUsd) {
@@ -2705,7 +2812,7 @@ function queryBar(view) {
   }
   function paint() {
     if (!st.opts.length) { closePop(); return; }
-    pop.replaceChildren(
+    swap(pop, 
       ...st.opts.map((o, i) => h("div", {
         class: "qbar-opt", role: "option", id: "qopt-" + i, "aria-selected": String(i === st.active),
         // Keep focus in the input: the click below accepts.
@@ -2765,7 +2872,7 @@ function queryBar(view) {
     // Values from the store: counts under the rest of the query, as the sidebar counts them.
     const rest = (value.slice(0, tok.start) + " " + value.slice(tok.end)).replace(/\s+/g, " ").trim();
     const p = listParams();
-    const params = { scope: p.scope, since: p.since, until: p.until, keys: def.name, limit: QBAR_VALUES + done.length, prefix: partial.slice(0, 200), where: rest };
+    const params = facetValueParams(p, def.name, QBAR_VALUES + done.length, partial.slice(0, 200), rest);
     const cacheKey = qs(params);
     const render = (rows) => {
       if (ask !== st.ask) return;
@@ -2818,6 +2925,14 @@ function queryBar(view) {
     }
     list.where = w;
     list.showError = !!showErr;
+    // A query that cannot parse is not sent: the rows on screen stay, and the bar says why.
+    const problem = whereProblem(w);
+    if (problem) {
+      list.seq++;
+      list.whereError = new ApiError(400, problem.message, problem);
+      if (showErr) renderSessions(view);
+      return Promise.resolve();
+    }
     st.pending = reload(view);
     return st.pending;
   }
@@ -3060,7 +3175,7 @@ function histogramPanel(view, hist) {
     svg("svg", { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "none", "aria-hidden": "true" }, g, svg("line", { class: "base", x1: 0, x2: W, y1: H - 0.5, y2: H - 0.5 })));
   const sel = h("div", { class: "hist-sel", hidden: true });
   const tip = h("div", { class: "hist-tip", hidden: true });
-  plot.append(sel, tip);
+  append(plot, [sel, tip]);
   const fineStep = hist.step < 86400e3;
   const at = (x) => Math.max(0, Math.min(n - 1, Math.floor(x * n)));
   const frac = (e) => { const r = plot.getBoundingClientRect(); return Math.max(0, Math.min(0.9999, (e.clientX - r.left) / r.width)); };
@@ -3173,7 +3288,7 @@ function sessionList(view) {
         h("span", { class: "row-badges" }, toggle, testsBadge(s), failedReqs, rowFlags(s.flags))),
       h("div", { class: "row-cells" },
         h("span", { class: "cell agent-cell", title: [s.agent, s.model].filter(Boolean).join(" · ") }, h("span", null, s.parent && s.parent.type ? s.parent.type : s.agent), s.model ? h("span", { class: "sub" }, " " + midClip(s.model, 22)) : null),
-        h("span", { class: "cell muted repo-cell" + (s.repo && s.repo.root ? "" : " is-none"), title: s.repo && s.repo.root }, s.repo && s.repo.root ? basename(s.repo.root) : "—"),
+        h("span", { class: "cell muted repo-cell" + (repoLabel(s) ? "" : " is-none"), title: repoDir(s) }, repoLabel(s) || "—"),
         h("span", { class: "cell act-cell" }, act, actErr ? h("span", { class: "err" }, " · " + actErr) : null),
         h("span", { class: "cell num muted tok-cell" }, rowTokens(st.usage).replace(" tokens", " tok")),
         h("span", { class: "cell num cost-cell" + (cost.none ? " muted opt" : ""), title: cost.title }, cost.text),
@@ -3749,10 +3864,15 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   fromHit = "";
   const replaceBody = (node) => { view.lastChild.replaceWith(h("div", { class: "wrap" }, node)); };
   let session, events, labels, children, parent = null;
+  const sessionPath = "/api/sessions/" + encodeURIComponent(id);
+  // The session record is asked for once and first: an id that is not in the index is a 404 here and
+  // costs no other request, and a record the hit check already read is not read again.
+  let first = null, firstError = null;
   if (viaHit) {
     // A hit's session can still be importing: wait out one ingest pass before giving up.
     for (let attempt = 0; attempt < 2; attempt++) {
-      try { await api("/api/sessions/" + encodeURIComponent(id)); break; } catch (e) {
+      try { first = await api(sessionPath); firstError = null; break; } catch (e) {
+        firstError = e;
         if (e.status !== 404 || attempt === 1 || !current(seq)) break;
         replaceBody(h("div", { class: "panel empty", "aria-busy": "true" },
           h("h2", { text: "This session is still importing" }),
@@ -3765,8 +3885,9 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     if (!current(seq)) return;
   }
   try {
-    [session, events, labels, children] = await Promise.all([
-      api("/api/sessions/" + encodeURIComponent(id)),
+    if (firstError) throw firstError;
+    session = first || await api(sessionPath);
+    [events, labels, children] = await Promise.all([
       api(eventsPath + qs({ limit: EVENTS_PAGE })),
       api("/api/labels" + qs({ sessionId: id })),
       api("/api/sessions" + qs({ parent: id, limit: 500 })).catch((e) => { if (e.status === 401) throw e; return { items: [] }; }),
@@ -3995,7 +4116,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   const navPair = (nav, noun, move, keys) => {
     const lbl = h("span", { class: "lbl" });
     const btn = (dir, word, key) => h("button", { type: "button", "aria-label": word + " " + noun, "aria-keyshortcuts": key, title: word + " " + noun + (key ? " (" + key + ")" : ""), onclick: () => move(dir) }, dir < 0 ? "‹" : "›");
-    nav.replaceChildren(lbl, btn(-1, "Previous", keys[0]), btn(1, "Next", keys[1]));
+    swap(nav, lbl, btn(-1, "Previous", keys[0]), btn(1, "Next", keys[1]));
     return lbl;
   };
   const derailLbl = navPair(derailNav, "derail", (d) => jumpDerail(d), []);
@@ -4007,11 +4128,11 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   function renderTools() {
     const total = session.stats && session.stats.events;
     const remaining = total && total > allEvents.length ? total - allEvents.length : 0;
-    head.replaceChildren(...[h("span", { class: "meta" }, plural(items.length, "step")),
+    swap(head, ...[h("span", { class: "meta" }, plural(items.length, "step")),
       hasMore ? h("span", { class: "meta", title: "More events are stored than are loaded" },
         remaining ? fmtNum(allEvents.length) + " of " + fmtNum(total) + " events" : "first " + fmtNum(allEvents.length) + " events") : null].filter(Boolean));
     more.hidden = !hasMore;
-    more.replaceChildren();
+    swap(more);
     if (hasMore && loadingRest) {
       more.append(h("span", { class: "meta", "aria-live": "polite" }, "Loading the rest of the session: " + fmtNum(allEvents.length) + (total ? " of " + fmtNum(total) : "") + " events"));
     } else if (hasMore) {
@@ -4140,7 +4261,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
       mk.style.top = (r / n) * 100 + "%";
       marks.push(mk);
     }
-    map.replaceChildren(...marks);
+    swap(map, ...marks);
     map.hidden = rows.length * ROW <= (tl.clientHeight || 600);
   }
   map.addEventListener("click", (e) => {
@@ -4200,7 +4321,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   }
   function foldPane(x) {
     delete pane.dataset.item;
-    pane.replaceChildren(
+    swap(pane, 
       h("div", { class: "pane-top" }, h("p", { class: "meta" }, "Folded steps")),
       h("h2", { class: "pane-title" }, plural(x.to - x.from, "quiet step")),
       h("p", { class: "note" }, "Successful reads, searches and model calls in a row are folded so failures and edits stand out. Press Enter or click to expand."),
@@ -4311,6 +4432,23 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   tailPill.addEventListener("click", () => { fresh = 0; tailPill.hidden = true; selectRow(rows.length - 1, false); tl.focus({ preventScroll: true }); });
   const live = !session.endedAt || Date.now() - session.endedAt < 120e3;
   let tailTimer = 0;
+  let headerBusy = false;
+  // The header's tokens, cost, duration and badges come from the session record; a running session's
+  // grow with each new step, so a tick that brought events asks for the record again.
+  async function refreshHeader() {
+    if (headerBusy) return;
+    headerBusy = true;
+    try {
+      const next = await api("/api/sessions/" + encodeURIComponent(id), null, true);
+      const head = view.firstChild;
+      if (!current(seq) || !next || !head || head.contains(document.activeElement)) return;
+      // In place: the timeline's context holds this object.
+      for (const k of Object.keys(session)) delete session[k];
+      Object.assign(session, next);
+      durableSpans = indexDurable(session.stats && session.stats.durable);
+      head.replaceWith(sessionHeader(session, labels.items, { parent, children: kids, events: allEvents }));
+    } catch { /* the header keeps what it showed; the next tick tries again */ } finally { headerBusy = false; }
+  }
   // Rebuild the steps from allEvents, keeping the selected step and the scroll position.
   function refresh() {
     const activeId = items[activeItem] && items[activeItem].id;
@@ -4357,6 +4495,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
       try { n = await fetchMore(true); } catch { return; }
       if (!current(seq) || !n) return;
       refresh();
+      refreshHeader();
       // New phases and derails show up as the session goes on; the outline is a full read, so not every tick.
       if (Date.now() - outlineAt > 30e3) loadOutline();
       if (follow) selectRow(rows.length - 1, false);
@@ -4392,7 +4531,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   rpScrub.addEventListener("input", () => rpGo(Number(rpScrub.value)));
   function rpSpeedPref() { try { const v = Number(localStorage.getItem("csh-rpspeed")); return v === 4 || v === 16 ? v : 1; } catch { return 1; } }
   function renderSpeed() {
-    rpSpeed.replaceChildren(...[1, 4, 16].map((x) => h("button", { type: "button", "aria-pressed": String(x === rp.speed), title: x === 1 ? "Real time, long pauses cut to 3 s" : x + "× faster", onclick: () => setSpeed(x) }, x + "×")));
+    swap(rpSpeed, ...[1, 4, 16].map((x) => h("button", { type: "button", "aria-pressed": String(x === rp.speed), title: x === 1 ? "Real time, long pauses cut to 3 s" : x + "× faster", onclick: () => setSpeed(x) }, x + "×")));
   }
   function setSpeed(x) {
     rp.speed = x;
@@ -4426,7 +4565,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
       mk.style.left = ((st.n - 1) / n) * 100 + "%";
       marks.push(mk);
     }
-    rpMarks.replaceChildren(...marks);
+    swap(rpMarks, ...marks);
   }
   function renderPos() {
     const steps = rpSteps();
@@ -4450,7 +4589,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
       renderPos();
     }
     if (!rp.index) {
-      pane.replaceChildren(h("div", { class: "pane-top" }, h("p", { class: "meta", "aria-busy": "true" }, "Loading the replay…")));
+      swap(pane, h("div", { class: "pane-top" }, h("p", { class: "meta", "aria-busy": "true" }, "Loading the replay…")));
       let index;
       try { index = await api(replayPath, null, true); } catch (e) {
         if (!current(seq) || !rp.on) return;
@@ -4466,7 +4605,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     const total = rpSteps().length;
     if (!total) {
       renderPos();
-      pane.replaceChildren(h("h2", { class: "pane-title" }, "Nothing to replay"), h("p", { class: "note" }, "This session has no prompts, replies or tool calls."));
+      swap(pane, h("h2", { class: "pane-title" }, "Nothing to replay"), h("p", { class: "note" }, "This session has no prompts, replies or tool calls."));
       return;
     }
     if (n === undefined) {
@@ -4563,7 +4702,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
         } catch (e) {
           if (!current(seq) || !rp.on) return;
           rp.shown = want;
-          pane.replaceChildren(errorPanel(e, () => rpFetch(true)));
+          swap(pane, errorPanel(e, () => rpFetch(true)));
         }
       }
     } finally { rp.busy = false; }
@@ -4715,7 +4854,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
       }
     }
     const keep = pane.scrollTop;
-    pane.replaceChildren(...nodes);
+    swap(pane, ...nodes);
     // Switching tabs or files keeps the reader's place; a new step starts at the top.
     pane.scrollTop = rp.lastPaneStep === st.n ? keep : 0;
     rp.lastPaneStep = st.n;
@@ -4724,7 +4863,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   }
   function renderHint() {
     const scope = rp.on ? "replay" : "session";
-    hint.replaceChildren(
+    swap(hint, 
       ...KEYMAP.filter((k) => k.scope === scope && k.hint).map((k) => h("span", null, keyCaps(k.id === "down" ? ["j", "k"] : k.keys), k.id === "down" ? "move" : k.label.replace(/^Show or hide |^Expand or fold /, "").toLowerCase())),
       h("span", { class: "spacer" }), h("span", null, keyCaps(["?"]), "all shortcuts"));
   }
@@ -4930,7 +5069,7 @@ function runTreePanel(s, kidCount) {
       data = await api("/api/sessions/" + encodeURIComponent(s.id) + "/tree");
     } catch (e) {
       loaded = false;
-      body.replaceChildren(h("p", { class: "meta err" }, "Could not load the run tree: " + e.message));
+      swap(body, h("p", { class: "meta err" }, "Could not load the run tree: " + e.message));
       return;
     }
     const t = data.totals || {};
@@ -4966,7 +5105,7 @@ function runTreePanel(s, kidCount) {
       for (const c of n.children || []) walk(c);
     };
     for (const root of data.tree || []) walk(root);
-    body.replaceChildren(totals, worst, nodes);
+    swap(body, totals, worst, nodes);
   });
   return details;
 }
@@ -5098,7 +5237,7 @@ function clipped(text, make, opts) {
   const part = tail ? lines.slice(-max) : lines.slice(0, max);
   const hidden = lines.length - max;
   const wrap = h("div", { class: "section" });
-  const btn = h("button", { class: "btn btn-sm show-all", type: "button", onclick: () => wrap.replaceChildren(make(text)) },
+  const btn = h("button", { class: "btn btn-sm show-all", type: "button", onclick: () => swap(wrap, make(text)) },
     "Show all " + fmtNum(lines.length) + " lines");
   wrap.append(...(tail ? [h("p", { class: "meta" }, fmtNum(hidden) + " earlier lines hidden"), make(part.join("\n")), btn] : [make(part.join("\n")), btn]));
   return wrap;
@@ -5321,7 +5460,7 @@ function grepView(text) {
     if (n++ > 80) { pre.append(h("p", { class: "meta grep-file" }, "… " + plural(groups.size - 80, "more file"))); break; }
     const grid = h("div", { class: "lines" });
     for (const [ln, tx] of hits.slice(0, 40)) grid.append(h("span", { class: "ln" }, ln), h("span", null, tx));
-    pre.append(h("div", { class: "grep-file" }, f, h("span", { class: "meta" }, "  " + plural(hits.length, "match", "matches"))), grid);
+    append(pre, [h("div", { class: "grep-file" }, f, h("span", { class: "meta" }, "  " + plural(hits.length, "match", "matches"))), grid]);
   }
   return pre;
 }
@@ -5329,7 +5468,7 @@ function fileList(text) {
   const files = text.split("\n").map((l) => l.trim()).filter(Boolean);
   if (!files.length || files.some((f) => /\s{2,}/.test(f))) return null;
   const ul = h("ul", { class: "files code" });
-  const show = (k) => ul.replaceChildren(...files.slice(0, k).map((f) => h("li", { class: "truncate", title: f }, relPath(f))));
+  const show = (k) => swap(ul, ...files.slice(0, k).map((f) => h("li", { class: "truncate", title: f }, relPath(f))));
   show(200);
   const wrap = h("div", { class: "section" }, h("p", { class: "meta" }, plural(files.length, "file")), ul);
   if (files.length > 200) wrap.append(h("button", { class: "btn btn-sm show-all", type: "button", onclick: (e) => { show(files.length); e.currentTarget.remove(); } }, "Show all " + fmtNum(files.length)));
@@ -5452,13 +5591,13 @@ function blobView(ref, auto) {
         nodes.unshift(h("p", { class: "note" }, "Showing the first 2 MB of " + fmtBytes(size) + ". ",
           h("button", { class: "btn btn-sm", type: "button", onclick: () => load(true) }, "Load all")));
       }
-      body.replaceChildren(...nodes);
+      swap(body, ...nodes);
       loadBtn.remove();
       bar.append(h("span", { class: "meta" }, fmtBytes(size || text.length)));
     } catch (e) {
       loadBtn.disabled = false;
       loadBtn.textContent = "Retry";
-      body.replaceChildren(h("p", { class: "note err" }, e.status === 404 ? "This blob is not in the local store (it may have been garbage-collected)." : e.message));
+      swap(body, h("p", { class: "note err" }, e.status === 404 ? "This blob is not in the local store (it may have been garbage-collected)." : e.message));
     }
   }
   loadBtn.addEventListener("click", () => load(false));
@@ -5495,8 +5634,8 @@ function callDetails(ev) {
       nodes.push(h("p", { class: "note" }, "The request content was not stored (capture mode metadata)."));
     }
     nodes.push(callDiffSection(ev));
-    wrap.replaceChildren(...nodes);
-  }).catch((e) => wrap.replaceChildren(h("p", { class: "note err" }, e.message)));
+    swap(wrap, ...nodes);
+  }).catch((e) => swap(wrap, h("p", { class: "note err" }, e.message)));
   return wrap;
 }
 
@@ -5525,11 +5664,11 @@ function callDiffSection(ev) {
         let a = 1, b = 1;
         nodes.push(section("system prompt diff", diffGrid(d.system.lines.map((l) => l.op === "+" ? { t: "add", b: b++, text: l.text } : l.op === "-" ? { t: "del", a: a++, text: l.text } : l.text === "…" ? { t: "hunk", text: "…" } : { t: "ctx", a: a++, b: b++, text: l.text }))));
       }
-      body.replaceChildren(...nodes);
+      swap(body, ...nodes);
       btn.remove();
     } catch (e) {
       btn.disabled = false;
-      body.replaceChildren(h("p", { class: "note" }, e.status === 404 ? "This is the first model call of its session." : e.message));
+      swap(body, h("p", { class: "note" }, e.status === 404 ? "This is the first model call of its session." : e.message));
     }
   });
   return section("compare", h("div", { class: "stack" }, btn, body));
@@ -5568,7 +5707,7 @@ function renderPane(pane, item, session, ctx) {
   if (ctx.raw) {
     nodes.push(h("h2", { class: "pane-title" }, v.label));
     for (const ev of rawEvents) nodes.push(section(ev.kind + " · " + short(ev.id, 16), jsonTree(ev, true)));
-    pane.replaceChildren(...nodes);
+    swap(pane, ...nodes);
     if (!sameStep) pane.scrollTop = 0;
     return;
   }
@@ -5681,7 +5820,7 @@ function renderPane(pane, item, session, ctx) {
     const refs = blobRefs([ev]);
     if (refs.length) nodes.push(section("stored content", h("div", { class: "stack" }, refs.map((r, i) => blobView(r, item.type === "file.change" && typeof p.diff !== "string" && i === 0)))));
   }
-  pane.replaceChildren(...nodes);
+  swap(pane, ...nodes);
   if (!sameStep) pane.scrollTop = 0;
 }
 
@@ -5751,7 +5890,7 @@ async function showExperiments(seq) {
   setView(view, false, keys);
   // A local index answers in a few milliseconds. Show the skeleton only when it does
   // not, so a fast load never swaps a short placeholder for a tall list.
-  const skel = setTimeout(() => slot.replaceChildren(h("div", { class: "panel table", "aria-busy": "true", "aria-label": "Loading experiments" }, h("div", { class: "thead" }), [48, 36, 54, 40].map((w) => {
+  const skel = setTimeout(() => swap(slot, h("div", { class: "panel table", "aria-busy": "true", "aria-label": "Loading experiments" }, h("div", { class: "thead" }), [48, 36, 54, 40].map((w) => {
     const row = h("div", { class: "skeleton" }, h("span", { class: "dot tone-muted" }), h("i"));
     row.lastChild.style.width = w + "%";
     return row;
@@ -5762,7 +5901,7 @@ async function showExperiments(seq) {
   } catch (e) {
     clearTimeout(skel);
     if (!current(seq)) return;
-    slot.replaceChildren(errorPanel(e, () => route()));
+    swap(slot, errorPanel(e, () => route()));
     return;
   } finally { clearTimeout(skel); }
   if (!current(seq)) return;
@@ -5779,7 +5918,7 @@ async function showExperiments(seq) {
   const total = groups.size + exps.items.length;
   const pm = $(".page-head .meta", view);
   pm.classList.add("fact-line");
-  pm.replaceChildren(...[
+  swap(pm, ...[
     exps.items.length ? plural(exps.items.length, "experiment") : "",
     groups.size ? plural(groups.size, "harness group") : "",
     plural(runs.items.length + caseRuns, "run"), plural(tasks.items.length, "task")].filter(Boolean).map((t) => h("span", null, t)));
@@ -5806,7 +5945,7 @@ async function showExperiments(seq) {
     bar.hidden = expSel.length === 0;
     const pair = selPair();
     const names = pair.map((id) => (items.find((e) => e.id === id) || { name: id }).name || id);
-    bar.replaceChildren(
+    swap(bar, 
       h("span", { class: "truncate" }, expSel.length === 1 ? names[0] + " selected. Pick one more to compare." : names[0] + " vs " + names[1]),
       expSel.length === 2 ? h("a", { class: "btn btn-sm btn-primary", href: compareHref(pair[0], pair[1]), "aria-keyshortcuts": "c" }, "Compare") : null,
       h("button", { class: "btn btn-sm btn-ghost", type: "button", onclick: () => { expSel.length = 0; renderBar(); } }, "Clear"));
@@ -5862,12 +6001,12 @@ async function showExperiments(seq) {
       if (ev.key === "Enter") { ev.preventDefault(); ev.stopPropagation(); location.hash = expHref(items[active].id); }
       else if (ev.key === " ") { ev.preventDefault(); ev.stopPropagation(); toggleSel(active); }
     });
-    body.append(
+    append(body, [
       h("div", { class: "section-head" }, h("h2", null, "Dataset experiments", oneDs ? h("span", { class: "meta h-sub nw" }, datasetText(items[0])) : null), h("span", { class: "meta" }, "Select two to compare")),
       h("div", { class: "panel table exp-table" + (oneDs ? " one-ds" : "") },
         h("div", { class: "thead", "aria-hidden": "true" }, h("span"), h("span", null, "experiment"), oneDs ? null : h("span", null, "dataset"), h("span", null, "pass rate"), h("span", { class: "num opt" }, items.some((e) => (e.trials || 1) > 1) ? "cases × trials" : "cases"), h("span", { class: "num opt" }, "median"), h("span", { class: "num opt" }, "finished")),
         lb),
-      bar);
+      bar]);
     renderBar();
   }
 
@@ -6001,7 +6140,7 @@ async function showExperiment(seq, id) {
     [d, siblings] = await Promise.all([api("/api/experiments/" + encodeURIComponent(id)), (expCache ? Promise.resolve({ items: expCache }) : api("/api/experiments")).catch(() => ({ items: [] }))]);
   } catch (e) {
     if (!current(seq)) return;
-    view.append(e.status === 404 ? h("div", { class: "panel empty" }, h("h2", { text: "Experiment not found" }), h("p", { class: "mono dim", text: id })) : errorPanel(e, () => route()));
+    append(view, [e.status === 404 ? h("div", { class: "panel empty" }, h("h2", { text: "Experiment not found" }), h("p", { class: "mono dim", text: id })) : errorPanel(e, () => route())]);
     return;
   }
   if (!current(seq)) return;
@@ -6012,7 +6151,7 @@ async function showExperiment(seq, id) {
   // Earlier runs on the same dataset are the natural baselines.
   const peers = siblings.items.filter((e) => e.id !== d.id && e.dataset && d.dataset && e.dataset.id === d.dataset.id).slice(0, 4);
 
-  view.replaceChildren(
+  swap(view, 
     h("div", { class: "exp-top" }, crumbs,
       h("div", { class: "head-row" }, h("h1", { title: d.id }, d.name || d.id),
         h("div", { class: "badges" }, d.status === "cancelled" ? h("span", { class: "badge warn" }, "cancelled · partial") : null, copyBtn(d.id, "Copy experiment id", "experiment id", "Copy id"))),
@@ -6065,7 +6204,7 @@ async function showExperiment(seq, id) {
   const caseMeta = h("span", { class: "meta" });
   const more = h("div", { class: "more" });
   function renderCases() {
-    chips.replaceChildren(...[chip("all", "All", counts.all), chip("failed", "Failed", counts.fail + counts.errored, "fail"), chip("errored", "Errored", counts.errored, "warn"), chip("pass", "Passed", counts.pass, "pass"), chip("ungraded", "Ungraded", counts.ungraded)].filter(Boolean));
+    swap(chips, ...[chip("all", "All", counts.all), chip("failed", "Failed", counts.fail + counts.errored, "fail"), chip("errored", "Errored", counts.errored, "warn"), chip("pass", "Passed", counts.pass, "pass"), chip("ungraded", "Ungraded", counts.ungraded)].filter(Boolean));
     const keep = (r) => {
       const st = caseState(r);
       if (filter === "failed" && !(st === "fail" || st === "errored")) return false;
@@ -6075,7 +6214,7 @@ async function showExperiment(seq, id) {
     const all = runs.filter(keep);
     shownRows = all.slice(0, limit);
     active = Math.min(active, Math.max(0, shownRows.length - 1));
-    lb.replaceChildren(...shownRows.map((r, i) => {
+    swap(lb, ...shownRows.map((r, i) => {
       const st = caseState(r);
       const why = caseWhy(r);
       const preview = why || (r.output !== undefined ? oneLine(typeof r.output === "string" ? r.output : JSON.stringify(r.output)) : "");
@@ -6089,7 +6228,7 @@ async function showExperiment(seq, id) {
     if (!shownRows.length) lb.append(h("p", { class: "meta list-note" }, q ? "No cases match “" + q + "”." : "No cases in this group."));
     lb.setAttribute("aria-activedescendant", shownRows.length ? "case-" + active : "");
     caseMeta.textContent = (all.length === runs.length ? plural(all.length, "case run") : "showing " + fmtNum(all.length) + " of " + fmtNum(runs.length)) + (d.runsTruncated ? " · first " + fmtNum((d.runs || []).length) + " of " + fmtNum(d.runCount) + " loaded" : "");
-    more.replaceChildren();
+    swap(more);
     more.hidden = all.length <= limit;
     if (all.length > limit) more.append(h("button", { class: "btn btn-sm", type: "button", onclick: () => { limit += PAGE_CASES; renderCases(); } }, "Show " + fmtNum(Math.min(PAGE_CASES, all.length - limit)) + " more"));
   }
@@ -6180,7 +6319,7 @@ async function showCompare(seq, aId, bId) {
     ]);
   } catch (e) {
     if (!current(seq)) return;
-    view.append(e.status === 404 ? h("div", { class: "panel empty" }, h("h2", { text: "Experiment not found" }), h("p", { text: "One of the two experiments is not in the local store." }), h("p", { class: "mono dim", text: aId + " · " + bId })) : errorPanel(e, () => route()));
+    append(view, [e.status === 404 ? h("div", { class: "panel empty" }, h("h2", { text: "Experiment not found" }), h("p", { text: "One of the two experiments is not in the local store." }), h("p", { class: "mono dim", text: aId + " · " + bId })) : errorPanel(e, () => route())]);
     return;
   }
   if (!current(seq)) return;
@@ -6198,7 +6337,7 @@ async function showCompare(seq, aId, bId) {
   const noPower = pw.some((w) => w.code === "no-power");
   for (const w of pw) if (!(smallN && w.code === "below-mde") && !(noPower && w.code === "small-n")) warnings.push({ text: powerText(w, c), title: w.message });
   const mde = Number.isFinite(powerMde(c)) ? "detects changes of " + Math.round(powerMde(c) * 1000) / 10 + " pts or more" : "";
-  view.replaceChildren(
+  swap(view, 
     h("div", { class: "exp-top" }, crumbs),
     h("section", { class: "panel verdict " + tone, "aria-label": "Verdict" },
       h("div", { class: "verdict-line" }, h("h1", null, headline),
@@ -6267,14 +6406,14 @@ async function showCompare(seq, aId, bId) {
   };
   function render() {
     const n = { regression: c.regressions.length, improvement: c.improvements.length, same: unchanged.length };
-    chips.replaceChildren(
+    swap(chips, 
       h("button", { class: "chip is-fail", type: "button", "aria-pressed": String(filter === "regression"), onclick: () => { filter = "regression"; render(); } }, "Regressions", h("span", { class: "count" }, fmtNum(n.regression))),
       h("button", { class: "chip is-pass", type: "button", "aria-pressed": String(filter === "improvement"), onclick: () => { filter = "improvement"; render(); } }, "Improvements", h("span", { class: "count" }, fmtNum(n.improvement))),
       h("button", { class: "chip", type: "button", "aria-pressed": String(filter === "same"), onclick: () => { filter = "same"; render(); } }, "Unchanged", h("span", { class: "count" }, fmtNum(n.same))),
       h("button", { class: "chip", type: "button", "aria-pressed": String(filter === "all"), onclick: () => { filter = "all"; render(); } }, "All", h("span", { class: "count" }, fmtNum(rows.length))));
     shown = rows.filter((r) => filter === "all" || r.kind === filter).slice(0, 500);
     active = Math.min(active, Math.max(0, shown.length - 1));
-    lb.replaceChildren(...shown.map((r, i) => h("div", { class: "row cmp-row", role: "option", id: "cmp-" + i, "aria-selected": String(i === active), "aria-expanded": "false", "data-case": r.caseId, onclick: () => { setActive(i); toggle(i); } },
+    swap(lb, ...shown.map((r, i) => h("div", { class: "row cmp-row", role: "option", id: "cmp-" + i, "aria-selected": String(i === active), "aria-expanded": "false", "data-case": r.caseId, onclick: () => { setActive(i); toggle(i); } },
       h("span", { class: "cid mono truncate", title: r.caseId }, r.caseId),
       res(ra.get(r.caseId), r.a),
       res(rb.get(r.caseId), r.b),
@@ -6313,12 +6452,12 @@ async function showCompare(seq, aId, bId) {
     row.setAttribute("aria-expanded", String(!det.hidden));
   }
   lb.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); toggle(active); } });
-  view.append(
+  append(view, [
     h("div", { class: "case-tools" }, h("h2", null, "Cases"), chips),
     h("div", { class: "panel table cmp-table" },
       h("div", { class: "thead", "aria-hidden": "true" }, h("span", null, "case"), h("span", null, "baseline"), h("span", null, "candidate"), h("span", { class: "num" }, "change")),
       lb),
-    A.runsTruncated || B.runsTruncated ? h("p", { class: "meta list-foot" }, "Outputs come from the first " + fmtNum(Math.min((A.runs || []).length, (B.runs || []).length)) + " runs of each side. The statistics above use every run.") : null);
+    A.runsTruncated || B.runsTruncated ? h("p", { class: "meta list-foot" }, "Outputs come from the first " + fmtNum(Math.min((A.runs || []).length, (B.runs || []).length)) + " runs of each side. The statistics above use every run.") : null]);
   render();
   keys.actions = {
     down: () => { setActive(active + 1, true); lb.focus({ preventScroll: true }); },
@@ -6392,7 +6531,17 @@ async function showExplore(seq, query) {
   const keys = { scope: "explore", actions: { search: () => { input.focus(); input.select(); } }, palette: [] };
   const go = (patch) => { location.hash = exploreHref({ ...st, ...patch }); };
   const input = h("input", { type: "search", value: st.where, placeholder: "Filter: agent:codex cost>0.5 -flag:compaction", "aria-label": "Filter sessions with a query", autocomplete: "off", spellcheck: "false" });
-  const form = h("form", { class: "search qbar", role: "search", onsubmit: (e) => { e.preventDefault(); go({ where: input.value.trim().slice(0, WHERE_MAX) }); } }, input);
+  const problem = h("div");
+  const form = h("form", { class: "search qbar", role: "search", onsubmit: (e) => {
+    e.preventDefault();
+    const where = input.value.trim().slice(0, WHERE_MAX);
+    // A query that cannot parse is not sent: say why here, under the bar.
+    const bad = whereProblem(where);
+    swap(problem, bad ? queryErrorLine(new ApiError(400, bad.message, bad)) : null);
+    form.dataset.invalid = String(!!bad);
+    if (!bad) go({ where });
+  } }, input);
+  input.addEventListener("input", () => { if (problem.firstChild) { swap(problem); form.dataset.invalid = "false"; } });
   input.addEventListener("keydown", (e) => { if (e.key === "Escape" && input.value) { e.preventDefault(); e.stopPropagation(); input.value = ""; go({ where: "" }); } });
   const seg = (label, opts, cur, key) => h("div", { class: "seg", role: "group", "aria-label": label },
     opts.map(([v, text]) => h("button", { type: "button", "aria-pressed": String(cur === v), onclick: () => go({ [key]: v }) }, text)));
@@ -6407,7 +6556,7 @@ async function showExplore(seq, query) {
         return sel;
       })()));
   const meta = h("p", { class: "meta" }, "Loading…");
-  view.append(h("div", { class: "page-head" }, h("div", null, h("h1", { id: "explore-h" }, "Explore"), meta), form), controls);
+  append(view, [h("div", { class: "page-head" }, h("div", null, h("h1", { id: "explore-h" }, "Explore"), meta), form), problem, controls]);
   const slot = h("div", { class: "mx-body" });
   view.append(slot);
   setView(view, false, keys);
@@ -6417,12 +6566,12 @@ async function showExplore(seq, query) {
   } catch (e) {
     if (!current(seq)) return;
     meta.textContent = "";
-    slot.replaceChildren(e.status === 400 ? h("div", { class: "panel empty", role: "alert" }, h("h2", { text: "That filter does not parse" }), h("p", { text: e.message })) : errorPanel(e, () => route()));
+    swap(slot, e.status === 400 ? h("div", { class: "panel empty", role: "alert" }, h("h2", { text: "That filter does not parse" }), h("p", { text: e.message })) : errorPanel(e, () => route()));
     return;
   }
   if (!current(seq)) return;
   const t = m.totals;
-  const range = fmtDay(m.since) + " – " + fmtDay(m.until - 1);
+  const range = fmtDayRange(m.since, m.until - 1);
   meta.textContent = range + " · " + plural(t.sessions, "session") + (m.truncated ? " · first 100,000 only" : "");
   const dates = m.buckets.map(ymd);
   const lines = m.by ? m.series : [m.all];
@@ -6453,7 +6602,7 @@ async function showExplore(seq, query) {
   if (m.by && m.series.length) out.push(exploreTable(st, m, color));
   if (t.pricedSessions && t.pricedSessions < t.sessions) out.push(h("p", { class: "meta" }, "Cost covers the " + fmtNum(t.pricedSessions) + " of " + plural(t.sessions, "session") + " with a price."));
   if (m.by === "flag") out.push(h("p", { class: "meta" }, "A session with several flags counts once in each row."));
-  slot.replaceChildren(...out);
+  swap(slot, ...out);
   announce(plural(t.sessions, "session") + " in " + plural(m.buckets.length, st.per));
 }
 function exploreTable(st, m, color) {
@@ -6487,14 +6636,14 @@ async function showWorkflows(seq) {
   let d;
   try { d = await api("/api/workflows?limit=200"); } catch (e) {
     if (!current(seq)) return;
-    slot.replaceChildren(errorPanel(e, () => route()));
+    swap(slot, errorPanel(e, () => route()));
     return;
   }
   if (!current(seq)) return;
   const runs = d.runs || [];
   $(".page-head .meta", view).textContent = runs.length ? plural(runs.length, "run") + ", newest first" : "No runs yet";
   if (!runs.length) {
-    slot.replaceChildren(h("div", { class: "panel empty" },
+    swap(slot, h("div", { class: "panel empty" },
       h("h2", { text: "No workflow runs yet" }),
       h("p", { text: "A workflow run is one program that starts many agents: a Claude Code Workflow tool script, or a LangGraph, Mastra or Agents SDK app. Import the Claude Code runs on this machine, then open one here." }),
       cmdBlock("coding.sh workflows import", "Copy workflows import command")));
@@ -6508,7 +6657,7 @@ async function showWorkflows(seq) {
     h("td", null, wfMs(r.wallMs)),
     h("td", null, fmtNum(r.agents)),
     h("td", null, wfUsd(r.costUsd)));
-  slot.replaceChildren(h("div", { class: "panel mx-table-wrap wfg-list" }, h("table", { class: "mx-table" },
+  swap(slot, h("div", { class: "panel mx-table-wrap wfg-list" }, h("table", { class: "mx-table" },
     h("caption", { class: "sr-only" }, "Workflow runs"),
     h("thead", null, h("tr", null, ["Run", "Status", "Started", "Wall", "Agents", "Cost"].map((c) => h("th", { scope: "col" }, c)))),
     h("tbody", null, runs.map(row)))));
@@ -6529,7 +6678,7 @@ async function showWorkflow(seq, id) {
     [doc, g] = await Promise.all([api("/api/workflows/" + encodeURIComponent(id)), api("/api/workflows/" + encodeURIComponent(id) + "/gantt")]);
   } catch (e) {
     if (!current(seq)) return;
-    slot.replaceChildren(e.status === 404
+    swap(slot, e.status === 404
       ? h("div", { class: "panel empty" }, h("h2", { text: "No such workflow run" }), h("p", { text: "There is no stored run " + id + ". List the runs this machine knows:" }), cmdBlock("coding.sh workflows list", "Copy workflows list command"))
       : errorPanel(e, () => route()));
     return;
@@ -6554,12 +6703,12 @@ async function showWorkflow(seq, id) {
   const setMode = (m) => {
     mode = m;
     for (const b of seg.children) b.setAttribute("aria-pressed", String(b.dataset.mode === m));
-    body.replaceChildren(m === "table" && table ? table : timeline);
+    swap(body, m === "table" && table ? table : timeline);
   };
   for (const [m, label] of [["timeline", "Timeline"], ["table", "Table"]]) seg.append(h("button", { type: "button", "data-mode": m, "aria-pressed": "false", onclick: () => setMode(m) }, label));
   setMode(mode);
   const mainPanel = h("section", { class: "panel wfg-main", "aria-label": "Agents by phase" }, h("div", { class: "wfg-bar-head" }, facts, rows ? seg : null), body);
-  slot.replaceChildren(h("div", { class: "wfg-grid" }, mainPanel, h("aside", { class: "wfg-side" }, workflowPhaseTable(st), workflowMetricsTable(st, g))));
+  swap(slot, h("div", { class: "wfg-grid" }, mainPanel, h("aside", { class: "wfg-side" }, workflowPhaseTable(st), workflowMetricsTable(st, g))));
   announce("Workflow run " + (oneLine(run.name) || run.id) + ": " + plural(rows, "agent"));
 }
 
@@ -6695,7 +6844,7 @@ function playgroundHref(callId, sessionId) {
 function playgroundLink(ev, sessionId) {
   const slot = h("div", { class: "pg-slot" });
   playgroundAvailable().then((info) => {
-    if (info) slot.replaceChildren(h("a", { class: "btn btn-sm", href: playgroundHref(ev.id, sessionId) }, "Open in playground"));
+    if (info) swap(slot, h("a", { class: "btn btn-sm", href: playgroundHref(ev.id, sessionId) }, "Open in playground"));
   });
   return slot;
 }
@@ -6721,7 +6870,7 @@ async function showPlayground(seq, callId, sessionId) {
   } catch (e) {
     if (!current(seq)) return;
     meta.textContent = "";
-    body.replaceChildren(e.status === 404 && /only in the local viewer/.test(e.message)
+    swap(body, e.status === 404 && /only in the local viewer/.test(e.message)
       ? h("div", { class: "panel empty" }, h("h2", null, "The playground runs in the local viewer"), h("p", null, "Start it with coding.sh ui. Shared and team viewers do not send model requests."), cmdBlock("coding.sh ui"))
       : errorPanel(e, () => showPlayground(seq, callId, sessionId)));
     return;
@@ -6780,7 +6929,7 @@ async function showPlayground(seq, callId, sessionId) {
     const from = state.showAll ? 0 : Math.max(0, state.messages.length - PG_SHOWN);
     const items = state.messages.slice(from).map((m, k) => card(m, from + k));
     const more = from > 0 ? [h("li", { class: "pg-more" }, h("button", { class: "btn btn-sm", type: "button", onclick: () => { state.showAll = true; renderMsgs(); } }, "Show " + plural(from, "earlier message")))] : [];
-    list.replaceChildren(...more, ...items);
+    swap(list, ...more, ...items);
     msgCount.textContent = plural(state.messages.length, "message");
   }
   renderMsgs();
@@ -6821,7 +6970,7 @@ async function showPlayground(seq, callId, sessionId) {
       const out = await api("/api/playground/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: provSel.value, request: r }) }, true);
       if (!view.isConnected) return;
       state.last = out;
-      fresh.replaceChildren(outputCard("This run", out));
+      swap(fresh, outputCard("This run", out));
       status.textContent = "Done in " + fmtDuration(out.latencyMs) + ".";
       expected.querySelector("option[value=run]").disabled = false;
     } catch (e) {
@@ -6859,7 +7008,7 @@ async function showPlayground(seq, callId, sessionId) {
     } finally { saveBtn.disabled = false; }
   } }, h("datalist", { id: listId }, sets.map((d) => h("option", { value: d.name }))), dsInput, expected, saveBtn);
 
-  body.replaceChildren(
+  swap(body, 
     settings,
     section("system prompt", system),
     section("messages", h("div", { class: "stack pg-msg-wrap" }, list, h("div", { class: "pg-row" }, add("user"), add("assistant"))), msgCount),
@@ -6994,7 +7143,7 @@ function lineChart(o) {
       dots[k].style.top = Y(p.value) + "%";
       rows.push(h("div", { class: "tip-row" }, swatch(s.cls, s.dashed), h("span", { class: "truncate" }, s.name), h("b", null, o.fmtValue(p.value)), o.fmtRange && p.lo !== undefined ? h("span", { class: "meta" }, o.fmtRange(p)) : null));
     });
-    tip.replaceChildren(h("div", { class: "meta" }, shortDate(dates[i]) + (p0(i) ? " · n " + p0(i) : "")), ...rows);
+    swap(tip, h("div", { class: "meta" }, shortDate(dates[i]) + (p0(i) ? " · n " + p0(i) : "")), ...rows);
     tip.hidden = false;
     tip.classList.toggle("left", X(i) > 55);
     tip.style.left = X(i) + "%";
@@ -7055,7 +7204,7 @@ async function showBenchmarks(seq) {
   const slot = h("div");
   view.append(slot);
   setView(view, false, keys);
-  const skel = setTimeout(() => slot.replaceChildren(h("div", { class: "panel bench-card", "aria-busy": "true", "aria-label": "Loading benchmarks" }, [52, 38, 44].map((w) => {
+  const skel = setTimeout(() => swap(slot, h("div", { class: "panel bench-card", "aria-busy": "true", "aria-label": "Loading benchmarks" }, [52, 38, 44].map((w) => {
     const row = h("div", { class: "skeleton" }, h("span", { class: "dot tone-muted" }), h("i"));
     row.lastChild.style.width = w + "%";
     return row;
@@ -7064,7 +7213,7 @@ async function showBenchmarks(seq) {
   try { b = await api("/api/benchmarks"); } catch (e) {
     clearTimeout(skel);
     if (!current(seq)) return;
-    slot.replaceChildren(errorPanel(e, () => route()));
+    swap(slot, errorPanel(e, () => route()));
     return;
   } finally { clearTimeout(skel); }
   if (!current(seq)) return;
@@ -7072,7 +7221,7 @@ async function showBenchmarks(seq) {
   const items = b.items;
   $(".page-head .meta", view).textContent = items.length ? plural(items.length, "benchmark") + " · fresh cases every day" : "Fresh cases every day";
   if (!items.length) {
-    slot.replaceChildren(h("div", { class: "panel empty" },
+    swap(slot, h("div", { class: "panel empty" },
       h("h2", { text: "No benchmarks yet" }),
       h("p", { text: "A benchmark runs two or more agents on a fresh sample of cases every day and tracks who passes more. Define one, then run it daily." }),
       cmdBlock("coding.sh bench new <name> -c a=<cmd> -c b=<cmd>", "Copy bench new command"),
@@ -7093,7 +7242,7 @@ async function showBenchmarks(seq) {
   }
   const lb = h("div", { class: "stack bench-list", role: "listbox", tabindex: "0", "aria-label": "Benchmarks. j and k to move, Enter to open.", "aria-activedescendant": "bench-0" }, cards);
   lb.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); location.hash = benchHref(items[active].name); } });
-  slot.replaceChildren(lb);
+  swap(slot, lb);
   keys.actions = {
     down: () => { setActive(active + 1, true); lb.focus({ preventScroll: true }); },
     up: () => { setActive(active - 1, true); lb.focus({ preventScroll: true }); },
@@ -7147,7 +7296,7 @@ async function showBenchmark(seq, name) {
   let r;
   try { r = await api("/api/benchmarks/" + encodeURIComponent(name)); } catch (e) {
     if (!current(seq)) return;
-    view.append(e.status === 404 || e.status === 400 ? h("div", { class: "panel empty" }, h("h2", { text: "Benchmark not found" }), h("p", { class: "mono dim", text: name }), h("p", { class: "meta" }, "Benchmarks live in ~/.coding.sh/benchmarks.")) : errorPanel(e, () => route()));
+    append(view, [e.status === 404 || e.status === 400 ? h("div", { class: "panel empty" }, h("h2", { text: "Benchmark not found" }), h("p", { class: "mono dim", text: name }), h("p", { class: "meta" }, "Benchmarks live in ~/.coding.sh/benchmarks.")) : errorPanel(e, () => route())]);
     return;
   }
   if (!current(seq)) return;
@@ -7172,7 +7321,7 @@ async function showBenchmark(seq, name) {
     L.dataset ? L.dataset.id + "@" + L.dataset.version : "",
   ].filter(Boolean);
   const next = L.seedCommit && L.seedCommit.next;
-  view.replaceChildren(h("div", { class: "exp-top" }, crumbs,
+  swap(view, h("div", { class: "exp-top" }, crumbs,
     h("div", { class: "head-row" }, h("h1", null, r.bench),
       h("div", { class: "badges" },
         sc ? h("span", { class: "badge " + (sc.ok ? "pass" : "fail"), title: sc.checks.map((c) => (c.ok ? "ok: " : "failed: ") + c.detail).join("\n") }, sc.ok ? "seed verified" : "seed check failed") : null,
@@ -7251,7 +7400,7 @@ async function showBenchmark(seq, name) {
     const src = mode === "anchor" && r.anchor ? r.anchor.history : (r.history && r.history.pass) || {};
     const series = order.filter((n) => src[n]).map((n) => ({ name: n, cls: cOf(n), dashed: mode === "anchor", points: mode === "anchor" ? cutAnchor(src[n]) : src[n] }));
     const ax = rateAxis(series.flatMap((s) => s.points.map((p) => p && p.value)));
-    chartSlot.replaceChildren(lineChart({ dates, series, y: ax.y, ticks: ax.ticks, breaks: r.protocolBreaks, fmtTick: (t) => Math.round(t * 100) + "%", fmtValue: pct, fmtRange: (p) => pct(p.lo) + "–" + pct(p.hi),
+    swap(chartSlot, lineChart({ dates, series, y: ax.y, ticks: ax.ticks, breaks: r.protocolBreaks, fmtTick: (t) => Math.round(t * 100) + "%", fmtValue: pct, fmtRange: (p) => pct(p.lo) + "–" + pct(p.hi),
       label: "Pass rate by day" + (mode === "anchor" ? " on the anchor set" : "") + " for " + order.join(", ") }), legendFor(mode === "anchor"), ...(mode === "anchor" && anchorChanges.length ? [anchorNote()] : []));
     for (const b of seg.children) b.setAttribute("aria-pressed", String(b.dataset.mode === mode));
   }
@@ -7335,17 +7484,17 @@ async function showBenchmark(seq, name) {
   const flb = h("div", { class: "list", role: "listbox", tabindex: "0", "aria-label": "Failed cases. j and k to move, Enter to show, o to open the session." });
   function renderFails() {
     const count = (fn) => fails.filter(fn).length;
-    fchips.replaceChildren(
+    swap(fchips, 
       h("button", { class: "chip", type: "button", "aria-pressed": String(ffilter === "all"), onclick: () => { ffilter = "all"; flimit = FAIL_PAGE; renderFails(); } }, "All", h("span", { class: "count" }, fmtNum(fails.length))),
       ...order.filter((n) => count((f) => f.contender === n)).map((n) => h("button", { class: "chip", type: "button", "aria-pressed": String(ffilter === "c:" + n), onclick: () => { ffilter = "c:" + n; flimit = FAIL_PAGE; renderFails(); } }, swatch(cOf(n)), n, h("span", { class: "count" }, fmtNum(count((f) => f.contender === n))))),
       unsolved.size ? h("button", { class: "chip is-fail", type: "button", "aria-pressed": String(ffilter === "unsolved"), title: "Cases no contender passed", onclick: () => { ffilter = "unsolved"; flimit = FAIL_PAGE; renderFails(); } }, "Nobody passed", h("span", { class: "count" }, plural(unsolved.size, "case"))) : null);
     const all = fails.filter((f) => ffilter === "all" || (ffilter === "unsolved" ? unsolved.has(f.caseId) : "c:" + f.contender === ffilter));
     shown = all.slice(0, flimit);
-    fmore.replaceChildren();
+    swap(fmore);
     fmore.hidden = all.length <= flimit;
     if (all.length > flimit) fmore.append(h("button", { class: "btn btn-sm", type: "button", onclick: () => { flimit = all.length; renderFails(); } }, "Show " + fmtNum(all.length - flimit) + " more"));
     factive = Math.min(factive, Math.max(0, shown.length - 1));
-    flb.replaceChildren(...shown.map((f, i) => h("div", { class: "row case-row fail-row", role: "option", id: "bf-" + i, "aria-selected": String(i === factive), "aria-expanded": "false", onclick: () => { setFActive(i); toggleF(i); } },
+    swap(flb, ...shown.map((f, i) => h("div", { class: "row case-row fail-row", role: "option", id: "bf-" + i, "aria-selected": String(i === factive), "aria-expanded": "false", onclick: () => { setFActive(i); toggleF(i); } },
       h("span", { class: "dot tone-" + (f.failure === "timeout" || f.failure === "error" ? "warn" : "fail"), "aria-hidden": "true" }),
       h("span", { class: "cid", title: f.caseId }, f.caseId),
       h("span", { class: "who-name" }, swatch(cOf(f.contender)), h("span", { class: "truncate" }, f.contender), f.latencyMs ? h("span", { class: "meta f-dur" }, fmtDuration(f.latencyMs)) : null),
@@ -7406,7 +7555,7 @@ async function showBenchmark(seq, name) {
     (x.anchor ? "Anchor case " : "Case ") + clip(x.key, 60) + " changed on " + shortDate(x.to.date) + ". Earlier days scored the old version."))),
     changes.length > 10 ? h("div", { class: "meta" }, "and " + (changes.length - 10) + " more") : null);
 
-  view.append(
+  append(view, [
     h("div", { class: "section-head" }, h("h2", null, "Leaderboard", h("span", { class: "meta h-sub" }, shortDate(L.date))), h("span", { class: "meta" }, (usePooled ? "Places use every pooled day; = means tied within noise." : "Places from today's run; = means tied within noise.") + (usePooled && sums.length > 1 && sums.every((x) => x.place === sums[0].place) ? " Today's run alone can't separate them." : ""))),
     board,
     h("div", { class: "section-head" }, h("h2", null, "Pass rate by day"), r.anchor ? seg : null),
@@ -7423,7 +7572,7 @@ async function showBenchmark(seq, name) {
       h("div", { class: "thead", "aria-hidden": "true" }, h("span"), h("span", null, "case"), h("span", null, "contender"), h("span", null, "reason"), h("span", { class: "num opt" }, "latency"), h("span", { class: "num" }, "session")),
       flb, fmore),
     h("div", { class: "section-head" }, h("h2", null, "Run details")),
-    h("div", { class: "panel kv-panel" }, dl));
+    h("div", { class: "panel kv-panel" }, dl)]);
 
   keys.actions = {
     down: () => { setFActive(factive + 1, true); flb.focus({ preventScroll: true }); },
@@ -7460,6 +7609,54 @@ async function loadUpdate() {
   pill.hidden = false;
 }
 
+// ------------------------------------------------------------ star prompt
+
+// Once, after real use. The server decides (/api/star: 404 outside `coding.sh ui`, show=false until
+// 3 days and 5 sessions). The page makes no request to GitHub: the button is a plain link.
+function loadStar() {
+  const card = $("#star");
+  const KEY = "codingsh.star.dismissed";
+  try { if (localStorage.getItem(KEY)) return; } catch { /* storage can be blocked */ }
+  const post = (action) => {
+    try { localStorage.setItem(KEY, "1"); } catch { /* fallback only */ }
+    fetch("/api/star", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) }).catch(() => {});
+  };
+  const hide = (action) => {
+    post(action);
+    // Focus inside the card would be lost when it goes away: hand it to the page.
+    if (card.contains(document.activeElement)) $("#main").focus({ preventScroll: true });
+    let done = false;
+    const finish = () => { if (!done) { done = true; card.hidden = true; } };
+    card.setAttribute("data-hidden", "");
+    card.addEventListener("transitionend", finish, { once: true });
+    // No transition runs in a background tab: fall back to the exit time (--dur-exit) plus a little.
+    setTimeout(finish, (parseFloat(getComputedStyle(card).transitionDuration) || 0.15) * 1000 + 50);
+  };
+  $("#star-dismiss").addEventListener("click", () => hide("dismiss"));
+  const go = $("#star-go");
+  go.addEventListener("click", () => hide("starred"));
+  // A middle-click or a modified click opens the link too, without a click event.
+  go.addEventListener("auxclick", () => hide("starred"));
+  card.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.stopPropagation(); hide("dismiss"); } });
+  const show = (tries) => {
+    // Never over the command menu or the shortcuts list.
+    if (overlayOpen() && tries < 60) { setTimeout(() => show(tries + 1), 1000); return; }
+    if (overlayOpen()) return;
+    card.hidden = false;
+    void card.offsetHeight;
+    card.removeAttribute("data-hidden");
+  };
+  setTimeout(async () => {
+    let r;
+    try {
+      const res = await fetch("/api/star", { credentials: "same-origin", headers: { Accept: "application/json" } });
+      if (!res.ok) return;
+      r = await res.json();
+    } catch { return; }
+    if (r && r.show === true) show(0);
+  }, 1500);
+}
+
 // ------------------------------------------------------------ indexing pill
 
 // `coding.sh ui` ingests in the background, so the list can open on a partial
@@ -7484,10 +7681,10 @@ function loadIngest() {
         // A backlog only: live capture adds a few files every pass, and a flashing pill would be noise.
         const on = (!!st.ingesting && n >= 20) || ingestState.importing;
         if (on && ingestState.importing) {
-          pill.replaceChildren(h("span", { class: "dot", "aria-hidden": "true" }), h("span", null, "Importing past sessions…"));
+          swap(pill, h("span", { class: "dot", "aria-hidden": "true" }), h("span", null, "Importing past sessions…"));
           pill.title = "Past sessions are being imported in the background. The list shows what is imported so far.";
         } else if (on) {
-          pill.replaceChildren(h("span", { class: "dot", "aria-hidden": "true" }), h("span", null, "Indexing " + fmtNum(n) + (n === 1 ? " file…" : " files…")));
+          swap(pill, h("span", { class: "dot", "aria-hidden": "true" }), h("span", null, "Indexing " + fmtNum(n) + (n === 1 ? " file…" : " files…")));
           pill.title = "Captured sessions are being indexed in the background. The list shows what is indexed so far.";
         }
         if (on !== was) announce(on ? "Indexing captured sessions" : "Indexing done");
@@ -7546,6 +7743,7 @@ function touchTitles() {
 
 route();
 loadUpdate();
+loadStar();
 loadIngest();
 touchTitles();
 </script>

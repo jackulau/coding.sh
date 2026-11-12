@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { paths } from "../../core/paths.ts";
 import { execFile, spawn } from "../../core/spawn.ts";
 import { runningCli } from "../../mcp/launch.ts";
+import { shellQuote } from "../common.ts";
 import { refreshHookBin } from "../hookbin.ts";
 import { version } from "../meta.ts";
 import { CliError, clean } from "../output.ts";
@@ -83,10 +84,6 @@ export async function refreshAfterUpdate(env: NodeJS.ProcessEnv, signal: AbortSi
 /** The exact install command for a release (what install.sh runs). */
 export function installArgs(spec: string): string[] {
   return [...NPM_FLAGS, spec];
-}
-
-function shellQuote(s: string): string {
-  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
 /** `npm <args>` (npm.cmd on Windows, run without a shell); exported for tests. */

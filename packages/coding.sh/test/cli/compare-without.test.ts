@@ -103,12 +103,12 @@ describe("compare --without", () => {
     assert.deepEqual(list.bundles.map((b) => b.name).sort(), ["base", "base-without-claude-skills-pdf"]);
   });
 
-  it("--gate: keep the skill (exit 1), the --experiment path gives the same gate, a lenient gate accepts (exit 0)", (t) => {
+  it("--gate: one loss holds (exit 1), the --experiment path gives the same gate, a lenient gate accepts (exit 0)", (t) => {
     if (!gitBin) return t.skip("needs git");
     const live = cli(["compare", "base", "--without", ".claude/skills/pdf", "-t", "sum", "--yes", "--gate", "--json"]);
     assert.equal(live.status, 1, live.stdout + live.stderr);
     const { experimentId, report } = JSON.parse(live.stdout) as { experimentId: string; report: { gate: { decision: string; verdict: string; lost: string[]; losses: number; solved: number } } };
-    assert.deepEqual([report.gate.decision, report.gate.verdict, report.gate.losses, report.gate.solved], ["abstain", "dont-ship", 1, 1]);
+    assert.deepEqual([report.gate.decision, report.gate.verdict, report.gate.losses, report.gate.solved], ["abstain", "hold", 1, 1]);
     assert.equal(report.gate.lost.length, 1);
 
     const again = cli(["compare", "base", "--without", ".claude/skills/pdf", "--experiment", experimentId, "--gate", "--json"]);
@@ -117,7 +117,8 @@ describe("compare --without", () => {
 
     const text = cli(["compare", "base", "--without", ".claude/skills/pdf", "--experiment", experimentId, "--gate"]);
     assert.equal(text.status, 1);
-    assert.match(text.stdout, /^drop-it gate: Keep it: dropping \.claude\/skills\/pdf breaks 1 task A solved$/m);
+    // One loss is within chance: no evidence that dropping the skill helps.
+    assert.match(text.stdout, /^drop-it gate: Keep it: not enough evidence that dropping \.claude\/skills\/pdf helps \(B wins 0, loses 1\)$/m);
 
     // Arms swapped (B = base, which keeps the skill) with a lenient gate: one win is enough.
     const swapped = cli(["compare", "base-without-claude-skills-pdf", "base", "--experiment", experimentId, "--gate", "--lambda", "1", "--gate-alpha", "1", "--tau", "1"]);

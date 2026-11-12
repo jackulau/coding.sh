@@ -48,18 +48,24 @@ describe("exp compare --gate from the CLI", () => {
   });
   after(() => rmSync(root, { recursive: true, force: true }));
 
-  it("exit 0 on ship, 1 on don't ship; --json carries comparison.gate; no --gate, no gate", () => {
+  it("exit 0 on ship, 1 on hold or don't ship; --json carries comparison.gate; no --gate, no gate", () => {
     // b fixes a's 10 failures and breaks nothing.
     const ship = cli(["exp", "compare", "a", "b", "--gate"]);
     assert.equal(ship.status, 0, ship.stderr);
     assert.match(ship.stdout, /^gate {4}Ship it: B wins 10 cases, loses 0$/m);
 
     // c fixes 8 of a's failures (multiples of 3, not of 5) and breaks 4 it solved (5, 10, 20, 25): 8 − 2·4 = 0.
+    // 4 losses against 8 wins are within chance, so the gate holds.
     const hold = cli(["exp", "compare", "a", "c", "--gate", "--json"]);
     assert.equal(hold.status, 1, hold.stderr);
     const g = JSON.parse(hold.stdout).comparison.gate;
-    assert.deepEqual([g.wins, g.losses, g.solved, g.netGain, g.verdict], [8, 4, 20, 0, "dont-ship"]);
+    assert.deepEqual([g.wins, g.losses, g.solved, g.netGain, g.verdict], [8, 4, 20, 0, "hold"]);
     assert.deepEqual([...g.lostCases].sort(), ["c10", "c20", "c25", "c5"]);
+    // b solves all 30 and c breaks the 6 multiples of 5 with no win: P(6 of 6) = 1/64 < α, don't ship.
+    const dont = cli(["exp", "compare", "b", "c", "--gate", "--json"]);
+    assert.equal(dont.status, 1, dont.stderr);
+    const gd = JSON.parse(dont.stdout).comparison.gate;
+    assert.deepEqual([gd.wins, gd.losses, gd.verdict], [0, 6, "dont-ship"]);
     // λ=1, α=1, τ=1: wins > losses is enough.
     assert.equal(cli(["exp", "compare", "a", "c", "--gate", "--lambda", "1", "--gate-alpha", "1", "--tau", "1"]).status, 0);
 

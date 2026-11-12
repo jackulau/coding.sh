@@ -1,6 +1,7 @@
-// The Compare section's experiment: coding.sh's own AGENTS.md, before and after a
-// rewrite, on 20 coding.sh tasks, 5 runs each. scripts/shots/seed.mjs writes these
-// exact runs into the viewer for the screenshot, so the page and the picture agree.
+// Example numbers for the Compare section, written by hand: a coding.sh AGENTS.md
+// before and after a rewrite, on 20 tasks, 5 runs each. They are not an experiment
+// export. scripts/shots/seed.mjs writes these exact runs into the viewer for the
+// screenshot, so the page and the picture agree.
 
 export interface TaskRow {
   task: string;

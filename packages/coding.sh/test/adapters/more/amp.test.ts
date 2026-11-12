@@ -95,7 +95,8 @@ describe("amp install + plugin", () => {
     const r = handlers.get("tool.result")![0]!({ thread: { id: TID } });
     assert.equal(r, undefined, "handlers return nothing, so Amp's behaviour is unchanged");
     await fire(handlers, "agent.end", { thread: { id: TID }, id: "turn-1", status: "done", messages: [] });
-    await waitFor(() => hookCalls(dir).length >= 3);
+    // The hook runs as child processes: on a loaded Windows runner they can take well over 5 s.
+    await waitFor(() => hookCalls(dir).length >= 3, 30_000);
     const calls = hookCalls(dir);
     const end = calls.find((c) => c.argv[1] === "agent.end")!;
     assert.deepEqual(end.argv, ["amp", "agent.end"]);

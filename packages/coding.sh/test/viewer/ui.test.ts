@@ -38,7 +38,7 @@ test("no inline event-handler attributes, javascript: URLs or external origins",
   assert.doesNotMatch(html, /javascript:/i);
   // Only the SVG namespace may look like a URL.
   const urls = [...html.matchAll(/https?:\/\/[^\s"')]+/g)].map((m) => m[0]);
-  assert.deepEqual([...new Set(urls)].filter((u) => !u.startsWith("http://www.w3.org/2000/svg")), []);
+  assert.deepEqual([...new Set(urls)].filter((u) => !u.startsWith("http://www.w3.org/2000/svg") && u !== "https://github.com/jackulau/coding.sh"), []);
 });
 
 test("element attributes are set through the guarded helper", () => {

@@ -114,6 +114,40 @@ export async function wrapRunDetailed(opts: WrapRunOptions): Promise<WrapRunResu
     }
   };
 
+  // Handlers go in before the start snapshot and the spawn: a signal landing in either would otherwise
+  // kill the wrapper by default, losing the session (nothing is spooled until session.start) and
+  // orphaning the child. A signal that arrives before there is a child is kept, and the command never starts.
+  // isatty(0), not process.stdin: touching process.stdin would open a reader on the TTY the child owns.
+  const stdinIsTTY = isatty(0);
+  let child: ChildProcess | undefined;
+  let early: NodeJS.Signals | undefined;
+  const handlers = new Map<NodeJS.Signals, () => void>();
+  for (const sig of FORWARDED) {
+    const h = () => {
+      if (!child) {
+        early ??= sig;
+        return;
+      }
+      if (sig === "SIGINT" && stdinIsTTY) return; // child already got it from the TTY
+      try {
+        child.kill(sig);
+      } catch {
+        // child gone
+      }
+    };
+    handlers.set(sig, h);
+    process.on(sig, h);
+  }
+  const cleanup = () => {
+    for (const [sig, h] of handlers) process.removeListener(sig, h);
+  };
+  try {
+    return await wrapped();
+  } finally {
+    cleanup();
+  }
+
+  async function wrapped(): Promise<WrapRunResult> {
   const start = await snap("start");
   // Secret flag values (--openai-api-key X) never reach the spool; ingest redacts them again.
   spool("session.start", { cmd: opts.cmd, args: redactArgv(args), cwd, repo: start });
@@ -129,36 +163,17 @@ export async function wrapRunDetailed(opts: WrapRunOptions): Promise<WrapRunResu
   const timer = tap ? setInterval(() => spoolUsage(tap.poll()), 1000) : undefined;
   timer?.unref();
   const { exitCode, signal, error } = await new Promise<{ exitCode: number; signal?: NodeJS.Signals; error?: string }>((resolve) => {
-    // isatty(0), not process.stdin: touching process.stdin would open a reader on the TTY the child owns.
-    const stdinIsTTY = isatty(0);
-    // Handlers go in before the spawn: a SIGTERM landing between spawn() and
-    // process.on() would otherwise kill the wrapper by default and orphan the child.
-    let child: ChildProcess | undefined;
-    const handlers = new Map<NodeJS.Signals, () => void>();
-    for (const sig of FORWARDED) {
-      const h = () => {
-        if (sig === "SIGINT" && stdinIsTTY) return; // child already got it from the TTY
-        try {
-          child?.kill(sig);
-        } catch {
-          // child gone
-        }
-      };
-      handlers.set(sig, h);
-      process.on(sig, h);
+    if (early) {
+      resolve({ exitCode: 128 + (constants.signals[early] ?? 0), signal: early });
+      return;
     }
     child = spawn(opts.cmd, args, { cwd, env, stdio: opts.stdoutToStderr ? ["inherit", 2, "inherit"] : "inherit" });
     // If the wrapper itself dies hard (uncaught error, process.exit), take the child with it.
     trackChild(child);
-    const cleanup = () => {
-      for (const [sig, h] of handlers) process.removeListener(sig, h);
-    };
     child.on("error", (e: NodeJS.ErrnoException) => {
-      cleanup();
       resolve({ exitCode: e.code === "ENOENT" ? 127 : 126, error: `${opts.cmd}: ${e.message}` });
     });
     child.on("exit", (code, sig) => {
-      cleanup();
       if (sig) resolve({ exitCode: 128 + (constants.signals[sig] ?? 0), signal: sig });
       else resolve({ exitCode: code ?? 1 });
     });
@@ -196,4 +211,5 @@ export async function wrapRunDetailed(opts: WrapRunOptions): Promise<WrapRunResu
   if (diff) result.diff = diff;
   if (error) result.error = error;
   return result;
+  }
 }

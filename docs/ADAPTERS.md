@@ -13,10 +13,10 @@ sessions; `gemini-cli` stays for older Gemini CLI history. Aider is stale (last 
 | Agent | Hook config | Events | Payload ids |
 |---|---|---|---|
 | Claude Code | `~/.claude/settings.json` / `.claude/settings.json` → `hooks.<Event>[{matcher:"*",hooks:[{type:"command",command,timeout}]}]` | SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure, Stop, StopFailure, SubagentStart/Stop, PreCompact, SessionEnd | `session_id`, `transcript_path`, `cwd`. `model` only on SessionStart; otherwise take it from the transcript tail `message.model`. |
-| Codex | `$CODEX_HOME/hooks.json` or `.codex/hooks.json` (Claude-shaped). `[features] hooks=true`. Our entries are appended after the user's, because trust is stored per position. | SessionStart/End, UserPromptSubmit, Pre/PostToolUse, PermissionRequest, Pre/PostModelRequest, Pre/PostCompact, SubagentStart/Stop, Stop | `session_id`, `turn_id`, `transcript_path` (null with `--ephemeral`), `cwd`, `model`. Subagents are threads: SubagentStart/Stop carry `agent_id` (and `agent_transcript_path`). |
+| Codex | `$CODEX_HOME/hooks.json` or `.codex/hooks.json` (Claude-shaped). Hooks are on by default; doctor reports a `[features] hooks = false` line. Our entries are appended after the user's, because trust is stored per position. | SessionStart/End, UserPromptSubmit, Pre/PostToolUse, PermissionRequest, Pre/PostModelRequest, Pre/PostCompact, SubagentStart/Stop, Stop | `session_id`, `turn_id`, `transcript_path` (null with `--ephemeral`), `cwd`, `model`. Subagents are threads: SubagentStart/Stop carry `agent_id` (and `agent_transcript_path`). |
 | OpenCode 2.x | TS plugin `~/.config/opencode/plugins/<x>.ts`, `Plugin.define({setup(ctx)})` | `ctx.tool.hook("execute.before"/"execute.after")`; `ctx.event.subscribe`: `session.created/idle`, `session.tool.*`, `session.usage.updated` | `sessionID`, `model{providerID,id}`, `ctx.location.directory`. No transcript path. |
-| Amp | TS plugin `~/.config/amp/plugins/x.ts`. The first line must be the `// @i-know-the-amp-plugin-api-is-wip…` marker. | `session.start`, `tool.call`, `tool.result`, `agent.start`, `agent.end`, `changes.prompt` | `thread.id` only. No cwd, no model, and no payload carries a subagent field. |
-| Gemini CLI | `~/.gemini/settings.json` `hooks.BeforeTool[{matcher,hooks:[…]}]` (+ `tools.enableHooks`) | Before/AfterTool, Before/AfterAgent, Before/AfterModel, SessionStart/End, PreCompress | `session_id`, `transcript_path`, `cwd`. Model comes from `llm_request.model`. Before/AfterTool and BeforeModel also fire inside subagents, with the main `session_id` and no subagent field. |
+| Amp | TS plugin `~/.config/amp/plugins/x.ts` (or `.amp/plugins/*.ts` in a project). Files there load with no opt-in marker. | `session.start`, `tool.call`, `tool.result`, `agent.start`, `agent.end`, `changes.prompt` | `thread.id` only. No cwd, no model, and no payload carries a subagent field. |
+| Gemini CLI | `~/.gemini/settings.json` `hooks.BeforeTool[{matcher,hooks:[…]}]`. Hooks are on by default, with no setting to turn on. | Before/AfterTool, Before/AfterAgent, Before/AfterModel, SessionStart/End, PreCompress | `session_id`, `transcript_path`, `cwd`. Model comes from `llm_request.model`. Before/AfterTool and BeforeModel also fire inside subagents, with the main `session_id` and no subagent field. |
 | Cursor CLI (`agent`) | `~/.cursor/hooks.json` `{version:1,hooks:{postToolUse:[{command}]}}` | 21 events. We register no permission events (they block on empty output), so subagents come from `subagentStop` only: `subagentStart` is a permission gate and is not registered. **In `-p` mode, `stop` and `beforeSubmitPrompt` do not fire.** | `conversation_id`, `model`, `workspace_roots`. `transcript_path` is null in the CLI. |
 | Copilot CLI | `~/.copilot/hooks/<x>.json` or `.github/hooks/*.json` `{version:1,hooks:{preToolUse:[{type:"command",bash,powershell,timeoutSec}]}}`. **The key is `bash`, not `command`.** The file has no ownership marker, so ownership is recorded in `~/.coding.sh/installs.json`. | sessionStart/End, userPromptSubmitted, pre/postToolUse, agentStop, subagentStart/Stop, preCompact | `sessionId`, `cwd`. `transcriptPath` only on agentStop/preCompact. No model. `subagentStart` has `agentName` but no `agentId`; `subagentStop` has `agentId`, `agentType`, `agentName`, `response`, `stopReason`. Hooks fired inside a subagent add `agentId`, `agentType`, `parentAgentId`. On 1.0.107 `postToolUse` carries `toolCallId`, and `sessionStart.initialPrompt` repeats the first `userPromptSubmitted`. |
 | Pi | Extension `~/.pi/agent/extensions/x.ts`. Project extensions need trust, or `--approve` headless. | `session_start/shutdown`, `tool_call/result`, `agent_settled` (the true end of a run), `model_select` | `ctx.sessionManager.getSessionFile()/getSessionId()`, `ctx.model`. No subagents. Per-call latency comes from `message.timestamp` to `message_end`. |
@@ -201,10 +201,10 @@ order.
 Every adapter installs the same command. Outside Windows it runs the POSIX sh hook:
 
 ```
-/bin/sh "<~/.coding.sh/bin/hook.sh>" <agent-id> <EventName> [--echo-continue]
+/bin/sh "<~/.coding.sh/bin/hook.sh>" <agent-id> <EventName> [--echo-continue | --reply={}]
 ```
 
-On Windows, and for flags only the node hook handles (`--reply`), it runs node:
+On Windows, and for flags only the node hook handles (any other `--reply`), it runs node:
 
 ```
 node "<~/.coding.sh/bin/hook.mjs>" <agent-id> <EventName> [flags]
@@ -220,14 +220,18 @@ node "<~/.coding.sh/bin/hook.mjs>" <agent-id> <EventName> [flags]
   and the agent does not wait for it. A payload that is one line of the form `{"…}` goes inline
   when the spool line fits in 1024 bytes. Shells print through a 1024-byte buffer on macOS, and a
   longer line could be split by another hook's write. Any other payload goes verbatim to a side file
-  that the line names in `rawFile`, as `hook.mjs` does for payloads over 256 KB.
+  that the line names in `rawFile`, as `hook.mjs` does for any line over 1024 bytes. Under bash
+  and zsh a payload whose braces or brackets do not pair up goes to a side file too.
 - `hook.sh` hands the call to `hook.mjs` beside it, with the same arguments and stdin, when it sees
-  `--reply`, `CODING_SH_RUN_ID`, a T3 Code env marker, a model base URL other than a loopback one
+  a `--reply` other than `--reply={}`, `CODING_SH_RUN_ID`, a T3 Code env marker, a model base URL other than a loopback one
   (the `init --proxy` proxy) on a port no gateway uses, a session start while `init --proxy` is
   installed, a relative `CODING_SH_HOME`, a value it cannot copy into JSON as is, or a write that
   fails. It waits for `hook.mjs` and exits 0 whatever node does. When node is not on the agent's
-  `PATH` or cannot run `hook.mjs`, that event is not captured, and `--echo-continue` still gets its
-  reply.
+  `PATH` or cannot run `hook.mjs`, that event is not captured, and `--echo-continue` and
+  `--reply={}` still get their reply. A reader of the reply that has gone away does not fail the call.
+- With `CODING_SH_DISABLE=1` both hooks read the payload and write no line. They add the payload's
+  session id (`session_id`, `conversation_id`, `sessionId` or `conversationId`) to
+  `spool/disabled-sessions`. Ingest and `ingest --backfill` store no event of a session listed there.
 - Hooks installed by an older version run `node …/hook.mjs` and keep working. Run `coding.sh init`
   again to switch them to `hook.sh`. Codex asks you to review changed hooks in `/hooks` once.
 - Claude Code runs every hook command its settings files register for an event. With coding.sh

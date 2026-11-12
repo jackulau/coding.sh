@@ -6,6 +6,8 @@ import type { Score } from "../../src/core/types.ts";
 import { readValue } from "../../src/scores/cli.ts";
 import { scoreTools } from "../../src/scores/mcp.ts";
 import { ToolError } from "../../src/mcp/protocol.ts";
+import { SqliteIndexStore } from "../../src/store/sqlite.ts";
+import { join } from "node:path";
 import { tmpEnv, type TmpEnv } from "../adapters/_helpers.ts";
 import { cli, ok, seed, session, T0 } from "../query/_seed.ts";
 
@@ -18,6 +20,15 @@ before(async () => {
     events: [{ id: "evt-1", v: 0, sessionId: "sess-aaaa1111", ts: T0 + 1000, agent: "claude-code", kind: "notification", payload: {} }],
     labels: [{ id: "l1", sessionId: "sess-aaaa1111", criterion: "outcome", value: "fail", note: "looped", by: "me", ts: T0 }],
   });
+  // A run target must be a stored run.
+  const store = await SqliteIndexStore.open(join(env.dataHome, "index.db"));
+  try {
+    await store.putRun({ id: "r-1", taskId: "t1", bundleId: "b1", attempt: 1, pass: true, verifierExit: 0, agent: { exitCode: 0, timedOut: false, durationMs: 1, stdoutTail: "", stderrTail: "" }, startedAt: T0, endedAt: T0 + 1 });
+  } finally {
+    await store.close();
+  }
+  // A case target must be a case in a dataset.
+  ok(["dataset", "add", "ds", "--case", JSON.stringify({ id: "c-1", input: "x" })]);
 });
 after(() => env.restore());
 
@@ -87,7 +98,9 @@ describe("coding.sh score", () => {
     assert.deepEqual([cs.target, cs.targetId, cs.sessionId, cs.configId], ["case", "c-1", "sess-bbbb2222", "tone"]);
     const run = json(["score", "add", "run:r-1", "summary", "clean diff", "--type", "text", "--id", "my-id", "--judge-version", "j@2"]).score as Score;
     assert.deepEqual([run.id, run.dataType, run.value, run.judgeVersion, run.sessionId], ["my-id", "text", "clean diff", "j@2", undefined]);
-    assert.equal(cli(["score", "add", "trace:x", "ok", "1"]).status, 1, "an unknown kind reads as a session id");
+    const unknown = cli(["score", "add", "trace:x", "ok", "1"]);
+    assert.equal(unknown.status, 2, "an unknown kind that is not a session id either is a usage error");
+    assert.match(unknown.stderr, /unknown score target trace/);
     assert.equal(cli(["score", "add", "event:", "ok", "1"]).status, 2);
   });
 

@@ -51,7 +51,7 @@ export interface WorkflowRun {
   /** Driver attempts when infrastructure errors (rate limit, 5xx, network) were retried; absent for one. */
   attempts?: number;
   /** The last attempt still failed on an infrastructure error: outcome unknown, left out of comparisons, re-run by `workflows run --resume`. */
-  infra?: "rate-limit" | "server" | "network" | "tempfail" | "auth" | "setup";
+  infra?: "rate-limit" | "overloaded" | "server" | "network" | "tempfail" | "auth" | "setup";
   /** Phase titles in script order (meta.phases), when known. */
   phases?: string[];
   /**
@@ -101,6 +101,13 @@ export interface WorkflowNode {
   endedAt?: number;
   /** When the call was issued (queue wait = startedAt − issuedAt), if recorded. */
   issuedAt?: number;
+  /** A running agent: time of the last entry in its transcript. */
+  lastActivityAt?: number;
+  /**
+   * Set when shown, not stored: a running agent with no transcript activity for longer than
+   * the stall timeout (and the phase, group and workflow holding it): ms since its last activity.
+   */
+  stalledMs?: number;
   status: WorkflowNodeStatus;
   model?: string;
   effort?: string;

@@ -4,7 +4,8 @@ import type { Usage } from "../../schema/index.ts";
 import { readSse } from "./sse.ts";
 import { ProviderHttpError, type Conversation, type ConversationInit, type ModelTurn, type ToolResult } from "./types.ts";
 
-const base = (init: ConversationInit) => (init.baseUrl ?? "https://api.openai.com/v1").replace(/\/$/, "");
+// With no baseUrl on the driver, OPENAI_BASE_URL (when set) replaces the default endpoint.
+const base = (init: ConversationInit) => (init.baseUrl ?? (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1")).replace(/\/$/, "");
 
 async function post(init: ConversationInit, path: string, body: unknown, signal?: AbortSignal): Promise<Response> {
   const res = await init.fetch(`${base(init)}${path}`, {

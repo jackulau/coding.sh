@@ -6,11 +6,13 @@ import { mkdirSync, openSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { runningCli } from "../../mcp/launch.ts";
+import { isLoopbackHost } from "../../otel/receiver.ts";
 import { startLocalProxy } from "../../proxy/index.ts";
-import { chainedUpstreams, clearProxyState, pidAlive, probeProxy, proxyEnv, proxyLogPath, proxySettings, readProxyState, writeProxyState, type ProxyState } from "../../proxy/state.ts";
+import { chainedUpstreams, clearProxyState, pidAlive, probeProxy, proxyEnv, proxyLogPath, proxySettings, proxyUrl, readProxyState, upstreamProblem, writeProxyState, type ProxyState } from "../../proxy/state.ts";
 import type { AgentEvent } from "../../schema/index.ts";
 import { port as portFlag, str, withContext } from "../common.ts";
 import { version } from "../meta.ts";
+import { UsageError } from "../args.ts";
 import { CliError } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -37,7 +39,18 @@ export async function run(c: CommandContext): Promise<number> {
 
 function settingsOf(c: CommandContext) {
   const flagPort = c.flags.port !== undefined ? portFlag(c.flags.port, 0) : undefined;
-  return proxySettings(c.env, { port: flagPort, host: str(c.flags.host), anthropic: str(c.flags["anthropic-upstream"]), openai: str(c.flags["openai-upstream"]) });
+  const flags = { port: flagPort, host: str(c.flags.host), anthropic: str(c.flags["anthropic-upstream"]), openai: str(c.flags["openai-upstream"]) };
+  // An upstream that is not an http(s) URL would fail on the first call; say so now, naming where it came from.
+  for (const p of ["anthropic", "openai"] as const) {
+    const problem = flags[p] !== undefined ? upstreamProblem(flags[p]!) : undefined;
+    if (problem) throw new UsageError(`--${p}-upstream ${problem}: ${flags[p]}`, { reason: "invalid_value" });
+  }
+  const s = proxySettings(c.env, flags);
+  for (const p of ["anthropic", "openai", "chatgpt"] as const) {
+    const problem = upstreamProblem(s.upstreams[p]);
+    if (problem) throw new UsageError(`proxy.${p}_upstream in config.toml ${problem}: ${s.upstreams[p]}`, { reason: "invalid_value" });
+  }
+  return s;
 }
 
 async function start(c: CommandContext): Promise<number> {
@@ -82,13 +95,17 @@ async function start(c: CommandContext): Promise<number> {
       if (code === "EADDRINUSE") throw new CliError(`Can't start the proxy: port ${s.port} is in use`, { reason: "port_in_use", next: ["Pick another port:", "coding.sh proxy --port 0"] });
       throw new CliError(`Can't start the proxy: ${(e as Error).message}`, { reason: "proxy_failed" });
     }
-    await writeProxyState({ pid: process.pid, url: proxy.url, host: proxy.host, port: proxy.port, startedAt: Date.now(), upstreams: s.upstreams }, c.env);
-    const vars = proxyEnv(proxy.url);
-    if (out.json) out.data({ url: proxy.url, host: proxy.host, port: proxy.port, env: vars, upstreams: s.upstreams });
+    // A client dials 127.0.0.1 even when the proxy listens on every interface.
+    const url = proxyUrl(proxy.port, proxy.host);
+    await writeProxyState({ pid: process.pid, url, host: proxy.host, port: proxy.port, startedAt: Date.now(), upstreams: s.upstreams }, c.env);
+    const vars = proxyEnv(url);
+    if (out.json) out.data({ url, host: proxy.host, port: proxy.port, env: vars, upstreams: s.upstreams });
     else for (const [k, v] of Object.entries(vars)) out.print(`export ${k}=${v}`);
-    out.note(`Ready on ${proxy.url} (Anthropic → ${s.upstreams.anthropic}, OpenAI → ${s.upstreams.openai})`);
+    if (!isLoopbackHost(proxy.host)) out.warn(`Listening on ${proxy.host}: the proxy has no auth, so anyone who can reach this port can send calls through it`);
+    out.note(`Ready on ${url} (Anthropic → ${s.upstreams.anthropic}, OpenAI → ${s.upstreams.openai})`);
     out.note(ctx.config.capture.mode === "metadata" ? "Capture mode metadata: no prompts or responses are stored" : "Logging every call; auth headers are forwarded, never stored");
-    out.note("Press Ctrl-C to stop");
+    // A detached child (proxy --background) has no terminal for Ctrl-C to reach.
+    out.note(c.env[DETACHED_ENV] === "1" ? "Stop with: coding.sh proxy stop" : "Press Ctrl-C to stop");
     await new Promise<void>((resolve) => c.signal.addEventListener("abort", () => resolve(), { once: true }));
     await proxy.close();
     clearProxyState(process.pid, c.env);
@@ -96,8 +113,11 @@ async function start(c: CommandContext): Promise<number> {
   });
 }
 
+/** Set on the detached child that `proxy --background` starts. */
+const DETACHED_ENV = "CODING_SH_PROXY_DETACHED";
+
 /**
- * Starts `coding.sh proxy --quiet` detached (stdout/stderr to
+ * Starts `coding.sh proxy` detached (stdout/stderr to
  * ~/.coding.sh/proxy.log) with the given flags and waits until it answers.
  * Also used by `init --proxy`.
  */
@@ -107,7 +127,8 @@ export async function startInBackground(env: NodeJS.ProcessEnv, flags: Record<st
   const argv1 = process.argv[1];
   const script = runningCli(argv1) ?? (argv1 && basename(argv1) === "main.ts" ? argv1 : undefined);
   if (!script) throw new CliError("Can't find the coding.sh CLI to start in the background", { reason: "proxy_failed" });
-  const args = [...process.execArgv, script, "proxy", "--quiet"];
+  // No --quiet: the log keeps one line per call.
+  const args = [...process.execArgv, script, "proxy"];
   for (const k of ["port", "host", "anthropic-upstream", "openai-upstream"]) {
     const v = flags[k];
     if (v !== undefined) args.push(`--${k}`, String(v));
@@ -115,7 +136,7 @@ export async function startInBackground(env: NodeJS.ProcessEnv, flags: Record<st
   if (flags.port === undefined) args.push("--port", String(port));
   mkdirSync(dirname(proxyLogPath(env)), { recursive: true });
   const log = openSync(proxyLogPath(env), "a");
-  const child = spawn(process.execPath, args, { detached: true, stdio: ["ignore", log, log], windowsHide: true, env: { ...env, NODE_OPTIONS: undefined } });
+  const child = spawn(process.execPath, args, { detached: true, stdio: ["ignore", log, log], windowsHide: true, env: { ...env, NODE_OPTIONS: undefined, [DETACHED_ENV]: "1" } });
   child.unref();
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {

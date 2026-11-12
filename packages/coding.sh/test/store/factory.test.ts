@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { after, describe, it } from "node:test";
 import { defaultConfig } from "../../src/core/config.ts";
 import type { Config } from "../../src/core/types.ts";
-import { openStores, parseStoreUrl, registerBlobStore, registerIndexStore, registerSink, storePluginPackage } from "../../src/store/factory.ts";
+import { fileUrlPath, openStores, parseStoreUrl, registerBlobStore, registerIndexStore, registerSink, storePluginPackage } from "../../src/store/factory.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 
 const root = mkdtempSync(join(tmpdir(), "csh-factory-"));
@@ -77,5 +78,14 @@ describe("openStores", () => {
     assert.equal(ok.sinks[0]!.name, "null");
     await assert.rejects(() => openStores(config({ store: { index: "custom://a", blobs: "custom://fail" } })), /bucket missing/);
     assert.ok(closed);
+  });
+});
+
+describe("fileUrlPath", () => {
+  it("leaves out a user:password@ in front of the path, and the slash before a drive letter", () => {
+    const file = join(root, "pw-index.db");
+    assert.equal(fileUrlPath(`coding:secret@/${file}`), resolve(file));
+    assert.equal(fileUrlPath(file), resolve(file));
+    assert.equal(fileUrlPath(parseStoreUrl(pathToFileURL(file).href).rest), resolve(file), "a file:// URL, as config set store.blobs writes it");
   });
 });

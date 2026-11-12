@@ -122,7 +122,7 @@ async function stateAssertion(a: StateAssertion, sb: Sandbox, answers: unknown):
 async function one(c: Check, task: ToolTask, sb: Sandbox, finalText: string, answers: unknown, judge: JudgeFn | undefined, tap: readonly TapRecord[]): Promise<CheckResult> {
   try {
     if (c.kind === "calls") {
-      const r = checkCalls(c, callsFromTap(tap));
+      const r = checkCalls(c, callsFromTap(tap, sb.cliBin));
       return r.pass ? { kind: c.kind, pass: true } : { kind: c.kind, pass: false, detail: r.detail };
     }
     if (c.kind === "command") {

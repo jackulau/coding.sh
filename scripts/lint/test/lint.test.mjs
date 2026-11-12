@@ -13,6 +13,8 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const BAD = "declare const raw: string;\nexport const a = raw as unknown as number;\n";
 const BAD2 = `${BAD}export const b = raw as unknown as boolean;\n`;
 const CLEAN = "export const a = 1;\n";
+// Built from parts so this file holds no home path of its own.
+const HOME_OF_MARIA = ["", "Users", "maria"].join("/");
 
 const temps = [];
 after(() => {
@@ -175,6 +177,35 @@ test("cli: --update-allowlist baselines the tree, then a new finding fails", () 
   const r = run(root, []);
   assert.equal(r.code, 1);
   assert.match(r.stdout, /file has 2, allowlist allows 1/);
+});
+
+test("cli: --strict-allowlist fails a count above what the file holds; without the flag it only warns", () => {
+  const root = repo({
+    "src/a.ts": BAD,
+    "scripts/lint/allowlist.json": JSON.stringify({ entries: [{ rule: "chained-as", path: "src/a.ts", max: 3, reason: "baseline" }] }),
+  });
+  const loose = run(root, []);
+  assert.equal(loose.code, 0);
+  assert.match(loose.stderr, /src\/a\.ts has 1 chained-as \(max 3\)/);
+  const strict = run(root, ["--strict-allowlist"]);
+  assert.equal(strict.code, 1);
+  assert.match(strict.stderr, /--strict-allowlist: this fails the lint/);
+  assert.doesNotMatch(strict.stderr, /slop lint: clean/);
+  assert.match(strict.stderr, /slop lint: 1 stale allowlist entry/);
+  assert.equal(JSON.parse(run(root, ["--strict-allowlist", "--json"]).stdout).ok, false);
+  // A count that matches the file passes strictly.
+  writeFileSync(join(root, "scripts/lint/allowlist.json"), JSON.stringify({ entries: [{ rule: "chained-as", path: "src/a.ts", max: 1, reason: "baseline" }] }));
+  assert.equal(run(root, ["--strict-allowlist"]).code, 0);
+  assert.equal(run(root, ["--strict-allowlist", "--staged"]).code, 2);
+});
+
+test("a rule with fixtures: true reads recorded fixtures; the others do not", () => {
+  const files = { "packages/x/test/fixtures/a/b.ts": `export const p = "${HOME_OF_MARIA}/code";\nconst d = raw as unknown as number;\n` };
+  const { findings } = lintFiles(Object.keys(files), { read: read(files) });
+  assert.deepEqual(findings.map((f) => f.rule), ["personal-data"]);
+  // The lint's own fixtures are bad on purpose.
+  const own = { "scripts/lint/test/fixtures/personal-data/bad.ts": `export const p = "${HOME_OF_MARIA}/code";\n` };
+  assert.deepEqual(lintFiles(Object.keys(own), { read: read(own) }).findings, []);
 });
 
 test("cli: usage errors exit 2 and name the next command", () => {

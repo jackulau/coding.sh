@@ -9,6 +9,7 @@ import { autoIngest, list, num, readIngest, resolveSession, str, withContext } f
 import { ago, CliError, plural } from "../cli/output.ts";
 import type { CommandContext } from "../cli/types.ts";
 import type { Context } from "../core/context.ts";
+import { FileEvalStore } from "../datasets/store.ts";
 import type { Score, ScoreConfig, ScoreDataType, ScoreFilter, ScoreTarget } from "../core/types.ts";
 import { addScore, addScoreConfig, listScoreConfigs, listScores, SCORE_DATA_TYPES, SCORE_TARGETS, ScoreError, whoami } from "./scores.ts";
 
@@ -22,17 +23,44 @@ function cliError(e: unknown): unknown {
   return new CliError(e.message, { reason: "error" });
 }
 
-/** `kind:id`, or a session id (prefix or "latest"). */
-async function resolveTarget(ctx: Context, raw: string): Promise<{ target: ScoreTarget; targetId: string }> {
+const TARGET_HELP = "session:<id>, event:<id>, case:<id> or run:<id> (an eval run, run_…)";
+
+/** Whether any version of any dataset has a case with this id. */
+async function caseExists(ctx: Context, id: string): Promise<boolean> {
+  const store = new FileEvalStore({ env: ctx.env, index: ctx.index });
+  for (const d of await store.listDatasets()) {
+    for (const v of await store.listDatasetVersions(d.id)) {
+      if ((await store.getDataset(d.id, v.version))?.cases.some((c) => c.id === id)) return true;
+    }
+  }
+  return false;
+}
+
+/** `kind:id`, or a session id (prefix or "latest"). `exists`: a run target must be a stored run (score add). */
+async function resolveTarget(ctx: Context, raw: string, exists = false): Promise<{ target: ScoreTarget; targetId: string }> {
   const colon = raw.indexOf(":");
   const kind = colon > 0 ? raw.slice(0, colon) : "";
   if ((SCORE_TARGETS as readonly string[]).includes(kind)) {
     const id = raw.slice(colon + 1);
     if (!id) throw new UsageError(`${kind}: needs an id, e.g. ${kind}:abc123`, { reason: "bad_arg" });
+    if (kind === "run" && exists && !(await ctx.index.listRuns()).some((r) => r.id === id)) {
+      throw new CliError(`run not found: ${id}`, { reason: "not_found", next: ["A run id is an eval run's run_… id. Score a session instead:", "coding.sh score add latest outcome true"] });
+    }
+    if (kind === "case" && exists && !(await caseExists(ctx, id))) {
+      throw new CliError(`case not found: ${id}`, { reason: "not_found", next: ["A case id is the id of a case in a dataset. List the datasets:", "coding.sh dataset list"] });
+    }
     if (kind !== "session") return { target: kind as ScoreTarget, targetId: id };
     return { target: "session", targetId: (await resolveSession(ctx, id)).id };
   }
-  return { target: "session", targetId: (await resolveSession(ctx, raw)).id };
+  if (kind === "exp" || kind === "experiment") {
+    throw new UsageError(`an experiment is not a score target: score its runs or cases instead (${TARGET_HELP})`, { reason: "bad_arg" });
+  }
+  const s = await resolveSession(ctx, raw).catch((e: unknown) => {
+    // `foo:bar` that is not a session either: name the targets, not "can't find session".
+    if (/^[a-z]+$/.test(kind) && e instanceof CliError && e.reason === "not_found") throw new UsageError(`unknown score target ${kind}: use ${TARGET_HELP}, or a session id`, { reason: "bad_arg" });
+    throw e;
+  });
+  return { target: "session", targetId: s.id };
 }
 
 /** The value as typed, read as its data type (or as the type it looks like). */
@@ -55,11 +83,12 @@ function shown(s: Score): string {
 async function add(c: CommandContext, ctx: Context): Promise<number> {
   const [rawTarget, name, rawValue] = c.positionals;
   if (!rawTarget || !name || rawValue === undefined) throw new UsageError("score add needs <target> <name> <value>, e.g. coding.sh score add latest outcome true", { reason: "missing_arg" });
-  const { target, targetId } = await resolveTarget(ctx, rawTarget);
+  const { target, targetId } = await resolveTarget(ctx, rawTarget, true);
   const type = str(c.flags.type) as ScoreDataType | undefined;
   const configs = await listScoreConfigs(ctx.index).catch((e) => Promise.reject(cliError(e)));
   const configId = str(c.flags.config);
   const config = configId !== undefined ? configs.find((x) => x.id === configId) : configs.find((x) => x.name === name);
+  if (configId !== undefined && !config) throw new CliError(`unknown score config ${JSON.stringify(configId)}`, { reason: "not_found", exitCode: 2, next: ["List configs:", "coding.sh score configs"] });
   const body: Record<string, unknown> = { target, targetId, name, value: readValue(rawValue, type ?? config?.dataType) };
   if (type) body.dataType = type;
   if (configId !== undefined) body.configId = configId;
@@ -97,8 +126,10 @@ async function listCmd(c: CommandContext, ctx: Context): Promise<number> {
     return 0;
   }
   if (!items.length) {
-    c.out.note("No scores yet.");
-    c.out.next("Score the latest session", "coding.sh score add latest outcome true");
+    const filtered = Object.keys(f).some((k) => k !== "limit");
+    c.out.note(filtered ? "No scores match these filters." : "No scores yet.");
+    if (filtered) c.out.next("List every score", "coding.sh score list");
+    else c.out.next("Score the latest session", "coding.sh score add latest outcome true");
     return 0;
   }
   c.out.table(
@@ -172,5 +203,5 @@ export async function run(c: CommandContext): Promise<number> {
       default:
         throw new UsageError(`Unknown score command ${c.action}`);
     }
-  });
+  }, { create: c.action !== "list" && c.action !== "configs" });
 }

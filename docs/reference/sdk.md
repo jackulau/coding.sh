@@ -290,8 +290,8 @@ interface TraceOptions {
 | Field | Type | Description |
 |---|---|---|
 | `sessionId` | `string` | Groups the turns of one conversation into one session. Default: the trace is its own session. |
-| `userId` | `string` | Your user's id, stored on the session. |
-| `metadata` | `Record<string, unknown>` | Any JSON object, stored on the session. |
+| `userId` | `string` | Your user's id, recorded on the turn's session.start event. |
+| `metadata` | `Record<string, unknown>` | Any JSON object, recorded on the turn's session.start event. |
 | `input` | `unknown` | The turn's input (a prompt string, or any JSON value); becomes the session's user.message. |
 
 ### `TraceHandle`
@@ -429,6 +429,8 @@ Everything in `coding_sh.__all__`:
 | [`coding_sh.flush`](#coding_shflush) | function |
 | [`coding_sh.shutdown`](#coding_shshutdown) | function |
 | [`coding_sh.stats`](#coding_shstats) | function |
+| [`coding_sh.weights_edit`](#coding_shweights_edittensor-shape-changed-l2-max_abs-base_sha256-edited_sha256-) | function |
+| [`coding_sh.weights_delta`](#coding_shweights_deltabase-edited) | function |
 
 ### `coding_sh.__version__`
 
@@ -484,7 +486,9 @@ def observe(client: Any) -> Any
 
 A unit of work: `with coding_sh.trace("checkout", session_id=conv_id, input=prompt) as t:`.
 
-Also a decorator (sync or async). The yielded object has set_input(), set_output(), session_id and trace_id. A decorated function's return value becomes the output.
+user_id and metadata are recorded on the trace's session.start event.
+
+Also a decorator (sync or async). The yielded object has set_input(), set_output(), session_id and trace_id. A decorated function's return value becomes the output, and its arguments the input (a single argument as it is, several by name) unless input= is given.
 
 ```python
 def trace(
@@ -493,7 +497,7 @@ def trace(
     user_id: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
     input: Any = None,
-) -> _ScopeCM
+) -> _ScopeCM[_Trace]
 ```
 
 | Parameter | Type | Default |
@@ -511,7 +515,7 @@ A tool call (`span("tool", "lookup_order")`) or a step (`span("step", "rerank")`
 Context manager or decorator; as a decorator, the call's arguments become the input and its return value the output.
 
 ```python
-def span(kind: str, name: str, input: Any = None) -> _ScopeCM
+def span(kind: str, name: str, input: Any = None) -> _ScopeCM[_Span]
 ```
 
 | Parameter | Type | Default |
@@ -571,6 +575,57 @@ def shutdown(timeout: Optional[float] = 2.0) -> bool
 ```python
 def stats() -> Dict[str, int]
 ```
+
+### `coding_sh.weights_edit(tensor, shape, changed, l2, max_abs, base_sha256, edited_sha256, ...)`
+
+Record one weight edit as a `notification` event with `payload.kind` "weights.edit".
+
+tensor: the tensor's name. shape: its dimensions. changed: how many weights differ. l2, max_abs: the L2 norm and the largest absolute value of the change (edited minus base). base_sha256, edited_sha256: 64-hex hashes of the tensor before and after. note: free text, kept only in full capture mode.
+
+Returns True only when the event was queued. Returns False when a value is invalid, with one warning per process. Returns False without a warning when the SDK is off or shut down or the queue is full. Never raises.
+
+A note that is not a string is dropped with one warning; the edit is still recorded. Outside trace() and with_session() the edit gets a session of its own, so group a run of edits inside one.
+
+```python
+def weights_edit(
+    tensor: str,
+    shape: Sequence[int],
+    changed: int,
+    l2: float,
+    max_abs: float,
+    base_sha256: str,
+    edited_sha256: str,
+    note: Optional[str] = None,
+) -> bool
+```
+
+| Parameter | Type | Default |
+|---|---|---|
+| `tensor` | `str` | required |
+| `shape` | `Sequence[int]` | required |
+| `changed` | `int` | required |
+| `l2` | `float` | required |
+| `max_abs` | `float` | required |
+| `base_sha256` | `str` | required |
+| `edited_sha256` | `str` | required |
+| `note` | `Optional[str]` | `None` |
+
+### `coding_sh.weights_delta(base, edited)`
+
+{shape, changed, l2, max_abs} for two array-likes of the same shape, in pure Python.
+
+Takes nested lists, tuples, ranges, or anything with `.tolist()` (numpy, torch), up to 16 levels deep, holding finite numbers. Generators are not accepted. It is slow on large tensors: compute big ones with your own library and pass the numbers to weights_edit().
+
+A pure helper you call on purpose, unlike the never-raise weights_edit(): it raises ValueError on bad input (a shape mismatch, ragged or too deep nesting, a non-number, None, NaN or inf, or an argument that is not a sequence or array).
+
+```python
+def weights_delta(base: Sequence[Any], edited: Sequence[Any]) -> Dict[str, Any]
+```
+
+| Parameter | Type | Default |
+|---|---|---|
+| `base` | `Sequence[Any]` | required |
+| `edited` | `Sequence[Any]` | required |
 
 ### `coding_sh.otel`
 

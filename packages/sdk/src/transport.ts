@@ -78,6 +78,10 @@ export class Transport {
   /** The batch being sent, so a close() that gives up can count it exactly once. */
   private current: { n: number; done: boolean } | undefined;
   private wake: (() => void) | undefined;
+  /** The backoff timer of the retry sleeping now, so it can stop holding the process open. */
+  private sleepTimer: Timer | undefined;
+  /** An explicit flush() gave up on a server that did not answer: the exit flush would only wait again. */
+  private flushGaveUp = false;
   private readonly cfg: Config;
 
   constructor(cfg: Config) {
@@ -86,6 +90,11 @@ export class Transport {
 
   get enabled(): boolean {
     return !this.closed && this.cfg.url !== undefined;
+  }
+
+  /** True after a flush() timed out and nothing has been sent since: the exit flush is skipped. */
+  get skipExitFlush(): boolean {
+    return this.flushGaveUp;
   }
 
   stats(): TransportStats {
@@ -197,6 +206,7 @@ export class Transport {
       b.done = true;
       this.sent += sent;
       this.failed += failed;
+      if (sent > 0) this.flushGaveUp = false;
     };
 
     for (let attempt = 1; ; attempt++) {
@@ -263,9 +273,11 @@ export class Transport {
     return new Promise((resolve) => {
       const t = setTimeout(done, ms);
       if (this.flushing === 0) unref(t);
+      this.sleepTimer = t;
       const self = this;
       function done() {
         clearTimeout(t);
+        if (self.sleepTimer === t) self.sleepTimer = undefined;
         if (self.wake === done) self.wake = undefined;
         resolve();
       }
@@ -292,8 +304,21 @@ export class Transport {
       }
     } finally {
       this.flushing--;
+      // No flush() waits any more: a retry sleeping on from the one that gave up must not keep the process open.
+      if (this.flushing === 0 && this.sleepTimer) unref(this.sleepTimer);
     }
-    return this.q.length === 0 && !this.inflight;
+    const drained = this.q.length === 0 && !this.inflight;
+    if (!drained && !this.closed) {
+      this.flushGaveUp = true;
+      // A request the server accepted and never answered would hold the process open until its
+      // 10 s timeout. Abort it once no flush() waits: the batch goes back to an unref'd retry.
+      if (this.flushing === 0) this.controller?.abort();
+      this.warnOnce(
+        "flush-timeout",
+        `[coding.sh] flush() gave up after ${timeoutMs} ms with ${this.q.length + (this.current && !this.current.done ? this.current.n : 0)} events not sent (the server did not answer); they are retried while the process runs and dropped when it exits`,
+      );
+    }
+    return drained;
   }
 
   /**

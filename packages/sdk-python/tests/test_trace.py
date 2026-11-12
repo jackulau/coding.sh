@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 import unittest
 
@@ -150,6 +151,38 @@ class TraceTest(unittest.TestCase):
             fails()
         events = collect(self.server)
         self.assertEqual(by_kind(events, "turn.end")[0]["payload"]["error"], "KeyError: 'k'")
+
+    def test_decorator_records_arguments_as_input(self) -> None:
+        @coding_sh.trace("answer")
+        def answer(question: str) -> str:
+            return "ok"
+
+        @coding_sh.trace("search")
+        def search(query: str, limit: int = 3) -> str:
+            return "ok"
+
+        @coding_sh.trace("explicit", input="given")
+        def explicit(question: str) -> str:
+            return "ok"
+
+        answer("where is my order?")
+        search("shoes", limit=5)
+        explicit("ignored")
+        events = collect(self.server)
+        texts = [e["payload"]["text"] for e in by_kind(events, "user.message")]
+        self.assertEqual(texts[0], "where is my order?")
+        self.assertEqual(json.loads(texts[1]), {"query": "shoes", "limit": 5})
+        self.assertEqual(texts[2], "given")
+
+    def test_decorator_input_is_dropped_in_metadata_mode(self) -> None:
+        coding_sh.init(url=self.server.url, key=support.KEY, capture="metadata", flush_interval_ms=5)
+
+        @coding_sh.trace("answer")
+        def answer(question: str) -> str:
+            return "ok"
+
+        answer("secret question")
+        self.assertNotIn("secret", str(collect(self.server)))
 
     def test_set_input_after_start(self) -> None:
         with coding_sh.trace("late") as t:

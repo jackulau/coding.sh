@@ -5,13 +5,13 @@ import { progressMetrics } from "../core/derail.ts";
 import { sortableId } from "../core/ids.ts";
 import type { Redactor } from "../core/redact.ts";
 import type { Adapter, AgentEvent, BlobStore, EvalTask, HarnessBundle, IndexStore, RunResult, Session } from "../core/types.ts";
-import { exactPowerText, pairedPower, type PowerAnalysis } from "../experiments/power.ts";
+import { exactPowerText, mdeText, pairedPower, type PowerAnalysis } from "../experiments/power.ts";
 import { infraKind, infraKinds, infraKindsText, infraStopFor, voidText, withRetries, type InfraKind, type InfraStopReport, type RetryPolicy } from "../jobs/retry.ts";
 import type { JobScope } from "../jobs/store.ts";
 import { newcombeDiff, pairedBootstrap, wilson, type BootstrapResult, type Interval } from "../stats/interval.ts";
 import { mean } from "../stats/summary.ts";
 import { itemGate, dec, type ItemGateOpts, type ItemGateReport } from "./gate-item.ts";
-import { gateDetail, gateHeadline, gateVerdict, idList, type GateVerdict } from "../stats/gate.ts";
+import { gateDetail, gateHeadline, gateVerdict, guardVerdict, idList, type GateVerdict } from "../stats/gate.ts";
 import { acceptanceGate, fisherExact, mcnemar, type GateOpts, type GateResult, type McNemarResult } from "../stats/tests.ts";
 import { paretoSupport, type ParetoOpts, type ParetoSupport } from "../stats/pareto.ts";
 import { failureAnatomy, nestedVarianceShares, type ArmAnatomy, type VarianceShares } from "./anatomy.ts";
@@ -1438,7 +1438,9 @@ function stratify(pooled: CompareGate, cells: readonly { id: string; a: boolean;
     const lost = cs.filter((c) => c.a && !c.b).map((c) => c.id);
     const won = cs.filter((c) => !c.a && c.b).map((c) => c.id);
     const g = acceptanceGate({ wins: won.length, losses: lost.length, solved: cs.filter((c) => c.a).length }, opts.gate);
-    return { group, tasks: cs.length, gate: { ...g, verdict: gateVerdict(g) }, lost, won };
+    // A group is a few tasks, like refine's guard set: losing most of its solved tasks blocks
+    // without the binomial test, which a group this small could never pass.
+    return { group, tasks: cs.length, gate: { ...g, verdict: guardVerdict(g) }, lost, won };
   });
   const blockedBy = strata.filter((s) => s.gate.verdict === "dont-ship").map((s) => s.group);
   if (!blockedBy.length) return { ...pooled, strata, blockedBy };
@@ -1934,7 +1936,7 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
   }
   const p = r.power;
   out.push(
-    `power   MDE ${Number.isFinite(p.mde) ? `${(p.mde * 100).toFixed(1)}pp` : "—"}${exactPowerText(p)} ` +
+    `power   MDE ${mdeText(p.mde)}${exactPowerText(p)} ` +
       dim(`(α ${p.alpha}, power ${Math.round(p.power * 100)}%, paired, sd of per-case Δ ${Number.isFinite(p.sd) ? p.sd.toFixed(2) : "—"}${p.exact ? `, ${Math.round(p.exact.discordance * 100)}% discordant` : ""})`),
   );
   const pl = r.plan;

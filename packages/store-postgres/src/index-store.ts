@@ -5,6 +5,7 @@
 import pg from "pg";
 import {
   BLOB_REF_FIELDS,
+  DatasetConflict,
   DEFAULT_PROJECT,
   searchableText,
   searchTerms,
@@ -609,8 +610,16 @@ export class PgIndexStore implements IndexStore {
 
   // ------------------------------------------------------------ datasets / experiments / judges
 
-  async putDataset(ds: Dataset, opts: { note?: string; now?: number } = {}): Promise<{ version: string; created: boolean }> {
+  /** With `parent`, stores only when latest is that version (null: none yet), else throws DatasetConflict and writes nothing. */
+  async putDataset(ds: Dataset, opts: { note?: string; now?: number; parent?: string | null } = {}): Promise<{ version: string; created: boolean }> {
     return withTx(this.pool, async (c) => {
+      // One writer per dataset across processes: the parent check and the write see the same latest.
+      await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`coding.sh:dataset:${this.schema}:${ds.id}`]);
+      if (opts.parent !== undefined) {
+        const { rows } = await c.query(`SELECT version FROM ${this.t("dataset_latest")} WHERE id = $1`, [txt(ds.id)]);
+        const latest = rows[0]?.version as string | undefined;
+        if ((latest ?? null) !== opts.parent) throw new DatasetConflict(ds.id, opts.parent, latest);
+      }
       const createdAt = opts.now ?? ds.createdAt ?? Date.now();
       const stored: Dataset = { ...ds, createdAt };
       const ins = await c.query(

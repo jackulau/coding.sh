@@ -5,8 +5,9 @@
 // is fresh: the returned nextOffset stops before it and the next ingest picks
 // it up whole. One still incomplete after TORN_TAIL_MS is a torn write (ENOSPC,
 // EIO, a killed writer): it is reported and skipped, so the cursor reaches the
-// end of the file and gc can remove it. The writer starts its next line on a
-// fresh line after such a fragment (spool/write.ts).
+// end of the file and gc can remove it. The node writer starts its next line on a
+// fresh line after such a fragment (spool/write.ts); hook.sh appends without
+// looking, so a whole line glued onto a fragment is read from where it starts.
 import { readdirSync, statSync } from "node:fs";
 import { open, readFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -125,6 +126,26 @@ function validate(v: unknown): string | undefined {
   return undefined;
 }
 
+/** How every writer starts a spool line (hook.sh and JSON.stringify of a SpoolLine). */
+const LINE_START = '{"v":0,"agent":"';
+
+/**
+ * A whole spool line glued onto a torn fragment: a write cut short (a full disk)
+ * left a fragment with no "\n", and the next writer appended its line right
+ * after it. Returns the first later line start that parses, with its index in `text`.
+ */
+function gluedLine(text: string): { line: unknown; at: number } | undefined {
+  for (let at = text.indexOf(LINE_START, 1); at > 0; at = text.indexOf(LINE_START, at + 1)) {
+    try {
+      const line: unknown = JSON.parse(text.slice(at));
+      if (!validate(line)) return { line, at };
+    } catch {
+      // not this one: the fragment's payload may hold the same characters
+    }
+  }
+  return undefined;
+}
+
 /**
  * Yields complete lines of one spool file starting at byte `from`. Blank lines
  * are skipped silently; malformed lines are reported via onError and skipped.
@@ -161,11 +182,15 @@ export async function* readSpoolFile(spoolDir: string, file: string, from = 0, o
       pos = nextOffset;
       if (!text.trim()) continue;
       let parsed: unknown;
+      let lineOffset = offset;
       try {
         parsed = JSON.parse(text);
       } catch (err) {
-        opts.onError?.({ source, offset, nextOffset, message: `invalid JSON: ${(err as Error).message}` });
-        continue;
+        const glued = gluedLine(text);
+        opts.onError?.({ source, offset, nextOffset, message: `invalid JSON: ${(err as Error).message}${glued ? "; the whole line after the torn fragment is kept" : ""}` });
+        if (!glued) continue;
+        parsed = glued.line;
+        lineOffset = offset + Buffer.byteLength(text.slice(0, glued.at));
       }
       const problem = validate(parsed);
       if (problem) {
@@ -183,10 +208,10 @@ export async function* readSpoolFile(spoolDir: string, file: string, from = 0, o
           }
         } catch (err) {
           // Keep the line (its event/ts/cwd still matter) but flag the missing payload.
-          opts.onError?.({ source, offset, nextOffset, message: `cannot read rawFile ${line.rawFile}: ${(err as Error).message}` });
+          opts.onError?.({ source, offset: lineOffset, nextOffset, message: `cannot read rawFile ${line.rawFile}: ${(err as Error).message}` });
         }
       }
-      yield { source, line, offset, nextOffset };
+      yield { source, line, offset: lineOffset, nextOffset };
     }
   } finally {
     await fh.close();

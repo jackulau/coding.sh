@@ -1,0 +1,5 @@
+@keyframes spin { to { transform: rotate(1turn); } }
+.a { animation: spin 1s infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .a { animation: none; }
+}

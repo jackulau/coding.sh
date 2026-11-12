@@ -1,12 +1,17 @@
 // coding.sh dataset add|import|list
 import { resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { addCases, assignSplits, caseFromSession, createDataset, loadDatasetFile, slugify } from "../../datasets/dataset.ts";
 import { FileEvalStore } from "../../datasets/store.ts";
+import { DatasetConflict } from "../../store/common.ts";
 import type { CaseKind, Dataset, Split } from "../../datasets/types.ts";
 import { UsageError } from "../args.ts";
 import { jsonArg, list, resolveSession, str, withContext } from "../common.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
+
+/** Tries to save a dataset that other writers keep changing before giving up. */
+const SAVE_ATTEMPTS = 20;
 
 function summary(ds: Dataset) {
   const kinds: Partial<Record<CaseKind, number>> = {};
@@ -25,20 +30,37 @@ export async function run(c: CommandContext): Promise<number> {
   const { out, env } = c;
   return withContext(c, async (ctx) => {
     const store = new FileEvalStore({ env, index: ctx.index });
-    const save = async (built: Dataset & { duplicates: unknown[] }) => {
-      // Every written version has a split on every case: a case without one is
-      // invisible to split-filtered runs and to `judge calibrate`. Splits hash
-      // the case id, so they are stable, and splits already set are kept.
-      const ds = { ...assignSplits(built), duplicates: built.duplicates };
+    // Read, merge and write with the version read as the parent: a writer that lost a
+    // race (DatasetConflict) reads the new latest and merges again, so no case is lost.
+    const save = async (id: string, build: (existing: Dataset | undefined) => Dataset & { duplicates: unknown[] }) => {
       const note = str(c.flags.note);
-      const { version, created } = await store.putDataset(ds, note ? { note } : {});
-      if (out.json) out.data({ outcome: created ? "created" : "unchanged", dataset: { ...summary(ds), version }, duplicates: ds.duplicates.length });
-      else {
-        if (ds.duplicates.length) out.warn(`${plural(ds.duplicates.length, "duplicate case")} dropped`);
-        out.ok(created ? `${ds.name}: ${plural(ds.cases.length, "case")}` : `${ds.name} is unchanged`);
-        out.print(`${ds.id}@${version}`);
+      for (let attempt = 1; ; attempt++) {
+        const existing = await store.getDataset(id);
+        // Every written version has a split on every case: a case without one is
+        // invisible to split-filtered runs and to `judge calibrate`. Splits hash
+        // the case id, so they are stable, and splits already set are kept.
+        const built = build(existing);
+        const ds = { ...assignSplits(built), duplicates: built.duplicates };
+        let put;
+        try {
+          const opts: { note?: string; parent: string | null } = { parent: existing?.version ?? null };
+          if (note) opts.note = note;
+          put = await store.putDataset(ds, opts);
+        } catch (e) {
+          if (!(e instanceof DatasetConflict)) throw e;
+          if (attempt >= SAVE_ATTEMPTS) throw new CliError(`${ds.name} kept changing while saving (${SAVE_ATTEMPTS} tries). Run the command again`, { reason: "conflict" });
+          await delay(10 + Math.random() * 40 * attempt);
+          continue;
+        }
+        const { version, created } = put;
+        if (out.json) out.data({ outcome: created ? "created" : "unchanged", dataset: { ...summary(ds), version }, duplicates: ds.duplicates.length });
+        else {
+          if (ds.duplicates.length) out.warn(`${plural(ds.duplicates.length, "duplicate case")} dropped`);
+          out.ok(created ? `${ds.name}: ${plural(ds.cases.length, "case")}` : `${ds.name} is unchanged`);
+          out.print(`${ds.id}@${version}`);
+        }
+        return 0;
       }
-      return 0;
     };
     switch (c.action) {
       case "add": {
@@ -59,14 +81,13 @@ export async function run(c: CommandContext): Promise<number> {
           raw.push(kind ? { ...harvested, kind } : harvested);
         }
         if (!raw.length) throw new UsageError("Nothing to add. Pass --case <JSON> or --session <ID>", { reason: "missing_argument" });
-        const existing = await store.getDataset(slugify(name));
-        let ds;
-        try {
-          ds = existing ? addCases(existing, raw) : createDataset({ name, cases: raw });
-        } catch (e) {
-          throw new UsageError(e instanceof Error ? e.message : String(e), { reason: "invalid_case" });
-        }
-        return save(ds);
+        return save(slugify(name), (existing) => {
+          try {
+            return existing ? addCases(existing, raw) : createDataset({ name, cases: raw });
+          } catch (e) {
+            throw new UsageError(e instanceof Error ? e.message : String(e), { reason: "invalid_case" });
+          }
+        });
       }
       case "import": {
         const file = resolve(c.cwd, c.positionals[0]!);
@@ -78,9 +99,9 @@ export async function run(c: CommandContext): Promise<number> {
           if ((e as NodeJS.ErrnoException).code === "ENOENT") throw new CliError(`Can't read ${file}: no such file`, { reason: "not_found" });
           throw new CliError(`Couldn't import ${file}: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_file" });
         }
-        const existing = await store.getDataset(ds.id);
-        if (existing) ds = { ...addCases({ ...existing, cases: [] }, ds.cases), duplicates: ds.duplicates };
-        return save(ds);
+        if (!ds.cases.length) throw new CliError(`${file} has no cases`, { reason: "invalid_file" });
+        const loaded = ds;
+        return save(ds.id, (existing) => (existing ? { ...addCases({ ...existing, cases: [] }, loaded.cases), duplicates: loaded.duplicates } : loaded));
       }
       case "list": {
         const all = await store.listDatasets();
@@ -97,5 +118,5 @@ export async function run(c: CommandContext): Promise<number> {
       }
     }
     throw new UsageError(`Unknown dataset command ${c.action}`);
-  });
+  }, { create: c.action !== "list" });
 }

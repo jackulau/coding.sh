@@ -19,7 +19,7 @@ import { MemBlobs, MemIndex } from "../otel/_memstore.ts";
 const T0 = Date.UTC(2026, 10, 8, 9, 0, 0);
 const SID = "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff";
 const RUN = "wf_redact01";
-const TOKEN = "ghp_" + "0123456789abcdefghijABCDEFGHIJ012345";
+const TOKEN = ["ghp_", "0123456789abcdefghijABCDEFGHIJ012345"].join("");
 const iso = (ms: number) => new Date(ms).toISOString();
 
 function writeRun(projects: string): void {

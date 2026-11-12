@@ -125,6 +125,17 @@ export function proxySettings(env: NodeJS.ProcessEnv = process.env, flags: { por
   };
 }
 
+/** Why `value` cannot be an upstream (an http:// or https:// URL), or undefined when it can. */
+export function upstreamProblem(value: string): string | undefined {
+  let u: URL;
+  try {
+    u = new URL(value);
+  } catch {
+    return "is not a URL";
+  }
+  return u.protocol === "http:" || u.protocol === "https:" ? undefined : `must start with http:// or https://, got ${u.protocol}//`;
+}
+
 /** The URL agents point at for a proxy on this port. */
 export const proxyUrl = (port: number, host = "127.0.0.1"): string => `http://${host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host.includes(":") ? `[${host}]` : host}:${port}`;
 

@@ -173,7 +173,7 @@ export function createCommitHooks(o: { cfg: ServeConfig; blobs: BlobStore; sinks
     ...(forwarder ? { forwarder } : {}),
     ...(mirror ? { mirror } : {}),
     async flush() {
-      await Promise.all([forwarder?.pump(), mirror?.flush()]);
+      await Promise.all([forwarder?.flush(), mirror?.flush()]);
     },
     async close(timeoutMs) {
       await Promise.all([forwarder?.close(timeoutMs), mirror?.close(timeoutMs)]);

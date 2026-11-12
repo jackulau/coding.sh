@@ -55,6 +55,9 @@ const FORBID = /\b(?:never|do not|don't|must not|avoid)\b/i;
 const CONDITIONAL = /\b(?:if|when|unless|before|after)\b/i;
 const STOP = new Set(["true", "false", "null", "src", "test", "main", "readme"]);
 const RUN_VERB = /\b(?:run|execute|invoke)\s*$/i;
+// A token under 3 characters counts only as a flag (`-f`) or as a command after a verb (`run rm`, `use ls`).
+const SHORT_CMD_VERB = /\b(?:run|use|call|invoke|execute)\s*$/i;
+const SHORT_CMD = /^[A-Za-z][\w.-]?$/;
 
 const normalize = (s: string): string => s.replace(/\s+/g, " ").trim();
 
@@ -103,9 +106,15 @@ export function extractDirectives(text: string, path: string): Directive[] {
     const tokens: DirectiveToken[] = [];
     for (const m of line.matchAll(/`([^`\n]+)`/g)) {
       const value = (m[1] as string).trim();
-      if (value.length < 3 || STOP.has(value.toLowerCase())) continue;
+      if (STOP.has(value.toLowerCase())) continue;
       if (tokens.some((t) => t.value === value)) continue;
-      tokens.push({ kind: tokenKind(value, line.slice(0, m.index)), value });
+      const before = line.slice(0, m.index);
+      if (value.length < 3) {
+        if (/^--?\w+$/.test(value)) tokens.push({ kind: "flag", value });
+        else if (SHORT_CMD.test(value) && SHORT_CMD_VERB.test(before)) tokens.push({ kind: "command", value });
+        continue;
+      }
+      tokens.push({ kind: tokenKind(value, before), value });
     }
     if (!tokens.length) continue;
     const norm = normalize(line);
@@ -225,7 +234,8 @@ export function tokenUses(t: DirectiveToken, events: readonly RuleEvent[]): Rule
     let used = false;
     switch (t.kind) {
       case "command":
-        used = cmd !== undefined && cmd.includes(normalize(t.value));
+        // A short command (`rm`, `ls`) is a whole word, or a path ending in it: `npm run format` is not rm.
+        used = cmd !== undefined && (t.value.length < 3 ? cmd.split(/[\s;&|()<>]+/).some((w) => w === t.value || w.endsWith(`/${t.value}`)) : cmd.includes(normalize(t.value)));
         break;
       case "flag":
         used = cmd !== undefined && cmd.split(" ").some((a) => a === t.value || a.startsWith(`${t.value}=`));

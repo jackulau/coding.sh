@@ -33,7 +33,8 @@ That's it: every `chat.completions.create`, `responses.create` and `messages.cre
 latency, time to first token, stop reason and tool calls. The server prices it.
 
 Without `CODING_SH_URL` the SDK does nothing. It never changes return values, errors or stream
-semantics, and never raises into your app.
+semantics, and never raises into your app. The one exception is `coding_sh.weights_delta()`, a pure
+helper you call on purpose: it raises `ValueError` on bad input.
 
 ## Traces, tools and conversations
 
@@ -118,4 +119,6 @@ python3 -m unittest discover -s tests -t tests
 ```
 
 The provider tests use fake clients and always run. Tests against the real `openai`, `anthropic`
-and OpenTelemetry packages run when those are installed.
+and OpenTelemetry packages, and the mypy typing check, run when those are installed
+(`pip install '.[otel,openai,anthropic]' mypy`). With `CODING_SH_SDK_REQUIRE_ALL=1`, as in CI and
+`npm run gate`, they fail instead of skipping when a package is missing.

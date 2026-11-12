@@ -1,8 +1,9 @@
 // Runs a parsed `--where` query against any index store: the store's own query
 // path when it has one (SQLite compiles to SQL), else a scan of listSessions that
 // evaluates the query in memory. The scan answers session keys on every store;
-// event keys and text need events, which only SQLite (indexed) and the in-memory
-// store (cheap) can afford, so other stores get a clear QueryUnsupported error.
+// event keys and text need events, which only a store with a query compiler (SQLite,
+// the Postgres and ClickHouse plugins) or the in-memory store (cheap) can afford, so
+// other stores get a clear QueryUnsupported error.
 import type { EventPage, EventQueryOpts, FacetCount, IndexStore, QueryOpts, SearchHit, SearchOpts } from "../core/types.ts";
 import type { AgentEvent, Session } from "../schema/index.ts";
 import { matchesEvent, matchesSession, sortSessions } from "./match.ts";
@@ -21,7 +22,7 @@ export interface FindResult {
 
 function unsupported(index: IndexStore, what: string): QueryUnsupported {
   return new QueryUnsupported(
-    `${what} need the event index: the ${index.kind} store answers --where with session keys only (agent, model, repo, flag, cost, duration, …). Drop the event keys (tool, kind, ok, mcp, error, event.duration) and free text, or query the SQLite store.`,
+    `${what} need the event index: this ${index.kind} store answers --where with session keys only (agent, model, repo, flag, cost, duration, …), since it has no query compiler. Drop the event keys (tool, kind, ok, mcp, error, event.duration) and free text, upgrade the store's plugin, or use the SQLite store.`,
   );
 }
 

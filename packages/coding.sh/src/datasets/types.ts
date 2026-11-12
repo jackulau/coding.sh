@@ -199,7 +199,7 @@ export interface CaseRun {
    * its key was refused): the outcome is unknown (also `ungraded`), and
    * `--resume` runs it again.
    */
-  infra?: "rate-limit" | "server" | "network" | "tempfail" | "auth" | "setup";
+  infra?: "rate-limit" | "overloaded" | "server" | "network" | "tempfail" | "auth" | "setup";
   /** What the task reported it cost (`costUsd` on its output). */
   costUsd?: number;
   /** Content key of this case-trial (experiments/trial-cells.ts); set by matrix runs. */

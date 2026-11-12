@@ -1,0 +1,246 @@
+{
+  "og-image": {
+    "title": "Traces and evals for AI agents.",
+    "template": "v1::Open source, local-first, MIT licensed."
+  },
+  "og/blog": {
+    "title": "Blog",
+    "template": "v1:blog:Notes on how coding.sh works and why."
+  },
+  "og/blog-agents-run-in-your-shell": {
+    "title": "Coding agents run in your shell",
+    "template": "v1:blog:coding.sh blog"
+  },
+  "og/blog-why-local-first": {
+    "title": "Why coding.sh is local-first",
+    "template": "v1:blog:coding.sh blog"
+  },
+  "og/changelog": {
+    "title": "Changelog",
+    "template": "v1:changelog:Every release, newest first."
+  },
+  "og/docs": {
+    "title": "Record your agents and test your changes",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-agents": {
+    "title": "Record Claude Code, Codex and other coding agents",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-ai-gateway": {
+    "title": "LLM gateways",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-api": {
+    "title": "REST API reference",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-api-read": {
+    "title": "Read API: sessions and calls",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-api-read-search": {
+    "title": "Read API: search, labels and evals",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-benchmarks": {
+    "title": "Benchmarks",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-cli": {
+    "title": "CLI reference",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-compare": {
+    "title": "coding.sh compared with other tools",
+    "template": "v1:compare:coding.sh docs"
+  },
+  "og/docs-compare-agentops": {
+    "title": "coding.sh vs AgentOps",
+    "template": "v1:compare:coding.sh docs"
+  },
+  "og/docs-compare-braintrust": {
+    "title": "coding.sh vs Braintrust",
+    "template": "v1:compare:coding.sh docs"
+  },
+  "og/docs-compare-ccusage": {
+    "title": "coding.sh vs ccusage",
+    "template": "v1:compare:coding.sh docs"
+  },
+  "og/docs-compare-laminar": {
+    "title": "coding.sh vs Laminar",
+    "template": "v1:compare:coding.sh docs"
+  },
+  "og/docs-compare-langfuse": {
+    "title": "coding.sh vs Langfuse",
+    "template": "v1:compare:coding.sh docs"
+  },
+  "og/docs-compare-langsmith": {
+    "title": "coding.sh vs LangSmith",
+    "template": "v1:compare:coding.sh docs"
+  },
+  "og/docs-concepts": {
+    "title": "Concepts",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-config": {
+    "title": "Configuration reference",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-cost": {
+    "title": "Track cost and tokens",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-deploy": {
+    "title": "Deploy coding.sh serve",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-eval-methods": {
+    "title": "How evals are computed",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-evals": {
+    "title": "Run your first eval",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-experiments": {
+    "title": "Experiments",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-explore": {
+    "title": "Find and read runs",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-faq": {
+    "title": "FAQ",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-harness-evals": {
+    "title": "Evaluate AGENTS.md and skills",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-how-to-attribute-commits": {
+    "title": "See which agent session wrote each commit",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-how-to-capture-with-proxy": {
+    "title": "Log every model call with the proxy",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-how-to-ci-regressions": {
+    "title": "Catch a regression in CI",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-how-to-compare-agents": {
+    "title": "Compare two agents on your repo",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-how-to-does-this-plugin-help": {
+    "title": "Does this plugin help me?",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-how-to-evaluate-a-skill": {
+    "title": "Evaluate an Agent Skill",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-how-to-replay-llm-calls": {
+    "title": "Replay recorded model calls",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-how-to-self-host-team": {
+    "title": "Self-host for a team",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-how-to-session-to-eval": {
+    "title": "Turn failed runs into evals",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-how-to-test-agents-md-change": {
+    "title": "Test an AGENTS.md change",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-how-to-trace-durable-workflow": {
+    "title": "Trace a durable workflow",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-how-to-trace-your-agent": {
+    "title": "Trace your agent with the SDK",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-improve": {
+    "title": "What to fix first",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-install": {
+    "title": "Install",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-judges": {
+    "title": "LLM judges",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-mcp": {
+    "title": "Let your agent read its own runs over MCP",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-otel": {
+    "title": "Trace a framework with OpenTelemetry",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-privacy": {
+    "title": "Privacy and redaction",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-production": {
+    "title": "Trace an app in production",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-query": {
+    "title": "Query language",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-quickstart": {
+    "title": "Quickstart",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-roadmap": {
+    "title": "Roadmap",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-sdk": {
+    "title": "SDK reference",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-storage": {
+    "title": "Storage",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-stores": {
+    "title": "Postgres and ClickHouse stores",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-terse-mode": {
+    "title": "Does a terse mode save money on your tasks?",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-tool-evals": {
+    "title": "Tool evals",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-trace-format": {
+    "title": "Trace format",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-troubleshooting": {
+    "title": "Troubleshooting",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-use-cases-replay-agent-session": {
+    "title": "Replay a session step by step",
+    "template": "v1:docs:coding.sh docs"
+  },
+  "og/docs-workflows": {
+    "title": "Workflow experiments",
+    "template": "v1:docs:coding.sh docs"
+  }
+}

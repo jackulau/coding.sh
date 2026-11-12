@@ -17,14 +17,14 @@ import { defaultConfigToml } from "../../core/config.ts";
 import { paths } from "../../core/paths.ts";
 import type { Adapter, FileChange, McpServerSpec } from "../../core/types.ts";
 import { gitRoot } from "../../mcp/data.ts";
-import { mcpLaunchSpec, runningCli } from "../../mcp/launch.ts";
+import { mcpLaunchSpec, mcpLauncherSource, runningCli } from "../../mcp/launch.ts";
 import { applyProxyInstall, isProxyAgent, planProxyInstall, readProxyInstalls } from "../../proxy/install.ts";
 import { proxySettings } from "../../proxy/state.ts";
 import { spawnBackgroundIngest } from "../../spool/kick.ts";
 import { suggest, UsageError } from "../args.ts";
 import { changeJson, printChanges, shortPath } from "../changes.ts";
 import { ingestCli, list, requireConsent, str, underImportLock, withContext } from "../common.ts";
-import { planHookBin, writeHookBin } from "../hookbin.ts";
+import { hookShSource, hookSource, planHookBin, writeHookBin } from "../hookbin.ts";
 import { parseRemote, probeRemote, REMOTE_SINK, validateConfigText, withRemoteSink } from "../remote.ts";
 import { CliError, plural, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -167,7 +167,11 @@ function planBlockers(pl: AgentPlan, env: NodeJS.ProcessEnv, cwd: string): Block
   if (pl.mcp?.error) out.push({ text: `can't register the MCP server: ${pl.mcp.error}`, fatal: true });
   if (pl.proxy?.error) out.push({ text: `can't route through the proxy: ${pl.proxy.error}`, fatal: true });
   if (pl.proxyUnsupported) out.push({ text: "init --proxy can't route this agent; point it at the variables from coding.sh proxy env", fatal: false });
-  if (!pl.installed) out.push({ text: `${pl.adapter.displayName} is not installed on this machine; its hooks fire once it is`, fatal: false });
+  if (!pl.installed) {
+    // A wrapper-only agent (tier C) or a store-read one has no hooks to fire.
+    const later = pl.adapter.tail ? "its sessions are imported once it is" : pl.adapter.tier === "C" ? `capture it with coding.sh run -- ${pl.adapter.id} once it is` : "its hooks fire once it is";
+    out.push({ text: `${pl.adapter.displayName} is not installed on this machine; ${later}`, fatal: false });
+  }
   if (pl.otherScope) {
     const where = `${pl.otherScope.scope} scope (${pl.otherScope.files.map((f) => shortPath(f, env, cwd)).join(", ")})`;
     out.push({ text: pl.skipped ? `skipping hooks: already installed in ${where}; --force installs both` : `also hooked in ${where}; events may be captured twice`, fatal: false });
@@ -198,7 +202,7 @@ function renderPlan(out: Output, plans: AgentPlan[], own: FileChange[], scope: s
     emit(`  ${out.style(pl.adapter.displayName, "bold", stream)} (${scope} scope)`);
     const rows = rowsOf(pl);
     for (const r of rows) emit(file(r));
-    if (!rows.length && !pl.hooks.error && !pl.mcp?.error && !pl.proxy?.error && !pl.skipped) emit(pl.adapter.tail ? "    no hooks needed; imports from its store" : "    already set up");
+    if (!rows.length && !pl.hooks.error && !pl.mcp?.error && !pl.proxy?.error && !pl.skipped) emit(pl.adapter.tail ? "    no hooks needed; imports from its store" : pl.adapter.tier === "C" ? `    no hooks needed; capture with coding.sh run -- ${pl.adapter.id}` : "    already set up");
     for (const b of planBlockers(pl, env, cwd)) emit(`    ${b.fatal ? out.style("✗", "red", stream) : out.style("!", "yellow", stream)} ${b.text}`);
   }
   if (own.length) {
@@ -206,6 +210,35 @@ function renderPlan(out: Output, plans: AgentPlan[], own: FileChange[], scope: s
     for (const ch of own) emit(file([ch, ""]));
   }
   if (importFrom.length) emit(`  then import past sessions from ${joinNames(importFrom.map((a) => a.displayName))} (--no-import skips)`);
+}
+
+/**
+ * Each file under bin/ that writeHookBin writes and that differs from what this
+ * CLI ships (hook.mjs, hook.sh, mcp.mjs, cli-path), so the plan names every file
+ * the run creates. `hookChange` is planHookBin's entry for hook.mjs.
+ */
+function hookBinFiles(env: NodeJS.ProcessEnv, hookChange: FileChange): FileChange[] {
+  const p = paths(env);
+  const readOr = (path: string) => {
+    try {
+      return readFileSync(path, "utf8");
+    } catch {
+      return undefined;
+    }
+  };
+  const cli = runningCli();
+  const out: FileChange[] = readOr(p.hook) === readFileSync(hookSource(env), "utf8") ? [] : [hookChange];
+  const others: [string, string | undefined, string][] = [
+    [p.hookSh, readFileSync(hookShSource(env), "utf8"), "the hook's sh fast path"],
+    [p.mcpLauncher, mcpLauncherSource(), "the coding.sh MCP server launcher"],
+    [p.cliPointer, cli === undefined ? undefined : cli + "\n", "the CLI the hook starts ingest with"],
+  ];
+  for (const [path, want, what] of others) {
+    if (want === undefined) continue;
+    const have = readOr(path);
+    if (have !== want) out.push({ path, action: have === undefined ? "create" : "modify", summary: `${have === undefined ? "install" : "update"} ${what}` });
+  }
+  return out;
 }
 
 /** "Set up A and B (hooks + MCP server); C (hooks)" from what each agent actually got. */
@@ -373,6 +406,7 @@ export async function run(c: CommandContext): Promise<number> {
   }
 
   const hookChange = planHookBin(env);
+  const binChanges = hookChange ? hookBinFiles(env, hookChange) : [];
   const configBefore = existsSync(p.config) ? readFileSync(p.config, "utf8") : undefined;
   let configChange: FileChange | undefined = configBefore === undefined ? { path: p.config, action: "create", summary: "write the default coding.sh config", after: defaultConfigToml(env) } : undefined;
   if (remote) {
@@ -383,7 +417,7 @@ export async function run(c: CommandContext): Promise<number> {
       configChange = configBefore === undefined ? { path: p.config, action: "create", summary: `write the default coding.sh config and ${summary}`, after } : { path: p.config, action: "modify", summary, before: configBefore, after };
     }
   }
-  const own = [hookChange, configChange].filter((x): x is FileChange => x !== undefined);
+  const own = [...binChanges, configChange].filter((x): x is FileChange => x !== undefined);
   const agentChanges = (pl: AgentPlan) => [...pl.hooks.changes, ...(pl.mcp?.changes ?? []), ...(pl.proxy?.changes ?? [])];
   const pending = plans.filter((pl) => agentChanges(pl).length);
   const total = pending.reduce((n, pl) => n + agentChanges(pl).length, 0);
@@ -438,11 +472,14 @@ export async function run(c: CommandContext): Promise<number> {
   for (const pl of plans) {
     const a = pl.adapter;
     const hooks: Part = pl.hooks.error || !pl.hooks.changes.length ? pl.hooks : await plan(() => a.install({ hookCommand, scope, projectDir: c.cwd, dryRun: false }));
+    // An agent whose hooks can't go in (a settings file it can't parse) gets none of its other writes either.
+    const blocked = hooks.error !== undefined;
     // MCP after hooks: for agents that keep both in one file, the MCP record is the last write (exact uninstall).
-    const mcp: Part | undefined = !pl.mcp || pl.mcp.error || !pl.mcp.changes.length ? pl.mcp : await plan(() => a.installMcp!({ server, dryRun: false }));
+    const mcp: Part | undefined = blocked ? undefined : !pl.mcp || pl.mcp.error || !pl.mcp.changes.length ? pl.mcp : await plan(() => a.installMcp!({ server, dryRun: false }));
     // The proxy last: it is the final write to a file it shares (Claude Code settings.json), so its exact restore applies first on uninstall.
-    const proxy: Part | undefined =
-      !pl.proxy || pl.proxy.error || !pl.proxy.changes.length
+    const proxy: Part | undefined = blocked
+      ? undefined
+      : !pl.proxy || pl.proxy.error || !pl.proxy.changes.length
         ? pl.proxy
         : await plan(async () => {
             // Planned again: the hooks or MCP writes above may have changed the same file.
@@ -470,7 +507,9 @@ export async function run(c: CommandContext): Promise<number> {
       proxyStart = { url: proxyUrl, pid: 0, started: false, error: errText(e) };
     }
   }
-  const outcome = total + own.length === 0 ? "unchanged" : errors ? "partial" : "installed";
+  // Every agent asked for failed (a settings file it can't parse): nothing captures, so init failed.
+  const allFailed = applied.length > 0 && applied.every((x) => x.hooks.error);
+  const outcome = allFailed ? "failed" : total + own.length === 0 ? "unchanged" : errors ? "partial" : "installed";
   // Past sessions, so the first viewer screen shows the user's own history (never fails init).
   let imported: ImportOutcome | undefined;
   try {
@@ -500,6 +539,10 @@ export async function run(c: CommandContext): Promise<number> {
   const ready = applied.filter((x) => !x.hooks.error && !x.pl.skipped);
   // Store-read agents (T3 Code) and wrapper-only agents (tier C: Aider) get no hooks: listed by their plan row, not here.
   const summary = setupSummary(ready.filter((x) => (!x.pl.adapter.tail && x.pl.adapter.tier !== "C") || x.mcp).map((x) => ({ name: x.pl.adapter.displayName, mcp: x.mcp !== undefined && !x.mcp.error })));
+  if (allFailed) {
+    out.warn(`No agent was set up: fix the file, then run coding.sh init again`);
+    return 1;
+  }
   if (summary) out.ok(`${outcome === "unchanged" ? "Already set up:" : "Set up"} ${summary}`);
   // Agents load hooks when a session starts: one open while init ran (often the one that ran it) is not recorded live.
   const hookedNow = ready.filter((x) => x.hooks.changes.length).map((x) => x.pl.adapter.displayName);

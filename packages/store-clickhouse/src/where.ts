@@ -36,10 +36,10 @@ export function termsSql(terms: readonly string[], bind: (value: string) => stri
 
 const asciiLower = (s: string): string => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
 
-/** LIKE pattern from a value: `*` → %, and %, _ and \ escaped with \. */
-function likePattern(raw: string, wildcard: boolean): string {
-  const esc = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
-  return wildcard ? raw.split("*").map(esc).join("%") : esc(raw);
+const esc = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+/** LIKE pattern from a value: its wildcards → %, and %, _ and \ escaped with \. A literal star (`\*` in quotes) stays a star. */
+function likePattern(v: Value): string {
+  return v.kind === "glob" ? (v.parts ?? v.raw.split("*")).map(esc).join("%") : esc(v.raw);
 }
 
 const path = (keys: string) => keys.split(".").map((k) => `'${k}'`).join(", ");
@@ -95,7 +95,8 @@ export const KEY_SQL: Record<string, string[]> = {
   tool: ["tool"],
   ok: ["ok"],
   mcp: [jstr("payload", "server")],
-  error: [jstr("payload", "error")],
+  // payload.error of a failed call, or the message of an error event.
+  error: [jstr("payload", "error"), `if(kind = 'error', ${jstr("payload", "message")}, NULL)`],
   "event.duration": ["duration_ms"],
 };
 /** Facet value when it differs from the key's first expression. */
@@ -152,8 +153,8 @@ class Compiler {
     if (def.type === "text") {
       const p = def.multi?.prefix ?? "";
       // lower() folds ASCII only, as SQLite's LIKE does.
-      if (def.match === "contains") return `lower(${expr}) LIKE ${this.bind("String", asciiLower(`%${likePattern(v.raw, v.kind === "glob")}%`))}`;
-      if (v.kind === "glob") return `lower(${expr}) LIKE ${this.bind("String", asciiLower(likePattern(p, false) + likePattern(v.raw, true)))}`;
+      if (def.match === "contains") return `lower(${expr}) LIKE ${this.bind("String", asciiLower(`%${likePattern(v)}%`))}`;
+      if (v.kind === "glob") return `lower(${expr}) LIKE ${this.bind("String", asciiLower(esc(p) + likePattern(v)))}`;
       return `${expr} = ${this.bind("String", p + v.raw)}`;
     }
     if (def.type === "bool") return `${expr} = ${this.bind("Bool", v.n === 1)}`;
@@ -248,7 +249,7 @@ export function facetRows(key: string, bind: Bind, sessions: string, events: str
   if (!def || !KEY_SQL[key]) throw unknown(key);
   if (def.multi) {
     const p = def.multi.prefix;
-    const value = p ? `arrayJoin(arrayMap(f -> substring(f, ${p.length + 1}), arrayFilter(f -> lower(f) LIKE ${bind("String", `${likePattern(asciiLower(p), false)}%`)}, flags)))` : "arrayJoin(flags)";
+    const value = p ? `arrayJoin(arrayMap(f -> substring(f, ${p.length + 1}), arrayFilter(f -> lower(f) LIKE ${bind("String", `${esc(asciiLower(p))}%`)}, flags)))` : "arrayJoin(flags)";
     return `SELECT ${value} AS fv, id AS sid FROM ${sessions} FINAL ${where}`;
   }
   const value = FACET_SQL[key] ?? KEY_SQL[key]![0]!;

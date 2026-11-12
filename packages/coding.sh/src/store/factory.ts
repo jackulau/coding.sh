@@ -55,9 +55,14 @@ export function parseStoreUrl(url: string): { scheme: string; rest: string } {
   return { scheme: m[1]!.toLowerCase(), rest: m[2]! };
 }
 
-/** Filesystem path from sqlite:///abs, sqlite://~/x or sqlite://relative (resolved against cwd). */
+/**
+ * Filesystem path from sqlite:///abs, sqlite://~/x or sqlite://relative (resolved against cwd).
+ * A `user:password@` in front is not part of the path, and neither is the slash before a
+ * Windows drive letter (`sqlite:///C:/data/index.db`).
+ */
 export function fileUrlPath(rest: string): string {
-  const p = decodeURIComponent(rest.replace(/[?#].*$/, ""));
+  let p = decodeURIComponent(rest.replace(/[?#].*$/, "")).replace(/^[^/\\@:]+:[^/\\@]*@/, "");
+  if (process.platform === "win32") p = p.replace(/^\/(?=[A-Za-z]:[\\/])/, "");
   return resolve(expandHome(p));
 }
 

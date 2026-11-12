@@ -88,7 +88,8 @@ price. A call with none of these is unknown, not free.
   so a slow hour hits everyone.
 - **Same limits.** `timeoutMs` and `retries` are set once for everyone.
 - **Shared exclusions.** A 401, 402 or 429, a quota error, or a grader that fails twice drops the
-  case for every contender. Above 10% excluded, no winner is declared.
+  case for every contender. Above 10% excluded, no winner is declared: each pair says
+  `no-verdict` in `--json` and `report.json`.
 - **Fresh by default.** A case tested in an earlier counted run is never sampled again.
   `fresh = false` allows repeats.
 - **No rerunning until it looks good.** History counts the first complete plain `bench run` per

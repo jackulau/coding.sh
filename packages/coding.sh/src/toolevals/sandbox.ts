@@ -9,7 +9,7 @@
 import { cp, mkdir, stat, writeFile } from "node:fs/promises";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { commandEnv, sh } from "../runner/exec.ts";
-import { safeJoin } from "../runner/fsutil.ts";
+import { fencePackageScope, safeJoin } from "../runner/fsutil.ts";
 import { writeCliShim } from "./tap/cli.ts";
 import type { Target, ToolTask, Variant } from "./types.ts";
 
@@ -28,6 +28,8 @@ export interface Sandbox {
   vars: Record<string, string>;
   /** Env for the tool process itself (target env + variant env, expanded). */
   toolEnv: Record<string, string>;
+  /** A CLI target's bin: the name of a call with no subcommand. */
+  cliBin?: string;
 }
 
 const SETUP_TIMEOUT_MS = 15 * 60_000;
@@ -82,6 +84,7 @@ export async function prepareSandbox(task: ToolTask, target: Target, variant: Va
   const v = (p: string) => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
   sb.vars = { sandbox: v(dir), work: v(sb.work), home: v(sb.home), hidden: v(sb.hidden), bin: v(sb.bin), fixtures: v(join(suite, "fixtures")), suite: v(suite) };
   for (const d of [sb.work, sb.home, sb.bin, sb.hidden, sb.checkBin]) await mkdir(d, { recursive: true });
+  await fencePackageScope(dir);
   await writeFile(sb.tapLog, "");
 
   for (const [rel, src] of Object.entries(task.setup.files)) {
@@ -98,6 +101,7 @@ export async function prepareSandbox(task: ToolTask, target: Target, variant: Va
   sb.env = { ...setupEnv, PATH: `${sb.bin}${delimiter}${process.env.PATH ?? ""}`, CODING_SH_RUN_ID: trialId };
 
   if (target.kind === "cli") {
+    sb.cliBin = target.bin;
     const command = (variant.command ?? target.command).map((a) => expandVars(a, sb.vars));
     const shim = { command, env: sb.toolEnv, usageExitCodes: target.usageExitCodes, usagePatterns: target.usagePatterns };
     await writeCliShim(sb.bin, target.bin, { ...shim, tapLog: sb.tapLog });

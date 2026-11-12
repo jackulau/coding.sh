@@ -131,6 +131,8 @@ same `CODING_SH_HOME` as the server.
 | GET | [`/api/bundles`](#get-apitasks-get-apiruns-get-apibundles) | read key or basic auth | serve, ui |
 | GET | [`/api/update`](#get-apiupdate) | read key or basic auth | serve, ui |
 | GET | [`/api/ingest`](#get-apiingest) | read key or basic auth | serve, ui |
+| GET | [`/api/star`](#get-apistar-post-apistar) | ui token | ui |
+| POST | [`/api/star`](#get-apistar-post-apistar) | ui token | ui |
 
 Any other path answers 404 `{"error":"not found","status":404}`.
 
@@ -716,6 +718,18 @@ Three `notification` kinds carry the events behind these stats:
 | `fork` | `toolUseId` (the parent's Agent call) and `inheritedTokens` |
 | `hook.context` | `hookEvent`, `hookName`, `hookSource`, `command`, `chars`, `tokens` and `text` (clipped). Metadata mode keeps only `hookEvent`, `hookSource`, `chars` and `tokens` |
 
+One more `notification` kind records weight edits. The Python SDK's `coding_sh.weights_edit()` sends it, and any client can post it to `/v1/ingest`. It adds no stat and no flag; the event shows in the session's events. Redaction runs on `tensor` and `note` like on any payload.
+
+| `payload.kind` | Fields |
+|---|---|
+| `weights.edit` | `tensor` (string, the tensor's name), `shape` (array of non-negative integers, at most 16), `changed` (integer, the weights that differ, at most the product of `shape`), `l2` (number >= 0, the L2 norm of edited minus base), `maxAbs` (number >= 0, the largest absolute value of that change), `baseSha256` and `editedSha256` (64 lowercase hex characters, the tensor's hash before and after) and `note` (string, optional, left out in metadata mode) |
+
+- The caller computes the hashes and norms. The SDK checks the values, drops an invalid edit with one warning, and never raises into the app. Numpy and torch scalars count as numbers.
+- `weights_edit()` returns `True` only when the event was queued. A `note` that is not a string is dropped with a warning, and the edit is still recorded.
+- `coding_sh.weights_delta()` computes `shape`, `changed`, `l2` and `max_abs` for two small array-likes in pure Python. It is a helper you call on purpose, so it raises `ValueError` on bad input.
+- The server stores the payload without validating these fields, after redaction.
+- A call outside `trace()` and `with_session()` makes a session of its own, so put a run of edits inside one of them.
+
 A missing session, or one outside a scoped key's project, gets 404:
 
 ```sh
@@ -1180,10 +1194,12 @@ viewer's Explore page and `coding.sh stats --json`. Parameters:
 | `by` | none | `agent`, `model`, `repo` or `flag`: one series per group |
 | `groups` | 6 | how many groups get their own series (1 to 50); the rest add up in `other` |
 | `tz` | 0 | minutes behind UTC, as `Date#getTimezoneOffset` gives (360 for UTC-6); buckets start at local midnight. Without `tz` the buckets are UTC days and a date is read in the server's zone, so send `tz` with a date |
-| `scope` | `all` | `top` leaves out subagent sessions |
+| `scope` | `all` | `top` counts top-level sessions only, and adds each subagent's cost, tokens, tool calls and model calls to the session it ran under |
 | `where`, `project` | | as on `/api/sessions` |
 
-A session counts in the bucket it started in.
+A session counts in the bucket it started in. With `scope=top`, a subagent counts in its top-level
+session's bucket and group; one whose top-level session is not in the range, or does not match
+`where`, counts as a session of its own. Cost, token and call totals then equal `scope=all`.
 
 | Field | Meaning |
 |---|---|
@@ -1346,7 +1362,7 @@ Body (JSON, up to 1 MB):
 
 | Field | Meaning |
 |---|---|
-| `target` | `session` (default), `event`, `case` or `run` |
+| `target` | `session` (default), `event`, `case` or `run`. An experiment is not a target: score its runs or cases |
 | `targetId` | Id of what is scored. For a session, `sessionId` works in its place |
 | `name` | 1-100 characters of letters, digits and `_.:/-` (or the config's name, with `configId`) |
 | `value` | A number (`numeric`), `true` or `false` (`boolean`, 0 and 1 work too), or a string (`categorical`, `text`) |
@@ -1572,6 +1588,11 @@ content changed, the seed check and the failed cases.
 Two things differ: `cases` is left out, and each failure carries `hasSession` (whether the session
 is in this index, so the page can link to it) in place of `sessionUrl`.
 
+Each pair in `latest.comparisons` has a `verdict`: `a` or `b` (that contender is ahead),
+`tie` (no significant difference) or `no-verdict`. A run that excluded over 10% of its cases draws
+no verdict: every pair says `no-verdict` and `withheld` says why, for example
+`"7 of 47 cases excluded, over 10%"`. `withheld` is absent when the test decided.
+
 ```sh
 curl -sS "$CSH/api/benchmarks/coding-sh-issues" -H "Authorization: Bearer $READ_KEY"
 ```
@@ -1691,6 +1712,17 @@ curl -sS "$CSH/api/update" -H "Authorization: Bearer $READ_KEY"
 ```json
 {"current":"","latest":null,"updateAvailable":false,"url":null,"command":"","checkedAt":null}
 ```
+
+### `GET /api/star`, `POST /api/star`
+
+The viewer's "star on GitHub" card. Only `coding.sh ui` answers; `coding.sh serve` and every other host answer 404. Neither call makes a network request. The state is `star.json` in the coding.sh home.
+
+- `GET` returns `{"show": true}` when the first run was 3 or more days ago, the store holds at least 5 top-level sessions (subagents do not count), and neither `dismissedAt` nor `starredAt` is set. Otherwise it returns `{"show": false}`.
+- The prompt is off, and nothing is written, when `CODING_SH_NO_STAR_PROMPT` is set to a value other than empty, `0` or `false`, or `NO_UPDATE_NOTIFIER` is set to anything (even empty).
+- It is also off in CI: when `CI`, `CONTINUOUS_INTEGRATION`, `BUILD_NUMBER`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE` or `TF_BUILD` is set to such a value.
+- `POST` takes `{"action": "dismiss"}` or `{"action": "starred"}` as JSON and records `dismissedAt` or `starredAt`. Any other action answers 400. The body is capped at 1 KB and the `Origin` must match the host.
+
+Either one ends the card and the one line `coding.sh` prints in a terminal.
 
 ### `GET /api/ingest`
 

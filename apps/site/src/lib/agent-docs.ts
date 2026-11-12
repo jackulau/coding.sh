@@ -45,7 +45,7 @@ const WORKFLOW = `## 1. Install
 ${INSTALL_SH}
 \`\`\`
 
-Needs Node.js 22.15 or newer. The script installs the latest release with \`npm i -g\`, runs \`coding.sh init\`
+Needs Node.js 22.16 or newer. The script installs the latest release with \`npm i -g\`, runs \`coding.sh init\`
 and opens the viewer. Read it first: ${abs("/install")}. In a non-interactive shell set \`CODING_SH_YES=1\`
 (no prompt) and \`CODING_SH_NO_UI=1\` (no browser):
 

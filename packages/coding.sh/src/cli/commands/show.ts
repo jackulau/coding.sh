@@ -14,12 +14,12 @@ import { pageTree, subagentsOf, type TreeNode } from "../../core/tree.ts";
 import type { AgentEvent, Session } from "../../core/types.ts";
 import type { DurableStats } from "../../schema/index.ts";
 import { positiveInt } from "../args.ts";
-import { loadCall, resolveCall } from "../../proxy/calls.ts";
+import { CallRefError, loadCall, resolveCall } from "../../proxy/calls.ts";
 import { autoIngest, fieldsFlag, oneLine, pickFields, resolveSession, sessionJson, withContext, notFoundWithBacklog, pendingField, readIngest } from "../common.ts";
-import { ago, clean, CliError, duration, localTime, tokens, usd, type Output } from "../output.ts";
+import { ago, clean, CliError, duration, localTime, plural, tokens, usd, type Output } from "../output.ts";
 import { printCall } from "./diff-calls.ts";
 import type { CommandContext } from "../types.ts";
-import type { IndexStore } from "../../core/types.ts";
+import type { BlobStore, IndexStore } from "../../core/types.ts";
 import type { SessionDerail } from "../../schema/index.ts";
 import type { FileDiff } from "../../core/snapshot.ts";
 
@@ -71,6 +71,38 @@ function toolArg(input: unknown): string {
   return "";
 }
 
+/** The last lines of a failed tool's output, indented under its line: what went wrong, not just that it did. */
+export function failedTail(output: unknown): string {
+  if (typeof output !== "string") return "";
+  const lines = clean(output).split("\n").map((l) => l.trimEnd()).filter((l) => l.trim());
+  return lines.slice(-3).map((l) => `\n${"".padStart(18)}${oneLine(l.trim(), 150)}`).join("");
+}
+
+/**
+ * Failed tool calls whose stored output was cut, with the full output read back
+ * from its blob: the tail shown under the line is then the real end of the
+ * output, not the end of the stored preview. A blob counts only when it starts
+ * with the preview, so a raw payload blob is never shown as the output.
+ */
+export async function withFullFailedOutputs(events: AgentEvent[], blobs: BlobStore): Promise<AgentEvent[]> {
+  return Promise.all(
+    events.map(async (e) => {
+      const p = e.payload;
+      if (e.kind !== "tool.end" || p.ok !== false || typeof p.output !== "string") return e;
+      const own = str(p.outputBlob);
+      if (!own && !p.truncated && !p.output.endsWith("…")) return e;
+      const preview = p.output.endsWith("…") ? p.output.slice(0, -1) : p.output;
+      const refs = [...(e.blobs ?? [])].reverse();
+      if (own) refs.unshift(own);
+      for (const ref of refs) {
+        const full = await blobs.getText(ref).catch(() => undefined);
+        if (full !== undefined && full.length > preview.length && full.startsWith(preview)) return { ...e, payload: { ...p, output: full } };
+      }
+      return e;
+    }),
+  );
+}
+
 /** One timeline line per event; tool.start/tool.end pairs collapse into the end line. */
 function describe(e: AgentEvent, starts: Map<string, AgentEvent>): string | undefined {
   const p = e.payload;
@@ -92,7 +124,7 @@ function describe(e: AgentEvent, starts: Map<string, AgentEvent>): string | unde
       const start = id ? starts.get(id) : undefined;
       const input = start?.payload.input ?? p.input;
       const status = p.ok === false ? "failed" : "ok";
-      return `tool        ${str(p.tool) ?? str(start?.payload.tool) ?? "?"} ${oneLine(clean(toolArg(input)), 70)}  ${status} ${duration(e.durationMs)}`;
+      return `tool        ${str(p.tool) ?? str(start?.payload.tool) ?? "?"} ${oneLine(clean(toolArg(input)), 70)}  ${status} ${duration(e.durationMs)}${p.ok === false ? failedTail(p.output) : ""}`;
     }
     case "llm.call": {
       // Proxy calls: cache use, and the id that `show`, `diff-calls` and `exp replay` take.
@@ -345,7 +377,15 @@ export async function run(c: CommandContext): Promise<number> {
     } catch (err) {
       // Not a session: maybe a model call.
       if (!(err instanceof CliError) || err.reason !== "not_found" || c.flags.follow === true) throw notFoundWithBacklog(err, backlog);
-      const call = await resolveCall(ctx.index, ref).catch(() => undefined);
+      let call: AgentEvent | undefined;
+      try {
+        call = await resolveCall(ctx.index, ref);
+      } catch (e) {
+        // "Session X has 0 model calls; no #-1" says more than "can't find session". "Can't find" says nothing new.
+        if (e instanceof CallRefError && (e.reason === "ambiguous" || !/^Can't find/.test(e.message))) {
+          throw new CliError(e.message, { reason: e.reason, next: e.reason === "ambiguous" ? ["Use more of the id, or list sessions:", "coding.sh sessions"] : ["List sessions:", "coding.sh sessions"], data: e.candidates.length ? { candidates: e.candidates } : undefined });
+        }
+      }
       if (!call) throw notFoundWithBacklog(err, backlog);
       const loaded = await loadCall(ctx.blobs, call);
       if (out.json) {
@@ -403,7 +443,7 @@ export async function run(c: CommandContext): Promise<number> {
       ["Repo", s.repo ? `${s.repo.root}${s.repo.branch ? ` (${s.repo.branch})` : ""}` : (s.cwd ?? "-")],
       ["Started", startedText(s.startedAt)],
       ["Duration", s.endedAt !== undefined ? duration(s.endedAt - s.startedAt) : "running or not ended"],
-      ["Turns", `${s.stats.turns}, ${s.stats.toolCalls} tool calls${s.stats.toolErrors ? ` (${s.stats.toolErrors} failed)` : ""}, ${filesChanged} files changed`],
+      ["Turns", `${s.stats.turns}, ${plural(s.stats.toolCalls, "tool call")}${s.stats.toolErrors ? ` (${s.stats.toolErrors} failed)` : ""}, ${plural(filesChanged, "file")} changed`],
     ];
     // Tags (a colon in the name) are not failures; what is left is why `sessions --where is:flagged` listed it.
     const flags = failureFlags(s.flags);
@@ -448,7 +488,7 @@ export async function run(c: CommandContext): Promise<number> {
       printPhases(out, s, outline!);
       out.note(`${s.stats.events.toLocaleString("en-US")} events in ${outline!.phases.length} ${outline!.phases.length === 1 ? "phase" : "phases"}; --all lists every event, --limit N the first N`);
     } else {
-      printEvents(out, s, events, all ? outline : undefined, derails);
+      printEvents(out, s, await withFullFailedOutputs(events, ctx.blobs), all ? outline : undefined, derails);
       if (!all && events.length >= limit && s.stats.events > limit) out.note(`Showing the first ${limit} events; pass --limit for more or --all for every event`);
     }
     if (tree.length) {
@@ -458,7 +498,7 @@ export async function run(c: CommandContext): Promise<number> {
       if (subagentCount > SUBAGENT_TEXT_LIMIT) out.note(`Showing the first ${SUBAGENT_TEXT_LIMIT} of ${subagentCount.toLocaleString("en-US")} subagents; coding.sh tree ${s.id} lists them all`);
     }
     return 0;
-  });
+  }, { create: false });
 }
 
 // ---------------------------------------------------------------- long sessions
@@ -486,7 +526,7 @@ function printPhases(out: Output, s: Session, o: Outline): void {
     const stats = [
       `${p.prompts} ${p.prompts === 1 ? "prompt" : "prompts"}`,
       `${p.toolCalls} tools${p.toolErrors ? ` (${p.toolErrors} failed)` : ""}`,
-      p.filesChanged ? `${p.filesChanged} files` : "",
+      p.filesChanged ? plural(p.filesChanged, "file") : "",
       p.tests ? (p.tests.failed ? `${p.tests.failed} tests failing` : `${p.tests.passed} tests passing`) : "",
       p.tokens ? `${tokens(p.tokens)} tok` : "",
       p.costUsd ? usd(p.costUsd) : "",
@@ -552,7 +592,7 @@ async function follow(c: CommandContext, ctx: Parameters<Parameters<typeof withC
   }
   let ended = false;
   for (;;) {
-    const fresh = batch.filter((e) => !seen.has(e.id));
+    const fresh = await withFullFailedOutputs(batch.filter((e) => !seen.has(e.id)), ctx.blobs);
     // One line per model call the proxy and the agent's own capture both logged:
     // the merged copy when both are new, nothing when the other was printed before.
     const copies = callCopies(batch);

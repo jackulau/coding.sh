@@ -100,7 +100,7 @@ describe("runTask", () => {
 
   it("keeps the end of a failed verifier's output on the run, colour codes removed and secrets redacted", async () => {
     const w = await toyWorld();
-    const key = "sk-ant-" + "api03-" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
+    const key = ["sk-ant-", "api03-", "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"].join("");
     const script = [
       "for i in $(seq 1 600); do echo \"ok $i\"; done",
       `printf '\\033[31mFAIL\\033[0m expected 5, got -1 (sent ${key})\\n'`,

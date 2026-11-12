@@ -248,7 +248,7 @@ describe("cli exit codes", () => {
     assert.equal(e.reason, "confirmation_required");
     // An agent reading this must ask the user before it re-runs with --yes.
     assert.equal(e.askUser, true);
-    assert.deepEqual(e.next, ["coding.sh init --yes"]);
+    assert.deepEqual(e.next, ["With their approval:", "coding.sh init --yes"]);
     assert.equal(existsSync(join(h.home, ".claude", "settings.json")), false);
   });
 
@@ -1223,7 +1223,7 @@ describe("doctor on a dogfood machine", () => {
     const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     assert.match(r.stderr, new RegExp(`^! Claude Code\\s+v2\\.1\\.319, hooks in ${esc(file)} \\(project\\) run ${esc(otherHook)}, not this home's hook, `, "m"));
     assert.doesNotMatch(r.stderr, /✓ Claude Code/);
-    assert.match(r.stderr, /^! Hook\s+missing at .*hook\.mjs; run coding\.sh init$/m);
+    assert.match(r.stderr, /^! Hook\s+missing at .*hook\.(?:mjs|sh); run coding\.sh init$/m);
     assert.match(r.stderr, /coding\.sh init --agent claude-code/);
     const doc = parseJson(run(proj, ["doctor", "--json", "--agent", "claude-code"]).stdout, "doctor") as { agents: { id: string; hookFiles: unknown[] }[] };
     assert.deepEqual(doc.agents.find((x) => x.id === "claude-code")!.hookFiles, [{ file, scope: "project", hook: otherHook, current: false }]);
@@ -1259,6 +1259,8 @@ describe("doctor on a dogfood machine", () => {
     mkdirSync(binDir, { recursive: true });
     const hookFile = join(binDir, "hook.mjs");
     writeFileSync(hookFile, "// hook from the previous version\n");
+    // init installs hook.sh beside it: what agents run outside Windows.
+    writeFileSync(join(binDir, "hook.sh"), readFileSync(new URL("../../src/spool/hook.sh", import.meta.url), "utf8"));
     writeFileSync(join(binDir, "cli-path"), CLI + "\n");
     const r = run(h.home, ["doctor"]);
     assert.match(r.stderr, /^! Hook\s+.*hook\.mjs is stale \(differs from the hook this CLI ships\); run coding\.sh update --refresh-bin$/m);

@@ -10,6 +10,8 @@
             s.set_output(lookup(42))
         client.chat.completions.create(model="gpt-4o-mini", messages=[...])
 
+    coding_sh.weights_edit(name, shape, changed, l2, max_abs, base_sha256, edited_sha256)
+
 Set CODING_SH_URL and CODING_SH_INGEST_KEY. Without a URL the SDK does nothing. It never
 changes return values, errors or stream semantics, and never raises into the app.
 Stdlib only; one daemon thread sends batches, and an atexit flush is bounded to 2 s.
@@ -18,6 +20,7 @@ Stdlib only; one daemon thread sends batches, and an atexit flush is bounded to 
 from ._client import __version__
 from ._providers import observe
 from ._trace import current_session_id, flush, init, shutdown, span, stats, trace, with_session
+from ._weights import weights_delta, weights_edit
 
 __all__ = [
     "__version__",
@@ -30,4 +33,6 @@ __all__ = [
     "flush",
     "shutdown",
     "stats",
+    "weights_edit",
+    "weights_delta",
 ]

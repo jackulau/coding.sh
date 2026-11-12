@@ -16,7 +16,19 @@ export function tmpEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   roots.push(root);
   const home = join(root, "home");
   mkdirSync(home);
-  return { HOME: home, USERPROFILE: home, CODING_SH_HOME: join(home, ".coding.sh"), PATH: process.env.PATH, ...extra };
+  // Every agent home points into the temp dir, and nothing ingests in the background, so a command run in a test never reads the real ~/.claude or ~/.codex.
+  return {
+    HOME: home,
+    USERPROFILE: home,
+    CODING_SH_HOME: join(home, ".coding.sh"),
+    CLAUDE_CONFIG_DIR: join(home, ".claude"),
+    CODEX_HOME: join(home, ".codex"),
+    XDG_CONFIG_HOME: join(home, ".config"),
+    XDG_DATA_HOME: join(home, ".local", "share"),
+    CODING_SH_NO_AUTO_INGEST: "1",
+    PATH: process.env.PATH,
+    ...extra,
+  };
 }
 
 export function release(tag: string, extra: Record<string, unknown> = {}): Record<string, unknown> {

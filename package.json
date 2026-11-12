@@ -15,10 +15,11 @@
     "dogfood:validate": "node scripts/dogfood/cli-suite.mjs validate",
     "dogfood:test": "node --test \"scripts/dogfood/test/*.test.mjs\"",
     "lint": "node scripts/lint/slop.mjs",
+    "gate": "node scripts/gate.mjs",
     "lint:test": "node --test \"scripts/lint/test/*.test.mjs\" \"scripts/hooks/test/*.test.mjs\"",
     "hooks:install": "node scripts/hooks/install.mjs"
   },
   "engines": {
-    "node": ">=22.15"
+    "node": ">=22.16"
   }
 }

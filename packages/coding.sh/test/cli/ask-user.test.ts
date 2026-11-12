@@ -19,7 +19,7 @@ const DESTRUCTIVE = /--yes\b|--force(?:-all)?\b|\bpurge\b|\brollback\b|\buninsta
 /** Constructions that name such a step but do not suggest running it. */
 const NOT_A_SUGGESTION: [file: string, pattern: RegExp, why: string][] = [
   // `exp compare --force` only reads stored results: it includes a partial experiment in the comparison.
-  ["cli/commands/exp.ts", /exp compare \$\{ida\} \$\{idb\} --force/, "read-only comparison"],
+  ["cli/commands/exp.ts", /exp compare \$\{(?:shellQuote\()?ida\)?\} \$\{(?:shellQuote\()?idb\)?\} --force/, "read-only comparison"],
 ];
 
 function sources(dir: string): string[] {
@@ -95,7 +95,7 @@ describe("Output.error", () => {
     assert.equal("askUser" in JSON.parse(b.err()), false);
     const u = capture(true);
     assert.equal(u.out.error(new UsageError("Run 2 agent sessions needs confirmation", { reason: "confirmation_required", suggestion: "coding.sh eval run s --yes", askUser: true })), 2);
-    assert.deepEqual(JSON.parse(u.err()), { status: "error", reason: "confirmation_required", message: "Run 2 agent sessions needs confirmation", askUser: true, next: ["coding.sh eval run s --yes"] });
+    assert.deepEqual(JSON.parse(u.err()), { status: "error", reason: "confirmation_required", message: "Run 2 agent sessions needs confirmation", askUser: true, next: ["With their approval:", "coding.sh eval run s --yes"] });
   });
 
   it("text: says plainly that the user must approve, and never 'Did you mean' for such a step", () => {

@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { devNull, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { dependents, precommitPlan, prepushPlan, pushedFiles, workspaces } from "../lib.mjs";
+import { dependents, needsShell, precommitPlan, prepushPlan, pushedFiles, workspaces } from "../lib.mjs";
 import { main as install } from "../install.mjs";
 import { main as runHook } from "../run.mjs";
 
@@ -15,9 +15,9 @@ const ENV = {
   GIT_CONFIG_NOSYSTEM: "1",
   GIT_CONFIG_GLOBAL: devNull,
   GIT_AUTHOR_NAME: "test",
-  GIT_AUTHOR_EMAIL: "test@example.invalid",
+  GIT_AUTHOR_EMAIL: "1+test@users.noreply.github.com",
   GIT_COMMITTER_NAME: "test",
-  GIT_COMMITTER_EMAIL: "test@example.invalid",
+  GIT_COMMITTER_EMAIL: "1+test@users.noreply.github.com",
   CODING_SH_SKIP_HOOKS: "",
 };
 // The hooks spawn git themselves; keep the user's global config out of them too.
@@ -84,6 +84,13 @@ test("pre-commit: slop lint on staged files, then typecheck of each touched pack
   assert.deepEqual([plan[2].cwd, plan[2].args], ["packages/core", ["run", "--silent", "typecheck"]]);
 });
 
+test("pre-commit: a site whose check is `astro check && npm test` still gets astro check", () => {
+  const root = repo({ ...LAYOUT, "apps/site/package.json": { name: "site", scripts: { check: "astro check && npm test", test: "node --test" } } });
+  const plan = precommitPlan(root, ["apps/site/src/lib/changelog.ts"]);
+  assert.deepEqual(labels(plan), ["slop lint (staged files)", "typecheck site"]);
+  assert.deepEqual([plan[1].cwd, plan[1].cmd ?? plan[1].command, plan[1].args], ["apps/site", plan[1].cmd ?? plan[1].command, ["astro", "check"]]);
+});
+
 test("pre-push: tests of touched packages and their dependents, Python and script suites", () => {
   const root = repo(LAYOUT);
   assert.deepEqual(labels(prepushPlan(root, ["packages/core/src/a.ts"])), ["test core", "test store (depends on a changed package)"]);
@@ -128,11 +135,15 @@ test("run: --dry-run prints the plan, CODING_SH_SKIP_HOOKS skips it", () => {
   assert.equal(runHook(["pre-merge"], { stdout: sink(), stderr: sink(), cwd: root, env: ENV }), 2);
 });
 
-/** A repo with this checkout's lint and hooks copied in. */
+/** A repo with this checkout's lint, hooks and shared secret patterns copied in. */
 function hookedRepo(extra = {}) {
   const root = repo({ "package.json": { name: "root", private: true, workspaces: ["packages/*"] }, ...extra });
-  for (const dir of ["scripts/lint", "scripts/hooks"]) cpSync(join(REPO, dir), join(root, dir), { recursive: true, filter: (p) => !p.includes(`${dir}/test`) });
-  write(root, { "scripts/lint/allowlist.json": { entries: [] } });
+  for (const dir of ["scripts/lint", "scripts/hooks", "scripts/gate"]) cpSync(join(REPO, dir), join(root, dir), { recursive: true, filter: (p) => !p.includes(`${dir}/test`) });
+  // The lint rules read the shared secret patterns.
+  mkdirSync(join(root, "scripts/release"), { recursive: true });
+  cpSync(join(REPO, "scripts/release/secret-patterns.mjs"), join(root, "scripts/release/secret-patterns.mjs"));
+  // The pre-push identity check also wants agent folders ignored, as in this repo.
+  write(root, { "scripts/lint/allowlist.json": { entries: [] }, ".gitignore": "/.claude/\n" });
   return root;
 }
 
@@ -222,5 +233,36 @@ test("end to end: pre-push runs the tests of the packages a push touches", { ski
   rmSync(join(root, "packages/core/FAIL"));
   const ok = git(root, ["push", "origin", "main"]);
   assert.equal(ok.code, 0, ok.out);
-  assert.match(ok.out, /pre-push: ok \(1 step/);
+  assert.match(ok.out, /pre-push: ok \(2 steps/);
+  assert.match(ok.out, /pre-push: commit identity and private files/);
+
+  // rules-11: a commit authored with an address GitHub can't link is stopped before it leaves.
+  write(root, { "b.txt": "b\n" });
+  git(root, ["add", "b.txt"]);
+  assert.equal(spawnSync("git", ["commit", "-qm", "unlinked"], { cwd: root, env: { ...ENV, GIT_AUTHOR_EMAIL: "someone@example.invalid" } }).status, 0);
+  const unlinked = git(root, ["push", "origin", "main"]);
+  assert.notEqual(unlinked.code, 0);
+  assert.match(unlinked.out, /is authored by someone@example\.invalid/);
+  assert.match(unlinked.out, /commit identity and private files failed/);
+});
+
+test("pre-push: with the pushed ranges, the identity check runs first", () => {
+  const root = repo(LAYOUT);
+  write(root, { "scripts/gate/hygiene.mjs": "" });
+  const plan = prepushPlan(root, ["packages/core/src/a.ts"], ["abc..def"]);
+  assert.deepEqual(labels(plan), ["commit identity and private files", "test core", "test store (depends on a changed package)"]);
+  assert.deepEqual(plan[0].args, ["scripts/gate/hygiene.mjs", "abc..def"]);
+  assert.deepEqual(labels(prepushPlan(root, ["README.md"], ["abc..def"])), ["commit identity and private files"]);
+});
+
+test("npm and npx run through a shell on Windows only, where they are .cmd files", () => {
+  assert.equal(needsShell("npm", "win32"), true);
+  assert.equal(needsShell("npx", "win32"), true);
+  assert.equal(needsShell("node", "win32"), false);
+  assert.equal(needsShell("npx", "linux"), false);
+  assert.equal(needsShell("npm", "darwin"), false);
+  // run.mjs and gate.mjs spawn through it, so a Windows pre-push can start `npx tsc`.
+  for (const f of ["scripts/hooks/run.mjs", "scripts/gate.mjs"]) {
+    assert.match(readFileSync(join(REPO, f), "utf8"), /shell: needsShell\(/, `${f} uses needsShell`);
+  }
 });

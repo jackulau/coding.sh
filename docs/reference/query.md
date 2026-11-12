@@ -28,14 +28,14 @@ coding.sh export events --where 'agent:codex tool.errors>0' > events.jsonl
 | `( )` | Groups terms. | `(model:claude-* OR provider:openai) has:tests` |
 | `-` | Negates a term or a group. | `-flag:compaction`, `-(agent:codex tool:Bash)` |
 | `a,b` | Either value. | `agent:codex,gemini` |
-| `*` | A wildcard in a text value. | `model:claude-*` |
+| `*` | A wildcard in a text value, quoted or not. Inside quotes, `\*` is a literal star and `\\` a backslash. | `model:claude-*`, `title:"fix \*"` |
 | `>` `>=` `<` `<=` | Compares a number. `:` means equal. | `turns>=20` |
 | `a..b` | A range, both ends included. | `turns:3..5` |
 | `k` `M` `B` | Scale a count. | `tokens>1M` |
 | `30s` `10m` `2h` | A duration needs a unit. | `duration>10m` |
 | `$` | A cost may start with `$`. | `cost>$0.5` |
 | `"…"` | A value with spaces. | `title:"fix the build"` |
-| a bare word | Searches prompts, replies and tool calls. Every word must match within one event. | `timeout` |
+| a bare word | Searches prompts, replies and tool calls. Every word must match within one event. A bare word needs a letter or a digit; for symbols only, use `coding.sh search` (SQLite store only). | `timeout` |
 
 `sort:` and `limit:` set the order and the row count, and go at the top level only. A query is at
 most 2,000 characters.
@@ -97,7 +97,7 @@ test each hit.
 | `tool` | event | Tool name | `tool:Bash` |
 | `ok` | event | The tool call or model call succeeded | `ok:false` |
 | `mcp` | event | MCP server of a tool call | `mcp:github` |
-| `error` | event | Error message contains (case-insensitive) | `error:ENOENT` |
+| `error` | event | Error text of a failed call, or an error event's message, contains (case-insensitive) | `error:ENOENT` |
 | `event.duration` | event | Event duration | `event.duration>30s` |
 
 ### has, is, sort and limit

@@ -75,7 +75,7 @@ coding.sh collector
 
 It accepts `POST /v1/traces` and `/v1/logs` as protobuf or JSON. `/v1/metrics` is accepted and
 ignored. It understands OTel GenAI semantic conventions, OpenInference, Vercel AI SDK spans and the
-Claude Code, Codex and Gemini CLI log events. Every model call becomes an `llm.call` event with
+Claude Code, Codex and older Gemini CLI log events. Every model call becomes an `llm.call` event with
 model, token usage, duration and time to first token.
 
 A session that also has a transcript (Claude Code logs sent here and the transcript read by

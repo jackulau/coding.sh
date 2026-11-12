@@ -4,13 +4,21 @@
 // /api/metrics and the viewer's Metrics page). Without --by: one row per day
 // or week. With --by: one row per group with its totals and a trend of the
 // chosen measure. --json prints the MetricSeries document.
-import { computeMetrics, METRIC_MEASURES, MetricsError, measureAt, measureOf, type MetricBucket, type MetricGroup, type MetricLine, type MetricMeasure, type MetricTotals } from "../../viewer/metrics.ts";
+import { computeMetrics, MAX_BUCKETS, METRIC_MEASURES, MetricsError, measureAt, measureOf, type MetricBucket, type MetricGroup, type MetricLine, type MetricMeasure, type MetricTotals } from "../../viewer/metrics.ts";
 import { parseSinceWhen, UsageError } from "../args.ts";
 import { autoIngest, pendingField, queryCliError, readIngest, str, timeWindow, whereFlag, windowJson, windowNote, withContext } from "../common.ts";
-import { duration, tokens, usd } from "../output.ts";
+import { noSessionsNext } from "../first-session.ts";
+import { duration, plural, tokens, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
 const BARS = "▁▂▃▄▅▆▇█";
+
+/** A MetricsError in this command's flags (the engine's text names /api/metrics parameters). */
+function metricsErrorText(e: MetricsError): string {
+  if (e.tooManyBuckets === "day") return `the range needs more than ${MAX_BUCKETS} days: use --per week, or a shorter --since/--until`;
+  if (e.tooManyBuckets === "week") return `the range needs more than ${MAX_BUCKETS} weeks: use a shorter --since/--until`;
+  return e.message;
+}
 
 /** A one-line trend; blank cells for buckets with nothing to show. */
 export function sparkline(vals: readonly (number | null)[]): string {
@@ -78,7 +86,7 @@ export async function run(c: CommandContext): Promise<number> {
         filter: c.flags.all === true ? {} : { parentSessionId: null },
       });
     } catch (e) {
-      if (e instanceof MetricsError) throw new UsageError(e.message, { reason: e.reason });
+      if (e instanceof MetricsError) throw new UsageError(metricsErrorText(e), { reason: e.reason });
       throw queryCliError(e);
     }
     if (out.json) {
@@ -88,6 +96,12 @@ export async function run(c: CommandContext): Promise<number> {
     windowNote(out, window);
     if (!m.totals.sessions) {
       out.note(`No sessions from ${bucketLabel(m.since, "day")} to ${bucketLabel(until, "day")}${where ? " matching the query" : ""}`);
+      if (!(await ctx.index.listSessions({ limit: 1 })).length) {
+        // An empty store, not just an empty window: say how the first session gets here.
+        const n = noSessionsNext(c.env);
+        out.next(n.label, n.command);
+      } else if (where) out.next("Drop --where to see every session in the window, or widen it", "coding.sh stats --since 90d --per week");
+      else out.next("Widen the window", "coding.sh stats --since 90d --per week");
       return 0;
     }
     const trend = (line: MetricLine) => sparkline(m.buckets.map((_, i) => measureAt(line, measure, i)));
@@ -107,8 +121,8 @@ export async function run(c: CommandContext): Promise<number> {
       out.table([per.toUpperCase(), ...header], [...rows.reverse(), ["total", ...totalsCells(m.totals)]]);
       out.note(`${measure}: ${trend(m.all)}  ${cell(measure, measureOf(m.totals, measure))} in all`);
     }
-    if (m.totals.pricedSessions && m.totals.pricedSessions < m.totals.sessions) out.note(`COST covers the ${m.totals.pricedSessions} of ${m.totals.sessions} sessions with a price.`);
+    if (m.totals.pricedSessions && m.totals.pricedSessions < m.totals.sessions) out.note(`COST covers the ${m.totals.pricedSessions} of ${plural(m.totals.sessions, "session")} with a price.`);
     if (m.truncated) out.warn("Stopped after 100,000 sessions: narrow --since or --where.");
     return 0;
-  });
+  }, { create: false });
 }

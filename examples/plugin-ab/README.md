@@ -11,7 +11,7 @@ replies.
 
 ## Run it
 
-You need Docker, Node 22.15 or newer, and a model credential in a file only you can read: a line
+You need Docker, Node 22.16 or newer, and a model credential in a file only you can read: a line
 `CLAUDE_CODE_OAUTH_TOKEN=…` with the token `claude setup-token` prints, or
 `ANTHROPIC_API_KEY=…`.
 

@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 import { loadSuite, suiteDirs, taskDirs } from "../../eval/suite-spec.ts";
 import { taskJsonId } from "../../eval/task.ts";
 import { formatFindings, mineFindings, type MinSupport } from "../../refine/mine.ts";
-import { parseSince, positiveInt, UsageError } from "../args.ts";
+import { parseSince, positiveInt, suggest, UsageError } from "../args.ts";
 import { list, str, withContext } from "../common.ts";
 import { plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -55,10 +55,18 @@ export async function refineMine(c: CommandContext): Promise<number> {
   return withContext(c, async (ctx) => {
     const r = await mineFindings({ index: ctx.index, since, ...(repo ? { repo, repoTaskIds: await suiteTaskIds(repo) } : {}), ...(agents.length ? { agents } : {}), minSupport, limit });
     if (out.json) {
-      out.data({ since: new Date(since).toISOString(), repo: repo ?? "all", analyzed: r.analyzed, evalRuns: r.evalRuns, minSupport: r.minSupport, belowSupport: r.belowSupport, findings: r.findings });
+      out.data({ since: new Date(since).toISOString(), repo: repo ?? "all", analyzed: r.analyzed, evalRuns: r.evalRuns, minSupport: r.minSupport, belowSupport: r.belowSupport, findings: r.findings, agentsSeen: r.agentsSeen });
       return 0;
     }
     const read = `${plural(r.analyzed, "session")}${r.evalRuns ? ` and ${plural(r.evalRuns, "eval run")}` : ""}`;
+    if (r.agentsSeen) {
+      const seen = r.agentsSeen.map((a) => `${a.agent} (${a.sessions})`).join(", ");
+      const total = r.agentsSeen.reduce((n, a) => n + a.sessions, 0);
+      out.note(`No session of ${agents.join(", ")} since ${new Date(since).toISOString().slice(0, 10)}${repo ? ` under ${repo}` : ""}: the ${plural(total, "session")} ${total === 1 ? "is" : "are"} ${seen}`);
+      const names = r.agentsSeen.map((a) => a.agent);
+      out.next("Mine the sessions of an agent seen here", `coding.sh refine mine --agent ${suggest(agents[0]!, names) ?? names[0]}`);
+      return 0;
+    }
     if (!r.findings.length) {
       out.note(`No pattern seen in ${r.minSupport.sessions}+ sessions over ${r.minSupport.days}+ days (${read} since ${new Date(since).toISOString().slice(0, 10)}${repo ? ` under ${repo}` : ""}; ${plural(r.belowSupport, "pattern")} below that)`);
       if (r.analyzed || r.evalRuns) out.next("Lower the bar to see rarer patterns", "coding.sh refine mine --min-support 2,1");

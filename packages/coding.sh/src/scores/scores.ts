@@ -222,7 +222,8 @@ export interface AddScoreOptions extends ScoreDefaults {
 /**
  * Checks and stores one score. A session target must exist; an event target
  * must exist too when the store can find events by id, and its session is the
- * event's own (a different sessionId is a 400). Posting the same id with the
+ * event's own (a different sessionId is a 400). A body with the same value and
+ * no comment keeps the stored score's comment. Posting the same id with the
  * same content again changes nothing (`created: false`, the stored score back,
  * its ts kept); with other content it replaces the score. A stored score keeps
  * its data type: a value of another type is a 400 unless the body gives
@@ -242,6 +243,9 @@ export async function addScore(index: IndexStore, body: unknown, o: AddScoreOpti
   // After the session check, so a caller learns an event's session only when it may see it.
   if (givenSession !== undefined && givenSession !== score.sessionId) throw bad(`event ${score.targetId} belongs to session ${score.sessionId}, not ${givenSession}`);
   const [prev] = await store.listScores({ id: score.id });
+  // The same value with no comment in the body keeps the stored comment; an empty comment
+  // clears it. A new value drops it: the old comment explained the old value.
+  if (prev?.comment !== undefined && score.comment === undefined && (body as Obj).comment === undefined && JSON.stringify(prev.value) === JSON.stringify(score.value)) score.comment = prev.comment;
   const givenTs = !!body && typeof body === "object" && (body as Obj).ts !== undefined;
   if (prev && sameButTs(prev, score) && (!givenTs || prev.ts === score.ts)) return { score: prev, created: false, changed: false };
   // The type was only guessed from the value (no dataType, no config): a guess never retypes a stored score.

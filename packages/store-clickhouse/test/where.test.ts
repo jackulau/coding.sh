@@ -48,7 +48,8 @@ describe("clickhouse --where compiler", () => {
 
   it("binds every value: hostile input never changes the SQL", () => {
     const evil = [`x' OR 1=1 --`, `"; DROP TABLE sessions; --`, `%_\\`, `{p0:String}`, `') UNION SELECT * FROM kv --`, "a\u0000b"];
-    const qt = (x: string) => `"${x.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+    // Inside quotes \\, \" and \* stand for the character itself (a bare * is a wildcard).
+    const qt = (x: string) => `"${x.replace(/[\\"*]/g, (ch) => `\\${ch}`)}"`;
     const shapes = new Set<string>();
     for (const v of evil) {
       const c = compile(`agent:${qt(v)} title:${qt(v)} skill:${qt(v)} tool:${qt(v)}`);

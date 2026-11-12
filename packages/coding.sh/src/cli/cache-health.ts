@@ -151,8 +151,10 @@ const fallback = (b: Pick<CacheBreak, "cause">): CacheCause => structuralOf(b.ca
 export interface BreakTotals {
   breaks: number;
   lostTokens: number;
-  /** Absent when a session has a break on a model with no price. */
+  /** The priced breaks' USD. Absent only when no break has a price. */
   extraUsd?: number;
+  /** Breaks on a model with no price, left out of extraUsd. Absent when there are none. */
+  unpricedBreaks?: number;
 }
 
 /** The stored totals `usage` adds up, over the sessions' stats.cacheBreaks. */
@@ -160,15 +162,26 @@ export function breakTotals(stats: Iterable<CacheBreakStats>): BreakTotals {
   let breaks = 0;
   let lost = 0;
   let usd = 0;
-  let unpriced = false;
+  let priced = false;
+  let unpriced = 0;
   for (const b of stats) {
     breaks += b.count;
     lost += b.lostTokens;
-    if (b.extraUsd === undefined) unpriced = true;
-    else usd += b.extraUsd;
+    if (b.extraUsd !== undefined) {
+      usd += b.extraUsd;
+      priced = true;
+    } else {
+      // A session with an unpriced model: keep what its priced causes cost and count the rest.
+      unpriced += Math.max(1, b.unpriced ?? 0);
+      for (const c of Object.values(b.byCause)) if (c?.extraUsd !== undefined) {
+        usd += c.extraUsd;
+        priced = true;
+      }
+    }
   }
   const t: BreakTotals = { breaks, lostTokens: lost };
-  if (breaks && !unpriced) t.extraUsd = round(usd, 6);
+  if (priced) t.extraUsd = round(usd, 6);
+  if (unpriced) t.unpricedBreaks = unpriced;
   return t;
 }
 
@@ -195,6 +208,8 @@ export interface CacheHealth {
   breaks: number;
   lostTokens: number;
   extraUsd?: number;
+  /** Breaks on a model with no price: extraUsd leaves them out. Absent when there are none. */
+  unpricedBreaks?: number;
   avoidableTokens: number;
   avoidableShare?: number;
   causes: CauseRow[];
@@ -222,26 +237,31 @@ export function cacheScore(hitRate: number, avoidableShare: number): { score: nu
  * (every session's stored stats) is the headline; without it the headline is the sum of `breaks`.
  */
 export function cacheHealth(o: { hitRate?: number; promptTokens: number; breaks: readonly ClassifiedBreak[]; totals?: BreakTotals }): CacheHealth {
-  interface Row { count: number; sessions: Set<string>; lost: number; usd: number; unpriced: boolean; top?: ClassifiedBreak }
+  interface Row { count: number; sessions: Set<string>; lost: number; usd: number; priced: boolean; unpriced: number; top?: ClassifiedBreak }
   const by = new Map<CacheCause, Row>();
   const rowOf = (cause: CacheCause): Row => {
     let r = by.get(cause);
-    if (!r) by.set(cause, (r = { count: 0, sessions: new Set<string>(), lost: 0, usd: 0, unpriced: false }));
+    if (!r) by.set(cause, (r = { count: 0, sessions: new Set<string>(), lost: 0, usd: 0, priced: false, unpriced: 0 }));
     return r;
   };
   let lost = 0;
   let usd = 0;
-  let unpriced = false;
+  let priced = false;
+  let unpriced = 0;
   let avoidable = 0;
   for (const b of o.breaks) {
     const r = rowOf(b.structural);
     r.count++;
     r.sessions.add(b.sessionId);
     r.lost += b.lostTokens;
-    if (b.extraUsd === undefined) r.unpriced = unpriced = true;
-    else {
+    if (b.extraUsd === undefined) {
+      r.unpriced++;
+      unpriced++;
+    } else {
       r.usd += b.extraUsd;
+      r.priced = true;
       usd += b.extraUsd;
+      priced = true;
     }
     const cost = (x: ClassifiedBreak) => x.extraUsd ?? 0;
     if (!r.top || cost(b) > cost(r.top) || (cost(b) === cost(r.top) && b.lostTokens > r.top.lostTokens)) r.top = b;
@@ -255,7 +275,7 @@ export function cacheHealth(o: { hitRate?: number; promptTokens: number; breaks:
       count: r.count,
       sessions: r.sessions.size,
       lostTokens: r.lost,
-      ...(r.unpriced ? {} : { extraUsd: round(r.usd, 6) }),
+      ...(r.priced ? { extraUsd: round(r.usd, 6) } : {}),
       avoidable: AVOIDABLE.has(cause),
       fix: CACHE_CAUSE_FIX[cause],
     };
@@ -266,7 +286,8 @@ export function cacheHealth(o: { hitRate?: number; promptTokens: number; breaks:
   let totals = o.totals;
   if (!totals) {
     totals = { breaks: o.breaks.length, lostTokens: lost };
-    if (totals.breaks && !unpriced) totals.extraUsd = round(usd, 6);
+    if (priced) totals.extraUsd = round(usd, 6);
+    if (unpriced) totals.unpricedBreaks = unpriced;
   }
   const share = o.promptTokens > 0 ? avoidable / o.promptTokens : undefined;
   const graded = o.hitRate !== undefined ? cacheScore(o.hitRate, share ?? 0) : undefined;
@@ -282,6 +303,7 @@ export function cacheHealth(o: { hitRate?: number; promptTokens: number; breaks:
     causes,
     degraded: o.breaks.filter((b) => b.degraded).length,
   };
+  if (totals.unpricedBreaks) health.unpricedBreaks = totals.unpricedBreaks;
   if (notRead) health.breaksNotRead = notRead;
   return health;
 }

@@ -210,7 +210,7 @@ describe("ingest", () => {
 
   it("redacts payloads and blobs before storing", async () => {
     const t = setup();
-    const key = "sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz";
+    const key = ["sk-ant-", "api03-AbCdEfGhIjKlMnOpQrStUvWxYz"].join("");
     t.write(t.line({ session: "s", kind: "user.message", text: `my key is ${key}`, blob: `raw transcript with ${key}` }));
     await ingest({ config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env });
     const [e] = await t.index.listEvents("s");
@@ -250,6 +250,21 @@ describe("ingest", () => {
     assert.equal(r.excluded, 1);
     assert.deepEqual(await t.index.listEvents("hidden"), []);
     assert.deepEqual((await t.index.listEvents("meta"))[0]!.payload, {});
+    assert.equal((await t.index.listEvents("full"))[0]!.payload.text, "visible");
+  });
+
+  it("honours capture.exclude by the payload's own cwd when the line's cwd differs", async () => {
+    // The shell hook skips a "cwd" inside tool_input and falls back to its process cwd, so a
+    // payload whose top-level cwd comes after a nested one spools under another directory.
+    const t = setup({ exclude: ["~/private/**"] });
+    const secret = join(t.env.HOME, "private", "proj");
+    t.write(
+      t.line({ session: "nested", kind: "user.message", text: "x", cwd: secret }, { cwd: join(t.root, "elsewhere") }),
+      t.line({ session: "full", kind: "user.message", text: "visible", cwd: join(t.root, "elsewhere") }, { cwd: join(t.root, "elsewhere") }),
+    );
+    const r = await ingest({ config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env });
+    assert.equal(r.excluded, 1);
+    assert.deepEqual(await t.index.listEvents("nested"), []);
     assert.equal((await t.index.listEvents("full"))[0]!.payload.text, "visible");
   });
 

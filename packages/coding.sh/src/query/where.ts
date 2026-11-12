@@ -19,6 +19,11 @@ export interface Value {
   quoted: boolean;
   /** eq: equals; glob: `*` wildcards (text keys); range: `a..b` inclusive (number keys). */
   kind: "eq" | "glob" | "range";
+  /**
+   * glob only, set when the value also holds a literal star (`\*` inside quotes): the text
+   * between the wildcards. Without it, every `*` in raw is a wildcard (see globParts).
+   */
+  parts?: string[];
   /** Number keys: the value (eq) or the bounds (range); time keys: epoch ms. */
   n?: number;
   lo?: number;
@@ -124,9 +129,10 @@ export interface KeyDef {
   /**
    * SQL that is true exactly when the value is set, put before the comparison. For a key
    * whose index holds only the rows with a value (`WHERE error IS NOT NULL`): SQLite takes
-   * such an index only when the query says so, and LIKE alone does not.
+   * such an index only when the query says so, and LIKE alone does not. A list gives one
+   * guard per `sql` expression, so each branch of the OR can start from its own index.
    */
-  present?: string;
+  present?: string | string[];
   /** A list-valued field: one EXISTS over json_each, values compared after `prefix`. */
   multi?: { from: string; prefix: string };
   /** The values the scan fallback compares (one per `sql` expression, or every list item for multi). */
@@ -230,7 +236,12 @@ const KEY_LIST: KeyDef[] = [
   // events.mcp holds payload.server of tool calls (written at insert, indexed).
   { name: "mcp", level: "event", type: "text", doc: "MCP server of a tool call", example: "mcp:github", sql: ["e.mcp"], get: (e) => [typeof e.payload?.tool === "string" && typeof e.payload.server === "string" ? e.payload.server : undefined], facet: {} },
   // events.error holds payload.error when it is text (written at insert; events_error indexes the rows that have one).
-  { name: "error", level: "event", type: "text", match: "contains", doc: "Error message contains (case-insensitive)", example: "error:ENOENT", sql: ["e.error"], present: "e.error IS NOT NULL", get: (e) => [typeof e.payload?.error === "string" ? e.payload.error : undefined] },
+  // An error event (kind error) carries its text in payload.message instead, read from the payload.
+  {
+    name: "error", level: "event", type: "text", match: "contains", doc: "Error text of a failed call, or an error event's message, contains (case-insensitive)", example: "error:ENOENT",
+    sql: ["e.error", "(CASE WHEN e.kind = 'error' AND json_type(e.payload, '$.message') = 'text' THEN json_extract(e.payload, '$.message') END)"], present: ["e.error IS NOT NULL", "e.kind = 'error'"],
+    get: (e) => [typeof e.payload?.error === "string" ? e.payload.error : undefined, e.kind === "error" && typeof e.payload?.message === "string" ? e.payload.message : undefined],
+  },
   { name: "event.duration", level: "event", type: "number", unit: "ms", doc: "Event duration (30s, 2m)", example: "event.duration>30s", sql: ["e.duration_ms"], get: (e) => [num(e.durationMs)] },
 ];
 
@@ -345,15 +356,18 @@ type Tok =
   | { k: "word"; at: number; text: string; quoted: boolean };
 
 /** Reads a quoted string starting at q[i] === '"'; returns the unescaped text and the index after the closing quote. */
-function readQuoted(q: string, i: number): { text: string; end: number } {
+/** A quoted part: `\"` is a quote, `\\` a backslash, `\*` a literal star; `wild` holds where the other stars (wildcards) are in `text`. */
+function readQuoted(q: string, i: number): { text: string; end: number; wild: number[] } {
   let out = "";
+  const wild: number[] = [];
   for (let j = i + 1; j < q.length; j++) {
     const c = q[j]!;
-    if (c === "\\" && (q[j + 1] === '"' || q[j + 1] === "\\")) {
+    if (c === "\\" && (q[j + 1] === '"' || q[j + 1] === "\\" || q[j + 1] === "*")) {
       out += q[++j];
       continue;
     }
-    if (c === '"') return { text: out, end: j + 1 };
+    if (c === '"') return { text: out, end: j + 1, wild };
+    if (c === "*") wild.push(out.length);
     out += c;
   }
   throw new QueryError("unterminated quote", i, { reason: "unterminated_quote", next: ['close it with " (or escape a literal quote as \\")'] });
@@ -404,34 +418,58 @@ export interface ParseOptions {
   tzOffsetMin?: number;
 }
 
+/** One value as typed: its text, whether any of it was quoted, and where its wildcard stars are. */
+interface Part {
+  text: string;
+  quoted: boolean;
+  at: number;
+  /** Indices of the wildcard `*`s in text; a star not listed is literal. Absent: every star is a wildcard. */
+  wild?: number[];
+}
+
 /** Splits a raw value on commas outside quotes; each part keeps whether it was quoted. */
-function splitValues(raw: string, at: number): { text: string; quoted: boolean; at: number }[] {
-  const parts: { text: string; quoted: boolean; at: number }[] = [];
+function splitValues(raw: string, at: number): Part[] {
+  const parts: Part[] = [];
   let i = 0;
   let cur = "";
   let quoted = false;
+  let wild: number[] = [];
   let partAt = at;
   while (i <= raw.length) {
     const c = raw[i];
     if (c === undefined || c === ",") {
-      parts.push({ text: cur, quoted, at: partAt });
+      parts.push({ text: cur, quoted, at: partAt, wild });
       cur = "";
       quoted = false;
+      wild = [];
       i++;
       partAt = at + i;
       continue;
     }
     if (c === '"') {
       const r = readQuoted(raw, i);
+      for (const w of r.wild) wild.push(cur.length + w);
       cur += r.text;
       quoted = true;
       i = r.end;
       continue;
     }
+    if (c === "*") wild.push(cur.length);
     cur += c;
     i++;
   }
   return parts;
+}
+
+const starsIn = (text: string): number[] => {
+  const at: number[] = [];
+  for (let i = text.indexOf("*"); i >= 0; i = text.indexOf("*", i + 1)) at.push(i);
+  return at;
+};
+
+/** A glob value's text between its wildcards (literal stars kept). */
+export function globParts(v: Value): string[] {
+  return v.parts ?? v.raw.split("*");
 }
 
 function closestKey(name: string): string | undefined {
@@ -458,14 +496,24 @@ function editDistance(a: string, b: string): number {
   return prev[b.length]!;
 }
 
-function resolveValue(def: KeyDef, op: Op, part: { text: string; quoted: boolean; at: number }, now: number, tzOffsetMin?: number): Value {
+function resolveValue(def: KeyDef, op: Op, part: Part, now: number, tzOffsetMin?: number): Value {
   const { text, quoted, at } = part;
   const v: Value = { raw: text, quoted, kind: "eq" };
   const bad = (why: string, next: string[] = [`e.g. ${def.example}`]) => new QueryError(`${def.name}: ${why}`, at, { reason: "bad_value", next });
   if (text === "") throw bad("needs a value");
   if (def.type === "text") {
     if (op !== ":") throw bad(`compares text with ':' only, not '${op}'`);
-    if (!quoted && text.includes("*")) v.kind = "glob";
+    // `*` is a wildcard, quoted or not; `\*` inside quotes is a literal star.
+    const wild = part.wild ?? starsIn(text);
+    if (wild.length) {
+      v.kind = "glob";
+      if (wild.length < text.split("*").length - 1) {
+        let from = 0;
+        v.parts = [];
+        for (const w of wild) v.parts.push(text.slice(from, w)), (from = w + 1);
+        v.parts.push(text.slice(from));
+      }
+    }
     return v;
   }
   if (def.type === "bool") {
@@ -618,9 +666,14 @@ function mergeText(items: Node[]): Node | undefined {
 const needsQuotes = (s: string): boolean => s === "" || /[\s()",]/.test(s) || s === "OR" || s.startsWith("-");
 const quote = (s: string): string => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 
-/** An unquoted value never holds a space, paren, quote or comma (they end or split it), so it prints as typed. */
+/**
+ * An unquoted value never holds a space, paren, quote or comma (they end or split it), so it
+ * prints as typed. A quoted one escapes its literal stars as `\*`.
+ */
 function printValue(v: Value): string {
-  return v.quoted ? quote(v.raw) : v.raw;
+  if (!v.quoted) return v.raw;
+  const esc = (s: string) => s.replace(/[\\"*]/g, (c) => `\\${c}`);
+  return `"${v.kind === "glob" ? globParts(v).map(esc).join("*") : esc(v.raw)}"`;
 }
 
 function printNode(n: Node, parent?: Node["t"]): string {

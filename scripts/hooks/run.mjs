@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { git, precommitPlan, prepushPlan, pushedFiles, stagedFiles } from "./lib.mjs";
+import { git, needsShell, precommitPlan, prepushPlan, pushedFiles, pushedRanges, stagedFiles } from "./lib.mjs";
 
 const HOOKS = ["pre-commit", "pre-push"];
 
@@ -36,8 +36,9 @@ export function main(argv, { stdout = process.stdout, stderr = process.stderr, e
     return 2;
   }
   const root = resolve(top.out);
-  const files = hook === "pre-commit" ? stagedFiles(root) : pushedFiles(root, stdin(), rest[0] ?? "origin");
-  const plan = hook === "pre-commit" ? precommitPlan(root, files) : prepushPlan(root, files);
+  const input = hook === "pre-push" ? stdin() : "";
+  const files = hook === "pre-commit" ? stagedFiles(root) : pushedFiles(root, input, rest[0] ?? "origin");
+  const plan = hook === "pre-commit" ? precommitPlan(root, files) : prepushPlan(root, files, pushedRanges(root, input, rest[0] ?? "origin"));
   if (dry) {
     if (json) stdout.write(`${JSON.stringify({ hook, files: files.length, plan })}\n`);
     else for (const s of plan) stdout.write(`${s.cwd}\t${s.label}\t${[s.cmd === process.execPath ? "node" : s.cmd, ...s.args].join(" ")}\n`);
@@ -50,8 +51,7 @@ export function main(argv, { stdout = process.stdout, stderr = process.stderr, e
   const started = Date.now();
   for (const s of plan) {
     stderr.write(`${hook}: ${s.label}\n`);
-    // npm is npm.cmd on Windows, which needs a shell.
-    const r = spawnSync(s.cmd, s.args, { cwd: join(root, s.cwd), stdio: "inherit", env, shell: process.platform === "win32" && s.cmd === "npm" });
+    const r = spawnSync(s.cmd, s.args, { cwd: join(root, s.cwd), stdio: "inherit", env, shell: needsShell(s.cmd) });
     if (r.status !== 0) {
       const skip = hook === "pre-commit" ? "git commit --no-verify" : "git push --no-verify";
       stderr.write(`${hook}: ${s.label} failed${r.error ? ` (${r.error.message})` : ""}.\nnext: fix it and retry, or skip once with \`${skip}\`\n`);

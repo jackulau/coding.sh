@@ -18,6 +18,7 @@ import { mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { acquireLock } from "../core/lock.ts";
 import { paths } from "../core/paths.ts";
+import { DatasetConflict } from "../store/common.ts";
 import { writeFileDurable } from "../store/durable.ts";
 import type { DatasetListing, IndexStore } from "../core/types.ts";
 import { datasetVersion } from "./dataset.ts";
@@ -132,7 +133,11 @@ export class FileEvalStore {
    * re-putting the same content is a no-op (`created: false`), and the stored
    * file is never rewritten.
    */
-  async putDataset(ds: Dataset, opts: { note?: string; now?: number } = {}): Promise<{ version: string; created: boolean }> {
+  /**
+   * With `parent`, stores only when "latest" is that version (null: no dataset yet), else
+   * throws DatasetConflict and writes nothing (see IndexStore.putDataset).
+   */
+  async putDataset(ds: Dataset, opts: { note?: string; now?: number; parent?: string | null } = {}): Promise<{ version: string; created: boolean }> {
     const id = safeId("dataset", ds.id);
     const version = datasetVersion(ds.cases);
     if (version !== ds.version) throw new Error(`dataset ${id}: version ${ds.version} does not match its content (${version})`);
@@ -146,6 +151,10 @@ export class FileEvalStore {
     // One writer per dataset: the version file, the history entry and `latest` change together.
     const lock = await acquireLock(join(dir, ".lock"));
     try {
+      if (opts.parent !== undefined) {
+        const latest = (await readText(join(dir, "latest")))?.trim() || undefined;
+        if ((latest ?? null) !== opts.parent) throw new DatasetConflict(id, opts.parent, latest);
+      }
       const file = join(dir, "versions", `${version}.json`);
       const existing = await readJson<Dataset>(file);
       let createdAt = opts.now ?? Date.now();

@@ -28,7 +28,7 @@ import os
 import threading
 import time
 import uuid
-from typing import Any, Callable, Dict, Optional, TypeVar
+from typing import Any, Callable, Dict, Generic, Optional, TypeVar
 
 from ._client import Config, Transport, dumps
 
@@ -178,11 +178,12 @@ def error_text(exc: BaseException) -> str:
     return clip(type(exc).__name__ + (": " + msg if msg else "")) or type(exc).__name__
 
 
-def emit(event: Dict[str, Any]) -> None:
+def emit(event: Dict[str, Any]) -> bool:
+    """Queue one event. True when it was queued; never raises."""
     try:
-        _get().enqueue(event)
+        return bool(_get().enqueue(event))
     except Exception:
-        pass
+        return False
 
 
 # ---------------------------------------------------------------------------- context
@@ -260,7 +261,7 @@ class Scope:
     def __init__(self) -> None:
         self.node: Optional[Node] = None
         self.is_root = False
-        self._token: Optional[contextvars.Token] = None
+        self._token: "Optional[contextvars.Token[Optional[Node]]]" = None
         self._t0 = 0.0
         self._p0 = 0.0
         self._done = False
@@ -380,7 +381,7 @@ class _Trace(Scope):
         self.user_id = user_id
         self.metadata = metadata
         self.input = input
-        self._sess_token: Optional[contextvars.Token] = None
+        self._sess_token: "Optional[contextvars.Token[Optional[str]]]" = None
         self._input_sent = False
 
     @property
@@ -488,38 +489,43 @@ class _Span(Scope):
             _step_event(self.node, self.name, self._t0, duration, error, self.input, self.output, self.is_root)
 
 
-class _ScopeCM:
-    """Context manager (sync and async) and decorator around a Scope factory."""
+S = TypeVar("S", bound="Scope")
 
-    def __init__(self, factory: Callable[[], Scope], capture_args: bool = False) -> None:
+
+class _ScopeCM(Generic[S]):
+    """Context manager (sync and async) and decorator around a Scope factory; `with` yields the scope S."""
+
+    def __init__(self, factory: Callable[[], S], capture_args: bool = False, unwrap_single: bool = False) -> None:
         self._factory = factory
         self._capture_args = capture_args
-        self._scopes: list = []
+        self._unwrap_single = unwrap_single
+        self._scopes: "list[S]" = []
 
-    def __enter__(self) -> Scope:
-        s = self._factory().start()
+    def __enter__(self) -> S:
+        s = self._factory()
+        s.start()
         self._scopes.append(s)
         return s
 
-    def __exit__(self, exc_type: Any, exc: Optional[BaseException], tb: Any) -> bool:
+    def __exit__(self, exc_type: Any, exc: Optional[BaseException], tb: Any) -> None:
         if self._scopes:
             self._scopes.pop().end(exc if isinstance(exc, Exception) else None)
-        return False
 
-    async def __aenter__(self) -> Scope:
+    async def __aenter__(self) -> S:
         return self.__enter__()
 
-    async def __aexit__(self, exc_type: Any, exc: Optional[BaseException], tb: Any) -> bool:
-        return self.__exit__(exc_type, exc, tb)
+    async def __aexit__(self, exc_type: Any, exc: Optional[BaseException], tb: Any) -> None:
+        self.__exit__(exc_type, exc, tb)
 
     def __call__(self, fn: F) -> F:
         factory = self._factory
         capture_args = self._capture_args
+        unwrap_single = self._unwrap_single
 
         def begin(args: Any, kwargs: Any) -> Scope:
             s = factory()
             if capture_args and s.input is None:
-                s.input = _bound_args(fn, args, kwargs)
+                s.input = _bound_args(fn, args, kwargs, unwrap_single)
             return s.start()
 
         if inspect.iscoroutinefunction(fn):
@@ -561,10 +567,13 @@ class _ScopeCM:
         return wrapper  # type: ignore[return-value]
 
 
-def _bound_args(fn: Callable[..., Any], args: Any, kwargs: Any) -> Any:
+def _bound_args(fn: Callable[..., Any], args: Any, kwargs: Any, unwrap_single: bool = False) -> Any:
+    """The call's arguments by name (self and cls left out); with unwrap_single, one argument alone is its own value."""
     try:
         bound = inspect.signature(fn).bind_partial(*args, **kwargs)
         out = {k: v for k, v in bound.arguments.items() if k not in ("self", "cls")}
+        if unwrap_single and len(out) == 1:
+            return next(iter(out.values()))
         return out or None
     except Exception:
         return None
@@ -576,16 +585,19 @@ def trace(
     user_id: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
     input: Any = None,
-) -> _ScopeCM:
+) -> _ScopeCM[_Trace]:
     """A unit of work: `with coding_sh.trace("checkout", session_id=conv_id, input=prompt) as t:`.
 
+    user_id and metadata are recorded on the trace's session.start event.
+
     Also a decorator (sync or async). The yielded object has set_input(), set_output(),
-    session_id and trace_id. A decorated function's return value becomes the output.
+    session_id and trace_id. A decorated function's return value becomes the output, and its
+    arguments the input (a single argument as it is, several by name) unless input= is given.
     """
-    return _ScopeCM(lambda: _Trace(name, session_id, user_id, metadata, input))
+    return _ScopeCM(lambda: _Trace(name, session_id, user_id, metadata, input), capture_args=True, unwrap_single=True)
 
 
-def span(kind: str, name: str, input: Any = None) -> _ScopeCM:
+def span(kind: str, name: str, input: Any = None) -> _ScopeCM[_Span]:
     """A tool call (`span("tool", "lookup_order")`) or a step (`span("step", "rerank")`).
 
     Context manager or decorator; as a decorator, the call's arguments become the input and
@@ -597,25 +609,24 @@ def span(kind: str, name: str, input: Any = None) -> _ScopeCM:
 class _SessionCM:
     def __init__(self, session_id: str) -> None:
         self.session_id = str(session_id)
-        self._tokens: list = []
+        self._tokens: "list[contextvars.Token[Optional[str]]]" = []
 
     def __enter__(self) -> str:
         self._tokens.append(_session_var.set(self.session_id))
         return self.session_id
 
-    def __exit__(self, *exc: Any) -> bool:
+    def __exit__(self, *exc: Any) -> None:
         if self._tokens:
             try:
                 _session_var.reset(self._tokens.pop())
             except ValueError:
                 pass
-        return False
 
     async def __aenter__(self) -> str:
         return self.__enter__()
 
-    async def __aexit__(self, *exc: Any) -> bool:
-        return self.__exit__(*exc)
+    async def __aexit__(self, *exc: Any) -> None:
+        self.__exit__(*exc)
 
     def __call__(self, fn: F) -> F:
         sid = self.session_id

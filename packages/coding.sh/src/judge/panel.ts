@@ -198,6 +198,7 @@ function limitsOf(o: RenderLimits): RenderLimits {
 
 /** The version for a panel: one id over every member's provider, model and params, the prompt and the settings. */
 export function panelVersionFor(opts: PanelOptions): PanelVersion {
+  if (typeof opts.rubric !== "string" || !opts.rubric.trim()) throw new TypeError(`panel "${opts.name}" needs a rubric, e.g. "rubric": "Answers the question and cites the source"`);
   if (!Array.isArray(opts.members) || opts.members.length === 0) throw new TypeError(`panel "${opts.name}" needs at least one member`);
   const seen = new Set<string>();
   const members = opts.members.map((m) => {

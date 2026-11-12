@@ -22,6 +22,10 @@ import { loadCall } from "../proxy/calls.ts";
 import { type CapturedCall, createRecorder, storeWriter } from "../proxy/record.ts";
 import { SNIPPET_CLOSE, SNIPPET_OPEN } from "./common.ts";
 import { FsBlobStore } from "./fs-blobs.ts";
+import { MemoryIndexStore } from "./memory.ts";
+import { findSessions } from "../query/run.ts";
+import { parseWhere } from "../query/where.ts";
+import { computeMetrics } from "../viewer/metrics.ts";
 
 let seq = 0;
 const REF = (s: string) => sha256Hex(s);
@@ -583,6 +587,53 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
       // Re-putting an old version moves latest back to it.
       await s.putDataset(v1);
       assert.equal((await s.getDataset("qa"))?.version, "v1");
+    }));
+
+    it("putDataset with a parent writes only over the version it read", withStore(async (s) => {
+      // dataset add reads, merges and writes with the version it read; a lost race must refuse, not overwrite.
+      if (!s.putDataset || !s.getDataset) return;
+      const v1 = { id: "race", name: "race", version: "v1", cases: [{ id: "c1", input: "a" }] };
+      const v2 = { id: "race", name: "race", version: "v2", cases: [{ id: "c1", input: "a" }, { id: "c2", input: "b" }] };
+      const conflict = (e: unknown) => e instanceof Error && e.name === "DatasetConflict" && (e as { reason?: string }).reason === "dataset_conflict";
+      assert.deepEqual(await s.putDataset(v1, { parent: null }), { version: "v1", created: true });
+      await assert.rejects(s.putDataset(v2, { parent: null }), conflict, "a dataset exists: parent null conflicts");
+      await assert.rejects(s.putDataset(v2, { parent: "v0" }), conflict);
+      assert.equal((await s.getDataset("race"))?.version, "v1", "a refused write leaves latest alone");
+      assert.equal(await s.getDataset("race", "v2"), undefined, "a refused write stores no version");
+      assert.deepEqual(await s.putDataset(v2, { parent: "v1" }), { version: "v2", created: true });
+      assert.equal((await s.getDataset("race"))?.version, "v2");
+    }));
+
+    it("metrics with event keys, error text, globs and bare words match the in-memory scan", withStore(async (s) => {
+      // Stats and /api/metrics: a store with a --where compiler (querySessions) or metricRows answers every key.
+      if (!s.querySessions && !s.metricRows) return;
+      const t = 1_700_000_000_000;
+      const memory = new MemoryIndexStore();
+      const sess = (id: string, n: number, over: Partial<Session> = {}) => fixtureSession({ id, startedAt: t + n * 60_000, stats: { events: 2, turns: 1, toolCalls: n, toolErrors: 0, filesChanged: 0, usage: { inputTokens: 10 * n, costUsd: n / 100 } }, ...over });
+      const sessions = [sess("mx-1", 1, { cwd: "/a b/c" }), sess("mx-2", 2, { cwd: "/a b/*" }), sess("mx-3", 3, { parent: { sessionId: "mx-1", type: "Explore" } }), sess("mx-4", 4)];
+      const events = [
+        fixtureEvent({ sessionId: "mx-1", kind: "tool.end", durationMs: 45_000, payload: { tool: "Bash", ok: false, error: "permission denied" } }),
+        fixtureEvent({ sessionId: "mx-1", kind: "user.message", payload: { text: "deploy the docs" } }),
+        fixtureEvent({ sessionId: "mx-2", kind: "error", payload: { message: "Rate limit hit (429)" } }),
+        fixtureEvent({ sessionId: "mx-3", kind: "tool.end", payload: { tool: "Read", ok: true } }),
+      ];
+      for (const st of [s, memory]) {
+        await st.putEvents(events);
+        for (const x of sessions) await st.upsertSession(x);
+      }
+      const spec = { since: t, until: t + 86_400_000, bucket: "day" as const };
+      for (const q of ["tool:Bash", "-tool:Bash", "kind:error", "ok:false", "error:denied", "error:rate", "event.duration>30s", "deploy", 'dir:"/a b/*"', 'dir:"/a b/\\*"']) {
+        for (const filter of [{}, { parentSessionId: null }]) {
+          const where = parseWhere(q);
+          const got = await computeMetrics(s, { ...spec, where, filter });
+          assert.deepEqual(got, await computeMetrics(memory, { ...spec, where, filter }), `${q} ${JSON.stringify(filter)}`);
+        }
+      }
+      const ids = async (q: string) => (await findSessions(s, parseWhere(q))).sessions.map((x) => x.id).sort();
+      assert.deepEqual(await ids("error:rate"), ["mx-2"], "error: matches an error event's message");
+      assert.deepEqual(await ids('dir:"/a b/*"'), ["mx-1", "mx-2"], "a quoted * is a wildcard");
+      assert.deepEqual(await ids('dir:"/a b/\\*"'), ["mx-2"], "\\* is a literal star");
+      assert.equal((await computeMetrics(s, { ...spec, filter: { parentSessionId: null } })).totals.costUsd, 0.1, "a subagent's cost adds to its parent's");
     }));
 
     it("optional experiments and judges round-trip", withStore(async (s) => {

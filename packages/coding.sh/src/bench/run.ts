@@ -40,11 +40,17 @@ import { JobStore, type Job } from "../jobs/store.ts";
 import type { AnchorResult, BenchDef, BenchRun, Cell, ContenderRecord, ContenderSpec, ExcludeReason, FailureMode, FrozenCase, SeedCommit } from "./types.ts";
 
 export class BenchRunError extends Error {
-  constructor(message: string) {
+  /** The command that continues the stopped run, when there is one to continue. */
+  readonly resume: string | undefined;
+  constructor(message: string, o: { resume?: string } = {}) {
     super(message);
     this.name = "BenchRunError";
+    this.resume = o.resume;
   }
 }
+
+/** The command that continues stopped run `id` of benchmark `name`. */
+export const resumeCommand = (name: string, id: string): string => `coding.sh bench run ${name} --resume ${id}`;
 
 export interface RunBenchOpts {
   def: BenchDef;
@@ -302,7 +308,7 @@ function finalize(
     else if (share > 0.02) warnings.push(`degraded: ${dropped.size} of ${o.cases} cases excluded for every contender (${parts})`);
     else warnings.push(`${dropped.size} of ${o.cases} cases excluded for every contender (${parts})`);
   }
-  const comparisons = comparePairs(counted, names, { trials: o.trials, dataset: o.dataset, graders: o.graders, noVerdict });
+  const comparisons = comparePairs(counted, names, { trials: o.trials, dataset: o.dataset, graders: o.graders, noVerdict: noVerdict && `${dropped.size} of ${o.cases} cases excluded, over 10%` });
   const summaries = assignPlaces(
     contenders.map((c) => summarizeContender(counted, c, o.trials)),
     comparisons,
@@ -897,7 +903,7 @@ export async function runBench(opts: RunBenchOpts): Promise<BenchRun | DryRunRes
   const run = await assemble(def, p, ex, opts);
   await putRun(run, env);
   await job.finish(ex.stopReason === "interrupted" ? "interrupted" : ex.stopReason ? "incomplete" : "completed");
-  if (ex.stopReason === "interrupted") throw new BenchRunError(`interrupted; the partial run is saved as ${runId} and kept out of history (bench run ${def.name} --resume continues it)`);
+  if (ex.stopReason === "interrupted") throw new BenchRunError(`interrupted; the partial run is saved as ${runId} and kept out of history`, { resume: resumeCommand(def.name, runId) });
   return run;
 }
 
@@ -984,7 +990,7 @@ export async function resumeBench(opts: Omit<RunBenchOpts, "dryRun" | "seed" | "
   const run = await assemble(def, p, ex, opts);
   if (target.mode === "scheduled" && mode === "adhoc") run.warnings.unshift(`another run now counts for ${target.date}, so this resumed run is adhoc`);
   await putRun(run, env);
-  if (ex.stopReason === "interrupted") throw new BenchRunError(`interrupted again; run ${target.id} is saved and can be resumed`);
+  if (ex.stopReason === "interrupted") throw new BenchRunError(`interrupted again; run ${target.id} is saved and can be resumed`, { resume: resumeCommand(def.name, target.id) });
   return run;
 }
 

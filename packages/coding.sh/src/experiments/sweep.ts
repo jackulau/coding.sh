@@ -27,6 +27,7 @@ import type { Case, CaseRun, Dataset, ExperimentResult, Grader, Interval, Split 
 import type { JobScope } from "../jobs/store.ts";
 import { infraStopFor, type InfraStopReport, type RetryPolicy } from "../jobs/retry.ts";
 import { mapPool } from "../judge/limit.ts";
+import { guardVerdict } from "../stats/gate.ts";
 import { pairedBootstrap } from "../stats/interval.ts";
 import { mulberry32 } from "../stats/prng.ts";
 import { runAb } from "./ab.ts";
@@ -484,13 +485,15 @@ export async function runSweep(opts: RunSweepOpts): Promise<SweepResult> {
     const st = scoreOf(ab.a);
     const wn = scoreOf(ab.b);
     const deltaForget = st.p - wn.p;
-    const gate = cmp.gate!;
+    // A guard is gated like refine's guard set (guardVerdict): breaking more solved cases than τ allows
+    // blocks, with no binomial test, which a few lost cases could never pass.
+    const gate = { ...cmp.gate!, verdict: guardVerdict(cmp.gate!) };
     const blocks = gate.verdict === "dont-ship";
     out.guards.push({ dataset: gds.id, name: gds.name, version: gds.version, start: st, winner: wn, deltaForget, rhoForget: st.p > 0 ? deltaForget / st.p : 0, gate, blocks });
     if (blocks) blockedBy.push(gds.name);
   }
   if (blockedBy.length && out.adopt) {
-    out.adopt = { ...out.adopt, decision: "abstain", verdict: "dont-ship" };
+    out.adopt = { ...out.adopt, decision: "abstain", verdict: "dont-ship", reasons: [...out.adopt.reasons.filter((x) => x !== "guard"), "guard"] };
     out.blockedBy = blockedBy;
     for (const g of out.guards.filter((x) => x.blocks)) {
       notes.push(`winner forgets ${g.name}: ${Math.round(g.start.p * 100)}% -> ${Math.round(g.winner.p * 100)}% (rho ${Math.round(g.rhoForget * 100)}%)`);

@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { usageRows } from "./usage-rows.mjs";
 import { TASKS } from "../../src/data/compare.ts";
 import { SqliteIndexStore } from "../../../../packages/coding.sh/src/store/sqlite.ts";
 
@@ -491,6 +492,7 @@ await store.close?.();
 
 // ------------------------------------------------------------------ usage output (for the Measure section)
 const usage = cli(["usage", "--since", "7d"]);
+writeFileSync(join(here, "../../src/data/usage-rows.json"), JSON.stringify(usageRows(usage), null, 2) + "\n");
 
 console.log(`root     ${ROOT}`);
 console.log(`sessions ${written} (${RECENT} today), ${r} experiment runs`);

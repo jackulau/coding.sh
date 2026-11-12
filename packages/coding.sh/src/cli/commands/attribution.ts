@@ -16,7 +16,9 @@ export function attributionCliError(e: unknown): unknown {
   if (!(e instanceof AttributionError)) return e;
   if (e.reason === "not_a_repo") return new CliError(e.message, { reason: "not_a_repo", next: ["Run it inside a git repository, or pass one:", "coding.sh attribution --repo <dir>"] });
   if (e.reason === "unknown_rev") return new CliError(e.message, { reason: "unknown_rev", next: ["List branches and commits:", "git log --oneline -n 20"] });
-  return new CliError(e.message, { reason: e.reason });
+  if (e.reason === "invalid_range") return new UsageError(e.message, { reason: "invalid_argument" });
+  if (e.reason === "not_found") return new CliError(e.message, { reason: "not_found", next: e.next ?? ["See the files git tracks:", "git ls-files"] });
+  return new CliError(e.message, { reason: e.reason, next: ["See the options:", "coding.sh attribution --help"] });
 }
 
 /** Shared by attribution and blame: repo, rev, since, and a progress line on stderr. */
@@ -93,8 +95,18 @@ async function exportTrace(c: CommandContext, ctx: Context): Promise<number> {
   const { out } = c;
   const format = str(c.flags.format) ?? "agent-trace";
   if (format !== "agent-trace") throw new UsageError(`unknown --format ${format} (expected agent-trace)`);
+  const viewerUrl = str(c.flags["viewer-url"]);
+  if (viewerUrl !== undefined) {
+    let u: URL | undefined;
+    try {
+      u = new URL(viewerUrl);
+    } catch {
+      // not a URL
+    }
+    if (!u || (u.protocol !== "http:" && u.protocol !== "https:")) throw new UsageError(`--viewer-url ${JSON.stringify(viewerUrl)} is not an http or https URL`, { reason: "invalid_argument", suggestion: "coding.sh attribution export --viewer-url http://127.0.0.1:4319" });
+  }
   const r = await report(c, ctx);
-  const records = agentTraceRecords(r, { toolVersion: version(), ...(str(c.flags["viewer-url"]) ? { viewerUrl: str(c.flags["viewer-url"])! } : {}) });
+  const records = agentTraceRecords(r, { toolVersion: version(), ...(viewerUrl ? { viewerUrl } : {}) });
   const file = str(c.flags.out);
   if (file) {
     const path = resolve(c.cwd, file);

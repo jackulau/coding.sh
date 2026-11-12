@@ -23,6 +23,7 @@ const FLAGS = [
   { name: "--rule", value: "id", help: `Run only this rule; repeatable. One of: ${RULE_IDS.join(", ")}` },
   { name: "--all", help: "Also print allowlisted findings" },
   { name: "--json", help: "Print one JSON document on stdout" },
+  { name: "--strict-allowlist", help: "Fail when an allowlist count is higher than the findings it covers (the allowlist only shrinks)" },
   { name: "--update-allowlist", help: "Rewrite allowlist counts to the current tree (whole tree only)" },
   { name: "--allowlist", value: "file", help: "Allowlist file (default scripts/lint/allowlist.json)" },
   { name: "--root", value: "dir", help: "Repo root (default: this checkout)" },
@@ -63,7 +64,7 @@ class UsageError extends Error {
 }
 
 export function parseArgs(argv) {
-  const opts = { paths: [], rules: [], staged: false, all: false, json: false, update: false, listRules: false, help: false };
+  const opts = { paths: [], rules: [], staged: false, all: false, json: false, strictAllowlist: false, update: false, listRules: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const [flag, inline] = a.startsWith("--") ? a.split(/=(.*)/s, 2) : [a, undefined];
@@ -75,6 +76,7 @@ export function parseArgs(argv) {
     if (flag === "--staged") opts.staged = true;
     else if (flag === "--all") opts.all = true;
     else if (flag === "--json") opts.json = true;
+    else if (flag === "--strict-allowlist") opts.strictAllowlist = true;
     else if (flag === "--update-allowlist") opts.update = true;
     else if (flag === "--list-rules") opts.listRules = true;
     else if (flag === "--help" || flag === "-h") opts.help = true;
@@ -94,6 +96,9 @@ export function parseArgs(argv) {
   }
   if (opts.update && (opts.staged || opts.paths.length || opts.rules.length)) {
     throw new UsageError("--update-allowlist reads the whole tree; drop --staged, --rule and paths", "node scripts/lint/slop.mjs --update-allowlist");
+  }
+  if (opts.strictAllowlist && (opts.staged || opts.paths.length || opts.rules.length)) {
+    throw new UsageError("--strict-allowlist compares counts over the whole tree; drop --staged, --rule and paths", "node scripts/lint/slop.mjs --strict-allowlist");
   }
   if (opts.staged && opts.paths.length) throw new UsageError("--staged lints staged files; drop the paths", "node scripts/lint/slop.mjs --staged");
   return opts;
@@ -172,16 +177,20 @@ export function main(argv, { stdout = process.stdout, stderr = process.stderr, c
   }
 
   const failing = findings.filter((f) => !f.allowed);
+  // A count above what the file holds is room for new findings; --strict-allowlist closes it.
+  const loose = opts.strictAllowlist ? stale : [];
   const shown = opts.all ? findings : failing;
   if (opts.json) {
-    stdout.write(`${JSON.stringify({ ok: failing.length === 0, files: new Set(findings.map((f) => f.path)).size, findings: shown, allowlisted: findings.length - failing.length, stale })}\n`);
+    stdout.write(`${JSON.stringify({ ok: failing.length === 0 && loose.length === 0, files: new Set(findings.map((f) => f.path)).size, findings: shown, allowlisted: findings.length - failing.length, stale })}\n`);
   } else {
     for (const f of shown) stdout.write(`${fmt(f)}${f.allowed ? "  (allowlisted)" : ""}\n`);
-    for (const s of stale) stderr.write(`allowlist: ${s.path} has ${s.found} ${s.rule} (max ${s.max}); lower it with --update-allowlist\n`);
+    for (const s of stale) stderr.write(`allowlist: ${s.path} has ${s.found} ${s.rule} (max ${s.max}); lower it with --update-allowlist${loose.length ? " (--strict-allowlist: this fails the lint)" : ""}\n`);
     const n = failing.length;
-    stderr.write(n ? `slop lint: ${n} finding${n === 1 ? "" : "s"} (${findings.length - n} allowlisted). Fix them, or add \`slop-allow <rule>: <reason>\` on the line.\n` : `slop lint: clean (${files.length} files, ${findings.length} allowlisted)\n`);
+    if (n) stderr.write(`slop lint: ${n} finding${n === 1 ? "" : "s"} (${findings.length - n} allowlisted). Fix them, or add \`slop-allow <rule>: <reason>\` on the line.\n`);
+    else if (loose.length) stderr.write(`slop lint: ${loose.length} stale allowlist entr${loose.length === 1 ? "y" : "ies"}. Lower them: node scripts/lint/slop.mjs --update-allowlist\n`);
+    else stderr.write(`slop lint: clean (${files.length} files, ${findings.length} allowlisted)\n`);
   }
-  return failing.length ? 1 : 0;
+  return failing.length || loose.length ? 1 : 0;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

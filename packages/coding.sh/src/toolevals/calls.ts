@@ -154,13 +154,20 @@ export function cliArgs(argv: readonly string[]): { tool: string; args: Record<s
   return { tool: lead.join(" "), args };
 }
 
-/** A tool-eval trial's target calls, in order, from its tap (meta calls such as MCP initialize left out). */
-export function callsFromTap(tap: readonly TapRecord[]): ToolCall[] {
+/**
+ * A tool-eval trial's target calls, in order, from its tap (meta calls such as
+ * MCP initialize left out). `bin`: a CLI target's name, which names a call
+ * with no subcommand (`greet --name Ada` is tool `greet`).
+ */
+export function callsFromTap(tap: readonly TapRecord[], bin?: string): ToolCall[] {
   return [...tap]
     .filter((r) => r.class !== "meta")
     .sort((a, b) => a.ts - b.ts)
     .map((r): ToolCall => {
-      if (r.target === "cli") return cliArgs(r.argv ?? []);
+      if (r.target === "cli") {
+        const c = cliArgs(r.argv ?? []);
+        return c.tool === "" && bin ? { ...c, tool: bin } : c;
+      }
       if (r.target === "mcp") return { tool: r.tool ?? r.method ?? "", ...(isObj(r.args) ? { args: r.args } : {}) };
       return { tool: `${r.httpMethod ?? ""} ${r.pathTemplate ?? ""}`.trim() };
     });

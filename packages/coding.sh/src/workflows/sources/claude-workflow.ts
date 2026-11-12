@@ -24,6 +24,7 @@ import type { AgentEvent, Session } from "../../schema/index.ts";
 import { ClaudeTranscriptConverter } from "../../adapters/_shared/claude-transcript.ts";
 import { readJsonl } from "../../adapters/_shared/jsonl.ts";
 import { childSessionId, parentLink } from "../../adapters/_shared/normalize.ts";
+import { copiedSubagentOwner } from "../../adapters/claude-code.ts";
 import { eventEnd } from "../metrics.ts";
 import type { TreeSources, WorkflowNode, WorkflowRun } from "../types.ts";
 
@@ -414,6 +415,25 @@ export function describeRunDir(runDir: string): ClaudeWorkflowDir {
   const runId = basename(runDir);
   const sessionDir = dirname(dirname(dirname(runDir)));
   return { runDir, runId, sessionDir, hostSessionId: basename(sessionDir) };
+}
+
+/**
+ * The session that wrote a run dir found under another session (a fork, a
+ * resumed or symlinked run): every agent transcript in it is a copy of the
+ * same owner's, and the owner still holds the run's journal. That dir is the
+ * run; this one is imported from there. Undefined for the owner's own dir.
+ */
+export async function copiedRunOwner(d: ClaudeWorkflowDir): Promise<ClaudeWorkflowDir | undefined> {
+  const agents = (await ls(d.runDir)).filter((f) => /^agent-.+\.jsonl$/.test(f));
+  let owner: string | undefined;
+  for (const f of agents) {
+    const o = await copiedSubagentOwner(join(d.runDir, f));
+    if (o === undefined || (owner !== undefined && o !== owner)) return undefined;
+    owner = o;
+  }
+  if (owner === undefined) return undefined;
+  const runDir = join(dirname(d.sessionDir), owner, "subagents", "workflows", basename(d.runDir));
+  return (await ls(runDir)).includes("journal.jsonl") ? describeRunDir(runDir) : undefined;
 }
 
 /** The script Claude Code persists for a run: <session dir>/workflows/scripts/<meta.name>-<runId>.js. */

@@ -38,7 +38,7 @@ dependencies; the parts below are folders under `packages/coding.sh/src`.
 
 | Package or folder | Role |
 |---|---|
-| `packages/coding.sh` | The `coding.sh` CLI (npm). Zero runtime deps, Node 22.15+. |
+| `packages/coding.sh` | The `coding.sh` CLI (npm). Zero runtime deps, Node 22.16+. |
 | `src/schema` | `coding.sh/trace` v0 types |
 | `src/spool` | The hook entrypoint: appends stdin to the spool |
 | `src/core` | Ingest, normalization, sessions, redaction, repo snapshots, config, storage interfaces |
@@ -56,8 +56,8 @@ dependencies; the parts below are folders under `packages/coding.sh/src`.
 | `apps/site` | coding.sh website (Astro) |
 
 Drivers with dependencies live in their own packages (`coding.sh-store-<scheme>`,
-`coding.sh-sink-<kind>`), so the core install stays dependency-free. The npm packages are published;
-the Python SDK is not on PyPI yet.
+`coding.sh-sink-<kind>`), so the core install stays dependency-free. The npm packages are published,
+and the Python SDK is on PyPI as `coding-sh`.
 
 ## Capture
 

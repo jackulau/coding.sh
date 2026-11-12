@@ -29,6 +29,8 @@ jobs:
       # desk about 2. Shard 1 also runs the typecheck, the build and the other checks.
       matrix:
         os: [ubuntu-latest, macos-latest]
+        # The suite runs .ts from source, which needs Node 22.18 or newer (type stripping on by
+        # default). The runtime-floor job runs the packed CLI on the engines floor.
         node: [22.x, 24.x]
         shard: [1, 2, 3]
         exclude:
@@ -116,10 +118,170 @@ jobs:
         working-directory: apps/site
         run: npm run build
 
+      # A missing build fails the site tests here instead of skipping them.
       - name: Site check
         if: matrix.shard == 1
         working-directory: apps/site
+        env:
+          CODING_SH_REQUIRE_DIST: "1"
         run: npm run check
+
+      # The built output holds nothing shaped like a secret.
+      - name: Secret scan of the built output
+        if: matrix.shard == 1
+        run: node scripts/gate.mjs --only secret-scan
+
+      # The hook budget: a slow hook slows every agent. The desk runner measures main's own
+      # build a few percent over the design budget (docs/design/dogfood.md), so the step fails
+      # on more than 20% over it. One rerun absorbs a noisy runner.
+      - name: Hook budget
+        if: matrix.shard == 1 && runner.os == 'Linux' && matrix.node == '24.x'
+        run: node scripts/dogfood/bench.mjs hook --check --tolerance 20 || node scripts/dogfood/bench.mjs hook --check --tolerance 20
+
+  gate-static:
+    name: gate (static checks)
+    # The checks that need no build: repo hygiene, lint, the lint tests, actionlint and generated files.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: actionlint
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7 "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Static gate
+        env:
+          GATE_COMMIT_RANGE: ${{ github.event_name == 'push' && format('{0}..{1}', github.event.before, github.sha) || '' }}
+        run: node scripts/gate.mjs --static --strict
+
+  store-postgres:
+    name: coding.sh-store-postgres / Postgres 17
+    # GitHub-hosted, for the service container; the plugin tests run against a real server.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: coding
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck and test (real Postgres)
+        working-directory: packages/store-postgres
+        env:
+          CODING_SH_TEST_PG_URL: postgres://postgres:ci@127.0.0.1:5432/coding
+        run: npm run check
+
+      - name: Typecheck and test blob-s3
+        working-directory: packages/blob-s3
+        run: npm run check
+
+  python-sdk:
+    name: python sdk / python ${{ matrix.python }}
+    # pyproject allows Python 3.9, which has no build for ubuntu-latest (26.04); it runs on 24.04.
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { python: "3.9", os: ubuntu-24.04 }
+          - { python: "3.13", os: ubuntu-latest }
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+
+      # The golden test runs the core package's .ts sources on Node. The typing, golden, otel
+      # and real-SDK tests need mypy and the otel, openai and anthropic extras, so CI installs
+      # them and CODING_SH_SDK_REQUIRE_ALL=1 makes a missing one fail instead of skip.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.x
+
+      - name: Install the extras and mypy
+        working-directory: packages/sdk-python
+        run: python -m pip install --quiet ".[otel,openai,anthropic]" mypy
+
+      - name: Unit tests
+        working-directory: packages/sdk-python
+        env:
+          CODING_SH_SDK_REQUIRE_ALL: "1"
+        run: python -m unittest discover -s tests
+
+  runtime-floor:
+    name: packed CLI on the Node floor
+    # Builds and packs on a current Node, then installs the tarball and runs it on the
+    # oldest Node packages/coding.sh/package.json allows (engines).
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Build and pack
+        run: |
+          npm ci
+          cd packages/coding.sh
+          npm run build
+          mv "$(npm pack --silent | tail -n 1)" "$RUNNER_TEMP/coding.sh.tgz"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.16.0
+
+      - name: Run it on the floor
+        run: sh scripts/release/runtime-floor.sh "$RUNNER_TEMP/coding.sh.tgz"
+
+  release-smoke:
+    name: release smoke test
+    # The pre-publish smoke test, on a build of this checkout, in a throwaway home.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Smoke test
+        run: sh scripts/release/smoke.sh
 
   action:
     name: GitHub Action
@@ -167,14 +329,17 @@ jobs:
           command: eval run good --yes
           working-directory: ${{ runner.temp }}/proj
 
+      # The failure is the test. fail: "false" records the exit code without failing the step,
+      # so a green run carries no annotation (continue-on-error would still get GitHub's
+      # "Process completed with exit code 1").
       - name: Failing suite
         id: bad
-        continue-on-error: true
         uses: ./
         with:
           path: ${{ runner.temp }}/coding.sh.tgz
           command: eval run bad --yes
           working-directory: ${{ runner.temp }}/proj
+          fail: "false"
 
       # Each step has its own $GITHUB_STEP_SUMMARY, so this reads the action's report output.
       - name: Check the exit codes and the reports
@@ -187,7 +352,7 @@ jobs:
         run: |
           test "$GOOD" = 0
           test "$BAD" = 1
-          test "$BAD_OUTCOME" = failure
+          test "$BAD_OUTCOME" = success
           grep -q '^### Evals: the suite passed$' "$GOOD_REPORT"
           grep -q '^| bad | regression | 2 cases | 1/2 | .* | \*\*fail\*\*: b fails most trials |$' "$BAD_REPORT"
           grep -q '`coding.sh eval run bad --yes` exited 1' "$BAD_REPORT"

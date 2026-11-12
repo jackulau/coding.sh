@@ -85,7 +85,7 @@ hooks with `coding.sh init` and also imports sessions recorded before it was ins
 ### What does each need to self-host?
 
 Langfuse runs a web and a worker container with Postgres, ClickHouse, Redis (or Valkey) and S3
-compatible storage. coding.sh needs Node 22.15 or newer. A team server is one `coding.sh serve`
+compatible storage. coding.sh needs Node 22.16 or newer. A team server is one `coding.sh serve`
 process on SQLite, or on Postgres or ClickHouse through a store plugin. See
 [Self-host for a team](../how-to/self-host-team.md).
 

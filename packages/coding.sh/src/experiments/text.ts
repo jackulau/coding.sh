@@ -2,6 +2,8 @@
 // (`{color: boolean}`): callers enable it only for a TTY without NO_COLOR, so
 // piped output and `--json` stay clean.
 
+import { cutToWidth, padToWidth, textWidth } from "../core/width.ts";
+
 export interface RenderOpts {
   color: boolean;
   /** Max rows in per-case lists (regressions, noisy labels, failures). Default 20. */
@@ -15,17 +17,10 @@ export function paint(s: string, style: Style, color: boolean): string {
   return color ? `\u001b[${CODES[style]}m${s}\u001b[0m` : s;
 }
 
-const ANSI = /\u001b\[[0-9;]*m/g;
+/** Display width in terminal cells: strips ANSI; wide (CJK) characters count 2. */
+export const width = textWidth;
 
-/** Display width: strips ANSI, counts code points (good enough for CLI tables). */
-export function width(s: string): number {
-  return Array.from(s.replace(ANSI, "")).length;
-}
-
-function pad(s: string, w: number, align: "left" | "right"): string {
-  const gap = Math.max(0, w - width(s));
-  return align === "right" ? " ".repeat(gap) + s : s + " ".repeat(gap);
-}
+const pad = padToWidth;
 
 export interface Column {
   header: string;
@@ -72,8 +67,7 @@ export function pValue(p: number): string {
   return p.toFixed(3);
 }
 
+/** The text on one line, cut to `n` terminal cells. */
 export function truncate(s: string, n: number): string {
-  const flat = s.replace(/\s+/g, " ").trim();
-  const cps = Array.from(flat);
-  return cps.length > n ? `${cps.slice(0, n - 1).join("")}…` : flat;
+  return cutToWidth(s.replace(/\s+/g, " ").trim(), n);
 }

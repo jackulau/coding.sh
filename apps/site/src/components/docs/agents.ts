@@ -170,5 +170,5 @@ export const STATUS_LABEL: Record<AdapterRow["status"], string> = {
   verified: "Verified on real sessions",
   "real-install": "Verified on a real install",
   "not-live": "Not run live",
-  tested: "Tested",
+  tested: "Wraps any command",
 };

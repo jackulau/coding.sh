@@ -839,7 +839,7 @@ coding.sh stats [options]
 | `--per <BUCKET>` | `day` | Bucket size. One of: `day`, `week`. |
 | `--since <WHEN>` | `30d` | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
 | `--until <WHEN>` |  | Only before this time (exclusive): 7d, 12h, today or a date in local time; --until 2026-11-09 leaves that day out (default: now) |
-| `--all` |  | Count subagent sessions as their own rows (default: top-level sessions only) |
+| `--all` |  | Count subagent sessions as their own rows (default: top-level sessions only, with each subagent's cost, tokens and tool calls added to its top-level session) |
 | `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
@@ -1582,6 +1582,7 @@ coding.sh exp compare <A> <B> [options]
 | `--pairwise <JSON|FILE>` |  | Pairwise judge spec, {"kind":"pairwise","name":…,"rubric":…}: judges A and B's outputs side by side, in both orders. Repeat it for more judges: compare then reports how far they agree, and --gate holds unless every judge finds B better. Repeatable. |
 | `--labels <FILE>` |  | With --pairwise: human labels (JSON array or JSONL of {"caseId","winner":"a"\|"b"\|"tie"}) to calibrate each judge on the test split. |
 | `--matrix` |  | Also print the success-count matrix: cases by passes out of k in A (rows) and B (columns) |
+| `--given <GRADER>` |  | Compare only the cases where this grader passes in both arms, with every delta read over those cases (conditioned on the gate, not the whole dataset). Prints how many cases were kept and dropped. |
 | `--margin <D>` |  | Non-inferiority: exit 1 unless the 95% CI lower bound of B − A is above −D (0.05 = 5pp) |
 | `--labels-a <FILE>` |  | Human labels of A's outputs (JSON array or JSONL of {"caseId","value":"pass"\|"fail"\|"skip","criterion"?}): LLM judge graders get a PPI++ corrected B − A. |
 | `--labels-b <FILE>` |  | Human labels of B's outputs (required with --labels-a; labels are never shared across arms) |
@@ -1598,6 +1599,7 @@ coding.sh exp compare base cheaper --margin 0.03
 coding.sh exp compare base cand --cluster repo
 coding.sh exp compare base cand --gate
 coding.sh exp compare base cand --matrix
+coding.sh exp compare base cand --given terminated
 coding.sh exp compare base cand --pairwise judge.json
 coding.sh exp compare base cand --pairwise openai-judge.json --pairwise anthropic-judge.json --gate
 coding.sh exp compare base cand --labels-a base-labels.jsonl --labels-b cand-labels.jsonl
@@ -1760,7 +1762,7 @@ coding.sh exp show <EXPERIMENT>
 
 | Argument | Required | Description |
 |---|---|---|
-| `experiment` | yes | Experiment id or name (newest, cancelled ones included) |
+| `experiment` | yes | Experiment id or name (newest, cancelled ones included), or latest. |
 
 ### `coding.sh exp list`
 
@@ -1913,7 +1915,7 @@ coding.sh judge <action>
 
 | Action | What it does |
 |---|---|
-| [`grade`](#codingsh-judge-grade) | Run one grader on one output and trace (exit 0 on pass); inside a verifier both default to the agent's |
+| [`grade`](#codingsh-judge-grade) | Run one grader on one output and trace (exit 0 on pass, 1 on a fail verdict, 2 when the grader could not grade); inside a verifier both default to the agent's |
 | [`slop`](#codingsh-judge-slop) | Flag agent-slop patterns (placeholder code, type escapes, swallowed errors, debug prints, focused tests) in the lines captured work added |
 | [`calibrate`](#codingsh-judge-calibrate) | Measure judge-human agreement (Cohen's kappa) on a held-out split, or a verifier's precision |
 | [`sample`](#codingsh-judge-sample) | Plan which cases to label next: a seeded random sample stratified by judge verdict and confidence |
@@ -1922,7 +1924,7 @@ coding.sh judge <action>
 
 ### `coding.sh judge grade`
 
-Run one grader on one output and trace (exit 0 on pass); inside a verifier both default to the agent's.
+Run one grader on one output and trace (exit 0 on pass, 1 on a fail verdict, 2 when the grader could not grade); inside a verifier both default to the agent's.
 
 ```text
 coding.sh judge grade [options]
@@ -2356,7 +2358,7 @@ coding.sh workflows run <WORKFLOW> [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `--variant <NAME=SCRIPT|JSON>` |  | Variant: name=script path (claude), name=command (command), or JSON (repeatable) |
+| `-v, --variant <NAME=SCRIPT|JSON>` |  | Variant: name=script path (claude), name=command (command), or JSON (repeatable) |
 | `--cases <DIR>` |  | Cases directory (default: evals/workflows/&lt;workflow&gt;/cases) |
 | `-k, --k <N>` | `3` | Attempts per case and variant. |
 | `--split <SPLIT>` |  | Only cases in this split. One of: `dev`, `heldout`. |
@@ -2813,7 +2815,7 @@ coding.sh compare <A> [b] [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `--parity` |  | Instead: diff what a crawler reads from two pages (status, redirects, title, description, canonical, robots, Open Graph and Twitter tags, hreflang count, JSON-LD types, lang). Exits 1 when they differ. |
+| `--parity` |  | Instead: diff what a crawler reads from two pages (status, redirects, title, description, canonical, robots, Open Graph and Twitter tags, hreflang count, JSON-LD types, lang; status is left out when a side is a command). Exits 1 when they differ, 2 when a page could not be read. |
 | `--user-agent <UA>` |  | With --parity: the User-Agent to fetch as (default: a coding.sh crawler agent) |
 | `-t, --task <ID>` |  | Task id (repeatable; default: all validated tasks) Takes a comma list too (a,b). |
 | `--tag <TAG>` |  | Run every non-archived task with this tag, drafts included (e.g. the tag given to eval import) |
@@ -3484,6 +3486,7 @@ coding.sh update --check
 
 - Other commands print one line when a newer release is out (checked at most daily, in the background).
 - Turn that off with NO_UPDATE_NOTIFIER=1, CODING_SH_NO_UPDATE_CHECK=1 or `[update] check = false` in ~/.coding.sh/config.toml.
+- Once, three days after first use, a successful command also prints one line asking for a GitHub star (no network call). Turn that off with CODING_SH_NO_STAR_PROMPT=1, NO_UPDATE_NOTIFIER=1 or CI.
 
 ## `coding.sh upgrade-store`
 

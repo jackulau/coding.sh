@@ -1,16 +1,21 @@
 # coding.sh hook, the POSIX sh fast path. Installed as ~/.coding.sh/bin/hook.sh
 # next to hook.mjs (src/spool/hook.ts). Agents run it as:
 #
-#   /bin/sh "<home>/bin/hook.sh" <agent> <event> [--echo-continue]   < hook JSON on stdin
+#   /bin/sh "<home>/bin/hook.sh" <agent> <event> [--echo-continue | --reply={}]   < hook JSON on stdin
 #
 # It writes the same SpoolLine (core/types.ts) hook.mjs writes, without starting
 # node: a node start costs about 30 ms, this script a few ms. Same contract:
 # - Exits 0 and prints nothing, except `{"continue":true}` for --echo-continue
-#   (or CODING_SH_ECHO_CONTINUE=1). stderr goes to /dev/null. Both hold when a
-#   call is handed to hook.mjs and node cannot run it.
+#   (or CODING_SH_ECHO_CONTINUE=1) and `{}` for --reply={}. stderr goes to
+#   /dev/null, and a reader of stdout that is gone does not fail the call
+#   (SIGPIPE is ignored for the reply). These hold when a call is handed to
+#   hook.mjs and node cannot run it.
 # - No network, no git. Files 0600, dirs 0700.
+# - CODING_SH_DISABLE=1: reads the payload and writes no line. The payload's
+#   session id goes to spool/disabled-sessions, so ingest and an import of the
+#   agent's transcripts leave that session out (hook.mjs does the same).
 # - Anything it does not handle goes to hook.mjs with the same arguments and
-#   stdin: --reply, an eval run (CODING_SH_RUN_ID), a host app (T3 Code), a
+#   stdin: any other --reply, an eval run (CODING_SH_RUN_ID), a host app (T3 Code), a
 #   model base URL that may be a gateway's (gateway detection), a session start while
 #   `init --proxy` is installed (proxy restart), a relative CODING_SH_HOME, a
 #   value it cannot put in JSON as is, and any write that fails (hook.mjs then
@@ -23,9 +28,11 @@
 # BUFSIZ bytes, which is 1024 on macOS and musl: a longer line can leave in
 # pieces that another hook's line lands between. Any other payload goes verbatim to a side file under
 # <agent>/raw/ and the line names it in "rawFile", as hook.mjs does for
-# payloads over 256 KB; readers recover it with resolveRaw(). The inline check
-# is by shape, not a JSON parse: agents send their serializer's output, and a
-# line that still fails to parse is skipped and reported by the spool reader.
+# lines over the same 1024 bytes; readers recover it with resolveRaw(). The inline check
+# is by shape, not a JSON parse: agents send their serializer's output. Under
+# bash and zsh a payload whose braces or brackets do not pair up also goes to a
+# side file (where the reader keeps it as text, as hook.mjs does); elsewhere a
+# line that fails to parse is skipped and reported by the spool reader.
 #
 # Session end (stop, session-end, session.idle, afterAgent): touches
 # spool/.ingest.pending and starts `node <cli-path> ingest --background` in its
@@ -64,11 +71,23 @@ case $0 in */*) d=${0%/*} ;; *) d=. ;; esac
 # before the script has parsed them.
 no_node() {
   [ "${CODING_SH_ECHO_CONTINUE-}" = 1 ] && echo=1
+  reply=
   for a in "$@"; do
     [ "$a" = --echo-continue ] && echo=1
+    [ "$a" = '--reply={}' ] && reply='{}'
   done
-  [ -n "${echo-}" ] && printf '{"continue":true}\n'
+  answer
   exit 0
+}
+# The reply the agent waits for: --reply={} over --echo-continue, as in hook.mjs.
+# A reader of stdout that is gone (EPIPE) is not the hook's failure.
+answer() {
+  trap '' PIPE
+  if [ -n "${reply-}" ]; then
+    printf '%s\n' "$reply" || :
+  elif [ -n "${echo-}" ]; then
+    printf '{"continue":true}\n' || :
+  fi
 }
 # Hand the whole call to hook.mjs (stdin untouched) and wait for it. Not an
 # exec: node's exit status must never be the hook's. --sh-pids gives hook.mjs
@@ -89,10 +108,16 @@ PAYLOAD
 agent=$1
 event=$2
 echo=
+reply=
 [ "${CODING_SH_ECHO_CONTINUE-}" = 1 ] && echo=1
 if [ $# -gt 2 ]; then
-  [ $# -eq 3 ] && [ "$3" = --echo-continue ] || to_node "$@"
-  echo=1
+  [ $# -eq 3 ] || to_node "$@"
+  case $3 in
+    --echo-continue) echo=1 ;;
+    # The reply Antigravity's hooks give ({}: no opinion); hook.mjs checks any other.
+    '--reply={}') reply='{}' ;;
+    *) to_node "$@" ;;
+  esac
 fi
 case $agent in "" | *[!a-z0-9._-]* | [!a-z0-9]* | *..*) to_node "$@" ;; esac
 [ ${#agent} -le 64 ] || to_node "$@"
@@ -127,13 +152,6 @@ case $home in *[\"\\]* | *[[:cntrl:]]*) to_node "$@" ;; esac
 case $event in
   [Ss][Ee][Ss][Ss][Ii][Oo][Nn][Ss][Tt][Aa][Rr][Tt] | [Ss][Ee][Ss][Ss][Ii][Oo][Nn][._-][Ss][Tt][Aa][Rr][Tt])
     [ "${CODING_SH_NO_PROXY_AUTOSTART-}" != 1 ] && [ -e "$home/proxy-installs.json" ] && to_node "$@" ;;
-esac
-
-case ${CODING_SH_DISABLE-} in
-  1 | true)
-    [ -t 0 ] || cat >/dev/null
-    [ -n "$echo" ] && printf '{"continue":true}\n'
-    exit 0 ;;
 esac
 
 end=
@@ -197,13 +215,41 @@ if [ ! -t 0 ]; then
   fi
 fi
 
+# Capture paused: the payload is read (above, as for a capture, with no cat
+# under bash), and only its session id is kept.
+case ${CODING_SH_DISABLE-} in
+  1 | true)
+    sid=
+    for k in '"session_id":"' '"session_id": "' '"conversation_id":"' '"conversation_id": "' '"sessionId":"' '"sessionId": "' '"conversationId":"' '"conversationId": "'; do
+      case $raw in
+        *"$k"*)
+          rest=${raw#*"$k"}
+          sid=${rest%%\"*}
+          break ;;
+      esac
+    done
+    case $sid in
+      "" | *[!A-Za-z0-9._:-]*) ;;
+      *)
+        if [ ${#sid} -le 128 ]; then
+          umask 077
+          { [ -d "$home/spool" ] || mkdir -p "$home/spool"; } && printf '%s\n' "$sid" >>"$home/spool/disabled-sessions"
+        fi ;;
+    esac
+    answer
+    exit 0 ;;
+esac
+
 # Milliseconds since the epoch: bash 5 and zsh have EPOCHREALTIME (trusted only
-# there: another shell could inherit a stale exported copy), else date(1)
-# (GNU and macOS print nanoseconds for %N; a date without it prints "N").
-case ${BASH_VERSION-}${ZSH_VERSION-}:${EPOCHREALTIME-} in
-  ?*:[0-9]*[.,][0-9]*)
-    s=${EPOCHREALTIME%[.,]*}
-    f=${EPOCHREALTIME#*[.,]}000
+# there, and only with a whole seconds count: another shell, bash 3.2 included,
+# could inherit a stale exported copy), else date(1) (GNU and macOS print
+# nanoseconds for %N; a date without it prints "N").
+ert=
+{ [ "${BASH_VERSINFO-0}" -ge 5 ] || [ -n "${ZSH_VERSION-}" ]; } && ert=${EPOCHREALTIME-}
+case $ert in
+  [1-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*[.,][0-9]*)
+    s=${ert%[.,]*}
+    f=${ert#*[.,]}000
     f=${f%"${f#???}"} ;;
   *)
     t=$(date +%s%N)
@@ -231,13 +277,15 @@ year=$((yoe + era * 400 + (mon <= 2)))
 [ $dom -lt 10 ] && dom=0$dom
 day=$year-$mon-$dom
 
-# cwd: the payload's "cwd" when it is a plain string near the start, else the
-# process cwd (hook.mjs reads the parsed payload's).
+# cwd: the payload's "cwd" when it is a plain string near the start and not
+# inside a nested object or list (tool_input.cwd), else the process cwd (agents
+# run hooks in the session's directory). The payload itself is kept as sent.
 cwd=
 for k in '"cwd":"' '"cwd": "'; do
   case $raw in
     *"$k"*)
       pre=${raw%%"$k"*}
+      case ${pre#?} in *[{[]*) break ;; esac
       if [ ${#pre} -le 1024 ]; then
         rest=${raw#"$pre$k"}
         cwd=${rest%%\"*}
@@ -284,6 +332,12 @@ else
         *) line="$meta,\"raw\":$raw}"; [ ${#line} -le 1023 ] || line= ;;
       esac ;;
   esac
+  # Braces or brackets that do not pair up ({"a":1}}): not JSON, so not inline.
+  # Pattern substitution is bash and zsh only; eval keeps dash from parsing it.
+  if [ -n "$line" ] && [ -n "${BASH_VERSION-}${ZSH_VERSION-}" ]; then
+    eval 'o=${raw//[!\{]/} c=${raw//[!\}]/} lo=${raw//[!\[]/} lc=${raw//[!\]]/}'
+    [ ${#o} -eq ${#c} ] && [ ${#lo} -eq ${#lc} ] || line=
+  fi
 fi
 side=
 if [ -z "$line" ]; then
@@ -303,7 +357,7 @@ if [ -n "${readfail-}" ]; then
   printf '{"ts":%s,"pid":%s,"agent":"%s","event":"%s","where":"hook.sh","error":"reading stdin failed: the payload may be cut short"}\n' "$ts" "$$" "$agent" "$event" >>"$home/spool/errors.log"
 fi
 
-[ -n "$echo" ] && printf '{"continue":true}\n'
+answer
 
 # After the reply, so the agent is never kept waiting on the spawn.
 if [ -n "$end" ]; then

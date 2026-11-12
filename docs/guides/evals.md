@@ -126,12 +126,17 @@ pass^2  0.0%  a task counts only when all 2 trials pass
 
 task                     passed         first failure
 -----------------------  ------  -----  ---------------------------
-make-sum-js-add-its-two     1/2  flaky  coding.sh show 4fd72079-09a
+make-sum-js-add-its-two     1/2  flaky  coding.sh show a902e2be-c74
 
 flaky: make-sum-js-add-its-two. These pass some trials and fail others; pass^2 counts them as failures.
 1 task: a suite this small only shows large changes; grow it toward 20 to 50 tasks from real failures
-1 task without a reference solution (make-sum-js-add-its-two): add reference.patch to the task dir, then coding.sh eval validate <task>
-harness claude-code-project (3 files) · experiment exp_01M6WGQF2R1GZWABGSSJY7BR87
+1 task without a reference solution (make-sum-js-add-its-two): add reference.patch to the task dir, then coding.sh eval import <task dir> and coding.sh eval validate <task>
+
+Verifier output of failed runs (last 8 lines):
+  make-sum-js-add-its-two · attempt 2  exit 1 · run_01M7537BVVE69X10W444RCZ748
+    │ sum(2, 3) should be 5
+captured failures: 0 of 1 now pass
+harness claude-code-project (3 files) · experiment exp_01M7537BT8QPVDYX904Q8S27NB
 ```
 
 This is real output from `scripts/e2e/eval-init-capture.mjs`, where Claude Code runs against a
@@ -426,7 +431,8 @@ test on flipped cases and the minimum detectable effect. It also reports:
 
 `coding.sh exp compare A B --gate` adds a ship-or-hold line under the verdict: `Ship it: B wins 8
 cases, loses 0`, `Hold: not enough evidence`, or `Don't ship: B breaks 2 cases A solved` with up to
-5 of the broken cases. It exits 0 only for "Ship it" and 1 otherwise, and `--json` carries
+5 of the broken cases. "Don't ship" needs losses that beat chance: an exact one-sided binomial test
+at p = 1/2 on the cases that changed outcome, below `--gate-alpha`. Fewer losses hold. It exits 0 only for "Ship it" and 1 otherwise, and `--json` carries
 `comparison.gate`. It uses each case's majority outcome over its trials (a 0.5 pass rate counts as
 a pass) and only cases both sides graded. A fixed case is a win and a broken one is a loss. B ships
 when wins minus λ times losses is positive (`--lambda`, default 2). The wins must also beat
@@ -572,7 +578,8 @@ never blocks. A guards table prints each suite's start and winner pass rates, th
 Δ = start − winner and ρ = Δ / start, and the gate. When the start config wins, no guard runs and
 the report says so. Each sweep that ships records the dataset in `adoptions.jsonl` in the store;
 `--guard prior` guards every dataset a sweep adopted a config on, except the one being tuned.
-`--json` carries `sweep.guards` and `sweep.blockedBy`, both absent without `--guard`. Flags and
+`--json` carries `sweep.guards` and `sweep.blockedBy`, both absent without `--guard`, and a
+blocked `adopt` lists `guard` in its `reasons`. Flags and
 guard datasets are checked before anything runs.
 
 ### Matrix
@@ -725,6 +732,72 @@ second try. So when B ran with `--failing A` (or `--errors-from A`) and A ran on
 failures)`, and `--gate` holds. The fair comparison runs A's config on the same cases
 (`exp run <A's spec> --failing A`) and compares B with that; two runs picked from the same
 experiment's failures are compared as usual.
+
+### Compare an edited model with its base
+
+An edit that stops a model from looping can look like a gain in accuracy: more answers finish, so
+more are right. To tell the two apart, grade each answer twice, on whether it finished and on
+whether it is right, and read the two as separate paired deltas.
+
+Import the items. Each line of `math.jsonl` is a case with the question as `input` and the answer
+as `expected`, shaped like the task's output (`{"id": "m1", "input": "…", "expected": {"answer": "7"}}`):
+
+```sh
+coding.sh dataset import math.jsonl --name math
+```
+
+Write one command task per model. The command gets each case's input as JSON on stdin and prints
+`{"answer": …, "finish_reason": …}` as JSON, where `finish_reason` is `stop` when the model ended
+its answer and anything else (`length`) when it was cut off. Only the environment differs between
+the two tasks:
+
+`base.json`:
+
+```json
+{"kind": "command", "command": "python3", "args": ["generate.py"], "env": {"MODEL": "base"}}
+```
+
+`edited.json`:
+
+```json
+{"kind": "command", "command": "python3", "args": ["generate.py"], "env": {"MODEL": "edited"}}
+```
+
+Two `json-path` graders read the output. `terminated` passes when the answer finished, and
+`correct` passes when `$.answer` equals the same field of the case's `expected`. Grader scores are 0 to 1, so a
+count such as tokens used has to become a pass or fail before it is a grader.
+
+`terminated.json`:
+
+```json
+{"kind": "json-path", "name": "terminated", "path": "$.finish_reason", "equals": "stop"}
+```
+
+`correct.json`:
+
+```json
+{"kind": "json-path", "name": "correct", "path": "$.answer"}
+```
+
+Run each model, then compare:
+
+```sh
+coding.sh exp run -d math --task base.json -g terminated.json -g correct.json --name base
+coding.sh exp run -d math --task edited.json -g terminated.json -g correct.json --name edited
+coding.sh exp compare base edited
+coding.sh exp compare base edited --given terminated
+```
+
+The first compare prints a paired delta for `terminated` and one for `correct`, each with its
+bootstrap interval. If the edited model only stopped looping, `terminated` is up and `correct`
+is up with it. `--given terminated` keeps the cases where `terminated` passes in both runs, and
+compares everything else on those: `correct` there is accuracy among answers that finished. The
+report says how many cases were kept and how many were dropped, and every number in it is
+conditioned on that gate, so it describes the kept cases and not the whole dataset. `--json`
+carries `comparison.given` (`grader`, `kept`, `dropped`). With no case kept it says so and prints
+no statistics. With several trials, a case is kept when the gate passes on at least half of each
+run's trials. A grader name that is not in both runs is a usage error that lists the ones that
+are.
 
 ### Sequential attempts with feedback
 
@@ -938,7 +1011,8 @@ person, so scoring the same thing again replaces it, and the same value again ch
 A stored score keeps its type. Without a config, the type comes from how the value looks, so a
 value that reads as another type (`1,5` over a number) is refused (exit 2, or HTTP 400) unless you
 pass `--type`. An event must be in the store to be scored, and the score goes on the event's own
-session.
+session. An experiment is not a target: `score add exp:<id>` is refused (exit 2), so score its
+runs (`run:<id>`) or cases instead.
 `coding.sh ui` and `coding.sh serve` take the same scores at `POST /api/scores`
 ([API](../reference/api.md#post-apiscores)), and agents use the `score_add` and `score_list` MCP
 tools. The `scores` table is in [Query](../reference/query.md#scores). Scores are kept in the
@@ -1144,7 +1218,7 @@ undecided cases out of the kappa and counts them: `3 undecided (judge abstained)
 `abstain`, prompts and judge version ids are unchanged.
 
 `coding.sh judge grade --grader <JSON|FILE>` grades one output with any grader and exits 0 on
-pass. It reads the output from `--output <FILE|->` and the trace from `--trace <FILE>`. The trace
+pass, 1 on a fail verdict and 2 when the grader could not grade (reason `grader_error`). It reads the output from `--output <FILE|->` and the trace from `--trace <FILE>`. The trace
 can be Claude stream-json, a Claude transcript, `codex exec --json` output, Cursor
 `--output-format stream-json` output, an OpenAI chat or Responses request body (or its
 `messages`/`input` array), or coding.sh events as JSONL. An OpenAI tool result has no status
@@ -1441,7 +1515,7 @@ repo. The report adds `effect of <path> = A − B` with its CI. `--without` can 
 
 `coding.sh compare A B --gate` adds a ship-or-hold answer under the verdict: `Ship it: B wins 9
 tasks, loses 0`, `Hold: not enough evidence`, or `Don't ship: B breaks 3 tasks A solved` with the
-broken task ids. It exits 0 only for "Ship it", so it can gate a harness change in CI. It works on
+broken task ids. As with `exp compare`, "Don't ship" needs losses that beat chance. It exits 0 only for "Ship it", so it can gate a harness change in CI. It works on
 each task's majority outcome. A task B fixed is a win, a task A solved that B failed is a loss, and
 ties are ignored. B ships when three things hold. First, wins minus λ times losses is positive (λ =
 `--lambda`, default 2, so one break cancels two fixes). Second, an exact one-sided binomial test on
@@ -1456,7 +1530,9 @@ out of 40 solved tasks is under τ, even when all 3 come from a suite where A so
 suite:` also runs the gate on each group of tasks, grouped by their first tag with that prefix
 (tasks without one go in `(none)`). The pooled numbers stay, one line per group follows, and any
 group that says "Don't ship" makes the whole gate "Don't ship" (reason `stratum-regression`):
-`gate: Don't ship: B breaks 3 of 4 suite:swt tasks A solved`. A group that only holds never blocks.
+`gate: Don't ship: B breaks 3 of 4 suite:swt tasks A solved`. A group is too small for the binomial
+test, so it says "Don't ship" when B breaks more than τ of its solved tasks or its λ-weighted gain
+is not positive. A group that only holds never blocks.
 `--json` adds `gate.strata` (each group's gate, lost and won tasks) and `gate.blockedBy`. `--by`
 without `--gate`, or a prefix no task's tags start with, is an error before anything runs. Tag
 tasks with `eval new --tag suite:swe`.
@@ -2354,14 +2430,14 @@ file does not change, and a `triggers` suite only checks that a skill loads.
 
 **Reusing the base across rounds.** The base arm is the same every round until an edit is kept, so
 `--reuse baseline` copies its finished runs from an earlier round instead of running the agent
-again — a candidate-against-base round then pays only for the candidate, roughly halving the agent
+again. A candidate-against-base round then pays only for the candidate, roughly halving the agent
 sessions a long climb spends. `--reuse both` also copies a candidate that recurs. Reuse keys runs by
 content exactly as [`compare --reuse`](#reuse-finished-runs) does (an agent upgrade, a harness edit
 or a changed verifier runs them again), copies count `$0` toward `--max-cost`, and only runs that
 finished within `--reuse-max-age` (default `7d`) are copied. It is off by default because a reused
 run did not run next to this round's, so the pair is no longer fully interleaved: the round warns
 that drift since the earlier run (model updates, API latency, rate limits) is not balanced across
-the arms. The verdict itself is unchanged — reuse copies identical runs, it does not change what is
+the arms. The verdict itself is unchanged: reuse copies identical runs, it does not change what is
 judged.
 
 **Objectives.** `--objective` lists what to improve, primary first: `pass` (the default), `cost`,

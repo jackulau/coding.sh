@@ -1,9 +1,21 @@
 // Path-safety helpers: overlay and hidden-file writes must never escape their root.
 import { lstat, mkdir, realpath, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { BlobRef, BlobStore } from "../core/types.ts";
 
 export class PathEscapeError extends Error {}
+
+/**
+ * Writes `<dir>/package.json` with no "type", unless one is there. Node reads the
+ * nearest package.json, so a trial under a folder whose package.json says
+ * "type": "module" (a home inside a JS project) runs .js files as it would
+ * anywhere else. A task's own package.json, deeper in its tree, still wins.
+ */
+export async function fencePackageScope(dir: string): Promise<void> {
+  await writeFile(join(dir, "package.json"), '{ "private": true }\n', { flag: "wx" }).catch((e: NodeJS.ErrnoException) => {
+    if (e.code !== "EEXIST") throw e;
+  });
+}
 
 /** Resolve rel under root; throw if it is absolute, empty, or climbs out. */
 export function safeJoin(root: string, rel: string): string {

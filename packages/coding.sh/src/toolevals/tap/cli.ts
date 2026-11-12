@@ -62,7 +62,12 @@ export interface ShimSpawn {
   args: string[];
   /** The args are already quoted for cmd.exe. */
   verbatim: boolean;
+  /** The command is not on PATH outside the shim dirs: the shim exits 127 instead of spawning. */
+  missing?: boolean;
 }
+
+/** The shim dirs a tapped call already passed through, so a nested shim never resolves to one of them. */
+export const SHIM_DIRS_ENV = "CODING_SH_TAP_SHIM_DIRS";
 
 /** Node builtins the resolver uses, passed in so it stays self-contained. */
 export interface ShimDeps {
@@ -75,7 +80,9 @@ export interface ShimDeps {
 
 /**
  * Resolves the target command like a shell, skipping the shim's own dir
- * (`self`) so a target whose command equals its bin never re-enters the shim.
+ * (`self`) and every shim dir in CODING_SH_TAP_SHIM_DIRS, so a target whose
+ * command equals its bin never re-enters a shim. A command found nowhere else
+ * comes back `missing`: a bare name handed to spawn would find the shim again.
  * Windows: PATH + PATHEXT lookup; an npm cmd-shim runs its node script
  * directly, any other .cmd/.bat via cmd.exe with escaped args (the rules in
  * core/spawn.ts). Self-contained: embedded in the shim as source.
@@ -96,16 +103,17 @@ export function resolveShimSpawn(cmd: string, args: string[], env: Record<string
     }
   };
   const same = (a: string, b: string) => (win ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase() : path.resolve(a) === path.resolve(b));
+  const skip = [self, ...get("CODING_SH_TAP_SHIM_DIRS").split(path.delimiter).filter(Boolean)];
   let found: string | undefined;
   if (/[\\/]/.test(cmd)) found = win ? candidates(path.resolve(cmd)).find(runnable) : cmd;
   else {
     for (const dir of get("PATH").split(path.delimiter)) {
-      if (!dir || same(dir, self)) continue;
+      if (!dir || skip.some((s) => same(dir, s))) continue;
       found = candidates(path.join(dir, cmd)).find(runnable);
       if (found) break;
     }
   }
-  if (!found) return { file: cmd, args, verbatim: false };
+  if (!found) return { file: cmd, args, verbatim: false, missing: true };
   if (!win || !/\.(cmd|bat)$/i.test(found)) return { file: found, args, verbatim: false };
   let text = "";
   try {
@@ -152,19 +160,14 @@ const argv = process.argv.slice(2);
 const env = { ...process.env, ...CFG.env };
 const self = path.dirname(path.resolve(process.argv[1] || ""));
 const target = resolveSpawn(CFG.command[0], [...CFG.command.slice(1), ...argv], env, self, { fs, path, win: process.platform === "win32", node: process.execPath });
+env.${SHIM_DIRS_ENV} = [self, env.${SHIM_DIRS_ENV}].filter(Boolean).join(path.delimiter);
 let outBytes = 0, errBytes = 0, errHead = "";
 const ts = Date.now();
 const t0 = performance.now();
 let t1 = 0;
-const child = spawn(target.file, target.args, { stdio: ["inherit", CFG.tapLog ? "pipe" : "inherit", CFG.tapLog ? "pipe" : "inherit"], env, windowsVerbatimArguments: target.verbatim });
 const sigs = ["SIGINT", "SIGTERM", "SIGHUP"];
-const fwd = (s) => { try { child.kill(s); } catch {} };
-for (const s of sigs) process.on(s, fwd);
-if (CFG.tapLog) {
-  child.stdout.on("data", (b) => { outBytes += b.length; process.stdout.write(b); });
-  child.stderr.on("data", (b) => { errBytes += b.length; if (errHead.length < 2048) errHead = (errHead + b.toString("utf8")).slice(0, 2048); process.stderr.write(b); });
-}
-child.on("exit", () => { t1 = performance.now(); });
+let child;
+const fwd = (s) => { try { child && child.kill(s); } catch {} };
 let done = false;
 const finish = (code, signal) => {
   if (done) return;
@@ -181,8 +184,19 @@ const finish = (code, signal) => {
   if (signal) { try { process.kill(process.pid, signal); } catch {} process.exitCode = 128 + 15; }
   else process.exitCode = code ?? 1;
 };
-child.on("error", (e) => { errHead = String(e && e.message || e); process.stderr.write(errHead + "\\n"); finish(127, null); });
-child.on("close", (code, signal) => finish(code, signal));
+const fail = (msg) => { errHead = msg; process.stderr.write(errHead + "\\n"); finish(127, null); };
+if (target.missing) fail(CFG.command[0] + ": target command not found on PATH (set an absolute command in the target)");
+else {
+  child = spawn(target.file, target.args, { stdio: ["inherit", CFG.tapLog ? "pipe" : "inherit", CFG.tapLog ? "pipe" : "inherit"], env, windowsVerbatimArguments: target.verbatim });
+  for (const s of sigs) process.on(s, fwd);
+  if (CFG.tapLog) {
+    child.stdout.on("data", (b) => { outBytes += b.length; process.stdout.write(b); });
+    child.stderr.on("data", (b) => { errBytes += b.length; if (errHead.length < 2048) errHead = (errHead + b.toString("utf8")).slice(0, 2048); process.stderr.write(b); });
+  }
+  child.on("exit", () => { t1 = performance.now(); });
+  child.on("error", (e) => fail(String(e && e.message || e)));
+  child.on("close", (code, signal) => finish(code, signal));
+}
 `;
 }
 

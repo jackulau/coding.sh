@@ -15,7 +15,7 @@ import type { Adapter, AgentRunOutput, BlobStore, EvalTask, HarnessBundle, Index
 import { applyBundle } from "./bundle.ts";
 import { pluginProblem } from "./plugins.ts";
 import { commandEnv, sh, type ExecResult } from "./exec.ts";
-import { safeJoin, writeHiddenFiles } from "./fsutil.ts";
+import { fencePackageScope, safeJoin, writeHiddenFiles } from "./fsutil.ts";
 import { rebaseStart, rmrf, snapshotOps, type SnapshotOps, type WorkdirDiff } from "./git.ts";
 import { copyTree, isolationOff, withIsolatedTree } from "./isolate.ts";
 import { otelEnv, runTraceContext, startRunReceiver, type OtelOpt, type RunOtel } from "./otel.ts";
@@ -221,6 +221,7 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
     let ops: SnapshotOps;
     try {
       await mkdir(layout.root, { recursive: true });
+      await fencePackageScope(layout.root);
       ops = await snapshotOps(opts.git);
       await ops.materialize({ root: task.start.repoRoot, head: task.start.head, snapshot: task.start.snapshot }, layout.work);
     } catch (e) {

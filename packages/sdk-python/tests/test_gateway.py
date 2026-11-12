@@ -123,7 +123,7 @@ class _Real(unittest.TestCase):
         return [c["payload"] for c in by_kind(collect(self.server), "llm.call")]
 
 
-@unittest.skipUnless(HAS_OPENAI, "openai not installed")
+@unittest.skipUnless(HAS_OPENAI or support.REQUIRE_ALL, "openai not installed")
 class RealOpenAIGatewayTest(_Real):
     def _client(self, cls_name: str = "OpenAI"):  # noqa: ANN202
         import openai
@@ -184,7 +184,7 @@ class RealOpenAIGatewayTest(_Real):
         self.assertEqual(self.payloads(), [])
 
 
-@unittest.skipUnless(HAS_ANTHROPIC, "anthropic not installed")
+@unittest.skipUnless(HAS_ANTHROPIC or support.REQUIRE_ALL, "anthropic not installed")
 class RealAnthropicGatewayTest(_Real):
     def _client(self, cls_name: str = "Anthropic"):  # noqa: ANN202
         import anthropic

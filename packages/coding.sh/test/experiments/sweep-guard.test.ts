@@ -72,6 +72,23 @@ describe("runSweep guards", () => {
     assert.match(text, /BLOCKS: Don't ship: B breaks 30 cases A solved/);
   });
 
+  it("a guard block when the winner also lost a held-out case: the headline names only the guard, and the gate says why", async () => {
+    // The start solves even test cases; the winner solves every test case but t:102, so it loses one
+    // held-out case and still ships on the target alone.
+    const half = config("start", (st, i) => (st === "t" ? i % 2 === 0 : true));
+    const lossy = config("cand", (st, i) => st === "t" && i !== 102);
+    const r = await runSweep({ name: "s", dataset: target, configs: [half, lossy], graders: [truthy], seed: 3, guards: [{ dataset: guardDs("old") }] });
+    assert.equal(r.comparison?.gate?.verdict, "ship", "the target gate alone ships");
+    assert.equal(r.comparison?.gate?.losses, 1);
+    assert.deepEqual(r.blockedBy, ["old"]);
+    assert.deepEqual(r.adopt?.reasons, ["guard"]);
+    const text = renderSweep(r, { color: false });
+    assert.match(text, /^keep {4}start: cand forgets old \(guard\)$/m);
+    assert.doesNotMatch(text, /loses 1 held-out case/);
+    assert.doesNotMatch(text, /abstain \(\)/);
+    assert.match(text, /abstain \(guard\)/);
+  });
+
   it("a guard the winner ties: no discordant cases, no block, still ships", async () => {
     const r = await runSweep({ name: "s", dataset: target, configs: [start, keeps], graders: [truthy], seed: 3, guards: [{ dataset: guardDs("old") }] });
     assert.equal(r.adopt?.verdict, "ship");
@@ -80,6 +97,18 @@ describe("runSweep guards", () => {
     assert.equal(r.guards![0]!.blocks, false);
     assert.equal(r.guards![0]!.gate.wins + r.guards![0]!.gate.losses, 0);
     assert.equal(r.guards![0]!.deltaForget, 0);
+  });
+
+  it("a winner that breaks 3 of 20 solved guard cases blocks: over τ, though 3 losses are within chance", async () => {
+    const g20 = createDataset({ name: "g20", createdAt: 1, cases: Array.from({ length: 20 }, (_, i) => ({ id: `g${i}`, input: `g:${i}` })) });
+    const w = config("cand", (su, i) => su === "t" || i >= 3);
+    const r = await runSweep({ name: "s", dataset: target, configs: [start, w], graders: [truthy], seed: 3, guards: [{ dataset: g20 }] });
+    const g = r.guards![0]!;
+    assert.equal(g.gate.losses, 3);
+    assert.equal(g.gate.verdict, "dont-ship");
+    assert.equal(g.blocks, true);
+    assert.equal(r.adopt?.verdict, "dont-ship");
+    assert.deepEqual(r.blockedBy, ["g20"]);
   });
 
   it("Δ and ρ follow eqs. 4-5, and a hold never blocks", async () => {

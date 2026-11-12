@@ -60,6 +60,12 @@ test("perf budgets", () => {
   assert.equal(meets("perf.ingest", 4999), false);
   assert.equal(meets("perf.storeSize", 2.5), false);
   assert.equal(meets("perf.viewerTti", null), undefined);
+  // CI's tolerance: the desk runner's 10.7 ms and 3.18 ms pass at 20%, a real regression does not.
+  assert.equal(meets("perf.hook", 10.7, 20), true);
+  assert.equal(meets("perf.hookSh", 3.18, 20), true);
+  assert.equal(meets("perf.hook", 12.1, 20), false);
+  assert.equal(meets("perf.ingest", 4100, 20), true);
+  assert.equal(meets("perf.ingest", 3900, 20), false);
 });
 
 test("TAP summary parsing", () => {

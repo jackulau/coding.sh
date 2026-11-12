@@ -4,10 +4,11 @@
 // with events but no row, rows whose fold failed), and the OTLP receiver port.
 import { accessSync, closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
-import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { ADAPTERS, detectAll } from "../../adapters/index.ts";
 import { mcpTargetOf, readMcpEntry } from "../../adapters/_shared/mcp.ts";
-import type { Adapter } from "../../core/types.ts";
+import type { Adapter, IndexStore } from "../../core/types.ts";
+import type { AgentEvent } from "../../schema/index.ts";
 import { MCP_CONFIG_NAME } from "../../mcp/launch.ts";
 import { proxyRoutes } from "../../proxy/install.ts";
 import { pidAlive, probeProxy, readProxyState } from "../../proxy/state.ts";
@@ -15,6 +16,8 @@ import { hookBinHealth } from "../hookbin.ts";
 import { openContext } from "../../core/context.ts";
 import { FLAGS } from "../../core/sessions.ts";
 import { paths, userHome } from "../../core/paths.ts";
+import { spoolFile } from "../../spool/write.ts";
+import { maskStoreUrl, maskUrlsIn } from "../../core/store-url.ts";
 import { allGatewayConfigs, detectGatewaySetups, gatewaySettings } from "../../integrations/gateway/config.ts";
 import { GATEWAYS } from "../../integrations/gateway/providers.ts";
 import { GATEWAY_FLAG } from "../../integrations/gateway/ids.ts";
@@ -113,6 +116,121 @@ async function hookFilesIn(a: Adapter, scope: "user" | "project", projectDir: st
   // The uninstall also names files without hooks (the MCP entry's): keep the ones that run a hook when any do.
   const withHook = all.filter((f) => f.hook !== null);
   return withHook.length ? withHook : all;
+}
+
+/**
+ * Physical limits for a stored model call: a value past one is a parse or unit
+ * bug (milliseconds read as seconds, tokens summed twice), not a real call.
+ */
+export const PLAUSIBLE_LIMITS = {
+  /** Output tokens per second over the call's duration (no model streams faster). */
+  maxTokensPerSec: 500,
+  /** Calls shorter than this are not timed well enough to judge speed. */
+  minTimedMs: 200,
+  /** One call's cost in USD. */
+  maxCallCostUsd: 50,
+} as const;
+
+/** Why a stored llm.call is past a physical limit (empty when it is not). */
+export function implausible(e: AgentEvent): string[] {
+  const out: string[] = [];
+  const L = PLAUSIBLE_LIMITS;
+  const ttft = e.payload.ttftMs;
+  const ms = e.durationMs;
+  const outTok = e.usage?.outputTokens;
+  const reported = typeof e.payload.tokensPerSec === "number" ? e.payload.tokensPerSec : undefined;
+  const speed = reported ?? (outTok !== undefined && ms !== undefined && ms >= L.minTimedMs ? outTok / (ms / 1000) : undefined);
+  if (speed !== undefined && Number.isFinite(speed) && speed > L.maxTokensPerSec) out.push("speed");
+  if (typeof ttft === "number" && (ttft < 0 || (ms !== undefined && ttft > ms))) out.push("ttft");
+  const cost = e.usage?.costUsd;
+  if (cost !== undefined && (!Number.isFinite(cost) || cost < 0 || cost > L.maxCallCostUsd)) out.push("cost");
+  return out;
+}
+
+/** Model calls past a physical limit in recent sessions: counts by check and the session with the most. */
+async function implausibleCalls(index: { listSessions: IndexStore["listSessions"]; listEvents: IndexStore["listEvents"] }, sessions = 50): Promise<{ count: number; by: Record<string, number>; worst: string } | undefined> {
+  const by: Record<string, number> = {};
+  let count = 0;
+  let worst: { id: string; n: number } | undefined;
+  for (const s of await index.listSessions({ limit: sessions })) {
+    let n = 0;
+    for (const e of await index.listEvents(s.id, { kinds: ["llm.call"], limit: 5000 })) {
+      const why = implausible(e);
+      if (!why.length) continue;
+      n++;
+      for (const w of why) by[w] = (by[w] ?? 0) + 1;
+    }
+    count += n;
+    if (n && (!worst || n > worst.n)) worst = { id: s.id, n };
+  }
+  return worst ? { count, by, worst: worst.id } : undefined;
+}
+
+/** errors.log codes that mean a hook could not write its line. */
+const WRITE_FAILURES = new Set(["EACCES", "EPERM", "EROFS", "ENOSPC", "EDQUOT", "EIO"]);
+
+/**
+ * What stops hooks from appending although the spool dir is writable: each
+ * agent's current day file opened for append as the hook opens it, and the
+ * write failures hooks logged to spool/errors.log in the last day.
+ */
+export function spoolAppendProblems(spool: string, env: NodeJS.ProcessEnv, now = Date.now()): string[] {
+  const out: string[] = [];
+  let agents: string[] = [];
+  try {
+    agents = readdirSync(spool, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+  } catch {
+    return out;
+  }
+  for (const agent of agents.sort()) {
+    let file: string;
+    try {
+      file = spoolFile(agent, now, env);
+    } catch {
+      continue;
+    }
+    const rel = `spool/${agent}/${file.slice(file.lastIndexOf(sep) + 1)}`;
+    try {
+      if (existsSync(file)) closeSync(openSync(file, constants.O_WRONLY | constants.O_APPEND));
+      else accessSync(dirname(file), constants.W_OK);
+    } catch (e) {
+      out.push(`${rel} not writable: ${(e as NodeJS.ErrnoException).code ?? (e as Error).message}`);
+    }
+  }
+  const failed = new Map<string, number>();
+  let last: { code: string; error: string } | undefined;
+  for (const line of tailText(join(spool, "errors.log"), 256 * 1024).split("\n")) {
+    let entry: { ts?: unknown; code?: unknown; error?: unknown };
+    try {
+      entry = JSON.parse(line) as typeof entry;
+    } catch {
+      continue;
+    }
+    if (typeof entry.ts !== "number" || now - entry.ts > 86_400_000 || typeof entry.code !== "string" || !WRITE_FAILURES.has(entry.code)) continue;
+    failed.set(entry.code, (failed.get(entry.code) ?? 0) + 1);
+    last = { code: entry.code, error: typeof entry.error === "string" ? entry.error : entry.code };
+  }
+  if (last) {
+    const n = [...failed.values()].reduce((a, b) => a + b, 0);
+    out.push(`${plural(n, "hook write")} failed in the last day (${[...failed].map(([k, v]) => `${k} ${v}`).join(", ")}; last: ${last.error}); see spool/errors.log`);
+  }
+  return out;
+}
+
+/** The last `max` bytes of a file as text ("" when it can't be read). */
+function tailText(path: string, max: number): string {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, "r");
+    const size = fstatSync(fd).size;
+    const buf = Buffer.alloc(Math.min(size, max));
+    readSync(fd, buf, 0, buf.length, size - buf.length);
+    return buf.toString("utf8");
+  } catch {
+    return "";
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
 }
 
 function spoolWritable(spool: string): { ok: boolean; error?: string } {
@@ -227,7 +345,7 @@ interface DoctorAgent {
 
 /** A row doctor marks with "!": what is wrong, and the command that fixes it when one does. */
 export interface DoctorWarning {
-  check: "agent" | "agents" | "hook" | "mcp" | "sessions" | "ingest" | "proxy";
+  check: "agent" | "agents" | "hook" | "mcp" | "spool" | "stats" | "sessions" | "ingest" | "proxy";
   agent?: string;
   message: string;
   /** For an agent: why its hooks will not fire, with the file and line to change when there is one. */
@@ -280,6 +398,8 @@ export async function run(c: CommandContext): Promise<number> {
     missingRows?: { count: number; byAgent: Record<string, number> };
     /** Rows tagged fold:error (Session.stats.foldError). */
     foldErrors?: number;
+    /** Recent model calls past a physical limit (PLAUSIBLE_LIMITS). Unset when there is none. */
+    implausible?: { count: number; by: Record<string, number>; worst: string };
   } = { ok: false };
   const lastByAgent: Record<string, number> = {};
   // Where the agent's recent sessions ran: project-level hooks are looked for there.
@@ -289,7 +409,7 @@ export async function run(c: CommandContext): Promise<number> {
     const ctx = await openContext({ env, cwd: c.cwd });
     try {
       store.kind = ctx.index.kind;
-      store.url = ctx.config.store.index;
+      store.url = maskStoreUrl(ctx.config.store.index);
       for (const { adapter } of detected) {
         const recent = await ctx.index.listSessions({ agent: adapter.id, limit: 5 });
         const s = recent[0];
@@ -304,17 +424,23 @@ export async function run(c: CommandContext): Promise<number> {
         store.missingRows = { count: missing.length, byAgent };
       }
       store.foldErrors = (await ctx.index.listSessions({ flag: FLAGS.foldError })).length;
+      const odd = await implausibleCalls(ctx.index);
+      if (odd) store.implausible = odd;
       store.ok = true;
     } finally {
       await ctx.close();
     }
   } catch (e) {
-    store.error = e instanceof Error ? e.message : String(e);
+    store.error = maskUrlsIn(e instanceof Error ? e.message : String(e));
   }
 
   // After an update the bin can lag the CLI (stale hook.mjs, cli-path naming an old install).
   const health = hookBinHealth(env);
-  const hookBin = { path: p.hook, installed: existsSync(p.hook), ...health, stale: existsSync(p.hook) && (health.hookCurrent === false || health.cliPathCurrent === false || (health.cliPath !== null && !health.cliPathExists)) };
+  // The files the installed commands run: hook.sh outside Windows (it hands what it
+  // does not handle to the hook.mjs beside it), hook.mjs on Windows.
+  const hookGone = (process.platform === "win32" ? [p.hook] : [p.hookSh, p.hook]).find((f) => !existsSync(f));
+  const hookBin: { path: string; installed: boolean; missing?: string; stale: boolean } & typeof health = { path: p.hook, installed: hookGone === undefined, ...health, stale: hookGone === undefined && (health.hookCurrent === false || health.cliPathCurrent === false || (health.cliPath !== null && !health.cliPathExists)) };
+  if (hookGone !== undefined) hookBin.missing = hookGone;
   const home = resolve(userHome(env));
   const agents: DoctorAgent[] = [];
   for (const { adapter, result } of detected) {
@@ -358,6 +484,7 @@ export async function run(c: CommandContext): Promise<number> {
   }
 
   const spool = { path: p.spool, ...spoolWritable(p.spool) };
+  const spoolProblems = spool.ok ? spoolAppendProblems(p.spool, env) : [];
   const mcp = checkMcpEntries(
     detected.filter((d) => d.result.installed || named.includes(d.adapter.id)).map((d) => d.adapter),
     env,
@@ -410,14 +537,15 @@ export async function run(c: CommandContext): Promise<number> {
     for (const n of r.notes) out.note(n);
   }
   if (!shown.length) warn("Agents", "none detected; capture any agent with coding.sh run -- <cmd>", { check: "agents", message: "No agent detected", next: "coding.sh run -- <cmd>" });
-  if (!hookBin.installed) warn("Hook", `missing at ${hookBin.path}; run coding.sh init`, { check: "hook", message: `The hook is missing at ${hookBin.path}`, next: "coding.sh init" });
+  if (hookBin.missing !== undefined) warn("Hook", `missing at ${hookBin.missing}; run coding.sh init`, { check: "hook", message: `The hook is missing at ${hookBin.missing}`, next: "coding.sh init" });
   else if (hookBin.stale) {
     const why = hookBin.hookCurrent === false ? "differs from the hook this CLI ships" : hookBin.cliPath && !hookBin.cliPathExists ? `cli-path names a missing ${hookBin.cliPath}` : `cli-path names ${hookBin.cliPath ?? "nothing"}, not this CLI`;
     // Only the bin lags: refreshing it leaves the agent configs alone (init would rewrite them).
     warn("Hook", `${hookBin.path} is stale (${why}); run coding.sh update --refresh-bin`, { check: "hook", message: `${hookBin.path} is stale (${why})`, next: "coding.sh update --refresh-bin" });
   } else out.row("Hook", hookBin.path, "ok");
   for (const m of mcp.filter((x) => !x.ok)) warn("MCP", `${m.agent}: ${m.problem} (${m.file}); run coding.sh init`, { check: "mcp", agent: m.agent, message: `${m.problem} (${m.file})`, next: "coding.sh init" });
-  out.row("Spool", spool.ok ? `${spool.path} writable` : `${spool.path} not writable: ${spool.error}`, spool.ok ? "ok" : "fail");
+  if (spool.ok && spoolProblems.length) for (const m of spoolProblems) warn("Spool", m, { check: "spool", message: m });
+  else out.row("Spool", spool.ok ? `${spool.path} writable` : `${spool.path} not writable: ${spool.error}`, spool.ok ? "ok" : "fail");
   out.row("Store", store.ok ? `${store.kind} ${store.url}` : `can't open: ${store.error}`, store.ok ? "ok" : "fail");
   // The ingest the hook starts runs unseen: a failed one leaves a marker (core/ingest-health.ts).
   const stopped = readIngestStopped(p.ingestStopped);
@@ -430,6 +558,12 @@ export async function run(c: CommandContext): Promise<number> {
     const byAgent = Object.entries(missing.byAgent).sort((a, b) => b[1] - a[1]).map(([agent, n]) => `${agent} ${n}`);
     const message = `${plural(missing.count, "session")} ${missing.count === 1 ? "has" : "have"} events but no session row (${byAgent.join(", ")})`;
     warn("Sessions", `${message}; run coding.sh ingest`, { check: "sessions", message, next: "coding.sh ingest" });
+  }
+  if (store.implausible) {
+    const { count, by, worst } = store.implausible;
+    const names: Record<string, string> = { speed: `over ${PLAUSIBLE_LIMITS.maxTokensPerSec} tok/s`, ttft: "first token outside the call", cost: "cost below 0 or over $" + PLAUSIBLE_LIMITS.maxCallCostUsd };
+    const message = `${plural(count, "model call")} past physical limits (${Object.entries(by).map(([k, v]) => `${names[k] ?? k} ${v}`).join(", ")}); most in ${worst}`;
+    warn("Stats", `${message}; see coding.sh show ${worst}`, { check: "stats", message, next: `coding.sh show ${worst}` });
   }
   if (store.foldErrors) {
     const message = `${plural(store.foldErrors, "session")} could not be folded (tagged ${FLAGS.foldError})`;

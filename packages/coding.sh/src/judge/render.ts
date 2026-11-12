@@ -50,7 +50,8 @@ const usd = (x: number) => `$${x >= 1 ? x.toFixed(2) : String(Number(x.toPrecisi
 /** Discrimination gap, label efficiency η and the cost break-even (arXiv 2610.35698, Eq.6-8). */
 function efficiencyLines(e: JudgeEfficiency, split: string, color: boolean): string[] {
   const out = [`discrimination gap ${fixed(e.gap)} (pass-recall ${fixed(e.sensitivity)}, false-pass ${fixed(e.alpha)})`];
-  if (e.eta !== undefined) {
+  // η is unbounded for a judge with no errors on these labels: there is nothing useful to print.
+  if (e.eta !== undefined && Number.isFinite(e.eta)) {
     const at = e.thetaFrom === "corrected-judge" ? `at pass rate ${fixed(e.theta)}, corrected over ${e.judged} judged ${split} cases` : `at the human pass share ${fixed(e.theta)}`;
     const what =
       e.eta < 1

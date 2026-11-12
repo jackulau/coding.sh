@@ -14,7 +14,8 @@ and pull requests are all welcome. Coding agents working on the repo: read [AGEN
 
 ## Setup
 
-Node 22.15 or newer.
+Node 22.18 or newer: the tests and the CLI from source run `.ts` files directly. The published CLI
+runs on Node 22.16 or newer.
 
 ```sh
 git clone https://github.com/jackulau/coding.sh && cd coding.sh
@@ -129,6 +130,10 @@ tests run with `npm run lint:test`.
 ## Pull requests
 
 - Keep each PR to one change, and include tests.
+- `npm run gate` from the repo root must pass: it runs lint, actionlint, the generated files, the
+  checks and the build, and the site, in a throwaway home. Its first step checks that your
+  branch's commits are authored with your global git identity (`git config --global user.email`)
+  and that the repo sets no `user.email` of its own.
 - `npm run check` and `npm run build` must pass in `packages/coding.sh`. CI also builds and checks
   the site on Node 22 and 24, on Linux and macOS.
 - Timing tests (hook latency, help startup) assume an idle machine. If one fails on a loaded

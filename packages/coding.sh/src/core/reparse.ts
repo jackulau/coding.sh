@@ -287,6 +287,20 @@ async function dedupe(live: AgentEvent[], backfill: AgentEvent[]): Promise<Agent
 }
 
 /** Re-parses stale sessions (or every session with `all`) from their transcripts and spool. */
+/**
+ * A re-derived row keeps the redaction counts its stored row has. After ingest the spool line
+ * and its side file hold markers in place of the secrets (core/spool-scrub.ts), so a re-parse
+ * finds only markers it can't count: without this the session would lose its Redacted row and
+ * its secret-exposed flag.
+ */
+export function keepRedactionCounts(was: AgentEvent, fresh: AgentEvent): AgentEvent {
+  const counted = was.payload?.redactions;
+  if (!counted || typeof counted !== "object" || !Object.keys(counted).length) return fresh;
+  const now = fresh.payload?.redactions;
+  if (now && typeof now === "object" && Object.keys(now).length) return fresh;
+  return { ...fresh, payload: { ...fresh.payload, redactions: counted } };
+}
+
 export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
   const { config, index, blobs, adapters } = opts;
   const env = opts.env ?? process.env;
@@ -425,8 +439,14 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
       // A re-derived row identical to the stored one stays (a second run writes nothing).
       const byId = new Map(stored.map((e) => [e.id, e]));
       const write: AgentEvent[] = [];
-      for (const e of await toolDurationFiller(viewOf(final))(final.filter((e) => !old.has(e)))) {
-        const was = byId.get(e.id);
+      // A scrubbed spool line gives its event a new id (the id hashes the line): its stored row
+      // is found by kind and time to carry the redaction counts over.
+      const counted = new Map<string, AgentEvent>();
+      for (const e of stored) if (e.payload?.redactions && Object.keys(e.payload.redactions).length) counted.set(`${e.kind}|${e.ts}`, e);
+      for (const fresh of await toolDurationFiller(viewOf(final))(final.filter((e) => !old.has(e)))) {
+        const was = byId.get(fresh.id);
+        const prior = was ?? counted.get(`${fresh.kind}|${fresh.ts}`);
+        const e = prior ? keepRedactionCounts(prior, fresh) : fresh;
         if (was && canonical(was) === canonical(e)) keep.add(e.id);
         else write.push(e);
       }

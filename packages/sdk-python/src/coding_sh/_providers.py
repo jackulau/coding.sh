@@ -316,7 +316,8 @@ class _AnthropicStreamManager:
             pass
 
     def __enter__(self) -> Any:
-        call = self._cs_call = self._cs_make_call().start()
+        call = self._cs_call = self._cs_make_call()
+        call.start()
         try:
             with capturing(call):
                 stream = self._cs_manager.__enter__()
@@ -333,7 +334,8 @@ class _AnthropicStreamManager:
             self._cs_finish(exc[1] if len(exc) > 1 else None)
 
     async def __aenter__(self) -> Any:
-        call = self._cs_call = self._cs_make_call().start()
+        call = self._cs_call = self._cs_make_call()
+        call.start()
         try:
             with capturing(call):
                 stream = await self._cs_manager.__aenter__()

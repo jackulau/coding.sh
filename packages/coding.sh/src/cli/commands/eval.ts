@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { paths } from "../../core/paths.ts";
-import { snapshotDir } from "../../core/snapshot.ts";
+import { materialize, shadowRepoPath, snapshotDir } from "../../core/snapshot.ts";
 import type { EvalTask, RunResult } from "../../core/types.ts";
 import { crossCheckMeta, crossCheckVerifier, DEFAULT_CROSSCHECK_MAX, formatCrossCheck } from "../../eval/crosscheck.ts";
 import { StatementError } from "../../eval/statement.ts";
@@ -48,15 +48,32 @@ export async function importDir(dir: string, ctx: Context, env: NodeJS.ProcessEn
   let start: EvalTask["start"] | undefined;
   if (existsSync(repo)) start = await snapshotDir(repo, env);
   else {
-    const json = JSON.parse(await readFile(join(dir, "task.json"), "utf8")) as { start?: { snapshot?: string; commit?: unknown; repo?: unknown } };
+    const json = JSON.parse(await readFile(join(dir, "task.json"), "utf8")) as { start?: { snapshot?: string; repoRoot?: unknown; commit?: unknown; repo?: unknown } };
     if (json.start?.commit !== undefined && !json.start.snapshot) start = await commitStart(dir, json.start.commit, json.start.repo);
-    else if (!json.start?.snapshot) {
+    else if (json.start?.snapshot) await checkStartSnapshot(dir, json.start.snapshot, json.start.repoRoot, env);
+    else {
       const empty = join(paths(env).repos, "empty-start");
       await mkdir(empty, { recursive: true });
       start = await snapshotDir(empty, env);
     }
   }
   return importTaskDir(dir, ctx.blobs, start ? { start } : {});
+}
+
+/**
+ * A task.json that points at a start snapshot (an export made before repo/ was
+ * written, or `eval init`'s suite) only imports where that snapshot is: in this
+ * home's shadow repo for repoRoot, or in the git repo at repoRoot.
+ */
+async function checkStartSnapshot(dir: string, snapshot: string, repoRoot: unknown, env: NodeJS.ProcessEnv): Promise<void> {
+  const where = typeof repoRoot === "string" && repoRoot ? repoRoot : undefined;
+  const fix = `export it again with coding.sh eval export <task> --out <DIR> where it was made (the export then carries its start tree as repo/), or add a repo/ dir with the start files`;
+  if (!where) throw new Error(`${dir}/task.json: start snapshot ${snapshot.slice(0, 12)} names no repoRoot; ${fix}`);
+  const shadow = shadowRepoPath(where, env);
+  const has = async (gitDir: string) => (await git([`--git-dir=${gitDir}`, "cat-file", "-e", `${snapshot}^{commit}`], dir)).exitCode === 0;
+  if (existsSync(join(shadow, "HEAD")) && (await has(shadow))) return;
+  if (existsSync(where) && (await git(["-C", where, "cat-file", "-e", `${snapshot}^{commit}`], dir)).exitCode === 0) return;
+  throw new Error(`${dir}/task.json: start snapshot ${snapshot.slice(0, 12)} is not in this home (it was made for ${where}); ${fix}`);
 }
 
 /** A task's start tree as a commit of a git repo: `repo` (relative to the task dir) or the repo holding the task dir. */
@@ -435,7 +452,7 @@ export async function run(c: CommandContext): Promise<number> {
         else if (format === "atif") {
           await mkdir(dir, { recursive: true });
           await writeFile(join(dir, "trajectory.json"), `${JSON.stringify(trajectory, null, 2)}\n`);
-        } else await exportTaskDir(task, dir, ctx.blobs);
+        } else await exportTaskDir(task, dir, ctx.blobs, { materializeStart: (start, dest) => materialize({ root: start.repoRoot, head: start.head, snapshot: start.snapshot }, dest, c.env) });
         if (out.json) out.data({ outcome: replaced ? "replaced" : "exported", task: task.id, path: dir, format: str(c.flags.format) ?? "coding.sh" });
         else {
           if (replaced) out.row("Replaced", dir);
@@ -445,5 +462,5 @@ export async function run(c: CommandContext): Promise<number> {
       }
     }
     throw new UsageError(`Unknown eval command ${c.action}`);
-  });
+  }, { create: c.action !== "list" && c.action !== "export" });
 }

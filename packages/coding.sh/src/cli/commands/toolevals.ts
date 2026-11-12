@@ -333,8 +333,11 @@ async function validate(c: CommandContext): Promise<number> {
     await rm(root, { recursive: true, force: true }).catch(() => {});
   }
   const ok = results.every((r) => r.ok) && cfg.problems.length === 0;
-  if (c.out.json) c.out.data({ ok, tasks: results, problems: cfg.problems });
-  else c.out.print(`${results.filter((r) => r.ok).length}/${results.length} task(s) valid`);
+  // A task file that did not load is a task that is not valid.
+  const names = new Set(targets.map((t) => t.name));
+  const rejected = (cfg.rejectedTasks ?? []).filter((r) => names.has(r.target)).length;
+  if (c.out.json) c.out.data({ ok, tasks: results, problems: cfg.problems, rejected });
+  else c.out.print(`${results.filter((r) => r.ok).length}/${results.length + rejected} task(s) valid`);
   return ok ? 0 : 1;
 }
 

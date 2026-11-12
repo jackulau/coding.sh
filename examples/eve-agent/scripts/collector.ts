@@ -6,7 +6,7 @@
 // ships `coding.sh collector`, use that instead; this script is the same
 // wiring in 20 lines.
 //
-//   node scripts/collector.ts            # Node >= 22.15, no eve needed
+//   node scripts/collector.ts            # Node >= 22.16, no eve needed
 //   PORT=4318 STORE=memory node scripts/collector.ts   # print only, store nothing
 import { loadConfig } from "../../../packages/coding.sh/src/core/config.ts";
 import { openStores } from "../../../packages/coding.sh/src/store/factory.ts";

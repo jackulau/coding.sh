@@ -182,6 +182,26 @@ export interface AuditedPassRate {
 }
 
 /**
+ * 95% interval around the stratified mean p. Each stratum's variance uses the
+ * Agresti-Coull rate (x + z²/2) / (n + z²) instead of x / n, so a stratum that is
+ * all pass or all fail still adds width: with a judge that agrees with every
+ * label the plug-in variance is 0 and the interval was [p, p] at any n. The
+ * finite-population factor stays, so labelling every case still gives [p, p].
+ */
+function adjustedInterval(p: number, strata: readonly { N: number; labelled: number; passed: number }[], N: number): { lo: number; hi: number } {
+  const z = 1.959963984540054;
+  let v = 0;
+  for (const s of strata) {
+    if (!s.N || !s.labelled) continue;
+    const pi = s.N / N;
+    const q = (s.passed + (z * z) / 2) / (s.labelled + z * z);
+    v += (pi * pi * (1 - s.labelled / s.N) * q * (1 - q)) / s.labelled;
+  }
+  const h = z * Math.sqrt(v);
+  return { lo: Math.max(0, p - h), hi: Math.min(1, p + h) };
+}
+
+/**
  * Human-audited pass rate from a plan's labelled picks. A pick counts once its
  * human votes have a majority (as in calibrate); ties and missing labels are
  * unlabelled.
@@ -216,5 +236,6 @@ export function auditedPassRate(plan: AuditPlan, labels: readonly HumanLabel[], 
   }
   const labelled = strata.reduce((a, s) => a + s.labelled, 0);
   const picks = plan.picks.length;
-  return { p: est.p, lo: est.lo, hi: est.hi, hoeffdingEps: est.hoeffdingEps, coverage: picks ? labelled / picks : 0, labelled, picks, bounds: { lo: blo, hi: bhi }, strata };
+  const ci = Number.isNaN(est.p) ? { lo: est.lo, hi: est.hi } : adjustedInterval(est.p, strata, N);
+  return { p: est.p, lo: ci.lo, hi: ci.hi, hoeffdingEps: est.hoeffdingEps, coverage: picks ? labelled / picks : 0, labelled, picks, bounds: { lo: blo, hi: bhi }, strata };
 }

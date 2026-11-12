@@ -9,7 +9,12 @@ import { attributionCliError, report } from "./attribution.ts";
 
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
-  const target = parseBlameTarget(c.positionals[0]!);
+  let target: ReturnType<typeof parseBlameTarget>;
+  try {
+    target = parseBlameTarget(c.positionals[0]!);
+  } catch (e) {
+    throw attributionCliError(e);
+  }
   return withContext(c, async (ctx) => {
     const r = await report(c, ctx);
     let b;

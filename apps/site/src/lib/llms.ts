@@ -69,7 +69,7 @@ Status: v${VERSION}, ${LICENSE} licensed. coding.sh is new: commands and file fo
 ## Install
 
 \`\`\`sh
-${INSTALL_SH}      # checks Node 22.15+, installs the latest release, runs init, opens the viewer
+${INSTALL_SH}      # checks Node 22.16+, installs the latest release, runs init, opens the viewer
 coding.sh init --yes    # non-interactive: install hooks into every detected agent
 coding.sh doctor --json # check the install
 \`\`\`
@@ -116,7 +116,7 @@ that went wrong.
 5. Storage: a SQLite index and a content-addressed, zstd-compressed blob store by default; OTLP and HTTP sinks,
    metadata-only by default; stores and sinks load as npm plugins. \`coding.sh serve\` keeps sessions in Postgres or
    ClickHouse with coding.sh-store-postgres, coding.sh-store-clickhouse and coding.sh-store-s3. One npm package with
-   zero runtime dependencies, on Node 22.15 or newer.
+   zero runtime dependencies, on Node 22.16 or newer.
 6. Also: \`coding.sh toolevals\` scores how well agents use a CLI, MCP server or HTTP API; \`coding.sh workflows\`
    captures, scores and compares multi-agent runs; the trace format ships as TypeScript types (\`coding.sh/schema\`) and
    a JSON Schema (\`coding.sh/schema.json\`, ${abs("/schema.json")}).
