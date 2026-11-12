@@ -117,6 +117,22 @@ describe("runMetrics", () => {
     assert.match(text, /js_bytes .*fixed.* worse/);
   });
 
+  it("a small non-zero value keeps its digits: 0.0001 does not print as 0.000", async () => {
+    // A gain per edited weight: 29.45 points over 1023 weights, against 0.0001.
+    const r = await runMetrics({
+      arms: [fnArm("small", () => ({ gain_per_weight: 29.45 / 1023, tiny: -0.00004, zero: 0, half: 0.5 })), fnArm("wide", () => ({ gain_per_weight: 0.0001, tiny: 0.00000012, zero: 0, half: 0.25 }))],
+      pairs: 3,
+      seed: 1,
+      higher: ["gain_per_weight"],
+    });
+    const row = (name: string) => renderMetrics(r, { color: false }).split("\n").find((l) => l.startsWith(name))!.split(/\s{2,}/);
+    // metric, A, B, delta: three decimals where they say something, two significant digits below that.
+    assert.deepEqual(row("gain_per_weight").slice(0, 4), ["gain_per_weight ↑", "0.029", "0.0001", "-0.029 (-99.7%)"]);
+    assert.deepEqual(row("tiny").slice(1, 3), ["-0.00004", "1.2e-7"]);
+    assert.deepEqual(row("zero").slice(1, 3), ["0", "0"]);
+    assert.deepEqual(row("half").slice(1, 4), ["0.500", "0.250", "-0.250 (-50.0%)"]);
+  });
+
   it("--higher flips the direction", async () => {
     const r = await runMetrics({
       arms: [fnArm("a", () => ({ score: 70 })), fnArm("b", () => ({ score: 80 }))],

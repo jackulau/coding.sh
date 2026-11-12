@@ -38,6 +38,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Evals.** `exp metrics` prints a count or score below 0.0005 with two significant digits (`0.0001`) instead of `0.000`, so a small value such as a gain per edited weight no longer reads as zero. [Metric A/B](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#metric-ab-ms-bytes)
 - **MCP.** A request cancelled with `notifications/cancelled` gets no reply (a cancel for `initialize` is ignored), a cursor on `tools/list`, `prompts/list` or `resources/templates/list` is an error, a request with a null id gets an error instead of no answer (a null-id `notifications/` message is still a notification), and a 2025-03-26 session accepts batches. [MCP server](https://coding.sh/docs/mcp#protocol)
 - **MCP.** Tool answers stay under 25,000 characters: a longer page has fewer rows and `limitUsed`, and a tool with a `cursor` also returns `nextCursor`. `session_replay` pages its files and cuts text and lists only when an answer would not fit, saying so with `truncated` (a range was 5 million characters). [MCP server](https://coding.sh/docs/mcp#tools)
 - **MCP.** `eval_init` and `score_add` are marked destructive, since both can replace stored data, and `score_list`'s error names its `since` argument instead of the CLI's `--since`. [MCP server](https://coding.sh/docs/mcp#tools)
