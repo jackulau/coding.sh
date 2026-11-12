@@ -62,6 +62,18 @@ test ran. A flag with a colon, such as `skill:pdf`, is a tag, not a failure.
 
 Every flag and what sets it: [Flags and derails](https://coding.sh/docs/query#flags-and-derails).
 
+### Weight edit
+
+A change a script made to a model's weights, recorded as one event: the tensor's name and shape,
+how many weights changed, the size of the change, and the hash of the tensor before and after. A
+session that recorded one has the `weights:edited` tag and counts its edits in `stats.weightEdits`.
+
+- In the viewer: each edit is a row on the session page, and the header counts them.
+- In the CLI: `coding.sh sessions --flag weights:edited` lists the sessions, and
+  `coding.sh show <id>` prints one line per edit.
+- Recorded by the Python SDK's `coding_sh.weights_edit()`, or by any OpenTelemetry SDK as a span
+  named `weights.edit`. The fields are in the [API reference](https://coding.sh/docs/api).
+
 ### Cost
 
 What a session's model calls cost, from their token counts and each model's price. A `~` marks an

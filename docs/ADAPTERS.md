@@ -262,6 +262,9 @@ Apps in production don't use an adapter. They send data over the network to `cod
 | Vercel AI Gateway trace drain | `POST /v1/traces` | `src/otel/map.ts` plus the gateway enricher | `otel…` |
 | Claude Code, Codex and Gemini CLI running remotely with OTel logs on | `POST /v1/logs` | `src/otel/map.ts` log events | `otel…` |
 
+- A span or a log record named `weights.edit` with `coding_sh.weights.*` attributes is stored as
+  the weight edit event the SDKs send (`notification`, `payload.kind: "weights.edit"`); the
+  attributes are listed in [reference/api.md](reference/api.md).
 - Hooks, transcript backfill and `coding.sh run` stay local. Serve does not take spool lines.
 - The ingest key picks the project, and session ids are stored as `<project>/<sessionId>`.
 - SDK sessions that never send `session.end` have no `endedAt` yet; see the open item in
