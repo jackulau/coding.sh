@@ -50,7 +50,7 @@ const toc = tabs.map((t, i) => {
 ---
 
 <div class="tabs" data-tabs={id} data-toc={JSON.stringify(toc)}>
-  <div class="tabs__list" role="tablist" aria-label={tabs.map((t) => t.label).join(" or ")} hidden data-agent-skip data-pagefind-ignore>
+  <div class="tabs__list" role="tablist" aria-label={tabs.map((t) => t.label).join(" or ")} data-agent-skip data-pagefind-ignore>
     {
       tabs.map((t, i) => (
         <button type="button" class="tabs__tab" role="tab" id={`tab-${id}-${t.id}`} aria-controls={t.id} aria-selected={i === 0 ? "true" : "false"} tabindex={i === 0 ? 0 : -1} data-for={t.id}>

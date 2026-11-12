@@ -189,16 +189,20 @@
   color: var(--text-muted);
 }
 .cl-chips {
-  display: flex;
-  flex-wrap: wrap;
+  /* Columns from a fixed width, not from each chip's text: Geist replacing the
+     fallback font changes a chip by a pixel or two, and with flex-wrap that
+     moved chips between rows. */
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr));
   gap: 0.4rem;
   margin: 0.75rem 0 0;
   padding: 0;
   list-style: none;
 }
 .cl-chips a {
-  display: inline-flex;
+  display: flex;
   align-items: baseline;
+  justify-content: space-between;
   gap: 0.4rem;
   padding: 0.3rem 0.6rem;
   font-size: var(--fs-sm);
