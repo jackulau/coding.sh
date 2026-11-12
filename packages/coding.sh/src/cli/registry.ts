@@ -1118,6 +1118,12 @@ export const COMMANDS: CommandSpec[] = [
           { name: "replay", type: "string", value: "<EXPERIMENT>", desc: "Serve this recorded experiment's model calls again, up to each case-trial's first changed call; later calls run live. Adds the recorded config as a control arm (A) unless --no-control" },
           { name: "replay-until", type: "number", value: "<N>", desc: "With --replay: serve only calls 1..N from the recording; call N+1 onward runs live" },
           { name: "series", type: "string", value: "<NAME>", desc: "Tag the experiment as the next round of an iteration loop and print whether the loop should stop (see exp plateau)" },
+          {
+            name: "weights",
+            type: "list",
+            value: "<SHA256>",
+            desc: "Record the checkpoint the task ran: the SHA-256 of the weights file, 64 hex characters, which you compute (coding.sh hashes nothing). exp compare shows each side's and warns when both ran the same. With --arm: one per arm, as ARM=<SHA256>. Not with --watch or a matrix spec",
+          },
           { name: "watch", type: "boolean", desc: "Rerun on every change to the spec, the task's script, grader files or --watch-path; a grader-only change regrades the stored outputs. Enter reruns, q quits" },
           { name: "watch-path", type: "list", value: "<GLOB>", desc: "With --watch: more files whose change reruns the task (repeatable; also the spec's \"watch\" field)" },
           { name: "session", type: "boolean", desc: "In an experiment session (exp session new), add the run to its timeline and print the delta against the previous run; --no-session skips it", default: "true" },
@@ -1138,6 +1144,7 @@ export const COMMANDS: CommandSpec[] = [
           "coding.sh exp run matrix.json --reuse baseline --plan",
           "coding.sh exp run spec.json --record",
           "coding.sh exp run cand.json --replay exp_01J… --replay-until 3",
+          "coding.sh exp run edited.json --name edited --weights 5f2c8a1e9b3d4c7f6a0e1d2b3c4f5a6e7d8c9b0a1f2e3d4c5b6a7f8e9d0c1b2a",
         ],
       },
       {

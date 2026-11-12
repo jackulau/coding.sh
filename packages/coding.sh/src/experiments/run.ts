@@ -28,6 +28,7 @@ import { ADAPTIVE_MAX, ADAPTIVE_TRIALS, allPassKeys, CaseTracker, caseVerdicts, 
 import { selectRunCases, type CaseSelection, type SelectOpts } from "./select.ts";
 import { checkSeq, markUnchanged, seqCritic, seqFeedback, seqFeedbackName, seqTaskError, summarizeSeq, type SeqOpts } from "./seq.ts";
 import { resolveTask, type ResolvedTask, type TaskContext, type TaskSpec } from "./task.ts";
+import { shortWeights, weightsOf, withWeights } from "./weights.ts";
 import type { LlmCache } from "../llmcache/proxy.ts";
 import { llmMetadata, openLlmCache, withLlmJob, type LlmRunOpts, type TaskLlm } from "../llmcache/run.ts";
 
@@ -101,6 +102,7 @@ export interface RunExperimentOpts {
    * finished case-trials are kept and only the rest run. It must have run the
    * same dataset version, task, graders, trials and selection
    * (ResumeMismatchError names what changed). Infra-failed trials always run again.
+   * Its weights stamp (`metadata.weights`) is kept when `metadata` gives none; a different one is a mismatch.
    */
   resumeFrom?: ExperimentResult;
   /** With resumeFrom: also run again the case-trials whose task errored. */
@@ -126,9 +128,9 @@ export interface RunExperimentOpts {
   llm?: LlmRunOpts;
 }
 
-/** Thrown when resumeFrom ran with a different dataset, task, graders, trials or selection. */
+/** Thrown when resumeFrom ran with a different dataset, task, graders, trials, selection or weights stamp. */
 export class ResumeMismatchError extends Error {
-  /** What changed: "dataset", "task", "graders", "trials", "selection". */
+  /** What changed: "dataset", "task", "graders", "trials", "selection", "seq", "weights". */
   readonly fields: string[];
   constructor(id: string, fields: string[], detail: string[]) {
     super(`can't resume ${id}: ${detail.join("; ")}. Its finished case-trials would mix with ones measured differently`);
@@ -140,7 +142,7 @@ export class ResumeMismatchError extends Error {
 /** Throw ResumeMismatchError unless `prev` measured what this run measures. */
 export function assertResumable(
   prev: ExperimentResult,
-  now: { dataset: Pick<Dataset, "id" | "version">; task: ResolvedTask["info"]; graders: readonly Pick<Grader, "id" | "version">[]; trials: number; selection?: CaseSelection; seq?: unknown },
+  now: { dataset: Pick<Dataset, "id" | "version">; task: ResolvedTask["info"]; graders: readonly Pick<Grader, "id" | "version">[]; trials: number; selection?: CaseSelection; seq?: unknown; weights?: string },
 ): void {
   const fields: string[] = [];
   const detail: string[] = [];
@@ -171,6 +173,12 @@ export function assertResumable(
   if (JSON.stringify(prev.metadata?.seq ?? null) !== JSON.stringify(now.seq ?? null)) {
     fields.push("seq");
     detail.push("the --seq settings changed");
+  }
+  // A stamp given now must be the stored one; none given keeps the stored one (runExperiment carries it over).
+  const was = weightsOf(prev);
+  if (now.weights !== undefined && now.weights !== was) {
+    fields.push("weights");
+    detail.push(`weights changed (${was ? shortWeights(was) : "none"} → ${shortWeights(now.weights)})`);
   }
   if (fields.length) throw new ResumeMismatchError(prev.id, fields, detail);
 }
@@ -567,11 +575,14 @@ export async function runExperiment(opts: RunExperimentOpts): Promise<Experiment
   const seqMeta = opts.seq ? { k: opts.seq.k, feedback: seqFeedbackName(opts.seq.feedback), history: opts.seq.history ?? "full" } : undefined;
   const withSel = selection ? { ...(opts.metadata ?? {}), selection } : opts.metadata;
   const withSeq = seqMeta ? { ...(withSel ?? {}), seq: seqMeta } : withSel;
-  const metadata = opts.llm ? { ...(withSeq ?? {}), llm: llmMetadata(opts.llm, opts.task) } : withSeq;
+  const withLlm = opts.llm ? { ...(withSeq ?? {}), llm: llmMetadata(opts.llm, opts.task) } : withSeq;
   const task = resolveTask(opts.task);
   const job = opts.job;
   const prev = opts.resumeFrom;
-  if (prev) assertResumable(prev, { dataset: opts.dataset, task: task.info, graders, trials, ...(selection ? { selection } : {}), ...(seqMeta ? { seq: seqMeta } : {}) });
+  const weights = weightsOf({ metadata: opts.metadata });
+  if (prev) assertResumable(prev, { dataset: opts.dataset, task: task.info, graders, trials, ...(selection ? { selection } : {}), ...(seqMeta ? { seq: seqMeta } : {}), weights });
+  // A resumed run keeps the weights stamp its finished case-trials ran under.
+  const metadata = weights === undefined ? withWeights(withLlm, weightsOf(prev)) : withLlm;
   const { id, createdAt } = await rememberIdentity(job, prev ? { id: prev.id, createdAt: prev.createdAt } : { id: opts.id ?? sortableId("exp_"), createdAt: Date.now() });
   // Case-trials resumeFrom finished: kept unless infra-failed (or task-errored, with retryErrors).
   const kept = new Map<string, CaseRun>();

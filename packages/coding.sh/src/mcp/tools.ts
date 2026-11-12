@@ -85,6 +85,8 @@ const N = { type: "number" };
 const I = { type: "integer" };
 const B = { type: "boolean" };
 const arr = (items: Obj) => ({ type: "array", items });
+/** An experiment's weights stamp (`exp run --weights`): the SHA-256 of the checkpoint its task ran. */
+const WEIGHTS_OUT = out({ sha256: S });
 
 // Output schemas name the fields worth knowing about; results may carry more
 // (objects are open), which keeps every tool definition cheap to send each turn.
@@ -975,11 +977,11 @@ function toolDefs(): ToolDef<ToolCtx>[] {
     {
       name: "experiments_list",
       title: "List experiments",
-      description: "List dataset experiments, newest first, with dataset, trials, and pass rate with its confidence interval. Compare two with experiment_compare.",
+      description: "List dataset experiments, newest first, with dataset, trials, pass rate with its interval, and weights (a run's checkpoint SHA-256). Compare two with experiment_compare.",
       inputSchema: input({ dataset: { type: "string", description: "Only experiments on this dataset id." }, name: { type: "string", description: "Only experiments with this exact name." }, limit: LIMIT(20, 100), cursor: CURSOR }),
       outputSchema: out(
         {
-          experiments: arr(out({ id: S, name: S, dataset: S, passRate: N }, ["id", "name"])),
+          experiments: arr(out({ id: S, name: S, dataset: S, passRate: N, weights: WEIGHTS_OUT }, ["id", "name"])),
           nextCursor: S,
         },
         ["experiments"],
@@ -987,7 +989,7 @@ function toolDefs(): ToolDef<ToolCtx>[] {
       annotations: READ,
       async run(a, c) {
         const ctx = await c.store();
-        const { FileEvalStore } = await import("../datasets/store.ts");
+        const [{ FileEvalStore }, { weightsOf, stampedWith }] = await Promise.all([import("../datasets/store.ts"), import("../experiments/weights.ts")]);
         const store = new FileEvalStore({ env: c.env, index: ctx.index });
         const offset = cursorArg(a);
         const limit = numArg(a, "limit", 20);
@@ -996,7 +998,8 @@ function toolDefs(): ToolDef<ToolCtx>[] {
         const all = await store.listExperiments({ limit: offset + limit + 1, ...(dataset ? { datasetId: dataset } : {}), ...(name ? { name } : {}) });
         const page = all.slice(offset, offset + limit);
         return {
-          experiments: page.map((e) => ({
+          // Each row carries the checkpoint its run recorded (exp run --weights); no key when it recorded none.
+          experiments: page.map((e) => stampedWith({
             id: e.id,
             name: e.name,
             dataset: e.dataset.id,
@@ -1011,7 +1014,7 @@ function toolDefs(): ToolDef<ToolCtx>[] {
             passRateLo: round(e.summary.passRate.lo),
             passRateHi: round(e.summary.passRate.hi),
             createdAt: iso(e.createdAt),
-          })),
+          }, weightsOf(e))),
           ...(all.length > offset + limit ? { nextCursor: String(offset + limit) } : {}),
         };
       },
@@ -1031,8 +1034,8 @@ function toolDefs(): ToolDef<ToolCtx>[] {
       ),
       outputSchema: out(
         {
-          baseline: out({ id: S, passRate: N }),
-          candidate: out({ id: S, passRate: N }),
+          baseline: out({ id: S, passRate: N, weights: WEIGHTS_OUT }),
+          candidate: out({ id: S, passRate: N, weights: WEIGHTS_OUT }),
           verdict: { type: "string", enum: ["better", "worse", "inconclusive"] },
           diff: out({ mean: N, lo: N, hi: N }),
           paired: I,
@@ -1078,11 +1081,13 @@ function toolDefs(): ToolDef<ToolCtx>[] {
           ...cmp.power.warnings.map((w) => w.message),
           ...(cmp.turnover.warning ? [cmp.turnover.warning] : []),
         ];
+        // First: with one checkpoint on both sides, nothing below compares two models.
+        if (cmp.weightsWarning) warnings.unshift(cmp.weightsWarning);
         const gate = cmp.gate;
         const t = cmp.turnover;
         return {
-          baseline: { id: cmp.a.id, name: cmp.a.name, passRate: round(cmp.a.passRate) },
-          candidate: { id: cmp.b.id, name: cmp.b.name, passRate: round(cmp.b.passRate) },
+          baseline: { ...cmp.a, passRate: round(cmp.a.passRate) },
+          candidate: { ...cmp.b, passRate: round(cmp.b.passRate) },
           verdict: cmp.verdict,
           diff: { mean: round(cmp.diff.mean), lo: round(cmp.diff.lo), hi: round(cmp.diff.hi) },
           paired: cmp.paired,

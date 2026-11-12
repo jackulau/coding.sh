@@ -6156,7 +6156,7 @@ async function showExperiment(seq, id) {
       h("div", { class: "head-row" }, h("h1", { title: d.id }, d.name || d.id),
         h("div", { class: "badges" }, d.status === "cancelled" ? h("span", { class: "badge warn" }, "cancelled · partial") : null, copyBtn(d.id, "Copy experiment id", "experiment id", "Copy id"))),
       // Facts wrap between items, never inside one; the task command gets its own line.
-      h("p", { class: "meta fact-line" }, ...[datasetText(d), (d.trials || 1) > 1 ? plural(d.trials, "trial") + " per case" : "", fmtDate(d.createdAt || 0)].filter(Boolean).map((t) => h("span", null, t))),
+      h("p", { class: "meta fact-line" }, ...[datasetText(d), (d.trials || 1) > 1 ? plural(d.trials, "trial") + " per case" : "", fmtDate(d.createdAt || 0)].filter(Boolean).map((t) => h("span", null, t)), weightsFact(d.metadata && d.metadata.weights, "")),
       d.task ? h("p", { class: "meta mono truncate task-line", title: d.task.kind + " " + d.task.ref },
         // Each argument wraps as a whole, so a phone never splits "agents-md-v2" at its hyphen.
         ...(d.task.kind + " " + d.task.ref).split(" ").flatMap((t, i) => [i ? " " : null, h("span", { class: "tok" }, t)])) : null),
@@ -6273,10 +6273,18 @@ async function showExperiment(seq, id) {
 /** A symmetric axis that ends on a round number: ±10, 20, 25, 50 or 100 pts. */
 function niceSpan(x) { return [0.1, 0.2, 0.25, 0.5, 1].find((v) => v >= x * 1.1) || 1; }
 /** The side of the verdict card: role, name (when it says more than the role) and pass rate. */
-function side(cls, role, e) {
+/** `stamped`: one side at least records its weights (`exp run --weights`), so both say what they recorded. */
+function side(cls, role, e, stamped) {
   const name = e.name || e.id;
   return h("div", { class: "side " + cls }, h("span", { class: "meta" }, name.toLowerCase() === role ? role : role + " · " + name),
-    h("a", { class: "pct", href: expHref(e.id), title: e.id }, pct1(e.passRate)));
+    h("a", { class: "pct", href: expHref(e.id), title: e.id }, pct1(e.passRate)),
+    stamped ? weightsFact(e.weights, "weights not recorded") : null);
+}
+/** A weights stamp in 12 hex characters, the whole SHA-256 in its title. `none`: the text for a run that recorded no stamp ("" shows nothing). */
+function weightsFact(w, none) {
+  const sha = w && typeof w.sha256 === "string" ? w.sha256 : "";
+  if (!sha && !none) return null;
+  return h("span", { class: "meta weights", title: sha ? "SHA-256 of the checkpoint this run recorded with --weights: " + sha : "This run was started without --weights" }, sha ? "weights " + sha.slice(0, 12) : none);
 }
 /** One decimal, so both sides add up to the difference shown in tenths of a point. */
 function pct1(x) { return ((x || 0) * 100).toFixed(1) + "%"; }
@@ -6329,7 +6337,7 @@ async function showCompare(seq, aId, bId) {
       : "Inconclusive";
   // Axis: symmetric around zero, wide enough for the interval, at least ±10 pts.
   const span = niceSpan(Math.max(Math.abs(c.diff.lo), Math.abs(c.diff.hi)));
-  const warnings = [c.datasetWarning, c.gradeWarning, ...(c.partial || []).map((id) => (id === c.a.id ? "Baseline" : "Candidate") + " was cancelled; only its finished cases are compared.")].filter(Boolean).map((w) => ({ text: w }));
+  const warnings = [c.weightsWarning, c.datasetWarning, c.gradeWarning, ...(c.partial || []).map((id) => (id === c.a.id ? "Baseline" : "Candidate") + " was cancelled; only its finished cases are compared.")].filter(Boolean).map((w) => ({ text: w }));
   // small-n already states the detection limit; below-mde would repeat it.
   const pw = (c.power && c.power.warnings) || [];
   const smallN = pw.some((w) => w.code === "small-n");
@@ -6343,9 +6351,9 @@ async function showCompare(seq, aId, bId) {
       h("div", { class: "verdict-line" }, h("h1", null, headline),
         h("span", { class: "meta" }, plural(c.paired, "paired case") + " · McNemar p = " + (c.mcnemar.p < 0.001 ? "<0.001" : (Math.round(c.mcnemar.p * 1000) / 1000)) + (mde && !smallN ? " · " + mde : ""))),
       h("div", { class: "vs" },
-        side("a", "baseline", c.a),
+        side("a", "baseline", c.a, !!(c.a.weights || c.b.weights)),
         h("span", { class: "arrow", "aria-hidden": "true" }, "→"),
-        side("b", "candidate", c.b),
+        side("b", "candidate", c.b, !!(c.a.weights || c.b.weights)),
         h("div", { class: "side diff-side" }, h("span", { class: "meta" }, "difference"), h("span", { class: "pct delta-big " + (tone === "better" ? "up" : tone === "worse" ? "down" : "") }, signedPts(c.diff.mean)))),
       h("div", { class: "delta-ci" },
         h("div", { class: "section-label" }, h("span", { class: "meta" }, "95% CI " + signedPts(c.diff.lo) + " to " + signedPts(c.diff.hi))),

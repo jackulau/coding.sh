@@ -2,10 +2,14 @@
 // every tool against a seeded store, resources, and JSON-RPC error paths.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
+import { openContext } from "../../src/core/context.ts";
+import { FileEvalStore } from "../../src/datasets/store.ts";
+import { CHARACTER_LIMIT } from "../../src/mcp/tools.ts";
 import { schemaViolations } from "../../src/toolevals/jsonschema.ts";
 import { connectMcp, resetEraCache } from "../../src/toolevals/mcp/client.ts";
 import { MAIN, RawClient, SEED, cleanup, makeWorld, seed, type World } from "./helpers.ts";
@@ -320,6 +324,59 @@ describe("tools", () => {
     assert.deepEqual([...gate.lostCases].sort(), ["c1", "c3"]);
     assert.match(gate.summary, /^Hold: not enough evidence \(B wins 0, loses 2; within chance\)/);
     assert.match(await callError("experiment_compare", { baseline: SEED.expA, candidate: "exp-missing" }), /No experiment with id "exp-missing"/);
+  });
+
+  it("experiments_list and experiment_compare carry each run's weights stamp, and warn when both ran the same", async () => {
+    const sha = (label: string) => createHash("sha256").update(label).digest("hex");
+    const [base, edited] = [sha("base checkpoint"), sha("edited checkpoint")];
+    // A world of its own, so the lists other tests read keep their two experiments.
+    const ww = makeWorld();
+    await seed(ww);
+    const ctx = await openContext({ env: ww.env, cwd: ww.root });
+    try {
+      const store = new FileEvalStore({ env: ww.env, index: ctx.index });
+      const [a, b] = await Promise.all([store.getExperiment(SEED.expA), store.getExperiment(SEED.expB)]);
+      await store.putExperiment({ ...a!, id: "exp-w-base", name: "w-base", metadata: { weights: { sha256: base } } });
+      await store.putExperiment({ ...b!, id: "exp-w-edited", name: "w-edited", metadata: { weights: { sha256: edited } } });
+      await store.putExperiment({ ...b!, id: "exp-w-twin", name: "w-twin", metadata: { weights: { sha256: base } } });
+      // A full page of stamped rows, for the answer-size check below.
+      for (let i = 0; i < 100; i++) await store.putExperiment({ ...a!, id: `exp-many-${String(i).padStart(3, "0")}`, name: "many", metadata: { weights: { sha256: sha(`many ${i}`) } } });
+    } finally {
+      await ctx.close();
+    }
+    const wc = new RawClient(ww.env, ww.repo);
+    try {
+      await wc.initialize();
+      // `call` checks every answer against the tool's outputSchema.
+      const row = async (name: string) => ((await call("experiments_list", { name }, wc)).experiments as { id: string; weights?: { sha256: string } }[])[0]!;
+      assert.deepEqual([(await row("w-base")).id, (await row("w-base")).weights], ["exp-w-base", { sha256: base }]);
+      assert.deepEqual((await row("w-edited")).weights, { sha256: edited });
+      const plain = await row("baseline");
+      assert.equal(plain.id, SEED.expA);
+      assert.equal(Object.hasOwn(plain, "weights"), false, "a run without a stamp has no weights key");
+
+      const many = await wc.call("experiments_list", { name: "many", limit: 100 });
+      assert.ok(many.content[0]!.text.length <= CHARACTER_LIMIT, `100 stamped rows are ${many.content[0]!.text.length} chars`);
+      const page = many.structuredContent as { experiments: { weights?: { sha256: string } }[]; limitUsed?: number; nextCursor?: string };
+      assert.ok(page.experiments.length > 0 && page.experiments.every((r) => /^[0-9a-f]{64}$/.test(r.weights?.sha256 ?? "")), "every row keeps its full stamp");
+      assert.ok(page.experiments.length === 100 || page.nextCursor, "rows that did not fit are behind the cursor");
+
+      const cmp = await call("experiment_compare", { baseline: "exp-w-base", candidate: "exp-w-edited" }, wc);
+      assert.deepEqual([(cmp.baseline as { weights?: unknown }).weights, (cmp.candidate as { weights?: unknown }).weights], [{ sha256: base }, { sha256: edited }]);
+      assert.equal((cmp.warnings as string[]).some((x) => /weights/.test(x)), false, "different stamps: nothing to warn about");
+
+      const twin = await call("experiment_compare", { baseline: "exp-w-base", candidate: "exp-w-twin" }, wc);
+      assert.equal((twin.warnings as string[])[0], `A and B ran the same weights (${base.slice(0, 12)}): B − A is not a difference between two models`);
+      const oneSided = await call("experiment_compare", { baseline: SEED.expA, candidate: "exp-w-edited" }, wc);
+      assert.equal(Object.hasOwn(oneSided.baseline as object, "weights"), false);
+      assert.deepEqual((oneSided.candidate as { weights?: unknown }).weights, { sha256: edited });
+      assert.match((oneSided.warnings as string[])[0]!, /^only B records which weights it ran \([0-9a-f]{12}\); A was run without --weights/);
+      const neither = await call("experiment_compare", { baseline: SEED.expA, candidate: SEED.expB }, wc);
+      assert.equal(Object.hasOwn(neither.baseline as object, "weights"), false);
+      assert.equal((neither.warnings as string[]).some((x) => /weights/.test(x)), false);
+    } finally {
+      await wc.close();
+    }
   });
 
   it("exp_session_note and exp_session_summary keep the experiment session the CLI reads", async () => {

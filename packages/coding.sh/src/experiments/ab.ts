@@ -22,11 +22,14 @@ import { planSequential, sequentialLook, sequentialOutcome, type LookResult, typ
 import { llmMetadata, openLlmCache, type LlmRunOpts } from "../llmcache/run.ts";
 import { caseRates, experimentResult, prepareGraders, priorRun, rememberIdentity, runTrial, selectCases, storeResult, type TrialEnv } from "./run.ts";
 import { resolveTask, type TaskSpec } from "./task.ts";
+import { withWeights } from "./weights.ts";
 
 export interface AbArm {
   /** Arm name; the experiment is stored as `<name>-<arm>`. */
   name: string;
   task: TaskSpec;
+  /** SHA-256 of the checkpoint this arm runs (`exp run --weights ARM=<SHA256>`); stored as the arm's `metadata.weights`. */
+  weights?: string;
 }
 
 export interface StopEarlyOpts {
@@ -205,6 +208,7 @@ export async function runAb(opts: RunAbOpts): Promise<AbResult> {
   const cancelled = settled.some((run, j) => run === undefined && jobs[j]!.ci < keep) || !!infraStop?.report;
   const sequential = plan ? sequentialOutcome(plan, history) : undefined;
   const results = ([0, 1] as const).map((i) => {
+    const metadata = withWeights(opts.llm ? { llm: llmMetadata(opts.llm, opts.arms[i].task) } : undefined, opts.arms[i].weights);
     const r = experimentResult({
       id: ids[i],
       name: names[i],
@@ -219,7 +223,7 @@ export async function runAb(opts: RunAbOpts): Promise<AbResult> {
       runs: settled.filter((run, j): run is CaseRun => run !== undefined && jobs[j]!.arm === i && jobs[j]!.ci < keep),
       boot: { iters: opts.bootstrapIters ?? 2000, seed: 0x5eed },
       infraStop: infraStop?.report,
-      ...(opts.llm ? { metadata: { llm: llmMetadata(opts.llm, opts.arms[i].task) } } : {}),
+      ...(metadata ? { metadata } : {}),
     });
     r.pair = { id: pairId, arm: opts.arms[i].name, experiments: ids, seed, ...(sequential ? { sequential } : {}) };
     return r;
