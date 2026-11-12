@@ -732,7 +732,7 @@ export function renderSdkReference(): string {
     "",
     "<!-- Generated from packages/sdk and packages/sdk-python by packages/coding.sh/scripts/sdk-reference.ts. Do not edit by hand. -->",
     "",
-    "Both SDKs send to a server you run with `coding.sh serve` ([production guide](https://coding.sh/docs/production), [serverless apps](https://coding.sh/docs/deploy)). Without `CODING_SH_URL` they do nothing. They never change return values, errors or stream behavior, and never throw into your app. The SDKs do not price calls; the server does.",
+    "Both SDKs send to a server you run with `coding.sh serve` ([production guide](https://coding.sh/docs/production), [serverless apps](https://coding.sh/docs/deploy)). Without `CODING_SH_URL` they do nothing. They never change return values, errors or stream behavior, and never throw into your app. The one exception is `weightsDelta()` (`coding_sh.weights_delta()` in Python), a pure helper you call on purpose: it throws on bad input. The SDKs do not price calls; the server does.",
     "",
     "## Environment variables",
     "",
@@ -789,6 +789,9 @@ export function renderSdkReference(): string {
     "- TypeScript times are in milliseconds (`timeoutMs`, `flushIntervalMs`). Python timeouts are in seconds; only `flush_interval_ms` is in milliseconds.",
     "- In TypeScript, `trace()`, `span()` and `withSession()` take the function to run. In Python, they are context managers and decorators.",
     "- `aiSdkTracer()` and `observeFetch()` are TypeScript only. `coding_sh.otel` is Python only.",
+    "- `weightsEdit()` takes one object in TypeScript; `weights_edit()` takes arguments in Python. Both record the same event. `weightsDelta()` returns `maxAbs` where `weights_delta()` returns `max_abs`, and throws a `TypeError` or `RangeError` where Python raises `ValueError`.",
+    "- A weight count or dimension must be an integer below 2^53 in TypeScript; Python takes any integer. Python also takes numpy scalars as numbers, and `weights_delta()` reads anything with `.tolist()`; in TypeScript `weightsDelta()` reads arrays and typed arrays.",
+    "- A long tensor name or note is cut. TypeScript cuts at 64 KiB of UTF-8 and sets `payload.truncated`; Python cuts at 65,536 characters and appends `…[truncated]`.",
     "",
   );
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";

@@ -718,7 +718,7 @@ Three `notification` kinds carry the events behind these stats:
 | `fork` | `toolUseId` (the parent's Agent call) and `inheritedTokens` |
 | `hook.context` | `hookEvent`, `hookName`, `hookSource`, `command`, `chars`, `tokens` and `text` (clipped). Metadata mode keeps only `hookEvent`, `hookSource`, `chars` and `tokens` |
 
-One more `notification` kind records weight edits. The Python SDK's `coding_sh.weights_edit()` sends it, and any client can post it to `/v1/ingest`. It adds no stat and no flag; the event shows in the session's events. Redaction runs on `tensor` and `note` like on any payload.
+One more `notification` kind records weight edits. The Python SDK's `coding_sh.weights_edit()` and the TypeScript SDK's `weightsEdit()` send it, and any client can post it to `/v1/ingest`. It adds no stat and no flag; the event shows in the session's events. Redaction runs on `tensor` and `note` like on any payload.
 
 | `payload.kind` | Fields |
 |---|---|

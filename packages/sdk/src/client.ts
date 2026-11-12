@@ -66,6 +66,16 @@ export function enqueue(kind: ItemKind, value: unknown): boolean {
   return current().transport.enqueue(kind, value);
 }
 
+/** Problems already reported through warnOnce(): one warning per key per process. */
+const warnedKeys = new Set<string>();
+
+/** Warns once per process for each key, however often init() is called. */
+export function warnOnce(key: string, msg: string): void {
+  if (warnedKeys.has(key)) return;
+  warnedKeys.add(key);
+  console.warn(msg);
+}
+
 /** True when events would be sent anywhere (a URL is configured and the SDK is on). */
 export const isEnabled = (): boolean => current().transport.enabled;
 
@@ -116,4 +126,5 @@ export function _reset(): void {
   state = undefined;
   carried.sent = carried.dropped = carried.failed = 0;
   warnedUrls.clear();
+  warnedKeys.clear();
 }
