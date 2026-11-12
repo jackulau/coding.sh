@@ -11,6 +11,7 @@ grouped by area, with links to the docs for the details.
 
 ### Added
 
+- **CLI.** Three days after first use, a successful command prints one dim line asking for a GitHub star, and `coding.sh ui` shows a small card after 5 sessions. The line prints once; the card shows until you dismiss it or click Star. Neither makes a network call. `CODING_SH_NO_STAR_PROMPT=1` turns both off. [Install](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#updates)
 - **Checks.** `npm run gate` runs every pre-commit check in one pass under a throwaway home: repo hygiene, branch freshness, lint, actionlint, generated files, build and tests, store plugins, the Python SDK, the site, a secret scan and adapter versions. A failing step prints the command that reruns it. [Contributing](https://github.com/jackulau/coding.sh/blob/main/CONTRIBUTING.md)
 - **Lint.** New rules: vendor-literal, site-voice, universal-transition, reduced-motion, global-install and personal-data. `slop.mjs --strict-allowlist` fails on allowlist entries that no longer match anything. [Contributing](https://github.com/jackulau/coding.sh/blob/main/CONTRIBUTING.md)
 - **Doctor.** `coding.sh doctor` counts recent model calls past a physical limit (speed, time to first token, duration) and names the session with the most. [Troubleshooting](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md)

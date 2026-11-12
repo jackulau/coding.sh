@@ -131,6 +131,8 @@ same `CODING_SH_HOME` as the server.
 | GET | [`/api/bundles`](#get-apitasks-get-apiruns-get-apibundles) | read key or basic auth | serve, ui |
 | GET | [`/api/update`](#get-apiupdate) | read key or basic auth | serve, ui |
 | GET | [`/api/ingest`](#get-apiingest) | read key or basic auth | serve, ui |
+| GET | [`/api/star`](#get-apistar-post-apistar) | ui token | ui |
+| POST | [`/api/star`](#get-apistar-post-apistar) | ui token | ui |
 
 Any other path answers 404 `{"error":"not found","status":404}`.
 
@@ -1710,6 +1712,17 @@ curl -sS "$CSH/api/update" -H "Authorization: Bearer $READ_KEY"
 ```json
 {"current":"","latest":null,"updateAvailable":false,"url":null,"command":"","checkedAt":null}
 ```
+
+### `GET /api/star`, `POST /api/star`
+
+The viewer's "star on GitHub" card. Only `coding.sh ui` answers; `coding.sh serve` and every other host answer 404. Neither call makes a network request. The state is `star.json` in the coding.sh home.
+
+- `GET` returns `{"show": true}` when the first run was 3 or more days ago, the store holds at least 5 top-level sessions (subagents do not count), and neither `dismissedAt` nor `starredAt` is set. Otherwise it returns `{"show": false}`.
+- The prompt is off, and nothing is written, when `CODING_SH_NO_STAR_PROMPT` is set to a value other than empty, `0` or `false`, or `NO_UPDATE_NOTIFIER` is set to anything (even empty).
+- It is also off in CI: when `CI`, `CONTINUOUS_INTEGRATION`, `BUILD_NUMBER`, `GITHUB_ACTIONS`, `GITLAB_CI`, `BUILDKITE` or `TF_BUILD` is set to such a value.
+- `POST` takes `{"action": "dismiss"}` or `{"action": "starred"}` as JSON and records `dismissedAt` or `starredAt`. Any other action answers 400. The body is capped at 1 KB and the `Origin` must match the host.
+
+Either one ends the card and the one line `coding.sh` prints in a terminal.
 
 ### `GET /api/ingest`
 

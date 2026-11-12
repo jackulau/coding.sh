@@ -3486,6 +3486,7 @@ coding.sh update --check
 
 - Other commands print one line when a newer release is out (checked at most daily, in the background).
 - Turn that off with NO_UPDATE_NOTIFIER=1, CODING_SH_NO_UPDATE_CHECK=1 or `[update] check = false` in ~/.coding.sh/config.toml.
+- Once, three days after first use, a successful command also prints one line asking for a GitHub star (no network call). Turn that off with CODING_SH_NO_STAR_PROMPT=1, NO_UPDATE_NOTIFIER=1 or CI.
 
 ## `coding.sh upgrade-store`
 

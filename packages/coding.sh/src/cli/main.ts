@@ -180,13 +180,15 @@ export function defaultCommand(env: NodeJS.ProcessEnv, interactive: boolean): "i
   return existsSync(paths(env).hook) ? "ui" : "init";
 }
 
-/** One dim stderr line when a newer release is out (cached; see update/index.ts for the opt-outs). */
-async function updateNotice(env: NodeJS.ProcessEnv, out: Output, command: string): Promise<void> {
+/** One dim stderr line when a newer release is out (cached; see update/index.ts for the opt-outs), else once ever a star prompt (update/star.ts). */
+async function updateNotice(env: NodeJS.ProcessEnv, out: Output, command: string, ok: boolean): Promise<void> {
   // `mcp` talks to an agent over stdio; `update` reports on its own.
-  if (out.json || process.stderr.isTTY !== true || command === "mcp" || command === "update") return;
+  if (out.json || process.stderr.isTTY !== true || command === "mcp" || command === "statusline" || command === "update") return;
   try {
     const { notice } = await import("../update/index.ts");
-    notice(env, out, { command });
+    const printed = notice(env, out, { command });
+    // One more dim line at most, once ever, after a command that worked and never beside the update notice.
+    if (ok) (await import("../update/star.ts")).starNotice(env, out, { command, skip: printed });
   } catch {
     // never let a notice fail a command
   }
@@ -359,7 +361,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
         throw e;
       }
       if (handle && stopCode) return stopExit ?? stopCode;
-      await updateNotice(env, out, cmd.name);
+      await updateNotice(env, out, cmd.name, (code ?? 0) === 0);
       return code ?? 0;
     } finally {
       if (handle) for (const sig of STOP_SIGNALS) process.off(sig, onStop);
