@@ -9,10 +9,15 @@ import type { ExperimentResult } from "../datasets/types.ts";
 // One parser and one 12-character form for every weights hash: core/weights.ts has both.
 export { parseWeights, shortWeights };
 
-/** `ExperimentResult.metadata.weights`. */
+/** `ExperimentResult.metadata.weights`, and the stamp as commands and tools print it. */
 export interface WeightsStamp {
   /** SHA-256 of the checkpoint file: 64 lowercase hex characters. */
   sha256: string;
+  /**
+   * Ids of the sessions whose `weights.checkpoint` event recorded this hash (experiments/checkpoints.ts),
+   * newest first. Looked up when the stamp is printed, never stored; absent when no session recorded it.
+   */
+  sessions?: string[];
 }
 
 /** The stamp an experiment carries, or undefined (never stamped, or a value that is not a SHA-256). */

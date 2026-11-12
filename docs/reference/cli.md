@@ -1515,7 +1515,7 @@ coding.sh exp run [spec] [options]
 | `--replay <EXPERIMENT>` |  | Serve this recorded experiment's model calls again, up to each case-trial's first changed call; later calls run live. Adds the recorded config as a control arm (A) unless --no-control. |
 | `--replay-until <N>` |  | With --replay: serve only calls 1..N from the recording; call N+1 onward runs live. |
 | `--series <NAME>` |  | Tag the experiment as the next round of an iteration loop and print whether the loop should stop (see exp plateau) |
-| `--weights <SHA256>` |  | Record the checkpoint the task ran: the SHA-256 of the weights file, 64 hex characters, which you compute (coding.sh hashes nothing). exp compare shows each side's and warns when both ran the same. With --arm: one per arm, as ARM=&lt;SHA256&gt;. Not with --watch or a matrix spec. Repeatable. |
+| `--weights <SHA256>` |  | Record the checkpoint the task ran: the SHA-256 of the weights file, 64 hex characters, which you compute (coding.sh hashes nothing). exp compare shows each side's and warns when both ran the same; with exp show it names the session that recorded the hash as a weights.checkpoint event. With --arm: one per arm, as ARM=&lt;SHA256&gt;. Not with --watch or a matrix spec. Repeatable. |
 | `--watch` |  | Rerun on every change to the spec, the task's script, grader files or --watch-path; a grader-only change regrades the stored outputs. Enter reruns, q quits. |
 | `--watch-path <GLOB>` |  | With --watch: more files whose change reruns the task (repeatable; also the spec's "watch" field) |
 | `--session` | `true` | In an experiment session (exp session new), add the run to its timeline and print the delta against the previous run; --no-session skips it. |

@@ -788,9 +788,40 @@ count such as tokens used has to become a pass or fail before it is a grader.
 {"kind": "json-path", "name": "correct", "path": "$.answer"}
 ```
 
+Record what the editing script did, so the comparison can name it. The script records each tensor
+it changes with `weights_edit()`, and the file it saves with `weights_checkpoint()`: the SHA-256
+of the saved file, and of the file it started from. Put them in one `trace()`, so they are one
+session. `CODING_SH_URL` points the SDK at your `coding.sh serve`
+([SDK reference](https://coding.sh/docs/sdk)).
+
+```python
+import hashlib
+import coding_sh
+
+def sha256_file(path):
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+with coding_sh.trace("stop-looping edit"):
+    for name, base, edited in patches:
+        coding_sh.weights_edit(name, base_sha256=sha256_tensor(base), edited_sha256=sha256_tensor(edited),
+                               **coding_sh.weights_delta(base, edited))
+    save(model, "edited.safetensors")
+    coding_sh.weights_checkpoint(sha256_file("edited.safetensors"),
+                                 base_sha256=sha256_file("base.safetensors"))
+coding_sh.flush()
+```
+
+`patches`, `sha256_tensor` and `save` stand for your own code: the tensors you changed with their
+values before and after, a hash of one tensor, and the call that writes the file.
+`weights_delta()` reads small arrays in pure Python; for real tensors pass `shape`, `changed`, `l2`
+and `max_abs` from your own framework. The TypeScript SDK has the same two calls, `weightsEdit()`
+and `weightsCheckpoint({ sha256, baseSha256 })`.
+
 Run each model, then compare. `--weights` records which checkpoint each task ran: the SHA-256 of
 its weights file, 64 hex characters. You compute it, for example with
-`shasum -a 256 model.safetensors`; coding.sh stores the value and hashes nothing.
+`shasum -a 256 model.safetensors`; coding.sh stores the value and hashes nothing. Give the edited
+run the hash the script recorded as its checkpoint.
 
 ```sh
 coding.sh exp run -d math --task base.json -g terminated.json -g correct.json --name base \
@@ -810,6 +841,24 @@ carries a stamp, it says so, and the other side reads `weights not recorded`. `e
 the same stamp. `exp list` adds a `WEIGHTS` column when a listed run has one, and its `--json`
 rows carry `weights.sha256`. `exp run` without `--weights` stores no stamp, and a comparison of two such runs
 prints nothing about weights.
+
+When a session recorded a side's stamp as a checkpoint, `exp compare` and `exp show` name it on the
+next line, with the edits that session recorded:
+
+```
+A base exp_…  pass 66.7%  weights 0496e5111097
+B edited exp_…  pass 100.0%  weights 58899f90572c
+  edits    <session id>  2 edits, 2 tensors, 66,560 weights changed
+```
+
+- `coding.sh show <session id>` prints each edit, and an `Experiments` row with the runs that used
+  the file.
+- `--json` carries the session ids as `weights.sessions`: on `comparison.a` and `comparison.b`
+  for `exp compare`, on each row of `exp list`, and in a top-level `weights` object
+  (`sha256`, `sessions`) for `exp show`. The MCP tools `experiments_list` and `experiment_compare`
+  carry the same field.
+- At most 5 sessions are named for a hash, newest first.
+- A stamp no session recorded prints as before, and so does a store that cannot answer the lookup.
 
 The first compare prints a paired delta for `terminated` and one for `correct`, each with its
 bootstrap interval. If the edited model only stopped looping, `terminated` is up and `correct`

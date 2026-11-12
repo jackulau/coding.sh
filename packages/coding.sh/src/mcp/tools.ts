@@ -989,7 +989,7 @@ function toolDefs(): ToolDef<ToolCtx>[] {
       annotations: READ,
       async run(a, c) {
         const ctx = await c.store();
-        const [{ FileEvalStore }, { weightsOf, stampedWith }] = await Promise.all([import("../datasets/store.ts"), import("../experiments/weights.ts")]);
+        const [{ FileEvalStore }, { weightsOf, stampedWith }, { checkpointSessions, withSessions }] = await Promise.all([import("../datasets/store.ts"), import("../experiments/weights.ts"), import("../experiments/checkpoints.ts")]);
         const store = new FileEvalStore({ env: c.env, index: ctx.index });
         const offset = cursorArg(a);
         const limit = numArg(a, "limit", 20);
@@ -997,9 +997,11 @@ function toolDefs(): ToolDef<ToolCtx>[] {
         const name = strArg(a, "name");
         const all = await store.listExperiments({ limit: offset + limit + 1, ...(dataset ? { datasetId: dataset } : {}), ...(name ? { name } : {}) });
         const page = all.slice(offset, offset + limit);
+        const checkpoints = await checkpointSessions(ctx.index, page.map((e) => weightsOf(e)));
         return {
-          // Each row carries the checkpoint its run recorded (exp run --weights); no key when it recorded none.
-          experiments: page.map((e) => stampedWith({
+          // Each row carries the checkpoint its run recorded (exp run --weights), with the ids of the sessions that
+          // recorded that file (weights.sessions); no key when it recorded none.
+          experiments: page.map((e) => withSessions(stampedWith({
             id: e.id,
             name: e.name,
             dataset: e.dataset.id,
@@ -1014,7 +1016,7 @@ function toolDefs(): ToolDef<ToolCtx>[] {
             passRateLo: round(e.summary.passRate.lo),
             passRateHi: round(e.summary.passRate.hi),
             createdAt: iso(e.createdAt),
-          }, weightsOf(e))),
+          }, weightsOf(e)), checkpoints)),
           ...(all.length > offset + limit ? { nextCursor: String(offset + limit) } : {}),
         };
       },
@@ -1061,7 +1063,7 @@ function toolDefs(): ToolDef<ToolCtx>[] {
       annotations: READ,
       async run(a, c) {
         const ctx = await c.store();
-        const [{ FileEvalStore }, { compareExperiments, IncompleteExperimentError }] = await Promise.all([import("../datasets/store.ts"), import("../experiments/compare.ts")]);
+        const [{ FileEvalStore }, { compareExperiments, IncompleteExperimentError }, { checkpointSessions, withSessions }] = await Promise.all([import("../datasets/store.ts"), import("../experiments/compare.ts"), import("../experiments/checkpoints.ts")]);
         const store = new FileEvalStore({ env: c.env, index: ctx.index });
         const ids = [strArg(a, "baseline")!, strArg(a, "candidate")!];
         const [ea, eb] = await Promise.all(ids.map((id) => store.getExperiment(id).catch(() => undefined)));
@@ -1085,9 +1087,11 @@ function toolDefs(): ToolDef<ToolCtx>[] {
         if (cmp.weightsWarning) warnings.unshift(cmp.weightsWarning);
         const gate = cmp.gate;
         const t = cmp.turnover;
+        // Each side's stamp names the sessions that recorded that weights file as a checkpoint (weights.sessions).
+        const checkpoints = await checkpointSessions(ctx.index, [cmp.a.weights?.sha256, cmp.b.weights?.sha256]);
         return {
-          baseline: { ...cmp.a, passRate: round(cmp.a.passRate) },
-          candidate: { ...cmp.b, passRate: round(cmp.b.passRate) },
+          baseline: withSessions({ ...cmp.a, passRate: round(cmp.a.passRate) }, checkpoints),
+          candidate: withSessions({ ...cmp.b, passRate: round(cmp.b.passRate) }, checkpoints),
           verdict: cmp.verdict,
           diff: { mean: round(cmp.diff.mean), lo: round(cmp.diff.lo), hi: round(cmp.diff.hi) },
           paired: cmp.paired,

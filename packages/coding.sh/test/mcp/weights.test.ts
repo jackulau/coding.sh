@@ -1,10 +1,15 @@
 // Weight edits and checkpoints over MCP: sessions_list finds the session by its tag and by a
 // checkpoint's hash and carries the stat, session_get's timeline has one line per edit and
-// checkpoint, and the session resource has the row.
+// checkpoint, the session resource has the row, and the experiment tools name the session
+// that recorded the weights file an experiment ran.
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { openContext } from "../../src/core/context.ts";
 import { buildSession } from "../../src/core/sessions.ts";
+import { createDataset } from "../../src/datasets/dataset.ts";
+import { FileEvalStore } from "../../src/datasets/store.ts";
+import type { Grader } from "../../src/datasets/types.ts";
+import { runExperiment } from "../../src/experiments/run.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { RawClient, cleanup, makeWorld, seed, type World } from "./helpers.ts";
 
@@ -16,6 +21,7 @@ const C = "c".repeat(64);
 const FILE = `c0ffee${"1".repeat(58)}`;
 const FILE_BASE = `ba5e${"2".repeat(60)}`;
 const STATS = { events: 3, tensors: 2, weightsChanged: 66560, checkpoints: [FILE] };
+const ids: Record<string, string> = {};
 
 let w: World;
 let c: RawClient;
@@ -37,6 +43,15 @@ before(async () => {
   ];
   await ctx.index.putEvents(evs);
   await ctx.index.upsertSession(buildSession(evs));
+  // One experiment ran the file the session saved, one ran the file it started from, one recorded none.
+  const ds = createDataset({ name: "wt", createdAt: 1, cases: [1, 2].map((n) => ({ id: `m${n}`, input: n, expected: n })) });
+  const exact: Grader = { id: "exact", version: "1", kind: "custom", grade: async (x) => ({ score: 1, pass: x.output === x.expected }) };
+  const evals = new FileEvalStore({ env: w.env, index: ctx.index });
+  for (const [name, sha256] of [["wt-base", FILE_BASE], ["wt-edited", FILE], ["wt-plain", undefined]] as const) {
+    const r = await runExperiment({ name, dataset: ds, task: (n) => n, graders: [exact], metadata: sha256 ? { weights: { sha256 } } : undefined });
+    await evals.putExperiment(r);
+    ids[name] = r.id;
+  }
   await ctx.close();
   c = new RawClient(w.env, w.repo);
   await c.initialize();
@@ -91,5 +106,21 @@ describe("weight edits over MCP", () => {
     assert.doesNotMatch(text, /saved after layer 16/);
     assert.match(text, /model\.layers\.15\.mlp\.down_proj\.weight \[4096×11008\]/);
     assert.match(text, /model\.layers\.16\.mlp\.down_proj\.weight \[4096×11008\]/);
+  });
+
+  it("experiments_list and experiment_compare name the session that recorded the weights file a run used", async () => {
+    const list = await c.call("experiments_list", {});
+    const rows = list.structuredContent!.experiments as { id: string; weights?: unknown }[];
+    const row = (name: string) => rows.find((r) => r.id === ids[name])!;
+    assert.deepEqual(row("wt-edited").weights, { sha256: FILE, sessions: [SID] });
+    assert.deepEqual(row("wt-base").weights, { sha256: FILE_BASE }, "no session recorded this file: the stamp alone");
+    assert.equal(Object.hasOwn(row("wt-plain"), "weights"), false);
+
+    const cmp = await c.call("experiment_compare", { baseline: ids["wt-base"], candidate: ids["wt-edited"] });
+    const d = cmp.structuredContent as { baseline: { weights?: unknown }; candidate: { weights?: unknown } };
+    assert.deepEqual(d.baseline.weights, { sha256: FILE_BASE });
+    assert.deepEqual(d.candidate.weights, { sha256: FILE, sessions: [SID] });
+    const plain = await c.call("experiment_compare", { baseline: ids["wt-plain"], candidate: ids["wt-edited"] });
+    assert.equal(Object.hasOwn((plain.structuredContent as { baseline: object }).baseline, "weights"), false);
   });
 });

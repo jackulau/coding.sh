@@ -736,6 +736,9 @@ Two more `notification` kinds record weight edits and the file they were saved t
 - A shape of more than 16 dimensions is not shown, and the total is left out when the count does not fit in the shape. An edit with no readable field still gets a line.
 - A checkpoint gets one line in the same three places: `checkpoint 58899f90572c ← 0496e5111097`, the first 12 characters of the file's hash and of the base file's. With no base it reads `checkpoint 58899f90572c`.
 - The session's `Weight edits` row names its checkpoints after the counts: `2 edits, 2 tensors, 66,560 weights changed, checkpoint 58899f90572c`.
+- `coding.sh show` adds one `Experiments` row for each checkpoint an experiment ran with `exp run --weights`: `58899f90572c ran in edited (exp_…)`. It reads the newest 200 experiments.
+- With `--json` those rows are `checkpointExperiments`, a list of `{sha256, experiments: [{id, name}]}`, absent when no experiment ran one.
+- `exp show` and `exp compare` name the session from the other side: [Compare an edited model with its base](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#compare-an-edited-model-with-its-base).
 - Metadata mode: the SDK leaves out `note`. A server with `capture.mode = "metadata"` also drops an edit's `tensor`, `shape` and both hashes, and keeps `changed`, `l2` and `maxAbs`.
 - In metadata mode a checkpoint keeps `sha256` and `baseSha256`, the values that join it to an experiment, and loses `note`.
 - OpenTelemetry in: a span or log record named `weights.edit`, sent to `/v1/traces` or `/v1/logs`, is read as the same event. Its fields are the attributes below. A malformed one is left out and the edit still counts.
@@ -1513,7 +1516,7 @@ These fields are present only when they apply:
 | `samples`, `summary.caseVerdicts` | `exp run --samples adaptive` | `"samples": "adaptive"`, and verdicts `passed`, `failed`, `tieBreaks`. The `passRate` interval is then biased, so use the verdicts |
 | `regression` | `--stop-on-regression` stopped the run (status `cancelled`) | `{caseId, baseline}` |
 | `metadata.checkpoint` | A partial record written while the run was going (status `cancelled`) | `done`, `total`, `at` |
-| `metadata.weights` | `exp run --weights <SHA256>` | `sha256`: the SHA-256 of the checkpoint the task ran, 64 hex characters as given to the flag, stored in lowercase. `/api/compare` carries it as `a.weights` and `b.weights`, with `weightsWarning` when both are the same or only one side has one |
+| `metadata.weights` | `exp run --weights <SHA256>` | `sha256`: the SHA-256 of the checkpoint the task ran, 64 hex characters as given to the flag, stored in lowercase. `/api/compare` carries it as `a.weights` and `b.weights`, with `weightsWarning` when both are the same or only one side has one. `exp show --json`, `exp compare --json`, `exp list --json` and the MCP tools `experiments_list` and `experiment_compare` add `weights.sessions`, the ids of the sessions whose `weights.checkpoint` event recorded that hash (at most 5, newest first). It is looked up when printed, never stored, and absent when no session recorded it |
 | `metadata.selection` | A run of part of the dataset | `from` (`{kind: "failing"\|"errors", experiment}`), `cases`, `sample`, `seed`, `firstN`, `selected`, `of` |
 | `metadata.seq` | `exp run --seq K` | `k`, `feedback`, `history` |
 | `summary.seq` | `exp run --seq K` | `k`, `feedback`, `history`, `curve` (`[{k, rate, lo, hi}]`, Seq@1..K), `egs`, `lgs`, `unchangedRate`, `costToSolve`; with 2+ trials also `passAtK` (`[{k, rate}]`), `front` (`[{protocol, k, cost, success, overall}]`) and `costUnit` (`usd` or `attempts`) |
