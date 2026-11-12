@@ -101,7 +101,9 @@ function serverRoutes(): Map<string, string> {
       const extra = new Set([...sb.matchAll(/method [!=]== "([A-Z]+)"/g)].map((m) => m[1]!));
       if (extra.size) own.push([path, extra, /if \(!ctx\.fork\)/.test(sb) ? "ui" : "serve, ui"]);
     });
-    for (const method of methods) for (const path of paths) routes.set(key(method, path), "serve, ui");
+    // A source guard at the case's own indent (`if (!ctx.star) throw new HttpError(404`) means only `coding.sh ui` serves it.
+    const by = /^      if \(!ctx\.\w+\) throw new HttpError\(404/m.test(block) ? "ui" : "serve, ui";
+    for (const method of methods) for (const path of paths) routes.set(key(method, path), by);
     for (const [path, ms, by] of own) for (const method of new Set([...ms, "GET"])) routes.set(key(method, path), by);
   });
   return routes;

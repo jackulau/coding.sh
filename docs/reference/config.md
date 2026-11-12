@@ -342,6 +342,7 @@ Tool-eval model drivers read the key variable set by `apiKeyEnv` in `coding.sh.t
 | `FORCE_COLOR` | Color even when output is not a terminal. |
 | `CI` | Treated as non-interactive: no prompts or spinners. Commands that would ask need `--yes`. |
 | `NO_UPDATE_NOTIFIER`, `CODING_SH_NO_UPDATE_CHECK` | Turn off the update check. Same as `update.check = false`. |
+| `CODING_SH_NO_STAR_PROMPT` | Turn off the one-time GitHub star prompt in the terminal and the viewer. `NO_UPDATE_NOTIFIER` and `CI` turn it off too. |
 | `CODING_SH_READ_BUDGET_MS` | How long read commands (`status`, `sessions`, `search`, `show`, `tree`, `usage`, `improve`, `harness audit`, `cache doctor`, ...) and MCP tool calls ingest pending captures before answering from what is indexed (with a `pending` field in JSON and MCP results). Default `1500`; `--fresh` waits for all. While a re-parse holds `reparse.lock`, these reads skip the ingest, leave the spool to the re-parse, and add `"reparsing": true` to `pending`. |
 
 ### Installer

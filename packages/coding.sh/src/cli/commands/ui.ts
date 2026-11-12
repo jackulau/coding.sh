@@ -40,7 +40,7 @@ export async function run(c: CommandContext): Promise<number> {
       const fork = viewerForks({ index: ctx.index, blobs: ctx.blobs, env: c.env, prices: pricesFor(ctx.config.pricing), upstreams: proxySettings(c.env).upstreams });
       // The LLM-call playground: a call edited and sent again with this machine's key, saved to the same datasets.
       const playground = viewerPlayground({ env: c.env, datasets: experiments, prices: pricesFor(ctx.config.pricing) });
-      viewer = await startViewer({ index: ctx.index, blobs: ctx.blobs, port, host, open, experiments, ingestStatus, replayBaseline, fork, playground });
+      viewer = await startViewer({ index: ctx.index, blobs: ctx.blobs, port, host, open, experiments, ingestStatus, star: { env: c.env }, replayBaseline, fork, playground });
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       if (code === "EADDRINUSE") throw new CliError(`Can't start the viewer: port ${port} is in use`, { reason: "port_in_use", next: ["Pick another port:", "coding.sh ui --port 0"] });

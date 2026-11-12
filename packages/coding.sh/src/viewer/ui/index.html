@@ -1378,6 +1378,29 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 }
 .toast[data-hidden] { opacity: 0; transform: translate(-50%, 6px); pointer-events: none; transition-duration: var(--dur-exit); }
 
+/* ---------- star prompt (once, after real use) ---------- */
+.star-card {
+  position: fixed; right: 1.25rem; bottom: calc(1.25rem + env(safe-area-inset-bottom)); z-index: 35; width: min(26rem, calc(100vw - 2rem));
+  display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 0.7rem; align-items: start; padding: 0.8rem 0.9rem; border-radius: var(--radius);
+  background: var(--raised-2); color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--line-strong), var(--shadow);
+  transform: translateY(0); opacity: 1;
+  transition: opacity var(--dur-enter) var(--ease-out), transform var(--dur-enter) var(--ease-out);
+}
+.star-card[hidden] { display: none; }
+.star-card[data-hidden] { opacity: 0; transform: translateY(8px); pointer-events: none; transition-duration: var(--dur-exit); }
+.star-card .star-icon { width: 18px; height: 18px; margin-top: 1px; color: var(--text-2); }
+.star-card .star-title { font-size: 13.5px; font-weight: 600; line-height: 1.3; }
+.star-card .star-body { grid-column: 2; margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--text-2); }
+.star-card .star-actions { grid-column: 2; display: flex; justify-content: flex-end; gap: 0.4rem; margin-top: 0.45rem; }
+.star-card a.btn { text-decoration: none; }
+@media (max-width: 640px) {
+  .star-card { left: 1rem; right: 1rem; width: auto; bottom: calc(1rem + env(safe-area-inset-bottom)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .star-card, .star-card[data-hidden] { transform: none; }
+}
+
 @media (hover: hover) and (pointer: fine) {
   .bench-card:hover .chev { color: var(--text); }
   .nav a:hover:not([aria-current="page"]) { color: var(--text); transition-duration: var(--dur-hover-in); }
@@ -1522,6 +1545,15 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 <main id="main" tabindex="-1"></main>
 <div class="overlay" id="overlay" hidden></div>
 <div class="toast" id="toast" role="status" aria-live="polite" data-hidden></div>
+<aside class="star-card" id="star" aria-label="Star coding.sh on GitHub" hidden data-hidden>
+  <svg class="star-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 1.4l1.95 4.1 4.5.6-3.3 3.1.84 4.45L8 11.4l-3.99 2.25.84-4.45-3.3-3.1 4.5-.6z"/></svg>
+  <div class="star-title">Enjoying coding.sh?</div>
+  <p class="star-body">A star on GitHub helps other people find it.</p>
+  <div class="star-actions">
+    <button class="btn btn-sm btn-ghost" id="star-dismiss" type="button">Dismiss</button>
+    <a class="btn btn-sm btn-primary" id="star-go" href="https://github.com/jackulau/coding.sh" target="_blank" rel="noopener noreferrer">Star on GitHub</a>
+  </aside>
+</div>
 
 <script nonce="__CSP_NONCE__">
 "use strict";
@@ -7577,6 +7609,54 @@ async function loadUpdate() {
   pill.hidden = false;
 }
 
+// ------------------------------------------------------------ star prompt
+
+// Once, after real use. The server decides (/api/star: 404 outside `coding.sh ui`, show=false until
+// 3 days and 5 sessions). The page makes no request to GitHub: the button is a plain link.
+function loadStar() {
+  const card = $("#star");
+  const KEY = "codingsh.star.dismissed";
+  try { if (localStorage.getItem(KEY)) return; } catch { /* storage can be blocked */ }
+  const post = (action) => {
+    try { localStorage.setItem(KEY, "1"); } catch { /* fallback only */ }
+    fetch("/api/star", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) }).catch(() => {});
+  };
+  const hide = (action) => {
+    post(action);
+    // Focus inside the card would be lost when it goes away: hand it to the page.
+    if (card.contains(document.activeElement)) $("#main").focus({ preventScroll: true });
+    let done = false;
+    const finish = () => { if (!done) { done = true; card.hidden = true; } };
+    card.setAttribute("data-hidden", "");
+    card.addEventListener("transitionend", finish, { once: true });
+    // No transition runs in a background tab: fall back to the exit time (--dur-exit) plus a little.
+    setTimeout(finish, (parseFloat(getComputedStyle(card).transitionDuration) || 0.15) * 1000 + 50);
+  };
+  $("#star-dismiss").addEventListener("click", () => hide("dismiss"));
+  const go = $("#star-go");
+  go.addEventListener("click", () => hide("starred"));
+  // A middle-click or a modified click opens the link too, without a click event.
+  go.addEventListener("auxclick", () => hide("starred"));
+  card.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.stopPropagation(); hide("dismiss"); } });
+  const show = (tries) => {
+    // Never over the command menu or the shortcuts list.
+    if (overlayOpen() && tries < 60) { setTimeout(() => show(tries + 1), 1000); return; }
+    if (overlayOpen()) return;
+    card.hidden = false;
+    void card.offsetHeight;
+    card.removeAttribute("data-hidden");
+  };
+  setTimeout(async () => {
+    let r;
+    try {
+      const res = await fetch("/api/star", { credentials: "same-origin", headers: { Accept: "application/json" } });
+      if (!res.ok) return;
+      r = await res.json();
+    } catch { return; }
+    if (r && r.show === true) show(0);
+  }, 1500);
+}
+
 // ------------------------------------------------------------ indexing pill
 
 // `coding.sh ui` ingests in the background, so the list can open on a partial
@@ -7663,6 +7743,7 @@ function touchTitles() {
 
 route();
 loadUpdate();
+loadStar();
 loadIngest();
 touchTitles();
 </script>

@@ -38,6 +38,7 @@ A made-up key, like the ones in docs and test fixtures, is redacted too, but cou
 | `repos/` | Snapshots of the working tree before and after a session. Your repo's own refs are never touched. |
 | `backups/` | A copy of every agent config file before coding.sh edited it. |
 | `config.toml` | Your settings. |
+| `star.json` | When you first ran coding.sh and when the one-time GitHub star prompt was shown, dismissed or clicked. Four timestamps, no network call. |
 
 `CODING_SH_HOME` moves the folder. Outside Windows, the index, its WAL files, the blob store and
 the index backups are readable by your user only (files 0600, folders 0700). In full mode, the default, coding.sh keeps prompts, replies,
