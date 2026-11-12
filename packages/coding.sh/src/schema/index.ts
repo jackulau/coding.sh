@@ -135,15 +135,22 @@ export interface HookContextStats {
 
 /**
  * Session.stats.weightEdits: weight edits the session recorded (`notification`
- * events with `payload.kind: "weights.edit"`).
+ * events with `payload.kind: "weights.edit"`), and the checkpoints it recorded
+ * (`payload.kind: "weights.checkpoint"`).
  */
 export interface WeightEditStats {
-  /** Edits recorded. */
+  /** Edits recorded. 0 for a session that recorded a checkpoint and no edit. */
   events: number;
   /** Distinct tensor names edited. Unset when no edit kept its name, as in metadata capture. */
   tensors?: number;
   /** The edits' `changed` counts added up: a weight two edits changed counts twice. */
   weightsChanged: number;
+  /**
+   * SHA-256 of each weights file the session recorded as a checkpoint: distinct, in
+   * arrival order, at most 16. The value `coding.sh exp run --weights` takes. Unset when
+   * the session recorded no checkpoint.
+   */
+  checkpoints?: string[];
 }
 
 /** Why a prompt cache broke: a compaction rewrote the context, the model changed, the cache expired while idle, or something else. */
@@ -389,7 +396,7 @@ export interface Session {
     inheritedTokens?: number;
     /** Text hooks added to the model's context, by source (`plugin:<name>`, `settings`, …). Unset when no hook added any. */
     hookContext?: HookContextStats;
-    /** Weight edits the session recorded; it also tags the session `weights:edited`. Unset when it recorded none. */
+    /** Weight edits and checkpoints the session recorded; they also tag the session `weights:edited` and `weights:checkpoint`. Unset when it recorded neither. */
     weightEdits?: WeightEditStats;
     /**
      * Memory and instruction files (AGENTS.md, rules, skills, Claude auto-memory) the

@@ -9,7 +9,7 @@ import { CACHE_BREAK_FIX, CACHE_IDLE_FIX } from "../core/cache-breaks.ts";
 import { cacheBaseline, CACHE_BASELINE_NOTE } from "../core/cache-baselines.ts";
 import { mergeCallCopies } from "../core/call-copies.ts";
 import { failureFlags, percentile } from "../core/sessions.ts";
-import { WEIGHTS_EDIT_KIND, weightsEditText } from "../core/weights.ts";
+import { weightsEventText } from "../core/weights.ts";
 import { sessionMatcher } from "../query/run.ts";
 import type { Node, Query } from "../query/where.ts";
 
@@ -331,11 +331,13 @@ export function timeline(events: AgentEvent[], startedAt: number): TimelineEntry
       case "context.compact":
         push("compact", `context compacted (${str(p.trigger) ?? "auto"})`);
         break;
-      case "notification":
-        // An edit with no readable field still gets its line: push() leaves out an empty one.
-        if (p.kind === WEIGHTS_EDIT_KIND) push("weights", clip(weightsEditText(p), 240) || "no details recorded");
+      case "notification": {
+        // A weight edit or a checkpoint. An edit with no readable field still gets its line: push() leaves out an empty one.
+        const weights = weightsEventText(p);
+        if (weights !== undefined) push("weights", clip(weights, 240) || "no details recorded");
         else push("notification", clip(str(p.message) ?? str(p.text), 160));
         break;
+      }
       default:
         break;
     }

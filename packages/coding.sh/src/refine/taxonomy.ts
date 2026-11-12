@@ -208,6 +208,8 @@ export const FLAG_DIAGNOSIS: Readonly<Record<string, FlagDiagnosis | "context-on
   "fold:error": "context-only",
   // The session recorded a weight edit: a fact about the run, not a behaviour.
   "weights:edited": "context-only",
+  // The session recorded the hash of a weights file it saved: a fact about the run too.
+  "weights:checkpoint": "context-only",
   // A refusal can be the correct answer (a safety refusal); harm not observed.
   refusal: { typeIds: ["ins.inappropriate-refusal"], nature: "risk", reach: 0.4 },
   // The call never ran, and the model then works from a result it never got.

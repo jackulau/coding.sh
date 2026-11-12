@@ -160,7 +160,7 @@ export function orderBy(sort: { key: string; desc: boolean } | undefined): strin
  */
 export function facetSource(key: string): { value: string; from: string; prefix?: string; facetKey?: string } {
   const def = KEYS.get(key)!;
-  if (def.multi) return { value: def.multi.prefix ? `substr(j.value, ${def.multi.prefix.length + 1})` : "j.value", from: `sessions s, json_each(s.flags) j`, prefix: def.multi.prefix };
+  if (def.multi) return { value: def.multi.prefix ? `substr(j.value, ${def.multi.prefix.length + 1})` : "j.value", from: `sessions s, json_each(${def.multi.from}) j`, prefix: def.multi.prefix };
   if (def.level === "event") return { value: "f.value", from: "session_facets f JOIN sessions s ON s.id = f.session_id", facetKey: key };
   return { value: def.facet?.sql ?? def.sql[0]!, from: "sessions s" };
 }

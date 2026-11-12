@@ -723,15 +723,21 @@ One more `notification` kind records weight edits. The Python SDK's `coding_sh.w
 | `payload.kind` | Fields |
 |---|---|
 | `weights.edit` | `tensor` (string, the tensor's name), `shape` (array of non-negative integers, at most 16), `changed` (integer, the weights that differ, at most the product of `shape`), `l2` (number >= 0, the L2 norm of edited minus base), `maxAbs` (number >= 0, the largest absolute value of that change), `baseSha256` and `editedSha256` (64 lowercase hex characters, the tensor's hash before and after) and `note` (string, optional) |
+| `weights.checkpoint` | `sha256` (64 hex characters, the SHA-256 of the saved weights file: the value you give to `exp run --weights`), `baseSha256` (optional, the SHA-256 of the file the edits started from) and `note` (string, optional) |
 
 | Field | Meaning |
 |---|---|
-| `stats.weightEdits` (`events`, `tensors`, `weightsChanged`) | Weight edits the session recorded: how many, how many distinct tensor names, and their `changed` counts added up (a weight two edits changed counts twice). Absent when the session recorded none. `tensors` is absent when no edit kept its name |
+| `stats.weightEdits` (`events`, `tensors`, `weightsChanged`, `checkpoints`) | Weight edits the session recorded: how many, how many distinct tensor names, and their `changed` counts added up (a weight two edits changed counts twice). `checkpoints` lists the distinct `sha256` of its `weights.checkpoint` events in the order they arrived, at most 16. Absent when the session recorded no edit and no checkpoint. `tensors` is absent when no edit kept its name, and `checkpoints` when there is none. A session with a checkpoint and no edit has `events: 0` and `weightsChanged: 0` |
 
 - A session with a weight edit gets the `weights:edited` tag. `coding.sh sessions --flag weights:edited` lists them, and `--where 'weights.changed>1000'` filters by size.
+- A session with a checkpoint gets the `weights:checkpoint` tag. `--where 'weights.checkpoint:58899f90572c*'` finds the sessions that recorded a file by its hash or the start of it. A session that holds a checkpoint and nothing else is still listed.
+- A checkpoint is read only when `sha256` is 64 hex characters. It is compared in lowercase, whatever case it arrived in. A `baseSha256` that is not a hash is left out and the checkpoint still counts.
 - `coding.sh show`, the viewer and MCP `session_get` print one line per edit: the tensor and its shape, the weights changed out of the total, both norms and the first 12 characters of each hash.
 - A shape of more than 16 dimensions is not shown, and the total is left out when the count does not fit in the shape. An edit with no readable field still gets a line.
-- Metadata mode: the SDK leaves out `note`. A server with `capture.mode = "metadata"` also drops `tensor`, `shape` and both hashes, and keeps `changed`, `l2` and `maxAbs`.
+- A checkpoint gets one line in the same three places: `checkpoint 58899f90572c ← 0496e5111097`, the first 12 characters of the file's hash and of the base file's. With no base it reads `checkpoint 58899f90572c`.
+- The session's `Weight edits` row names its checkpoints after the counts: `2 edits, 2 tensors, 66,560 weights changed, checkpoint 58899f90572c`.
+- Metadata mode: the SDK leaves out `note`. A server with `capture.mode = "metadata"` also drops an edit's `tensor`, `shape` and both hashes, and keeps `changed`, `l2` and `maxAbs`.
+- In metadata mode a checkpoint keeps `sha256` and `baseSha256`, the values that join it to an experiment, and loses `note`.
 - OpenTelemetry in: a span or log record named `weights.edit`, sent to `/v1/traces` or `/v1/logs`, is read as the same event. Its fields are the attributes below. A malformed one is left out and the edit still counts.
 - OpenTelemetry out: the `otlp` sink sends one `weights.edit` span per edit with the same attributes, as a child of the session's `invoke_agent` span. That span carries `coding_sh.stats.weight_edits` and `coding_sh.stats.weights_changed`.
 - `[serve.forward]` sends the same span for an edit posted to `/v1/ingest`, and passes on a `weights.edit` span posted to `/v1/traces` as it came. An edit that arrived as a log record is not forwarded.

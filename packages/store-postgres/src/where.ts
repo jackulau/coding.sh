@@ -41,11 +41,13 @@ const jnum = (col: string, path: string) => `(CASE WHEN json_typeof(${col}::json
 /** A JSON string at `path` of a JSON text column, else NULL. */
 const jstr = (col: string, path: string) => `(CASE WHEN json_typeof(${col}::json #> '{${path}}') = 'string' THEN ${col}::json #>> '{${path}}' END)`;
 const stat = (path: string) => jnum("s.stats", path);
+/** A JSON array at `path` of a JSON text column, else an empty one. */
+const jarr = (col: string, path: string) => `(CASE WHEN json_typeof(${col}::json #> '{${path}}') = 'array' THEN ${col}::json #> '{${path}}' ELSE '[]'::json END)`;
 /** A repo's name as coding.sh's repoName: the text after the last / or \ (empty after a trailing slash), "tmp" for the macOS temp dir. */
 const base = (x: string) => `(CASE WHEN replace(${x}, chr(92), '/') ~ '/var/folders/.*/T$' THEN 'tmp' ELSE regexp_replace(replace(${x}, chr(92), '/'), '^.*/', '') END)`;
 const tokens = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"].map((k) => `coalesce(${stat(`usage,${k}`)}, 0)`).join(" + ");
 
-/** SQL over `s` (sessions) or `e` (events) per key; a clause matches when any expression does. Flags use `f.v`. */
+/** SQL over `s` (sessions) or `e` (events) per key; a clause matches when any expression does. List-valued keys (flags, weights.checkpoint) use `f.v`, an item of MULTI_FROM. */
 export const KEY_SQL: Record<string, string[]> = {
   agent: ["s.agent"],
   model: ["s.model"],
@@ -64,6 +66,7 @@ export const KEY_SQL: Record<string, string[]> = {
   "hook.tokens": [stat("hookContext,tokens")],
   "weights.edits": [stat("weightEdits,events")],
   "weights.changed": [stat("weightEdits,weightsChanged")],
+  "weights.checkpoint": ["f.v"],
   since: ["s.started_at"],
   until: ["s.started_at"],
   duration: ["(s.ended_at - s.started_at)"],
@@ -133,6 +136,12 @@ export function assertSupported(n: Node): void {
   }
 }
 
+/** The JSON array a list-valued key reads, one row per item: the session's flags, unless the key is named here. */
+const MULTI_FROM: Record<string, string> = {
+  "weights.checkpoint": jarr("s.stats", "weightEdits,checkpoints"),
+};
+const multiFrom = (key: string): string => MULTI_FROM[key] ?? "s.flags::json";
+
 class Compiler {
   private readonly bind: Bind;
   private readonly events: string;
@@ -159,7 +168,7 @@ class Compiler {
     const def = KEYS.get(c.key)!;
     if (def.multi) {
       const any = c.values.map((v) => this.valueSql(def, c, v, "f.v")).join(" OR ");
-      return `EXISTS (SELECT 1 FROM json_array_elements_text(s.flags::json) AS f(v) WHERE ${any})`;
+      return `EXISTS (SELECT 1 FROM json_array_elements_text(${multiFrom(c.key)}) AS f(v) WHERE ${any})`;
     }
     const parts = KEY_SQL[c.key]!.flatMap((expr) => c.values.map((v) => this.valueSql(def, c, v, expr)));
     const sql = parts.length === 1 ? parts[0]! : `(${parts.join(" OR ")})`;
@@ -245,7 +254,7 @@ export function facetSource(key: string, bind: Bind, sessions: string, events: s
   const def = KEYS.get(key);
   if (!def || !KEY_SQL[key]) throw unknown(key);
   if (def.multi) {
-    const from = `${sessions} s CROSS JOIN LATERAL json_array_elements_text(s.flags::json) AS ff(v)`;
+    const from = `${sessions} s CROSS JOIN LATERAL json_array_elements_text(${multiFrom(key)}) AS ff(v)`;
     const p = def.multi.prefix;
     if (!p) return { value: "ff.v", from };
     return { value: `substr(ff.v, ${p.length + 1})`, from, where: `${lowerSql("ff.v")} LIKE ${bind(`${esc(asciiLower(p))}%`)}` };

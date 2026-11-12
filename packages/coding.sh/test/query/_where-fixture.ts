@@ -5,14 +5,18 @@ import type { AgentEvent, Session } from "../../src/schema/index.ts";
 import { event, session, T0 } from "./_seed.ts";
 
 const H = 3_600_000;
+/** Weights files the fixture's sessions recorded as checkpoints: s2 saved CP_A then CP_B, s5 only CP_C (and no edit). */
+export const CP_A = `c0ffee${"a".repeat(58)}`;
+export const CP_B = `beef${"b".repeat(60)}`;
+export const CP_C = `c0ffee${"c".repeat(58)}`;
 export function fixture(): { sessions: Session[]; events: AgentEvent[] } {
   const repo = (root: string, branch?: string) => ({ root, head: "abc", ...(branch ? { branch } : {}) });
   const sessions: Session[] = [
     session("s1", { agent: "codex", model: "gpt-5.1-codex", repo: repo("/work/demo", "main"), cwd: "/work/demo", startedAt: T0, endedAt: T0 + 20 * 60_000, flags: ["no-verification", "skill:pdf"], title: "Fix the Build", stats: { events: 6, turns: 3, toolCalls: 4, toolErrors: 1, filesChanged: 2, testsFailed: 2, usage: { inputTokens: 900_000, outputTokens: 200_000, cacheReadTokens: 50_000, costUsd: 1.25 }, cacheBreaks: { count: 2, lostTokens: 30_000, extraUsd: 0.14, byCause: { idle: { count: 2, lostTokens: 30_000, extraUsd: 0.14 } } } } }),
-    session("s2", { agent: "claude-code", model: "claude-sonnet-4-5", repo: repo("/work/other", "feat/x"), cwd: "/work/other/sub", startedAt: T0 + H, endedAt: T0 + H + 5 * 60_000, flags: ["compaction", "unapproved-action"], title: "write docs", stats: { events: 4, turns: 25, toolCalls: 120, toolErrors: 0, filesChanged: 0, testsPassed: 10, usage: { inputTokens: 1000, outputTokens: 100, costUsd: 0.02 }, unapprovedActions: { count: 2, byKind: { "rm-rf": 1, paid: 1 }, first: { kind: "rm-rf", command: "rm -rf src", at: T0 + H + 60_000, afterError: true } } } }),
+    session("s2", { agent: "claude-code", model: "claude-sonnet-4-5", repo: repo("/work/other", "feat/x"), cwd: "/work/other/sub", startedAt: T0 + H, endedAt: T0 + H + 5 * 60_000, flags: ["compaction", "unapproved-action"], title: "write docs", stats: { events: 4, turns: 25, toolCalls: 120, toolErrors: 0, filesChanged: 0, testsPassed: 10, usage: { inputTokens: 1000, outputTokens: 100, costUsd: 0.02 }, unapprovedActions: { count: 2, byKind: { "rm-rf": 1, paid: 1 }, first: { kind: "rm-rf", command: "rm -rf src", at: T0 + H + 60_000, afterError: true } }, weightEdits: { events: 2, tensors: 2, weightsChanged: 66_560, checkpoints: [CP_A, CP_B] } } }),
     session("s3", { agent: "claude-code", model: "claude-opus-4-1", cwd: "C:\\Users\\me\\proj", startedAt: T0 + 2 * H, flags: [], title: "50% done_now", stats: { events: 3, turns: 1, toolCalls: 1, toolErrors: 0, filesChanged: 0 } }),
     session("s4", { agent: "codex", model: "gpt-5.1-codex", repo: repo("/work/demo", "main"), cwd: "/work/demo", startedAt: T0 + 3 * H, endedAt: T0 + 3 * H + 2 * H, parent: { sessionId: "s1", type: "explorer" }, flags: ["skill:docx", "gateway:vercel"], stats: { events: 2, turns: 1, toolCalls: 2, toolErrors: 2, filesChanged: 0, llmErrors: { count: 1, statusCode: 429 }, usage: { inputTokens: 10, outputTokens: 5 }, cacheBreaks: { count: 1, lostTokens: 5000, byCause: { other: { count: 1, lostTokens: 5000 } }, unpriced: 1 } } }),
-    session("s5", { agent: "gemini", runId: "run_42", cwd: "/work/*", title: "done*now", startedAt: T0 + 4 * H, endedAt: T0 + 4 * H + 30_000, flags: ["repeated-tool-failure"], stats: { events: 1, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0, usage: { inputTokens: 5, outputTokens: 5, costUsd: 0 } } }),
+    session("s5", { agent: "gemini", runId: "run_42", cwd: "/work/*", title: "done*now", startedAt: T0 + 4 * H, endedAt: T0 + 4 * H + 30_000, flags: ["repeated-tool-failure"], stats: { events: 1, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0, usage: { inputTokens: 5, outputTokens: 5, costUsd: 0 }, weightEdits: { events: 0, weightsChanged: 0, checkpoints: [CP_C] } } }),
   ];
   const tool = (sid: string, n: number, kind: "tool.start" | "tool.end", payload: Record<string, unknown>, over: Partial<AgentEvent> = {}) => event(sid, n, { kind, payload, ...over, agent: sessions.find((s) => s.id === sid)!.agent });
   const events: AgentEvent[] = [
@@ -117,6 +121,19 @@ export const QUERIES = [
   "unapproved>0",
   "unapproved>=2",
   "-unapproved>0",
+  "weights.edits>0",
+  "weights.edits:0",
+  "weights.changed>1000",
+  `weights.checkpoint:${CP_A}`,
+  `weights.checkpoint:${CP_B}`,
+  `weights.checkpoint:${CP_A.toUpperCase()}`,
+  "weights.checkpoint:c0ffee*",
+  "weights.checkpoint:C0FFEE*",
+  "weights.checkpoint:beef*",
+  "weights.checkpoint:*cc",
+  `weights.checkpoint:${CP_B},${CP_C}`,
+  "-weights.checkpoint:c0ffee*",
+  "weights.checkpoint:c0ffee* weights.edits>0",
   "files>=1",
   "events<3",
   "run:run_*",

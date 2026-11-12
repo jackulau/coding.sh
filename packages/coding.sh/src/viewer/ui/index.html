@@ -3845,6 +3845,15 @@ function weightsEditText(p) {
 }
 /** Every weights hash is written in 12 hex characters (shortWeights in core/weights.ts). */
 function shortWeights(sha) { return String(sha).slice(0, 12); }
+// One line for a weights.checkpoint payload, "" when it is not one (no kind, or a sha256 that is not
+// 64 hex characters); the same text as weightsCheckpointText in core/weights.ts.
+function weightsCheckpointText(p) {
+  const sha = (v) => { const s = typeof v === "string" ? v.trim().toLowerCase() : ""; return /^[0-9a-f]{64}$/.test(s) ? s : ""; };
+  const file = p.kind === "weights.checkpoint" ? sha(p.sha256) : "";
+  if (!file) return "";
+  const base = sha(p.baseSha256);
+  return "checkpoint " + shortWeights(file) + (base ? " ← " + shortWeights(base) : "");
+}
 function eventView(ev) {
   const p = ev.payload || {};
   switch (ev.kind) {
@@ -3883,6 +3892,9 @@ function eventView(ev) {
         const t = weightsEditText(p);
         return { name: "Edited weights", arg: clip(t, 200), label: "Edited weights" + (t ? " · " + clip(t, 90) : ""), tone: "text", kindText: "weights.edit" };
       }
+      // The hash of the weights file the session saved: what exp run --weights takes.
+      const checkpoint = weightsCheckpointText(p);
+      if (checkpoint) return { name: "Saved weights", arg: checkpoint, label: "Saved weights · " + checkpoint, tone: "text", kindText: "weights.checkpoint" };
       // Claude Code loading a nested CLAUDE.md or a skill mid-session.
       if (p.kind !== "harness.loaded") return { name: KIND_LABEL[ev.kind], arg: "", label: KIND_LABEL[ev.kind], tone: "muted", kindText: ev.kind };
       const names = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === "string") : []);
@@ -5100,7 +5112,8 @@ function sessionHeader(s, labels, rel) {
           : [st.toolCalls ? h("span", { class: "badge" }, plural(st.toolCalls, "tool call")) : null,
             st.toolErrors ? h("span", { class: "badge fail" }, plural(st.toolErrors, "tool error")) : null],
         st.filesChanged ? h("span", { class: "badge" }, plural(st.filesChanged, "file") + " changed") : null,
-        st.weightEdits ? h("span", { class: "badge", title: fmtNum(st.weightEdits.weightsChanged) + " weights changed" + (st.weightEdits.tensors ? " in " + plural(st.weightEdits.tensors, "tensor") : "") }, plural(st.weightEdits.events, "weight edit")) : null,
+        st.weightEdits && st.weightEdits.events ? h("span", { class: "badge", title: fmtNum(st.weightEdits.weightsChanged) + " weights changed" + (st.weightEdits.tensors ? " in " + plural(st.weightEdits.tensors, "tensor") : "") }, plural(st.weightEdits.events, "weight edit")) : null,
+        st.weightEdits && st.weightEdits.checkpoints && st.weightEdits.checkpoints.length ? h("span", { class: "badge", title: "SHA-256 of the weights file this session saved (exp run --weights takes it): " + st.weightEdits.checkpoints.join(", ") }, st.weightEdits.checkpoints.length === 1 ? "checkpoint " + shortWeights(st.weightEdits.checkpoints[0]) : plural(st.weightEdits.checkpoints.length, "checkpoint")) : null,
         st.turns && !api_ ? h("span", { class: "badge" }, plural(st.turns, "turn")) : null,
         kids.length ? h("span", { class: "badge" }, plural(kids.length, "subagent")) : null,
         s.parent && s.parent.type ? h("span", { class: "badge" }, "subagent · " + s.parent.type) : null,
