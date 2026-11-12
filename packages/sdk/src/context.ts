@@ -10,6 +10,7 @@
 //   model call       llm.call (ts = start, durationMs, usage, model) · assistant.message (ts = end)
 //   tool span        tool.start · tool.end
 //   step span        span { name, ok }
+//   notification     notification { kind, … } (weightsEdit: one event, a child of the current span)
 //
 // A model call or tool span outside any trace is its own root (a one-call
 // session), unless withSession() names the session it belongs to.
@@ -29,6 +30,7 @@ export type EventKind =
   | "tool.end"
   | "turn.end"
   | "span"
+  | "notification"
   | "error";
 
 export interface Usage {
@@ -129,7 +131,8 @@ function clean(p: Record<string, unknown>): Record<string, unknown> {
   return p;
 }
 
-function emit(span: SpanState, kind: EventKind, ts: number, payload: Record<string, unknown>, extra: Partial<SdkEvent> = {}): SdkEvent {
+/** Queues one event. True when it was queued. */
+function emit(span: SpanState, kind: EventKind, ts: number, payload: Record<string, unknown>, extra: Partial<SdkEvent> = {}): boolean {
   const e: SdkEvent = {
     v: 0,
     id: extra.id ?? uuid(),
@@ -145,8 +148,7 @@ function emit(span: SpanState, kind: EventKind, ts: number, payload: Record<stri
   if (span.trace.conversation) e.turnId = span.trace.traceId;
   for (const [k, v] of Object.entries(extra)) if (v !== undefined && k !== "id") (e as unknown as Record<string, unknown>)[k] = v;
   if (e.durationMs !== undefined) e.durationMs = Math.max(0, Math.round(e.durationMs * 1000) / 1000);
-  enqueue("event", e);
-  return e;
+  return enqueue("event", e);
 }
 
 // ---------------------------------------------------------------- traces
@@ -406,4 +408,30 @@ function textPayload(s: string): Record<string, unknown> {
   const p: Record<string, unknown> = {};
   text(p, "text", s);
   return p;
+}
+
+// ---------------------------------------------------------------- notifications
+
+/**
+ * Records one `notification` event. Inside a trace or span it is a child of
+ * the current span. Outside one it gets a session of its own, named `name`
+ * (or a turn of the withSession() session). True when the notification itself
+ * was queued.
+ */
+export function recordNotification(name: string, payload: Record<string, unknown>): boolean {
+  const ctx = als.getStore();
+  const parent = ctx?.span;
+  const start = nowMs();
+  if (parent) {
+    const s: SpanState = { trace: parent.trace, spanId: newSpanId(), parentSpanId: parent.spanId, anchorId: uuid() };
+    return emit(s, "notification", start, payload, { parentId: parent.anchorId });
+  }
+  const root = openRoot(ctx?.sessionId);
+  emit(root, "session.start", start, { name, traceId: root.trace.traceId }, { id: root.anchorId });
+  const queued = emit(root, "notification", start, payload);
+  const end = nowMs();
+  const durationMs = end - start;
+  emit(root, "turn.end", end, { ok: true, durationMs }, { durationMs });
+  if (!root.trace.conversation) emit(root, "session.end", end, { reason: "completed" }, { durationMs });
+  return queued;
 }

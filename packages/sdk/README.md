@@ -18,7 +18,8 @@ env vars at a `coding.sh serve` instance (backed by SQLite, or Postgres plus S3)
 shows up as a session with tokens, cost, latency and errors.
 
 - Zero runtime dependencies, ESM with types, Node ≥ 18 (Vercel's Node runtime too; edge is best effort).
-- Never changes your return values, errors or streams, and never throws into your app.
+- Never changes your return values, errors or streams, and never throws into your app. The one exception is
+  `weightsDelta()`, a pure helper you call on purpose: it throws on bad input.
 - Without `CODING_SH_URL` it does nothing at all.
 
 ```sh
@@ -63,6 +64,8 @@ app.post("/chat", async (req, res) => {
 | `span("tool" \| "step", name, fn, {input?})` | A tool call or a named step inside the current trace. |
 | `withSession(id, fn)` | Every trace and untraced call inside `fn` goes to session `id`. |
 | `aiSdkTracer({sessionId?})` | An OpenTelemetry `Tracer` for the Vercel AI SDK (see below). |
+| `weightsEdit({tensor, shape, changed, l2, maxAbs, baseSha256, editedSha256, note?})` | Records one weight edit as a `notification` event with `payload.kind: "weights.edit"`, the same event the Python SDK's `weights_edit()` sends. Returns `true` only when the event was queued. An invalid value drops the event with one warning per process. Inside `trace()` or `span()` it joins that trace; outside it gets a session of its own. |
+| `weightsDelta(base, edited)` | Computes `{shape, changed, l2, maxAbs}` for two nested arrays or typed arrays of the same shape, ready to spread into `weightsEdit()`. Throws a `TypeError` or `RangeError` on bad input. |
 | `init(opts?)` | Optional. The SDK reads env on first use. Options: `url`, `key`, `service`, `capture: "full" \| "metadata"`, `flushIntervalMs` (1000), `maxBatch` (500), `maxQueue` (10000), `disabled`, `debug`, `fetch`. |
 | `flush(timeoutMs?)` / `shutdown(timeoutMs?)` | Send what is queued. `flush` resolves `true` when the queue is drained. `shutdown` also stops the SDK. |
 | `stats()` | `{queued, sent, dropped, failed}`. |

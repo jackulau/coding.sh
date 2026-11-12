@@ -6,7 +6,7 @@ Site version: [coding.sh/docs/sdk](https://coding.sh/docs/sdk).
 
 <!-- Generated from packages/sdk and packages/sdk-python by packages/coding.sh/scripts/sdk-reference.ts. Do not edit by hand. -->
 
-Both SDKs send to a server you run with `coding.sh serve` ([production guide](https://coding.sh/docs/production), [serverless apps](https://coding.sh/docs/deploy)). Without `CODING_SH_URL` they do nothing. They never change return values, errors or stream behavior, and never throw into your app. The SDKs do not price calls; the server does.
+Both SDKs send to a server you run with `coding.sh serve` ([production guide](https://coding.sh/docs/production), [serverless apps](https://coding.sh/docs/deploy)). Without `CODING_SH_URL` they do nothing. They never change return values, errors or stream behavior, and never throw into your app. The one exception is `weightsDelta()` (`coding_sh.weights_delta()` in Python), a pure helper you call on purpose: it throws on bad input. The SDKs do not price calls; the server does.
 
 ## Environment variables
 
@@ -113,6 +113,11 @@ That is AI SDK 7. On AI SDK 6 and older, pass `experimental_telemetry: { isEnabl
 | [`TraceOptions`](#traceoptions) | interface |
 | [`TraceHandle`](#tracehandle) | interface |
 | [`SpanOptions`](#spanoptions) | interface |
+| [`weightsEdit`](#weightseditedit) | function |
+| [`weightsDelta`](#weightsdeltabase-edited) | function |
+| [`WeightsEdit`](#weightsedit) | interface |
+| [`WeightsDelta`](#weightsdelta) | interface |
+| [`WeightsArray`](#weightsarray) | type |
 | [`aiSdkTracer`](#aisdktraceropts) | function |
 | [`AiSdkTracer`](#aisdktracer) | interface |
 | [`AiSdkTracerOptions`](#aisdktraceroptions) | interface |
@@ -228,6 +233,39 @@ function withSession<T>(id: string, fn: () => T): T
 | `id` | `string` | required |
 | `fn` | `() => T` | required |
 
+### `weightsEdit(edit)`
+
+Records one weight edit as a `notification` event with `payload.kind` "weights.edit". The Python SDK's `weights_edit()` sends the same event.
+
+Returns true only when the event was queued. Returns false when a value is invalid, with one warning per process. Returns false without a warning when the SDK is off or shut down or the queue is full. Never throws.
+
+A `note` that is not a string is dropped with one warning; the edit is still recorded. Inside `trace()` or `span()` the edit joins that trace. Outside them it gets a session of its own, or a turn of the `withSession()` session, so group a run of edits inside `trace()`.
+
+```ts
+function weightsEdit(edit: WeightsEdit): boolean
+```
+
+| Parameter | Type | Default |
+|---|---|---|
+| `edit` | [`WeightsEdit`](#weightsedit) | required |
+
+### `weightsDelta(base, edited)`
+
+Computes `{ shape, changed, l2, maxAbs }` for two arrays of the same shape, ready to spread into `weightsEdit()`. The Python SDK's `weights_delta()` gives the same numbers, with `max_abs` for `maxAbs`.
+
+Takes nested arrays of numbers, typed arrays such as `Float32Array`, or arrays of typed arrays, up to 16 levels deep, holding finite numbers. It reads every value twice on the calling thread and copies nothing.
+
+A pure helper you call on purpose, unlike the never-throw `weightsEdit()`: it throws on bad input. A `TypeError` for an argument that is not an array or a value that is not a number (null and BigInt included). A `RangeError` for a shape mismatch, ragged or too deep nesting, NaN or Infinity.
+
+```ts
+function weightsDelta(base: WeightsArray, edited: WeightsArray): WeightsDelta
+```
+
+| Parameter | Type | Default |
+|---|---|---|
+| `base` | [`WeightsArray`](#weightsarray) | required |
+| `edited` | [`WeightsArray`](#weightsarray) | required |
+
 ### `aiSdkTracer(opts?)`
 
 An OpenTelemetry Tracer-shaped object that sends AI SDK spans to coding.sh.
@@ -323,6 +361,62 @@ interface SpanOptions {
 | Field | Type | Description |
 |---|---|---|
 | `input` | `unknown` | Tool arguments (tool spans) or step input. |
+
+### `WeightsEdit`
+
+One weight edit, as `weightsEdit()` records it.
+
+```ts
+interface WeightsEdit {
+  tensor: string;
+  shape: readonly number[];
+  changed: number;
+  l2: number;
+  maxAbs: number;
+  baseSha256: string;
+  editedSha256: string;
+  note?: string;
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `tensor` | `string` | The tensor's name. |
+| `shape` | `readonly number[]` | Its dimensions: at most 16 non-negative integers. |
+| `changed` | `number` | How many weights differ: an integer from 0 to the product of `shape`. |
+| `l2` | `number` | L2 norm of the change (edited minus base): a finite number >= 0. |
+| `maxAbs` | `number` | Largest absolute value of the change: a finite number >= 0. |
+| `baseSha256` | `string` | sha256 of the tensor before the edit: 64 hex characters, sent in lowercase. |
+| `editedSha256` | `string` | sha256 of the tensor after the edit: 64 hex characters, sent in lowercase. |
+| `note` | `string` | Free text, kept only in full capture mode. |
+
+### `WeightsDelta`
+
+What `weightsDelta()` returns. It spreads into `weightsEdit()`.
+
+```ts
+interface WeightsDelta {
+  shape: number[];
+  changed: number;
+  l2: number;
+  maxAbs: number;
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `shape` | `number[]` | Dimensions of both arrays. |
+| `changed` | `number` | How many values differ. |
+| `l2` | `number` | L2 norm of edited minus base. |
+| `maxAbs` | `number` | Largest absolute value of edited minus base. |
+
+### `WeightsArray`
+
+What `weightsDelta()` reads: nested arrays of numbers, typed arrays such as `Float32Array`, or arrays of typed arrays.
+
+```ts
+type WeightsArray = readonly number[] | (ArrayBufferView & ArrayLike<number>) | readonly WeightsArray[];
+```
 
 ### `AiSdkTracer`
 
@@ -705,3 +799,6 @@ A constant: `"gen_ai.conversation.id"`.
 - TypeScript times are in milliseconds (`timeoutMs`, `flushIntervalMs`). Python timeouts are in seconds; only `flush_interval_ms` is in milliseconds.
 - In TypeScript, `trace()`, `span()` and `withSession()` take the function to run. In Python, they are context managers and decorators.
 - `aiSdkTracer()` and `observeFetch()` are TypeScript only. `coding_sh.otel` is Python only.
+- `weightsEdit()` takes one object in TypeScript; `weights_edit()` takes arguments in Python. Both record the same event. `weightsDelta()` returns `maxAbs` where `weights_delta()` returns `max_abs`, and throws a `TypeError` or `RangeError` where Python raises `ValueError`.
+- A weight count or dimension must be an integer below 2^53 in TypeScript; Python takes any integer. Python also takes numpy scalars as numbers, and `weights_delta()` reads anything with `.tolist()`; in TypeScript `weightsDelta()` reads arrays and typed arrays.
+- A long tensor name or note is cut. TypeScript cuts at 64 KiB of UTF-8 and sets `payload.truncated`; Python cuts at 65,536 characters and appends `…[truncated]`.
