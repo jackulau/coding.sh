@@ -1013,6 +1013,42 @@ the same, like the byte count of a fixed build, has no noise: a non-zero delta i
 `--json` prints the whole result, runs included. `--fail-on-worse` exits 1 when any metric got
 worse, for CI gates. scripts/perf/ uses it to gate the coding.sh site on Lighthouse metrics.
 
+### An edit's size and gain
+
+To weigh a model edit by what it cost, make each arm one edit, and have its command print how
+many weights the edit changed and what it gained:
+
+```json
+{"edited_weights": 1023, "gain_pp": 29.45, "gain_per_weight": 0.0288}
+```
+
+- `edited_weights`: the number of weights the edit changed. Lower is better, which is the default.
+- `gain_pp`: the gain over the unedited base, in percentage points.
+- `gain_per_weight`: `gain_pp` divided by `edited_weights`.
+
+Your command computes the three numbers. coding.sh treats them like any other metric: it pairs
+the runs and compares them. Name the two gain keys in `--higher`. Without it every metric is
+lower-is-better, and the edit with the larger gain reads as `worse`:
+
+```sh
+coding.sh exp metrics --arm small='python3 edit_report.py small' \
+  --arm wide='python3 edit_report.py wide' --higher 'gain_*'
+```
+
+```
+metric             small     wide                    Δ  95% CI  p (adj)  verdict
+-----------------  -----  -------  -------------------  ------  -------  -------
+edited_weights      1023   294912  +293889 (+28728.2%)  fixed         —  worse
+gain_per_weight ↑  0.029  0.00011      -0.029 (-99.6%)  fixed         —  worse
+gain_pp ↑           29.4     31.2         +1.8 (+5.9%)  fixed         —  better
+```
+
+`↑` marks a metric where higher is better. Here the wide edit changes more weights, gains 1.8
+points more, and gains far less per weight. None of the three names ends in `_ms` or `_bytes`, so
+they print as plain numbers, and a value below 0.0005 keeps two significant digits (`0.00011`)
+and does not print as `0.000`. A command that prints the same numbers on every run has no noise:
+the CI column reads `fixed`, and a non-zero delta is a change.
+
 ## Scores
 
 A score is one typed value on a session, an event, a dataset case or an eval run: a number, true

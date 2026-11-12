@@ -269,6 +269,49 @@ describe("coding.sh exp metrics", () => {
     assert.match(aa.stdout, /0 better · 0 worse · 2 same · 0 inconclusive/);
   });
 
+  it("an arm that reports an edit's size and gain: three rows, and the gain keys read higher-is-better only with --higher", () => {
+    // Prints the keys the guide names for a model edit: how many weights it changed, the points it
+    // gained, and the gain per weight. argv: <edited weights> <gain in points>.
+    writeFileSync(
+      join(root, "edit.mjs"),
+      `process.stdin.resume().on("end", () => {
+        const [n, gain] = process.argv.slice(2).map(Number);
+        console.log(JSON.stringify({ edited_weights: n, gain_pp: gain, gain_per_weight: gain / n }));
+      });`,
+    );
+    const args = ["exp", "metrics", "--arm", "small=node edit.mjs 1023 29.45", "--arm", "wide=node edit.mjs 294912 31.2", "--pairs", "3", "--seed", "1"];
+    type Row = { name: string; better: string; verdict: string };
+    const rows = (extra: string[]) => {
+      const r = cli([...args, ...extra, "--json"]);
+      assert.equal(r.status, 0, r.stderr);
+      return (JSON.parse(r.stdout) as { experiment: { metrics: Row[] } }).experiment.metrics.map((m) => [m.name, m.better, m.verdict]);
+    };
+    // The wide edit changes more weights (worse: lower is better), gains more points, and gains less per weight.
+    const named = rows(["--higher", "gain_pp,gain_per_weight"]);
+    assert.deepEqual(named, [
+      ["edited_weights", "lower", "worse"],
+      ["gain_per_weight", "higher", "worse"],
+      ["gain_pp", "higher", "better"],
+    ]);
+    assert.deepEqual(rows(["--higher", "gain_*"]), named, "the * wildcard names both gain keys");
+    // Without --higher every key is lower-is-better, so both gains read backwards.
+    assert.deepEqual(rows([]), [
+      ["edited_weights", "lower", "worse"],
+      ["gain_per_weight", "lower", "better"],
+      ["gain_pp", "lower", "worse"],
+    ]);
+    const text = cli([...args, "--higher", "gain_*"]);
+    assert.equal(text.status, 0, text.stderr);
+    // metric, A, B, delta, then CI, p and verdict.
+    const row = (name: string) => text.stdout.split("\n").find((l) => l.startsWith(name))!.split(/\s{2,}/);
+    assert.deepEqual(row("edited_weights").slice(0, 4), ["edited_weights", "1023", "294912", "+293889 (+28728.2%)"]);
+    assert.deepEqual(row("gain_pp").slice(0, 4), ["gain_pp ↑", "29.4", "31.2", "+1.8 (+5.9%)"]);
+    // 31.2 / 294912 is 0.000106: it prints with its digits, not as 0.000.
+    assert.deepEqual(row("gain_per_weight").slice(0, 4), ["gain_per_weight ↑", "0.029", "0.00011", "-0.029 (-99.6%)"]);
+    for (const name of ["edited_weights", "gain_pp", "gain_per_weight"]) assert.equal(row(name)[4], "fixed", "the same number every run has no noise");
+    assert.deepEqual(["edited_weights", "gain_pp", "gain_per_weight"].map((n) => row(n).at(-1)), ["worse", "better", "worse"]);
+  });
+
   it("usage errors exit 2 and a broken arm exits 1 with the next step", () => {
     const one = cli(["exp", "metrics", "--arm", "a=node bench.mjs"]);
     assert.equal(one.status, 2);
