@@ -173,6 +173,10 @@ mode = "metadata"
 On a team, set `CODING_SH_FORWARD_URL=http://collector:4319` on serve instead, and it forwards
 every trace it commits.
 
+Point a sink or the forward at a collector, not back at the coding.sh server whose sessions it
+sends. Spans that come back over `/v1/traces` are stored as new events of the same session, so
+its tool calls, model calls and weight edits are counted twice.
+
 #### The span table
 
 What lands in `otel_traces`, with `ServiceName = 'coding.sh'`:
