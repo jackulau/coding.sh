@@ -72,6 +72,8 @@ export const KEY_SQL: Record<string, string[]> = {
   skill: ["f"],
   hook: ["f"],
   "hook.tokens": [stat("hookContext.tokens")],
+  "weights.edits": [stat("weightEdits.events")],
+  "weights.changed": [stat("weightEdits.weightsChanged")],
   since: ["started_at"],
   until: ["started_at"],
   duration: ["(ended_at - started_at)"],
