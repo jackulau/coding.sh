@@ -39,7 +39,7 @@ import {
 import { sessionDigest } from "./digest.ts";
 import { facetCounts, searchWhere } from "../query/run.ts";
 import { andQuery, FACET_KEYS, parseWhere, QueryError, QueryUnsupported, type Query } from "../query/where.ts";
-import { fitTexts, pageRange, pageStep } from "./replay-page.ts";
+import { fitAnswer, pageRange, pageStep } from "./replay-page.ts";
 import { toolText, ToolError, type ToolDef } from "./protocol.ts";
 import { scoreTools } from "../scores/mcp.ts";
 
@@ -509,7 +509,7 @@ function toolDefs(): ToolDef<ToolCtx>[] {
         }
         if (a.fork !== undefined) {
           if (step === undefined) throw new ToolError("fork needs a step.");
-          return fitTexts({ ...(await forkTool(ctx, c.env, s, replay, step, a.fork)) }, REPLAY_TEXT_LIMIT);
+          return fitAnswer({ ...(await forkTool(ctx, c.env, s, replay, step, a.fork)) }, REPLAY_TEXT_LIMIT);
         }
         const file = strArg(a, "file");
         if (step !== undefined) {
@@ -518,8 +518,11 @@ function toolDefs(): ToolDef<ToolCtx>[] {
         }
         if (file) throw new ToolError("file needs a step.");
         const index = replay.index();
-        const more = (n: number) => offset + n < Math.max(total, index.files.length);
-        return fitPage(limit, (n) => ({ ...index, steps: index.steps.slice(offset, offset + n), files: index.files.slice(offset, offset + n), total, filesTotal: index.files.length, ...(more(n) ? { nextCursor: String(offset + n) } : {}) }));
+        return fitPage(limit, (n) => {
+          const page: Obj = { ...index, steps: structuredClone(index.steps.slice(offset, offset + n)), files: index.files.slice(offset, offset + n), total, filesTotal: index.files.length };
+          if (offset + n < Math.max(total, index.files.length)) page.nextCursor = String(offset + n);
+          return fitAnswer(page, REPLAY_TEXT_LIMIT, ["steps", "files"]);
+        });
       },
     },
     {

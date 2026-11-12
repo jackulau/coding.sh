@@ -18,8 +18,8 @@ let c: RawClient;
 
 type Sc = Record<string, any>;
 
-async function call(args: Record<string, unknown>): Promise<{ sc: Sc; len: number }> {
-  const r = await c.call("session_replay", { sessionId: ID, ...args });
+async function call(args: Record<string, unknown>, sessionId = ID): Promise<{ sc: Sc; len: number }> {
+  const r = await c.call("session_replay", { sessionId, ...args });
   assert.notEqual(r.isError, true, r.content[0]?.text.slice(0, 300));
   return { sc: r.structuredContent as Sc, len: r.content[0]!.text.length };
 }
@@ -62,6 +62,32 @@ before(async () => {
   evs.push({ ...base, id: "f-end", ts: t0 + 20 * FILES, kind: "session.end", payload: {} });
   await ctx.index.putEvents(evs);
   await ctx.index.upsertSession(buildSession(evs));
+  // More shapes: a small diff, a MultiEdit of 60 edits, an apply_patch that adds 500 files, and a 20 KB
+  // file followed by tool steps whose output grows, so that some step is near the limit.
+  const put = async (sid: string, agent: string, calls: { tool: string; input: Record<string, unknown>; output?: string }[]) => {
+    const b = { ...base, sessionId: sid, agent };
+    const list: AgentEvent[] = [{ ...b, id: `${sid}-0`, ts: t0, kind: "session.start", payload: {} }, { ...b, id: `${sid}-1`, ts: t0 + 1, kind: "user.message", payload: { text: "go" } }];
+    calls.forEach((x, i) => {
+      list.push({ ...b, id: `${sid}-s${i}`, ts: t0 + 10 + i * 2, kind: "tool.start", payload: { tool: x.tool, toolUseId: `u${i}`, input: x.input } });
+      list.push({ ...b, id: `${sid}-e${i}`, ts: t0 + 11 + i * 2, kind: "tool.end", payload: { tool: x.tool, toolUseId: `u${i}`, ok: true, output: x.output } });
+    });
+    list.push({ ...b, id: `${sid}-end`, ts: t0 + 1000, kind: "session.end", payload: {} });
+    await ctx.index.putEvents(list);
+    await ctx.index.upsertSession(buildSession(list));
+  };
+  const body = Array.from({ length: 150 }, (_, l) => `export const v${l} = ${l * 7919};`).join("\n") + "\n";
+  await put("rv-small", "claude-code", [
+    { tool: "Write", input: { file_path: "src/a.ts", content: "short\n" } },
+    { tool: "Edit", input: { file_path: "src/a.ts", old_string: "short\n", new_string: body.slice(0, 1900) } },
+  ]);
+  const edits = Array.from({ length: 60 }, (_, i) => ({ old_string: `old${i} `.padEnd(500, "o"), new_string: `new${i} `.padEnd(500, "n") }));
+  await put("rv-multi", "claude-code", [{ tool: "MultiEdit", input: { file_path: "src/b.ts", edits } }]);
+  const patch = "*** Begin Patch\n" + Array.from({ length: 500 }, (_, i) => `*** Add File: src/generated/models/entity-${String(i).padStart(4, "0")}.generated.ts\n+export const x = ${i};\n`).join("") + "*** End Patch\n";
+  await put("rv-patch", "codex", [{ tool: "apply_patch", input: { input: patch }, output: "Done" }]);
+  await put("rv-grow", "claude-code", [
+    { tool: "Write", input: { file_path: "src/d.ts", content: "x".repeat(20000) } },
+    ...Array.from({ length: 40 }, (_, k) => ({ tool: "Grep", input: { pattern: "x" }, output: "y".repeat(7700 + k * 20) })),
+  ]);
   await ctx.close();
   c = new RawClient(w.env, w.repo);
   await c.initialize();
@@ -115,3 +141,69 @@ describe("session_replay under the 25,000-character limit", () => {
     assert.equal(one.sc.nextCursor, "1");
   });
 });
+
+describe("session_replay cuts only what does not fit", () => {
+  it("cuts many small strings in one step (a MultiEdit of 60 edits), whatever the limit", async () => {
+    for (const limit of [undefined, 1]) {
+      const { sc, len } = await call({ step: 2, limit }, "rv-multi");
+      assert.ok(len <= CHARACTER_LIMIT, `limit ${String(limit)}: ${len} characters`);
+      assert.equal(sc.truncated, true);
+      assert.match(sc.note, /cut/);
+      assert.equal(sc.detail.inputTruncated, true, "the cut input is flagged on detail");
+      assert.equal(sc.detail.input.editsTotal, undefined, "nothing is written inside the recorded input");
+      assert.equal(sc.detail.input.editsTruncated, undefined);
+      assert.ok(sc.detail.input.edits.length >= 1 && sc.detail.input.edits.length < 60);
+    }
+  });
+
+  it("caps a step's own file list, in the step and in the step list", async () => {
+    for (const limit of [undefined, 1]) {
+      const { sc, len } = await call({ step: 2, limit }, "rv-patch");
+      assert.ok(len <= CHARACTER_LIMIT, `step, limit ${String(limit)}: ${len} characters`);
+      assert.equal(sc.step.filesTruncated, true);
+      assert.equal(sc.step.filesTotal, 500);
+      assert.ok(sc.step.files.length < 500);
+    }
+    const list = await call({}, "rv-patch");
+    assert.ok(list.len <= CHARACTER_LIMIT, `step list: ${list.len} characters`);
+    const row = (list.sc.steps as { files?: unknown[]; filesTotal?: number }[]).find((x) => x.filesTotal === 500);
+    assert.ok(row && row.files!.length < 500, "a step's file list in the step list is capped, with its total");
+    const pages = await pages_({ sessionId: "rv-patch" });
+    assert.ok(pages.every((p) => p.len <= CHARACTER_LIMIT));
+  });
+
+  it("stays under the limit, note included, for a step whose content and output are near it", async () => {
+    let cut = 0;
+    for (let k = 0; k < 40; k++) {
+      const { sc, len } = await call({ step: 3 + k, file: "src/d.ts" }, "rv-grow");
+      assert.ok(len <= CHARACTER_LIMIT, `step ${3 + k}: ${len} characters`);
+      if (sc.truncated) {
+        cut++;
+        assert.match(sc.note, /cut/);
+      } else assert.equal(sc.note, undefined, "no note when this answer cut nothing");
+    }
+    assert.ok(cut > 0, "some step needed a cut");
+  });
+
+  it("does not cut a small diff at the default limit, nor add a note", async () => {
+    const { sc } = await call({ step: 3 }, "rv-small");
+    assert.equal(sc.changes[0].diff.length > 1900, true, `the whole diff (${sc.changes[0].diff.length})`);
+    assert.equal(sc.changes[0].diffTruncated, undefined);
+    assert.equal(sc.truncated, undefined);
+    assert.equal(sc.note, undefined);
+    const range = await call({ from: 3, to: 3 }, "rv-small");
+    assert.equal(range.sc.files[0].diffTruncated, undefined);
+  });
+});
+
+async function pages_(args: { sessionId: string }): Promise<{ len: number }[]> {
+  const out: { len: number }[] = [];
+  let cursor: string | undefined;
+  for (let i = 0; i < 50; i++) {
+    const r = await call(cursor ? { cursor } : {}, args.sessionId);
+    out.push({ len: r.len });
+    cursor = r.sc.nextCursor;
+    if (!cursor) break;
+  }
+  return out;
+}

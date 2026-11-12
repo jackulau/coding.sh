@@ -75,11 +75,18 @@ function world() {
     }
     return undefined;
   };
+  /** Waits for the signal that a tool is running: it has registered its gate. */
+  const started = async () => {
+    for (let i = 0; i < 1000 && !gates.length; i++) await tick();
+    assert.ok(gates.length, "the tool started");
+  };
+  /** Two turns of the event loop: input written so far has been read. */
+  const settle = () => new Promise<void>((r) => setImmediate(() => setImmediate(r)));
   const release = async () => {
     for (let i = 0; i < 1000 && !gates.length; i++) await tick();
     gates.shift()!();
   };
-  return { server, send, out, batches, reply, tick, release, close: async () => (input.end(), done) };
+  return { server, send, out, batches, reply, tick, started, settle, release, close: async () => (input.end(), done) };
 }
 
 describe("caching hints (2026-07-28)", () => {
@@ -128,9 +135,9 @@ describe("cancellation (notifications/cancelled)", () => {
   it("a request cancelled while it runs gets no reply", async () => {
     const w = world();
     w.send({ jsonrpc: "2.0", id: "a", method: "tools/call", params: { name: "slow" } });
-    await w.tick();
+    await w.started();
     w.send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: "a" } });
-    await w.tick();
+    await w.settle();
     await w.release();
     w.send({ jsonrpc: "2.0", id: "b", method: "ping" });
     assert.ok(await w.reply("b"));

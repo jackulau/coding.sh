@@ -1845,7 +1845,7 @@
     {
       "rule": "conditional-empty-spread",
       "path": "packages/coding.sh/src/mcp/tools.ts",
-      "max": 68,
+      "max": 67,
       "reason": "baseline 2026-11-09: existing code, do not add more"
     },
     {

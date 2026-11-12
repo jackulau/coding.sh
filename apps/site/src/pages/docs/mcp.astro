@@ -114,14 +114,22 @@ const gemini = `// ~/.gemini/settings.json
     score replaces the one stored for the same target, name, source and person.
   </p>
   <p>
-    A tool answer stays under 25,000 characters. A tool that pages (it has a <code>cursor</code> argument) returns
-    <code>nextCursor</code>, which starts at the first row left out. The others return fewer rows when the answer would be longer, with a
-    <code>limitUsed</code> field. Rows are dropped, not cut.
+    A tool answer stays under 25,000 characters. When the rows asked for would be longer, the answer has fewer rows and a
+    <code>limitUsed</code> field. A tool with a <code>cursor</code> argument also returns <code>nextCursor</code>, which starts at the
+    first row left out. Rows are dropped, not cut.
   </p>
   <p>
     <code>session_replay</code> pages the files of a step, of a range and of the step list with <code>limit</code> and
-    <code>cursor</code>. It cuts the text of a diff, a file or a tool output that does not fit, and says so with
-    <code>truncated: true</code> and the field's own flag. <code>limit: 1</code> gives one file's diff up to 16 KB.
+    <code>cursor</code>. <code>limit: 1</code> gives one file's diff up to 16 KB.
+  </p>
+  <p>
+    It cuts only when an answer would still be too long. A list that is not paged (a step's own files, the edits in a tool input)
+    keeps its first items, and the longest text is cut to a common length.
+  </p>
+  <p>
+    The answer then has <code>truncated: true</code>, a <code>note</code>, and a flag such as <code>diffTruncated</code> or
+    <code>filesTruncated</code> (with <code>filesTotal</code>) on what was cut. A cut inside a tool input is flagged on
+    <code>detail</code> as <code>inputTruncated</code>.
   </p>
 
   <h2 id="protocol">Protocol</h2>
@@ -132,9 +140,16 @@ const gemini = `// ~/.gemini/settings.json
   </p>
   <p>
     In 2026-07-28, list and read results carry <code>ttlMs</code> and <code>cacheScope</code>: the tool, prompt and template lists
-    are <code>public</code> for an hour, and resources are <code>private</code> and stale at once. A request cancelled with
-    <code>notifications/cancelled</code> gets no reply. Requests run one at a time, so a cancelled request that has not started
-    never runs.
+    are <code>public</code> for an hour, <code>server/discover</code> for 5 minutes (<code>ttlMs</code> 300000, because its
+    instructions carry an update notice), and resources are <code>private</code> and stale at once.
+  </p>
+  <p>
+    A request cancelled with <code>notifications/cancelled</code> gets no reply, except <code>initialize</code>, which can't be
+    cancelled. Requests run one at a time, so a cancelled request that has not started never runs.
+  </p>
+  <p>
+    A message with a null <code>id</code> whose method starts with <code>notifications/</code> is a notification and gets no
+    reply. Any other request with a null <code>id</code> gets an invalid-request error.
   </p>
 
   <h2 id="prompts">Prompts and resources</h2>

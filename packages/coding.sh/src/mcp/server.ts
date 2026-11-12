@@ -44,7 +44,7 @@ const BASE_INSTRUCTIONS = [
   "To build evals for the user, call eval_init (a suite in evals/<name>/ from failed sessions, a skill's trigger prompts, or cases you write), then tell them its run command.",
   "eval_from_session, eval_init, score_add and exp_session_note write; ask the user before calling eval_from_session or eval_init with confirm: true.",
   'A result with pending: {files, indexing} was answered before every capture was indexed: it covers what is indexed so far; call again shortly for the rest.',
-  "Answers stay under 25,000 characters. A tool that pages returns nextCursor for the rest; the others return fewer rows, with limitUsed.",
+  "Answers stay under 25,000 characters. A page that would be longer has fewer rows and limitUsed; a tool with a cursor argument also returns nextCursor for the rest.",
 ].join(" ");
 
 /** Server instructions, with a one-line notice when the update checker found a newer release. */
