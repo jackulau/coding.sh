@@ -39,7 +39,7 @@ import {
 import { sessionDigest } from "./digest.ts";
 import { facetCounts, searchWhere } from "../query/run.ts";
 import { andQuery, FACET_KEYS, parseWhere, QueryError, QueryUnsupported, type Query } from "../query/where.ts";
-import { ToolError, type ToolDef } from "./protocol.ts";
+import { toolText, ToolError, type ToolDef } from "./protocol.ts";
 import { scoreTools } from "../scores/mcp.ts";
 
 type Obj = Record<string, unknown>;
@@ -130,6 +130,42 @@ function treeNodeJson(n: TreeNode, top = false): Obj {
 }
 
 // ------------------------------------------------------------ helpers
+
+/** The longest answer a tool sends, in characters of its text (mcp-builder's CHARACTER_LIMIT). */
+export const CHARACTER_LIMIT = 25_000;
+
+/**
+ * The page `render(limit)` makes, with fewer rows while its text is over CHARACTER_LIMIT. Rows are
+ * dropped, never cut, so a cursor of offset + n still points at the first row left out. A shortened
+ * page carries `limitUsed`. When no smaller limit makes it shorter (the size is not in the rows, or
+ * one row is that long), the shortest page comes back whole.
+ */
+export async function fitPage(limit: number, render: (n: number) => Obj | Promise<Obj>): Promise<Obj> {
+  let page = await render(limit);
+  let len = toolText(page).length;
+  let used: number | undefined;
+  // n can start above the rows left (the last page), so a try that is no shorter only halves n.
+  for (let n = limit; len > CHARACTER_LIMIT && n > 1; ) {
+    n = Math.max(1, Math.min(Math.floor(n / 2), Math.floor((n * CHARACTER_LIMIT * 0.9) / len)));
+    const smaller = await render(n);
+    const smallerLen = toolText(smaller).length;
+    if (smallerLen < len) [page, len, used] = [smaller, smallerLen, n];
+  }
+  return used === undefined ? page : { ...page, limitUsed: used };
+}
+
+/** A read-only tool with a `limit` argument, run again with a smaller limit when its answer is too long. */
+function withCharacterLimit(t: ToolDef<ToolCtx>): ToolDef<ToolCtx> {
+  const limit = (t.inputSchema.properties as Record<string, { default?: unknown }> | undefined)?.limit;
+  if (!limit || t.annotations.readOnlyHint !== true || t.annotations.idempotentHint !== true) return t;
+  return {
+    ...t,
+    run(a, c) {
+      const asked = typeof a.limit === "number" ? a.limit : typeof limit.default === "number" ? limit.default : undefined;
+      return asked === undefined ? t.run(a, c) : fitPage(asked, (n) => t.run(n === asked ? a : { ...a, limit: n }, c));
+    },
+  };
+}
 
 const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 
@@ -300,6 +336,10 @@ function lastSpoolError(file: string): Obj | undefined {
 // ------------------------------------------------------------ tools
 
 export function buildTools(): ToolDef<ToolCtx>[] {
+  return toolDefs().map(withCharacterLimit);
+}
+
+function toolDefs(): ToolDef<ToolCtx>[] {
   return [
     {
       name: "sessions_list",
@@ -428,7 +468,8 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         const ctx = await c.store();
         const s = await resolveSession(ctx, strArg(a, "sessionId")!);
         const redactor = createRedactor({ redact: ctx.config.capture.redact, patterns: ctx.config.capture.redactPatterns, env: ctx.env });
-        const replay = await loadReplay(ctx, s, { baseline: snapshotBaseline(s, ctx.env, redactor), maxContentBytes: 64 * 1024, maxDiffBytes: 64 * 1024 });
+        // 16 KB of a file and of each diff keeps a step's view near CHARACTER_LIMIT; contentTruncated and diffTruncated say when they were cut.
+        const replay = await loadReplay(ctx, s, { baseline: snapshotBaseline(s, ctx.env, redactor), maxContentBytes: 16 * 1024, maxDiffBytes: 16 * 1024 });
         const total = replay.steps.length;
         const stepArg = (k: string): number | undefined => {
           const v = a[k];
@@ -453,8 +494,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         const index = replay.index();
         const offset = cursorArg(a);
         const limit = numArg(a, "limit", 100);
-        const page = index.steps.slice(offset, offset + limit);
-        return { ...index, steps: page, total, ...(offset + limit < total ? { nextCursor: String(offset + limit) } : {}) };
+        return fitPage(limit, (n) => ({ ...index, steps: index.steps.slice(offset, offset + n), total, ...(offset + n < total ? { nextCursor: String(offset + n) } : {}) }));
       },
     },
     {
@@ -898,7 +938,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         const ranked = await rankSessions(ctx.index, pool, { now });
         const eligible = ranked.filter((x) => x.eligible);
         const limit = numArg(a, "limit", 10);
-        const shown = [...eligible.slice(0, limit), ...(a.includeRejected === true ? ranked.filter((x) => !x.eligible) : [])];
+        const shown = [...eligible.slice(0, limit), ...(a.includeRejected === true ? ranked.filter((x) => !x.eligible).slice(0, limit) : [])];
         return {
           candidates: shown.map((x) => ({ ...x, title: clip(x.title, 100), startedAt: new Date(x.startedAt).toISOString() })),
           considered: ranked.length,

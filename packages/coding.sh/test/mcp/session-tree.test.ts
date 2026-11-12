@@ -10,6 +10,7 @@ import { openContext } from "../../src/core/context.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import { pageTree, type TreeNode } from "../../src/core/tree.ts";
 import { createCodingShMcp, type CodingShMcp } from "../../src/mcp/server.ts";
+import { CHARACTER_LIMIT } from "../../src/mcp/tools.ts";
 import type { AgentEvent, Session } from "../../src/schema/index.ts";
 import { schemaViolations } from "../../src/toolevals/jsonschema.ts";
 import { PKG, cleanup, makeWorld, type World } from "./helpers.ts";
@@ -58,14 +59,14 @@ let w: World;
 let mcp: CodingShMcp;
 let outputSchema: Record<string, unknown>;
 
-async function tree(args: Record<string, unknown>): Promise<{ page: Page; bytes: number }> {
+async function tree(args: Record<string, unknown>): Promise<{ page: Page; bytes: number; chars: number }> {
   const r = await mcp.server.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "session_tree", arguments: args } });
   const res = r!.result as { structuredContent: Page; isError?: boolean; content: { text: string }[] };
   assert.notEqual(res.isError, true, res.content?.[0]?.text);
   const page = JSON.parse(JSON.stringify(res.structuredContent)) as Page;
   assert.deepEqual(schemaViolations(page, outputSchema), [], "session_tree output matches its outputSchema");
   // What the agent reads: the whole tool result, text and structured content.
-  return { page, bytes: Buffer.byteLength(JSON.stringify(r!.result)) };
+  return { page, bytes: Buffer.byteLength(JSON.stringify(r!.result)), chars: res.content[0]!.text.length };
 }
 
 before(async () => {
@@ -114,15 +115,17 @@ describe("session_tree on a run with 800 subagents", () => {
     let cursor: string | undefined;
     let calls = 0;
     do {
-      const { page } = await tree(cursor ? { sessionId: ROOT, limit: 200, cursor } : { sessionId: ROOT, limit: 200 });
+      const { page, chars } = await tree(cursor ? { sessionId: ROOT, limit: 200, cursor } : { sessionId: ROOT, limit: 200 });
       calls++;
+      assert.ok(chars <= CHARACTER_LIMIT, `page ${calls} is ${chars} characters`);
       assert.equal(page.totals.sessions, NODES);
       if (cursor) for (const top of page.tree) assert.deepEqual({ parent: top.parentSessionId, depth: top.depth }, { parent: ROOT, depth: 1 });
       seen.push(...flat(page.tree).map((x) => x.sessionId!));
       cursor = page.nextCursor;
       assert.equal(page.truncated, cursor ? true : undefined);
-    } while (cursor && calls < 10);
-    assert.equal(calls, 5, "802 nodes at 200 a page");
+    } while (cursor && calls < 50);
+    // 200 nodes are over the 25,000-character limit, so each page holds fewer.
+    assert.ok(calls > 5, `802 nodes in ${calls} pages`);
     assert.equal(seen.length, NODES);
     assert.equal(new Set(seen).size, NODES, "no node twice");
     assert.deepEqual(seen.slice(0, 3), [ROOT, child(0), GRAND], "depth-first, as coding.sh tree prints it");
