@@ -35,6 +35,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Site.** The changelog and quickstart pages no longer shift on a phone while loading: release area chips sit in a fixed grid and the quickstart tab list is laid out from first paint. Layout shift fell from 0.052 to 0 and from 0.023 to 0. [Site speed](https://github.com/jackulau/coding.sh/blob/main/docs/perf.md#font-swap-and-image-sizes)
 - **Stores.** A `file:///C:/...` blob URL and a `sqlite://user:password@/path` index URL open the path they name on Windows, and the user and password are no longer read as a folder. See [stores](https://github.com/jackulau/coding.sh/blob/main/docs/reference/stores.md).
 - **Capture.** Model calls no longer show impossible speeds such as 3750 tok/s. A hook reading a transcript from mid-response, or late Codex lines, gave a call a start time inside the response; such a call now has no duration, time to first token or speed. A Claude Code call gets them back when the import reads the whole transcript. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#known-breakage-to-design-around)
 - **Tests.** The viewer's browser tests no longer hang when Chrome drops its DevTools connection: a waiting call fails at once, and any call fails after 30 s. The helper lets go of Chrome's pipe after closing it, and the CI runner ends each test file once its tests finish, so an open handle cannot hold a Windows job. [Contributing](https://github.com/jackulau/coding.sh/blob/main/CONTRIBUTING.md)
