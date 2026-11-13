@@ -426,7 +426,15 @@ function toolDefs(): ToolDef<ToolCtx>[] {
         const ctx = await c.store();
         const s = await resolveSession(ctx, strArg(a, "sessionId")!);
         try {
-          return await sessionDigest(ctx.index, s, { turn: typeof a.turn === "number" ? a.turn : undefined, limit: numArg(a, "limit", 40), offset: cursorArg(a), from: a.tail === true ? "tail" : "head", now: c.now() });
+          const digest = await sessionDigest(ctx.index, s, { turn: typeof a.turn === "number" ? a.turn : undefined, limit: numArg(a, "limit", 40), offset: cursorArg(a), from: a.tail === true ? "tail" : "head", now: c.now() });
+          // The experiments that ran each weights file the session recorded as a checkpoint, as `coding.sh show --json` has them.
+          const hashes = s.stats.weightEdits?.checkpoints;
+          if (hashes?.length) {
+            const [{ FileEvalStore }, { checkpointRuns }] = await Promise.all([import("../datasets/store.ts"), import("../experiments/checkpoints.ts")]);
+            const runs = await checkpointRuns(new FileEvalStore({ env: c.env, index: ctx.index }), hashes);
+            if (runs.length) digest.checkpointExperiments = runs;
+          }
+          return digest;
         } catch (e) {
           if (e instanceof RangeError) throw new ToolError(e.message);
           throw e;

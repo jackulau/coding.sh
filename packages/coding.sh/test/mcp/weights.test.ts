@@ -98,6 +98,15 @@ describe("weight edits over MCP", () => {
     assert.equal(d.timelineTotal, 4, "an edit with no readable field keeps its line");
   });
 
+  it("session_get names the experiments that ran the session's checkpoint, as coding.sh show --json does", async () => {
+    const r = await c.call("session_get", { sessionId: SID });
+    const d = r.structuredContent as { checkpointExperiments?: unknown };
+    // The file the session saved, not the one it started from: wt-base ran that one.
+    assert.deepEqual(d.checkpointExperiments, [{ sha256: FILE, experiments: [{ id: ids["wt-edited"], name: "wt-edited" }] }]);
+    const plain = await c.call("session_get", { sessionId: "sess-a" });
+    assert.equal(Object.hasOwn(plain.structuredContent!, "checkpointExperiments"), false, "absent on a session with no checkpoint");
+  });
+
   it("the session resource has the weight edits row and both lines", async () => {
     const r = await c.request("resources/read", { uri: `codingsh://session/${SID}` });
     const text = (r.result!.contents as { text: string }[])[0]!.text;

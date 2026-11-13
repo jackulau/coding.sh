@@ -113,3 +113,19 @@ export async function checkpointExperiments(store: { listExperiments(filter: { l
   }
   return out;
 }
+
+/** A checkpoint of a session, with the experiments that ran it. */
+export interface CheckpointRun {
+  sha256: string;
+  experiments: CheckpointExperiment[];
+}
+
+/**
+ * Each checkpoint of a session that an experiment ran, in the order the session recorded them, with those
+ * experiments (newest first). `hashes` is Session.stats.weightEdits.checkpoints. What `coding.sh show`
+ * and MCP session_get print as `checkpointExperiments`.
+ */
+export async function checkpointRuns(store: Parameters<typeof checkpointExperiments>[0], hashes: readonly string[] | undefined): Promise<CheckpointRun[]> {
+  const by = await checkpointExperiments(store, hashes);
+  return (hashes ?? []).flatMap((sha256) => (by.has(sha256) ? [{ sha256, experiments: by.get(sha256)! }] : []));
+}

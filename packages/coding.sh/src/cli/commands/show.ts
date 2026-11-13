@@ -13,7 +13,7 @@ import { SKILL_EVENT_KINDS, SKILL_TAG_PREFIX, skillUse, type SkillUseReport } fr
 import { pageTree, subagentsOf, type TreeNode } from "../../core/tree.ts";
 import { checkpointRunsText, weightsEventText, weightsSummaryText } from "../../core/weights.ts";
 import type { AgentEvent, Session } from "../../core/types.ts";
-import type { CheckpointExperiment } from "../../experiments/checkpoints.ts";
+import type { CheckpointRun } from "../../experiments/checkpoints.ts";
 import type { DurableStats } from "../../schema/index.ts";
 import { positiveInt } from "../args.ts";
 import { CallRefError, loadCall, resolveCall } from "../../proxy/calls.ts";
@@ -342,13 +342,12 @@ export interface SnapshotChanges {
  * Each checkpoint of the session that an experiment ran, in the order the session recorded them, with those
  * experiments (newest first). Empty for a session with no checkpoint, which reads no experiment.
  */
-async function checkpointRuns(index: IndexStore, s: Session, env: NodeJS.ProcessEnv): Promise<{ sha256: string; experiments: CheckpointExperiment[] }[]> {
+async function ranIn(index: IndexStore, s: Session, env: NodeJS.ProcessEnv): Promise<CheckpointRun[]> {
   const hashes = s.stats.weightEdits?.checkpoints;
   if (!hashes?.length) return [];
   // Loaded here, so showing a session with no checkpoint loads no experiment code.
-  const [{ FileEvalStore }, { checkpointExperiments }] = await Promise.all([import("../../datasets/store.ts"), import("../../experiments/checkpoints.ts")]);
-  const by = await checkpointExperiments(new FileEvalStore({ env, index }), hashes);
-  return hashes.flatMap((sha256) => (by.has(sha256) ? [{ sha256, experiments: by.get(sha256)! }] : []));
+  const [{ FileEvalStore }, { checkpointRuns }] = await Promise.all([import("../../datasets/store.ts"), import("../../experiments/checkpoints.ts")]);
+  return checkpointRuns(new FileEvalStore({ env, index }), hashes);
 }
 
 /**
@@ -433,7 +432,7 @@ export async function run(c: CommandContext): Promise<number> {
     const filesChanged = Math.max(s.stats.filesChanged, changed.size);
     const skills = await sessionSkills(ctx.index, s);
     // The experiments that ran each weights file the session recorded as a checkpoint (exp run --weights with the same hash).
-    const ranIn = await checkpointRuns(ctx.index, s, c.env);
+    const runs = await ranIn(ctx.index, s, c.env);
     if (out.json) {
       // A phased session answers with its phases, as the text does; --all or --limit lists the events.
       const listed = phased ? [] : ((all ? full : events) ?? []);
@@ -451,7 +450,7 @@ export async function run(c: CommandContext): Promise<number> {
       // The count alone does not say where the rest are.
       if (subagents.next !== undefined) Object.assign(doc, { subagentsTruncated: true, subagentsRest: `coding.sh tree ${s.id} --json` });
       doc.skills = skills?.used ?? [];
-      if (ranIn.length) doc.checkpointExperiments = ranIn;
+      if (runs.length) doc.checkpointExperiments = runs;
       Object.assign(doc, pendingField(backlog));
       out.data(fields ? pickFields(doc, fields) : doc);
       return 0;
@@ -498,7 +497,7 @@ export async function run(c: CommandContext): Promise<number> {
     const hooks = hookContextRow(s);
     if (hooks) rows.push(hooks);
     if (s.stats.weightEdits) rows.push(["Weight edits", weightsSummaryText(s.stats.weightEdits)]);
-    for (const x of ranIn) rows.push(["Experiments", oneLine(clean(checkpointRunsText(x.sha256, x.experiments)), 140)]);
+    for (const x of runs) rows.push(["Experiments", oneLine(clean(checkpointRunsText(x.sha256, x.experiments)), 140)]);
     if (skills?.used.length) rows.push(["Skills", skillsText(skills)]);
     if (derails.length) rows.push(["Derails", derails.slice(0, 4).map((d) => `${d.flag} at +${duration(Math.max(0, d.ts - s.startedAt))}`).join(", ") + (derails.length > 4 ? ` +${derails.length - 4} more` : "")]);
     for (const [k, v] of rows) out.print(`  ${k.padEnd(14)}${v}`);
