@@ -35,4 +35,10 @@ async def double(x: int) -> int:
     return x * 2
 
 
+def record_weights(file_sha256: str, base_sha256: Optional[str]) -> bool:
+    edited: bool = coding_sh.weights_edit("w", shape=[2, 3], changed=1, l2=0.5, max_abs=0.5, base_sha256="a" * 64, edited_sha256="b" * 64)
+    saved: bool = coding_sh.weights_checkpoint(file_sha256, base_sha256=base_sha256, note="after the edit")
+    return edited and saved
+
+
 n: int = decorated(1)

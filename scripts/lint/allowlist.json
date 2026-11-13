@@ -1011,7 +1011,7 @@
     {
       "rule": "conditional-empty-spread",
       "path": "packages/coding.sh/src/cli/commands/exp.ts",
-      "max": 67,
+      "max": 66,
       "reason": "baseline 2026-11-09: existing code, do not add more"
     },
     {

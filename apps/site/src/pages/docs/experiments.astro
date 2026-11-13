@@ -94,6 +94,41 @@ coding.sh exp plateau --series triage-loop`;
 
 const metricsCmd = `coding.sh exp metrics --arm base='node bench.mjs --dir a' --arm cand='node bench.mjs --dir b'`;
 
+// The weights outputs are real too: a six-question toy task whose base model is cut off on every
+// other answer, with the edits recorded by the Python SDK, under a throwaway HOME and
+// CODING_SH_HOME, 2026-11-12.
+const weightsPy = `import coding_sh
+
+with coding_sh.trace("stop-looping edit"):
+    for name, base, edited in patches:
+        coding_sh.weights_edit(name, base_sha256=sha256_tensor(base), edited_sha256=sha256_tensor(edited),
+                               **coding_sh.weights_delta(base, edited))
+    save(model, "edited.safetensors")
+    coding_sh.weights_checkpoint(sha256_file("edited.safetensors"),
+                                 base_sha256=sha256_file("base.safetensors"))
+coding_sh.flush()`;
+
+const weightsCmd = `coding.sh exp run -d math --task base.json -g terminated.json -g correct.json --name base \\
+  --weights 6a78961da782b2795fa5bb6f0968f79c75799fbf1919aba8798c965001caf221
+coding.sh exp run -d math --task edited.json -g terminated.json -g correct.json --name edited \\
+  --weights 6e4c46150bc5c8ef6f1223e3880c5415795233187be390daf290a1ee6cd72e5b
+coding.sh exp compare base edited`;
+
+const weightsOut = `A base exp_01M793B934C7G6QEAP1DFBA810  pass 50.0%  weights 6a78961da782
+B edited exp_01M793B998T36PYVGCE527YKMT  pass 100.0%  weights 6e4c46150bc5
+  edits    74a74605-6002-4ae3-b53c-8aa065ba6ede  2 edits, 2 tensors, 3 weights changed
+…`;
+
+const weightsShowCmd = `coding.sh sessions --where 'weights.checkpoint:6e4c46150bc5*'
+coding.sh show 74a74605-6002-4ae3-b53c-8aa065ba6ede`;
+
+const weightsShowOut = `  Weight edits  2 edits, 2 tensors, 3 weights changed, checkpoint 6e4c46150bc5
+  Experiments   6e4c46150bc5 ran in edited (exp_01M793B998T36PYVGCE527YKMT)
+
+    +0ms  weights     layers.0.weight [2×2] · 1 of 4 weights · L2 0.5 · max 0.5 · 2927a02adf33 → ecfbe5382ed5
+    +0ms  weights     layers.1.weight [1×3] · 2 of 3 weights · L2 1.414 · max 1 · d0a1c13caf23 → dca6036fedd3
+    +0ms  weights     checkpoint 6e4c46150bc5 ← 6a78961da782`;
+
 const replayCmd = `coding.sh exp replay latest#-1 --vary model=claude-haiku-4-5 --dry-run
 coding.sh exp replay latest#-1 --vary model=claude-sonnet-4-5,claude-haiku-4-5 --n 5`;
 ---
@@ -308,6 +343,32 @@ coding.sh exp replay latest#-1 --vary model=claude-sonnet-4-5,claude-haiku-4-5 -
       </tbody>
     </table>
   </div>
+
+  <h2 id="weights">Compare an edited model with its base</h2>
+  <p>
+    When the change is an edit to a model's weights, record it from the script that makes it. <code>weights_edit()</code> records each
+    tensor the script changes, and <code>weights_checkpoint()</code> the file it saves, by SHA-256. You compute the hashes; coding.sh
+    hashes nothing.
+  </p>
+  <Code title="edit.py" code={weightsPy} />
+  <p>
+    <code>patches</code>, <code>sha256_tensor</code>, <code>sha256_file</code> and <code>save</code> stand for your own code. The
+    TypeScript SDK has <code>weightsEdit()</code> and <code>weightsCheckpoint()</code>, and an OpenTelemetry span named
+    <code>weights.checkpoint</code> records the same event. Then give each run the hash of the weights file its task ran:
+  </p>
+  <Code code={weightsCmd} />
+  <Code title="output" code={weightsOut} />
+  <p>
+    The <code>edits</code> line names the session that saved B's file, with what it changed. The comparison warns when both sides ran the
+    same weights, or only one recorded them. The session names the experiments that ran its file:
+  </p>
+  <Code code={weightsShowCmd} />
+  <Code title="output" code={weightsShowOut} />
+  <p>
+    The MCP tools carry the same session ids and experiments. The viewer links the session from the weights stamp on the experiment and
+    compare pages, and links each experiment from the session's header. See
+    <a href="/docs/concepts#weights-checkpoint">Weights checkpoint</a> for where each field appears.
+  </p>
 
   <h2 id="exp-replay">Replay one model call</h2>
   <p>

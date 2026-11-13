@@ -1,11 +1,13 @@
-// weightsEdit: one `notification` event with payload.kind "weights.edit" (docs/reference/api.md).
+// weightsEdit: one `notification` event with payload.kind "weights.edit", and weightsCheckpoint:
+// one with payload.kind "weights.checkpoint" (docs/reference/api.md).
 //
 // These mirror packages/sdk-python/tests/test_weights.py case for case. Most read the batch the
 // SDK posts to a fake ingest endpoint. The parity tests check those batches against
 // test/fixtures/weights-edit.json, which the Python SDK's tests check too. The last test starts a
-// real `coding.sh serve` on a temp CODING_SH_HOME and reads the event back, redacted.
+// real `coding.sh serve` on a temp CODING_SH_HOME and reads the events back, redacted.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,7 +15,7 @@ import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { after, afterEach, before, beforeEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { flush, init, shutdown, span, stats, trace, weightsDelta, weightsEdit, withSession, type WeightsArray, type WeightsEdit } from "../src/index.ts";
+import { flush, init, shutdown, span, stats, trace, weightsCheckpoint, weightsDelta, weightsEdit, withSession, type WeightsArray, type WeightsCheckpoint, type WeightsEdit } from "../src/index.ts";
 import { _reset } from "../src/client.ts";
 import { MAX_TEXT_BYTES } from "../src/util.ts";
 import { type FakeServe, startFakeServe } from "./helpers/fake-serve.ts";
@@ -41,13 +43,15 @@ interface Wire {
 interface Fixture {
   edit: WeightsEdit;
   payload: Record<string, unknown>;
+  checkpoint: WeightsCheckpoint;
+  checkpointPayload: Record<string, unknown>;
   volatilePayloadKeys: string[];
   ignoredEventKeys: string[];
   scenarios: Record<string, { sessionId: string | null; parent: string | null; events: { kind: string; keys: string[]; payload?: Record<string, unknown> }[] }>;
   delta: { base: WeightsArray; edited: WeightsArray; result: unknown };
 }
 
-// What both SDKs must send for the same edit. A missing fixture fails every test in this file.
+// What both SDKs must send for the same edit and the same checkpoint. A missing fixture fails every test in this file.
 const fx = JSON.parse(readFileSync(join(here, "fixtures", "weights-edit.json"), "utf8")) as Fixture;
 
 let serve: FakeServe;
@@ -312,6 +316,159 @@ test("server down never throws", async () => {
   });
 });
 
+// ---------------------------------------------------------------- weightsCheckpoint
+
+// SHA-256 of a whole weights file and of the file it was edited from, as a script would compute them.
+const FILE = `58899f90572c${"0".repeat(52)}`;
+const FILE_BASE = `0496e5111097${"f".repeat(52)}`;
+const checkpoint = (over: Record<string, unknown> = {}): boolean => weightsCheckpoint({ sha256: FILE, baseSha256: FILE_BASE, ...over } as WeightsCheckpoint);
+
+test("checkpoint: one notification with the payload", async () => {
+  assert.equal(checkpoint({ note: "after layer 3" }), true);
+  const events = await posted();
+  assert.deepEqual(one(byKind(events, "notification")).payload, { kind: "weights.checkpoint", sha256: FILE, baseSha256: FILE_BASE, note: "after layer 3" });
+  assert.equal(one(byKind(events, "session.start")).payload.name, "weights.checkpoint", "a session of its own, named after the event");
+  assert.equal(one(serve.events().filter((e) => e.kind === "notification" && e.sessionId === events[0]!.sessionId)).source, "sdk");
+});
+
+test("checkpoint: the hash alone is enough, and a missing base is left out", async () => {
+  assert.equal(weightsCheckpoint({ sha256: FILE }), true);
+  for (const baseSha256 of [undefined, null]) assert.equal(checkpoint({ baseSha256 }), true);
+  for (const n of byKind(await posted(), "notification")) assert.deepEqual(n.payload, { kind: "weights.checkpoint", sha256: FILE });
+});
+
+test("checkpoint: joins the trace that recorded the edits", async () => {
+  trace(
+    "edit-run",
+    () => {
+      edit();
+      edit({ tensor: "lm_head.weight" });
+      checkpoint();
+    },
+    { sessionId: "conv-1" },
+  );
+  const events = await posted();
+  assert.deepEqual(byKind(events, "notification").map((n) => [n.sessionId, n.payload.kind]), [["conv-1", "weights.edit"], ["conv-1", "weights.edit"], ["conv-1", "weights.checkpoint"]]);
+  assert.equal(byKind(events, "session.start").length, 1);
+});
+
+test("checkpoint: metadata mode drops the note only", async () => {
+  start({ capture: "metadata" });
+  checkpoint({ note: "free text" });
+  assert.deepEqual(one(byKind(await posted(), "notification")).payload, { kind: "weights.checkpoint", sha256: FILE, baseSha256: FILE_BASE });
+});
+
+test("checkpoint: invalid values are dropped, not thrown", async () => {
+  const bad: Record<string, unknown>[] = [
+    { sha256: "abc" },
+    { sha256: "g".repeat(64) },
+    { sha256: FILE + "\n" }, // a trailing newline is not 64 hex characters
+    { sha256: `sha256:${FILE}` },
+    { sha256: undefined },
+    { sha256: null },
+    { sha256: 5 },
+    { baseSha256: "abc" },
+    { baseSha256: FILE.slice(1) },
+    { baseSha256: 5 },
+    { baseSha256: "" },
+  ];
+  const warns = await warnings(() => {
+    for (const over of bad) assert.equal(checkpoint(over), false, JSON.stringify(over));
+    // A call from plain JavaScript can pass anything.
+    const untyped = weightsCheckpoint as (checkpoint: unknown) => boolean;
+    for (const arg of [undefined, null, FILE, 5, {}]) assert.equal(untyped(arg), false, String(arg));
+  });
+  assert.equal(warns.length, 1);
+  assert.match(warns[0]!, /^\[coding\.sh\] weightsCheckpoint dropped an event: sha256 must be 64 hex characters$/);
+  assert.deepEqual(byKind(await posted(), "notification"), []);
+});
+
+test("checkpoint: uppercase sha is lowercased", async () => {
+  assert.equal(checkpoint({ sha256: FILE.toUpperCase(), baseSha256: FILE_BASE.toUpperCase() }), true);
+  const p = one(byKind(await posted(), "notification")).payload;
+  assert.deepEqual([p.sha256, p.baseSha256], [FILE, FILE_BASE]);
+});
+
+test("checkpoint: returns false when disabled, without a URL, after shutdown and when the queue is full", async () => {
+  _reset();
+  init({ url: serve.url, disabled: true });
+  assert.deepEqual(await warnings(() => assert.equal(checkpoint(), false)), [], "a valid checkpoint is silent when disabled");
+  const invalid = await warnings(() => assert.equal(checkpoint({ sha256: "abc" }), false));
+  assert.equal(invalid.length, 1, "an invalid one still warns, as in Python");
+  _reset();
+  init({ url: "" });
+  assert.equal(checkpoint(), false);
+  start();
+  assert.equal(checkpoint(), true);
+  await shutdown(2000);
+  assert.deepEqual(await warnings(() => assert.equal(checkpoint(), false)), [], "no warning: nothing is wrong with the checkpoint");
+  start({ maxQueue: 1, flushIntervalMs: 60_000 });
+  // The trace's session.start takes the one slot.
+  await warnings(() => trace("full", () => assert.equal(checkpoint(), false)));
+  assert.equal(stats().queued, 1);
+});
+
+test("checkpoint: warns once per process, apart from weightsEdit's warning", async () => {
+  const warns = await warnings(() => {
+    checkpoint({ sha256: "abc" });
+    checkpoint({ baseSha256: "abc" });
+    init({ url: serve.url, flushIntervalMs: 5 }); // a second init() is the same process
+    checkpoint({ sha256: 5 });
+    edit({ changed: -1 });
+  });
+  assert.equal(warns.filter((w) => w.includes("weightsCheckpoint dropped")).length, 1);
+  assert.equal(warns.filter((w) => w.includes("weightsEdit dropped")).length, 1);
+});
+
+test("checkpoint: a note that is not a string is dropped with a warning, an empty one without", async () => {
+  const warns = await warnings(() => {
+    assert.equal(checkpoint({ note: 5 }), true);
+    assert.equal(checkpoint({ note: { text: "x" } }), true);
+    for (const note of ["", null, undefined]) assert.equal(checkpoint({ note }), true);
+  });
+  assert.equal(warns.length, 1);
+  assert.match(warns[0]!, /weightsCheckpoint ignored a note that is not a string/);
+  const notes = byKind(await posted(), "notification");
+  assert.equal(notes.length, 5);
+  for (const n of notes) assert.deepEqual(n.payload, { kind: "weights.checkpoint", sha256: FILE, baseSha256: FILE_BASE });
+});
+
+test("checkpoint: a long note is cut like every other SDK string", async () => {
+  assert.equal(checkpoint({ note: "x".repeat(MAX_TEXT_BYTES + 10) }), true);
+  const p = one(byKind(await posted(), "notification")).payload;
+  assert.equal((p.note as string).length, MAX_TEXT_BYTES);
+  assert.equal(p.truncated, true);
+});
+
+test("checkpoint: inside withSession, inside a span, and after an await", async () => {
+  withSession("run-7", () => void checkpoint());
+  assert.deepEqual(byKind(await posted(), "notification").map((n) => n.sessionId), ["run-7"]);
+  start();
+  trace("run", () => span("tool", "save", () => void checkpoint()));
+  let events = await posted();
+  assert.equal(one(byKind(events, "notification")).parentId, one(byKind(events, "tool.start")).id);
+  start();
+  await trace("run", async () => {
+    await new Promise((r) => setTimeout(r, 1));
+    checkpoint();
+  });
+  events = await posted();
+  assert.equal(one(byKind(events, "notification")).parentId, one(byKind(events, "session.start")).id);
+});
+
+test("checkpoint: server down never throws", async () => {
+  const dead = await startFakeServe();
+  const url = dead.url;
+  await dead.close();
+  _reset();
+  init({ url, flushIntervalMs: 5 });
+  await warnings(async () => {
+    assert.equal(checkpoint(), true, "queued; delivery fails in the background");
+    assert.equal(await flush(200), false);
+    await shutdown(200);
+  });
+});
+
 // ---------------------------------------------------------------- weightsDelta
 
 test("weightsDelta", () => {
@@ -375,27 +532,35 @@ test("weightsDelta feeds weightsEdit", async () => {
 
 // ---------------------------------------------------------------- parity with the Python SDK
 
-type Run = (edit: () => void, sessionId: string | null) => void;
+type Run = (record: () => void, sessionId: string | null) => void;
 
 // One entry per scenario in the fixture; test_weights.py has the same list. The functions return
 // nothing, so no span records an output the Python `with` block would not have.
 const SCENARIOS: Record<string, Run> = {
-  alone: (edit) => edit(),
-  withSession: (edit, sid) => withSession(sid!, edit),
-  trace: (edit) => trace("run", edit),
-  traceWithSessionId: (edit, sid) => trace("run", edit, { sessionId: sid! }),
-  toolSpan: (edit) => trace("run", () => span("tool", "patch", edit)),
-  stepSpan: (edit) => trace("run", () => span("step", "patch", edit)),
+  alone: (record) => record(),
+  withSession: (record, sid) => withSession(sid!, record),
+  trace: (record) => trace("run", record),
+  traceWithSessionId: (record, sid) => trace("run", record, { sessionId: sid! }),
+  toolSpan: (record) => trace("run", () => span("tool", "patch", record)),
+  stepSpan: (record) => trace("run", () => span("step", "patch", record)),
 };
+
+// Each scenario runs once per helper: what is recorded, and the payload the fixture says it sends.
+const RECORDS: [string, () => boolean, Record<string, unknown>][] = [
+  ["weightsEdit", () => weightsEdit(fx.edit), fx.payload],
+  ["weightsCheckpoint", () => weightsCheckpoint(fx.checkpoint), fx.checkpointPayload],
+];
+/** A fixture payload with "<kind>" filled in: a session the helper opens by itself is named after the event. */
+const named = (payload: Record<string, unknown> | undefined, kind: unknown) => (payload?.name === "<kind>" ? { ...payload, name: kind } : payload);
 
 test("every scenario in the fixture runs here", () => {
   assert.deepEqual(Object.keys(SCENARIOS).sort(), Object.keys(fx.scenarios).sort());
 });
 
-for (const [name, sc] of Object.entries(fx.scenarios)) {
-  test(`the same events as the Python SDK: ${name}`, async () => {
+for (const [name, sc] of Object.entries(fx.scenarios)) for (const [helper, record, payload] of RECORDS) {
+  test(`the same events as the Python SDK: ${helper} ${name}`, async () => {
     let queued = false;
-    SCENARIOS[name]!(() => void (queued = weightsEdit(fx.edit)), sc.sessionId);
+    SCENARIOS[name]!(() => void (queued = record()), sc.sessionId);
     assert.equal(queued, true);
     const events = await posted();
     const got = events.map((e) => ({
@@ -403,9 +568,9 @@ for (const [name, sc] of Object.entries(fx.scenarios)) {
       keys: Object.keys(e).filter((k) => !fx.ignoredEventKeys.includes(k)).sort(),
       payload: Object.fromEntries(Object.entries(e.payload).map(([k, v]) => [k, fx.volatilePayloadKeys.includes(k) ? "<volatile>" : v])),
     }));
-    assert.deepEqual(got, sc.events.map((e) => (e.kind === "notification" ? { ...e, payload: fx.payload } : e)));
+    assert.deepEqual(got, sc.events.map((e) => (e.kind === "notification" ? { ...e, payload } : e.payload ? { ...e, payload: named(e.payload, payload.kind) } : e)));
 
-    // One trace, one session, and the edit hangs off the event the fixture names.
+    // One trace, one session, and the event hangs off the event the fixture names.
     const first = events[0]!;
     const note = one(byKind(events, "notification"));
     assert.deepEqual([...new Set(events.map((e) => e.traceId))], [first.traceId]);
@@ -431,7 +596,7 @@ const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
 // The same condition as WeightsEditServerTest in test_weights.py.
 const serveOk = existsSync(CLI) && (major > 22 || (major === 22 && minor >= 15));
 
-test("round trip through a real coding.sh serve: the event comes back with the secret redacted", { skip: serveOk ? false : "needs node >= 22.15 and the core package" }, async () => {
+test("round trip through a real coding.sh serve: the events come back with the secret redacted and the hashes whole", { skip: serveOk ? false : "needs node >= 22.15 and the core package" }, async () => {
   const root = mkdtempSync(join(tmpdir(), "csh-sdk-weights-"));
   const ingest = "csh_ik_" + "w".repeat(43);
   const read = "csh_rk_" + "r".repeat(43);
@@ -468,7 +633,13 @@ test("round trip through a real coding.sh serve: the event comes back with the s
     assert.match(url, /^http:\/\//, `serve did not start: ${stderr || url}`);
     _reset();
     init({ url, key: ingest, service: "weights-test", flushIntervalMs: 5 });
-    assert.equal(weightsEdit({ tensor: `blocks.0.${FAKE_TOKEN}`, shape: [2, 3], changed: 2, l2: 0.5, maxAbs: 0.4, baseSha256: A, editedSha256: B, note: `deploy with ${FAKE_TOKEN}` }), true);
+    // Hashes of real bytes: the server's redactor must leave a SHA-256 alone, or the join on it breaks.
+    const file = createHash("sha256").update("edited weights file").digest("hex");
+    const fileBase = createHash("sha256").update("base weights file").digest("hex");
+    trace("edit-run", () => {
+      assert.equal(weightsEdit({ tensor: `blocks.0.${FAKE_TOKEN}`, shape: [2, 3], changed: 2, l2: 0.5, maxAbs: 0.4, baseSha256: A, editedSha256: B, note: `deploy with ${FAKE_TOKEN}` }), true);
+      assert.equal(weightsCheckpoint({ sha256: file.toUpperCase(), baseSha256: fileBase, note: `saved with ${FAKE_TOKEN}` }), true);
+    });
     assert.equal(await flush(5000), true);
     assert.equal(stats().failed, 0);
 
@@ -479,10 +650,19 @@ test("round trip through a real coding.sh serve: the event comes back with the s
       assert.equal(res.status, 200);
       const body = (await res.json()) as { items?: typeof items } | typeof items;
       items = Array.isArray(body) ? body : (body.items ?? []);
-      if (items.some((i) => i.kind === "notification") || Date.now() > until) break;
+      if (items.filter((i) => i.kind === "notification").length >= 2 || Date.now() > until) break;
       await new Promise((r) => setTimeout(r, 100));
     }
-    const e = one(items.filter((i) => i.kind === "notification"));
+    const saved = one(items.filter((i) => i.payload.kind === "weights.checkpoint"));
+    const { redactions: _counts, ...kept } = saved.payload;
+    assert.deepEqual(kept, { kind: "weights.checkpoint", sha256: file, baseSha256: fileBase, note: "saved with [redacted:github-token]" });
+    assert.ok(!JSON.stringify(saved).includes(FAKE_TOKEN));
+    // The session the two events share is found by the file's hash, with the edit it recorded.
+    const found = await fetch(`${url}/api/sessions?where=${encodeURIComponent(`weights.checkpoint:${file}`)}`, { headers: { authorization: `Bearer ${read}` } });
+    assert.equal(found.status, 200);
+    const listed = (await found.json()) as { items?: { stats: { weightEdits?: unknown } }[] } | { stats: { weightEdits?: unknown } }[];
+    assert.deepEqual((Array.isArray(listed) ? listed : (listed.items ?? [])).map((s) => s.stats.weightEdits), [{ events: 1, tensors: 1, weightsChanged: 2, checkpoints: [file] }]);
+    const e = one(items.filter((i) => i.payload.kind === "weights.edit"));
     const p = e.payload;
     assert.equal(p.kind, "weights.edit");
     assert.deepEqual([p.shape, p.changed, p.l2, p.maxAbs], [[2, 3], 2, 0.5, 0.4]);

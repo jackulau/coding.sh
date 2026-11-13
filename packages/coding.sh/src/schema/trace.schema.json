@@ -931,7 +931,7 @@
               "$ref": "#/$defs/HookContextStats"
             },
             "weightEdits": {
-              "description": "Weight edits the session recorded; it also tags the session `weights:edited`. Unset when it recorded none.",
+              "description": "Weight edits and checkpoints the session recorded; they also tag the session `weights:edited` and `weights:checkpoint`. Unset when it recorded neither.",
               "$ref": "#/$defs/WeightEditStats"
             },
             "memoryUse": {
@@ -1308,11 +1308,11 @@
       "additionalProperties": false
     },
     "WeightEditStats": {
-      "description": "Session.stats.weightEdits: weight edits the session recorded (`notification`\nevents with `payload.kind: \"weights.edit\"`).",
+      "description": "Session.stats.weightEdits: weight edits the session recorded (`notification`\nevents with `payload.kind: \"weights.edit\"`), and the checkpoints it recorded\n(`payload.kind: \"weights.checkpoint\"`).",
       "type": "object",
       "properties": {
         "events": {
-          "description": "Edits recorded.",
+          "description": "Edits recorded. 0 for a session that recorded a checkpoint and no edit.",
           "type": "number"
         },
         "tensors": {
@@ -1322,6 +1322,13 @@
         "weightsChanged": {
           "description": "The edits' `changed` counts added up: a weight two edits changed counts twice.",
           "type": "number"
+        },
+        "checkpoints": {
+          "description": "SHA-256 of each weights file the session recorded as a checkpoint: distinct, in\narrival order, at most 16. The value `coding.sh exp run --weights` takes. Unset when\nthe session recorded no checkpoint.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [

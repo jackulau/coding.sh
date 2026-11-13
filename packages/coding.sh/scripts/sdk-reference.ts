@@ -665,9 +665,13 @@ function renderTsExport(e: TsExport, anchors: Map<string, string>, options: Map<
   return out;
 }
 
+/** The parameters a caller passes. A bare `*` is not one: it only makes the ones after it keyword-only, and the declaration shows it. */
+export const pyNamed = (a: PyApi): PyParam[] => a.params.filter((p) => p.name !== "*");
+
 function pyHeading(prefix: string, a: PyApi): string {
   if (a.kind !== "function") return `\`${prefix}${a.name}\``;
-  const args = [...a.params.filter((p) => p.dflt === undefined).map((p) => p.name), ...(a.params.some((p) => p.dflt !== undefined) ? ["..."] : [])];
+  const params = pyNamed(a);
+  const args = [...params.filter((p) => p.dflt === undefined).map((p) => p.name), ...(params.some((p) => p.dflt !== undefined) ? ["..."] : [])];
   return `\`${prefix}${a.name}(${args.join(", ")})\``;
 }
 
@@ -689,7 +693,7 @@ function renderPy(prefix: string, a: PyApi, options?: Map<string, OptionInfo>): 
       }
     } else {
       out.push("| Parameter | Type | Default |", "|---|---|---|");
-      for (const p of a.params) out.push(`| \`${p.name}\` | ${p.type ? cell(code(p.type)) : ""} | ${p.dflt !== undefined ? cell(code(p.dflt)) : "required"} |`);
+      for (const p of pyNamed(a)) out.push(`| \`${p.name}\` | ${p.type ? cell(code(p.type)) : ""} | ${p.dflt !== undefined ? cell(code(p.dflt)) : "required"} |`);
     }
     out.push("");
   }
@@ -789,7 +793,8 @@ export function renderSdkReference(): string {
     "- TypeScript times are in milliseconds (`timeoutMs`, `flushIntervalMs`). Python timeouts are in seconds; only `flush_interval_ms` is in milliseconds.",
     "- In TypeScript, `trace()`, `span()` and `withSession()` take the function to run. In Python, they are context managers and decorators.",
     "- `aiSdkTracer()` and `observeFetch()` are TypeScript only. `coding_sh.otel` is Python only.",
-    "- `weightsEdit()` takes one object in TypeScript; `weights_edit()` takes arguments in Python. Both record the same event. `weightsDelta()` returns `maxAbs` where `weights_delta()` returns `max_abs`, and throws a `TypeError` or `RangeError` where Python raises `ValueError`.",
+    "- `weightsEdit()` and `weightsCheckpoint()` take one object in TypeScript. `weights_edit()` and `weights_checkpoint()` take arguments in Python, and `weights_checkpoint()` takes `base_sha256` and `note` by keyword only. Each pair records the same event.",
+    "- `weightsDelta()` returns `maxAbs` where `weights_delta()` returns `max_abs`, and throws a `TypeError` or `RangeError` where Python raises `ValueError`.",
     "- A weight count or dimension must be an integer below 2^53 in TypeScript; Python takes any integer. Python also takes numpy scalars as numbers, and `weights_delta()` reads anything with `.tolist()`; in TypeScript `weightsDelta()` reads arrays and typed arrays.",
     "- A long tensor name or note is cut. TypeScript cuts at 64 KiB of UTF-8 and sets `payload.truncated`; Python cuts at 65,536 characters and appends `…[truncated]`.",
     "",

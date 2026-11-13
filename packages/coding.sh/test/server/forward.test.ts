@@ -101,6 +101,9 @@ async function post(h: ServeHandle, path: string, key: string | undefined, body:
 
 const attr = (kvs: J[] | undefined, key: string): J => kvs?.find((kv: J) => kv.key === key)?.value;
 const TRACE = "0af7651916cd43dd8448eb211c80319c";
+// SHA-256 of a weights file and of the file it was edited from, as a weights.checkpoint event carries them.
+const WEIGHTS_FILE = `58899f90572c${"0".repeat(52)}`;
+const WEIGHTS_BASE = `0496e5111097${"f".repeat(52)}`;
 
 /** A chat span carrying every kind of content metadata mode must drop. */
 function contentSpan(spanId: string, convo = "conv-1"): J {
@@ -239,6 +242,7 @@ describe("serve forward: metadata allowlist and full-mode redaction", () => {
       ["coding_sh.weights.base_sha256", str, false],
       ["coding_sh.weights.edited_sha256", str, false],
       ["coding_sh.weights.note", str, false],
+      ["coding_sh.weights.sha256", { stringValue: WEIGHTS_FILE }, true],
       ["gen_ai.input.messages", str, false],
       ["gen_ai.output.messages", str, false],
       ["gen_ai.system_instructions", str, false],
@@ -253,9 +257,90 @@ describe("serve forward: metadata allowlist and full-mode redaction", () => {
       ["app.note", str, false],
     ];
     for (const [k, v, want] of cases) assert.equal(keepInMetadata(k, v as never), want, k);
+    // The SHA-256 of a checkpoint's base file passes on a weights.checkpoint span only, and only as a SHA-256.
+    const base = "coding_sh.weights.base_sha256";
+    assert.equal(keepInMetadata(base, { stringValue: WEIGHTS_BASE }, "weights.checkpoint"), true);
+    assert.equal(keepInMetadata(base, { stringValue: WEIGHTS_BASE.toUpperCase() }, "weights.checkpoint"), true);
+    assert.equal(keepInMetadata(base, { stringValue: "layers.3.mlp.down_proj.weight" }, "weights.checkpoint"), false);
+    assert.equal(keepInMetadata(base, { intValue: "7" } as never, "weights.checkpoint"), false);
+    assert.equal(keepInMetadata(base, { stringValue: WEIGHTS_BASE }, "weights.edit"), false);
+    assert.equal(keepInMetadata(base, { stringValue: WEIGHTS_BASE }), false);
+    assert.equal(keepInMetadata("coding_sh.weights.note", str as never, "weights.checkpoint"), false);
+    assert.equal(keepInMetadata("coding_sh.weights.tensor", str as never, "weights.checkpoint"), false);
     // span helper: events keep exception.type only, status message cleared
     const span: JsonSpan = { traceId: TRACE, spanId: "b7ad6b7169203331", name: "x", kind: 1, startTimeUnixNano: "1", endTimeUnixNano: "2", attributes: [], status: { code: 2, message: "boom" } };
     assert.deepEqual(scrubSpan(span, "metadata", createRedactor()).status, { code: 2 });
+  });
+});
+
+describe("serve forward: a weight edit and a weights checkpoint in one metadata batch", () => {
+  const TENSOR_A = "a".repeat(64);
+  const TENSOR_B = "b".repeat(64);
+  const weights = (s: J) => Object.fromEntries((s.attributes as J[]).filter((kv) => kv.key.startsWith("coding_sh.weights.")).map((kv) => [kv.key, kv.value]));
+  const want = {
+    "weights.edit": { "coding_sh.weights.changed": { intValue: "1204" }, "coding_sh.weights.l2": { doubleValue: 0.0183 }, "coding_sh.weights.max_abs": { doubleValue: 0.004 } },
+    "weights.checkpoint": { "coding_sh.weights.sha256": { stringValue: WEIGHTS_FILE }, "coding_sh.weights.base_sha256": { stringValue: WEIGHTS_BASE } },
+  };
+  const leaked = ["layers.3.mlp.down_proj.weight", TENSOR_A, TENSOR_B, "rank-1 edit", "after layer 3"];
+
+  it("from /v1/ingest: the checkpoint keeps its two file hashes, the edit its counts, and neither its note", async () => {
+    const c = await stub();
+    const ik = generateKey("ingest");
+    const index = new MemoryIndexStore();
+    const { h } = await serve(tmpEnv({ CODING_SH_INGEST_KEYS: `demo:${ik}`, CODING_SH_FORWARD_URL: c.url, CODING_SH_CAPTURE_MODE: "metadata" }), { stores: { index, blobs: new MemoryBlobStore() } });
+    const now = Date.now() - 5000;
+    const events = [
+      { v: 0, id: "s", sessionId: "edit-1", ts: now, kind: "session.start", payload: {} },
+      { v: 0, id: "w", sessionId: "edit-1", ts: now + 10, kind: "notification", payload: { kind: "weights.edit", tensor: "layers.3.mlp.down_proj.weight", shape: [4096, 11008], changed: 1204, l2: 0.0183, maxAbs: 0.004, baseSha256: TENSOR_A, editedSha256: TENSOR_B, note: "rank-1 edit" } },
+      { v: 0, id: "c", sessionId: "edit-1", ts: now + 20, kind: "notification", payload: { kind: "weights.checkpoint", sha256: WEIGHTS_FILE, baseSha256: WEIGHTS_BASE, note: "after layer 3" } },
+      { v: 0, id: "e", sessionId: "edit-1", ts: now + 30, kind: "session.end", payload: {} },
+    ];
+    const r = await post(h, "/v1/ingest", ik, { v: 0, service: "trainer", events });
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    const spans = (await c.spans(3)).filter((s) => String(s.name).startsWith("weights."));
+    assert.deepEqual(Object.fromEntries(spans.map((s) => [s.name, weights(s)])), want);
+    const text = JSON.stringify(c.bodies);
+    for (const needle of leaked) assert.ok(!text.includes(needle), needle);
+    // The store kept the same: a checkpoint is still one the session can be found by.
+    const stored = (await index.listEvents((await index.listSessions({}))[0]!.id)).filter((e) => e.kind === "notification").map((e) => e.payload);
+    assert.deepEqual(stored, [
+      { kind: "weights.edit", changed: 1204, l2: 0.0183, maxAbs: 0.004 },
+      { kind: "weights.checkpoint", sha256: WEIGHTS_FILE, baseSha256: WEIGHTS_BASE },
+    ]);
+    assert.deepEqual((await index.listSessions({}))[0]!.stats.weightEdits, { events: 1, weightsChanged: 1204, checkpoints: [WEIGHTS_FILE] });
+    await h.shutdown();
+  });
+
+  it("from /v1/traces: the same, on the app's own spans", async () => {
+    const c = await stub();
+    const { h } = await serve(tmpEnv({ CODING_SH_FORWARD_URL: c.url, CODING_SH_CAPTURE_MODE: "metadata" }));
+    const body = otlpTraces("trainer", [
+      otlpSpan(TRACE, "b7ad6b7169203331", undefined, "edit run", [], 0, 9),
+      otlpSpan(
+        TRACE,
+        "b7ad6b7169203332",
+        "b7ad6b7169203331",
+        "weights.edit",
+        [
+          sAttr("coding_sh.weights.tensor", "layers.3.mlp.down_proj.weight"),
+          iAttr("coding_sh.weights.changed", 1204),
+          { key: "coding_sh.weights.l2", value: { doubleValue: 0.0183 } },
+          { key: "coding_sh.weights.max_abs", value: { doubleValue: 0.004 } },
+          sAttr("coding_sh.weights.base_sha256", TENSOR_A),
+          sAttr("coding_sh.weights.edited_sha256", TENSOR_B),
+          sAttr("coding_sh.weights.note", "rank-1 edit"),
+        ],
+        1,
+        2,
+      ),
+      otlpSpan(TRACE, "b7ad6b7169203333", "b7ad6b7169203331", "weights.checkpoint", [sAttr("coding_sh.weights.sha256", WEIGHTS_FILE), sAttr("coding_sh.weights.base_sha256", WEIGHTS_BASE), sAttr("coding_sh.weights.note", "after layer 3")], 3, 4),
+    ]);
+    assert.equal((await post(h, "/v1/traces", undefined, body)).status, 200);
+    const spans = (await c.spans(3)).filter((s) => String(s.name).startsWith("weights."));
+    assert.deepEqual(Object.fromEntries(spans.map((s) => [s.name, weights(s)])), want);
+    const text = JSON.stringify(c.bodies);
+    for (const needle of leaked) assert.ok(!text.includes(needle), needle);
+    await h.shutdown();
   });
 });
 

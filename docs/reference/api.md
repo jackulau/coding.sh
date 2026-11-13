@@ -518,7 +518,9 @@ curl -sS "$CSH/api/sessions?where=agent:codex%20modle:x" -H "Authorization: Bear
 
 ### `GET /api/sessions/{id}`
 
-One session, the same shape as a list row without `childCount`. Percent-encode the id.
+One session, the same shape as a list row without `childCount`. Percent-encode the id. A session
+whose weights checkpoint an experiment ran also has `checkpointExperiments`: a list of
+`{sha256, experiments: [{id, name}]}`. A key scoped to a project does not get it.
 
 ```sh
 curl -sS "$CSH/api/sessions/team%2Fchat-1" -H "Authorization: Bearer $READ_KEY"
@@ -718,24 +720,37 @@ Three `notification` kinds carry the events behind these stats:
 | `fork` | `toolUseId` (the parent's Agent call) and `inheritedTokens` |
 | `hook.context` | `hookEvent`, `hookName`, `hookSource`, `command`, `chars`, `tokens` and `text` (clipped). Metadata mode keeps only `hookEvent`, `hookSource`, `chars` and `tokens` |
 
-One more `notification` kind records weight edits. The Python SDK's `coding_sh.weights_edit()` and the TypeScript SDK's `weightsEdit()` send it, and any client can post it to `/v1/ingest`. Redaction runs on `tensor` and `note` like on any payload.
+Two more `notification` kinds record weight edits and the file they were saved to. The Python SDK's `coding_sh.weights_edit()` and `coding_sh.weights_checkpoint()` and the TypeScript SDK's `weightsEdit()` and `weightsCheckpoint()` send them, and any client can post them to `/v1/ingest`. Redaction runs on `tensor` and `note` like on any payload.
 
 | `payload.kind` | Fields |
 |---|---|
 | `weights.edit` | `tensor` (string, the tensor's name), `shape` (array of non-negative integers, at most 16), `changed` (integer, the weights that differ, at most the product of `shape`), `l2` (number >= 0, the L2 norm of edited minus base), `maxAbs` (number >= 0, the largest absolute value of that change), `baseSha256` and `editedSha256` (64 lowercase hex characters, the tensor's hash before and after) and `note` (string, optional) |
+| `weights.checkpoint` | `sha256` (64 hex characters, the SHA-256 of the saved weights file: the value you give to `exp run --weights`), `baseSha256` (optional, the SHA-256 of the file the edits started from) and `note` (string, optional) |
 
 | Field | Meaning |
 |---|---|
-| `stats.weightEdits` (`events`, `tensors`, `weightsChanged`) | Weight edits the session recorded: how many, how many distinct tensor names, and their `changed` counts added up (a weight two edits changed counts twice). Absent when the session recorded none. `tensors` is absent when no edit kept its name |
+| `stats.weightEdits` (`events`, `tensors`, `weightsChanged`, `checkpoints`) | Weight edits the session recorded: how many, how many distinct tensor names, and their `changed` counts added up (a weight two edits changed counts twice). `checkpoints` lists the distinct `sha256` of its `weights.checkpoint` events in the order they arrived, at most 16. Absent when the session recorded no edit and no checkpoint. `tensors` is absent when no edit kept its name, and `checkpoints` when there is none. A session with a checkpoint and no edit has `events: 0` and `weightsChanged: 0` |
 
 - A session with a weight edit gets the `weights:edited` tag. `coding.sh sessions --flag weights:edited` lists them, and `--where 'weights.changed>1000'` filters by size.
-- `coding.sh show`, the viewer and MCP `session_get` print one line per edit: the tensor and its shape, the weights changed out of the total, both norms and the first 8 characters of each hash.
+- A session with a checkpoint gets the `weights:checkpoint` tag. `--where 'weights.checkpoint:58899f90572c*'` finds the sessions that recorded a file by its hash or the start of it. A session that holds a checkpoint and nothing else is still listed.
+- A checkpoint is read only when `sha256` is 64 hex characters. It is compared in lowercase, whatever case it arrived in. A `baseSha256` that is not a hash is left out and the checkpoint still counts.
+- `coding.sh show`, the viewer and MCP `session_get` print one line per edit: the tensor and its shape, the weights changed out of the total, both norms and the first 12 characters of each hash.
 - A shape of more than 16 dimensions is not shown, and the total is left out when the count does not fit in the shape. An edit with no readable field still gets a line.
-- Metadata mode: the SDK leaves out `note`. A server with `capture.mode = "metadata"` also drops `tensor`, `shape` and both hashes, and keeps `changed`, `l2` and `maxAbs`.
+- A checkpoint gets one line in the same three places: `checkpoint 58899f90572c ← 0496e5111097`, the first 12 characters of the file's hash and of the base file's. With no base it reads `checkpoint 58899f90572c`.
+- The session's `Weight edits` row names its checkpoints after the counts: `2 edits, 2 tensors, 66,560 weights changed, checkpoint 58899f90572c`.
+- `coding.sh show` adds one `Experiments` row for each checkpoint an experiment ran with `exp run --weights`: `58899f90572c ran in edited (exp_…)`. It reads the newest 200 experiments.
+- With `--json` those rows are `checkpointExperiments`, a list of `{sha256, experiments: [{id, name}]}`, absent when no experiment ran one. MCP `session_get` carries the same field.
+- `GET /api/sessions/{id}` carries `checkpointExperiments` too, except for a project-scoped read key. The viewer's session header shows each experiment as a `ran in <name>` link.
+- `exp show` and `exp compare` name the session from the other side: [Compare an edited model with its base](https://coding.sh/docs/experiments#weights).
+- Metadata mode: the SDK leaves out `note`. A server with `capture.mode = "metadata"` also drops an edit's `tensor`, `shape` and both hashes, and keeps `changed`, `l2` and `maxAbs`.
+- In metadata mode a checkpoint keeps `sha256` and `baseSha256`, the values that join it to an experiment, and loses `note`.
 - OpenTelemetry in: a span or log record named `weights.edit`, sent to `/v1/traces` or `/v1/logs`, is read as the same event. Its fields are the attributes below. A malformed one is left out and the edit still counts.
 - OpenTelemetry out: the `otlp` sink sends one `weights.edit` span per edit with the same attributes, as a child of the session's `invoke_agent` span. That span carries `coding_sh.stats.weight_edits` and `coding_sh.stats.weights_changed`.
 - `[serve.forward]` sends the same span for an edit posted to `/v1/ingest`, and passes on a `weights.edit` span posted to `/v1/traces` as it came. An edit that arrived as a log record is not forwarded.
 - In `metadata` mode the span keeps `coding_sh.weights.changed`, `.l2` and `.max_abs` only.
+- A span or log record named `weights.checkpoint` is read as a checkpoint from `coding_sh.weights.sha256`, `.base_sha256` and `.note`.
+- A checkpoint goes out the same way, as one `weights.checkpoint` span with those three attributes. In `metadata` mode it keeps the two hashes and drops `.note`.
+- A session with a checkpoint and no edit has neither `coding_sh.stats` attribute.
 
 | Attribute | Payload field |
 |---|---|
@@ -750,10 +765,12 @@ One more `notification` kind records weight edits. The Python SDK's `coding_sh.w
 
 - The caller computes the hashes and norms. Each SDK checks the values, drops an invalid edit with one warning, and never raises into the app. In Python, numpy scalars and 0-d tensors (what torch's `.norm()` returns) count as numbers.
 - `weights_edit()` (Python) and `weightsEdit()` (TypeScript) return true only when the event was queued. A `note` that is not a string is dropped with a warning, and the edit is still recorded.
+- `weights_checkpoint(sha256, base_sha256=..., note=...)` (Python) and `weightsCheckpoint({ sha256, baseSha256, note })` (TypeScript) follow the same rules. A `sha256` or a `baseSha256` that is not 64 hex characters drops the event with one warning.
+- Both hashes are sent in lowercase. coding.sh hashes nothing: you compute the file's hash, for example with `hashlib.sha256` or `shasum -a 256`.
 - `coding_sh.weights_delta()` computes `shape`, `changed`, `l2` and `max_abs` for two small array-likes in pure Python. It is a helper you call on purpose, so it raises `ValueError` on bad input.
 - The TypeScript SDK's `weightsDelta()` does the same for nested arrays and typed arrays, and throws a `TypeError` or a `RangeError`.
 - The server stores the payload without validating these fields, after redaction.
-- A call outside `trace()` and `with_session()` (`withSession()` in TypeScript) makes a session of its own, so put a run of edits inside one of them.
+- A call outside `trace()` and `with_session()` (`withSession()` in TypeScript) makes a session of its own, so put a run of edits and its checkpoint inside one of them.
 
 A missing session, or one outside a scoped key's project, gets 404:
 
@@ -1502,7 +1519,7 @@ These fields are present only when they apply:
 | `samples`, `summary.caseVerdicts` | `exp run --samples adaptive` | `"samples": "adaptive"`, and verdicts `passed`, `failed`, `tieBreaks`. The `passRate` interval is then biased, so use the verdicts |
 | `regression` | `--stop-on-regression` stopped the run (status `cancelled`) | `{caseId, baseline}` |
 | `metadata.checkpoint` | A partial record written while the run was going (status `cancelled`) | `done`, `total`, `at` |
-| `metadata.weights` | `exp run --weights <SHA256>` | `sha256`: the SHA-256 of the checkpoint the task ran, 64 hex characters as given to the flag, stored in lowercase. `/api/compare` carries it as `a.weights` and `b.weights`, with `weightsWarning` when both are the same or only one side has one |
+| `metadata.weights` | `exp run --weights <SHA256>` | `sha256`: the SHA-256 of the checkpoint the task ran, 64 hex characters as given to the flag, stored in lowercase. `/api/compare` carries it as `a.weights` and `b.weights`, with `weightsWarning` when both are the same or only one side has one. `exp show --json`, `exp compare --json`, `exp list --json`, the MCP tools `experiments_list` and `experiment_compare`, `/api/compare` and `/api/experiments/{id}` add `weights.sessions`, the ids of the sessions whose `weights.checkpoint` event recorded that hash (at most 5, newest first). It is looked up when printed, never stored, and absent when no session recorded it |
 | `metadata.selection` | A run of part of the dataset | `from` (`{kind: "failing"\|"errors", experiment}`), `cases`, `sample`, `seed`, `firstN`, `selected`, `of` |
 | `metadata.seq` | `exp run --seq K` | `k`, `feedback`, `history` |
 | `summary.seq` | `exp run --seq K` | `k`, `feedback`, `history`, `curve` (`[{k, rate, lo, hi}]`, Seq@1..K), `egs`, `lgs`, `unchangedRate`, `costToSolve`; with 2+ trials also `passAtK` (`[{k, rate}]`), `front` (`[{protocol, k, cost, success, overall}]`) and `costUnit` (`usd` or `attempts`) |
@@ -1513,6 +1530,10 @@ These fields are present only when they apply:
 One experiment with its case runs (up to 5,000; `runsTruncated` says when more exist). Outputs over
 4,000 characters are cut and marked `outputTruncated`. Ids come from `coding.sh exp list`. Unknown
 ids, and any id for a scoped key, get 404 `{"error":"experiment not found","status":404}`.
+
+When a session recorded the experiment's weights file as a checkpoint, a top-level `weights` object
+holds `sha256` and `sessions`, as `exp show --json` prints it. The stamp itself is in
+`metadata.weights`.
 
 ```sh
 curl -sS "$CSH/api/experiments/$EXP_A" -H "Authorization: Bearer $READ_KEY"
@@ -1576,6 +1597,8 @@ These fields are present only when they apply:
 | `selectionWarning` | One side ran only on the other's failures (`exp run --failing`). The verdict is then `inconclusive` |
 | `seqK` | Both sides ran `--seq` with the same K and feedback: `k`, `feedback`, `n`, `a`, `b`, `diff` |
 | `seqNote` | Only one side ran `--seq`, or their K or feedback differ |
+| `a.weights`, `b.weights` | The side ran with `exp run --weights`: `sha256`, and `sessions` when a session recorded that file as a checkpoint |
+| `weightsWarning` | Both sides ran the same weights, or only one side records which it ran |
 
 A missing or malformed id gets 400 `{"error":"a and b must be experiment ids","status":400}`; an
 unknown one gets 404 `{"error":"experiment not found","status":404}`.

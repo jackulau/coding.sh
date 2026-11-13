@@ -4,6 +4,7 @@
 // leaves the sink comes back as the same Usage.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { buildSession } from "../../src/core/sessions.ts";
 import type { AgentEvent, Session, Usage } from "../../src/schema/index.ts";
 import { type KeyValue, OtlpSink, toOtlpRequest, toOtlpSpans } from "../../src/sinks/otlp.ts";
 import { decodeTraceJson } from "../../src/otel/json.ts";
@@ -203,6 +204,54 @@ describe("otlp sink: weight edits", () => {
     }
     const none = attrsOf(toOtlpSpans([end], [session()], "full")[0]!.attributes);
     assert.equal(Object.hasOwn(none, "coding_sh.stats.weight_edits") || Object.hasOwn(none, "coding_sh.stats.weights_changed"), false);
+  });
+
+  const FILE = `58899f90572c${"0".repeat(52)}`;
+  const FILE_BASE = `0496e5111097${"f".repeat(52)}`;
+  const saved = { kind: "weights.checkpoint", sha256: FILE, baseSha256: FILE_BASE, note: "after layer 3" };
+
+  it("sends one weights.checkpoint span per checkpoint, with both file hashes and the note", () => {
+    const spans = toOtlpSpans([edit("w1"), edit("c1", saved), edit("c2", { kind: "weights.checkpoint", sha256: FILE_BASE })], [], "full");
+    assert.deepEqual(spans.map((s) => s.name), ["weights.edit", "weights.checkpoint", "weights.checkpoint"]);
+    assert.equal(new Set(spans.map((s) => s.spanId)).size, 3);
+    assert.equal(spans[1]!.parentSpanId, spans[0]!.parentSpanId, "under the session span, like an edit");
+    assert.deepEqual(weights(attrsOf(spans[1]!.attributes)), { "coding_sh.weights.sha256": FILE, "coding_sh.weights.base_sha256": FILE_BASE, "coding_sh.weights.note": "after layer 3" });
+    assert.deepEqual(weights(attrsOf(spans[2]!.attributes)), { "coding_sh.weights.sha256": FILE_BASE });
+  });
+
+  it("metadata mode keeps a checkpoint's two file hashes and drops its note", () => {
+    const spans = toOtlpSpans([edit("c1", saved)], [], "metadata");
+    assert.deepEqual(spans.map((s) => s.name), ["weights.checkpoint"]);
+    assert.deepEqual(weights(attrsOf(spans[0]!.attributes)), { "coding_sh.weights.sha256": FILE, "coding_sh.weights.base_sha256": FILE_BASE });
+  });
+
+  it("a checkpoint whose sha256 is not a SHA-256 is not exported", () => {
+    assert.deepEqual(toOtlpSpans([edit("c1", { kind: "weights.checkpoint", sha256: "abc", baseSha256: FILE_BASE }), edit("c2", { kind: "weights.checkpoint" })], [], "full"), []);
+  });
+
+  it("the session span of a session with a checkpoint and no edit carries no edit count", () => {
+    const end: AgentEvent = { ...edit("end"), kind: "session.end", payload: {} };
+    const s = session();
+    s.stats.weightEdits = { events: 0, weightsChanged: 0, checkpoints: [FILE] };
+    s.flags = ["weights:checkpoint"];
+    const a = attrsOf(toOtlpSpans([end], [s], "full")[0]!.attributes);
+    assert.equal(Object.hasOwn(a, "coding_sh.stats.weight_edits") || Object.hasOwn(a, "coding_sh.stats.weights_changed"), false);
+  });
+
+  it("the receiver reads an exported checkpoint back as the same payload, and the session folds to the same stat", async () => {
+    const cases: Record<string, unknown>[] = [saved, { kind: "weights.checkpoint", sha256: FILE, baseSha256: FILE_BASE }, { kind: "weights.checkpoint", sha256: FILE }];
+    for (const [i, p] of cases.entries()) {
+      const req = JSON.parse(JSON.stringify(toOtlpRequest([edit(`cp${i}`, p)], [], "full")));
+      const { events } = await mapTraces(decodeTraceJson(req), ctx());
+      const back = events.filter((e) => e.kind === "notification");
+      assert.equal(back.length, 1, JSON.stringify(p));
+      assert.deepEqual(back[0]!.payload, p);
+      assert.deepEqual(buildSession(events).stats.weightEdits, { events: 0, weightsChanged: 0, checkpoints: [FILE] });
+    }
+    // Metadata mode: the note is gone, the join on the file's hash still works.
+    const req = JSON.parse(JSON.stringify(toOtlpRequest([edit("cpm", saved)], [], "metadata")));
+    const { events } = await mapTraces(decodeTraceJson(req), ctx());
+    assert.deepEqual(events.filter((e) => e.kind === "notification").map((e) => e.payload), [{ kind: "weights.checkpoint", sha256: FILE, baseSha256: FILE_BASE }]);
   });
 
   it("the receiver reads an exported edit back as the same payload", async () => {

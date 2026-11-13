@@ -22,6 +22,7 @@ import type { ExperimentBlock, ExpSession, SessionBlock } from "./session.ts";
 import { stabilityLine } from "./stability.ts";
 import type { SweepResult } from "./sweep.ts";
 import type { Turnover } from "./turnover.ts";
+import { checkpointLines, type CheckpointSessions } from "./checkpoints.ts";
 import { shortWeights, weightsOf } from "./weights.ts";
 import { fixed, ms, paint, pct, pValue, signedPct, table, truncate, type RenderOpts } from "./text.ts";
 import { formatBestSet } from "../stats/mcb.ts";
@@ -100,7 +101,7 @@ export function selectionText(s: CaseSelection): string {
   return `${s.selected} of ${s.of}${parts.length ? `: ${parts.join(", ")}` : ""}`;
 }
 
-export function renderExperiment(r: ExperimentResult, opts: RenderOpts & { verifiers?: ReadonlyMap<string, VerifierAudit>; cases?: ReadonlyMap<string, string> }): string {
+export function renderExperiment(r: ExperimentResult, opts: RenderOpts & { verifiers?: ReadonlyMap<string, VerifierAudit>; cases?: ReadonlyMap<string, string>; checkpoints?: CheckpointSessions }): string {
   const color = opts.color;
   const limit = opts.limit ?? 20;
   const s = r.summary;
@@ -116,6 +117,8 @@ export function renderExperiment(r: ExperimentResult, opts: RenderOpts & { verif
   // The checkpoint the task ran, as given to exp run --weights: whole, so it can be checked against the file's hash.
   const weights = weightsOf(r);
   if (weights) out.push(`weights ${weights}`);
+  // The sessions that recorded that file as a checkpoint, each with the edits it recorded.
+  out.push(...checkpointLines(weights, opts.checkpoints));
   if (r.status === "cancelled" && s.n === 0) {
     out.push(paint("cancelled before any case run finished: nothing was graded", "yellow", color));
     return out.join("\n");
@@ -248,7 +251,7 @@ export function renderExperiment(r: ExperimentResult, opts: RenderOpts & { verif
   return out.join("\n");
 }
 
-export function renderComparison(c: Comparison, opts: RenderOpts & { a?: ExperimentResult; b?: ExperimentResult; matrix?: boolean; cases?: ReadonlyMap<string, string> }): string {
+export function renderComparison(c: Comparison, opts: RenderOpts & { a?: ExperimentResult; b?: ExperimentResult; matrix?: boolean; cases?: ReadonlyMap<string, string>; checkpoints?: CheckpointSessions }): string {
   const color = opts.color;
   const limit = opts.limit ?? 20;
   const out: string[] = [];
@@ -257,15 +260,17 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
   // Which checkpoint each side ran (exp run --weights), once either side says: the first 12 hex characters, or that it was not recorded.
   const stamped = c.a.weights !== undefined || c.b.weights !== undefined;
   const weights = (x: Comparison["a"]) => (stamped ? `  weights ${x.weights ? shortWeights(x.weights.sha256) : "not recorded"}` : "");
+  // Under each side: the sessions that recorded its weights file as a checkpoint, with the edits they recorded.
+  const edits = (x: Comparison["a"]) => checkpointLines(x.weights?.sha256, opts.checkpoints);
   if (c.given && !c.given.kept) {
     const g = c.given;
-    out.push(`${paint("A", "bold", color)} ${c.a.name} ${paint(c.a.id, "dim", color)}${weights(c.a)}`, `${paint("B", "bold", color)} ${c.b.name} ${paint(c.b.id, "dim", color)}${weights(c.b)}`);
+    out.push(`${paint("A", "bold", color)} ${c.a.name} ${paint(c.a.id, "dim", color)}${weights(c.a)}`, ...edits(c.a), `${paint("B", "bold", color)} ${c.b.name} ${paint(c.b.id, "dim", color)}${weights(c.b)}`, ...edits(c.b));
     if (c.weightsWarning) out.push(paint(`! ${c.weightsWarning}`, "yellow", color));
     out.push(paint(`! --given ${g.grader}: no case passes ${g.grader} in both A and B (${g.dropped} dropped), so there is nothing to compare`, "yellow", color));
     return out.join("\n");
   }
-  out.push(`${paint("A", "bold", color)} ${c.a.name} ${paint(c.a.id, "dim", color)}  pass ${pct(c.a.passRate)}${partial(opts.a)}${weights(c.a)}`);
-  out.push(`${paint("B", "bold", color)} ${c.b.name} ${paint(c.b.id, "dim", color)}  pass ${pct(c.b.passRate)}${partial(opts.b)}${weights(c.b)}`);
+  out.push(`${paint("A", "bold", color)} ${c.a.name} ${paint(c.a.id, "dim", color)}  pass ${pct(c.a.passRate)}${partial(opts.a)}${weights(c.a)}`, ...edits(c.a));
+  out.push(`${paint("B", "bold", color)} ${c.b.name} ${paint(c.b.id, "dim", color)}  pass ${pct(c.b.passRate)}${partial(opts.b)}${weights(c.b)}`, ...edits(c.b));
   if (c.weightsWarning) out.push(paint(`! ${c.weightsWarning}`, "yellow", color));
   if (c.given) out.push(paint(`! ${c.given.note}`, "yellow", color));
   if (c.datasetWarning) out.push(paint(`! ${c.datasetWarning}`, "yellow", color));

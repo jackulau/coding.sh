@@ -296,6 +296,8 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   border-radius: 5px; font-family: var(--font-mono); font-size: 11px; white-space: nowrap;
   color: var(--text-2); box-shadow: inset 0 0 0 1px var(--line);
 }
+/* The session behind a weights stamp, and the experiment that ran a session's checkpoint. */
+.badge a, .weights a { text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
 .badge.pass { color: var(--pass-ink); background: var(--pass-wash); box-shadow: none; }
 .badge.fail { color: var(--fail-ink); background: var(--fail-wash); box-shadow: none; }
 .badge.warn { color: var(--warn-ink); background: var(--warn-wash); box-shadow: none; }
@@ -3840,8 +3842,19 @@ function weightsEditText(p) {
   }
   if (norm(p.l2)) parts.push("L2 " + real(p.l2));
   if (norm(p.maxAbs)) parts.push("max " + real(p.maxAbs));
-  if (text(p.baseSha256) && text(p.editedSha256)) parts.push(p.baseSha256.slice(0, 8) + " → " + p.editedSha256.slice(0, 8));
+  if (text(p.baseSha256) && text(p.editedSha256)) parts.push(shortWeights(p.baseSha256) + " → " + shortWeights(p.editedSha256));
   return parts.join(" · ");
+}
+/** Every weights hash is written in 12 hex characters (shortWeights in core/weights.ts). */
+function shortWeights(sha) { return String(sha).slice(0, 12); }
+// One line for a weights.checkpoint payload, "" when it is not one (no kind, or a sha256 that is not
+// 64 hex characters); the same text as weightsCheckpointText in core/weights.ts.
+function weightsCheckpointText(p) {
+  const sha = (v) => { const s = typeof v === "string" ? v.trim().toLowerCase() : ""; return /^[0-9a-f]{64}$/.test(s) ? s : ""; };
+  const file = p.kind === "weights.checkpoint" ? sha(p.sha256) : "";
+  if (!file) return "";
+  const base = sha(p.baseSha256);
+  return "checkpoint " + shortWeights(file) + (base ? " ← " + shortWeights(base) : "");
 }
 function eventView(ev) {
   const p = ev.payload || {};
@@ -3881,6 +3894,9 @@ function eventView(ev) {
         const t = weightsEditText(p);
         return { name: "Edited weights", arg: clip(t, 200), label: "Edited weights" + (t ? " · " + clip(t, 90) : ""), tone: "text", kindText: "weights.edit" };
       }
+      // The hash of the weights file the session saved: what exp run --weights takes.
+      const checkpoint = weightsCheckpointText(p);
+      if (checkpoint) return { name: "Saved weights", arg: checkpoint, label: "Saved weights · " + checkpoint, tone: "text", kindText: "weights.checkpoint" };
       // Claude Code loading a nested CLAUDE.md or a skill mid-session.
       if (p.kind !== "harness.loaded") return { name: KIND_LABEL[ev.kind], arg: "", label: KIND_LABEL[ev.kind], tone: "muted", kindText: ev.kind };
       const names = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === "string") : []);
@@ -5098,7 +5114,11 @@ function sessionHeader(s, labels, rel) {
           : [st.toolCalls ? h("span", { class: "badge" }, plural(st.toolCalls, "tool call")) : null,
             st.toolErrors ? h("span", { class: "badge fail" }, plural(st.toolErrors, "tool error")) : null],
         st.filesChanged ? h("span", { class: "badge" }, plural(st.filesChanged, "file") + " changed") : null,
-        st.weightEdits ? h("span", { class: "badge", title: fmtNum(st.weightEdits.weightsChanged) + " weights changed" + (st.weightEdits.tensors ? " in " + plural(st.weightEdits.tensors, "tensor") : "") }, plural(st.weightEdits.events, "weight edit")) : null,
+        st.weightEdits && st.weightEdits.events ? h("span", { class: "badge", title: fmtNum(st.weightEdits.weightsChanged) + " weights changed" + (st.weightEdits.tensors ? " in " + plural(st.weightEdits.tensors, "tensor") : "") }, plural(st.weightEdits.events, "weight edit")) : null,
+        st.weightEdits && st.weightEdits.checkpoints && st.weightEdits.checkpoints.length ? h("span", { class: "badge", title: "SHA-256 of the weights file this session saved (exp run --weights takes it): " + st.weightEdits.checkpoints.join(", ") }, st.weightEdits.checkpoints.length === 1 ? "checkpoint " + shortWeights(st.weightEdits.checkpoints[0]) : plural(st.weightEdits.checkpoints.length, "checkpoint")) : null,
+        // The experiments that ran a file this session saved (checkpointExperiments, as coding.sh show --json).
+        (Array.isArray(s.checkpointExperiments) ? s.checkpointExperiments : []).map((c) => (c.experiments || []).slice(0, 3).map((e) =>
+          h("span", { class: "badge", title: "This experiment ran the weights file " + c.sha256 + " (exp run --weights)" }, "ran in ", h("a", { href: expHref(e.id), title: e.id }, e.name || e.id)))),
         st.turns && !api_ ? h("span", { class: "badge" }, plural(st.turns, "turn")) : null,
         kids.length ? h("span", { class: "badge" }, plural(kids.length, "subagent")) : null,
         s.parent && s.parent.type ? h("span", { class: "badge" }, "subagent · " + s.parent.type) : null,
@@ -6225,7 +6245,7 @@ async function showExperiment(seq, id) {
       h("div", { class: "head-row" }, h("h1", { title: d.id }, d.name || d.id),
         h("div", { class: "badges" }, d.status === "cancelled" ? h("span", { class: "badge warn" }, "cancelled · partial") : null, copyBtn(d.id, "Copy experiment id", "experiment id", "Copy id"))),
       // Facts wrap between items, never inside one; the task command gets its own line.
-      h("p", { class: "meta fact-line" }, ...[datasetText(d), (d.trials || 1) > 1 ? plural(d.trials, "trial") + " per case" : "", fmtDate(d.createdAt || 0)].filter(Boolean).map((t) => h("span", null, t)), weightsFact(d.metadata && d.metadata.weights, "")),
+      h("p", { class: "meta fact-line" }, ...[datasetText(d), (d.trials || 1) > 1 ? plural(d.trials, "trial") + " per case" : "", fmtDate(d.createdAt || 0)].filter(Boolean).map((t) => h("span", null, t)), weightsFact(d.weights || (d.metadata && d.metadata.weights), "")),
       d.task ? h("p", { class: "meta mono truncate task-line", title: d.task.kind + " " + d.task.ref },
         // Each argument wraps as a whole, so a phone never splits "agents-md-v2" at its hyphen.
         ...(d.task.kind + " " + d.task.ref).split(" ").flatMap((t, i) => [i ? " " : null, h("span", { class: "tok" }, t)])) : null),
@@ -6353,7 +6373,10 @@ function side(cls, role, e, stamped) {
 function weightsFact(w, none) {
   const sha = w && typeof w.sha256 === "string" ? w.sha256 : "";
   if (!sha && !none) return null;
-  return h("span", { class: "meta weights", title: sha ? "SHA-256 of the checkpoint this run recorded with --weights: " + sha : "This run was started without --weights" }, sha ? "weights " + sha.slice(0, 12) : none);
+  // The sessions that recorded this file as a checkpoint (weights.sessions): where the edits behind it are.
+  const from = sha && Array.isArray(w.sessions) ? w.sessions.filter((id) => typeof id === "string" && id) : [];
+  return h("span", { class: "meta weights", title: sha ? "SHA-256 of the checkpoint this run recorded with --weights: " + sha : "This run was started without --weights" }, sha ? "weights " + shortWeights(sha) : none,
+    from.map((id, i) => [i ? ", " : " · edits ", h("a", { href: sessionHref(id), title: "The session that recorded this weights file as a checkpoint: " + id }, short(id, 8))]));
 }
 /** One decimal, so both sides add up to the difference shown in tenths of a point. */
 function pct1(x) { return ((x || 0) * 100).toFixed(1) + "%"; }

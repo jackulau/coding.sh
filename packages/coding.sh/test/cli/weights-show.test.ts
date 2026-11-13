@@ -1,5 +1,7 @@
-// Weight edits in the CLI: `sessions` lists a session that holds nothing but an edit and finds
-// it by tag and by count, and `show` prints the Weight edits row and one line per edit.
+// Weight edits and checkpoints in the CLI: `sessions` lists a session that holds nothing but an
+// edit or a checkpoint and finds it by tag, by count and by the checkpoint's hash, and `show`
+// prints the Weight edits row, one line per edit and checkpoint, and the experiments that ran a
+// checkpoint.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -9,13 +11,22 @@ import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { openContext } from "../../src/core/context.ts";
 import { buildSession } from "../../src/core/sessions.ts";
+import { createDataset } from "../../src/datasets/dataset.ts";
+import { FileEvalStore } from "../../src/datasets/store.ts";
+import type { Grader } from "../../src/datasets/types.ts";
+import { runExperiment } from "../../src/experiments/run.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 
 const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const A = "a".repeat(64);
 const B = "b".repeat(64);
+// Hashes of whole weights files, as a script would compute them: the edited file and the one it started from.
+const FILE = `c0ffee${"c".repeat(58)}`;
+const FILE_BASE = "d".repeat(64);
+const LATER = `beef${"e".repeat(60)}`;
 const EDITS = "sess-edits";
 const PLAIN = "sess-plain";
+const SAVED = "sess-saved";
 
 describe("weight edits in the CLI", () => {
   let root = "";
@@ -60,8 +71,26 @@ describe("weight edits in the CLI", () => {
       { ...e, id: "w-0", ts: t0, kind: "session.start", payload: { name: "weights.edit" } },
       { ...e, id: "w-1", ts: t0 + 100, kind: "notification", payload: { kind: "weights.edit", tensor: "model.layers.15.mlp.down_proj.weight", shape: [4096, 11008], changed: 65536, l2: 0.0183, maxAbs: 0.004, baseSha256: A, editedSha256: B } },
       { ...e, id: "w-2", ts: t0 + 200, kind: "notification", payload: { kind: "weights.edit", changed: 1024, l2: 0.002, maxAbs: 0.001 } },
+      { ...e, id: "w-2c", ts: t0 + 250, kind: "notification", payload: { kind: "weights.checkpoint", sha256: FILE, baseSha256: FILE_BASE, note: "after layer 15" } },
       { ...e, id: "w-3", ts: t0 + 300, kind: "session.end", payload: {} },
     ]);
+    // A script that only saves: two checkpoints (one hash in upper case, as some tools print it) and no edit.
+    const c = { v: 0 as const, sessionId: SAVED, agent: "weights-run" };
+    await put([
+      { ...c, id: "c-0", ts: t0, kind: "session.start", payload: { name: "weights.checkpoint" } },
+      { ...c, id: "c-1", ts: t0 + 100, kind: "notification", payload: { kind: "weights.checkpoint", sha256: LATER.toUpperCase() } },
+      { ...c, id: "c-2", ts: t0 + 200, kind: "notification", payload: { kind: "weights.checkpoint", sha256: FILE_BASE } },
+      { ...c, id: "c-3", ts: t0 + 300, kind: "notification", payload: { kind: "weights.checkpoint", sha256: "not a hash" } },
+      { ...c, id: "c-4", ts: t0 + 400, kind: "session.end", payload: {} },
+    ]);
+    // Two experiments ran the file EDITS saved, one ran the file both sessions name, none ran LATER.
+    const ds = createDataset({ name: "wt", createdAt: 1, cases: [{ id: "m1", input: 1, expected: 1 }] });
+    const exact: Grader = { id: "exact", version: "1", kind: "custom", grade: async (x) => ({ score: 1, pass: x.output === x.expected }) };
+    const evals = new FileEvalStore({ env, index: ctx.index });
+    for (const [name, sha256] of [["edited", FILE], ["base", FILE_BASE], ["edited-again", FILE]] as const) {
+      await evals.putExperiment(await runExperiment({ name, dataset: ds, task: (n) => n, graders: [exact], metadata: { weights: { sha256 } } }));
+    }
+    await evals.putExperiment(await runExperiment({ name: "unstamped", dataset: ds, task: (n) => n, graders: [exact] }));
     const p = { v: 0 as const, sessionId: PLAIN, agent: "codex" };
     await put([
       { ...p, id: "p-0", ts: t0, kind: "session.start", payload: {} },
@@ -73,24 +102,67 @@ describe("weight edits in the CLI", () => {
   after(() => rmSync(root, { recursive: true, force: true }));
 
   it("sessions lists a session that holds only weight edits, and finds it by tag and by count", () => {
-    assert.deepEqual(ids(), [EDITS, PLAIN].sort(), "not hidden as an empty session");
+    assert.deepEqual(ids(), [EDITS, PLAIN, SAVED].sort(), "not hidden as an empty session");
     assert.deepEqual(ids("--flag", "weights:edited"), [EDITS]);
     assert.deepEqual(ids("--where", "flag:weights:edited"), [EDITS]);
     assert.deepEqual(ids("--where", "weights.edits>0"), [EDITS]);
     assert.deepEqual(ids("--where", "weights.changed>=66560"), [EDITS]);
     assert.deepEqual(ids("--where", "weights.changed>66560"), []);
-    assert.deepEqual(ids("--where", "-flag:weights:edited"), [PLAIN]);
+    assert.deepEqual(ids("--where", "-flag:weights:edited"), [PLAIN, SAVED].sort());
   });
 
-  it("show prints the Weight edits row and one line per edit", () => {
+  it("sessions finds a session by the hash of a checkpoint it recorded, whole or by prefix", () => {
+    assert.deepEqual(ids("--flag", "weights:checkpoint"), [EDITS, SAVED].sort());
+    assert.deepEqual(ids("--where", `weights.checkpoint:${FILE}`), [EDITS]);
+    assert.deepEqual(ids("--where", "weights.checkpoint:c0ffee*"), [EDITS]);
+    assert.deepEqual(ids("--where", "weights.checkpoint:C0FFEE*"), [EDITS], "a prefix matches in any case");
+    assert.deepEqual(ids("--where", `weights.checkpoint:${LATER}`), [SAVED], "stored in lower case");
+    assert.deepEqual(ids("--where", `weights.checkpoint:${FILE_BASE}`), [SAVED], "the hash a checkpoint started from is not a checkpoint");
+    assert.deepEqual(ids("--where", `weights.checkpoint:${FILE},${LATER}`), [EDITS, SAVED].sort());
+    assert.deepEqual(ids("--where", "weights.checkpoint:c0ffee* weights.edits>0"), [EDITS]);
+    assert.deepEqual(ids("--where", "-weights.checkpoint:*"), [PLAIN]);
+    assert.deepEqual(ids("--where", `weights.checkpoint:${"9".repeat(64)}`), []);
+  });
+
+  it("a session that holds only checkpoints is listed, tagged and shown with no edit count", () => {
+    const j = JSON.parse(cli("show", SAVED, "--json")) as { session: { flags: string[]; stats: { weightEdits?: unknown } }; checkpointExperiments?: unknown };
+    assert.deepEqual(j.session.stats.weightEdits, { events: 0, weightsChanged: 0, checkpoints: [LATER, FILE_BASE] }, "in the order recorded; a value that is not a hash is not a checkpoint");
+    assert.ok(j.session.flags.includes("weights:checkpoint"));
+    assert.equal(j.session.flags.includes("weights:edited"), false);
+    assert.deepEqual(ids("--where", "weights.edits:0 flag:weights:checkpoint"), [SAVED]);
+    const text = cli("show", SAVED);
+    assert.match(text, /^\s*Weight edits\s+checkpoints beefeeeeeeee, dddddddddddd$/m);
+    assert.match(text, /weights\s+checkpoint beefeeeeeeee$/m);
+    assert.match(text, /weights\s+checkpoint dddddddddddd$/m);
+    assert.doesNotMatch(text, /Flags/, "the tag is not a failure");
+  });
+
+  it("show names the experiments that ran each checkpoint, newest first, and nothing for one no experiment ran", () => {
     const text = cli("show", EDITS);
-    assert.match(text, /Weight edits\s+2 edits, 1 tensor, 66,560 weights changed/);
-    assert.match(text, /weights\s+model\.layers\.15\.mlp\.down_proj\.weight \[4096×11008\] · 65,536 of 45,088,768 weights · L2 0\.0183 · max 0\.004 · aaaaaaaa → bbbbbbbb/);
+    assert.match(text, /^\s*Experiments\s+c0ffeecccccc ran in edited-again \(exp_\w+\), edited \(exp_\w+\)$/m);
+    const saved = cli("show", SAVED);
+    assert.match(saved, /^\s*Experiments\s+dddddddddddd ran in base \(exp_\w+\)$/m);
+    assert.equal(saved.match(/^\s*Experiments/gm)?.length, 1, "no row for the checkpoint no experiment ran");
+    const j = JSON.parse(cli("show", EDITS, "--json")) as { checkpointExperiments?: { sha256: string; experiments: { id: string; name: string }[] }[] };
+    assert.deepEqual(j.checkpointExperiments?.map((x) => [x.sha256, x.experiments.map((e) => e.name)]), [[FILE, ["edited-again", "edited"]]]);
+    assert.ok(j.checkpointExperiments![0]!.experiments.every((e) => /^exp_\w+$/.test(e.id)));
+    for (const id of [PLAIN]) {
+      assert.doesNotMatch(cli("show", id), /^\s*Experiments/m);
+      assert.equal(Object.hasOwn(JSON.parse(cli("show", id, "--json")), "checkpointExperiments"), false);
+    }
+  });
+
+  it("show prints the Weight edits row and one line per edit and checkpoint", () => {
+    const text = cli("show", EDITS);
+    assert.match(text, /^\s*Weight edits\s+2 edits, 1 tensor, 66,560 weights changed, checkpoint c0ffeecccccc$/m);
+    assert.match(text, /weights\s+checkpoint c0ffeecccccc ← dddddddddddd$/m);
+    assert.doesNotMatch(text, /after layer 15/, "the line is the two hashes; the note stays in the event");
+    assert.match(text, /weights\s+model\.layers\.15\.mlp\.down_proj\.weight \[4096×11008\] · 65,536 of 45,088,768 weights · L2 0\.0183 · max 0\.004 · aaaaaaaaaaaa → bbbbbbbbbbbb/);
     assert.match(text, /weights\s+1,024 weights · L2 0\.002 · max 0\.001/, "an edit captured without its name still says what changed");
     assert.doesNotMatch(text, /^\s*\+\S+\s+notification\s*$/m, "no blank notification line");
     const j = JSON.parse(cli("show", EDITS, "--json")) as { session: { flags: string[]; stats: { weightEdits?: unknown } } };
-    assert.deepEqual(j.session.stats.weightEdits, { events: 2, tensors: 1, weightsChanged: 66560 });
-    assert.ok(j.session.flags.includes("weights:edited"));
+    assert.deepEqual(j.session.stats.weightEdits, { events: 2, tensors: 1, weightsChanged: 66560, checkpoints: [FILE] });
+    assert.ok(j.session.flags.includes("weights:edited") && j.session.flags.includes("weights:checkpoint"));
   });
 
   it("a session with no weight edit has no row", () => {

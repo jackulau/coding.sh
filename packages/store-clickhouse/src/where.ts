@@ -54,7 +54,7 @@ const tokens = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTok
 
 /**
  * SQL over the sessions row, or (event keys) over an events row; a clause
- * matches when any expression does. Flags use the lambda argument `f`.
+ * matches when any expression does. List-valued keys (flags, weights.checkpoint) use the lambda argument `f`, an item of MULTI_FROM.
  */
 export const KEY_SQL: Record<string, string[]> = {
   agent: ["agent"],
@@ -74,6 +74,7 @@ export const KEY_SQL: Record<string, string[]> = {
   "hook.tokens": [stat("hookContext.tokens")],
   "weights.edits": [stat("weightEdits.events")],
   "weights.changed": [stat("weightEdits.weightsChanged")],
+  "weights.checkpoint": ["f"],
   since: ["started_at"],
   until: ["started_at"],
   duration: ["(ended_at - started_at)"],
@@ -143,6 +144,13 @@ export function assertSupported(n: Node): void {
   }
 }
 
+/** The array a list-valued key reads: the session's flags, unless the key is named here. */
+const MULTI_FROM: Record<string, string> = {
+  // An empty array when the session recorded no checkpoint.
+  "weights.checkpoint": "JSONExtract(stats, 'weightEdits', 'checkpoints', 'Array(String)')",
+};
+const multiFrom = (key: string): string => MULTI_FROM[key] ?? "flags";
+
 class Compiler {
   private readonly bind: Bind;
   private readonly events: string;
@@ -168,7 +176,7 @@ class Compiler {
   /** A key clause; `negated` wraps nullable columns so NOT(NULL) reads as true, as in the scan. */
   cmp(c: Cmp, negated: boolean): string {
     const def = KEYS.get(c.key)!;
-    if (def.multi) return `arrayExists(f -> ${c.values.map((v) => this.valueSql(def, c, v, "f")).join(" OR ")}, flags)`;
+    if (def.multi) return `arrayExists(f -> ${c.values.map((v) => this.valueSql(def, c, v, "f")).join(" OR ")}, ${multiFrom(c.key)})`;
     const parts = KEY_SQL[c.key]!.flatMap((expr) => c.values.map((v) => this.valueSql(def, c, v, expr)));
     const sql = parts.length === 1 ? parts[0]! : `(${parts.join(" OR ")})`;
     return negated && !def.notNull ? `ifNull(${sql}, 0)` : sql;
@@ -251,7 +259,8 @@ export function facetRows(key: string, bind: Bind, sessions: string, events: str
   if (!def || !KEY_SQL[key]) throw unknown(key);
   if (def.multi) {
     const p = def.multi.prefix;
-    const value = p ? `arrayJoin(arrayMap(f -> substring(f, ${p.length + 1}), arrayFilter(f -> lower(f) LIKE ${bind("String", `${esc(asciiLower(p))}%`)}, flags)))` : "arrayJoin(flags)";
+    const from = multiFrom(key);
+    const value = p ? `arrayJoin(arrayMap(f -> substring(f, ${p.length + 1}), arrayFilter(f -> lower(f) LIKE ${bind("String", `${esc(asciiLower(p))}%`)}, ${from})))` : `arrayJoin(${from})`;
     return `SELECT ${value} AS fv, id AS sid FROM ${sessions} FINAL ${where}`;
   }
   const value = FACET_SQL[key] ?? KEY_SQL[key]![0]!;

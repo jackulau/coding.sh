@@ -2,13 +2,26 @@
 // weights_edit helpers, or any client of /v1/ingest), folded into
 // Session.stats.weightEdits and the `weights:edited` session tag, and read
 // into one line of text for the CLI, the MCP server and the viewer's rows.
+//
+// A checkpoint: one `notification` with `payload.kind: "weights.checkpoint"` and
+// the SHA-256 of the weights file the session saved. An edit hashes one tensor;
+// `exp run --weights` records the hash of the whole file. The checkpoint event
+// carries that file hash, so a session of edits and the experiments that ran its
+// result name each other (Session.stats.weightEdits.checkpoints, the
+// `weights:checkpoint` tag, `--where weights.checkpoint:<sha256>`).
 import type { AgentEvent, WeightEditStats } from "../schema/index.ts";
+import { isSha256Hex } from "./ids.ts";
 
 export const WEIGHTS_EDIT_KIND = "weights.edit";
 /** A tag, not a failure: the session recorded at least one weight edit. */
 export const WEIGHTS_EDITED = "weights:edited";
+export const WEIGHTS_CHECKPOINT_KIND = "weights.checkpoint";
+/** A tag, not a failure: the session recorded the hash of a weights file it saved. */
+export const WEIGHTS_CHECKPOINT = "weights:checkpoint";
 /** Distinct tensor names kept per session; `tensors` stops counting there. */
 const TENSORS_MAX = 10_000;
+/** Distinct checkpoint hashes kept per session, in arrival order; later ones are not kept. */
+export const CHECKPOINTS_MAX = 16;
 /** Dimensions a shape may have (what the SDKs accept); a longer one is not read as a shape. */
 const SHAPE_MAX = 16;
 
@@ -17,9 +30,11 @@ export interface WeightEditState {
   events: number;
   weightsChanged: number;
   tensors: Set<string>;
+  /** Distinct file hashes of the session's weights.checkpoint events, in arrival order (CHECKPOINTS_MAX). */
+  checkpoints: string[];
 }
 
-export const weightEditState = (): WeightEditState => ({ events: 0, weightsChanged: 0, tensors: new Set() });
+export const weightEditState = (): WeightEditState => ({ events: 0, weightsChanged: 0, tensors: new Set(), checkpoints: [] });
 
 /** True for a weights.edit event. */
 export const isWeightsEdit = (e: AgentEvent): boolean => e.kind === "notification" && e.payload.kind === WEIGHTS_EDIT_KIND;
@@ -27,6 +42,15 @@ export const isWeightsEdit = (e: AgentEvent): boolean => e.kind === "notificatio
 const count = (v: unknown): number | undefined => (typeof v === "number" && Number.isSafeInteger(v) && v >= 0 ? v : undefined);
 const norm = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
 const text = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
+
+/** A SHA-256 as stored: trimmed and lowercased; undefined when it is not 64 hex characters. */
+export function parseWeights(v: unknown): string | undefined {
+  const s = typeof v === "string" ? v.trim().toLowerCase() : undefined;
+  return isSha256Hex(s) ? s : undefined;
+}
+
+/** The first 12 hex characters: how every weights hash (a tensor's, a file's) is written in a line of text. */
+export const shortWeights = (sha256: string): string => sha256.slice(0, 12);
 
 /** The fields of a weights.edit payload that are present and well-formed. Metadata capture keeps only the numbers. */
 export interface WeightsEdit {
@@ -80,7 +104,59 @@ export function weightsEditAttrs(p: Record<string, unknown>): Record<string, unk
   return out;
 }
 
+/** A weights.checkpoint payload: the saved file's hash, and what is present and well-formed of the rest. */
+export interface WeightsCheckpoint {
+  /** SHA-256 of the saved weights file, 64 lowercase hex: the value `exp run --weights` takes. */
+  sha256: string;
+  /** SHA-256 of the weights file the edits started from. */
+  baseSha256?: string;
+  note?: string;
+}
+
+/**
+ * The checkpoint a payload records, hashes lowercased. Undefined when `kind` is not
+ * weights.checkpoint or `sha256` is not 64 hex characters: without the file's hash there
+ * is nothing to join on, so the event is not read as a checkpoint. A `baseSha256` that is
+ * not a SHA-256 is left out.
+ */
+export function weightsCheckpointOf(p: Record<string, unknown>): WeightsCheckpoint | undefined {
+  const sha256 = p.kind === WEIGHTS_CHECKPOINT_KIND ? parseWeights(p.sha256) : undefined;
+  if (sha256 === undefined) return undefined;
+  const out: WeightsCheckpoint = { sha256 };
+  const base = parseWeights(p.baseSha256);
+  if (base !== undefined) out.baseSha256 = base;
+  const note = text(p.note);
+  if (note !== undefined) out.note = note;
+  return out;
+}
+
+/** True for a weights.checkpoint event with a well-formed `sha256`. */
+export const isWeightsCheckpoint = (e: AgentEvent): boolean => e.kind === "notification" && weightsCheckpointOf(e.payload) !== undefined;
+
+/** True for an event that gets a `weights` line: a weight edit, or a checkpoint. */
+export const isWeightsEvent = (e: AgentEvent): boolean => isWeightsEdit(e) || isWeightsCheckpoint(e);
+
+/**
+ * OTLP: a span or a log record named `weights.checkpoint` carries the checkpoint in these
+ * attributes. The base hash and the note share their names with a weight edit's.
+ */
+export const WEIGHTS_CHECKPOINT_ATTRS: Record<keyof WeightsCheckpoint, string> = {
+  sha256: "coding_sh.weights.sha256",
+  baseSha256: WEIGHTS_EDIT_ATTRS.baseSha256,
+  note: WEIGHTS_EDIT_ATTRS.note,
+};
+
+/** A weights.checkpoint payload as OTLP attributes; empty when it is not a checkpoint. */
+export function weightsCheckpointAttrs(p: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(weightsCheckpointOf(p) ?? {})) out[WEIGHTS_CHECKPOINT_ATTRS[k as keyof WeightsCheckpoint]] = v;
+  return out;
+}
+
 export function foldWeightEdits(s: WeightEditState, e: AgentEvent): void {
+  if (e.kind !== "notification") return;
+  const c = weightsCheckpointOf(e.payload);
+  if (c && s.checkpoints.length < CHECKPOINTS_MAX && !s.checkpoints.includes(c.sha256)) s.checkpoints.push(c.sha256);
   if (!isWeightsEdit(e)) return;
   const w = weightsEditOf(e.payload);
   s.events++;
@@ -88,15 +164,24 @@ export function foldWeightEdits(s: WeightEditState, e: AgentEvent): void {
   if (w.tensor && s.tensors.size < TENSORS_MAX) s.tensors.add(w.tensor);
 }
 
-/** Session.stats.weightEdits, or undefined when the session recorded no weight edit. */
+/**
+ * Session.stats.weightEdits, or undefined when the session recorded no weight edit and no
+ * checkpoint. A session with a checkpoint and no edit has `events: 0`.
+ */
 export function weightEditsOf(s: WeightEditState | undefined): WeightEditStats | undefined {
-  if (!s?.events) return undefined;
+  if (!s || (!s.events && !s.checkpoints.length)) return undefined;
   const out: WeightEditStats = { events: s.events, weightsChanged: s.weightsChanged };
   if (s.tensors.size) out.tensors = s.tensors.size;
+  if (s.checkpoints.length) out.checkpoints = [...s.checkpoints];
   return out;
 }
 
-export const weightEditFlags = (s: WeightEditState | undefined): string[] => (s?.events ? [WEIGHTS_EDITED] : []);
+export function weightEditFlags(s: WeightEditState | undefined): string[] {
+  const out: string[] = [];
+  if (s?.events) out.push(WEIGHTS_EDITED);
+  if (s?.checkpoints.length) out.push(WEIGHTS_CHECKPOINT);
+  return out;
+}
 
 const int = (n: number): string => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 /** Four significant digits; a number that rounds past the largest double is written as it is. */
@@ -104,11 +189,10 @@ const real = (n: number): string => {
   const r = Number(n.toPrecision(4));
   return String(Number.isFinite(r) ? r : n);
 };
-const short = (sha: string): string => sha.slice(0, 8);
 
 /**
  * One line for a weights.edit payload, most useful part first:
- * `layers.3.mlp.down_proj.weight [4096×11008] · 1,204 of 45,088,768 weights · L2 0.0183 · max 0.004 · 9f2c1a7e → 4b1d0c33`.
+ * `layers.3.mlp.down_proj.weight [4096×11008] · 1,204 of 45,088,768 weights · L2 0.0183 · max 0.004 · 9f2c1a7e03b5 → 4b1d0c33a9e2`.
  * A part whose field is missing is left out, so an event captured in metadata mode reads
  * `1,204 weights · L2 0.0183 · max 0.004`.
  */
@@ -125,14 +209,53 @@ export function weightsEditText(p: Record<string, unknown>): string {
   }
   if (w.l2 !== undefined) parts.push(`L2 ${real(w.l2)}`);
   if (w.maxAbs !== undefined) parts.push(`max ${real(w.maxAbs)}`);
-  if (w.baseSha256 && w.editedSha256) parts.push(`${short(w.baseSha256)} → ${short(w.editedSha256)}`);
+  if (w.baseSha256 && w.editedSha256) parts.push(`${shortWeights(w.baseSha256)} → ${shortWeights(w.editedSha256)}`);
   return parts.join(" · ");
 }
 
-/** The session line: `2 edits, 2 tensors, 66,560 weights changed`. */
+/**
+ * One line for a weights.checkpoint payload: `checkpoint 58899f90572c ← 0496e5111097`, the
+ * saved file's hash and the base file's, or `checkpoint 58899f90572c` when no base was
+ * recorded. Empty when the payload is not a checkpoint.
+ */
+export function weightsCheckpointText(p: Record<string, unknown>): string {
+  const c = weightsCheckpointOf(p);
+  if (!c) return "";
+  return `checkpoint ${shortWeights(c.sha256)}${c.baseSha256 ? ` ← ${shortWeights(c.baseSha256)}` : ""}`;
+}
+
+/**
+ * The `weights` line of an event's payload, for `coding.sh show`, MCP session_get and the
+ * viewer's rows: a weight edit's (empty when no field is readable) or a checkpoint's.
+ * Undefined when the payload is neither.
+ */
+export function weightsEventText(p: Record<string, unknown>): string | undefined {
+  if (p.kind === WEIGHTS_EDIT_KIND) return weightsEditText(p);
+  return weightsCheckpointOf(p) ? weightsCheckpointText(p) : undefined;
+}
+
+/** The edits of a session: `2 edits, 2 tensors, 66,560 weights changed`, or `no edits` for a session that only recorded a checkpoint. */
 export function weightEditsText(w: WeightEditStats): string {
+  if (!w.events) return "no edits";
   const parts = [`${int(w.events)} ${w.events === 1 ? "edit" : "edits"}`];
   if (w.tensors) parts.push(`${int(w.tensors)} ${w.tensors === 1 ? "tensor" : "tensors"}`);
   parts.push(`${int(w.weightsChanged)} ${w.weightsChanged === 1 ? "weight" : "weights"} changed`);
   return parts.join(", ");
+}
+
+/**
+ * The session's summary row: its edits, then the checkpoints it recorded.
+ * `2 edits, 2 tensors, 66,560 weights changed, checkpoint 58899f90572c`; a session with a
+ * checkpoint and no edit reads `checkpoint 58899f90572c`.
+ */
+export function weightsSummaryText(w: WeightEditStats): string {
+  const parts = w.events ? [weightEditsText(w)] : [];
+  const cps = w.checkpoints ?? [];
+  if (cps.length) parts.push(`${cps.length === 1 ? "checkpoint" : "checkpoints"} ${cps.map(shortWeights).join(", ")}`);
+  return parts.join(", ");
+}
+
+/** `58899f90572c ran in edited (exp_…), edited-again (exp_…)`: the experiments stamped with one checkpoint's hash. */
+export function checkpointRunsText(sha256: string, experiments: readonly { id: string; name: string }[]): string {
+  return `${shortWeights(sha256)} ran in ${experiments.map((e) => `${e.name} (${e.id})`).join(", ")}`;
 }

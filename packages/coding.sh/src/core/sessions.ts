@@ -21,7 +21,7 @@ import { foldWaste, wasteState, wasteStatsOf, type WasteState } from "./waste.ts
 import { foldModels, mainModelOf, MODEL_FALLBACK, MODEL_SWITCH, modelFlags, modelState, modelSwitchOf, modelsOf, REFUSAL, type ModelState } from "./models.ts";
 import { exposesSecret, foldRedactions, redactionsOf, redactionState, SECRET_EXPOSED, type RedactionState } from "./redaction-stats.ts";
 import { foldUnapproved, unapprovedOf, unapprovedState, type UnapprovedState } from "./unapproved.ts";
-import { foldWeightEdits, weightEditFlags, weightEditsOf, weightEditState, WEIGHTS_EDITED, type WeightEditState } from "./weights.ts";
+import { foldWeightEdits, weightEditFlags, weightEditsOf, weightEditState, WEIGHTS_CHECKPOINT, WEIGHTS_EDITED, type WeightEditState } from "./weights.ts";
 
 export { REOPEN_SLACK_MS };
 
@@ -58,6 +58,8 @@ export const FLAGS = {
   cacheLow: "cache:low",
   /** A tag, not a failure: the session recorded a weight edit (core/weights.ts, Session.stats.weightEdits). */
   weightsEdited: WEIGHTS_EDITED,
+  /** A tag, not a failure: the session recorded the hash of a weights file it saved (core/weights.ts, Session.stats.weightEdits.checkpoints). */
+  weightsCheckpoint: WEIGHTS_CHECKPOINT,
   /** A tag, not a failure: coding.sh could not fold the session's events into its stats (Session.stats.foldError, core/ingest.ts recomputeSession). */
   foldError: "fold:error",
   /** Derails (core/derail.ts): where the session went off the rails. */
@@ -458,7 +460,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * new derivation. A new or retyped sub-state changes the stamp by itself; a
  * new optional field or a change of meaning still needs the bump.
  */
-export const SESSION_FOLD_VERSION = 20; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory). 19: a session with transcript model calls counts them, not the copies its OTLP logs carry (sansOtel, transcriptCalls). 20: weight edits (stats.weightEdits, the weights:edited tag, SessionState.weightEdits).
+export const SESSION_FOLD_VERSION = 21; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory). 19: a session with transcript model calls counts them, not the copies its OTLP logs carry (sansOtel, transcriptCalls). 20: weight edits (stats.weightEdits, the weights:edited tag, SessionState.weightEdits). 21: weight checkpoints (stats.weightEdits.checkpoints, the weights:checkpoint tag), and stats.weightEdits on a session with a checkpoint and no edit.
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -1194,7 +1196,7 @@ function flagsOf(s: FlagState, derails: readonly Derail[], sorted?: readonly Age
  * A session with nothing to look at: no turn, no tool call and no model call
  * (a hook that fired with no agent work behind it, such as a wrapper process
  * or a subagent that never ran). A changed file, a start snapshot (what
- * `coding.sh run` takes) or a recorded weight edit is something to look at. `coding.sh sessions` hides
+ * `coding.sh run` takes) or a recorded weight edit or checkpoint is something to look at. `coding.sh sessions` hides
  * the empty ones unless --empty. Applied when listing, not when folding.
  */
 export function isEmptySession(s: Pick<Session, "stats"> & Partial<Pick<Session, "repo">>): boolean {

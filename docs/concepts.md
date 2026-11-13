@@ -75,6 +75,27 @@ session that recorded one has the `weights:edited` tag and counts its edits in `
   or any OpenTelemetry SDK as a span named `weights.edit`. The fields are in the
   [API reference](https://coding.sh/docs/api).
 
+### Weights checkpoint
+
+The file a script saved its edited weights to, recorded as one event: the SHA-256 of the file, and
+of the file the edits started from. An edit's hashes cover one tensor, and
+`coding.sh exp run --weights` records the hash of a whole file. The checkpoint is what links the
+two. A session that recorded one has the `weights:checkpoint` tag and lists the hashes in
+`stats.weightEdits.checkpoints`.
+
+- In the viewer: a `Saved weights` row on the session page, a `ran in <name>` link in its header
+  for each experiment that ran the file, and a link to the session next to an experiment's
+  weights stamp.
+- In the CLI: `coding.sh sessions --where 'weights.checkpoint:58899f90572c*'` finds the session
+  that saved a file, and `coding.sh show <id>` prints `checkpoint 58899f90572c ← 0496e5111097`
+  and the experiments that ran that file.
+- In evals: `coding.sh exp show` and `exp compare` name the session under the experiment's
+  `weights` line, with its edits. See
+  [Compare an edited model with its base](https://coding.sh/docs/experiments#weights).
+- Recorded by the Python SDK's `coding_sh.weights_checkpoint()`, the TypeScript SDK's
+  `weightsCheckpoint()`, or any OpenTelemetry SDK as a span named `weights.checkpoint`. You compute
+  the hash; coding.sh hashes nothing.
+
 ### Cost
 
 What a session's model calls cost, from their token counts and each model's price. A `~` marks an

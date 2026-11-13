@@ -1,4 +1,5 @@
-"""Weight edits: one `notification` event per edit, `payload.kind` "weights.edit".
+"""Weight edits: one `notification` event per edit, `payload.kind` "weights.edit", and one per
+saved file, `payload.kind` "weights.checkpoint".
 
     coding_sh.weights_edit(
         "model.layers.3.mlp.down_proj.weight",
@@ -9,12 +10,13 @@
         base_sha256=sha_before,
         edited_sha256=sha_after,
     )
+    coding_sh.weights_checkpoint(sha_of_edited_file, base_sha256=sha_of_base_file)
 
 The caller's script computes the hashes and norms; this module only checks them and sends them.
 It imports no numpy or torch; numpy and torch scalars are accepted as numbers. weights_edit()
-never raises into the app: a bad value drops the event with a warning (once per process) and it
-returns False. weights_delta() is a helper you call on purpose, so it raises ValueError on bad
-input. The event lands in the current trace or session, or in a
+and weights_checkpoint() never raise into the app: a bad value drops the event with a warning
+(once per process) and they return False. weights_delta() is a helper you call on purpose, so
+it raises ValueError on bad input. The event lands in the current trace or session, or in a
 session of its own when there is none. Payload fields are in docs/reference/api.md.
 """
 
@@ -29,6 +31,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from ._trace import Scope, _get, clip, emit, full_capture
 
 KIND = "weights.edit"
+CHECKPOINT_KIND = "weights.checkpoint"
 _SHA256 = re.compile(r"^[0-9a-fA-F]{64}$")
 MAX_DIMS = 16
 
@@ -115,16 +118,32 @@ def _payload(
         "baseSha256": _sha(base_sha256, "base_sha256"),
         "editedSha256": _sha(edited_sha256, "edited_sha256"),
     }
-    if note is not None:
-        if not isinstance(note, str):
-            # The edit is still recorded; only the note is dropped.
-            _warn("weights_edit_note", "coding.sh: weights_edit ignored a note that is not a string")
-        elif full_capture() and note:
-            p["note"] = clip(note)
+    _put_note(p, note, "weights_edit_note", "weights_edit")
+    return p
+
+
+def _put_note(p: Dict[str, Any], note: Any, key: str, fn: str) -> None:
+    """Sets `note` in full capture mode. One that is not a string is dropped with a warning; the
+    event is still recorded."""
+    if note is None:
+        return
+    if not isinstance(note, str):
+        _warn(key, "coding.sh: %s ignored a note that is not a string" % fn)
+    elif full_capture() and note:
+        p["note"] = clip(note)
+
+
+def _checkpoint_payload(sha256: Any, base_sha256: Any, note: Any) -> Dict[str, Any]:
+    p: Dict[str, Any] = {"kind": CHECKPOINT_KIND, "sha256": _sha(sha256, "sha256")}
+    if base_sha256 is not None:
+        p["baseSha256"] = _sha(base_sha256, "base_sha256")
+    _put_note(p, note, "weights_checkpoint_note", "weights_checkpoint")
     return p
 
 
 class _WeightsEdit(Scope):
+    """One weights notification: an edit, or a checkpoint."""
+
     bind_context = False
 
     def __init__(self, payload: Dict[str, Any]) -> None:
@@ -133,7 +152,7 @@ class _WeightsEdit(Scope):
         self.queued = False
 
     def _root_name(self) -> str:
-        return KIND
+        return str(self.payload["kind"])
 
     def _on_start(self) -> None:
         if self.node is not None:
@@ -170,14 +189,44 @@ def weights_edit(
     except Exception as e:
         _warn("weights_edit", "coding.sh: weights_edit dropped an event: %s" % e)
         return False
+    return _record(p)
+
+
+def _record(payload: Dict[str, Any]) -> bool:
+    """Queues one weights notification. True only when it was queued; never raises."""
     try:
-        scope = _WeightsEdit(p)
+        scope = _WeightsEdit(payload)
         scope.start()
         queued = scope.queued
         scope.end()
         return queued
     except Exception:
         return False
+
+
+def weights_checkpoint(sha256: str, *, base_sha256: Optional[str] = None, note: Optional[str] = None) -> bool:
+    """Record one saved weights file as a `notification` event with `payload.kind`
+    "weights.checkpoint".
+
+    sha256: the 64-hex hash of the whole file, as your script computed it. It is the value
+    `coding.sh exp run --weights` takes, so the session that recorded the edits and the
+    experiment that ran the file name each other. base_sha256: the hash of the file the edits
+    started from. note: free text, kept only in full capture mode.
+
+    Returns True only when the event was queued. Returns False when a value is invalid, with
+    one warning per process. Returns False without a warning when the SDK is off or shut down
+    or the queue is full. Never raises.
+
+    A note that is not a string is dropped with one warning; the checkpoint is still recorded.
+    Outside trace() and with_session() the checkpoint gets a session of its own, so record it
+    inside the one that recorded the edits.
+    """
+    try:
+        p = _checkpoint_payload(sha256, base_sha256, note)
+    except Exception as e:
+        _warn("weights_checkpoint", "coding.sh: weights_checkpoint dropped an event: %s" % e)
+        return False
+    return _record(p)
 
 
 def _walk(x: Any, shape: List[int], depth: int, out: List[float], leaves: Set[int]) -> None:

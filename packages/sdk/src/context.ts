@@ -10,7 +10,7 @@
 //   model call       llm.call (ts = start, durationMs, usage, model) · assistant.message (ts = end)
 //   tool span        tool.start · tool.end
 //   step span        span { name, ok }
-//   notification     notification { kind, … } (weightsEdit: one event, a child of the current span)
+//   notification     notification { kind, … } (weightsEdit, weightsCheckpoint: one event, a child of the current span)
 //
 // A model call or tool span outside any trace is its own root (a one-call
 // session), unless withSession() names the session it belongs to.

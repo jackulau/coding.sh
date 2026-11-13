@@ -1,11 +1,11 @@
-// A weight edit in the viewer: the page's own weightsEditText (run straight from index.html) gives
-// the same line as core/weights.ts, the rows route labels the event with it, and a fold of routine
-// events never hides one.
+// A weight edit and a weights checkpoint in the viewer: the page's own weightsEditText and
+// weightsCheckpointText (run straight from index.html) give the same lines as core/weights.ts, the
+// rows route labels the event with them, and a fold of routine events never hides one.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { test } from "node:test";
-import { weightsEditText } from "../../src/core/weights.ts";
+import { weightsCheckpointText, weightsEditText } from "../../src/core/weights.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { buildModel, FOLD_MIN, layoutRows, rowLabel } from "../../src/viewer/model.ts";
 
@@ -14,6 +14,7 @@ const from = html.indexOf("function weightsEditText(");
 const to = html.indexOf("function eventView(", from);
 assert.ok(from >= 0 && to > from, "the page defines weightsEditText just before eventView");
 const page: (p: Record<string, unknown>) => string = runInNewContext(`${html.slice(from, to)}\nweightsEditText`, { Number, String, Array });
+const pageCheckpoint: (p: Record<string, unknown>) => string = runInNewContext(`${html.slice(from, to)}\nweightsCheckpointText`, { Number, String, Array });
 
 const A = "a".repeat(64);
 const B = "b".repeat(64);
@@ -42,7 +43,31 @@ test("the page and the CLI write the same line for a weight edit", () => {
     { tensor: "w", shape: Array.from({ length: 17 }, () => 1), changed: 1 },
   ];
   for (const p of payloads) assert.equal(page(p), weightsEditText(p), JSON.stringify(p));
-  assert.equal(page(FULL), "layers.3.mlp.down_proj.weight [4096×11008] · 1,204 of 45,088,768 weights · L2 0.0183 · max 0.004 · aaaaaaaa → bbbbbbbb");
+  assert.equal(page(FULL), "layers.3.mlp.down_proj.weight [4096×11008] · 1,204 of 45,088,768 weights · L2 0.0183 · max 0.004 · aaaaaaaaaaaa → bbbbbbbbbbbb");
+});
+
+const SAVED = { kind: "weights.checkpoint", sha256: `58899f90572c${"0".repeat(52)}`, baseSha256: `0496e5111097${"f".repeat(52)}` };
+
+test("the page and the CLI write the same line for a weights checkpoint", () => {
+  const payloads: Record<string, unknown>[] = [
+    SAVED,
+    { ...SAVED, note: "after the layer 15 edit" },
+    { kind: "weights.checkpoint", sha256: SAVED.sha256 },
+    { kind: "weights.checkpoint", sha256: SAVED.sha256.toUpperCase(), baseSha256: ` ${SAVED.baseSha256.toUpperCase()}\n` },
+    { kind: "weights.checkpoint", sha256: SAVED.sha256, baseSha256: "abc" },
+    { kind: "weights.checkpoint", sha256: SAVED.sha256, baseSha256: 7 },
+    { kind: "weights.checkpoint", sha256: SAVED.sha256.slice(1) },
+    { kind: "weights.checkpoint", sha256: `${SAVED.sha256.slice(2)}zz` },
+    { kind: "weights.checkpoint", sha256: 7 },
+    { kind: "weights.checkpoint" },
+    { kind: "weights.edit", sha256: SAVED.sha256 },
+    { sha256: SAVED.sha256 },
+    {},
+  ];
+  for (const p of payloads) assert.equal(pageCheckpoint(p), weightsCheckpointText(p), JSON.stringify(p));
+  assert.equal(pageCheckpoint(SAVED), "checkpoint 58899f90572c ← 0496e5111097");
+  assert.equal(pageCheckpoint({ kind: "weights.checkpoint", sha256: SAVED.sha256 }), "checkpoint 58899f90572c");
+  assert.equal(pageCheckpoint({ kind: "weights.checkpoint", sha256: "abc" }), "", "a value that is not a SHA-256 is not a checkpoint");
 });
 
 const base = { v: 0, sessionId: "w-1", agent: "sdk" } as const;
@@ -52,6 +77,25 @@ test("the rows route labels a weight edit with that line", () => {
   assert.equal(rowLabel(ev(0, "notification", FULL)), weightsEditText(FULL));
   assert.equal(rowLabel(ev(2, "notification", { kind: "weights.edit" })), "weights.edit", "an edit with no readable field still has a label");
   assert.equal(rowLabel(ev(1, "notification", { kind: "hook.context", text: "x" })), "notification");
+});
+
+test("the rows route labels a weights checkpoint with its line", () => {
+  assert.equal(rowLabel(ev(0, "notification", SAVED)), "checkpoint 58899f90572c ← 0496e5111097");
+  assert.equal(rowLabel(ev(1, "notification", { kind: "weights.checkpoint", sha256: "abc" })), "notification", "not a checkpoint without a SHA-256");
+});
+
+test("a fold of routine events never hides a weights checkpoint", () => {
+  const n = FOLD_MIN * 6;
+  const mid = n / 2;
+  const evs = [ev(0, "session.start"), ev(1, "user.message", { text: "save the weights" })];
+  for (let i = 0; i < n; i++) evs.push(ev(2 + i, "notification", i === mid ? SAVED : { message: `tick ${i}` }));
+  const m = buildModel(evs);
+  const { slots } = layoutRows(m, m.turns[0]!, m.turns[0]!.start, 10_000);
+  const folds = slots.filter((s): s is { from: number; to: number } => "from" in s);
+  const at = 2 + mid;
+  assert.ok(folds.length >= 2, `the runs on both sides fold: ${JSON.stringify(slots)}`);
+  assert.ok(slots.some((s) => "i" in s && s.i === at), "the checkpoint is a row of its own");
+  assert.ok(folds.every((f) => at < f.from || at > f.to));
 });
 
 test("a fold of routine events never hides a weight edit", () => {

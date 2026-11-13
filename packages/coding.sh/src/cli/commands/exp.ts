@@ -44,6 +44,7 @@ import { sortableId } from "../../core/ids.ts";
 import { jobConfig, taskFingerprint } from "../../jobs/config.ts";
 import type { Job, JobKind } from "../../jobs/store.ts";
 import { positiveInt, UsageError } from "../args.ts";
+import { checkpointSessions, withSessions } from "../../experiments/checkpoints.ts";
 import { parseWeights, shortWeights, stampedWith, weightsOf, withWeights } from "../../experiments/weights.ts";
 import { finishJob, infraStopNote, openJob, resumeField, resumeNote, retryFlag, statusCommand, trialTimeout } from "../jobs.ts";
 import { gateFlags, jsonArg, list, num, shellQuote, str, withContext } from "../common.ts";
@@ -1152,7 +1153,11 @@ export async function run(c: CommandContext): Promise<number> {
         const hold = pws.length && cmp.gate?.verdict === "ship" ? judgeHold(replication ?? replicatePairwise([pws[0]!.summary], [pws[0]!.meta])) : undefined;
         if (hold && cmp.gate) Object.assign(cmp.gate, { decision: "abstain", verdict: "hold", judgeHold: hold });
         const calField = (x: (typeof pws)[number]) => (x.calibration ? { ...x.calibration.report, abstained: x.calibration.abstained } : undefined);
+        // The sessions that recorded either side's weights file as a checkpoint (a weights.checkpoint event).
+        const checkpoints = await checkpointSessions(ctx.index, [cmp.a.weights?.sha256, cmp.b.weights?.sha256]);
         if (out.json) {
+          withSessions(cmp.a, checkpoints);
+          withSessions(cmp.b, checkpoints);
           out.data({
             comparison: cmp,
             ...(pw ? { pairwise: pw.summary } : {}),
@@ -1162,7 +1167,7 @@ export async function run(c: CommandContext): Promise<number> {
           });
         } else {
           const ds = await store.getDataset(b!.dataset.id, b!.dataset.version).catch(() => undefined);
-          out.print(renderComparison(cmp, { color: out.color, a: a!, b: b!, matrix: c.flags.matrix === true, cases: ds ? caseLabels(ds.cases) : undefined }));
+          out.print(renderComparison(cmp, { color: out.color, a: a!, b: b!, matrix: c.flags.matrix === true, cases: ds ? caseLabels(ds.cases) : undefined, checkpoints }));
           for (const x of pws) {
             out.print(`\n${renderPairwise(x.summary, { color: out.color })}`);
             if (x.calibration) {
@@ -1305,10 +1310,18 @@ export async function run(c: CommandContext): Promise<number> {
         }
         if (!e) throw new CliError(`Can't find experiment ${JSON.stringify(ref)}`, { reason: "not_found", next: ["List experiments:", "coding.sh exp list"] });
         const verifiers = await verifierAudits(store, e);
-        if (out.json) out.data({ experiment: e, ...(verifiers.size ? { verifiers: [...verifiers.values()] } : {}) });
-        else {
+        // The sessions that recorded the experiment's weights file as a checkpoint (a weights.checkpoint event).
+        const checkpoints = await checkpointSessions(ctx.index, [weightsOf(e)]);
+        if (out.json) {
+          const doc: Record<string, unknown> = { experiment: e };
+          // Next to the experiment, so the stored record prints as it is: its stamp with the ids of those sessions.
+          const { weights } = withSessions(stampedWith({}, weightsOf(e)), checkpoints);
+          if (weights?.sessions) doc.weights = weights;
+          if (verifiers.size) doc.verifiers = [...verifiers.values()];
+          out.data(doc);
+        } else {
           const ds = await store.getDataset(e.dataset.id, e.dataset.version).catch(() => undefined);
-          out.print(renderExperiment(e, { color: out.color, verifiers, cases: ds ? caseLabels(ds.cases) : undefined }));
+          out.print(renderExperiment(e, { color: out.color, verifiers, cases: ds ? caseLabels(ds.cases) : undefined, checkpoints }));
         }
         return 0;
       }
@@ -1316,8 +1329,9 @@ export async function run(c: CommandContext): Promise<number> {
         const limit = positiveInt(c.flags.limit, "limit") ?? 20;
         const all = await store.listExperiments({ limit });
         if (out.json) {
-          // Each row carries the checkpoint its run recorded (exp run --weights); no key when it recorded none.
-          out.data({ experiments: all.map((e) => stampedWith({ id: e.id, name: e.name, status: e.status ?? "completed", ...(isCheckpoint(e) ? { partial: true } : {}), dataset: e.dataset, trials: e.trials, runs: e.runs.length, createdAt: new Date(e.createdAt).toISOString(), summary: e.summary }, weightsOf(e))) });
+          // Each row carries the checkpoint its run recorded (exp run --weights), with the sessions that recorded that file; no key when it recorded none.
+          const checkpoints = await checkpointSessions(ctx.index, all.map((e) => weightsOf(e)));
+          out.data({ experiments: all.map((e) => withSessions(stampedWith({ id: e.id, name: e.name, status: e.status ?? "completed", ...(isCheckpoint(e) ? { partial: true } : {}), dataset: e.dataset, trials: e.trials, runs: e.runs.length, createdAt: new Date(e.createdAt).toISOString(), summary: e.summary }, weightsOf(e)), checkpoints)) });
           return 0;
         }
         if (!all.length) {

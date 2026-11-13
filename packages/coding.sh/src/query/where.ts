@@ -121,7 +121,7 @@ export interface KeyDef {
   example: string;
   /**
    * SQL expressions over `s` (sessions) or `e` (events); a clause matches when any
-   * of them does. Multi keys (flags) use `j.value` from `multi.from` instead.
+   * of them does. Multi keys (flags, weights.checkpoint) use `j.value` from `multi.from` instead.
    */
   sql: string[];
   /** Columns that are never NULL (no COALESCE needed under negation). */
@@ -133,7 +133,7 @@ export interface KeyDef {
    * guard per `sql` expression, so each branch of the OR can start from its own index.
    */
   present?: string | string[];
-  /** A list-valued field: one EXISTS over json_each, values compared after `prefix`. */
+  /** A list-valued field: one EXISTS over json_each of `from` (a JSON array, or NULL for none), values compared after `prefix`. */
   multi?: { from: string; prefix: string };
   /** The values the scan fallback compares (one per `sql` expression, or every list item for multi). */
   get(row: Session & AgentEvent): unknown[];
@@ -203,6 +203,16 @@ const KEY_LIST: KeyDef[] = [
   { name: "hook.tokens", level: "session", type: "number", unit: "count", doc: "Tokens hooks added to the context (characters / 4)", example: "hook.tokens>500", sql: [stat("hookContext.tokens")], get: (s) => [num(s.stats?.hookContext?.tokens)] },
   { name: "weights.edits", level: "session", type: "number", unit: "count", doc: "Weight edits the session recorded", example: "weights.edits>0", sql: [stat("weightEdits.events")], get: (s) => [num(s.stats?.weightEdits?.events)] },
   { name: "weights.changed", level: "session", type: "number", unit: "count", doc: "Weights those edits changed, added up", example: "weights.changed>1000", sql: [stat("weightEdits.weightsChanged")], get: (s) => [num(s.stats?.weightEdits?.weightsChanged)] },
+  {
+    name: "weights.checkpoint",
+    level: "session",
+    type: "text",
+    doc: "SHA-256 of a weights file the session recorded as a checkpoint (the value exp run --weights takes): 64 lowercase hex characters, or a prefix with *",
+    example: "weights.checkpoint:58899f90572c*",
+    sql: ["j.value"],
+    multi: { from: stat("weightEdits.checkpoints"), prefix: "" },
+    get: (s) => s.stats?.weightEdits?.checkpoints ?? [],
+  },
   { name: "since", level: "session", type: "time", bound: "since", doc: "Started at or after: 7d, 12h, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight", example: "since:7d", sql: ["s.started_at"], notNull: true, get: (s) => [s.startedAt] },
   { name: "until", level: "session", type: "time", bound: "until", doc: "Started before (exclusive): 7d, 12h, today or a date in local time. until:2026-11-01 leaves that day out", example: "until:2026-11-01", sql: ["s.started_at"], notNull: true, get: (s) => [s.startedAt] },
   { name: "duration", level: "session", type: "number", unit: "ms", doc: "Wall time of an ended session (30s, 10m, 2h)", example: "duration>10m", sql: ["(s.ended_at - s.started_at)"], get: (s) => [s.endedAt !== undefined ? s.endedAt - s.startedAt : undefined] },

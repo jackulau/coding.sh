@@ -1122,7 +1122,7 @@ export const COMMANDS: CommandSpec[] = [
             name: "weights",
             type: "list",
             value: "<SHA256>",
-            desc: "Record the checkpoint the task ran: the SHA-256 of the weights file, 64 hex characters, which you compute (coding.sh hashes nothing). exp compare shows each side's and warns when both ran the same. With --arm: one per arm, as ARM=<SHA256>. Not with --watch or a matrix spec",
+            desc: "Record the checkpoint the task ran: the SHA-256 of the weights file, 64 hex characters, which you compute (coding.sh hashes nothing). exp compare shows each side's and warns when both ran the same; with exp show it names the session that recorded the hash as a weights.checkpoint event. With --arm: one per arm, as ARM=<SHA256>. Not with --watch or a matrix spec",
           },
           { name: "watch", type: "boolean", desc: "Rerun on every change to the spec, the task's script, grader files or --watch-path; a grader-only change regrades the stored outputs. Enter reruns, q quits" },
           { name: "watch-path", type: "list", value: "<GLOB>", desc: "With --watch: more files whose change reruns the task (repeatable; also the spec's \"watch\" field)" },

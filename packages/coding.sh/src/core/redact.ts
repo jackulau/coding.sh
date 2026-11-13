@@ -3,6 +3,7 @@
 // name next to the value, so ordinary code, paths and sha hashes pass through.
 import { statSync } from "node:fs";
 import type { AgentEvent, Session } from "../schema/index.ts";
+import { weightsCheckpointOf } from "./weights.ts";
 
 export interface RedactRule {
   kind: string;
@@ -794,7 +795,8 @@ const METADATA_STRING_KEYS = new Set([
 /**
  * Metadata-only view of an event, for remote sinks and capture.mode="metadata":
  * keeps kind, ids, timings, tool names, ok flags, counts and usage; drops text,
- * tool input/output, paths, cwd, repo root and blob refs.
+ * tool input/output, paths, cwd, repo root and blob refs. A weights checkpoint
+ * keeps its two file hashes.
  */
 export function toMetadata(event: AgentEvent): AgentEvent {
   const payload: Record<string, unknown> = {};
@@ -803,6 +805,13 @@ export function toMetadata(event: AgentEvent): AgentEvent {
     else if (typeof v === "string" && METADATA_STRING_KEYS.has(k) && v.length <= 200) payload[k] = v;
     // The tools a model call offered, by name (the proxy), like `tool` on tool events.
     else if (k === "toolNames" && Array.isArray(v)) payload[k] = v.filter((n): n is string => typeof n === "string" && n.length <= 200).slice(0, 128);
+  }
+  // A weights checkpoint keeps the hashes of its two files: they are the key that joins the session
+  // to the experiments that ran the file (which store the same value in any mode). The note is dropped.
+  const checkpoint = event.kind === "notification" ? weightsCheckpointOf(event.payload ?? {}) : undefined;
+  if (checkpoint) {
+    payload.sha256 = checkpoint.sha256;
+    if (checkpoint.baseSha256) payload.baseSha256 = checkpoint.baseSha256;
   }
   // Redaction counts (kind → number, never values): the secret-exposure signal survives metadata mode.
   const counts = redactionCounts(event.payload?.redactions);

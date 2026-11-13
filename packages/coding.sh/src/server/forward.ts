@@ -5,7 +5,7 @@
 //
 // - Spans received over OTLP keep their own trace and span ids (they line up
 //   with the app's other spans in the backend). Native /v1/ingest batches are
-//   converted with toOtlpRequest (invoke_agent / execute_tool / chat / weights.edit spans).
+//   converted with toOtlpRequest (invoke_agent / execute_tool / chat / weights.edit / weights.checkpoint spans).
 // - Every resource gets `coding_sh.project`.
 // - Metadata mode is an allowlist (see keepInMetadata); full mode keeps every
 //   attribute and runs serve's redactor over every string.
@@ -17,7 +17,7 @@ import type { Redactor } from "../core/redact.ts";
 import type { OtelValue, ResourceSpans } from "../otel/model.ts";
 import type { OpenSession } from "../core/types.ts";
 import { otlpTracesUrl, toOtlpOpenSessionRequest, toOtlpRequest } from "../sinks/otlp.ts";
-import { WEIGHTS_EDIT_CONTENT_ATTRS } from "../core/weights.ts";
+import { parseWeights, WEIGHTS_CHECKPOINT_ATTRS, WEIGHTS_CHECKPOINT_KIND, WEIGHTS_EDIT_CONTENT_ATTRS } from "../core/weights.ts";
 import { DEFAULT_TIMEOUT_MS, parseRetryAfter, redactUrl } from "../sinks/post.ts";
 import type { ForwardConfig } from "./config.ts";
 import type { Logger } from "./log.ts";
@@ -108,8 +108,14 @@ const DROP_EXACT = new Set(["coding_sh.session.title", "coding_sh.repo.root", ..
 
 const isScalarNonString = (v: AnyValue): boolean => "boolValue" in v || "intValue" in v || "doubleValue" in v;
 
-/** Whether metadata mode forwards this attribute: an allowlisted key, or any boolean or number. */
-export function keepInMetadata(key: string, value: AnyValue): boolean {
+/**
+ * Whether metadata mode forwards this attribute: an allowlisted key, or any boolean or number.
+ * `span` is the name of the span it is on: a `weights.checkpoint` span keeps the SHA-256 of its
+ * base file, which a weight edit's span drops (there it is one tensor's hash). The two file
+ * hashes join a session to the experiments that ran the file. Its note is dropped.
+ */
+export function keepInMetadata(key: string, value: AnyValue, span?: string): boolean {
+  if (span === WEIGHTS_CHECKPOINT_KIND && key === WEIGHTS_CHECKPOINT_ATTRS.baseSha256) return "stringValue" in value && parseWeights(value.stringValue) !== undefined;
   if (DROP_EXACT.has(key)) return false;
   if (KEEP_EXACT.has(key) || KEEP_PREFIX.some((p) => key.startsWith(p))) return true;
   return isScalarNonString(value);
@@ -135,11 +141,11 @@ function deepRedact(v: AnyValue, r: Redactor): AnyValue {
   return v;
 }
 
-/** Applies the forward mode to a list of attributes (a new list). */
-export function scrubAttrs(kvs: KeyValue[] | undefined, mode: "full" | "metadata", r: Redactor): KeyValue[] {
+/** Applies the forward mode to a list of attributes (a new list). `span`: the name of the span they are on. */
+export function scrubAttrs(kvs: KeyValue[] | undefined, mode: "full" | "metadata", r: Redactor, span?: string): KeyValue[] {
   const out: KeyValue[] = [];
   for (const kv of kvs ?? []) {
-    if (mode === "metadata" && !keepInMetadata(kv.key, kv.value)) continue;
+    if (mode === "metadata" && !keepInMetadata(kv.key, kv.value, span)) continue;
     out.push({ key: kv.key, value: deepRedact(kv.value, r) });
   }
   return out;
@@ -148,7 +154,7 @@ export function scrubAttrs(kvs: KeyValue[] | undefined, mode: "full" | "metadata
 /** Applies the forward mode to one span (a new span). */
 export function scrubSpan(s: JsonSpan, mode: "full" | "metadata", r: Redactor): JsonSpan {
   const meta = mode === "metadata";
-  const out: JsonSpan = { ...s, name: r.string(s.name), attributes: scrubAttrs(s.attributes, mode, r) };
+  const out: JsonSpan = { ...s, name: r.string(s.name), attributes: scrubAttrs(s.attributes, mode, r, s.name) };
   if (s.events) {
     out.events = s.events.map((e) => ({
       timeUnixNano: e.timeUnixNano,
