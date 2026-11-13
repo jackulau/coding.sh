@@ -104,6 +104,27 @@ export interface ResourceProvider {
   read(uri: string): Promise<{ uri: string; mimeType: string; text: string } | undefined>;
 }
 
+/** One skill as skills/list and skills/get return it (SEP-2640): the SKILL.md URI, its frontmatter and every file. */
+export interface SkillEntry {
+  uri: string;
+  /** The SKILL.md's YAML frontmatter as JSON, every field. */
+  frontmatter: Obj;
+  resources: { uri: string; digest: string; size: number }[];
+}
+
+/** Agent Skills served as resources (the io.modelcontextprotocol/skills extension). */
+export interface SkillProvider {
+  list(): Promise<SkillEntry[]>;
+  /** undefined = no skill has this SKILL.md URI. */
+  get(uri: string): Promise<SkillEntry | undefined>;
+  /** Each skill's SKILL.md, for the first page of resources/list. */
+  resources(): Promise<ResourceDef[]>;
+  /** One skill file. undefined = not a skill file. */
+  read(uri: string): Promise<{ uri: string; mimeType: string; text: string } | undefined>;
+  /** The direct children of a skill directory. undefined = not a directory. */
+  directory(uri: string): Promise<ResourceDef[] | undefined>;
+}
+
 export interface PromptArgument {
   name: string;
   description?: string;
@@ -126,6 +147,8 @@ export interface ServerOptions<C> {
   instructions(): Promise<string> | string;
   tools: ToolDef<C>[];
   resources?: ResourceProvider;
+  /** Needs `resources`: skill files are read through resources/read. */
+  skills?: SkillProvider;
   prompts?: PromptDef[];
   /** Handler context, created per tool call. */
   context(): C;
@@ -178,7 +201,18 @@ const CACHE_HINTS: Record<string, { ttlMs: number; cacheScope: "public" | "priva
   "resources/templates/list": { ttlMs: 3_600_000, cacheScope: "public" },
   "resources/list": { ttlMs: 0, cacheScope: "private" },
   "resources/read": { ttlMs: 0, cacheScope: "private" },
+  // The skill list is cached like the tool list. An entry, a file and a folder listing are read
+  // fresh: a host refreshes a stale entry with skills/get, and after an upgrade it must check the
+  // new digests against the new bytes.
+  "skills/list": { ttlMs: 3_600_000, cacheScope: "public" },
+  "skills/get": { ttlMs: 0, cacheScope: "public" },
+  "resources/directory/read": { ttlMs: 0, cacheScope: "public" },
 };
+
+/** The Agent Skills extension (SEP-2640): skills/list, skills/get and, with directoryRead, resources/directory/read. */
+export const SKILLS_EXTENSION = "io.modelcontextprotocol/skills";
+/** A skill file holds no user data, unlike a session digest. It is read fresh, as its entry is. */
+const SKILL_FILE_CACHE = { ttlMs: 0, cacheScope: "public" } as const;
 
 /** These lists come back in one page, so any cursor is one this server never issued. */
 function noCursor(method: string, params: Obj): void {
@@ -203,12 +237,19 @@ export class McpServer<C> {
     this.byName = new Map(o.tools.map((t) => [t.name, t]));
   }
 
+  /** Skills are served only next to resources: the extension requires the resources capability. */
+  private get skills(): SkillProvider | undefined {
+    return this.o.resources ? this.o.skills : undefined;
+  }
+
   private capabilities(): Obj {
-    return {
+    const caps: Obj = {
       tools: { listChanged: false },
       ...(this.o.resources ? { resources: { listChanged: false, subscribe: false } } : {}),
       ...(this.o.prompts?.length ? { prompts: { listChanged: false } } : {}),
     };
+    if (this.skills) caps.extensions = { [SKILLS_EXTENSION]: { directoryRead: true } };
+    return caps;
   }
 
   /**
@@ -316,8 +357,13 @@ export class McpServer<C> {
       case "resources/list": {
         const r = this.o.resources;
         if (!r) throw new RpcFailure(RPC.METHOD_NOT_FOUND, "Method not found: resources/list");
-        const page = await r.list(typeof params.cursor === "string" ? params.cursor : undefined);
-        return { resources: page.resources, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
+        // An empty cursor is the first page, as it is for the provider.
+        const cursor = typeof params.cursor === "string" && params.cursor ? params.cursor : undefined;
+        const page = await r.list(cursor);
+        // Each skill's SKILL.md closes the first page, after the sessions a client listed before
+        // there were skills; a skill's other files are in its skills/list entry.
+        const skillMds = cursor === undefined ? ((await this.skills?.resources()) ?? []) : [];
+        return { resources: [...page.resources, ...skillMds], ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
       }
       case "resources/templates/list": {
         const r = this.o.resources;
@@ -329,9 +375,34 @@ export class McpServer<C> {
         const r = this.o.resources;
         if (!r) throw new RpcFailure(RPC.METHOD_NOT_FOUND, "Method not found: resources/read");
         if (typeof params.uri !== "string" || !params.uri) throw new RpcFailure(RPC.INVALID_PARAMS, "resources/read needs a uri");
+        const file = await this.skills?.read(params.uri);
+        if (file) return modern ? { contents: [file], ...SKILL_FILE_CACHE } : { contents: [file] };
         const c = await r.read(params.uri);
         if (!c) throw new RpcFailure(modern ? RPC.INVALID_PARAMS : RPC.RESOURCE_NOT_FOUND, `Resource not found: ${params.uri}`, { uri: clipText(params.uri, 1000) });
         return { contents: [c] };
+      }
+      case "skills/list": {
+        const s = this.skills;
+        if (!s) throw new RpcFailure(RPC.METHOD_NOT_FOUND, "Method not found: skills/list");
+        noCursor(method, params);
+        return { skills: await s.list() };
+      }
+      case "skills/get": {
+        const s = this.skills;
+        if (!s) throw new RpcFailure(RPC.METHOD_NOT_FOUND, "Method not found: skills/get");
+        if (typeof params.uri !== "string" || !params.uri) throw new RpcFailure(RPC.INVALID_PARAMS, "skills/get needs the uri of a skill's SKILL.md");
+        const skill = await s.get(params.uri);
+        if (!skill) throw new RpcFailure(RPC.INVALID_PARAMS, `No skill at ${params.uri}. Call skills/list for the skills this server serves.`, { uri: clipText(params.uri, 1000) });
+        return { skill };
+      }
+      case "resources/directory/read": {
+        const s = this.skills;
+        if (!s) throw new RpcFailure(RPC.METHOD_NOT_FOUND, "Method not found: resources/directory/read");
+        if (typeof params.uri !== "string" || !params.uri) throw new RpcFailure(RPC.INVALID_PARAMS, "resources/directory/read needs a directory uri");
+        noCursor(method, params);
+        const resources = await s.directory(params.uri);
+        if (!resources) throw new RpcFailure(RPC.INVALID_PARAMS, `Not a directory: ${params.uri}. A skill's directory is its SKILL.md URI without /SKILL.md.`, { uri: clipText(params.uri, 1000) });
+        return { resources };
       }
       case "prompts/list":
         noCursor(method, params);

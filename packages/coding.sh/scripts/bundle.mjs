@@ -41,7 +41,8 @@ export async function bundle(outdir = "dist") {
       chunkNames: "chunk-[hash]",
       define: { __CODING_SH_VERSION__: JSON.stringify(pkg.version) },
       banner: { js: "#!/usr/bin/env node" },
-      loader: { ".html": "text", ".css": "text" },
+      // .md: the skills the MCP server serves (src/mcp/skills.ts).
+      loader: { ".html": "text", ".css": "text", ".md": "text" },
     }),
     build({ ...common, entryPoints: { hook: "src/spool/hook.ts" }, banner: { js: "#!/usr/bin/env node" }, minify: true }),
     build({ ...common, entryPoints: { schema: "src/schema/index.ts" } }),

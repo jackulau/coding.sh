@@ -189,8 +189,9 @@ export class RawClient {
   private readonly waiters = new Map<string, (r: Rpc) => void>();
   private readonly exited: Promise<number | null>;
 
-  constructor(env: Record<string, string>, cwd: string) {
-    this.child = spawn(process.execPath, ["--no-warnings", MAIN], { env, cwd, stdio: ["pipe", "pipe", "pipe"] });
+  /** `argv`: the server to run, by default the one in src. */
+  constructor(env: Record<string, string>, cwd: string, argv: string[] = ["--no-warnings", MAIN]) {
+    this.child = spawn(process.execPath, argv, { env, cwd, stdio: ["pipe", "pipe", "pipe"] });
     this.child.stdout!.setEncoding("utf8");
     this.child.stdout!.on("data", (chunk: string) => {
       this.buf += chunk;

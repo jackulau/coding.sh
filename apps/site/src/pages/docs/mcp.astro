@@ -32,6 +32,14 @@ const TOOLS: [string, string][] = [
   ["status", "Health of coding.sh: version, available update, recent captures, pending spool, last error."],
 ];
 
+// The skills follow packages/coding.sh/skills/<name>/SKILL.md.
+const SKILLS: [string, string][] = [
+  ["improve-agent-setup", "Find what goes wrong most and the AGENTS.md line that fixes it, then check whether a committed change helped."],
+  ["trim-agent-setup", "Find the memory files, rules and skills that sessions never read and what the loaded ones cost, and trim them without losing a protected line."],
+  ["review-agent-session", "Read one recorded session: what the agent did, where it failed or went in circles, and what it cost."],
+  ["build-agent-evals", "Turn failed sessions, a skill's trigger prompts or your own cases into an eval suite, and read a paired comparison of two runs."],
+];
+
 const init = `coding.sh init          # hooks + MCP server for every detected agent
 coding.sh init --no-mcp # hooks only
 coding.sh mcp config    # print the server command for manual setup`;
@@ -142,7 +150,8 @@ const gemini = `// ~/.gemini/settings.json
   <p>
     In 2026-07-28, list and read results carry <code>ttlMs</code> and <code>cacheScope</code>: the tool, prompt and template lists
     are <code>public</code> for an hour, <code>server/discover</code> for 5 minutes (<code>ttlMs</code> 300000, because its
-    instructions carry an update notice), and resources are <code>private</code> and stale at once.
+    instructions carry an update notice), and session resources are <code>private</code> and stale at once. The skill
+    list is <code>public</code> for an hour. A skill's entry, files and folder listings are <code>public</code> and stale at once.
   </p>
   <p>
     A request cancelled with <code>notifications/cancelled</code> gets no reply, except <code>initialize</code>, which can't be
@@ -167,6 +176,42 @@ const gemini = `// ~/.gemini/settings.json
   <p>
     See <a href="/docs/improve">What to fix first</a>. Resources:
     <code>codingsh://latest</code> and <code>codingsh://session/&lt;id&gt;</code>, each a Markdown digest of one session.
+  </p>
+
+  <h2 id="skills">Skills</h2>
+  <p>
+    The server also serves four <a href="https://agentskills.io">Agent Skills</a>. Each one tells the agent which of the tools above
+    to call, and in what order, for one job. A host that supports MCP skills lists them next to its own skills and loads one when
+    your request matches.
+  </p>
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Skill</th><th>Use it to</th></tr></thead>
+      <tbody>
+        {
+          SKILLS.map(([name, desc]) => (
+            <tr>
+              <td>
+                <code>{name}</code>
+              </td>
+              <td>{desc}</td>
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+  <p>
+    The skills are built into the CLI, so they name the tools of the version you run. Nothing is written to your skills folders.
+    A host shows them only when it supports the extension. In any host with MCP prompts, the prompts above run the improve and
+    trim loops.
+  </p>
+  <p>
+    The server declares the <code>io.modelcontextprotocol/skills</code> extension. <code>skills/list</code> and
+    <code>skills/get</code> return each skill's frontmatter with the SHA-256 digest and size of every file.
+    <code>resources/read</code> returns a file at <code>skill://&lt;name&gt;/&lt;path&gt;</code>, and
+    <code>resources/directory/read</code> lists a skill's folder. Each <code>SKILL.md</code> is also on the first page of
+    <code>resources/list</code>, after the sessions.
   </p>
 
   <h2 id="manual">Manual config</h2>

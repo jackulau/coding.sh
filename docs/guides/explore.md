@@ -332,6 +332,10 @@ to `eventCount`; `--limit N` or `--all` lists them.
 `coding.sh init` registers an MCP server with your agents, so an agent can read its own past
 sessions. See [Let your agent read its own runs](https://coding.sh/docs/mcp).
 
+The server also serves four skills to hosts that load skills from MCP servers: reviewing a session,
+improving and trimming your agent setup, and building evals. See
+[Skills](https://coding.sh/docs/mcp#skills).
+
 :::more Every MCP tool
 `sessions_list`, `session_get`, `session_current`, `session_replay`, `search`, `improve`,
 `harness_changes`, `harness_audit`, `failures`, `latency`, `usage`, `subagents`, `session_tree`,
