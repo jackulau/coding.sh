@@ -1260,6 +1260,78 @@ describe("viewer UI: failed requests and the top bar", { skip: chrome ? false : 
   }
 });
 
+// A weights file's SHA-256 joins the session that saved it (a weights.checkpoint event) with the
+// experiments that ran it (exp run --weights). The pages link both ways, as the CLI prints both.
+describe("viewer UI: a checkpoint links its session and the experiments that ran it", { skip: chrome ? false : "no Chrome/Chromium found (set CODING_SH_TEST_CHROME)" }, () => {
+  const EDITS = "5d0c9a1e-3b7f-4c2a-8e6d-9f1a2b3c4d5e";
+  const PLAIN = "plain-1";
+  const SHA_BASE = "ab12".repeat(16);
+  const SHA_EDIT = "cd34".repeat(16);
+  const index = new FakeIndex();
+  let v: Viewer;
+  let browser: Browser;
+  let page: Page;
+  const ran = "[...document.querySelectorAll('.detail-head .badges .badge')].filter((b) => b.textContent.startsWith('ran in ')).map((b) => [b.textContent, b.querySelector('a').getAttribute('href'), b.title])";
+
+  before(async () => {
+    const stats = { events: 1, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0 };
+    await index.upsertSession(session(EDITS, { startedAt: T0, title: "Edit the layer", stats: { ...stats, weightEdits: { events: 2, weightsChanged: 3, tensors: 2, checkpoints: [SHA_EDIT] } }, flags: ["weights:edited", "weights:checkpoint"] }));
+    await index.upsertSession(session(PLAIN, { startedAt: T0 - 1000, title: "No weights here", stats }));
+    await index.putEvents([ev(EDITS, 1, { kind: "user.message", payload: { text: "edit the layer" } }), ev(PLAIN, 1, { kind: "user.message", payload: { text: "hello" } })]);
+    const exps = [
+      experimentResult("exp-w-base", { name: "base", metadata: { weights: { sha256: SHA_BASE } } }),
+      experimentResult("exp-w-edit", { name: "edited", metadata: { weights: { sha256: SHA_EDIT } } }),
+    ];
+    v = await startViewer({
+      index, blobs: new FakeBlobs(), port: 0, updateStatus: async () => ({ disabled: "test" }) as any,
+      experiments: { listExperiments: async () => exps, getExperiment: async (id) => exps.find((e) => e.id === id) },
+    });
+    browser = await launchBrowser(chrome!);
+  });
+  after(async () => {
+    await browser?.close();
+    await v?.close();
+  });
+
+  test("the stamp links the session that recorded it; that session's header links the experiment back", async () => {
+    page = await browser.newPage();
+    try {
+      await page.viewport(1280, 900);
+      await page.goto(v.url + "#/experiments/exp-w-base/vs/exp-w-edit");
+      const sides: [string, string | null, string | null][] = await page.waitFor(
+        "(() => { const w = [...document.querySelectorAll('.vs .side .weights')]; return w.length === 2 && w.map((e) => [e.textContent, e.querySelector('a')?.getAttribute('href') ?? null, e.querySelector('a')?.title ?? null]); })()",
+        "both stamps on the comparison",
+      );
+      assert.deepEqual(sides[0], ["weights " + SHA_BASE.slice(0, 12), null, null], "no session recorded the base file: the stamp alone");
+      assert.deepEqual(sides[1]!.slice(0, 2), [`weights ${SHA_EDIT.slice(0, 12)} · edits ${EDITS.slice(0, 8)}`, "#/s/" + EDITS]);
+      assert.ok(sides[1]![2]!.endsWith(EDITS), "the link's title carries the whole session id");
+
+      await page.eval(`location.hash = "#/experiments/exp-w-edit"`);
+      const fact: [string, string] = await page.waitFor("(() => { const a = document.querySelector('.exp-top .fact-line .weights a'); return a && [a.parentElement.textContent, a.getAttribute('href')]; })()", "the session link on the experiment page");
+      assert.deepEqual(fact, [`weights ${SHA_EDIT.slice(0, 12)} · edits ${EDITS.slice(0, 8)}`, "#/s/" + EDITS]);
+
+      // Follow the link: the session names the experiment that ran the file it saved.
+      await page.eval("document.querySelector('.exp-top .fact-line .weights a').click()");
+      const badges: [string, string, string][] = await page.waitFor(`(() => { const b = ${ran}; return b.length ? b : null; })()`, "the experiment on the session header");
+      assert.deepEqual(badges.map((b) => b.slice(0, 2)), [["ran in edited", "#/experiments/exp-w-edit"]]);
+      assert.ok(badges[0]![2].includes(SHA_EDIT), "the badge's title names the weights file");
+
+      await page.eval(`location.hash = "#/s/${PLAIN}"`);
+      await page.waitFor("/No weights here/.test(document.querySelector('.detail-head')?.textContent ?? '')", "a session with no checkpoint");
+      assert.deepEqual(await page.eval(ran), []);
+
+      // The usual way in: a click on the session's row in the list.
+      await page.eval(`location.hash = "#/"`);
+      await page.waitFor("document.querySelector('[role=listbox] [role=option]')", "the sessions list");
+      await page.eval("[...document.querySelectorAll('[role=listbox] [role=option]')].find((r) => r.querySelector('.row-title').textContent === 'Edit the layer').click()");
+      const fromList: [string, string, string][] = await page.waitFor(`(() => { const b = ${ran}; return b.length ? b : null; })()`, "the experiment on the header, from the list");
+      assert.deepEqual(fromList.map((b) => b.slice(0, 2)), [["ran in edited", "#/experiments/exp-w-edit"]]);
+    } finally {
+      await page.close();
+    }
+  });
+});
+
 describe("session replay in a browser", { skip: chrome ? false : "no Chrome/Chromium found (set CODING_SH_TEST_CHROME)" }, () => {
   const RP = "7f3c1e2a-5b6d-4e8f-9a0b-1c2d3e4f5a6b";
   const index = new FakeIndex();

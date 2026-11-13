@@ -23,7 +23,9 @@ import { phaseLabel, sessionOutline, storedOutline } from "../core/outline.ts";
 import { loadReplay, type Baseline, type Replay } from "../core/replay.ts";
 import { buildSessionTree, worstFirst, worstNode, type TreeNode } from "../core/tree.ts";
 import type { ExperimentResult } from "../datasets/types.ts";
+import { checkpointRuns, checkpointSessions, withSessions } from "../experiments/checkpoints.ts";
 import { compareExperiments } from "../experiments/compare.ts";
+import { stampedWith, weightsOf } from "../experiments/weights.ts";
 import { facetCounts, findEvents, findSessions, searchWhere } from "../query/run.ts";
 import type { AgentEvent } from "../schema/index.ts";
 import { searchableText, searchTerms, snippet } from "../store/common.ts";
@@ -668,7 +670,14 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       if (sub !== "fork") get();
       if (id === undefined || (id === "" && sub === undefined)) return sendJson(res, 200, await listSessions(ctx.index, q, projectParam(ctx, q)));
       const sessionId = checkId(id, "session id");
-      if (sub === undefined) return sendJson(res, 200, await visibleSession(ctx, sessionId));
+      if (sub === undefined) {
+        const s = await visibleSession(ctx, sessionId);
+        // The experiments that ran each weights file the session recorded as a checkpoint, as `coding.sh show --json`
+        // has them. Eval assets belong to no project: a project-scoped key sees none.
+        const hashes = s.stats.weightEdits?.checkpoints;
+        const runs = hashes?.length && ctx.project === undefined && ctx.experiments ? await checkpointRuns(ctx.experiments, hashes) : [];
+        return sendJson(res, 200, runs.length ? { ...s, checkpointExperiments: runs } : s);
+      }
       if (sub === "events") {
         await visibleSession(ctx, sessionId);
         const limit = intParam(q, "limit", 5000, 1, 20_000);
@@ -975,7 +984,9 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       if (!EXPERIMENT_ID_RE.test(id) || id.includes("..")) throw new HttpError(400, "invalid experiment id");
       const exp = scoped || !ctx.experiments ? undefined : await ctx.experiments.getExperiment(id);
       if (!exp) throw new HttpError(404, "experiment not found");
-      return sendJson(res, 200, experimentDetail(exp));
+      // Next to the stored record, as `exp show --json`: the stamp with the sessions that recorded that weights file as a checkpoint.
+      const { weights } = withSessions(stampedWith({}, weightsOf(exp)), await checkpointSessions(ctx.index, [weightsOf(exp)]));
+      return sendJson(res, 200, weights?.sessions ? { ...experimentDetail(exp), weights } : experimentDetail(exp));
     }
 
     case "workflows": {
@@ -1025,7 +1036,12 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       if (!a || !b) throw new HttpError(404, "experiment not found");
       // A cancelled side still compares (its cases are real), flagged as partial.
       const partial = [a, b].filter((x) => x.status === "cancelled").map((x) => x.id);
-      return sendJson(res, 200, { ...compareExperiments(a, b, { iters: 4000, force: true }), partial });
+      const cmp = compareExperiments(a, b, { iters: 4000, force: true });
+      // Each side's stamp names the sessions that recorded that weights file as a checkpoint (weights.sessions).
+      const checkpoints = await checkpointSessions(ctx.index, [cmp.a.weights?.sha256, cmp.b.weights?.sha256]);
+      withSessions(cmp.a, checkpoints);
+      withSessions(cmp.b, checkpoints);
+      return sendJson(res, 200, { ...cmp, partial });
     }
 
     case "labels": {

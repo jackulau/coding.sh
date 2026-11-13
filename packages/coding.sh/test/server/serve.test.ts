@@ -19,7 +19,7 @@ import type { IndexStore, Sink } from "../../src/core/types.ts";
 import { otlpSpan, otlpTraces, sAttr, secretRequests } from "../otel/_encode.ts";
 import { FileEvalStore } from "../../src/datasets/store.ts";
 import { openIndexStore } from "../../src/store/factory.ts";
-import { experimentResult } from "../viewer/fakes.ts";
+import { experimentResult, session } from "../viewer/fakes.ts";
 
 const dirs: string[] = [];
 const handles: ServeHandle[] = [];
@@ -254,16 +254,29 @@ for (const kind of ["memory", "sqlite"] as const) {
       const evals = new FileEvalStore({ env, index: writer });
       assert.equal(evals.kind, "index");
       await evals.putExperiment(experimentResult("exp-prod-smoke"));
+      // An experiment stamped with a weights file, and a session of project `demo` that recorded the same file as a checkpoint.
+      const sha = "ab12".repeat(16);
+      await evals.putExperiment(experimentResult("exp-edited", { name: "edited", metadata: { weights: { sha256: sha } } }));
+      const stats = { events: 1, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0, weightEdits: { events: 1, weightsChanged: 4, checkpoints: [sha] } };
+      await writer.upsertSession(session("demo/ck-1", { project: "demo", stats, flags: ["weights:edited", "weights:checkpoint"] }));
       if (kind !== "memory") await writer.close();
 
       const list = await call(h, "/api/experiments", { key: rkAll });
       assert.equal(list.status, 200, list.text);
-      assert.deepEqual(list.json.items.map((e: { id: string; name: string; runCount: number }) => [e.id, e.name, e.runCount]), [["exp-prod-smoke", "prod-smoke", 2]]);
+      assert.deepEqual(list.json.items.map((e: { id: string; name: string; runCount: number }) => [e.id, e.name, e.runCount]).sort(), [["exp-edited", "edited", 2], ["exp-prod-smoke", "prod-smoke", 2]]);
       const one = await call(h, "/api/experiments/exp-prod-smoke", { key: rkAll });
       assert.equal(one.json.runs.length, 2);
       assert.equal((await call(h, "/api/experiments")).status, 401);
       assert.deepEqual((await call(h, "/api/experiments", { key: rkDemo })).json, { items: [] });
       assert.equal((await call(h, "/api/experiments/exp-prod-smoke", { key: rkDemo })).status, 404);
+
+      // The join on the weights file: an all-projects key reads it both ways; a project key reads its session without the experiments.
+      const ck = `/api/sessions/${encodeURIComponent("demo/ck-1")}`;
+      assert.deepEqual((await call(h, "/api/experiments/exp-edited", { key: rkAll })).json.weights, { sha256: sha, sessions: ["demo/ck-1"] });
+      assert.deepEqual((await call(h, ck, { key: rkAll })).json.checkpointExperiments, [{ sha256: sha, experiments: [{ id: "exp-edited", name: "edited" }] }]);
+      const scoped = await call(h, ck, { key: rkDemo });
+      assert.equal(scoped.status, 200, scoped.text);
+      assert.equal("checkpointExperiments" in scoped.json, false);
       await h.shutdown();
     });
 

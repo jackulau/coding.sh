@@ -640,6 +640,26 @@ describe("viewer server: experiment compare", () => {
     assert.deepEqual((await req(v, "/api/experiments/w-base")).json().metadata, { weights: { sha256: x } });
   });
 
+  test("a stamp names the sessions that recorded it as a checkpoint, and the session names the experiments that ran it", async () => {
+    const [x, y] = ["ef56".repeat(16), "0a9b".repeat(16)];
+    await index.putExperiment(experimentResult("j-base", { name: "base", metadata: { weights: { sha256: x } } }));
+    await index.putExperiment(experimentResult("j-edit", { name: "edited", metadata: { weights: { sha256: y } } }));
+    const stats = { events: 3, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0 };
+    await index.upsertSession(session("sess-edit", { stats: { ...stats, weightEdits: { events: 2, weightsChanged: 3, tensors: 2, checkpoints: [y] } }, flags: ["weights:edited", "weights:checkpoint"] }));
+    await index.upsertSession(session("sess-plain", { stats }));
+
+    // Both ways of the same join that `exp compare --json`, `exp show --json` and `show --json` print.
+    const cmp = (await req(v, "/api/compare?a=j-base&b=j-edit")).json();
+    assert.deepEqual([cmp.a.weights, cmp.b.weights], [{ sha256: x }, { sha256: y, sessions: ["sess-edit"] }]);
+    assert.deepEqual((await req(v, "/api/experiments/j-edit")).json().weights, { sha256: y, sessions: ["sess-edit"] });
+    const base = (await req(v, "/api/experiments/j-base")).json();
+    assert.equal("weights" in base, false, "no session recorded the base file: the stamp stays in metadata only");
+    assert.deepEqual(base.metadata, { weights: { sha256: x } });
+
+    assert.deepEqual((await req(v, "/api/sessions/sess-edit")).json().checkpointExperiments, [{ sha256: y, experiments: [{ id: "j-edit", name: "edited" }] }]);
+    assert.equal("checkpointExperiments" in (await req(v, "/api/sessions/sess-plain")).json(), false);
+  });
+
   test("rejects bad ids and missing experiments", async () => {
     assert.equal((await req(v, "/api/compare?a=base")).status, 400);
     assert.equal((await req(v, "/api/compare?a=..%2Fx&b=base")).status, 400);
