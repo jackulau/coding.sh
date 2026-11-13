@@ -371,6 +371,8 @@ class WeightsCheckpointTest(unittest.TestCase):
     """weights_checkpoint() follows weights_edit() case for case; weights.test.ts has the same list."""
 
     def setUp(self) -> None:
+        # The warnings are once per process: each test starts with none given.
+        _weights._reset_warned()
         self.server = IngestServer()
 
     def tearDown(self) -> None:
