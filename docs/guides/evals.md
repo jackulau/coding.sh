@@ -858,6 +858,8 @@ B edited exp_…  pass 100.0%  weights 58899f90572c
   (`sha256`, `sessions`) for `exp show`. The MCP tools `experiments_list` and `experiment_compare`
   carry the same field.
 - At most 5 sessions are named for a hash, newest first.
+- The viewer links the session from the stamp on the experiment and compare pages, and links
+  each experiment from the session's header as `ran in <name>`.
 - A stamp no session recorded prints as before, and so does a store that cannot answer the lookup.
 
 The first compare prints a paired delta for `terminated` and one for `correct`, each with its
