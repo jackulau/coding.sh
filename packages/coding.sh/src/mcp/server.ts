@@ -14,6 +14,7 @@ import { schemaViolations } from "../toolevals/jsonschema.ts";
 import { McpServer, serveStdio, ToolError, type StdioStreams } from "./protocol.ts";
 import { buildPrompts } from "./prompts.ts";
 import { buildResources } from "./resources.ts";
+import { buildSkillProvider } from "./skills.ts";
 import { buildTools, updateInfo, type ToolCtx } from "./tools.ts";
 
 export const SERVER_NAME = "coding.sh";
@@ -119,6 +120,7 @@ export function createCodingShMcp(o: CodingShMcpOptions = {}): CodingShMcp {
     instructions: () => instructions(env),
     tools,
     resources: buildResources(store),
+    skills: buildSkillProvider(log),
     prompts: buildPrompts(),
     context: () => ctx,
     validate: (args, schema) => schemaViolations(args, schema, 10),

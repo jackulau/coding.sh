@@ -16,7 +16,8 @@ the repo's routines.
 Inside `packages/coding.sh/src`: `schema/index.ts` and `core/types.ts` are the contracts,
 `adapters/` holds one adapter per agent (registered in `adapters/index.ts`), `core/sessions.ts`
 builds sessions and their flags, `cli/registry.ts` holds every command, flag and help text, and
-`spool/hook.ts` is the hook agents run.
+`spool/hook.ts` is the hook agents run. `packages/coding.sh/skills` holds the Agent Skills the MCP
+server serves; a new file there is registered in `src/mcp/skills.ts`.
 
 ## Commands
 

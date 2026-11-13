@@ -45,7 +45,8 @@ export function primaryNavLabels(html) {
 /** Labels in the LINKS array of Nav.astro. */
 export const navSourceLabels = (astro) => [...(/const LINKS = \[([\s\S]*?)\n\];/.exec(astro)?.[1] ?? "").matchAll(/label:\s*"([^"]+)"/g)].map((m) => m[1]);
 
-export const TOGGLE = /ViewToggle|data-viewtog|\?view=(?:human|agent)|view-agent|Human\s*\/\s*Agent/;
+// `view-agent` as a name of its own: the skill review-agent-session is not the toggle.
+export const TOGGLE = /ViewToggle|data-viewtog|\?view=(?:human|agent)|(?<![a-z])view-agent|Human\s*\/\s*Agent/;
 export const ACME = /\bacme\b/i;
 export const TIER = /\btier[- ]?[abc]\b|\btier:\s*["'][abc]["']|<th>\s*Tier\s*<\/th>/i;
 export const DEV_HOST = /(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):\d{2,5}/;

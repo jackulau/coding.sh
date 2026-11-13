@@ -164,6 +164,7 @@ The coding.sh MCP server (`coding.sh init` sets it up) runs the same loop:
 | `harness_changes` tool | Each change with its before and after counts, how often each new line was followed, and the verdict. |
 | `harness_audit` tool | The instruction files and skills your sessions never read, and what each costs to load. |
 | `/mcp__coding-sh__improve`, `/mcp__coding-sh__did-it-help`, `/mcp__coding-sh__trim` | Prompts that run the loop in Claude Code. |
+| `improve-agent-setup`, `trim-agent-setup` skills | The same loop as [skills](https://coding.sh/docs/mcp#skills), for a host that loads skills from MCP servers. |
 
 You can also ask in plain words: "did my AGENTS.md change last week help?"
 
