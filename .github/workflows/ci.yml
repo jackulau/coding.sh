@@ -58,6 +58,12 @@ jobs:
         # A file that fails is run again alone; one that then passes is a warning, not a failure.
         run: node scripts/test-ci.mjs
 
+      # The SDK allows Node 18 and up, so it is checked on Node 22 here as well as on 24 in build.
+      - name: SDK typecheck and test on Node 22
+        if: matrix.node == '22.x' && matrix.shard == 1
+        working-directory: packages/sdk
+        run: npm run check
+
       # Each file's run time, for refreshing scripts/test-durations.json (see scripts/test-shards.ts).
       - uses: actions/upload-artifact@v6
         if: matrix.node == '24.x'
