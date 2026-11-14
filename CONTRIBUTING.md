@@ -134,8 +134,9 @@ tests run with `npm run lint:test`.
   checks and the build, and the site, in a throwaway home. Its first step checks that your
   branch's commits are authored with your global git identity (`git config --global user.email`)
   and that the repo sets no `user.email` of its own.
-- `npm run check` and `npm run build` must pass in `packages/coding.sh`. CI also builds and checks
-  the site on Node 22 and 24, on Linux and macOS.
+- `npm run check` and `npm run build` must pass in `packages/coding.sh`. CI also runs the tests on
+  Linux (Node 22 and 24), macOS and Windows (Node 24; both Nodes on main), and builds and checks
+  the site.
 - Timing tests (hook latency, help startup) assume an idle machine. If one fails on a loaded
   machine, rerun it alone before you treat it as a regression.
 
