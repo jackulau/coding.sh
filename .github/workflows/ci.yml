@@ -14,6 +14,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # A pull request that only touches docs or the site (scripts/ci-changes.mjs) skips the jobs
+  # that never read them. Pushes to main and manual runs always run everything, and so does a
+  # pull request whose diff can't be read: the gated jobs run unless this says code=false.
+  changes:
+    name: what changed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      # The pull request's merge commit and its first parent, the base branch.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+
+      - name: Docs or code
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = pull_request ] && files=$(git diff --name-only --no-renames HEAD^1 HEAD); then
+            printf '%s\n' "$files" | node scripts/ci-changes.mjs | tee -a "$GITHUB_OUTPUT"
+          else
+            echo "code=true" | tee -a "$GITHUB_OUTPUT"
+          fi
+
   # The test suite runs on every OS in shards of about equal time (scripts/test-shards.ts), so
   # the checks that need one run only, not one per OS and Node, live in the build job below.
   # Pull requests run macOS and Windows on Node 24 only; pushes to main run both Nodes everywhere.
@@ -150,6 +176,8 @@ jobs:
 
   macos:
     name: node ${{ matrix.node }} / macos-latest (${{ matrix.shard }}/${{ matrix.node == '22.x' && 2 || 3 }})
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # GitHub runs at most 5 macOS jobs at once for this account, and a sixth waits for a slot.
     # On main, Node 24 takes 3 shards and Node 22 takes 2.
     runs-on: macos-latest
@@ -229,6 +257,8 @@ jobs:
 
   store-postgres:
     name: coding.sh-store-postgres / Postgres 17
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # GitHub-hosted, for the service container; the plugin tests run against a real server.
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -264,6 +294,8 @@ jobs:
 
   python-sdk:
     name: python sdk / python ${{ matrix.python }}
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # pyproject allows Python 3.9, which has no build for ubuntu-latest (26.04); it runs on 24.04.
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
@@ -299,6 +331,8 @@ jobs:
 
   runtime-floor:
     name: packed CLI on the Node floor
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # Builds and packs on a current Node, then installs the tarball and runs it on the
     # oldest Node packages/coding.sh/package.json allows (engines).
     runs-on: ubuntu-latest
@@ -327,6 +361,8 @@ jobs:
 
   release-smoke:
     name: release smoke test
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # The pre-publish smoke test, on a build of this checkout, in a throwaway home.
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -346,6 +382,8 @@ jobs:
 
   action:
     name: GitHub Action
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # The action in action.yml, installing this checkout's package: a passing and a failing
     # regression suite, the exit code, and the report. The comment is tested in
     # test/scripts/github-action.test.ts against a stub API.
@@ -420,6 +458,8 @@ jobs:
 
   store-clickhouse:
     name: coding.sh-store-clickhouse / ClickHouse 26.3
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # GitHub-hosted, for the service container; the plugin tests run against a real server.
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -451,6 +491,8 @@ jobs:
 
   image:
     name: container image / self-host smoke
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # GitHub-hosted: it builds and runs pull-request code in Docker. Nothing is pushed; the
     # release workflow publishes the image on version tags.
     runs-on: ubuntu-latest
@@ -505,6 +547,8 @@ jobs:
 
   windows:
     name: node ${{ matrix.node }} / windows-latest (${{ matrix.shard }}/4)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: windows-latest
     timeout-minutes: 20
     strategy:
@@ -577,6 +621,8 @@ jobs:
 
   real-capture:
     name: real capture / ${{ matrix.os }}${{ matrix.os == 'ubuntu-latest' && format(' ({0}/2)', matrix.part) || '' }}
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # Always GitHub-hosted: it installs third-party agents from npm and runs them. Each script
     # installs into its own temp home, so the Linux steps split across two jobs of about equal time.
     runs-on: ${{ matrix.os }}
@@ -702,6 +748,8 @@ jobs:
 
   cli-suite:
     name: cli-suite (dev tasks)
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # The CLI effectiveness suite's own health, on the committed dev tasks only: held-out tasks
     # live outside the repo, so this never passes --split all or heldout. It needs no API key and
     # starts no agent. Always GitHub-hosted.

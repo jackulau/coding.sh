@@ -136,7 +136,8 @@ tests run with `npm run lint:test`.
   and that the repo sets no `user.email` of its own.
 - `npm run check` and `npm run build` must pass in `packages/coding.sh`. CI also runs the tests on
   Linux (Node 22 and 24), macOS and Windows (Node 24; both Nodes on main), and builds and checks
-  the site.
+  the site. A pull request that only changes docs or the site skips macOS, Windows and the other
+  jobs that never read them (`scripts/ci-changes.mjs`).
 - Timing tests (hook latency, help startup) assume an idle machine. If one fails on a loaded
   machine, rerun it alone before you treat it as a regression.
 
