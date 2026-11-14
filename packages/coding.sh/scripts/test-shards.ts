@@ -48,10 +48,15 @@ export function shardFiles(files: string[], durations: Record<string, number | u
   return out.sort();
 }
 
-/** One table from several reporter outputs, keeping the higher time when two list a file. */
+/**
+ * One table from several reporter outputs, keeping the higher time when two list a file. A test
+ * defined outside a test file (a shared suite in src/) is reported under that file and left out.
+ */
 export function mergeDurations(objects: Record<string, number>[]): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const o of objects) for (const [f, ms] of Object.entries(o)) out[f] = Math.max(out[f] ?? 0, Math.round(ms));
+  for (const o of objects) {
+    for (const [f, ms] of Object.entries(o)) if (f.endsWith(".test.ts")) out[f] = Math.max(out[f] ?? 0, Math.round(ms));
+  }
   return Object.fromEntries(Object.entries(out).sort(([a], [b]) => (a < b ? -1 : 1)));
 }
 

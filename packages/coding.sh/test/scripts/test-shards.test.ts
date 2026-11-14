@@ -52,8 +52,8 @@ describe("scripts/test-shards.ts", () => {
     assert.deepEqual(shardFiles(files, {}, 2, 2), ["b", "d"]);
   });
 
-  it("merges reporter outputs, keeping the higher time", () => {
-    assert.deepEqual(mergeDurations([{ b: 1.4, a: 3 }, { a: 7 }]), { a: 7, b: 1 });
+  it("merges reporter outputs, keeping the higher time and only test files", () => {
+    assert.deepEqual(mergeDurations([{ "b.test.ts": 1.4, "a.test.ts": 3 }, { "a.test.ts": 7, "src/suite.ts": 9 }]), { "a.test.ts": 7, "b.test.ts": 1 });
   });
 });
 
