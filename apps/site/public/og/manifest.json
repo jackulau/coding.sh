@@ -11,6 +11,10 @@
     "title": "Coding agents run in your shell",
     "template": "v1:blog:coding.sh blog"
   },
+  "og/blog-terse-mode": {
+    "title": "Does a terse mode save money?",
+    "template": "v1:blog:coding.sh blog"
+  },
   "og/blog-why-local-first": {
     "title": "Why coding.sh is local-first",
     "template": "v1:blog:coding.sh blog"
@@ -217,10 +221,6 @@
   },
   "og/docs-stores": {
     "title": "Postgres and ClickHouse stores",
-    "template": "v1:docs:coding.sh docs"
-  },
-  "og/docs-terse-mode": {
-    "title": "Does a terse mode save money on your tasks?",
     "template": "v1:docs:coding.sh docs"
   },
   "og/docs-tool-evals": {

@@ -63,7 +63,7 @@ has the terms, and [troubleshooting.md](troubleshooting.md) helps when something
 | [how-to/test-agents-md-change.md](how-to/test-agents-md-change.md) | test an AGENTS.md change on your own sessions |
 | [how-to/evaluate-a-skill.md](how-to/evaluate-a-skill.md) | test whether an Agent Skill changes what the agent does |
 | [how-to/does-this-plugin-help.md](how-to/does-this-plugin-help.md) | see what a Claude Code plugin adds to your sessions, then A/B it on your own tasks |
-| [guides/terse-mode.md](guides/terse-mode.md) | does a terse mode save money on your tasks |
+| [Does a terse mode save money?](https://coding.sh/blog/terse-mode) (blog) | what a terse plugin did to cost on ten tasks, and how to test one on yours |
 
 ## Run for a team
 
