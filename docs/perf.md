@@ -351,3 +351,4 @@ of the same build.
 
 In Chrome, with all 30,155 steps loaded, the timeline scrolls with a p95 of 11 ms per jump and
 9 ms per wheel step. No task during the background load ran longer than 0.1 s.
+
