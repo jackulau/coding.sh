@@ -570,14 +570,18 @@ jobs:
           coding.sh doctor --agent claude-code
 
   real-capture:
-    name: real capture / ${{ matrix.os }}
-    # Always GitHub-hosted: it installs third-party agents from npm and runs them.
+    name: real capture / ${{ matrix.os }}${{ matrix.os == 'ubuntu-latest' && format(' ({0}/2)', matrix.part) || '' }}
+    # Always GitHub-hosted: it installs third-party agents from npm and runs them. Each script
+    # installs into its own temp home, so the Linux steps split across two jobs of about equal time.
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - { os: ubuntu-latest, part: 1 }
+          - { os: ubuntu-latest, part: 2 }
+          - { os: windows-latest, part: 1 }
     defaults:
       run:
         shell: bash
@@ -603,61 +607,62 @@ jobs:
       # from npm, Goose from its GitHub release and Aider from PyPI, under a temp HOME, each
       # driven through one session against a local stub model.
       - name: Real agents against a stub model
+        if: matrix.part == 1
         run: node scripts/e2e/real-capture.mjs
 
       # Harness compare on real Claude Code and Codex sessions against a scripted stub model: the
       # one-item gate gives KEEP, KILL and REJECT from captured exposure, and failed runs split by own tests.
       - name: Harness compare with real agents
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.part == 1
         run: node scripts/e2e/compare-capture.mjs
 
       # compare --repair with real Claude Code and Codex: a failed first attempt is told "Verification
       # failed." with the failing test's name in its own resumed session, fixes it in round 1, never
       # sees the hidden tests, and the report shows the Seq@k curve and the rounds that changed nothing.
       - name: Repair rounds with real agents
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.part == 1
         run: node scripts/e2e/repair-capture.mjs
 
       # eval trigger with real Claude Code and Codex: a stub router loads the skill whose installed
       # description names a word of the prompt. Checks exact precision/recall counts from captured
       # sessions, the sibling route, a description A/B with its flips, and --min-f1.
       - name: Skill trigger eval with real agents
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.part == 2
         run: node scripts/e2e/trigger-capture.mjs
 
       # eval init then eval run with real Claude Code, one suite per source: a repo task from a
       # failed session (pass@2 100%, pass^2 0%, flaky, the failed trial's session), drafted cases
       # graded exactly (a regression suite that exits 1), and drafted skill trigger prompts.
       - name: eval init and eval run with real Claude Code
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.part == 1
         run: node scripts/e2e/eval-init-capture.mjs
 
       # exp ab on real Claude Code sessions that claim done without testing: mines the decision
       # points, replays the next turn with the committed and the edited CLAUDE.md, and checks the
       # verdict, the noise floor, the cost cap, the cache and --watch.
       - name: exp ab on real Claude Code sessions
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.part == 1
         run: node scripts/e2e/exp-ab-capture.mjs
 
       # Experiment sessions and exp run --watch on a command agent and an LLM judge answered by
       # the stub: the delta vs the previous run, a rubric-only edit regrades with 0 agent calls,
       # a save mid-run aborts it and stores nothing, a broken spec keeps watching, Ctrl-C exits 0.
       - name: Experiment sessions and exp run --watch
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.part == 2
         run: node scripts/e2e/exp-session-watch.mjs
 
       # exp run with a 2x2 matrix spec on a command agent answered by the stub: --plan stores
       # nothing, the cells run interleaved and are stored one experiment each, the p-values are
       # Holm-adjusted, exp compare on two cells matches, and a vary violation exits 2 before any call.
       - name: Experiment matrix
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.part == 2
         run: node scripts/e2e/exp-matrix.mjs
 
       # The refine loop on synthetic sessions, with the proposer, the next turn and the judge
       # answered by the stub: one edit is kept and applied, a later edit that drops it wins its own
       # decision points but is rejected by the guard, and a rollback restores CLAUDE.md byte for byte.
       - name: Refine loop keep and guard reject
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.part == 2
         run: node scripts/e2e/refine-loop.mjs
 
       # refine run --suite with real Claude Code against the stub, which bills input tokens by
@@ -665,14 +670,14 @@ jobs:
       # held, a cheaper cut that drops a line the tasks need is rejected, and a cut of a safety
       # line is rejected before any run.
       - name: Refine climb on an eval suite with real Claude Code
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.part == 2
         run: node scripts/e2e/refine-suite-capture.mjs
 
       # The model API proxy with real Claude Code and Codex: init --proxy routes both through it to a
       # stub model; checks streaming, the agent's own key reaching the API, calls linked into the
       # hook sessions, show/diff-calls/exp replay, no key stored, and a byte-for-byte uninstall.
       - name: Model API proxy with real agents
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.part == 2
         run: node scripts/e2e/proxy-capture.mjs
 
       # Fork from step N with real Claude Code against the stub: a session whose CLAUDE.md says npm
@@ -680,13 +685,13 @@ jobs:
       # again and takes another action, --run reruns the agent from the step in a rolled-back copy
       # and its verifier passes, and --save-case makes a case eval run fails until CLAUDE.md is fixed.
       - name: Fork from a replay step with real Claude Code
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.part == 2
         run: node scripts/e2e/fork-capture.mjs
 
       # What the proxy adds to a streamed call, direct and proxied interleaved; fails over budget
       # (2 ms per chunk, 5 ms to first byte).
       - name: Proxy latency budget
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.part == 2
         run: node scripts/dogfood/bench.mjs proxy --check
 
   cli-suite:
