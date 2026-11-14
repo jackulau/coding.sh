@@ -14,35 +14,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The test suite runs on every OS in shards of about equal time (scripts/test-shards.ts), so
+  # the checks that need one run only, not one per OS and Node, live in the build job below.
+  # Pull requests run macOS and Windows on Node 24 only; pushes to main run both Nodes everywhere.
+  # Everything here is GitHub-hosted: free for this public repo, and it leaves the desk runners
+  # to deploys and Site perf.
   test:
-    name: node ${{ matrix.node }} / ${{ matrix.os }}${{ matrix.of > 1 && format(' ({0}/{1})', matrix.shard, matrix.of) || '' }}
-    # Linux legs of trusted runs (push to main, manual) use a self-hosted desk
-    # runner, either one, so they never wait behind Site perf. Pull requests,
-    # including forks, stay on GitHub-hosted runners: they are free for public
-    # repos, and untrusted PR code never runs on our own machine.
-    runs-on: ${{ (github.event_name != 'pull_request' && matrix.os == 'ubuntu-latest') && fromJSON('["self-hosted","linux","desk"]') || matrix.os }}
-    timeout-minutes: 30
+    name: node ${{ matrix.node }} / ubuntu-latest (${{ matrix.shard }}/3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
-      # The test files split across `of` jobs (node --test-shard) so no leg runs much past
-      # 5 minutes: hosted macOS takes about 10 minutes for the whole suite, Linux on the
-      # desk about 2. Shard 1 also runs the typecheck, the build and the other checks.
       matrix:
-        os: [ubuntu-latest, macos-latest]
         # The suite runs .ts from source, which needs Node 22.18 or newer (type stripping on by
         # default). The runtime-floor job runs the packed CLI on the engines floor.
         node: [22.x, 24.x]
         shard: [1, 2, 3]
-        exclude:
-          - os: ubuntu-latest
-            shard: 2
-          - os: ubuntu-latest
-            shard: 3
-        include:
-          - os: ubuntu-latest
-            of: 1
-          - os: macos-latest
-            of: 3
     steps:
       - uses: actions/checkout@v5
 
@@ -60,39 +47,137 @@ jobs:
       - name: Install
         run: npm ci
 
-      # The viewer UI tests drive headless Chrome and skip without one. GitHub's Linux image
-      # ships Chrome; the desk runner has none, so it fetches Chrome for Testing into its tool
-      # cache, kept between runs. No sudo and no unzip there: yauzl unpacks it in Node. Linux
-      # legs name the binary, so a missing one fails instead of skipping.
-      - name: Chrome for the viewer tests
-        id: chrome
-        if: runner.os == 'Linux' && runner.environment == 'self-hosted'
-        working-directory: ${{ runner.temp }}
+      # The viewer UI tests drive headless Chrome and skip without one. GitHub's Linux image ships
+      # Chrome; naming it makes a missing one fail instead of skip.
+      - name: Test
+        working-directory: packages/coding.sh
+        env:
+          CODING_SH_TEST_CHROME: /usr/bin/google-chrome
+          SHARD: ${{ matrix.shard }}/3
+          TEST_DURATIONS_OUT: ${{ runner.temp }}/test-durations.json
+        # A file that fails is run again alone; one that then passes is a warning, not a failure.
+        run: node scripts/test-ci.mjs
+
+      # Each file's run time, for refreshing scripts/test-durations.json (see scripts/test-shards.ts).
+      - uses: actions/upload-artifact@v6
+        if: matrix.node == '24.x'
+        continue-on-error: true
+        with:
+          name: test-durations-${{ matrix.shard }}
+          path: ${{ runner.temp }}/test-durations.json
+          retention-days: 14
+          if-no-files-found: ignore
+
+  build:
+    name: build, typecheck and site
+    # The checks that need one run, on Linux and Node 24: the typecheck, the SDK, the bundle, the
+    # package contents, the site and its budgets, the secret scan and the hook budget.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Git identity
         run: |
-          out=$(npx --yes -p @puppeteer/browsers@3.2.6 -p yauzl@3.4.0 browsers install chrome@stable --path "$RUNNER_TOOL_CACHE/chrome-for-testing")
-          last=${out##*$'\n'}
-          echo "$last"
-          test -x "${last#* }"
-          echo "chrome-path=${last#* }" >> "$GITHUB_OUTPUT"
+          git config --global user.name "coding.sh CI"
+          git config --global user.email "ci@coding.sh.invalid"
+
+      - name: Install
+        run: npm ci
 
       - name: Typecheck
-        if: matrix.shard == 1
         working-directory: packages/coding.sh
         run: npx tsc -p tsconfig.json --noEmit
+
+      # The SDK's golden test builds sessions with coding.sh's core, so a core change can break it.
+      - name: SDK typecheck and test
+        working-directory: packages/sdk
+        run: npm run check
+
+      - name: Build
+        working-directory: packages/coding.sh
+        run: npm run build
+
+      - name: Smoke test the bundle
+        working-directory: packages/coding.sh
+        env:
+          NO_UPDATE_NOTIFIER: "1"
+        run: |
+          node dist/cli.mjs --version
+          node dist/cli.mjs --help > /dev/null
+
+      - name: Package contents
+        working-directory: packages/coding.sh
+        run: npm pack --dry-run
+
+      - name: Site build
+        working-directory: apps/site
+        run: npm run build
+
+      # A missing build fails the site tests here instead of skipping them.
+      - name: Site check
+        working-directory: apps/site
+        env:
+          CODING_SH_REQUIRE_DIST: "1"
+        run: npm run check
+
+      # The Site workflow runs this on main and stops the deploy when a page is over budget.
+      # Running it here, on the same OS and Node as that workflow, fails the pull request instead.
+      - name: Site perf budget
+        working-directory: apps/site
+        run: npm run perf:budget
+
+      # The built output holds nothing shaped like a secret.
+      - name: Secret scan of the built output
+        run: node scripts/gate.mjs --only secret-scan
+
+      # The hook budget: a slow hook slows every agent. A shared runner measures main's own build
+      # a few percent over the design budget (docs/design/dogfood.md), so the step fails on more
+      # than 20% over it. One rerun absorbs a noisy runner.
+      - name: Hook budget
+        run: node scripts/dogfood/bench.mjs hook --check --tolerance 20 || node scripts/dogfood/bench.mjs hook --check --tolerance 20
+
+  macos:
+    name: node ${{ matrix.node }} / macos-latest (${{ matrix.shard }}/${{ matrix.node == '22.x' && 2 || 3 }})
+    # GitHub runs at most 5 macOS jobs at once for this account, and a sixth waits for a slot.
+    # On main, Node 24 takes 3 shards and Node 22 takes 2.
+    runs-on: macos-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ${{ fromJSON(github.event_name == 'pull_request' && '["24.x"]' || '["22.x", "24.x"]') }}
+        shard: [1, 2, 3]
+        exclude:
+          - node: 22.x
+            shard: 3
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Git identity
+        run: |
+          git config --global user.name "coding.sh CI"
+          git config --global user.email "ci@coding.sh.invalid"
+
+      - name: Install
+        run: npm ci
 
       - name: Test
         working-directory: packages/coding.sh
         env:
-          CODING_SH_TEST_CHROME: ${{ steps.chrome.outputs.chrome-path || (runner.os == 'Linux' && '/usr/bin/google-chrome' || '') }}
-          SHARD: ${{ matrix.shard }}/${{ matrix.of }}
+          SHARD: ${{ matrix.shard }}/${{ matrix.node == '22.x' && 2 || 3 }}
         # A file that fails is run again alone; one that then passes is a warning, not a failure.
         run: node scripts/test-ci.mjs
-
-      # The SDK's golden test builds sessions with coding.sh's core, so a core change can break it.
-      - name: SDK typecheck and test
-        if: matrix.shard == 1
-        working-directory: packages/sdk
-        run: npm run check
 
       - name: Build
         if: matrix.shard == 1
@@ -107,43 +192,6 @@ jobs:
         run: |
           node dist/cli.mjs --version
           node dist/cli.mjs --help > /dev/null
-
-      - name: Package contents
-        if: matrix.shard == 1
-        working-directory: packages/coding.sh
-        run: npm pack --dry-run
-
-      - name: Site build
-        if: matrix.shard == 1
-        working-directory: apps/site
-        run: npm run build
-
-      # A missing build fails the site tests here instead of skipping them.
-      - name: Site check
-        if: matrix.shard == 1
-        working-directory: apps/site
-        env:
-          CODING_SH_REQUIRE_DIST: "1"
-        run: npm run check
-
-      # The Site workflow runs this on main and stops the deploy when a page is over budget.
-      # Running it here, on the same OS and Node as that workflow, fails the pull request instead.
-      - name: Site perf budget
-        if: matrix.shard == 1 && runner.os == 'Linux' && matrix.node == '24.x'
-        working-directory: apps/site
-        run: npm run perf:budget
-
-      # The built output holds nothing shaped like a secret.
-      - name: Secret scan of the built output
-        if: matrix.shard == 1
-        run: node scripts/gate.mjs --only secret-scan
-
-      # The hook budget: a slow hook slows every agent. The desk runner measures main's own
-      # build a few percent over the design budget (docs/design/dogfood.md), so the step fails
-      # on more than 20% over it. One rerun absorbs a noisy runner.
-      - name: Hook budget
-        if: matrix.shard == 1 && runner.os == 'Linux' && matrix.node == '24.x'
-        run: node scripts/dogfood/bench.mjs hook --check --tolerance 20 || node scripts/dogfood/bench.mjs hook --check --tolerance 20
 
   gate-static:
     name: gate (static checks)
@@ -451,15 +499,14 @@ jobs:
 
   windows:
     name: node ${{ matrix.node }} / windows-latest (${{ matrix.shard }}/4)
-    # Always GitHub-hosted: the self-hosted desk runner is Linux only.
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     strategy:
       fail-fast: false
-      # Four shards (node --test-shard): the whole suite takes about 12 minutes on hosted
-      # Windows. Shard 1 also runs the typecheck, the build and the installer.
+      # Four shards: the whole suite takes about 20 minutes on hosted Windows. Shard 1 also runs
+      # the build and the installer.
       matrix:
-        node: [22.x, 24.x]
+        node: ${{ fromJSON(github.event_name == 'pull_request' && '["24.x"]' || '["22.x", "24.x"]') }}
         shard: [1, 2, 3, 4]
     defaults:
       run:
@@ -481,11 +528,6 @@ jobs:
 
       - name: Install
         run: npm ci
-
-      - name: Typecheck
-        if: matrix.shard == 1
-        working-directory: packages/coding.sh
-        run: npx tsc -p tsconfig.json --noEmit
 
       - name: Test
         working-directory: packages/coding.sh
