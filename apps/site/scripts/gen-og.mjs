@@ -57,11 +57,11 @@ function lines(text, max) {
   return out.slice(0, 3);
 }
 
-function svg({ kicker, title, sub }) {
+function svg({ kicker, title, sub, size = title.length > 34 ? 64 : 76 }) {
   // Lines wrap short enough to stay left of the cube (x ≈ 830).
-  const size = title.length > 34 ? 64 : 76;
   const tl = lines(title, size === 76 ? 18 : 22);
-  const top = 300 - ((tl.length - 1) * size * 1.05) / 2;
+  // A card with no line under its title sits lower, so the title alone is level with the cube.
+  const top = (sub ? 300 : 330) - ((tl.length - 1) * size * 1.05) / 2;
   const scale = 300 / cube.height;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
 <style>@font-face{font-family:G;src:url(data:font/woff2;base64,${sans}) format("woff2");font-weight:400 700}@font-face{font-family:GM;src:url(data:font/woff2;base64,${mono}) format("woff2");font-weight:400 700}</style>
@@ -69,7 +69,7 @@ function svg({ kicker, title, sub }) {
 <g transform="translate(${1100 - cube.width * scale} ${315 - (cube.height * scale) / 2}) scale(${scale})">${cube.body}</g>
 <text x="88" y="112" font-family="GM, Geist Mono, monospace" font-weight="600" font-size="34" fill="#f4f4f5">coding<tspan fill="#8b8b92">.sh</tspan>${kicker ? `<tspan fill="#5c5c63"> / </tspan><tspan fill="#8b8b92">${esc(kicker)}</tspan>` : ""}</text>
 ${tl.map((l, i) => `<text x="88" y="${top + i * size * 1.05}" font-family="G, Geist, sans-serif" font-weight="600" font-size="${size}" letter-spacing="-2.5" fill="#f4f4f5">${esc(l)}</text>`).join("\n")}
-<text x="88" y="${top + (tl.length - 1) * size * 1.05 + 70}" font-family="G, Geist, sans-serif" font-size="28" fill="#8b8b92">${esc(sub)}</text>
+${sub ? `<text x="88" y="${top + (tl.length - 1) * size * 1.05 + 70}" font-family="G, Geist, sans-serif" font-size="28" fill="#8b8b92">${esc(sub)}</text>` : ""}
 <text x="88" y="560" font-family="GM, Geist Mono, monospace" font-size="22" fill="#5c5c63">curl -fsSL https://coding.sh/install | sh</text>
 </svg>
 `;
