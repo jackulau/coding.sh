@@ -41,10 +41,11 @@ jobs:
           # Full history: each sitemap <lastmod> is the last commit to that page's source.
           fetch-depth: 0
 
+      # No `cache: npm`: the desk keeps ~/.npm between runs, and restoring GitHub's copy of it
+      # (about 480 MB) took the desk 90 s or more.
       - uses: actions/setup-node@v5
         with:
           node-version: 24.x
-          cache: npm
 
       - name: Install
         run: npm ci --no-audit --no-fund
