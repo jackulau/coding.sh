@@ -37,8 +37,11 @@ const BUDGET = {
   // About 10% over the largest page of each group in the 2026-11-10 build;
   // docs and blog CSS reset to that after the docs rebuild of 2026-11-11 (tabs,
   // code tabs and the on-this-page rail; quickstart 8.1KB CSS and 4.0KB JS).
+  // Home JS is 6.7KB with the 2026-11-14 front page: it draws its two pictures (one
+  // session, and the agents to outputs diagram) and guesses the next click in inline
+  // scripts, minified at build time by src/landing/pack.ts. So 7.4KB, about 10% over.
   inlineCss: { home: 8 * KB, docs: 8.9 * KB, changelog: 7.1 * KB, blog: 8.8 * KB, other: 5.5 * KB },
-  inlineJs: { home: 2.7 * KB, docs: 4.4 * KB, changelog: 2.6 * KB, blog: 2.1 * KB, other: 1.4 * KB },
+  inlineJs: { home: 7.4 * KB, docs: 4.4 * KB, changelog: 2.6 * KB, blog: 2.1 * KB, other: 1.4 * KB },
   preloadFonts: 28.5 * KB, // woff2 bytes preloaded by one page (26.0KB today)
   moduleScripts: 1, // external <script type="module" src> per page
   // The cards are lossless PNG (gen-og.mjs, compressionLevel 9). Palette

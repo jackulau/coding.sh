@@ -44,6 +44,7 @@ grouped by area, with links to the docs for the details.
 - **Site.** Docs pages no longer jump when the web fonts load on a phone: layout shift on /docs/cli fell from 0.208 to 0.0003 and on /docs/quickstart from 0.009 to 0.0002. Desktop screens get home screenshots sized to their slot, 1.6 kB less. [Site speed](https://github.com/jackulau/coding.sh/blob/main/docs/perf.md#font-swap-and-image-sizes)
 - **Site.** The edge answers moved URLs with permanent redirects, keeps a page prefetched on hover for the click, caches hashed images and search files for a year, compresses the changelog feed, and names the page as canonical on each Markdown copy. [Site speed](https://github.com/jackulau/coding.sh/blob/main/docs/perf.md#font-swap-and-image-sizes)
 - **Agent text.** llms.txt lists the blog and links every CLI command. llms-full.txt leaves out the per-version changelog pages and the per-command CLI pages (647 kB, was 1,046 kB), and each Markdown copy's `updated:` is its page's last change. [llms.txt](https://coding.sh/llms.txt)
+- **Site.** The front page is new: the headline and install command, a moving row of the agents it works with, a diagram of agents feeding one record, three steps to start with a drawing of one session, and four short answers. Its footer lists the docs by section. [coding.sh](https://coding.sh)
 
 ### Fixed
 

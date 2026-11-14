@@ -1,27 +1,30 @@
 ---
+// The front page. Its body, its two pictures and the click predictor are plain HTML and JS in
+// src/landing; this file holds the page's data and fills it into the body's {{PLACEHOLDER}}s.
+// The pictures are drawings; the screenshot and the numbers are the site's own.
 import Layout from "../layouts/Layout.astro";
 import Nav from "../components/Nav.astro";
-import CubeField from "../components/CubeField.astro";
-import Terminal from "../components/Terminal.astro";
-import AgentMarquee from "../components/AgentMarquee.astro";
-import InstallActions from "../components/InstallActions.astro";
-import Shot from "../components/Shot.astro";
-import { SITE, REPO_URL } from "../data/site";
-import { STATS, taskScore } from "../data/compare";
-import { faqSchema } from "../lib/schema";
+import Mark from "../components/Mark.astro";
+import Wordmark from "../components/Wordmark.astro";
+import { SITE, INSTALL_SH, REPO_URL, LICENSE_URL } from "../data/site";
+import { STATS } from "../data/compare";
 import usage from "../data/usage-rows.json";
+import { logo } from "../lib/logos";
+import { faqSchema } from "../lib/schema";
+// The viewer screenshot goes through the asset pipeline, so a build serves it too.
+import shot from "../assets/product/hero-session.webp";
+import shotM from "../assets/product/hero-session-m.webp";
+import body from "../landing/body.html?raw";
+import scene from "../landing/trace.html?raw";
+import flow from "../landing/flow.html?raw";
+import intentCore from "../landing/intent-core.js?raw";
+import intentWire from "../landing/intent-wire.js?raw";
+import { pack } from "../landing/pack";
+import { getImage } from "astro:assets";
 
-// Real screenshots of the viewer, from scripts/shots (seed.mjs, then capture.mjs):
-// a throwaway home where coding.sh works on its own repo. Never real traces.
-import heroSession from "../assets/product/hero-session.webp";
-import heroSessionM from "../assets/product/hero-session-m.webp";
-import recordFailure from "../assets/product/record-failure.webp";
-import recordFailureM from "../assets/product/record-failure-m.webp";
-import productionRequests from "../assets/product/production-requests.webp";
-import productionRequestsM from "../assets/product/production-requests-m.webp";
-
-// Agents with an adapter (packages/coding.sh/src/adapters; table in
-// components/docs/agents.ts). Antigravity CLI is Google's replacement for Gemini CLI.
+// Agents with an adapter (packages/coding.sh/src/adapters; table in components/docs/agents.ts),
+// each with the site's own mark (src/lib/logos). An agent with no published logo gets the
+// site's neutral prompt glyph.
 const WORKS_WITH = [
   { id: "claude-code", name: "Claude Code" },
   { id: "codex", name: "Codex" },
@@ -36,681 +39,211 @@ const WORKS_WITH = [
   { id: "aider", name: "Aider" },
   { id: "t3code", name: "T3 Code" },
 ];
-const OTHERS = WORKS_WITH.length - 3;
-// One sentence: the "Works with" strip under the screenshot names the rest, and
-// the fine print says where runs are kept.
-const SUB = "coding.sh records every step your AI agents take, from Claude\u00a0Code, Codex and Cursor to the ones you build.";
+const GLYPH = { viewBox: "0 0 24 24", evenodd: false, body: '<path d="M4.5 7.5 9 12l-4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square"/><path d="M12 17.25h7.5" fill="none" stroke="currentColor" stroke-width="1.8"/>' };
+// The name is written next to each mark, so the mark itself is decoration.
+const mark = (id: string) => {
+  const l = logo(id) ?? GLYPH;
+  return `<svg viewBox="${l.viewBox}" fill="currentColor"${l.evenodd ? ' fill-rule="evenodd"' : ""} aria-hidden="true" focusable="false">${l.body}</svg>`;
+};
+const works = WORKS_WITH.map(({ id, name }) => `<li>${mark(id)}${name}</li>`).join("\n");
 
-const m = (s: string) => `<span class="t-muted">${s}</span>`;
-const tx = (s: string) => `<span class="t-text">${s}</span>`;
+const w = usage.head.map((h: string, i: number) => Math.max(h.length, ...usage.rows.map((r: string[]) => r[i].length)));
+const row = (r: string[]) => r.map((c, i) => (i === r.length - 1 ? c : c.padEnd(w[i]) + "  ")).join("");
+const USAGE = [`<span class="t">$ ${usage.command}</span>`, `<span class="t">${row(usage.head)}</span>`, ...usage.rows.map(row)].join("\n");
 
-// The real output of `coding.sh usage --since 7d` on the screenshot home, with
-// the four columns a first-time reader needs: agent, sessions, tokens and
-// cost. scripts/shots/seed.mjs writes data/usage-rows.json from the command,
-// so the rows are never typed by hand. Cursor's hooks report no tokens, so it
-// has no row. ~ marks a cost estimated from tokens and list prices.
-const USAGE_HEAD: string[] = usage.head;
-const USAGE_ROWS: string[][] = usage.rows;
-const widths = USAGE_HEAD.map((h, i) => Math.max(h.length, ...USAGE_ROWS.map((r) => r[i].length)));
-const usageLine = (r: string[], head = false) =>
-  r
-    .map((c, i) => {
-      const text = i === r.length - 1 ? c : c.padEnd(widths[i]) + "  ";
-      return head ? tx(text) : text;
-    })
-    .join("");
-const USAGE = [
-  `${m("$")} ${tx("coding.sh usage --since 7d")}`,
-  usageLine(USAGE_HEAD, true),
-  ...USAGE_ROWS.map((r) => usageLine(r)),
-].join("\n");
-
-const SDK_CODE = [
-  `${tx("import")} { observe } ${tx("from")} "@codingdotsh/sdk";`,
-  `${tx("const")} openai = observe(${tx("new")} OpenAI());`,
-].join("\n");
-
-const SDK_URL = "/docs/sdk";
-const PY_SDK_URL = `${REPO_URL}/tree/main/packages/sdk-python#readme`;
-
-// One real task from the same runs, so "better" has an example.
-const EXAMPLE = taskScore("retry-locked-index");
-
-const STEPS = [
-  { n: "01", title: "Install.", body: "Run the command above. It finds the agents you use and asks before it changes their settings." },
-  { n: "02", title: "Keep working.", body: "Use your agents the way you do now. Each session is saved on your machine as it runs." },
-];
-
+// The questions, once: the page lists them and the FAQ structured data repeats them.
 const FAQ = [
   { q: "Does anything leave my machine?", a: "No session data. The only default request is a daily update check (off with CODING_SH_NO_UPDATE_CHECK=1). Sessions are saved in ~/.coding.sh and nothing else is sent unless you set up an export yourself." },
   { q: "Will it slow my agent down?", a: "No. The hook adds one line to a file and exits. The rest of the work happens after the session." },
   { q: "Does it change my agent's settings?", a: "Only after you say yes. It backs up each file first, and coding.sh uninstall takes its hooks out again." },
-  { q: "What does it cost?", a: "Nothing. It is open source under the MIT license. Your model spend stays what your agents already cost." },
-  { q: "How do you say coding.sh?", a: "“coding shell”: the .sh is a shell script. People also write it coding sh or codingsh; the CLI runs as coding.sh or codingsh. It is all one tool." },
+  { q: "What does it cost?", a: "Nothing. Your model spend stays what your agents already cost." },
 ];
+const esc = (t: string) => t.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+const faq = FAQ.map(({ q, a }) => `<details>\n<summary>${esc(q)}</summary>\n<p>${esc(a)}</p>\n</details>`).join("\n");
+
+const tiles = WORKS_WITH.map(({ id, name }) => `<li class="f-tile" title="${name}">${mark(id)}</li>`).join("\n");
+const intent = `<script>\n(() => {\n${intentCore}\n${intentWire}})();\n</scr` + `ipt>`;
+// FLOW goes first: it carries a placeholder of its own. Each value goes in through a function,
+// so a "$" in it is kept as written.
+// The screenshots are 2x captures. Each also gets a 1x file, so a 1x screen does not download
+// the 2x one: 777px is the widest the desktop slot gets (two thirds of the 76rem frame, less its
+// padding), and the phone crop is drawn at half its pixel width.
+const desk = await getImage({ src: shot, widths: [777, shot.width], format: "webp", quality: 82 });
+const phone = await getImage({ src: shotM, widths: [shotM.width / 2, shotM.width], format: "webp", quality: 82 });
+const fill: Record<string, string> = { FLOW: flow, INTENT: intent, AGENT_TILES: tiles, SCENE: scene, WORKS: works, FAQ: faq, USAGE, SHOT: desk.src, SHOT_SET: desk.srcSet.attribute, SHOT_M_SET: phone.srcSet.attribute, INSTALL: INSTALL_SH, BASE_RATE: String(STATS.baseRate), CAND_RATE: String(STATS.candRate), TASKS: String(STATS.tasks), RUNS: String(STATS.runsPerTask) };
+// The footer's links, in columns. Every one is a page that exists.
+const FOOT: [string, [string, string][]][] = [
+  ["Start", [["Quickstart", "/docs/quickstart"], ["Install", "/docs/install"], ["Agents", "/docs/agents"], ["All docs", "/docs"]]],
+  ["Use", [["Cost", "/docs/cost"], ["Evals", "/docs/evals"], ["Experiments", "/docs/experiments"], ["SDK", "/docs/sdk"]]],
+  ["Project", [["Changelog", "/changelog"], ["Blog", "/blog"], ["GitHub", REPO_URL], ["License", LICENSE_URL]]],
+  ["More", [["Compare", "/docs/compare"], ["Privacy", "/docs/privacy"], ["FAQ", "/docs/faq"], ["llms.txt", "/llms.txt"]]],
+];
+const html = pack(Object.entries(fill).reduce((s, [k, v]) => s.replaceAll(`{{${k}}}`, () => v), body));
 ---
 
 <Layout
   title={`${SITE.name}: open-source observability and evals for AI agents`}
-  description={`Record what Claude Code, Codex, Cursor and ${OTHERS} other AI agents did and what it cost, then test changes with evals. Local-first, open source, MIT.`}
+  description={`Record what Claude Code, Codex, Cursor and ${WORKS_WITH.length - 3} other AI agents did and what it cost, then test changes with evals. Local-first and open source.`}
   schemas={[faqSchema(FAQ)]}
 >
   <Nav />
-
-  <main id="main">
-    <section class="hero" aria-labelledby="hero-title">
-      <CubeField />
-      <div class="wrap hero__inner" data-field-clear>
-        <h1 id="hero-title">See what your AI agents did,<br /> <span class="h1-line">and what it cost</span></h1>
-        <p class="hero__sub">{SUB}</p>
-        <div class="hero__actions">
-          <InstallActions />
+  <Fragment set:html={html} />
+  <footer slot="footer" class="site-footer f-foot">
+    <div class="f-foot__frame">
+      <div class="f-foot__top">
+        <div class="f-foot__id">
+          <a href="/" aria-label="coding.sh home" class="f-foot__brand"><Mark size={18} /><Wordmark /></a>
+          <p>A record of what your agents did and what it cost, kept on your machine.</p>
+          <dl class="f-foot__fine">
+            <div><dt>status</dt><dd>{SITE.version}</dd></div>
+          </dl>
         </div>
-        <p class="hero__fine">Free and open source under MIT. Your sessions stay on your machine.</p>
-        <p class="sr-only" aria-live="polite" data-copy-status></p>
-      </div>
-
-      <div class="wrap hero__shot" data-field-clear="hard">
-        <Shot
-          src={heroSession}
-          srcMobile={heroSessionM}
-          eager
-          timing="first-viewer-row"
-          sizes="(min-width: 1088px) 60rem, calc(100vw - 4rem)"
-          alt="A Claude Code session in the coding.sh viewer, on the coding.sh repo: its title, agent, duration and estimated cost, then its steps in order, with what each model call cost. An npm test run is red because one test failed. A few steps later the agent edits src/store/sqlite.ts to fix it."
-        />
-      </div>
-
-      <div class="wrap works" data-field-clear>
-        <p class="works__label">Works with</p>
-        <AgentMarquee items={WORKS_WITH} />
-      </div>
-    </section>
-
-    <section id="how" class="band" aria-labelledby="how-title">
-      <div class="wrap">
-        <div class="frame band__inner">
-          <h2 id="how-title">How it works</h2>
-          <ol class="steps">
-            {
-              STEPS.map((s) => (
-                <li>
-                  <span class="steps__n">{s.n}</span>
-                  <h3>{s.title}</h3>
-                  <p>{s.body}</p>
-                </li>
-              ))
-            }
-            <li>
-              <span class="steps__n">03</span>
-              <h3>Open the viewer.</h3>
-              <p>Run <code>coding.sh ui</code> to see every session and where it broke.</p>
-            </li>
-          </ol>
-        </div>
-      </div>
-    </section>
-
-    <section id="record" class="band" aria-labelledby="record-title">
-      <div class="wrap">
-        <div class="frame split band__inner">
-          <div class="copy">
-            <p class="eyebrow">Record</p>
-            <h2 id="record-title">Find the step that broke</h2>
-            <p class="body">Open any session to see each prompt, tool call and file edit in order. When a command fails, the lines that say why are marked red.</p>
-          </div>
-          <div class="visual">
-            <Shot
-              src={recordFailure}
-              srcMobile={recordFailureM}
-              sizes="(min-width: 1216px) 578px, (min-width: 1024px) calc((100vw - 226px) * 0.5833), calc(100vw - 4rem)"
-              alt="The failed npm test step in the coding.sh viewer, with the lines that say why in red: the test applies each migration once failed with SqliteError: duplicate column name: cost_usd, thrown at src/store/sqlite.ts line 428."
-            />
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section id="measure" class="band" aria-labelledby="measure-title">
-      <div class="wrap">
-        <div class="frame split split--flip band__inner">
-          <div class="copy">
-            <p class="eyebrow">Measure</p>
-            <h2 id="measure-title">See what each agent costs</h2>
-            <p class="body">Run <code>coding.sh usage</code> to add up tokens and dollars by agent, model, repo or day. A <code>~</code> means the cost is estimated from list prices.</p>
-            <p class="links"><a class="inline-link hit" href="/docs/cost">Track cost per session</a> <a class="inline-link hit" href="/docs/compare/ccusage">Compared with ccusage</a></p>
-          </div>
-          <Terminal title="~/coding.sh" label="Output of coding.sh usage" class="usage-term">
-            <pre set:html={USAGE} />
-          </Terminal>
-        </div>
-      </div>
-    </section>
-
-    <section id="compare" class="band" aria-labelledby="compare-title">
-      <div class="wrap">
-        <div class="frame split band__inner">
-          <div class="copy">
-            <p class="eyebrow">Compare</p>
-            <h2 id="compare-title">You changed AGENTS.md. Did your agent get better?</h2>
-            <p class="body">Run the same {STATS.tasks} tasks on the old and new version, {STATS.runsPerTask} times each. coding.sh tells you which one passed more often.</p>
-            <p class="links"><a class="inline-link hit" href="/docs/how-to/test-agents-md-change">Test an AGENTS.md or skill change</a></p>
-          </div>
-          <div class="visual result">
-            <p class="result__label">what coding.sh reports</p>
-            <div class="pair tnum" role="img" aria-label={`Tasks passed went from ${STATS.baseRate}% before to ${STATS.candRate}% after`} data-agent-text={`Tasks passed went from ${STATS.baseRate}% before to ${STATS.candRate}% after.`}>
-              <span class="pair__side pair__side--before"><span class="pair__n">{STATS.baseRate}%</span><span class="pair__l">before</span></span>
-              <span class="pair__arrow" aria-hidden="true">→</span>
-              <span class="pair__side"><span class="pair__n">{STATS.candRate}%</span><span class="pair__l">after</span></span>
+        <nav aria-label="Footer" class="f-foot__nav">
+          {FOOT.map(([head, links]) => (
+            <div>
+              <h2>{head}</h2>
+              <ul role="list">
+                {links.map(([name, href]) => <li><a href={href}>{name}</a></li>)}
+              </ul>
             </div>
-            <p class="verdict"><span class="t-pass" aria-hidden="true">✓</span> Better by {STATS.diff} points. That's more than luck would explain.</p>
-            <p class="example">
-              <span class="example__label">biggest gain</span>
-              <span class="example__row"><span class="example__task">{EXAMPLE.label}:</span> <span class="tnum">{EXAMPLE.before.replace("/", " of ")} runs passed before, {EXAMPLE.after.replace("/", " of ")} after</span></span>
-            </p>
-            <p class="result__link"><a class="inline-link hit" href="/docs/experiments#compare">How we check it's not luck</a></p>
-          </div>
-        </div>
+          ))}
+        </nav>
       </div>
-    </section>
-
-    <section id="production" class="band" aria-labelledby="production-title">
-      <div class="wrap">
-        <div class="frame split split--flip band__inner">
-          <div class="copy">
-            <p class="eyebrow">Production</p>
-            <h2 id="production-title"><span class="nw">Track the AI calls</span> in your app</h2>
-            <p class="body">Wrap your OpenAI or Anthropic client with the SDK. Each request shows up with its model, tokens, cost and time.</p>
-            <pre class="code" set:html={SDK_CODE} />
-            <p class="links"><a class="inline-link hit" href={SDK_URL}>Read the SDK guide</a> <a class="inline-link hit" href={PY_SDK_URL}>Python SDK</a></p>
-          </div>
-          <div class="visual">
-            <Shot
-              src={productionRequests}
-              srcMobile={productionRequestsM}
-              bar="coding.sh serve"
-              sizes="(min-width: 1216px) 578px, (min-width: 1024px) calc((100vw - 226px) * 0.5833), calc(100vw - 4rem)"
-              alt="The coding.sh serve viewer listing requests from coding-sh-triage, a bot that labels issues on the coding.sh repo, each with its model, tokens, estimated cost and time."
-            />
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section id="questions" class="band" aria-labelledby="questions-title">
-      <div class="wrap">
-        <div class="frame band__inner faq">
-          <h2 id="questions-title">Questions</h2>
-          <div class="faq__list">
-            {
-              FAQ.map((f) => (
-                <details>
-                  <summary>{f.q}</summary>
-                  <p>{f.a}</p>
-                </details>
-              ))
-            }
-            <p class="faq__more links"><a class="inline-link hit" href="/docs/faq">More questions</a></p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section id="start" class="band" aria-labelledby="start-title">
-      <div class="wrap">
-        <div class="frame band__inner closing">
-          <h2 id="start-title">Try it on your next session</h2>
-          <InstallActions />
-        </div>
-      </div>
-    </section>
-  </main>
+      {/* The wordmark again, as large as the frame, fading out at the bottom. Decoration only. */}
+      <div class="f-foot__big" aria-hidden="true"><Wordmark px={20} /></div>
+    </div>
+  </footer>
 </Layout>
 
 <style>
-  /* ---------- hero ---------- */
-  .hero {
-    position: relative;
-    isolation: isolate;
-    padding-top: calc(var(--nav-h) + 2.25rem);
+  /* The footer carries on between the page's two rails. */
+  .f-foot {
+    --rail: var(--line-strong, #2c2c30);
+    padding-inline: var(--gutter, 1rem);
+    font-size: 0.9375rem;
   }
-  @media (min-width: 1024px) {
-    .hero {
-      padding-top: calc(var(--nav-h) + 3rem);
-    }
-  }
-  .hero__inner {
+  .f-foot__frame {
     position: relative;
+    max-width: 76rem;
+    margin-inline: auto;
+    overflow: hidden;
+    border-inline: 1px solid var(--rail);
+  }
+  .f-foot__top {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  }
+  .f-foot__id {
     display: flex;
     flex-direction: column;
+    align-items: flex-start;
+    gap: 0.9rem;
+    padding: 3.25rem 2rem 2.5rem;
+  }
+  .f-foot__brand {
+    display: inline-flex;
     align-items: center;
-    text-align: center;
+    gap: 0.55rem;
+    min-height: 2.75rem;
   }
-  .hero h1 {
-    margin-top: 0;
-    font-size: clamp(2.5rem, 1.3rem + 4.6vw, 4.75rem);
-    line-height: 1;
-    letter-spacing: -0.05em;
-  }
-  /* Centred flex items size to their longest word; anywhere lets a word longer
-     than the line break instead of widening the page. */
-  .hero h1,
-  .hero__sub {
-    overflow-wrap: anywhere;
-  }
-  /* Two lines from tablets up; phones wrap the second line once. */
-  @media (min-width: 768px) {
-    .h1-line {
-      white-space: nowrap;
-    }
-  }
-  .hero__sub {
-    margin-top: 1.1rem;
-    max-width: 34rem;
-    font-size: 1.125rem;
+  .f-foot__id p {
+    max-width: 17rem;
+    margin: 0;
     line-height: 1.5;
     color: var(--text-2);
   }
-  .hero__actions {
-    margin-top: 1.5rem;
-  }
-  .hero__fine {
-    margin-top: 0.75rem;
-    max-width: 30rem;
-    text-wrap: balance;
-    font-size: var(--fs-sm);
-    line-height: 1.5;
-    color: var(--text-muted);
-  }
-  @media (max-width: 479px) {
-    .hero__sub {
-      font-size: 1.0625rem;
-    }
-    .hero__actions {
-      width: 100%;
-    }
-  }
-  .hero__shot {
-    position: relative;
-    margin-top: 2.5rem;
-    max-width: calc(60rem + 4rem);
-  }
-
-  /* ---------- works with ---------- */
-  .works {
-    position: relative;
-    margin-top: 2.5rem;
-    max-width: 60rem;
-  }
-  .works__label {
+  .f-foot__fine {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1.25rem;
+    margin: 0.4rem 0 0;
     font-family: var(--font-mono);
-    font-size: var(--fs-xs);
-    text-align: center;
+    font-size: var(--fs-xs, 12px);
+  }
+  .f-foot__fine div {
+    display: flex;
+    gap: 0.45rem;
+    white-space: nowrap;
+  }
+  .f-foot__fine dt {
     color: var(--text-muted);
   }
-  @media (max-width: 639px) {
-    /* Edge to edge on phones: the fade does the inset. */
-    .works {
-      margin-top: 2rem;
-      padding-inline: 0;
-    }
-  }
-
-  /* ---------- framed bands ----------
-     A document frame: two rails at the wrap edges, and horizontal rules that
-     stop at the rails instead of running the full viewport. */
-  .band {
-    margin-top: 0;
-  }
-  #how {
-    margin-top: 4rem;
-  }
-  .frame {
-    border-inline: 1px solid var(--line);
-    border-top: 1px solid var(--line);
-  }
-  @media (max-width: 639px) {
-    .frame {
-      border-inline: 0;
-    }
-  }
-  .band__inner {
-    padding: 4rem 2rem;
-  }
-  @media (min-width: 1024px) {
-    .band__inner {
-      padding: 4rem 3rem;
-    }
-    .split {
-      align-items: center;
-    }
-    /* Copy on the right: the visual keeps the wider 7fr column. */
-    .split--flip {
-      grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
-    }
-    .split--flip > .copy {
-      order: 2;
-    }
-  }
-  @media (max-width: 639px) {
-    .band__inner {
-      padding: 3rem 0;
-    }
-    .split {
-      gap: 1.75rem;
-    }
-  }
-
-  /* ---------- section copy ---------- */
-  .eyebrow {
-    margin-bottom: 0.75rem;
-    font-family: var(--font-mono);
-    font-size: var(--fs-sm);
-    color: var(--text-muted);
-  }
-  .band h2 {
-    font-size: clamp(1.75rem, 1.2rem + 2vw, 2.5rem);
-    letter-spacing: -0.03em;
-  }
-  .body {
-    margin-top: 0.8rem;
-    max-width: 28rem;
-    font-size: 1.0625rem;
-    line-height: 1.55;
+  .f-foot__fine dd {
+    margin: 0;
     color: var(--text-2);
   }
-  .body code,
-  .steps code {
-    font-size: 0.875em;
-    color: var(--text);
-  }
-  .visual {
-    min-width: 0;
-  }
-
-  /* ---------- how it works ---------- */
-  /* Three short steps and no visual: less air than the sections with one. */
-  #how .band__inner {
-    padding-block: 3rem;
-  }
-  .steps {
+  .f-foot__nav {
     display: grid;
-    gap: 1.5rem;
-    margin: 2rem 0 0;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 2rem 1.5rem;
+    padding: 3.5rem 2rem 2.5rem 0;
+  }
+  .f-foot__nav h2 {
+    margin: 0 0 0.6rem;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .f-foot__nav ul {
+    margin: 0;
     padding: 0;
     list-style: none;
   }
-  @media (min-width: 768px) {
-    .steps {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 2.5rem;
+  .f-foot__nav a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.25rem;
+    color: var(--text-2);
+    transition: color 200ms ease;
+  }
+  .f-foot__nav a:active {
+    color: var(--text);
+    transition-duration: 0s;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .f-foot__nav a:hover {
+      color: var(--text);
+      transition-duration: 90ms;
     }
+  }
+  @media (pointer: coarse) {
+    .f-foot__nav a {
+      min-height: 2.75rem;
+    }
+  }
+  .f-foot__big {
+    padding: 1rem 2rem 0;
+    margin-bottom: calc(-1.4% + var(--safe-b, 0px));
+    opacity: 0.11;
+    -webkit-mask-image: linear-gradient(#000 10%, transparent 96%);
+    mask-image: linear-gradient(#000 10%, transparent 96%);
+  }
+  .f-foot__big :global(svg) {
+    width: 100%;
+    height: auto;
   }
   @media (max-width: 767px) {
-    .steps {
-      gap: 1.1rem;
-      margin-top: 1.5rem;
+    .f-foot {
+      padding-inline: 0;
     }
-    .steps h3 {
-      margin-top: 0.2rem;
+    .f-foot__frame {
+      border-inline: 0;
     }
-  }
-  .steps__n {
-    font-family: var(--font-mono);
-    font-size: var(--fs-sm);
-    color: var(--text-muted);
-  }
-  .steps h3 {
-    margin-top: 0.4rem;
-  }
-  .steps p {
-    margin-top: 0.35rem;
-    max-width: 22rem;
-    font-size: var(--fs-base);
-    line-height: 1.55;
-    color: var(--text-2);
-  }
-  /* Phones and tablets: the steps read as body text, at 16px. */
-  @media (max-width: 1023px) {
-    .steps p {
-      font-size: 1rem;
+    .f-foot__top {
+      grid-template-columns: minmax(0, 1fr);
     }
-  }
-
-  /* ---------- measure ---------- */
-  /* The ~ on estimated costs makes the table 1ch wider; this keeps it unscrolled at 320px. */
-  @media (max-width: 359px) {
-    #measure :global(.usage-term .term__body) {
-      padding-inline: 0.75rem;
-      font-size: 11.5px;
+    .f-foot__id {
+      padding: 2.5rem 1.25rem 0.5rem;
     }
-  }
-  @media (min-width: 1024px) {
-    #measure :global(.usage-term) {
-      font-size: 0.9375rem;
-      line-height: 1.85;
+    .f-foot__nav {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      padding: 1.75rem 1.25rem 2rem;
     }
-    #measure :global(.usage-term .term__body) {
-      padding: 1.25rem 1.5rem 1.4rem;
+    .f-foot__big {
+      padding-inline: 1.25rem;
     }
-  }
-
-  /* ---------- compare ----------
-     Copy on the left; on the right, the result in the same frame as the
-     screenshots: the two numbers, then the verdict. */
-  .result {
-    padding: 1.75rem 2rem 1.6rem;
-    border-radius: 12px;
-    background: #0b0b0d;
-    box-shadow: inset 0 0 0 1px var(--line-strong);
-  }
-  @media (max-width: 639px) {
-    .result {
-      padding: 1.4rem 1.25rem 1.3rem;
-    }
-  }
-  .result__label {
-    font-family: var(--font-mono);
-    font-size: var(--fs-sm);
-    color: var(--text-muted);
-  }
-  .pair {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.3em;
-    margin-top: 0.35rem;
-    font-family: var(--font-mono);
-    font-size: clamp(3rem, 2rem + 4vw, 4.5rem);
-    line-height: 1;
-    letter-spacing: -0.04em;
-    font-weight: 500;
-    color: var(--text);
-  }
-  .pair__side {
-    display: flex;
-    flex-direction: column;
-  }
-  /* The old number steps back, so the eye lands on the new one. */
-  .pair__side--before .pair__n {
-    color: var(--text-muted);
-  }
-  .pair__l {
-    margin-top: 0.5rem;
-    font-size: var(--fs-sm);
-    font-weight: 400;
-    letter-spacing: 0;
-    color: var(--text-muted);
-  }
-  .pair__arrow {
-    color: var(--text-muted);
-  }
-  .verdict {
-    margin-top: 1.5rem;
-    padding-top: 1.1rem;
-    border-top: 1px solid var(--line);
-    font-size: 1.0625rem;
-    color: var(--text);
-  }
-  .example {
-    display: grid;
-    gap: 0.3rem;
-    margin-top: 1.1rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--line);
-    font-size: var(--fs-base);
-    line-height: 1.5;
-    color: var(--text-2);
-  }
-  .example__label {
-    font-family: var(--font-mono);
-    font-size: var(--fs-sm);
-    color: var(--text-muted);
-  }
-  .example__task {
-    color: var(--text);
-  }
-  .result__link {
-    margin-top: 0.75rem;
-    font-size: var(--fs-base);
-  }
-
-
-  /* ---------- production ---------- */
-  /* The first line stays whole, so the heading never breaks after "AI" or "the". */
-  .nw {
-    white-space: nowrap;
-  }
-  .code {
-    margin-top: 1.25rem;
-    padding: 0.85rem 1rem;
-    overflow-x: auto;
-    border-radius: var(--radius);
-    background: var(--term);
-    box-shadow: inset 0 0 0 1px var(--line-strong);
-    font-size: 12.5px;
-    line-height: 1.6;
-    color: var(--text-2);
-  }
-  /* Both lines fit without a scrollbar down to the narrowest columns. */
-  @media (max-width: 1279px) {
-    .code {
-      font-size: 12px;
-    }
-  }
-  @media (max-width: 479px) {
-    .code {
-      padding: 0.75rem 0.8rem;
-    }
-  }
-  @media (max-width: 359px) {
-    .code {
-      padding: 0.7rem 0.6rem;
-      font-size: 10.5px;
-    }
-  }
-  .links {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem 1.25rem;
-    margin-top: 0.9rem;
-    font-size: var(--fs-base);
-  }
-
-  /* ---------- questions ---------- */
-  .faq__list {
-    margin-top: 1.5rem;
-    max-width: 44rem;
-  }
-  .faq details {
-    border-bottom: 1px solid var(--line);
-  }
-  .faq details:first-child {
-    border-top: 1px solid var(--line);
-  }
-  .faq summary {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 1rem;
-    min-height: 3.25rem;
-    padding-block: 0.6rem;
-    cursor: pointer;
-    list-style: none;
-    font-size: 1.0625rem;
-    color: var(--text);
-  }
-  .faq summary::-webkit-details-marker {
-    display: none;
-  }
-  .faq summary::after {
-    /* Empty alt text: screen readers already say "expanded" or "collapsed". */
-    content: "+" / "";
-    flex: none;
-    font-family: var(--font-mono);
-    color: var(--text-muted);
-  }
-  .faq details[open] summary::after {
-    content: "−" / "";
-  }
-  /* A mouse lights the sign up; a press still shows the dimmer :active colour below. */
-  @media (hover: hover) and (pointer: fine) {
-    .faq summary::after {
-      transition: color var(--hover-out) ease;
-    }
-    .faq summary:hover::after {
-      color: var(--text);
-      transition-duration: var(--hover-in);
-    }
-  }
-  .faq summary:active,
-  .faq summary:active::after {
-    color: var(--text-2);
-  }
-  .faq summary:focus-visible {
-    outline: 2px solid var(--text-2);
-    outline-offset: 2px;
-  }
-  .faq details p {
-    padding-bottom: 1rem;
-    max-width: 38rem;
-    font-size: var(--fs-base);
-    line-height: 1.6;
-    color: var(--text-2);
-  }
-  .faq__more {
-    margin-top: 1.25rem;
-    font-size: var(--fs-base);
-  }
-  @media (max-width: 639px) {
-    .faq details p {
-      font-size: 1rem;
-    }
-  }
-
-  /* ---------- closing ---------- */
-  .closing {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 1.75rem;
-    text-align: center;
   }
 </style>
-
-<script>
-  // The copy buttons ([data-copy]) are wired once, site-wide, by Nav's script.
-
-  // scripts/perf reads this mark: when the hero viewer screenshot, with its
-  // first rows, is painted (Element Timing on the image). No visible effect.
-  type ElementTiming = PerformanceEntry & { identifier: string; renderTime: number; loadTime: number };
-  if (typeof PerformanceObserver !== "undefined" && PerformanceObserver.supportedEntryTypes?.includes("element")) {
-    const po = new PerformanceObserver((list) => {
-      for (const e of list.getEntries() as ElementTiming[]) {
-        if (e.identifier !== "first-viewer-row") continue;
-        performance.mark("first-viewer-row", { startTime: e.renderTime || e.loadTime });
-        po.disconnect();
-      }
-    });
-    po.observe({ type: "element", buffered: true });
-  }
-</script>
