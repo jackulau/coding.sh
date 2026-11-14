@@ -1,0 +1,369 @@
+<!--
+  The picture under the three steps: one agent's session as a level line, left to right, with
+  the time under it. The agent hands a task to a subagent, which leaves the line, does its work
+  above it and comes back. Each model call drops to the gateway below the line, where its cost
+  is written. Later one step fails (red) and the last one passes (green). A light crosses the
+  line and everything is drawn as the light reaches it.
+  It is a drawing of the idea, not a recording: the steps, times and costs are made up, and add
+  up to the session in the screenshot further down the page (5m 18s, ~$0.34, one failure).
+-->
+<div class="tl" data-tl>
+  <svg class="tl__svg" role="img" aria-label="A drawing of one agent's session as a level line, left to right, with the time under it. The agent hands a task to a subagent, which branches off above the line and comes back. Each model call drops to a gateway below the line, where its cost is written. Later one step fails, in red, and the last one passes, in green."></svg>
+</div>
+
+<style>
+  .tl {
+    position: relative;
+    width: 100%;
+    max-width: 1200px;
+    margin-inline: auto;
+  }
+  .tl__svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+    font-family: var(--font-mono, "Geist Mono", ui-monospace, Menlo, monospace);
+  }
+</style>
+
+<script data-astro-rerun>
+  (() => {
+    const root = document.querySelector("[data-tl]:not([data-on])");
+    if (!root) return;
+    root.dataset.on = "";
+    const svg = root.querySelector("svg");
+
+    // What happens on the agent's line, in order. t = seconds into the session, written under the
+    // line. word = written over it. cost = a model call, billed at the gateway. join = where the
+    // subagent's result comes back, which is not a step of its own.
+    const MAIN = [
+      { id: "m1", t: 0, word: "prompt" },
+      { id: "b1", t: 21 },
+      { id: "g1", cost: 0.04 },
+      { id: "g2", cost: 0.07 },
+      { id: "e1", word: "edit" },
+      { id: "j1", t: 64, join: true },
+      { id: "g3", cost: 0.09 },
+      { id: "f1", t: 82, word: "failed", mark: "fail" },
+      { id: "e2", word: "edit" },
+      { id: "g4", cost: 0.08 },
+      { id: "p1", t: 318, word: "passed", mark: "pass" },
+    ];
+
+    // The light crosses the line, the finished picture holds, fades back to the start, and the
+    // light sets off again.
+    const SWEEP = 5600;
+    const SETTLE = 600;
+    const TOTAL = SWEEP + SETTLE;
+    const HOLD = 3400;
+    const FADE = 600;
+    const CYCLE = TOTAL + HOLD + FADE;
+    const DROP = 260; // ms a model call takes to reach the gateway
+    const CH = 0.602; // width of one character of the mono face, in ems
+
+    const WHITE = "244,244,245";
+    const FAIL = "240,97,106";
+    const PASS = "60,207,122";
+    const RAIL = "#2a2a2f";
+    const INK = "#0a0a0b";
+
+    // Every place is set by hand, once per width. x = where each step sits on the agent's line
+    // (a step with no x is left out at that width). s = the subagent's steps, sc = where it
+    // finishes. x1 = the end of the agent's line, xl = the end of the gateway's.
+    // A card with no text shows its tag alone.
+    const LAYOUTS = {
+      wide: {
+        W: 1200, H: 372, fs: 12.5, ySub: 72, yMain: 198, yGw: 320, rc: 24, nr: 4.5, mr: 14, grid: 40,
+        agent: { x: 56, text: "session" }, sub: { x: 404, text: "~$0.06" }, gw: { x: 214, text: "model calls" },
+        x: { m1: 262, b1: 340, g1: 452, g2: 604, e1: 700, j1: 792, g3: 852, f1: 922, e2: 986, g4: 1040, p1: 1108 },
+        s: [604, 662], sc: 724, x1: 1164, xl: 1084,
+      },
+      mid: {
+        W: 720, H: 306, fs: 10.8, ySub: 58, yMain: 160, yGw: 262, rc: 18, nr: 4, mr: 11, grid: 36,
+        agent: { x: 16, text: "session" }, sub: { x: 236, text: "~$0.06" }, gw: { x: 96, text: "model calls" },
+        x: { m1: 156, b1: 202, g1: 276, g2: 352, e1: 412, j1: 474, g3: 514, f1: 558, e2: 598, g4: 634, p1: 686 },
+        s: [378, 406], sc: 436, x1: 712, xl: 664,
+      },
+      narrow: {
+        W: 358, H: 262, fs: 10, ySub: 46, yMain: 134, yGw: 228, rc: 14, nr: 3.5, mr: 9, grid: 30,
+        agent: { x: 4 }, sub: { x: 112 }, gw: { x: 4 },
+        x: { m1: 70, b1: 94, g1: 126, g2: 180, j1: 234, g3: 262, f1: 290, g4: 318, p1: 345 },
+        s: [190], sc: 210, x1: 356, xl: 344, noTime: { b1: 1 },
+      },
+    };
+    let G;
+
+    const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
+    const easeOut = (p) => 1 - Math.pow(1 - p, 3);
+    const n1 = (v) => (Math.round(v * 10) / 10).toString();
+    const cardW = (tag, text) => 5 + tag.length * (G.fs - 1.5) * CH + 12 + (text ? 8 + text.length * G.fs * CH + 11 : 5);
+
+    function setLayout(name) {
+      G = { ...LAYOUTS[name], name };
+      G.ch = Math.round(G.fs * 2.1 + 12); // a card's height
+      for (const [k, tag] of [["agent", "AGENT"], ["sub", "SUBAGENT"], ["gw", "GATEWAY"]]) G[k] = { ...G[k], tag, w: cardW(tag, G[k].text) };
+      G.xs = G.agent.x + G.agent.w; // where the agent's line starts
+      G.lead = G.W * 0.03; // the light sets off this far before the line, as the agent's card wakes
+      G.ms = SWEEP / (G.x1 - G.xs + G.lead);
+      // The subagent's path: up from the line, a corner, across, a corner, down to the line.
+      const { b1, j1 } = G.x;
+      const LA = G.yMain - G.ySub - G.rc;
+      const arc = (Math.PI * G.rc) / 2;
+      const LB = j1 - b1 - 2 * G.rc;
+      G.sp = { LA, arc, LB, T: 2 * LA + 2 * arc + LB };
+      // When the light reaches each thing, on the picture's clock.
+      G.main = MAIN.filter((n) => G.x[n.id] != null).map((n) => ({ ...n, x: G.x[n.id], at: at(G.x[n.id]) }));
+      G.subAt = G.s.map((x) => subWhen(lenAt(x)));
+      G.scAt = subWhen(lenAt(G.sc));
+      svg.setAttribute("viewBox", `0 0 ${G.W} ${G.H}`);
+    }
+    const at = (x) => (x - G.xs + G.lead) * G.ms;
+    // The subagent's light leaves the line when the agent's light passes the branch and is back
+    // on it when the agent's light reaches the join, so it moves faster than the agent's.
+    const lenAt = (x) => G.sp.LA + G.sp.arc + (x - G.x.b1 - G.rc);
+    const subWhen = (len) => at(G.x.b1 + (len / G.sp.T) * (G.x.j1 - G.x.b1));
+    function pointAt(s) {
+      const { LA, arc, LB } = G.sp;
+      const { b1, j1 } = G.x;
+      const r = G.rc;
+      if (s <= LA) return [b1, G.yMain - s];
+      s -= LA;
+      if (s <= arc) return [b1 + r - r * Math.cos(s / r), G.ySub + r - r * Math.sin(s / r)];
+      s -= arc;
+      if (s <= LB) return [b1 + r + s, G.ySub];
+      s -= LB;
+      if (s <= arc) return [j1 - r + r * Math.sin(s / r), G.ySub + r - r * Math.cos(s / r)];
+      return [j1, G.ySub + r + (s - arc)];
+    }
+
+    const line = (x1, y1, x2, y2, stroke, w = 1.5, more = "") => `<line x1="${n1(x1)}" y1="${n1(y1)}" x2="${n1(x2)}" y2="${n1(y2)}" stroke="${stroke}" stroke-width="${w}"${more}/>`;
+    const text = (x, y, s, o = {}) =>
+      `<text x="${n1(x)}" y="${n1(y)}" font-size="${o.size ?? G.fs}" fill="${o.fill ?? "#8b8b92"}" text-anchor="${o.anchor ?? "middle"}"${o.weight ? ` font-weight="${o.weight}"` : ""}${o.op != null && o.op < 1 ? ` opacity="${o.op.toFixed(2)}"` : ""}>${s}</text>`;
+    // The first `lit` px of a dashed line, as a dash pattern.
+    const dashes = (lit, total) => {
+      const n = Math.floor(lit / 8);
+      return "3 5 ".repeat(n) + `${n1(Math.min(lit - n * 8, 3))} ${Math.ceil(total + 8)}`;
+    };
+    const pop = (x, y, p, inner) => `<g opacity="${p.toFixed(2)}" transform="translate(${n1(x)} ${n1(y)}) scale(${(0.9 + 0.1 * p).toFixed(3)}) translate(${n1(-x)} ${n1(-y)})">${inner}</g>`;
+
+    // A card: a filled tag, then a word. It is dim until the light wakes it.
+    function card(c, yc, wake) {
+      const h = G.ch;
+      const y = yc - h / 2;
+      const ts = G.fs - 1.5;
+      const tw = c.tag.length * ts * CH + 12;
+      const one = (edge, tagFill, tagInk, ink) =>
+        `<rect x="${n1(c.x)}" y="${n1(y)}" width="${n1(c.w)}" height="${h}" rx="9" fill="#0e0e10" stroke="${edge}"/>` +
+        `<rect x="${n1(c.x + 5)}" y="${n1(y + 5)}" width="${n1(tw)}" height="${h - 10}" rx="5" fill="${tagFill}"/>` +
+        text(c.x + 5 + tw / 2, yc + ts * 0.36, c.tag, { size: ts, fill: tagInk, weight: 600 }) +
+        (c.text ? text(c.x + 5 + tw + 8, yc + G.fs * 0.36, c.text, { fill: ink, anchor: "start" }) : "");
+      return one("#27272b", "#242428", "#77777f", "#5c5c63") + (wake > 0 ? `<g opacity="${wake.toFixed(2)}">${one("#4b4b53", "#f4f4f5", INK, "#e4e4e7")}</g>` : "");
+    }
+    // A step on a line: a ring that fills when the light reaches it.
+    const dot = (x, y, r, p) =>
+      `<circle cx="${n1(x)}" cy="${n1(y)}" r="${r}" fill="${INK}" stroke="#34343a" stroke-width="1.5"/>` +
+      (p > 0 ? pop(x, y, p, `<circle cx="${n1(x)}" cy="${n1(y)}" r="${r}" fill="${INK}" stroke="rgb(${WHITE})" stroke-width="1.5"/><circle cx="${n1(x)}" cy="${n1(y)}" r="${n1(r * 0.42)}" fill="rgb(${WHITE})"/>`) : "");
+    // A step with an outcome: a larger ring with a sign in it.
+    function mark(x, y, r, kind, p) {
+      const c = kind === "fail" ? FAIL : kind === "pass" ? PASS : WHITE;
+      const dim = `<circle cx="${n1(x)}" cy="${n1(y)}" r="${r}" fill="${INK}" stroke="#34343a" stroke-width="1.5"/>`;
+      if (p <= 0) return dim;
+      const sign =
+        kind === "fail"
+          ? `<path d="M${n1(x)} ${n1(y - r * 0.42)}V${n1(y + r * 0.1)}" stroke="rgb(${c})" stroke-width="1.8" stroke-linecap="round"/><circle cx="${n1(x)}" cy="${n1(y + r * 0.46)}" r="1.2" fill="rgb(${c})"/>`
+          : `<path d="M${n1(x - r * 0.38)} ${n1(y + r * 0.02)}l${n1(r * 0.27)} ${n1(r * 0.28)}l${n1(r * 0.5)} ${n1(-r * 0.56)}" fill="none" stroke="rgb(${c})" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`;
+      const halo = kind === "done" ? "" : `<circle cx="${n1(x)}" cy="${n1(y)}" r="${r + 8}" fill="rgb(${c})" opacity="0.3" filter="url(#tl-soft)"/>`;
+      return dim + pop(x, y, p, `${halo}<circle cx="${n1(x)}" cy="${n1(y)}" r="${r}" fill="${INK}"/><circle cx="${n1(x)}" cy="${n1(y)}" r="${r}" fill="rgba(${c},0.14)" stroke="rgb(${c})" stroke-width="1.5"/>${sign}`);
+    }
+    const spark = (x, y) => `<circle cx="${n1(x)}" cy="${n1(y)}" r="9" fill="#fff" opacity="0.5" filter="url(#tl-soft)"/><circle cx="${n1(x)}" cy="${n1(y)}" r="2.6" fill="#fff"/>`;
+
+    // What does not change with the clock: the squared paper and the notches on the agent's line.
+    function still() {
+      let g = "";
+      for (let x = (G.W / 2) % G.grid; x <= G.W; x += G.grid) g += line(x, -30, x, G.H + 30, "rgba(255,255,255,0.06)", 1);
+      for (let y = G.yMain % G.grid; y <= G.H + 30; y += G.grid) g += line(-40, y, G.W + 40, y, "rgba(255,255,255,0.06)", 1);
+      let t = "";
+      for (let x = G.xs + G.grid / 2; x < G.x1 - 4; x += G.grid / 2) t += line(x, G.yMain - 2.5, x, G.yMain + 2.5, RAIL, 1);
+      return `<defs>
+        <radialGradient id="tl-fade" cx="0.5" cy="0.5" r="0.62"><stop offset="0.35" stop-color="#fff"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+        <mask id="tl-mask" maskUnits="userSpaceOnUse" x="-40" y="-30" width="${G.W + 80}" height="${G.H + 60}"><rect x="-40" y="-30" width="${G.W + 80}" height="${G.H + 60}" fill="url(#tl-fade)"/></mask>
+        <filter id="tl-soft" x="-300%" y="-300%" width="700%" height="700%"><feGaussianBlur stdDeviation="4"/></filter>
+      </defs><g mask="url(#tl-mask)">${g}</g>${t}`;
+    }
+
+    // Everything that changes with the clock, as markup.
+    function frame(a) {
+      const { ySub: yS, yMain: yM, yGw: yG, rc, nr, mr, fs } = G;
+      const { b1, j1 } = G.x;
+      const hx = clamp(G.xs - G.lead + a / G.ms, G.xs, G.x1);
+      const done = a >= SWEEP;
+      let rails = "";
+      let steps = "";
+      let words = "";
+      let chips = "";
+      let sparks = "";
+
+      // The agent's line.
+      rails += line(G.xs, yM, G.x1, yM, RAIL);
+      if (hx > G.xs) rails += line(G.xs, yM, hx, yM, `rgba(${WHITE},0.82)`);
+      if (!done && hx > G.xs && hx < G.x1) sparks += spark(hx, yM);
+
+      // The subagent: dashed up to its card, solid along its own line and back down.
+      const sub = G.sub;
+      const s = a >= at(b1) ? clamp((hx - b1) / (j1 - b1)) * G.sp.T : 0;
+      const lenIn = lenAt(sub.x);
+      const lenOut = lenAt(sub.x + sub.w);
+      const dIn = `M${b1} ${yM}V${yS + rc}A${rc} ${rc} 0 0 1 ${b1 + rc} ${yS}H${n1(sub.x)}`;
+      const dOut = `M${n1(sub.x + sub.w)} ${yS}H${j1 - rc}A${rc} ${rc} 0 0 1 ${j1} ${yS + rc}V${yM}`;
+      rails += `<path d="${dIn}" fill="none" stroke="#34343a" stroke-width="1.5" stroke-dasharray="3 5"/><path d="${dOut}" fill="none" stroke="${RAIL}" stroke-width="1.5"/>`;
+      if (s > 0) {
+        rails += `<path d="${dIn}" fill="none" stroke="rgba(${WHITE},0.82)" stroke-width="1.5" stroke-dasharray="${dashes(Math.min(s, lenIn), lenIn)}"/>`;
+        if (s > lenOut) rails += `<path d="${dOut}" fill="none" stroke="rgba(${WHITE},0.82)" stroke-width="1.5" stroke-dasharray="${n1(s - lenOut)} ${Math.ceil(G.sp.T)}"/>`;
+        if (!done && s < G.sp.T) {
+          const p = pointAt(s);
+          sparks += spark(p[0], p[1]);
+        }
+      }
+      G.s.forEach((x, i) => (steps += dot(x, yS, nr - 0.5, easeOut(clamp((a - G.subAt[i]) / 220)))));
+      const back = easeOut(clamp((a - G.scAt) / 220));
+      steps += mark(G.sc, yS, mr - 2, "done", back);
+      if (back > 0) words += text(G.sc, yS - mr - 6, "returned", { size: fs - 1, op: back });
+
+      // The gateway: its line, and a model call dropping to it from each call on the agent's line.
+      const gw = G.gw;
+      const chipH = Math.round(fs + 11);
+      const cs = fs - 1;
+      rails += line(gw.x + gw.w, yG, G.xl, yG, RAIL);
+      let landed = 0;
+      for (const n of G.main) {
+        if (!n.cost) continue;
+        const top = yM + nr + 3;
+        const bottom = yG - chipH / 2;
+        const p = clamp((a - n.at) / DROP);
+        const landP = easeOut(clamp((a - n.at - DROP) / 200));
+        rails += `<path d="M${n.x} ${n1(top)}V${n1(bottom)}" fill="none" stroke="#34343a" stroke-width="1.5" stroke-dasharray="3 5"/>`;
+        if (p > 0) rails += `<path d="M${n.x} ${n1(top)}V${n1(bottom)}" fill="none" stroke="rgba(${WHITE},0.82)" stroke-width="1.5" stroke-dasharray="${dashes((bottom - top) * p, bottom - top)}"/>`;
+        steps += `<circle cx="${n.x}" cy="${yG}" r="2.5" fill="#34343a"/>`;
+        if (landP > 0) {
+          const label = `~$${n.cost.toFixed(2)}`;
+          const w = label.length * cs * CH + 14;
+          landed = Math.max(landed, n.x);
+          chips += pop(n.x, yG, landP, `<rect x="${n1(n.x - w / 2)}" y="${n1(yG - chipH / 2)}" width="${n1(w)}" height="${chipH}" rx="${chipH / 2}" fill="${INK}" stroke="rgba(${WHITE},0.34)"/>` + text(n.x, yG + cs * 0.36, label, { size: cs, fill: "#e4e4e7" }));
+        }
+      }
+      if (landed) rails += line(gw.x + gw.w, yG, landed, yG, `rgba(${WHITE},0.5)`);
+
+      // The steps on the agent's line, with the word over each and the time under it.
+      for (const n of G.main) {
+        const p = easeOut(clamp((a - n.at) / 220));
+        const r = n.mark ? mr : nr;
+        steps += n.mark ? mark(n.x, yM, r, n.mark, p) : dot(n.x, yM, nr, p);
+        if (p <= 0) continue;
+        const last = n.x + 30 > G.W;
+        if (n.word) words += text(last ? G.W - 2 : n.x, yM - r - (n.mark ? 8 : 9), n.word, { size: fs - 0.5, anchor: last ? "end" : "middle", fill: n.mark === "fail" ? "#ff9aa0" : n.mark === "pass" ? "#7ee2a8" : "#b0b0b6", op: p });
+        if (n.t != null && !(G.noTime && G.noTime[n.id])) words += text(last ? G.W - 2 : n.x, yM + r + fs + 5, `${Math.floor(n.t / 60)}:${String(n.t % 60).padStart(2, "0")}`, { size: fs - 1.5, anchor: last ? "end" : "middle", fill: "#77777f", op: p });
+      }
+
+      const cards = card(G.agent, yM, clamp(a / 300)) + card(sub, yS, s > 0 ? clamp((a - subWhen(lenIn)) / 300) : 0) + card(gw, yG, landed ? clamp((a - G.main.find((n) => n.cost).at - DROP) / 300) : 0);
+      return rails + steps + cards + chips + words + sparks;
+    }
+
+    const draw = (a) => {
+      svg.innerHTML = STATIC + frame(a);
+    };
+
+    let STATIC = "";
+    let START = "";
+    let END = "";
+    let raf = 0;
+    let t0 = 0;
+    let playing = false;
+    let seen = false;
+    const calm = matchMedia("(prefers-reduced-motion: reduce)");
+    const mqNarrow = matchMedia("(max-width: 640px)");
+    const mqWide = matchMedia("(min-width: 1040px)");
+    const frozen = new URLSearchParams(location.search).get("f");
+    const moves = () => frozen == null && !calm.matches;
+    const rest = () => (frozen != null ? clamp(+frozen) * TOTAL : TOTAL);
+
+    function build() {
+      setLayout(mqNarrow.matches ? "narrow" : mqWide.matches ? "wide" : "mid");
+      STATIC = still();
+      START = frame(0);
+      END = frame(TOTAL);
+    }
+    function stop() {
+      cancelAnimationFrame(raf);
+      playing = false;
+    }
+    function play() {
+      stop();
+      if (!moves()) return draw(rest());
+      // It starts from the finished picture, which fades out before the line is drawn again.
+      playing = true;
+      let held = false;
+      t0 = performance.now() - TOTAL - HOLD;
+      draw(TOTAL);
+      const tick = (now) => {
+        const a = now - t0;
+        if (a >= CYCLE) {
+          t0 = now;
+          held = false;
+          draw(0);
+        } else if (a >= TOTAL + HOLD) {
+          const p = (a - TOTAL - HOLD) / FADE;
+          svg.innerHTML = STATIC + START + `<g opacity="${(1 - p * p * (3 - 2 * p)).toFixed(3)}">${END}</g>`;
+        } else if (a >= TOTAL) {
+          if (!held) draw(TOTAL);
+          held = true;
+        } else draw(a);
+        raf = requestAnimationFrame(tick);
+      };
+      raf = requestAnimationFrame(tick);
+    }
+
+    build();
+    const relay = () => {
+      build();
+      if (!playing) draw(rest());
+    };
+    // The site swaps pages without a reload: everything here lets go when this page leaves.
+    const off = new AbortController();
+    const on = { signal: off.signal };
+    let io = null;
+    document.addEventListener(
+      "astro:before-swap",
+      () => {
+        off.abort();
+        if (io) io.disconnect();
+        stop();
+      },
+      { once: true },
+    );
+    mqNarrow.addEventListener("change", relay, on);
+    mqWide.addEventListener("change", relay, on);
+    // It runs while it is in view and the tab is showing, and starts over when it comes back.
+    // Until then, and if it never starts, the finished picture is what shows.
+    if (moves() && "IntersectionObserver" in window) {
+      draw(TOTAL);
+      io = new IntersectionObserver(
+        (es) => {
+          seen = es[es.length - 1].isIntersecting;
+          if (seen && !playing && !document.hidden) play();
+          if (!seen) stop();
+        },
+        { threshold: 0.35 },
+      );
+      io.observe(root);
+      document.addEventListener(
+        "visibilitychange",
+        () => {
+          if (document.hidden) stop();
+          else if (seen && !playing) play();
+        },
+        on,
+      );
+    } else play();
+  })();
+</script>

@@ -1,0 +1,104 @@
+    <!-- Agents on one side, what coding.sh keeps on the other. The columns move with the page:
+         their position is a function of the scroll offset alone, so scrolling back reverses them. -->
+    <section class="f-flow" aria-labelledby="f-flow-h">
+      <header class="f-head">
+        <h2 id="f-flow-h">Every agent, one record</h2>
+        <p>Your agents on one side. Sessions, cost and evals on the other.</p>
+      </header>
+      <div class="f-flow__stage" data-flow role="img" aria-label="The agents you use feed coding.sh, which keeps their sessions, cost, evals, experiments, benchmarks, gateway costs and SDK traces.">
+        <div class="f-flow__grid"></div>
+        <div class="f-flow__panel f-flow__panel--in">
+          <ul class="f-flow__col" role="list">
+            {{AGENT_TILES}}
+          </ul>
+        </div>
+        <span class="f-flow__wire f-flow__wire--in"></span>
+        <div class="f-flow__hub">
+          <!-- The site's mark (Mark.astro). -->
+          <svg viewBox="0 0 28.28 32.66" aria-hidden="true" focusable="false"><polygon fill="#f4f4f4" points="0,8.16 14.14,0 28.28,8.16 14.14,16.33" /><polygon fill="#b9b9b9" points="0,24.49 0,8.16 14.14,16.33 14.14,32.66" /><polygon fill="#757575" points="14.14,32.66 14.14,16.33 28.28,8.16 28.28,24.49" /></svg>
+        </div>
+        <span class="f-flow__wire f-flow__wire--out"></span>
+        <div class="f-flow__panel f-flow__panel--out">
+          <ul class="f-flow__col" role="list">
+            <li class="f-tile f-tile--out"><svg viewBox="0 0 24 24"><path d="M4 6h1M9 6h11M4 12h1M9 12h11M4 18h1M9 18h7" /></svg><span>sessions</span></li>
+            <li class="f-tile f-tile--out"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" /><path d="M14.6 9.4c-.5-.8-1.4-1.3-2.6-1.3-1.5 0-2.6.8-2.6 1.9 0 2.9 5.3 1.2 5.3 4.1 0 1.100-1.200 1.900-2.700 1.900-1.200 0-2.200-.5-2.700-1.400M12 6.300v11.400" /></svg><span>cost</span></li>
+            <li class="f-tile f-tile--out"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2" /><path d="m8.500 12.200 2.400 2.400 4.600-5" /></svg><span>evals</span></li>
+            <li class="f-tile f-tile--out"><svg viewBox="0 0 24 24"><path d="M9.500 3.500h5M10.500 3.500v5.200L5.600 17.600a1.900 1.900 0 0 0 1.700 2.900h9.400a1.900 1.900 0 0 0 1.700-2.900L13.500 8.700V3.500M8 14.500h8" /></svg><span>experiments</span></li>
+            <li class="f-tile f-tile--out"><svg viewBox="0 0 24 24"><path d="M5.500 20v-8M12 20V5M18.500 20v-5.500M3.500 20h17" /></svg><span>benchmarks</span></li>
+            <li class="f-tile f-tile--out"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.800" /><circle cx="19" cy="6" r="1.800" /><circle cx="19" cy="18" r="1.800" /><path d="M6.800 12H10c3 0 3.200-6 7.200-6M10 12c3 0 3.200 6 7.200 6" /></svg><span>gateways</span></li>
+            <li class="f-tile f-tile--out"><svg viewBox="0 0 24 24"><path d="m8.500 7.500-4.500 4.500 4.500 4.500M15.500 7.500l4.500 4.500-4.500 4.500M13.300 5.500l-2.600 13" /></svg><span>sdk</span></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <script data-astro-rerun>
+      (() => {
+        const stage = document.querySelector("[data-flow]");
+        if (!stage) return;
+        // Each side starts as one column. Two more are made from it, each starting further down
+        // the list, and every column is doubled so it can wrap around without a gap.
+        for (const panel of stage.querySelectorAll(".f-flow__panel")) {
+          const first = panel.querySelector(".f-flow__col");
+          const tiles = [...first.children];
+          const n = tiles.length;
+          for (const k of [1, 2]) {
+            const col = first.cloneNode(false);
+            for (let i = 0; i < n; i++) col.append(tiles[(i + Math.ceil((k * n) / 3)) % n].cloneNode(true));
+            panel.append(col);
+          }
+        }
+        const cols = [...stage.querySelectorAll(".f-flow__col")];
+        const rate = new Map(); // px a column moves per px of scroll; the sign is its direction
+        cols.forEach((col, i) => {
+          for (const t of [...col.children]) col.append(t.cloneNode(true));
+          // Neighbours move in opposite directions, the middle one slower.
+          // (Kept in a map: an element already has a dir property of its own.)
+          rate.set(col, i % 3 === 1 ? -0.28 : 0.42);
+        });
+        const still = matchMedia("(prefers-reduced-motion: reduce)");
+        let raf = 0;
+        let near = false;
+        function place() {
+          raf = 0;
+          // How far the stage's top edge has come up from the bottom of the window.
+          const d = still.matches ? 0 : innerHeight - stage.getBoundingClientRect().top;
+          for (const col of cols) {
+            if (!col.offsetHeight) continue; // a column hidden at this width
+            // One trip through the list: half the doubled column, counting the gap after it.
+            const cycle = (col.scrollHeight + (parseFloat(getComputedStyle(col).rowGap) || 0)) / 2;
+            const o = (((d * rate.get(col)) % cycle) + cycle) % cycle;
+            col.style.transform = `translate3d(0,${(-o).toFixed(1)}px,0)`;
+          }
+        }
+        const ask = () => {
+          if (near && !raf) raf = requestAnimationFrame(place);
+        };
+        place();
+        // The site swaps pages without a reload: everything here lets go when this page leaves.
+        const off = new AbortController();
+        let io = null;
+        if ("IntersectionObserver" in window) {
+          io = new IntersectionObserver(
+            (es) => {
+              near = es[es.length - 1].isIntersecting;
+              ask();
+            },
+            { rootMargin: "200px 0px" },
+          );
+          io.observe(stage);
+        } else near = true;
+        addEventListener("scroll", ask, { passive: true, signal: off.signal });
+        addEventListener("resize", ask, { signal: off.signal });
+        still.addEventListener("change", ask, { signal: off.signal });
+        document.addEventListener(
+          "astro:before-swap",
+          () => {
+            off.abort();
+            if (io) io.disconnect();
+            cancelAnimationFrame(raf);
+          },
+          { once: true },
+        );
+      })();
+    </script>

@@ -41,6 +41,7 @@ test("copy that lists current agents says Antigravity CLI, not Gemini CLI", () =
   const files = [
     ...walk("apps/site/src/content", /\.(md|mdx)$/),
     "apps/site/src/pages/index.astro",
+    ...walk("apps/site/src/landing", /\.(html|js)$/),
     "README.md",
     ...walk("docs/guides", /\.md$/),
     ...walk("docs/how-to", /\.md$/),

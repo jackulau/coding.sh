@@ -44,12 +44,14 @@ test("compare.ts does not claim a real experiment", () => {
   assert.match(head, /by hand|not an experiment/i, "the header should say the numbers are written by hand");
 });
 
+// The landing's data is in pages/index.astro and its markup in landing/body.html.
+const LANDING = ["pages/index.astro", "landing/body.html"].map((f) => readFileSync(`${SRC}${f}`, "utf8")).join("\n");
+
 test("the landing does not call the compare numbers measured", () => {
-  assert.deepEqual(measuredClaims(readFileSync(`${SRC}pages/index.astro`, "utf8")), []);
+  assert.deepEqual(measuredClaims(LANDING), []);
   assert.deepEqual(measuredClaims("We ran 20 tasks and measured over five runs."), ["We ran 20 tasks and measured over five runs."]);
 });
 
 test("the result panel is labeled as what coding.sh reports, not a measurement", () => {
-  const page = readFileSync(`${SRC}pages/index.astro`, "utf8");
-  assert.match(page, /<p class="result__label">what coding\.sh reports<\/p>/);
+  assert.match(LANDING, /<p class="f-cell__label">what coding\.sh reports<\/p>\s*<div class="f-pair"/);
 });
