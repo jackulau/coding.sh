@@ -16,12 +16,40 @@ on:
   push:
     branches: [main]
     paths:
+      # What can change the five measured pages (PAGES in scripts/perf/lighthouse.mjs): not the
+      # site's tests and tool scripts, the blog, or a page that is not measured. CI's
+      # "Site perf budget" step still checks every page's weight on every pull request.
       - "apps/site/**"
+      - "!apps/site/test/**"
+      - "!apps/site/scripts/shots/**"
+      - "!apps/site/scripts/perf-budget.mjs"
+      - "!apps/site/scripts/seo-check.mjs"
+      - "!apps/site/scripts/indexnow.mjs"
+      - "!apps/site/src/content/**"
+      - "!apps/site/src/pages/**"
+      - "apps/site/src/pages/index.astro"
+      - "apps/site/src/pages/changelog.astro"
+      - "apps/site/src/pages/docs/quickstart.astro"
+      - "apps/site/src/pages/docs/evals.astro"
+      - "apps/site/src/pages/docs/cli.astro"
       - "scripts/perf/**"
       - ".github/workflows/site-perf.yml"
   pull_request:
+    # The same list as push.
     paths:
       - "apps/site/**"
+      - "!apps/site/test/**"
+      - "!apps/site/scripts/shots/**"
+      - "!apps/site/scripts/perf-budget.mjs"
+      - "!apps/site/scripts/seo-check.mjs"
+      - "!apps/site/scripts/indexnow.mjs"
+      - "!apps/site/src/content/**"
+      - "!apps/site/src/pages/**"
+      - "apps/site/src/pages/index.astro"
+      - "apps/site/src/pages/changelog.astro"
+      - "apps/site/src/pages/docs/quickstart.astro"
+      - "apps/site/src/pages/docs/evals.astro"
+      - "apps/site/src/pages/docs/cli.astro"
       - "scripts/perf/**"
       - ".github/workflows/site-perf.yml"
   workflow_dispatch:
@@ -55,10 +83,12 @@ jobs:
           # Base commit for the A/B, and each sitemap <lastmod> in both builds.
           fetch-depth: 0
 
+      # The desk keeps ~/.npm between runs; restoring GitHub's copy of it (about 480 MB) took the
+      # desk 90 s or more, so only hosted runners use the cache.
       - uses: actions/setup-node@v5
         with:
           node-version: 24.x
-          cache: npm
+          cache: ${{ runner.environment == 'github-hosted' && 'npm' || '' }}
 
       # The gate and budget rules against synthetic samples, before the long A/B.
       - name: Gate tests
