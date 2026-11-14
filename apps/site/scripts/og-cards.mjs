@@ -27,10 +27,14 @@ export function blogPosts() {
     });
 }
 
-/** Every card as { name, kicker, title, sub }; name is the PNG's path under public/ without .png. */
+/**
+ * Every card as { name, kicker, title, sub }; name is the PNG's path under public/ without .png.
+ * The site card is the front page's headline alone: no line under it, and `size` keeps it at the
+ * large type size although it is a character over the length where a title is set smaller.
+ */
 export function cards(docPages, posts = blogPosts()) {
   return [
-    { name: "og-image", title: "Traces and evals for AI agents.", sub: "Open source, local-first, MIT licensed." },
+    { name: "og-image", title: "The Observability Layer for Agents.", size: 76 },
     { name: "og/changelog", kicker: "changelog", title: "Changelog", sub: "Every release, newest first." },
     { name: "og/blog", kicker: "blog", title: "Blog", sub: "Notes on how coding.sh works and why." },
     ...posts.map((p) => ({ name: `og/blog-${p.slug}`, kicker: "blog", title: p.title, sub: "coding.sh blog" })),
@@ -41,8 +45,8 @@ export function cards(docPages, posts = blogPosts()) {
   ];
 }
 
-/** What the manifest records for a card: its title, and the template (version, kicker, line under the title) it was drawn with. */
-export const manifestEntry = (c) => ({ title: c.title, template: `v${TEMPLATE_VERSION}:${c.kicker ?? ""}:${c.sub}` });
+/** What the manifest records for a card: its title, and the template (version, kicker, line under the title, a set type size) it was drawn with. */
+export const manifestEntry = (c) => ({ title: c.title, template: `v${TEMPLATE_VERSION}:${c.kicker ?? ""}:${c.sub ?? ""}${c.size ? `:${c.size}` : ""}` });
 
 /** The manifest for a list of cards, keys sorted so the file is stable. */
 export function manifest(list) {

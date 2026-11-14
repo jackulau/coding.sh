@@ -45,6 +45,7 @@ grouped by area, with links to the docs for the details.
 - **Site.** The edge answers moved URLs with permanent redirects, keeps a page prefetched on hover for the click, caches hashed images and search files for a year, compresses the changelog feed, and names the page as canonical on each Markdown copy. [Site speed](https://github.com/jackulau/coding.sh/blob/main/docs/perf.md#font-swap-and-image-sizes)
 - **Agent text.** llms.txt lists the blog and links every CLI command. llms-full.txt leaves out the per-version changelog pages and the per-command CLI pages (647 kB, was 1,046 kB), and each Markdown copy's `updated:` is its page's last change. [llms.txt](https://coding.sh/llms.txt)
 - **Site.** The front page is new: the headline and install command, a moving row of the agents it works with, a diagram of agents feeding one record, three steps to start with a drawing of one session, and four short answers. Its footer lists the docs by section. [coding.sh](https://coding.sh)
+- **Site.** The card shown when a link to coding.sh is shared has the front page's headline. [coding.sh](https://coding.sh)
 
 ### Fixed
 
