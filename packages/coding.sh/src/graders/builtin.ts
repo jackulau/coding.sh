@@ -246,6 +246,64 @@ export function numericGrader(spec: Omit<NumericSpec, "kind"> = {}): Grader {
   });
 }
 
+// ---------------------------------------------------------------- objective
+
+export interface ObjectiveSpec<G = unknown> {
+  kind: "objective";
+  name?: string;
+  /** JSON path to the measured quantity J in the output. Default: the whole output, read with toNumber. */
+  path?: string;
+  /** Anchor that scores 0 (a baseline). Frozen: change it and the grader version changes. */
+  base: number;
+  /** Anchor that scores 1 (a reference). Lower is better when ref < base. */
+  ref: number;
+  /** When the anchors were measured (e.g. "2026-11-14"). Named in every reason. */
+  anchoredAt: string;
+  /** "log" (default): ratio on a log scale, for positive quantities. "linear": for quantities with no natural zero. */
+  scale?: "log" | "linear";
+  /** Upper bound of the score. Default 3. */
+  clip?: number;
+  /** A grader that must pass first; when it fails the score is 0. A GraderSpec in a config, a Grader in code. */
+  gate?: G;
+}
+
+export const OBJECTIVE_DEFAULT_CLIP = 3;
+
+/** Objective score (arXiv 2611.13541): clip(max(0, log(J/base) / log(ref/base)), 0, clip). Not capped at 1, so pass is score >= 1. */
+export function objectiveGrader(spec: Omit<ObjectiveSpec<Grader>, "kind">): Grader {
+  const scale = spec.scale ?? "log";
+  const clip = spec.clip ?? OBJECTIVE_DEFAULT_CLIP;
+  const finite = (n: unknown) => typeof n === "number" && Number.isFinite(n);
+  if (!finite(spec.base) || !finite(spec.ref)) throw new Error("objective: base and ref must be finite numbers");
+  if (spec.base === spec.ref) throw new Error("objective: base and ref must differ");
+  if (scale !== "log" && scale !== "linear") throw new Error(`objective: scale must be "log" or "linear" (got ${JSON.stringify(spec.scale)})`);
+  if (scale === "log" && (spec.base <= 0 || spec.ref <= 0)) throw new Error("objective: base and ref must be greater than 0 on the log scale (use scale \"linear\" otherwise)");
+  if (typeof spec.anchoredAt !== "string" || !spec.anchoredAt.trim()) throw new Error("objective: anchoredAt (the date the anchors were measured) is required");
+  if (!finite(clip) || clip <= 0) throw new Error("objective: clip must be a number greater than 0");
+  if (spec.path) queryJsonPath(null, spec.path); // validate syntax eagerly
+  const { gate, ...frozen } = spec;
+  const hashed: { name?: string; [k: string]: unknown } = { ...frozen };
+  if (gate) hashed.gate = { kind: gate.kind, version: gate.version };
+  const g = makeGrader("objective", hashed, async (ctx): Promise<GradeResult> => {
+    if (gate) {
+      const gr = await gate.grade(ctx);
+      if (!gr.pass) return { score: 0, pass: false, reason: `gate ${gate.id} failed${gr.reason ? `: ${gr.reason}` : ""}` };
+    }
+    const raw = spec.path ? selection(ctx.output, spec.path) : ctx.output;
+    const j = toNumber(raw);
+    if (j === undefined) return { score: 0, pass: false, reason: spec.path ? `${spec.path} ${raw === undefined ? "not found" : `has no number (${short(raw)})`} in output` : `output ${short(raw)} has no number` };
+    const anchors = `base ${spec.base}, ref ${spec.ref}, anchored ${spec.anchoredAt}`;
+    if (scale === "log" && j <= 0) return { score: 0, pass: false, reason: `J=${j} is not above 0, so the log scale has no score (${anchors})` };
+    const x = scale === "log" ? Math.log(j / spec.base) / Math.log(spec.ref / spec.base) : (j - spec.base) / (spec.ref - spec.base);
+    const floored = Math.max(0, x);
+    const clipped = floored > clip;
+    const score = clipped ? clip : floored;
+    const bound = clipped ? `clipped at ${clip} (unclipped ${floored.toFixed(3)})` : floored === 0 && x < 0 ? "floored at 0" : "within the clip";
+    return { score, pass: score >= 1, reason: `J=${j} on the ${scale} scale: score ${score.toFixed(3)} (${anchors}; ${bound})` };
+  });
+  return g;
+}
+
 // ---------------------------------------------------------------- similarity
 
 /** Levenshtein distance over code points, O(min(n, m)) memory. */
