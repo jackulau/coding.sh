@@ -511,6 +511,9 @@ describe("viewer UI: sessions list state", { skip: chrome ? false : "no Chrome/C
         await page.waitFor("document.querySelector('[data-filter=scope] [aria-pressed=true]')?.textContent.startsWith('Include') && document.querySelector('[role=listbox]')", "scope all");
         const rows: string[] = await page.eval(titles);
         assert.equal(rows.filter((t) => t === "CHILD").length, 1, JSON.stringify(rows));
+        // The header counts the child once: two rows are one session and one subagent, as in the top-level scope.
+        await page.waitFor("document.querySelector('.view-tabs .count')?.textContent === '2'", "scope all stats");
+        assert.deepEqual(await page.eval("[...document.querySelectorAll('.fact-line > span')].slice(0, 2).map((s) => s.textContent)"), ["1 session", "+ 1 subagent"]);
       },
     );
   });

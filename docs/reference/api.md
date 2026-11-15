@@ -1227,6 +1227,8 @@ Totals and facet counts for the session list. Takes `project`, `scope`, `agent`,
 
 - A `where` query narrows the totals, facets and histogram (its `sort:` and `limit:` do not apply). A bad one answers 400 as on `/api/sessions`.
 - Each facet applies every filter except its own.
+- `sessions` counts the rows the list shows: top-level sessions with `scope=top`, every session (subagents included) with `scope=all`, the default. `subagents` counts the matching subagent sessions in either scope.
+- `toolCalls`, `llmCalls`, `costUsd` and `pricedSessions` cover every matching session in either scope, each once: a parent's numbers do not include its subagents'.
 - `histogram` buckets session starts over at most the 90 days before the newest session.
 
 ```sh

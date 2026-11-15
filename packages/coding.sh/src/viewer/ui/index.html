@@ -2618,7 +2618,8 @@ const FACET_PAGE = 40;
 function isQueryError(e) { return !!(e && e.status === 400 && e.body && e.body.reason); }
 
 function fetchStats(p) {
-  return api("/api/stats" + qs(p)).catch((e) => { if (e.status === 401 || isQueryError(e)) throw e; return null; });
+  // The totals keep the scope they were counted in: summaryLine reads `sessions` by it.
+  return api("/api/stats" + qs(p)).then((s) => s && Object.assign(s, { scope: p.scope })).catch((e) => { if (e.status === 401 || isQueryError(e)) throw e; return null; });
 }
 async function fetchFacets(p) {
   const get = (keys) => api("/api/facets" + qs({ ...p, keys: keys.join(","), limit: FACET_PAGE }), null, true).then((b) => b.facets || {});
@@ -2801,14 +2802,22 @@ function viewTabs() {
     h("span", { class: "spacer" }),
     ev && list.events.length ? h("span", { class: "meta" }, "Newest first") : null);
 }
+/**
+ * "1 session + 2 subagents · …" in either scope. With scope=all the stats' `sessions` already
+ * counts the subagents (it is the list's row count), so they are taken out of it here; cost and
+ * tool totals cover every session, each once, in both scopes.
+ */
 function summaryLine(s) {
-  const parts = [plural(s.sessions, "session")];
-  if (s.subagents) parts.push("+ " + plural(s.subagents, "subagent"));
+  const subs = s.subagents || 0;
+  const top = s.scope === "all" ? Math.max(0, s.sessions - subs) : s.sessions;
+  const parts = [plural(top, "session")];
+  if (subs) parts.push("+ " + plural(subs, "subagent"));
   if (s.toolCalls) parts.push(plural(s.toolCalls, "tool call"));
   if (s.llmCalls) parts.push((s.llmCalls === 1 ? "1" : fmtCompact(s.llmCalls)) + (s.llmCalls === 1 ? " model call" : " model calls"));
   if (s.costUsd) {
     const est = s.estimatedCostUsd > 0;
-    const partial = s.pricedSessions && s.pricedSessions < s.sessions;
+    // pricedSessions counts subagents in either scope, so it is weighed against every session.
+    const partial = s.pricedSessions && s.pricedSessions < top + subs;
     parts.push({
       text: (est ? "~" : "") + fmtCost(s.costUsd) + (partial ? " priced" : ""),
       title: [partial ? "Cost of the " + plural(s.pricedSessions, "session") + " with a price" : "", est ? (s.estimatedCostUsd < s.costUsd - 1e-9 ? fmtCost(s.estimatedCostUsd) + " of it estimated from list prices" : EST_TITLE) : ""].filter(Boolean).join(". ") || "Reported cost",
