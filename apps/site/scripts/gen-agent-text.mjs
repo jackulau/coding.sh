@@ -6,12 +6,13 @@
 // the text can never disagree with what a browser renders.
 import { readdir, readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, dirname, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { isAgentExcluded } from "../src/lib/agent-routes.mjs";
 import { pageLastmod } from "../src/lib/lastmod.mjs";
 
 // `--dist <dir>` writes into another copy of dist.
 const distArg = process.argv.indexOf("--dist");
-const DIST = distArg !== -1 && process.argv[distArg + 1] ? resolve(process.argv[distArg + 1]) : new URL("../dist/", import.meta.url).pathname.replace(/\/$/, "");
+const DIST = distArg !== -1 && process.argv[distArg + 1] ? resolve(process.argv[distArg + 1]) : fileURLToPath(new URL("../dist", import.meta.url));
 const SITE = "https://coding.sh";
 
 // Per-version changelog pages and per-command CLI pages stay out of llms-full.txt:
