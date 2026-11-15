@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -218,5 +218,56 @@ describe("Claude Code workflow tree", () => {
     const n = failed.nodes.find((x) => x.kind === "agent")!;
     assert.equal(n.status, "failed");
     assert.equal(n.error, "no result recorded");
+  });
+});
+
+describe("a group while its agents run", () => {
+  const at = (n: number) => new Date(T0 + n).toISOString();
+  const journal = (done: number) =>
+    [
+      { type: "launched", runId: "wf_g" },
+      ...["a", "b", "c"].map((l, i) => ({ type: "started", key: `k${i}`, agentId: `x${i}`, label: l, phase: "P", ts: at(i) })),
+      ...["a", "b", "c"].slice(0, done).map((l, i) => ({ type: "result", key: `k${i}`, agentId: `x${i}`, ts: at(1000 + i), value: "ok" })),
+    ]
+      .map((l) => JSON.stringify(l))
+      .join("\n");
+  it("is running, with no end, while any member runs; ok once they are all done", () => {
+    const open = buildWorkflowTree({ journal: journal(2), runId: "wf_g" });
+    const group = open.nodes.find((n) => n.kind === "group")!;
+    assert.ok(open.nodes.some((n) => n.kind === "agent" && n.status === "running"), "an agent is still running");
+    assert.equal(group.status, "running");
+    assert.equal(group.endedAt, undefined);
+    const done = buildWorkflowTree({ journal: journal(3), runId: "wf_g" });
+    assert.notEqual(done.nodes.find((n) => n.kind === "group")!.status, "running");
+  });
+});
+
+describe("findClaudeWorkflowDirs scan cache", () => {
+  it("remembers the scan, sees a new run dir under a known session, and stops at its budget", async () => {
+    const r = mkdtempSync(join(tmpdir(), "csh-wf-scan-"));
+    try {
+      const projects = join(r, "projects");
+      writeClaudeWorkflowFixture(projects);
+      const cacheFile = join(r, "scan-cache.json");
+      const first = await findClaudeWorkflowDirs(projects, { cacheFile });
+      assert.ok(existsSync(cacheFile));
+      const again = await findClaudeWorkflowDirs(projects, { cacheFile });
+      assert.deepEqual(again.map((d) => d.runDir).sort(), first.map((d) => d.runDir).sort());
+      // A project dir that appears later is found from the cache too.
+      mkdirSync(join(projects, "-other"), { recursive: true });
+      assert.deepEqual((await findClaudeWorkflowDirs(projects, { cacheFile })).map((d) => d.runDir).sort(), first.map((d) => d.runDir).sort());
+      // A budget already spent: the scan says it is not complete, and a later one goes on.
+      const cold = join(r, "cold.json");
+      const state = { complete: true };
+      await findClaudeWorkflowDirs(projects, { cacheFile: cold, budgetMs: -1, state });
+      assert.equal(state.complete, false);
+      const full = { complete: false };
+      const all = await findClaudeWorkflowDirs(projects, { cacheFile: cold, state: full });
+      assert.equal(full.complete, true);
+      assert.deepEqual(all.map((d) => d.runDir).sort(), first.map((d) => d.runDir).sort());
+      utimesSync(projects, new Date(), new Date());
+    } finally {
+      rmSync(r, { recursive: true, force: true });
+    }
   });
 });

@@ -13,7 +13,7 @@
 // a newer version writes them, and counts every other record as unknown
 // instead of failing. A result whose key was never started in this journal is
 // treated as a resume cache hit (inferred).
-import { readFile, readdir, stat } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { sha256Hex, hashParts } from "../../core/ids.ts";
 import { applyPricing, type Prices } from "../../core/pricing.ts";
@@ -443,11 +443,60 @@ async function persistedScript(d: ClaudeWorkflowDir): Promise<string | undefined
   return f === undefined ? undefined : join(dir, f);
 }
 
+export interface FindOpts {
+  /**
+   * A file that remembers the scan of a projects dir: for each project dir, its mtime and the session dirs in it.
+   * A project dir whose mtime has not moved has no new session dirs, so it is not listed again (a projects dir
+   * can hold tens of thousands of files, and listing them all took half a minute). Known session dirs are always
+   * looked at again, since a run appears inside them without changing the project dir.
+   */
+  cacheFile?: string;
+  /** Stop listing new or changed project dirs after this many ms; what was listed is kept in the cache, so the next call goes on from there. */
+  budgetMs?: number;
+  /** Set to `{ complete: false }` by a scan that stopped at its budget. */
+  state?: { complete: boolean };
+}
+
+interface ScanEntry {
+  /** The project dir's mtime when it was listed. */
+  m: number;
+  /** The entry is itself a session dir (root is a project dir). */
+  direct?: true;
+  /** Names of the directories inside it. */
+  dirs: string[];
+}
+interface ScanCache {
+  v: 1;
+  root: string;
+  entries: Record<string, ScanEntry>;
+}
+
+async function readScanCache(file: string, root: string): Promise<ScanCache> {
+  try {
+    const c = JSON.parse(await readFile(file, "utf8")) as ScanCache;
+    if (c && c.v === 1 && c.root === root && c.entries && typeof c.entries === "object") return c;
+  } catch {
+    // missing or unreadable: scan from scratch
+  }
+  return { v: 1, root, entries: {} };
+}
+
+async function writeScanCache(file: string, cache: ScanCache): Promise<void> {
+  try {
+    await mkdir(dirname(file), { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    await writeFile(tmp, JSON.stringify(cache));
+    await rename(tmp, file);
+  } catch {
+    // a cache that can't be written costs the next scan its speed, nothing else
+  }
+}
+
 /**
  * Every Claude Code workflow run dir under `root`. `root` may be the projects
  * dir, one project (slug) dir, one session dir, or a run dir itself.
  */
-export async function findClaudeWorkflowDirs(root: string): Promise<ClaudeWorkflowDir[]> {
+export async function findClaudeWorkflowDirs(root: string, opts: FindOpts = {}): Promise<ClaudeWorkflowDir[]> {
   const out: ClaudeWorkflowDir[] = [];
   const tryRun = async (dir: string) => {
     if ((await ls(dir)).includes("journal.jsonl")) out.push(describeRunDir(dir));
@@ -464,14 +513,65 @@ export async function findClaudeWorkflowDirs(root: string): Promise<ClaudeWorkfl
     await trySession(root);
     return out;
   }
-  for (const a of await ls(root)) {
+  const names = await ls(root);
+  const cache = opts.cacheFile ? await readScanCache(opts.cacheFile, root) : undefined;
+  const entries: Record<string, ScanEntry> = {};
+  const deadline = opts.budgetMs !== undefined ? Date.now() + opts.budgetMs : Infinity;
+  let complete = true;
+  let changed = !cache;
+  let next = 0;
+  const visit = async (a: string): Promise<void> => {
     const pa = join(root, a);
-    if (!(await isDir(pa))) continue;
+    let m: number;
+    try {
+      const st = await stat(pa);
+      if (!st.isDirectory()) return;
+      m = Math.floor(st.mtimeMs);
+    } catch {
+      return;
+    }
+    const known = cache?.entries[a];
+    if (known && known.m === m) {
+      entries[a] = known;
+      return;
+    }
+    if (Date.now() > deadline) {
+      // Not listed yet: keep what the cache knew, and say the scan is not whole.
+      complete = false;
+      if (known) entries[a] = known;
+      return;
+    }
+    changed = true;
     if (await isDir(join(pa, "subagents", "workflows"))) {
+      entries[a] = { m, direct: true, dirs: [] };
+      return;
+    }
+    let dirs: string[] = [];
+    try {
+      dirs = (await readdir(pa, { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+    } catch {
+      // vanished mid-scan
+    }
+    entries[a] = { m, dirs };
+  };
+  await Promise.all(
+    Array.from({ length: 32 }, async () => {
+      while (next < names.length) await visit(names[next++]!);
+    }),
+  );
+  if (cache && opts.cacheFile) {
+    if (Object.keys(cache.entries).some((k) => !(k in entries))) changed = true;
+    if (changed) await writeScanCache(opts.cacheFile, { v: 1, root, entries });
+  }
+  if (opts.state) opts.state.complete = complete;
+  for (const a of Object.keys(entries).sort()) {
+    const e = entries[a]!;
+    const pa = join(root, a);
+    if (e.direct) {
       await trySession(pa);
       continue;
     }
-    for (const b of await ls(pa)) {
+    for (const b of e.dirs) {
       const pb = join(pa, b);
       if (await isDir(join(pb, "subagents", "workflows"))) await trySession(pb);
     }

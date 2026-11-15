@@ -6,6 +6,7 @@
 // The Claude Code adapter's backfill walks transcripts only three levels deep,
 // so workflow run dirs (five levels) are not picked up there; this importer
 // covers them until the adapter globs `<session dir>/**/journal.jsonl` itself.
+import { readdir, stat } from "node:fs/promises";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import type { BlobStore, IndexStore } from "../core/types.ts";
@@ -42,12 +43,25 @@ export interface ImportOpts {
   /** Redact, strip (metadata mode) and price agent events as ingest does (see LoadOpts.profile). */
   profile?: CaptureProfile;
   onRun?: (run: WorkflowRun) => void;
+  /** Remember the scan of the projects dir in this file (see FindOpts.cacheFile). */
+  scanCache?: string;
+  /** Stop looking for new project dirs after this many ms (see FindOpts.budgetMs). */
+  scanBudgetMs?: number;
+  /**
+   * Read at most this many bytes of changed run dirs' transcripts in this call. A run dir that would go over
+   * stays as stored and is counted in `deferred`, for a later import (a live run's dir can hold tens of MB).
+   */
+  loadBudgetBytes?: number;
 }
 
 export interface ImportResult {
   found: number;
   imported: WorkflowRun[];
   skipped: number;
+  /** False when the scan stopped at its time budget: a later call goes on from there. */
+  scanComplete?: boolean;
+  /** Changed run dirs left unread because of `loadBudgetBytes` (absent when none). */
+  deferred?: number;
   /** Run dirs that are copies of a run another session wrote (imported once, from that session). */
   copies: number;
   errors: { path: string; error: string }[];
@@ -57,9 +71,32 @@ export interface ImportResult {
 // full-text index; at 500 per write, commits were most of a large import's time.
 const PUT_BATCH = 20_000;
 
+/** Bytes of the .jsonl files (journal and agent transcripts) in a run dir. */
+async function transcriptBytes(runDir: string): Promise<number> {
+  let total = 0;
+  try {
+    for (const f of await readdir(runDir)) {
+      if (!f.endsWith(".jsonl")) continue;
+      try {
+        total += (await stat(join(runDir, f))).size;
+      } catch {
+        // vanished mid-scan
+      }
+    }
+  } catch {
+    // unreadable: loading it reports why
+  }
+  return total;
+}
+
 export async function importClaudeWorkflows(o: ImportOpts): Promise<ImportResult> {
-  const found = await findClaudeWorkflowDirs(o.root);
+  const scan = { complete: true };
+  const findOpts: Parameters<typeof findClaudeWorkflowDirs>[1] & {} = { state: scan };
+  if (o.scanCache) findOpts.cacheFile = o.scanCache;
+  if (o.scanBudgetMs !== undefined) findOpts.budgetMs = o.scanBudgetMs;
+  const found = await findClaudeWorkflowDirs(o.root, findOpts);
   const res: ImportResult = { found: found.length, imported: [], skipped: 0, copies: 0, errors: [] };
+  if (!scan.complete) res.scanComplete = false;
   // A run dir copied under a second session (fork, resumed or symlinked run) is the
   // same run: import it once, from the session that wrote it, so its agents are
   // stored once and the run keeps its first host.
@@ -74,6 +111,7 @@ export async function importClaudeWorkflows(o: ImportOpts): Promise<ImportResult
     dirs.push(use);
   }
   const resumed: WorkflowTree[] = [];
+  let loadedBytes = 0;
   for (const d of dirs) {
     try {
       // An unchanged run dir is skipped before its transcripts are read: they are most of the bytes.
@@ -83,6 +121,14 @@ export async function importClaudeWorkflows(o: ImportOpts): Promise<ImportResult
           res.skipped++;
           continue;
         }
+      }
+      if (o.loadBudgetBytes !== undefined) {
+        const bytes = await transcriptBytes(d.runDir);
+        if (loadedBytes + bytes > o.loadBudgetBytes) {
+          res.deferred = (res.deferred ?? 0) + 1;
+          continue;
+        }
+        loadedBytes += bytes;
       }
       const loaded = await loadClaudeWorkflowDir(d, {
         ...(o.blobs ? { blobs: o.blobs } : {}),
