@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 // CLI effectiveness suite runner (docs/design/dogfood.md §3.1, docs/TOOL-EVALS.md).
 //
-//   node scripts/dogfood/cli-suite.mjs validate [--split dev|heldout|all] [--task id]... [--concurrency n] [--json]
+//   node scripts/dogfood/cli-suite.mjs validate [--split dev|heldout|all] [--task id]... [--shard i/n] [--concurrency n] [--json]
 //   node scripts/dogfood/cli-suite.mjs run --driver agent:claude-code:sonnet [--driver agent:codex] [--k 3]
-//        [--split dev|heldout|all] [--task id]... [--concurrency n] [--yes] [--json]
+//        [--split dev|heldout|all] [--task id]... [--shard i/n] [--concurrency n] [--yes] [--json]
 //
 // validate ($0, no agent): for every task, builds a fresh world and checks that
 //   1. the no-op trial fails (checks run right after setup),
 //   2. the scripted reference passes (run through the tap shim, like an agent),
 //   3. the instruction does not contain the expected answers.
+//   --shard i/n validates every n-th task, starting at the i-th: n jobs cover the suite between them.
 // run (costs money): one trial per (task, driver, k). Metrics come from the
 //   tap records, never from the agent's own report. Trial records go to
 //   ~/.coding.sh/dogfood/cli-runs/<runId>/ (outside the repo: held-out data).
@@ -438,7 +439,16 @@ export async function validate(opts = {}) {
 function pickTasks(tasks, opts) {
   const ids = list(opts.task);
   const split = opts.split ?? "all";
-  return tasks.filter((t) => (ids.length ? ids.includes(t.id) : split === "all" || t.split === split));
+  return shardTasks(tasks.filter((t) => (ids.length ? ids.includes(t.id) : split === "all" || t.split === split)), opts.shard);
+}
+
+/** Every n-th task from the i-th, for `shard` "i/n" (1-based). Each task is in exactly one shard. */
+export function shardTasks(tasks, shard) {
+  if (shard === undefined) return tasks;
+  const m = /^(\d+)\/(\d+)$/.exec(String(shard));
+  const [i, n] = m ? [Number(m[1]), Number(m[2])] : [0, 0];
+  if (!(n >= 1 && i >= 1 && i <= n)) throw new Error(`--shard must be i/n with 1 <= i <= n, got ${shard}`);
+  return tasks.filter((_, k) => k % n === i - 1);
 }
 
 // ---------------------------------------------------------------- agent drivers
@@ -559,7 +569,13 @@ export function aggregate(trials) {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const args = parseArgs(process.argv.slice(2), { booleans: ["json", "yes", "keep"] });
   const [cmd] = args._;
-  const opts = { split: args.split, task: args.task, concurrency: args.concurrency ? Number(args.concurrency) : undefined, k: args.k, driver: args.driver, yes: args.yes, keep: args.keep, cli: args.cli ? resolve(args.cli) : undefined, seed: args.seed ? Number(args.seed) : undefined };
+  const opts = { split: args.split, task: args.task, shard: args.shard, concurrency: args.concurrency ? Number(args.concurrency) : undefined, k: args.k, driver: args.driver, yes: args.yes, keep: args.keep, cli: args.cli ? resolve(args.cli) : undefined, seed: args.seed ? Number(args.seed) : undefined };
+  try {
+    shardTasks([], opts.shard);
+  } catch (e) {
+    process.stderr.write(`${e.message}\n`);
+    process.exit(2);
+  }
   if (cmd === "validate") {
     const r = await validate(opts);
     if (args.json) process.stdout.write(JSON.stringify(r) + "\n");
@@ -577,7 +593,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     else process.stdout.write(JSON.stringify(r.summary, null, 2) + "\n");
     process.exitCode = r.trials && Object.values(r.summary).some((s) => s.errors) ? 1 : 0;
   } else {
-    process.stderr.write("usage: cli-suite.mjs validate|run [--split dev|heldout|all] [--task id] [--driver d] [--k n] [--json]\n");
+    process.stderr.write("usage: cli-suite.mjs validate|run [--split dev|heldout|all] [--task id] [--shard i/n] [--driver d] [--k n] [--json]\n");
     process.exitCode = 2;
   }
 }

@@ -747,14 +747,19 @@ jobs:
         run: node scripts/dogfood/bench.mjs proxy --check
 
   cli-suite:
-    name: cli-suite (dev tasks)
+    name: cli-suite (dev tasks, ${{ matrix.part }}/2)
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # The CLI effectiveness suite's own health, on the committed dev tasks only: held-out tasks
     # live outside the repo, so this never passes --split all or heldout. It needs no API key and
-    # starts no agent. Always GitHub-hosted.
+    # starts no agent. Always GitHub-hosted. Every task builds its own fixture home twice, which
+    # is most of the time, so the tasks split across two jobs.
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2]
     steps:
       - uses: actions/checkout@v5
 
@@ -780,9 +785,10 @@ jobs:
       # reference passes them, and the instruction does not leak the answer. Exits 1 on any
       # invalid task.
       - name: Validate the dev tasks
-        run: node scripts/dogfood/cli-suite.mjs validate --split dev --json
+        run: node scripts/dogfood/cli-suite.mjs validate --split dev --shard ${{ matrix.part }}/2 --json
 
       # The CLI guidelines over the same fixture home. The score is printed, not gated; the step
       # fails when the fixture home does not build.
       - name: CLI guidelines on the fixture home
+        if: matrix.part == 1
         run: node scripts/dogfood/cli-guidelines.mjs
