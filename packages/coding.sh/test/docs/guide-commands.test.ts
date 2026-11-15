@@ -1,6 +1,6 @@
 // Every `coding.sh …` command in a guide's sh blocks must parse against the CLI registry: the
 // command and action exist, every flag is one the command takes with a valid value, and the
-// positionals fit. docs/guides/terse-mode.md is also checked end to end: its two harness TOMLs
+// positionals fit. The terse-mode blog post is also checked end to end: its two harness TOMLs
 // snapshot into arms that differ by one rule file, and its SQL reads per-arm tokens from a store.
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -20,9 +20,11 @@ import { ok } from "../query/_seed.ts";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
 const read = (rel: string) => readFileSync(join(repo, "docs", rel), "utf8");
+/** The terse-mode recipe is a blog post on the site (/blog/terse-mode), relative to docs/ like the guides. */
+const TERSE = "../apps/site/src/content/blog/terse-mode.md";
 
 /** Guides whose commands are checked. */
-const GUIDES = ["guides/terse-mode.md", "how-to/does-this-plugin-help.md", "how-to/test-agents-md-change.md"];
+const GUIDES = [TERSE, "how-to/does-this-plugin-help.md", "how-to/test-agents-md-change.md"];
 
 /** The ```sh blocks of a Markdown doc. */
 function shBlocks(md: string): string[] {
@@ -161,7 +163,7 @@ describe("guide commands", () => {
   }
 
   it("terse-mode.md names the flags its report reading depends on", () => {
-    const cmds = commandsOf(read("guides/terse-mode.md"));
+    const cmds = commandsOf(read(TERSE));
     const compare = cmds.filter((c) => c[0] === "compare");
     for (const flag of ["--gate", "--promote", "--with", "--dry-run", "--max-cost"]) assert.ok(compare.some((c) => c.includes(flag)), flag);
     assert.ok(cmds.some((c) => c[0] === "exp" && c[1] === "replay" && c.includes("system=@terse-system.md")));
@@ -171,7 +173,7 @@ describe("guide commands", () => {
 
 describe("terse-mode.md end to end", () => {
   let env: TmpEnv;
-  const md = read("guides/terse-mode.md");
+  const md = read(TERSE);
   before(() => {
     env = tmpEnv();
   });

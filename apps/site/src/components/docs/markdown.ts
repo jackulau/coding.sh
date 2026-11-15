@@ -57,7 +57,6 @@ const SITE_PAGES: Record<string, string> = {
   "guides/privacy.md": "/docs/privacy",
   "guides/benchmarks.md": "/docs/benchmarks",
   "guides/workflows.md": "/docs/workflows",
-  "guides/terse-mode.md": "/docs/terse-mode",
   "how-to/trace-your-agent.md": "/docs/how-to/trace-your-agent",
   "how-to/trace-durable-workflow.md": "/docs/how-to/trace-durable-workflow",
   "how-to/capture-with-proxy.md": "/docs/how-to/capture-with-proxy",

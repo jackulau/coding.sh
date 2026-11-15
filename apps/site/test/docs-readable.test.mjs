@@ -58,7 +58,6 @@ const NO_EXAMPLE = new Map([
   ["/docs/sdk", "the generated SDK reference; /docs/how-to/trace-your-agent has the example"],
   // Open work: the page has an example, but not before its second heading. Move it up.
   ["/docs/storage", "the first example comes after the second heading"],
-  ["/docs/terse-mode", "no example before the second heading"],
   ["/docs/cost", "no example before the second heading"],
   ["/docs/eval-methods", "formulas; no example before the second heading"],
   ["/docs/stores", "no example before the second heading"],

@@ -264,12 +264,6 @@ export const DOC_GROUPS: DocGroup[] = [
         title: "Does this plugin help me?",
         summary: "See what a Claude Code plugin's hooks add to your sessions and what it costs, then run your tasks with and without it.",
       },
-      {
-        path: "/docs/terse-mode",
-        label: "Does a terse mode save money?",
-        title: "Does a terse mode save money on your tasks?",
-        summary: "Run your tasks with and without a be-concise rule, skill or plugin, and compare pass rate, cost, output tokens and the input it adds.",
-      },
     ],
   },
   {

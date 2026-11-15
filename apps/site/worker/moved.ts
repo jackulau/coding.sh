@@ -1,6 +1,6 @@
 // Pages that moved: old path to new path. The worker answers the old path with a
 // 301, so old links keep working and search engines follow the move. A target
-// is a page in the docs nav (no #anchor); no built docs page links an old path.
+// is a page in the docs nav or a blog post (no #anchor); no built page links an old path.
 export const MOVED: Record<string, string> = {
   "/docs/how-to/test-claude-md-change": "/docs/how-to/test-agents-md-change",
   // 2026-11-11: the docs regrouped by task; use-case pages merged into the page for the task.
@@ -13,4 +13,6 @@ export const MOVED: Record<string, string> = {
   "/docs/use-cases/pi": "/docs/agents",
   "/docs/use-cases/proxy-model-calls": "/docs/how-to/capture-with-proxy",
   "/docs/perf": "/docs/experiments",
+  // 2026-11-14: the terse-mode guide is a blog post: one measured result, then how to repeat it.
+  "/docs/terse-mode": "/blog/terse-mode",
 };

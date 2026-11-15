@@ -1,21 +1,18 @@
-# Does a terse mode save money on your tasks?
-
-Run your tasks with and without a be-concise rule, skill or plugin, and compare pass rate, cost,
-output tokens and the input it adds.
+---
+title: Does a terse mode save money?
+description: We ran a terse-output plugin on ten tasks. Replies got 17% shorter and just as clear, and each run cost 11% more. How to test one on your own tasks.
+date: 2026-11-09
+updated: 2026-11-14
+---
 
 A terse mode asks the agent to write less: a line in AGENTS.md, a rule, a skill, or a plugin that
 adds a style guide to every session. Output can go down, but the instruction is sent with every
-request and written to the prompt cache, so input goes up. This recipe measures which one wins on
-your tasks.
+request and written to the prompt cache, so input goes up. Which one wins depends on your tasks, so
+we measured one and wrote down how to measure yours.
 
-## Before you start
+## What we measured on one plugin
 
-- coding.sh records your agent's sessions (`coding.sh init`). The steps use Claude Code; any agent
-  that `compare` drives works the same way.
-- A repo under git, and a model key or a logged-in subscription.
-
-:::more What we measured on one plugin
-coding.sh ran this A/B on a terse-output Claude Code plugin, with the ten tasks in its own
+coding.sh ran an A/B on a terse-output Claude Code plugin, with the ten tasks in its own
 `examples/plugin-ab` folder: six code tasks and four explain tasks. Claude Code 2.1.319 on
 `claude-opus-5-5`, 6 runs per task and arm, paired by task and attempt. Intervals are 95%, from a
 paired bootstrap over tasks.
@@ -36,9 +33,15 @@ $0.012 more.
 The pass rate counts only the second of two batches, because the first batch's verifiers looked in
 the wrong directory; the other rows use all 60 runs per arm. This is one plugin, on short tasks, with
 one model. A one-line rule adds far less input than a plugin.
-:::
 
-## 1. See what a terse mode adds today
+## Run it on your tasks
+
+Run your tasks with and without the terse instruction, and compare pass rate, cost, output tokens
+and the input it adds. You need coding.sh recording your agent's sessions (`coding.sh init`), a repo
+under git, and a model key or a logged-in subscription. The steps use Claude Code; any agent that
+`compare` drives works the same way.
+
+### 1. See what a terse mode adds today
 
 If you already use a terse plugin, its hooks' text is stored with each session:
 
@@ -50,9 +53,9 @@ coding.sh usage --cache
 
 `coding.sh show <session>` has a `Hook context` row with the estimated tokens per source. These
 numbers show what the plugin costs, not whether it saves anything. [Does this plugin help
-me?](../how-to/does-this-plugin-help.md) covers this step in more detail.
+me?](/docs/how-to/does-this-plugin-help) covers this step in more detail.
 
-## 2. Get tasks
+### 2. Get tasks
 
 A terse mode changes prose most, so include tasks whose answer is prose (review a diff, explain a
 crash) as well as code tasks. Draft tasks from your own failed sessions:
@@ -64,7 +67,7 @@ coding.sh eval init terse --sessions
 They get the tag `suite:terse`. Or, from a clone of the coding.sh repository, import the ten tasks
 measured above: `coding.sh eval import examples/plugin-ab/tasks/*/` (tagged `plugin-ab`).
 
-## 3. Build the two arms
+### 3. Build the two arms
 
 Build both arms from harness TOML files, so they read the same files and differ only by the terse
 instruction. Make a folder `terse-ab/` in your repo and put three files in it.
@@ -109,7 +112,7 @@ Files in your home are read only when both TOMLs list them in `include = [...]`.
 | A skill | `".claude/skills/terse/SKILL.md" = "terse-skill.md"`, with a `name` and `description` in its frontmatter. |
 | A plugin | No second TOML. `compare` adds the plugin itself (step 4). |
 
-## 4. Run both arms
+### 4. Run both arms
 
 ```sh
 coding.sh compare base concise --tag suite:terse --k 3 --dry-run
@@ -130,7 +133,7 @@ coding.sh compare base --with plugin:<name> --tag suite:terse --k 3 --gate --pro
 | `--max-cost` | none | Starts no new run once finished runs cost this much. |
 | `--dry-run` | off | Prints how many runs each arm would make, and runs nothing. |
 
-## 5. Read the result
+### 5. Read the result
 
 | Line | What it says |
 |---|---|
@@ -142,7 +145,7 @@ coding.sh compare base --with plugin:<name> --tag suite:terse --k 3 --gate --pro
 
 On a Claude subscription, costs are API-equivalent: list prices applied to the tokens each run used.
 
-## 6. Split output from input overhead
+### 6. Split output from input overhead
 
 The token row is one total. To see where the cost went, read each arm's mean tokens by type from the
 store. This reads the latest comparison:
@@ -167,7 +170,7 @@ cache) or $8 (1-hour cache). These are means, without intervals.
 
 ## A faster check on recorded calls
 
-With the [proxy](../how-to/capture-with-proxy.md) capturing your sessions, send recorded model calls
+With the [proxy](/docs/how-to/capture-with-proxy) capturing your sessions, send recorded model calls
 again with a changed system prompt, and compare output tokens and cost per call:
 
 ```sh
@@ -189,9 +192,9 @@ whether the task still gets done.
 A pass rate does not measure whether you prefer shorter replies. That is a fine reason to keep a
 terse mode, just not a cost reason.
 
-## Next steps
+## Further reading
 
-- [Does this plugin help me?](../how-to/does-this-plugin-help.md): what a plugin's hooks add to your
+- [Does this plugin help me?](/docs/how-to/does-this-plugin-help): what a plugin's hooks add to your
   sessions.
-- [Compare two agents on your repo](../how-to/compare-agents.md): other setups `compare` can test.
-- [Cost](https://coding.sh/docs/cost): where your sessions' spend goes.
+- [Compare two agents on your repo](/docs/how-to/compare-agents): other setups `compare` can test.
+- [Cost](/docs/cost): where your sessions' spend goes.
