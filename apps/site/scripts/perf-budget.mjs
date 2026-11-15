@@ -12,6 +12,7 @@ import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative, extname, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { brotliCompressSync, constants } from "node:zlib";
+import { LOCALES, DEFAULT_LOCALE } from "../src/i18n/locales.mjs";
 
 const KB = 1024;
 const BUDGET = {
@@ -22,13 +23,18 @@ const BUDGET = {
   // (27.8KB with the 0.1.6 entries). Raised from 26KB for those three.
   // Troubleshooting is 30.5KB after the docs rebuild of 2026-11-11, so 33KB.
   // /docs/api/read is 30.3KB with the weight edit and checkpoint fields, so 33KB.
+  // The front page names its translations (hreflang links, og:locale alternates and the
+  // language switcher in its footer): 0.3KB, so / went from 24.5 to 25.5KB.
   htmlBrotli: {
-    "/": 24.5 * KB,
+    "/": 25.5 * KB,
     "/docs/cli/": 30 * KB,
     "/docs/api/": 30 * KB,
     "/docs/api/read/": 33 * KB,
     "/docs/api/read/search/": 30 * KB,
     "/docs/troubleshooting/": 33 * KB,
+    // The front page in another language (/de, /ja, ...) is 24.5-24.8KB in the 2026-11-14
+    // build: the same page as /, with longer words or wider characters. About 10% over.
+    translated: 27.3 * KB,
     other: 26 * KB,
   },
   // Brotli q11 of all inline <style> and of all inline JS (<script> without
@@ -42,7 +48,11 @@ const BUDGET = {
   // scripts, minified at build time by src/landing/pack.ts. So 7.4KB, about 10% over.
   inlineCss: { home: 8 * KB, docs: 8.9 * KB, changelog: 7.1 * KB, blog: 8.8 * KB, other: 5.5 * KB },
   inlineJs: { home: 7.4 * KB, docs: 4.4 * KB, changelog: 2.6 * KB, blog: 2.1 * KB, other: 1.4 * KB },
-  preloadFonts: 28.5 * KB, // woff2 bytes preloaded by one page (26.0KB today)
+  preloadFonts: 28.5 * KB, // woff2 bytes preloaded by one page (26.6KB today)
+  // A front page whose language needs the accented letters in the -rest fonts (German,
+  // Spanish, French, Portuguese: `preloadRest` in src/i18n/locales.mjs) preloads those
+  // too: 48.2KB with the 2026-11-14 fonts. About 10% over.
+  preloadFontsRest: 53 * KB,
   moduleScripts: 1, // external <script type="module" src> per page
   // The cards are lossless PNG (gen-og.mjs, compressionLevel 9). Palette
   // quantization would get them near 25KB but changes pixels (a card has about
@@ -76,6 +86,10 @@ const distFile = (href) => join(DIST, decodeURIComponent(href.split(/[?#]/)[0]))
 const attr = (tag, name) => tag.match(new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"))?.slice(1).find((v) => v !== undefined);
 const hasAttr = (tag, name) => new RegExp(`\\s${name}(\\s|=|/?>)`, "i").test(tag);
 
+// The front page in each other language, and those that preload the -rest fonts.
+const TRANSLATED = new Set(LOCALES.filter((l) => l !== DEFAULT_LOCALE).map((l) => l.path + "/"));
+const PRELOAD_REST = new Set(LOCALES.filter((l) => l.preloadRest).map((l) => l.path + "/"));
+
 const pages = walk(DIST)
   .filter((f) => f.endsWith(".html") && !relative(DIST, f).startsWith("pagefind"))
   .map((f) => {
@@ -88,14 +102,14 @@ const pages = walk(DIST)
 let worstHtml = { size: 0 };
 for (const p of pages) {
   const size = brotliCompressSync(readFileSync(p.file), { params: { [constants.BROTLI_PARAM_QUALITY]: 11 } }).length;
-  const max = BUDGET.htmlBrotli[p.path] ?? BUDGET.htmlBrotli.other;
+  const max = BUDGET.htmlBrotli[p.path] ?? (TRANSLATED.has(p.path) ? BUDGET.htmlBrotli.translated : BUDGET.htmlBrotli.other);
   if (size > max) fail(p.path, `HTML is ${fmt(size)} brotli, budget ${fmt(max)}`);
   if (size / max > (worstHtml.size / worstHtml.max || 0)) worstHtml = { path: p.path, size, max };
 }
 
 // 1b. Inline CSS and inline JS on the wire, per page.
 const group = (path) =>
-  path === "/" ? "home" : path.startsWith("/docs/") ? "docs" : path.startsWith("/changelog/") ? "changelog" : path.startsWith("/blog/") ? "blog" : "other";
+  path === "/" || TRANSLATED.has(path) ? "home" : path.startsWith("/docs/") ? "docs" : path.startsWith("/changelog/") ? "changelog" : path.startsWith("/blog/") ? "blog" : "other";
 const brotli = (text) => brotliCompressSync(Buffer.from(text), { params: { [constants.BROTLI_PARAM_QUALITY]: 11 } }).length;
 const worstInline = { css: { size: 0 }, js: { size: 0 } };
 for (const p of pages) {
@@ -123,8 +137,9 @@ for (const p of pages) {
     if (!existsSync(f)) fail(p.path, `preloaded font ${attr(tag, "href")} is missing from dist`);
     else size += statSync(f).size;
   }
-  if (size > BUDGET.preloadFonts) fail(p.path, `preloads ${fmt(size)} of fonts, budget ${fmt(BUDGET.preloadFonts)}`);
-  if (size > worstFonts.size) worstFonts = { path: p.path, size };
+  const max = PRELOAD_REST.has(p.path) ? BUDGET.preloadFontsRest : BUDGET.preloadFonts;
+  if (size > max) fail(p.path, `preloads ${fmt(size)} of fonts, budget ${fmt(max)}`);
+  if (size / max > (worstFonts.size / worstFonts.max || 0)) worstFonts = { path: p.path, size, max };
 }
 
 // 3. Startup JS: one external module per page, and no static imports from any
@@ -198,18 +213,24 @@ for (const p of pages) {
   }
   restFaces = Math.max(restFaces, rest.length);
   if (!rest.length) continue;
+  // A page may use a -rest glyph when it preloads that file (preloadRest), not otherwise.
+  const preloaded = new Set(
+    (p.html.match(/<link\b[^>]*>/gi) ?? []).filter((t) => attr(t, "rel") === "preload" && attr(t, "as") === "font").map((t) => attr(t, "href")),
+  );
   const text =
     decode(
       p.html
         .replace(/<!--[\s\S]*?-->/g, "")
         .replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, "")
+        // An element marked data-system-font is drawn without Geist, so its glyphs fetch nothing.
+        .replace(/<(\w+)\b[^>]*\sdata-system-font\b[^>]*>[\s\S]*?<\/\1>/gi, "")
         .replace(/<[^>]*\splaceholder\s*=\s*"([^"]*)"[^>]*>/gi, " $1 ")
         .replace(/<[^>]+>/g, " "),
     ) + [...css.matchAll(/content\s*:\s*(["'])(.*?)\1/g)].map((m) => cssEscapes(m[2])).join("");
   const hits = new Map();
   for (const ch of text) {
     const cp = ch.codePointAt(0);
-    for (const f of rest) if (f.ranges.some(([a, b]) => cp >= a && cp <= b)) hits.set(ch, f.url);
+    for (const f of rest) if (!preloaded.has(f.url) && f.ranges.some(([a, b]) => cp >= a && cp <= b)) hits.set(ch, f.url);
   }
   for (const [ch, url] of hits)
     fail(p.path, `uses U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, "0")} "${ch}", which only ${url} has`);
@@ -230,7 +251,7 @@ console.log(`perf-budget: ${pages.length} pages, ${imgCount} images, ${ogFiles.l
 console.log(`  html     ${worstHtml.path} ${fmt(worstHtml.size)} of ${fmt(worstHtml.max)} (closest to budget)`);
 console.log(`  css      ${worstInline.css.path} inline ${fmt(worstInline.css.size)} of ${fmt(worstInline.css.max)} (closest to budget)`);
 console.log(`  js       ${worstInline.js.path} inline ${fmt(worstInline.js.size)} of ${fmt(worstInline.js.max)} (closest to budget)`);
-console.log(`  fonts    ${worstFonts.path ?? "-"} preloads ${fmt(worstFonts.size)} of ${fmt(BUDGET.preloadFonts)}`);
+console.log(`  fonts    ${worstFonts.path ?? "-"} preloads ${fmt(worstFonts.size)} of ${fmt(worstFonts.max ?? BUDGET.preloadFonts)}`);
 console.log(`  scripts  ${worstScripts.path ?? "-"} has ${worstScripts.n} of ${BUDGET.moduleScripts} external modules`);
 console.log(`  rest     ${restFaces} *-rest font faces checked`);
 console.log(`  og       ${worstOg.file ?? "-"} ${fmt(worstOg.size)} of ${fmt(BUDGET.ogPng)}`);

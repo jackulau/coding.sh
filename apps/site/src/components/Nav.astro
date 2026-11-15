@@ -19,26 +19,44 @@ import Mark from "./Mark.astro";
 import GitHubIcon from "./GitHubIcon.astro";
 import CopyIcon from "./CopyIcon.astro";
 import { REPO_URL, INSTALL_SH } from "../data/site";
+import { localeOf } from "../i18n/locales.mjs";
+import { translator } from "../i18n/home";
+
+interface Props {
+  /** The page's language (src/i18n/locales.mjs); English when absent. Only the front page has others. */
+  lang?: string;
+}
+const locale = localeOf(Astro.props.lang);
+const { t } = translator(locale.code);
+const english = locale.code === "en";
 
 const path = Astro.url.pathname.replace(/\/+$/, "") || "/";
 const LINKS = [
-  { href: "/docs", label: "Docs", on: (p: string) => p === "/docs" || p.startsWith("/docs/") },
-  { href: "/changelog", label: "Changelog", on: (p: string) => p === "/changelog" || p.startsWith("/changelog/") },
+  { href: "/docs", label: t("Docs"), on: (p: string) => p === "/docs" || p.startsWith("/docs/") },
+  { href: "/changelog", label: t("Changelog"), on: (p: string) => p === "/changelog" || p.startsWith("/changelog/") },
 ];
 const links = LINKS.map((l) => ({ ...l, current: l.on(path) }));
 // The install command breaks only before the pipe (see InstallActions).
 const [cmdHead, cmdTail] = INSTALL_SH.split(/ (?=\| )/);
 ---
 
-<header class="nav" data-nav>
+{/* The script's own words (the menu button's label, the copy status), when they are not English. */}
+<header
+  class="nav"
+  data-nav
+  data-l-menu={english ? undefined : t("Menu")}
+  data-l-close={english ? undefined : t("Close menu")}
+  data-l-copied={english ? undefined : t("Copied to clipboard")}
+  data-l-selected={english ? undefined : t("Selected, copy it with your keyboard")}
+>
   <div class="nav__scrim" data-nav-scrim aria-hidden="true"></div>
   <div class="nav__bar">
-    <a href="/" class="nav__home" aria-label="coding.sh home">
+    <a href={locale.path} class="nav__home" aria-label={t("coding.sh home")}>
       <Mark size={20} />
       <Wordmark />
     </a>
 
-    <nav aria-label="Primary" class="nav__links">
+    <nav aria-label={t("Primary")} class="nav__links">
       {links.map((l) => <a href={l.href} class="nav__link" aria-current={l.current ? "page" : undefined}>{l.label}</a>)}
     </nav>
 
@@ -47,13 +65,13 @@ const [cmdHead, cmdTail] = INSTALL_SH.split(/ (?=\| )/);
         <GitHubIcon />
         GitHub
       </a>
-      <button type="button" class="nav__menu-btn" aria-expanded="false" aria-controls="nav-sheet" aria-label="Menu" data-nav-btn>
+      <button type="button" class="nav__menu-btn" aria-expanded="false" aria-controls="nav-sheet" aria-label={t("Menu")} data-nav-btn>
         <span class="nav__burger" aria-hidden="true"><i></i><i></i></span>
       </button>
     </div>
 
     <div class="nav__sheet" id="nav-sheet" data-nav-sheet tabindex="-1" hidden>
-      <nav aria-label="Menu" class="nav__group">
+      <nav aria-label={t("Menu")} class="nav__group">
         {
           links.map((l) => (
             <a href={l.href} class="nav__row" aria-current={l.current ? "page" : undefined}>
@@ -70,8 +88,8 @@ const [cmdHead, cmdTail] = INSTALL_SH.split(/ (?=\| )/);
       </nav>
 
       <div class="nav__group nav__group--pad">
-        <p class="nav__cap">Install</p>
-        <button type="button" class="nav__install" data-copy={INSTALL_SH} aria-label={`Copy the install command: ${INSTALL_SH}`}>
+        <p class="nav__cap">{t("Install")}</p>
+        <button type="button" class="nav__install" data-copy={INSTALL_SH} aria-label={t("Copy the install command: {{INSTALL}}").replace("{{INSTALL}}", INSTALL_SH)}>
           <code><span>{cmdHead}</span>{cmdTail && <>{" "}<span>{cmdTail}</span></>}</code>
           <CopyIcon />
         </button>
@@ -521,7 +539,7 @@ const [cmdHead, cmdTail] = INSTALL_SH.split(/ (?=\| )/);
       nav.classList.toggle("is-open", open);
       for (const el of outside()) el.inert = open;
       btn.setAttribute("aria-expanded", String(open));
-      btn.setAttribute("aria-label", open ? "Close menu" : "Menu");
+      btn.setAttribute("aria-label", open ? (nav.dataset.lClose ?? "Close menu") : (nav.dataset.lMenu ?? "Menu"));
       if (open) {
         // Keep the page still. html reserves the scrollbar's gutter
         // (scrollbar-gutter: stable), so hiding the overflow moves nothing.
@@ -601,7 +619,8 @@ const [cmdHead, cmdTail] = INSTALL_SH.split(/ (?=\| )/);
       btn.closest("[data-nav-sheet]")?.querySelector<HTMLElement>("[data-nav-copy-status]") ??
       document.querySelector<HTMLElement>("[data-copy-status]");
     if (status) {
-      status.textContent = ok ? "Copied to clipboard" : "Selected, copy it with your keyboard";
+      const words = document.querySelector<HTMLElement>("[data-nav]")?.dataset ?? {};
+      status.textContent = ok ? (words.lCopied ?? "Copied to clipboard") : (words.lSelected ?? "Selected, copy it with your keyboard");
       setTimeout(() => (status.textContent = ""), 1600);
     }
   });

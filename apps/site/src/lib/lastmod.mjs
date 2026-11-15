@@ -10,6 +10,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { LOCALES, DEFAULT_LOCALE } from "../i18n/locales.mjs";
 
 const SITE_DIR = fileURLToPath(new URL("../../", import.meta.url));
 const REPO_DIR = join(SITE_DIR, "../..");
@@ -83,6 +84,9 @@ export function pageSources(pathname) {
   if (/^blog\/[^/]+$/.test(route)) return [join(POSTS_DIR, `${route.slice("blog/".length)}.md`)].filter(existsSync);
   const posts = route === "blog" && existsSync(POSTS_DIR) ? readdirSync(POSTS_DIR).filter((f) => f.endsWith(".md")).map((f) => join(POSTS_DIR, f)) : [];
   const pages = join(SITE_DIR, "src/pages");
+  // The home page in another language (/zh): the English page and its translation table.
+  const locale = LOCALES.find((l) => l !== DEFAULT_LOCALE && l.path === `/${route}`);
+  if (locale) return [join(pages, "index.astro"), join(SITE_DIR, `src/i18n/home/${locale.code}.ts`)].filter(existsSync);
   const base = route === "" ? join(pages, "index") : join(pages, route);
   // A generated page (docs/cli/<command>) comes from its folder's [param].astro route.
   const dynamic = existsSync(dirname(base)) ? readdirSync(dirname(base)).find((f) => /^\[[^.\]]+\]\.astro$/.test(f)) : undefined;

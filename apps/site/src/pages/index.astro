@@ -2,6 +2,9 @@
 // The front page. Its body, its two pictures and the click predictor are plain HTML and JS in
 // src/landing; this file holds the page's data and fills it into the body's {{PLACEHOLDER}}s.
 // The pictures are drawings; the screenshot and the numbers are the site's own.
+//
+// The same page in another language is src/pages/[lang]/index.astro, which renders this one with
+// a `lang`: every string goes through the translation table in src/i18n/home/<lang>.ts.
 import Layout from "../layouts/Layout.astro";
 import Nav from "../components/Nav.astro";
 import Mark from "../components/Mark.astro";
@@ -22,6 +25,15 @@ import intentCore from "../landing/intent-core.js?raw";
 import intentWire from "../landing/intent-wire.js?raw";
 import { pack } from "../landing/pack";
 import { getImage } from "astro:assets";
+import { LOCALES, localeOf } from "../i18n/locales.mjs";
+import { translator } from "../i18n/home";
+
+interface Props {
+  /** A code from src/i18n/locales.mjs; English when absent. */
+  lang?: string;
+}
+const locale = localeOf(Astro.props.lang);
+const { t, html: tr } = translator(locale.code);
 
 // Agents with an adapter (packages/coding.sh/src/adapters; table in components/docs/agents.ts),
 // each with the site's own mark (src/lib/logos). An agent with no published logo gets the
@@ -60,7 +72,8 @@ const FAQ = [
   { q: "What does it cost?", a: "Nothing. Your model spend stays what your agents already cost." },
 ];
 const esc = (t: string) => t.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-const faq = FAQ.map(({ q, a }) => `<details>\n<summary>${esc(q)}</summary>\n<p>${esc(a)}</p>\n</details>`).join("\n");
+const QA = FAQ.map(({ q, a }) => ({ q: t(q), a: t(a) }));
+const faq = QA.map(({ q, a }) => `<details>\n<summary>${esc(q)}</summary>\n<p>${esc(a)}</p>\n</details>`).join("\n");
 
 const tiles = WORKS_WITH.map(({ id, name }) => `<li class="f-tile" title="${name}">${mark(id)}</li>`).join("\n");
 const intent = `<script>\n(() => {\n${intentCore}\n${intentWire}})();\n</scr` + `ipt>`;
@@ -71,7 +84,7 @@ const intent = `<script>\n(() => {\n${intentCore}\n${intentWire}})();\n</scr` + 
 // padding), and the phone crop is drawn at half its pixel width.
 const desk = await getImage({ src: shot, widths: [777, shot.width], format: "webp", quality: 82 });
 const phone = await getImage({ src: shotM, widths: [shotM.width / 2, shotM.width], format: "webp", quality: 82 });
-const fill: Record<string, string> = { FLOW: flow, INTENT: intent, AGENT_TILES: tiles, SCENE: scene, WORKS: works, FAQ: faq, USAGE, SHOT: desk.src, SHOT_SET: desk.srcSet.attribute, SHOT_M_SET: phone.srcSet.attribute, INSTALL: INSTALL_SH, RELEASE, RELEASE_HREF: releasePath(slug(RELEASE)), BASE_RATE: String(STATS.baseRate), CAND_RATE: String(STATS.candRate), TASKS: String(STATS.tasks), RUNS: String(STATS.runsPerTask) };
+const fill: Record<string, string> = { FLOW: tr(flow), INTENT: intent, AGENT_TILES: tiles, SCENE: tr(scene), WORKS: works, FAQ: faq, USAGE, SHOT: desk.src, SHOT_SET: desk.srcSet.attribute, SHOT_M_SET: phone.srcSet.attribute, INSTALL: INSTALL_SH, RELEASE, RELEASE_HREF: releasePath(slug(RELEASE)), BASE_RATE: String(STATS.baseRate), CAND_RATE: String(STATS.candRate), TASKS: String(STATS.tasks), RUNS: String(STATS.runsPerTask) };
 // The footer's links, in columns. Every one is a page that exists.
 const FOOT: [string, [string, string][]][] = [
   ["Start", [["Quickstart", "/docs/quickstart"], ["Install", "/docs/install"], ["Agents", "/docs/agents"], ["All docs", "/docs"]]],
@@ -79,32 +92,45 @@ const FOOT: [string, [string, string][]][] = [
   ["Project", [["Changelog", "/changelog"], ["Blog", "/blog"], ["GitHub", REPO_URL], ["License", LICENSE_URL]]],
   ["More", [["Compare", "/docs/compare"], ["Privacy", "/docs/privacy"], ["FAQ", "/docs/faq"], ["llms.txt", "/llms.txt"]]],
 ];
-const html = pack(Object.entries(fill).reduce((s, [k, v]) => s.replaceAll(`{{${k}}}`, () => v), body));
+const html = pack(Object.entries(fill).reduce((s, [k, v]) => s.replaceAll(`{{${k}}}`, () => v), tr(body)));
 ---
 
 <Layout
-  title={`${SITE.name}: open-source observability and evals for AI agents`}
-  description={`Record what Claude Code, Codex, Cursor and ${WORKS_WITH.length - 3} other AI agents did and what it cost, then test changes with evals. Local-first and open source.`}
-  schemas={[faqSchema(FAQ)]}
+  title={t(`${SITE.name}: open-source observability and evals for AI agents`)}
+  description={t(`Record what Claude Code, Codex, Cursor and ${WORKS_WITH.length - 3} other AI agents did and what it cost, then test changes with evals. Local-first and open source.`)}
+  schemas={[faqSchema(QA, locale.tag)]}
+  locale={locale}
+  alternates={LOCALES}
 >
-  <Nav />
+  <Nav lang={locale.code} />
   <Fragment set:html={html} />
   <footer slot="footer" class="site-footer f-foot">
     <div class="f-foot__frame">
       <div class="f-foot__top">
         <div class="f-foot__id">
-          <a href="/" aria-label="coding.sh home" class="f-foot__brand"><Mark size={18} /><Wordmark /></a>
-          <p>A record of what your agents did and what it cost, kept on your machine.</p>
+          <a href={locale.path} aria-label={t("coding.sh home")} class="f-foot__brand"><Mark size={18} /><Wordmark /></a>
+          <p>{t("A record of what your agents did and what it cost, kept on your machine.")}</p>
           <dl class="f-foot__fine">
-            <div><dt>status</dt><dd>{SITE.version}</dd></div>
+            <div><dt>{t("status")}</dt><dd>{SITE.version.replace("early", t("early"))}</dd></div>
           </dl>
+          {/* The page in each language. A full load, not the client router: the <html lang> and
+              the head's alternates change with it. The names are drawn in the system font: Geist's
+              core file has no ç, ê or ñ, and without this every page would fetch the -rest file
+              for "Français", "Português" and "Español" (scripts/perf-budget.mjs, rule 5). */}
+          <nav aria-label={t("Language")} class="f-foot__langs" data-system-font>
+            <ul role="list">
+              {LOCALES.map((l) => (
+                <li><a href={l.path} hreflang={l.tag} lang={l.tag} aria-current={l === locale ? "page" : undefined} data-astro-reload>{l.name}</a></li>
+              ))}
+            </ul>
+          </nav>
         </div>
-        <nav aria-label="Footer" class="f-foot__nav">
+        <nav aria-label={t("Footer")} class="f-foot__nav">
           {FOOT.map(([head, links]) => (
             <div>
-              <h2>{head}</h2>
+              <h2>{t(head)}</h2>
               <ul role="list">
-                {links.map(([name, href]) => <li><a href={href}>{name}</a></li>)}
+                {links.map(([name, href]) => <li><a href={href}>{t(name)}</a></li>)}
               </ul>
             </div>
           ))}
@@ -172,6 +198,55 @@ const html = pack(Object.entries(fill).reduce((s, [k, v]) => s.replaceAll(`{{${k
   .f-foot__fine dd {
     margin: 0;
     color: var(--text-2);
+  }
+  nav[data-system-font] {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .f-foot__langs ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 1rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: var(--fs-sm, 0.875rem);
+  }
+  .f-foot__langs a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.25rem;
+    color: var(--text-muted);
+    transition: color 200ms ease;
+  }
+  .f-foot__langs a[aria-current] {
+    color: var(--text);
+  }
+  .f-foot__langs a:active {
+    color: var(--text);
+    transition-duration: 0s;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .f-foot__langs a:hover {
+      color: var(--text);
+      transition-duration: 90ms;
+    }
+  }
+  @media (pointer: coarse) {
+    .f-foot__langs a {
+      min-height: 2.75rem;
+    }
+  }
+  /* Chinese, Japanese and Korean: the Latin headings' tight tracking crowds the characters.
+     Japanese breaks lines between phrases where the browser can tell them apart; Korean, which
+     puts spaces between words, breaks only at those spaces. */
+  :global(:is(:lang(zh), :lang(ja), :lang(ko)) .f :is(h1, h2, h3)) {
+    letter-spacing: 0;
+  }
+  :global(:lang(ja) .f) {
+    word-break: auto-phrase;
+  }
+  :global(:lang(ko) .f) {
+    word-break: keep-all;
   }
   .f-foot__nav {
     display: grid;

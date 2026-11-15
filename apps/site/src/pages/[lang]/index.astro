@@ -1,0 +1,12 @@
+---
+// The front page in another language: /zh, /ja, /es (src/i18n/locales.mjs). It is the English
+// page (../index.astro) rendered with a `lang`, so the two cannot drift apart in layout or data.
+import Home from "../index.astro";
+import { LOCALES, DEFAULT_LOCALE } from "../../i18n/locales.mjs";
+
+export function getStaticPaths() {
+  return LOCALES.filter((l) => l !== DEFAULT_LOCALE).map((l) => ({ params: { lang: l.code } }));
+}
+---
+
+<Home lang={Astro.params.lang} />

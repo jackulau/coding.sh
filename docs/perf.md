@@ -80,6 +80,37 @@ A fade at the bottom of the docs sidebar was tried and left out. Its mask made d
 on Evals 16.8 ms [3.2, 25.6] slower. Without it, Evals is -3.4 ms [-18, +5.5] against the build
 before.
 
+## Translated front pages
+
+The front page is also served at /de, /es, /fr, /ja, /ko, /pt-br and /zh. This is what it cost
+the English home page, measured with 30 interleaved pairs against the build before it on a phone
+viewport with a 4x slower CPU. Regular 3G is 300 ms latency and 750 kbps. Slow 3G is 2,000 ms
+latency and 400 kbps. These profiles are not in the Lighthouse runner below: a one-off script set
+them through the DevTools protocol, which adds the latency once per request, and served the
+builds with the same server. The machine was busy during the run; pairing controls for that, but
+the absolute times may read a little high.
+
+| What | Before | After | Change [95% interval] |
+|---|---|---|---|
+| HTML, compressed | 29,090 B | 29,734 B | +644 B, the same in every pair |
+| Fonts | 26,672 B | 26,672 B | 0 B |
+| First paint, Regular 3G | 572 ms | 568 ms | 0 ms [-4, +4] |
+| Main content (LCP), Regular 3G | 572 ms | 568 ms | 0 ms [-4, +4] |
+| First paint, Slow 3G | 2,248 ms | 2,252 ms | +8 ms [+2, +10] |
+| Main content (LCP), Slow 3G | 2,348 ms | 2,384 ms | +36 ms [+32, +40] |
+| Page ready (DOMContentLoaded), Slow 3G | 4,433 ms | 4,457 ms | +25 ms [+3, +31] |
+
+The HTML grew by the hreflang links in the head and the language switcher in the footer. The
+fonts did not grow. The switcher's names Español, Français and Português use ñ, ç and ê, which
+are not in the common-letter font files, so the switcher is drawn in the system font. Drawn in
+Geist, it would make every page fetch the rare-letter files as well.
+
+The German, Spanish, French and Portuguese pages need accented letters above the fold, so they
+preload the rare-letter files too (`preloadRest` in `apps/site/src/i18n/locales.mjs`). That is
+about 21 kB more font. On /de, first paint is the same as the English page; the page is ready
+about 130 ms later on Regular 3G and 240 ms later on Slow 3G. `npm run perf:budget` checks the
+translated pages against their own HTML budget, and checks the preloaded fonts per page.
+
 ## How we measure
 
 - **Pages:** home, /docs/quickstart, /docs/evals, /changelog and /docs/cli.
