@@ -194,7 +194,7 @@ const real = (n: number): string => {
  * One line for a weights.edit payload, most useful part first:
  * `layers.3.mlp.down_proj.weight [4096×11008] · 1,204 of 45,088,768 weights · L2 0.0183 · max 0.004 · 9f2c1a7e03b5 → 4b1d0c33a9e2`.
  * A part whose field is missing is left out, so an event captured in metadata mode reads
- * `1,204 weights · L2 0.0183 · max 0.004`.
+ * `1,204 weights · L2 0.0183 · max 0.004`. The edit's note, when it has one, comes last.
  */
 export function weightsEditText(p: Record<string, unknown>): string {
   const w = weightsEditOf(p);
@@ -210,18 +210,19 @@ export function weightsEditText(p: Record<string, unknown>): string {
   if (w.l2 !== undefined) parts.push(`L2 ${real(w.l2)}`);
   if (w.maxAbs !== undefined) parts.push(`max ${real(w.maxAbs)}`);
   if (w.baseSha256 && w.editedSha256) parts.push(`${shortWeights(w.baseSha256)} → ${shortWeights(w.editedSha256)}`);
+  if (w.note) parts.push(w.note);
   return parts.join(" · ");
 }
 
 /**
  * One line for a weights.checkpoint payload: `checkpoint 58899f90572c ← 0496e5111097`, the
  * saved file's hash and the base file's, or `checkpoint 58899f90572c` when no base was
- * recorded. Empty when the payload is not a checkpoint.
+ * recorded, then ` · ` and the note when there is one. Empty when the payload is not a checkpoint.
  */
 export function weightsCheckpointText(p: Record<string, unknown>): string {
   const c = weightsCheckpointOf(p);
   if (!c) return "";
-  return `checkpoint ${shortWeights(c.sha256)}${c.baseSha256 ? ` ← ${shortWeights(c.baseSha256)}` : ""}`;
+  return `checkpoint ${shortWeights(c.sha256)}${c.baseSha256 ? ` ← ${shortWeights(c.baseSha256)}` : ""}${c.note ? ` · ${c.note}` : ""}`;
 }
 
 /**

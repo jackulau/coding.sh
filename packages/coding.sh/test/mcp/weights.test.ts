@@ -92,7 +92,7 @@ describe("weight edits over MCP", () => {
         ["weights", "model.layers.15.mlp.down_proj.weight [4096×11008] · 65,536 of 45,088,768 weights · L2 0.0183 · max 0.004 · aaaaaaaaaaaa → bbbbbbbbbbbb"],
         ["weights", "model.layers.16.mlp.down_proj.weight [4096×11008] · 1,024 of 45,088,768 weights · L2 0.0183 · max 0.004 · bbbbbbbbbbbb → cccccccccccc"],
         ["weights", "no details recorded"],
-        ["weights", "checkpoint c0ffee111111 ← ba5e22222222"],
+        ["weights", "checkpoint c0ffee111111 ← ba5e22222222 · saved after layer 16"],
       ],
     );
     assert.equal(d.timelineTotal, 4, "an edit with no readable field keeps its line");
@@ -111,8 +111,7 @@ describe("weight edits over MCP", () => {
     const r = await c.request("resources/read", { uri: `codingsh://session/${SID}` });
     const text = (r.result!.contents as { text: string }[])[0]!.text;
     assert.match(text, /Weight edits.*3 edits, 2 tensors, 66,560 weights changed, checkpoint c0ffee111111/);
-    assert.match(text, /checkpoint c0ffee111111 ← ba5e22222222/);
-    assert.doesNotMatch(text, /saved after layer 16/);
+    assert.match(text, /checkpoint c0ffee111111 ← ba5e22222222 · saved after layer 16/);
     assert.match(text, /model\.layers\.15\.mlp\.down_proj\.weight \[4096×11008\]/);
     assert.match(text, /model\.layers\.16\.mlp\.down_proj\.weight \[4096×11008\]/);
   });

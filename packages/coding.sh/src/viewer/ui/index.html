@@ -3843,6 +3843,7 @@ function weightsEditText(p) {
   if (norm(p.l2)) parts.push("L2 " + real(p.l2));
   if (norm(p.maxAbs)) parts.push("max " + real(p.maxAbs));
   if (text(p.baseSha256) && text(p.editedSha256)) parts.push(shortWeights(p.baseSha256) + " → " + shortWeights(p.editedSha256));
+  if (text(p.note)) parts.push(p.note);
   return parts.join(" · ");
 }
 /** Every weights hash is written in 12 hex characters (shortWeights in core/weights.ts). */
@@ -3854,7 +3855,8 @@ function weightsCheckpointText(p) {
   const file = p.kind === "weights.checkpoint" ? sha(p.sha256) : "";
   if (!file) return "";
   const base = sha(p.baseSha256);
-  return "checkpoint " + shortWeights(file) + (base ? " ← " + shortWeights(base) : "");
+  const note = typeof p.note === "string" && p.note ? " · " + p.note : "";
+  return "checkpoint " + shortWeights(file) + (base ? " ← " + shortWeights(base) : "") + note;
 }
 function eventView(ev) {
   const p = ev.payload || {};
