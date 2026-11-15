@@ -38,7 +38,7 @@ function fixture(): CandidateItem[] {
     { session: session("run", { flags: ["repeated-tool-failure"], runId: "run_1" }), events: events("run") },
     { session: session("nogit", { flags: ["premature-completion"], repo: undefined }), events: events("nogit").map((e) => ({ ...e, repo: undefined })) },
     { session: session("noprompt", { flags: ["no-verification"] }), events: events("noprompt", { prompt: false }) },
-    { session: session("noedit", { flags: ["no-verification"], stats: { events: 3, turns: 1, toolCalls: 2, toolErrors: 0, filesChanged: 0 } }), events: events("noedit", { edits: false }) },
+    { session: session("noedit", { flags: ["no-verification"], endSnapshot: "snap", stats: { events: 3, turns: 1, toolCalls: 2, toolErrors: 0, filesChanged: 0 } }), events: events("noedit", { edits: false }) },
     { session: session("deploy", { flags: ["repeated-tool-failure"] }), events: events("deploy", { shell: ["gh pr create --fill", "git push origin HEAD", "vercel deploy --prod", "kubectl apply -f k8s.yaml"] }) },
   ];
 }
@@ -107,5 +107,27 @@ describe("rankEvalCandidates", () => {
     }
     const r = await rankSessions(index, [...index.sessions.values()], { now: NOW, eligibleOnly: true });
     assert.deepEqual(r.map((c) => c.sessionId), ["flagged", "plain"]);
+  });
+
+  it("counts a session whose end snapshot differs from its start as edited, though hooks saw no edit tool", () => {
+    const stats = { events: 3, turns: 1, toolCalls: 1, toolErrors: 0, filesChanged: 0 };
+    const viaShell = rankEvalCandidates([{ session: session("shell", { stats }), events: events("shell", { edits: false, shell: ["sed -i 's/a - b/a + b/' sum.js"] }) }], { now: NOW })[0]!;
+    assert.equal(viaShell.eligible, true);
+    const untouched = rankEvalCandidates([{ session: session("same", { stats, endSnapshot: "snap" }), events: events("same", { edits: false }) }], { now: NOW })[0]!;
+    assert.equal(untouched.reject, "no-edits");
+  });
+
+  it("rankSessions compares files when the start state is only a HEAD commit (Bash edits, filesChanged 0)", async () => {
+    const stats = { events: 3, turns: 1, toolCalls: 1, toolErrors: 0, filesChanged: 0 };
+    const headOnly = (id: string) => session(id, { stats, repo: { root: ROOT, head: "abc" }, endSnapshot: "end" });
+    const index = new MemIndex();
+    for (const id of ["bash", "idle"]) {
+      await index.upsertSession(headOnly(id));
+      await index.putEvents(events(id, { edits: false, shell: ["sed -i 's/a - b/a + b/' sum.js"] }).map((e) => (e.kind === "session.start" ? { ...e, repo: { root: ROOT, head: "abc" } } : e)));
+    }
+    const diffSnapshots = async (_r: string, a: string, b: string) => ({ files: a === "abc" && b === "end" && calls++ < 1 ? [{ path: "sum.js" }] : [] });
+    let calls = 0;
+    const r = await rankSessions(index, [...index.sessions.values()], { now: NOW, diffSnapshots });
+    assert.deepEqual(r.map((c) => [c.sessionId, c.reject]), [["bash", undefined], ["idle", "no-edits"]]);
   });
 });

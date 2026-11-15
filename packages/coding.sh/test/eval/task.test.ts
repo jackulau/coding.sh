@@ -126,6 +126,15 @@ describe("draftTaskFromSession", () => {
     assert.match(ref ?? "", /test\/add\.test\.js/, "without hiddenTests the test file stays in the reference");
     assert.equal(t.id, (await draftTaskFromSession({ index, blobs, git, sessionId: "s1", now: 6 })).id, "deterministic id");
   });
+  it("drafting a session again keeps the tags of the task it replaces and says so", async () => {
+    const { index, blobs, git } = await fixture();
+    const first = await draftTaskFromSession({ index, blobs, git, sessionId: "s1", tags: ["suite:qa"], now: 5 });
+    await index.putTask(first);
+    const again = await draftTaskFromSession({ index, blobs, git, sessionId: "s1", name: "renamed", now: 6 });
+    assert.equal(again.id, first.id);
+    assert.ok(again.tags.includes("suite:qa"));
+    assert.ok(again.meta.notes.some((n) => /updated the existing task .*suite:qa/.test(n)), again.meta.notes.join("; "));
+  });
   it("moves test files into hidden verifier files", async () => {
     const { index, blobs, git } = await fixture();
     const t = await draftTaskFromSession({ index, blobs, git, sessionId: "s1", hiddenTests: ["test/**"], verifierCommand: "node test/add.test.js", setup: [] });

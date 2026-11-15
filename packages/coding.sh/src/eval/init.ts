@@ -29,7 +29,7 @@ import { CANDIDATE_POOL, rankSessions, rejectSummary } from "./candidates.ts";
 import { draftCases, draftTriggers, type DraftedCase } from "./draft.ts";
 import { type SuitePurpose } from "./report.ts";
 import { DEFAULT_TRIALS, SUITE_FILE, SUITES_DIR, type SuiteKind, type SuiteSpec } from "./suite-spec.ts";
-import { draftTaskFromSession, exportTaskDir } from "./task.ts";
+import { draftTaskFromSession, exportTaskDir, type DraftedTask } from "./task.ts";
 import { referenceTestEdits } from "./test-edits.ts";
 import { runVerifier, taskWorlds, validateTask } from "./validate.ts";
 import { findSessions } from "../query/run.ts";
@@ -317,7 +317,7 @@ async function fromSessions(o: InitOpts, deps: InitDeps, name: string, _dir: str
   let attempts = 0;
   let validated = 0;
   for (const s of sessions) {
-    let task;
+    let task: DraftedTask;
     try {
       task = await draftTaskFromSession({
         index: deps.index,
@@ -335,6 +335,8 @@ async function fromSessions(o: InitOpts, deps: InitDeps, name: string, _dir: str
     }
     let d = slug(task.name).slice(0, 48) || "task";
     for (let i = 2; used.has(d); i++) d = `${slug(task.name).slice(0, 44)}-${i}`;
+    // Names are unique in the suite: a repeat takes its directory name.
+    if (tasks.some((t) => t.task.name === task.name)) task = { ...task, name: d };
     // A failed session's diff is what the agent got wrong: a near miss the
     // verifier must fail, not the reference solution it must pass. With
     // validation, the verifier decides: a diff that passes it is a reference.
@@ -366,7 +368,9 @@ async function fromSessions(o: InitOpts, deps: InitDeps, name: string, _dir: str
     used.add(d);
     tasks.push({ task, dir: d, sessionId: s.id });
     if (failed) attempts++;
-    agents.set(s.agent, (agents.get(s.agent) ?? 0) + 1);
+    // T3 Code is the host; the agent that ran (and has a driver) is the provider.
+    const ran = s.agent === "t3code" && s.provider ? s.provider : s.agent;
+    agents.set(ran, (agents.get(ran) ?? 0) + 1);
     if (!task.verifier.command) notes.push(`${d}: no verifier; set "verifier.command" in tasks/${d}/task.json to a command that passes only when the task is solved`);
     else if (task.meta.verifierSource !== "given") notes.push(`${d}: verifier guessed (${task.verifier.command}); make sure it covers this task only`);
   }

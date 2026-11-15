@@ -62,6 +62,8 @@ export const SCORE = {
 export interface CandidateItem {
   session: Session;
   events: readonly AgentEvent[];
+  /** Set by rankSessions: the start state (snapshot or HEAD) and the end snapshot hold different files. */
+  snapshotChanged?: boolean;
 }
 
 export interface Candidate {
@@ -91,6 +93,8 @@ export interface RankOpts {
   limit?: number;
   /** Leave rejected sessions out of the result. */
   eligibleOnly?: boolean;
+  /** Files that differ between two snapshots (tests, other backends; default src/core/snapshot.ts). */
+  diffSnapshots?: (root: string, a: string, b: string) => Promise<{ files: readonly unknown[] }>;
 }
 
 const EDIT_TOOLS = new Set(["edit", "write", "multiedit", "notebookedit", "apply_patch", "applypatch", "str_replace_editor", "str_replace_based_edit_tool", "edit_file", "write_file", "replace", "create_file", "patch"]);
@@ -105,8 +109,11 @@ function startRepo(session: Session, events: readonly AgentEvent[]): boolean {
   return !!repo && !!repo.root && !!(repo.snapshot || repo.head);
 }
 
-function edited(session: Session, events: readonly AgentEvent[]): boolean {
+function edited(session: Session, events: readonly AgentEvent[], snapshotChanged?: boolean): boolean {
   if ((session.stats.filesChanged ?? 0) > 0) return true;
+  // Hooks emit file.change only for edit tools; a sed -i or printf > shows in the end snapshot against the start state.
+  if (snapshotChanged) return true;
+  if (session.repo?.snapshot && session.endSnapshot && session.endSnapshot !== session.repo.snapshot) return true;
   return events.some((e) => e.kind === "file.change" || (e.kind === "tool.start" && EDIT_TOOLS.has(String(e.payload.tool ?? "").toLowerCase())));
 }
 
@@ -160,7 +167,7 @@ export function scoreCandidate(item: CandidateItem, now = Date.now()): Candidate
   if (s.runId || events.some((e) => e.runId)) return reject("run");
   if (!startRepo(s, events)) return reject("no-git-start");
   if (!prompts.length) return reject("no-user-prompt");
-  if (!edited(s, events)) return reject("no-edits");
+  if (!edited(s, events, item.snapshotChanged)) return reject("no-edits");
   const shell = events.map(shellCommandOf).filter((c): c is string => !!c);
   if (shell.length >= 2 && shell.filter(isDeliveryCommand).length * 2 >= shell.length) return reject("external-deliverable");
 
@@ -224,9 +231,31 @@ export function formatCandidates(cands: readonly Candidate[]): string {
 /** Sessions `eval init --sessions` and `eval candidates` read events for, newest first. */
 export const CANDIDATE_POOL = 200;
 
+/**
+ * A session with no edit-tool signal can still have changed files through Bash. When its start state is
+ * only a HEAD commit (no start snapshot) the two ids are never equal, so the files are compared.
+ */
+async function snapshotsDiffer(session: Session, events: readonly AgentEvent[], opts: RankOpts): Promise<boolean> {
+  if ((session.stats.filesChanged ?? 0) > 0 || !session.endSnapshot) return false;
+  const root = session.repo?.root ?? events.find((e) => e.repo?.root)?.repo?.root;
+  const start = session.repo?.snapshot ?? session.repo?.head ?? events.find((e) => e.kind === "session.start" && e.repo)?.repo?.head;
+  if (!root || !start || start === session.endSnapshot) return false;
+  try {
+    const diff = opts.diffSnapshots ?? (async (r, a, b) => (await import("../core/snapshot.ts")).diffSnapshots(r, a, b));
+    return (await diff(root, start, session.endSnapshot)).files.length > 0;
+  } catch {
+    return false; // shadow repo gone or history pruned
+  }
+}
+
 /** Load each session's events and rank them. */
 export async function rankSessions(index: { listEvents(sessionId: string): Promise<AgentEvent[]> }, sessions: readonly Session[], opts: RankOpts = {}): Promise<Candidate[]> {
   const items: CandidateItem[] = [];
-  for (const session of sessions) items.push({ session, events: await index.listEvents(session.id) });
+  for (const session of sessions) {
+    const events = await index.listEvents(session.id);
+    const item: CandidateItem = { session, events };
+    if (await snapshotsDiffer(session, events, opts)) item.snapshotChanged = true;
+    items.push(item);
+  }
   return rankEvalCandidates(items, opts);
 }
