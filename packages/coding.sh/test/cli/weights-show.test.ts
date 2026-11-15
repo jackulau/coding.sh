@@ -155,8 +155,7 @@ describe("weight edits in the CLI", () => {
   it("show prints the Weight edits row and one line per edit and checkpoint", () => {
     const text = cli("show", EDITS);
     assert.match(text, /^\s*Weight edits\s+2 edits, 1 tensor, 66,560 weights changed, checkpoint c0ffeecccccc$/m);
-    assert.match(text, /weights\s+checkpoint c0ffeecccccc ← dddddddddddd$/m);
-    assert.doesNotMatch(text, /after layer 15/, "the line is the two hashes; the note stays in the event");
+    assert.match(text, /weights\s+checkpoint c0ffeecccccc ← dddddddddddd · after layer 15$/m, "the two hashes, then the note");
     assert.match(text, /weights\s+model\.layers\.15\.mlp\.down_proj\.weight \[4096×11008\] · 65,536 of 45,088,768 weights · L2 0\.0183 · max 0\.004 · aaaaaaaaaaaa → bbbbbbbbbbbb/);
     assert.match(text, /weights\s+1,024 weights · L2 0\.002 · max 0\.001/, "an edit captured without its name still says what changed");
     assert.doesNotMatch(text, /^\s*\+\S+\s+notification\s*$/m, "no blank notification line");

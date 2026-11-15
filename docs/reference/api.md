@@ -734,9 +734,9 @@ Two more `notification` kinds record weight edits and the file they were saved t
 - A session with a weight edit gets the `weights:edited` tag. `coding.sh sessions --flag weights:edited` lists them, and `--where 'weights.changed>1000'` filters by size.
 - A session with a checkpoint gets the `weights:checkpoint` tag. `--where 'weights.checkpoint:58899f90572c*'` finds the sessions that recorded a file by its hash or the start of it. A session that holds a checkpoint and nothing else is still listed.
 - A checkpoint is read only when `sha256` is 64 hex characters. It is compared in lowercase, whatever case it arrived in. A `baseSha256` that is not a hash is left out and the checkpoint still counts.
-- `coding.sh show`, the viewer and MCP `session_get` print one line per edit: the tensor and its shape, the weights changed out of the total, both norms and the first 12 characters of each hash.
+- `coding.sh show`, the viewer and MCP `session_get` print one line per edit: the tensor and its shape, the weights changed out of the total, both norms, the first 12 characters of each hash and the edit's `note`.
 - A shape of more than 16 dimensions is not shown, and the total is left out when the count does not fit in the shape. An edit with no readable field still gets a line.
-- A checkpoint gets one line in the same three places: `checkpoint 58899f90572c ← 0496e5111097`, the first 12 characters of the file's hash and of the base file's. With no base it reads `checkpoint 58899f90572c`.
+- A checkpoint gets one line in the same three places: `checkpoint 58899f90572c ← 0496e5111097`, the first 12 characters of the file's hash and of the base file's. With no base it reads `checkpoint 58899f90572c`. A `note` follows the hashes: `checkpoint 58899f90572c ← 0496e5111097 · after the layer 15 edit`.
 - The session's `Weight edits` row names its checkpoints after the counts: `2 edits, 2 tensors, 66,560 weights changed, checkpoint 58899f90572c`.
 - `coding.sh show` adds one `Experiments` row for each checkpoint an experiment ran with `exp run --weights`: `58899f90572c ran in edited (exp_…)`. It reads the newest 200 experiments.
 - With `--json` those rows are `checkpointExperiments`, a list of `{sha256, experiments: [{id, name}]}`, absent when no experiment ran one. MCP `session_get` carries the same field.

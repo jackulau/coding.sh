@@ -770,7 +770,7 @@ describe("viewer UI: timeline, inspector and compare", { skip: chrome ? false : 
       assert.equal(other.name, "Notification");
       // The file the edits were saved to: its hash and the base file's, at 12 characters like every weights hash.
       const saved = await page.eval(`eventView({ kind: "notification", payload: { kind: "weights.checkpoint", sha256: "58899F90572C" + "c".repeat(52), baseSha256: "0496e5111097" + "d".repeat(52), note: "after layer 3" } })`);
-      assert.deepEqual([saved.name, saved.arg, saved.kindText], ["Saved weights", "checkpoint 58899f90572c ← 0496e5111097", "weights.checkpoint"]);
+      assert.deepEqual([saved.name, saved.arg, saved.kindText], ["Saved weights", "checkpoint 58899f90572c ← 0496e5111097 · after layer 3", "weights.checkpoint"]);
       const notOne = await page.eval(`eventView({ kind: "notification", payload: { kind: "weights.checkpoint", sha256: "abc" } })`);
       assert.equal(notOne.name, "Notification", "without a SHA-256 it is not a checkpoint");
     } finally {
