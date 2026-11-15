@@ -114,11 +114,12 @@ test("the built site pitches nothing through another product", distOpts(join(ROO
 });
 
 // Category words stacked in place of saying what coding.sh does. A page title may keep "observability" as a search label.
+// The translation tables (src/i18n/home/) repeat each English string as a key; it is checked where it is written.
 const CATEGORY = /local-first (?:observability|traces)|\bfirst-class\b|\b(?:observability|traces) and evals for\b/i;
 const TITLE_LINE = /\b(?:title|metaTitle)"?\s*[=:]|<title>/;
 
 test("no page describes coding.sh with stacked category words", () => {
-  const found = lines(SITE_WORDS(), (f, l) => !/^docs\/(?:research|design)\/|^CHANGELOG\.md$/.test(f) && !TITLE_LINE.test(l) && CATEGORY.test(l));
+  const found = lines(SITE_WORDS(), (f, l) => !/^docs\/(?:research|design)\/|^CHANGELOG\.md$|^apps\/site\/src\/i18n\/home\//.test(f) && !TITLE_LINE.test(l) && CATEGORY.test(l));
   assert.deepEqual(found, [], `${found.length} line(s) describe coding.sh with category words; say what it records and what the reader does with it:\n${found.join("\n")}`);
 });
 

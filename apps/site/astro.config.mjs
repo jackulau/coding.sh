@@ -5,6 +5,7 @@ import tailwindcss from '@tailwindcss/vite';
 import sitemap from '@astrojs/sitemap';
 import { isAgentExcluded } from './src/lib/agent-routes.mjs';
 import { pageLastmod } from './src/lib/lastmod.mjs';
+import { LOCALES, DEFAULT_LOCALE } from './src/i18n/locales.mjs';
 
 // https://astro.build/config
 export default defineConfig({
@@ -22,6 +23,8 @@ export default defineConfig({
     sitemap({
       filter: (page) => !isAgentExcluded(new URL(page).pathname),
       serialize: (item) => ({ ...item, lastmod: pageLastmod(new URL(item.url).pathname) }),
+      // The home page and its translations (/zh, /ja, ...) list each other as alternates.
+      i18n: { defaultLocale: DEFAULT_LOCALE.code, locales: Object.fromEntries(LOCALES.map((l) => [l.code, l.tag])) },
     }),
   ],
   output: 'static',

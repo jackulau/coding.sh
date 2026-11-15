@@ -43,7 +43,7 @@ export function primaryNavLabels(html) {
   return nav ? [...nav.matchAll(/<a\b[^>]*>([\s\S]*?)<\/a>/g)].map((m) => m[1].replace(/<[^>]+>/g, "").trim()) : [];
 }
 /** Labels in the LINKS array of Nav.astro. */
-export const navSourceLabels = (astro) => [...(/const LINKS = \[([\s\S]*?)\n\];/.exec(astro)?.[1] ?? "").matchAll(/label:\s*"([^"]+)"/g)].map((m) => m[1]);
+export const navSourceLabels = (astro) => [...(/const LINKS = \[([\s\S]*?)\n\];/.exec(astro)?.[1] ?? "").matchAll(/label:\s*(?:t\()?"([^"]+)"/g)].map((m) => m[1]);
 
 // `view-agent` as a name of its own: the skill review-agent-session is not the toggle.
 export const TOGGLE = /ViewToggle|data-viewtog|\?view=(?:human|agent)|(?<![a-z])view-agent|Human\s*\/\s*Agent/;
@@ -69,6 +69,8 @@ export const worksWith = (astro) => [...(/const WORKS_WITH = \[([\s\S]*?)\n\];/.
 test("each rule catches its seeded bad example", () => {
   assert.deepEqual(primaryNavLabels('<nav aria-label="Primary"><a href="/docs">Docs</a><a href="/agents">Agents</a></nav>'), ["Docs", "Agents"]);
   assert.deepEqual(navSourceLabels('const LINKS = [\n  { href: "/docs", label: "Docs" },\n  { href: "/agents", label: "Agents" },\n];'), ["Docs", "Agents"]);
+  // A label the front page translates is written t("…") (src/i18n/home.ts).
+  assert.deepEqual(navSourceLabels('const LINKS = [\n  { href: "/docs", label: t("Docs"), on: () => true },\n];'), ["Docs"]);
   assert.ok(TOGGLE.test('<button data-viewtog="agent">'));
   assert.ok(ACME.test("acme-corp/api"));
   assert.ok(TIER.test("<th>Tier</th>") && TIER.test("Tier B"));

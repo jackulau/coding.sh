@@ -28,6 +28,7 @@ grouped by area, with links to the docs for the details.
 - **Evals.** `coding.sh exp compare A B --given <grader>` compares only the cases where that grader passes in both runs, and prints how many it kept and dropped. With a `terminated` grader this separates "finished more answers" from "got more of the finished answers right". [Compare an edited model with its base](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#compare-an-edited-model-with-its-base)
 - **MCP.** `coding.sh mcp` serves four Agent Skills over the MCP skills extension (`io.modelcontextprotocol/skills`): `improve-agent-setup`, `trim-agent-setup`, `review-agent-session` and `build-agent-evals`. A host that supports the extension lists them and loads one when a request matches. [Skills](https://coding.sh/docs/mcp#skills)
 - **MCP.** In 2026-07-28 requests, list, read and discover results carry `ttlMs` and `cacheScope`: the tool, prompt and template lists are cached for an hour, `server/discover` for five minutes, and sessions are not cached. [MCP server](https://coding.sh/docs/mcp#protocol)
+- **Site.** The front page is also in German, Spanish, French, Japanese, Korean, Brazilian Portuguese and Simplified Chinese, at /de, /es, /fr, /ja, /ko, /pt-br and /zh. Each page names the others with hreflang links and the sitemap lists them as alternates. A switcher in the footer moves between them. The docs, blog and changelog stay in English. [简体中文](https://coding.sh/zh)
 
 ### Changed
 
