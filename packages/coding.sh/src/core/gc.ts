@@ -316,20 +316,27 @@ async function scanEvents(index: IndexStore, cutoff: number | undefined): Promis
   const candidates = new Set<BlobRef>();
   const keep = new Set<BlobRef>();
   const pagedRequests = new Set<BlobRef>();
-  const PAGE = 500;
-  // Without a cutoff only model calls matter.
-  const opts = cutoff === undefined ? { kinds: ["llm.call"] } : undefined;
-  for (let offset = 0; ; offset += PAGE) {
-    const sessions = await index.listSessions({ limit: PAGE, offset });
-    for (const s of sessions) {
-      for (const e of await index.listEvents(s.id, opts)) {
-        if (e.payload?.requestPaged === true && typeof e.payload.requestRef === "string") pagedRequests.add(e.payload.requestRef);
-        if (cutoff === undefined || !e.blobs?.length) continue;
-        const target = e.kind === "tool.end" && e.ts < cutoff ? candidates : keep;
-        for (const ref of e.blobs) target.add(ref);
+  if (index.gcEventBlobs) {
+    // The store answers from its rows (SQLite: one query each), without reading every event of every session.
+    const r = await index.gcEventBlobs(cutoff);
+    for (const ref of r.expired) candidates.add(ref);
+    for (const ref of r.pagedRequests) pagedRequests.add(ref);
+  } else {
+    const PAGE = 500;
+    // Without a cutoff only model calls matter.
+    const opts = cutoff === undefined ? { kinds: ["llm.call"] } : undefined;
+    for (let offset = 0; ; offset += PAGE) {
+      const sessions = await index.listSessions({ limit: PAGE, offset });
+      for (const s of sessions) {
+        for (const e of await index.listEvents(s.id, opts)) {
+          if (e.payload?.requestPaged === true && typeof e.payload.requestRef === "string") pagedRequests.add(e.payload.requestRef);
+          if (cutoff === undefined || !e.blobs?.length) continue;
+          const target = e.kind === "tool.end" && e.ts < cutoff ? candidates : keep;
+          for (const ref of e.blobs) target.add(ref);
+        }
       }
+      if (sessions.length < PAGE) break;
     }
-    if (sessions.length < PAGE) break;
   }
   if (!candidates.size) return { expired: candidates, pagedRequests };
   for (const t of await index.listTasks()) for (const r of taskBlobs(t)) keep.add(r);

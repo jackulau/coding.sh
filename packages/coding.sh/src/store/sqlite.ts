@@ -1770,6 +1770,23 @@ export class SqliteIndexStore implements IndexStore {
     }
   }
 
+  /** See IndexStore.gcEventBlobs: the scan core/gc.ts does with listEvents, in SQL (no event is parsed in JS). */
+  async gcEventBlobs(cutoff: number | undefined): Promise<{ expired: BlobRef[]; pagedRequests: BlobRef[] }> {
+    const stored = "e.session_id IN (SELECT id FROM sessions)";
+    const refs = (sql: string, ...params: (string | number | null)[]): BlobRef[] =>
+      (this.db.prepare(sql).all(...params) as Row[]).map((r) => r.ref).filter((r): r is BlobRef => typeof r === "string");
+    const pagedRequests = refs(`SELECT DISTINCT e.payload->>'$.requestRef' AS ref FROM events e
+      WHERE (? IS NOT NULL OR e.kind = 'llm.call') AND instr(e.payload, '"requestPaged"') > 0
+        AND json_type(e.payload, '$.requestPaged') = 'true' AND json_type(e.payload, '$.requestRef') = 'text' AND ${stored}`, cutoff ?? null);
+    if (cutoff === undefined) return { expired: [], pagedRequests };
+    const expired = refs(`SELECT j.value AS ref FROM events e, json_each(e.blobs) j
+        WHERE e.blobs IS NOT NULL AND e.kind = 'tool.end' AND e.ts < ?1 AND ${stored}
+      EXCEPT
+      SELECT j.value FROM events e, json_each(e.blobs) j
+        WHERE e.blobs IS NOT NULL AND (e.kind <> 'tool.end' OR e.ts >= ?1) AND ${stored}`, cutoff);
+    return { expired, pagedRequests };
+  }
+
   async compact(): Promise<void> {
     this.slimEvents();
     this.db.exec("INSERT INTO events_fts(events_fts) VALUES ('optimize')");

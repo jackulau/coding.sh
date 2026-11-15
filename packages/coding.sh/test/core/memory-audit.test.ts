@@ -271,6 +271,32 @@ describe("harness audit over a store and a temp HOME", () => {
     }
   });
 
+  it("finds nested CLAUDE.md / AGENTS.md three levels down, through a linked dir, and spends its dir cap on the shallowest dirs", () => {
+    const root = mkdtempSync(join(tmpdir(), "cs-memnest-"));
+    try {
+      const put = (rel: string) => {
+        mkdirSync(dirname(join(root, rel)), { recursive: true });
+        writeFileSync(join(root, rel), "# x\n");
+      };
+      for (const rel of ["app/CLAUDE.md", "app/a/AGENTS.md", "app/a/b/c/CLAUDE.md", "app/a/b/c/d/CLAUDE.md", "app/node_modules/m/CLAUDE.md", "app/.hidden/CLAUDE.md", "elsewhere/lib/AGENTS.md"]) put(rel);
+      // A junction needs no privileges on Windows; elsewhere a dir symlink.
+      symlinkSync(join(root, "elsewhere"), join(root, "app", "linked"), process.platform === "win32" ? "junction" : "dir");
+      const dirs = { home: root, claudeDir: join(root, ".claude"), codexDir: join(root, ".codex") };
+      const keys = (cwd: string) => listMemoryFiles(dirs, [cwd]).map((f) => f.key).sort();
+      assert.deepEqual(keys(join(root, "app")), ["~/app/CLAUDE.md", "~/app/a/AGENTS.md", "~/app/a/b/c/CLAUDE.md", "~/app/linked/lib/AGENTS.md"], "not d/ (too deep), node_modules or dot dirs");
+      // 2,100 dirs two levels down, each with a CLAUDE.md: the 2,000-dir cap stops before the last of them,
+      // but not before zz/, a sibling of their parent listed later.
+      for (let i = 0; i < 2100; i++) put(`wide/many/d${String(i).padStart(4, "0")}/CLAUDE.md`);
+      put("wide/zz/CLAUDE.md");
+      const wide = keys(join(root, "wide"));
+      assert.ok(wide.includes("~/wide/zz/CLAUDE.md"), "the shallow dir is visited first");
+      const deep = wide.filter((k) => k.startsWith("~/wide/many/")).length;
+      assert.ok(deep > 1900 && deep < 2100, `capped: ${deep}`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("audits stored sessions (subagents folded into their root) since a time", async () => {
     const index = new MemoryIndexStore();
     const slug = claudeProjectSlug(join(home, "app"));
