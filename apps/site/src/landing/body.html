@@ -99,6 +99,26 @@
     line-height: 1.5;
     color: var(--text-2);
   }
+  /* Under the install command: the licence in one word and the latest release, linked to its notes. */
+  .f-fine {
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    color: var(--text-muted);
+  }
+  .f-fine a {
+    white-space: nowrap;
+    color: var(--text);
+    text-decoration: none;
+  }
+  .f-fine a:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .f-fine code {
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    color: var(--text-2);
+  }
   .f-actions {
     display: flex;
     flex-wrap: wrap;
@@ -864,7 +884,7 @@
       <div class="f-bg" aria-hidden="true"></div>
       <div class="f-hero__copy">
         <h1 id="f-title">The Observability Layer for&nbsp;Agents.</h1>
-        <p class="f-sub">Agents, subagents and gateways, traced on your machine.</p>
+        <p class="f-sub">Record, measure, compare and benchmark every agent&nbsp;run.</p>
         <p class="sr-only" aria-live="polite" data-copy-status></p>
         <div class="f-actions">
           <button type="button" class="f-install" data-copy="{{INSTALL}}" aria-label="Copy the install command: {{INSTALL}}">
@@ -877,6 +897,7 @@
           </button>
           <a class="f-btn" href="/docs/quickstart">Get started</a>
         </div>
+        <p class="f-fine">Free and open source. <a href="{{RELEASE_HREF}}">What's new in coding.sh <code>v{{RELEASE}}</code></a></p>
       </div>
       <div class="f-strip">
         <p class="f-strip__label">Works with</p>
