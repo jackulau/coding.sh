@@ -36,9 +36,9 @@ before(() => {
   cpSync(FIXTURE, projects, { recursive: true });
   // The second parent holds a byte-identical copy of the run dir and its script.
   cpSync(join(projects, "-work-demo", OWNER), join(projects, "-work-demo", COPY), { recursive: true });
-  env = { HOME: home, USERPROFILE: home, CODING_SH_HOME: join(root, "data"), XDG_CONFIG_HOME: join(home, ".config"), CLAUDE_CONFIG_DIR: join(root, "claude"), PATH: process.env.PATH, NO_COLOR: "1", CI: "1" };
+  env = { HOME: home, USERPROFILE: home, CODING_SH_HOME: join(root, "data"), XDG_CONFIG_HOME: join(home, ".config"), CLAUDE_CONFIG_DIR: join(root, "claude"), PATH: process.env.PATH, NO_COLOR: "1", CI: "1", CODING_SH_NO_AUTO_INGEST: "1" }; // no detached background ingest outliving the test and holding the home on Windows
 });
-after(() => rmSync(root, { recursive: true, force: true }));
+after(() => rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
 
 describe("a workflow run copied under a second parent", () => {
   it("the adapter sees the copy's agent as the owner's", async () => {

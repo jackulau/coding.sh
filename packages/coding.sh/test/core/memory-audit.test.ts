@@ -244,7 +244,7 @@ describe("harness audit over a store and a temp HOME", () => {
       CODING_SH_NO_UPDATE_CHECK: "1",
     };
   });
-  after(() => rmSync(root, { recursive: true, force: true }));
+  after(() => rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })); // Windows: a read's killed worker can hold a handle in the home for a moment
 
   it("lists memory files on disk, nested CLAUDE.md included, nothing else", () => {
     const keys = listMemoryFiles({ home, claudeDir: join(home, ".claude"), codexDir: join(home, ".codex") }, [join(home, "app")])

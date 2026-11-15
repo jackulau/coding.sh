@@ -45,7 +45,7 @@ before(() => {
   assert.equal(r.status, 0, r.stderr);
 });
 
-after(() => rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+after(() => rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })); // Windows: a read's killed worker can hold a handle in the home for a moment
 
 describe("coding.sh tree", () => {
   test("from a session, shows the whole run with rolled-up totals and the node to fix first", () => {

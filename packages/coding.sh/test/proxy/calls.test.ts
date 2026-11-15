@@ -300,7 +300,7 @@ describe("CLI: show <call> and diff-calls", () => {
   let env: NodeJS.ProcessEnv = {};
   before(async () => {
     root = realpathSync(mkdtempSync(join(tmpdir(), "csh-calls-")));
-    env = { PATH: process.env.PATH, HOME: join(root, "home"), CODING_SH_HOME: join(root, "data"), NO_COLOR: "1", CODING_SH_NO_UPDATE_CHECK: "1" };
+    env = { PATH: process.env.PATH, HOME: join(root, "home"), CODING_SH_HOME: join(root, "data"), NO_COLOR: "1", CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1" }; // no detached background ingest holding the home on Windows
     const config = loadConfig(env);
     const stores = await openStores(config);
     const recorder = recorderFor({ config, index: stores.index, blobs: stores.blobs, env: {} });
@@ -314,7 +314,7 @@ describe("CLI: show <call> and diff-calls", () => {
       await stores.blobs.close?.();
     }
   });
-  after(() => rmSync(root, { recursive: true, force: true }));
+  after(() => rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
   const cli = (...args: string[]) => spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { env, encoding: "utf8", timeout: 60_000 });
 
   it("diff-calls <session>#3 explains the miss against the call before it", () => {
