@@ -159,6 +159,26 @@ maxFiles = 50
     assert.equal(loadConfig({ env, cwd: repo }).capture.mode, "full");
   });
 
+  it("stops the repo search at the OS account's home when $HOME points elsewhere", () => {
+    // On Windows the temp dir sits under the account's home, whose
+    // .coding.sh/config.toml is a user config, not a repo override.
+    const { env, root } = setup();
+    const account = join(root, "account");
+    mkdirSync(join(account, ".coding.sh"), { recursive: true });
+    writeFileSync(join(account, ".coding.sh", "config.toml"), "[capture]\nmode = \"metadata\"\n");
+    const cwd = join(account, "AppData", "Temp", "work");
+    mkdirSync(cwd, { recursive: true });
+    const key = process.platform === "win32" ? "USERPROFILE" : "HOME";
+    const saved = process.env[key];
+    process.env[key] = account;
+    try {
+      assert.equal(findRepoConfig(cwd, env), undefined);
+    } finally {
+      if (saved === undefined) delete process.env[key];
+      else process.env[key] = saved;
+    }
+  });
+
   it("writes a parseable default config once", () => {
     const { env, home } = setup();
     const first = writeDefaultConfig(env);

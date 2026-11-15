@@ -5,6 +5,7 @@
 // redactors and patterns are unioned, never removed. It can never add sinks or
 // move the stores, which would let a repository exfiltrate your sessions.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { Config, SinkConfig } from "./types.ts";
 import { PRICE_TIERS, type Price, type Prices, type Rates, type TierRates } from "./pricing.ts";
@@ -103,16 +104,21 @@ export function resolveRepoConfig(base: Config, cwd: string, env: NodeJS.Process
   return applyRepoConfig(base, readToml(file), file);
 }
 
-/** Finds `<dir>/.coding.sh/config.toml` walking up from cwd, stopping at the repo root or $HOME. */
+/**
+ * Finds `<dir>/.coding.sh/config.toml` walking up from cwd, stopping at the repo
+ * root or a home: $HOME, or the OS account's home when $HOME points elsewhere
+ * (on Windows the temp dir sits under the account's home).
+ */
 export function findRepoConfig(cwd: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const home = resolve(expandHome("~", env));
+  const homes = new Set([resolve(expandHome("~", env)), resolve(homedir())]);
   const userConfig = resolve(paths(env).config);
   let dir = resolve(cwd);
   for (;;) {
+    // <home>/.coding.sh/config.toml is a user config, not a repo override.
+    if (homes.has(dir)) return undefined;
     const candidate = join(dir, ".coding.sh", "config.toml");
-    // ~/.coding.sh/config.toml is the user config, not a repo override.
     if (candidate !== userConfig && existsSync(candidate)) return candidate;
-    if (dir === home || existsSync(join(dir, ".git"))) return undefined;
+    if (existsSync(join(dir, ".git"))) return undefined;
     const parent = dirname(dir);
     if (parent === dir) return undefined;
     dir = parent;
