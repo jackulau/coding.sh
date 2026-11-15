@@ -20,6 +20,7 @@ import { runGuidelines } from "./cli-guidelines.mjs";
 import { captureHealth, fixtures, smoke } from "./conformance.mjs";
 import { siteJs, siteLighthouse, SITE_TARGETS } from "./site.mjs";
 import { DOGFOOD_TASKS, git, log, parseArgs, PKG, readJsonl, REPO, round, sh, shAsync, tempDir } from "./lib/util.mjs";
+import { isMain } from "./lib/main.mjs";
 
 export const WEIGHTS = {
   "cli.heldout.success": 30,
@@ -302,7 +303,7 @@ export async function score(opts = {}) {
   return card;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMain(import.meta.url)) {
   const args = parseArgs(process.argv.slice(2), { booleans: ["json", "skip-gates", "dry-run"] });
   const mode = args.mode ?? "auto";
   if (!["quick", "full", "auto"].includes(mode)) {

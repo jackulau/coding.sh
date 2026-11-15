@@ -12,6 +12,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, normalize, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import { log, parseArgs, sh, SITE } from "./lib/util.mjs";
+import { isMain } from "./lib/main.mjs";
 
 export const SITE_TARGETS = {
   jsKb: 60,
@@ -92,7 +93,7 @@ export async function siteLighthouse({ port = 4329 } = {}) {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMain(import.meta.url)) {
   const args = parseArgs(process.argv.slice(2), { booleans: ["json"] });
   const which = args._.length ? args._ : ["js", "lighthouse"];
   const out = {};

@@ -14,6 +14,7 @@ import { cpSync, existsSync, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { CLI, log, parseArgs, PKG, REPO, sh, shAsync, tempDir } from "./lib/util.mjs";
+import { isMain } from "./lib/main.mjs";
 
 /** Parse node:test TAP output into test-level counts (suites are not tests). */
 export function parseTapSummary(text) {
@@ -79,7 +80,7 @@ export async function smoke() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMain(import.meta.url)) {
   const args = parseArgs(process.argv.slice(2), { booleans: ["json"] });
   const which = args._.length ? args._ : ["fixtures", "health", "smoke"];
   const out = {};
