@@ -21,6 +21,8 @@
 //   node .github/assets/capture-readme.mjs "$(head -1 $R/ui.log)"   # the URL with its ?t= token
 //   kill $U
 //   node .github/assets/render-banner.mjs                          # banner.png from banner-session.png
+// The README's other two pictures need no sessions: capture-flow.mjs records agents-flow.gif from
+// the front page, and render-star.mjs draws star.gif from star.html.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 

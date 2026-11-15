@@ -17,40 +17,38 @@
   }
   html, body { margin: 0; background: var(--bg); }
   .banner { position: relative; width: 1280px; height: 640px; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--sans); }
-  .layer { position: absolute; inset: 0; }
-  .vignette { position: absolute; inset: 0;
-    background:
-      radial-gradient(ellipse 36% 34% at 50% 34%, rgba(0,0,0,.85), rgba(0,0,0,0) 100%),
-      radial-gradient(ellipse 85% 80% at 50% 45%, rgba(0,0,0,0) 55%, rgba(0,0,0,.5) 100%); }
+  /* The front page's grid (.f-bg in apps/site/src/landing/body.html): it shows at the two sides
+     and clears behind the words. */
+  .grid { position: absolute; inset: 0;
+    background-image: linear-gradient(90deg, rgba(255,255,255,.075) 1px, transparent 0), linear-gradient(180deg, rgba(255,255,255,.075) 1px, transparent 0);
+    background-size: 40px 40px; background-position: calc(50% + 20px) 20px;
+    -webkit-mask-image: linear-gradient(90deg, #000, transparent 32%, transparent 68%, #000);
+    mask-image: linear-gradient(90deg, #000, transparent 32%, transparent 68%, #000); }
   .head { position: absolute; left: 0; right: 0; top: 50px; display: flex; flex-direction: column; align-items: center; text-align: center; }
   .brand { display: flex; align-items: center; gap: 14px; }
-  h1 { margin: 30px 0 0; font-size: 62px; line-height: 1.04; font-weight: 600; letter-spacing: -3px; }
-  .tagline { margin: 20px 0 0; font-size: 20px; line-height: 1.4; color: var(--text-muted); letter-spacing: -0.2px; }
+  h1 { margin: 34px 0 0; font-size: 64px; line-height: 1.05; font-weight: 600; letter-spacing: -0.045em; }
+  .tagline { margin: 20px 0 0; font-size: 21px; line-height: 1.5; color: #a1a1aa; }
 
-  /* The top of a real viewer screenshot (banner-session.png), cut by the bottom edge. */
-  .viewer { position: absolute; left: 200px; right: 200px; top: 350px; background: var(--term); border: 1px solid var(--line-strong); border-radius: 12px; overflow: hidden;
-    box-shadow: 0 -20px 80px rgba(0,0,0,.9); }
+  /* A real viewer screenshot (banner-session.png): the head of one session and its first steps. */
+  .viewer { position: absolute; left: 200px; right: 200px; top: 300px; background: var(--term); border: 1px solid var(--line-strong); border-radius: 12px; overflow: hidden;
+    box-shadow: 0 0 80px 20px rgba(0,0,0,.9); }
   .viewer img { display: block; width: 100%; height: auto; }
-  .fade { position: absolute; left: 0; right: 0; bottom: 0; height: 64px; background: linear-gradient(to bottom, rgba(0,0,0,0), #000); }
 </style>
 </head>
 <body>
 <div class="banner" id="banner">
-  <svg class="layer" id="stars" viewBox="0 0 1280 640"></svg>
-  <svg class="layer" id="cubes" viewBox="0 0 1280 640"></svg>
-  <div class="vignette"></div>
+  <div class="grid"></div>
 
   <div class="head">
     <div class="brand">
       <svg id="mark" width="40" height="40"></svg>
       <svg id="wordmark" shape-rendering="crispEdges" role="img" aria-label="coding.sh"></svg>
     </div>
-    <h1>See what your AI agents did,<br>and what it cost</h1>
-    <p class="tagline">Every prompt, tool call, file change and cost, kept on your machine.</p>
+    <h1>The Observability Layer for Agents.</h1>
+    <p class="tagline">Agents, subagents and gateways, traced on your machine.</p>
   </div>
 
   <div class="viewer"><img src="banner-session.png" alt=""></div>
-  <div class="fade"></div>
 </div>
 
 <script>
@@ -82,7 +80,6 @@ function cubeSvg(yaw = ISO_YAW, pitch = ISO_PITCH, s = 10, dim = 1) {
   const body = faces.map((f) => { const c = hex(f.grey * dim); return `<polygon fill="${c}" stroke="${c}" stroke-width="${(s * 0.05).toFixed(2)}" stroke-linejoin="round" points="${f.pts.map(([x, y]) => `${(x - minX).toFixed(2)},${(y - minY).toFixed(2)}`).join(" ")}"/>`; }).join("");
   return { body, width, height };
 }
-function mulberry32(seed) { let a = seed >>> 0; return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
 // Brand mark.
 for (const id of ["mark"]) {
@@ -113,40 +110,6 @@ const GLYPHS = {
   el.setAttribute("viewBox", `0 0 ${W} 7`); el.setAttribute("width", W * PX); el.setAttribute("height", 7 * PX);
   el.innerHTML = `<path d="${lit}" fill="#f4f4f5"/><path d="${dim}" fill="#8b8b92"/>`;
 }
-
-// Stars.
-const rand = mulberry32(0x5eed);
-const r = (a, b) => a + rand() * (b - a);
-document.getElementById("stars").innerHTML = Array.from({ length: 150 }, () =>
-  `<circle cx="${r(0, 1280).toFixed(1)}" cy="${r(0, 640).toFixed(1)}" r="${r(0.45, 1.2).toFixed(2)}" fill="#fff" opacity="${r(0.08, 0.45).toFixed(2)}"/>`).join("");
-
-// Cubes: kept to the sides, clear of the headline and the viewer crop.
-// [x, y, half-edge, yaw, pitch, brightness, blur]
-const CUBES = [
-  [-22, 300, 64, 0.62, 0.56, 0.85, 2.2],
-  [1300, 120, 54, 0.9, 0.58, 0.8, 2.0],
-  [96, 112, 17, 0.5, 0.6, 0.92, 0],
-  [182, 214, 10, 1.1, 0.5, 0.78, 0],
-  [62, 470, 12, 0.35, 0.66, 0.8, 0],
-  [236, 78, 7, 0.8, 0.5, 0.6, 0],
-  [138, 384, 6, 0.2, 0.7, 0.5, 0],
-  [214, 520, 5, 1.0, 0.45, 0.45, 0],
-  [30, 196, 5, 0.7, 0.62, 0.4, 0],
-  [1176, 262, 16, 0.7, 0.55, 0.92, 0],
-  [1098, 92, 9, 0.3, 0.62, 0.7, 0],
-  [1222, 404, 11, 1.2, 0.5, 0.8, 0],
-  [1062, 330, 6, 0.55, 0.68, 0.5, 0],
-  [1250, 548, 7, 0.9, 0.6, 0.55, 0],
-  [1010, 296, 5, 0.1, 0.55, 0.42, 0],
-  [1146, 500, 5, 0.45, 0.62, 0.42, 0],
-  [318, 40, 4, 0.6, 0.6, 0.35, 0],
-  [962, 50, 4, 0.9, 0.5, 0.35, 0],
-];
-document.getElementById("cubes").innerHTML = CUBES.map(([x, y, s, yaw, pitch, dim, blur]) => {
-  const c = cubeSvg(yaw, pitch, s, dim);
-  const f = blur ? ` filter="url(#b${String(blur).replace(".","_")})"` : "";
-  return `<g transform="translate(${(x - c.width / 2).toFixed(1)} ${(y - c.height / 2).toFixed(1)})"${f}>${c.body}</g>`;
-}).join("") + `<defs>${[...new Set(CUBES.map((c) => c[6]).filter(Boolean))].map((b) => `<filter id="b${String(b).replace(".","_")}" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="${b}"/></filter>`).join("")}</defs>`;
 </script>
 </body>
 </html>

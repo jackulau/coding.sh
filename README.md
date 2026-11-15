@@ -1,12 +1,18 @@
 <p align="center">
-  <img src=".github/assets/banner.png" alt="coding.sh: see what your AI agents did, and what it cost. Every prompt, tool call, file change and cost, kept on your machine. Below the headline, the top of one session in the coding.sh viewer: a Claude Code session that raised the OTLP receiver body limit to 8 MB, with its model, duration, estimated cost, a '31 passed' test badge and its first file edits." width="100%">
+  <img src=".github/assets/banner.png" alt="coding.sh: The Observability Layer for Agents. Agents, subagents and gateways, traced on your machine. Below the headline, the top of one session in the coding.sh viewer: a Claude Code session that raised the OTLP receiver body limit to 8 MB, with its model, duration, estimated cost, a '31 passed' test badge and its first file edits." width="100%">
 </p>
 
 <p align="center">
   <a href="https://github.com/jackulau/coding.sh/actions/workflows/ci.yml"><img src="https://github.com/jackulau/coding.sh/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status"></a>
   <a href="https://www.npmjs.com/package/coding.sh"><img src="https://img.shields.io/npm/v/coding.sh?label=npm" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/coding.sh"><img src="https://img.shields.io/npm/dt/coding.sh?label=downloads&amp;color=blue" alt="npm downloads"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D22.16-brightgreen" alt="Node 22.16 or newer">
+  <a href="https://coding.sh"><img src="https://img.shields.io/badge/Visit-coding.sh-181818?labelColor=555555&amp;logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9Ii0xNy4zMiAtMjAgMzQuNjQgNDAiPjxwb2x5Z29uIGZpbGw9IiNmNGY0ZjQiIHBvaW50cz0iMCwtMjAgMTcuMzIsLTEwIDAsMCAtMTcuMzIsLTEwIi8%2BPHBvbHlnb24gZmlsbD0iI2I5YjliOSIgcG9pbnRzPSItMTcuMzIsLTEwIDAsMCAwLDIwIC0xNy4zMiwxMCIvPjxwb2x5Z29uIGZpbGw9IiM3Njc2NzYiIHBvaW50cz0iMCwwIDE3LjMyLC0xMCAxNy4zMiwxMCAwLDIwIi8%2BPC9zdmc%2B" alt="Visit coding.sh"></a>
+</p>
+
+<p align="center">
+  <a href="https://x.com/jacklau"><img src="https://img.shields.io/badge/Follow%20on%20X-000000?logo=x&amp;logoColor=white&amp;style=for-the-badge" alt="Follow on X"></a>
 </p>
 
 <p align="center">
@@ -168,6 +174,12 @@ TypeScript SDK and the store plugins are on npm, and the Python SDK is on PyPI. 
 
 ## Supported agents
 
+<p align="center">
+  <a href="https://coding.sh"><img src=".github/assets/agents-flow.gif" alt="An animated diagram from the coding.sh front page. On the left, three columns of agent logo tiles slide past one another. A line joins them to a cube in the middle, which is coding.sh. From the cube, a green line runs to three columns of tiles on the right, labeled sessions, cost, evals, experiments, benchmarks, gateways and sdk." width="100%"></a>
+  <br>
+  <sub>Every agent, one record: the diagram from the <a href="https://coding.sh">coding.sh</a> front page.</sub>
+</p>
+
 | Agent | How it records | Status |
 |---|---|---|
 | Claude Code | hooks, transcript, subagents | Verified on real sessions |
@@ -279,7 +291,13 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and the codebase map. Issues la
 [good first issue](https://github.com/jackulau/coding.sh/labels/good%20first%20issue) are small and
 self-contained. Release steps are in [docs/RELEASE.md](docs/RELEASE.md).
 
-## Star history
+## ⭐️ Star the Repository
+
+<p align="center">
+  <a href="https://github.com/jackulau/coding.sh"><img src=".github/assets/star.gif" alt="A drawing of the jackulau/coding.sh repository row. A pointer moves to the Star button and presses it. The star turns yellow and the button reads Starred." width="100%"></a>
+</p>
+
+If coding.sh is useful to you, star the repository. A star helps other people find the project.
 
 <a href="https://star-history.com/#jackulau/coding.sh&Date"><picture><source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=jackulau/coding.sh&type=Date&theme=dark" /><source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=jackulau/coding.sh&type=Date" /><img alt="Star history for jackulau/coding.sh" src="https://api.star-history.com/svg?repos=jackulau/coding.sh&type=Date" /></picture></a>
 

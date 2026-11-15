@@ -18,7 +18,7 @@ const CHROME = process.env.CHROME || "/Applications/Google Chrome.app/Contents/M
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: true,
-  args: ["--no-first-run", "--hide-scrollbars", "--allow-file-access-from-files"],
+  args: ["--no-first-run", "--hide-scrollbars", "--allow-file-access-from-files", "--use-mock-keychain", "--password-store=basic"],
 });
 try {
   const page = await browser.newPage();
