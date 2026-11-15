@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { mulberry32 } from "../../src/stats/prng.ts";
 import { pairedPermutation } from "../../src/stats/tests.ts";
-import { compareToolArms, summarizeArms } from "../../src/toolevals/compare.ts";
+import { compareToolArms, runOutcome, summarizeArms } from "../../src/toolevals/compare.ts";
 import { formatToolCompare } from "../../src/toolevals/report.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import type { SurfaceReport, TrialResult } from "../../src/toolevals/types.ts";
@@ -144,9 +144,31 @@ describe("compareToolArms", () => {
     assert.deepEqual(
       sum.map((a) => [a.arm, a.passAllK, a.passAnyK]),
       [
-        [`base@${D}`, 5, 5],
+        [`base@${D}`, 1, 1],
         [`terse@${D}`, 0, 0],
       ],
     );
+  });
+});
+
+
+describe("toolevals pass^k / pass@k are fractions of tasks", () => {
+  const t = (taskId: string, pass: boolean, infra?: "network"): TrialResult => {
+    const r: Partial<TrialResult> = { taskId, variant: "base", driver: "d", pass };
+    if (infra) r.infra = infra;
+    return r as TrialResult;
+  };
+  it("is 1 for an all-pass run and 0.5 when one of two tasks fails", () => {
+    const all = summarizeArms([t("a", true), t("a", true), t("b", true), t("b", true)]);
+    assert.deepEqual([all[0]!.passAllK, all[0]!.passAnyK], [1, 1]);
+    const half = summarizeArms([t("a", false), t("a", false), t("b", true), t("b", true)]);
+    assert.deepEqual([half[0]!.passAllK, half[0]!.passAnyK], [0.5, 0.5]);
+    const mixed = summarizeArms([t("a", true), t("a", false), t("b", false), t("b", false)]);
+    assert.deepEqual([mixed[0]!.passAllK, mixed[0]!.passAnyK], [0, 0.5]);
+  });
+  it("runOutcome: void when nothing was measured, incomplete when some trials were infra", () => {
+    assert.equal(runOutcome(summarizeArms([t("a", true)])), undefined);
+    assert.equal(runOutcome(summarizeArms([t("a", true), t("b", false, "network")])), "incomplete");
+    assert.equal(runOutcome(summarizeArms([t("a", false, "network"), t("b", false, "network")])), "void");
   });
 });

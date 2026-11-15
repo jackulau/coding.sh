@@ -367,9 +367,9 @@ export interface ToolArmSummary {
   trials: number;
   passes: number;
   passRate: Interval;
-  /** Tasks where all k trials pass (pass^k). */
+  /** Fraction of tasks where all k trials pass (pass^k), 0 to 1. */
   passAllK: number;
-  /** Tasks where at least one trial passes (pass@k). */
+  /** Fraction of tasks where at least one trial passes (pass@k), 0 to 1. */
   passAnyK: number;
   /** Task errors among the trials with a known outcome. */
   errors: number;

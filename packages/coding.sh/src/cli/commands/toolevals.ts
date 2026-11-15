@@ -499,7 +499,7 @@ async function runAction(c: CommandContext): Promise<number> {
   if (stop !== undefined) return stop;
 
   const { runToolExperiment, toolevalsRoot } = await import("../../toolevals/experiment.ts");
-  const { summarizeArms } = await import("../../toolevals/compare.ts");
+  const { summarizeArms, runOutcome } = await import("../../toolevals/compare.ts");
   const { formatArms } = await import("../../toolevals/report.ts");
   const { measureSurface } = await import("../../toolevals/surface.ts");
   const { getAdapter } = await import("../../adapters/index.ts");
@@ -548,7 +548,7 @@ async function runAction(c: CommandContext): Promise<number> {
     const regression = r.regression ? { ...r.regression, baseline: baselineId! } : undefined;
     if (out.json)
       out.data({
-        outcome: r.infraStop ? "stopped" : regression ? "regression" : undefined,
+        outcome: r.infraStop ? "stopped" : regression ? "regression" : runOutcome(summary),
         regression,
         infraStop: r.infraStop,
         experimentId: r.experimentId,
@@ -565,7 +565,7 @@ async function runAction(c: CommandContext): Promise<number> {
       out.print(r.experimentId);
       if (summary.length > 1 && !adaptive && !regression && !r.infraStop) out.next("Compare two arms", `coding.sh toolevals compare ${r.experimentId} --baseline ${summary[0]!.arm} --candidate ${summary[1]!.arm}`);
     }
-    return regression || r.infraStop ? 1 : 0;
+    return regression || r.infraStop || runOutcome(summary) ? 1 : 0;
   });
 }
 
