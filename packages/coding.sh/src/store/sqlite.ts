@@ -32,7 +32,7 @@ import type { Dataset, DatasetVersionInfo, ExperimentResult, JudgeVersion } from
 import type { DatasetListing } from "../core/types.ts";
 import { HARNESS_LOADED, MEMORY_INPUT_KEYS, MEMORY_PATH_TEXT, MEMORY_PAYLOAD_KEYS, pickSet, SKILL_TOOL, type MemoryEvent } from "../core/memory-events.ts";
 import { BLOB_REF_FIELDS, type BlobRefField, DatasetConflict, errorText, ftsQuery, searchableText, SEARCHABLE_KINDS, searchTerms, snippet, symbolQuery, symbolSnippet } from "./common.ts";
-import { loadSqlite, mkdirPrivate, ownerOnly, switchToWal } from "./sqlite-open.ts";
+import { isBusy, loadSqlite, mkdirPrivate, ownerOnly, retryOnBusy, switchToWal, withoutBusyRetry } from "./sqlite-open.ts";
 import { backupIndex, describeStep, parseWriter, pruneBackups, runningUpgrade, splitSql, StoreNewerError, UPGRADE_PROGRESS_MIN_ROWS, UpgradeProgress, WRITER_KEY, type StoreWriter } from "./upgrade.ts";
 import { labelToScore } from "../scores/labels.ts";
 import { isNewer } from "../update/semver.ts";
@@ -763,7 +763,7 @@ export class SqliteIndexStore implements IndexStore {
   static async open(path: string, opts: SqliteIndexOptions = {}): Promise<SqliteIndexStore> {
     const { DatabaseSync } = await loadSqlite();
     if (path !== ":memory:") mkdirPrivate(dirname(path));
-    const db = new DatabaseSync(path, { readOnly: opts.readOnly ?? false });
+    const db = retryOnBusy(new DatabaseSync(path, { readOnly: opts.readOnly ?? false }));
     try {
       // Before the WAL switch: SQLite gives the -wal and -shm the database file's mode.
       if (!opts.readOnly) ownerOnly(path);
@@ -893,7 +893,7 @@ export class SqliteIndexStore implements IndexStore {
     if (inTransaction) return write();
     try {
       this.db.exec("PRAGMA busy_timeout = 0");
-      write();
+      withoutBusyRetry(this.db, write);
     } catch {
       // busy: not worth waiting for
     } finally {
@@ -1007,10 +1007,10 @@ export class SqliteIndexStore implements IndexStore {
     try {
       for (;;) {
         try {
-          this.db.exec("BEGIN IMMEDIATE");
+          withoutBusyRetry(this.db, () => this.db.exec("BEGIN IMMEDIATE"));
           return;
         } catch (e) {
-          if ((e as { errcode?: number }).errcode !== 5) throw e;
+          if (!isBusy(e)) throw e;
         }
         const other = this.path === ":memory:" ? undefined : runningUpgrade(this.path);
         if (!other && Date.now() - started >= BUSY_TIMEOUT_MS) throw new Error(`${this.path} is locked by another process (database is locked)`);
@@ -1045,7 +1045,7 @@ export class SqliteIndexStore implements IndexStore {
     if (this.closed || this.readOnly || this.path === ":memory:") return;
     try {
       this.db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.floor(waitMs))}`);
-      this.db.prepare(`PRAGMA wal_checkpoint(${mode})`).get();
+      withoutBusyRetry(this.db, () => this.db.prepare(`PRAGMA wal_checkpoint(${mode})`).get());
     } catch {
       // busy or locked: the WAL stays as it is until the next checkpoint
     } finally {
