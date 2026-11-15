@@ -1538,7 +1538,7 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
   <span class="spacer"></span>
   <span class="update-pill indexing-pill" id="indexing" hidden></span>
   <button class="update-pill" id="update" type="button" hidden><span class="dot" aria-hidden="true"></span><span class="long">Update available</span><span class="ver"></span></button>
-  <button class="cmdk" id="cmdk" type="button" aria-label="Open command menu" aria-keyshortcuts="Meta+K Control+K"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4l3.1 3.1"/></svg><span>Jump to…</span><kbd>⌘K</kbd></button>
+  <button class="cmdk" id="cmdk" type="button" aria-label="Open command menu" aria-keyshortcuts="Meta+K Control+K"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4l3.1 3.1"/></svg><span>Jump to…</span><kbd id="cmdk-key">⌘K</kbd></button>
   <button class="icon-btn" id="theme" type="button" aria-label="Switch to light theme"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="3.2"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"/></svg></button>
   <button class="icon-btn" id="help" type="button" aria-label="Keyboard shortcuts" aria-keyshortcuts="?"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="1.5" y="4" width="13" height="8.5" rx="1.5"/><path d="M4 7h1M7 7h1M10 7h2M4.5 9.8h7"/></svg></button>
   <span class="loading-bar" id="loading" aria-hidden="true"></span>
@@ -2069,8 +2069,12 @@ window.addEventListener("hashchange", route);
 
 // One table drives the handler, the shortcut sheet and the hint bar.
 // scope: where it applies; id: the action a view (or the app) provides.
+// The command menu opens on Cmd+K on a Mac and Ctrl+K elsewhere; show the key that works.
+const IS_MAC = /Mac|iPhone|iPad|iPod/.test(String((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || ""));
+const MOD_K = IS_MAC ? "⌘K" : "Ctrl K";
+{ const k = document.getElementById("cmdk-key"); if (k) k.textContent = MOD_K; }
 const KEYMAP = [
-  { scope: "global", id: "palette", keys: ["⌘K"], label: "Command menu" },
+  { scope: "global", id: "palette", keys: [MOD_K], label: "Command menu" },
   { scope: "global", id: "help", keys: ["?"], label: "Keyboard shortcuts" },
   { scope: "global", id: "go-sessions", keys: ["g", "s"], label: "Go to sessions", chord: true },
   { scope: "global", id: "go-experiments", keys: ["g", "e"], label: "Go to experiments", chord: true },
@@ -2227,6 +2231,23 @@ function openPalette() {
   ].filter(Boolean);
   if (!expCache) api("/api/experiments", null, true).then((b) => { expCache = b.items; if (overlayOpen() && d.isConnected) render(); }, () => { expCache = []; });
   if (!benchCache) api("/api/benchmarks", null, true).then((b) => { benchCache = b.items; if (overlayOpen() && d.isConnected) render(); }, () => { benchCache = []; });
+  // Stored sessions that match the typed text, from the server: the loaded list may be filtered or empty.
+  let found = [];
+  let findSeq = 0;
+  let findTimer = 0;
+  function searchStored() {
+    clearTimeout(findTimer);
+    const text = input.value.trim();
+    const mine = ++findSeq;
+    if (!text) { if (found.length) { found = []; render(); } return; }
+    findTimer = setTimeout(() => {
+      api("/api/sessions" + qs({ where: text.replace(/["()]/g, " ").slice(0, 200), limit: 8 }), null, true).then((b) => {
+        if (mine !== findSeq || !d.isConnected) return;
+        found = (b && b.items) || [];
+        render();
+      }, () => {});
+    }, 120);
+  }
   function results() {
     const q = input.value.trim().toLowerCase();
     const m = (s) => !q || String(s).toLowerCase().includes(q);
@@ -2237,6 +2258,12 @@ function openPalette() {
       seen.add(s.id);
       out.push({ group: "Sessions", label: sessionTitle(s), hint: s.agent, run: () => { location.hash = sessionHref(s.id); } });
       if (seen.size >= 8) break;
+    }
+    for (const s of found) {
+      if (seen.size >= 8) break;
+      if (!s || !s.id || seen.has(s.id)) continue;
+      seen.add(s.id);
+      out.push({ group: "Sessions", label: sessionTitle(s), hint: s.agent, run: () => { location.hash = sessionHref(s.id); } });
     }
     for (const e of (expCache || []).filter((e) => m(e.name) || m(e.id)).slice(0, 6)) {
       out.push({ group: "Experiments", label: e.name || e.id, hint: pct(e.summary && e.summary.passRate && e.summary.passRate.p), run: () => { location.hash = "#/experiments/" + encodeURIComponent(e.id); } });
@@ -2271,7 +2298,7 @@ function openPalette() {
     closeOverlay();
     it.run();
   }
-  input.addEventListener("input", () => { palette.active = 0; render(); });
+  input.addEventListener("input", () => { palette.active = 0; render(); searchStored(); });
   input.addEventListener("keydown", (e) => {
     if (e.key === "ArrowDown") { e.preventDefault(); palette.active = Math.min(palette.items.length - 1, palette.active + 1); sync(); }
     else if (e.key === "ArrowUp") { e.preventDefault(); palette.active = Math.max(0, palette.active - 1); sync(); }
@@ -2568,11 +2595,11 @@ function activityText(s) {
   if (!st.toolCalls && !st.toolErrors) return ["", ""];
   return [plural(st.toolCalls || 0, "tool"), st.toolErrors ? fmtNum(st.toolErrors) + " failed" : ""];
 }
-/** API rows: "1 failed request (429)" in red, the first failure's message on hover. */
+/** "1 failed request (429)" on API rows, "7,172 model errors (429)" on agent rows, in red, the first failure's message on hover. */
 function failedRequestsBadge(s) {
-  const e = isApiSession(s) && (s.stats || {}).llmErrors;
+  const e = (s.stats || {}).llmErrors;
   if (!e || !e.count) return null;
-  const text = plural(e.count, "failed request") + (typeof e.statusCode === "number" ? " (" + e.statusCode + ")" : "");
+  const text = plural(e.count, isApiSession(s) ? "failed request" : "model error") + (typeof e.statusCode === "number" ? " (" + e.statusCode + ")" : "");
   return h("span", { class: "badge fail", title: e.error ? "First failure: " + e.error : text }, text);
 }
 /** "1.6k tokens": everything the session sent and got back, cache included. */
@@ -3295,6 +3322,9 @@ function sessionList(view) {
       list.where.trim()
         ? h("p", null, "Nothing matches ", h("code", null, clip(list.where.trim(), 120)), list.filters.since || list.filters.until ? " in this time range." : ".", " Remove a clause, or widen the time range.")
         : h("p", { text: "Widen the time range, or include subagents." }),
+      list.stats && list.stats.subagents && list.filters.scope !== "all"
+        ? h("p", null, plural(list.stats.subagents, "subagent"), " match. ", h("button", { class: "btn", type: "button", onclick: () => { list.filters.scope = "all"; filtersChanged(view); } }, "Include subagents"))
+        : null,
       h("button", { class: "btn", type: "button", onclick: () => clearFilters(view) }, "Clear filters"));
   }
   const lb = h("div", { class: "list", role: "listbox", tabindex: "0", "aria-label": "Sessions. j and k to move, Enter to open, right and left arrows to show or hide subagents." });
@@ -4235,8 +4265,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     failNav.hidden = failIdx.length === 0;
     const pos = failIdx.indexOf(activeItem);
     failLbl.textContent = (pos >= 0 ? fmtNum(pos + 1) + " / " : "") + plural(failIdx.length, "failure");
-    const anyFold = rows.some((r) => typeof r !== "number");
-    foldBtn.textContent = foldsOff ? "Fold quiet" : anyFold ? "Expand all" : "Fold quiet";
+    foldBtn.textContent = "Fold quiet";
     foldBtn.setAttribute("aria-pressed", String(!foldsOff));
     findCount.textContent = findQ ? (matches.length ? (Math.max(0, matches.indexOf(activeItem)) + 1) + "/" + matches.length : "0") : "";
   }
@@ -4555,7 +4584,10 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     loadingRest = false;
     if (!current(seq)) return;
     renderTools();
-    if (!hasMore) loadOutline();
+    if (!hasMore) {
+      announce("Session loaded, " + plural(items.length, "step") + (failIdx.length ? ", " + plural(failIdx.length, "failure") : ""));
+      loadOutline();
+    }
   }
   let outlineAt = 0;
   async function loadOutline() {
@@ -5113,6 +5145,7 @@ function sessionHeader(s, labels, rel) {
           ? [h("span", { class: "badge" }, plural(st.latency.llmCalls, "request")), failedRequests ? h("span", { class: "badge fail" }, plural(failedRequests, "failed request")) : null]
           : [st.toolCalls ? h("span", { class: "badge" }, plural(st.toolCalls, "tool call")) : null,
             st.toolErrors ? h("span", { class: "badge fail" }, plural(st.toolErrors, "tool error")) : null],
+        !api_ && st.llmErrors && st.llmErrors.count ? h("span", { class: "badge fail", title: st.llmErrors.error ? "First failure: " + st.llmErrors.error : undefined }, plural(st.llmErrors.count, "model error") + (typeof st.llmErrors.statusCode === "number" ? " (" + st.llmErrors.statusCode + ")" : "")) : null,
         st.filesChanged ? h("span", { class: "badge" }, plural(st.filesChanged, "file") + " changed") : null,
         st.weightEdits && st.weightEdits.events ? h("span", { class: "badge", title: fmtNum(st.weightEdits.weightsChanged) + " weights changed" + (st.weightEdits.tensors ? " in " + plural(st.weightEdits.tensors, "tensor") : "") }, plural(st.weightEdits.events, "weight edit")) : null,
         st.weightEdits && st.weightEdits.checkpoints && st.weightEdits.checkpoints.length ? h("span", { class: "badge", title: "SHA-256 of the weights file this session saved (exp run --weights takes it): " + st.weightEdits.checkpoints.join(", ") }, st.weightEdits.checkpoints.length === 1 ? "checkpoint " + shortWeights(st.weightEdits.checkpoints[0]) : plural(st.weightEdits.checkpoints.length, "checkpoint")) : null,

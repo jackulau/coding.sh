@@ -21,7 +21,7 @@ const src = [
   slice("const nf = new Intl.NumberFormat();", "function fmtDate("),
   slice("function midClip(", "function clip("),
   slice("function repoDir(", "function basename("),
-  slice("function isApiSession(", "/** API rows:"),
+  slice("function isApiSession(", "/** \"1 failed request"),
   slice("function rowTokens(", "// Facet sidebar keys"),
   slice("function testsTone(", "function sessionTitle("),
   slice("function failedRequestsBadge(", "/** \"1.6k tokens\""),
@@ -90,6 +90,7 @@ test("server-drawn rows show what the script's rows show", () => {
     base({ id: "red", stats: { toolCalls: 5, testsFailed: 2, testsPassed: 7 } }),
     base({ id: "green", stats: { toolCalls: 5, testsPassed: 3 } }),
     base({ id: "api-err", stats: { latency: { llmCalls: 4, llmP95Ms: 100 }, llmErrors: { count: 2, statusCode: 429, error: "rate limited" } } }),
+    base({ id: "agent-err", stats: { toolCalls: 2, llmErrors: { count: 3693, statusCode: 429 } } }),
   ];
   const all = [...metricFixtures(), ...extra];
   const out = renderSessionsMain(all, all.length, Date.UTC(2026, 9, 20));
@@ -109,4 +110,14 @@ test("server-drawn rows show what the script's rows show", () => {
     const dot = /<span class="dot ([^"]+)"/.exec(row)![1];
     assert.deepEqual({ badges: badges![1]!.replace(/<[^>]+>/g, ""), dot }, hydratedBadges(s), `${s.id} badges and dot`);
   });
+});
+
+
+test("a session whose model calls failed shows a marker in the row and the header", () => {
+  const s = base({ id: "all-429", stats: { llmErrors: { count: 3693, statusCode: 429, error: "rate_limit" } } });
+  const row = renderSessionsMain([s], 1);
+  assert.match(row, /3,693 model errors \(429\)/);
+  assert.match(row, /class="dot tone-fail ring"/);
+  assert.equal(textOf(page.failedRequestsBadge(s)), "3,693 model errors (429)");
+  assert.match(html, /plural\(st\.llmErrors\.count, "model error"\)/);
 });

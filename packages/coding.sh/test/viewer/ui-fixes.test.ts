@@ -145,3 +145,12 @@ test("the value autocomplete leaves out a rest of the query the parser would ref
   assert.equal(f.facetValueParams(p, "tool", 12, "Bash", "").where, undefined);
   assert.equal(f.facetValueParams(p, "tool", 12, "Bash", "(").keys, "tool");
 });
+
+test("the command menu key is Ctrl K off a Mac, the fold toggle keeps one name, and the palette asks the server", () => {
+  assert.match(html, /const MOD_K = IS_MAC \? "⌘K" : "Ctrl K";/);
+  assert.match(html, /keys: \[MOD_K\], label: "Command menu"/);
+  assert.doesNotMatch(html, /"Expand all"/);
+  assert.match(html, /function searchStored\(\)/);
+  assert.match(html, /announce\("Session loaded, " \+ plural\(items\.length, "step"\) \+ \(failIdx\.length \? ", " \+ plural\(failIdx\.length, "failure"\) : ""\)\);\n\s+loadOutline\(\)/);
+  assert.match(html, /"Include subagents"\)\)\n?\s*: null,/);
+});

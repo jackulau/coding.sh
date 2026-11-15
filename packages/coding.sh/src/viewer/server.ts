@@ -147,8 +147,9 @@ export const BLOB_CAP_BYTES = 2 * 1024 * 1024;
 export const MAX_BODY_BYTES = 1024 * 1024;
 const PORT_ATTEMPTS = 11; // the requested port + the next 10
 const SHA_RE = /^[0-9a-f]{64}$/;
-// Serve namespaces ids as `<project>/<sessionId>` (project ≤ 63 chars).
-const MAX_ID_LEN = 320;
+// Serve namespaces ids as `<project>/<sessionId>` (project ≤ 63 chars); adapters that nest a host id (t3code
+// threads) produce ids of a few hundred chars, so the cap only guards against abuse.
+const MAX_ID_LEN = 2048;
 const STATS_SCAN_CAP = 100_000;
 
 class HttpError extends Error {
@@ -734,7 +735,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         if (!m && (s.stats.events ?? 0) <= OUTLINE_INLINE_EVENTS) m = await cachedModel(ctx, s);
         // After the response: a SQLite read of every event runs synchronously.
         else if (!m) setImmediate(() => cachedModel(ctx, s).catch(() => undefined));
-        return sendJson(res, 200, { phases: o.phases.map((p) => ({ ...p, label: phaseLabel(p) })), days: o.days, derails, events: s.stats.events, ...(m ? modelOutline(m) : { spans: "building" }) });
+        return sendJson(res, 200, { phases: viewerPhases(o.phases), days: o.days, derails, events: s.stats.events, ...(m ? modelOutline(m) : { spans: "building" }) });
       }
       if (sub === "rows") {
         // One page of a turn's rows: events, with long runs of routine ones folded (never a failure).
@@ -1647,6 +1648,24 @@ async function createLabel(ctx: ApiCtx, body: unknown): Promise<Label> {
 }
 
 // ---------------------------------------------------------------- helpers
+
+/** A resume this close to the last main-agent event is the host starting the session, not a pause. */
+const RESUME_NOISE_MS = 10_000;
+
+/**
+ * The outline's phases as the viewer marks them: a "resume" a few seconds after the first events
+ * (a host notification just before session.start) is no phase, and a gap under a minute is
+ * labelled in seconds so the chip matches the gap.
+ */
+function viewerPhases<P extends { n: number; kind: string; gapMs?: number; trigger?: string }>(phases: readonly P[]): (P & { label: string })[] {
+  const out: (P & { label: string })[] = [];
+  for (const p of phases) {
+    if (p.kind === "resume" && p.gapMs !== undefined && p.gapMs < RESUME_NOISE_MS && out.length === 1 && out[0]!.kind === "start") continue;
+    const label = p.kind === "resume" && p.gapMs !== undefined && p.gapMs < 60_000 ? `resumed after ${Math.max(1, Math.round(p.gapMs / 1000))} s` : phaseLabel(p as Parameters<typeof phaseLabel>[0]);
+    out.push({ ...p, n: out.length + 1, label });
+  }
+  return out;
+}
 
 function checkId(id: string, what: string): string {
   if (!id || id.length > MAX_ID_LEN || /[\u0000-\u001f]/.test(id)) throw new HttpError(400, `invalid ${what}`);
