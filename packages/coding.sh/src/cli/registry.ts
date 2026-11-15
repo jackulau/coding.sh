@@ -71,7 +71,7 @@ const LIMIT = (d: number): FlagSpec => ({ name: "limit", short: "n", type: "numb
 const WHERE = (what: string): FlagSpec => ({ name: "where", type: "string", dashValue: true, value: "<QUERY>", desc: `Only ${what} matching a query, e.g. 'agent:codex cost>0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help)` });
 /** Help notes for the query language, generated from its key table. */
 const WHERE_NOTES: string[] = [
-  "--where: key:value clauses, AND by default; OR between clauses; ( ) to group; - to negate; a,b for either value; * as a wildcard in text; > >= < <= and a..b on numbers. Bare words search prompts, replies and tool calls (every word in one event).",
+  "--where: key:value clauses, AND by default; OR between clauses; ( ) to group; - to negate; a,b for either value; * as a wildcard in text; > >= < <= and a..b on numbers. Bare words search prompts, replies, tool calls and errors (every word in one event).",
   `Session keys: ${keyDocs().filter((k) => k.level === "session").map((k) => k.name).join(", ")}. Event keys (the session has a matching event; event keys in one group match the same event): ${keyDocs().filter((k) => k.level === "event").map((k) => k.name).join(", ")}. Also sort:-cost and limit:N. Full list with examples: https://coding.sh/docs/query.`,
 ];
 const GATEWAY_NAME: FlagSpec = { name: "gateway", type: "string", value: "<NAME>", choices: GATEWAY_IDS, desc: "Only this gateway" };
@@ -592,7 +592,7 @@ export const COMMANDS: CommandSpec[] = [
   {
     name: "search",
     group: "Explore",
-    summary: "Full-text search over prompts, replies and tool calls",
+    summary: "Full-text search over prompts, replies, tool calls and errors",
     args: [{ name: "text", desc: "Search text", required: true, variadic: true }],
     flags: [AGENT_ONE, LIMIT(20), { name: "project", type: "string", value: "<ID>", desc: "Only matches in this serve project (default: all)" }, WHERE("matches"), FRESH],
     examples: ["coding.sh search 'flaky test'", "coding.sh search migration --where 'agent:codex kind:tool.start'"],

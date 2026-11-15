@@ -51,7 +51,7 @@ Every command accepts these.
 | [`attribution`](#codingsh-attribution) | Explore | Which agent session wrote the lines each commit added; export them as Agent Trace |
 | [`blame`](#codingsh-blame) | Explore | git blame with the agent session that wrote each line |
 | [`diff-calls`](#codingsh-diff-calls) | Explore | Show what changed between two model calls, and why the second missed the prompt cache |
-| [`search`](#codingsh-search) | Explore | Full-text search over prompts, replies and tool calls |
+| [`search`](#codingsh-search) | Explore | Full-text search over prompts, replies, tool calls and errors |
 | [`usage`](#codingsh-usage) | Explore | Tokens, cost, turns and cache hits by agent, model or day |
 | [`cache`](#codingsh-cache) | Explore | Score prompt-cache health and name what breaks the cached prefix |
 | [`stats`](#codingsh-stats) | Explore | Sessions, failures, cost, tokens and latency per day or week, split by agent, model, repo or flag |
@@ -507,7 +507,7 @@ coding.sh sessions --facets model,tool --where 'repo:coding-sh'
 coding.sh sessions --agent codex --since 7d
 ```
 
-- --where: key:value clauses, AND by default; OR between clauses; ( ) to group; - to negate; a,b for either value; \* as a wildcard in text; &gt; &gt;= &lt; &lt;= and a..b on numbers. Bare words search prompts, replies and tool calls (every word in one event).
+- --where: key:value clauses, AND by default; OR between clauses; ( ) to group; - to negate; a,b for either value; \* as a wildcard in text; &gt; &gt;= &lt; &lt;= and a..b on numbers. Bare words search prompts, replies, tool calls and errors (every word in one event).
 - Session keys: agent, model, provider, repo, launch, branch, dir, title, id, run, parent, flag, skill, hook, hook.tokens, weights.edits, weights.changed, weights.checkpoint, since, until, duration, turns, tools, tool.errors, llm.errors, files, events, tests.passed, tests.failed, tokens, tokens.in, tokens.out, cost, cache.breaks, cache.lost, cache.cost, unapproved, has, is. Event keys (the session has a matching event; event keys in one group match the same event): kind, tool, ok, mcp, error, event.duration. Also sort:-cost and limit:N. Full list with examples: https://coding.sh/docs/query.
 - --facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).
 - With --json each session is a digest: its stats without stats.phases, and each derail without the event it started at (eventId, index). show &lt;id&gt; --json has both, and --fields stats.phases or --fields stats.derails prints them here.
@@ -725,7 +725,7 @@ coding.sh diff-calls 9f1c2e 4b7d1a --json
 
 ## `coding.sh search`
 
-Full-text search over prompts, replies and tool calls.
+Full-text search over prompts, replies, tool calls and errors.
 
 ```text
 coding.sh search <TEXT>... [options]

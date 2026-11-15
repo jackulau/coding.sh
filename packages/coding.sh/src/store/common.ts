@@ -11,8 +11,12 @@ export const SNIPPET_ELLIPSIS = "…";
 /** Kinds whose `payload.text` is indexed verbatim (prompts and replies). */
 export const MESSAGE_SEARCH_KINDS: readonly string[] = ["user.message", "assistant.message"];
 
-/** Every kind with searchable text: messages plus tool calls, tool output and subagent launches. */
-export const SEARCHABLE_KINDS: readonly string[] = [...MESSAGE_SEARCH_KINDS, "tool.start", "tool.end", "subagent.start"];
+/**
+ * Every kind with searchable text: messages plus tool calls, tool output, subagent launches,
+ * error events and failed model calls. An llm.call has search text only when it failed
+ * (payload.error is text), so the SQLite index finds those by events.error, not by payload.
+ */
+export const SEARCHABLE_KINDS: readonly string[] = [...MESSAGE_SEARCH_KINDS, "tool.start", "tool.end", "subagent.start", "error", "llm.call"];
 
 /** Cap on indexed text for tool/subagent events, so a huge Write or tool output cannot bloat the index. */
 export const TOOL_SEARCH_TEXT_CAP = 2000;
@@ -57,13 +61,19 @@ function joinCapped(parts: unknown[]): string | undefined {
   return text.slice(0, end);
 }
 
+/** A status code as a word (`429`), so a search for it finds the error. */
+const code = (v: unknown): string | undefined => (typeof v === "number" && Number.isFinite(v) ? String(v) : undefined);
+
 /**
  * The text an event is full-text indexed under, or undefined if it has none.
  * - user/assistant messages: `payload.text`, verbatim.
  * - tool.start: tool name, MCP server and the flattened input (command, file path, query first).
- * - tool.end: tool name and output.
+ * - tool.end: tool name, the error when it failed (payload.error), and output.
  * - subagent.start: subagent type, description and prompt.
- * Tool and subagent text is capped at TOOL_SEARCH_TEXT_CAP characters.
+ * - error: message, error type (`rate_limit_error`), error class, rate limit type and status code.
+ * - llm.call: only a failed call (payload.error is text): the error, error type, class and status code.
+ * Text other than messages is capped at TOOL_SEARCH_TEXT_CAP characters.
+ * The payload was redacted before it was stored, so this text is redacted too.
  */
 export function searchableText(e: AgentEvent): string | undefined {
   const p = e.payload ?? {};
@@ -73,10 +83,20 @@ export function searchableText(e: AgentEvent): string | undefined {
       return typeof p.text === "string" && p.text.length > 0 ? p.text : undefined;
     case "tool.start":
       return joinCapped([p.tool, p.server, ...flatten(p.input, KEY_INPUT_FIELDS)]);
-    case "tool.end":
-      return joinCapped([p.tool, ...flatten(p.output)]);
+    case "tool.end": {
+      // Before the output, so the cap never drops it; once, when the output already says it.
+      const out = flatten(p.output);
+      const err = errorText(p);
+      return joinCapped([p.tool, err !== null && !out.includes(err) ? err : undefined, ...out]);
+    }
     case "subagent.start":
       return joinCapped([p.type, p.description, p.prompt]);
+    case "error":
+      return joinCapped([p.message, p.errorType, p.errorClass, p.rateLimitType, code(p.statusCode)]);
+    case "llm.call": {
+      const err = errorText(p);
+      return err ? joinCapped([err, p.errorType, p.errorClass, code(p.statusCode)]) : undefined;
+    }
     default:
       return undefined;
   }

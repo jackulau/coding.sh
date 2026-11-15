@@ -35,7 +35,7 @@ coding.sh export events --where 'agent:codex tool.errors>0' > events.jsonl
 | `30s` `10m` `2h` | A duration needs a unit. | `duration>10m` |
 | `$` | A cost may start with `$`. | `cost>$0.5` |
 | `"…"` | A value with spaces. | `title:"fix the build"` |
-| a bare word | Searches prompts, replies and tool calls. Every word must match within one event. A bare word needs a letter or a digit; for symbols only, use `coding.sh search` (SQLite store only). | `timeout` |
+| a bare word | Searches prompts, replies, tool calls and errors. Every word must match within one event. A bare word needs a letter or a digit; for symbols only, use `coding.sh search` (SQLite store only). | `timeout` |
 
 `sort:` and `limit:` set the order and the row count, and go at the top level only. A query is at
 most 2,000 characters.
