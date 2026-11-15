@@ -195,10 +195,13 @@ export class Output {
     this.err(msg ? `  ${msg}` : "");
   }
 
-  /** Label/value row: label at column 2 in a 16-column field, value at column 18. */
-  row(label: string, value: string, glyph: "ok" | "warn" | "fail" | "none" = "none"): void {
-    const g = glyph === "ok" ? this.style("✓", "green", "err") : glyph === "warn" ? this.style("!", "yellow", "err") : glyph === "fail" ? this.style("✗", "red", "err") : " ";
-    this.err(`${g} ${formatLabel(label)}${value}`);
+  /** Label/value row: label at column 2 in a 16-column field, value at column 18. `answer` puts it on stdout (a report is the answer). */
+  row(label: string, value: string, glyph: "ok" | "warn" | "fail" | "none" = "none", answer = false): void {
+    const sink = answer ? "out" : "err";
+    const g = glyph === "ok" ? this.style("✓", "green", sink) : glyph === "warn" ? this.style("!", "yellow", sink) : glyph === "fail" ? this.style("✗", "red", sink) : " ";
+    const line = `${g} ${formatLabel(label)}${value}`;
+    if (answer) this.print(line);
+    else this.err(line);
   }
 
   /** Next step: benefit, colon, then the command on its own line. */

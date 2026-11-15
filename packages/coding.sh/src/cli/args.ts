@@ -67,19 +67,23 @@ export class UsageError extends Error {
   }
 }
 
-/** Levenshtein distance (small strings only). */
+/** Optimal string alignment distance: Levenshtein where swapping two adjacent characters is one edit (small strings only). */
 export function distance(a: string, b: string): number {
-  const prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  const rows: number[][] = [];
+  for (let i = 0; i <= a.length; i++) {
+    const row = new Array<number>(b.length + 1).fill(0);
+    row[0] = i;
+    rows.push(row);
+  }
+  for (let j = 0; j <= b.length; j++) rows[0]![j] = j;
   for (let i = 1; i <= a.length; i++) {
-    let diag = prev[0]!;
-    prev[0] = i;
     for (let j = 1; j <= b.length; j++) {
-      const tmp = prev[j]!;
-      prev[j] = Math.min(prev[j]! + 1, prev[j - 1]! + 1, diag + (a[i - 1] === b[j - 1] ? 0 : 1));
-      diag = tmp;
+      let d = Math.min(rows[i - 1]![j]! + 1, rows[i]![j - 1]! + 1, rows[i - 1]![j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d = Math.min(d, rows[i - 2]![j - 2]! + 1);
+      rows[i]![j] = d;
     }
   }
-  return prev[b.length]!;
+  return rows[a.length]![b.length]!;
 }
 
 /** The one closest candidate within a small edit distance, or undefined. */

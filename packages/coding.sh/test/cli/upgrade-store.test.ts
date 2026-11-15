@@ -292,7 +292,7 @@ describe("a store one schema ahead of this coding.sh", () => {
     await storeAt(h.index, SQLITE_SCHEMA_VERSION);
     writeFileSync(join(h.data, "ingest-stopped.json"), JSON.stringify({ since: Date.now() - 4 * 3600e3, at: Date.now(), reason: "store_newer", why: "a newer coding.sh migrated the store, and this one can't open it", next: "coding.sh update", version: VERSION }));
     const before = run(CLI, ["status"], h); // CODING_SH_NO_AUTO_INGEST: status itself ingests nothing here
-    assert.match(before.stderr, /Ingest\s+stopped 4h ago/);
+    assert.match(before.stdout, /Ingest\s+stopped 4h ago/);
     assert.equal(run(CLI, ["ingest", "--background"], h).status, 0);
     assert.equal(existsSync(join(h.data, "ingest-stopped.json")), false);
     const s = run(CLI, ["status", "--json"], h);

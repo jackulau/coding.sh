@@ -109,7 +109,7 @@ export async function slop(c: CommandContext): Promise<number> {
     if (id.startsWith("exp_")) {
       const runs = (await ctx.index.listRuns({ experimentId: id })).filter((r) => !r.superseded && !r.cancelled);
       if (!runs.length) {
-        throw new CliError(`No stored runs in experiment ${id}`, { reason: "no_diff", exitCode: 2, next: ["Harness A/B runs (coding.sh compare) keep the agent's diff; list them:", "coding.sh exp status"] });
+        throw new CliError(`No stored runs in experiment ${id}`, { reason: "no_diff", exitCode: 1, next: ["Harness A/B runs (coding.sh compare) keep the agent's diff; list them:", "coding.sh exp status"] });
       }
       runs.sort((a, b) => a.bundleId.localeCompare(b.bundleId) || a.taskId.localeCompare(b.taskId) || a.attempt - b.attempt);
       const graded: (Graded & { run: RunResult })[] = [];
@@ -165,7 +165,7 @@ export async function slop(c: CommandContext): Promise<number> {
     if (!d.patches.length) {
       throw new CliError(`Session ${s.id} has no captured diffs${d.missing ? ` (${plural(d.missing, "file change")} without one: ${s.agent}'s capture does not record diffs)` : ""}`, {
         reason: "no_diff",
-        exitCode: 2,
+        exitCode: 1,
         next: ["Grade a diff directly:", "git diff | coding.sh judge slop --diff -"],
       });
     }

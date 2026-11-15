@@ -15,8 +15,8 @@ export function ingestStoppedText(s: IngestStopped, now = Date.now()): string {
   return `stopped ${ago(s.since, { now })}: ${s.why}${s.next ? `; run ${s.next}` : ""}`;
 }
 
-function ingestRow(out: Output, stopped: IngestStopped | undefined): void {
-  if (stopped) out.row("Ingest", ingestStoppedText(stopped), "warn");
+function ingestRow(out: Output, stopped: IngestStopped | undefined, answer = false): void {
+  if (stopped) out.row("Ingest", ingestStoppedText(stopped), "warn", answer);
 }
 
 export async function run(c: CommandContext): Promise<number> {
@@ -54,13 +54,13 @@ async function status(c: CommandContext): Promise<number> {
       out.data({ home: ctx.paths.root, store: maskStoreUrl(ctx.config.store.index), last24h: { sessions: recent.length, agents }, spool, latest: latest ? sessionJson(latest) : null, ...pendingField(backlog), ...ingestStoppedField(stopped) });
       return 0;
     }
-    out.row("Home", ctx.paths.root);
-    out.row("Store", maskStoreUrl(ctx.config.store.index));
-    out.row("Last 24h", recent.length ? `${plural(recent.length, "session")} from ${agents.join(", ")}` : "No sessions");
+    out.row("Home", ctx.paths.root, "none", true);
+    out.row("Store", maskStoreUrl(ctx.config.store.index), "none", true);
+    out.row("Last 24h", recent.length ? `${plural(recent.length, "session")} from ${agents.join(", ")}` : "No sessions", "none", true);
     // Files ingest has yet to read (the same count --json gives as pending.files).
     const waiting = backlog.pendingFiles ? `, ${plural(backlog.pendingFiles, "file")} not yet ingested${backlog.indexing ? " (ingest running)" : ""}` : "";
-    out.row("Spool", `${plural(spool.files, "file")}, ${bytes(spool.bytes)}${waiting}`);
-    ingestRow(out, stopped);
+    out.row("Spool", `${plural(spool.files, "file")}, ${bytes(spool.bytes)}${waiting}`, "none", true);
+    ingestRow(out, stopped, true);
     if (latest) {
       out.print(`${latest.id}  ${latest.agent}  ${ago(latest.startedAt)}  ${oneLine(latest.title, 60)}`);
     } else {

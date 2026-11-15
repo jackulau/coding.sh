@@ -1579,7 +1579,7 @@ export const COMMANDS: CommandSpec[] = [
           ...IMPROVE_FLAGS("30d", 5),
           { name: "watch", type: "boolean", desc: "Keep running and print a line when a change's verdict moves as new sessions arrive" },
           { name: "interval", type: "number", value: "<SECONDS>", desc: "With --watch: how often to re-check", default: "60" },
-          { name: "sessions", type: "boolean", desc: "List every session still flagged after each change, not just the newest 5" },
+          { name: "sessions", type: "boolean", desc: "List every session still flagged after each change, not only the newest 5" },
         ],
         examples: ["coding.sh improve check", "coding.sh improve check --since 7d --json", "coding.sh improve check --sessions", "coding.sh improve check --watch"],
       },

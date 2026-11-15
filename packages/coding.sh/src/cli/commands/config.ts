@@ -164,8 +164,22 @@ export async function run(c: CommandContext): Promise<number> {
     }
     const key = c.positionals[0];
     if (key === undefined) {
-      if (out.json) out.data({ config });
-      else out.print(stringifyToml(config as unknown as Record<string, unknown>).trimEnd());
+      // The keys the loaded Config does not carry (refine.*, serve.*, proxy.*) are read from the user's file.
+      const full = structuredClone(config) as unknown as Record<string, unknown>;
+      const table = readUserConfigTable(env).table;
+      for (const k of FILE_KEYS) {
+        const v = getPath(table, k);
+        if (v === undefined || getPath(full, k) !== undefined) continue;
+        const parts = k.split(".");
+        let cur = full;
+        for (const part of parts.slice(0, -1)) {
+          const next = cur[part];
+          cur = next && typeof next === "object" && !Array.isArray(next) ? (next as Record<string, unknown>) : (cur[part] = {}) as Record<string, unknown>;
+        }
+        cur[parts[parts.length - 1]!] = structuredClone(v);
+      }
+      if (out.json) out.data({ config: full });
+      else out.print(stringifyToml(full).trimEnd());
       return 0;
     }
     let value = getPath(config, key);

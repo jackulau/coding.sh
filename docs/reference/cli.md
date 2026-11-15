@@ -2723,7 +2723,7 @@ coding.sh improve check [options]
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 | `--watch` |  | Keep running and print a line when a change's verdict moves as new sessions arrive. |
 | `--interval <SECONDS>` | `60` | With --watch: how often to re-check. |
-| `--sessions` |  | List every session still flagged after each change, not just the newest 5. |
+| `--sessions` |  | List every session still flagged after each change, not only the newest 5. |
 
 ```sh
 coding.sh improve check

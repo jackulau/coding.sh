@@ -60,6 +60,7 @@ export async function run(c: CommandContext): Promise<number> {
   if (evidence && kind !== "sessions") throw new UsageError(`--evidence writes whole sessions; drop "${kind}"`, { reason: "bad_arg" });
   const format = (str(c.flags.format) ?? "jsonl") as ExportFormat;
   if (!(EXPORT_FORMATS as readonly string[]).includes(format)) throw new UsageError(`--format must be one of ${EXPORT_FORMATS.join(", ")}`, { reason: "bad_flag" });
+  if (c.out.json && !evidence) throw new UsageError(`export already prints one ${kind === "sessions" ? "session" : kind === "events" ? "event" : "label"} per line (JSONL); drop --json, or use --format csv`, { reason: "bad_flag" });
   const maxSessions = positiveInt(c.flags.limit, "limit");
   const since = str(c.flags.since) !== undefined ? parseSince(str(c.flags.since)!) : undefined;
   const repo = str(c.flags.repo);
