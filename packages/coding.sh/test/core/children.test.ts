@@ -25,9 +25,13 @@ const alive = (pid: number) => {
 const until = async (cond: () => boolean) => {
   while (!cond()) await new Promise((r) => setTimeout(r, 20));
 };
-/** Whether `pid` is gone within 5 s. A killed process is not gone at once: it still has to be scheduled to die and be reaped. */
+/**
+ * Whether `pid` is gone within 15 s. A killed process is not gone at once: it still has to be
+ * scheduled to die and be reaped, which the full suite's load can stretch to seconds. A process
+ * that is gone returns at once, and one that was never killed lives for SLEEPER_MS.
+ */
 const gone = async (pid: number) => {
-  const end = Date.now() + 5000;
+  const end = Date.now() + 15_000;
   while (alive(pid) && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
   return !alive(pid);
 };
@@ -48,16 +52,41 @@ function script(js: string): string {
   writeFileSync(p, js);
   return p;
 }
-/** Script lines that start a 30 s sleeper sharing our stdout (`c`) and record its pid in `pidFile`. */
+/** How long a sleeper lives. The bugs these tests catch wait for a sleeper or a 60 s timeout, so they cost at least this long. */
+const SLEEPER_MS = 60_000;
+/** Script lines that start a sleeper sharing our stdout (`c`) and record its pid in `pidFile`. */
 const sleeper = (pidFile: string) => `
-const c = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: ["ignore", "inherit", "inherit"] });
+const c = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, ${SLEEPER_MS})"], { stdio: ["ignore", "inherit", "inherit"] });
 ${writePid(pidFile, "c.pid")}
 `;
 /** `node <file>` as a sh command line. */
 const nodeLine = (file: string) => `'${process.execPath}' '${file}'`;
 
+type Run = (file: string, timeoutMs: number, signal?: AbortSignal) => Promise<{ exitCode: number | null; timedOut: boolean; stdout: string }>;
+/**
+ * The time a run may take to settle on exit or after an abort: 3x what the same helper takes to
+ * run a script that only prints, measured just before (node's start on this machine, now), at
+ * least 2.5 s and at most half a sleeper's life. Idle, that is the old fixed 2.5 s. Under the full
+ * suite on Windows a node start alone can take a second or more, and the fixed 2.5 s failed once
+ * per helper. The bugs wait for a sleeper or the timeout, so they still miss it by tens of seconds.
+ */
+const budgetFor = async (run: Run) => {
+  const t0 = Date.now();
+  const r = await run(script(`console.log("started");\n`), 0);
+  assert.equal(r.exitCode, 0);
+  return Math.min(SLEEPER_MS / 2, Math.max(2500, 3 * (Date.now() - t0)));
+};
+/**
+ * Asserts a run settled within `budget` (from budgetFor, before the run), or within a budget
+ * measured again now when it took longer: the load can rise while a test runs.
+ */
+const settledWithin = async (run: Run, ms: number, budget: number, what: string) => {
+  const b = ms < budget ? budget : Math.max(budget, await budgetFor(run));
+  assert.ok(ms < b, `${what} ${ms}ms, budget ${b}ms`);
+};
+
 /** Each helper runs `node <script>` (sh through the POSIX shell) and reports exit code, timeout and stdout. */
-const helpers: Record<string, (file: string, timeoutMs: number, signal?: AbortSignal) => Promise<{ exitCode: number | null; timedOut: boolean; stdout: string }>> = {
+const helpers: Record<string, Run> = {
   sh: async (file, timeoutMs, signal) => {
     const r = await sh(nodeLine(file), { cwd: process.cwd(), timeoutMs, ...(signal ? { signal } : {}) });
     return { exitCode: r.exitCode, timedOut: r.timedOut, stdout: r.stdoutTail };
@@ -81,9 +110,10 @@ for (const [name, run] of Object.entries(helpers)) {
     it("settles on exit with the real code when a background child holds stdout, and reaps it", async () => {
       for (const timeoutMs of [5000, 0]) {
         const pidFile = join(root, `bg-${seq++}`);
+        const budget = await budgetFor(run);
         const t0 = Date.now();
         const r = await run(script(`${sleeper(pidFile)}c.unref();\nconsole.log("tests passed");\n`), timeoutMs);
-        assert.ok(Date.now() - t0 < 2500, `settled in ${Date.now() - t0}ms (timeoutMs ${timeoutMs})`);
+        await settledWithin(run, Date.now() - t0, budget, `settled (timeoutMs ${timeoutMs}) in`);
         assert.equal(r.exitCode, 0);
         assert.equal(r.timedOut, false);
         assert.match(r.stdout, /tests passed/);
@@ -95,25 +125,32 @@ for (const [name, run] of Object.entries(helpers)) {
 
     it("an explicit abort kills the process group promptly", async () => {
       const pidFile = join(root, `abort-${seq++}`);
+      const budget = await budgetFor(run);
       const ac = new AbortController();
-      const t0 = Date.now();
       const p = run(script(sleeper(pidFile)), 60_000, ac.signal);
       await until(() => existsSync(pidFile));
+      // Timed from the abort: how fast the kill lands, not how long node took to start.
+      const t0 = Date.now();
       ac.abort();
       const r = await p;
-      assert.ok(Date.now() - t0 < 5000, `aborted in ${Date.now() - t0}ms`);
+      await settledWithin(run, Date.now() - t0, budget, "settled after the abort in");
       assert.equal(r.exitCode, null);
       assert.equal(r.timedOut, false);
       assert.equal(await gone(Number(readFileSync(pidFile, "utf8"))), true);
     });
 
     it("the ambient signal reaches spawns that take no signal", async () => {
+      const budget = await budgetFor(run);
       const ac = new AbortController();
-      const t0 = Date.now();
-      const p = withAbortSignal(ac.signal, () => run(script("setTimeout(() => {}, 30000);\n"), 60_000));
-      setTimeout(() => ac.abort(), 200);
+      let t0 = 0;
+      const p = withAbortSignal(ac.signal, () => run(script(`setTimeout(() => {}, ${SLEEPER_MS});\n`), 60_000));
+      setTimeout(() => {
+        t0 = Date.now();
+        ac.abort();
+      }, 200);
       const r = await p;
-      assert.ok(Date.now() - t0 < 5000, `aborted in ${Date.now() - t0}ms`);
+      assert.ok(t0 > 0, `the run ended before the abort: exit ${r.exitCode}, stdout ${JSON.stringify(r.stdout)}`);
+      await settledWithin(run, Date.now() - t0, budget, "settled after the abort in");
       assert.equal(r.exitCode, null);
       assert.equal(liveChildCount(), 0);
     });

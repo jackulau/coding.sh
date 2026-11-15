@@ -22,8 +22,18 @@ let repo = "";
 let env: Record<string, string> = {};
 const WITHOUT = ["--without", ".claude/skills/pdf"];
 
+/**
+ * Runs the CLI from source. The 8-run compare takes about 17 s alone on Windows and took 133 s
+ * under the full suite, past the old 120 s cap, which left stdout empty and failed on JSON.parse.
+ * 600 s leaves room for that; a hang still ends the run.
+ */
 function cli(args: string[], cwd = home) {
-  return spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { env, cwd, encoding: "utf8", timeout: 120_000 });
+  return spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { env, cwd, encoding: "utf8", timeout: 600_000 });
+}
+/** The JSON a run printed, or a failure that says how the run ended instead of "Unexpected end of JSON input". */
+function json<T>(r: ReturnType<typeof cli>): T {
+  assert.ok(r.status === 0 && r.stdout.trim(), `exit ${r.status}${r.signal ? `, signal ${r.signal}` : ""}${r.error ? `, ${r.error.message}` : ""}\nstdout: ${r.stdout}\nstderr: ${r.stderr}`);
+  return JSON.parse(r.stdout) as T;
 }
 const runsLog = () => (existsSync(join(root, "runs.log")) ? readFileSync(join(root, "runs.log"), "utf8").trim().split("\n").filter(Boolean) : []);
 const clearLog = () => rmSync(join(root, "runs.log"), { force: true });
@@ -98,15 +108,14 @@ describe("compare: iterate on a comparison", () => {
     if (!gitBin) return t.skip("needs git");
     writeFileSync(join(root, "ratelimit.flag"), "");
     const r = cli(["compare", "base", ...WITHOUT, "--tag", "iter", "--retries", "0", "-c", "1", "--yes", "--json"]);
-    const out = JSON.parse(r.stdout) as Out;
+    const out = json<Out>(r);
     first = out.experimentId;
     assert.deepEqual([out.planned, out.skipped], [8, 0]);
     assert.equal(out.report.baseline.runs + out.report.candidate.runs, 7, "the infra-failed run is left out");
     assert.equal(runsLog().length, 7);
     clearLog();
     const retry = cli(["compare", "base", ...WITHOUT, "--experiment", first, "--retry-errors", "--yes", "--json"]);
-    assert.equal(retry.status, 0, retry.stdout + retry.stderr);
-    const again = JSON.parse(retry.stdout) as Out;
+    const again = json<Out>(retry);
     assert.equal(again.experimentId, first);
     assert.deepEqual([again.planned, again.retried], [1, 1]);
     assert.equal(runsLog().length, 1, "one agent run");
@@ -116,16 +125,15 @@ describe("compare: iterate on a comparison", () => {
     // Nothing errored now: no run, the same report.
     clearLog();
     const none = cli(["compare", "base", ...WITHOUT, "--experiment", first, "--retry-errors", "--yes", "--json"]);
-    assert.equal((JSON.parse(none.stdout) as Out).retried, 0);
+    assert.equal(json<Out>(none).retried, 0);
     assert.equal(runsLog().length, 0);
   });
 
   it("--failing runs only the tasks A failed, and says the rates are conditioned on it", (t) => {
     if (!gitBin) return t.skip("needs git");
+    assert.ok(first, "needs the experiment the --retry-errors test runs, which failed");
     clearLog();
-    const r = cli(["compare", "base", ...WITHOUT, "--failing", first, "--yes", "--json"]);
-    assert.equal(r.status, 0, r.stdout + r.stderr);
-    const out = JSON.parse(r.stdout) as Out;
+    const out = json<Out>(cli(["compare", "base", ...WITHOUT, "--failing", first, "--yes", "--json"]));
     assert.deepEqual([out.selection?.from, out.selection?.tasks, out.selection?.failing?.bundle], [4, 1, "base"]);
     assert.deepEqual(runsLog().sort(), ["with:make sum add BROKEN", "without:make sum add BROKEN"]);
     // Both arms failed the BROKEN task: each failed run carries the end of its verifier output, redacted.
@@ -147,6 +155,7 @@ describe("compare: iterate on a comparison", () => {
 
   it("--failing refuses a bundle the comparison didn't run, and a comparison A never failed in", (t) => {
     if (!gitBin) return t.skip("needs git");
+    assert.ok(first, "needs the experiment the --retry-errors test runs, which failed");
     const other = cli(["compare", "base", ...WITHOUT, "--failing", `${first}@other`, "--yes"]);
     assert.equal(other.status, 2, other.stderr);
     assert.match(other.stderr, new RegExp(`${first} has no runs of other; it ran base and base-without-claude-skills-pdf`));
@@ -159,7 +168,7 @@ describe("compare: iterate on a comparison", () => {
 
   it("--sample draws the same tasks for the same seed", (t) => {
     if (!gitBin) return t.skip("needs git");
-    const draw = (seed: string) => JSON.parse(cli(["compare", "base", ...WITHOUT, "--tag", "iter", "--sample", "2", "--seed", seed, "--dry-run", "--json"]).stdout) as { runs: number; tasks: string[]; selection: { note: string } };
+    const draw = (seed: string) => json<{ runs: number; tasks: string[]; selection: { note: string } }>(cli(["compare", "base", ...WITHOUT, "--tag", "iter", "--sample", "2", "--seed", seed, "--dry-run", "--json"]));
     const a = draw("7");
     assert.equal(a.runs, 4);
     assert.equal(a.tasks.length, 2);
