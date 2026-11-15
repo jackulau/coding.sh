@@ -271,3 +271,38 @@ describe("otlp sink: weight edits", () => {
     }
   });
 });
+
+describe("otlp sink: structured message content (semconv #634)", () => {
+  const msgEvents = (reply: string): AgentEvent[] => [
+    { id: "m1", v: 0, sessionId: "otlp-sink-s1", ts: T0, agent: "claude-code", kind: "user.message", payload: { text: "fix the bug" } } as AgentEvent,
+    { id: "m2", v: 0, sessionId: "otlp-sink-s1", ts: T0 + 500, agent: "claude-code", kind: "assistant.message", model: "claude-sonnet-4-5", payload: { text: reply } } as AgentEvent,
+  ];
+  const chat = (reply: string) => toOtlpSpans(msgEvents(reply), [], "full").find((s) => s.name.startsWith("chat"))!;
+  const get = (list: KeyValue[], key: string) => list.find((kv) => kv.key === key)!.value as any;
+
+  it("input and output messages are arrayValue of kvlistValue", () => {
+    const span = chat("done");
+    const input = get(span.attributes, "gen_ai.input.messages");
+    const first = input.arrayValue.values[0].kvlistValue.values;
+    assert.equal(first.find((kv: KeyValue) => kv.key === "role")!.value.stringValue, "user");
+    const part = first.find((kv: KeyValue) => kv.key === "parts")!.value.arrayValue.values[0].kvlistValue.values;
+    assert.equal(part.find((kv: KeyValue) => kv.key === "type")!.value.stringValue, "text");
+    assert.equal(part.find((kv: KeyValue) => kv.key === "content")!.value.stringValue, "fix the bug");
+    assert.ok(get(span.attributes, "gen_ai.output.messages").arrayValue.values[0].kvlistValue);
+  });
+
+  it("round trips through the receiver mapping", async () => {
+    const req = toOtlpRequest(msgEvents("all fixed"), [], "full");
+    const { events } = await mapTraces(decodeTraceJson(req), { maxInlineBytes: 4096, blob: (d) => new MemBlobs().put(d), traceSessions: new TraceSessionMap() });
+    assert.ok(events.some((e) => e.kind === "assistant.message" && e.payload.text === "all fixed"));
+  });
+
+  it("truncates inside the part and keeps the structure", () => {
+    const span = chat("x".repeat(20_000));
+    const out = get(span.attributes, "gen_ai.output.messages").arrayValue.values[0].kvlistValue.values;
+    const parts = out.find((kv: KeyValue) => kv.key === "parts")!.value.arrayValue.values[0].kvlistValue.values;
+    const c = parts.find((kv: KeyValue) => kv.key === "content")!.value.stringValue as string;
+    assert.equal(c.length, 8193);
+    assert.ok(c.endsWith("…"));
+  });
+});
