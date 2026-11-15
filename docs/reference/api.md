@@ -642,6 +642,18 @@ Each API error Claude Code retried (a transcript's `api_error` line) is an `erro
 A weekly-limit stall then reads as hundreds of `rate_limit` errors on `seven_day`, not as one
 transient error.
 
+The `api-stall` flag marks a session that rate limits or an overloaded API held up. It counts the
+failed model calls and API `error` events with status 429 or 529, error class `rate_limit` or
+`overloaded`, or a message that names a rate limit, an overload or a usage limit. The session is
+flagged when:
+
+- there are three or more of them,
+- their `retryAfterMs` add up to a minute or more,
+- one was the last retry allowed (`retryAttempt` reached `maxRetries`), or
+- no model call, reply or tool call came after the last one.
+
+One 429 that a retry got past does not flag. A 500, a 400 or an auth error does not count.
+
 **Waste and cache breaks.** Both stats are absent when there is nothing to report.
 
 | Field | Meaning |
@@ -704,6 +716,7 @@ skills). It is what `coding.sh harness audit` counts.
 
 | Field | Meaning |
 |---|---|
+| `stats.filesChanged` | Distinct files the session changed, by path relative to its working directory. Each `file.change` event counts, and so does each file a finished shell call wrote (rules below) |
 | `stats.toolErrors` | Tool calls that really failed |
 | `stats.benignToolErrors` | Non-zero exits that are not errors: a shell search that found nothing (`grep`, `rg`, `git grep` and the like exiting 1 with no output), a probe that answered no (`test -f`, `which`, `command -v`), and a `diff`, `cmp` or `git diff --exit-code` that found differences. Absent when zero |
 | `stats.interruptedToolCalls` | Calls the user or the agent stopped (exit 130, or an interrupted result). Absent when zero |
@@ -711,6 +724,8 @@ skills). It is what `coding.sh harness audit` counts.
 
 - A session with `stats.foldError` holds only what the events say directly: the agent, the first and last event times, the cwd and `stats.events`, plus the `fold:error` tag. `coding.sh ingest` folds it again, and `coding.sh doctor` counts these sessions.
 - The benign and interrupted rule also decides `repeated-tool-failure`, which only counts real failures, and each phase's `toolErrors` in the outline.
+- A shell call writes a file when its command names it as the target of `>` or `>>`, `tee`, `sed -i`, `perl -i`, `truncate`, `cp` or `mv`, `git checkout|restore -- <path>`, or PowerShell's `Set-Content`, `Add-Content` or `Out-File`. A file written both by an edit tool and by a shell call counts once.
+- Reads, deletes, `/dev/null`, paths with a variable or a glob, and paths outside the working directory (`/tmp`, `~`) do not count. Neither does a call the user stopped or turned down, nor a script that writes files without naming them in the command (`python fix.py`).
 
 Three `notification` kinds carry the events behind these stats:
 

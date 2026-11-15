@@ -11,6 +11,7 @@ grouped by area, with links to the docs for the details.
 
 ### Added
 
+- **Sessions.** A session the model API held up gets the `api-stall` flag: three or more 429 or 529 errors, a minute of retry waits, retries run out, or a last rate-limit error it never got past. One 429 that a retry got past is not flagged. [API](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md)
 - **Export.** The OTLP sink sends `gen_ai.input.messages` and `gen_ai.output.messages` as structured values (a list of `{role, parts:[{type, content}]}`) instead of a JSON string, as the GenAI semantic conventions now require. Each text part is cut at 8192 characters. [Sinks](https://github.com/jackulau/coding.sh/blob/main/docs/reference/config.md#sinks)
 - **Evals.** The `objective` grader scores a measured number (speed, size, cost) against two dated anchors on a clipped log or linear ratio, so runs that all pass a test still rank; a `gate` grader that fails scores 0. [Graders](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md)
 - **CLI.** Three days after first use, a successful command prints one dim line asking for a GitHub star, and `coding.sh ui` shows a small card after 5 sessions. The line prints once; the card shows until you dismiss it or click Star. Neither makes a network call. `CODING_SH_NO_STAR_PROMPT=1` turns both off. [Install](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#updates)
@@ -33,6 +34,7 @@ grouped by area, with links to the docs for the details.
 
 ### Changed
 
+- **Sessions.** `stats.filesChanged` counts files an agent wrote from a shell (`sed -i`, `>`, `tee`, `cp`, `mv`, `Set-Content`, `Out-File`), not only through edit tools. A file edited both ways counts once. [API](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md)
 - **Docs.** The docs home, the home page FAQ and llms.txt say what coding.sh does: it records prompts, model calls, tool calls, file changes and cost, shows each run in a local viewer, and turns failed runs into evals. Other products are named only on the compare pages and where they are an integration, and a site test enforces it. [Docs](https://coding.sh/docs)
 - **Docs.** `--help`, the package descriptions, the README, the site's description and llms.txt say what coding.sh records instead of "open-source, local-first observability and evals for any AI agent", and the site's status line shows the current release (it said v0.1.4). A site test fails on stacked category words in published text. [Docs](https://coding.sh/docs)
 - **Node.** The minimum Node is 22.16, because 22.15 has no SQLite FTS5. A store that lacks FTS5 now fails with reason `no_fts5` and names Node 22.16. CI runs the packed CLI on Node 22.16.0. [Install](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md)

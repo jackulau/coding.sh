@@ -22,6 +22,8 @@ import { foldModels, mainModelOf, MODEL_FALLBACK, MODEL_SWITCH, modelFlags, mode
 import { exposesSecret, foldRedactions, redactionsOf, redactionState, SECRET_EXPOSED, type RedactionState } from "./redaction-stats.ts";
 import { foldUnapproved, unapprovedOf, unapprovedState, type UnapprovedState } from "./unapproved.ts";
 import { foldWeightEdits, weightEditFlags, weightEditsOf, weightEditState, WEIGHTS_CHECKPOINT, WEIGHTS_EDITED, type WeightEditState } from "./weights.ts";
+import { normalizeTracePath } from "./shell-diff.ts";
+import { shellCallFiles } from "./shell-files.ts";
 
 export { REOPEN_SLACK_MS };
 
@@ -52,6 +54,8 @@ export const FLAGS = {
   refusal: REFUSAL,
   /** The model wrote a tool call out as text, so it never ran: the tool was not available to it (writesToolCallAsText). */
   textToolCall: "text-tool-call",
+  /** The model API held the session up with rate limits or overload (429, 529): see API_STALL. */
+  apiStall: "api-stall",
   /** The agent ran a destructive or paid command (rm -rf, git reset --hard, a tool's repair --yes, …) that the user's last turn had not approved (core/unapproved.ts, Session.stats.unapprovedActions). */
   unapprovedAction: "unapproved-action",
   /** A tag, not a failure: the session wrote a prompt cache it barely read back (core/cache-breaks.ts cacheUnderused). */
@@ -460,7 +464,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * new derivation. A new or retyped sub-state changes the stamp by itself; a
  * new optional field or a change of meaning still needs the bump.
  */
-export const SESSION_FOLD_VERSION = 23; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory). 19: a session with transcript model calls counts them, not the copies its OTLP logs carry (sansOtel, transcriptCalls). 20: weight edits (stats.weightEdits, the weights:edited tag, SessionState.weightEdits). 21: weight checkpoints (stats.weightEdits.checkpoints, the weights:checkpoint tag), and stats.weightEdits on a session with a checkpoint and no edit. 22: a `<parent>:sub:<agentId>` session with no session.start takes its parent from the id. 23: an API error event (source api, or status 400 or more) counts in stats.llmErrors.
+export const SESSION_FOLD_VERSION = 24; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory). 19: a session with transcript model calls counts them, not the copies its OTLP logs carry (sansOtel, transcriptCalls). 20: weight edits (stats.weightEdits, the weights:edited tag, SessionState.weightEdits). 21: weight checkpoints (stats.weightEdits.checkpoints, the weights:checkpoint tag), and stats.weightEdits on a session with a checkpoint and no edit. 22: a `<parent>:sub:<agentId>` session with no session.start takes its parent from the id. 23: an API error event (source api, or status 400 or more) counts in stats.llmErrors. 24: api-stall (FlagState.apiStall); filesChanged counts files a shell call writes (shellCallFiles, SessionState.shellFiles), and keys file.change paths relative to the cwd.
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -512,7 +516,10 @@ export interface SessionState {
   /** `parent` came from a proxied call's parentSessionId; a session.start replaces it. */
   parentByProxy?: boolean;
   project?: string;
+  /** Files changed, relative to the cwd: file.change paths, and files a finished shell call wrote. */
   files: Set<string>;
+  /** Files a started shell call writes (shellCallFiles), by toolUseId: they count once the call ends and was not stopped. */
+  shellFiles: Map<string, string[]>;
   turnEnds: { live: number; backfill: number; liveIdless: number; backfillIdless: number };
   turnIds: Set<string>;
   userMessages: number;
@@ -590,6 +597,7 @@ export function sessionState(): SessionState {
     allTranscript: true,
     live: false,
     files: new Set(),
+    shellFiles: new Map(),
     turnEnds: { live: 0, backfill: 0, liveIdless: 0, backfillIdless: 0 },
     turnIds: new Set(),
     userMessages: 0,
@@ -832,6 +840,16 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
       if (typeof id === "string" && id) s.toolIds.add(id);
       else if (e.kind === "tool.start") s.idlessStarts++;
       else s.idlessEnds++;
+      // A shell call that writes files (sed -i, `>`, tee, Set-Content, …): they count when it ends, unless it was stopped
+      // or turned down (it never ran). A call with no id counts as it starts.
+      if (e.kind === "tool.start") {
+        const written = shellCallFiles(e.payload.tool, e.payload.input, e.cwd ?? s.cwd);
+        if (written.length && typeof id === "string" && id) s.shellFiles.set(id, written);
+        else for (const f of written) s.files.add(f);
+      } else if (typeof id === "string" && s.shellFiles.has(id)) {
+        if (failure?.cls !== "interrupted") for (const f of s.shellFiles.get(id)!) s.files.add(f);
+        s.shellFiles.delete(id);
+      }
       if (e.kind === "tool.end" && e.payload.ok === false) {
         if (!failure || failure.cls === "real") s.toolErrors++;
         else if (failure.cls === "benign") s.benignToolErrors++;
@@ -849,7 +867,8 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
       if (proxyCall && typeof e.payload.prompt === "string" && e.payload.prompt.trim() && !SYNTHETIC_PROMPT.test(e.payload.prompt)) s.fallbackTitle ??= makeTitle(e.payload.prompt);
       break;
     case "file.change":
-      if (typeof e.payload.path === "string") s.files.add(e.payload.path);
+      // Keyed like a shell call's writes (relative to the cwd), so a file edited both ways counts once.
+      if (typeof e.payload.path === "string" && e.payload.path) s.files.add(normalizeTracePath(e.payload.path, e.cwd ?? s.cwd));
       break;
     case "test.result":
       s.lastTest = { passed: num(e.payload.passed) ?? 0, failed: num(e.payload.failed) ?? 0 };
@@ -1151,9 +1170,11 @@ interface FlagState {
   gateways: Set<GatewayId>;
   tamper: TamperState;
   unapproved: UnapprovedState;
+  apiStall: ApiStallState;
 }
 
 const flagState = (): FlagState => ({
+  apiStall: { errors: 0, waitMs: 0, exhausted: false, open: false, at: 0 },
   premature: prematureState(),
   repeated: repeatedFailureState(),
   fileChange: false,
@@ -1181,6 +1202,61 @@ export function writesToolCallAsText(text: string): boolean {
   return text.includes("<invoke name=") && TEXT_TOOL_CALL.test(text.replace(CODE_BLOCK, ""));
 }
 
+/** api-stall thresholds. Documented in docs/concepts.md; change both together. */
+export const API_STALL = {
+  /** This many rate-limit or overload errors in one session… */
+  errors: 3,
+  /** …or retry waits the API asked for (retryAfterMs) adding up to this long. */
+  waitMs: 60_000,
+} as const;
+
+/** Rate-limit and overload errors the model API returned, and whether the session got past the last one. */
+interface ApiStallState {
+  errors: number;
+  waitMs: number;
+  /** A retry was the last one allowed (retryAttempt ≥ maxRetries): the request gave up. */
+  exhausted: boolean;
+  /** No model call or tool call has followed the last such error yet. */
+  open: boolean;
+  /** ts of the last such error. */
+  at: number;
+}
+
+/** What a rate limit or an overloaded provider says in an error message or type. */
+const CAPACITY_TEXT = /\b(?:429|529)\b|rate[ _-]?limit|overloaded|too many requests|usage limit/i;
+
+/** A failed model call that ran into a rate limit or an overloaded provider (HTTP 429 or 529), not a bad request or an outage. */
+export function capacityError(p: Record<string, unknown>): boolean {
+  if (p.statusCode === 429 || p.statusCode === 529 || p.errorClass === "rate_limit" || p.errorClass === "overloaded") return true;
+  return [p.errorType, p.error, p.message].some((v) => typeof v === "string" && CAPACITY_TEXT.test(v));
+}
+
+function foldApiStall(s: ApiStallState, e: AgentEvent): void {
+  if (isEnrichment(e)) return;
+  const failed = (e.kind === "error" && apiErrorEvent(e.payload)) || (e.kind === "llm.call" && llmCallFailed(e.payload));
+  if (failed) {
+    if (!capacityError(e.payload)) return;
+    s.errors++;
+    s.waitMs += Math.max(0, num(e.payload.retryAfterMs) ?? 0);
+    const attempt = num(e.payload.retryAttempt);
+    const max = num(e.payload.maxRetries);
+    if (attempt !== undefined && max !== undefined && attempt >= max) s.exhausted = true;
+    s.open = true;
+    s.at = e.ts;
+    return;
+  }
+  // The agent got going again: a model call that worked, a reply or a tool call, after the error (not the error's own message).
+  if (s.open && e.ts > s.at && (e.kind === "llm.call" || e.kind === "assistant.message" || e.kind === "tool.start")) s.open = false;
+}
+
+/**
+ * The model API held the session up: API_STALL.errors or more rate-limit or
+ * overload errors, retry waits of API_STALL.waitMs or more in all, a request
+ * that ran out of retries, or a last such error the session never got past. A
+ * single 429 that a retry got past is not a stall.
+ */
+const apiStalled = (s: ApiStallState): boolean => s.errors >= API_STALL.errors || s.waitMs >= API_STALL.waitMs || s.exhausted || s.open;
+
 /** `failure`: how a failed tool.end failed (core/failures.ts); undefined counts it as real. */
 function foldFlags(s: FlagState, e: AgentEvent, failure?: FailureClass): void {
   foldPremature(s.premature, e);
@@ -1190,6 +1266,7 @@ function foldFlags(s: FlagState, e: AgentEvent, failure?: FailureClass): void {
   if (e.kind === "file.change") s.fileChange = true;
   if (e.kind === "test.result" || isVerifyToolStart(e)) s.verified = true;
   if (e.kind === "context.compact") s.compaction = true;
+  foldApiStall(s.apiStall, e);
   if (e.kind === "assistant.message" && !s.textToolCall && typeof e.payload.text === "string" && writesToolCallAsText(e.payload.text)) s.textToolCall = true;
   const g = gatewayOfEvent(e);
   if (g) s.gateways.add(g);
@@ -1203,6 +1280,7 @@ function flagsOf(s: FlagState, derails: readonly Derail[], sorted?: readonly Age
   if (s.fileChange && !s.verified) flags.push(FLAGS.noVerification);
   if (s.compaction) flags.push(FLAGS.compaction);
   if (s.textToolCall) flags.push(FLAGS.textToolCall);
+  if (apiStalled(s.apiStall)) flags.push(FLAGS.apiStall);
   for (const d of derails) if (!flags.includes(d.flag)) flags.push(d.flag);
   if (s.tamper.high || (s.tamper.needsEvents && detectTestTamper(sorted!))) flags.push(FLAGS.testTamper);
   if (s.unapproved.hits.length) flags.push(FLAGS.unapprovedAction);

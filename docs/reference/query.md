@@ -186,6 +186,7 @@ coding.sh sessions --where 'is:flagged since:7d'
 | `skill-copy-conflict` | Used two copies of one skill, such as the project's and a personal one. |
 | `refusal` | Had a model call stop on a refusal (`refusal`, `content_filter` or `safety`). |
 | `text-tool-call` | Had the model write a tool call out as text, so it never ran. |
+| `api-stall` | Was held up by rate limits or an overloaded API: three or more 429 or 529 errors, a minute of retry waits, retries run out, or an error it never got past. |
 | `unapproved-action` | Ran a destructive or paid command that the user's turn did not approve, such as `git reset --hard` or `git push --force`. |
 | `step-retried`, `resumed` | Is a durable workflow run that retried a step, or continued after a crash. Notes, not failures. |
 

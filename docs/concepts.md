@@ -53,7 +53,11 @@ own session, linked to its parent.
 ### Flag
 
 A failure pattern coding.sh found in a session, such as `no-verification` when files changed but no
-test ran. A flag with a colon, such as `skill:pdf`, is a tag, not a failure.
+test ran, or `api-stall` when rate limits or an overloaded API held the session up. A flag with a
+colon, such as `skill:pdf`, is a tag, not a failure.
+
+A session's files changed count each file once, whether the agent edited it with an edit tool or
+wrote it from a shell command such as `sed -i`, `>` or `Set-Content`.
 
 - In the viewer: a row shows its first flag and a count of the rest, the session page shows them
   all, and a ⚑ marks the step where a long run went off the rails.
