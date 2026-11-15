@@ -81,7 +81,11 @@ it("the packed package names no export target the tarball lacks", { skip: !BUILT
     assert.equal(r.status, 0, r.stderr);
     assert.equal(readFileSync(join(pkg, "package.json"), "utf8"), before, "postpack restores package.json");
     assert.ok(!existsSync(join(pkg, BACKUP)), "postpack removes its backup");
-    const packed = new Set((JSON.parse(r.stdout)[0].files as { path: string }[]).map((f) => f.path));
+    // npm 10 and 11 print an array of packs; npm 12 an object keyed by package name.
+    const out = JSON.parse(r.stdout) as { files: { path: string }[] }[] | Record<string, { files: { path: string }[] }>;
+    const result = Array.isArray(out) ? out[0] : Object.values(out)[0];
+    assert.ok(result?.files, `npm pack --json printed no files: ${r.stdout.slice(0, 200)}`);
+    const packed = new Set(result.files.map((f) => f.path));
     const missing = targets(JSON.parse(before).exports)
       .map((t) => t.replace(/^\.\//, ""))
       .filter((t) => !packed.has(t));
@@ -100,7 +104,8 @@ it("the packed package.json drops the source conditions", { skip: !BUILT && !REQ
     const r = pack(pkg, dir, ["--silent", "--pack-destination", dir]);
     assert.equal(r.status, 0, r.stderr);
     const tgz = r.stdout.trim().split("\n").pop()!;
-    const t = spawnSync("tar", ["-xzOf", join(dir, tgz), "package/package.json"], { encoding: "utf8" });
+    // A relative name: GNU tar (Git for Windows) reads "C:\..." as a remote host.
+    const t = spawnSync("tar", ["-xzOf", tgz, "package/package.json"], { cwd: dir, encoding: "utf8" });
     assert.equal(t.status, 0, t.stderr);
     const exportsMap = JSON.parse(t.stdout).exports;
     assert.ok(!/"source"/.test(JSON.stringify(exportsMap)), "no source condition in the published exports");
