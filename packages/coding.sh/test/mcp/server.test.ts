@@ -593,7 +593,7 @@ describe("freshness", () => {
     }
     const { createCodingShMcp } = await import("../../src/mcp/server.ts");
     // A 0 ms budget: each call ingests one file (every run makes progress), then answers.
-    const mcp = createCodingShMcp({ env: { ...f.env, CODING_SH_NO_AUTO_INGEST: "1" }, cwd: f.root, ingestIntervalMs: 0, ingestBudgetMs: 0, log: () => {} });
+    const mcp = createCodingShMcp({ env: { ...f.env, CODING_SH_NO_AUTO_INGEST: "1" }, cwd: f.root, ingestIntervalMs: 0, ingestBudgetMs: 0, ingestGraceMs: 10_000, log: () => {} });
     const callIt = async (name: string, args: Record<string, unknown> = {}) => {
       const r = await mcp.server.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } });
       return (r!.result as { structuredContent: Record<string, unknown> }).structuredContent;
@@ -613,5 +613,78 @@ describe("freshness", () => {
         else process.env[k] = v;
       }
     }
+  });
+});
+
+describe("slow ingest and progress", () => {
+  const call = (mcp: { server: { handle(m: unknown): Promise<{ result?: unknown } | null> } }, name: string, args: Record<string, unknown> = {}, meta?: Record<string, unknown>) => {
+    const params: Record<string, unknown> = { name, arguments: args };
+    if (meta) params._meta = meta;
+    return mcp.server.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params });
+  };
+
+  it("answers within the read budget even when the ingest ignores its deadline, then reports pending", async () => {
+    const f = makeWorld();
+    const { createCodingShMcp } = await import("../../src/mcp/server.ts");
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const mcp = createCodingShMcp({
+      env: f.env,
+      cwd: f.root,
+      ingestIntervalMs: 0,
+      ingestBudgetMs: 50,
+      log: () => {},
+      autoIngest: async () => {
+        await gate; // a scan over 90k files that never checks the deadline
+        return { pendingFiles: 0, indexing: false };
+      },
+    });
+    try {
+      for (let i = 0; i < 2; i++) {
+        const t0 = Date.now();
+        const r = await call(mcp, "sessions_list");
+        assert.ok(Date.now() - t0 < 1500, `call ${i} took ${Date.now() - t0} ms`);
+        const sc = (r!.result as { structuredContent: { pending?: { files: number; indexing: boolean } } }).structuredContent;
+        assert.deepEqual(sc.pending, { files: 1, indexing: true });
+      }
+    } finally {
+      release();
+      await mcp.close();
+    }
+  });
+
+  it("sends notifications/progress while a call with a progressToken runs", async () => {
+    const f = makeWorld();
+    const { createCodingShMcp } = await import("../../src/mcp/server.ts");
+    const { serveStdio } = await import("../../src/mcp/protocol.ts");
+    const { PassThrough } = await import("node:stream");
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const mcp = createCodingShMcp({ env: f.env, cwd: f.root, ingestIntervalMs: 0, ingestBudgetMs: 10_000, progressIntervalMs: 20, log: () => {}, autoIngest: async () => (await new Promise((r) => setTimeout(r, 250)), { pendingFiles: 0, indexing: false }) });
+    let out = "";
+    output.on("data", (c: Buffer) => (out += c.toString()));
+    const done = serveStdio(mcp.server, { input, output });
+    input.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "0" } } }) + "\n");
+    input.write(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "sessions_list", arguments: {}, _meta: { progressToken: "p1" } } }) + "\n");
+    input.end();
+    await done;
+    await mcp.close();
+    const frames = out.trim().split("\n").map((l) => JSON.parse(l) as { method?: string; id?: number; params?: { progressToken: string; progress: number } });
+    const prog = frames.filter((m) => m.method === "notifications/progress");
+    assert.ok(prog.length >= 2, `got ${prog.length} progress frames`);
+    assert.ok(prog.every((m) => m.params!.progressToken === "p1"));
+    assert.deepEqual(prog.map((m) => m.params!.progress), prog.map((_, i) => i + 1));
+    assert.equal(frames.at(-1)!.id, 2, "the result comes last");
+  });
+});
+
+describe("session digests carry every token class", () => {
+  it("sessionSummary and sessionMarkdown include cache-write tokens", async () => {
+    const { sessionSummary } = await import("../../src/mcp/data.ts");
+    const { sessionMarkdown } = await import("../../src/mcp/digest.ts");
+    const s = { id: "s1", agent: "claude-code", startedAt: 1000, endedAt: 2000, flags: [], stats: { turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0, usage: { inputTokens: 14, outputTokens: 1981, cacheReadTokens: 329484, cacheWriteTokens: 31695, costUsd: 0.1796 } } } as never;
+    assert.deepEqual(sessionSummary(s, 5000).tokens, { input: 14, output: 1981, cacheRead: 329484, cacheWrite: 31695 });
+    const md = await sessionMarkdown({ listEvents: async () => [], listSessions: async () => [] } as never, s, 10, 5000);
+    assert.match(md, /cache read 329484, cache write 31695, \$0\.1796/);
   });
 });

@@ -103,7 +103,7 @@ export function sessionSummary(s: Session, now: number = Date.now()): SessionSum
     toolErrors: s.stats.toolErrors,
     filesChanged: s.stats.filesChanged,
     tests: s.stats.testsPassed !== undefined || s.stats.testsFailed !== undefined ? { passed: s.stats.testsPassed ?? 0, failed: s.stats.testsFailed ?? 0 } : undefined,
-    tokens: u && (u.inputTokens !== undefined || u.outputTokens !== undefined) ? { input: u.inputTokens ?? 0, output: u.outputTokens ?? 0, cacheRead: u.cacheReadTokens ?? 0 } : undefined,
+    tokens: u && (u.inputTokens !== undefined || u.outputTokens !== undefined) ? { input: u.inputTokens ?? 0, output: u.outputTokens ?? 0, cacheRead: u.cacheReadTokens ?? 0, cacheWrite: u.cacheWriteTokens ?? 0 } : undefined,
     costUsd: u?.costUsd !== undefined ? round4(u.costUsd) : undefined,
     costEstimated: (u?.estimatedCostUsd ?? 0) > 0 ? true : undefined,
     flags: s.flags.length ? s.flags : undefined,
