@@ -374,6 +374,15 @@ export function calibrate(opts: CalibrateOpts): CalibrationReport {
 
   const m = metrics(held, [reportSplit], iters, seed, alpha);
   const reasons: string[] = [];
+  // A judge that never varies (or agrees no better than chance) says nothing about which human labels are wrong.
+  const judged = [...votes].flatMap(([id, v]) => {
+    const j = verdicts.get(id);
+    return j && !j.undecided && v.pass !== v.fail ? [j.pass] : [];
+  });
+  const constantJudge = judged.length > 0 && judged.every((p) => p === judged[0]);
+  if (constantJudge || (!Number.isNaN(m.kappa) && m.kappa <= 0)) {
+    for (let i = noisy.length - 1; i >= 0; i--) if ((noisy[i] as NoisyCase).kind === "judge-confident-opposite") noisy.splice(i, 1);
+  }
   let state: CalibrationState;
   if (!heldOut) {
     state = "in-sample";
@@ -393,6 +402,7 @@ export function calibrate(opts: CalibrateOpts): CalibrationReport {
   }
   if (heldOut && m.n > 0 && Number.isNaN(m.failRecall)) reasons.push("no human-labelled failures in the held-out split: recall on failures is unknown");
 
+  if (constantJudge && judged.length > 0) reasons.push(`the judge gave every case the same verdict (${judged[0] ? "pass" : "fail"}); its disagreements are not evidence that human labels are noisy`);
   const status: CalibrationStatus = { state, n: m.n, split: reportSplit, ts: opts.now ?? Date.now() };
   if (!Number.isNaN(m.kappa)) status.kappa = m.kappa;
   if (!Number.isNaN(m.kappaCI.lo)) {

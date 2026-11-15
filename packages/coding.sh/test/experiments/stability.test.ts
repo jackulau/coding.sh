@@ -59,6 +59,12 @@ describe("directionStability", () => {
     );
   });
 
+  it("all-zero differences read as a tie, not unstable", () => {
+    const s = directionStability(vals(0, 0, 30));
+    assert.equal(s.direction, "none");
+    assert.equal(stabilityLine(s), "tie  no difference in any resample");
+  });
+
   it("empty input: no direction, share NaN, censored, unstable", () => {
     const s = directionStability([]);
     assert.deepEqual([s.direction, s.bySize.length, s.nStar, s.stable], ["none", 0, "censored", false]);

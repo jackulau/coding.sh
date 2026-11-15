@@ -188,6 +188,23 @@ describe("calibrate: noisy labels and exclusions", () => {
     assert.match(text, /excluded: 1 tied human vote\(s\), 1 labelled but unjudged, 1 judged but unlabelled, 1 without a split/);
   });
 
+  it("does not list human labels as noisy when the judge never varies", () => {
+    const labels: HumanLabel[] = [];
+    const verdicts: JudgedCase[] = [];
+    const splits: Record<string, Split> = {};
+    for (let i = 0; i < 6; i++) {
+      const id = `c${i}`;
+      labels.push({ caseId: id, criterion: "correct", value: i < 3 ? "pass" : "fail", by: "alice" });
+      verdicts.push({ caseId: id, pass: true, score: 1, confidence: 1 });
+      splits[id] = "test";
+    }
+    const r = calibrate({ judge, labels, verdicts, splits, minN: 3 });
+    assert.equal(r.kappa, 0);
+    assert.deepEqual(r.noisy, []);
+    assert.ok(r.reasons.some((x) => /same verdict/.test(x)));
+    assert.doesNotMatch(renderCalibration(r, { color: false }), /relabel/);
+  });
+
   it("accepts a Dataset or Map for splits and core labels by session", () => {
     const labels = labelsFromCore(
       [

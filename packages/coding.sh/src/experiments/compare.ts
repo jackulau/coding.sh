@@ -636,7 +636,8 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
     const infoA = a.graders.find((g) => g.id === gid);
     const infoB = b.graders.find((g) => g.id === gid);
     const judge = infoA?.kind === "llm" || infoB?.kind === "llm" || !!infoA?.calibration || !!infoB?.calibration;
-    if (common.length && judge) {
+    // All-zero differences are a tie, not a judge that flips: no stability line.
+    if (common.length && judge && diffs.some((d) => Math.abs(d) > 1e-12)) {
       out.stability = directionStability(diffs, { seed: boot.seed, ...(cl ? { clusterIds: common.map(clusterOf) } : {}) });
     }
     if (opts.labels && judge) {
