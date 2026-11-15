@@ -67,7 +67,23 @@ fi
 say "Installing coding.sh $VERSION"
 npm install -g --silent --no-fund --no-audit "$URL" >&2 || die "npm install failed. Try: npm install -g $URL"
 
-command -v coding.sh >/dev/null 2>&1 || die "Installed, but coding.sh is not on PATH. Add \"$(npm prefix -g)/bin\" to PATH."
+# Where npm put the shims: <prefix>/bin on POSIX, <prefix> itself on Windows.
+PREFIX=$(npm prefix -g 2>/dev/null || true)
+case "$(uname -s 2>/dev/null || true)" in
+  MINGW*|MSYS*|CYGWIN*) BIN_DIR="$PREFIX" ;;
+  *) BIN_DIR="$PREFIX/bin" ;;
+esac
+CSH=coding.sh
+if [ -n "$PREFIX" ]; then
+  BIN_POSIX="$BIN_DIR"
+  command -v cygpath >/dev/null 2>&1 && BIN_POSIX=$(cygpath -u "$BIN_DIR" 2>/dev/null || printf '%s' "$BIN_DIR")
+  # Use the binary just installed, not whichever coding.sh comes first on PATH.
+  if [ -f "$BIN_POSIX/coding.sh" ]; then
+    CSH="$BIN_POSIX/coding.sh"
+    command -v coding.sh >/dev/null 2>&1 || say "coding.sh: installed in \"$BIN_DIR\", which is not on PATH. Add it to PATH to run coding.sh."
+  fi
+fi
+[ "$CSH" != coding.sh ] || command -v coding.sh >/dev/null 2>&1 || die "Installed, but coding.sh is not on PATH. Add \"$BIN_DIR\" to PATH."
 
 [ "${CODING_SH_NO_INIT:-}" = "1" ] && { say "Done. Run: coding.sh init"; exit 0; }
 
@@ -77,9 +93,9 @@ has_tty() { (exec </dev/tty) 2>/dev/null; }
 
 status=0
 if [ "${CODING_SH_YES:-}" = "1" ]; then
-  coding.sh init --yes || status=$?
+  "$CSH" init --yes || status=$?
 elif has_tty; then
-  coding.sh init </dev/tty || status=$?
+  "$CSH" init </dev/tty || status=$?
 else
   # An agent's shell or CI: installed, nothing set up. Name the exact next command
   # (bare `coding.sh` without a terminal only prints help).
@@ -93,4 +109,4 @@ fi
 [ "${CODING_SH_NO_UI:-}" = "1" ] && exit 0
 # The viewer is a long-running server: start it only for a person at a
 # terminal, never in CI or a Docker build (CODING_SH_YES=1 with no tty).
-if has_tty; then coding.sh ui </dev/tty; else say "Done. Run: coding.sh ui"; fi
+if has_tty; then "$CSH" ui </dev/tty; else say "Done. Run: coding.sh ui"; fi

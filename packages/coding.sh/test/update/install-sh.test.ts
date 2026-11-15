@@ -3,9 +3,9 @@
 // npm and curl are stubs on PATH; nothing touches the network or installs.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { describe, test } from "node:test";
 
 const INSTALL_SH = resolve(import.meta.dirname, "../../../../install.sh");
@@ -121,5 +121,63 @@ describe("install.sh without a terminal", () => {
     assert.throws(() => readFileSync(calls, "utf8"), "coding.sh was not run");
     assert.match(r.stderr, /no agent was set up yet/);
     assert.match(r.stderr, /coding\.sh init --yes/);
+  });
+});
+
+describe("install.sh on Windows shells", () => {
+  /** npm prefix holds the shim directly (Windows layout); a stale coding.sh sits first on PATH. */
+  function windows(bin: boolean) {
+    const root = mkdtempSync(join(tmpdir(), "csh-win-"));
+    const prefix = join(root, "prefix");
+    const stale = join(root, "stale");
+    const stubs = join(root, "stubs");
+    for (const d of [prefix, stale, stubs, join(prefix, "bin")]) mkdirSync(d, { recursive: true });
+    const log = join(root, "init.log");
+    writeFileSync(join(stubs, "npm"), `#!/bin/sh\ncase "$1" in install) exit 0 ;; prefix) echo '${prefix.split("\\").join("/")}' ;; esac\n`);
+    writeFileSync(join(stubs, "uname"), `#!/bin/sh\necho MINGW64_NT-10.0\n`);
+    writeFileSync(join(prefix, bin ? "bin/coding.sh" : "coding.sh"), `#!/bin/sh\necho new >> "${log}"\n`);
+    writeFileSync(join(stale, "coding.sh"), `#!/bin/sh\necho stale >> "${log}"\n`);
+    for (const f of ["npm", "uname"]) chmodSync(join(stubs, f), 0o755);
+    for (const f of [join(prefix, "coding.sh"), join(prefix, "bin/coding.sh"), join(stale, "coding.sh")]) {
+      try {
+        chmodSync(f, 0o755);
+      } catch {}
+    }
+    const r = spawnSync("sh", [INSTALL_SH], {
+      encoding: "utf8",
+      env: {
+        PATH: `${stubs}:${stale}:${process.env.PATH}`, HOME: root, CODING_SH_TARBALL: "x.tgz",
+        CODING_SH_YES: "1", CODING_SH_NO_UI: "1",
+      },
+    });
+    let ran = "";
+    try { ran = readFileSync(log, "utf8").trim(); } catch {}
+    return { r, ran, prefix };
+  }
+
+  test("runs init with the binary in <prefix>, not a stale one on PATH", () => {
+    const { r, ran } = windows(false);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(ran, "new");
+  });
+
+  test("a binary missing from PATH names the prefix without /bin", () => {
+    const root = mkdtempSync(join(tmpdir(), "csh-win-"));
+    const stubs = join(root, "stubs");
+    mkdirSync(stubs);
+    writeFileSync(join(stubs, "npm"), `#!/bin/sh\ncase "$1" in install) exit 0 ;; prefix) echo /nonexistent/prefix ;; esac\n`);
+    writeFileSync(join(stubs, "uname"), `#!/bin/sh\necho MINGW64_NT-10.0\n`);
+    chmodSync(join(stubs, "npm"), 0o755);
+    chmodSync(join(stubs, "uname"), 0o755);
+    const cleanPath = (process.env.PATH ?? "")
+      .split(delimiter)
+      .filter((d) => !existsSync(join(d, "coding.sh")))
+      .join(delimiter);
+    const r = spawnSync("sh", [INSTALL_SH], {
+      encoding: "utf8",
+      env: { PATH: `${stubs}${delimiter}${cleanPath}`, HOME: root, CODING_SH_TARBALL: "x.tgz", CODING_SH_NO_INIT: "1" },
+    });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /Add "\/nonexistent\/prefix" to PATH/);
   });
 });
