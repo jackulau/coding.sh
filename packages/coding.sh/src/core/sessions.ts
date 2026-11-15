@@ -460,7 +460,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * new derivation. A new or retyped sub-state changes the stamp by itself; a
  * new optional field or a change of meaning still needs the bump.
  */
-export const SESSION_FOLD_VERSION = 21; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory). 19: a session with transcript model calls counts them, not the copies its OTLP logs carry (sansOtel, transcriptCalls). 20: weight edits (stats.weightEdits, the weights:edited tag, SessionState.weightEdits). 21: weight checkpoints (stats.weightEdits.checkpoints, the weights:checkpoint tag), and stats.weightEdits on a session with a checkpoint and no edit.
+export const SESSION_FOLD_VERSION = 23; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory). 19: a session with transcript model calls counts them, not the copies its OTLP logs carry (sansOtel, transcriptCalls). 20: weight edits (stats.weightEdits, the weights:edited tag, SessionState.weightEdits). 21: weight checkpoints (stats.weightEdits.checkpoints, the weights:checkpoint tag), and stats.weightEdits on a session with a checkpoint and no edit. 22: a `<parent>:sub:<agentId>` session with no session.start takes its parent from the id. 23: an API error event (source api, or status 400 or more) counts in stats.llmErrors.
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -720,6 +720,14 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
     if (typeof e.payload.agentType === "string") s.parent.type = e.payload.agentType;
     s.parentByProxy = true;
   }
+  if (!s.parent) {
+    // A subagent stored as `<parent>:sub:<agentId>` with no session.start: the id names the parent. A session.start replaces it.
+    const m = /^(.+):sub:([^:]+)$/.exec(e.sessionId);
+    if (m) {
+      s.parent = { sessionId: m[1]!, subagentId: m[2]!, type: "subagent" };
+      s.parentByProxy = true;
+    }
+  }
   if (!isBackfillEvent(e)) s.live = true;
   if (!s.gitStart && e.kind === "session.start") {
     const { gitBranch, gitCommit, git } = e.payload;
@@ -831,6 +839,10 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
       }
       break;
     }
+    case "error":
+      // An API error (a 429, a 5xx, a network drop) is a failed model call.
+      if (apiErrorEvent(e.payload)) s.llmErrors = addLlmError(s.llmErrors, e.payload);
+      break;
     case "llm.call":
       if (llmCallFailed(e.payload)) s.llmErrors = addLlmError(s.llmErrors, e.payload);
       // A proxy-only session has no user.message events: the call's last prompt names it.
@@ -1000,12 +1012,18 @@ export function llmCallFailed(payload: Record<string, unknown>): boolean {
   return payload.ok === false || (typeof payload.statusCode === "number" && payload.statusCode >= 400);
 }
 
+/** An error event that reports a failed model call: source "api", or an HTTP status of 400 or more. */
+export function apiErrorEvent(payload: Record<string, unknown>): boolean {
+  return payload.source === "api" || (typeof payload.statusCode === "number" && payload.statusCode >= 400);
+}
+
 /** Counts one failed call (sessions are built in time order, so the first one keeps its status and message). */
 export function addLlmError(prev: LlmErrors | undefined, payload: Record<string, unknown>): LlmErrors {
   if (prev) return { ...prev, count: prev.count + 1 };
   const out: LlmErrors = { count: 1 };
   if (typeof payload.statusCode === "number") out.statusCode = payload.statusCode;
-  if (typeof payload.error === "string" && payload.error) out.error = payload.error.slice(0, 300);
+  const msg = typeof payload.error === "string" && payload.error ? payload.error : typeof payload.message === "string" && payload.message ? payload.message : undefined;
+  if (msg) out.error = msg.slice(0, 300);
   return out;
 }
 

@@ -49,6 +49,8 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Sessions.** A subagent session stored as `<parent>:sub:<agentId>` with no `session.start` takes its parent from the id, so the default `sessions` list no longer shows it as a top-level run and capture health stops counting it as a failed capture. Stored sessions are folded again. [Docs](https://coding.sh/docs/concepts)
+- **Sessions.** An API error event (source `api`, or an HTTP status of 400 or more) counts in `stats.llmErrors`, and the viewer shows `N model errors (429)` on agent sessions as well as API rows. Stored sessions are folded again. [Docs](https://coding.sh/docs/concepts)
 - **Evals.** `exp metrics` prints a count or score below 0.0005 with two significant digits (`0.0001`) instead of `0.000`, so a small value such as a gain per edited weight no longer reads as zero. [Metric A/B](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#metric-ab-ms-bytes)
 - **SDK.** `coding_sh.weights_edit()` reads a 0-d tensor or array as the number it holds, so `l2=delta.norm()` records the edit. Before, a torch scalar was refused and the edit was dropped with a warning, though the docs said torch scalars count as numbers. [Docs](https://coding.sh/docs/api)
 - **SDK.** `coding_sh.weights_edit()` warns about a dropped edit once per process, as its docs say and as the TypeScript SDK does. Before, every `init()` warned again. [Docs](https://coding.sh/docs/sdk)

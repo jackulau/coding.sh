@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import * as sessions from "../../src/cli/commands/sessions.ts";
-import { isEmptySession } from "../../src/core/sessions.ts";
+import { buildSession, isEmptySession } from "../../src/core/sessions.ts";
 import { mkSession, runCmd, sandbox, type Sandbox } from "./_cmd.ts";
 
 describe("isEmptySession", () => {
@@ -58,5 +58,31 @@ describe("sessions list", () => {
     const all = await runCmd(sessions, sb, { json: true });
     assert.equal(all.json.total, 3);
     assert.doesNotMatch((await runCmd(sessions, sb)).stderr, /matched/);
+  });
+});
+
+describe("sessions list: a subagent with no session.start", () => {
+  let sb: Sandbox;
+  before(async () => {
+    sb = sandbox();
+    const at = Date.now() - 10_000;
+    const mk = (sessionId: string, n: number) => {
+      const events = [
+        { id: `${sessionId}-1`, v: 0, sessionId, ts: at + n, agent: "claude-code", kind: "prompt", payload: { text: "go" } },
+        { id: `${sessionId}-2`, v: 0, sessionId, ts: at + n + 1, agent: "claude-code", kind: "tool.start", payload: { tool: "Bash", toolUseId: `${sessionId}-t`, input: { command: "ls" } } },
+        { id: `${sessionId}-3`, v: 0, sessionId, ts: at + n + 2, agent: "claude-code", kind: "tool.end", payload: { tool: "Bash", toolUseId: `${sessionId}-t`, ok: true } },
+      ] as never[];
+      return { session: buildSession(events), events };
+    };
+    const parent = mk("abc", 0);
+    const child = mk("abc:sub:a1", 100);
+    await sb.seed([parent.session, child.session], [...parent.events, ...child.events]);
+  });
+  after(() => sb.cleanup());
+  const ids = (r: { json?: any }) => (r.json.sessions as { id: string }[]).map((s) => s.id).sort();
+
+  test("the default list shows only the parent; --subagents shows both", async () => {
+    assert.deepEqual(ids(await runCmd(sessions, sb, { json: true })), ["abc"]);
+    assert.deepEqual(ids(await runCmd(sessions, sb, { json: true, flags: { subagents: true } })), ["abc", "abc:sub:a1"]);
   });
 });

@@ -42,6 +42,19 @@ describe("buildSession", () => {
     assert.equal(buildSession([ev("llm.call", { ok: true })]).stats.llmErrors, undefined, "unset when none failed");
   });
 
+  it("counts API error events (429, 5xx) as failed model calls", () => {
+    const events = [
+      ev("error", { message: "Error 429 rate limit", source: "api", statusCode: 429, errorClass: "rate_limit" }),
+      ev("error", { message: "Error 429 rate limit", source: "api", statusCode: 429, errorClass: "rate_limit" }),
+      ev("error", { message: "stop failure" }),
+    ];
+    const s = buildSession(events);
+    assert.equal(s.stats.llmErrors?.count, 2);
+    assert.equal(s.stats.llmErrors?.statusCode, 429);
+    assert.match(s.stats.llmErrors!.error!, /^Error 429/);
+    assert.equal(buildSession([ev("error", { message: "stop failure" })]).stats.llmErrors, undefined);
+  });
+
   it("folds stats, usage, title, files, tests and end time", () => {
     const long = "Please   fix\nthe bug " + "x".repeat(400);
     const events = [
@@ -88,6 +101,26 @@ describe("buildSession", () => {
     assert.deepEqual(s.parent, { sessionId: "p" });
     assert.equal(s.endedAt, undefined);
     assert.throws(() => buildSession([]), /at least one event/);
+  });
+
+  it("names the parent from a `<parent>:sub:<agentId>` id when there is no session.start", () => {
+    const sid = "abc:sub:a1";
+    const s = buildSession([
+      ev("tool.start", { tool: "Bash", toolUseId: "x1", input: { command: "ls" } }, { sessionId: sid }),
+      ev("tool.end", { tool: "Bash", toolUseId: "x1", ok: true }, { sessionId: sid }),
+    ]);
+    assert.deepEqual(s.parent, { sessionId: "abc", subagentId: "a1", type: "subagent" });
+    assert.equal(buildSession([ev("tool.start", { tool: "Bash", toolUseId: "y", input: { command: "ls" } }, { sessionId: "plain" })]).parent, undefined);
+  });
+
+  it("a session.start parent wins over the id, before or after the tool events", () => {
+    const sid = "abc:sub:a1";
+    const start = ev("session.start", { parentSessionId: "real", subagentId: "a1", subagentType: "explore" }, { sessionId: sid });
+    const tool = ev("tool.start", { tool: "Bash", toolUseId: "z", input: { command: "ls" } }, { sessionId: sid });
+    const want = { sessionId: "real", subagentId: "a1", type: "explore" };
+    assert.deepEqual(buildSession([start, tool]).parent, want);
+    const late = { ...start, ts: tool.ts + 5 };
+    assert.deepEqual(buildSession([tool, late]).parent, want);
   });
 
   it("takes the parent link from session.start", () => {
