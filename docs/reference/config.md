@@ -283,7 +283,9 @@ Read only by `coding.sh serve`. Every key has an environment variable, which win
 | Variable | What |
 |---|---|
 | `CODING_SH_DISABLE=1` | The hook reads its input and writes no event. It records only the session id, in `spool/disabled-sessions`, so ingest and imports of past sessions leave that session out. Set it in an agent's environment to pause capture. |
-| `CODING_SH_NO_AUTO_INGEST=1` | The hook does not start a background ingest when a session ends, and `init` does not finish its import of past sessions in the background. |
+| `CODING_SH_NO_AUTO_INGEST=1` | The hook does not start a background ingest when a session ends, `init` does not finish its import of past sessions in the background, and `workflows list` does not start a background `workflows import`. |
+| `CODING_SH_WORKFLOWS_BACKGROUND_IMPORT=1` | Set by `workflows list` on the `workflows import` it starts in the background: it skips when another import runs and prints nothing. Not for you to set. |
+| `CODING_SH_TAIL_CHILD` | Set by a command that reads within a time budget on the child process it starts to import from adapters that read a capture path (T3 Code's database, transcripts of agents without hooks). The command kills that child at its deadline. Not for you to set. |
 | `CODING_SH_NO_PROXY_AUTOSTART=1` | The hook does not restart a stopped `coding.sh proxy` when a session starts (it does only after `init --proxy`). |
 | `CODING_SH_ECHO_CONTINUE=1` | The hook prints `{"continue":true}`, for agents that need a JSON reply. `init` sets this up where needed. |
 | `CODING_SH_HOOK_SOURCE` | Path of the `hook.mjs` that `init` copies into `~/.coding.sh/bin`. |

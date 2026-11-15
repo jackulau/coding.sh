@@ -1506,6 +1506,13 @@ export interface BackfillResult {
   busy?: true;
 }
 
+/** Thrown by the `changed` callback of a backfill that is out of time: the adapter's walk of its source files ends there. */
+export class BackfillStop extends Error {
+  constructor() {
+    super("backfill out of time");
+  }
+}
+
 /** Cursor keys for one backfill source file: size, mtime (floored ms) and the `since` it was read with. */
 export const backfillCursorKey = (agent: string, path: string, field: "size" | "mtime" | "since"): string => `backfill:${agent}:${path}#${field}`;
 
@@ -1735,6 +1742,14 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
     if (!adapter.backfill) continue;
     const report = { agent: adapter.id, events: 0 } as BackfillResult["agents"][number];
     result.agents.push(report);
+    // Out of time before the adapter starts, with an earlier one having read a file (a run always makes
+    // progress): its first step can be a scan of tens of thousands of files, which no later check could cut
+    // short. It stays for the next run; one file stands for what was not looked at, so the caller starts a
+    // background ingest.
+    if (accepted > 0 && opts.deadline !== undefined && Date.now() >= opts.deadline) {
+      result.pendingFiles++;
+      continue;
+    }
     let pending: AgentEvent[] = [];
     const flush = async () => {
       if (!pending.length) return;
@@ -1798,9 +1813,16 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
       // A sink that lacks what the index stored from the file has it read again.
       const at = sinkStates.size ? await sinkCursors(adapter.id, f.path) : undefined;
       const behind = at !== undefined && [...at.values()].some((c) => c !== mtime);
-      if (unchanged && !behind) return false;
+      const late = opts.deadline !== undefined && Date.now() >= opts.deadline;
+      if (unchanged && !behind) {
+        if (!late) return false;
+        // Out of time on a file nothing changed in: the adapter's walk over the files left is not worth waiting
+        // for (a projects dir can hold tens of thousands). Stop it; one file stands for the ones not looked at.
+        result.pendingFiles++;
+        throw new BackfillStop();
+      }
       // Out of time (after reading one, so every run makes progress): left for the next backfill, which finds it still changed.
-      if (accepted > 0 && opts.deadline !== undefined && Date.now() >= opts.deadline) {
+      if (late && accepted > 0) {
         if (!unchanged) result.pendingFiles++;
         return false;
       }
@@ -1839,6 +1861,13 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
       await endSource();
       for (const file of files) fileCursors.push({ agent: adapter.id, file });
     } catch (err) {
+      if (err instanceof BackfillStop) {
+        // Not a failure: what was read is stored and its cursors are set, as at the end of a whole walk.
+        await flush();
+        await endSource();
+        for (const file of files) fileCursors.push({ agent: adapter.id, file });
+        continue;
+      }
       await flush().catch(() => {});
       // Cut short: its sinks stay behind on it.
       src = undefined;

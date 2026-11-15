@@ -1,7 +1,7 @@
 // T3 Code adapter: a synthetic T3 store (real v2/v1 table shapes, made-up rows)
 // built in a temp HOME next to Codex and Claude transcripts T3 "ran".
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, it } from "node:test";
@@ -10,7 +10,9 @@ import { codex } from "../../src/adapters/codex.ts";
 import { ADAPTERS } from "../../src/adapters/index.ts";
 import { backfillT3, t3code, turnUsage } from "../../src/adapters/t3code.ts";
 import { defaultConfig } from "../../src/core/config.ts";
-import { backfill, ingest } from "../../src/core/ingest.ts";
+import { backfill, childLinker, ingest, recomputeSession } from "../../src/core/ingest.ts";
+import { repoResolver } from "../../src/core/repo-state.ts";
+import { reparse } from "../../src/core/reparse.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { Adapter } from "../../src/core/types.ts";
 import { usage } from "../../src/mcp/data.ts";
@@ -431,4 +433,88 @@ describe("t3code native ids from real installs", () => {
     // Found natively: the provider's own capture has the content, so T3 adds only the link.
     assert.equal((await index.listEvents(OC_ID, { kinds: ["user.message"] })).length, 0);
   });
+});
+
+describe("T3 Claude subagent threads", () => {
+  let env: TmpEnv;
+  const saved: Record<string, string | undefined> = {};
+  before(() => {
+    env = tmpEnv();
+    for (const k of t3Env) (saved[k] = process.env[k]), delete process.env[k];
+  });
+  after(() => {
+    for (const k of t3Env) if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+    env.restore();
+  });
+
+  it("does not store a subagent the claude-code transcript holds a second time", async () => {
+    const { claude } = nativeTranscripts(env.home);
+    const subDir = join(claude.slice(0, -".jsonl".length), "subagents");
+    writeFile(join(subDir, "agent-a111.jsonl"), "{}\n");
+    writeFile(join(subDir, "workflows", "wf_1", "agent-ab22.jsonl"), "{}\n");
+    const dir = join(env.home, ".t3", "userdata");
+    mkdirSync(dir, { recursive: true });
+    const db = new DatabaseSync(join(dir, "statev2.sqlite"));
+    db.exec(V2_SCHEMA);
+    db.prepare("INSERT INTO projection_projects VALUES ('proj-1', 'demo', '/work/demo', '[]', ?, ?, NULL, NULL)").run(T(0), T(0));
+    thread(db, "mcp:launch:root", { provider: "claudeAgent", title: "Root", created: T(0) });
+    providerThread(db, "pt-root", "mcp:launch:root", "claudeAgent", CLAUDE_ID, 1);
+    const sub = (id: string, parent: string, title: string) => thread(db, id, { provider: "claudeAgent", title, created: T(1), payload: { lineage: { parentThreadId: parent, relationshipToParent: "subagent", rootThreadId: "mcp:launch:root" } } });
+    // T3 ids are percent-encoded; the agent id is the last segment.
+    sub("thread:native-thread:pending%3Aroot%3Aa111", "mcp:launch:root", "Smoke test");
+    sub("thread:native-thread:pending%3Aroot%3Aa999", "mcp:launch:root", "No transcript for this one");
+    sub("thread:native-thread:pending%3Aroot%3Awcsbor", "mcp:launch:root", "Workflow");
+    sub("thread:native-thread:pending%3Aroot%3Awcsbor%3Aagent%3A1", "thread:native-thread:pending%3Aroot%3Awcsbor", "ok");
+    db.close();
+
+    const { index } = await runAll();
+    const ids = (await index.listSessions({})).map((s) => s.id);
+    assert.ok(!ids.some((i) => i.endsWith("a111")), "a subagent with a transcript file is the claude-code child only");
+    assert.ok(!ids.some((i) => i.includes("%3Aagent%3A1")), "a workflow agent is the claude-code child only");
+    assert.ok(ids.some((i) => i.endsWith("a999")), "a subagent without a transcript keeps its t3code session");
+    assert.ok(ids.some((i) => i.endsWith("wcsbor")), "the workflow thread has no transcript of its own and stays");
+    assert.ok(ids.includes(CLAUDE_ID));
+  });
+
+  it("re-parse deletes the t3code copies an older parse stored of subagents the claude-code transcript holds", async () => {
+    const { claude } = nativeTranscripts(env.home);
+    const subDir = join(claude.slice(0, -".jsonl".length), "subagents");
+    const dir = join(env.home, ".t3", "userdata");
+    mkdirSync(dir, { recursive: true });
+    rmSync(join(dir, "statev2.sqlite"), { force: true });
+    const db = new DatabaseSync(join(dir, "statev2.sqlite"));
+    db.exec(V2_SCHEMA);
+    db.prepare("INSERT INTO projection_projects VALUES ('proj-1', 'demo', '/work/demo', '[]', ?, ?, NULL, NULL)").run(T(0), T(0));
+    thread(db, "mcp:launch:root", { provider: "claudeAgent", title: "Root", created: T(0) });
+    providerThread(db, "pt-root", "mcp:launch:root", "claudeAgent", CLAUDE_ID, 1);
+    thread(db, "thread:native-thread:pending%3Aroot%3Aa222", { provider: "claudeAgent", title: "Smoke test", created: T(1), payload: { lineage: { parentThreadId: "mcp:launch:root", relationshipToParent: "subagent", rootThreadId: "mcp:launch:root" } } });
+    db.close();
+    const cenv = { ...process.env };
+    const index = new MemoryIndexStore();
+    const o = { config: defaultConfig(cenv), index, blobs: new MemoryBlobStore(), env: cenv };
+    // The older parse did not see the transcript's subagents dir, so it stored the thread as a t3code session.
+    await backfill({ ...o, adapters: [{ ...t3code, parseVersion: 7 }] });
+    const copy = (await index.listSessions({})).map((s) => s.id).find((i) => i.endsWith("a222"));
+    assert.ok(copy, "the older parse stored the copy");
+    writeFile(join(subDir, "agent-a222.jsonl"), "{}\n");
+    const owner = `${CLAUDE_ID}:sub:a222`;
+    await index.putEvents([{ id: "own-1", v: 0, sessionId: owner, ts: Date.parse(T(1)), agent: "claude-code", kind: "session.start", source: "transcript", payload: {} }]);
+    await recomputeSession(index, owner, { linker: childLinker(index), repo: repoResolver() });
+    assert.ok(await index.getSession(owner));
+
+    const r = await reparse({ ...o, adapters: new Map([["t3code", t3code]]) });
+    assert.deepEqual(r.errors, []);
+    assert.equal(r.copiesRemoved, 1);
+    assert.equal(await index.getSession(copy), undefined);
+    assert.ok(await index.getSession(owner));
+  });
+
+  const runAll = async () => {
+    const cenv = { ...process.env };
+    const index = new MemoryIndexStore();
+    const r = await backfill({ config: defaultConfig(cenv), index, blobs: new MemoryBlobStore(), adapters: [t3code], env: cenv });
+    assert.deepEqual(r.errors, []);
+    return { index };
+  };
 });

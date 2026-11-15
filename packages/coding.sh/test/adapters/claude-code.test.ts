@@ -460,13 +460,17 @@ describe("claude-code backfill", () => {
     assert.ok(cursors.every((c) => c === 0), "a failed file is retried on the next backfill");
   });
 
-  it("honors since", async () => {
+  it("honors since by file, and imports a transcript written inside the window whole", async () => {
     const { ctx } = testCtx();
     const all = await collect(claudeCode.backfill!(ctx));
+    // A cut in the middle of the session's events: its file was written after it, so nothing is dropped.
     const cut = Date.parse("2026-11-01T10:00:25.000Z");
+    assert.ok(all.some((e) => e.ts < cut) && all.some((e) => e.ts >= cut));
     const some = await collect(claudeCode.backfill!(ctx, { since: cut }));
-    assert.ok(some.length > 0 && some.length < all.length);
-    assert.ok(some.every((e) => e.ts >= cut));
+    assert.equal(some.length, all.length);
+    assert.ok(some.some((e) => e.ts < cut));
+    // A window that opens after the file was last written leaves the file out.
+    assert.equal((await collect(claudeCode.backfill!(ctx, { since: Date.now() + 86_400_000 }))).length, 0);
   });
 });
 
@@ -631,6 +635,8 @@ describe("claude-code install", () => {
 
   it("imports history on read until our hooks are installed", async () => {
     writeFile(settings(), "{}\n"); // valid settings, no coding.sh hooks
+    assert.equal(claudeCode.tailWhenUnhooked!(), false, "no transcripts dir: nothing to read, so a read starts no import");
+    mkdirSync(join(dirname(settings()), "projects"), { recursive: true });
     assert.deepEqual(claudeCode.tailWhenUnhooked!(), {}, "not inited: a read imports all transcripts");
     await claudeCode.install({ hookCommand: hookCommand(), scope: "user", dryRun: false });
     assert.equal(claudeCode.tailWhenUnhooked!(), false, "hooked: live capture, don't re-read history");

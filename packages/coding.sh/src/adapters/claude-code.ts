@@ -2,7 +2,7 @@
 // `claude -p --output-format stream-json` headless runs, CLAUDE_CONFIG_DIR
 // isolation. See docs/ADAPTERS.md.
 import { randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import { createInterface } from "node:readline";
@@ -417,7 +417,9 @@ async function* backfillClaude(base: NormalizeContext, opts: BackfillOpts = {}, 
       continue; // unreadable transcript: skip, never abort the whole backfill
     }
     if (blobError) throw blobError.err; // in case a converter swallowed it
-    for (const e of events) if (since === undefined || e.ts >= since) yield e;
+    // A transcript written inside the window is imported whole: cutting it at `since` would leave a session
+    // without its first prompt, title or start time. (walkFiles already left out files last written before `since`.)
+    yield* events;
   }
 }
 
@@ -714,8 +716,8 @@ export const claudeCode: Adapter = {
   // transcripts already on disk, so `coding.sh usage` works with no setup and
   // shows all of a user's Claude Code history. Once hooked, live hooks and the
   // spool capture, so stop re-reading all of history on every read. Imports are
-  // keyed by session id, so a later `init` backfill never doubles them.
-  tailWhenUnhooked: () => (hasOurHooks(CLAUDE_AGENT, join(claudeConfigDir(), "settings.json")) ? false : {}),
+  // keyed by session id, so a later `init` backfill never doubles them. No projects dir: nothing to read.
+  tailWhenUnhooked: () => (existsSync(join(claudeConfigDir(), "projects")) && !hasOurHooks(CLAUDE_AGENT, join(claudeConfigDir(), "settings.json")) ? {} : false),
   run: runClaude,
   canResume: true,
   overlay: overlayClaude,

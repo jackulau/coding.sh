@@ -239,7 +239,7 @@ export async function autoIngest(ctx: Context, o: AutoIngestOptions = {}): Promi
       }
     }
   }
-  if (!o.signal?.aborted) pending += await tailIngest(ctx, deadline);
+  if (!o.signal?.aborted) pending += await (deadline !== undefined ? tailIngestWithin(ctx, deadline) : tailIngest(ctx));
   if (pending && o.budgetMs !== undefined) {
     // An ingest holding the lock finishes the spool (and the transcripts) itself; else start one
     // (not with CODING_SH_NO_AUTO_INGEST=1, which also keeps the hook from starting them).
@@ -302,6 +302,31 @@ export function ingestCli(pointer: string): string | undefined {
     return readFileSync(pointer, "utf8").trim() || undefined;
   } catch {
     return undefined;
+  }
+}
+
+/** Starts `node <cli> <args>` detached (it outlives this process, no output). Returns false without a CLI file to run. */
+export function spawnDetachedCli(cli: string | undefined, args: string[], env: NodeJS.ProcessEnv): boolean {
+  if (!cli || !existsSync(cli)) return false;
+  const child = process.getBuiltinModule("node:child_process").spawn(process.execPath, [cli, ...args], { detached: true, stdio: "ignore", windowsHide: true, env: { ...env, NODE_OPTIONS: undefined } });
+  child.on("error", () => {});
+  child.unref();
+  return true;
+}
+
+/**
+ * tailIngest for a budgeted read: answers by `deadline` however long the adapters' reads take
+ * (several seconds on a machine with T3 Code's database and a big projects dir), counting the
+ * source it left as one file not yet ingested. Runs in a child process, and only when an adapter has a source to read.
+ */
+async function tailIngestWithin(ctx: Context, deadline: number): Promise<number> {
+  try {
+    const { ADAPTERS } = await import("../adapters/index.ts");
+    if (!ADAPTERS.some((a) => a.tail?.() || a.tailWhenUnhooked?.())) return 0;
+    const { tailWithin } = await import("./ingest-worker.ts");
+    return (await tailWithin({ env: ctx.env, cwd: process.cwd(), deadline })).pending;
+  } catch {
+    return 0;
   }
 }
 
@@ -517,10 +542,15 @@ export function agentsFlag(c: CommandContext): string[] {
 export function agentScope(agents: readonly string[], where: Query | undefined): { agent?: string; where?: Query } {
   if (agents.length === 0) return where ? { where } : {};
   if (agents.length === 1) return { agent: agents[0]!, ...(where ? { where } : {}) };
+  return { where: agentQuery(agents, where) };
+}
+
+/** `where` narrowed to sessions of any of `agents` (the session's agent, as `agent:` in --where is). */
+export function agentQuery(agents: readonly string[], where: Query | undefined): Query {
   const cmp: Node = { t: "cmp", key: "agent", op: ":", values: agents.map((raw) => ({ raw, quoted: true, kind: "eq" as const })), at: 0 };
   // Wrapped in a group: the flag filters like SessionFilter.agent, so an agent facet must not drop
   // it the way it drops a typed `agent:` clause (withoutKey only removes top-level clauses).
-  return { where: andQuery(where ?? {}, { t: "or", items: [cmp] }) };
+  return andQuery(where ?? {}, { t: "or", items: [cmp] });
 }
 
 export function num(v: FlagValue): number | undefined {

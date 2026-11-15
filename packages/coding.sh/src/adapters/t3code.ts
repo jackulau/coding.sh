@@ -29,13 +29,13 @@
 // The hook stamps T3's env marker (spool/host.ts), and T3-originated rollouts
 // say so in session_meta.originator (codex.ts).
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { userHome } from "../core/paths.ts";
 import type { Adapter, BackfillFile, BackfillOpts, NormalizeContext } from "../core/types.ts";
 import type { AgentEvent, Usage } from "../schema/index.ts";
 import { T3_AGENT } from "../spool/host.ts";
-import { ClaudeTranscriptConverter, Emitter, blobList, clipText, clipValue, emitDerived, hasOurHooks, num, obj, parentLink, readJsonl, str, toMs, usageSnapshotKey, walkFiles } from "./_shared/index.ts";
+import { ClaudeTranscriptConverter, Emitter, blobList, childSessionId, clipText, clipValue, emitDerived, hasOurHooks, num, obj, parentLink, readJsonl, str, toMs, usageSnapshotKey, walkFiles } from "./_shared/index.ts";
 import { CLAUDE_AGENT, TRANSCRIPT_IDLE_MS, claudeConfigDir } from "./claude-code.ts";
 import { ROLLOUT_IDLE_MS, codexHome, convertRollout } from "./codex.ts";
 import { cursorConfigDir } from "./cursor.ts";
@@ -188,7 +188,16 @@ class NativeIndex {
     this.env = env;
   }
 
-  find(agent: string, id: string): Promise<string | undefined> {
+  /**
+   * The transcript of a native session. `cwd` is a hint: Claude Code keeps a transcript under
+   * projects/<cwd slug>/, so it is looked for there first. Listing every project dir (tens of
+   * thousands on a long-used machine) is the fallback, and blocks for seconds.
+   */
+  find(agent: string, id: string, cwd?: string): Promise<string | undefined> {
+    if (agent === CLAUDE_AGENT && cwd) {
+      const direct = join(claudeConfigDir(this.env), "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"), `${id}.jsonl`);
+      if (existsSync(direct)) return Promise.resolve(direct);
+    }
     let m = this.maps.get(agent);
     if (!m) this.maps.set(agent, (m = this.build(agent)));
     return m.then((map) => map.get(id));
@@ -266,6 +275,51 @@ async function convertNative(ctx: NormalizeContext, agent: string, path: string,
     // truncated transcript: keep what converted
   }
   return conv.finish();
+}
+
+// ---------------------------------------------------------------- covered subagents
+
+/** Last segment of a T3 thread id: the Claude agent id of a subagent thread (ids are percent-encoded, so ":" may be "%3A"). */
+const threadTail = (id: string): string => id.split(/%3A|:/i).pop() ?? id;
+
+/**
+ * Subagent threads of a Claude session whose run the claude-code adapter already stores as
+ * `<root>:sub:<agentId>` (from <root>/subagents/agent-<id>.jsonl). Storing them again as t3code
+ * sessions doubles the tree. A thread is covered when the parent transcript has the agent file, or
+ * when it is a workflow agent (a numbered child of a workflow thread) and the transcript has a
+ * subagents/workflows directory. Maps thread id to the claude-code session that holds a direct subagent's run.
+ */
+async function coveredThreads(all: Thread[], native: NativeIndex, owners?: Map<string, string>): Promise<Map<string, string | undefined>> {
+  const byId = new Map(all.map((t) => [t.id, t]));
+  const out = new Map<string, string | undefined>();
+  const rootDir = async (t: Thread): Promise<{ dir: string; sid: string } | undefined> => {
+    const pt = t.providerThreads[0];
+    if (!pt?.nativeId || providerAgent(pt.driver) !== CLAUDE_AGENT) return undefined;
+    const sid = unscope(pt.nativeId);
+    const path = await native.find(CLAUDE_AGENT, sid, t.cwd);
+    return path ? { dir: join(dirname(path), sid, "subagents"), sid } : undefined;
+  };
+  for (const t of all) {
+    if (t.relation !== "subagent" || !t.parentThreadId || t.providerThreads.length) continue;
+    const parent = byId.get(t.parentThreadId);
+    if (!parent) continue;
+    const tail = threadTail(t.id);
+    if (parent.relation !== "subagent") {
+      const root = await rootDir(parent);
+      if (root && existsSync(join(root.dir, `agent-${tail}.jsonl`))) {
+        out.set(t.id, childSessionId(root.sid, tail));
+        owners?.set(t.id, childSessionId(root.sid, tail));
+      }
+    } else {
+      const grand = parent.parentThreadId ? byId.get(parent.parentThreadId) : undefined;
+      const root = grand && grand.relation !== "subagent" ? await rootDir(grand) : undefined;
+      if (root && /^\d+$/.test(tail) && existsSync(join(root.dir, "workflows"))) {
+        out.set(t.id, undefined);
+        owners?.set(t.id, root.sid);
+      }
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- events
@@ -370,7 +424,7 @@ async function* threadEvents(ctx: NormalizeContext, t: Thread, rows: StoreRows, 
   for (const p of plans) {
     let events: AgentEvent[] = [];
     const agent = p.pt ? providerAgent(p.pt.driver) : undefined;
-    const path = agent && p.pt?.nativeId ? await native.find(agent, unscope(p.pt.nativeId)) : undefined;
+    const path = agent && p.pt?.nativeId ? await native.find(agent, unscope(p.pt.nativeId), t.cwd) : undefined;
     if (path && (agent === "codex" || agent === CLAUDE_AGENT)) events = await convertNative(ctx, agent, path, p.sessionId);
     else if (!path) {
       const mine = (x: { pt?: string }) => (p.pt ? x.pt === p.pt.id || (x.pt === undefined && p === plans[0]) : true);
@@ -623,7 +677,7 @@ async function threadFile(native: NativeIndex, dbPath: string, t: Thread, act: {
     const agent = providerAgent(pt.driver);
     // Only transcripts this adapter converts count; linked stores are their adapter's to watch.
     if (!pt.nativeId || (agent !== "codex" && agent !== CLAUDE_AGENT)) continue;
-    const s = statOf(await native.find(agent, unscope(pt.nativeId)));
+    const s = statOf(await native.find(agent, unscope(pt.nativeId), t.cwd));
     size += s.size;
     mtimeMs = Math.max(mtimeMs, s.mtimeMs);
   }
@@ -669,8 +723,16 @@ export async function* backfillT3(ctx: NormalizeContext, opts: BackfillOpts = {}
         activity(v1.db, "SELECT thread_id, COUNT(*) n, MAX(created_at) t FROM projection_thread_activities GROUP BY thread_id"),
       );
     }
-    const primary = new Map(all.map((x) => [x.thread.id, primaryOf(x.thread)]));
+    const owners = new Map<string, string>();
+    const covered = await coveredThreads(all.map((x) => x.thread), native, owners);
+    const primary = new Map(all.map((x) => [x.thread.id, covered.get(x.thread.id) ?? primaryOf(x.thread)]));
     for (const { thread, db, path, v1: old } of all) {
+      if (covered.has(thread.id)) {
+        // A store parsed before parseVersion 8 holds this thread as a session: re-parse deletes it, its owner has the run.
+        const owner = owners.get(thread.id);
+        if (owner) opts.copied?.(primaryOf(thread), owner);
+        continue;
+      }
       if (opts.changed) {
         const act = acts.map((m) => m.get(thread.id)).filter((a): a is { n: number; t: number } => a !== undefined);
         if (!(await opts.changed(await threadFile(native, path, thread, act)))) continue;
@@ -713,7 +775,8 @@ export const t3code: Adapter = {
   // 5 (0.1.2): tool.end records a tool output the agent cut before the model saw it (cut).
   // 6 (0.1.3): Claude transcripts' model fallbacks (system/model_fallback, model_refusal_fallback) are model.fallback notifications.
   // 7 (0.1.5): a tool call that loads a skill names it (payload.skill).
-  parseVersion: 7,
+  // 8 (0.1.5): a subagent thread of a Claude session whose transcript holds its run is not stored again as a t3code session.
+  parseVersion: 8,
 
   async detect() {
     const env = process.env;
