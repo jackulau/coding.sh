@@ -49,7 +49,8 @@ test("chat.completions.create: same result, one llm.call with usage, model and t
   assert.ok(typeof call.durationMs === "number" && call.durationMs > 0);
   const s = serve.session(sessionId)!;
   assert.equal(s.stats.latency?.llmCalls, 1);
-  assert.equal(s.title, undefined); // trace without input: no user.message
+  assert.equal(serve.events().some((e) => e.sessionId === sessionId && e.kind === "user.message"), false, "a trace without input records no user.message");
+  assert.equal(s.title, "plain", "so the trace's name titles the session");
   const reply = serve.events().find((e) => e.sessionId === sessionId && e.kind === "assistant.message");
   assert.equal(reply?.payload.text, "pong");
 });
