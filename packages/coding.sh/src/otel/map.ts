@@ -92,6 +92,11 @@ export type SpanEnricher = (span: OtelSpan, events: AgentEvent[], info: SpanEnri
 
 export interface MapResult {
   events: AgentEvent[];
+  /**
+   * Spans that arrived after descendants stored earlier (a subagent's model and tool spans exported
+   * before its invoke_agent span): see Rehome. Traces only.
+   */
+  rehome?: Rehome[];
   /** Spans/log records that could not be mapped (counted in partial_success). */
   rejected: number;
   errors: string[];
@@ -159,9 +164,22 @@ export interface SpanNode {
  */
 export class SpanTree {
   private readonly map = new Map<string, SpanNode>();
+  /** Parents that spans already seen name but that have not arrived (`${traceId}:${spanId}`). */
+  private readonly waiting = new Set<string>();
   private readonly max: number;
   constructor(max = 50_000) {
     this.max = max;
+  }
+  /** A span seen named `spanId` as its parent before it arrived. */
+  wait(traceId: string, spanId: string): void {
+    const k = `${traceId}:${spanId}`;
+    this.waiting.delete(k);
+    this.waiting.add(k);
+    if (this.waiting.size > this.max) this.waiting.delete(this.waiting.values().next().value!);
+  }
+  /** True once if earlier spans were waiting for `spanId`. */
+  takeWaiting(traceId: string, spanId: string): boolean {
+    return this.waiting.delete(`${traceId}:${spanId}`);
   }
   get(traceId: string, spanId: string): SpanNode | undefined {
     return this.map.get(`${traceId}:${spanId}`);
@@ -172,6 +190,29 @@ export class SpanTree {
     this.map.set(k, node);
     if (this.map.size > this.max) this.map.delete(this.map.keys().next().value!);
   }
+}
+
+/**
+ * A span that earlier spans were waiting for has arrived and puts some of them under a subagent:
+ * stored events of `traceId` in session `from` whose span now resolves to a subagent belong to that
+ * subagent's child session (see rehomeTarget, rehomeStored in receiver.ts).
+ */
+export interface Rehome {
+  traceId: string;
+  /** The session those earlier spans were stored in. */
+  from: string;
+}
+
+/**
+ * Where a stored event of session `from` belongs now that the span tree knows more: the child session
+ * of its nearest enclosing subagent. Undefined when it stays (no known subagent above it, or not in `from`).
+ */
+export function rehomeTarget(tree: SpanTree, e: AgentEvent, r: Rehome): { sessionId: string; subagentId: string } | undefined {
+  if (e.sessionId !== r.from || e.traceId !== r.traceId || !e.spanId) return undefined;
+  const node = tree.get(r.traceId, e.spanId);
+  if (!node) return undefined;
+  const sub = enclosingSubagent(tree, r.traceId, node.parentSpanId);
+  return sub ? { sessionId: childSessionId(r.traceId, sub), subagentId: sub } : undefined;
 }
 
 /** Index kv key of a persisted trace → conversation entry. */
@@ -745,8 +786,10 @@ export const spanEventId = (traceId: string, spanId: string, slot: number): stri
  * tools, nested subagents), tagged with subagentId, whenever the descendant's
  * ancestry up to the agent span is known: same batch, or an earlier batch via
  * MapContext.spanTree. Spans exported before their agent ancestor (a long
- * subagent under a batching exporter) stay in the parent session: stored
- * events are never moved.
+ * subagent under a batching exporter) are stored in the parent session first;
+ * when the ancestor arrives, mapTraces reports a Rehome and the receiver moves
+ * them (rehomeStored in receiver.ts), so the result does not depend on how
+ * spans were split across requests.
  */
 export const childSessionId = (traceId: string, spanId: string): string => `otel-sub-${traceId}-${spanId}`;
 
@@ -1090,6 +1133,10 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
   const unkeyed: [OtelSpan, DurableTag][] = [];
   const traceRunId = new Map<string, string>();
   const tree = ctx.spanTree ?? new SpanTree();
+  // Spans that earlier batches' spans were waiting for, and this batch's spans whose parent is not known yet.
+  const waited = new Set<OtelSpan>();
+  const orphans: OtelSpan[] = [];
+  const rehome = new Map<string, Rehome>();
   for (const rs of batch)
     for (const ss of rs.scopeSpans)
       for (const sp of ss.spans) {
@@ -1113,8 +1160,11 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
           if (sp.parentSpanId) node.parentSpanId = sp.parentSpanId;
           if (d?.replay) node.replay = true;
           tree.set(sp.traceId, sp.spanId, node);
+          if (tree.takeWaiting(sp.traceId, sp.spanId)) waited.add(sp);
+          if (sp.parentSpanId) orphans.push(sp);
         }
       }
+  for (const sp of orphans) if (!tree.get(sp.traceId!, sp.parentSpanId!)) tree.wait(sp.traceId!, sp.parentSpanId!);
   for (const [sp, d] of unkeyed) {
     const known = sp.traceId ? ctx.traceSessions?.get(sp.traceId) : undefined;
     const run = (sp.traceId && traceRunId.get(sp.traceId)) || (known?.startsWith(`${d.engine}:`) ? known.slice(d.engine.length + 1) : undefined);
@@ -1166,6 +1216,10 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
         if (d) c.durable = d;
         if (underReplay(tree, span.traceId, span.spanId)) c.replayed = true;
         const sub = enclosingSubagent(tree, span.traceId, span.parentSpanId);
+        // Earlier spans were waiting for this one and it puts them under a subagent: stored events may need to move.
+        if (waited.has(span) && (sub || tree.get(span.traceId, span.spanId)?.subagent)) {
+          rehome.set(`${span.traceId}\0${c.sessionId}`, { traceId: span.traceId, from: conv ?? span.traceId });
+        }
         if (sub) {
           c.subagentId = sub;
           c.sessionId = childSessionId(span.traceId, sub);
@@ -1191,6 +1245,7 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
       }
     }
   }
+  if (rehome.size) result.rehome = [...rehome.values()];
   return result;
 }
 
