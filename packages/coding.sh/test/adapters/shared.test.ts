@@ -218,6 +218,35 @@ describe("walkFiles", () => {
   });
 });
 
+describe("walkFiles with many project dirs", () => {
+  it("yields every file in path order, and a consumer that stops early ends the walk", async () => {
+    const root = await mkdtemp(join(tmpdir(), "csh-walk-many-"));
+    try {
+      const expected: string[] = [];
+      for (let i = 0; i < 40; i++) {
+        const dir = join(root, `p${String(i).padStart(2, "0")}`);
+        await mkdir(dir);
+        for (const n of ["a", "b"]) {
+          await writeFile(join(dir, `${n}.jsonl`), "{}\n");
+          expected.push(`p${String(i).padStart(2, "0")}/${n}.jsonl`);
+        }
+      }
+      const rel = (p: string) => p.slice(root.length + 1).replace(/\\/g, "/");
+      const all: string[] = [];
+      for await (const f of walkFiles(root, { match: (n) => n.endsWith(".jsonl") })) all.push(rel(f.path));
+      assert.deepEqual(all, expected);
+      const some: string[] = [];
+      for await (const f of walkFiles(root, { match: (n) => n.endsWith(".jsonl") })) {
+        some.push(rel(f.path));
+        if (some.length === 3) break;
+      }
+      assert.deepEqual(some, expected.slice(0, 3));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("parseTraceparent (W3C Trace Context)", async () => {
   const { parseTraceparent, rememberTraceSessions } = await import("../../src/adapters/_shared/traceparent.ts");
   const T = "52d64d522262bb7dfe0a8873681dae65";

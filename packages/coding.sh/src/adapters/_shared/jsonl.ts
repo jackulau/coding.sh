@@ -3,6 +3,8 @@ import { createReadStream } from "node:fs";
 import { open, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
+import type { Transform } from "node:stream";
+import * as zlib from "node:zlib";
 
 export interface JsonlRecord {
   value: unknown;
@@ -12,27 +14,69 @@ export interface JsonlRecord {
   offset: number;
 }
 
-/** Streams parsed JSON lines; blank and unparseable lines are skipped (lineNo still advances). */
-export async function* readJsonl(path: string): AsyncGenerator<JsonlRecord> {
-  const rl = createInterface({ input: createReadStream(path, { encoding: "utf8" }), crlfDelay: Infinity });
-  let lineNo = -1;
-  let offset = 0;
-  try {
-    for await (const line of rl) {
-      lineNo++;
-      const start = offset;
-      offset += Buffer.byteLength(line) + 1;
-      if (!line.trim()) continue;
-      let value: unknown;
-      try {
-        value = JSON.parse(line);
-      } catch {
-        continue;
+export function isZst(path: string): boolean {
+  return path.endsWith(".zst");
+}
+
+let warnedNoZstd = false;
+
+/**
+ * Lines of a text file, "
+" or "
+
+" ended. A `.zst` file is decompressed as it streams. A truncated or
+ * corrupt `.zst` ends after the lines decoded before the cut and never throws; so does a runtime without zstd
+ * (one warning). A plain file's read errors still throw.
+ */
+async function* readLines(path: string): AsyncGenerator<string> {
+  let input: NodeJS.ReadableStream;
+  if (isZst(path)) {
+    const make = (zlib as { createZstdDecompress?: () => Transform }).createZstdDecompress;
+    if (typeof make !== "function") {
+      if (!warnedNoZstd) {
+        warnedNoZstd = true;
+        process.stderr.write(`coding.sh: this Node has no zstd support (zlib.createZstdDecompress); skipping ${path}
+`);
       }
-      yield { value, lineNo, offset: start };
+      return;
     }
+    const src = createReadStream(path);
+    const dec = make();
+    dec.on("error", () => {}); // reported through the iteration below
+    src.on("error", (e) => dec.destroy(e));
+    src.pipe(dec);
+    dec.setEncoding("utf8");
+    input = dec;
+  } else {
+    input = createReadStream(path, { encoding: "utf8" });
+  }
+  const rl = createInterface({ input, crlfDelay: Infinity });
+  try {
+    for await (const line of rl) yield line;
+  } catch (e) {
+    if (!isZst(path)) throw e;
   } finally {
     rl.close();
+    (input as { destroy?: () => void }).destroy?.();
+  }
+}
+
+/** Streams parsed JSON lines; blank and unparseable lines are skipped (lineNo still advances). Reads `.zst` too. */
+export async function* readJsonl(path: string): AsyncGenerator<JsonlRecord> {
+  let lineNo = -1;
+  let offset = 0;
+  for await (const line of readLines(path)) {
+    lineNo++;
+    const start = offset;
+    offset += Buffer.byteLength(line) + 1;
+    if (!line.trim()) continue;
+    let value: unknown;
+    try {
+      value = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    yield { value, lineNo, offset: start };
   }
 }
 
@@ -57,6 +101,14 @@ export async function readHeadText(path: string, maxBytes: number): Promise<stri
 
 /** The file's first line, parsed, when it ends within `maxBytes`; else (or unreadable) undefined. */
 export async function readJsonlHead(path: string, maxBytes = 1024 * 1024): Promise<unknown> {
+  if (isZst(path)) {
+    try {
+      for await (const line of readLines(path)) return Buffer.byteLength(line) <= maxBytes ? JSON.parse(line) : undefined;
+    } catch {
+      // unreadable or corrupt
+    }
+    return undefined;
+  }
   const text = await readHeadText(path, maxBytes);
   if (text === undefined) return undefined;
   const end = text.indexOf("\n");
@@ -69,6 +121,30 @@ export async function readJsonlHead(path: string, maxBytes = 1024 * 1024): Promi
 
 /** Parses the complete JSON lines within the last `maxBytes` of a file (oldest first). */
 export async function readJsonlTail(path: string, maxBytes = 256 * 1024): Promise<unknown[]> {
+  if (isZst(path)) {
+    // No seeking in a compressed file: stream it all and keep the last `maxBytes` of whole lines.
+    const kept: string[] = [];
+    let bytes = 0;
+    try {
+      for await (const l of readLines(path)) {
+        kept.push(l);
+        bytes += Buffer.byteLength(l) + 1;
+        while (bytes > maxBytes && kept.length) bytes -= Buffer.byteLength(kept.shift()!) + 1;
+      }
+    } catch {
+      // unreadable: keep what was read
+    }
+    const out: unknown[] = [];
+    for (const l of kept) {
+      if (!l.trim()) continue;
+      try {
+        out.push(JSON.parse(l));
+      } catch {
+        // corrupt line
+      }
+    }
+    return out;
+  }
   let fh;
   try {
     fh = await open(path, "r");
@@ -112,6 +188,15 @@ export interface WalkOpts {
   skipDir?: (name: string, path: string) => boolean;
 }
 
+/** Subdirectories of the walk root listed ahead of the one being read. */
+const WALK_LOOKAHEAD = 16;
+
+async function collect<T>(it: AsyncIterable<T>): Promise<T[]> {
+  const out: T[] = [];
+  for await (const x of it) out.push(x);
+  return out;
+}
+
 /** Depth-bounded walk yielding matching files sorted by path (deterministic order). Missing root → nothing. */
 export async function* walkFiles(root: string, opts: WalkOpts, depth = 0): AsyncGenerator<WalkedFile> {
   let entries;
@@ -121,8 +206,28 @@ export async function* walkFiles(root: string, opts: WalkOpts, depth = 0): Async
     return;
   }
   entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  for (const e of entries) {
+  // The top level of a big tree (tens of thousands of project dirs): the next few subdirectories are listed
+  // while the current one is read, since each listing waits on the disk. Files still come out in path order.
+  const ahead = new Map<string, Promise<WalkedFile[]>>();
+  let started = 0;
+  const prefetch = (from: number) => {
+    if (depth !== 0) return;
+    for (; started < entries.length && started < from + WALK_LOOKAHEAD; started++) {
+      const e = entries[started]!;
+      if (e.isDirectory() && !opts.skipDir?.(e.name, join(root, e.name)) && (opts.maxDepth ?? 8) > 0) {
+        ahead.set(e.name, collect(walkFiles(join(root, e.name), opts, 1)));
+      }
+    }
+  };
+  for (const [i, e] of entries.entries()) {
+    prefetch(i);
     const p = join(root, e.name);
+    const listed = ahead.get(e.name);
+    if (listed) {
+      ahead.delete(e.name);
+      yield* await listed;
+      continue;
+    }
     // A symlink (or a Windows junction) is followed to what it points at; maxDepth bounds a link cycle.
     let linked;
     if (e.isSymbolicLink()) {
