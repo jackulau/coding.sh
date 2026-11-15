@@ -471,14 +471,14 @@ A grader is a JSON object with a `kind`. Every kind takes `name`, the grader's i
 | `json-schema` | `schema` (required) | The output, parsed as JSON when it is text, validates against the schema. |
 | `json-path` | `path` (required, e.g. `$.answer.city`), `equals`, `expectedPath`, `normalize` | The value at `path` in the output equals `equals`, else the value at `expectedPath` (default: `path`) in `expected`, else `expected` itself. |
 | `numeric` | `abs`, `rel`, `value`, `path` | The first number in the output (or at `path`) is within `max(abs, rel × \|answer\|)` of the answer. Both tolerances default to 0. |
-| `objective` | `base`, `ref`, `anchoredAt` (all required), `path`, `scale` (`log` by default, or `linear`), `clip` (default 3), `gate` (a grader spec) | Scores a measured number (speed, size, cost) against two dated anchors: `base` scores 0 and `ref` scores 1. On the log scale the score is `log(J/base) / log(ref/base)`, on the linear scale `(J-base)/(ref-base)`; both are floored at 0 and clipped at `clip`, so the score can pass 1 (the other graders stop at 1). Lower is better when `ref < base`. Passes at a score of 1 or more. If `gate` fails, the score is 0. The log scale needs `base`, `ref` and J above 0; `base` and `ref` must differ. Keep cost as its own score. |
+| `objective` | `base`, `ref`, `anchoredAt` (all required), `path`, `scale` (`log` by default, or `linear`), `clip` (default 3, at least 1), `gate` (a grader spec) | Scores a measured number (speed, size, cost) against two dated anchors: `base` scores 0 and `ref` scores 1. On the log scale the score is `log(J/base) / log(ref/base)`, on the linear scale `(J-base)/(ref-base)`; both are floored at 0 and clipped at `clip`, so the score can pass 1 (the other graders stop at 1). `clip: 1` keeps it in 0 to 1. Lower is better when `ref < base`. Passes at a score of 1 or more. See [Scores above 1](#scores-above-1). If `gate` fails, the score is 0. The log scale needs `base`, `ref` and J above 0; `base` and `ref` must differ. Keep cost as its own score. |
 | `similarity` | `threshold` (default 0.8), `value`, `normalize` | 1 − edit distance / length of the longer text is at least `threshold`. |
 | `progress` | `flags`, `maxDerails` (default 0) | The trace derailed at most `maxDerails` times. The score is the share of the run before the first derail. `flags` limits which derails count: `looping`, `failure-streak`, `churn`, `no-progress`, `stalled`, `context-thrash`. |
 | `executability` | `kinds`, `maxInvalid` (default 0) | The trace has at most `maxInvalid` tool calls the harness refused. `kinds` limits which count: `schema`, `unknown-tool`, `precondition`, `state`, `missing`, `denied`, `other`. |
 | `calls` | `must`, `mustNot`, `max`, `order` | Every `must` match is some tool call in the trace, no `mustNot` match is, there are at most `max` calls, and the `order` tools are called in that order (other calls may come between). A match is `{"tool": …, "args": {…}}`, with partial argument matches; an MCP tool matches by its own name or the agent's. See [Tool evals](../TOOL-EVALS.md#3-task-format). |
 | `next-action` | none: the case's `expected` is a calls spec (`must`, `mustNot`, `max`, `order`) | The tool calls in the turn's output match the case's own spec. `replay --fork --save-case` writes these cases, with the recorded failing action under `mustNot`. See [Fork a failing step into a case](#fork-a-failing-step-into-a-case). |
 | `agent-slop` | `rules`, `exclude`, `maxErrors` (default 0), `maxWarnings` (default: no limit) | The lines the diff adds have at most that many findings. See [Agent slop](#agent-slop). |
-| `command` | `command` (required, an executable, not a shell line), `args`, `cwd`, `env`, `timeoutMs` (default 60000, 0 for none), `passThreshold` (default 0.5) | The command exits 0. It gets `{input, output, expected, metadata, caseId, trace}` as JSON on stdin and may print a grade: `true`/`false`, a score from 0 to 1 (passes at `passThreshold`), or `{"score", "pass", "reason"}`. A non-zero exit fails the run. A timeout, a signal or a command that can't start is a grader error. |
+| `command` | `command` (required, an executable, not a shell line), `args`, `cwd`, `env`, `timeoutMs` (default 60000, 0 for none), `passThreshold` (default 0.5) | The command exits 0. It gets `{input, output, expected, metadata, caseId, trace}` as JSON on stdin and may print a grade: `true`/`false`, a score from 0 to 1 (passes at `passThreshold`; a score outside 0 to 1 is stored as 0 or 1), or `{"score", "pass", "reason"}`. A non-zero exit fails the run. A timeout, a signal or a command that can't start is a grader error. |
 | `module` | `module` (required, a path to a JS file, relative to the spec file), `export` (default `default`), `options`, `passThreshold` (default 0.5) | The exported function, called with the grade context and `options`, returns a passing grade, in the same forms as `command`. |
 | `llm` | `name` and `rubric` (required), `criterion` (default: `name`), `passThreshold` (default 0.5), `template`, `system`, `tunedOn` (default `["train", "dev"]`), `concurrency` (default 4), and the provider fields below | The judge model's verdict passes, or its score is at least `passThreshold` when it gives no verdict. |
 | `llm-checklist` | `name` and `items` (required), `mode` (`per-item` by default, or `batched`), `abstain`, `passThreshold` (default 0.5), `criterion`, `system`, `tunedOn`, `concurrency`, and the provider fields below | No `critical` item is answered no or left undecided, and the weighted share of yes answers is at least `passThreshold`. An item has `id`, `question`, and optionally `critical`, `weight` (default 1), `dimension`, `violationExample` and `check`. See [Checklists and trace checks](#checklists-and-trace-checks). |
@@ -503,6 +503,23 @@ false` for a local server with no key), and `mockAnswer` (`mock` only). A judge 
 {"kind": "command", "command": "python3", "args": ["grade.py"], "timeoutMs": 30000}
 {"kind": "llm", "name": "helpful", "rubric": "Answers the question asked, correctly and politely."}
 ```
+
+#### Scores above 1
+
+Only an `objective` grader scores above 1. Nothing clamps its score on the way into a report:
+
+- `exp run` prints each grader's mean score as a number, so `1.84` is a mean above the reference.
+- `exp compare` prints each side's mean and B − A as numbers. In the viewer, the grader bars
+  widen their axis past ±1 to fit the difference.
+- The delta an `exp run` prints in a session gives score differences in points (score × 100), so
+  `+150.0pp` is a gain of 1.5.
+- In `bench`, a cell's score is the mean of its graders' scores, so an `objective` grader can lift
+  it past 1. The leaderboard then shows a mean score above 100%, and the score trend's axis grows to
+  fit it.
+
+A case still passes only when every grader passes, and the `objective` grader passes at 1. A
+`command` or `module` grader's score is stored as 0 when below 0 and 1 when above 1. To keep an
+`objective` score in 0 to 1 as well, set `clip: 1`.
 
 ### Regrade
 
@@ -775,7 +792,7 @@ the two tasks:
 
 Two `json-path` graders read the output. `terminated` passes when the answer finished, and
 `correct` passes when `$.answer` equals the same field of the case's `expected`. Grader scores are 0 to 1, so a
-count such as tokens used has to become a pass or fail before it is a grader.
+count such as tokens used has to become a pass or fail, or an `objective` score against two anchors, before it is a grader.
 
 `terminated.json`:
 

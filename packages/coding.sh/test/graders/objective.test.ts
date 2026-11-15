@@ -64,6 +64,29 @@ describe("objective grader", () => {
     assert.throws(() => objectiveGrader({ base: 5, ref: 6, anchoredAt: "" }), /anchoredAt/);
     await assert.rejects(async () => createGrader({ kind: "objective", base: 3, ref: 3, anchoredAt: "x" }), /differ/);
     assert.doesNotThrow(() => objectiveGrader({ base: 0, ref: 5, anchoredAt: "x", scale: "linear" }));
+    // Pass is score >= 1, so a clip below 1 could never pass.
+    assert.throws(() => objectiveGrader({ ...ANCHORS, clip: 0.5 }), /at least 1/);
+    await assert.rejects(async () => createGrader({ kind: "objective", ...ANCHORS, clip: 0.99 }), /at least 1/);
+  });
+
+  it("clip 1 keeps the score in 0..1 and still passes at the reference", async () => {
+    const g = objectiveGrader({ ...ANCHORS, clip: 1 });
+    const beyond = await grade(g, 0.5);
+    assert.equal(beyond.score, 1);
+    assert.equal(beyond.pass, true);
+    near((await grade(g, Math.sqrt(20))).score, 0.5);
+  });
+
+  it("a score above 1 reaches the experiment summary unclamped", async () => {
+    const { summarizeRuns } = await import("../../src/experiments/run.ts");
+    const g = objectiveGrader(ANCHORS);
+    const results = [await grade(g, 0.4), await grade(g, 10)];
+    const runs = results.map((r, i) => ({ caseId: `c${i}`, trial: 1, output: null, latencyMs: 1, pass: r.pass, grades: [{ graderId: g.id, result: r }] }));
+    const s = summarizeRuns(runs as never, [g], 1);
+    const gs = s.graders.find((x) => x.id === g.id)!;
+    near(results[0]!.score, 2);
+    near(gs.meanScore, 1); // (2 + 0) / 2: the 2 is not clamped to 1 on its way into the mean
+    assert.equal(gs.passed, 1);
   });
 
   it("changes version when an anchor changes", () => {

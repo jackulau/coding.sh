@@ -6402,7 +6402,8 @@ async function showExperiment(seq, id) {
 // ---- compare two experiments (a = baseline, b = candidate)
 
 /** A symmetric axis that ends on a round number: ±10, 20, 25, 50 or 100 pts. */
-function niceSpan(x) { return [0.1, 0.2, 0.25, 0.5, 1].find((v) => v >= x * 1.1) || 1; }
+// Pass-rate gaps stop at 1; an objective grader's score gap can reach its clip (default 3), so the axis grows past 1 instead of pinning the bar to its end.
+function niceSpan(x) { return [0.1, 0.2, 0.25, 0.5, 1].find((v) => v >= x * 1.1) || (x <= 1 ? 1 : [2, 3, 5, 10].find((v) => v >= x * 1.1) || Math.ceil(x * 1.1)); }
 /** The side of the verdict card: role, name (when it says more than the role) and pass rate. */
 /** `stamped`: one side at least records its weights (`exp run --weights`), so both say what they recorded. */
 function side(cls, role, e, stamped) {

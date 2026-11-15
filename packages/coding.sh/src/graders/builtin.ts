@@ -261,7 +261,7 @@ export interface ObjectiveSpec<G = unknown> {
   anchoredAt: string;
   /** "log" (default): ratio on a log scale, for positive quantities. "linear": for quantities with no natural zero. */
   scale?: "log" | "linear";
-  /** Upper bound of the score. Default 3. */
+  /** Upper bound of the score, at least 1 (the pass mark). Default 3. 1 keeps the score in 0..1 like every other grader. */
   clip?: number;
   /** A grader that must pass first; when it fails the score is 0. A GraderSpec in a config, a Grader in code. */
   gate?: G;
@@ -279,7 +279,8 @@ export function objectiveGrader(spec: Omit<ObjectiveSpec<Grader>, "kind">): Grad
   if (scale !== "log" && scale !== "linear") throw new Error(`objective: scale must be "log" or "linear" (got ${JSON.stringify(spec.scale)})`);
   if (scale === "log" && (spec.base <= 0 || spec.ref <= 0)) throw new Error("objective: base and ref must be greater than 0 on the log scale (use scale \"linear\" otherwise)");
   if (typeof spec.anchoredAt !== "string" || !spec.anchoredAt.trim()) throw new Error("objective: anchoredAt (the date the anchors were measured) is required");
-  if (!finite(clip) || clip <= 0) throw new Error("objective: clip must be a number greater than 0");
+  // Pass is score >= 1, so a clip below 1 could never pass.
+  if (!finite(clip) || clip < 1) throw new Error("objective: clip must be a number of at least 1 (the score that passes)");
   if (spec.path) queryJsonPath(null, spec.path); // validate syntax eagerly
   const { gate, ...frozen } = spec;
   const hashed: { name?: string; [k: string]: unknown } = { ...frozen };

@@ -86,7 +86,7 @@ export interface Citation {
 }
 
 export interface GradeResult {
-  /** 0..1 */
+  /** 0..1, except an `objective` grader's, which runs from 0 to its `clip` (default 3) and passes at 1. Consumers must not assume a score is at most 1. */
   score: number;
   pass: boolean;
   reason?: string;
