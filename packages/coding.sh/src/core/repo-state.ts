@@ -1,7 +1,9 @@
 // Repo state for sessions whose capture path does no git work (agent hooks,
 // transcript backfill). Filled at ingest, once per session, from its cwd:
 //
-// - root:   `git rev-parse --show-toplevel` of the cwd (cached per cwd per run).
+// - root:   `git rev-parse --show-toplevel` of the cwd (cached per cwd per run;
+//           the current HEAD and branch are cached per root, HEAD at a time per
+//           root and second).
 // - head:   the commit the agent reported at session start (Codex session_meta
 //           git.commit_hash → session.start payload.gitCommit, or the HEAD a
 //           0.1.3 hook read from .git → payload.git.commit), else HEAD at
@@ -42,25 +44,50 @@ function startMeta(p: Record<string, unknown> | undefined): { branch?: string; c
   return out;
 }
 
-export function repoResolver(): RepoResolver {
+export interface RepoResolverOptions {
+  /**
+   * True once git must wait (a budgeted read past its deadline, a stopped run): start()
+   * then runs no git and returns undefined, after calling `skipped` with the session id
+   * so the caller can leave the session for a later ingest (core/ingest-deferred.ts).
+   */
+  stop?: () => boolean;
+  skipped?: (sessionId: string) => void;
+}
+
+export function repoResolver(o: RepoResolverOptions = {}): RepoResolver {
+  // One git call per cwd, root, or root and second for the whole run: an import of a few hundred
+  // sessions in one big repo otherwise ran the same git commands hundreds of times.
   const roots = new Map<string, Promise<string | undefined>>();
-  const rootOf = (cwd: string) => {
-    let p = roots.get(cwd);
-    if (!p) roots.set(cwd, (p = repoRoot(cwd).catch(() => undefined)));
+  const heads = new Map<string, Promise<string | undefined>>();
+  const branches = new Map<string, Promise<string | undefined>>();
+  const headsAt = new Map<string, Promise<string | undefined>>();
+  const quiet = <T>(p: Promise<T>): Promise<T | undefined> => p.catch(() => undefined);
+  const once = <T>(m: Map<string, Promise<T | undefined>>, key: string, fn: () => Promise<T>): Promise<T | undefined> => {
+    let p = m.get(key);
+    if (!p) m.set(key, (p = quiet(fn())));
     return p;
   };
-  const quiet = <T>(p: Promise<T>): Promise<T | undefined> => p.catch(() => undefined);
   return {
     async start(session, facts) {
       if (session.repo || !session.cwd) return undefined;
-      const root = await rootOf(session.cwd);
+      const cwd = session.cwd;
+      if (o.stop?.() && !roots.has(cwd)) {
+        o.skipped?.(session.id);
+        return undefined;
+      }
+      const root = await once(roots, cwd, () => repoRoot(cwd));
       if (!root) return undefined;
       const meta = startMeta(facts.start);
       const live = facts.live;
-      let head = meta.commit ?? (await quiet(headAt(root, session.startedAt)));
-      if (head === undefined && live) head = await quiet(currentHead(root));
+      const needsGit = meta.commit === undefined || (meta.branch === undefined && live);
+      if (needsGit && o.stop?.()) {
+        o.skipped?.(session.id);
+        return undefined;
+      }
+      let head = meta.commit ?? (await once(headsAt, `${root}\0${Math.floor(session.startedAt / 1000)}`, () => headAt(root, session.startedAt)));
+      if (head === undefined && live) head = await once(heads, root, () => currentHead(root));
       const state: RepoState = { root, head: head ?? "" };
-      const branch = meta.branch ?? (live ? await quiet(currentBranch(root)) : undefined);
+      const branch = meta.branch ?? (live ? await once(branches, root, () => currentBranch(root)) : undefined);
       if (branch) state.branch = branch;
       return state;
     },

@@ -14,7 +14,7 @@ import { spoolSize } from "../core/ingest-health.ts";
 import { paths } from "../core/paths.ts";
 import { listBackups, StoreNewerError } from "../store/upgrade.ts";
 import { version } from "./meta.ts";
-import { acquireLock, isLocked, wakeMarker } from "../core/lock.ts";
+import { acquireLock, isLocked, type LockOptions, wakeMarker } from "../core/lock.ts";
 import { spawnBackgroundIngest } from "../spool/kick.ts";
 import { UsageError, type FlagValue } from "./args.ts";
 import { ago, CliError, plural, type Output } from "./output.ts";
@@ -239,14 +239,23 @@ export async function autoIngest(ctx: Context, o: AutoIngestOptions = {}): Promi
       }
     }
   }
-  if (!o.signal?.aborted) pending += await (deadline !== undefined ? tailIngestWithin(ctx, deadline) : tailIngest(ctx));
-  if (pending && o.budgetMs !== undefined) {
-    // An ingest holding the lock finishes the spool (and the transcripts) itself; else start one
-    // (not with CODING_SH_NO_AUTO_INGEST=1, which also keeps the hook from starting them).
+  const spoolPending = pending;
+  let tail: TailIngestResult = { pending: 0, busy: false };
+  // A caller with a stop signal (the viewer's worker) comes back in a few seconds: it does not wait on another tail import.
+  if (!o.signal?.aborted) tail = await (deadline !== undefined ? tailIngestWithin(ctx, deadline) : tailIngest(ctx, o.signal ? { signal: o.signal, waitMs: 0 } : {}));
+  pending += tail.pending;
+  if (o.budgetMs !== undefined) {
     const env = o.env ?? process.env;
-    const started = !busy && env.CODING_SH_NO_AUTO_INGEST !== "1" && spawnBackgroundIngest(ingestCli(ctx.paths.cliPointer), env);
-    indexing = busy || !!started;
-    o.out?.note(`${plural(pending, "file")} not yet ingested${indexing ? ", indexing in the background" : ""}; showing what is indexed so far (--fresh waits for all)`);
+    // Git work the ingest left (end snapshots, repo states) is done by a background ingest, with no note: the answer is whole.
+    const deferred = !busy && !pending && (await import("../core/ingest-deferred.ts").then((m) => m.hasDeferred(ctx.index)).catch(() => false));
+    // An ingest holding the lock finishes the spool (and the transcripts) itself, and a process holding the tail lock the
+    // transcripts; else start one, at most one per read (not with CODING_SH_NO_AUTO_INGEST=1, which also keeps the hook
+    // from starting them). Transcripts another process is reading need none: a read finds them indexed when it is done.
+    const tailOnly = !spoolPending && !deferred;
+    const wanted = !busy && (pending > 0 || deferred) && !(tailOnly && (tail.busy || isLocked(ctx.paths.tailLock)));
+    const started = wanted && env.CODING_SH_NO_AUTO_INGEST !== "1" && spawnBackgroundIngest(ingestCli(ctx.paths.cliPointer), env);
+    indexing = busy || tail.busy || !!started;
+    if (pending) o.out?.note(`${plural(pending, "file")} not yet ingested${indexing ? ", indexing in the background" : ""}; showing what is indexed so far (--fresh waits for all)`);
     if (started) reparseKicked = true; // that ingest re-parses too when due
   }
   await kickReparse(ctx, o.env ?? process.env);
@@ -318,36 +327,73 @@ export function spawnDetachedCli(cli: string | undefined, args: string[], env: N
  * tailIngest for a budgeted read: answers by `deadline` however long the adapters' reads take
  * (several seconds on a machine with T3 Code's database and a big projects dir), counting the
  * source it left as one file not yet ingested. Runs in a child process, and only when an adapter has a source to read.
+ * Another process reading them (paths.tailLock) counts as one file too: the read answers before that import is done.
  */
-async function tailIngestWithin(ctx: Context, deadline: number): Promise<number> {
+async function tailIngestWithin(ctx: Context, deadline: number): Promise<TailIngestResult> {
   try {
     const { ADAPTERS } = await import("../adapters/index.ts");
-    if (!ADAPTERS.some((a) => a.tail?.() || a.tailWhenUnhooked?.())) return 0;
+    if (!ADAPTERS.some((a) => a.tail?.() || a.tailWhenUnhooked?.())) return { pending: 0, busy: false };
+    // Another process is reading them: no child to start, that one has them.
+    if (isLocked(ctx.paths.tailLock)) return { pending: 1, busy: true };
     const { tailWithin } = await import("./ingest-worker.ts");
-    return (await tailWithin({ env: ctx.env, cwd: process.cwd(), deadline })).pending;
+    const r = await tailWithin({ env: ctx.env, cwd: process.cwd(), deadline });
+    return r.busy ? { pending: 1, busy: true } : { pending: r.pending, busy: false };
   } catch {
-    return 0;
+    return { pending: 0, busy: false };
   }
 }
 
-/** Imports from adapters whose store is a capture path (Adapter.tail). Never fails a read. Returns the files left unread at `deadline`. */
-export async function tailIngest(ctx: Context, deadline?: number): Promise<number> {
+/** What tailIngest left: files unread at its deadline or stop, and whether another process was reading the same sources. */
+export interface TailIngestResult {
+  pending: number;
+  /** Another process held paths.tailLock past `waitMs`: this one read nothing, that one reads them. */
+  busy: boolean;
+}
+
+/**
+ * Imports from adapters whose store is a capture path (Adapter.tail), under paths.tailLock so one
+ * process reads them at a time (a read's tail child, a background ingest and `--fresh` all do):
+ * several reading the same transcripts at once only repeat each other's work. Waits `waitMs` for
+ * another one (default 30 s; 0 skips while one runs), and not past an abort. Never fails a read.
+ */
+export async function tailIngest(ctx: Context, o: { deadline?: number; signal?: AbortSignal; waitMs?: number } = {}): Promise<TailIngestResult> {
   let pending = 0;
-  const d = deadline !== undefined ? { deadline } : {};
+  const d: { deadline?: number; signal?: AbortSignal } = {};
+  if (o.deadline !== undefined) d.deadline = o.deadline;
+  if (o.signal) d.signal = o.signal;
   try {
     const { ADAPTERS } = await import("../adapters/index.ts");
     const agents = ADAPTERS.filter((a) => a.tail?.()).map((a) => a.id);
-    if (agents.length) pending += (await ctx.backfill({ agents, ...d })).pendingFiles;
     // Agents whose hooks are installed but not firing yet: their transcripts
     // are the capture path until they are (a fresh `init` with Codex).
-    for (const a of ADAPTERS) {
+    const unhooked = ADAPTERS.flatMap((a) => {
       const t = a.tailWhenUnhooked?.();
-      if (t) pending += (await ctx.backfill({ agents: [a.id], ...(t.since !== undefined ? { since: t.since } : {}), ...d })).pendingFiles;
+      return t ? [{ id: a.id, since: t.since }] : [];
+    });
+    if (!agents.length && !unhooked.length) return { pending: 0, busy: false };
+    mkdirSync(dirname(ctx.paths.tailLock), { recursive: true });
+    let lock;
+    try {
+      const wait: LockOptions = { waitMs: o.waitMs ?? 30_000 };
+      if (o.signal) wait.signal = o.signal;
+      lock = await acquireLock(ctx.paths.tailLock, wait);
+    } catch (e) {
+      if (lockContention(e)) return { pending: 0, busy: true };
+      throw e;
+    }
+    try {
+      if (agents.length) pending += (await ctx.backfill({ agents, ...d })).pendingFiles;
+      for (const t of unhooked) {
+        if (o.signal?.aborted) break;
+        pending += (await ctx.backfill({ agents: [t.id], ...(t.since !== undefined ? { since: t.since } : {}), ...d })).pendingFiles;
+      }
+    } finally {
+      lock.release();
     }
   } catch {
     // a broken third-party store must not break `coding.sh sessions`
   }
-  return pending;
+  return { pending, busy: false };
 }
 
 /**

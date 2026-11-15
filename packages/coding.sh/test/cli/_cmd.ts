@@ -60,7 +60,7 @@ export interface Ran {
   error?: any;
 }
 
-export async function runCmd(mod: CommandModule, sb: Sandbox, opts: { action?: string; flags?: Record<string, FlagValue>; positionals?: string[]; rest?: string[]; json?: boolean; cwd?: string; argv?: string[] } = {}): Promise<Ran> {
+export async function runCmd(mod: CommandModule, sb: Sandbox, opts: { action?: string; flags?: Record<string, FlagValue>; positionals?: string[]; rest?: string[]; json?: boolean; cwd?: string; argv?: string[]; /** Ctrl-C: the signal main() aborts on the first SIGINT. */ signal?: AbortSignal } = {}): Promise<Ran> {
   const res: Ran = { code: undefined, stdout: "", stderr: "" };
   const out = new Output({
     json: opts.json === true,
@@ -69,7 +69,7 @@ export async function runCmd(mod: CommandModule, sb: Sandbox, opts: { action?: s
     stderr: { write: (s: string) => ((res.stderr += s), true), isTTY: false },
     stdin: { isTTY: false },
   });
-  const c: CommandContext = { action: opts.action, flags: opts.flags ?? {}, positionals: opts.positionals ?? [], rest: opts.rest ?? [], out, env: sb.env, cwd: opts.cwd ?? sb.env.HOME!, debug: false, signal: new AbortController().signal, argv: opts.argv };
+  const c: CommandContext = { action: opts.action, flags: opts.flags ?? {}, positionals: opts.positionals ?? [], rest: opts.rest ?? [], out, env: sb.env, cwd: opts.cwd ?? sb.env.HOME!, debug: false, signal: opts.signal ?? new AbortController().signal, argv: opts.argv };
   // Some paths (the inline transcript ingest a read runs, os.homedir()) resolve agent homes from
   // process.env, not c.env. Point those at the sandbox while the command runs, or a read would
   // ingest the real ~/.claude and ~/.codex into the sandbox store.

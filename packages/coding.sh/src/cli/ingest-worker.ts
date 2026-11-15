@@ -92,10 +92,13 @@ export function startBackgroundIngest(opts: BackgroundIngestOptions): Background
  * thread stuck in a native call (a sync file or SQLite call) cannot be terminated, and the process then cannot exit
  * until the call returns (12 to 42 s on a loaded Windows machine); killing a process is immediate. What it stored is
  * kept, and its cursors are set only after the events they cover, so the background ingest the read starts resumes.
+ * The child stops by itself a little before the deadline (tailMarginMs), with the cursors of each file it read
+ * through committed as it went, so the kill is only for a read that does not return (a scan, a big database).
  * Resolves with the files left unread: `late` when the child was still reading at the deadline (at least one), 0
- * when it failed, or had not started reading yet (a budget of 0 ms answers without any wait).
+ * when it failed, or had not started reading yet (a budget of 0 ms answers without any wait). `busy`: another
+ * process was reading the same sources (paths.tailLock), so this one read nothing.
  */
-export function tailWithin(opts: { env: NodeJS.ProcessEnv; cwd: string; deadline: number; /** Tests: block the child this long before it reads, as a slow adapter does. */ stallMs?: number }): Promise<{ pending: number; late: boolean }> {
+export function tailWithin(opts: { env: NodeJS.ProcessEnv; cwd: string; deadline: number; /** Tests: block the child this long before it reads, as a slow adapter does. */ stallMs?: number }): Promise<{ pending: number; late: boolean; busy?: true }> {
   return new Promise((resolve) => {
     const data: TailData = { kind: TAIL_KIND, cwd: opts.cwd, deadline: opts.deadline, stallMs: opts.stallMs };
     let child: ChildProcess;
@@ -108,7 +111,7 @@ export function tailWithin(opts: { env: NodeJS.ProcessEnv; cwd: string; deadline
     let done = false;
     let reading = false;
     let out = "";
-    const finish = (r: { pending: number; late: boolean }) => {
+    const finish = (r: { pending: number; late: boolean; busy?: true }) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
@@ -125,6 +128,7 @@ export function tailWithin(opts: { env: NodeJS.ProcessEnv; cwd: string; deadline
         const line = out.slice(0, i);
         out = out.slice(i + 1);
         if (line === "reading") reading = true;
+        else if (line === "tail busy") finish({ pending: 0, late: false, busy: true });
         else if (line.startsWith("tail ")) finish({ pending: Number(line.slice(5)) || 0, late: false });
       }
     });
@@ -140,20 +144,27 @@ interface TailData {
   stallMs: number | undefined;
 }
 
+/**
+ * How long before the parent's deadline its tail child stops reading: a quarter of the time left, between 100 and
+ * 500 ms, for the last file's commit and the store's close.
+ */
+export const tailMarginMs = (left: number): number => Math.min(500, Math.max(100, Math.floor(left / 4)));
+
 async function runTail(d: TailData): Promise<void> {
   delete process.env[TAIL_ENV]; // not inherited by anything this import starts
   const [{ openContext }, { tailIngest }] = await Promise.all([import("../core/context.ts"), import("./common.ts")]);
   const ctx = await openContext({ env: process.env, cwd: d.cwd });
-  let pending = 0;
+  let r = { pending: 0, busy: false };
   try {
     process.stdout.write("reading\n");
     // A native call that does not return until done, as a big database read is: not interruptible in-process.
     if (d.stallMs) spawnSync(process.execPath, ["-e", `setTimeout(() => {}, ${Math.floor(d.stallMs)})`], { stdio: "ignore" });
-    pending = await tailIngest(ctx, d.deadline);
+    // Another process reading the same sources (a background ingest, another read's child): not again here.
+    r = await tailIngest(ctx, { deadline: d.deadline - tailMarginMs(d.deadline - Date.now()), waitMs: 0 });
   } finally {
     await ctx.close();
   }
-  process.stdout.write(`tail ${pending}\n`);
+  process.stdout.write(r.busy ? "tail busy\n" : `tail ${r.pending}\n`);
 }
 
 async function runWorker(d: Data): Promise<void> {

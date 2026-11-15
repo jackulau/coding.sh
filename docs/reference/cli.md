@@ -238,6 +238,7 @@ coding.sh ingest --rebuild --agent pi
 - Rarely needed: read commands, the viewer and the MCP server ingest first, and the hook starts one when a session ends.
 - After an upgrade, sessions stored by an older adapter parse are re-parsed in the background. --rebuild does it for every session now; a session whose transcript and spool lines are gone keeps its rows, minus duplicates, and one the adapter now reads as a copy of another stored session is removed.
 - Run in the foreground, it also folds sessions that have events but no session row, and sessions tagged fold:error; doctor counts both.
+- Ctrl-C stops it at the next line: what was read stays stored, the lock is released and it exits 130 (with --json, outcome interrupted). Run it again to finish.
 
 ## `coding.sh run`
 
