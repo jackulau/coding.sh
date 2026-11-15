@@ -54,6 +54,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Store.** Under Git Bash on Windows, `/tmp/…` and `/c/…` in a `sqlite://` or `file://` URL mean the shell's paths (the user's temp dir, `C:…`), not `C:	mp`. An index that can't be opened names the path it tried. [Config](https://github.com/jackulau/coding.sh/blob/main/docs/reference/config.md)
 - **Search.** Hits that rank the same come back newest first and the same on every call, where a page of tied hits was arbitrary. [Explore](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md)
 - **CLI.** A read that finds a capture pending (`sessions`, `show`, `search`, `status`, `usage`) answers at its 1.5 s budget again: the reads of T3 Code's database and of transcripts of agents without hooks run in a worker it stops waiting for, where they took 5 to 12 s on one thread. [Troubleshooting](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md)
 - **Workflows.** `workflows list` reads at most 2 MB of changed run transcripts before it answers and leaves a live run's larger directory to a background `workflows import`, showing the last import with a `pending` field in `--json`, where it took 10 to 50 s while a run was live. [Workflows](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md)

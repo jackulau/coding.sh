@@ -45,7 +45,7 @@ keep tokens out of the file.
 
 | Key | Default | Settable | What |
 |---|---|---|---|
-| `store.index` | `sqlite://~/.coding.sh/index.db` | yes | Index store URL. `sqlite://` and `memory://` are built in; `postgres://` needs the `coding.sh-store-postgres` package. Another scheme loads `coding.sh-store-<scheme>`. |
+| `store.index` | `sqlite://~/.coding.sh/index.db` | yes | Index store URL. `sqlite://` and `memory://` are built in; `postgres://` needs the `coding.sh-store-postgres` package. Another scheme loads `coding.sh-store-<scheme>`. On Windows under Git Bash, `/tmp/…` and `/c/…` in a `sqlite://` or `file://` URL are the shell's paths: the user's temp dir and `C:\…`. |
 | `store.blobs` | `file://~/.coding.sh/blobs` | yes | Blob store URL for large payloads. `s3://` needs `coding.sh-store-s3`. With a `postgres://` index and no blob URL, blobs go to the same database. |
 
 ## `[capture]`

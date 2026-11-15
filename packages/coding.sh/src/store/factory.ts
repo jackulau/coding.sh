@@ -7,7 +7,8 @@
 //                             (postgresql:// loads coding.sh-store-postgres,
 //                             clickhouses:// loads coding.sh-store-clickhouse)
 //   coding.sh-sink-<kind>     exporting { sink } factory
-import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { posix, win32 } from "node:path";
 import type { BlobStore, Config, IndexStore, Sink, SinkConfig } from "../core/types.ts";
 import { expandHome } from "../core/paths.ts";
 import { repriceStored } from "../core/reprice.ts";
@@ -55,15 +56,44 @@ export function parseStoreUrl(url: string): { scheme: string; rest: string } {
   return { scheme: m[1]!.toLowerCase(), rest: m[2]! };
 }
 
+/** Where a path is read: the platform, the environment and the temp dir (parameters, so tests run on every OS). */
+export interface PathHost {
+  platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
+  /** The directory Git Bash mounts at /tmp (default os.tmpdir(): the user's %TEMP% on Windows). */
+  tmp?: string;
+}
+
+/**
+ * On Windows under Git Bash or another MSYS shell (MSYSTEM set), a path in the shell's
+ * spelling as Windows spells it: `/tmp/x.db` is the shell's /tmp, the user's temp dir, and
+ * `/c/data/x.db` is `C:\data\x.db`. The shell converts a path it is given as an argument,
+ * but not one inside a URL (`--store sqlite:///tmp/x.db`), which Node then read as
+ * `C:\tmp\x.db`. Any other path, and every path on another platform or shell, is returned as given.
+ */
+export function msysPath(p: string, host: PathHost = {}): string {
+  const platform = host.platform ?? process.platform;
+  const env = host.env ?? process.env;
+  if (platform !== "win32" || !env.MSYSTEM) return p;
+  const tmp = /^\/tmp(?:\/(.*))?$/s.exec(p);
+  if (tmp) return win32.join(host.tmp ?? tmpdir(), tmp[1] ?? "");
+  const drive = /^\/([A-Za-z])(?:\/(.*))?$/s.exec(p);
+  if (drive) return win32.join(`${drive[1]!.toUpperCase()}:\\`, drive[2] ?? "");
+  return p;
+}
+
 /**
  * Filesystem path from sqlite:///abs, sqlite://~/x or sqlite://relative (resolved against cwd).
  * A `user:password@` in front is not part of the path, and neither is the slash before a
- * Windows drive letter (`sqlite:///C:/data/index.db`).
+ * Windows drive letter (`sqlite:///C:/data/index.db`). Under Git Bash on Windows, `/tmp/…`
+ * and `/c/…` are the shell's paths (msysPath).
  */
-export function fileUrlPath(rest: string): string {
+export function fileUrlPath(rest: string, host: PathHost = {}): string {
+  const platform = host.platform ?? process.platform;
   let p = decodeURIComponent(rest.replace(/[?#].*$/, "")).replace(/^[^/\\@:]+:[^/\\@]*@/, "");
-  if (process.platform === "win32") p = p.replace(/^\/(?=[A-Za-z]:[\\/])/, "");
-  return resolve(expandHome(p));
+  if (platform === "win32") p = p.replace(/^\/(?=[A-Za-z]:[\\/])/, "");
+  p = msysPath(p, host);
+  return (platform === "win32" ? win32 : posix).resolve(expandHome(p, host.env));
 }
 
 registerIndexStore("sqlite", (url, config) => {

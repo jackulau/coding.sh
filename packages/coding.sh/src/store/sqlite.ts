@@ -793,8 +793,15 @@ export class SqliteIndexStore implements IndexStore {
   /** Opens (creating if needed) the database at `path` (":memory:" for tests) and migrates it. */
   static async open(path: string, opts: SqliteIndexOptions = {}): Promise<SqliteIndexStore> {
     const { DatabaseSync } = await loadSqlite();
-    if (path !== ":memory:") mkdirPrivate(dirname(path));
-    const db = retryOnBusy(new DatabaseSync(path, { readOnly: opts.readOnly ?? false }));
+    let db: DatabaseSync;
+    try {
+      if (path !== ":memory:") mkdirPrivate(dirname(path));
+      db = retryOnBusy(new DatabaseSync(path, { readOnly: opts.readOnly ?? false }));
+    } catch (e) {
+      // SQLite says only "unable to open database file": name the absolute path it tried.
+      if (e instanceof Error && !e.message.includes(path)) e.message = `${e.message} (the index at ${path})`;
+      throw e;
+    }
     try {
       // Before the WAL switch: SQLite gives the -wal and -shm the database file's mode.
       if (!opts.readOnly) ownerOnly(path);
