@@ -1,6 +1,6 @@
 // Run a command module in this process against a throwaway store: seed sessions,
 // call run(), read what it printed. No real agent home or store is opened.
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FlagValue } from "../../src/cli/args.ts";
@@ -8,6 +8,7 @@ import { Output } from "../../src/cli/output.ts";
 import type { CommandContext, CommandModule } from "../../src/cli/types.ts";
 import type { AgentEvent, Session } from "../../src/core/types.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
+import { removeTestDir } from "../_rm.ts";
 
 export interface Sandbox {
   root: string;
@@ -45,7 +46,7 @@ export function sandbox(extra: NodeJS.ProcessEnv = {}): Sandbox {
       if (events.length) await index.putEvents(events);
       await index.close();
     },
-    cleanup: () => rmSync(root, { recursive: true, force: true }),
+    cleanup: () => removeTestDir(root),
   };
 }
 

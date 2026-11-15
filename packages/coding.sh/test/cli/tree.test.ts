@@ -4,11 +4,12 @@
 // at the worst-flagged node to fix first.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { removeTestDir } from "../_rm.ts";
 
 const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const CONFIG = fileURLToPath(new URL("../fixtures/adapters/claude-code/config", import.meta.url));
@@ -45,7 +46,7 @@ before(() => {
   assert.equal(r.status, 0, r.stderr);
 });
 
-after(() => rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })); // Windows: a read's killed worker can hold a handle in the home for a moment
+after(() => removeTestDir(root));
 
 describe("coding.sh tree", () => {
   test("from a session, shows the whole run with rolled-up totals and the node to fix first", () => {

@@ -4,12 +4,13 @@
 // parent, and the import counts it once.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { copiedSubagentOwner } from "../../src/adapters/claude-code.ts";
+import { removeTestDir } from "../_rm.ts";
 
 const MAIN = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const FIXTURE = fileURLToPath(new URL("../fixtures/workflows/claude-code-running/projects", import.meta.url));
@@ -38,7 +39,7 @@ before(() => {
   cpSync(join(projects, "-work-demo", OWNER), join(projects, "-work-demo", COPY), { recursive: true });
   env = { HOME: home, USERPROFILE: home, CODING_SH_HOME: join(root, "data"), XDG_CONFIG_HOME: join(home, ".config"), CLAUDE_CONFIG_DIR: join(root, "claude"), PATH: process.env.PATH, NO_COLOR: "1", CI: "1", CODING_SH_NO_AUTO_INGEST: "1" }; // no detached background ingest outliving the test and holding the home on Windows
 });
-after(() => rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
+after(() => removeTestDir(root));
 
 describe("a workflow run copied under a second parent", () => {
   it("the adapter sees the copy's agent as the owner's", async () => {

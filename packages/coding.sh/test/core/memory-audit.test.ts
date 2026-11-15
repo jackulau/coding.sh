@@ -22,6 +22,7 @@ import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { pathOf } from "../_bin.ts";
 import { FIXTURES, collect, testCtx, tmpEnv } from "../adapters/_helpers.ts";
+import { removeTestDir } from "../_rm.ts";
 
 const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const HOME = "/home/me";
@@ -244,7 +245,7 @@ describe("harness audit over a store and a temp HOME", () => {
       CODING_SH_NO_UPDATE_CHECK: "1",
     };
   });
-  after(() => rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 })); // Windows: a read's killed worker can hold a handle in the home for a moment
+  after(() => removeTestDir(root));
 
   it("lists memory files on disk, nested CLAUDE.md included, nothing else", () => {
     const keys = listMemoryFiles({ home, claudeDir: join(home, ".claude"), codexDir: join(home, ".codex") }, [join(home, "app")])

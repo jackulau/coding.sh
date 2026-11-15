@@ -1,9 +1,10 @@
 // Runs the CLI from source (no build) with a throwaway home, for the serve, proxy and collector CLI tests.
 import { type ChildProcess, spawn, spawnSync, type SpawnSyncReturns } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { removeTestDir } from "../_rm.ts";
 
 export const MAIN = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "cli", "main.ts");
 const roots: string[] = [];
@@ -14,7 +15,7 @@ export function cleanup(): void {
   for (const c of children) if (c.exitCode === null) c.kill("SIGKILL");
   // On Windows a just-killed child (or a background proxy that is stopping) can hold
   // a handle in the home for a moment: rm fails with EPERM/EBUSY, so retry.
-  for (const r of roots) rmSync(r, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  for (const r of roots) removeTestDir(r);
 }
 
 export interface TmpHome {
