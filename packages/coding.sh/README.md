@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/jackulau/coding.sh/main/.github/assets/banner.png" alt="coding.sh: see what your AI agents did, and what it cost. Every prompt, tool call, file change and cost, kept on your machine. Below the headline, the top of one Claude Code session in the coding.sh viewer, with its model, duration, estimated cost, a '31 passed' test badge and its first file edits." width="100%">
+  <img src="https://raw.githubusercontent.com/jackulau/coding.sh/main/.github/assets/banner.png" alt="coding.sh: The Observability Layer for Agents. Agents, subagents and gateways, traced on your machine. Below the headline, the top of one Claude Code session in the coding.sh viewer, with its model, duration, estimated cost, a '31 passed' test badge and its first file edits." width="100%">
 </p>
 
 <p align="center">

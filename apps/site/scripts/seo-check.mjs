@@ -18,6 +18,11 @@
 //   [twin]        every sitemap URL has a Markdown twin (<page>.md, /index.md for the home page)
 //   [twin-date]   a twin's updated: date is the date of its sitemap <lastmod>
 //   [llms]        llms.txt links every sitemap URL outside /changelog/v* and /docs/cli/*
+//   [hreflang]    a page with language alternates lists itself under its <html lang>, has an
+//                 x-default, and every alternate is an indexable page that lists the same set
+//
+// Title and description lengths count a Chinese, Japanese or Korean character as two: search
+// results cut them by width, and such a character is about twice as wide as a Latin letter.
 //
 // Run by `npm run build` after astro build and the agent text;
 // `node scripts/seo-check.mjs [--dist <dir>]` checks an existing dist/ (or a copy).
@@ -48,6 +53,9 @@ const GITHUB_DOC = /^https:\/\/github\.com\/jackulau\/coding\.sh\/(?:blob|tree)\
 const SITE_DOCS = new Map(
   [...(readFileSync(new URL("../src/components/docs/markdown.ts", import.meta.url), "utf8").match(/const SITE_PAGES\b[^=]*=\s*\{([\s\S]*?)\n\};/)?.[1] ?? "").matchAll(/"([^"]+)":\s*"([^"]+)"/g)].map((m) => [m[1], m[2]]),
 );
+// East Asian wide characters: Hangul Jamo, CJK and kana, Hangul syllables, compatibility forms, fullwidth forms.
+const WIDE = /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6]/g;
+const width = (s) => s.length + (s.match(WIDE)?.length ?? 0);
 const VOID = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
 
 function htmlFiles(dir) {
@@ -137,6 +145,8 @@ const problems = [];
 const titles = new Map();
 const descriptions = new Map();
 const indexable = new Set();
+/** route -> { lang, alternates: Map<hreflang, route> } for pages that list language alternates. */
+const langs = new Map();
 let pages = 0;
 
 if (!SITE_DOCS.size) problems.push("seo-check: [github-doc] found no SITE_PAGES map in src/components/docs/markdown.ts");
@@ -176,10 +186,18 @@ for (const file of htmlFiles(DIST)) {
   const ogUrl = attr(html, /<meta property="og:url" content="([^"]*)"/);
 
   if (!title) bad("no <title>");
-  else if (title.length > TITLE_MAX) bad(`<title> is ${title.length} characters (max ${TITLE_MAX}): ${title}`);
+  else if (width(title) > TITLE_MAX) bad(`<title> is ${width(title)} characters wide (max ${TITLE_MAX}): ${title}`);
   if (!description) bad("no meta description");
-  else if (description.length > DESC_MAX || description.length < DESC_MIN)
-    bad(`description is ${description.length} characters (${DESC_MIN}-${DESC_MAX}): ${description}`);
+  else if (width(description) > DESC_MAX || width(description) < DESC_MIN)
+    bad(`description is ${width(description)} characters wide (${DESC_MIN}-${DESC_MAX}): ${description}`);
+
+  const alternates = new Map();
+  for (const [tag] of html.matchAll(/<link\s[^>]*rel="alternate"[^>]*hreflang="[^"]*"[^>]*>/g)) {
+    const lang = attr(tag, /hreflang="([^"]*)"/);
+    if (alternates.has(lang)) bad(`[hreflang] ${lang} is listed twice`);
+    alternates.set(lang, norm(attr(tag, /href="([^"]*)"/)));
+  }
+  if (alternates.size) langs.set(route, { lang: attr(html, /<html\s[^>]*lang="([^"]*)"/), alternates });
   if (titles.has(title)) bad(`same <title> as ${titles.get(title)}`);
   else titles.set(title, route);
   if (descriptions.has(description)) bad(`same description as ${descriptions.get(description)}`);
@@ -229,6 +247,21 @@ for (const file of htmlFiles(DIST)) {
   if (md) bad(`[markdown] raw Markdown link in the text: ${md[0].slice(0, 100)}`);
 }
 
+// Language alternates: each page in a set names itself and the same others, and all of them exist.
+for (const [route, { lang, alternates }] of langs) {
+  const bad = (msg) => problems.push(`${route}: [hreflang] ${msg}`);
+  if (alternates.get(lang) !== route) bad(`<html lang="${lang}"> but hreflang="${lang}" points at ${alternates.get(lang) ?? "nothing"}`);
+  if (!alternates.has("x-default")) bad("no x-default");
+  for (const [tag, target] of alternates) {
+    if (!indexable.has(target)) bad(`${tag} points at ${target}, which is not an indexable page`);
+    else if (tag !== "x-default") {
+      const other = langs.get(target)?.alternates;
+      const same = other && other.size === alternates.size && [...alternates].every(([t, r]) => other.get(t) === r);
+      if (!same) bad(`${target} (${tag}) does not list the same alternates`);
+    }
+  }
+}
+
 // The sitemap, the twins and llms.txt.
 const sitemap = new Map();
 const index = join(DIST, "sitemap-index.xml");
@@ -271,6 +304,6 @@ if (problems.length) {
   process.exitCode = 1;
 } else {
   console.log(
-    `seo-check: ${pages} pages ok (titles, descriptions, canonicals, og:image, h1, JSON-LD, internal links; version, hidden-text, markdown, github-doc, fragment, og-url, jsonld-id, headline, sitemap, twin, twin-date, llms)`,
+    `seo-check: ${pages} pages ok (titles, descriptions, canonicals, og:image, h1, JSON-LD, internal links; version, hidden-text, markdown, github-doc, fragment, og-url, jsonld-id, headline, hreflang, sitemap, twin, twin-date, llms)`,
   );
 }

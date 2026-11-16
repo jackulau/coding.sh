@@ -6,6 +6,7 @@ import { FRAMEWORKS, OTLP_ENDPOINT } from "../data/agents";
 import { DOC_GROUPS, type DocPage } from "../components/docs/nav";
 import { ADAPTER_ROWS, PLANNED_AGENTS, STATUS_LABEL } from "../components/docs/agents";
 import { cliPath, cliReference } from "../components/docs/cli-help";
+import { LOCALES, DEFAULT_LOCALE } from "../i18n/locales.mjs";
 
 const abs = (path: string) => new URL(path, SITE_URL).toString();
 
@@ -86,6 +87,8 @@ Screenshots and terminal output on the landing page come from the real CLI and v
 ## Pages
 
 ${NAV_PAGES.map((p) => `- [${p.title}](${abs(p.path)}): ${p.summary}`).join("\n")}
+
+The home page is also in ${LOCALES.filter((l) => l !== DEFAULT_LOCALE).map((l) => `[${l.name}](${abs(l.path)})`).join(", ")}. The docs are in English only.
 
 ## Docs
 

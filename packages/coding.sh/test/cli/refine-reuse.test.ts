@@ -14,12 +14,11 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, w
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { which } from "../../src/adapters/_shared/detect.ts";
 import { posixShell } from "../../src/core/spawn.ts";
 import { pathOf } from "../_bin.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const gitBin = which("git") ?? "";
 const ESSENTIAL = "ESSENTIAL: write done.txt when you finish.";
 const BLOAT = Array.from({ length: 40 }, (_, i) => `- Style note ${i}: prefer clear names and short functions.`).join("\n");

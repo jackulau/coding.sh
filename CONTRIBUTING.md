@@ -31,6 +31,10 @@ real `~/.coding.sh`: a newer build would migrate the index, and your installed c
 open it again. Give it a throwaway home with `export CODING_SH_HOME=$(mktemp -d)`, or set
 `CODING_SH_DEV_REAL_STORE=1` to use the real one. `npm link` counts as an install.
 
+The tests launch the CLI from source. After `npm run build`, set
+`CODING_SH_TEST_CLI="$PWD/dist/cli.mjs"` and they launch the built CLI, which starts faster. Build
+again after you change `src`. AGENTS.md "Commands" has the details.
+
 Website: `cd apps/site && npm run dev` (then `npm run build && npm run check` before a PR).
 
 ## Layout
@@ -134,11 +138,30 @@ tests run with `npm run lint:test`.
   checks and the build, and the site, in a throwaway home. Its first step checks that your
   branch's commits are authored with your global git identity (`git config --global user.email`)
   and that the repo sets no `user.email` of its own.
-- `npm run check` and `npm run build` must pass in `packages/coding.sh`. CI also runs the tests on
-  Linux (Node 22 and 24), macOS and Windows (Node 24; both Nodes on main), and builds and checks
-  the site. A pull request that only changes docs or the site skips macOS, Windows and the other
-  jobs that never read them (`scripts/ci-changes.mjs`).
+- `npm run check` and `npm run build` must pass in `packages/coding.sh`. On a pull request CI
+  runs the quick jobs: the tests on Linux (Node 24), the build and the site, the gate, the store
+  plugins, the Python SDK, the packed CLI on the Node floor, the release smoke test and the
+  GitHub Action. The Linux Node 24 tests launch the built CLI (`CODING_SH_TEST_CLI`, "Setup"
+  above); the Node 22 and Windows tests of the full suite launch it from source. A pull request that only changes docs or the site skips the ones that never
+  read them (`scripts/ci-changes.mjs`). Windows, Node 22, the real agent captures, the container
+  image and cli-suite run in the full suite, below. CI does not run macOS: run `npm run check` on
+  a Mac for a change that depends on it.
+- `main` takes pull requests only, and each one runs the full suite first. A maintainer adds the
+  `ready` label; CI then runs every job on the pull request merged with `main`, skips none for a
+  docs or site change, and checks the commit authors as it does on `main`. That run reports one
+  check named `full suite`, which passes only when every other job passed. `main` requires that
+  check on a branch that is up to date with `main`, so a push or an update of the branch after the
+  label runs it again. Without the label there is no check of that name and the pull request cannot
+  merge. The full suite includes Site perf (`.github/workflows/site-perf.yml`, the Lighthouse A/B
+  and the byte, request and layout-shift budgets) on GitHub's runners. Without the label a pull
+  request gets Site perf only when it touches the site's measured paths. The timing budgets were
+  set on the desk and are checked there after the merge, when the push to `main` touches those
+  paths.
 - Timing tests (hook latency, help startup) assume an idle machine. If one fails on a loaded
   machine, rerun it alone before you treat it as a regression.
+- The viewer UI tests drive headless Chrome and skip when none is installed. In CI a missing
+  Chrome is a failure: each test job starts Chrome once before its tests
+  (`packages/coding.sh/scripts/warm-chrome.ts`), because a fresh runner's first start can take
+  longer than the 20 s a test gives it. That first start has 60 s; past it the job fails.
 
 By contributing you agree that your contributions are licensed under the MIT license.

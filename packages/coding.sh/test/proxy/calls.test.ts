@@ -8,7 +8,6 @@ import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { printDiff } from "../../src/cli/commands/diff-calls.ts";
 import { Output } from "../../src/cli/output.ts";
 import { loadConfig } from "../../src/core/config.ts";
@@ -22,8 +21,8 @@ import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { startViewer, type Viewer } from "../../src/viewer/server.ts";
 import { anthropicStream, call, startTestProxy, startUpstream, type TestProxy, type Upstream } from "./_helpers.ts";
 import { removeTestDir } from "../_rm.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const SECRET = "sk-ant-api03-CALLSCALLSCALLSCALLSCALLSCALLSCALLS-abcdefAA";
 const SESSION = "7d2e4b1a-0c9f-4e8d-b3a2-1f0e9d8c7b6a";
 

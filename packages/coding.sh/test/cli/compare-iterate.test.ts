@@ -1,5 +1,5 @@
 // X-25: `compare --experiment <id> --retry-errors`, `--failing <exp>[@bundle]`
-// and `--sample N --seed S`, end to end through src/cli/main.ts with a temp
+// and `--sample N --seed S`, end to end through the CLI with a temp
 // HOME. A fake `wrapper` agent fixes the bug only when the pdf skill is in its
 // work dir and the instruction doesn't say BROKEN, logs every run, and fails
 // its first run with a rate-limit error while a flag file exists.
@@ -9,12 +9,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { which } from "../../src/adapters/_shared/detect.ts";
 import { posixShell } from "../../src/core/spawn.ts";
 import { pathOf } from "../_bin.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const gitBin = which("git") ?? "";
 let root = "";
 let home = "";

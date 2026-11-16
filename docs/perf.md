@@ -80,6 +80,37 @@ A fade at the bottom of the docs sidebar was tried and left out. Its mask made d
 on Evals 16.8 ms [3.2, 25.6] slower. Without it, Evals is -3.4 ms [-18, +5.5] against the build
 before.
 
+## Translated front pages
+
+The front page is also served at /de, /es, /fr, /ja, /ko, /pt-br and /zh. This is what it cost
+the English home page, measured with 30 interleaved pairs against the build before it on a phone
+viewport with a 4x slower CPU. Regular 3G is 300 ms latency and 750 kbps. Slow 3G is 2,000 ms
+latency and 400 kbps. These profiles are not in the Lighthouse runner below: a one-off script set
+them through the DevTools protocol, which adds the latency once per request, and served the
+builds with the same server. The machine was busy during the run; pairing controls for that, but
+the absolute times may read a little high.
+
+| What | Before | After | Change [95% interval] |
+|---|---|---|---|
+| HTML, compressed | 29,090 B | 29,734 B | +644 B, the same in every pair |
+| Fonts | 26,672 B | 26,672 B | 0 B |
+| First paint, Regular 3G | 572 ms | 568 ms | 0 ms [-4, +4] |
+| Main content (LCP), Regular 3G | 572 ms | 568 ms | 0 ms [-4, +4] |
+| First paint, Slow 3G | 2,248 ms | 2,252 ms | +8 ms [+2, +10] |
+| Main content (LCP), Slow 3G | 2,348 ms | 2,384 ms | +36 ms [+32, +40] |
+| Page ready (DOMContentLoaded), Slow 3G | 4,433 ms | 4,457 ms | +25 ms [+3, +31] |
+
+The HTML grew by the hreflang links in the head and the language switcher in the footer. The
+fonts did not grow. The switcher's names Español, Français and Português use ñ, ç and ê, which
+are not in the common-letter font files, so the switcher is drawn in the system font. Drawn in
+Geist, it would make every page fetch the rare-letter files as well.
+
+The German, Spanish, French and Portuguese pages need accented letters above the fold, so they
+preload the rare-letter files too (`preloadRest` in `apps/site/src/i18n/locales.mjs`). That is
+about 21 kB more font. On /de, first paint is the same as the English page; the page is ready
+about 130 ms later on Regular 3G and 240 ms later on Slow 3G. `npm run perf:budget` checks the
+translated pages against their own HTML budget, and checks the preloaded fonts per page.
+
 ## How we measure
 
 - **Pages:** home, /docs/quickstart, /docs/evals, /changelog and /docs/cli.
@@ -114,18 +145,26 @@ See [Experiments](https://coding.sh/docs/experiments#metrics) for the metric A/B
 ## Budgets in CI
 
 [.github/workflows/site-perf.yml](https://github.com/jackulau/coding.sh/blob/main/.github/workflows/site-perf.yml) builds the base and
-head commits and runs 9 pairs. It runs when a change can reach the five measured pages: the
-site's layouts, components, styles, assets and config, those pages themselves, and `scripts/perf`.
+head commits and runs 9 pairs. On a push to `main` it runs when the change touches the site's
+layouts, components, styles, assets or config, the five measured pages themselves, or
+`scripts/perf`. CI calls it for pull requests: one that touches those paths gets it at once, and
+every pull request gets it with the `ready` label, as part of the `full suite` check that `main`
+requires.
+On a pull request each page is measured in its own job, five in all, with the same
+pairs in the same order (`ab.mjs --part`). One more job joins their samples into a single result
+(`ab.mjs --merge`) and judges it, so the gate and its correction cover every metric as they do in
+one run. A page or profile with no samples fails that job.
 It fails when a gated metric gets worse by an amount that matters,
 or when a page goes over its budget in
 [scripts/perf/budgets.json](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/budgets.json). The budgets sit about 10%
 above what the current build measures. Layout shift is budgeted at 0.02 on every page, and each
 page has its own blocking-time budget on the slow phone. The rules are in
-[scripts/perf/gate.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/gate.mjs), with tests in `scripts/perf/test`.
+[scripts/perf/gate.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/gate.mjs), with tests in `scripts/perf/test`
+(`npm run perf:test`, which `npm run gate` runs).
 
 | Where | What runs |
 |---|---|
-| Pull requests | GitHub's hosted runners. Load-time budgets are skipped: they only hold on our own machine. |
+| Pull requests | GitHub's hosted runners, one job per page. Load-time budgets are skipped: they only hold on our own machine. |
 | Pushes to main | The one desk runner labelled `perf`, so two perf runs never overlap. Deploys run beside it. |
 | Pull requests and deploys | `npm run perf:budget` in apps/site checks page weight, inline CSS and script, fonts, scripts and images in the build. CI runs it on every pull request, and the Site workflow runs it again before a deploy. |
 

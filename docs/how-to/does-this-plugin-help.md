@@ -104,7 +104,7 @@ is not flagged, so a plugin that makes the agent write regression tests is not c
 
 ## Next steps
 
-- [Does a terse mode save money?](../guides/terse-mode.md): split the cost into output tokens and the
-  input a plugin adds.
+- [Does a terse mode save money?](https://coding.sh/blog/terse-mode) (blog): split the cost into output
+  tokens and the input a plugin adds.
 - [Evaluate a skill](evaluate-a-skill.md): the same test for an Agent Skill.
 - [Compare two agents on your repo](compare-agents.md): other things `compare` can test.

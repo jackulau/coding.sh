@@ -145,11 +145,19 @@ cd ~/coding-sh && git checkout main && git pull
       cd ../../apps/site && npm run build && npm run check
       cd ../.. && scripts/release/smoke.sh   # packs, installs and exercises all six packages
       ```
-- [ ] Commit, tag and push:
+- [ ] Commit on a branch and open a pull request with the `ready` label. `main` takes pull
+      requests only, and the label runs the full suite (CONTRIBUTING.md, "Pull requests"):
       ```sh
-      git commit -am "Release X.Y.Z"
-      git tag -a vX.Y.Z -m "coding.sh X.Y.Z"
-      git push origin main vX.Y.Z
+      git switch -c release/X.Y.Z
+      git commit -am "chore(release): X.Y.Z"
+      git push -u origin release/X.Y.Z
+      gh pr create --fill --label ready
+      ```
+- [ ] When the `full suite` check is green, merge, then tag the merge commit and push the tag:
+      ```sh
+      gh pr merge --merge
+      git switch main && git pull --ff-only
+      git tag -a vX.Y.Z -m "coding.sh X.Y.Z" && git push origin vX.Y.Z
       ```
 - [ ] In **Actions → Release**, wait for *verify* and *github-release* (the GitHub release is
       live now), then approve *publish-npm* and *publish-pypi* once their credentials exist.

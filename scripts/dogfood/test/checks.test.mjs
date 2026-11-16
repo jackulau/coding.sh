@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkOutput, classify, firstJson, jsonPath, leakage, tapMetrics, template } from "../cli-suite.mjs";
+import { checkOutput, classify, firstJson, jsonPath, leakage, shardTasks, tapMetrics, template } from "../cli-suite.mjs";
 import { judge } from "../cli-guidelines.mjs";
 
 test("output checks", () => {
@@ -70,4 +70,15 @@ test("guideline judge catches color, words, JSON and exit codes", () => {
   assert.match(judge({ ...ok, stdout: "{}{}" }, {}, { env: {}, json: true })[0], /not one JSON/);
   assert.deepEqual(judge({ code: 2, stdout: "", stderr: '{"status":"error","reason":"confirmation_required"}', ms: 1 }, { expect: 2, confirm: true }, { env: {}, json: true }), []);
   assert.match(judge({ ...ok, stderr: "Did you mean a?\nDid you mean b?" }, {}, piped)[0], /did you mean/);
+});
+
+test("shardTasks puts every task in exactly one shard and rejects a malformed shard", () => {
+  const tasks = Array.from({ length: 37 }, (_, i) => ({ id: `t${i}` }));
+  assert.equal(shardTasks(tasks, undefined), tasks);
+  for (const n of [1, 2, 3, 5]) {
+    const shards = Array.from({ length: n }, (_, i) => shardTasks(tasks, `${i + 1}/${n}`));
+    assert.deepEqual(shards.flat().map((t) => t.id).sort(), tasks.map((t) => t.id).sort(), `n=${n}`);
+    for (const s of shards) assert.ok(Math.abs(s.length - tasks.length / n) < 1, `n=${n}: uneven shard of ${s.length}`);
+  }
+  for (const bad of ["0/2", "3/2", "2", "a/b", "1/0"]) assert.throws(() => shardTasks(tasks, bad), /--shard must be i\/n/, bad);
 });

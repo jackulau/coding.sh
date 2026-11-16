@@ -14,7 +14,7 @@ import { findChrome, launchBrowser, type Browser, type Page } from "./browser.ts
 import { FakeBlobs, FakeIndex, costFixtures, event, experimentResult, failedRequestFixtures, session } from "./fakes.ts";
 
 const chrome = findChrome();
-// Every CI leg (Linux, macOS, Windows) has a Chrome: there, a skipped viewer suite is a bug.
+// Every CI leg (Linux, Windows) has a Chrome: there, a skipped viewer suite is a bug.
 if (!chrome && process.env.GITHUB_ACTIONS) throw new Error("no Chrome found on CI; set CODING_SH_TEST_CHROME");
 const T0 = 1_762_400_000_000;
 // Real-looking ids: long enough that the eval command overflows a phone screen.
@@ -773,7 +773,7 @@ describe("viewer UI: timeline, inspector and compare", { skip: chrome ? false : 
       assert.equal(other.name, "Notification");
       // The file the edits were saved to: its hash and the base file's, at 12 characters like every weights hash.
       const saved = await page.eval(`eventView({ kind: "notification", payload: { kind: "weights.checkpoint", sha256: "58899F90572C" + "c".repeat(52), baseSha256: "0496e5111097" + "d".repeat(52), note: "after layer 3" } })`);
-      assert.deepEqual([saved.name, saved.arg, saved.kindText], ["Saved weights", "checkpoint 58899f90572c ← 0496e5111097", "weights.checkpoint"]);
+      assert.deepEqual([saved.name, saved.arg, saved.kindText], ["Saved weights", "checkpoint 58899f90572c ← 0496e5111097 · after layer 3", "weights.checkpoint"]);
       const notOne = await page.eval(`eventView({ kind: "notification", payload: { kind: "weights.checkpoint", sha256: "abc" } })`);
       assert.equal(notOne.name, "Notification", "without a SHA-256 it is not a checkpoint");
     } finally {

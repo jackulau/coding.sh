@@ -47,7 +47,7 @@ describe("a weights.edit span", () => {
     assert.deepEqual(own.map((e) => e.kind), ["notification"]);
     assert.deepEqual(own[0]!.payload, PAYLOAD);
     assert.equal(own[0]!.durationMs, 200);
-    assert.equal(weightsEditText(own[0]!.payload), LINE);
+    assert.equal(weightsEditText(own[0]!.payload), `${LINE} · rank-1 edit`);
     const s = buildSession(events);
     assert.deepEqual(s.stats.weightEdits, { events: 1, tensors: 1, weightsChanged: 1204 });
     assert.ok(s.flags.includes("weights:edited"));
@@ -105,7 +105,7 @@ describe("a weights.checkpoint span", () => {
     const own = events.filter((e) => e.spanId === "3333333333333333");
     assert.deepEqual(own.map((e) => e.kind), ["notification"]);
     assert.deepEqual(own[0]!.payload, SAVED_PAYLOAD);
-    assert.equal(weightsCheckpointText(own[0]!.payload), "checkpoint 58899f90572c ← 0496e5111097");
+    assert.equal(weightsCheckpointText(own[0]!.payload), "checkpoint 58899f90572c ← 0496e5111097 · after layer 3");
     const s = buildSession(events);
     assert.deepEqual(s.stats.weightEdits, { events: 1, tensors: 1, weightsChanged: 1204, checkpoints: [FILE] });
     assert.ok(s.flags.includes("weights:edited") && s.flags.includes("weights:checkpoint"));

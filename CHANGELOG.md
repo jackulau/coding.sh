@@ -7,7 +7,7 @@ follow [Semantic Versioning](https://semver.org/) from the first npm release.
 Each release opens with a short summary. The list under it has one line per change,
 grouped by area, with links to the docs for the details.
 
-## [0.1.7] - Unreleased
+## [0.1.7] - 2026-11-16
 
 ### Added
 
@@ -32,6 +32,7 @@ grouped by area, with links to the docs for the details.
 - **Evals.** `coding.sh exp compare A B --given <grader>` compares only the cases where that grader passes in both runs, and prints how many it kept and dropped. With a `terminated` grader this separates "finished more answers" from "got more of the finished answers right". [Compare an edited model with its base](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#compare-an-edited-model-with-its-base)
 - **MCP.** `coding.sh mcp` serves four Agent Skills over the MCP skills extension (`io.modelcontextprotocol/skills`): `improve-agent-setup`, `trim-agent-setup`, `review-agent-session` and `build-agent-evals`. A host that supports the extension lists them and loads one when a request matches. [Skills](https://coding.sh/docs/mcp#skills)
 - **MCP.** In 2026-07-28 requests, list, read and discover results carry `ttlMs` and `cacheScope`: the tool, prompt and template lists are cached for an hour, `server/discover` for five minutes, and sessions are not cached. [MCP server](https://coding.sh/docs/mcp#protocol)
+- **Site.** The front page is also in German, Spanish, French, Japanese, Korean, Brazilian Portuguese and Simplified Chinese, at /de, /es, /fr, /ja, /ko, /pt-br and /zh. Each page names the others with hreflang links and the sitemap lists them as alternates. A switcher in the footer moves between them. The docs, blog and changelog stay in English. [简体中文](https://coding.sh/zh)
 
 ### Changed
 
@@ -40,6 +41,7 @@ grouped by area, with links to the docs for the details.
 - **Capture.** T3 Code, Goose and Antigravity databases are read from a read-only copy, so closing it no longer folds the copied write-ahead log into a file about to be deleted. `ingest --rebuild --agent t3code` went from 47 s to 14 s on a 600 MB T3 Code store. [Host apps (T3 Code)](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#host-apps-t3-code)
 - **Harness.** `harness audit` finds nested CLAUDE.md and AGENTS.md from typed directory listings, nearest directories first, and counts every directory it checks toward its 2,000-directory cap: 4,400 file checks instead of 85,700 over 38 session directories. [Memory and instruction files](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#memory-and-instruction-files)
 - **Store.** `gc` finds expired tool output and paged model requests with two SQLite queries instead of reading every stored event, 3 to 5 times faster on a 26,000-event store. [gc](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-gc)
+- **Site.** The terse-mode guide is now a blog post that leads with what we measured on one plugin (output −8%, cost +11%, same pass rate and clarity), then shows how to run the same test on your tasks. /docs/terse-mode answers with a permanent redirect to it. [Does a terse mode save money?](https://coding.sh/blog/terse-mode)
 - **Docs.** The docs home, the home page FAQ and llms.txt say what coding.sh does: it records prompts, model calls, tool calls, file changes and cost, shows each run in a local viewer, and turns failed runs into evals. Other products are named only on the compare pages and where they are an integration, and a site test enforces it. [Docs](https://coding.sh/docs)
 - **Docs.** `--help`, the package descriptions, the README, the site's description and llms.txt say what coding.sh records instead of "open-source, local-first observability and evals for any AI agent", and the site's status line shows the current release (it said v0.1.4). A site test fails on stacked category words in published text. [Docs](https://coding.sh/docs)
 - **Node.** The minimum Node is 22.16, because 22.15 has no SQLite FTS5. A store that lacks FTS5 now fails with reason `no_fts5` and names Node 22.16. CI runs the packed CLI on Node 22.16.0. [Install](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md)
@@ -55,6 +57,7 @@ grouped by area, with links to the docs for the details.
 - **Agent text.** llms.txt lists the blog and links every CLI command. llms-full.txt leaves out the per-version changelog pages and the per-command CLI pages (647 kB, was 1,046 kB), and each Markdown copy's `updated:` is its page's last change. [llms.txt](https://coding.sh/llms.txt)
 - **Site.** The front page is new: the headline and install command, a moving row of the agents it works with, a diagram of agents feeding one record, three steps to start with a drawing of one session, and four short answers. Its footer lists the docs by section. [coding.sh](https://coding.sh)
 - **Site.** The card shown when a link to coding.sh is shared has the front page's headline. [coding.sh](https://coding.sh)
+- **Site.** The line under the front page's headline reads "Record, measure, compare and benchmark every agent run." Under the install command, a line links to the notes for the latest release. [coding.sh](https://coding.sh)
 
 ### Fixed
 
@@ -88,6 +91,9 @@ grouped by area, with links to the docs for the details.
 - **MCP.** A tool call answers within its read budget while an ingest runs, sends `notifications/progress` to a host that passed a `progressToken`, and keeps a page under the size limit when it adds `pending`. [MCP](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md)
 - **Store.** A statement that fails with "database is locked" while a background ingest opens or closes the index is tried again for up to 5 s.
 - **Install.** `install.sh` under Git Bash on Windows looks for the `coding.sh` shim in npm's prefix, not `<prefix>/bin`, runs the binary it installed, and says which directory to add to PATH. [Install](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md)
+- **Site.** The install script is served with `X-Robots-Tag: noindex` at both of its paths, /install and /install.sh. The two paths return the same file, and neither named a canonical. [Install](https://coding.sh/docs/install)
+- **Sessions.** `coding.sh show`, the viewer and MCP `session_get` print a weight edit's or a checkpoint's `note` at the end of its line. Before, the note was stored but never shown. [Docs](https://coding.sh/docs/api)
+- **Sessions.** A session with no prompt, such as an SDK `trace()` that only records weight edits, is titled by its trace's name in `coding.sh sessions` and the viewer. Before, its title was empty. Stored sessions are folded again. [Docs](https://coding.sh/docs/sdk)
 - **Evals.** `exp metrics` prints a count or score below 0.0005 with two significant digits (`0.0001`) instead of `0.000`, so a small value such as a gain per edited weight no longer reads as zero. [Metric A/B](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#metric-ab-ms-bytes)
 - **SDK.** `coding_sh.weights_edit()` reads a 0-d tensor or array as the number it holds, so `l2=delta.norm()` records the edit. Before, a torch scalar was refused and the edit was dropped with a warning, though the docs said torch scalars count as numbers. [Docs](https://coding.sh/docs/api)
 - **SDK.** `coding_sh.weights_edit()` warns about a dropped edit once per process, as its docs say and as the TypeScript SDK does. Before, every `init()` warned again. [Docs](https://coding.sh/docs/sdk)
@@ -186,7 +192,7 @@ grouped by area, with links to the docs for the details.
 - **OpenTelemetry.** The receiver reads reasoning tokens (`gen_ai.usage.reasoning.output_tokens`, the AI SDK's `reasoningTokens`, Codex's `reasoning_token_count`, Gemini CLI's `thoughts_token_count`) into `payload.reasoningTokens` on the `llm.call`; skills (`gen_ai.skill.name`, Claude Code's `skill_activated`, Codex's `codex.skill_invocation`) as `payload.skill` and a `skill:<name>` tag; `gen_ai.conversation.compacted` and Claude Code's `compaction` event as `context.compact`; and `gen_ai.main_agent.name`, Claude Code's `agent_id`/`parent_agent_id` and Codex's `codex.agent_response` for the agent and its subagents. Spans without them map as before. [OpenTelemetry](https://coding.sh/docs/otel).
 - **OpenTelemetry.** An eve or durable-harness agent can send its Agent Runs spans to `coding.sh collector` as well as to Vercel, with one extra span processor; each run becomes a session with its turn, model calls, tool calls and usage, under the agent `durable-harness` for durable-harness. [Tee Agent Runs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/tee-agent-runs.md).
 - **Collector.** `coding.sh collector import --clickhouse <url>` reads agent traces from an OpenTelemetry Collector's ClickHouse `otel_traces` table (Map or JSON attributes) into the local store, with the same mapping, redaction and pricing as spans posted to the collector. It keeps its place per table and row filter, so a second run imports nothing new; `--since`, `--from-start`, `--where`, `--table`, `--all`, `--dry-run` and `--json` shape it. [Pull from ClickHouse](https://coding.sh/docs/stores#pull-from-clickhouse).
-- **Docs.** A guide to whether a terse mode saves money on your tasks: run them with and without a be-concise rule, skill or plugin, read pass rate and cost with intervals, and split output tokens from the input the instruction adds. It cites our A/B of a terse-output plugin: output −8%, cost +11%, same pass rate and clarity. Its commands are checked against the CLI in tests. [Terse mode guide](https://github.com/jackulau/coding.sh/blob/main/docs/guides/terse-mode.md).
+- **Docs.** A guide to whether a terse mode saves money on your tasks: run them with and without a be-concise rule, skill or plugin, read pass rate and cost with intervals, and split output tokens from the input the instruction adds. It cites our A/B of a terse-output plugin: output −8%, cost +11%, same pass rate and clarity. Its commands are checked against the CLI in tests. [Terse mode guide](https://coding.sh/blog/terse-mode).
 - **Benchmarks.** `bench show` and the report add a routing headroom check: the any-contender pass rate against the best single contender, compared with a Rasch model where no contender specializes, so per-case routing is only suggested when the gap beats run noise. [Routing headroom](https://github.com/jackulau/coding.sh/blob/main/docs/guides/benchmarks.md)
 - **Benchmarks.** Contenders that cross models with harnesses (agents, or `axes = { model, harness }` on any contender) get a grid: interaction residuals with intervals, rank reversals, Cross-Model Fit per harness and leave-one-model-out regret. [Model × harness grid](https://github.com/jackulau/coding.sh/blob/main/docs/guides/benchmarks.md)
 - **Capture.** `coding.sh run -- aider` records each reply's tokens and cost while Aider runs: the wrapper reads Aider's analytics log (a temp `AIDER_ANALYTICS_LOG`, or the log you named) and the cache split from its chat history, so live Aider sessions have usage and cost, not only eval runs. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#transcripts-headless-runs-isolation)
@@ -701,6 +707,7 @@ It also runs as a server on SQLite or Postgres, with SDKs for apps that call mod
 - **Docs.** README with a quickstart, the agent matrix, OTLP setup, storage, privacy and uninstall.
 - **Docs.** CONTRIBUTING, SECURITY and a release checklist in docs/RELEASE.md.
 
+[0.1.7]: https://github.com/jackulau/coding.sh/releases/tag/v0.1.7
 [0.1.6]: https://github.com/jackulau/coding.sh/releases/tag/v0.1.6
 [0.1.5]: https://github.com/jackulau/coding.sh/releases/tag/v0.1.5
 [0.1.4]: https://github.com/jackulau/coding.sh/releases/tag/v0.1.4

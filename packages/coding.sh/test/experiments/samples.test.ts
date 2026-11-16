@@ -6,15 +6,14 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { createDataset } from "../../src/datasets/dataset.ts";
 import { exactGrader } from "../../src/graders/builtin.ts";
 import { renderExperiment } from "../../src/experiments/render.ts";
 import { runExperiment } from "../../src/experiments/run.ts";
 import { allPassKeys, caseFails, CaseTracker, caseVerdicts } from "../../src/experiments/samples.ts";
 import { pathOf } from "../_bin.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 
 describe("samples: pure helpers", () => {
   it("a case fails at half or more failing trials, never on none", () => {

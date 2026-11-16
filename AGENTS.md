@@ -35,6 +35,18 @@ node --no-warnings src/cli/main.ts --help            # the CLI from source, no b
 
 There is no build step for development and no formatter; match the style of the file you edit.
 
+The tests launch the CLI from source. To launch the built CLI instead, which starts faster, build
+and set `CODING_SH_TEST_CLI` to the absolute path of `dist/cli.mjs`:
+
+```sh
+npm run build && CODING_SH_TEST_CLI="$PWD/dist/cli.mjs" node --no-warnings --test 'test/**/*.test.ts'
+```
+
+Build again after a change under `src`: the tests launch the file as it is. CI's Linux Node 24
+tests run this way; its Node 22 and Windows tests launch from source. A path that is not
+absolute or names no file fails every test that launches the CLI. A test takes the path from
+`test/_cli.ts` (`CLI`), or `SOURCE_CLI` when it is about running from source.
+
 The CLI from source (`src/cli/main.ts`, or a `dist/` built in the repo) won't open the default
 `~/.coding.sh`: set `CODING_SH_HOME=$(mktemp -d)` for each run. A newer build migrates the index
 one way and strands the user's installed coding.sh. `CODING_SH_DEV_REAL_STORE=1` opts in; never
@@ -108,8 +120,12 @@ every new stat stay absent when empty, does the change hold on real fixtures as 
 ones, and is there a test that fails without it.
 
 **Pull request.** One change per PR, with tests. `npm run check` and `npm run build` must pass in
-`packages/coding.sh`; CI also runs the tests on Linux (Node 22 and 24), macOS and Windows (Node 24;
-both Nodes on main), and the real agent captures in `scripts/e2e/real-capture.mjs`.
+`packages/coding.sh`. On a pull request CI runs the tests on Linux (Node 24) and the quick jobs;
+Windows, Node 22 and the real agent captures in `scripts/e2e/real-capture.mjs` run in the full
+suite. CI does not run macOS. Nothing is pushed to `main`: it takes pull requests only. The `ready`
+label runs the full suite on the pull request (every job, none skipped), and `main` requires its
+one check, `full suite`, on a branch that is up to date. Add the label when the pull request's own
+checks are green; CONTRIBUTING.md "Pull requests" has the details.
 
 **Adding an agent.** Follow "Adding an agent" in CONTRIBUTING.md: a row in `docs/ADAPTERS.md`, the
 `Adapter` interface from `src/core/types.ts`, fixtures with goldens, install and uninstall tested

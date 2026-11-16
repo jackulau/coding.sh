@@ -43,6 +43,7 @@ import { serve } from "./serve.mjs";
 import { isMain } from "../dogfood/lib/main.mjs";
 
 export const PAGES = { home: "/", quickstart: "/docs/quickstart", evals: "/docs/evals", changelog: "/changelog", cli: "/docs/cli" };
+export const PROFILES = ["desktop", "mobile"];
 const MARK = "first-viewer-row";
 
 async function deps() {
@@ -175,8 +176,8 @@ async function main() {
     console.error("usage: node scripts/perf/lighthouse.mjs --dir <built-site> [--profile desktop|mobile]... [--page home|quickstart|evals|changelog|cli|/path]... [--reports <dir>]");
     process.exit(values.help ? 0 : 2);
   }
-  const profiles = values.profile?.length ? values.profile : ["desktop", "mobile"];
-  for (const p of profiles) if (p !== "desktop" && p !== "mobile") throw new Error(`unknown profile ${p}; use desktop or mobile`);
+  const profiles = values.profile?.length ? values.profile : PROFILES;
+  for (const p of profiles) if (!PROFILES.includes(p)) throw new Error(`unknown profile ${p}; use ${PROFILES.join(" or ")}`);
   const targets = {};
   for (const p of values.page?.length ? values.page : Object.keys(PAGES)) {
     if (PAGES[p]) targets[p] = PAGES[p];

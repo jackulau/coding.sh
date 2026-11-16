@@ -15,11 +15,10 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { ASK_USER } from "../../src/cli/output.ts";
 import { claimSession, putSession, retrySession } from "../helpers-decision.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const TEST_RULE = "TEST-RULE: run npm test before you say you are done.";
 const RETRY_RULE = "RETRY-RULE: when a command fails, read the error and fix the command before you run it again.";
 const BASE = "Keep answers short.\nNever run `git push --force`.\n";

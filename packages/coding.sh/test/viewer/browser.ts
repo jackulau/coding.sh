@@ -164,6 +164,9 @@ export function chromeArgs(dir: string): string[] {
     // pops a "keychain cannot be found" dialog on the desktop for every launch.
     "--use-mock-keychain",
     "--password-store=basic",
+    // The viewer is on 127.0.0.1. Without this, a new Chrome on Windows asks the system for its
+    // proxy settings before the first page load, and that took 0.6-1.7 s on CI runners.
+    "--no-proxy-server",
     // Root (the desk, CI containers) cannot use Chrome's sandbox.
     ...(process.getuid?.() === 0 ? ["--no-sandbox"] : []),
     "about:blank",

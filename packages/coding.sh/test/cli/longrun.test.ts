@@ -14,7 +14,6 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
-import { fileURLToPath } from "node:url";
 import { deserialize, serialize } from "node:v8";
 import { detectDerails } from "../../src/core/derail.ts";
 import { childLinker, recomputeSession } from "../../src/core/ingest.ts";
@@ -24,8 +23,8 @@ import type { AgentEvent, Session } from "../../src/core/types.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { generateLongSession, type GenManifest } from "../fixtures/longrun/generate.ts";
 import { median, timeMs } from "../helpers-timing.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 let root = "";
 let m: GenManifest;
 let env: NodeJS.ProcessEnv;

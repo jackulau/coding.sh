@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+    # `labeled` starts the full suite when a pull request gets the `ready` label.
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
 
 permissions:
@@ -13,16 +15,29 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# The full suite is every job below. It runs on a pull request that carries the `ready` label.
+# Only then does a check named "full suite" exist, and main requires it (CONTRIBUTING.md, "Pull
+# requests"), so nothing merges before every job has passed on the pull request merged with an
+# up-to-date main. A push to main and a manual run run every job but Site perf, and their closing
+# check has another name ("full suite without site perf"). Without the label a pull request
+# gets the quick jobs only: the Linux tests on Node 24, the build, the gate, the stores, the
+# Python SDK, the Node floor, the release smoke test and the GitHub Action, minus the ones
+# scripts/ci-changes.mjs can prove it does not need. Windows, Node 22, the real agent captures,
+# the container image and cli-suite run in the full suite only.
+env:
+  FULL: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
+
 jobs:
   # A pull request that only touches docs or the site (scripts/ci-changes.mjs) skips the jobs
-  # that never read them. Pushes to main and manual runs always run everything, and so does a
-  # pull request whose diff can't be read: the gated jobs run unless this says code=false.
+  # that never read them. The full suite never skips, and neither does a pull request whose diff
+  # can't be read: the gated jobs run unless this says code=false.
   changes:
     name: what changed
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       code: ${{ steps.diff.outputs.code }}
+      site_perf: ${{ steps.diff.outputs.site_perf }}
     steps:
       # The pull request's merge commit and its first parent, the base branch.
       - uses: actions/checkout@v5
@@ -34,15 +49,16 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
         run: |
-          if [ "$EVENT" = pull_request ] && files=$(git diff --name-only --no-renames HEAD^1 HEAD); then
+          if [ "$FULL" != true ] && [ "$EVENT" = pull_request ] && files=$(git diff --name-only --no-renames HEAD^1 HEAD); then
             printf '%s\n' "$files" | node scripts/ci-changes.mjs | tee -a "$GITHUB_OUTPUT"
           else
-            echo "code=true" | tee -a "$GITHUB_OUTPUT"
+            printf 'code=true\nsite_perf=true\n' | tee -a "$GITHUB_OUTPUT"
           fi
 
-  # The test suite runs on every OS in shards of about equal time (scripts/test-shards.ts), so
-  # the checks that need one run only, not one per OS and Node, live in the build job below.
-  # Pull requests run macOS and Windows on Node 24 only; pushes to main run both Nodes everywhere.
+  # The test suite runs on Linux and Windows in shards of about equal time
+  # (scripts/test-shards.ts), so the checks that need one run only, not one per OS and Node, live
+  # in the build job below. A pull request runs Linux on Node 24. The full suite (a push to main,
+  # or the `ready` label) runs both Nodes on both. No job runs on macOS.
   # Everything here is GitHub-hosted: free for this public repo, and it leaves the desk runners
   # to deploys and Site perf.
   test:
@@ -54,8 +70,14 @@ jobs:
       matrix:
         # The suite runs .ts from source, which needs Node 22.18 or newer (type stripping on by
         # default). The runtime-floor job runs the packed CLI on the engines floor.
-        node: [22.x, 24.x]
+        # A pull request runs Node 24; the full suite adds Node 22. The Node 24 legs launch the
+        # built CLI and the Node 22 legs launch it from source (the build step below).
+        node: ${{ fromJSON((github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready')) && '["24.x"]' || '["22.x", "24.x"]') }}
         shard: [1, 2, 3]
+    env:
+      # The viewer UI tests drive headless Chrome and skip without one. GitHub's Linux image ships
+      # Chrome; naming it makes a missing one fail instead of skip.
+      CODING_SH_TEST_CHROME: /usr/bin/google-chrome
     steps:
       - uses: actions/checkout@v5
 
@@ -73,12 +95,29 @@ jobs:
       - name: Install
         run: npm ci
 
-      # The viewer UI tests drive headless Chrome and skip without one. GitHub's Linux image ships
-      # Chrome; naming it makes a missing one fail instead of skip.
+      # The Node 24 legs launch the bundle (test/_cli.ts reads CODING_SH_TEST_CLI): a launch from
+      # source strips types on every start. The Node 22 legs keep launching src/cli/main.ts, so the
+      # full suite covers both. Set here, not in an `env:` expression: that would give the Node 22
+      # legs an empty value, which test/_cli.ts refuses.
+      - name: Build the CLI the tests launch
+        if: matrix.node == '24.x'
+        working-directory: packages/coding.sh
+        run: |
+          npm run build
+          echo "CODING_SH_TEST_CLI=$PWD/dist/cli.mjs" >> "$GITHUB_ENV"
+
+      # A fresh runner's first Chrome start waits on a cold disk and can take longer than the 20 s a
+      # viewer test gives a start. This step takes that start under a 60 s limit of its own and
+      # prints its time, then starts Chrome once more under the tests' own limits
+      # (scripts/warm-chrome.ts). No Chrome fails here.
+      - name: Start Chrome
+        working-directory: packages/coding.sh
+        timeout-minutes: 3
+        run: node scripts/warm-chrome.ts
+
       - name: Test
         working-directory: packages/coding.sh
         env:
-          CODING_SH_TEST_CHROME: /usr/bin/google-chrome
           SHARD: ${{ matrix.shard }}/3
           TEST_DURATIONS_OUT: ${{ runner.temp }}/test-durations.json
         # A file that fails is run again alone; one that then passes is a warning, not a failure.
@@ -95,7 +134,7 @@ jobs:
         if: matrix.node == '24.x'
         continue-on-error: true
         with:
-          name: test-durations-${{ matrix.shard }}
+          name: test-durations-linux-${{ matrix.shard }}
           path: ${{ runner.temp }}/test-durations.json
           retention-days: 14
           if-no-files-found: ignore
@@ -174,62 +213,10 @@ jobs:
       - name: Hook budget
         run: node scripts/dogfood/bench.mjs hook --check --tolerance 20 || node scripts/dogfood/bench.mjs hook --check --tolerance 20
 
-  macos:
-    name: node ${{ matrix.node }} / macos-latest (${{ matrix.shard }}/${{ matrix.node == '22.x' && 2 || 3 }})
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    # GitHub runs at most 5 macOS jobs at once for this account, and a sixth waits for a slot.
-    # On main, Node 24 takes 3 shards and Node 22 takes 2.
-    runs-on: macos-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        node: ${{ fromJSON(github.event_name == 'pull_request' && '["24.x"]' || '["22.x", "24.x"]') }}
-        shard: [1, 2, 3]
-        exclude:
-          - node: 22.x
-            shard: 3
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: ${{ matrix.node }}
-          cache: npm
-
-      - name: Git identity
-        run: |
-          git config --global user.name "coding.sh CI"
-          git config --global user.email "ci@coding.sh.invalid"
-
-      - name: Install
-        run: npm ci
-
-      - name: Test
-        working-directory: packages/coding.sh
-        env:
-          SHARD: ${{ matrix.shard }}/${{ matrix.node == '22.x' && 2 || 3 }}
-        # A file that fails is run again alone; one that then passes is a warning, not a failure.
-        run: node scripts/test-ci.mjs
-
-      - name: Build
-        if: matrix.shard == 1
-        working-directory: packages/coding.sh
-        run: npm run build
-
-      - name: Smoke test the bundle
-        if: matrix.shard == 1
-        working-directory: packages/coding.sh
-        env:
-          NO_UPDATE_NOTIFIER: "1"
-        run: |
-          node dist/cli.mjs --version
-          node dist/cli.mjs --help > /dev/null
-
   gate-static:
     name: gate (static checks)
-    # The checks that need no build: repo hygiene, lint, the lint tests, actionlint and generated files.
+    # The checks that need no build: repo hygiene, lint, the lint and Site perf gate tests, actionlint and
+    # generated files.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -250,9 +237,11 @@ jobs:
           bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7 "$RUNNER_TEMP"
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
+      # The commits whose authors the gate checks: the pushed ones, or the pull request's own
+      # when the full suite runs, so a commit main would reject is caught before the merge.
       - name: Static gate
         env:
-          GATE_COMMIT_RANGE: ${{ github.event_name == 'push' && format('{0}..{1}', github.event.before, github.sha) || '' }}
+          GATE_COMMIT_RANGE: ${{ github.event_name == 'push' && format('{0}..{1}', github.event.before, github.sha) || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ready')) && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || '' }}
         run: node scripts/gate.mjs --static --strict
 
   store-postgres:
@@ -491,8 +480,7 @@ jobs:
 
   image:
     name: container image / self-host smoke
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
     # GitHub-hosted: it builds and runs pull-request code in Docker. Nothing is pushed; the
     # release workflow publishes the image on version tags.
     runs-on: ubuntu-latest
@@ -547,16 +535,15 @@ jobs:
 
   windows:
     name: node ${{ matrix.node }} / windows-latest (${{ matrix.shard }}/4)
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
     runs-on: windows-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
-      # Four shards: the whole suite takes about 20 minutes on hosted Windows. Shard 1 also runs
-      # the build and the installer.
+      # The whole suite takes about 20 minutes on hosted Windows: 4 shards on each Node.
+      # Shard 1 also runs the build and the installer.
       matrix:
-        node: ${{ fromJSON(github.event_name == 'pull_request' && '["24.x"]' || '["22.x", "24.x"]') }}
+        node: [22.x, 24.x]
         shard: [1, 2, 3, 4]
     defaults:
       run:
@@ -579,12 +566,30 @@ jobs:
       - name: Install
         run: npm ci
 
+      # As on Linux: the runner's first Chrome start, outside the tests. GitHub's Windows image
+      # ships Chrome, and the step fails if it is gone.
+      - name: Start Chrome
+        working-directory: packages/coding.sh
+        timeout-minutes: 3
+        run: node scripts/warm-chrome.ts
+
       - name: Test
         working-directory: packages/coding.sh
         env:
           SHARD: ${{ matrix.shard }}/4
+          TEST_DURATIONS_OUT: ${{ runner.temp }}/test-durations.json
         # A file that fails is run again alone; one that then passes is a warning, not a failure.
         run: node scripts/test-ci.mjs
+
+      # Each file's run time on this OS, for its own table (see scripts/test-shards.ts).
+      - uses: actions/upload-artifact@v6
+        if: matrix.node == '24.x'
+        continue-on-error: true
+        with:
+          name: test-durations-win32-${{ matrix.shard }}
+          path: ${{ runner.temp }}/test-durations.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Build
         if: matrix.shard == 1
@@ -621,8 +626,7 @@ jobs:
 
   real-capture:
     name: real capture / ${{ matrix.os }}${{ matrix.os == 'ubuntu-latest' && format(' ({0}/2)', matrix.part) || '' }}
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
     # Always GitHub-hosted: it installs third-party agents from npm and runs them. Each script
     # installs into its own temp home, so the Linux steps split across two jobs of about equal time.
     runs-on: ${{ matrix.os }}
@@ -747,14 +751,18 @@ jobs:
         run: node scripts/dogfood/bench.mjs proxy --check
 
   cli-suite:
-    name: cli-suite (dev tasks)
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    name: cli-suite (dev tasks, ${{ matrix.part }}/2)
+    if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
     # The CLI effectiveness suite's own health, on the committed dev tasks only: held-out tasks
     # live outside the repo, so this never passes --split all or heldout. It needs no API key and
-    # starts no agent. Always GitHub-hosted.
+    # starts no agent. Always GitHub-hosted. Every task builds its own fixture home twice, which
+    # is most of the time, so the tasks split across two jobs.
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2]
     steps:
       - uses: actions/checkout@v5
 
@@ -780,9 +788,48 @@ jobs:
       # reference passes them, and the instruction does not leak the answer. Exits 1 on any
       # invalid task.
       - name: Validate the dev tasks
-        run: node scripts/dogfood/cli-suite.mjs validate --split dev --json
+        run: node scripts/dogfood/cli-suite.mjs validate --split dev --shard ${{ matrix.part }}/2 --json
 
       # The CLI guidelines over the same fixture home. The score is printed, not gated; the step
       # fails when the fixture home does not build.
       - name: CLI guidelines on the fixture home
+        if: matrix.part == 1
         run: node scripts/dogfood/cli-guidelines.mjs
+
+  # Site perf (site-perf.yml: Lighthouse A/B, budgets) on a pull request, as a job of this
+  # workflow so the full suite needs its verdict. The full suite always runs it: the measured
+  # pages also read CHANGELOG.md, the docs and the CLI's registry, so no path list proves a diff
+  # cannot move them. Without the `ready` label it runs when scripts/ci-changes.mjs says the
+  # diff touches the site's measured paths. A push to main is measured by site-perf.yml's own
+  # push trigger, on the desk, so this job is skipped there.
+  site-perf:
+    name: site perf
+    needs: changes
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.site_perf != 'false' }}
+    uses: ./.github/workflows/site-perf.yml
+
+  # The one check main requires. Its name is "full suite" only when the full suite ran, so a pull
+  # request without the `ready` label reports no check of that name and cannot merge: GitHub
+  # lists the skipped job under the name expression itself, unevaluated. A skipped job counts as
+  # passed for a required check, so two things keep this one honest. The condition below reads
+  # the event, not another job's output: with the label this job always runs, and it fails
+  # unless every other job ended in success (a skipped or cancelled job fails it). And it is
+  # `always()`, not `!cancelled()`: a cancelled run ends with this check failed, never skipped.
+  # A push or a manual run does not measure Site perf here (MAY_SKIP below), so it reports under
+  # another name: a manual run on a pull request's branch cannot stand in for the required check.
+  full-suite:
+    name: ${{ github.event_name != 'pull_request' && 'full suite without site perf' || contains(github.event.pull_request.labels.*.name, 'ready') && 'full suite' || 'full suite (not run, add the ready label)' }}
+    needs: [changes, test, build, gate-static, store-postgres, python-sdk, runtime-floor, release-smoke, action, store-clickhouse, image, windows, real-capture, cli-suite, site-perf]
+    if: ${{ always() && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Every job passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          # The one job that may end skipped, and only off a pull request: site-perf.yml measures
+          # a push to main itself. This reads the event, not a job's output.
+          MAY_SKIP: ${{ github.event_name != 'pull_request' && 'site-perf' || '' }}
+        run: node scripts/ci-full-suite.mjs

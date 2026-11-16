@@ -8,7 +8,6 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { openContext } from "../../src/core/context.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import { createDataset } from "../../src/datasets/dataset.ts";
@@ -16,8 +15,8 @@ import { FileEvalStore } from "../../src/datasets/store.ts";
 import type { Grader } from "../../src/datasets/types.ts";
 import { runExperiment } from "../../src/experiments/run.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const A = "a".repeat(64);
 const B = "b".repeat(64);
 // Hashes of whole weights files, as a script would compute them: the edited file and the one it started from.
@@ -155,8 +154,7 @@ describe("weight edits in the CLI", () => {
   it("show prints the Weight edits row and one line per edit and checkpoint", () => {
     const text = cli("show", EDITS);
     assert.match(text, /^\s*Weight edits\s+2 edits, 1 tensor, 66,560 weights changed, checkpoint c0ffeecccccc$/m);
-    assert.match(text, /weights\s+checkpoint c0ffeecccccc ← dddddddddddd$/m);
-    assert.doesNotMatch(text, /after layer 15/, "the line is the two hashes; the note stays in the event");
+    assert.match(text, /weights\s+checkpoint c0ffeecccccc ← dddddddddddd · after layer 15$/m, "the two hashes, then the note");
     assert.match(text, /weights\s+model\.layers\.15\.mlp\.down_proj\.weight \[4096×11008\] · 65,536 of 45,088,768 weights · L2 0\.0183 · max 0\.004 · aaaaaaaaaaaa → bbbbbbbbbbbb/);
     assert.match(text, /weights\s+1,024 weights · L2 0\.002 · max 0\.001/, "an edit captured without its name still says what changed");
     assert.doesNotMatch(text, /^\s*\+\S+\s+notification\s*$/m, "no blank notification line");

@@ -9,6 +9,7 @@ import { join, dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isAgentExcluded } from "../src/lib/agent-routes.mjs";
 import { pageLastmod } from "../src/lib/lastmod.mjs";
+import { TRANSLATED_PATHS } from "../src/i18n/locales.mjs";
 
 // `--dist <dir>` writes into another copy of dist.
 const distArg = process.argv.indexOf("--dist");
@@ -16,8 +17,9 @@ const DIST = distArg !== -1 && process.argv[distArg + 1] ? resolve(process.argv[
 const SITE = "https://coding.sh";
 
 // Per-version changelog pages and per-command CLI pages stay out of llms-full.txt:
-// each has its own twin, and /changelog and /docs/cli link them.
-const NOT_IN_FULL = [/^\/changelog\/v/, /^\/docs\/cli\//];
+// each has its own twin, and /changelog and /docs/cli link them. So do the front page's
+// translations (/zh, /ja, ...): the English home page is in it, and each has its own twin.
+const NOT_IN_FULL = [/^\/changelog\/v/, /^\/docs\/cli\//, ...TRANSLATED_PATHS.map((p) => new RegExp(`^${p}$`))];
 
 const NAMED_ENTITIES = {
   nbsp: " ", amp: "&", lt: "<", gt: ">", quot: '"', apos: "'",
@@ -263,8 +265,9 @@ for (const page of pages) {
 const full = `# coding.sh — full text
 
 Every page of coding.sh as plain text, for LLMs and agents, except one page per changelog version
-(/changelog/v*) and one per CLI command (/docs/cli/<command>). Each of those has its own Markdown
-copy at <page>.md; start from ${SITE}/changelog.md and ${SITE}/docs/cli.md.
+(/changelog/v*), one per CLI command (/docs/cli/<command>) and the home page's translations
+(${TRANSLATED_PATHS.join(", ")}). Each of those has its own Markdown copy at <page>.md; start from
+${SITE}/changelog.md and ${SITE}/docs/cli.md.
 Index: ${SITE}/llms.txt
 
 ${pages

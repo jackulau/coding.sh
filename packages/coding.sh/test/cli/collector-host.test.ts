@@ -1,7 +1,7 @@
 // `coding.sh collector` listens on loopback only: a public host is a usage error that points at serve.
 import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
-import { cleanup, runSync, tmpHome } from "./_run-source.ts";
+import { cleanup, runSync, tmpHome } from "./_run-cli.ts";
 
 after(cleanup);
 

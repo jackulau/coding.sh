@@ -37,6 +37,13 @@ describe("weight edits in a session", () => {
     assert.equal(weightsEditText(stripped.payload), "1,204 weights · L2 0.0183 · max 0.004");
   });
 
+  it("an edit's note comes last on its line, and a note that is not a string is left out", () => {
+    const line = "layers.3.mlp.down_proj.weight [4096×11008] · 1,204 of 45,088,768 weights · L2 0.0183 · max 0.004 · aaaaaaaaaaaa → bbbbbbbbbbbb";
+    assert.equal(weightsEditText(edit({ note: "rank-1 edit" }).payload), `${line} · rank-1 edit`);
+    assert.equal(weightsEditText(edit({ note: 7 }).payload), line);
+    assert.equal(weightsEditText(edit({ note: "" }).payload), line);
+  });
+
   it("an edit whose numbers are not numbers still counts as an edit", () => {
     const s = buildSession([ev("session.start"), edit({ changed: "many", tensor: 7 }), edit({ changed: -3 }), edit({ changed: 1.5 })]);
     assert.deepEqual(s.stats.weightEdits, { events: 3, tensors: 1, weightsChanged: 0 });
@@ -123,7 +130,8 @@ describe("a weights checkpoint in a session", () => {
     const b = buildSession(events.map(toMetadata));
     assert.deepEqual(a.stats.weightEdits, { events: 1, tensors: 1, weightsChanged: 1204, checkpoints: [FILE] });
     assert.deepEqual(b.stats.weightEdits, { events: 1, weightsChanged: 1204, checkpoints: [FILE] });
-    assert.equal(weightsEventText(toMetadata(full).payload), weightsEventText(full.payload));
+    assert.equal(weightsEventText(full.payload), "checkpoint 58899f90572c ← 0496e5111097 · after the rank-1 patch on layer 3");
+    assert.equal(weightsEventText(toMetadata(full).payload), "checkpoint 58899f90572c ← 0496e5111097", "metadata capture keeps the hashes on the line and drops the note");
   });
 });
 
@@ -131,7 +139,8 @@ describe("weightsCheckpointText", () => {
   it("writes the saved file's hash and the base file's, 12 characters each", () => {
     assert.equal(weightsCheckpointText(checkpoint().payload), "checkpoint 58899f90572c ← 0496e5111097");
     assert.equal(weightsCheckpointText(checkpoint({ baseSha256: undefined }).payload), "checkpoint 58899f90572c");
-    assert.equal(weightsCheckpointText(checkpoint({ note: "not shown" }).payload), "checkpoint 58899f90572c ← 0496e5111097");
+    assert.equal(weightsCheckpointText(checkpoint({ note: "rank-1 fix" }).payload), "checkpoint 58899f90572c ← 0496e5111097 · rank-1 fix");
+    assert.equal(weightsCheckpointText(checkpoint({ note: 7 }).payload), "checkpoint 58899f90572c ← 0496e5111097");
     assert.equal(weightsCheckpointText({ kind: "weights.checkpoint" }), "");
   });
 

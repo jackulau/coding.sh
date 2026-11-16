@@ -9,7 +9,7 @@ Main sources, linked by short name below:
 | Name | URL |
 | --- | --- |
 | Blog | https://rikiyat.github.io/blog/weight-space-programming/ |
-| Blog source | https://raw.githubusercontent.com/RikiyaT/RikiyaT.github.io/master/blog/weight-space-programming/index.html (76,425 bytes, one static HTML file) |
+| Blog source | https://raw.githubusercontent.com/RikiyaT/RikiyaT.github.io/master/blog/weight-space-programming/index.html (one static HTML file: 76,425 bytes on 2026-11-11, 83,905 on 2026-11-15) |
 | Logs | https://github.com/RikiyaT/lm_understand-logs |
 | Exp 4 log | https://raw.githubusercontent.com/RikiyaT/lm_understand-logs/main/exp4_fix_car/README.md |
 | Exp 6 log | https://raw.githubusercontent.com/RikiyaT/lm_understand-logs/main/exp6_go_from_scratch/README.md |
@@ -104,10 +104,10 @@ Each shard's `scores.json` gives counts over 4 samples per problem; shard 0 of t
 ([scores.json](https://raw.githubusercontent.com/RikiyaT/lm_understand-logs/main/exp8_math/eval/unedited/parts/math500_s0of10/scores.json)).
 Summed over the 10 MATH-500 shards (`parts/math500_s<i>of10/scores.json`): unedited 158 correct
 and 1,860 cut of 2,000; 50 passes 962 correct and 661 cut of 2,000. Other benchmarks
-unedited → 50 passes: AIME24 0.0 → 0.0, AMC23 0.5 → 23.4, Minerva 1.5 → 25.4, OlympiadBench 1.3 →
+unedited → 50 passes: AIME24 0.0 → 0.6, AIME25 0.0 → 2.3, AMC23 0.5 → 23.4, Minerva 1.5 → 25.4, OlympiadBench 1.3 →
 21.8, GPQA 22.7 → 36.6, MMLU-Pro 40.3 → 45.5
 ([RESULTS_excerpt.md](https://raw.githubusercontent.com/RikiyaT/lm_understand-logs/main/exp8_math/eval/RESULTS_excerpt.md),
-read through a summarizing fetch). That file numbers the Qwen math runs "Experiment 6" and Gemma
+read raw on 2026-11-15). That file numbers the Qwen math runs "Experiment 6" and Gemma
 "Experiment 8", unlike the Blog.
 
 ## What the agent was given

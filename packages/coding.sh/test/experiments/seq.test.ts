@@ -1,7 +1,6 @@
 // AC-9: exp run --seq K, sequential attempts with grader feedback. Function,
 // command (a node script) and HTTP (a local server) tasks; temp dirs only.
 import assert from "node:assert/strict";
-import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -21,6 +20,7 @@ import type { TaskContext } from "../../src/experiments/task.ts";
 import { exactGrader } from "../../src/graders/builtin.ts";
 import { passAtK } from "../../src/stats/seqk.ts";
 import { pathOf } from "../_bin.ts";
+import { CLI } from "../_cli.ts";
 
 const one = createDataset({ name: "one", createdAt: 1, cases: [{ id: "q", input: "what is 6*7?", expected: 42 }] });
 const ten = createDataset({ name: "ten", createdAt: 1, cases: Array.from({ length: 10 }, (_, i) => ({ id: `c${i}`, input: i, expected: i })) });
@@ -316,7 +316,6 @@ describe("exp compare with --seq runs", () => {
 describe("exp run --seq from the CLI", () => {
   let root = "";
   let env: NodeJS.ProcessEnv = {};
-  const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
   const cli = (args: string[]) => spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { env, cwd: root, encoding: "utf8", timeout: 120_000 });
   before(async () => {
     root = realpathSync(await mkdtemp(join(tmpdir(), "csh-seq-cli-")));

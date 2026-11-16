@@ -9,9 +9,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { CLI } from "../_cli.ts";
 
 const pkg = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const CLI = join(pkg, "src", "cli", "main.ts");
 const HOOK = join(pkg, "src", "spool", "hook.ts");
 
 const roots: string[] = [];

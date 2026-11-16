@@ -109,8 +109,9 @@ export function plainText(html: string): string {
 
 // Questions the page itself shows, word for word: the home FAQ, /docs/faq, and
 // the "Questions" section of a docs page (DocsLayout finds it).
-export function faqSchema(items: { q: string; a: string }[]) {
-  return {
+// `inLanguage` is set on a translated page (the front page in another language).
+export function faqSchema(items: { q: string; a: string }[], inLanguage?: string) {
+  const schema: Record<string, unknown> = {
     "@context": "https://schema.org",
     "@type": "FAQPage",
     mainEntity: items.map((item) => ({
@@ -119,4 +120,6 @@ export function faqSchema(items: { q: string; a: string }[]) {
       acceptedAnswer: { "@type": "Answer", text: plainText(item.a) },
     })),
   };
+  if (inLanguage && inLanguage !== "en") schema.inLanguage = inLanguage;
+  return schema;
 }

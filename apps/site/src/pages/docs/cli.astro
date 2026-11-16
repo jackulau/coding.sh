@@ -13,10 +13,13 @@ const commands = ref ? ref.groups.flatMap((g) => g.commands.map((c) => c.name)) 
     ref ? (
       <>
         <p>
-          Generated at build time from <code>coding.sh --help</code> (version {ref.version}). Run <code>coding.sh &lt;command&gt; --help</code>{" "}
-          for the same text in your terminal, or add <code>--json</code> for machine-readable metadata. Each command has its own page with its full
-          help and its subcommands.
+          Generated at build time from <code>coding.sh --help</code>. Run <code>coding.sh &lt;command&gt; --help</code> for the same text in your
+          terminal, or add <code>--json</code> for machine-readable metadata. Each command has its own page with its full help and its
+          subcommands.
         </p>
+        {/* The version has its own short line. Inside the paragraph above, a release that changed one
+            digit moved a line break in the web font only, and the page shifted when the font loaded. */}
+        <p>This page describes coding.sh {ref.version}.</p>
 
         <h2 id="global">Global options</h2>
         <p>Every command accepts these.</p>

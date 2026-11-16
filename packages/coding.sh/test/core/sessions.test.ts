@@ -454,6 +454,15 @@ describe("harness-injected prompts (QA regression)", () => {
     assert.equal(s.title, "/model opus");
   });
 
+  it("a session with no prompt is titled by its start event's name, and a prompt still wins", () => {
+    const start = ev("session.start", { name: "edit  layer 15\n mlp" });
+    const edit = ev("notification", { kind: "weights.edit", tensor: "w", changed: 1 });
+    assert.equal(buildSession([start, edit]).title, "edit layer 15 mlp");
+    assert.equal(buildSession([start, um("Fix the parser")]).title, "Fix the parser");
+    assert.equal(buildSession([start, um("<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args>opus</command-args>")]).title, "/model opus");
+    assert.equal(buildSession([ev("session.start", { name: "  " }), edit]).title, undefined);
+  });
+
   it("isSyntheticPrompt", () => {
     for (const t of [clear, note, "<local-command-caveat>Caveat: …</local-command-caveat>", "  <system-reminder>x</system-reminder>"]) assert.ok(isSyntheticPrompt(t), t);
     for (const t of ["Fix <command-name> parsing", "hello", "<div>html question</div>"]) assert.ok(!isSyntheticPrompt(t), t);

@@ -1,11 +1,11 @@
-// `coding.sh serve` from source: the healthcheck reaches ports fetch refuses, and a config
+// `coding.sh serve` through the CLI: the healthcheck reaches ports fetch refuses, and a config
 // error points at a docs page a reader can open.
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
-import { cleanup, runAsync, runSync, tmpHome } from "./_run-source.ts";
+import { cleanup, runAsync, runSync, tmpHome } from "./_run-cli.ts";
 
 const servers: Server[] = [];
 after(() => {

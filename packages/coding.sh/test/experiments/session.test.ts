@@ -8,7 +8,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { createDataset } from "../../src/datasets/dataset.ts";
 import { FileEvalStore } from "../../src/datasets/store.ts";
 import type { Grader } from "../../src/datasets/types.ts";
@@ -17,6 +16,7 @@ import { renderSessionSummary } from "../../src/experiments/render.ts";
 import { regradeExperiment, runExperiment } from "../../src/experiments/run.ts";
 import { appendBlock, findSession, newSession, readTimeline, recordExperiment, SESSION_ENV, sessionDelta, timelinePath } from "../../src/experiments/session.ts";
 import { exactGrader } from "../../src/graders/builtin.ts";
+import { CLI } from "../_cli.ts";
 
 const dirs: string[] = [];
 after(() => {
@@ -142,7 +142,6 @@ describe("recordExperiment", () => {
 
 // The CLI end to end: a session in a folder, a second run from a subdirectory, notes, summary, --no-session.
 describe("exp session CLI", () => {
-  const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
   const root = temp("csh-session-cli-");
   const home = join(root, "home");
   mkdirSync(join(home, "proj", "sub"), { recursive: true });

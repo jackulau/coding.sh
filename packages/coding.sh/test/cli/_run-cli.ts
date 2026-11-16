@@ -1,12 +1,13 @@
-// Runs the CLI from source (no build) with a throwaway home, for the serve, proxy and collector CLI tests.
+// Runs the CLI (test/_cli.ts) with a throwaway home, for the serve, proxy and collector CLI tests.
 import { type ChildProcess, spawn, spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { removeTestDir } from "../_rm.ts";
+import { CLI as MAIN } from "../_cli.ts";
 
-export const MAIN = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "cli", "main.ts");
+export { MAIN };
+
 const roots: string[] = [];
 const children: ChildProcess[] = [];
 

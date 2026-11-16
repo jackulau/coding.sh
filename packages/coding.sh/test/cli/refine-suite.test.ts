@@ -1,5 +1,5 @@
 // `coding.sh refine test|run|log --suite`: a harness edit judged on an eval
-// suite of repo tasks, end to end through src/cli/main.ts with a temp HOME.
+// suite of repo tasks, end to end through the CLI with a temp HOME.
 //
 // The agent is the "wrapper" agent from a harness bundle: a node script that
 // reads the CLAUDE.md it was given, starts one bare node process per 200 bytes
@@ -16,12 +16,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { which } from "../../src/adapters/_shared/detect.ts";
 import { posixShell } from "../../src/core/spawn.ts";
 import { pathOf } from "../_bin.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const gitBin = which("git") ?? "";
 const ESSENTIAL = "ESSENTIAL: write done.txt when you finish.";
 const SAFETY = "Never run `git push --force`.";

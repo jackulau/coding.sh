@@ -8,7 +8,6 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { auditMemory, claudeProjectSlug, homeKey, memoryKind, shellPaths, skillListingBytes, type MemoryFileInfo, type MemorySession } from "../../src/core/memory-audit.ts";
 import { MEMORY_EVENT_KINDS, MEMORY_INPUT_KEYS, MEMORY_PAYLOAD_KEYS, memoryEventOf, type MemoryEvent } from "../../src/core/memory-events.ts";
@@ -23,8 +22,8 @@ import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { pathOf } from "../_bin.ts";
 import { FIXTURES, collect, testCtx, tmpEnv } from "../adapters/_helpers.ts";
 import { removeTestDir } from "../_rm.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const HOME = "/home/me";
 
 let n = 0;

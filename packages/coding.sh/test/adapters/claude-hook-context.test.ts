@@ -11,13 +11,13 @@ import { cpSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { ClaudeTranscriptConverter } from "../../src/adapters/_shared/claude-transcript.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import { toMetadata } from "../../src/core/redact.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { assertWellFormed, collect, FIXTURES, testCtx, tmpEnv, type TmpEnv } from "./_helpers.ts";
+import { CLI } from "../_cli.ts";
 
 const CONFIG = join(FIXTURES, "claude-code", "hooks-real", "config");
 const PLAIN = "fd08f71c-fbd8-4bb1-a1aa-114160e07141";
@@ -154,7 +154,6 @@ describe("hook context in a live Stop window", () => {
 });
 
 describe("hook context in the CLI", () => {
-  const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
   let root = "";
   let env: NodeJS.ProcessEnv;
   const cli = (...args: string[]) => {

@@ -20,6 +20,8 @@ const ASSETS = {
   "/skill.md": [200, MD, "# Skill"],
   "/llms.txt": [200, { "Content-Type": "text/plain; charset=utf-8" }, "llms"],
   "/llms-full.txt": [200, { "Content-Type": "text/plain; charset=utf-8" }, "llms full"],
+  "/install": [200, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=300" }, "#!/bin/sh"],
+  "/install.sh": [200, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=300" }, "#!/bin/sh"],
   "/docs/": [307, { Location: "/docs" }, null],
   "/docs/quickstart.html": [307, { Location: "/docs/quickstart" }, null],
   "/index.html": [307, { Location: "/" }, null],
@@ -129,6 +131,19 @@ test("/llms-full.txt is marked noindex and /llms.txt is not", async () => {
   assert.equal(await full.text(), "llms full");
   assert.equal(full.headers.get("X-Robots-Tag"), "noindex");
   assert.equal((await get("/llms.txt")).headers.get("X-Robots-Tag"), null);
+});
+
+test("the installer is marked noindex at both paths and is otherwise unchanged", async () => {
+  for (const path of ["/install", "/install.sh"]) {
+    const res = await get(path);
+    assert.equal(res.status, 200, path);
+    assert.equal(await res.text(), "#!/bin/sh", path);
+    assert.equal(res.headers.get("X-Robots-Tag"), "noindex", path);
+    assert.equal(res.headers.get("Content-Type"), "text/plain; charset=utf-8", path);
+    assert.equal(res.headers.get("Cache-Control"), "public, max-age=300", path);
+  }
+  // A page stays indexable.
+  assert.equal((await get("/docs/quickstart")).headers.get("X-Robots-Tag"), null);
 });
 
 test("the redirects and rules before the assets still hold", async () => {

@@ -1,4 +1,4 @@
-// `coding.sh dataset add|import` end to end from source: every case in a written
+// `coding.sh dataset add|import` end to end through the CLI: every case in a written
 // version gets a split, so session-derived (labellable) cases reach
 // split-filtered runs and `judge calibrate`. Temp HOME / CODING_SH_HOME only.
 import assert from "node:assert/strict";
@@ -6,15 +6,14 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
 import { splitFor } from "../../src/datasets/dataset.ts";
 import { FileEvalStore } from "../../src/datasets/store.ts";
 import type { Case } from "../../src/datasets/types.ts";
 import type { AgentEvent, Session } from "../../src/schema/index.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
+import { CLI as MAIN } from "../_cli.ts";
 
-const MAIN = join(dirname(fileURLToPath(import.meta.url)), "../../src/cli/main.ts");
 const SESSIONS = Array.from({ length: 8 }, (_, i) => `c0000000-0000-4000-8000-00000000000${i}`);
 
 let root = "";

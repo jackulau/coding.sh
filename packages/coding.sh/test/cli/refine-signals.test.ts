@@ -6,13 +6,12 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { signalsFile } from "../../src/refine/diagnose.ts";
 import { refineDir } from "../../src/refine/ledger.ts";
 import { writeSignals, type Signal, type SignalsDoc } from "../../src/refine/signals.ts";
 import { catalogHash } from "../../src/refine/taxonomy.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const root = realpathSync(mkdtempSync(join(tmpdir(), "csh-refine-signals-")));
 after(() => rmSync(root, { recursive: true, force: true }));
 
