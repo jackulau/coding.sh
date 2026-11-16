@@ -29,6 +29,10 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const ISOLATED = {
   HOME: "home",
   USERPROFILE: "home",
+  // Windows: LOCALAPPDATA must sit inside USERPROFILE. With the profile moved and LOCALAPPDATA
+  // left on the real one, Chrome refuses --remote-debugging-port ("requires a non-default data
+  // directory") and every browser test times out. Nothing reads it elsewhere.
+  LOCALAPPDATA: join("home", "AppData", "Local"),
   CODING_SH_HOME: "coding.sh",
   CLAUDE_CONFIG_DIR: "claude",
   CODEX_HOME: "codex",

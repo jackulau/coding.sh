@@ -105,6 +105,8 @@ test("isolatedEnv points every home variable into a fresh temp directory and dro
   assert.equal(a.env.PATH, "/bin");
   assert.equal(a.env.CODING_SH_STORE_URL, undefined);
   assert.notEqual(a.env.HOME, "/home/user");
+  // Chrome on Windows starts with remote debugging only when LOCALAPPDATA is inside USERPROFILE.
+  assert.ok(a.env.LOCALAPPDATA.startsWith(a.env.USERPROFILE), "LOCALAPPDATA is inside USERPROFILE");
 });
 
 test("the gate refuses to start when CODING_SH_DEV_REAL_STORE is set", async () => {
