@@ -131,6 +131,6 @@ test("ci.yml gates every code-only job on the changes job, and never skips when 
   assert.ok(job("test").includes(`node: \${{ fromJSON(${narrow} && '["24.x"]' || '["22.x", "24.x"]') }}\n        shard: [1, 2, 3]\n`));
   // The checks that read docs and the site always run.
   for (const name of ["gate-static", "build", "test"]) assert.doesNotMatch(job(name), /needs: changes/, name);
-  // Pushes to main, manual runs and the full suite on a pull request never skip.
+  // Pushes to main, manual runs and the full suite on a pull request skip no job for the diff.
   assert.match(job("changes"), /if \[ "\$FULL" != true \] && \[ "\$EVENT" = pull_request \] && files=/);
 });

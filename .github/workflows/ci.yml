@@ -15,10 +15,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# The full suite is every job below. It runs on pushes to main, on manual runs, and on a pull
-# request that carries the `ready` label. Only then does a check named "full suite" exist, and
-# main requires it (CONTRIBUTING.md, "Pull requests"), so nothing merges before every job has
-# passed on the pull request merged with an up-to-date main. Without the label a pull request
+# The full suite is every job below. It runs on a pull request that carries the `ready` label.
+# Only then does a check named "full suite" exist, and main requires it (CONTRIBUTING.md, "Pull
+# requests"), so nothing merges before every job has passed on the pull request merged with an
+# up-to-date main. A push to main and a manual run run every job but Site perf, and their closing
+# check has another name ("full suite without site perf"). Without the label a pull request
 # gets the quick jobs only: the Linux tests on Node 24, the build, the gate, the stores, the
 # Python SDK, the Node floor, the release smoke test and the GitHub Action, minus the ones
 # scripts/ci-changes.mjs can prove it does not need. Windows, Node 22, the real agent captures,
@@ -785,8 +786,10 @@ jobs:
   # the event, not another job's output: with the label this job always runs, and it fails
   # unless every other job ended in success (a skipped or cancelled job fails it). And it is
   # `always()`, not `!cancelled()`: a cancelled run ends with this check failed, never skipped.
+  # A push or a manual run does not measure Site perf here (MAY_SKIP below), so it reports under
+  # another name: a manual run on a pull request's branch cannot stand in for the required check.
   full-suite:
-    name: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready')) && 'full suite' || 'full suite (not run, add the ready label)' }}
+    name: ${{ github.event_name != 'pull_request' && 'full suite without site perf' || contains(github.event.pull_request.labels.*.name, 'ready') && 'full suite' || 'full suite (not run, add the ready label)' }}
     needs: [changes, test, build, gate-static, store-postgres, python-sdk, runtime-floor, release-smoke, action, store-clickhouse, image, windows, real-capture, cli-suite, site-perf]
     if: ${{ always() && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready')) }}
     runs-on: ubuntu-latest

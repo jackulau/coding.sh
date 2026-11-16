@@ -74,7 +74,9 @@ test("the check is named \"full suite\" only when the full suite runs, and then 
   const body = job("full-suite");
   // The name and the condition read the same thing, and neither reads another job's output: a
   // failed job must not be able to skip this one under the required name.
-  assert.ok(body.includes(`\n    name: \${{ (${FULL}) && 'full suite' || 'full suite (not run, add the ready label)' }}\n`));
+  // Off a pull request Site perf is skipped (MAY_SKIP), so the check has another name: a manual
+  // run on a pull request's branch reports on the same commit and must not satisfy main's rule.
+  assert.ok(body.includes("\n    name: ${{ github.event_name != 'pull_request' && 'full suite without site perf' || contains(github.event.pull_request.labels.*.name, 'ready') && 'full suite' || 'full suite (not run, add the ready label)' }}\n"));
   assert.ok(body.includes(`\n    if: \${{ always() && (${FULL}) }}\n`));
   assert.doesNotMatch(body, /needs\.[a-z-]+\.outputs/);
   // No other job can report under the required name.
