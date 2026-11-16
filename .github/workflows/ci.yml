@@ -768,11 +768,12 @@ jobs:
         run: node scripts/dogfood/cli-guidelines.mjs
 
   # The one check main requires. Its name is "full suite" only when the full suite ran, so a pull
-  # request without the `ready` label reports no check of that name and cannot merge. A skipped
-  # job counts as passed for a required check: the condition below reads the event, not another
-  # job's output, so with the label this job always runs, and it fails unless every other job
-  # ended in success. A skipped or cancelled job fails it. `always()`, not `!cancelled()`: a
-  # cancelled run must end with this check failed, never skipped.
+  # request without the `ready` label reports no check of that name and cannot merge: GitHub
+  # lists the skipped job under the name expression itself, unevaluated. A skipped job counts as
+  # passed for a required check, so two things keep this one honest. The condition below reads
+  # the event, not another job's output: with the label this job always runs, and it fails
+  # unless every other job ended in success (a skipped or cancelled job fails it). And it is
+  # `always()`, not `!cancelled()`: a cancelled run ends with this check failed, never skipped.
   full-suite:
     name: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready')) && 'full suite' || 'full suite (not run, add the ready label)' }}
     needs: [changes, test, build, gate-static, store-postgres, python-sdk, runtime-floor, release-smoke, action, store-clickhouse, image, windows, real-capture, cli-suite]
