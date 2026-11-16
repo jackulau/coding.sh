@@ -5,7 +5,7 @@ import { globSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mergeDurations, readDurations, shardFiles, testFiles } from "../../scripts/test-shards.ts";
+import { durationsFile, mergeDurations, readDurations, shardFiles, testFiles } from "../../scripts/test-shards.ts";
 
 const PKG = fileURLToPath(new URL("../../", import.meta.url));
 const RUNNER = fileURLToPath(new URL("../../scripts/test-ci.mjs", import.meta.url));
@@ -50,6 +50,17 @@ describe("scripts/test-shards.ts", () => {
     const files = ["d", "a", "c", "b"];
     assert.deepEqual(shardFiles(files, {}, 1, 2), ["a", "c"]);
     assert.deepEqual(shardFiles(files, {}, 2, 2), ["b", "d"]);
+  });
+
+  it("reads an OS's own table when it has one, and the Linux table otherwise", () => {
+    const linux = readDurations("linux");
+    assert.ok(Object.keys(linux).length > 100, "the Linux table is missing or nearly empty");
+    assert.deepEqual(readDurations("an-os-with-no-table"), linux);
+    let own: Record<string, number> | undefined;
+    try {
+      own = JSON.parse(readFileSync(durationsFile("win32"), "utf8"));
+    } catch {}
+    assert.deepEqual(readDurations("win32"), own ?? linux);
   });
 
   it("merges reporter outputs, keeping the higher time and only test files", () => {

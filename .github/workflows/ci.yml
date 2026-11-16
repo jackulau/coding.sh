@@ -95,7 +95,7 @@ jobs:
         if: matrix.node == '24.x'
         continue-on-error: true
         with:
-          name: test-durations-${{ matrix.shard }}
+          name: test-durations-linux-${{ matrix.shard }}
           path: ${{ runner.temp }}/test-durations.json
           retention-days: 14
           if-no-files-found: ignore
@@ -583,8 +583,19 @@ jobs:
         working-directory: packages/coding.sh
         env:
           SHARD: ${{ matrix.shard }}/4
+          TEST_DURATIONS_OUT: ${{ runner.temp }}/test-durations.json
         # A file that fails is run again alone; one that then passes is a warning, not a failure.
         run: node scripts/test-ci.mjs
+
+      # Each file's run time on this OS, for its own table (see scripts/test-shards.ts).
+      - uses: actions/upload-artifact@v6
+        if: matrix.node == '24.x'
+        continue-on-error: true
+        with:
+          name: test-durations-win32-${{ matrix.shard }}
+          path: ${{ runner.temp }}/test-durations.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Build
         if: matrix.shard == 1
