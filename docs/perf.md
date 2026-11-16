@@ -147,6 +147,10 @@ See [Experiments](https://coding.sh/docs/experiments#metrics) for the metric A/B
 [.github/workflows/site-perf.yml](https://github.com/jackulau/coding.sh/blob/main/.github/workflows/site-perf.yml) builds the base and
 head commits and runs 9 pairs. It runs when a change can reach the five measured pages: the
 site's layouts, components, styles, assets and config, those pages themselves, and `scripts/perf`.
+On a pull request each page is measured in its own job, five in all, with the same
+pairs in the same order (`ab.mjs --part`). One more job joins their samples into a single result
+(`ab.mjs --merge`) and judges it, so the gate and its correction cover every metric as they do in
+one run. A page or profile with no samples fails that job.
 It fails when a gated metric gets worse by an amount that matters,
 or when a page goes over its budget in
 [scripts/perf/budgets.json](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/budgets.json). The budgets sit about 10%
@@ -156,7 +160,7 @@ page has its own blocking-time budget on the slow phone. The rules are in
 
 | Where | What runs |
 |---|---|
-| Pull requests | GitHub's hosted runners. Load-time budgets are skipped: they only hold on our own machine. |
+| Pull requests | GitHub's hosted runners, one job per page. Load-time budgets are skipped: they only hold on our own machine. |
 | Pushes to main | The one desk runner labelled `perf`, so two perf runs never overlap. Deploys run beside it. |
 | Pull requests and deploys | `npm run perf:budget` in apps/site checks page weight, inline CSS and script, fonts, scripts and images in the build. CI runs it on every pull request, and the Site workflow runs it again before a deploy. |
 

@@ -11,6 +11,13 @@ name: Site perf
 # sample records cpu_busy so ab.mjs checks the _ms budgets on quiet samples
 # only. Pull requests, forks included, run on GitHub-hosted ubuntu-latest (free
 # for public repos), so PR code never runs on our own machine.
+#
+# A sample is one Lighthouse load of each page under each profile, about 15
+# seconds apiece, and 9 pairs after a warm-up are 20 samples: 50 minutes on one
+# machine. A pull request measures each page in its own job (ab.mjs --part),
+# both profiles, with the same pairs and seed, and the verdict job joins them
+# (ab.mjs --merge) into one result: the same samples per metric, one gate, one
+# Holm correction. The desk has one perf runner, so main keeps the single job.
 
 on:
   push:
@@ -70,8 +77,15 @@ concurrency:
 
 jobs:
   perf:
+    name: ${{ matrix.page == 'all' && 'perf' || format('perf ({0})', matrix.page) }}
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","linux","desk","perf"]') }}
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      # The pages of scripts/perf/lighthouse.mjs (scripts/perf/test/merge.test.mjs checks the
+      # list matches). "all" is the single job that measures and judges everything.
+      matrix:
+        page: ${{ fromJSON(github.event_name == 'pull_request' && '["home", "quickstart", "evals", "changelog", "cli"]' || '["all"]') }}
     env:
       PAIRS: ${{ inputs.pairs || '9' }}
     defaults:
@@ -141,18 +155,33 @@ jobs:
           echo "CHROME_PATH=$path" >> "$GITHUB_ENV"
           "$path" --version
 
-      # The _ms budgets were set on the desk; a hosted runner checks the byte,
-      # request and layout-shift budgets and the A/B verdicts only.
       - name: A/B and budgets
-        env:
-          SKIP: ${{ github.event_name == 'pull_request' && '--skip-budget *_ms' || '' }}
+        if: matrix.page == 'all'
         run: |
-          set -f  # $SKIP holds a pattern for ab.mjs, not for the shell
           mkdir -p "$RUNNER_TEMP/perf"
-          # shellcheck disable=SC2086
           node scripts/perf/ab.mjs --base "$RUNNER_TEMP/base-dist" --cand "$RUNNER_TEMP/head-dist" \
-            --pairs "$PAIRS" --warmup 1 --gate --budgets scripts/perf/budgets.json $SKIP \
+            --pairs "$PAIRS" --warmup 1 --gate --budgets scripts/perf/budgets.json \
             --out "$RUNNER_TEMP/perf/result.json" | tee "$RUNNER_TEMP/perf/report.txt"
+
+      # One page under both profiles. Every job of the run passes the same seed, so they all run the
+      # pairs in the same arm order and the verdict job can join them. No verdict is printed here.
+      - name: A/B samples for this page
+        if: matrix.page != 'all'
+        env:
+          PAGE: ${{ matrix.page }}
+        run: |
+          node scripts/perf/ab.mjs --base "$RUNNER_TEMP/base-dist" --cand "$RUNNER_TEMP/head-dist" \
+            --pairs "$PAIRS" --warmup 1 --seed "$GITHUB_RUN_NUMBER" --page "$PAGE" \
+            --part --out "$RUNNER_TEMP/part/part.json"
+
+      # The verdict job needs every part: a failed upload fails this job.
+      - uses: actions/upload-artifact@v6
+        if: ${{ !cancelled() && matrix.page != 'all' }}
+        with:
+          name: site-perf-part-${{ matrix.page }}
+          path: ${{ runner.temp }}/part/part.json
+          retention-days: 7
+          if-no-files-found: error
 
       - name: Summary
         if: always()
@@ -163,7 +192,7 @@ jobs:
       # The report is already in the step summary; a failed upload (the desk runner
       # has lost DNS mid-run before) must not fail a run whose gate passed.
       - uses: actions/upload-artifact@v6
-        if: always()
+        if: ${{ always() && matrix.page == 'all' }}
         continue-on-error: true
         with:
           name: site-perf
@@ -173,3 +202,59 @@ jobs:
       - name: Clean up
         if: always()
         run: git worktree remove --force "$RUNNER_TEMP/base" 2>/dev/null || true
+
+  # Pull requests only: joins the parts and judges them as the single job does. It needs no
+  # install: the gate and the merge use Node built-ins and coding.sh from source.
+  verdict:
+    name: perf
+    needs: perf
+    if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.x
+
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: site-perf-part-*
+          path: ${{ runner.temp }}/parts
+
+      # The _ms budgets were set on the desk; a hosted runner checks the byte,
+      # request and layout-shift budgets and the A/B verdicts only. A page or
+      # profile with no part fails here.
+      - name: Verdict and budgets
+        run: |
+          mkdir -p "$RUNNER_TEMP/perf"
+          node scripts/perf/ab.mjs --merge --gate --budgets scripts/perf/budgets.json --skip-budget '*_ms' \
+            --out "$RUNNER_TEMP/perf/result.json" "$RUNNER_TEMP"/parts/*/part.json | tee "$RUNNER_TEMP/perf/report.txt"
+
+      - name: Summary
+        if: always()
+        run: |
+          [ -f "$RUNNER_TEMP/perf/report.txt" ] || exit 0
+          { echo '### Site perf: base vs head'; echo '```text'; cat "$RUNNER_TEMP/perf/report.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v6
+        if: always()
+        continue-on-error: true
+        with:
+          name: site-perf
+          path: ${{ runner.temp }}/perf
+          if-no-files-found: ignore
+
+      # A part's job can fail after it uploaded a complete part (a failed step after the
+      # samples); the verdict is not green over a red part.
+      - name: Every part's job passed
+        if: ${{ always() && needs.perf.result != 'success' }}
+        env:
+          PARTS: ${{ needs.perf.result }}
+        run: |
+          echo "the perf jobs ended as $PARTS: see the job that did not pass"
+          exit 1
