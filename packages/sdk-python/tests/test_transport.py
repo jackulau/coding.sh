@@ -121,7 +121,9 @@ class TransportTest(unittest.TestCase):
         port = _free_port()
         coding_sh.init(url="http://127.0.0.1:%d" % port, key=KEY, flush_interval_ms=5)
         self._span()
-        self.assertTrue(coding_sh.flush(5))
+        # Windows takes about 2 s to refuse a connection to a closed local port, so the five
+        # attempts need about 10 s there; elsewhere the refusal is immediate.
+        self.assertTrue(coding_sh.flush(5 + 3 * _client.MAX_ATTEMPTS))
         s = coding_sh.stats()
         self.assertEqual(s["failed"], 5)
 
