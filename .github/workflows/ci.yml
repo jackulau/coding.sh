@@ -15,10 +15,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# The full suite is every job below. It runs on pushes to main, on manual runs, and on a pull
-# request that carries the `ready` label. Only then does a check named "full suite" exist, and
-# main requires it (CONTRIBUTING.md, "Pull requests"), so nothing merges before every job has
-# passed on the pull request merged with an up-to-date main. Without the label a pull request
+# The full suite is every job below. It runs on a pull request that carries the `ready` label.
+# Only then does a check named "full suite" exist, and main requires it (CONTRIBUTING.md, "Pull
+# requests"), so nothing merges before every job has passed on the pull request merged with an
+# up-to-date main. A push to main and a manual run run every job but Site perf, and their closing
+# check has another name ("full suite without site perf"). Without the label a pull request
 # gets the quick jobs only: the Linux tests on Node 24, the build, the gate, the stores, the
 # Python SDK, the Node floor, the release smoke test and the GitHub Action, minus the ones
 # scripts/ci-changes.mjs can prove it does not need. Windows, Node 22, the real agent captures,
@@ -36,6 +37,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       code: ${{ steps.diff.outputs.code }}
+      site_perf: ${{ steps.diff.outputs.site_perf }}
     steps:
       # The pull request's merge commit and its first parent, the base branch.
       - uses: actions/checkout@v5
@@ -50,7 +52,7 @@ jobs:
           if [ "$FULL" != true ] && [ "$EVENT" = pull_request ] && files=$(git diff --name-only --no-renames HEAD^1 HEAD); then
             printf '%s\n' "$files" | node scripts/ci-changes.mjs | tee -a "$GITHUB_OUTPUT"
           else
-            echo "code=true" | tee -a "$GITHUB_OUTPUT"
+            printf 'code=true\nsite_perf=true\n' | tee -a "$GITHUB_OUTPUT"
           fi
 
   # The test suite runs on Linux and Windows in shards of about equal time
@@ -191,7 +193,8 @@ jobs:
 
   gate-static:
     name: gate (static checks)
-    # The checks that need no build: repo hygiene, lint, the lint tests, actionlint and generated files.
+    # The checks that need no build: repo hygiene, lint, the lint and Site perf gate tests, actionlint and
+    # generated files.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -764,6 +767,18 @@ jobs:
         if: matrix.part == 1
         run: node scripts/dogfood/cli-guidelines.mjs
 
+  # Site perf (site-perf.yml: Lighthouse A/B, budgets) on a pull request, as a job of this
+  # workflow so the full suite needs its verdict. The full suite always runs it: the measured
+  # pages also read CHANGELOG.md, the docs and the CLI's registry, so no path list proves a diff
+  # cannot move them. Without the `ready` label it runs when scripts/ci-changes.mjs says the
+  # diff touches the site's measured paths. A push to main is measured by site-perf.yml's own
+  # push trigger, on the desk, so this job is skipped there.
+  site-perf:
+    name: site perf
+    needs: changes
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.site_perf != 'false' }}
+    uses: ./.github/workflows/site-perf.yml
+
   # The one check main requires. Its name is "full suite" only when the full suite ran, so a pull
   # request without the `ready` label reports no check of that name and cannot merge: GitHub
   # lists the skipped job under the name expression itself, unevaluated. A skipped job counts as
@@ -771,9 +786,11 @@ jobs:
   # the event, not another job's output: with the label this job always runs, and it fails
   # unless every other job ended in success (a skipped or cancelled job fails it). And it is
   # `always()`, not `!cancelled()`: a cancelled run ends with this check failed, never skipped.
+  # A push or a manual run does not measure Site perf here (MAY_SKIP below), so it reports under
+  # another name: a manual run on a pull request's branch cannot stand in for the required check.
   full-suite:
-    name: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready')) && 'full suite' || 'full suite (not run, add the ready label)' }}
-    needs: [changes, test, build, gate-static, store-postgres, python-sdk, runtime-floor, release-smoke, action, store-clickhouse, image, windows, real-capture, cli-suite]
+    name: ${{ github.event_name != 'pull_request' && 'full suite without site perf' || contains(github.event.pull_request.labels.*.name, 'ready') && 'full suite' || 'full suite (not run, add the ready label)' }}
+    needs: [changes, test, build, gate-static, store-postgres, python-sdk, runtime-floor, release-smoke, action, store-clickhouse, image, windows, real-capture, cli-suite, site-perf]
     if: ${{ always() && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -783,4 +800,7 @@ jobs:
       - name: Every job passed
         env:
           NEEDS: ${{ toJSON(needs) }}
+          # The one job that may end skipped, and only off a pull request: site-perf.yml measures
+          # a push to main itself. This reads the event, not a job's output.
+          MAY_SKIP: ${{ github.event_name != 'pull_request' && 'site-perf' || '' }}
         run: node scripts/ci-full-suite.mjs

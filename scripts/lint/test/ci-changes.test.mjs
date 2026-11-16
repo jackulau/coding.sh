@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { needsCode } from "../../ci-changes.mjs";
+import { needsCode, needsSitePerf, SITE_PERF_PATHS, sitePerfPath } from "../../ci-changes.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 const SCRIPT = join(ROOT, "scripts/ci-changes.mjs");
@@ -39,9 +39,70 @@ test("no changed paths runs everything", () => {
 
 test("the script prints a GITHUB_OUTPUT line", () => {
   const run = (input) => spawnSync(process.execPath, [SCRIPT], { input, encoding: "utf8" });
-  assert.equal(run("docs/a.md\napps/site/x.astro\n").stdout, "code=false\n");
-  assert.equal(run("docs/a.md\nsrc/x.ts\n").stdout, "code=true\n");
-  assert.equal(run("").stdout, "code=true\n");
+  assert.equal(run("docs/a.md\napps/site/x.astro\n").stdout, "code=false\nsite_perf=true\n");
+  assert.equal(run("docs/a.md\nsrc/x.ts\n").stdout, "code=true\nsite_perf=false\n");
+  assert.equal(run("docs/a.md\napps/site/src/content/blog/a.md\n").stdout, "code=false\nsite_perf=false\n");
+  assert.equal(run("").stdout, "code=true\nsite_perf=true\n");
+});
+
+test("a pull request gets Site perf when it touches what the five measured pages are built from", () => {
+  for (const f of [
+    "apps/site/src/components/Hero.astro",
+    "apps/site/src/data/site.ts",
+    "apps/site/astro.config.mjs",
+    "apps/site/src/pages/index.astro",
+    "apps/site/src/pages/docs/cli.astro",
+    "scripts/perf/budgets.json",
+    ".github/workflows/site-perf.yml",
+  ]) {
+    assert.equal(sitePerfPath(f), true, f);
+    assert.equal(needsSitePerf(["README.md", f]), true, f);
+  }
+  for (const f of [
+    "apps/site/test/links.test.mjs",
+    "apps/site/scripts/shots/home.mjs",
+    "apps/site/scripts/perf-budget.mjs",
+    "apps/site/src/content/blog/a.md",
+    "apps/site/src/pages/docs/mcp.astro", // a page that is not measured
+    "apps/site/src/pages/index.astro.bak",
+    "apps/sitemap.ts",
+    "scripts/performance.mjs",
+    "packages/coding.sh/src/cli/registry.ts",
+    "CHANGELOG.md",
+  ]) {
+    assert.equal(sitePerfPath(f), false, f);
+  }
+  assert.equal(needsSitePerf(["apps/site/test/a.test.mjs", "docs/perf.md"]), false);
+  // A diff that cannot be read is measured.
+  assert.equal(needsSitePerf([]), true);
+  assert.equal(needsSitePerf(["", "  "]), true);
+});
+
+test("the Site perf paths are the ones site-perf.yml runs for on a push", () => {
+  const yml = readFileSync(join(ROOT, ".github/workflows/site-perf.yml"), "utf8");
+  const push = /\n  push:\n    branches: \[main\]\n    paths:\n((?:      .*\n)+)/.exec(yml)?.[1] ?? "";
+  const paths = push.split("\n").map((line) => /^      - "(.+)"$/.exec(line)?.[1]).filter(Boolean);
+  assert.ok(paths.length > 10, "the push paths of site-perf.yml were read");
+  assert.deepEqual(SITE_PERF_PATHS, paths);
+  // Each entry is one of the two shapes sitePerfPath understands.
+  for (const entry of SITE_PERF_PATHS) assert.match(entry, /^!?[^*!]+(\/\*\*)?$/, entry);
+});
+
+test("ci.yml calls Site perf for pull requests, and site-perf.yml no longer starts on one", () => {
+  const ci = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
+  const yml = readFileSync(join(ROOT, ".github/workflows/site-perf.yml"), "utf8");
+  const body = new RegExp("\\n  site-perf:\\n([\\s\\S]*?)(?=\\n  [a-z][a-z-]*:\\n|$)").exec(ci)?.[1] ?? "";
+  assert.ok(body.includes("    needs: changes\n"));
+  // With the label the changes job reports site_perf=true without reading the diff; the job
+  // runs unless it was told false, and never on a push (site-perf.yml measures main itself).
+  assert.ok(body.includes("    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.site_perf != 'false' }}\n"));
+  assert.ok(body.includes("    uses: ./.github/workflows/site-perf.yml\n"));
+  assert.match(ci, /\n      site_perf: \$\{\{ steps\.diff\.outputs\.site_perf \}\}\n/);
+  assert.match(ci, /\n          else\n            printf 'code=true\\nsite_perf=true\\n' \| tee -a "\$GITHUB_OUTPUT"\n/);
+  // One trigger per event: two Site perf runs on one pull request would cancel each other.
+  const on = yml.slice(yml.indexOf("\non:\n"), yml.indexOf("\npermissions:\n"));
+  assert.match(on, /\n  workflow_call:\n/);
+  assert.doesNotMatch(on, /\n  pull_request/);
 });
 
 test("ci.yml gates every code-only job on the changes job, and never skips when unsure", () => {
@@ -70,6 +131,6 @@ test("ci.yml gates every code-only job on the changes job, and never skips when 
   assert.ok(job("test").includes(`node: \${{ fromJSON(${narrow} && '["24.x"]' || '["22.x", "24.x"]') }}\n        shard: [1, 2, 3]\n`));
   // The checks that read docs and the site always run.
   for (const name of ["gate-static", "build", "test"]) assert.doesNotMatch(job(name), /needs: changes/, name);
-  // Pushes to main, manual runs and the full suite on a pull request never skip.
+  // Pushes to main, manual runs and the full suite on a pull request skip no job for the diff.
   assert.match(job("changes"), /if \[ "\$FULL" != true \] && \[ "\$EVENT" = pull_request \] && files=/);
 });

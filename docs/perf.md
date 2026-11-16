@@ -145,8 +145,11 @@ See [Experiments](https://coding.sh/docs/experiments#metrics) for the metric A/B
 ## Budgets in CI
 
 [.github/workflows/site-perf.yml](https://github.com/jackulau/coding.sh/blob/main/.github/workflows/site-perf.yml) builds the base and
-head commits and runs 9 pairs. It runs when a change can reach the five measured pages: the
-site's layouts, components, styles, assets and config, those pages themselves, and `scripts/perf`.
+head commits and runs 9 pairs. On a push to `main` it runs when the change touches the site's
+layouts, components, styles, assets or config, the five measured pages themselves, or
+`scripts/perf`. CI calls it for pull requests: one that touches those paths gets it at once, and
+every pull request gets it with the `ready` label, as part of the `full suite` check that `main`
+requires.
 On a pull request each page is measured in its own job, five in all, with the same
 pairs in the same order (`ab.mjs --part`). One more job joins their samples into a single result
 (`ab.mjs --merge`) and judges it, so the gate and its correction cover every metric as they do in
@@ -156,7 +159,8 @@ or when a page goes over its budget in
 [scripts/perf/budgets.json](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/budgets.json). The budgets sit about 10%
 above what the current build measures. Layout shift is budgeted at 0.02 on every page, and each
 page has its own blocking-time budget on the slow phone. The rules are in
-[scripts/perf/gate.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/gate.mjs), with tests in `scripts/perf/test`.
+[scripts/perf/gate.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/gate.mjs), with tests in `scripts/perf/test`
+(`npm run perf:test`, which `npm run gate` runs).
 
 | Where | What runs |
 |---|---|

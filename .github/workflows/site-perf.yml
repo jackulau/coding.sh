@@ -5,6 +5,11 @@ name: Site perf
 # 95% paired bootstrap CI) and fails when a budget in scripts/perf/budgets.json
 # is broken or a gated metric gets worse.
 #
+# Pull requests do not start this workflow: CI calls it (the `site-perf` job of
+# ci.yml), so its verdict is one of the jobs the `full suite` check needs. A
+# pull request with the `ready` label always gets it; one without gets it when
+# the diff touches the paths below (scripts/ci-changes.mjs keeps the same list).
+#
 # Pushes to main and manual runs use the self-hosted desk runner labelled
 # `perf` (desk-wsl). Only one runner has that label, so two perf runs never
 # overlap; CI and deploys run beside it on the desk's other runner, and each
@@ -26,6 +31,8 @@ on:
       # What can change the five measured pages (PAGES in scripts/perf/lighthouse.mjs): not the
       # site's tests and tool scripts, the blog, or a page that is not measured. CI's
       # "Site perf budget" step still checks every page's weight on every pull request.
+      # SITE_PERF_PATHS in scripts/ci-changes.mjs is the same list, for pull requests
+      # (scripts/lint/test/ci-changes.test.mjs checks the two match).
       - "apps/site/**"
       - "!apps/site/test/**"
       - "!apps/site/scripts/shots/**"
@@ -41,24 +48,9 @@ on:
       - "apps/site/src/pages/docs/cli.astro"
       - "scripts/perf/**"
       - ".github/workflows/site-perf.yml"
-  pull_request:
-    # The same list as push.
-    paths:
-      - "apps/site/**"
-      - "!apps/site/test/**"
-      - "!apps/site/scripts/shots/**"
-      - "!apps/site/scripts/perf-budget.mjs"
-      - "!apps/site/scripts/seo-check.mjs"
-      - "!apps/site/scripts/indexnow.mjs"
-      - "!apps/site/src/content/**"
-      - "!apps/site/src/pages/**"
-      - "apps/site/src/pages/index.astro"
-      - "apps/site/src/pages/changelog.astro"
-      - "apps/site/src/pages/docs/quickstart.astro"
-      - "apps/site/src/pages/docs/evals.astro"
-      - "apps/site/src/pages/docs/cli.astro"
-      - "scripts/perf/**"
-      - ".github/workflows/site-perf.yml"
+  # Called by ci.yml for pull requests. The jobs read the caller's event, so `github.event_name`
+  # is `pull_request` here.
+  workflow_call:
   workflow_dispatch:
     inputs:
       base:
@@ -103,10 +95,6 @@ jobs:
         with:
           node-version: 24.x
           cache: ${{ runner.environment == 'github-hosted' && 'npm' || '' }}
-
-      # The gate and budget rules against synthetic samples, before the long A/B.
-      - name: Gate tests
-        run: node --no-warnings --test scripts/perf/test/*.test.mjs
 
       - name: Pick the base commit
         id: base
