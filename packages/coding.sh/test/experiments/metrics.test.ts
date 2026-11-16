@@ -6,7 +6,6 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import {
   analyzeMetrics,
   flattenMetrics,
@@ -21,6 +20,7 @@ import {
 } from "../../src/experiments/metrics.ts";
 import { mulberry32 } from "../../src/stats/prng.ts";
 import { pairedBootstrapMedian, signTest } from "../../src/stats/index.ts";
+import { CLI } from "../_cli.ts";
 
 /** Standard normal draws from a seeded uniform (Box–Muller). */
 function normal(rand: () => number): () => number {
@@ -221,7 +221,6 @@ describe("runMetrics", () => {
 });
 
 describe("coding.sh exp metrics", () => {
-  const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
   let root = "";
   let env: NodeJS.ProcessEnv = {};
   const cli = (args: string[]) => spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { env, cwd: root, encoding: "utf8", timeout: 60_000 });

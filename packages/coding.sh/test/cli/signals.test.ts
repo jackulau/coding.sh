@@ -1,17 +1,16 @@
 // Interrupting `exp run` from outside (EXP-1, EXP-3): Ctrl-C and SIGTERM both
 // abort it, kill the task's process group, store the experiment as cancelled
 // with only its finished case runs, and `exp compare` refuses that partial
-// result unless --force. Runs src/cli/main.ts directly (type stripping) with a
-// temp HOME and a fake command agent.
+// result unless --force. Runs the CLI with a temp HOME and a fake command
+// agent.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 let root = "";
 let home = "";
 let env: NodeJS.ProcessEnv = {};

@@ -8,13 +8,12 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { unloadedEdits } from "../../src/cli/commands/exp-ab.ts";
 import { importedBy, loadedBy } from "../../src/core/harness-paths.ts";
 import { injectContext, type FrozenPrefix } from "../../src/experiments/continuation.ts";
 import { claimSession, putSession } from "../helpers-decision.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 let root = "";
 
 before(() => {

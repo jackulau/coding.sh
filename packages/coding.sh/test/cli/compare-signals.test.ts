@@ -1,4 +1,4 @@
-// Z-11: `compare --experiment <id> --signals`, end to end through src/cli/main.ts
+// Z-11: `compare --experiment <id> --signals`, end to end through the CLI
 // with a temp HOME. A fake `wrapper` agent fixes the bug only when the pdf skill
 // is in its work dir, so A passes and B (A without the skill) fails.
 import assert from "node:assert/strict";
@@ -7,12 +7,11 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { which } from "../../src/adapters/_shared/detect.ts";
 import { posixShell } from "../../src/core/spawn.ts";
 import { pathOf } from "../_bin.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const gitBin = which("git") ?? "";
 let root = "";
 let home = "";

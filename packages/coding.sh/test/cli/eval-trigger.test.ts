@@ -2,19 +2,18 @@
 // running a script) prints Claude-style stream-json and calls the Skill tool for a
 // skill whose installed description names a word in the prompt. The probes run
 // in fresh dirs through the harness runner; the trace is the agent's stdout.
-// Runs src/cli/main.ts with a temp HOME.
+// Runs the CLI with a temp HOME.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { which } from "../../src/adapters/_shared/detect.ts";
 import { posixShell } from "../../src/core/spawn.ts";
 import { pathOf } from "../_bin.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const gitBin = which("git") ?? "";
 let root = "";
 let home = "";

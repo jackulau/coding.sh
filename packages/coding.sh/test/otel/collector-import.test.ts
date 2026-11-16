@@ -1,11 +1,10 @@
-// `coding.sh collector import --clickhouse`, run from source in a temp HOME /
+// `coding.sh collector import --clickhouse`, run through the CLI in a temp HOME /
 // CODING_SH_HOME against the stub ClickHouse in _clickhouse.ts: --json prints
 // one document (errors go to stderr), a second run imports nothing, --dry-run writes nothing, and a
 // bad URL or bad credentials is an error with next steps. A run resumes at its own filter's cursor;
 // --from-start or a --since on the command line reads from --since again.
 // A run that stops part-way says how far it got, and the same command reads the rest.
 import assert from "node:assert/strict";
-import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,8 +13,8 @@ import { after, before, describe, it } from "node:test";
 import { decodeTraceJson } from "../../src/otel/json.ts";
 import type { ClickHouseSpanRow } from "../../src/otel/clickhouse.ts";
 import { chatRows, type StubClickHouse, stubClickHouse, toRows } from "./_clickhouse.ts";
+import { CLI as MAIN } from "../_cli.ts";
 
-const MAIN = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const PASSWORD = ["pa", "ss"].join("");
 const rows = toRows(decodeTraceJson(JSON.parse(readFileSync(new URL("../fixtures/otel/claude-code-traces.json", import.meta.url), "utf8"))), "map");
 

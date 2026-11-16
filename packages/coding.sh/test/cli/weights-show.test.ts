@@ -8,7 +8,6 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { openContext } from "../../src/core/context.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import { createDataset } from "../../src/datasets/dataset.ts";
@@ -16,8 +15,8 @@ import { FileEvalStore } from "../../src/datasets/store.ts";
 import type { Grader } from "../../src/datasets/types.ts";
 import { runExperiment } from "../../src/experiments/run.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const A = "a".repeat(64);
 const B = "b".repeat(64);
 // Hashes of whole weights files, as a script would compute them: the edited file and the one it started from.

@@ -11,7 +11,8 @@ import { buildSession } from "../../src/core/sessions.ts";
 import { createCodingShMcp, type CodingShMcp } from "../../src/mcp/server.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { schemaViolations } from "../../src/toolevals/jsonschema.ts";
-import { PKG, cleanup, makeWorld, type World } from "./helpers.ts";
+import { cleanup, makeWorld, type World } from "./helpers.ts";
+import { CLI } from "../_cli.ts";
 
 const H = 3600e3;
 const M = 60e3;
@@ -227,7 +228,7 @@ describe("usage", () => {
 describe("coding.sh mcp (stdio serve)", () => {
   // On Windows process.kill(pid, "SIGINT") terminates the server outright: no handler runs.
   it("exits 130 on the first Ctrl-C", { timeout: 20_000, skip: process.platform === "win32" && "SIGINT can't be caught on Windows" }, async () => {
-    const child = spawn(process.execPath, ["--no-warnings", join(PKG, "src", "cli", "main.ts"), "mcp"], { env: { ...w.env, CODING_SH_NO_UPDATE_CHECK: "1" }, cwd: w.root, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(process.execPath, ["--no-warnings", CLI, "mcp"], { env: { ...w.env, CODING_SH_NO_UPDATE_CHECK: "1" }, cwd: w.root, stdio: ["pipe", "pipe", "pipe"] });
     const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((r) => child.on("exit", (code, signal) => r({ code, signal })));
     try {
       // Wait until the server answers, so SIGINT lands while it is serving.

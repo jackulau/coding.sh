@@ -1,19 +1,18 @@
 // `coding.sh eval audit` (AA-11): two fake `wrapper` agents both pass a verifier that
 // only checks positive numbers; `special` special-cases positives. A witness test for
 // negatives passes the reference, then refutes `special`'s passes on replay.
-// Runs src/cli/main.ts directly with a temp HOME; no model is called.
+// Runs the CLI with a temp HOME; no model is called.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { which } from "../../src/adapters/_shared/detect.ts";
 import { posixShell } from "../../src/core/spawn.ts";
 import { pathOf } from "../_bin.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const gitBin = which("git") ?? "";
 let root = "";
 let home = "";

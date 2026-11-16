@@ -1,7 +1,6 @@
 // AD-13: the agent release each run ran on, and the release confound between arms.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { after, describe, it } from "node:test";
 import type { HarnessBundle, RunResult, Session } from "../../src/core/types.ts";
 import { loadConfig } from "../../src/core/config.ts";
@@ -12,6 +11,7 @@ import { harnessReport } from "../../src/runner/harness-report.ts";
 import { agentVersions, releaseCache, releaseMix, runRelease } from "../../src/runner/release.ts";
 import { tmpEnv } from "../adapters/_helpers.ts";
 import { cleanupWorlds, fakeAdapter, MemBlobs, MemIndex, toyWorld } from "../helpers-eval.ts";
+import { CLI } from "../_cli.ts";
 
 after(cleanupWorlds);
 
@@ -223,7 +223,6 @@ describe("CLI: compare --promote refuses across releases", () => {
       for (const r of arms(() => "2.1.316", () => "2.1.319")) await stores.index.putRun({ ...r, experimentId: "exp_release" });
       await stores.index.close();
       await stores.blobs.close?.();
-      const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
       const cli = (...extra: string[]) =>
         spawnSync(process.execPath, ["--no-warnings", CLI, "compare", "base", "cand", "--experiment", "exp_release", "--promote", ...extra], {
           env: { ...process.env, NO_COLOR: "1", CODING_SH_NO_UPDATE_CHECK: "1" },

@@ -3,19 +3,18 @@
 // whose fake agent prints Claude-style stream-json. Each verifier is
 // `judge grade` with a checklist that reads the agent's answer and tool calls
 // from CODING_SH_AGENT_OUTPUT / CODING_SH_AGENT_STDOUT. `--max-cost` reports
-// the budget. Runs src/cli/main.ts directly with a temp HOME.
+// the budget. Runs the CLI with a temp HOME.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { which } from "../../src/adapters/_shared/detect.ts";
 import { posixShell } from "../../src/core/spawn.ts";
 import { pathOf } from "../_bin.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const gitBin = which("git") ?? "";
 let root = "";
 let home = "";

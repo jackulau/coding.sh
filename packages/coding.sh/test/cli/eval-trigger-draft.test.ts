@@ -1,6 +1,6 @@
 // `coding.sh eval trigger <skill> --draft` from the CLI: refuses to overwrite,
 // a model that answers without a draft is a clear error, and the draft reads
-// this repo's sessions only unless --repo widens it. Runs src/cli/main.ts with a
+// this repo's sessions only unless --repo widens it. Runs the CLI with a
 // temp HOME; no model is called (provider "mock").
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -8,11 +8,10 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { AgentEvent } from "../../src/core/types.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const root = realpathSync(mkdtempSync(join(tmpdir(), "csh-trigger-draft-")));
 const home = join(root, "home");
 const skill = join(root, "skills", "pdf");

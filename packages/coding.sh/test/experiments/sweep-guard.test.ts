@@ -8,7 +8,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { createDataset } from "../../src/datasets/dataset.ts";
 import { FileEvalStore } from "../../src/datasets/store.ts";
 import type { Grader, Split } from "../../src/datasets/types.ts";
@@ -16,6 +15,7 @@ import { appendAdoption, listAdoptions, priorDatasets } from "../../src/experime
 import { renderSweep } from "../../src/experiments/render.ts";
 import { runSweep, type SweepConfig } from "../../src/experiments/sweep.ts";
 import { pathOf } from "../_bin.ts";
+import { CLI } from "../_cli.ts";
 
 const truthy: Grader = { id: "ok", version: "1", kind: "custom", grade: async (ctx) => ({ score: ctx.output === true ? 1 : 0, pass: ctx.output === true }) };
 /** pass(input) decides each case; inputs are "<suite>:<i>". */
@@ -158,7 +158,6 @@ describe("exp sweep --guard from the CLI", () => {
   let home = "";
   let env: NodeJS.ProcessEnv = {};
   const cli = (args: string[]) => spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { env, cwd: home, encoding: "utf8", timeout: 120_000 });
-  const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
   // MODE=forget: right on the target, wrong elsewhere; MODE=keep: always right; MODE=start: right on a third of the target.
   const task = (mode: string) => JSON.stringify({ kind: "command", command: process.execPath, args: [join(home, "agent.mjs")], env: { MODE: mode } });
   const stored = () => JSON.parse(cli(["exp", "list", "--json", "--limit", "500"]).stdout).experiments.length as number;

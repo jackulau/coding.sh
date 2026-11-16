@@ -3,16 +3,15 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { after, describe, test } from "node:test";
-import { fileURLToPath } from "node:url";
 import { buildReport, renderReportHtml } from "../../src/bench/report.ts";
 import { runBench } from "../../src/bench/run.ts";
 import { pooledGap, tQuantile } from "../../src/bench/stats.ts";
 import { listRuns } from "../../src/bench/store.ts";
 import { cleanup, day, project } from "./helpers.ts";
+import { CLI as MAIN } from "../_cli.ts";
 
 after(cleanup);
 
-const MAIN = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const close = (a: number, b: number, tol: number) => assert.ok(Math.abs(a - b) <= tol, `${a} vs ${b}`);
 
 describe("bench window estimate", () => {

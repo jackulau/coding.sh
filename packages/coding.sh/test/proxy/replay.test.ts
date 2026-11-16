@@ -7,7 +7,6 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { loadConfig } from "../../src/core/config.ts";
 import { applyArm, parseVary, replayable, sameActionGrader } from "../../src/experiments/replay.ts";
 import type { LoadedCall } from "../../src/proxy/calls.ts";
@@ -15,8 +14,8 @@ import { recorderFor } from "../../src/proxy/index.ts";
 import { startProxy } from "../../src/proxy/server.ts";
 import { openStores } from "../../src/store/factory.ts";
 import { anthropicStream, call, startUpstream, type Upstream } from "./_helpers.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const AGENT_KEY = "sk-ant-oat01-AGENTLOGINAGENTLOGINAGENTLOGIN-abcdefAA";
 const USER_KEY = "sk-ant-api03-REPLAYKEYREPLAYKEYREPLAYKEY-abcdefAA";
 const SESSION = "0b9c8d7e-6f5a-4b3c-9d2e-1f0a9b8c7d6e";

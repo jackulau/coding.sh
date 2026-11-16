@@ -5,7 +5,6 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
 import { openContext } from "../../src/core/context.ts";
 import { FileEvalStore } from "../../src/datasets/store.ts";
@@ -13,8 +12,8 @@ import { CHARACTER_LIMIT } from "../../src/mcp/tools.ts";
 import { schemaViolations } from "../../src/toolevals/jsonschema.ts";
 import { connectMcp, resetEraCache } from "../../src/toolevals/mcp/client.ts";
 import { MAIN, RawClient, SEED, cleanup, makeWorld, seed, type World } from "./helpers.ts";
+import { CLI as CLI_MAIN } from "../_cli.ts";
 
-const CLI_MAIN = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const META = "io.modelcontextprotocol/";
 const modernMeta = { [`${META}protocolVersion`]: "2026-07-28", [`${META}clientCapabilities`]: {}, [`${META}clientInfo`]: { name: "t", version: "0" } };
 

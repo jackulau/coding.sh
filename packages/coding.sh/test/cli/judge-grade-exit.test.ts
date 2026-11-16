@@ -7,9 +7,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 let root = "";
 let env: NodeJS.ProcessEnv = {};
 const run = (...args: string[]) => spawnSync(process.execPath, ["--no-warnings", CLI, "judge", "grade", ...args], { env, cwd: root, encoding: "utf8", timeout: 120_000 });

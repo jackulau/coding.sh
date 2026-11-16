@@ -19,8 +19,9 @@ import { mcpLaunchSpec, runningCli } from "../../src/mcp/launch.ts";
 import { cursor } from "../../src/adapters/cursor.ts";
 import { tmpEnv as adapterEnv } from "../adapters/_helpers.ts";
 import { nodeBin, pathOf } from "../_bin.ts";
+import { CLI } from "../_cli.ts";
 
-const MAIN = realpathSync(join(import.meta.dirname, "..", "..", "src", "cli", "main.ts"));
+const MAIN = realpathSync(CLI);
 const roots: string[] = [];
 after(() => {
   for (const r of roots) rmSync(r, { recursive: true, force: true });
@@ -104,7 +105,7 @@ describe("hook bin after `coding.sh update` (INS-6)", () => {
       current: "0.1.0",
       check: async () => ({ latest: "0.2.0", checkedAt: 1, install: "coding.sh-0.2.0.tgz", source: "github" }),
       install: async () => ({ code: 0, output: "" }),
-      // Spawn the "new" CLI (this source tree) exactly as after a real npm install.
+      // Spawn the "new" CLI (this checkout's) exactly as after a real npm install.
       refresh: (en, signal) => refreshAfterUpdate(en, signal, async () => MAIN),
     });
     assert.equal(code, 0);

@@ -31,6 +31,10 @@ real `~/.coding.sh`: a newer build would migrate the index, and your installed c
 open it again. Give it a throwaway home with `export CODING_SH_HOME=$(mktemp -d)`, or set
 `CODING_SH_DEV_REAL_STORE=1` to use the real one. `npm link` counts as an install.
 
+The tests launch the CLI from source. After `npm run build`, set
+`CODING_SH_TEST_CLI="$PWD/dist/cli.mjs"` and they launch the built CLI, which starts faster. Build
+again after you change `src`. AGENTS.md "Commands" has the details.
+
 Website: `cd apps/site && npm run dev` (then `npm run build && npm run check` before a PR).
 
 ## Layout

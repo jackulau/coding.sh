@@ -8,13 +8,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { createDataset } from "../../src/datasets/dataset.ts";
 import { FileEvalStore } from "../../src/datasets/store.ts";
 import type { Grader } from "../../src/datasets/types.ts";
 import { aaNoise, taskKey } from "../../src/experiments/aa.ts";
 import { renderAa } from "../../src/experiments/render.ts";
 import { runExperiment } from "../../src/experiments/run.ts";
+import { CLI } from "../_cli.ts";
 
 const ids = Array.from({ length: 20 }, (_, i) => `c${String(i + 1).padStart(2, "0")}`);
 const ds = createDataset({ name: "aa", createdAt: 1, cases: ids.map((id) => ({ id, input: id })) });
@@ -74,7 +74,6 @@ describe("aaNoise", () => {
 });
 
 describe("exp aa and exp compare from the CLI", () => {
-  const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
   let root = "";
   let home = "";
   let env: NodeJS.ProcessEnv = {};

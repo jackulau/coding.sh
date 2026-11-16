@@ -9,8 +9,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const CONFIG = fileURLToPath(new URL("../fixtures/adapters/claude-code/config", import.meta.url));
 const SID = "11111111-2222-4333-8444-555555555555";
 const SUB = `${SID}:sub:abc123`;

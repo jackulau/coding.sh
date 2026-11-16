@@ -3,7 +3,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { after, describe, test } from "node:test";
-import { fileURLToPath } from "node:url";
 import { commitFor, commitmentOf, maskSeed, nextDate, saltFor, verifySeed } from "../../src/bench/commit.ts";
 import { buildReport, renderReportHtml } from "../../src/bench/report.ts";
 import { runBench } from "../../src/bench/run.ts";
@@ -11,11 +10,11 @@ import { envRefs } from "../../src/bench/schedule.ts";
 import { listRuns, putRun } from "../../src/bench/store.ts";
 import type { BenchRun } from "../../src/bench/types.ts";
 import { cleanup, day, project } from "./helpers.ts";
+import { CLI as MAIN } from "../_cli.ts";
 
 after(cleanup);
 
 const KEY = "k3y-for-tests-only-0123456789abcdef";
-const MAIN = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 
 describe("bench commit-reveal seed", () => {
   test("helpers: salt is an HMAC of name:date, commitment its sha256", () => {

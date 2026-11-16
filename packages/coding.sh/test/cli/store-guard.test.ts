@@ -14,9 +14,9 @@ import { after, before, describe, it } from "node:test";
 import { bundle } from "../../scripts/bundle.mjs";
 import { loadSqlite } from "../../src/store/sqlite-open.ts";
 import { MIGRATIONS, SQLITE_SCHEMA_VERSION } from "../../src/store/sqlite.ts";
+import { SOURCE_CLI } from "../_cli.ts";
 
 const PKG = fileURLToPath(new URL("../../", import.meta.url));
-const SRC_CLI = join(PKG, "src", "cli", "main.ts");
 const VERSION = (JSON.parse(readFileSync(join(PKG, "package.json"), "utf8")) as { version: string }).version;
 
 let root = "";
@@ -111,7 +111,7 @@ function oldInstall(version: string): string {
 
 describe("a source checkout never opens the default store by accident", () => {
   for (const [what, cli] of [
-    ["src/cli/main.ts", () => SRC_CLI],
+    ["src/cli/main.ts", () => SOURCE_CLI],
     ["the dist/ built inside a checkout", () => CHECKOUT_CLI],
   ] as const) {
     it(`from ${what}, with no CODING_SH_HOME, refuses the default home and opens nothing`, () => {
@@ -135,7 +135,7 @@ describe("a source checkout never opens the default store by accident", () => {
   it("works from source with CODING_SH_HOME, --store or CODING_SH_DEV_REAL_STORE=1", () => {
     const { home, data } = tmpHome();
     const other = join(home, "other");
-    for (const cli of [SRC_CLI, CHECKOUT_CLI]) {
+    for (const cli of [SOURCE_CLI, CHECKOUT_CLI]) {
       const r = run(cli, ["sessions", "--json"], home, { CODING_SH_HOME: other });
       assert.equal(r.status, 0, r.stderr);
     }

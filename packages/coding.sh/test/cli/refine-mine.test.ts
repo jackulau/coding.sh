@@ -1,4 +1,4 @@
-// `coding.sh refine mine` through src/cli/main.ts with a temp HOME: a repo with
+// `coding.sh refine mine` through the CLI with a temp HOME: a repo with
 // a suite under evals/, and a store seeded with that suite's eval runs the way
 // the runner leaves them (each session in a scratch directory under the
 // coding.sh home, each task starting from the shared empty tree).
@@ -8,12 +8,11 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import type { EvalTask } from "../../src/core/types.ts";
 import { importTaskDir } from "../../src/eval/task.ts";
 import { putSession, sessionEvents } from "../helpers-decision.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const DAY = 86_400_000;
 let root = "";
 let home = "";

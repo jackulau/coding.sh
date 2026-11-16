@@ -7,8 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const CODEX = fileURLToPath(new URL("../fixtures/judge/trace/codex-exec.jsonl", import.meta.url));
 let root = "";
 let env: NodeJS.ProcessEnv;

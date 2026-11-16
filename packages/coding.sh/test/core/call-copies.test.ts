@@ -16,8 +16,8 @@ import { buildSession } from "../../src/core/sessions.ts";
 import { timeline } from "../../src/mcp/data.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { openStores } from "../../src/store/factory.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const fixture = (agent: "claude-code" | "codex"): AgentEvent[] =>
   readFileSync(fileURLToPath(new URL(`../fixtures/proxy/${agent}-proxied.jsonl`, import.meta.url)), "utf8")
     .trim()

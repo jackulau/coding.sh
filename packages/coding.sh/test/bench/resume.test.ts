@@ -7,6 +7,7 @@ import { resumeBench, resumeTarget, runBench } from "../../src/bench/run.ts";
 import { historyRuns, listRuns } from "../../src/bench/store.ts";
 import type { BenchRun } from "../../src/bench/types.ts";
 import { cleanup, day, project } from "./helpers.ts";
+import { CLI } from "../_cli.ts";
 
 after(cleanup);
 
@@ -88,10 +89,8 @@ describe("bench run --resume", () => {
   });
   test("CLI: --resume continues the stored run; it refuses flags that would change the sample", async () => {
     const { spawnSync } = await import("node:child_process");
-    const { fileURLToPath } = await import("node:url");
-    const main = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
     const p = project();
-    const cli = (args: string[]) => spawnSync(process.execPath, ["--no-warnings", main, ...args], { cwd: p.root, env: { ...p.env, NO_COLOR: "1", CODING_SH_BENCH_NOW: "2026-11-04T06:15:00Z" }, encoding: "utf8" });
+    const cli = (args: string[]) => spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { cwd: p.root, env: { ...p.env, NO_COLOR: "1", CODING_SH_BENCH_NOW: "2026-11-04T06:15:00Z" }, encoding: "utf8" });
     const stopped = await run({ def: p.def("budget_usd = 0.005"), env: p.env, now: day("2026-11-04") });
     assert.equal(cli(["bench", "run", "arith", "--resume", "--seed", "x"]).status, 2);
     assert.match(cli(["bench", "run", "arith", "--run", stopped.id]).stderr, /add --resume/);

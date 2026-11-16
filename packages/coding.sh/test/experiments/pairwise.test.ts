@@ -8,8 +8,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const JUDGE = fileURLToPath(new URL("./fixtures/pairwise-judge.mjs", import.meta.url));
 
 describe("exp compare --pairwise from the CLI", () => {

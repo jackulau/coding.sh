@@ -1,4 +1,4 @@
-// `coding.sh doctor --conformance` end to end, from source, against fixture
+// `coding.sh doctor --conformance` end to end through the CLI, against fixture
 // homes in a temp HOME: one JSON document, exit codes 0/1/2, and no store.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -6,11 +6,10 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { FIXTURES, PKG_ROOT } from "../adapters/_helpers.ts";
 import { loadDb } from "./_cases.ts";
+import { CLI as MAIN } from "../_cli.ts";
 
-const MAIN = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const roots: string[] = [];
 
 /** Runs the CLI with a fresh HOME and store dir and only the given agent variables. */
