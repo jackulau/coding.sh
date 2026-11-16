@@ -5,7 +5,7 @@
 // Zero dependencies.
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { SECRET_PATTERNS } from "../release/secret-patterns.mjs";
 import { archiveEntries } from "./archive.mjs";
 
@@ -220,7 +220,8 @@ export function secretScan(root, { static: isStatic = false } = {}) {
   for (const r of roots) {
     for (const file of walk(join(root, r))) {
       if (statSync(file).size > MAX_BYTES) continue;
-      const label = file.slice(root.length + 1);
+      // The same label on every platform: "/" between parts, never Windows "\".
+      const label = file.slice(root.length + 1).split(sep).join("/");
       // A wheel or sdist is what PyPI gets: scan each file inside it.
       let entries;
       try {
