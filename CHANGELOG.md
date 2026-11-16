@@ -7,6 +7,12 @@ follow [Semantic Versioning](https://semver.org/) from the first npm release.
 Each release opens with a short summary. The list under it has one line per change,
 grouped by area, with links to the docs for the details.
 
+## [0.1.8] - Unreleased
+
+### Fixed
+
+- **Viewer.** Esc or a link pressed within 80 ms of a step key (`j`, `k`, `n`) leaves the session. Before, the step's late update of the pane could put the session's URL back, and the page stayed on the session. [Explore sessions](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md)
+
 ## [0.1.7] - 2026-11-16
 
 ### Added
