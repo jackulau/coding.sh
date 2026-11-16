@@ -31,6 +31,22 @@ test("a failed, cancelled or skipped job fails it and is named", () => {
   assert.deepEqual(notPassed({ a: { result: "failure" }, b: {}, c: ok }), ["a: failure", "b: no result"]);
 });
 
+test("a job named in MAY_SKIP may end skipped, and nothing else changes", () => {
+  const skipped = { result: "skipped" };
+  assert.deepEqual(notPassed({ test: ok, "site-perf": skipped }, ["site-perf"]), []);
+  assert.deepEqual(notPassed({ test: ok, "site-perf": ok }, ["site-perf"]), []);
+  // Only skipped is excused, and only for the named job.
+  for (const result of ["failure", "cancelled"]) assert.deepEqual(notPassed({ test: ok, "site-perf": { result } }, ["site-perf"]), [`site-perf: ${result}`]);
+  assert.deepEqual(notPassed({ test: skipped, "site-perf": skipped }, ["site-perf"]), ["test: skipped"]);
+  // A name that is not a job is a mistake in the workflow, not a pass.
+  assert.throws(() => notPassed({ test: ok }, ["site-perf"]), /MAY_SKIP names site-perf, not a job in NEEDS/);
+  const run2 = (maySkip) => spawnSync(process.execPath, [SCRIPT], { env: { ...process.env, NEEDS: JSON.stringify({ test: ok, "site-perf": skipped }), MAY_SKIP: maySkip }, encoding: "utf8" });
+  assert.equal(run2("site-perf").status, 0);
+  assert.equal(run2("").status, 1);
+  assert.match(run2("").stderr, /site-perf: skipped/);
+  assert.equal(run2("nope").status, 1);
+});
+
 test("no jobs, or a NEEDS that cannot be read, fails it", () => {
   for (const needs of ["", "{}", "[]", "null", "not json"]) assert.equal(run(needs).status, 1, JSON.stringify(needs));
   const env = { ...process.env };
@@ -48,7 +64,10 @@ test("ci.yml's full-suite job needs every other job", () => {
   const needs = /\n    needs: \[([^\]]+)\]\n/.exec(job("full-suite"))?.[1].split(",").map((s) => s.trim());
   assert.ok(jobIds.length > 10, "the jobs of ci.yml were read");
   assert.deepEqual([...(needs ?? [])].sort(), jobIds.filter((id) => id !== "full-suite").sort());
-  assert.match(job("full-suite"), /NEEDS: \$\{\{ toJSON\(needs\) \}\}\n\s+run: node scripts\/ci-full-suite\.mjs\n/);
+  assert.match(job("full-suite"), /NEEDS: \$\{\{ toJSON\(needs\) \}\}\n(?:\s+#.*\n)*\s+MAY_SKIP: .*\n\s+run: node scripts\/ci-full-suite\.mjs\n/);
+  // Site perf is the one job that may be skipped, and only off a pull request, where
+  // site-perf.yml measures the push itself. The condition reads the event, not a job's output.
+  assert.ok(job("full-suite").includes("\n          MAY_SKIP: ${{ github.event_name != 'pull_request' && 'site-perf' || '' }}\n"));
 });
 
 test("the check is named \"full suite\" only when the full suite runs, and then it always runs", () => {

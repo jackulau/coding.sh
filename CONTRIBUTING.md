@@ -151,8 +151,11 @@ tests run with `npm run lint:test`.
   check named `full suite`, which passes only when every other job passed. `main` requires that
   check on a branch that is up to date with `main`, so a push or an update of the branch after the
   label runs it again. Without the label there is no check of that name and the pull request cannot
-  merge. Site perf (`.github/workflows/site-perf.yml`) is a separate workflow and not part of
-  `full suite`: its timing run on the desk still follows the merge.
+  merge. The full suite includes Site perf (`.github/workflows/site-perf.yml`, the Lighthouse A/B
+  and the byte, request and layout-shift budgets) on GitHub's runners. Without the label a pull
+  request gets Site perf only when it touches the site's measured paths. The timing budgets were
+  set on the desk and are checked there after the merge, when the push to `main` touches those
+  paths.
 - Timing tests (hook latency, help startup) assume an idle machine. If one fails on a loaded
   machine, rerun it alone before you treat it as a regression.
 
