@@ -135,7 +135,8 @@ test("ab.mjs --merge gates the merged parts and fails when a part is missing", (
     writeFileSync(f, JSON.stringify(part(whole, p)));
     return f;
   });
-  const run = (args) => spawnSync(process.execPath, ["--no-warnings", AB, "--merge", ...args], { encoding: "utf8" });
+  // On GitHub Actions ab.mjs prints failures as ::error:: annotations; the test reads the plain form.
+  const run = (args) => spawnSync(process.execPath, ["--no-warnings", AB, "--merge", ...args], { encoding: "utf8", env: { ...process.env, GITHUB_ACTIONS: "" } });
 
   const out = join(dir, "result.json");
   const all = run(["--gate", "--out", out, ...files]);
