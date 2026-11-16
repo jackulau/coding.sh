@@ -34,7 +34,29 @@ const MANY_TESTS = 400;
 const MANY = `import { it } from "node:test"; for (let i = 0; i < ${MANY_TESTS}; i++) it("quick test number " + i + " with a name long enough to fill the pipe", () => {});`;
 const LAST_FAILS = ` it("the last test fails", () => { throw new Error("real"); });`;
 
+// A suite that test files share: its tests are reported under this file, not the file that runs it.
+const SHARED = `import { it } from "node:test"; import { existsSync, writeFileSync } from "node:fs";
+export function always(): void { it("a shared test that always fails", () => { throw new Error("real"); }); }
+export function once(): void { it("a shared test that fails the first time only", () => { if (!existsSync(process.env.FLAKE_FLAG!)) { writeFileSync(process.env.FLAKE_FLAG!, "1"); throw new Error("under load"); } }); }`;
+const USES_ALWAYS = `import { always } from "./shared.ts"; always();`;
+const USES_ONCE = `import { once } from "./shared.ts"; once();`;
+
 describe("scripts/test-ci.mjs", () => {
+  // Rerun alone, the file that defines a shared suite runs no tests and exits 0.
+  it("fails when a test of a shared suite fails, and does not rerun the file that defines the suite", () => {
+    const r = run({ "shared.ts": SHARED, "s.test.ts": USES_ALWAYS, "c.test.ts": GREEN }, ["s.test.ts", "c.test.ts"]);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /a shared test that always fails/);
+    assert.match(r.out, /A test failed in shared\.ts, which is not a test file of this run/);
+    assert.doesNotMatch(r.out, /Rerunning|::warning/);
+  });
+
+  it("fails on a shared suite's failure even when it would pass a second time", () => {
+    const r = run({ "shared.ts": SHARED, "s.test.ts": USES_ONCE, "a.test.ts": FLAKY }, ["s.test.ts"]);
+    assert.equal(r.code, 1, r.out);
+    assert.doesNotMatch(r.out, /Rerunning|::warning/);
+  });
+
   it("passes when a failed file passes alone, and says so as a warning", () => {
     const r = run({ "a.test.ts": FLAKY, "c.test.ts": GREEN }, ["a.test.ts", "c.test.ts"]);
     assert.equal(r.code, 0, r.out);

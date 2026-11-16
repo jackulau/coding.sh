@@ -4,12 +4,16 @@
 // it alone first"). A file that passes alone is reported as a warning; one that fails again fails
 // the job. More than MAX_RERUN failed files is a real break and is not rerun.
 //
+// Only a test file of this run is rerun. A test defined outside its test file (a suite shared by
+// test files, such as src/store/conformance.ts) fails under the file that defines it; that file
+// alone runs no tests and would pass. Such a failure fails the job as it is.
+//
 // SHARD=i/n picks the files of shard i by their recorded run time (scripts/test-shards.ts), so
 // the shards end close together. TEST_DURATIONS_OUT=<file> also writes each file's run time there.
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { readDurations, shardFiles, testFiles } from "./test-shards.ts";
 
 const MAX_RERUN = 5;
@@ -25,12 +29,14 @@ const dir = mkdtempSync(join(tmpdir(), "coding-sh-test-ci-"));
 const failedPath = join(dir, "failed.txt");
 const durationsOut = process.env.TEST_DURATIONS_OUT;
 let files = process.argv.length > 2 ? process.argv.slice(2) : ["test/**/*.test.ts"];
+// The test files this run can hold. An argument that is not a file (a flag, a pattern) names none.
+let listed = process.argv.length > 2 ? files.filter((f) => existsSync(f)) : testFiles(process.cwd());
 const args = [];
 if (shard && process.argv.length > 2) args.push(`--test-shard=${shard}`);
 else if (shard) {
   const [i, n] = shard.split("/").map(Number);
   if (!(n >= 1 && i >= 1 && i <= n)) throw new Error(`SHARD must be i/n with 1 <= i <= n, got ${shard}`);
-  files = shardFiles(testFiles(process.cwd()), readDurations(), i, n);
+  files = listed = shardFiles(testFiles(process.cwd()), readDurations(), i, n);
   console.log(`Shard ${shard}: ${files.length} test files`);
   if (files.length === 0) process.exit(0);
 }
@@ -47,6 +53,14 @@ try {
 rmSync(dir, { recursive: true, force: true });
 
 if (first === 0) process.exit(0);
+const name = (file) => relative(process.cwd(), file) || file;
+const key = (file) => (process.platform === "win32" ? resolve(file).toLowerCase() : resolve(file));
+const ours = new Set(listed.map(key));
+const elsewhere = failed.filter((f) => !ours.has(key(f)));
+if (elsewhere.length) {
+  console.log(`\nA test failed in ${elsewhere.map(name).join(", ")}, which is not a test file of this run (a suite shared by test files?): not rerun.`);
+  process.exit(first);
+}
 if (failed.length === 0 || failed.length > MAX_RERUN) {
   console.log(`\n${failed.length ? `${failed.length} files failed (more than ${MAX_RERUN}): not rerun.` : "The run failed outside any test: not rerun."}`);
   process.exit(first);
@@ -54,9 +68,8 @@ if (failed.length === 0 || failed.length > MAX_RERUN) {
 
 let code = 0;
 for (const file of failed) {
-  const name = relative(process.cwd(), file) || file;
-  console.log(`\nRerunning ${name} alone`);
-  if (node(["--test-concurrency=1", file]) === 0) console.log(`::warning title=Passed when run alone::${name} failed in the full run and passed alone (a timing test under load?)`);
+  console.log(`\nRerunning ${name(file)} alone`);
+  if (node(["--test-concurrency=1", file]) === 0) console.log(`::warning title=Passed when run alone::${name(file)} failed in the full run and passed alone (a timing test under load?)`);
   else code = 1;
 }
 process.exit(code);
