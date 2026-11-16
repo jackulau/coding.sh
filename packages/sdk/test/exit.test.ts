@@ -1,4 +1,4 @@
-// A process whose explicit flush() gave up on an unreachable server exits at once: no second
+// A process whose explicit flush() gave up on a server that is down exits at once: no second
 // bounded flush at exit and no retry timer keeping it alive.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -11,13 +11,19 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const src = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "index.ts")).href;
 
-/** A port nothing listens on. */
-async function deadPort(): Promise<number> {
-  const s = createServer();
+/**
+ * A server that drops every connection at once: to the SDK that is a network error, the same as a
+ * refused connection. The port stays ours while the child runs. A port that was opened and closed
+ * to find a free one can be handed to another test file's server before the child connects, and
+ * that server answers 200.
+ */
+async function downServer(): Promise<{ port: number; close(): Promise<void> }> {
+  const s = createServer((sock) => {
+    sock.on("error", () => undefined);
+    sock.destroy();
+  });
   await new Promise<void>((r) => s.listen(0, "127.0.0.1", r));
-  const port = (s.address() as { port: number }).port;
-  await new Promise<void>((r) => s.close(() => r()));
-  return port;
+  return { port: (s.address() as { port: number }).port, close: () => new Promise<void>((r) => s.close(() => r())) };
 }
 
 function run(script: string, env: Record<string, string>): Promise<{ end: number; code: number | null; stdout: string; stderr: string }> {
@@ -39,19 +45,19 @@ function run(script: string, env: Record<string, string>): Promise<{ end: number
   });
 }
 
-test("exits promptly after flush() timed out against an unreachable server, and says what was dropped", async () => {
-  const port = await deadPort();
+test("exits promptly after flush() timed out against a server that drops every connection, and says what was dropped", async () => {
+  const down = await downServer();
   const r = await run(
     `import { init, trace, flush } from ${JSON.stringify(src)};
      init({ flushIntervalMs: 10 });
      trace("t", () => 1);
      const drained = await flush(1000);
      process.stdout.write(drained + " " + Date.now());`,
-    { CODING_SH_URL: `http://127.0.0.1:${port}` },
-  );
+    { CODING_SH_URL: `http://127.0.0.1:${down.port}` },
+  ).finally(() => down.close());
   assert.equal(r.code, 0, r.stderr);
   const [drained, flushedAt] = r.stdout.split(" ");
-  assert.equal(drained, "false");
+  assert.equal(drained, "false", r.stderr);
   const lingered = r.end - Number(flushedAt);
   assert.ok(lingered < 750, `the process stayed ${lingered} ms after flush() gave up`);
   assert.equal((r.stderr.match(/\[coding\.sh\]/g) ?? []).length, 1, r.stderr);
