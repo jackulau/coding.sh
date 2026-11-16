@@ -48,12 +48,16 @@ test("ci.yml gates every code-only job on the changes job, and never skips when 
   const ci = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
   const job = (name) => new RegExp(`\\n  ${name}:\\n([\\s\\S]*?)(?=\\n  [a-z][a-z-]*:\\n|$)`).exec(ci)?.[1] ?? "";
   const gate = "if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}";
-  for (const name of ["macos", "windows", "real-capture", "cli-suite", "image", "store-postgres", "store-clickhouse", "python-sdk", "runtime-floor", "release-smoke", "action"]) {
+  for (const name of ["windows", "real-capture", "cli-suite", "image", "store-postgres", "store-clickhouse", "python-sdk", "runtime-floor", "release-smoke", "action"]) {
     const body = job(name);
     assert.ok(body, `${name} job`);
     assert.match(body, /\n    needs: changes\n/, `${name} needs changes`);
     assert.ok(body.includes(`\n    ${gate}\n`), `${name} runs unless changes says code=false`);
   }
+  // A pull request's Windows shards: the list and the count each leg is told agree.
+  const [, shards] = /shard: \$\{\{ fromJSON\(github\.event_name == 'pull_request' && '(\[[\d, ]+\])'/.exec(job("windows")) ?? [];
+  const told = [...job("windows").matchAll(/matrix\.shard \}\}\/\$\{\{ github\.event_name == 'pull_request' && (\d+) \|\| 4 \}\}/g)].map((m) => Number(m[1]));
+  assert.deepEqual(told, [JSON.parse(shards ?? "[]").length, JSON.parse(shards ?? "[]").length], "the job name and SHARD");
   // The checks that read docs and the site always run.
   for (const name of ["gate-static", "build", "test"]) assert.doesNotMatch(job(name), /needs: changes/, name);
   // Pushes to main and manual runs never skip.

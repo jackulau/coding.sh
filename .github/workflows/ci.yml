@@ -40,9 +40,10 @@ jobs:
             echo "code=true" | tee -a "$GITHUB_OUTPUT"
           fi
 
-  # The test suite runs on every OS in shards of about equal time (scripts/test-shards.ts), so
-  # the checks that need one run only, not one per OS and Node, live in the build job below.
-  # Pull requests run macOS and Windows on Node 24 only; pushes to main run both Nodes everywhere.
+  # The test suite runs on Linux and Windows in shards of about equal time
+  # (scripts/test-shards.ts), so the checks that need one run only, not one per OS and Node, live
+  # in the build job below. Pull requests run Linux on both Nodes and Windows on Node 24; pushes
+  # to main run both Nodes on both. No job runs on macOS.
   # Everything here is GitHub-hosted: free for this public repo, and it leaves the desk runners
   # to deploys and Site perf.
   test:
@@ -95,7 +96,7 @@ jobs:
         if: matrix.node == '24.x'
         continue-on-error: true
         with:
-          name: test-durations-${{ matrix.shard }}
+          name: test-durations-linux-${{ matrix.shard }}
           path: ${{ runner.temp }}/test-durations.json
           retention-days: 14
           if-no-files-found: ignore
@@ -173,59 +174,6 @@ jobs:
       # than 20% over it. One rerun absorbs a noisy runner.
       - name: Hook budget
         run: node scripts/dogfood/bench.mjs hook --check --tolerance 20 || node scripts/dogfood/bench.mjs hook --check --tolerance 20
-
-  macos:
-    name: node ${{ matrix.node }} / macos-latest (${{ matrix.shard }}/${{ matrix.node == '22.x' && 2 || 3 }})
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    # GitHub runs at most 5 macOS jobs at once for this account, and a sixth waits for a slot.
-    # On main, Node 24 takes 3 shards and Node 22 takes 2.
-    runs-on: macos-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        node: ${{ fromJSON(github.event_name == 'pull_request' && '["24.x"]' || '["22.x", "24.x"]') }}
-        shard: [1, 2, 3]
-        exclude:
-          - node: 22.x
-            shard: 3
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: ${{ matrix.node }}
-          cache: npm
-
-      - name: Git identity
-        run: |
-          git config --global user.name "coding.sh CI"
-          git config --global user.email "ci@coding.sh.invalid"
-
-      - name: Install
-        run: npm ci
-
-      - name: Test
-        working-directory: packages/coding.sh
-        env:
-          SHARD: ${{ matrix.shard }}/${{ matrix.node == '22.x' && 2 || 3 }}
-        # A file that fails is run again alone; one that then passes is a warning, not a failure.
-        run: node scripts/test-ci.mjs
-
-      - name: Build
-        if: matrix.shard == 1
-        working-directory: packages/coding.sh
-        run: npm run build
-
-      - name: Smoke test the bundle
-        if: matrix.shard == 1
-        working-directory: packages/coding.sh
-        env:
-          NO_UPDATE_NOTIFIER: "1"
-        run: |
-          node dist/cli.mjs --version
-          node dist/cli.mjs --help > /dev/null
 
   gate-static:
     name: gate (static checks)
@@ -546,18 +494,19 @@ jobs:
         run: node deploy/test/smoke.mjs compose coding-sh:smoke deploy/compose/compose.clickhouse.yml
 
   windows:
-    name: node ${{ matrix.node }} / windows-latest (${{ matrix.shard }}/4)
+    name: node ${{ matrix.node }} / windows-latest (${{ matrix.shard }}/${{ github.event_name == 'pull_request' && 6 || 4 }})
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: windows-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
-      # Four shards: the whole suite takes about 20 minutes on hosted Windows. Shard 1 also runs
-      # the build and the installer.
+      # The whole suite takes about 20 minutes on hosted Windows: a pull request splits it into
+      # 6 shards on Node 24, a push to main into 4 on each Node.
+      # Shard 1 also runs the build and the installer.
       matrix:
         node: ${{ fromJSON(github.event_name == 'pull_request' && '["24.x"]' || '["22.x", "24.x"]') }}
-        shard: [1, 2, 3, 4]
+        shard: ${{ fromJSON(github.event_name == 'pull_request' && '[1, 2, 3, 4, 5, 6]' || '[1, 2, 3, 4]') }}
     defaults:
       run:
         # bash (Git for Windows) keeps the quoted test glob and /dev/null the same as on Linux.
@@ -582,9 +531,20 @@ jobs:
       - name: Test
         working-directory: packages/coding.sh
         env:
-          SHARD: ${{ matrix.shard }}/4
+          SHARD: ${{ matrix.shard }}/${{ github.event_name == 'pull_request' && 6 || 4 }}
+          TEST_DURATIONS_OUT: ${{ runner.temp }}/test-durations.json
         # A file that fails is run again alone; one that then passes is a warning, not a failure.
         run: node scripts/test-ci.mjs
+
+      # Each file's run time on this OS, for its own table (see scripts/test-shards.ts).
+      - uses: actions/upload-artifact@v6
+        if: matrix.node == '24.x'
+        continue-on-error: true
+        with:
+          name: test-durations-win32-${{ matrix.shard }}
+          path: ${{ runner.temp }}/test-durations.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Build
         if: matrix.shard == 1
@@ -747,14 +707,19 @@ jobs:
         run: node scripts/dogfood/bench.mjs proxy --check
 
   cli-suite:
-    name: cli-suite (dev tasks)
+    name: cli-suite (dev tasks, ${{ matrix.part }}/2)
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # The CLI effectiveness suite's own health, on the committed dev tasks only: held-out tasks
     # live outside the repo, so this never passes --split all or heldout. It needs no API key and
-    # starts no agent. Always GitHub-hosted.
+    # starts no agent. Always GitHub-hosted. Every task builds its own fixture home twice, which
+    # is most of the time, so the tasks split across two jobs.
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2]
     steps:
       - uses: actions/checkout@v5
 
@@ -780,9 +745,10 @@ jobs:
       # reference passes them, and the instruction does not leak the answer. Exits 1 on any
       # invalid task.
       - name: Validate the dev tasks
-        run: node scripts/dogfood/cli-suite.mjs validate --split dev --json
+        run: node scripts/dogfood/cli-suite.mjs validate --split dev --shard ${{ matrix.part }}/2 --json
 
       # The CLI guidelines over the same fixture home. The score is printed, not gated; the step
       # fails when the fixture home does not build.
       - name: CLI guidelines on the fixture home
+        if: matrix.part == 1
         run: node scripts/dogfood/cli-guidelines.mjs

@@ -108,8 +108,9 @@ every new stat stay absent when empty, does the change hold on real fixtures as 
 ones, and is there a test that fails without it.
 
 **Pull request.** One change per PR, with tests. `npm run check` and `npm run build` must pass in
-`packages/coding.sh`; CI also runs the tests on Linux (Node 22 and 24), macOS and Windows (Node 24;
-both Nodes on main), and the real agent captures in `scripts/e2e/real-capture.mjs`.
+`packages/coding.sh`; CI also runs the tests on Linux (Node 22 and 24) and Windows (Node 24,
+and Node 22 on pushes to main), and the real agent captures in `scripts/e2e/real-capture.mjs`. CI
+does not run macOS.
 
 **Adding an agent.** Follow "Adding an agent" in CONTRIBUTING.md: a row in `docs/ADAPTERS.md`, the
 `Adapter` interface from `src/core/types.ts`, fixtures with goldens, install and uninstall tested
