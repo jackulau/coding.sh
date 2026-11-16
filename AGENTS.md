@@ -109,8 +109,11 @@ ones, and is there a test that fails without it.
 
 **Pull request.** One change per PR, with tests. `npm run check` and `npm run build` must pass in
 `packages/coding.sh`; CI also runs the tests on Linux (Node 22 and 24) and Windows (Node 24,
-and Node 22 on pushes to main), and the real agent captures in `scripts/e2e/real-capture.mjs`. CI
-does not run macOS.
+and Node 22 in the full suite), and the real agent captures in `scripts/e2e/real-capture.mjs`. CI
+does not run macOS. Nothing is pushed to `main`: it takes pull requests only. The `ready` label
+runs the full suite on the pull request (every job, none skipped), and `main` requires its one
+check, `full suite`, on a branch that is up to date. Add the label when the pull request's own
+checks are green; CONTRIBUTING.md "Pull requests" has the details.
 
 **Adding an agent.** Follow "Adding an agent" in CONTRIBUTING.md: a row in `docs/ADAPTERS.md`, the
 `Adapter` interface from `src/core/types.ts`, fixtures with goldens, install and uninstall tested

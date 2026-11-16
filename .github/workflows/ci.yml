@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+    # `labeled` starts the full suite when a pull request gets the `ready` label.
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
 
 permissions:
@@ -13,10 +15,19 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# The full suite is every job below. It runs on pushes to main, on manual runs, and on a pull
+# request that carries the `ready` label. Only then does a check named "full suite" exist, and
+# main requires it (CONTRIBUTING.md, "Pull requests"), so nothing merges before every job has
+# passed on the pull request merged with an up-to-date main. Without the label a pull request
+# gets the same jobs minus the ones scripts/ci-changes.mjs can prove it does not need, with
+# Windows on Node 24 only.
+env:
+  FULL: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
+
 jobs:
   # A pull request that only touches docs or the site (scripts/ci-changes.mjs) skips the jobs
-  # that never read them. Pushes to main and manual runs always run everything, and so does a
-  # pull request whose diff can't be read: the gated jobs run unless this says code=false.
+  # that never read them. The full suite never skips, and neither does a pull request whose diff
+  # can't be read: the gated jobs run unless this says code=false.
   changes:
     name: what changed
     runs-on: ubuntu-latest
@@ -34,7 +45,7 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
         run: |
-          if [ "$EVENT" = pull_request ] && files=$(git diff --name-only --no-renames HEAD^1 HEAD); then
+          if [ "$FULL" != true ] && [ "$EVENT" = pull_request ] && files=$(git diff --name-only --no-renames HEAD^1 HEAD); then
             printf '%s\n' "$files" | node scripts/ci-changes.mjs | tee -a "$GITHUB_OUTPUT"
           else
             echo "code=true" | tee -a "$GITHUB_OUTPUT"
@@ -198,9 +209,11 @@ jobs:
           bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7 "$RUNNER_TEMP"
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
+      # The commits whose authors the gate checks: the pushed ones, or the pull request's own
+      # when the full suite runs, so a commit main would reject is caught before the merge.
       - name: Static gate
         env:
-          GATE_COMMIT_RANGE: ${{ github.event_name == 'push' && format('{0}..{1}', github.event.before, github.sha) || '' }}
+          GATE_COMMIT_RANGE: ${{ github.event_name == 'push' && format('{0}..{1}', github.event.before, github.sha) || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ready')) && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || '' }}
         run: node scripts/gate.mjs --static --strict
 
   store-postgres:
@@ -494,7 +507,7 @@ jobs:
         run: node deploy/test/smoke.mjs compose coding-sh:smoke deploy/compose/compose.clickhouse.yml
 
   windows:
-    name: node ${{ matrix.node }} / windows-latest (${{ matrix.shard }}/${{ github.event_name == 'pull_request' && 6 || 4 }})
+    name: node ${{ matrix.node }} / windows-latest (${{ matrix.shard }}/${{ (github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready')) && 6 || 4 }})
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: windows-latest
@@ -502,11 +515,12 @@ jobs:
     strategy:
       fail-fast: false
       # The whole suite takes about 20 minutes on hosted Windows: a pull request splits it into
-      # 6 shards on Node 24, a push to main into 4 on each Node.
+      # 6 shards on Node 24, the full suite (a push to main, or the `ready` label) into 4 on each
+      # Node.
       # Shard 1 also runs the build and the installer.
       matrix:
-        node: ${{ fromJSON(github.event_name == 'pull_request' && '["24.x"]' || '["22.x", "24.x"]') }}
-        shard: ${{ fromJSON(github.event_name == 'pull_request' && '[1, 2, 3, 4, 5, 6]' || '[1, 2, 3, 4]') }}
+        node: ${{ fromJSON((github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready')) && '["24.x"]' || '["22.x", "24.x"]') }}
+        shard: ${{ fromJSON((github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready')) && '[1, 2, 3, 4, 5, 6]' || '[1, 2, 3, 4]') }}
     defaults:
       run:
         # bash (Git for Windows) keeps the quoted test glob and /dev/null the same as on Linux.
@@ -531,7 +545,7 @@ jobs:
       - name: Test
         working-directory: packages/coding.sh
         env:
-          SHARD: ${{ matrix.shard }}/${{ github.event_name == 'pull_request' && 6 || 4 }}
+          SHARD: ${{ matrix.shard }}/${{ (github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready')) && 6 || 4 }}
           TEST_DURATIONS_OUT: ${{ runner.temp }}/test-durations.json
         # A file that fails is run again alone; one that then passes is a warning, not a failure.
         run: node scripts/test-ci.mjs
@@ -752,3 +766,23 @@ jobs:
       - name: CLI guidelines on the fixture home
         if: matrix.part == 1
         run: node scripts/dogfood/cli-guidelines.mjs
+
+  # The one check main requires. Its name is "full suite" only when the full suite ran, so a pull
+  # request without the `ready` label reports no check of that name and cannot merge. A skipped
+  # job counts as passed for a required check: the condition below reads the event, not another
+  # job's output, so with the label this job always runs, and it fails unless every other job
+  # ended in success. A skipped or cancelled job fails it. `always()`, not `!cancelled()`: a
+  # cancelled run must end with this check failed, never skipped.
+  full-suite:
+    name: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready')) && 'full suite' || 'full suite (not run, add the ready label)' }}
+    needs: [changes, test, build, gate-static, store-postgres, python-sdk, runtime-floor, release-smoke, action, store-clickhouse, image, windows, real-capture, cli-suite]
+    if: ${{ always() && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Every job passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: node scripts/ci-full-suite.mjs

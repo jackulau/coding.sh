@@ -55,11 +55,16 @@ test("ci.yml gates every code-only job on the changes job, and never skips when 
     assert.ok(body.includes(`\n    ${gate}\n`), `${name} runs unless changes says code=false`);
   }
   // A pull request's Windows shards: the list and the count each leg is told agree.
-  const [, shards] = /shard: \$\{\{ fromJSON\(github\.event_name == 'pull_request' && '(\[[\d, ]+\])'/.exec(job("windows")) ?? [];
-  const told = [...job("windows").matchAll(/matrix\.shard \}\}\/\$\{\{ github\.event_name == 'pull_request' && (\d+) \|\| 4 \}\}/g)].map((m) => Number(m[1]));
+  // "Narrow" is a pull request without the `ready` label; the full suite runs what a push runs.
+  const narrow = "(github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready'))";
+  const quoted = narrow.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const [, shards] = new RegExp(`shard: \\$\\{\\{ fromJSON\\(${quoted} && '(\\[[\\d, ]+\\])'`).exec(job("windows")) ?? [];
+  const told = [...job("windows").matchAll(new RegExp(`matrix\\.shard \\}\\}\\/\\$\\{\\{ ${quoted} && (\\d+) \\|\\| 4 \\}\\}`, "g"))].map((m) => Number(m[1]));
+  assert.ok(job("windows").includes(`node: \${{ fromJSON(${narrow} && '["24.x"]' || '["22.x", "24.x"]') }}`), "the full suite runs Windows on both Node versions");
+  assert.doesNotMatch(job("windows"), /event_name == 'pull_request' &&(?! !contains)/, "no Windows setting reads the event alone");
   assert.deepEqual(told, [JSON.parse(shards ?? "[]").length, JSON.parse(shards ?? "[]").length], "the job name and SHARD");
   // The checks that read docs and the site always run.
   for (const name of ["gate-static", "build", "test"]) assert.doesNotMatch(job(name), /needs: changes/, name);
-  // Pushes to main and manual runs never skip.
-  assert.match(job("changes"), /if \[ "\$EVENT" = pull_request \]/);
+  // Pushes to main, manual runs and the full suite on a pull request never skip.
+  assert.match(job("changes"), /if \[ "\$FULL" != true \] && \[ "\$EVENT" = pull_request \] && files=/);
 });
