@@ -10,10 +10,11 @@
 //
 // SHARD=i/n picks the files of shard i by their recorded run time (scripts/test-shards.ts), so
 // the shards end close together. TEST_DURATIONS_OUT=<file> also writes each file's run time there.
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { readDurations, shardFiles, testFiles } from "./test-shards.ts";
 
 const MAX_RERUN = 5;
@@ -23,7 +24,22 @@ const shard = process.env.SHARD;
 // --import test-blocking-stdout.mjs: with that flag a file can exit before the end of its report
 // has left its process, so each file writes its report with blocking writes.
 const blocking = new URL("./test-blocking-stdout.mjs", import.meta.url).href;
-const node = (args) => spawnSync(process.execPath, ["--no-warnings", "--import", blocking, "--test", "--test-force-exit", ...args], { stdio: "inherit" }).status ?? 1;
+// DIAGNOSTICS ONLY: trace every test process, and run the samplers beside the tests.
+const traceDir = process.env.CSH_TRACE_DIR;
+const diag = traceDir ? ["--import", new URL("./diag-preload.mjs", import.meta.url).href] : [];
+if (traceDir) {
+  const here = (f) => new URL(f, import.meta.url);
+  const kids = [spawn(process.execPath, ["--no-warnings", fileURLToPath(here("./diag-heartbeat.mjs"))], { stdio: "ignore" })];
+  if (process.platform === "win32") {
+    kids.push(spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", fileURLToPath(here("./diag-procs.ps1")), "-Out", `${traceDir}\\procs.txt`], { stdio: "ignore" }));
+    kids.push(spawn("typeperf.exe", ["\\Processor(_Total)\\% Processor Time", "\\PhysicalDisk(_Total)\\Current Disk Queue Length", "\\PhysicalDisk(_Total)\\Disk Read Bytes/sec", "\\PhysicalDisk(_Total)\\Disk Write Bytes/sec", "\\PhysicalDisk(_Total)\\Avg. Disk sec/Read", "\\PhysicalDisk(_Total)\\Avg. Disk sec/Write", "\\Memory\\Available MBytes", "\\Memory\\Pages/sec", "\\System\\Processor Queue Length", "\\System\\Context Switches/sec", "-si", "1", "-o", `${traceDir}\\perf.csv`, "-y"], { stdio: "ignore" }));
+  }
+  for (const k of kids) k.on("error", (e) => console.log(`diag: ${e.message}`));
+  process.on("exit", () => {
+    for (const k of kids) k.kill();
+  });
+}
+const node = (args) => spawnSync(process.execPath, ["--no-warnings", "--import", blocking, ...diag, "--test", "--test-force-exit", ...args], { stdio: "inherit" }).status ?? 1;
 
 const dir = mkdtempSync(join(tmpdir(), "coding-sh-test-ci-"));
 const failedPath = join(dir, "failed.txt");

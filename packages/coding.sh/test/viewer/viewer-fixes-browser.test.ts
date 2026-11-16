@@ -90,12 +90,17 @@ describe("viewer fixes in a browser", { skip: chrome ? false : "no Chrome/Chromi
   test("Explore says why a query cannot parse without leaving the page or asking", async () => {
     const p = await open("#/explore");
     await p.waitFor("document.querySelector('.mx-body > *')", "explore body");
+    // DIAGNOSTICS ONLY: every request with its start time, before and after.
+    const timed = (): Promise<string[]> => p.eval("performance.getEntriesByType('resource').map((e) => Math.round(e.startTime) + ' ' + new URL(e.name).pathname + new URL(e.name).search).concat('now ' + Math.round(performance.now()))");
+    const beforeList = await timed();
     const before = (await apiCalls(p)).length;
     await p.eval("(() => { const i = document.querySelector('.explore input[type=search]'); i.value = '(agent:codex'; i.form.requestSubmit(); })()");
     await p.waitFor("document.querySelector('.explore .qbar-err')", "inline error");
     assert.match(await p.eval("document.querySelector('.explore .qbar-err').textContent"), /missing '\)'/);
     assert.equal(await p.eval("location.hash"), "#/explore");
-    assert.equal((await apiCalls(p)).length, before);
+    const afterList = await timed();
+    (globalThis as any).__cshTrace?.("explore-calls", { beforeList, afterList });
+    assert.equal((await apiCalls(p)).length, before, `before: ${JSON.stringify(beforeList)} after: ${JSON.stringify(afterList)}`);
   });
 
   test("a year-long Explore range names its year", async () => {

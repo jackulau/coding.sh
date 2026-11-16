@@ -394,9 +394,18 @@ export async function startViewer(opts: ViewerOptions): Promise<Viewer> {
     ...(opts.serverRender !== undefined ? { serverRender: opts.serverRender } : {}),
   });
 
+  // DIAGNOSTICS ONLY (throwaway branch).
+  const tr = (globalThis as any).__cshTrace as ((ev: string, data: Record<string, unknown>) => void) | undefined;
   const server = createServer((req, res) => {
+    if (tr) {
+      const t0 = performance.now();
+      const url = (req.url ?? "").replace(/\?t=[^#&]*/, "").slice(0, 120);
+      tr("srv-req", { m: req.method, url });
+      res.on("finish", () => tr("srv-res", { url, status: res.statusCode, ms: Math.round((performance.now() - t0) * 10) / 10 }));
+    }
     void handle(req, res);
   });
+  if (tr) server.on("connection", (sock) => tr("srv-conn", { port: sock.remotePort }));
   server.headersTimeout = 20_000;
   server.requestTimeout = 60_000;
 

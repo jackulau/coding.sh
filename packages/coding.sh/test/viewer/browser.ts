@@ -53,6 +53,12 @@ const NAMED_KEYS: Record<string, { code: string; vk: number; text?: string }> = 
   Home: { code: "Home", vk: 36 },
 };
 
+// DIAGNOSTICS ONLY (throwaway branch): scripts/diag-preload.mjs defines the trace function.
+const tr = (ev: string, data: Record<string, unknown> = {}): void => (globalThis as any).__cshTrace?.(ev, data);
+const tracing = (): boolean => !!(globalThis as any).__cshTrace;
+const TRACED_EVENTS = new Set(["Page.lifecycleEvent", "Page.frameNavigated", "Page.frameStartedLoading", "Page.frameStoppedLoading", "Page.loadEventFired", "Page.domContentEventFired", "Network.requestWillBeSent", "Network.responseReceived", "Network.loadingFinished", "Network.loadingFailed", "Inspector.targetCrashed", "Target.targetCrashed"]);
+let browserSeq = 0;
+
 type Pending = { resolve: (v: any) => void; reject: (e: Error) => void };
 
 class Cdp {
@@ -76,6 +82,11 @@ class Cdp {
     ws.addEventListener("error", fail);
     ws.addEventListener("message", (m) => {
       const msg = JSON.parse(String(m.data));
+      if (msg.method && TRACED_EVENTS.has(msg.method)) {
+        const q = msg.params ?? {};
+        const u: string | undefined = q.request?.url ?? q.response?.url ?? q.frame?.url;
+        tr("evt", { m: msg.method, s: msg.sessionId?.slice(0, 6), name: q.name, req: q.requestId, url: u?.replace(/\?t=[^#&]*/, "").slice(0, 120), status: q.response?.status, err: q.errorText, frame: (q.frameId ?? q.frame?.id)?.slice(0, 6) });
+      }
       if (msg.method) for (const l of this.listeners) l(msg.method, msg.params, msg.sessionId);
       const p = msg.id !== undefined ? this.pending.get(msg.id) : undefined;
       if (!p) return;
@@ -95,6 +106,8 @@ class Cdp {
   send(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<any> {
     if (this.closed) return Promise.reject(new Error(`CDP ${method}: the connection is closed`));
     const id = ++this.id;
+    const t0 = performance.now();
+    const note = (err?: string) => tr("cdp", { m: method, s: sessionId?.slice(0, 6), ms: Math.round((performance.now() - t0) * 10) / 10, ...(typeof params.expression === "string" ? { x: params.expression.slice(0, 90) } : {}), ...(typeof params.url === "string" ? { url: params.url.replace(/\?t=[^#&]*/, "").slice(0, 120) } : {}), ...(err ? { err } : {}) });
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
@@ -104,7 +117,7 @@ class Cdp {
         clearTimeout(timer);
         f(...a);
       };
-      this.pending.set(id, { resolve: done(resolve), reject: done(reject) });
+      this.pending.set(id, { resolve: done((v: any) => (note(), resolve(v))), reject: done((e: Error) => (note(e.message), reject(e))) });
       this.ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
     });
   }
@@ -175,7 +188,15 @@ export function chromeArgs(dir: string): string[] {
 
 export async function launchBrowser(chrome: string): Promise<Browser> {
   const dir = mkdtempSync(join(tmpdir(), "csh-chrome-"));
+  const bseq = ++browserSeq;
+  const tSpawn = performance.now();
   const child: ChildProcess = spawn(chrome, chromeArgs(dir), { stdio: ["ignore", "ignore", "pipe"] });
+  tr("chrome-spawn", { b: bseq, chromePid: child.pid, dir });
+  let stderrLines = 0;
+  child.stderr!.on("data", (d: Buffer) => {
+    if (stderrLines++ < 40) tr("chrome-stderr", { b: bseq, text: d.toString().slice(0, 400) });
+  });
+  child.once("exit", (code, sig) => tr("chrome-exit", { b: bseq, code, sig }));
   const wsUrl = await new Promise<string>((resolve, reject) => {
     let buf = "";
     const timer = setTimeout(() => reject(new Error("Chrome did not start: " + buf.slice(-500))), 20_000);
@@ -192,10 +213,15 @@ export async function launchBrowser(chrome: string): Promise<Browser> {
       reject(new Error(`Chrome exited (${code}): ${buf.slice(-500)}`));
     });
   });
+  tr("chrome-devtools", { b: bseq, ms: Math.round(performance.now() - tSpawn) });
   const cdp = await Cdp.connect(wsUrl);
+  tr("chrome-ws", { b: bseq, ms: Math.round(performance.now() - tSpawn) });
+  let pageSeq = 0;
 
   return {
     async newPage() {
+      const pseq = ++pageSeq;
+      const tPage = performance.now();
       const { browserContextId } = await cdp.send("Target.createBrowserContext");
       const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank", browserContextId });
       const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
@@ -208,12 +234,30 @@ export async function launchBrowser(chrome: string): Promise<Browser> {
       });
       await send("Page.enable");
       await send("Runtime.enable");
+      if (tracing()) {
+        await send("Network.enable");
+        await send("Page.setLifecycleEventsEnabled", { enabled: true });
+      }
+      tr("newpage", { b: bseq, p: pseq, s: sessionId.slice(0, 6), ms: Math.round(performance.now() - tPage) });
       const page: Page = {
         errors,
         send,
         async goto(url) {
-          await send("Page.navigate", { url });
-          await page.waitFor("document.readyState === 'complete' && location.href !== 'about:blank'", "page load");
+          const t0 = performance.now();
+          tr("goto-start", { b: bseq, p: pseq, s: sessionId.slice(0, 6) });
+          const nav = await send("Page.navigate", { url });
+          const navMs = Math.round(performance.now() - t0);
+          tr("goto-nav", { b: bseq, p: pseq, s: sessionId.slice(0, 6), navMs, err: nav?.errorText });
+          // DIAGNOSTICS ONLY: the real limit is 5 s. A longer one here lets a stalled load be measured to its end.
+          try {
+            await page.waitFor("document.readyState === 'complete' && location.href !== 'about:blank'", "page load", tracing() ? 40_000 : 5000);
+          } catch (e) {
+            const st = await page.eval("({ rs: document.readyState, href: location.href.replace(/\\?t=[^#&]*/, '') })").catch((x) => String(x));
+            tr("goto-timeout", { b: bseq, p: pseq, s: sessionId.slice(0, 6), navMs, st });
+            throw e;
+          }
+          const totalMs = Math.round(performance.now() - t0);
+          tr("goto-done", { b: bseq, p: pseq, s: sessionId.slice(0, 6), navMs, loadMs: totalMs - navMs, totalMs, wouldFail: totalMs - navMs > 5000 });
         },
         async eval(expr) {
           const r = await send("Runtime.evaluate", { expression: expr, awaitPromise: true, returnByValue: true });
@@ -222,11 +266,21 @@ export async function launchBrowser(chrome: string): Promise<Browser> {
         },
         async waitFor(expr, what, timeoutMs = 5000) {
           const deadline = Date.now() + timeoutMs;
+          const tW = performance.now();
+          let polls = 0;
           let last: unknown;
           for (;;) {
+            polls++;
             last = await page.eval(`(() => { try { return (${expr}); } catch (e) { return null; } })()`).catch(() => null);
-            if (last) return last as any;
-            if (Date.now() > deadline) throw new Error(`timed out waiting for ${what ?? expr}`);
+            if (last) {
+              const ms = Math.round(performance.now() - tW);
+              if (ms > 400) tr("wait", { b: bseq, p: pseq, what: what ?? expr.slice(0, 60), ms, polls });
+              return last as any;
+            }
+            if (Date.now() > deadline) {
+              tr("wait-timeout", { b: bseq, p: pseq, what: what ?? expr.slice(0, 60), ms: Math.round(performance.now() - tW), polls });
+              throw new Error(`timed out waiting for ${what ?? expr}`);
+            }
             await new Promise((r) => setTimeout(r, 40));
           }
         },
