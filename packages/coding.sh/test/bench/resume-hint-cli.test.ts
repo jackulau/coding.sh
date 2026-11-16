@@ -1,15 +1,14 @@
 // Ctrl-C on `coding.sh bench run`: the CLI prints how to continue the saved
-// run, not only "Finishing the trials in flight". Runs src/cli/main.ts with
+// run, not only "Finishing the trials in flight". Runs the CLI with
 // the temp project from helpers.ts.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { fileURLToPath } from "node:url";
 import { cleanup, project } from "./helpers.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 after(cleanup);
 
 // On Windows process.kill(pid, "SIGINT") terminates the CLI outright: no handler runs.

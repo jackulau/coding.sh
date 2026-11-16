@@ -18,6 +18,7 @@ import { gatewayForUrl } from "../../../src/integrations/gateway/providers.ts";
 import type { AgentEvent } from "../../../src/schema/index.ts";
 import { MemoryIndexStore } from "../../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../../src/store/sqlite.ts";
+import { CLI } from "../../_cli.ts";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const ADAPTERS = join(HERE, "..", "..", "fixtures", "adapters");
@@ -427,10 +428,9 @@ describe("CLIProxyAPI usage queue", () => {
       await index.putEvents(events);
       for (const id of new Set(events.map((e) => e.sessionId))) await index.upsertSession(buildSession(await index.listEvents(id)));
       await index.close();
-      const MAIN = fileURLToPath(new URL("../../../src/cli/main.ts", import.meta.url));
       const cli = (args: string[], extra: Record<string, string> = {}) =>
         new Promise<{ code: number; stdout: string; stderr: string }>((resolve) =>
-          execFile(process.execPath, ["--no-warnings", MAIN, ...args], { env: { ...env, ...extra }, cwd: home, timeout: 60_000 }, (err, stdout, stderr) => resolve({ code: err ? ((err as { code?: number }).code ?? 1) : 0, stdout, stderr })),
+          execFile(process.execPath, ["--no-warnings", CLI, ...args], { env: { ...env, ...extra }, cwd: home, timeout: 60_000 }, (err, stdout, stderr) => resolve({ code: err ? ((err as { code?: number }).code ?? 1) : 0, stdout, stderr })),
         );
 
       const noKey = await cli(["gateway", "enrich", "--gateway", "cliproxyapi", "--since", "3650d", "--json"]);

@@ -10,7 +10,6 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { loadConfig } from "../../src/core/config.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import { caseExpectation } from "../../src/experiments/fork-case.ts";
@@ -22,8 +21,8 @@ import { startProxy } from "../../src/proxy/server.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { openStores } from "../../src/store/factory.ts";
 import { anthropicStream, call, startUpstream, type Upstream } from "../proxy/_helpers.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const SESSION = "5f0e9d8c-7b6a-4c5d-8e9f-0a1b2c3d4e5f";
 const USER_KEY = "sk-ant-api03-FORKKEYFORKKEYFORKKEYFORK-abcdefAA";
 const OAUTH = "sk-ant-oat01-FORKLOGINFORKLOGINFORKLOGIN-abcdefAA";

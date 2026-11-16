@@ -1,4 +1,4 @@
-// `eval init` then `eval run`, end to end through src/cli/main.ts with a temp
+// `eval init` then `eval run`, end to end through the CLI with a temp
 // HOME: a cases suite answered by a command, a skill suite still holding its
 // TODO prompts, and a hand-written repo-task suite run by a fake agent (the
 // "wrapper" agent from a harness bundle) with a `judge grade` verifier.
@@ -8,12 +8,11 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { which } from "../../src/adapters/_shared/detect.ts";
 import { posixShell } from "../../src/core/spawn.ts";
 import { fencePackageScope, pathOf } from "../_bin.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const gitBin = which("git") ?? "";
 let root = "";
 let home = "";

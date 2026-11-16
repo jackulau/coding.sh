@@ -1,4 +1,4 @@
-// `coding.sh refine distill` end to end through src/cli/main.ts with a temp
+// `coding.sh refine distill` end to end through the CLI with a temp
 // HOME: an experiment's runs seeded into the store, and a fake `claude` on PATH
 // that writes out/SKILL.md (or not) in its working directory.
 import assert from "node:assert/strict";
@@ -7,12 +7,11 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import type { EvalTask, RunResult } from "../../src/core/types.ts";
 import { pathOf } from "../_bin.ts";
 import { putSession, sessionEvents } from "../helpers-decision.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const posix = process.platform !== "win32";
 let root = "";
 let home = "";

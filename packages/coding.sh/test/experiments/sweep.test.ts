@@ -8,12 +8,12 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { sha256Hex } from "../../src/core/ids.ts";
 import { createDataset } from "../../src/datasets/dataset.ts";
 import type { Grader, Split } from "../../src/datasets/types.ts";
 import { renderSweep } from "../../src/experiments/render.ts";
 import { defaultBudget, halvingSchedule, runSweep, type SweepConfig } from "../../src/experiments/sweep.ts";
+import { CLI } from "../_cli.ts";
 
 /** Passes when the task output is true. */
 const truthy: Grader = { id: "ok", version: "1", kind: "custom", grade: async (ctx) => ({ score: ctx.output === true ? 1 : 0, pass: ctx.output === true }) };
@@ -186,7 +186,6 @@ describe("sweep simulation (fixed seeds)", () => {
 });
 
 describe("exp sweep from the CLI", () => {
-  const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
   let root = "";
   let home = "";
   let env: NodeJS.ProcessEnv = {};

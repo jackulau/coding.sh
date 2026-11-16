@@ -8,7 +8,6 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { loadConfig } from "../../src/core/config.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { BlobStore, IndexStore } from "../../src/core/types.ts";
@@ -18,8 +17,8 @@ import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { buildTraceWorkspace, errorClass, TraceError, writeTraceWorkspace } from "../../src/toolevals/traces.ts";
 import type { McpTool, TapRecord, TrialResult } from "../../src/toolevals/types.ts";
 import { metrics } from "./helpers.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const dirs: string[] = [];
 after(() => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });

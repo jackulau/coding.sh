@@ -1,19 +1,18 @@
 // `coding.sh compare <bundle> --without <path>` (Z-9): one-command ablation.
 // A fake `wrapper` agent fixes the bug only when the pdf skill is in its work
 // dir and counts its runs, so both arms run on every task and the skill's
-// effect is +100 pp. Runs src/cli/main.ts directly with a temp HOME.
+// effect is +100 pp. Runs the CLI with a temp HOME.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { which } from "../../src/adapters/_shared/detect.ts";
 import { pathOf } from "../_bin.ts";
 import { posixShell } from "../../src/core/spawn.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const gitBin = which("git") ?? "";
 let root = "";
 let home = "";

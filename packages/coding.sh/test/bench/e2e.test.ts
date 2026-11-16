@@ -7,14 +7,13 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
-import { fileURLToPath } from "node:url";
 import { buildTools, type ToolCtx } from "../../src/mcp/tools.ts";
 import { nodeBin, pathOf } from "../_bin.ts";
 import { cleanup, project } from "./helpers.ts";
+import { CLI as MAIN } from "../_cli.ts";
 
 after(cleanup);
 
-const MAIN = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 
 function cli(cwd: string, env: NodeJS.ProcessEnv, args: string[], extra: NodeJS.ProcessEnv = {}) {
   const r = spawnSync(process.execPath, ["--no-warnings", MAIN, ...args], { cwd, env: { ...env, ...extra, NO_COLOR: "1" }, encoding: "utf8", timeout: 120_000 });

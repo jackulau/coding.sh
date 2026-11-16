@@ -1,17 +1,16 @@
 // `coding.sh attribution`, `attribution export` and `blame` end to end: the
-// fixture repo's sessions stored in a throwaway home, the CLI run from source.
+// fixture repo's sessions stored in a throwaway home, the CLI run against it.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
-import { fileURLToPath } from "node:url";
 import { validateAgentTrace } from "../../src/attribution/export.ts";
 import { openContext } from "../../src/core/context.ts";
 import { isolate, removeTmp, tmp } from "../capture/_helpers.ts";
 import { buildFixture, type Fixture } from "./_fixture.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 let fx: Fixture;
 let env: NodeJS.ProcessEnv;
 

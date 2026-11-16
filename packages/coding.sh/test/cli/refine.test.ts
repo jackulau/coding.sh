@@ -5,11 +5,10 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { appendLedger, refineDir, type TestEntry } from "../../src/refine/ledger.ts";
 import { putSession, sessionEvents } from "../helpers-decision.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const root = realpathSync(mkdtempSync(join(tmpdir(), "csh-refine-")));
 after(() => rmSync(root, { recursive: true, force: true }));
 

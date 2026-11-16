@@ -14,9 +14,9 @@ import { bundle } from "../../scripts/bundle.mjs";
 import { loadSqlite } from "../../src/store/sqlite-open.ts";
 import { MIGRATIONS, SQLITE_SCHEMA_VERSION } from "../../src/store/sqlite.ts";
 import { WRITER_KEY } from "../../src/store/upgrade.ts";
+import { SOURCE_CLI } from "../_cli.ts";
 
 const PKG = fileURLToPath(new URL("../../", import.meta.url));
-const SRC_CLI = join(PKG, "src", "cli", "main.ts");
 const VERSION = (JSON.parse(readFileSync(join(PKG, "package.json"), "utf8")) as { version: string }).version;
 const OLD = SQLITE_SCHEMA_VERSION - 1;
 
@@ -109,7 +109,7 @@ describe("a build that is not newer than the store's last writer", () => {
   it("from source, a store with no stamp is refused too (the read that migrated a v9 copy by itself)", async () => {
     const h = tmpHome();
     await storeAt(h.index, OLD);
-    const r = run(SRC_CLI, ["sessions", "--json"], h);
+    const r = run(SOURCE_CLI, ["sessions", "--json"], h);
     assert.equal(r.status, 1, r.stderr);
     assert.equal((JSON.parse(r.stderr) as { reason: string }).reason, "store_version");
     assert.match(r.stderr, /source checkout/);

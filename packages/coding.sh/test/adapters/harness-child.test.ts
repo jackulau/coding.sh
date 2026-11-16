@@ -9,16 +9,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { after, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import type { SpoolLine } from "../../src/core/types.ts";
 import { defaultConfig } from "../../src/core/config.ts";
 import { ingest } from "../../src/core/ingest.ts";
 import { ADAPTERS } from "../../src/adapters/index.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { FIXTURES } from "./_helpers.ts";
+import { CLI } from "../_cli.ts";
 
 const FIXTURE = join(FIXTURES, "harness", "claude-runs-codex");
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const expected = JSON.parse(readFileSync(join(FIXTURE, "expected.json"), "utf8")) as { claude: string; codex: string };
 const dirs: string[] = [];
 after(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));

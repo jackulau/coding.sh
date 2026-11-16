@@ -4,7 +4,6 @@
 // from the CLI on a real store).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { openContext } from "../../src/core/context.ts";
 import { buildSession } from "../../src/core/sessions.ts";
@@ -13,9 +12,9 @@ import { createCodingShMcp, type CodingShMcp } from "../../src/mcp/server.ts";
 import { CHARACTER_LIMIT } from "../../src/mcp/tools.ts";
 import type { AgentEvent, Session } from "../../src/schema/index.ts";
 import { schemaViolations } from "../../src/toolevals/jsonschema.ts";
-import { PKG, cleanup, makeWorld, type World } from "./helpers.ts";
+import { cleanup, makeWorld, type World } from "./helpers.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = join(PKG, "src", "cli", "main.ts");
 const ROOT = "big-root";
 const CHILDREN = 800;
 const child = (i: number) => `${ROOT}:sub:c${String(i).padStart(3, "0")}`;

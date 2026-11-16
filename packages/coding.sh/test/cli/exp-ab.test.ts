@@ -11,14 +11,13 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { defaultModel } from "../../src/cli/commands/exp-ab.ts";
 import { DEFAULT_MODELS } from "../../src/core/pricing.ts";
 import type { Case } from "../../src/datasets/types.ts";
 import { nodeBin, pathOf } from "../_bin.ts";
 import { claimSession, putSession } from "../helpers-decision.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const MARKER = "ALWAYS-RUN-NPM-TEST";
 
 interface Hit {

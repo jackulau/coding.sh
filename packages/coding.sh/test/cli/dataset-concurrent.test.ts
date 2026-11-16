@@ -6,17 +6,17 @@ import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { after, before, describe, test } from "node:test";
 import { createDataset } from "../../src/datasets/dataset.ts";
 import { FileEvalStore } from "../../src/datasets/store.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { cli } from "../query/_seed.ts";
+import { SOURCE_CLI } from "../_cli.ts";
 
 // By name, as the CLI matches it (a plugin's bundled copy counts too).
 const conflict = (e: unknown) => e instanceof Error && e.name === "DatasetConflict";
-const MAIN = join(dirname(fileURLToPath(import.meta.url)), "../../src/cli/main.ts");
 const N = 8;
 
 let root = "";
@@ -24,9 +24,13 @@ let env: NodeJS.ProcessEnv = {};
 
 let SLOW_READ: string[] = [];
 
+/**
+ * Always from source: SLOW_READ patches src/store/sqlite.ts, the module the CLI from source
+ * loads. A bundle carries its own copy of the class, so the patch would not reach it.
+ */
 function run(args: string[], preload: string[] = []): Promise<{ status: number | null; stderr: string }> {
   return new Promise((done) => {
-    const p = spawn(process.execPath, ["--no-warnings", ...preload, MAIN, ...args, "--json"], { env, cwd: root, stdio: ["ignore", "ignore", "pipe"] });
+    const p = spawn(process.execPath, ["--no-warnings", ...preload, SOURCE_CLI, ...args, "--json"], { env, cwd: root, stdio: ["ignore", "ignore", "pipe"] });
     let stderr = "";
     p.stderr.on("data", (b) => (stderr += b));
     p.on("close", (status) => done({ status, stderr }));
@@ -63,7 +67,7 @@ before(() => {
   };
   // Preloaded into the CLI: the index's getDataset resolves 300 ms after it reads.
   const slow = join(root, "slow-read.mjs");
-  const sqlite = pathToFileURL(join(dirname(MAIN), "../store/sqlite.ts")).href;
+  const sqlite = pathToFileURL(join(dirname(SOURCE_CLI), "../store/sqlite.ts")).href;
   writeFileSync(slow, `import { SqliteIndexStore } from ${JSON.stringify(sqlite)};
 const get = SqliteIndexStore.prototype.getDataset;
 SqliteIndexStore.prototype.getDataset = async function (...a) { const ds = await get.apply(this, a); await new Promise((r) => setTimeout(r, 300)); return ds; };

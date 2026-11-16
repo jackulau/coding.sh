@@ -2,7 +2,6 @@
 // [serve.forward]) and mirrors committed events to [[sinks]]. A stub collector
 // runs in-process; see src/server/forward.ts and src/server/mirror.ts.
 import assert from "node:assert/strict";
-import { fileURLToPath } from "node:url";
 import { createServer, type Server } from "node:http";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
@@ -22,6 +21,7 @@ import { SinkMirror } from "../../src/server/mirror.ts";
 import { startServe, type ServeHandle, type ServeOptions } from "../../src/server/serve.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { iAttr, otlpSpan, otlpTraces, sAttr } from "../otel/_encode.ts";
+import { CLI } from "../_cli.ts";
 
 type J = any;
 
@@ -585,8 +585,7 @@ describe("the local collector mirrors OTLP events to [[sinks]]", () => {
     delete env.CODING_SH_STORE_URL;
     mkdirSync(env.CODING_SH_HOME!, { recursive: true });
     writeFileSync(join(env.CODING_SH_HOME!, "config.toml"), `[[sinks]]\nkind = "http"\nname = "relay"\nendpoint = "http://127.0.0.1:${(server.address() as AddressInfo).port}/ingest"\nmode = "metadata"\n`);
-    const main = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
-    const p = spawn(process.execPath, ["--no-warnings", main, "collector", "--port", "0", "--json"], { env: { PATH: process.env.PATH, ...env, NO_COLOR: "1" }, stdio: ["ignore", "pipe", "pipe"] });
+    const p = spawn(process.execPath, ["--no-warnings", CLI, "collector", "--port", "0", "--json"], { env: { PATH: process.env.PATH, ...env, NO_COLOR: "1" }, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     p.stdout.on("data", (d) => (stdout += d));

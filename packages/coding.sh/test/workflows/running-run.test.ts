@@ -10,8 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { CLI as MAIN } from "../_cli.ts";
 
-const MAIN = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const PROJECTS = fileURLToPath(new URL("../fixtures/workflows/claude-code-running/projects", import.meta.url));
 const RUN = "wf_7d3c2a10-5be";
 const AGENT_SESSION = "5a1d7c3e-0b2f-4c6d-9e8f-1a2b3c4d5e6f:sub:a3c5e7f9b1d2e4f60";

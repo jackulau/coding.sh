@@ -3,17 +3,16 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { after, describe, test } from "node:test";
-import { fileURLToPath } from "node:url";
 import { buildReport, renderReportHtml } from "../../src/bench/report.ts";
 import { regradeRun, runBench, storedAnchor } from "../../src/bench/run.ts";
 import { historyRuns, listRuns, seenKeys, series, vsSeries } from "../../src/bench/store.ts";
 import type { BenchRun } from "../../src/bench/types.ts";
 import { cleanup, day, project } from "./helpers.ts";
+import { CLI as MAIN } from "../_cli.ts";
 
 after(cleanup);
 
 const run = (o: Parameters<typeof runBench>[0]) => runBench(o) as Promise<BenchRun>;
-const MAIN = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 
 describe("bench anchor set", () => {
   test("the same cases every day, kept out of the fresh numbers and the ledger", async () => {

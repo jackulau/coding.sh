@@ -14,11 +14,12 @@ import { defaultConfig } from "../../src/core/config.ts";
 import { childLinker, childLinkKey, childWaitKey, ingest, recomputeSession } from "../../src/core/ingest.ts";
 import { repoResolver } from "../../src/core/repo-state.ts";
 import { buildSession } from "../../src/core/sessions.ts";
-import { PKG_ROOT, loadSpool, tmpEnv } from "../adapters/_helpers.ts";
+import { loadSpool, tmpEnv } from "../adapters/_helpers.ts";
 import { linkSpawned, spawnedByFromEnv } from "../../src/spool/spawned.ts";
 import { MAX_OPEN_MS, matchSpawnedParent, runsAgentCli } from "../../src/spool/spawned-match.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
+import { CLI } from "../_cli.ts";
 
 const roots: string[] = [];
 after(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true })));
@@ -296,7 +297,7 @@ describe("ingest links harness children", () => {
       const lines = loadSpool("codex/hooks.spool.jsonl").map((l) => ({ ...l, spawnedBy: [{ agent: "claude-code", session: "11111111-2222-4333-8444-000000000000" }] }));
       writeFileSync(file, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
       const cliEnv = { HOME: env.home, USERPROFILE: env.home, CODING_SH_HOME: env.dataHome, CODEX_HOME: join(env.root, "codex"), CLAUDE_CONFIG_DIR: join(env.root, "claude"), XDG_CONFIG_HOME: join(env.root, "xdg"), XDG_DATA_HOME: join(env.root, "xdg-data"), PATH: dirname(process.execPath) };
-      const cli = (args: string[]) => spawnSync(process.execPath, ["--no-warnings", join(PKG_ROOT, "src", "cli", "main.ts"), ...args], { env: cliEnv, cwd: env.home, encoding: "utf8", timeout: 60_000 });
+      const cli = (args: string[]) => spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { env: cliEnv, cwd: env.home, encoding: "utf8", timeout: 60_000 });
       const ingested = cli(["ingest"]);
       assert.equal(ingested.status, 0, ingested.stderr);
       const listed = cli(["sessions", "--json", "--since", "2026-10-01"]);

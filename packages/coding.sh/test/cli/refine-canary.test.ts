@@ -1,5 +1,5 @@
 // `coding.sh refine test --suite … --canary-model` and `refine recheck` (Z-14),
-// end to end through src/cli/main.ts with a temp HOME. The agent is the
+// end to end through the CLI with a temp HOME. The agent is the
 // "wrapper" agent with a {model} slot: under the loop's model (none) it only
 // needs the ESSENTIAL line; under the canary model "small" it also needs the
 // RE-READ line, so a cut that drops RE-READ passes the loop and fails the canary.
@@ -9,12 +9,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { which } from "../../src/adapters/_shared/detect.ts";
 import { posixShell } from "../../src/core/spawn.ts";
 import { pathOf } from "../_bin.ts";
+import { CLI } from "../_cli.ts";
 
-const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const gitBin = which("git") ?? "";
 const ESSENTIAL = "ESSENTIAL: write done.txt when you finish.";
 const REREAD = "RE-READ: read the task twice.";

@@ -2,12 +2,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { Label } from "../../src/core/types.ts";
 import type { AgentEvent, Session } from "../../src/schema/index.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
+import { CLI } from "../_cli.ts";
 
-export const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
+export { CLI };
 export const T0 = Date.parse("2026-11-01T10:00:00Z");
 
 export function session(id: string, over: Partial<Session> = {}): Session {
@@ -53,7 +53,7 @@ export interface Run {
   stderr: string;
 }
 
-/** Runs the CLI from source with the test's env (HOME and CODING_SH_HOME already point at temp dirs). */
+/** Runs the CLI (test/_cli.ts: source, or the bundle CODING_SH_TEST_CLI names) with the test's env (HOME and CODING_SH_HOME already point at temp dirs). */
 export function cli(args: string[], extraEnv: NodeJS.ProcessEnv = {}, input?: string): Run {
   const env = { ...process.env, CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1", NO_COLOR: "1", TZ: "UTC", ...extraEnv };
   const r = spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { env, encoding: "utf8", ...(input !== undefined ? { input } : {}) });

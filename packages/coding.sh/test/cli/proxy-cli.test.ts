@@ -1,4 +1,4 @@
-// `coding.sh proxy` from source: a public bind is warned about and its env stays dialable,
+// `coding.sh proxy` through the CLI: a public bind is warned about and its env stays dialable,
 // upstream URLs are validated, and the background log keeps one line per call.
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { after, describe, it } from "node:test";
 import { anthropicStream, startUpstream, type Upstream } from "../proxy/_helpers.ts";
-import { cleanup, runLive, runSync, tmpHome } from "./_run-source.ts";
+import { cleanup, runLive, runSync, tmpHome } from "./_run-cli.ts";
 
 const ups: Upstream[] = [];
 const homes: ReturnType<typeof tmpHome>[] = [];
