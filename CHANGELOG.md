@@ -52,6 +52,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Site.** The install script is served with `X-Robots-Tag: noindex` at both of its paths, /install and /install.sh. The two paths return the same file, and neither named a canonical. [Install](https://coding.sh/docs/install)
 - **Sessions.** `coding.sh show`, the viewer and MCP `session_get` print a weight edit's or a checkpoint's `note` at the end of its line. Before, the note was stored but never shown. [Docs](https://coding.sh/docs/api)
 - **Sessions.** A session with no prompt, such as an SDK `trace()` that only records weight edits, is titled by its trace's name in `coding.sh sessions` and the viewer. Before, its title was empty. Stored sessions are folded again. [Docs](https://coding.sh/docs/sdk)
 - **Evals.** `exp metrics` prints a count or score below 0.0005 with two significant digits (`0.0001`) instead of `0.000`, so a small value such as a gain per edited weight no longer reads as zero. [Metric A/B](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#metric-ab-ms-bytes)

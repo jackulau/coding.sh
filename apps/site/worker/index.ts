@@ -7,7 +7,8 @@
 //   - /404 itself answers with a 404 status, not 200;
 //   - the assets' trailing-slash redirect (/docs/ to /docs) becomes a 301;
 //   - a changelog page number that no longer exists 301s to the release;
-//   - any other host (workers.dev, preview URLs) is served but marked noindex.
+//   - any other host (workers.dev, preview URLs) is served but marked noindex;
+//   - /llms-full.txt and the installer (/install, /install.sh) are marked noindex.
 // Everything else is env.ASSETS.fetch, so public/_headers still applies.
 
 import { MOVED } from "./moved.ts";
@@ -79,6 +80,9 @@ export default {
     if (url.hostname !== APEX) set("X-Robots-Tag", "noindex");
     // The whole site as one file: agents read it, search engines index the pages.
     if (url.pathname === "/llms-full.txt") set("X-Robots-Tag", "noindex");
+    // One installer at two paths, the same bytes: for curl to fetch, not for a
+    // search result. /docs/install is the page to find.
+    if (url.pathname === "/install" || url.pathname === "/install.sh") set("X-Robots-Tag", "noindex");
     // A 404 body is the HTML 404 page, also for a missing .txt or .md path,
     // whose _headers rule names a text type.
     if (status === 404) set("Content-Type", "text/html; charset=utf-8");
