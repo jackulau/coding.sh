@@ -159,5 +159,9 @@ tests run with `npm run lint:test`.
   paths.
 - Timing tests (hook latency, help startup) assume an idle machine. If one fails on a loaded
   machine, rerun it alone before you treat it as a regression.
+- The viewer UI tests drive headless Chrome and skip when none is installed. In CI a missing
+  Chrome is a failure: each test job starts Chrome once before its tests
+  (`packages/coding.sh/scripts/warm-chrome.ts`), because a fresh runner's first start can take
+  longer than the 20 s a test gives it. That first start has 60 s; past it the job fails.
 
 By contributing you agree that your contributions are licensed under the MIT license.

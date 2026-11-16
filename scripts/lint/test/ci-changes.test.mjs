@@ -2,7 +2,7 @@
 // CI jobs; anything else runs them all. Also checks that ci.yml wires every code-only job to it.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -141,4 +141,22 @@ test("ci.yml gates every code-only job on the changes job, and never skips when 
   for (const name of ["gate-static", "build", "test"]) assert.doesNotMatch(job(name), /needs: changes/, name);
   // Pushes to main, manual runs and the full suite on a pull request skip no job for the diff.
   assert.match(job("changes"), /if \[ "\$FULL" != true \] && \[ "\$EVENT" = pull_request \] && files=/);
+});
+
+test("ci.yml starts Chrome before the tests in every job that runs them", () => {
+  const ci = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
+  const jobs = [...ci.slice(ci.indexOf("\njobs:\n")).matchAll(/\n  ([a-z][a-z-]*):\n([\s\S]*?)(?=\n  [a-z][a-z-]*:\n|$)/g)].map((m) => ({ name: m[1], body: m[2] }));
+  const tests = "        run: node scripts/test-ci.mjs\n";
+  // The step as it must stay: no retry, no continue-on-error, and a limit of its own.
+  const step = "\n      - name: Start Chrome\n        working-directory: packages/coding.sh\n        timeout-minutes: 3\n        run: node scripts/warm-chrome.ts\n\n";
+  const running = jobs.filter((j) => j.body.includes(tests));
+  assert.deepEqual(running.map((j) => j.name), ["test", "windows"], "a new job that runs the tests starts Chrome first too");
+  for (const { name, body } of running) {
+    assert.equal(body.split(step).length, 2, `${name} starts Chrome once`);
+    assert.ok(body.indexOf(step) < body.indexOf(tests), `${name} starts Chrome before the tests`);
+  }
+  assert.equal(ci.split("scripts/warm-chrome.ts").length - 1, 3, "the two steps and one comment");
+  // On Linux the path is named for the whole job, so a missing Chrome fails both steps.
+  assert.match(running[0].body, /\n    env:\n(?:      #.*\n)*      CODING_SH_TEST_CHROME: \/usr\/bin\/google-chrome\n    steps:\n/);
+  assert.ok(existsSync(join(ROOT, "packages/coding.sh/scripts/warm-chrome.ts")));
 });
