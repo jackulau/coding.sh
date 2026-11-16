@@ -7,6 +7,12 @@ follow [Semantic Versioning](https://semver.org/) from the first npm release.
 Each release opens with a short summary. The list under it has one line per change,
 grouped by area, with links to the docs for the details.
 
+## [0.1.8] - Unreleased
+
+### Fixed
+
+- **Self-host.** In the Compose stacks that run serve, Postgres and ClickHouse are healthy only when they answer on the address serve connects to. The old checks passed against the image's first-start setup server on loopback or the unix socket, so `docker compose up -d --wait` could fail on the ClickHouse stack with `clickhouse at http://clickhouse:8123/ is unreachable`. [Deploy](https://github.com/jackulau/coding.sh/blob/main/docs/production/deploy.md#docker-compose)
+
 ## [0.1.7] - 2026-11-16
 
 ### Added
