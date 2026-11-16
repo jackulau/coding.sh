@@ -1,9 +1,9 @@
 // Which CI jobs a pull request needs. Reads the changed paths, one per line, on stdin and prints
 // `code=true` or `code=false` for $GITHUB_OUTPUT. code=false means every path is docs or site
-// content that the skipped jobs never read: Windows, real capture, the CLI suite, the
-// image, the stores, the Python SDK, the Node floor, the release smoke test and the action. The
-// gate, the build job (site build, site check, budgets) and the Linux tests still run, and they
-// check the generated docs. Anything else, or no paths at all, is code=true.
+// content that the skipped jobs never read: the stores, the Python SDK, the Node floor, the
+// release smoke test and the action. The gate, the build job (site build, site check, budgets)
+// and the Linux tests still run, and they check the generated docs. Anything else, or no paths
+// at all, is code=true. The full suite (ci.yml) does not ask: it runs every job.
 //
 //   git diff --name-only --no-renames HEAD^1 HEAD | node scripts/ci-changes.mjs
 import { readFileSync } from "node:fs";

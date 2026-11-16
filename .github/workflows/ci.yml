@@ -19,8 +19,10 @@ concurrency:
 # request that carries the `ready` label. Only then does a check named "full suite" exist, and
 # main requires it (CONTRIBUTING.md, "Pull requests"), so nothing merges before every job has
 # passed on the pull request merged with an up-to-date main. Without the label a pull request
-# gets the same jobs minus the ones scripts/ci-changes.mjs can prove it does not need, with
-# Windows on Node 24 only.
+# gets the quick jobs only: the Linux tests on Node 24, the build, the gate, the stores, the
+# Python SDK, the Node floor, the release smoke test and the GitHub Action, minus the ones
+# scripts/ci-changes.mjs can prove it does not need. Windows, Node 22, the real agent captures,
+# the container image and cli-suite run in the full suite only.
 env:
   FULL: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
 
@@ -53,8 +55,8 @@ jobs:
 
   # The test suite runs on Linux and Windows in shards of about equal time
   # (scripts/test-shards.ts), so the checks that need one run only, not one per OS and Node, live
-  # in the build job below. Pull requests run Linux on both Nodes and Windows on Node 24; pushes
-  # to main run both Nodes on both. No job runs on macOS.
+  # in the build job below. A pull request runs Linux on Node 24. The full suite (a push to main,
+  # or the `ready` label) runs both Nodes on both. No job runs on macOS.
   # Everything here is GitHub-hosted: free for this public repo, and it leaves the desk runners
   # to deploys and Site perf.
   test:
@@ -66,7 +68,8 @@ jobs:
       matrix:
         # The suite runs .ts from source, which needs Node 22.18 or newer (type stripping on by
         # default). The runtime-floor job runs the packed CLI on the engines floor.
-        node: [22.x, 24.x]
+        # A pull request runs Node 24; the full suite adds Node 22.
+        node: ${{ fromJSON((github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready')) && '["24.x"]' || '["22.x", "24.x"]') }}
         shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v5
@@ -452,8 +455,7 @@ jobs:
 
   image:
     name: container image / self-host smoke
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
     # GitHub-hosted: it builds and runs pull-request code in Docker. Nothing is pushed; the
     # release workflow publishes the image on version tags.
     runs-on: ubuntu-latest
@@ -507,20 +509,17 @@ jobs:
         run: node deploy/test/smoke.mjs compose coding-sh:smoke deploy/compose/compose.clickhouse.yml
 
   windows:
-    name: node ${{ matrix.node }} / windows-latest (${{ matrix.shard }}/${{ (github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready')) && 6 || 4 }})
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    name: node ${{ matrix.node }} / windows-latest (${{ matrix.shard }}/4)
+    if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
     runs-on: windows-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
-      # The whole suite takes about 20 minutes on hosted Windows: a pull request splits it into
-      # 6 shards on Node 24, the full suite (a push to main, or the `ready` label) into 4 on each
-      # Node.
+      # The whole suite takes about 20 minutes on hosted Windows: 4 shards on each Node.
       # Shard 1 also runs the build and the installer.
       matrix:
-        node: ${{ fromJSON((github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready')) && '["24.x"]' || '["22.x", "24.x"]') }}
-        shard: ${{ fromJSON((github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready')) && '[1, 2, 3, 4, 5, 6]' || '[1, 2, 3, 4]') }}
+        node: [22.x, 24.x]
+        shard: [1, 2, 3, 4]
     defaults:
       run:
         # bash (Git for Windows) keeps the quoted test glob and /dev/null the same as on Linux.
@@ -545,7 +544,7 @@ jobs:
       - name: Test
         working-directory: packages/coding.sh
         env:
-          SHARD: ${{ matrix.shard }}/${{ (github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready')) && 6 || 4 }}
+          SHARD: ${{ matrix.shard }}/4
           TEST_DURATIONS_OUT: ${{ runner.temp }}/test-durations.json
         # A file that fails is run again alone; one that then passes is a warning, not a failure.
         run: node scripts/test-ci.mjs
@@ -595,8 +594,7 @@ jobs:
 
   real-capture:
     name: real capture / ${{ matrix.os }}${{ matrix.os == 'ubuntu-latest' && format(' ({0}/2)', matrix.part) || '' }}
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
     # Always GitHub-hosted: it installs third-party agents from npm and runs them. Each script
     # installs into its own temp home, so the Linux steps split across two jobs of about equal time.
     runs-on: ${{ matrix.os }}
@@ -722,8 +720,7 @@ jobs:
 
   cli-suite:
     name: cli-suite (dev tasks, ${{ matrix.part }}/2)
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
     # The CLI effectiveness suite's own health, on the committed dev tasks only: held-out tasks
     # live outside the repo, so this never passes --split all or heldout. It needs no API key and
     # starts no agent. Always GitHub-hosted. Every task builds its own fixture home twice, which
