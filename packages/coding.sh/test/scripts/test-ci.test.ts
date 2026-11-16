@@ -28,6 +28,12 @@ const GREEN = `import { it } from "node:test"; it("passes", () => {});`;
 // A test that passes but leaves a handle open, as a browser's pipe can on Windows.
 const LEAKY = `import { it } from "node:test"; it("passes and leaks a timer", () => { setInterval(() => {}, 1000); });`;
 
+// Many tests that take no time: a file like this writes its report faster than the run reads it.
+const MANY_FILES = 12;
+const MANY_TESTS = 400;
+const MANY = `import { it } from "node:test"; for (let i = 0; i < ${MANY_TESTS}; i++) it("quick test number " + i + " with a name long enough to fill the pipe", () => {});`;
+const LAST_FAILS = ` it("the last test fails", () => { throw new Error("real"); });`;
+
 describe("scripts/test-ci.mjs", () => {
   it("passes when a failed file passes alone, and says so as a warning", () => {
     const r = run({ "a.test.ts": FLAKY, "c.test.ts": GREEN }, ["a.test.ts", "c.test.ts"]);
@@ -47,6 +53,22 @@ describe("scripts/test-ci.mjs", () => {
     assert.equal(r.code, 0, r.out);
     assert.doesNotMatch(r.out, /Rerunning/);
   });
+  // A file exits as soon as its tests are done (--test-force-exit). Without blocking writes the
+  // end of its report is still queued in its stdout pipe then, and the totals come up short.
+  it("reports every test of files that finish with their report still being written", () => {
+    const files = Object.fromEntries(Array.from({ length: MANY_FILES }, (_, i) => [`m${i}.test.ts`, MANY]));
+    const r = run(files, Object.keys(files));
+    assert.equal(r.code, 0, r.out.slice(-2000));
+    assert.equal(/^ℹ tests (\d+)$/m.exec(r.out)?.[1], String(MANY_FILES * MANY_TESTS), r.out.slice(-2000));
+  });
+
+  it("names the failing test when it is the last line of a long report", () => {
+    const r = run({ "z.test.ts": MANY + LAST_FAILS, "y.test.ts": MANY }, ["z.test.ts", "y.test.ts"]);
+    assert.equal(r.code, 1, r.out.slice(-2000));
+    const firstPass = r.out.split("Rerunning ")[0] ?? "";
+    assert.match(firstPass, /the last test fails/);
+  });
+
   it("finishes when a passing file leaves a handle open", () => {
     const r = run({ "l.test.ts": LEAKY }, ["l.test.ts"]);
     assert.equal(r.code, 0, r.out);

@@ -16,7 +16,10 @@ const MAX_RERUN = 5;
 const shard = process.env.SHARD;
 // --test-force-exit: a file whose tests are done exits even if a handle (a browser's pipe) is
 // still open, so a leak can't hold the job until its time limit cancels it.
-const node = (args) => spawnSync(process.execPath, ["--no-warnings", "--test", "--test-force-exit", ...args], { stdio: "inherit" }).status ?? 1;
+// --import test-blocking-stdout.mjs: with that flag a file can exit before the end of its report
+// has left its process, so each file writes its report with blocking writes.
+const blocking = new URL("./test-blocking-stdout.mjs", import.meta.url).href;
+const node = (args) => spawnSync(process.execPath, ["--no-warnings", "--import", blocking, "--test", "--test-force-exit", ...args], { stdio: "inherit" }).status ?? 1;
 
 const dir = mkdtempSync(join(tmpdir(), "coding-sh-test-ci-"));
 const failedPath = join(dir, "failed.txt");
