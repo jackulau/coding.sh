@@ -73,16 +73,18 @@ class ExitAfterFailedFlushTest(unittest.TestCase):
     def test_exit_does_not_flush_again_after_a_flush_gave_up(self) -> None:
         import socket
 
+        # Bound and never listening: a connection is refused, and the port stays ours while the
+        # child runs. A port that was closed to free it can be handed to another server first.
         s = socket.socket()
+        self.addCleanup(s.close)
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
-        s.close()  # a port nothing listens on
         env = dict(os.environ, SDK_SRC=support.SRC, INGEST="http://127.0.0.1:%d" % port)
         p = subprocess.run([sys.executable, "-c", DEAD_SCRIPT], env=env, capture_output=True, text=True, timeout=30)
         end = time.time()
         self.assertEqual(p.returncode, 0, p.stderr)
         drained, flushed_at = p.stdout.split()
-        self.assertEqual(drained, "False")
+        self.assertEqual(drained, "False", p.stderr)
         self.assertLess(end - float(flushed_at), 1.2, "the process stayed after flush() gave up")
         self.assertEqual(p.stderr.count("coding.sh"), 1, p.stderr)
         self.assertIn("not sent", p.stderr)
