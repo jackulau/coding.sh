@@ -7,5 +7,5 @@ contact_links:
     url: https://github.com/jackulau/coding.sh/security/advisories/new
     about: Please report security issues privately, not as a public issue.
   - name: Docs
-    url: https://coding.sh/docs/
+    url: https://coding.sh/docs
     about: Quickstart, supported agents, the CLI, MCP, evals and OpenTelemetry setup.
