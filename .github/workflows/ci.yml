@@ -74,6 +74,10 @@ jobs:
         # built CLI and the Node 22 legs launch it from source (the build step below).
         node: ${{ fromJSON((github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready')) && '["24.x"]' || '["22.x", "24.x"]') }}
         shard: [1, 2, 3]
+    env:
+      # The viewer UI tests drive headless Chrome and skip without one. GitHub's Linux image ships
+      # Chrome; naming it makes a missing one fail instead of skip.
+      CODING_SH_TEST_CHROME: /usr/bin/google-chrome
     steps:
       - uses: actions/checkout@v5
 
@@ -102,12 +106,18 @@ jobs:
           npm run build
           echo "CODING_SH_TEST_CLI=$PWD/dist/cli.mjs" >> "$GITHUB_ENV"
 
-      # The viewer UI tests drive headless Chrome and skip without one. GitHub's Linux image ships
-      # Chrome; naming it makes a missing one fail instead of skip.
+      # A fresh runner's first Chrome start waits on a cold disk and can take longer than the 20 s a
+      # viewer test gives a start. This step takes that start under a 60 s limit of its own and
+      # prints its time, then starts Chrome once more under the tests' own limits
+      # (scripts/warm-chrome.ts). No Chrome fails here.
+      - name: Start Chrome
+        working-directory: packages/coding.sh
+        timeout-minutes: 3
+        run: node scripts/warm-chrome.ts
+
       - name: Test
         working-directory: packages/coding.sh
         env:
-          CODING_SH_TEST_CHROME: /usr/bin/google-chrome
           SHARD: ${{ matrix.shard }}/3
           TEST_DURATIONS_OUT: ${{ runner.temp }}/test-durations.json
         # A file that fails is run again alone; one that then passes is a warning, not a failure.
@@ -555,6 +565,13 @@ jobs:
 
       - name: Install
         run: npm ci
+
+      # As on Linux: the runner's first Chrome start, outside the tests. GitHub's Windows image
+      # ships Chrome, and the step fails if it is gone.
+      - name: Start Chrome
+        working-directory: packages/coding.sh
+        timeout-minutes: 3
+        run: node scripts/warm-chrome.ts
 
       - name: Test
         working-directory: packages/coding.sh
