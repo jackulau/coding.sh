@@ -35,6 +35,11 @@ test("test Chrome stays out of the macOS keychain, which a test HOME does not ha
   assert.ok(args.includes("--user-data-dir=/tmp/profile"));
 });
 
+test("test Chrome does not look up the system's proxy: the viewer is on this machine", () => {
+  // On Windows the lookup holds the first page load of every new Chrome for 0.6-1.7 s.
+  assert.ok(chromeArgs("/tmp/profile").includes("--no-proxy-server"));
+});
+
 test("CODING_SH_TEST_CHROME wins, and a wrong one fails instead of skipping", () => {
   const pick = exe("custom");
   assert.equal(findChrome({ CODING_SH_TEST_CHROME: pick, PROGRAMFILES: dir("Program Files") }, "win32"), pick);
