@@ -242,7 +242,7 @@ line stays unredacted until `coding.sh gc` deletes the file after 7 days. Detail
 
 ## Status
 
-coding.sh is pre-1.0 (latest: 0.1.6), so expect rough edges. What isn't done yet:
+coding.sh is pre-1.0 (latest: 0.1.7), so expect rough edges. What isn't done yet:
 
 - **Windows.** CI runs on Linux and Windows. On Windows, CI runs the test suite, the installer (from
   Git Bash) and real OpenCode, Pi, Goose, Factory Droid, GitHub Copilot CLI and Aider sessions

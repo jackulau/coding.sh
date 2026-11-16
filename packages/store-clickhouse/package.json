@@ -1,6 +1,6 @@
 {
   "name": "coding.sh-store-clickhouse",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "ClickHouse store for coding.sh: point CODING_SH_STORE_URL at clickhouse:// and run serve, the CLI, MCP and evals on one database. Zero dependencies.",
   "license": "MIT",
   "author": "coding.sh contributors",
