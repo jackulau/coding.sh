@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { tmpdir, userInfo } from "node:os";
+import { join, resolve } from "node:path";
 import { after, describe, it } from "node:test";
 import {
   ConfigError,
   defaultConfig,
   expandStoreUrl,
   findRepoConfig,
+  searchStops,
   isExcluded,
   loadConfig,
   writeDefaultConfig,
@@ -176,6 +177,20 @@ maxFiles = 50
     } finally {
       if (saved === undefined) delete process.env[key];
       else process.env[key] = saved;
+    }
+  });
+
+  it("stops at the account's home from the user database when HOME and USERPROFILE both point elsewhere", () => {
+    // Under a test home on Windows os.homedir() follows USERPROFILE, so it no longer names the
+    // account's home, and a walk up from the temp dir would read the real ~/.coding.sh/config.toml.
+    const { env, root } = setup();
+    const keys = ["HOME", "USERPROFILE"] as const;
+    const saved = keys.map((k) => process.env[k]);
+    for (const k of keys) process.env[k] = root;
+    try {
+      assert.ok(searchStops({ ...env, HOME: root }).has(resolve(userInfo().homedir)));
+    } finally {
+      keys.forEach((k, i) => (saved[i] === undefined ? delete process.env[k] : (process.env[k] = saved[i])));
     }
   });
 

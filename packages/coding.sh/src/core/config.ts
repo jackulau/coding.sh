@@ -5,7 +5,7 @@
 // redactors and patterns are unioned, never removed. It can never add sinks or
 // move the stores, which would let a repository exfiltrate your sessions.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { Config, SinkConfig } from "./types.ts";
 import { PRICE_TIERS, type Price, type Prices, type Rates, type TierRates } from "./pricing.ts";
@@ -105,12 +105,26 @@ export function resolveRepoConfig(base: Config, cwd: string, env: NodeJS.Process
 }
 
 /**
+ * The homes the repo search stops at: $HOME, os.homedir(), and the OS account's home from the
+ * user database. On Windows os.homedir() follows USERPROFILE, so with it moved (a test home) only
+ * the user database still names the account's home, and the temp dir sits under it.
+ */
+export function searchStops(env: NodeJS.ProcessEnv = process.env): Set<string> {
+  const homes = new Set([resolve(expandHome("~", env)), resolve(homedir())]);
+  try {
+    homes.add(resolve(userInfo().homedir));
+  } catch {
+    // No user database entry (a container's arbitrary uid): the other two stand.
+  }
+  return homes;
+}
+
+/**
  * Finds `<dir>/.coding.sh/config.toml` walking up from cwd, stopping at the repo
- * root or a home: $HOME, or the OS account's home when $HOME points elsewhere
- * (on Windows the temp dir sits under the account's home).
+ * root or a home (searchStops): a home's .coding.sh/config.toml is a user config.
  */
 export function findRepoConfig(cwd: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const homes = new Set([resolve(expandHome("~", env)), resolve(homedir())]);
+  const homes = searchStops(env);
   const userConfig = resolve(paths(env).config);
   let dir = resolve(cwd);
   for (;;) {

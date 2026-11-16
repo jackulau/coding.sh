@@ -9,7 +9,9 @@ Later layers win:
 
 1. Built-in defaults.
 2. `~/.coding.sh/config.toml` (or `$CODING_SH_HOME/config.toml`), your user config.
-3. `<repo>/.coding.sh/config.toml`, the nearest one above the working directory.
+3. `<repo>/.coding.sh/config.toml`, the nearest one above the working directory. The search
+   stops at the git root and at a home folder: `$HOME`, and your account's home even when `HOME`
+   or `USERPROFILE` points elsewhere.
 4. Environment variables (`CODING_SH_STORE_URL`, `CODING_SH_BLOB_URL`, and the server variables).
 5. Command-line flags (`--store`, `--blobs`, and each command's own options).
 

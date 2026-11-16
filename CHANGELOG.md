@@ -61,6 +61,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Config.** The search for a repo `.coding.sh/config.toml` stops at your account's home on Windows even when `USERPROFILE` points elsewhere, so it no longer reads your user config as a repo config. [Config](https://github.com/jackulau/coding.sh/blob/main/docs/reference/config.md#where-settings-come-from)
 - **Capture.** A read that finds a capture pending no longer runs git while it ingests (the next ingest without a budget takes the snapshots), its transcript import saves its progress file by file, and only one process imports transcripts at a time (`tail.lock`). A read on a backlog could take minutes, and with auto-ingest off it never saved progress. [Config](https://github.com/jackulau/coding.sh/blob/main/docs/reference/config.md)
 - **CLI.** `coding.sh ingest` stops on the first Ctrl-C: what it read stays stored, the lock is released, and it exits 130 (`{"outcome":"interrupted"}` with `--json`). Run it again to finish. [CLI](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md)
 - **Viewer.** With subagents included, the sessions header no longer counts subagents twice: a parent with two subagents reads "1 session + 2 subagents" in both scopes, and the cost is marked partial when any session, subagents included, has no price. [API](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md#get-apistats)
