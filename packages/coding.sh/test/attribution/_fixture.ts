@@ -22,6 +22,11 @@ import { gitc, tmp, write } from "../capture/_helpers.ts";
 
 export const T0 = Date.parse("2026-10-01T09:00:00Z");
 export const HOUR = 3600_000;
+// A snapshot stops at its time budget (2 s by default, so capture never holds an agent up), and git
+// on a loaded Windows runner can take longer than that for a two-file repo. These tests read what a
+// snapshot holds, so they give it a budget it never runs out of; the default budget is tested in
+// test/core/snapshot.test.ts.
+export const ROOMY = { timeoutMs: 120_000 };
 
 export function gitAt(cwd: string, at: number, ...args: string[]): string {
   const d = new Date(at).toISOString();
@@ -114,19 +119,19 @@ export async function buildFixture(): Promise<Fixture> {
   const events: AgentEvent[] = [];
 
   // S1: claude-code, everything it does is committed as C1.
-  const s1Start = (await snapshot(root, { env }))!;
+  const s1Start = (await snapshot(root, { env, ...ROOMY }))!;
   appendFileSync(join(root, "src/math.ts"), "\n" + text(CLAMP));
   appendFileSync(join(root, "README.md"), "\n" + text(README_S1));
-  const s1End = (await snapshot(root, { env }))!;
+  const s1End = (await snapshot(root, { env, ...ROOMY }))!;
   const s1 = makeSession("s1-claude", "claude-code", "claude-sonnet-4-5", T0 + 1 * HOUR, s1Start, s1End.snapshot);
   events.push(event(s1, "file.change", { path: join(root, "src/math.ts"), op: "modify" }), event(s1, "file.change", { path: "README.md", op: "modify" }));
   const c1 = commitAll(root, T0 + 2 * HOUR, "add clamp");
 
   // S2: codex; a person edits its work before committing C2.
-  const s2Start = (await snapshot(root, { env }))!;
+  const s2Start = (await snapshot(root, { env, ...ROOMY }))!;
   write(root, { "src/util.ts": text(UTIL_S2) });
   appendFileSync(join(root, "src/math.ts"), text(LERP));
-  const s2End = (await snapshot(root, { env }))!;
+  const s2End = (await snapshot(root, { env, ...ROOMY }))!;
   const s2 = makeSession("s2-codex", "codex", "gpt-5-codex", T0 + 3 * HOUR, s2Start, s2End.snapshot);
   events.push(event(s2, "file.change", { path: "src/util.ts", op: "add" }), event(s2, "file.change", { path: "src/math.ts", op: "modify" }));
   const util = readFileSync(join(root, "src/util.ts"), "utf8").replace(UTIL_S2[7]!, HUMAN_MEAN);
@@ -135,10 +140,10 @@ export async function buildFixture(): Promise<Fixture> {
 
   // S3: claude-code on a feature branch.
   gitc(root, "checkout", "-q", "-b", "feature");
-  const s3Start = (await snapshot(root, { env }))!;
+  const s3Start = (await snapshot(root, { env, ...ROOMY }))!;
   appendFileSync(join(root, "src/math.ts"), text(SMOOTH));
   write(root, { "src/feature.ts": text(FEATURE) });
-  const s3End = (await snapshot(root, { env }))!;
+  const s3End = (await snapshot(root, { env, ...ROOMY }))!;
   const s3 = makeSession("s3-claude", "claude-code", "claude-opus-4-1", T0 + 4.5 * HOUR, s3Start, s3End.snapshot);
   events.push(event(s3, "file.change", { path: "src/math.ts", op: "modify" }), event(s3, "file.change", { path: "src/feature.ts", op: "add" }));
   const c3 = commitAll(root, T0 + 6 * HOUR, "add smoothstep");
