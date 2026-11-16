@@ -134,20 +134,21 @@ tests run with `npm run lint:test`.
   checks and the build, and the site, in a throwaway home. Its first step checks that your
   branch's commits are authored with your global git identity (`git config --global user.email`)
   and that the repo sets no `user.email` of its own.
-- `npm run check` and `npm run build` must pass in `packages/coding.sh`. CI also runs the tests on
-  Linux (Node 22 and 24) and Windows (Node 24), and builds and checks the site. CI does not run
-  macOS: run `npm run check` on a Mac for a change that depends on it. A pull request that only
-  changes docs or the site skips Windows and the other jobs that never read them
-  (`scripts/ci-changes.mjs`).
+- `npm run check` and `npm run build` must pass in `packages/coding.sh`. On a pull request CI
+  runs the quick jobs: the tests on Linux (Node 24), the build and the site, the gate, the store
+  plugins, the Python SDK, the packed CLI on the Node floor, the release smoke test and the
+  GitHub Action. A pull request that only changes docs or the site skips the ones that never
+  read them (`scripts/ci-changes.mjs`). Windows, Node 22, the real agent captures, the container
+  image and cli-suite run in the full suite, below. CI does not run macOS: run `npm run check` on
+  a Mac for a change that depends on it.
 - `main` takes pull requests only, and each one runs the full suite first. A maintainer adds the
   `ready` label; CI then runs every job on the pull request merged with `main`, skips none for a
-  docs or site change, adds Node 22 on Windows, and checks the commit authors as it does on
-  `main`. That run reports one check named `full suite`, which passes only when every other job
-  passed. `main` requires that check on a branch that is up to date with `main`, so a push or an
-  update of the branch after the label runs it again. Without the label there is no check of that
-  name and the pull request cannot merge. Site perf (`.github/workflows/site-perf.yml`) is a
-  separate workflow and not part of `full suite`: its timing run on the desk still follows the
-  merge.
+  docs or site change, and checks the commit authors as it does on `main`. That run reports one
+  check named `full suite`, which passes only when every other job passed. `main` requires that
+  check on a branch that is up to date with `main`, so a push or an update of the branch after the
+  label runs it again. Without the label there is no check of that name and the pull request cannot
+  merge. Site perf (`.github/workflows/site-perf.yml`) is a separate workflow and not part of
+  `full suite`: its timing run on the desk still follows the merge.
 - Timing tests (hook latency, help startup) assume an idle machine. If one fails on a loaded
   machine, rerun it alone before you treat it as a regression.
 

@@ -48,21 +48,26 @@ test("ci.yml gates every code-only job on the changes job, and never skips when 
   const ci = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
   const job = (name) => new RegExp(`\\n  ${name}:\\n([\\s\\S]*?)(?=\\n  [a-z][a-z-]*:\\n|$)`).exec(ci)?.[1] ?? "";
   const gate = "if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}";
-  for (const name of ["windows", "real-capture", "cli-suite", "image", "store-postgres", "store-clickhouse", "python-sdk", "runtime-floor", "release-smoke", "action"]) {
+  for (const name of ["store-postgres", "store-clickhouse", "python-sdk", "runtime-floor", "release-smoke", "action"]) {
     const body = job(name);
     assert.ok(body, `${name} job`);
     assert.match(body, /\n    needs: changes\n/, `${name} needs changes`);
     assert.ok(body.includes(`\n    ${gate}\n`), `${name} runs unless changes says code=false`);
   }
-  // A pull request's Windows shards: the list and the count each leg is told agree.
-  // "Narrow" is a pull request without the `ready` label; the full suite runs what a push runs.
+  // The slow jobs run in the full suite only (a push, a manual run, or the `ready` label). Their
+  // condition reads the event and the label, so nothing a pull request changes can skip them there.
+  const full = "if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}";
+  for (const name of ["windows", "real-capture", "cli-suite", "image"]) {
+    const body = job(name);
+    assert.ok(body.includes(`\n    ${full}\n`), `${name} runs in the full suite`);
+    assert.doesNotMatch(body, /needs\.changes/, `${name} does not read the changes job`);
+  }
+  // Windows has one shape: both Node versions, and the shard count each leg is told.
+  assert.match(job("windows"), /\n        node: \[22\.x, 24\.x\]\n        shard: \[1, 2, 3, 4\]\n/);
+  assert.equal([...job("windows").matchAll(/matrix\.shard \}\}\/4\b/g)].length, 2, "the job name and SHARD");
+  // A pull request without the label tests Linux on Node 24; the full suite adds Node 22.
   const narrow = "(github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready'))";
-  const quoted = narrow.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const [, shards] = new RegExp(`shard: \\$\\{\\{ fromJSON\\(${quoted} && '(\\[[\\d, ]+\\])'`).exec(job("windows")) ?? [];
-  const told = [...job("windows").matchAll(new RegExp(`matrix\\.shard \\}\\}\\/\\$\\{\\{ ${quoted} && (\\d+) \\|\\| 4 \\}\\}`, "g"))].map((m) => Number(m[1]));
-  assert.ok(job("windows").includes(`node: \${{ fromJSON(${narrow} && '["24.x"]' || '["22.x", "24.x"]') }}`), "the full suite runs Windows on both Node versions");
-  assert.doesNotMatch(job("windows"), /event_name == 'pull_request' &&(?! !contains)/, "no Windows setting reads the event alone");
-  assert.deepEqual(told, [JSON.parse(shards ?? "[]").length, JSON.parse(shards ?? "[]").length], "the job name and SHARD");
+  assert.ok(job("test").includes(`node: \${{ fromJSON(${narrow} && '["24.x"]' || '["22.x", "24.x"]') }}\n        shard: [1, 2, 3]\n`));
   // The checks that read docs and the site always run.
   for (const name of ["gate-static", "build", "test"]) assert.doesNotMatch(job(name), /needs: changes/, name);
   // Pushes to main, manual runs and the full suite on a pull request never skip.

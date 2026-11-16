@@ -108,11 +108,11 @@ every new stat stay absent when empty, does the change hold on real fixtures as 
 ones, and is there a test that fails without it.
 
 **Pull request.** One change per PR, with tests. `npm run check` and `npm run build` must pass in
-`packages/coding.sh`; CI also runs the tests on Linux (Node 22 and 24) and Windows (Node 24,
-and Node 22 in the full suite), and the real agent captures in `scripts/e2e/real-capture.mjs`. CI
-does not run macOS. Nothing is pushed to `main`: it takes pull requests only. The `ready` label
-runs the full suite on the pull request (every job, none skipped), and `main` requires its one
-check, `full suite`, on a branch that is up to date. Add the label when the pull request's own
+`packages/coding.sh`. On a pull request CI runs the tests on Linux (Node 24) and the quick jobs;
+Windows, Node 22 and the real agent captures in `scripts/e2e/real-capture.mjs` run in the full
+suite. CI does not run macOS. Nothing is pushed to `main`: it takes pull requests only. The `ready`
+label runs the full suite on the pull request (every job, none skipped), and `main` requires its
+one check, `full suite`, on a branch that is up to date. Add the label when the pull request's own
 checks are green; CONTRIBUTING.md "Pull requests" has the details.
 
 **Adding an agent.** Follow "Adding an agent" in CONTRIBUTING.md: a row in `docs/ADAPTERS.md`, the
