@@ -1,7 +1,8 @@
 // Splits the test files into CI shards of about equal run time. node --test-shard splits by file
 // count, so one shard could get every slow CLI test and run minutes past its siblings.
 // scripts/test-durations.json holds each file's time from a CI run on Linux (milliseconds, the sum
-// of its top-level tests). Windows runs the same files at other speeds, so it may have its own
+// of its top-level tests). The Node 24 legs record them, and those launch the built CLI
+// (CODING_SH_TEST_CLI), so a refreshed Linux table holds bundle-launch times. Windows runs the same files at other speeds, so it may have its own
 // table, scripts/test-durations.win32.json; an OS without one uses the Linux table. A file a
 // table does not list counts as the median file. Stale entries are ignored.
 //

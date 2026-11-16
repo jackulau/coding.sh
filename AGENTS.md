@@ -42,7 +42,8 @@ and set `CODING_SH_TEST_CLI` to the absolute path of `dist/cli.mjs`:
 npm run build && CODING_SH_TEST_CLI="$PWD/dist/cli.mjs" node --no-warnings --test 'test/**/*.test.ts'
 ```
 
-Build again after a change under `src`: the tests launch the file as it is. A path that is not
+Build again after a change under `src`: the tests launch the file as it is. CI's Linux Node 24
+tests run this way; its Node 22 and Windows tests launch from source. A path that is not
 absolute or names no file fails every test that launches the CLI. A test takes the path from
 `test/_cli.ts` (`CLI`), or `SOURCE_CLI` when it is about running from source.
 

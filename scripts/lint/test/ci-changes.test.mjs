@@ -129,6 +129,14 @@ test("ci.yml gates every code-only job on the changes job, and never skips when 
   // A pull request without the label tests Linux on Node 24; the full suite adds Node 22.
   const narrow = "(github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready'))";
   assert.ok(job("test").includes(`node: \${{ fromJSON(${narrow} && '["24.x"]' || '["22.x", "24.x"]') }}\n        shard: [1, 2, 3]\n`));
+  // The Node 24 legs launch the bundle they build; the Node 22 legs launch from source. The
+  // variable is the one test/_cli.ts reads, and it is written only by that step: a job-level
+  // `env:` would hand the Node 22 legs an empty value.
+  const cliEnv = /export const TEST_CLI_ENV = "([A-Z_]+)";/.exec(readFileSync(join(ROOT, "packages/coding.sh/test/_cli.ts"), "utf8"))?.[1];
+  assert.equal(cliEnv, "CODING_SH_TEST_CLI");
+  assert.ok(job("test").includes(`\n      - name: Build the CLI the tests launch\n        if: matrix.node == '24.x'\n        working-directory: packages/coding.sh\n        run: |\n          npm run build\n          echo "${cliEnv}=$PWD/dist/cli.mjs" >> "$GITHUB_ENV"\n\n`));
+  assert.ok(job("test").indexOf("Build the CLI the tests launch") < job("test").indexOf("run: node scripts/test-ci.mjs"), "built before the tests run");
+  assert.equal([...ci.matchAll(new RegExp(cliEnv, "g"))].length, 2, "the comment and the step, nowhere else");
   // The checks that read docs and the site always run.
   for (const name of ["gate-static", "build", "test"]) assert.doesNotMatch(job(name), /needs: changes/, name);
   // Pushes to main, manual runs and the full suite on a pull request skip no job for the diff.
