@@ -244,7 +244,7 @@ line stays unredacted until `coding.sh gc` deletes the file after 7 days. Detail
 
 coding.sh is pre-1.0 (latest: 0.1.6), so expect rough edges. What isn't done yet:
 
-- **Windows.** CI runs on Linux, macOS and Windows. On Windows, CI runs the test suite, the installer (from
+- **Windows.** CI runs on Linux and Windows. On Windows, CI runs the test suite, the installer (from
   Git Bash) and real OpenCode, Pi, Goose, Factory Droid, GitHub Copilot CLI and Aider sessions
   against a stub model. Capture from Claude Code, Codex CLI, Antigravity CLI, Cursor CLI, Amp and
   T3 Code has not been checked on Windows yet.
