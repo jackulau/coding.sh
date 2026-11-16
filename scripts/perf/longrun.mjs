@@ -14,7 +14,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -26,7 +26,7 @@ if (values.help) {
   process.exit(0);
 }
 
-const { generateLongSession } = await import(join(PKG, "test/fixtures/longrun/generate.ts"));
+const { generateLongSession } = await import(pathToFileURL(join(PKG, "test/fixtures/longrun/generate.ts")).href);
 const work = values.keep ? resolve(values.keep) : mkdtempSync(join(tmpdir(), "csh-longrun-"));
 rmSync(work, { recursive: true, force: true });
 mkdirSync(work, { recursive: true });
