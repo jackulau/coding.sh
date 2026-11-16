@@ -70,7 +70,8 @@ jobs:
       matrix:
         # The suite runs .ts from source, which needs Node 22.18 or newer (type stripping on by
         # default). The runtime-floor job runs the packed CLI on the engines floor.
-        # A pull request runs Node 24; the full suite adds Node 22.
+        # A pull request runs Node 24; the full suite adds Node 22. The Node 24 legs launch the
+        # built CLI and the Node 22 legs launch it from source (the build step below).
         node: ${{ fromJSON((github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready')) && '["24.x"]' || '["22.x", "24.x"]') }}
         shard: [1, 2, 3]
     steps:
@@ -89,6 +90,17 @@ jobs:
 
       - name: Install
         run: npm ci
+
+      # The Node 24 legs launch the bundle (test/_cli.ts reads CODING_SH_TEST_CLI): a launch from
+      # source strips types on every start. The Node 22 legs keep launching src/cli/main.ts, so the
+      # full suite covers both. Set here, not in an `env:` expression: that would give the Node 22
+      # legs an empty value, which test/_cli.ts refuses.
+      - name: Build the CLI the tests launch
+        if: matrix.node == '24.x'
+        working-directory: packages/coding.sh
+        run: |
+          npm run build
+          echo "CODING_SH_TEST_CLI=$PWD/dist/cli.mjs" >> "$GITHUB_ENV"
 
       # The viewer UI tests drive headless Chrome and skip without one. GitHub's Linux image ships
       # Chrome; naming it makes a missing one fail instead of skip.

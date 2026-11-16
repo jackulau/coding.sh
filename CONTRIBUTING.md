@@ -141,7 +141,8 @@ tests run with `npm run lint:test`.
 - `npm run check` and `npm run build` must pass in `packages/coding.sh`. On a pull request CI
   runs the quick jobs: the tests on Linux (Node 24), the build and the site, the gate, the store
   plugins, the Python SDK, the packed CLI on the Node floor, the release smoke test and the
-  GitHub Action. A pull request that only changes docs or the site skips the ones that never
+  GitHub Action. The Linux Node 24 tests launch the built CLI (`CODING_SH_TEST_CLI`, "Setup"
+  above); the Node 22 and Windows tests of the full suite launch it from source. A pull request that only changes docs or the site skips the ones that never
   read them (`scripts/ci-changes.mjs`). Windows, Node 22, the real agent captures, the container
   image and cli-suite run in the full suite, below. CI does not run macOS: run `npm run check` on
   a Mac for a change that depends on it.
