@@ -1,15 +1,17 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
+// bench.mjs times the built CLI. The gate and the Node 22 CI legs run the tests before any build.
+const NO_DIST = !existsSync(join(ROOT, "packages", "coding.sh", "dist", "cli.mjs")) && "needs dist/cli.mjs: run npm run build in packages/coding.sh";
 
 describe("dogfood and perf scripts run as the main module", () => {
-  it("bench.mjs help --json prints results (fails on Windows with the file:// guard)", () => {
+  it("bench.mjs help --json prints results (fails on Windows with the file:// guard)", { skip: NO_DIST }, () => {
     const home = mkdtempSync(join(tmpdir(), "codingsh-main-"));
     try {
       const r = spawnSync(process.execPath, ["--no-warnings", join("scripts", "dogfood", "bench.mjs"), "help", "--json"], {
