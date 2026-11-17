@@ -78,6 +78,7 @@ describe("isReadOnlyToolStart", () => {
   for (const [tool, input] of yes) it(`${tool} ${JSON.stringify(input)} only reads`, () => assert.equal(isReadOnlyToolStart(start(tool, input)), true));
   for (const [tool, input] of no) it(`${tool} ${JSON.stringify(input)} can write`, () => assert.equal(isReadOnlyToolStart(start(tool, input)), false));
   it("a wrapper call or a non-start event is never a read", () => {
+    assert.equal(1, 2, "planted break 2");
     assert.equal(isReadOnlyToolStart(ev("tool.start", { tool: "Read", wrapper: true, input: {} })), false);
     assert.equal(isReadOnlyToolStart(ev("tool.end", { tool: "Read", input: {} })), false);
     assert.equal(isReadOnlyCommand(undefined), false);
