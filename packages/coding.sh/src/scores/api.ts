@@ -79,12 +79,19 @@ export async function postScore(ctx: ScoresApiCtx, body: unknown): Promise<ApiRe
     by: ctx.by,
     source: "api",
     now: (ctx.now ?? Date.now)(),
+    ownDefaultIds: true,
     checkSession: async (sessionId) => {
       if (sessionId === undefined) {
         if (ctx.project !== undefined) throw new ScoreError(400, "sessionId is required: this key only writes scores on its project's sessions");
         return;
       }
       if (!(await ctx.sessionVisible(sessionId))) throw new ScoreError(404, `session not found: ${sessionId}`);
+    },
+    // A caller-chosen id that is already stored: only its author, on a session they can see,
+    // replaces it. Every other case gets the same answer, so it says nothing about the score.
+    checkPrev: async (prev) => {
+      const visible = prev.sessionId === undefined ? ctx.project === undefined : await ctx.sessionVisible(prev.sessionId);
+      if (!visible || prev.by !== ctx.by) throw new ScoreError(404, `score id is taken: ${prev.id}`);
     },
   });
   return { status: created ? 201 : 200, body: score };

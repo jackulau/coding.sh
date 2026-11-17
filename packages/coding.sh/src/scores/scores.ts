@@ -217,6 +217,18 @@ export interface AddScoreOptions extends ScoreDefaults {
    * not visible. Default: a session target must exist.
    */
   checkSession?: (sessionId: string | undefined) => Promise<void>;
+  /**
+   * Called with the stored score when the id is already taken, before anything
+   * about it is compared or returned; throws (404) when the caller may not
+   * replace it. Default: anyone may.
+   */
+  checkPrev?: (prev: Score) => Promise<void>;
+  /**
+   * When true, a given id shaped like a default id (64 hex characters) must be
+   * this score's own default id, so a caller cannot take the id another person's
+   * score would get. Default: any id.
+   */
+  ownDefaultIds?: boolean;
 }
 
 /**
@@ -233,6 +245,9 @@ export async function addScore(index: IndexStore, body: unknown, o: AddScoreOpti
   const store = requireScores(index);
   const score = parseScore(body, o, await store.listScoreConfigs());
   const givenSession = score.sessionId;
+  if (o.ownDefaultIds && /^[0-9a-f]{64}$/.test(score.id) && score.id !== defaultScoreId(score)) {
+    throw bad("id: 64 hex characters is the form of a default score id; leave id out to get this score's own, or pick another id");
+  }
   if (score.target === "event" && index.eventsByIdPrefix) {
     const [e] = (await index.eventsByIdPrefix(score.targetId, 2)).filter((x) => x.id === score.targetId);
     if (!e) throw new ScoreError(404, `event not found: ${score.targetId}`);
@@ -243,6 +258,7 @@ export async function addScore(index: IndexStore, body: unknown, o: AddScoreOpti
   // After the session check, so a caller learns an event's session only when it may see it.
   if (givenSession !== undefined && givenSession !== score.sessionId) throw bad(`event ${score.targetId} belongs to session ${score.sessionId}, not ${givenSession}`);
   const [prev] = await store.listScores({ id: score.id });
+  if (prev && o.checkPrev) await o.checkPrev(prev);
   // The same value with no comment in the body keeps the stored comment; an empty comment
   // clears it. A new value drops it: the old comment explained the old value.
   if (prev?.comment !== undefined && score.comment === undefined && (body as Obj).comment === undefined && JSON.stringify(prev.value) === JSON.stringify(score.value)) score.comment = prev.comment;

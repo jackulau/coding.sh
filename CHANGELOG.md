@@ -35,6 +35,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Scores.** `POST /api/scores` with an id that is already stored replaces the score only when the caller wrote it and can see its session. Other callers get 404 and the score is unchanged. [Scores API](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md)
 - **Viewer.** A session opened from a link or a reload, not only from the list, opens on its first failing step; a session with no failure opens on its first prompt instead of "Session starts". [Concepts](https://coding.sh/docs/concepts#session)
 - **Docs.** Below 1280px the "On this page" dropdown lists every subheading of every section, such as each function on the SDKs page. Only the wide rail keeps to the section being read. [SDKs](https://coding.sh/docs/sdk)
 - **Docs.** An API path in "On this page" wraps after a slash or a comma, so entries such as `GET /api/sessions/{id}/events` no longer split in the middle of a word. [REST API](https://coding.sh/docs/api/read)

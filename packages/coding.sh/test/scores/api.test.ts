@@ -7,6 +7,7 @@ import { createViewerHandler } from "../../src/viewer/server.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { sdkEventId } from "../../src/server/project.ts";
+import { defaultScoreId } from "../../src/scores/scores.ts";
 import { fixtureSession } from "../../src/store/conformance.ts";
 import type { IndexStore } from "../../src/core/types.ts";
 
@@ -204,6 +205,38 @@ for (const [kind, open] of [
       assert.equal(sdk.status, 201);
       assert.deepEqual([sdk.json().targetId, sdk.json().sessionId], [sdkEventId("demo", "c1"), "demo/s3"]);
       assert.equal((await post("/api/scores", { target: "event", targetId: "c1", sessionId: "s1", name: "correct", value: true })).status, 404, "c1 is not an event of the default project");
+    });
+
+    it("a stored score's id can be written again only by its author on a session they can see", async () => {
+      const stored = async () => (await get("/api/scores?sessionId=s1")).json().items.find((s: { id: string }) => s.id === "sc-1");
+      const before = await stored();
+      assert.equal(before.by, "alice");
+      // Another project's caller, aiming the id at a session it may see.
+      const other = await post("/api/scores", { id: "sc-1", sessionId: "demo/s3", name: "helpfulness", value: 0 }, { ...scoped, "x-by": "bob" });
+      // Its own author, through a key that cannot see the session.
+      const hidden = await post("/api/scores", { id: "sc-1", sessionId: "demo/s3", name: "helpfulness", value: 0 }, { ...scoped, "x-by": before.by });
+      assert.equal(hidden.status, 404);
+      // A caller who sees the session but did not write the score.
+      const notAuthor = await post("/api/scores", { id: "sc-1", sessionId: "s1", name: "helpfulness", value: 0 }, { "x-by": "carol" });
+      assert.equal(other.status, 404);
+      assert.equal(notAuthor.status, 404);
+      assert.equal(other.json().error, notAuthor.json().error, "one answer for every kind of miss");
+      assert.doesNotMatch(other.json().error, /s1|alice/);
+      assert.deepEqual(await stored(), before, "the stored score is unchanged");
+      // Its author may still replace it.
+      assert.equal((await post("/api/scores", { id: "sc-1", sessionId: "s1", name: "helpfulness", value: 5, source: "judge" })).status, 200);
+      assert.equal((await stored()).value, 5);
+    });
+
+    it("a given id cannot be another person's default score id", async () => {
+      const theirs = defaultScoreId({ target: "session", targetId: "s2", name: "nice", source: "api", by: "dave" });
+      const squat = await post("/api/scores", { id: theirs, sessionId: "s1", name: "ok", value: 1 }, { "x-by": "carol" });
+      assert.equal(squat.status, 400);
+      const own = await post("/api/scores", { sessionId: "s2", name: "nice", value: 1 }, { "x-by": "dave" });
+      assert.equal(own.status, 201);
+      assert.equal(own.json().id, theirs);
+      const again = await post("/api/scores", { id: theirs, sessionId: "s2", name: "nice", value: 2 }, { "x-by": "dave" });
+      assert.equal(again.status, 200, "its own default id may be given");
     });
   });
 }

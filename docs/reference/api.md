@@ -1443,6 +1443,10 @@ Body (JSON, up to 1 MB):
 - A stored score keeps its type: a value of another type is a 400 unless the body gives `dataType` or the name has a config.
 - An event id an SDK client sent to `/v1/ingest` works as `targetId` with its `sessionId` (serve stores such ids hashed with the project).
 - A project-scoped key may only score its project's sessions and their events.
+- An id that is already stored can be written again only by the caller who wrote it, on a session it can see. Any other caller gets 404.
+- The caller is the read key's name (`reader:<hash>` for an unnamed key), so a renamed or rotated key is a new caller.
+- A stored score with no session can be replaced only by a key not limited to one project.
+- A given `id` of 64 hex characters, the form of a default id, must be this score's own default id. Any other gets 400.
 
 ```sh
 curl -sS -X POST "$CSH/api/scores" \
