@@ -271,18 +271,26 @@ describe("150k events in SQLite", () => {
     assert.ok(restart < 100, `model from kv ${restart} ms`);
   });
 
-  test("rows: a page deep in the session in under 50 ms", async () => {
+  // The budget is this process's CPU time, not the clock: the viewer and the store run in this
+  // process, so its CPU time is the work a page costs, and a runner that stalls adds none. The
+  // clock's time is printed beside it.
+  test("rows: a page deep in the session costs under 50 ms of CPU", async () => {
     await timed("/api/sessions/long-1/outline");
     const times: number[] = [];
+    const cpu: number[] = [];
     for (const turn of [0, 500, 998, 997, 3, 750, 250]) {
+      const c0 = process.cpuUsage();
       const r = await timed(`/api/sessions/long-1/rows?turn=${turn}&limit=200`);
+      const c = process.cpuUsage(c0);
       assert.equal(r.status, 200);
       assert.ok(JSON.parse(r.body).rows.length > 0);
       times.push(r.ms);
+      cpu.push((c.user + c.system) / 1000);
     }
     times.sort((a, b) => a - b);
-    console.log(`# rows 150k: median ${times[3]!.toFixed(1)} ms, max ${times.at(-1)!.toFixed(1)} ms`);
-    assert.ok(times[3]! < 50, `rows median ${times[3]} ms`);
+    cpu.sort((a, b) => a - b);
+    console.log(`# rows 150k: median ${times[3]!.toFixed(1)} ms, max ${times.at(-1)!.toFixed(1)} ms; CPU median ${cpu[3]!.toFixed(1)} ms, max ${cpu.at(-1)!.toFixed(1)} ms`);
+    assert.ok(cpu[3]! < 50, `rows median ${cpu[3]} ms of CPU (${times[3]} ms on the clock)`);
   });
 });
 
