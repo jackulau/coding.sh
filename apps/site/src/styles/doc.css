@@ -162,6 +162,12 @@
 .doc-table .nowrap {
   white-space: nowrap;
 }
+/* A name in the first column (an env var, a flag, a field) stays one token
+   to copy; the table scrolls sideways instead. */
+.doc-table td:first-child code {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
 /* On touch, a cell that is one link is tappable across the whole cell. */
 @media (pointer: coarse) {
   .doc-table td.cell-link {
@@ -223,6 +229,11 @@
   }
   .doc-table--stack td:first-child {
     margin-bottom: 0.6rem;
+  }
+  /* A stacked card does not scroll, so its name may wrap again. */
+  .doc-table--stack td:first-child code {
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 }
 
