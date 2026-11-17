@@ -159,12 +159,13 @@ describe("exp run --weights from the CLI", () => {
     proj = join(env.root, "proj");
     mkdirSync(proj, { recursive: true });
     // MODEL=base finishes m1 and m2; edited finishes every case and misses m3; stuck finishes none.
-    // m2 exits 1 while ./broken exists, and m3 hangs while ./hang exists.
+    // m2 exits 1 while ./broken exists, and m3 hangs while ./hang exists. The hung task outlives a
+    // killed CLI (it runs in its own process group), so it exits by itself once ./hang is gone.
     writeFileSync(
       join(proj, "gen.mjs"),
       `import {existsSync} from "node:fs";let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const n=Number(JSON.parse(s).slice(1));const m=process.env.MODEL;
 if(n===2&&existsSync(${JSON.stringify(join(proj, "broken"))}))process.exit(1);
-if(n===3&&existsSync(${JSON.stringify(join(proj, "hang"))})){setInterval(()=>{},1000);return}
+if(n===3&&existsSync(${JSON.stringify(join(proj, "hang"))})){setInterval(()=>{if(!existsSync(${JSON.stringify(join(proj, "hang"))}))process.exit(1)},100);return}
 const done=m==="edited"||(m==="base"&&n<=2);const right=m==="edited"?n!==3:m==="base"&&n<=2;
 process.stdout.write(JSON.stringify({answer:right?"ok":"wrong",finish_reason:done?"stop":"length"}))});\n`,
     );
@@ -202,7 +203,11 @@ process.stdout.write(JSON.stringify({answer:right?"ok":"wrong",finish_reason:don
     const text = ok(["exp", "list"]).stdout;
     assert.match(text, /^ID\s+NAME\s+DATASET\s+RUNS\s+CREATED\s+WEIGHTS$/m);
     assert.match(text, new RegExp(`^exp_\\w+\\s+edited\\s.*\\s${short(EDITED)}$`, "m"));
-    assert.match(text, /^exp_\w+\s+plain\s.*\sago\s*$/m, "a run without a stamp has an empty cell");
+    // Read the row by its cells, not by its age: CREATED says "just now" in the run's first second
+    // and "2s ago" after it, and which one this is depends on how fast the machine is.
+    const plain = text.split("\n").map((line) => line.split("\t")).find((cells) => cells[1] === "plain");
+    assert.equal(plain?.length, 6, text);
+    assert.equal(plain?.[5], "", "a run without a stamp has an empty cell");
   });
 
   it("exp compare shows both stamps in the header: short in text, whole in --json", () => {

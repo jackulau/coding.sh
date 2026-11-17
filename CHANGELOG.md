@@ -41,6 +41,7 @@ grouped by area, with links to the docs for the details.
 - **Docs.** A name in a reference table's first column, such as `CODING_SH_INGEST_KEY`, stays on one line; the table scrolls sideways instead. [SDKs](https://coding.sh/docs/sdk)
 - **Docs.** On Quickstart and Install, a block that shows what a command prints is captioned "output" instead of "shell", so each step reads as the command to run and what to expect. [Quickstart](https://coding.sh/docs/quickstart)
 - **Docs.** On phones the "Copy page" and "View as Markdown" buttons above the title are as short as on a desktop, with the same 44px touch target, so the title sits higher on the first screen. [Quickstart](https://coding.sh/docs/quickstart)
+- **Viewer.** Esc or a link pressed within 80 ms of a step key (`j`, `k`, `n`) leaves the session. Before, the step's late update of the pane could put the session's URL back, and the page stayed on the session. [Explore sessions](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md)
 
 ## [0.1.7] - 2026-11-16
 

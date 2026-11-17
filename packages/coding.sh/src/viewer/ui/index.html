@@ -4619,8 +4619,11 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     stepItem = i;
     if (stepTimer) return;
     const wait = stepAt + 80 - performance.now();
-    if (wait <= 0) paintStep();
-    else stepTimer = setTimeout(paintStep, wait);
+    if (wait <= 0) return paintStep();
+    // Esc or a link may change the URL before the timer fires, and the timer can still run before
+    // the hash change is handled. The URL is then the next page's: the late paint leaves it alone.
+    const from = location.hash;
+    stepTimer = setTimeout(() => { if (location.hash === from) paintStep(); else stepTimer = 0; }, wait);
   }
   function cancelStep() { clearTimeout(stepTimer); stepTimer = 0; }
 
