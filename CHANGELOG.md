@@ -37,6 +37,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **OpenTelemetry.** `coding.sh collector` stores a Claude Code model call sent both as an `api_request` log record and, with `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA`, as a span, as one call with the reported cost and the span's TTFT. Before, it kept whichever copy came first, and a prompt logged before its trace read as a resume. [OpenTelemetry](https://coding.sh/docs/otel)
 - **OpenTelemetry.** When a batching exporter sends the span that names the conversation, such as the root `invoke_agent` with `gen_ai.conversation.id`, after the trace's other spans, those spans and their subagents move into the conversation. Before, they stayed in a session named after the trace id, and the conversation had no subagent. [OpenTelemetry](https://coding.sh/docs/otel)
 - **OpenTelemetry.** Spans of eve's own Workflow runtime, such as `workflow//eve//workflowEntry` and its steps, are dropped like the other `workflow` scope spans. Before, they added span rows to the eve session, stretched it to the last delivery, and added 0-turn sessions for session timeouts and workflow tool runs. [eve](https://github.com/jackulau/coding.sh/blob/main/docs/integrations/eve.md)
 - **Install.** On Windows, `install.sh` and `init` tell you to type `codingsh` in PowerShell and cmd, where `coding.sh` opens npm's sh script instead of running it. Run from Git Bash, `init` keeps `coding.sh`. The install guide says the same. [Install](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md)

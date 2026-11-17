@@ -374,6 +374,68 @@ describe("OTLP receiver over HTTP", () => {
     });
   });
 
+  // Regression: Claude Code sends a model call as an api_request log record (reported cost_usd) and,
+  // with CLAUDE_CODE_ENHANCED_TELEMETRY_BETA, as a claude_code.llm_request span (ttft_ms), under one
+  // id. The second copy inserted nothing, so the call lost the cost or the TTFT depending on which
+  // signal came first, and logs first put the prompt before session.start (a resume phase).
+  describe("Claude Code logs and spans of one model call", () => {
+    const T = "3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a";
+    const sid = "cc-both-1";
+    const c = sAttr("session.id", sid);
+    const traces = otlpTraces("claude-code", [
+      otlpSpan(
+        T,
+        "d000000000000002",
+        "d000000000000001",
+        "claude_code.llm_request",
+        [c, sAttr("prompt.id", "p1"), sAttr("span.type", "claude_code.llm_request"), sAttr("model", "claude-sonnet-4-5"), iAttr("duration_ms", 2000), iAttr("ttft_ms", 500), iAttr("input_tokens", 100), iAttr("output_tokens", 50), iAttr("cache_read_tokens", 4000), sAttr("request_id", "req_b1")],
+        100,
+        2100,
+      ),
+      otlpSpan(T, "d000000000000001", undefined, "claude_code.interaction", [c, sAttr("span.type", "claude_code.interaction"), sAttr("prompt.id", "p1"), sAttr("user_prompt", "hello there")], 0, 6000),
+    ]);
+    const at = (ms: number) => String((1767225600000n + BigInt(ms)) * 1_000_000n);
+    const log = (ms: number, name: string, attrs: ReturnType<typeof sAttr>[]) => ({
+      timeUnixNano: at(ms),
+      body: { stringValue: `claude_code.${name}` },
+      attributes: [c, sAttr("event.name", name), sAttr("prompt.id", "p1"), ...attrs],
+    });
+    const records = [
+      log(0, "user_prompt", [sAttr("prompt", "hello there")]),
+      log(2100, "api_request", [
+        sAttr("model", "claude-sonnet-4-5"),
+        { key: "cost_usd", value: { doubleValue: 0.0123 } },
+        iAttr("duration_ms", 2000),
+        iAttr("input_tokens", 100),
+        iAttr("output_tokens", 50),
+        iAttr("cache_read_tokens", 4000),
+        sAttr("request_id", "req_b1"),
+      ]),
+    ];
+    const logs = { resourceLogs: [{ resource: { attributes: [sAttr("service.name", "claude-code")] }, scopeLogs: [{ scope: { name: "com.anthropic.claude_code.events" }, logRecords: records }] }] };
+
+    for (const order of ["traces first", "logs first"]) {
+      it(`keeps the reported cost and the span's TTFT in one call, ${order}`, async () => {
+        const posts = [() => send(rx.url, json("/v1/traces", traces)), () => send(rx.url, json("/v1/logs", logs))];
+        if (order === "logs first") posts.reverse();
+        for (const p of posts) assert.equal((await p()).status, 200);
+        const s = await store.getSession(sid);
+        assert.equal(s?.stats.latency?.llmCalls, 1, "counted once");
+        assert.equal(s?.stats.usage?.costUsd, 0.0123, "the reported cost, not an estimate");
+        assert.equal(s?.stats.usage?.estimatedCostUsd, undefined);
+        assert.equal(s?.stats.latency?.ttftP50Ms, 500);
+        const events = await store.listEvents(sid);
+        const calls = events.filter((e) => e.kind === "llm.call");
+        assert.equal(calls.length, 1);
+        assert.equal(calls[0]?.payload.costEstimated, undefined);
+        assert.equal(calls[0]?.payload.ttftMs, 500);
+        assert.equal(calls[0]?.durationMs, 2000);
+        assert.equal(s?.stats.phases, undefined, "one prompt is one phase, not a resume");
+        assert.deepEqual(events.slice(0, 2).map((e) => e.kind), ["session.start", "user.message"]);
+      });
+    }
+  });
+
   it("runs the enrichSpan hook on every span", async () => {
     await rx.close();
     const names: string[] = [];

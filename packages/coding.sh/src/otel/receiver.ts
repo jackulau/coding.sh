@@ -117,7 +117,7 @@
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { promisify } from "node:util";
+import { isDeepStrictEqual, promisify } from "node:util";
 import * as zlib from "node:zlib";
 import type { AgentEvent, Session } from "../schema/index.ts";
 import type { BlobStore, IndexStore } from "../core/types.ts";
@@ -127,7 +127,7 @@ import { decodeLogsJson, decodeTraceJson, parseJson, validateMetricsJson } from 
 import { applyPricing, pricesFor, type Prices } from "../core/pricing.ts";
 import { enrichFromEve } from "../integrations/eve/map.ts";
 import { enrichGatewaySpan } from "../integrations/gateway/otel.ts";
-import { type MapContext, type MapResult, type Rehome, mapLogs, mapTraces, rehomeTarget, type SpanEnricher, SpanTree, TraceSessionMap, traceKvKey } from "./map.ts";
+import { LOG_SOURCE, type MapContext, type MapResult, mergeCallCopies, type Rehome, mapLogs, mapTraces, rehomeTarget, type SpanEnricher, SpanTree, TraceSessionMap, traceKvKey } from "./map.ts";
 import { OtlpDecodeError, type ResourceLogs, type ResourceSpans } from "./model.ts";
 import { decodeLogsRequest, decodeTraceRequest, encodeExportResponse, encodeStatus, validateMessage } from "./proto.ts";
 
@@ -443,6 +443,48 @@ async function rehomeStored(store: IndexStore, tree: SpanTree, rehome: Rehome[])
   }
 }
 
+/**
+ * Claude Code sends one model call (and the prompt) both as a log record and, with
+ * CLAUDE_CODE_ENHANCED_TELEMETRY_BETA, as a span, under one event id, so the second copy
+ * inserts nothing. Call after the put, with the ids it inserted: a model call's stored copy
+ * takes the fields of the copy that did not insert (mergeCallCopies). A prompt stored from the
+ * log record before its trace's session.start, at the same time, is stored again after it, so
+ * one prompt does not read as a resume. Needs replaceSessionEvents.
+ */
+export async function mergeAgentCopies(store: IndexStore, events: AgentEvent[], inserted: Set<string>): Promise<void> {
+  if (!store.replaceSessionEvents) return;
+  const startOf = (u: AgentEvent) =>
+    events.find((s) => s.kind === "session.start" && s.sessionId === u.sessionId && s.traceId === u.traceId && !s.subagentId && inserted.has(s.id));
+  const dups = events.filter(
+    (e) =>
+      e.agent === "claude-code" &&
+      !inserted.has(e.id) &&
+      ((e.kind === "llm.call" && typeof e.payload.requestId === "string") || (e.kind === "user.message" && e.traceId !== undefined && startOf(e) !== undefined)),
+  );
+  const bySession = new Map<string, AgentEvent[]>();
+  for (const d of dups) (bySession.get(d.sessionId) ?? bySession.set(d.sessionId, []).get(d.sessionId)!).push(d);
+  for (const [sessionId, copies] of bySession) {
+    const stored = new Map((await store.listEvents(sessionId, { kinds: ["llm.call", "user.message"] })).map((e) => [e.id, e]));
+    const remove: string[] = [];
+    const add: AgentEvent[] = [];
+    for (const d of copies) {
+      const s = stored.get(d.id);
+      if (!s || remove.includes(d.id)) continue;
+      if (d.kind === "llm.call") {
+        const merged = mergeCallCopies(s, d);
+        if (isDeepStrictEqual(merged, s)) continue;
+        remove.push(d.id);
+        add.push(merged);
+      } else if (s.ts >= startOf(d)!.ts && s.source === LOG_SOURCE) {
+        // Re-stored, it sorts after the session.start; it keeps the log's fields and gains the span's place in the trace.
+        remove.push(d.id);
+        add.push({ ...d, ...s, traceId: d.traceId!, ...(d.spanId ? { spanId: d.spanId } : {}) });
+      }
+    }
+    if (remove.length) await store.replaceSessionEvents(sessionId, remove, add);
+  }
+}
+
 /** Spans or log records in a decoded request (serve's admission cost). */
 export function countOtlpItems(signal: Signal, decoded: ResourceSpans[] | ResourceLogs[] | undefined): number {
   let n = 0;
@@ -749,6 +791,7 @@ export async function startReceiver(opts: ReceiverOptions): Promise<Receiver> {
       // where the store has them), and each request still counts its own inserts.
       const write = async () => {
         for (const d of done) puts.push(await insertedEvents.put(opts.store, d.events));
+        for (const [i, d] of done.entries()) await mergeAgentCopies(opts.store, d.events, puts[i]!.ids);
         await pipeline.rehome(rehome);
         // A session with no row yet whose events were all new (and stayed where they were) is
         // built from the events in hand, without reading them back from the store.
