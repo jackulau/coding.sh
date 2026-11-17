@@ -3401,19 +3401,31 @@ function sessionList(view) {
     const failedReqs = failedRequestsBadge(s);
     const cost = usageCost(st.usage, s.model);
     // Nested rows already sit under their parent; in the flat "all" scope the
-    // parent's subagents are separate rows, so the count is only a label.
+    // parent's subagents are separate rows, so the count is only a label. The toggle sits
+    // inside the row's link, so its click must not follow the link.
     const toggle = kids
       ? topLevelOnly()
         ? h("button", {
           class: "sub-toggle", type: "button", tabindex: "-1", "aria-expanded": String(expanded),
           "aria-label": (expanded ? "Hide " : "Show ") + plural(kids, "subagent"),
-          onclick: (e) => { e.stopPropagation(); list.active = i; toggleSubagents(view, s.id); },
+          onclick: (e) => { e.preventDefault(); e.stopPropagation(); list.active = i; toggleSubagents(view, s.id); },
         }, h("span", { class: "caret", "aria-hidden": "true" }, "▸"), plural(kids, "subagent"))
         : h("span", { class: "badge" }, plural(kids, "subagent"))
       : null;
-    const row = h("div", {
+    // A real link, so middle click, Ctrl or Cmd click and "Open in new tab" work. It takes no Tab
+    // stop: the listbox keeps focus and moves through rows with aria-activedescendant.
+    const row = h("a", {
       class: "row" + (depth ? " child" : ""), role: "option", id: "opt-" + i, "aria-selected": String(i === list.active), "data-sid": s.id,
-      onclick: () => { list.active = i; fromList = s.id; location.hash = sessionHref(s.id); },
+      href: sessionHref(s.id), tabindex: "-1",
+      // A middle click fires auxclick, not click. The browser opens the link elsewhere; this page keeps the list and selects the row.
+      onauxclick: (e) => { if (e.button === 1) { list.active = i; syncActive(lb); } },
+      onclick: (e) => {
+        list.active = i;
+        if (e.button || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) { syncActive(lb); return; }
+        e.preventDefault();
+        fromList = s.id;
+        location.hash = sessionHref(s.id);
+      },
     },
       h("span", { class: "dot " + (tone ? "tone-" + tone : actErr || failedReqs ? "tone-fail ring" : "tone-muted"), "aria-hidden": "true", title: tone === "fail" ? "Tests failing" : tone === "pass" ? "Tests passing" : undefined }),
       h("div", { class: "row-main" },
@@ -3436,6 +3448,8 @@ function sessionList(view) {
   lb.addEventListener("pointermove", (e) => { if (e.pointerType !== "touch") sessionIntent.move(rowSid(e), e.clientX, e.clientY); });
   lb.addEventListener("pointerleave", () => sessionIntent.leave());
   lb.addEventListener("pointerdown", (e) => { const id = rowSid(e); if (id) sessionIntent.press(id); });
+  // A press on a row link would focus the link; the listbox keeps focus, so j and k go on from there.
+  lb.addEventListener("focusin", (e) => { if (e.target !== lb && e.target.matches("[role=option]")) lb.focus({ preventScroll: true }); });
   lb.addEventListener("keydown", (e) => {
     if ((e.key === "Enter" || e.key === " ") && !ownKey(e)) {
       e.preventDefault();

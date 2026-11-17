@@ -330,6 +330,37 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     assert.deepEqual(p.errors, []);
   });
 
+  test("session rows are real links: a modified or middle click leaves the list in place, a plain click opens the session", async () => {
+    const p = await open("#/");
+    const row = (id: string) => `document.querySelector('[role=option][data-sid="${id}"]')`;
+    await p.waitFor(row(TURNS), "the session list");
+    assert.equal(await p.eval(`${row(TURNS)}.tagName`), "A");
+    assert.equal(await p.eval(`${row(TURNS)}.getAttribute('href')`), "#/s/" + TURNS);
+    // The listbox keeps the only Tab stop; rows are reached with j and k.
+    assert.equal(await p.eval("[...document.querySelectorAll('[role=listbox] [role=option]')].every((r) => r.tabIndex === -1)"), true);
+    const at: { x: number; y: number } = await p.eval(`(() => { const r = ${row(TURNS)}.querySelector('.row-title').getBoundingClientRect(); return { x: r.left + 4, y: r.top + r.height / 2 }; })()`);
+    const click = async (button: string, modifiers = 0) => {
+      const buttons = button === "middle" ? 4 : 1;
+      await p.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: at.x, y: at.y });
+      await p.send("Input.dispatchMouseEvent", { type: "mousePressed", x: at.x, y: at.y, button, buttons, clickCount: 1, modifiers });
+      await p.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: at.x, y: at.y, button, buttons: 0, clickCount: 1, modifiers });
+    };
+    let clicks = 0;
+    await p.eval(`${row(TURNS)}.addEventListener('click', () => { window.__rowClicks = (window.__rowClicks || 0) + 1; })`);
+    await click("left", 2); // Ctrl
+    clicks++;
+    // Cmd click opens a tab on macOS only; elsewhere the browser treats Meta click as a plain click.
+    if (process.platform === "darwin") { await click("left", 4); clicks++; }
+    await click("middle");
+    await p.waitFor(`window.__rowClicks === ${clicks}`, "the modified clicks reached the row");
+    assert.equal(await p.eval("location.hash"), "#/", "a modified or middle click does not navigate in place");
+    assert.equal(await p.eval(`${row(TURNS)}.getAttribute('aria-selected')`), "true", "the clicked row is selected");
+    assert.equal(await p.eval("document.activeElement.getAttribute('role')"), "listbox", "focus stays on the listbox");
+    await click("left");
+    await p.waitFor(`location.hash === '#/s/${TURNS}' && document.querySelector('#steps .st')`, "a plain click opens the session");
+    assert.deepEqual(p.errors, []);
+  });
+
   test("Chat shows every prompt and reply in full; a turn's step line goes back to Steps there; the view is linked and remembered", async () => {
     let p = await open("#/s/" + CHAT);
     const selected = "document.querySelector('#steps .st[aria-selected=true]')";
