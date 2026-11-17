@@ -138,9 +138,36 @@ export interface Page {
   close(): Promise<void>;
 }
 
+/** What Browser.close did, step by step, so a slow close names the step that took the time. */
+export interface CloseSteps {
+  /** The whole close. */
+  ms: number;
+  /** Browser.close until Chrome answered or dropped the socket. */
+  askMs: number;
+  /** The wait for chrome to exit after that; 3 s at most. */
+  exitMs: number;
+  /** Chrome was still running after the wait and was killed. */
+  killed: boolean;
+  /** Removing the profile directory, retries included. */
+  profileMs: number;
+  /** The profile directory could not be removed and was left behind. */
+  profileLeft: boolean;
+}
+
+/** A close slower than this prints its steps to the test output. */
+const SLOW_CLOSE_MS = 2000;
+
+export function describeClose(s: CloseSteps): string {
+  return (
+    `${Math.round(s.ms)} ms: Browser.close ${Math.round(s.askMs)} ms, ` +
+    `exit ${Math.round(s.exitMs)} ms${s.killed ? " (killed after the wait)" : ""}, ` +
+    `profile removal ${Math.round(s.profileMs)} ms${s.profileLeft ? " (left behind)" : ""}`
+  );
+}
+
 export interface Browser {
   newPage(): Promise<Page>;
-  close(): Promise<void>;
+  close(): Promise<CloseSteps>;
 }
 
 /** What a page load had done when its time ran out. */
@@ -297,27 +324,37 @@ export async function launchBrowser(chrome: string): Promise<Browser> {
       return page;
     },
     async close() {
+      const t0 = performance.now();
       await cdp.send("Browser.close").catch(() => {});
       cdp.close();
-      await new Promise<void>((resolve) => {
-        if (child.exitCode !== null) return resolve();
+      const t1 = performance.now();
+      const killed = await new Promise<boolean>((resolve) => {
+        if (child.exitCode !== null) return resolve(false);
         const t = setTimeout(() => {
           child.kill("SIGKILL");
-          resolve();
+          resolve(true);
         }, 3000);
         child.once("exit", () => {
           clearTimeout(t);
-          resolve();
+          resolve(false);
         });
       });
+      const t2 = performance.now();
       // On Windows, Chrome's helper processes can outlive chrome.exe and keep its stderr pipe
       // open. Let go of the pipe and the child, or this test file's process never exits.
       child.stderr?.destroy();
       child.unref();
       // On Windows, Chrome's helpers can hold the profile for a moment after it exits.
+      let profileLeft = false;
       try {
         rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-      } catch {}
+      } catch {
+        profileLeft = true;
+      }
+      const t3 = performance.now();
+      const steps: CloseSteps = { ms: t3 - t0, askMs: t1 - t0, exitMs: t2 - t1, killed, profileMs: t3 - t2, profileLeft };
+      if (steps.ms > SLOW_CLOSE_MS) console.log(`# slow Chrome close, ${describeClose(steps)}`);
+      return steps;
     },
   };
 }
