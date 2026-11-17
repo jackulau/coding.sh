@@ -82,6 +82,25 @@ describe("CLI shim", () => {
     assert.equal(r.stdout, "5\n");
   });
 
+  it("runs and records under a bin name with a dot extension node does not load (coding.sh)", async () => {
+    const d = tmp();
+    const bin = join(d, "bin");
+    const tapLog = join(d, "tap.jsonl");
+    writeFileSync(tapLog, "");
+    await writeCliShim(bin, "fake.sh", { command: [process.execPath, FAKE], env: {}, tapLog, ...cfg });
+    // Through PATH in a POSIX shell, as an agent calls it.
+    const r = spawnSync(posixShell()!, ["-c", "fake.sh greet --name ada"], { env: { ...process.env, PATH: pathOf(bin, process.env.PATH) }, cwd: d });
+    assert.equal(r.status, 0, `stderr: ${r.stderr}`);
+    assert.equal(r.stdout, "hello ada\n");
+    // And spawned by path, as reference and check commands are.
+    const r2 = spawnSync(join(bin, "fake.sh"), ["sum", "2", "3"]);
+    assert.equal(r2.status, 0, `stderr: ${r2.stderr}`);
+    assert.equal(r2.stdout, "5\n");
+    const tap = readTap(tapLog);
+    assert.deepEqual(tap.map((t) => t.class), ["ok", "ok"]);
+    assert.deepEqual(tap[0]!.argv, ["greet", "--name", "ada"]);
+  });
+
   it("resolves a bare command on PATH without re-entering itself", async () => {
     const d = tmp();
     const real = join(d, "real");

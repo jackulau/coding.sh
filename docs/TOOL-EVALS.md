@@ -321,7 +321,7 @@ real shell.
 ~/.coding.sh/toolevals/<experimentId>/<trialId>/
   work/        agent cwd (setup files, fixtures)
   home/        HOME/config dir for the agent when its overlay supports isolation
-  bin/<bin>    CLI shim
+  bin/<bin>    CLI shim: a sh launcher for the .<bin>.tap.mjs module beside it
   tap.jsonl    one TapRecord per target call
   hidden/      answers.json and hidden check files (never under work/)
 ```
