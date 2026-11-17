@@ -124,8 +124,8 @@ test("scripts/test-ci.mjs loads the selection only when TEST_SELECT is set, and 
   assert.ok(runner.includes("  files = listed = shardFiles(picked.files, readDurations(), i, n);\n"));
   // An empty shard passes only when the run was narrowed.
   assert.ok(runner.includes("  if (files.length === 0 && !narrowed) throw new Error(`shard ${shard} of every test file is empty`);\n  if (files.length === 0) process.exit(0);\n"));
-  // A narrowed run writes no run times and removes a file that is there.
-  assert.ok(runner.includes("if (durationsOut && narrowed) rmSync(durationsOut, { force: true });\nelse if (durationsOut) args.push("));
+  // A narrowed run writes no run times, removes a file that is there, and keeps the path from its tests.
+  assert.ok(runner.includes("if (narrowed) delete process.env.TEST_DURATIONS_OUT;\nif (durationsOut && narrowed) rmSync(durationsOut, { force: true });\nelse if (durationsOut) args.push("));
   // The selection reads the event itself as well: a second lock behind the workflow's.
   const select = readFileSync(join(ROOT, "packages/coding.sh/scripts/test-select.ts"), "utf8");
   assert.ok(select.includes('if (env.GITHUB_EVENT_NAME !== "pull_request") return everything('));

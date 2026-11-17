@@ -346,6 +346,16 @@ describe("scripts/test-ci.mjs with TEST_SELECT", () => {
     assert.equal(r.durations, false, "a narrowed run leaves no run times to upload, not even stale ones");
   });
 
+  it("a selected test cannot write the run times of the leg", () => {
+    // test/scripts/test-ci.test.ts starts a runner of its own, with the environment it was given.
+    const writes = `import { writeFileSync } from "node:fs"; import { it } from "node:test"; it("writes", () => { if (process.env.TEST_DURATIONS_OUT) writeFileSync(process.env.TEST_DURATIONS_OUT, "{}"); });`;
+    const { root } = repo({ "pkg/test/plain.test.ts": writes });
+    const r = leg(root, actions(root, "pull_request", []), "1/1");
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /a changed test file, and the test files that import it: 2 test files, for pkg\/test\/plain\.test\.ts/);
+    assert.equal(r.durations, false);
+  });
+
   it("fails when a selected test fails: the break in a changed test file is run", () => {
     const { root } = repo({ "pkg/test/plain.test.ts": BROKEN });
     const r = leg(root, actions(root, "pull_request", []), "1/1");

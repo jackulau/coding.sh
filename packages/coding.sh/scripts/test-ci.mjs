@@ -74,6 +74,9 @@ args.push(
   `--test-reporter=${new URL("./failed-files.mjs", import.meta.url).href}`, `--test-reporter-destination=${failedPath}`,
   `--test-reporter=${new URL("./report-complete.mjs", import.meta.url).href}`, `--test-reporter-destination=${reportPath}`,
 );
+// A narrowed run writes no run times, and no test of it may: a test that starts a runner of its
+// own (test/scripts/test-ci.test.ts) would hand it the variable.
+if (narrowed) delete process.env.TEST_DURATIONS_OUT;
 if (durationsOut && narrowed) rmSync(durationsOut, { force: true });
 else if (durationsOut) args.push(`--test-reporter=${new URL("./test-durations.mjs", import.meta.url).href}`, `--test-reporter-destination=${durationsOut}`);
 const first = node([...args, ...files]);
