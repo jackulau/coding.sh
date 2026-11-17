@@ -179,3 +179,21 @@ test("every file that names the Node floor names the same one", () => {
   }
   for (const p of ["install.sh", "action.yml", "AGENTS.md", "CONTRIBUTING.md", "scripts/release/smoke.sh"]) assert.ok(!read(p).includes("22.15"), `${p} still says 22.15`);
 });
+
+test("ci.yml installs only what the tests need on the test legs, and everything in the build job", () => {
+  const job = (name) => new RegExp(`\\n  ${name}:\\n([\\s\\S]*?)(?=\\n  [a-z][a-z-]*:\\n|$)`).exec(ci)?.[1] ?? "";
+  const installs = (body) => [...body.matchAll(/\n +(?:run: |)(npm ci[^\n]*)\n/g)].map((m) => m[1]);
+  // The CLI package's tests import nothing from the site or the SDK (zero-deps.test.ts pins the
+  // package itself), so the legs install that one workspace.
+  const sdkLeg = "(matrix.node == '22.x' && matrix.shard == 1)";
+  assert.deepEqual(installs(job("test")), [`npm ci --workspace packages/coding.sh \${{ ${sdkLeg} && '--workspace packages/sdk' || '' }}`]);
+  assert.deepEqual(installs(job("windows")), ["npm ci --workspace packages/coding.sh"]);
+  // The leg that checks the SDK is the leg that installs the SDK's dependencies.
+  assert.match(job("test"), /\n      - name: SDK typecheck and test on Node 22\n        if: matrix\.node == '22\.x' && matrix\.shard == 1\n        working-directory: packages\/sdk\n/);
+  assert.doesNotMatch(job("windows"), /packages\/sdk/);
+  // A whole-workspace install still runs in every pull request: it is what reads the lockfile
+  // for every package and what the site and the SDK are built from.
+  assert.deepEqual(installs(job("build")), ["npm ci"]);
+  // The npm cache is keyed and saved as before.
+  for (const name of ["test", "windows"]) assert.match(job(name), /\n          cache: npm\n/, `${name} keeps the npm cache`);
+});
