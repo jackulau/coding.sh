@@ -701,6 +701,12 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .st.fold .lbl { gap: 0.45rem; }
 .st.fold .caret { display: inline-block; width: 10px; color: var(--text-faint); }
 .st.fold .arg { font-family: var(--font-mono); font-size: 11.5px; }
+/* A folded turn: its prompt, then what it did. The caret on an open turn's row points down and folds it. */
+.st.turn.fold .arg { flex: 0 1 auto; max-width: 45%; font-family: var(--font-sans); font-size: 13px; color: var(--text); }
+.st.turn.fold .sum { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted); }
+.st.turn.fold .sum .err { color: var(--fail-ink); }
+.st.turn .caret { flex: none; display: inline-block; width: 10px; color: var(--text-faint); }
+.st.turn .caret.open { transform: rotate(90deg); cursor: pointer; }
 .st.is-match .lbl::after { content: ""; position: absolute; inset: 4px auto 4px 3.4rem; }
 .st.is-match .name, .st.is-match .arg { color: var(--warn-ink); }
 .st.is-match { background: color-mix(in srgb, var(--warn-wash) 60%, transparent); }
@@ -1420,6 +1426,7 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
   .row[aria-selected="true"]:hover { background: var(--select); }
   .st:hover:not([aria-selected="true"]) { background: var(--hover); }
   .st.fold:hover { color: var(--text); }
+  .st.turn .caret.open:hover { color: var(--text); }
   .back:hover { color: var(--text); transition-duration: var(--dur-hover-in); }
   .copy-id:hover { color: var(--text); }
   .sub-toggle:hover { background: var(--hover); color: var(--text); transition-duration: var(--dur-hover-in); }
@@ -2110,7 +2117,8 @@ const KEYMAP = [
   { scope: "session", id: "find", keys: ["/"], label: "Find in steps", hint: true },
   { scope: "session", id: "next-match", keys: ["n"], label: "Next match (find, or the query you came from)" },
   { scope: "session", id: "prev-match", keys: ["N"], label: "Previous match" },
-  { scope: "session", id: "open-fold", keys: ["Enter"], alt: ["ArrowRight"], label: "Expand folded steps" },
+  { scope: "session", id: "open-fold", keys: ["Enter"], alt: ["ArrowRight"], label: "Expand folded steps or turn (Enter on a turn folds it)" },
+  { scope: "session", id: "fold-turn", keys: ["←"], alt: ["ArrowLeft"], label: "Fold the turn" },
   { scope: "session", id: "folds", keys: ["z"], label: "Expand or fold quiet steps", hint: true },
   { scope: "session", id: "waterfall", keys: ["w"], label: "Show or hide timing bars", hint: true },
   { scope: "session", id: "raw", keys: ["r"], label: "Raw event JSON", hint: true },
@@ -3722,6 +3730,10 @@ const rowHeight = () => (PHONE.matches ? 44 : 30);
 let ROW = rowHeight();
 const OVERSCAN = 40;
 const FOLD_MIN = 6;
+// Tool kinds a folded turn counts in words (edits are EDIT_TOOLS).
+const READ_TOOL = /^(Read|read|read_file|view|View|NotebookRead)$/;
+const SHELL_TOOL = /^(Bash|bash|shell|exec_command|local_shell|run_shell_command)$/;
+const SEARCH_TOOL = /^(Grep|Glob|LS|grep|glob|ls|list_directory|search_files|grep_search|file_search|codebase_search|search|find|WebSearch|WebFetch|web_search|web_fetch)$/;
 
 // Paths inside the session's repo (or cwd) read better relative to it:
 // "src/store/sqlite.ts", not the absolute checkout path.
@@ -4084,7 +4096,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     childByEvent: new Map(kids.filter((c) => c.parent && c.parent.eventId).map((c) => [c.parent.eventId, c])),
     backToSteps: () => { tl.focus({ preventScroll: true }); timeline.scrollIntoView({ block: "start", behavior: smoothScroll() }); },
     raw: false,
-    openFold: (key) => { openFolds.add(key); rebuildRows(); },
+    openFold: (key) => { openFold(key); rebuildRows(); },
   };
 
   // ---- model: items (every step), rows (what the list shows after folding and find)
@@ -4125,6 +4137,9 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
       void turnStart;
     }
     for (const m of meta) { const t = turns[m.turn]; m.t0 = t.start; m.span = Math.max(1, t.end - t.start); }
+    // Each turn's steps (from, to), failures and length, for its folded row.
+    turnInfo = turns.map((t, k) => ({ from: t.index, to: k + 1 < turns.length ? turns[k + 1].index : items.length, dur: t.end - t.start, fails: 0, prompt: items[t.index].type === "user.message" }));
+    for (const m of meta) if (m.fail) turnInfo[m.turn].fails++;
     failIdx = [];
     turnIdx = [];
     for (let i = 0; i < meta.length; i++) { if (meta[i].fail) failIdx.push(i); if (meta[i].isTurn) turnIdx.push(i); }
@@ -4169,7 +4184,16 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   let queryIds = [];
   let queryIdx = [];
   let turnCount = 0;
+  let turnInfo = [];
   const openFolds = new Set();
+  // Turns folded by hand (Enter on a turn's row, or ←), including ones that would start open.
+  const closedTurns = new Set();
+  const turnKey = (k) => "turn:" + items[turnInfo[k].from].id;
+  // A finished turn (any but the last) with a prompt can fold; z and find show every step.
+  const turnFoldable = (k) => !foldsOff && !findQ && turnInfo[k].prompt && k < turnInfo.length - 1;
+  // In a session of more than three turns, finished turns start folded, unless one holds a failure.
+  const turnFolded = (k) => turnFoldable(k) && (closedTurns.has(turnKey(k)) || (turnIdx.length > 3 && !turnInfo[k].fails && !openFolds.has(turnKey(k))));
+  function openFold(key) { openFolds.add(key); closedTurns.delete(key); }
   let foldsOff = !prefs.get("fold", true);
   let findQ = "";
   let matchOnly = false;
@@ -4194,6 +4218,8 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
       // calls inside one turn keeps its first two and last step; the middle folds.
       let i = 0;
       while (i < items.length) {
+        const t = turnInfo[meta[i].turn];
+        if (i === t.from && turnFolded(meta[i].turn)) { out.push({ key: turnKey(meta[i].turn), from: i, to: t.to, turn: meta[i].turn }); i = t.to; continue; }
         if (!meta[i].quiet) { out.push(i); i++; continue; }
         let j = i;
         while (j < items.length && meta[j].quiet && meta[j].turn === meta[i].turn) j++;
@@ -4296,9 +4322,49 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   // ---- virtual list
   let rendered = new Map();
   let winFrom = -1, winTo = -1;
+  // What a turn did, in words drawn from its steps: "read 6 files, 2 edits +40 −12, 3 commands".
+  function turnWords(from, to) {
+    const files = new Set();
+    let tools = 0, edits = 0, adds = 0, dels = 0, cmds = 0, searches = 0, other = 0, changes = 0;
+    for (let k = from; k < to; k++) {
+      const it = items[k], m = meta[k];
+      // Line counts come from the recorded file changes; an edit tool's own row has none.
+      if (it.type === "file.change") { changes++; adds += m.v.adds || 0; dels += m.v.dels || 0; continue; }
+      if (it.type !== "tool") continue;
+      tools++;
+      const inp = ((it.start || {}).payload || {}).input || {};
+      if (READ_TOOL.test(m.tool)) files.add(String(inp.file_path || inp.path || inp.notebook_path || "#" + k));
+      else if (EDIT_TOOLS.has(m.tool)) edits++;
+      else if (SHELL_TOOL.test(m.tool)) cmds++;
+      else if (SEARCH_TOOL.test(m.tool)) searches++;
+      else other++;
+    }
+    if (!edits) edits = changes;
+    const parts = [
+      files.size ? "read " + plural(files.size, "file") : "",
+      edits ? plural(edits, "edit") + (adds || dels ? " +" + adds + " −" + dels : "") : "",
+      cmds ? plural(cmds, "command") : "",
+      searches ? plural(searches, "search", "searches") : "",
+      other ? plural(other, "other tool") : "",
+    ].filter(Boolean);
+    return { tools, words: parts.join(", ") || "no tool calls" };
+  }
+  function turnRowEl(r, x) {
+    const it = items[x.from], t = turnInfo[x.turn], w = turnWords(x.from, x.to);
+    const el = h("div", { class: "st turn fold" + (x.from === 0 ? " first" : "") + (t.fails ? " is-fail" : ""), role: "option", id: "st-" + r, "aria-selected": String(r === activeRow), "aria-expanded": "false", "aria-setsize": String(rows.length), "aria-posinset": String(r + 1),
+      onclick: () => { activeItem = x.from; ctx.openFold(x.key); selectRow(rowOf[x.from]); } },
+      h("span", { class: "t", title: new Date(it.ts).toLocaleTimeString() }, "Turn " + meta[x.from].prompt),
+      // Length, tool calls and errors first, so a narrow row cuts the words, not the counts.
+      h("span", { class: "lbl" }, h("span", { class: "caret", "aria-hidden": "true" }, "▸"), h("span", { class: "dot tone-" + meta[x.from].v.tone, "aria-hidden": "true" }), h("span", { class: "arg" }, promptLine(it) || "Prompt"),
+        h("span", { class: "sum" }, (t.dur > 0 ? fmtDuration(t.dur) + " · " : "") + plural(w.tools, "tool call") + " · ", t.fails ? [h("span", { class: "err" }, plural(t.fails, "error")), " · "] : null, w.words)),
+      h("span", { class: "d" }, h("time", { datetime: new Date(it.ts).toISOString() }, fmtClock(it.ts - session.startedAt))), h("span", { class: "wf" }));
+    el.style.transform = "translateY(" + r * ROW + "px)";
+    return el;
+  }
   function rowEl(r) {
     const x = rows[r];
     const top = r * ROW;
+    if (typeof x !== "number" && x.turn !== undefined) return turnRowEl(r, x);
     if (typeof x !== "number") {
       const counts = new Map();
       for (let k = x.from; k < x.to; k++) { const n = meta[k].v.name; counts.set(n, (counts.get(n) || 0) + 1); }
@@ -4330,10 +4396,13 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
       bar.style.width = Math.max(0.6, Math.min(100 - left, ((v.dur || 0) / m.span) * 100)) + "%";
       wf.append(bar);
     }
-    const el = h("div", { class: cls, role: "option", id: "st-" + r, "aria-selected": String(r === activeRow), "aria-setsize": String(rows.length), "aria-posinset": String(r + 1),
+    const canFold = m.isTurn && turnFoldable(m.turn);
+    // An open turn that can fold: its caret folds it (so do Enter on the row and ←).
+    const caret = m.isTurn ? h("span", { class: "caret open", "aria-hidden": "true", title: canFold ? "Fold this turn" : null, onclick: canFold ? (e) => { e.stopPropagation(); foldTurn(m.turn); } : null }, canFold ? "▸" : "") : null;
+    const el = h("div", { class: cls, role: "option", id: "st-" + r, "aria-selected": String(r === activeRow), "aria-expanded": canFold ? "true" : null, "aria-setsize": String(rows.length), "aria-posinset": String(r + 1),
       onclick: () => selectRow(r, true) },
       h("span", { class: "t", title: new Date(it.ts).toLocaleTimeString() }, m.isTurn ? "Turn " + m.prompt : fmtClock(it.ts - session.startedAt)),
-      h("span", { class: "lbl" }, chip, h("span", { class: "dot tone-" + v.tone, "aria-hidden": "true" }), m.isTurn ? null : h("span", { class: "name" }, v.name), m.isTurn ? h("span", { class: "arg" }, promptLine(it) || "Prompt") : argNode(v.arg), v.cost ? h("span", { class: "cost", title: v.cost.title }, v.cost.text) : null, flag),
+      h("span", { class: "lbl" }, chip, caret, h("span", { class: "dot tone-" + v.tone, "aria-hidden": "true" }), m.isTurn ? null : h("span", { class: "name" }, v.name), m.isTurn ? h("span", { class: "arg" }, promptLine(it) || "Prompt") : argNode(v.arg), v.cost ? h("span", { class: "cost", title: v.cost.title }, v.cost.text) : null, flag),
       h("span", { class: "d" }, m.isTurn ? h("time", { datetime: new Date(it.ts).toISOString() }, fmtClock(it.ts - session.startedAt)) : v.adds !== undefined || v.dels !== undefined
         ? [v.adds !== undefined ? h("span", { class: "add" }, "+" + v.adds) : null, v.adds !== undefined && v.dels !== undefined ? " " : null, v.dels !== undefined ? h("span", { class: "del" }, "−" + v.dels) : null]
         : v.meta || ""), wf);
@@ -4438,7 +4507,9 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     if (prev) prev.setAttribute("aria-selected", "false");
     activeRow = r;
     const x = rows[r];
+    // A folded turn stands at its prompt, so { and } go on from there.
     if (typeof x === "number") activeItem = x;
+    else if (x.turn !== undefined) activeItem = x.from;
     ensureVisible(r, center);
     const el = rendered.get(r);
     if (el) { el.setAttribute("aria-selected", "true"); tl.setAttribute("aria-activedescendant", el.id); }
@@ -4453,18 +4524,42 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     if (fromPointer && narrow.matches) pane.scrollIntoView({ block: "start", behavior: smoothScroll() });
   }
   function selectItem(i, center) {
-    if (rowOf[i] < 0 || typeof rows[rowOf[i]] !== "number") {
-      // Hidden by a fold or by "only matches": open the way to it.
+    // Hidden by a fold (a quiet run inside a folded turn takes two) or by "only matches": open the way to it.
+    for (let n = 0; n < 3 && (rowOf[i] < 0 || typeof rows[rowOf[i]] !== "number"); n++) {
       const r = rows[rowOf[i]];
-      if (r && typeof r !== "number") openFolds.add(r.key);
+      if (r && typeof r !== "number") openFold(r.key);
       else { matchOnly = false; onlyBox.checked = false; }
       activeItem = i;
       rebuildRows();
     }
     selectRow(rowOf[i], false, center);
   }
+  function foldTurn(k) {
+    if (!turnFoldable(k)) return false;
+    const key = turnKey(k);
+    openFolds.delete(key);
+    closedTurns.add(key);
+    activeItem = turnInfo[k].from;
+    rebuildRows();
+    selectRow(rowOf[activeItem]);
+    tl.focus({ preventScroll: true });
+    announce("Turn " + meta[activeItem].prompt + " folded");
+  }
   function foldPane(x) {
     delete pane.dataset.item;
+    if (x.turn !== undefined) {
+      const it = items[x.from], t = turnInfo[x.turn], w = turnWords(x.from, x.to);
+      swap(pane,
+        h("div", { class: "pane-top" }, h("p", { class: "meta" }, "Folded turn")),
+        h("h2", { class: "pane-title" }, "Turn " + meta[x.from].prompt + ": " + (promptLine(it) || "Prompt")),
+        h("p", { class: "note" }, [w.words, plural(w.tools, "tool call"), plural(t.fails, "error"), t.dur > 0 ? fmtDuration(t.dur) : ""].filter(Boolean).join(", ") + ". Press Enter or click to expand."),
+        h("ul", { class: "fold-list" }, Array.from({ length: Math.min(60, x.to - x.from) }, (_, k) => {
+          const m = meta[x.from + k];
+          return h("li", null, h("span", { class: "dot tone-" + m.v.tone }), h("span", { class: "truncate" }, m.v.label), h("span", { class: "meta" }, m.v.meta));
+        })),
+        h("button", { class: "btn btn-sm", type: "button", onclick: () => { ctx.openFold(x.key); selectRow(rowOf[x.from]); } }, "Expand"));
+      return;
+    }
     swap(pane, 
       h("div", { class: "pane-top" }, h("p", { class: "meta" }, "Folded steps")),
       h("h2", { class: "pane-title" }, plural(x.to - x.from, "quiet step")),
@@ -4528,7 +4623,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   function toggleFolds() {
     const anyFold = rows.some((r) => typeof r !== "number");
     if (!foldsOff && anyFold) { foldsOff = true; }
-    else { foldsOff = !foldsOff; openFolds.clear(); }
+    else { foldsOff = !foldsOff; openFolds.clear(); closedTurns.clear(); }
     prefs.set("fold", !foldsOff);
     rebuildRows();
     selectRow(activeItem >= 0 && rowOf[activeItem] >= 0 ? rowOf[activeItem] : activeRow, false, true);
@@ -4604,8 +4699,11 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   // Rebuild the steps from allEvents, keeping the selected step and the scroll position.
   function refresh() {
     const activeId = items[activeItem] && items[activeItem].id;
+    const onStep = typeof rows[activeRow] === "number";
     reindex();
     activeItem = Math.max(0, items.indexOf(byEvent.get(activeId)));
+    // A turn that just finished would fold; the step being read keeps its turn open.
+    if (onStep && items.length && !closedTurns.has(turnKey(meta[activeItem].turn))) openFolds.add(turnKey(meta[activeItem].turn));
     rebuildRows();
   }
   // A long session: the first page is on screen; the rest streams in behind it, so the
@@ -5036,7 +5134,14 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     find: () => { findInput.focus(); findInput.select(); },
     "next-match": () => (findQ ? jumpMatch(1) : jumpQuery(1)),
     "prev-match": () => (findQ ? jumpMatch(-1) : jumpQuery(-1)),
-    "open-fold": () => { const x = rows[activeRow]; if (typeof x === "number") return false; ctx.openFold(x.key); selectRow(rowOf[x.from]); },
+    "open-fold": (e) => {
+      const x = rows[activeRow];
+      // Enter on an open turn's row folds it again.
+      if (typeof x === "number") return e && e.key === "Enter" && meta[x].isTurn ? foldTurn(meta[x].turn) : false;
+      ctx.openFold(x.key);
+      selectRow(rowOf[x.from]);
+    },
+    "fold-turn": () => { const x = rows[activeRow]; return typeof x === "number" ? foldTurn(meta[x].turn) : false; },
     folds: () => toggleFolds(),
     waterfall: () => toggleWf(),
     raw: () => { if (rp.on) return false; ctx.raw = !ctx.raw; const x = rows[activeRow]; if (typeof x === "number") renderPane(pane, items[x], session, ctx); },
@@ -5074,7 +5179,9 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   };
   view.lastChild.replaceWith(...[durableStrip(session, pickSpan)].filter(Boolean), tools, rpBar, more, h("div", { class: "session-grid" }, timeline, pane), hint);
   rebuildRows();
-  selectItem(activeItem, !!eventId);
+  // A link to a step opens its turn; otherwise the list opens at the top, folded turns and all.
+  if (eventId && byEvent.has(eventId)) selectItem(activeItem, true);
+  else selectRow(0);
   if (!eventId) tl.scrollTop = 0, renderWindow(true);
   // A link ending in ?step=N opens the replay at that step.
   if (linkStep) enterReplay(linkStep);

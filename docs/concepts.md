@@ -30,6 +30,11 @@ One prompt and everything the agent does until it hands control back to you.
   on, with the first line of the prompt and its time into the session.
 - In the viewer: `}` and `{` move to the next and previous turn. The strip beside the step list marks
   where each turn starts.
+- In the viewer, a session of more than three turns starts with each finished turn folded to one
+  row: its prompt, what it did ("read 6 files, 2 edits +40 −12"), tool calls, errors and length.
+- A turn with a failure and the last turn stay open. Enter or click opens a folded turn; Enter on
+  an open turn's row or `←` folds it. A link to a step in a folded turn opens it.
+- `z` shows every step, and the viewer remembers that choice.
 - In the CLI: the `TURNS` column of `coding.sh sessions`, and the turn count in `coding.sh show`.
 
 ### Event

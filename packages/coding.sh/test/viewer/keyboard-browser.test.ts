@@ -14,6 +14,7 @@ const T0 = 1_762_400_000_000;
 const LONG = "5a1d2c3b-0f4e-4a6b-8c7d-9e0f1a2b3c4d";
 const RP = "7f3c1e2a-5b6d-4e8f-9a0b-1c2d3e4f5a6b";
 const TURNS = "3b9e4d2a-6c1f-4e7a-8b5d-2f0a9c8e7d61";
+const FOLDS = "8e2d6c4b-1a3f-4b5e-9c7d-0f6a2b8c4e19";
 
 describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no Chrome/Chromium found (set CODING_SH_TEST_CHROME)" }, () => {
   const index = new FakeIndex();
@@ -50,6 +51,32 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     }
     await index.upsertSession(session(TURNS, { startedAt: T0, endedAt: T0 + n * 1000, title: "Four turns", stats: { events: n, turns: 4, toolCalls: 0, toolErrors: 0, filesChanged: 0 } }));
     await index.putEvents(turnEvents);
+    // Five turns: the first reads, edits and runs a command; the third holds a failure; the fourth is a step deep links point into.
+    const tool = (n: number, name: string, id: string, input: Record<string, unknown>, end: Record<string, unknown> = { ok: true }) => [
+      at(FOLDS, n, { kind: "tool.start", payload: { tool: name, toolUseId: id, input } }),
+      at(FOLDS, n + 1, { kind: "tool.end", durationMs: 500, payload: { tool: name, toolUseId: id, ...end } }),
+    ];
+    const foldEvents: AgentEvent[] = [
+      at(FOLDS, 1, { kind: "user.message", payload: { text: "fix the parser" } }),
+      ...tool(2, "Read", "r1", { file_path: "/work/demo/a.ts" }),
+      ...tool(4, "Read", "r2", { file_path: "/work/demo/b.ts" }),
+      ...tool(6, "Edit", "e1", { file_path: "/work/demo/a.ts", old_string: "one", new_string: "two" }),
+      { ...at(FOLDS, 23, { kind: "file.change", payload: { path: "/work/demo/a.ts", op: "modify", additions: 1, deletions: 1, tool: "Edit", toolUseId: "e1" } }), ts: T0 + 7500 },
+      ...tool(8, "Bash", "b1", { command: "npm test" }),
+      at(FOLDS, 10, { kind: "assistant.message", payload: { text: "Fixed." } }),
+      at(FOLDS, 11, { kind: "user.message", payload: { text: "find the callers" } }),
+      ...tool(12, "Grep", "g1", { pattern: "parse(" }),
+      at(FOLDS, 14, { kind: "assistant.message", payload: { text: "Two callers." } }),
+      at(FOLDS, 15, { kind: "user.message", payload: { text: "run the build" } }),
+      ...tool(16, "Bash", "b2", { command: "npm run build" }, { ok: false, exitCode: 2, output: "error TS2304" }),
+      at(FOLDS, 18, { kind: "assistant.message", payload: { text: "The build fails." } }),
+      at(FOLDS, 19, { kind: "user.message", payload: { text: "explain it" } }),
+      at(FOLDS, 20, { kind: "assistant.message", payload: { text: "a step inside turn four" } }),
+      at(FOLDS, 21, { kind: "user.message", payload: { text: "thanks" } }),
+      at(FOLDS, 22, { kind: "assistant.message", payload: { text: "Done." } }),
+    ];
+    await index.upsertSession(session(FOLDS, { startedAt: T0, endedAt: T0 + 22_000, title: "Five turns", stats: { events: 23, turns: 5, toolCalls: 6, toolErrors: 1, filesChanged: 1 } }));
+    await index.putEvents(foldEvents);
     const exp = experimentResult("exp-prod-smoke");
     // The failing case's output is long enough to clip, so its open row holds a "Show all" button.
     exp.runs[1]!.output = Array.from({ length: 600 }, (_, i) => `line ${i}`).join("\n");
@@ -179,6 +206,56 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     assert.match(await p.eval("document.querySelector('.hintbar')?.textContent || ''"), /\{\}turns/);
     await p.press("?");
     await p.waitFor("/Next turn/.test(document.body.textContent) && /Previous turn/.test(document.body.textContent)", "the help sheet lists the turn keys");
+    assert.deepEqual(p.errors, []);
+  });
+
+  test("finished turns fold to one row each; a turn with a failure and the last turn stay open", async () => {
+    let p = await open("#/s/" + FOLDS);
+    const folded = "[...document.querySelectorAll('#steps .st.turn.fold')]";
+    const selected = "document.querySelector('#steps .st[aria-selected=true]')";
+    await p.waitFor(`${folded}.length === 3`, "turns 1, 2 and 4 folded");
+    // The failure is on screen: turn 3 is open, and so is the last turn.
+    assert.match(await p.eval("document.querySelector('#steps .st.is-fail:not(.fold)')?.textContent || ''"), /npm run build/);
+    assert.match(await p.eval("[...document.querySelectorAll('#steps .st:not(.fold)')].map((r) => r.textContent).join('|')"), /Done./);
+    assert.equal(await p.eval("document.querySelectorAll('#steps .st').length"), 8, "17 steps in 8 rows");
+    // The folded row: the prompt, its length and tool calls, what it did in words, and its time.
+    const row1 = `${folded}[0]`;
+    assert.equal(await p.eval(`${row1}.querySelector('.t').textContent`), "Turn 1");
+    assert.equal(await p.eval(`${row1}.querySelector('.arg').textContent`), "fix the parser");
+    assert.equal(await p.eval(`${row1}.querySelector('.sum').textContent`), "9.0s · 4 tool calls · read 2 files, 1 edit +1 −1, 1 command");
+    assert.equal(await p.eval(`${row1}.getAttribute('aria-expanded')`), "false");
+    assert.equal(await p.eval(`${row1}.getAttribute('aria-selected')`), "true", "the list opens on its first row");
+    // Enter opens the turn and its row says so; Enter again folds it.
+    await p.eval("document.querySelector('#steps').focus()");
+    await p.press("Enter");
+    await p.waitFor(`${folded}.length === 2 && /fix the parser/.test(${selected}.textContent) && ${selected}.getAttribute('aria-expanded') === 'true'`, "Enter opens turn 1");
+    assert.match(await p.eval("document.querySelector('#event-pane').textContent"), /fix the parser/);
+    await p.press("Enter");
+    await p.waitFor(`${folded}.length === 3 && ${selected}.getAttribute('aria-expanded') === 'false'`, "Enter folds it again");
+    // A click on a folded row opens it.
+    await p.eval(`${folded}[1].click()`);
+    await p.waitFor(`${folded}.length === 2 && /find the callers/.test(${selected}.textContent)`, "a click opens turn 2");
+    // z shows every step, and the choice is remembered (each test page has its own storage, so reload this one); z again folds them back.
+    await p.press("z");
+    await p.waitFor(`${folded}.length === 0`, "z expands all");
+    await p.eval("window.beforeReload = true; location.reload()");
+    await p.waitFor("!window.beforeReload && document.querySelectorAll('#steps .st').length === 17", "still expanded after a reload");
+    await p.eval("document.querySelector('#steps').focus()");
+    await p.press("z");
+    await p.waitFor(`${folded}.length === 3`, "z folds them back");
+    // A link to a step inside a folded turn opens that turn on the step.
+    p = await open("#/s/" + FOLDS + "/" + FOLDS + "-e20");
+    await p.waitFor(`${selected} && /a step inside turn four/.test(${selected}.textContent)`, "the deep link opens turn 4");
+    assert.equal(await p.eval(`${folded}.length`), 2);
+    // } into a folded turn opens it; { from there goes back to its prompt's turn.
+    await p.eval("document.querySelector('#steps').focus()");
+    await p.press("Home");
+    await p.press("}");
+    await p.waitFor(`/find the callers/.test(${selected}.textContent) && ${selected}.getAttribute('aria-expanded') === 'true'`, "} opens turn 2");
+    // ← folds the turn the selected step is in.
+    await p.press("j");
+    await p.press("ArrowLeft");
+    await p.waitFor(`/find the callers/.test(${selected}.textContent) && ${selected}.classList.contains('fold')`, "← folds turn 2");
     assert.deepEqual(p.errors, []);
   });
 

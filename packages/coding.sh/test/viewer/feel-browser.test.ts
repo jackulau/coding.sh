@@ -178,7 +178,11 @@ describe("viewer feel in a browser", { skip: chrome ? false : "no Chrome/Chromiu
   test("the Raw toggle keeps the pane's scroll position; a new step starts at the top", async () => {
     await open("#/s/long-1", 1280, 360);
     try {
-      await page.eval("document.getElementById('steps').focus(); window.__item = document.querySelector('.pane').dataset.item");
+      // The ten-turn session opens on its first turn, folded; } opens the next turn on its prompt, a step.
+      await page.eval("document.getElementById('steps').focus()");
+      await key("}");
+      await page.waitFor("document.querySelector('.pane').dataset.item", "a step's pane");
+      await page.eval("window.__item = document.querySelector('.pane').dataset.item");
       await key("j");
       // The new step's paint resets the pane to the top: scroll only once it has landed, however slow the machine.
       await page.waitFor("document.querySelector('.pane').dataset.item !== window.__item", "the next step's pane");
