@@ -7,6 +7,12 @@ follow [Semantic Versioning](https://semver.org/) from the first npm release.
 Each release opens with a short summary. The list under it has one line per change,
 grouped by area, with links to the docs for the details.
 
+## [0.1.8] - Unreleased
+
+### Changed
+
+- **Docs.** The docs sidebar folds by group on wide screens, as the phone menu does: the first group and the one that holds the page start open, the rest closed, so every group name fits on screen. [Docs](https://coding.sh/docs)
+
 ## [0.1.7] - 2026-11-16
 
 ### Added
