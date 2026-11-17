@@ -3,7 +3,7 @@
 // and splits cost by token type. No Docker, agent or key.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -89,9 +89,13 @@ describe("plugin-ab tasks and analysis", { skip: !hasPython && "needs python3 on
   it("every task fails at its start and passes with the reference fix", () => {
     // Without NODE_TEST_CONTEXT, or the tasks' own `node --test` reports to this runner and exits 0.
     const { NODE_TEST_CONTEXT: _, ...env } = process.env;
-    const r = spawnSync("python3", [join(AB, "check-tasks.py")], { env, encoding: "utf8" });
+    const tmp = join(root, "tmp");
+    mkdirSync(tmp);
+    const r = spawnSync("python3", [join(AB, "check-tasks.py")], { env: { ...env, TMPDIR: tmp }, encoding: "utf8" });
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.equal(r.stdout.trim().split("\n").filter((l) => l.endsWith(" OK")).length, 10);
+    // The check removes what it makes: its work trees, its answer files and the tasks' own temp folders.
+    assert.deepEqual(readdirSync(tmp), []);
   });
 
   it("pairs runs by task and attempt, checks the marker and splits cost by token type", () => {

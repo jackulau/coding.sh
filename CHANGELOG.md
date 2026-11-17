@@ -13,6 +13,7 @@ grouped by area, with links to the docs for the details.
 
 - **Viewer.** Esc or a link pressed within 80 ms of a step key (`j`, `k`, `n`) leaves the session. Before, the step's late update of the pane could put the session's URL back, and the page stayed on the session. [Explore sessions](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md)
 - **Self-host.** In the Compose stacks that run serve, Postgres and ClickHouse are healthy only when they answer on the address serve connects to. The old checks passed against the image's first-start setup server on loopback or the unix socket, so `docker compose up -d --wait` could fail on the ClickHouse stack with `clickhouse at http://clickhouse:8123/ is unreachable`. [Deploy](https://github.com/jackulau/coding.sh/blob/main/docs/production/deploy.md#docker-compose)
+- **Examples.** `examples/plugin-ab/check-tasks.py` removes the temp files it makes. Before, each run left 20 answer files and 2 folders in the temp directory. [examples/plugin-ab](https://github.com/jackulau/coding.sh/tree/main/examples/plugin-ab)
 
 ## [0.1.7] - 2026-11-16
 
