@@ -119,7 +119,8 @@ class Cdp {
 }
 
 export interface Page {
-  goto(url: string): Promise<void>;
+  /** Navigate and wait for the page to finish loading, for at most `timeoutMs` (5000). */
+  goto(url: string, timeoutMs?: number): Promise<void>;
   /** Evaluate an expression (awaited) and return its JSON value. */
   eval<T = any>(expr: string): Promise<T>;
   /** Poll an expression until it is truthy; returns its value. */
@@ -140,6 +141,32 @@ export interface Page {
 export interface Browser {
   newPage(): Promise<Page>;
   close(): Promise<void>;
+}
+
+/** What a page load had done when its time ran out. */
+export interface LoadWait {
+  /** From the call of goto to the timeout. */
+  waitedMs: number;
+  /** How long Chrome took to answer Page.navigate. */
+  navigateMs: number;
+  /** How many times the page was asked for its state, and the longest it took to answer. */
+  checks: number;
+  slowestCheckMs: number;
+  /** The last answer, or why there was none. */
+  readyState?: string;
+  href?: string;
+  error?: string;
+}
+
+/**
+ * The error of a page load that ran out of time. It says where the time went: in Page.navigate,
+ * in a page that did not answer (its main thread was busy or blocked), or in a load that answered
+ * and did not finish.
+ */
+export function loadTimeoutMessage(w: LoadWait): string {
+  const span = (ms: number) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
+  const last = w.error !== undefined ? `the last failed: ${w.error}` : `the last saw readyState ${JSON.stringify(w.readyState)} at ${w.href}`;
+  return `timed out waiting for page load after ${span(w.waitedMs)}: Page.navigate took ${span(w.navigateMs)}, then ${w.checks} ${w.checks === 1 ? "check" : "checks"} of the page, the slowest took ${span(w.slowestCheckMs)}; ${last}`;
 }
 
 /** The flags launchBrowser starts Chrome with, for a profile in `dir`. */
@@ -211,9 +238,25 @@ export async function launchBrowser(chrome: string): Promise<Browser> {
       const page: Page = {
         errors,
         send,
-        async goto(url) {
+        async goto(url, timeoutMs = 5000) {
+          const t0 = performance.now();
           await send("Page.navigate", { url });
-          await page.waitFor("document.readyState === 'complete' && location.href !== 'about:blank'", "page load");
+          const navigateMs = performance.now() - t0;
+          // The loop of waitFor, keeping what a timeout has to say.
+          const deadline = Date.now() + timeoutMs;
+          let checks = 0;
+          let slowestCheckMs = 0;
+          for (;;) {
+            const t1 = performance.now();
+            const seen: { readyState?: string; href?: string; error?: string } = await page
+              .eval("({ readyState: document.readyState, href: location.href })")
+              .catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+            checks++;
+            slowestCheckMs = Math.max(slowestCheckMs, performance.now() - t1);
+            if (seen.readyState === "complete" && seen.href !== "about:blank") return;
+            if (Date.now() > deadline) throw new Error(loadTimeoutMessage({ waitedMs: performance.now() - t0, navigateMs, checks, slowestCheckMs, ...seen }));
+            await new Promise((r) => setTimeout(r, 40));
+          }
         },
         async eval(expr) {
           const r = await send("Runtime.evaluate", { expression: expr, awaitPromise: true, returnByValue: true });
