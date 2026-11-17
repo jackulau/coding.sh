@@ -792,3 +792,24 @@ describe("serve Host check", () => {
     await pub.h.shutdown();
   });
 });
+
+describe("serve Origin check", () => {
+  it("a POST from a page must come from the host it was sent to, on a public bind too", async () => {
+    const ik = generateKey("ingest");
+    const { h } = await serve("memory", tmpEnv({ CODING_SH_INGEST_KEYS: ik, CODING_SH_BASIC_AUTH: "ops:pw" }), { flags: { host: "0.0.0.0" } });
+    assert.equal((await call(h, "/v1/ingest", { key: ik, body: batch([ev("a", "chat-1")]) })).status, 200);
+    const basic = `Basic ${Buffer.from("ops:pw").toString("base64")}`;
+    const label = (headers: Record<string, string>) => call(h, "/api/labels", { body: { sessionId: "chat-1", criterion: "outcome", value: "pass" }, headers: { authorization: basic, ...headers } });
+    const self = new URL(h.url).host;
+    const refused = await label({ origin: "https://elsewhere.example" });
+    assert.equal(refused.status, 403, "another site");
+    assert.match(refused.json.error, /proxy_set_header Host/, "the refusal names the proxy setting that fixes a rewritten Host");
+    assert.equal((await label({ origin: "null" })).status, 403, "an opaque origin");
+    assert.equal((await label({ origin: `http://${new URL(h.url).hostname}:1` })).status, 403, "another port");
+    assert.equal((await label({ origin: "https://elsewhere.example", "x-forwarded-host": "obs.example.com" })).status, 403, "another site behind a proxy");
+    assert.equal((await label({ origin: `http://${self}` })).status, 201, "the page serve sent");
+    assert.equal((await label({ origin: "https://obs.example.com", "x-forwarded-host": "obs.example.com" })).status, 201, "the page, through a proxy that rewrites Host");
+    assert.equal((await label({})).status, 201, "no Origin: not a browser page");
+    await h.shutdown();
+  });
+});

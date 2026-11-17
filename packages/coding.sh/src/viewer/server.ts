@@ -1773,19 +1773,35 @@ function forkHttpError(e: unknown): never {
   throw e;
 }
 
-/** Browsers always send Origin on cross-origin POSTs; when present it must be us. */
+/**
+ * Browsers always send Origin on cross-origin POSTs; when present it must be us: the host the
+ * request was sent to (its Host header, or the X-Forwarded-Host a proxy that rewrites Host adds;
+ * a page on another site cannot set that header without a preflight, which is refused).
+ */
 function checkOrigin(req: IncomingMessage, checkHost: (host: string) => boolean): void {
   const origin = req.headers.origin;
   if (origin === undefined) return;
-  let host: string;
+  let u: URL;
   try {
-    const u = new URL(origin);
+    u = new URL(origin);
     // https: serve behind a TLS-terminating proxy.
     if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("scheme");
-    host = u.host.toLowerCase();
   } catch {
     throw new HttpError(403, "forbidden origin");
   }
+  const host = u.host.toLowerCase();
+  // Compared as the Origin's scheme reads them, so "obs.example.com:443" matches https://obs.example.com.
+  const asOrigin = (h: unknown): string | undefined => {
+    if (typeof h !== "string" || !h.trim()) return undefined;
+    try {
+      return new URL(`${u.protocol}//${h.split(",")[0]!.trim()}`).host.toLowerCase();
+    } catch {
+      return undefined;
+    }
+  };
+  const sentTo = host === asOrigin(req.headers.host) || host === asOrigin(req.headers["x-forwarded-host"]);
+  // The page's own host differs from Host: say what fixes it, since a proxy that rewrites Host causes it.
+  if (!sentTo) throw new HttpError(403, "forbidden origin: the page's host is not the Host this request names. Behind a proxy that rewrites Host, pass the original (nginx: proxy_set_header Host $host)");
   if (!checkHost(host)) throw new HttpError(403, "forbidden origin");
 }
 

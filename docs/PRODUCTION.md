@@ -136,6 +136,10 @@ pushed into the production DB. An explicit `coding.sh ingest --store …` still 
   `OPTIONS` preflight, and OTLP) to the listed browser origins; any other `Origin` gets 403. The viewer
   and `/api/*` stay same-origin. Browser ingest needs a key in the page, so give it a dedicated
   project's ingest key and treat that project's data as untrusted.
+- **Same-origin writes:** a viewer `POST` that carries an `Origin` gets 403 unless the Origin's host
+  is the request's `Host`. Behind a proxy that rewrites `Host`, the proxy's `X-Forwarded-Host` counts.
+  nginx sends neither by default: add `proxy_set_header Host $host;`, or every label, score and fork
+  gets 403. Caddy keeps `Host`.
 
 ### 1.3 Projects
 
