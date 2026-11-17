@@ -6,7 +6,11 @@ import { pathToFileURL } from "node:url";
 
 export type Handler = (e: unknown, ctx?: unknown) => unknown;
 
-/** A hook.mjs stand-in that writes {argv, stdin} to <dir>/<n>.json. */
+/**
+ * A hook.mjs stand-in that writes {argv, stdin} to <dir>/call-<time>-<pid>.json. The pid is in
+ * the name because the plugin starts one hook per event and two can read the same clock value:
+ * they then wrote one file between them, and a call went missing.
+ */
 export function fakeHook(dir: string): string {
   const p = join(dir, "hook.mjs");
   writeFileSync(
@@ -17,7 +21,7 @@ export function fakeHook(dir: string): string {
 let body = "";
 process.stdin.on("data", (d) => (body += d));
 process.stdin.on("end", () => {
-  const name = ${JSON.stringify(dir)} + "/call-" + process.hrtime.bigint() + ".json";
+  const name = ${JSON.stringify(dir)} + "/call-" + process.hrtime.bigint() + "-" + process.pid + ".json";
   writeFileSync(name + ".tmp", JSON.stringify({ argv: process.argv.slice(2), stdin: JSON.parse(body) }));
   renameSync(name + ".tmp", name);
 });
@@ -51,10 +55,11 @@ export async function fire(handlers: Map<string, Handler[]>, event: string, e: u
   for (const h of handlers.get(event) ?? []) await h(e, ctx);
 }
 
-export async function waitFor(cond: () => boolean, ms = 5000): Promise<void> {
+/** Poll `cond`. `dir` is the fake hook's directory: a timeout lists it, so the error shows which calls arrived. */
+export async function waitFor(cond: () => boolean, ms = 5000, dir?: string): Promise<void> {
   const end = Date.now() + ms;
   while (!cond()) {
-    if (Date.now() > end) throw new Error("timed out waiting for hook calls");
+    if (Date.now() > end) throw new Error("timed out waiting for hook calls" + (dir ? `; ${dir} holds: ${readdirSync(dir).join(", ")}` : ""));
     await new Promise((r) => setTimeout(r, 25));
   }
 }
