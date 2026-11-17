@@ -746,6 +746,9 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .st.is-fail[aria-selected="true"] { background: var(--fail-wash); }
 .st.is-fail[aria-selected="true"]::before { background: var(--fail); }
 .st.turn { --indent: 0; box-shadow: inset 0 1px 0 var(--line); }
+/* A tool call a code-mode cell made sits under the cell; a cell whose call failed is marked, not failed again. */
+.st.nested { --indent: 2.1rem; }
+.st.child-fail .name { color: var(--warn-ink); }
 .st.turn .name { font-weight: 560; }
 .st.turn .arg { color: var(--text); font-family: var(--font-sans); font-size: 13px; }
 .st.turn .t { color: var(--text-muted); }
@@ -4237,6 +4240,17 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     let turnStart = 0;
     let prompts = 0;
     const turns = [];
+    // A code-mode cell (Codex `exec`, a tool.start with wrapper: true) runs other tool calls, which
+    // name it as their parentId. When one of them fails the cell fails too: the failure is the inner
+    // call's, so the cell is not a failure stop of its own and its calls show nested under it.
+    const cells = new Set();
+    const failedCells = new Set();
+    for (const it of items) {
+      if (it.type !== "tool") continue;
+      if (it.start && (it.start.payload || {}).wrapper === true) cells.add(it.start.id);
+      const parent = (it.start || it.end).parentId;
+      if (parent && it.end && (it.end.payload || {}).ok === false) failedCells.add(parent);
+    }
     for (const [i, it] of items.entries()) {
       byEvent.set(it.id, it);
       if (it.start) byEvent.set(it.start.id, it);
@@ -4249,10 +4263,13 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
       const end = barStart(it, v) + (v.dur || 0);
       if (end > turns[turn].end) turns[turn].end = end;
       const tool = it.type === "tool" ? String(((it.start || it.end).payload || {}).tool || "") : "";
+      const parent = it.type === "tool" ? (it.start || it.end).parentId : undefined;
+      const nested = !!parent && cells.has(parent);
+      if (v.tone === "fail" && it.start && failedCells.has(it.start.id) && cells.has(it.start.id)) { v.tone = "warn"; v.childFailed = true; }
       const fail = v.tone === "fail";
-      const quiet = !fail && ((it.type === "tool" && it.end && !EDIT_TOOLS.has(tool)) || it.type === "llm.call" || it.type === "turn.end");
+      const quiet = !fail && !v.childFailed && ((it.type === "tool" && it.end && !EDIT_TOOLS.has(tool)) || it.type === "llm.call" || it.type === "turn.end");
       meta[i] = {
-        v, turn, isTurn, fail, quiet, tool,
+        v, turn, isTurn, fail, quiet, tool, nested,
         edit: it.type === "file.change" || (it.type === "tool" && EDIT_TOOLS.has(tool)),
         test: it.type === "test.result",
         api: it.type === "llm.call",
@@ -4524,7 +4541,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     const it = items[x];
     const m = meta[x];
     const v = m.v;
-    const cls = "st" + (m.isTurn ? " turn" + (m.turn === 0 && x === 0 ? " first" : "") : "") + (m.fail ? " is-fail" : "") + (v.tone === "pass" ? " is-pass" : "")
+    const cls = "st" + (m.isTurn ? " turn" + (m.turn === 0 && x === 0 ? " first" : "") : "") + (m.fail ? " is-fail" : "") + (v.tone === "pass" ? " is-pass" : "") + (m.nested ? " nested" : "") + (v.childFailed ? " child-fail" : "")
       + (m.api ? " k-llm" : "") + (m.test ? " k-test" : "") + (it.type === "assistant.message" ? " k-msg" : "")
       + (findQ && m.text.includes(findQ) ? " is-match" : "") + (m.derail ? " is-derail" : "") + (m.phase || m.day ? " phase-start" : "");
     const chip = m.phase || m.day ? h("span", { class: "phase-chip", title: m.phase ? "Phase " + m.phase.n + ": " + m.phase.label : "" },
