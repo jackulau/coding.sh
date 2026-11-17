@@ -8,12 +8,16 @@
 // test files, such as src/store/conformance.ts) fails under the file that defines it; that file
 // alone runs no tests and would pass. Such a failure fails the job as it is.
 //
+// A run whose report lost results fails too, even when every result that arrived passed
+// (scripts/report-complete.mjs).
+//
 // SHARD=i/n picks the files of shard i by their recorded run time (scripts/test-shards.ts), so
 // the shards end close together. TEST_DURATIONS_OUT=<file> also writes each file's run time there.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { join, relative } from "node:path";
+import { fileKey, reportProblems } from "./report-complete.mjs";
 import { readDurations, shardFiles, testFiles } from "./test-shards.ts";
 
 const MAX_RERUN = 5;
@@ -27,6 +31,7 @@ const node = (args) => spawnSync(process.execPath, ["--no-warnings", "--import",
 
 const dir = mkdtempSync(join(tmpdir(), "coding-sh-test-ci-"));
 const failedPath = join(dir, "failed.txt");
+const reportPath = join(dir, "report.json");
 const durationsOut = process.env.TEST_DURATIONS_OUT;
 let files = process.argv.length > 2 ? process.argv.slice(2) : ["test/**/*.test.ts"];
 // The test files this run can hold. An argument that is not a file (a flag, a pattern) names none.
@@ -40,9 +45,13 @@ else if (shard) {
   console.log(`Shard ${shard}: ${files.length} test files`);
   if (files.length === 0) process.exit(0);
 }
+// The files whose reports must arrive whole. With --test-shard Node picks among the listed files,
+// so only the totals are checked then.
+const whole = shard && process.argv.length > 2 ? [] : listed;
 args.push(
   "--test-reporter=spec", "--test-reporter-destination=stdout",
   `--test-reporter=${new URL("./failed-files.mjs", import.meta.url).href}`, `--test-reporter-destination=${failedPath}`,
+  `--test-reporter=${new URL("./report-complete.mjs", import.meta.url).href}`, `--test-reporter-destination=${reportPath}`,
 );
 if (durationsOut) args.push(`--test-reporter=${new URL("./test-durations.mjs", import.meta.url).href}`, `--test-reporter-destination=${durationsOut}`);
 const first = node([...args, ...files]);
@@ -50,13 +59,20 @@ let failed = [];
 try {
   failed = readFileSync(failedPath, "utf8").split("\n").filter(Boolean);
 } catch {}
+let report;
+try {
+  report = JSON.parse(readFileSync(reportPath, "utf8"));
+} catch {}
 rmSync(dir, { recursive: true, force: true });
 
-if (first === 0) process.exit(0);
+const problems = reportProblems(whole, failed, report);
+if (problems.length) console.log(`\nThe report of this run is incomplete, so the run fails:\n${problems.map((p) => `  ${p}`).join("\n")}`);
+const lost = problems.length ? 1 : 0;
+
+if (first === 0) process.exit(lost);
 const name = (file) => relative(process.cwd(), file) || file;
-const key = (file) => (process.platform === "win32" ? resolve(file).toLowerCase() : resolve(file));
-const ours = new Set(listed.map(key));
-const elsewhere = failed.filter((f) => !ours.has(key(f)));
+const ours = new Set(listed.map(fileKey));
+const elsewhere = failed.filter((f) => !ours.has(fileKey(f)));
 if (elsewhere.length) {
   console.log(`\nA test failed in ${elsewhere.map(name).join(", ")}, which is not a test file of this run (a suite shared by test files?): not rerun.`);
   process.exit(first);
@@ -72,4 +88,4 @@ for (const file of failed) {
   if (node(["--test-concurrency=1", file]) === 0) console.log(`::warning title=Passed when run alone::${name(file)} failed in the full run and passed alone (a timing test under load?)`);
   else code = 1;
 }
-process.exit(code);
+process.exit(code || lost);
