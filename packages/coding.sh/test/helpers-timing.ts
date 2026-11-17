@@ -33,6 +33,23 @@ export const cpuMs = (fn: () => unknown): number => {
   return threadCpuMs() - start;
 };
 
+/**
+ * CPU milliseconds one call of `fn` costs this thread, from as many calls as it takes to use
+ * `minMs` of CPU. One short call can't be timed this way: a thread's CPU clock can be coarse
+ * (Windows counts it in timer ticks of about 16 ms), so a 4 ms call would read as 0 or 16.
+ */
+export const cpuMsPerCall = (fn: () => unknown, minMs = 100): number => {
+  const start = threadCpuMs();
+  let calls = 0;
+  let used = 0;
+  do {
+    fn();
+    calls++;
+    used = threadCpuMs() - start;
+  } while (used < minMs);
+  return used / calls;
+};
+
 let sink = 0;
 
 /**

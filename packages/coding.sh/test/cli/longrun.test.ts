@@ -22,7 +22,7 @@ import { buildSession, foldSession, isRealPrompt, sessionOf, sessionState, type 
 import type { AgentEvent, Session } from "../../src/core/types.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { generateLongSession, type GenManifest } from "../fixtures/longrun/generate.ts";
-import { median, timeMs } from "../helpers-timing.ts";
+import { cpuMsPerCall, median } from "../helpers-timing.ts";
 import { CLI } from "../_cli.ts";
 
 let root = "";
@@ -185,14 +185,17 @@ describe("a 12-hour session", () => {
       sessionOutline(evs, s.stats.derails ?? []);
     };
     work(events)();
-    // Interleaved, so load on the box stretches both sides alike. Linear work is about 4x; quadratic would be about 16x.
+    // In this thread's CPU time, not on the clock: on a busy machine the clock also counts the
+    // time the thread waits for a core, and one 4 ms sample can wait many times its own length.
+    // The two sides take turns. Linear work is about 4x; quadratic would be about 16x.
     const ratios: number[] = [];
-    for (let i = 0; i < 5; i++) ratios.push(timeMs(work(events)) / timeMs(work(quarter)));
-    assert.ok(median(ratios) < 9, `4x the events took ${median(ratios).toFixed(1)}x as long (${ratios.map((r) => r.toFixed(1)).join(", ")})`);
+    for (let i = 0; i < 5; i++) ratios.push(cpuMsPerCall(work(events)) / cpuMsPerCall(work(quarter)));
+    assert.ok(median(ratios) < 9, `4x the events took ${median(ratios).toFixed(1)}x the CPU time (${ratios.map((r) => r.toFixed(1)).join(", ")})`);
     // Against a same-moment baseline: one pass that touches every event's payload.
-    const base = timeMs(() => JSON.stringify(events));
-    const derail = median([0, 1, 2].map(() => timeMs(() => detectDerails(events))));
-    assert.ok(derail < Math.max(base * 6, 30), `detectDerails ${derail.toFixed(0)} ms over ${events.length} events; JSON.stringify ${base.toFixed(0)} ms`);
+    const base = cpuMsPerCall(() => JSON.stringify(events));
+    const derail = median([0, 1, 2].map(() => cpuMsPerCall(() => detectDerails(events))));
+    console.log(`# longrun CPU ms: ratios ${ratios.map((r) => r.toFixed(1)).join(", ")}; detectDerails ${derail.toFixed(1)}, JSON.stringify ${base.toFixed(1)}`);
+    assert.ok(derail < Math.max(base * 6, 30), `detectDerails ${derail.toFixed(0)} ms of CPU over ${events.length} events; JSON.stringify ${base.toFixed(0)} ms`);
   });
 });
 
