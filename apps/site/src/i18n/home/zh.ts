@@ -110,6 +110,7 @@ export default {
   "Close menu": "关闭菜单",
   Primary: "主要",
   "coding.sh home": "coding.sh 首页",
+  "Stars: {{N}}": "星标：{{N}}",
   "Copied to clipboard": "已复制到剪贴板",
   "Selected, copy it with your keyboard": "已选中，请用键盘复制",
   "Skip to content": "跳转到正文",

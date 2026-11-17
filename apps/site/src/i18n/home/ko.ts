@@ -112,6 +112,7 @@ export default {
   "Close menu": "메뉴 닫기",
   Primary: "메인 메뉴",
   "coding.sh home": "coding.sh 홈",
+  "Stars: {{N}}": "스타: {{N}}",
   "Copied to clipboard": "클립보드에 복사했습니다",
   "Selected, copy it with your keyboard": "선택했습니다. 키보드로 복사하세요",
   "Skip to content": "본문으로 건너뛰기",
