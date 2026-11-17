@@ -10,8 +10,7 @@ Later layers win:
 1. Built-in defaults.
 2. `~/.coding.sh/config.toml` (or `$CODING_SH_HOME/config.toml`), your user config.
 3. `<repo>/.coding.sh/config.toml`, the nearest one above the working directory. The search
-   stops at the git root and at a home folder: `$HOME`, and your account's home even when `HOME`
-   or `USERPROFILE` points elsewhere.
+   stops at the git root and at your home folder.
 4. Environment variables (`CODING_SH_STORE_URL`, `CODING_SH_BLOB_URL`, and the server variables).
 5. Command-line flags (`--store`, `--blobs`, and each command's own options).
 
@@ -49,7 +48,7 @@ keep tokens out of the file.
 
 | Key | Default | Settable | What |
 |---|---|---|---|
-| `store.index` | `sqlite://~/.coding.sh/index.db` | yes | Index store URL. `sqlite://` and `memory://` are built in; `postgres://` needs the `coding.sh-store-postgres` package. Another scheme loads `coding.sh-store-<scheme>`. On Windows under Git Bash, `/tmp/…` and `/c/…` in a `sqlite://` or `file://` URL are the shell's paths: the user's temp dir and `C:\…`. |
+| `store.index` | `sqlite://~/.coding.sh/index.db` | yes | Index store URL. `sqlite://` and `memory://` are built in; `postgres://` needs the `coding.sh-store-postgres` package. Another scheme loads `coding.sh-store-<scheme>`. Under Git Bash on Windows, `/tmp/…` and `/c/…` in the URL are the shell's paths. |
 | `store.blobs` | `file://~/.coding.sh/blobs` | yes | Blob store URL for large payloads. `s3://` needs `coding.sh-store-s3`. With a `postgres://` index and no blob URL, blobs go to the same database. |
 
 ## `[capture]`
@@ -57,7 +56,7 @@ keep tokens out of the file.
 | Key | Default | Settable | What |
 |---|---|---|---|
 | `capture.mode` | `"full"` | yes | `full` keeps prompts, replies and tool input and output. `metadata` keeps ids, times, kinds, durations, token counts and short labels only. |
-| `capture.redact` | `["secrets"]` | yes | Built-in redactors: `secrets` (API keys, tokens, private keys), `env` (values of environment variables), `email` (email addresses), `pii` (all of `email`, `phone`, `card`, `iban` and `national-id`), `phone` (phone numbers with a `+` country code, and North American numbers), `card` (card numbers with a known issuer prefix that pass the Luhn check), `iban` (IBANs with the right length for their country and a valid check), `national-id` (US SSNs, UK National Insurance numbers, Canadian SINs that pass the Luhn check), `none` (clears the list in your user config). |
+| `capture.redact` | `["secrets"]` | yes | Built-in redactors: `secrets`, `env`, `pii` (all of `email`, `phone`, `card`, `iban` and `national-id`), each of those five alone, and `none` (clears the list in your user config). [Privacy](https://coding.sh/docs/privacy#redaction) says what each one replaces. |
 | `capture.redactPatterns` | `[]` | yes | Extra regular expressions to redact. Matches become `[redacted:<kind>]`. In a repo's file, each entry is literal text. |
 | `capture.exclude` | `[]` | yes | Path globs (`*`, `**`, `?`, `~`). Sessions whose working directory, or a parent of it, matches are dropped at ingest. |
 | `capture.maxInlineBytes` | `4096` | yes | Payloads larger than this go to the blob store. Minimum 256. |
@@ -248,7 +247,7 @@ Read only by `coding.sh serve`. Every key has an environment variable, which win
 | `serve.queue_max_events` | `CODING_SH_QUEUE_MAX_EVENTS` | `50000` | Ingest queue limit; over it, requests get 429. |
 | `serve.queue_max_bytes` | `CODING_SH_QUEUE_MAX_BYTES` | `134217728` | Same, in bytes. |
 | `serve.insecure` | `CODING_SH_INSECURE=1` | off | Allow a non-loopback bind without keys. |
-| `serve.trust_proxy` | `CODING_SH_TRUST_PROXY=1` | off | Honor `X-Forwarded-Proto` and `X-Forwarded-For`. A request the proxy saw as HTTPS gets HSTS and a `Secure` cookie. A loopback bind then needs an ingest key and a read key (a `viewer` replica: a read key), or `--insecure`. |
+| `serve.trust_proxy` | `CODING_SH_TRUST_PROXY=1` | off | Honor `X-Forwarded-Proto` and `X-Forwarded-For`. HTTPS requests then get HSTS and a `Secure` cookie, and a loopback bind needs its keys set, or `--insecure`. |
 | `serve.allowed_hosts` | `CODING_SH_ALLOWED_HOSTS` (comma list) | `[]` | Host names, without scheme or port, that requests may name besides loopback ones. Empty: loopback names only on a loopback bind, any name on a public bind. |
 | `serve.cors_origins` | | `[]` | Browser origins allowed to post to the ingest routes (`/v1/ingest`, OTLP). The viewer and `/api/*` stay same-origin. |
 | `[[serve.projects]]` `id`, `ingest_keys`, `retention_days` | `CODING_SH_INGEST_KEYS` | | Projects and their ingest keys (`sha256:<hex>` in the file). |
@@ -278,9 +277,9 @@ Read only by `coding.sh serve`. Every key has an environment variable, which win
 | `CODING_SH_HOME` | Data directory. Default `~/.coding.sh`. Use a temp dir in tests and CI to keep runs out of your history. |
 | `CODING_SH_STORE_URL` | Index store for every command; same as `--store`. Skips the automatic ingest of the local spool. |
 | `CODING_SH_BLOB_URL` | Blob store; same as `--blobs`. |
-| `CODING_SH_DEV_REAL_STORE=1` | Lets coding.sh run from a source checkout (`src/*.ts`, or a `dist/` built inside it) open the default home. Without it, or `CODING_SH_HOME` or a store URL, such a run stops before it opens anything. Migrations still wait for the install that owns the store ([Store version errors](https://coding.sh/docs/troubleshooting#store-version-errors)). |
-| `CODING_SH_SCAN_CAP` | How many sessions `usage` and `cache doctor` read for a window's totals before they stop and say so (`Stopped after N sessions`, `truncated` in `--json`). Default `100000`. Tests set a small one. |
-| `CODING_SH_PURGE_WAIT_MS` | How long `purge` waits for another process's read of the index or the blob pack before it reports that the old bytes stay. Default `10000` for the index checkpoint before VACUUM and `5000` after it. Tests set a short wait. |
+| `CODING_SH_DEV_REAL_STORE=1` | Lets coding.sh run from a source checkout open the default home. Without it, or `CODING_SH_HOME` or a store URL, such a run stops before it opens anything. Migrations still wait for the install that owns the store ([Store version errors](https://coding.sh/docs/troubleshooting#store-version-errors)). |
+| `CODING_SH_SCAN_CAP` | How many sessions `usage` and `cache doctor` read for a window's totals before they stop and say so (`Stopped after N sessions`, `truncated` in `--json`). Default `100000`. |
+| `CODING_SH_PURGE_WAIT_MS` | How long `purge` waits for another process's read of the index or the blob pack before it reports that the old bytes stay. Default `10000` for the index checkpoint before VACUUM and `5000` after it. |
 | `DATABASE_URL` | `coding.sh serve` only: the store when it is a `postgres://` URL and `CODING_SH_STORE_URL` is unset. |
 
 ### Capture
@@ -288,9 +287,8 @@ Read only by `coding.sh serve`. Every key has an environment variable, which win
 | Variable | What |
 |---|---|
 | `CODING_SH_DISABLE=1` | The hook reads its input and writes no event. It records only the session id, in `spool/disabled-sessions`, so ingest and imports of past sessions leave that session out. Set it in an agent's environment to pause capture. |
-| `CODING_SH_NO_AUTO_INGEST=1` | The hook does not start a background ingest when a session ends, `init` does not finish its import of past sessions in the background, and `workflows list` does not start a background `workflows import`. |
-| `CODING_SH_WORKFLOWS_BACKGROUND_IMPORT=1` | Set by `workflows list` on the `workflows import` it starts in the background: it skips when another import runs and prints nothing. Not for you to set. |
-| `CODING_SH_TAIL_CHILD` | Set by a command that reads within a time budget on the child process it starts to import from adapters that read a capture path (T3 Code's database, transcripts of agents without hooks). The command kills that child at its deadline. Not for you to set. |
+| `CODING_SH_NO_AUTO_INGEST=1` | The hook does not start a background ingest when a session ends, and `init` and `workflows list` start no background import. |
+| `CODING_SH_WORKFLOWS_BACKGROUND_IMPORT`, `CODING_SH_TAIL_CHILD` | Set by coding.sh on the import processes it starts. Not for you to set. |
 | `CODING_SH_NO_PROXY_AUTOSTART=1` | The hook does not restart a stopped `coding.sh proxy` when a session starts (it does only after `init --proxy`). |
 | `CODING_SH_ECHO_CONTINUE=1` | The hook prints `{"continue":true}`, for agents that need a JSON reply. `init` sets this up where needed. |
 | `CODING_SH_HOOK_SOURCE` | Path of the `hook.mjs` that `init` copies into `~/.coding.sh/bin`. |
@@ -350,7 +348,7 @@ Tool-eval model drivers read the key variable set by `apiKeyEnv` in `coding.sh.t
 | `CI` | Treated as non-interactive: no prompts or spinners. Commands that would ask need `--yes`. |
 | `NO_UPDATE_NOTIFIER`, `CODING_SH_NO_UPDATE_CHECK` | Turn off the update check. Same as `update.check = false`. |
 | `CODING_SH_NO_STAR_PROMPT` | Turn off the one-time GitHub star prompt in the terminal and the viewer. `NO_UPDATE_NOTIFIER` and `CI` turn it off too. |
-| `CODING_SH_READ_BUDGET_MS` | How long read commands (`status`, `sessions`, `search`, `show`, `tree`, `usage`, `improve`, `harness audit`, `cache doctor`, ...) and MCP tool calls ingest pending captures before answering from what is indexed (with a `pending` field in JSON and MCP results). Default `1500`; `--fresh` waits for all. Git work (a session's start repo state, end snapshots) is left to the background ingest the read starts, and one process at a time imports transcripts (`tail.lock`): a read while another process imports them answers at once, with one file in `pending`. While a re-parse holds `reparse.lock`, these reads skip the ingest, leave the spool to the re-parse, and add `"reparsing": true` to `pending`. |
+| `CODING_SH_READ_BUDGET_MS` | How long read commands (`status`, `sessions`, `search`, `show`, `usage`, ...) and MCP tool calls ingest pending captures before answering from what is indexed (with a `pending` field in JSON and MCP results). Default `1500`; `--fresh` waits for all. A read while another process imports transcripts answers at once. While a re-parse holds `reparse.lock`, these reads skip the ingest, leave the spool to the re-parse, and add `"reparsing": true` to `pending`. |
 
 ### Installer
 
