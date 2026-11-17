@@ -40,7 +40,8 @@ One prompt and everything the agent does until it hands control back to you.
   an open turn's row or `←` folds it. A link to a step in a folded turn opens it.
 - `z` shows every step, and the viewer remembers that choice.
 - In the viewer: Chat, beside Steps (or `v`), shows only the prompts and replies, in order and in
-  full. The viewer remembers the choice, and the link carries it (`?view=chat`).
+  full. The viewer remembers the choice, and the link carries it (`?view=chat`). There, `}` and
+  `{` move between prompts, and `j` and `k` between messages.
 - In Chat, each turn has one line that counts its other steps, such as "4 steps · read 2 files,
   1 command". Activating it goes back to Steps at that turn.
 - The viewer formats the markdown in prompts and replies: headings, lists, code blocks with their

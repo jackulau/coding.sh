@@ -442,6 +442,21 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     // A link opens the view it names in a browser that remembers nothing.
     p = await open("#/s/" + CHAT + "?view=chat");
     await p.waitFor(`document.querySelectorAll('#chat .chat-text').length === 20 && ${pressed} === 'Chat'`, "the link opens the chat");
+    // In Chat, } and { move between prompts and j and k between messages; the hint bar lists them.
+    const atTop = "(() => { const c = document.querySelector('#chat'), t = c.getBoundingClientRect().top; const m = [...c.querySelectorAll('.chat-msg')].find((e) => Math.abs(e.getBoundingClientRect().top - t) < 3); return m ? m.querySelector('.chat-who span').textContent + '|' + m.textContent : ''; })()";
+    assert.match(await p.eval("document.querySelector('.hintbar').textContent"), /jkmove.*\{\}turns/);
+    await p.eval("document.querySelector('#chat').scrollTop = 0; document.querySelector('#chat').focus()");
+    await p.press("}");
+    await p.waitFor(`${atTop}.startsWith('Turn 1 · Prompt|')`, "} brings turn 1's prompt to the top");
+    await p.press("}");
+    await p.waitFor(`${atTop}.startsWith('Turn 2 · Prompt|')`, "} again, turn 2");
+    await p.press("j");
+    await p.waitFor(`${atTop}.startsWith('Assistant|') && /answer 2/.test(${atTop})`, "j, turn 2's reply");
+    await p.press("k");
+    await p.waitFor(`${atTop}.startsWith('Turn 2 · Prompt|')`, "k, back to the prompt");
+    await p.press("{");
+    await p.waitFor(`${atTop}.startsWith('Turn 1 · Prompt|')`, "{, turn 1");
+    assert.equal(await p.eval("document.querySelector('#chat').hidden"), false, "still in Chat");
     p = await open("#/s/" + CHAT);
     await p.waitFor(`${selected} && ${pressed} === 'Steps'`, "no link, nothing remembered: Steps");
     await p.press("?");

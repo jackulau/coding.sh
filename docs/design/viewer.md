@@ -428,7 +428,7 @@ drift as the file changes.
 | find | `/` matches loaded steps by label and tool input; `n` and `N` move between matches, and "Only matches" hides the rest. | index.html:4297–4301, 4827–4841 |
 | deep links | `#/s/<id>/<event>` selects a step and opens any fold around it. `?view=chat` or `?view=steps` picks the view, `?where=` makes `n` and `N` step through the query's matches (the newest 200), and `?step=` opens replay. | index.html:2129–2149, 2673, 4635–4645 |
 | timing bars | `w` shows a bar per step on its own turn's time scale. | index.html:4497–4507, 4811 |
-| Chat view | `v` shows every prompt and reply in full (up to 400 lines each), with one button per turn that goes back to its steps. | index.html:4682–4760 |
+| Chat view | `v` shows every prompt and reply in full (up to 400 lines each), with one button per turn that goes back to its steps. There `}` and `{` move between prompts and `j` and `k` between messages. | index.html:4682–4760 |
 | text | Prompts and replies render a markdown subset through `h()`. Tool output has terminal escape codes removed for display. Blobs load the first 2 MB, with "Load all" for the rest. | index.html:5706–5838, 6192–6221 |
 | tool detail | Per-tool sections, JSON trees, and line and word diffs for edits. | index.html:5868, 5947–5996, 6107–6172 |
 | live tail | A running session fetches new events every 4 s and renders only the rows in view; it reads the outline again at most every 30 s. | index.html:4870–4950 |

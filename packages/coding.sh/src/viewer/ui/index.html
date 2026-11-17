@@ -5321,7 +5321,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   function renderHint() {
     const scope = rp.on ? "replay" : "session";
     swap(hint, 
-      ...KEYMAP.filter((k) => k.scope === scope && k.hint && (!chatOn || CHAT_KEYS.has(k.id))).map((k) => h("span", null, keyCaps(k.id === "down" ? ["j", "k"] : k.id === "next-turn" ? ["{", "}"] : k.keys), k.id === "down" ? "move" : k.id === "next-turn" ? "turns" : k.label.replace(/^Show or hide |^Expand or fold /, "").toLowerCase())),
+      ...KEYMAP.filter((k) => k.scope === scope && k.hint && (!chatOn || CHAT_KEYS.has(k.id) || k.id === "down" || k.id === "next-turn")).map((k) => h("span", null, keyCaps(k.id === "down" ? ["j", "k"] : k.id === "next-turn" ? ["{", "}"] : k.keys), k.id === "down" ? "move" : k.id === "next-turn" ? "turns" : k.label.replace(/^Show or hide |^Expand or fold /, "").toLowerCase())),
       h("span", { class: "spacer" }), h("span", null, keyCaps(["?"]), "all shortcuts"));
   }
 
@@ -5376,8 +5376,26 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     { group: "Session", label: "Show or hide timing bars", hint: "w", run: () => toggleWf() },
     { group: "Session", label: "Replay step by step", hint: "R", run: () => enterReplay() },
   ];
-  // In chat view the step keys do nothing; v, Esc and the label keys still work.
-  for (const [k, fn] of Object.entries(keys.actions)) if (!CHAT_KEYS.has(k)) keys.actions[k] = (e) => (chatOn ? false : fn(e));
+  // In chat view j and k move between messages and } and { between prompts; the arrows keep
+  // scrolling the chat. The other step keys do nothing; v, Esc and the label keys still work.
+  function chatJump(sel, dir, e) {
+    if (e && e.key.startsWith("Arrow")) return false;
+    const top = narrow.matches ? parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--top")) || 0 : chat.getBoundingClientRect().top;
+    const els = [...chat.querySelectorAll(sel)];
+    const at = (el) => el.getBoundingClientRect().top - top;
+    const to = dir > 0 ? els.find((el) => at(el) > 2) : els.reverse().find((el) => at(el) < -2);
+    if (!to) return;
+    if (narrow.matches) window.scrollBy(0, at(to));
+    else chat.scrollTop += at(to);
+    chat.focus({ preventScroll: true });
+  }
+  const chatNav = {
+    down: (e) => chatJump(".chat-msg", 1, e),
+    up: (e) => chatJump(".chat-msg", -1, e),
+    "next-turn": () => chatJump(".chat-msg.is-user", 1),
+    "prev-turn": () => chatJump(".chat-msg.is-user", -1),
+  };
+  for (const [k, fn] of Object.entries(keys.actions)) if (!CHAT_KEYS.has(k)) keys.actions[k] = (e) => (chatOn ? (chatNav[k] ? chatNav[k](e) : false) : fn(e));
   // Clicks inside the step list keep keyboard focus on it.
   tl.addEventListener("mousedown", () => { requestAnimationFrame(() => { if (!typing({ target: document.activeElement })) tl.focus({ preventScroll: true }); }); });
 
