@@ -114,3 +114,30 @@ test("a viewer page past the limit fails with where the time went", { skip: !chr
     await browser.close();
   }
 });
+
+test("a viewer page that is ready only after the limit fails too", { skip: !chrome && "no Chrome installed", timeout: 120_000 }, async () => {
+  const browser = await launchBrowser(chrome!);
+  const limitMs = 500;
+  // A busy machine: the list page loads and shows its list, and the look that sees it comes after
+  // the limit. The page is given all the time it needs first, so the machine's speed decides nothing.
+  const newPage = browser.newPage.bind(browser);
+  browser.newPage = async () => {
+    // The limit began before this call, so it ends at most limitMs from here.
+    const asked = performance.now();
+    const page = await newPage();
+    const goto = page.goto.bind(page);
+    page.goto = async (url, timeoutMs) => {
+      if (new URL(url).hash) return goto(url, timeoutMs);
+      await goto(url, 60_000);
+      await page.waitFor("document.querySelector('[role=listbox]')", "the list", 60_000);
+      const early = asked + limitMs + 100 - performance.now();
+      if (early > 0) await new Promise((r) => setTimeout(r, early));
+    };
+    return page;
+  };
+  try {
+    await assert.rejects(viewerPages(browser, limitMs), /^Error: timed out waiting for the viewer's list: it was ready \d+ ms past the limit of 500 ms$/);
+  } finally {
+    await browser.close();
+  }
+});
