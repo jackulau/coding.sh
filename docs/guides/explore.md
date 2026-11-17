@@ -153,6 +153,9 @@ token for this run of `ui`; the viewer needs it.
   and the arrow keys scroll the focused step detail.
 - **Theme.** The viewer follows your system's light or dark setting. The theme button in the top
   bar picks one instead, and the browser remembers that choice.
+- **Copied commands.** Each value is single-quoted for sh and PowerShell. A value with a quote, a
+  control character or `& | < >` is shown but not copied, since no one quoting is safe for it in
+  every shell.
 
 ## Follow a running session
 

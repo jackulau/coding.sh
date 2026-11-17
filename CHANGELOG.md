@@ -35,6 +35,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Viewer.** Commands the viewer copies (`eval new`, `replay --fork --with`, `bench show`) quote each session id, path and name for sh and PowerShell. A command whose value holds a quote, a control character or `& | < >` is shown but not copied. [Explore](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#open-the-viewer)
 - **Serve.** A viewer `POST` that carries an `Origin` is accepted only when the Origin's host is the host the request was sent to, on a public bind as well as on loopback. Behind nginx, add `proxy_set_header Host $host;`: the 403 says so. [Production](https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md)
 - **Serve.** Every route but `/healthz` answers 403 to a `Host` header serve was not set up for, as the viewer already did. The new `serve.allowed_hosts` setting (`CODING_SH_ALLOWED_HOSTS`) adds names on loopback, such as `host.docker.internal` for an agent in a container, and limits a public bind to its list (`/readyz` still answers probes). [Configuration](https://github.com/jackulau/coding.sh/blob/main/docs/reference/config.md)
 - **Serve.** On loopback with no keys, serve answers only requests that no proxy passed on: a request with an `X-Forwarded-*`, `Forwarded` or `Via` header gets 401, and serve logs a warning the first time. With `serve.trust_proxy` set, a loopback serve with no keys stops at start and names the keys to add. [Production](https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md)
