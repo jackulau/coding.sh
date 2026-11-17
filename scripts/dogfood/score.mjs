@@ -181,7 +181,8 @@ export async function score(opts = {}) {
   } catch (e) {
     health = { value: null, error: e.message };
   }
-  put("capture.health", comp(health.value, { n: health.n, reason: health.reason, error: health.error, incomplete: health.incomplete, group: "conformance", unit: "rate", target: 1 }));
+  put("capture.health", comp(health.value, { n: health.n, reason: health.reason, error: health.error, incomplete: health.incomplete, excluded: health.excluded, warning: health.warning, group: "conformance", unit: "rate", target: 1 }));
+  if (health.warning) notes.push(`capture.health: ${health.warning}`);
   if (health.value === null) notes.push(`capture.health not measured: ${health.reason ?? health.error}`);
 
   // ---- perf
