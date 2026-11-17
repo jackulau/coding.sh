@@ -22,10 +22,7 @@ export function git(root, args) {
   return { ok: r.status === 0, out: (r.stdout ?? "").trim(), err: (r.stderr ?? "").trim() };
 }
 
-/**
- * The npm workspaces under `root` that have a package.json: their directory,
- * package name, scripts and the names of the workspaces they depend on.
- */
+/** The npm workspaces under `root` that have a package.json: their directory, package name and scripts. */
 export function workspaces(root) {
   const rootPkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   const dirs = [];
@@ -41,26 +38,13 @@ export function workspaces(root) {
     const file = join(root, dir, "package.json");
     if (!existsSync(file)) continue;
     const pkg = JSON.parse(readFileSync(file, "utf8"));
-    const deps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies, ...pkg.peerDependencies, ...pkg.optionalDependencies });
-    found.push({ dir, name: pkg.name, scripts: pkg.scripts ?? {}, deps });
+    found.push({ dir, name: pkg.name, scripts: pkg.scripts ?? {} });
   }
-  const names = new Set(found.map((w) => w.name));
-  for (const w of found) w.deps = w.deps.filter((d) => names.has(d));
   return found;
 }
 
 /** The workspace a repo-relative path belongs to, or undefined. */
 export const workspaceOf = (spaces, path) => spaces.find((w) => path === w.dir || path.startsWith(`${w.dir}/`));
-
-/** Workspaces that depend on any of `names`, directly or through another workspace. */
-export function dependents(spaces, names) {
-  const out = new Set(names);
-  for (let grew = true; grew; ) {
-    grew = false;
-    for (const w of spaces) if (!out.has(w.name) && w.deps.some((d) => out.has(d))) out.add(w.name), (grew = true);
-  }
-  return spaces.filter((w) => out.has(w.name));
-}
 
 /** A step: a label for the log and the command to run from `cwd` (repo-relative). */
 const step = (label, cmd, args, cwd = ".") => ({ label, cmd, args, cwd });
@@ -83,48 +67,47 @@ function typecheckCommand(w) {
  */
 export function precommitPlan(root, files) {
   if (!files.length) return [];
-  const plan = [step("slop lint (staged files)", process.execPath, ["scripts/lint/slop.mjs", "--staged"])];
+  return [step("slop lint (staged files)", process.execPath, ["scripts/lint/slop.mjs", "--staged"]), ...typecheckSteps(root, files)];
+}
+
+/** A typecheck step for each workspace that holds one of `files`. */
+function typecheckSteps(root, files) {
   const spaces = workspaces(root);
   const touched = new Set(files.map((f) => workspaceOf(spaces, f)).filter(Boolean));
+  const steps = [];
   for (const w of spaces) {
     if (!touched.has(w)) continue;
     const cmd = typecheckCommand(w);
-    if (cmd) plan.push(step(`typecheck ${w.name}`, cmd[0], cmd[1], w.dir));
+    // Typechecks only read, each in its own workspace, so the runner starts them together.
+    if (cmd) steps.push({ ...step(`typecheck ${w.name}`, cmd[0], cmd[1], w.dir), together: true });
   }
-  return plan;
+  return steps;
 }
 
-/** Repo scripts with their own tests, by path prefix. */
-const SCRIPT_SUITES = [
-  { prefix: ["scripts/lint/", "scripts/hooks/"], label: "lint and hook tests", args: ["--test", "scripts/lint/test/*.test.mjs", "scripts/hooks/test/*.test.mjs"] },
-  { prefix: ["scripts/dogfood/"], label: "dogfood tests", args: ["--test", "scripts/dogfood/test/*.test.mjs"] },
-];
+/** Past this many pushed files the lint reads the whole tree: the paths would not fit a Windows command line. */
+export const LINT_PATHS_MAX = 200;
 
 /**
  * pre-push: with `ranges` (the pushed commits), the gate's repo-hygiene check
- * first; then the tests of each workspace the pushed commits touch and of the
- * workspaces that depend on it (a coding.sh change runs the store plugins'
- * tests too), the Python SDK's tests, and the repo scripts' own tests.
+ * first; then the anti-slop lint over the files the push changes and a
+ * typecheck of each workspace it touches. No tests: CI runs them, and
+ * `npm run gate` runs them here. The lint and the typecheck read the working
+ * tree, which is the pushed commit unless there are uncommitted edits.
  */
 export function prepushPlan(root, files, ranges) {
-  const spaces = workspaces(root);
-  const touched = [...new Set(files.map((f) => workspaceOf(spaces, f)).filter(Boolean))];
   const plan = [];
   // The gate's repo-hygiene check on the pushed commits: a users.noreply.github.com
   // author on each, no repo-local identity, no tracked agent files.
   if (ranges?.length && existsSync(join(root, "scripts/gate/hygiene.mjs"))) {
     plan.push(step("commit identity and private files", process.execPath, ["scripts/gate/hygiene.mjs", ...ranges]));
   }
-  for (const w of dependents(spaces, touched.map((t) => t.name))) {
-    if (w.scripts.test) plan.push(step(`test ${w.name}${touched.includes(w) ? "" : " (depends on a changed package)"}`, "npm", ["test", "--silent"], w.dir));
+  // A file the push deletes is in the diff and not on disk; the lint has nothing to read there.
+  const present = files.filter((f) => existsSync(join(root, f)));
+  if (present.length) {
+    const whole = present.length > LINT_PATHS_MAX;
+    plan.push(step(whole ? "slop lint (whole tree)" : "slop lint (pushed files)", process.execPath, whole ? ["scripts/lint/slop.mjs"] : ["scripts/lint/slop.mjs", ...present]));
   }
-  const py = "packages/sdk-python";
-  if (files.some((f) => f.startsWith(`${py}/`)) && existsSync(join(root, py, "tests"))) {
-    plan.push(step("test coding-sh (Python)", process.platform === "win32" ? "python" : "python3", ["-m", "unittest", "discover", "-s", "tests", "-t", "tests"], py));
-  }
-  for (const s of SCRIPT_SUITES) {
-    if (files.some((f) => s.prefix.some((p) => f.startsWith(p)))) plan.push(step(s.label, process.execPath, s.args));
-  }
+  plan.push(...typecheckSteps(root, files));
   return plan;
 }
 

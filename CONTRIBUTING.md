@@ -110,9 +110,14 @@ undo it.
 
 - **pre-commit** runs the lint on staged files, then the `typecheck` script (the site's
   `astro check`) of each package the commit touches.
-- **pre-push** runs the `test` script of each package the pushed commits touch and of the
-  packages that depend on it (a `packages/coding.sh` change also runs the store plugins' tests),
-  the Python SDK's tests, and the lint, hook and dogfood script tests when those change.
+- **pre-push** checks the pushed commits' author addresses and that no private agent file is
+  tracked, runs the lint on the files the push changes, then the same typecheck as pre-commit for
+  each package the push touches. It runs no tests: CI runs them on the pull request, and
+  `npm run gate` runs them on your machine. The lint and the typecheck read your working tree, so
+  uncommitted edits are checked too. It prints a line when it takes more than 9 seconds.
+
+When a commit or push touches more than one package, their typechecks run at the same time, and a
+hook prints the output of the ones that fail.
 
 Skip a hook once with `--no-verify`, or set `CODING_SH_SKIP_HOOKS=1`.
 `node scripts/hooks/run.mjs pre-commit --dry-run` prints what a hook would run. The lint and hook

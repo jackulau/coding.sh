@@ -32,7 +32,7 @@ export function main(argv, { stdout = process.stdout, stderr = process.stderr, c
     return 2;
   }
   if (argv.includes("--help")) {
-    stdout.write("Usage: node scripts/hooks/install.mjs [--status | --uninstall] [--force]\n\nInstalls the repo's pre-commit (slop lint + typecheck) and pre-push (tests of touched packages) hooks\nby setting core.hooksPath to scripts/hooks in this checkout's git config.\n");
+    stdout.write("Usage: node scripts/hooks/install.mjs [--status | --uninstall] [--force]\n\nInstalls the repo's pre-commit (slop lint + typecheck) and pre-push (commit identity, slop lint + typecheck of what the push changes) hooks\nby setting core.hooksPath to scripts/hooks in this checkout's git config.\n");
     return 0;
   }
   const top = git(cwd, ["rev-parse", "--show-toplevel"]);
@@ -89,7 +89,7 @@ export function main(argv, { stdout = process.stdout, stderr = process.stderr, c
     stderr.write(`error: git config failed: ${r.err}\n`);
     return 1;
   }
-  stdout.write(`installed: pre-commit (slop lint + typecheck), pre-push (tests of touched packages)\n`);
+  stdout.write(`installed: pre-commit (slop lint + typecheck), pre-push (commit identity, slop lint + typecheck of what the push changes)\n`);
   stderr.write("skip once with --no-verify, or set CODING_SH_SKIP_HOOKS=1; remove with node scripts/hooks/install.mjs --uninstall\n");
   return 0;
 }
