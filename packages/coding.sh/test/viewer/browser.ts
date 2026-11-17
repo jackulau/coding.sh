@@ -154,8 +154,17 @@ export interface CloseSteps {
   profileLeft: boolean;
 }
 
-/** A close slower than this prints its steps to the test output. */
+/** A close slower than this prints its steps. */
 const SLOW_CLOSE_MS = 2000;
+
+/**
+ * Prints a slow close's steps on stderr. Not stdout: that is the result of a script that starts
+ * a browser (scripts/warm-chrome.ts prints one line there). A test file's stderr is in the test
+ * output all the same.
+ */
+export function noteClose(steps: CloseSteps): void {
+  if (steps.ms > SLOW_CLOSE_MS) console.error(`# slow Chrome close, ${describeClose(steps)}`);
+}
 
 export function describeClose(s: CloseSteps): string {
   return (
@@ -353,7 +362,7 @@ export async function launchBrowser(chrome: string): Promise<Browser> {
       }
       const t3 = performance.now();
       const steps: CloseSteps = { ms: t3 - t0, askMs: t1 - t0, exitMs: t2 - t1, killed, profileMs: t3 - t2, profileLeft };
-      if (steps.ms > SLOW_CLOSE_MS) console.log(`# slow Chrome close, ${describeClose(steps)}`);
+      noteClose(steps);
       return steps;
     },
   };

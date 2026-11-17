@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -71,6 +72,18 @@ test("a slow close names its steps", () => {
     describeClose({ ms: 240, askMs: 30, exitMs: 200, killed: false, profileMs: 10, profileLeft: false }),
     "240 ms: Browser.close 30 ms, exit 200 ms, profile removal 10 ms",
   );
+});
+
+test("a slow close is printed on stderr, so a script's stdout stays its result", () => {
+  const steps = (ms: number) => JSON.stringify({ ms, askMs: 5, exitMs: ms - 20, killed: false, profileMs: 15, profileLeft: false });
+  const run = (ms: number) =>
+    spawnSync(process.execPath, ["--no-warnings", "-e", `import(${JSON.stringify(new URL("./browser.ts", import.meta.url).href)}).then((m) => m.noteClose(${steps(ms)}))`], { encoding: "utf8" });
+  const slow = run(2362);
+  assert.equal(slow.status, 0, slow.stderr);
+  assert.equal(slow.stdout, "");
+  assert.equal(slow.stderr, "# slow Chrome close, 2362 ms: Browser.close 5 ms, exit 2342 ms, profile removal 15 ms\n");
+  const quick = run(240);
+  assert.equal(quick.stdout + quick.stderr, "");
 });
 
 test("a page load that runs out of time says where the time went", () => {
