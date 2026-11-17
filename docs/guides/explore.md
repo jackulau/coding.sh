@@ -149,6 +149,8 @@ token for this run of `ui`; the viewer needs it.
 - **Keys.** <kbd>?</kbd> lists every shortcut. <kbd>j</kbd> and <kbd>k</kbd> move through the
   list outside a text field. A focused button keeps Enter and Space, a focused link keeps Enter,
   and the arrow keys scroll the focused step detail.
+- **Theme.** The viewer follows your system's light or dark setting. The theme button in the top
+  bar picks one instead, and the browser remembers that choice.
 
 ## Follow a running session
 

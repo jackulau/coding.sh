@@ -116,4 +116,56 @@ describe("viewer fixes in a browser", { skip: chrome ? false : "no Chrome/Chromi
     await p.waitFor("document.querySelector('.row')", "the page");
     assert.equal(await p.eval("(() => { const d = document.createElement('div'); swap(d, null, 'a', undefined, false, [null, 'b']); return d.textContent; })()"), "ab");
   });
+
+  test("the theme follows the system until a choice is stored, and the first paint needs no script", async () => {
+    const scheme = (p: Page, value: string) => p.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value }] });
+    const bg = "getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()";
+    const label = "document.querySelector('#theme').getAttribute('aria-label')";
+    const LIGHT = "#f7f7f8", DARK = "#08080a";
+    // No flash: with scripts off, the CSS alone paints the system's theme.
+    for (const [value, want] of [["light", LIGHT], ["dark", DARK]] as const) {
+      await page?.close();
+      page = await browser.newPage();
+      await page.send("Emulation.setScriptExecutionDisabled", { value: true });
+      await scheme(page, value);
+      await page.goto(v.url + "#/");
+      assert.equal(await page.eval(bg), want, `${value} system, no script`);
+    }
+    // No stored choice: the page follows the system and reacts when the setting changes.
+    await page?.close();
+    page = await browser.newPage();
+    const p = page;
+    await p.viewport(1280, 900);
+    await scheme(p, "dark");
+    await p.goto(v.url + "#/");
+    await p.waitFor("document.querySelector('.row')", "the page");
+    assert.equal(await p.eval(bg), DARK);
+    assert.equal(await p.eval("document.documentElement.hasAttribute('data-theme')"), false);
+    assert.equal(await p.eval(label), "Switch to light theme");
+    await scheme(p, "light");
+    await p.waitFor(`${label} === 'Switch to dark theme'`, "the button's label follows the system");
+    assert.equal(await p.eval(bg), LIGHT);
+    // The system's light theme and a picked light theme set the same tokens.
+    const tokens = `(() => { const r = [...document.styleSheets[0].cssRules].find((x) => x.selectorText === ':root[data-theme="light"]');
+      const cs = getComputedStyle(document.documentElement); return [...r.style].map((n) => n + ": " + cs.getPropertyValue(n).trim()); })()`;
+    const system: string[] = await p.eval(tokens);
+    // The toggle stores the choice, and a stored choice wins over the system.
+    await p.eval("document.querySelector('#theme').click()");
+    assert.equal(await p.eval("localStorage.getItem('csh-theme')"), "dark");
+    assert.equal(await p.eval("document.documentElement.getAttribute('data-theme')"), "dark");
+    assert.equal(await p.eval(bg), DARK, "a picked dark theme on a light system");
+    await p.eval("document.querySelector('#theme').click()");
+    assert.equal(await p.eval("localStorage.getItem('csh-theme')"), "light");
+    await scheme(p, "dark");
+    assert.equal(await p.eval(bg), LIGHT, "a stored light choice wins over a dark system");
+    assert.deepEqual(await p.eval(tokens), system, "a picked light theme matches the system's");
+    await p.eval("document.querySelector('#theme').click()");
+    await scheme(p, "light");
+    await p.eval("window.beforeReload = true");
+    await p.send("Page.reload");
+    await p.waitFor("!window.beforeReload && document.readyState === 'complete' && document.querySelector('.row')", "the reload");
+    assert.equal(await p.eval(bg), DARK, "a stored dark choice wins over a light system after a reload");
+    assert.equal(await p.eval(label), "Switch to light theme");
+    assert.deepEqual(p.errors, []);
+  });
 });

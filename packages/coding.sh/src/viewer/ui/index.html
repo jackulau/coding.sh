@@ -61,6 +61,7 @@
   --gutter: 1rem;
   color-scheme: dark;
 }
+/* A light theme the person picked. The block under it is the same, for the system setting. */
 :root[data-theme="light"] {
   --bg: #f7f7f8;
   --surface: #ffffff;
@@ -91,6 +92,40 @@
   --s4: #b07400;
   --shadow: 0 18px 50px -20px rgba(0, 0, 0, 0.3);
   color-scheme: light;
+}
+/* No choice stored: follow the system. Kept in CSS so the first paint already has the right theme. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg: #f7f7f8;
+    --surface: #ffffff;
+    --raised: #f2f2f4;
+    --raised-2: #e9e9ec;
+    --hover: rgba(0, 0, 0, 0.03);
+    --select: rgba(0, 0, 0, 0.055);
+    --text: #0c0c0e;
+    --text-2: #4f4f57;
+    --text-muted: #62626a;
+    --text-faint: #b4b4bb;
+    --line: rgba(0, 0, 0, 0.08);
+    --line-strong: rgba(0, 0, 0, 0.14);
+    --pass: #15a352;
+    --pass-ink: #0b7a3b;
+    --pass-wash: rgba(21, 163, 82, 0.1);
+    --fail: #e5484d;
+    --fail-ink: #c2262c;
+    --fail-wash: rgba(229, 72, 77, 0.09);
+    --warn: #c98a12;
+    --warn-ink: #8a5a06;
+    --warn-wash: rgba(201, 138, 18, 0.12);
+    --bar: rgba(0, 0, 0, 0.28);
+    --bar-strong: rgba(0, 0, 0, 0.58);
+    --s1: #2a78d6;
+    --s2: #0d9a93;
+    --s3: #6250d6;
+    --s4: #b07400;
+    --shadow: 0 18px 50px -20px rgba(0, 0, 0, 0.3);
+    color-scheme: light;
+  }
 }
 @media (min-width: 768px) { :root { --gutter: 1.5rem; } }
 
@@ -2036,22 +2071,25 @@ function typing(e) {
 
 // ------------------------------------------------------------ theme
 
+// A stored choice (csh-theme) wins. Without one, the CSS follows prefers-color-scheme and the page
+// only keeps the button's label in step, also when the system setting changes.
+const SYSTEM_LIGHT = matchMedia("(prefers-color-scheme: light)");
 const theme = {
-  get() { try { return localStorage.getItem("csh-theme") === "light" ? "light" : "dark"; } catch { return "dark"; } },
-  apply(t) {
-    if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+  chosen: (() => { try { const t = localStorage.getItem("csh-theme"); return t === "light" || t === "dark" ? t : null; } catch { return null; } })(),
+  get() { return theme.chosen ?? (SYSTEM_LIGHT.matches ? "light" : "dark"); },
+  apply() {
+    if (theme.chosen) document.documentElement.setAttribute("data-theme", theme.chosen);
     else document.documentElement.removeAttribute("data-theme");
-    $("#theme").setAttribute("aria-label", t === "light" ? "Switch to dark theme" : "Switch to light theme");
+    $("#theme").setAttribute("aria-label", theme.get() === "light" ? "Switch to dark theme" : "Switch to light theme");
   },
   toggle() {
-    const next = theme.get() === "light" ? "dark" : "light";
-    try { localStorage.setItem("csh-theme", next); } catch { /* private window: this page only */ }
-    theme.apply(next);
-    if (!localStorageWorks()) document.documentElement.toggleAttribute("data-theme", next === "light");
+    theme.chosen = theme.get() === "light" ? "dark" : "light";
+    try { localStorage.setItem("csh-theme", theme.chosen); } catch { /* private window: this page only */ }
+    theme.apply();
   },
 };
-function localStorageWorks() { try { localStorage.setItem("csh-t", "1"); localStorage.removeItem("csh-t"); return true; } catch { return false; } }
-theme.apply(theme.get());
+theme.apply();
+SYSTEM_LIGHT.addEventListener("change", () => theme.apply());
 $("#theme").addEventListener("click", () => theme.toggle());
 
 // Relative times ("3m ago") are rewritten once a minute, and when the tab comes back.
