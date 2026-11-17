@@ -16,7 +16,7 @@ import { listBackups, StoreNewerError } from "../store/upgrade.ts";
 import { version } from "./meta.ts";
 import { acquireLock, isLocked, type LockOptions, wakeMarker } from "../core/lock.ts";
 import { spawnBackgroundIngest } from "../spool/kick.ts";
-import { UsageError, type FlagValue } from "./args.ts";
+import { suggest, UsageError, type FlagValue } from "./args.ts";
 import { ago, CliError, plural, type Output } from "./output.ts";
 import type { CommandContext } from "./types.ts";
 import { noSessionsNext, noSessionsNextLines } from "./first-session.ts";
@@ -579,6 +579,28 @@ export function list(v: FlagValue): string[] {
 /** `--agent`: every agent named, repeated or as a comma list (the parser splits those), each once. */
 export function agentsFlag(c: CommandContext): string[] {
   return [...new Set(list(c.flags.agent))];
+}
+
+/** The `--agent` names with no stored session at all (a typo, or an agent not captured yet). */
+export async function agentsWithoutSessions(index: IndexStore, agents: readonly string[]): Promise<string[]> {
+  const none: string[] = [];
+  for (const agent of agents) if (!(await index.listSessions({ agent, limit: 1 })).length) none.push(agent);
+  return none;
+}
+
+/**
+ * After an empty result: an `--agent` that names no adapter and no stored session but is close to
+ * an adapter id, as `suggest` judges it, is a typo (`claud-code`), rejected the way `harness audit`
+ * rejects it. An SDK agent's own id is not near an adapter id, so it still filters to an empty list.
+ */
+export async function rejectAgentTypos(index: IndexStore, agents: readonly string[]): Promise<void> {
+  if (!agents.length) return;
+  const { ADAPTERS } = await import("../adapters/index.ts");
+  const ids = ADAPTERS.map((a) => a.id as string);
+  for (const agent of await agentsWithoutSessions(index, agents.filter((a) => !ids.includes(a)))) {
+    const s = suggest(agent, ids);
+    if (s) throw new UsageError(`Unknown agent ${JSON.stringify(agent)}`, { suggestion: `--agent ${s}`, reason: "unknown_agent" });
+  }
 }
 
 /**
