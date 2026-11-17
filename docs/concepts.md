@@ -22,8 +22,8 @@ thread, one trace from your own agent, or one `coding.sh run -- <command>`.
 - In the viewer: a row in the session list. Click it to open its timeline. Each row is a link, so
   a middle click or Ctrl or Cmd click opens the session in a new tab.
 - A session with a failure opens on its first failing step. First failure in the session header,
-  or `F`, goes back to it. A session with no failure opens on its first prompt. A link to a step
-  opens on that step.
+  or `F`, goes back to it.
+- A session with no failure opens on its first prompt. A link to a step opens on that step.
 - In the CLI: `coding.sh sessions` lists sessions, and `coding.sh show <id>` prints one.
 
 ### Turn
@@ -40,8 +40,8 @@ One prompt and everything the agent does until it hands control back to you.
   an open turn's row or `←` folds it. A link to a step in a folded turn opens it.
 - `z` shows every step, and the viewer remembers that choice.
 - In the viewer: Chat, beside Steps (or `v`), shows only the prompts and replies, in order and in
-  full. The viewer remembers the choice, and the link carries it (`?view=chat`). There, `}` and
-  `{` move between prompts, and `j` and `k` between messages.
+  full. The viewer remembers the choice, and the link carries it (`?view=chat`).
+- In Chat, `}` and `{` move between prompts, and `j` and `k` between messages.
 - In Chat, each turn has one line that counts its other steps, such as "4 steps · read 2 files,
   1 command". Activating it goes back to Steps at that turn.
 - The viewer formats the markdown in prompts and replies: headings, lists, code blocks with their
