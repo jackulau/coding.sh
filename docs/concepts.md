@@ -62,8 +62,9 @@ tool call with its input and output, or a file change.
 - In the CLI: `coding.sh show <id>` prints one line per event, and `coding.sh search` finds text in
   them.
 - The CLI prints captured text without terminal escape sequences or control characters: in tables,
-  lines and messages on stdout and stderr, and in CSV or JSONL written to a terminal. CSV and JSONL
-  written to a file or a pipe keep the text as stored. `--json` output keeps it, escaped as JSON does.
+  lines and messages on stdout and stderr, and in CSV or JSONL written to a terminal.
+- CSV and JSONL written to a file or a pipe keep the text as stored. `--json` output keeps it,
+  escaped as JSON does.
 
 ### Subagent
 
