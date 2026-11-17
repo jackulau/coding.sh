@@ -41,7 +41,8 @@ describe("exp run case selection and resume from the CLI", () => {
       join(home, "agent.cjs"),
       `const fs=require("node:fs");let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const q=JSON.parse(s);` +
         `if(q===5&&fs.existsSync(${JSON.stringify(join(home, "broken"))})){process.exit(1)}` +
-        `if(q===7&&fs.existsSync(${JSON.stringify(join(home, "hang"))})){setInterval(()=>{},1000);return}` +
+        // The hung task outlives a killed CLI (it runs in its own process group): it exits once ./hang is gone.
+        `if(q===7&&fs.existsSync(${JSON.stringify(join(home, "hang"))})){setInterval(()=>{if(!fs.existsSync(${JSON.stringify(join(home, "hang"))}))process.exit(1)},100);return}` +
         `const k=Number(process.env.FAIL_EVERY||0);process.stdout.write(JSON.stringify(k&&q%k===0?-1:q))});\n`,
     );
     writeFileSync(join(home, "package.json"), '{"type":"commonjs"}');
