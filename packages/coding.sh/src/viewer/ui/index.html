@@ -3746,7 +3746,17 @@ function listActions(view) {
   };
   return {
     search: () => { const q = $("#q", view); if (!q) return false; q.focus(); q.select(); if (qbar && qbar.input === q) qbar.suggest(); },
-    down: move(() => list.active + 1),
+    // Down from the last loaded row loads the next page, as "Load more" does, and selects its first row.
+    down: () => {
+      const lb = lbox();
+      const more = lb && lb.parentElement ? lb.parentElement.querySelector(":scope > .more > button") : null;
+      if (more && list.active >= lb.querySelectorAll("[role=option]").length - 1) {
+        if (document.activeElement !== lb) lb.focus({ preventScroll: true });
+        if (!more.disabled) more.click();
+        return;
+      }
+      return move(() => list.active + 1)();
+    },
     up: move(() => list.active - 1),
     open: () => {
       const lb = lbox();

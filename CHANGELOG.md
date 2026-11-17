@@ -37,6 +37,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Viewer.** In the session and event lists, `j` on the last loaded row loads the next page, as Load more does, and selects its first row. Before, it stayed on the last row. [Concepts](https://coding.sh/docs/concepts#session)
 - **Viewer.** A command that fails inside a Codex code-mode cell is one failure stop: the cell that ran it is marked, not counted as a second failure, and the calls a cell runs sit indented under it. A cell that fails on its own is still a failure stop. [Concepts](https://coding.sh/docs/concepts#session)
 - **Workflows.** Ctrl-C stops `workflows import` and `workflows list` at the next run and exits 130. The runs imported so far stay stored, the import says how many are left, and the next import goes on from there; `--json` says `"outcome": "interrupted"`. Before, the first Ctrl-C did nothing until the import finished. [Workflows](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md)
 - **MCP.** `eval_init` errors name its arguments, such as `command`, `url` and `force: true`, where `eval init` names CLI flags, and no longer suggest `--draft`, which `eval_init` does not take. [MCP server](https://coding.sh/docs/mcp)

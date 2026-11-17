@@ -1,5 +1,6 @@
 // Viewer fixes from hands-on QA, seen in headless Chrome: a failed command inside a Codex code-mode
-// cell is one failure stop (the cell is not a second one, and its calls sit nested under it).
+// cell is one failure stop (the cell is not a second one, and its calls sit nested under it), and j
+// past the last loaded row loads the next page.
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
@@ -87,6 +88,19 @@ describe("viewer QA fixes in a browser", { skip: chrome ? false : "no Chrome/Chr
     assert.match(bash.cls, /\bis-fail\b/);
     assert.doesNotMatch(cell.cls, /\bis-fail\b/);
     assert.match(cell.cls, /\bchild-fail\b/);
+    assert.deepEqual(p.errors, []);
+  });
+
+  test("j past the last loaded session loads the next page and selects its first row", async () => {
+    const p = await open("#/");
+    await p.waitFor("document.querySelectorAll('.list .row').length === 50", "first page");
+    await p.eval("document.querySelector('.list[role=listbox]').focus()");
+    for (let i = 0; i < 50; i++) await p.press("j");
+    await p.waitFor("document.querySelectorAll('.list .row').length === 100", "second page", 10_000);
+    await p.waitFor("document.querySelector('.list').getAttribute('aria-activedescendant') === 'opt-50'", "row 51 selected");
+    assert.equal(await p.eval("document.activeElement === document.querySelector('.list[role=listbox]')"), true);
+    await p.press("j");
+    assert.equal(await p.eval("document.querySelector('.list').getAttribute('aria-activedescendant')"), "opt-51");
     assert.deepEqual(p.errors, []);
   });
 });
