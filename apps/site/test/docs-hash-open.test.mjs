@@ -1,8 +1,9 @@
 // A link to an id inside a closed <details> opens it: /docs/faq folds each
-// answer under its question, and every docs page carries a small inline script
-// that, on load, on hashchange and after a click on a link with a hash, opens
-// the target when it is a closed <details> and each closed <details> around
-// it, and scrolls to it. Checks the built pages in dist when there is a build.
+// answer under its question, and every docs page with a fold in its article
+// carries a small inline script that, on load, on hashchange and after a click
+// on a link with a hash, opens the target when it is a closed <details> and
+// each closed <details> around it, and scrolls to it. Checks the built pages
+// in dist when there is a build.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -145,9 +146,12 @@ test("a click on a same-page hash link opens the fold, though the router fires n
   assert.equal(target.open, false);
 });
 
-test("every docs page carries the opener once, :::more pages included", distOpts(DIST), () => {
+test("every docs page with a fold carries the opener once, :::more pages included, and a page without one none", distOpts(DIST), () => {
   needDist(DIST);
-  for (const p of ["docs/quickstart", "docs/privacy", "docs/troubleshooting", "docs/cli"]) opener(page(p));
+  for (const p of ["docs/quickstart", "docs/privacy", "docs/troubleshooting", "docs/faq"]) opener(page(p));
+  const cli = page("docs/cli");
+  assert.doesNotMatch(cli.match(/<main[\s\S]*<\/main>/)[0], /<details[\s>]/, "/docs/cli has no fold in its article");
+  assert.doesNotMatch(cli, /onhashchange/, "so it carries no opener");
 });
 
 test("the FAQ question styles ship on /docs/faq only, and outrank .more > summary in any order", distOpts(DIST), () => {
