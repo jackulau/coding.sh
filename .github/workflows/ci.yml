@@ -265,11 +265,12 @@ jobs:
           GATE_COMMIT_RANGE: ${{ github.event_name == 'push' && format('{0}..{1}', github.event.before, github.sha) || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ready')) && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || '' }}
         run: node scripts/gate.mjs --static --strict
 
-  store-postgres:
-    name: coding.sh-store-postgres / Postgres 17
+  stores:
+    name: store plugins / Postgres 17 and ClickHouse 26.3
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    # GitHub-hosted, for the service container; the plugin tests run against a real server.
+    # GitHub-hosted, for the service containers; each plugin's tests run against a real server.
+    # One job for both stores: they share a checkout and an install, and each has its own step.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -281,6 +282,14 @@ jobs:
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 30
+      clickhouse:
+        image: clickhouse/clickhouse-server:26.3.62.3
+        env:
+          CLICKHOUSE_USER: coding
+          CLICKHOUSE_PASSWORD: ci
+        ports: ["8123:8123"]
+        options: >-
+          --health-cmd "wget -qO- http://127.0.0.1:8123/ping" --health-interval 2s --health-timeout 5s --health-retries 30
     steps:
       - uses: actions/checkout@v5
 
@@ -290,6 +299,7 @@ jobs:
           cache: npm
 
       - name: Install
+        id: install
         run: npm ci
 
       - name: Typecheck and test (real Postgres)
@@ -298,8 +308,17 @@ jobs:
           CODING_SH_TEST_PG_URL: postgres://postgres:ci@127.0.0.1:5432/coding
         run: npm run check
 
+      # The next two steps run when an earlier one fails too, so one run shows every result.
       - name: Typecheck and test blob-s3
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: packages/blob-s3
+        run: npm run check
+
+      - name: Typecheck and test (real ClickHouse)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: packages/store-clickhouse
+        env:
+          CODING_SH_TEST_CH_URL: clickhouse://coding:ci@127.0.0.1:8123/coding
         run: npm run check
 
   python-sdk:
@@ -471,39 +490,6 @@ jobs:
           grep -q '^### Evals: the suite passed$' "$GOOD_REPORT"
           grep -q '^| bad | regression | 2 cases | 1/2 | .* | \*\*fail\*\*: b fails most trials |$' "$BAD_REPORT"
           grep -q '`coding.sh eval run bad --yes` exited 1' "$BAD_REPORT"
-
-  store-clickhouse:
-    name: coding.sh-store-clickhouse / ClickHouse 26.3
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    # GitHub-hosted, for the service container; the plugin tests run against a real server.
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    services:
-      clickhouse:
-        image: clickhouse/clickhouse-server:26.3.62.3
-        env:
-          CLICKHOUSE_USER: coding
-          CLICKHOUSE_PASSWORD: ci
-        ports: ["8123:8123"]
-        options: >-
-          --health-cmd "wget -qO- http://127.0.0.1:8123/ping" --health-interval 2s --health-timeout 5s --health-retries 30
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24.x
-          cache: npm
-
-      - name: Install
-        run: npm ci
-
-      - name: Typecheck and test (real ClickHouse)
-        working-directory: packages/store-clickhouse
-        env:
-          CODING_SH_TEST_CH_URL: clickhouse://coding:ci@127.0.0.1:8123/coding
-        run: npm run check
 
   image:
     name: container image / self-host smoke
@@ -860,7 +846,7 @@ jobs:
   # to main does not run this job: it runs the quick jobs and the real captures, not the suite.
   full-suite:
     name: ${{ github.event_name == 'workflow_dispatch' && 'full suite without site perf' || contains(github.event.pull_request.labels.*.name, 'ready') && 'full suite' || 'full suite (not run, add the ready label)' }}
-    needs: [changes, test, build, gate-static, store-postgres, python-sdk, runtime-floor, action, store-clickhouse, image, windows, real-capture, cli-suite, site-perf]
+    needs: [changes, test, build, gate-static, stores, python-sdk, runtime-floor, action, image, windows, real-capture, cli-suite, site-perf]
     if: ${{ always() && (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
