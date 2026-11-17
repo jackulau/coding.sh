@@ -88,6 +88,21 @@ jobs:
         with:
           python-version: "3.12"
 
+      # A tag can be pushed on any commit. Only a commit that main already holds has been
+      # through a pull request and the full suite.
+      - name: Tag points at a commit on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$GITHUB_SHA" --jq .status)
+          case "$status" in
+            identical|behind) ;;
+            *)
+              echo "::error::tag $GITHUB_REF_NAME points at $GITHUB_SHA, which is not on main (compare status: $status)"
+              exit 1
+              ;;
+          esac
+
       - name: Tag matches package version
         id: version
         run: |

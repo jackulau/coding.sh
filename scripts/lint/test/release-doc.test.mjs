@@ -17,6 +17,18 @@ test("RELEASE.md counts the npm tarballs the workflow packs", () => {
   assert.ok(!/packs the four npm tarballs/.test(doc));
 });
 
+test("verify refuses a tag whose commit is not on main, before any job publishes", () => {
+  const verify = release.slice(release.indexOf("\n  verify:"), release.indexOf("\n  github-release:"));
+  assert.match(verify, /compare\/main\.\.\.\$GITHUB_SHA/);
+  assert.match(verify, /identical\|behind\) ;;/);
+  assert.ok(verify.indexOf("compare/main...") < verify.indexOf("Tag matches package version"), "the check runs first");
+  for (const job of ["github-release", "publish-image", "publish-npm", "publish-pypi"]) {
+    const at = release.indexOf(`\n  ${job}:`);
+    assert.match(release.slice(at, at + 200), /needs: (verify|\[verify, github-release\])/, `${job} needs verify`);
+  }
+  assert.match(doc, /points\s+at a commit that is on `main`/);
+});
+
 test("RELEASE.md names publish-image, the Worker deploy and the deploy secret", () => {
   assert.ok(doc.includes("publish-image"));
   assert.ok(doc.includes("coding-sh-site"));
