@@ -120,7 +120,7 @@ async function doImport(c: CommandContext, root: string, force: boolean, budgetM
     scan.scanCache = join(store.root, "scan-cache.json");
     if (budgetMs !== undefined) scan.scanBudgetMs = budgetMs;
   }
-  return withContext(c, (ctx) => importClaudeWorkflows({ root, store, index: ctx.index, blobs: ctx.blobs, force, profile: profileCache(ctx.config, c.env, () => {})(undefined), ...scan, loadBudgetBytes }));
+  return withContext(c, (ctx) => importClaudeWorkflows({ root, store, index: ctx.index, blobs: ctx.blobs, force, profile: profileCache(ctx.config, c.env, () => {})(undefined), ...scan, loadBudgetBytes, signal: c.signal }));
 }
 
 // ------------------------------------------------------------ list / import
@@ -138,6 +138,7 @@ async function listRuns(c: CommandContext): Promise<number> {
     const root = claudeProjectsDir(c.env);
     if (existsSync(root)) {
       const r = await doImport(c, root, false, LIST_SCAN_BUDGET_MS, LIST_LOAD_BUDGET_BYTES);
+      if (r.interrupted) return 130;
       if (r.deferred) {
         const started = c.env.CODING_SH_NO_AUTO_INGEST !== "1" && !!spawnDetachedCli(ingestCli(paths(c.env).cliPointer), ["workflows", "import", root], { ...c.env, [BACKGROUND_IMPORT_ENV]: "1" });
         pending = { runs: r.deferred, importing: started };
@@ -191,6 +192,16 @@ async function importRuns(c: CommandContext): Promise<number> {
     r = await doImport(c, root, c.flags.force === true);
   } finally {
     spin.stop();
+  }
+  if (r.interrupted) {
+    // Stopped at a run boundary: the runs imported so far are stored; the next import skips them.
+    if (out.json) out.data({ outcome: "interrupted", found: r.found, imported: r.imported.map(runJson), skipped: r.skipped, copies: r.copies, left: r.left ?? 0, errors: r.errors });
+    else {
+      for (const run of r.imported) out.print(`${run.id}\t${clean(run.name)}\t${run.status}\t${run.stats.agents} agents`);
+      const left = [r.left ? `${plural(r.left, "workflow run")} left to import` : "", r.scanComplete === false ? "the search for runs did not finish" : ""].filter(Boolean);
+      out.note(`Stopped: ${plural(r.imported.length, "workflow run")} imported${left.length ? `, ${left.join(", ")}` : ""}; run coding.sh workflows import to finish`);
+    }
+    return 130;
   }
   if (out.json) {
     out.data({ found: r.found, imported: r.imported.map(runJson), skipped: r.skipped, copies: r.copies, errors: r.errors });
