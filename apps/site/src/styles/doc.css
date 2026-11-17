@@ -294,6 +294,23 @@
 .more > :last-child {
   margin-bottom: 1rem;
 }
+/* FAQ: each question is the summary of its folded answer. A click on the
+   question toggles it; its self-link stays for the keyboard and for copying. */
+.faq > summary > h2 {
+  margin: 0;
+  padding: 0.6rem 0;
+  font-size: var(--fs-base);
+  line-height: 1.4;
+  letter-spacing: normal;
+}
+.faq .h-anchor {
+  pointer-events: none;
+}
+/* The section a link points at, marked without motion. */
+.doc :is(h2, h3, h4):target {
+  text-decoration: underline 1px var(--text-muted);
+  text-underline-offset: 0.3em;
+}
 
 .doc figure {
   margin-inline: 0;

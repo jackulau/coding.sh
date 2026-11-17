@@ -15,6 +15,7 @@ grouped by area, with links to the docs for the details.
 - **Docs.** The "On this page" rail lists each section's subheadings under it, shows them for the section being read, and marks both; it scrolls itself to keep the current entry in view. [SDKs](https://coding.sh/docs/sdk)
 - **Docs.** Below 1280px, where the rail does not fit, "On this page" is a closed dropdown at the top of the article with the same entries, on tablets and phones. [SDKs](https://coding.sh/docs/sdk)
 - **Docs.** The Quickstart and Tool evals procedures are numbered steps: each step's number sits in a ring beside its heading, with a line joining it to the next. The Markdown copies keep the numbers in the headings. [Quickstart](https://coding.sh/docs/quickstart)
+- **Docs.** The FAQ folds each answer under its question. A link to a section inside a closed fold, such as a question or an optional step, opens the fold and scrolls to the section. [FAQ](https://coding.sh/docs/faq)
 
 ## [0.1.7] - 2026-11-16
 

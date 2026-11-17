@@ -65,10 +65,12 @@ const FAQ: { id: string; q: string; a: string }[] = [
 <DocsLayout schemas={[faqSchema(FAQ)]}>
   {
     FAQ.map((f) => (
-      <>
-        <h2 id={f.id}>{f.q}</h2>
+      <details class="more faq">
+        <summary>
+          <h2 id={f.id}>{f.q}</h2>
+        </summary>
         <p set:html={f.a} />
-      </>
+      </details>
     ))
   }
 </DocsLayout>

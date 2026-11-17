@@ -262,7 +262,13 @@ const showOutline = outline.length + (outline[0]?.subs?.length ?? 0) >= 2;
           )
         }
       </main>
-
+      {/* A link to an id inside a closed <details> (a :::more block, an FAQ
+          answer) opens every closed <details> around it, then scrolls to it.
+          Runs after the article is parsed, again after each page swap, and on
+          each hash change (one handler, so a rerun does not add another). */}
+      <script is:inline data-astro-rerun>
+        onhashchange=()=>{try{let e=document.getElementById(decodeURIComponent(location.hash.slice(1))),d=e,s;while(d=d?.parentElement?.closest("details:not([open])"))d.open=s=1;s&&e.scrollIntoView()}catch{}};onhashchange()
+      </script>
     </div>
   </div>
 </Layout>
