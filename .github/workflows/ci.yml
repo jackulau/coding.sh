@@ -103,8 +103,11 @@ jobs:
           git config --global user.name "coding.sh CI"
           git config --global user.email "ci@coding.sh.invalid"
 
+      # The tests need only the CLI package's own dependencies (esbuild, the two TypeScripts and
+      # Node's types). The site's and the SDK's are most of a whole-workspace install, so they are
+      # left out. The one leg that also checks the SDK (below) installs the SDK's too.
       - name: Install
-        run: npm ci
+        run: npm ci --workspace packages/coding.sh ${{ (matrix.node == '22.x' && matrix.shard == 1) && '--workspace packages/sdk' || '' }}
 
       # The Node 24 legs launch the bundle (test/_cli.ts reads CODING_SH_TEST_CLI): a launch from
       # source strips types on every start. The Node 22 legs keep launching src/cli/main.ts, so the
@@ -588,8 +591,9 @@ jobs:
           git config --global user.name "coding.sh CI"
           git config --global user.email "ci@coding.sh.invalid"
 
+      # As on Linux: the CLI package's own dependencies, not the whole workspace's.
       - name: Install
-        run: npm ci
+        run: npm ci --workspace packages/coding.sh
 
       # As on Linux: the runner's first Chrome start and first viewer pages, outside the tests.
       # GitHub's Windows image ships Chrome, and the step fails if it is gone.
