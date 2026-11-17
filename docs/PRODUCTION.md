@@ -116,6 +116,13 @@ pushed into the production DB. An explicit `coding.sh ingest --store …` still 
   ingest key **and** (a read key or basic auth) are configured, or `--insecure` is passed. The error
   message names the env vars and `--insecure`. On loopback with no keys, ingest is open to project
   `default` (single-user mode, J4). `--insecure` logs a warning at start and sets `insecure: true` in `/readyz`.
+- **Loopback behind a proxy:** with `serve.trust_proxy` set, a loopback bind follows the refusal rule
+  too. Its error does not offer `--insecure`.
+- **Open mode is for this machine only:** on loopback with no keys, a request that carries an
+  `X-Forwarded-*`, `Forwarded` or `Via` header gets 401, and serve logs a warning the first time.
+  `--insecure` turns this check off.
+- **A proxy that adds none of those headers is not detected.** nginx `proxy_pass` with its defaults,
+  `ssh -R` and TCP tunnels look like this machine. Anything you put behind a proxy or tunnel needs keys.
 - Serve speaks plain HTTP. TLS is terminated by the platform or a proxy.
 - CORS is closed by default. `serve.cors_origins` opens the ingest routes (`/v1/ingest` with its
   `OPTIONS` preflight, and OTLP) to the listed browser origins; any other `Origin` gets 403. The viewer

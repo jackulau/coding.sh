@@ -299,10 +299,13 @@ function resolveForward(serve: TomlTable | undefined, env: NodeJS.ProcessEnv, ca
 
 /**
  * The refusal rule: a non-loopback bind needs at least one ingest key and a read
- * key or basic auth, unless --insecure. (A viewer-role replica needs read credentials only.)
+ * key or basic auth, unless --insecure. So does a loopback bind with trust_proxy set,
+ * since a reverse proxy in front of it makes it public. (A viewer-role replica needs
+ * read credentials only.)
  */
 export function checkExposure(c: ServeConfig): void {
-  if (c.insecure || isLoopbackHost(c.host)) return;
+  const loopback = isLoopbackHost(c.host);
+  if (c.insecure || (loopback && !c.trustProxy)) return;
   const ingest = c.credentials.ingest.size > 0;
   const read = c.credentials.read.size > 0 || !!c.credentials.basic;
   if ((c.role === "viewer" || ingest) && read) return;
@@ -310,8 +313,11 @@ export function checkExposure(c: ServeConfig): void {
     ...(c.role !== "viewer" && !ingest ? ["an ingest key (CODING_SH_INGEST_KEYS, or [[serve.projects]] ingest_keys)"] : []),
     ...(!read ? ["a read key or basic auth (CODING_SH_READ_KEYS or CODING_SH_BASIC_AUTH)"] : []),
   ];
+  const where = loopback ? `behind a reverse proxy (CODING_SH_TRUST_PROXY / serve.trust_proxy is set) on ${c.host}` : `on ${c.host}`;
+  // Behind a proxy, --insecure would open the server to everyone the proxy serves: not offered there.
+  const orOpen = loopback ? "" : ", or pass --insecure (CODING_SH_INSECURE=1) to run open";
   throw new ServeRefusal(
-    `refusing to listen on ${c.host} without auth: set ${missing.join(" and ")}, or pass --insecure (CODING_SH_INSECURE=1) to run open. ` +
+    `refusing to listen ${where} without auth: set ${missing.join(" and ")}${orOpen}. ` +
       "Generate keys with `coding.sh serve keygen --project <id>`.",
   );
 }

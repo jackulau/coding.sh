@@ -104,6 +104,18 @@ describe("serve config", () => {
     checkExposure(resolveServeConfig({ host: "0.0.0.0", port: 0, role: "viewer" }, tmpEnv({ CODING_SH_READ_KEYS: generateKey("read") })));
   });
 
+  it("refuses a loopback bind behind a reverse proxy (trust_proxy) while either side is open, naming the settings", () => {
+    const behind = (env: NodeJS.ProcessEnv, flags: Parameters<typeof resolveServeConfig>[0] = {}) => resolveServeConfig({ host: "127.0.0.1", port: 0, ...flags }, tmpEnv({ CODING_SH_TRUST_PROXY: "1", ...env }));
+    const refused = (e: Error) => e instanceof ServeRefusal && /CODING_SH_TRUST_PROXY/.test(e.message) && /CODING_SH_INGEST_KEYS/.test(e.message) && /CODING_SH_READ_KEYS/.test(e.message);
+    assert.throws(() => checkExposure(behind({})), refused);
+    assert.throws(() => checkExposure(behind({})), (e: Error) => !/--insecure/.test(e.message), "behind a proxy, running open is not offered");
+    assert.throws(() => checkExposure(behind({ CODING_SH_INGEST_KEYS: generateKey("ingest") })), /read key or basic auth/);
+    assert.throws(() => checkExposure(behind({ CODING_SH_READ_KEYS: generateKey("read") })), /ingest key/);
+    checkExposure(behind({ CODING_SH_INGEST_KEYS: generateKey("ingest"), CODING_SH_READ_KEYS: generateKey("read") }));
+    checkExposure(behind({ CODING_SH_READ_KEYS: generateKey("read") }, { role: "viewer" }));
+    checkExposure(behind({}, { insecure: true }));
+  });
+
   it("follows flags > env > file > defaults, and DATABASE_URL only when postgres", () => {
     const env = tmpEnv({ CODING_SH_PORT: "5000" });
     const file = join(env.HOME!, "serve.toml");

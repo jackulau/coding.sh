@@ -128,7 +128,7 @@ export interface Authenticator {
   /** Project for an ingest request, or undefined (401). With no ingest keys configured, `open` decides. */
   ingest(req: IncomingMessage): string | undefined;
   /** Same, for a raw key from elsewhere than Authorization (the proxy routes' x-coding-sh-key). */
-  ingestKey(key: string | undefined): string | undefined;
+  ingestKey(key: string | undefined, req: IncomingMessage): string | undefined;
   /** Read access for the viewer, /api and /metrics, or undefined (401). */
   read(req: IncomingMessage): { project?: string; by?: string } | undefined;
   /** The read scope of a raw read key (for the viewer's `?t=` exchange). */
@@ -137,11 +137,18 @@ export interface Authenticator {
   readonly hasReadCredentials: boolean;
 }
 
+/** A request that a proxy passed on: it names a forwarded client, host or hop. */
+export function viaProxy(req: IncomingMessage): boolean {
+  return Object.keys(req.headers).some((h) => h.startsWith("x-forwarded-") || h === "forwarded" || h === "via");
+}
+
 /**
  * openIngest: no ingest keys configured and the server may run open (loopback or
  * --insecure), so ingest lands in project default. openRead: same for reading.
+ * directOnly: the open fallback serves only requests that did not come through a
+ * proxy (a loopback bind is open because only this machine can reach it).
  */
-export function createAuthenticator(creds: Credentials, o: { openIngest: boolean; openRead: boolean }): Authenticator {
+export function createAuthenticator(creds: Credentials, o: { openIngest: boolean; openRead: boolean; directOnly?: boolean; onProxied?: () => void }): Authenticator {
   const hasIngestKeys = creds.ingest.size > 0;
   const hasReadCredentials = creds.read.size > 0 || !!creds.basic;
   const readScope = (key: string): ReadScope | undefined => (key ? creds.read.get(sha256(key)) : undefined);
@@ -151,16 +158,21 @@ export function createAuthenticator(creds: Credentials, o: { openIngest: boolean
     return scope === undefined ? undefined : { ...scoped(scope), by: readKeyId(hash, creds.readNames) };
   };
   const scoped = (scope: ReadScope) => (scope === "*" ? {} : { project: scope });
-  const ingestKey = (key: string | undefined): string | undefined => {
+  const openTo = (req: IncomingMessage) => {
+    if (!o.directOnly || !viaProxy(req)) return true;
+    o.onProxied?.();
+    return false;
+  };
+  const ingestKey = (key: string | undefined, req: IncomingMessage): string | undefined => {
     if (key) return creds.ingest.get(sha256(key));
-    return !hasIngestKeys && o.openIngest ? DEFAULT_PROJECT : undefined;
+    return !hasIngestKeys && o.openIngest && openTo(req) ? DEFAULT_PROJECT : undefined;
   };
 
   return {
     hasIngestKeys,
     hasReadCredentials,
     readScope,
-    ingest: (req) => ingestKey(bearer(req)),
+    ingest: (req) => ingestKey(bearer(req), req),
     ingestKey,
     read(req) {
       const key = bearer(req);
@@ -180,7 +192,7 @@ export function createAuthenticator(creds: Credentials, o: { openIngest: boolean
           if (okUser && okPass) return { by: user };
         }
       }
-      if (!hasReadCredentials && o.openRead) return {};
+      if (!hasReadCredentials && o.openRead && openTo(req)) return {};
       return undefined;
     },
   };

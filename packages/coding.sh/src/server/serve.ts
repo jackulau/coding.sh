@@ -115,7 +115,14 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
   const metrics = new ServeMetrics();
   const loopback = isLoopbackHost(cfg.host);
   const open = loopback || cfg.insecure;
-  const auth = createAuthenticator(cfg.credentials, { openIngest: open, openRead: open });
+  // Without --insecure, loopback is open only to this machine: a request a proxy passed on needs a key.
+  let warnedProxied = false;
+  const onProxied = () => {
+    if (warnedProxied) return;
+    warnedProxied = true;
+    log.warn("refused a request a proxy passed on: this server runs with no keys, so it answers only this machine. Behind a proxy, set keys: coding.sh serve keygen --project <id>");
+  };
+  const auth = createAuthenticator(cfg.credentials, { openIngest: open, openRead: open, directOnly: !cfg.insecure, onProxied });
   const storeScheme = canonicalScheme(parseStoreUrl(cfg.core.store.index).scheme);
 
   // ---- stores
@@ -275,7 +282,7 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
   });
   const proxy = (req: IncomingMessage, res: ServerResponse): void => {
     const h = req.headers[PROXY_KEY_HEADER];
-    const project = auth.ingestKey(typeof h === "string" ? h.trim() : undefined);
+    const project = auth.ingestKey(typeof h === "string" ? h.trim() : undefined, req);
     if (project === undefined) {
       metrics.authFailures.inc({ route: "/proxy" });
       req.resume();

@@ -414,7 +414,7 @@ coding.sh serve --role viewer --host 0.0.0.0
 
 - Routes: POST /v1/traces, /v1/logs, /v1/metrics (OTLP/HTTP), POST /v1/ingest (native), GET / and /api/\* (viewer), /healthz, /readyz, /metrics.
 - Precedence: flags &gt; env &gt; --config file &gt; defaults. See docs/PRODUCTION.md for every setting.
-- A non-loopback bind needs an ingest key and a read key (or basic auth), or --insecure; on loopback with no keys, ingest is open to project default.
+- A non-loopback bind needs an ingest key and a read key (or basic auth), or --insecure; on loopback with no keys, ingest is open to project default, but only to requests that no proxy passed on. With trust_proxy set, a loopback bind needs keys too.
 - Prints the URL (or one JSON document with --json) on stdout once ready; logs go to stderr. SIGTERM/SIGINT drain the queue (25s) and exit 0.
 
 ### `coding.sh serve keygen`

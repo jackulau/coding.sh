@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { generateKey, sha256 } from "../../src/server/auth.ts";
 import { resolveServeConfig, type ServeConfig } from "../../src/server/config.ts";
+import { isLoopbackHost } from "../../src/otel/receiver.ts";
 import { createLogger } from "../../src/server/log.ts";
 import { DIRTY_KEY, IngestQueue } from "../../src/server/queue.ts";
 import { startServe, type ServeHandle, type ServeOptions } from "../../src/server/serve.ts";
@@ -701,6 +702,46 @@ describe("serve API audit", () => {
     assert.match(raw.json.error, /%2F/);
     assert.equal((await call(h, "/api/sessions/demo%2Fchat-1", { key: rk })).status, 200);
     assert.equal((await call(h, "/api/sessions/demo%2Fchat-1/events", { key: rk })).status, 200);
+    await h.shutdown();
+  });
+});
+
+describe("serve on loopback with no keys", () => {
+  const forwarded: Record<string, string>[] = [{ "x-forwarded-for": "203.0.113.9" }, { "x-forwarded-host": "obs.example.com" }, { forwarded: "for=203.0.113.9" }, { via: "1.1 proxy" }];
+
+  it("answers a direct request and refuses one that came through a proxy", async () => {
+    const { h, cfg } = await serve("memory", tmpEnv());
+    assert.ok(isLoopbackHost(cfg.host) && !cfg.insecure);
+    assert.equal((await call(h, "/v1/ingest", { body: batch([ev("a", "chat-1")]) })).status, 200);
+    assert.equal((await call(h, "/api/sessions")).status, 200);
+    for (const headers of forwarded) {
+      const name = Object.keys(headers)[0];
+      assert.equal((await call(h, "/v1/ingest", { body: batch([ev("b", "chat-1")]), headers })).status, 401, `ingest with ${name}`);
+      assert.equal((await call(h, "/api/sessions", { headers })).status, 401, `read with ${name}`);
+      const proxied = await call(h, "/proxy/anthropic/v1/messages", { body: {}, headers });
+      assert.equal(proxied.status, 401, `proxy with ${name}`);
+      assert.equal(proxied.json?.error?.type, "authentication_error");
+    }
+    await h.shutdown();
+  });
+
+  it("logs once that it refused a proxied request, naming keygen", async () => {
+    const lines: string[] = [];
+    const { h } = await serve("memory", tmpEnv(), { log: createLogger({ format: "json", write: (l) => lines.push(l) }) });
+    for (const headers of forwarded) assert.equal((await call(h, "/api/sessions", { headers })).status, 401);
+    const warned = lines.filter((l) => /a proxy passed on/.test(l));
+    assert.equal(warned.length, 1);
+    assert.match(warned[0]!, /serve keygen/);
+    await h.shutdown();
+  });
+
+  it("still lets a proxied request in with a key", async () => {
+    const ik = generateKey("ingest");
+    const rk = generateKey("read");
+    const { h } = await serve("memory", tmpEnv({ CODING_SH_INGEST_KEYS: ik, CODING_SH_READ_KEYS: rk }));
+    const headers = forwarded[0]!;
+    assert.equal((await call(h, "/v1/ingest", { key: ik, body: batch([ev("a", "chat-1")]), headers })).status, 200);
+    assert.equal((await call(h, "/api/sessions", { key: rk, headers })).status, 200);
     await h.shutdown();
   });
 });
