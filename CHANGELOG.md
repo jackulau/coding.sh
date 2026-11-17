@@ -37,6 +37,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Install.** `uninstall` removes the coding.sh MCP entry from Codex's `config.toml` after `~/.coding.sh` was deleted, when the entry is exactly the launch coding.sh writes. Before, it stayed and `uninstall` said nothing was installed. [Install](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md)
 - **Capture.** A backfill skips Gemini CLI chat files that have not changed since the last one. Before, it read every chat file again each time and counted all of their sessions as updated. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#transcripts-headless-runs-isolation)
 - **Capture.** A copy of T3 Code's store that a killed read left in the temp directory, up to 1.7 GB each, is removed by the next read, even when the store is unchanged. A copy that fails, such as on a full temp volume, is a backfill error, not an import of nothing. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#host-apps-t3-code)
 - **Viewer.** The shortcut bar at the foot of a session page keeps `? all shortcuts` in view in a window about 1,000 px wide. Hints that do not fit on its one line are left out whole. Before, they wrapped and pushed `? all shortcuts` below the bar. [Concepts](https://coding.sh/docs/concepts#turn)

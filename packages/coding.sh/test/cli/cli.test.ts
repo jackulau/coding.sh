@@ -602,6 +602,25 @@ describe("cli zero setup", () => {
     assert.ok(dry.agents.every((a) => a.changes.length === 0), "nothing left");
   });
 
+  it("uninstall removes the Codex MCP entry after the coding.sh home was deleted, also after a second init", () => {
+    for (const reinit of [false, true]) {
+      const h = tmpHome();
+      const toml = mcpFiles(h).codex;
+      mkdirSync(dirname(toml), { recursive: true });
+      writeFileSync(toml, 'model = "x"\n');
+      assert.equal(cli(h, ["init", "--yes", "--no-import", "--agent", "codex"]).status, 0);
+      assert.match(readFileSync(toml, "utf8"), /\[mcp_servers\.coding-sh\]/);
+      rmSync(h.data, { recursive: true, force: true });
+      if (reinit) assert.equal(cli(h, ["init", "--yes", "--no-import", "--agent", "codex"]).status, 0);
+      const u = cli(h, ["uninstall", "--yes"]);
+      assert.equal(u.status, 0, u.stderr);
+      assert.doesNotMatch(readFileSync(toml, "utf8"), /coding-sh/, `reinit=${reinit}`);
+      assert.match(readFileSync(toml, "utf8"), /^model = "x"$/m);
+      const dry = parseJson(cli(h, ["uninstall", "--dry-run", "--json"]).stdout, "uninstall again") as { agents: { changes: unknown[] }[] };
+      assert.ok(dry.agents.every((a) => a.changes.length === 0), "nothing left");
+    }
+  });
+
   it("captured sessions show up without running ingest: the hook ingests in the background at session end", async () => {
     const h = tmpHome();
     assert.equal(cli(h, ["init", "--agent", "claude-code", "--yes"]).status, 0);

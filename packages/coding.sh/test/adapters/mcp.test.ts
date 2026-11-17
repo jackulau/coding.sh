@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { claudeCode, codex, cursor, opencode } from "../../src/adapters/index.ts";
 import { geminiCliAdapter as geminiCli } from "../../src/adapters/more/gemini-cli.ts";
 import { tomlBody } from "../../src/adapters/_shared/mcp.ts";
+import { paths } from "../../src/core/paths.ts";
 import { parseToml } from "../../src/core/toml.ts";
 import type { Adapter, McpServerSpec } from "../../src/core/types.ts";
 import { tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
@@ -133,6 +134,21 @@ describe("adapter MCP registration", () => {
     assert.deepEqual(await codex.installMcp!({ server: SERVER, dryRun: false }), []);
     assert.deepEqual(await codex.uninstallMcp!({ name: SERVER.name, dryRun: false }), []);
     assert.equal(readFileSync(file, "utf8"), mine);
+  });
+
+  it("codex: removes the init launcher entry when installs.json is gone with the coding.sh home", async () => {
+    const file = join(t.home, ".codex", "config.toml");
+    const launcher = paths().mcpLauncher;
+    const ours = `model = "x"\n\n[mcp_servers.coding-sh]\ncommand = "node"\nargs = [${JSON.stringify(launcher)}]\n`;
+    writeFile(file, ours);
+    const [c] = await codex.uninstallMcp!({ name: "coding-sh", dryRun: false });
+    assert.equal(c?.action, "modify");
+    assert.equal(readFileSync(file, "utf8").trim(), 'model = "x"');
+    // Another node script under that name is the user's.
+    const theirs = '[mcp_servers.coding-sh]\ncommand = "node"\nargs = ["/srv/mine.mjs"]\n';
+    writeFile(file, theirs);
+    assert.deepEqual(await codex.uninstallMcp!({ name: "coding-sh", dryRun: false }), []);
+    assert.equal(readFileSync(file, "utf8"), theirs);
   });
 
   it("refuses to modify a config it cannot parse", async () => {
