@@ -152,7 +152,8 @@ async function testStart(chrome: string): Promise<{ startMs: number; pageMs: num
     await page.goto(PAGE);
     const pageMs = performance.now() - t1;
     await page.close();
-    return { startMs, pageMs, viewerMs: await viewerPages(browser) };
+    // THROWAWAY: the A/B arm without the fix.
+    return { startMs, pageMs, viewerMs: process.env.CSH_WARM === "data" ? [0, 0] : await viewerPages(browser) };
   } finally {
     await browser.close();
   }
