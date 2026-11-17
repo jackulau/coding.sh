@@ -1,8 +1,8 @@
 name: CI
 
-# THROWAWAY: the Windows test legs only. Suite legs with four warm-ups (data: none of the viewer;
-# wide: the fix; run2: run 2's warm-up; paired: the paired pages), and burst probes that start the
-# browser test files inside the Storage Service window (data, wide, and wide with the service off).
+# THROWAWAY: the Windows test legs only. Suite legs with three warm-ups (viewer: run 4's, the pages
+# at Chrome's default size; wide: the fix; nostor: the fix with the Storage Service stopped), and
+# burst probes with today's warm-up, with the Storage Service stopped (nostordata) and not (data).
 on:
   pull_request:
 
@@ -24,44 +24,29 @@ jobs:
         mode: [suite]
         node: [22.x, 24.x]
         shard: [1, 2, 3, 4]
-        warm: [data, wide, run2]
+        warm: [viewer, wide, nostor]
         rep: [1]
         include:
-          - { mode: suite, node: 24.x, shard: 1, warm: paired, rep: 1 }
-          - { mode: suite, node: 24.x, shard: 2, warm: paired, rep: 1 }
-          - { mode: suite, node: 22.x, shard: 3, warm: paired, rep: 1 }
-          - { mode: suite, node: 22.x, shard: 4, warm: paired, rep: 1 }
+          - { mode: probe, node: 24.x, shard: 0, warm: nostordata, rep: 1 }
+          - { mode: probe, node: 22.x, shard: 0, warm: nostordata, rep: 2 }
+          - { mode: probe, node: 24.x, shard: 0, warm: nostordata, rep: 3 }
+          - { mode: probe, node: 22.x, shard: 0, warm: nostordata, rep: 4 }
+          - { mode: probe, node: 24.x, shard: 0, warm: nostordata, rep: 5 }
+          - { mode: probe, node: 22.x, shard: 0, warm: nostordata, rep: 6 }
+          - { mode: probe, node: 24.x, shard: 0, warm: nostordata, rep: 7 }
+          - { mode: probe, node: 22.x, shard: 0, warm: nostordata, rep: 8 }
           - { mode: probe, node: 24.x, shard: 0, warm: data, rep: 1 }
           - { mode: probe, node: 22.x, shard: 0, warm: data, rep: 2 }
           - { mode: probe, node: 24.x, shard: 0, warm: data, rep: 3 }
           - { mode: probe, node: 22.x, shard: 0, warm: data, rep: 4 }
-          - { mode: probe, node: 24.x, shard: 0, warm: data, rep: 5 }
-          - { mode: probe, node: 22.x, shard: 0, warm: data, rep: 6 }
-          - { mode: probe, node: 24.x, shard: 0, warm: wide, rep: 1 }
-          - { mode: probe, node: 22.x, shard: 0, warm: wide, rep: 2 }
-          - { mode: probe, node: 24.x, shard: 0, warm: wide, rep: 3 }
-          - { mode: probe, node: 22.x, shard: 0, warm: wide, rep: 4 }
-          - { mode: probe, node: 24.x, shard: 0, warm: wide, rep: 5 }
-          - { mode: probe, node: 22.x, shard: 0, warm: wide, rep: 6 }
-          - { mode: probe, node: 24.x, shard: 0, warm: wide, rep: 7 }
-          - { mode: probe, node: 22.x, shard: 0, warm: wide, rep: 8 }
-          - { mode: probe, node: 24.x, shard: 0, warm: nostor, rep: 1 }
-          - { mode: probe, node: 22.x, shard: 0, warm: nostor, rep: 2 }
-          - { mode: probe, node: 24.x, shard: 0, warm: nostor, rep: 3 }
-          - { mode: probe, node: 22.x, shard: 0, warm: nostor, rep: 4 }
-          - { mode: probe, node: 24.x, shard: 0, warm: nostor, rep: 5 }
-          - { mode: probe, node: 22.x, shard: 0, warm: nostor, rep: 6 }
-          - { mode: probe, node: 24.x, shard: 0, warm: nostor, rep: 7 }
-          - { mode: probe, node: 22.x, shard: 0, warm: nostor, rep: 8 }
     defaults:
       run:
         shell: bash
     steps:
       - name: Storage Service
-        if: matrix.mode == 'probe'
         shell: pwsh
         env:
-          STOP: ${{ matrix.warm == 'nostor' && '1' || '0' }}
+          STOP: ${{ startsWith(matrix.warm, 'nostor') && '1' || '0' }}
         run: |
           $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
           "storsvc at boot+{0:F0} s: {1}" -f ((Get-Date) - $boot).TotalSeconds, ((Get-Service StorSvc, VSS, swprv | ForEach-Object { "$($_.Name) $($_.Status) $($_.StartType)" }) -join ", ")
@@ -115,7 +100,7 @@ jobs:
         run: node scripts/pages-summary.mjs
 
       - name: Service events
-        if: always() && matrix.mode == 'probe'
+        if: always()
         shell: pwsh
         run: |
           $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime

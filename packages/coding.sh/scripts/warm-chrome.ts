@@ -130,7 +130,7 @@ export async function viewerPages(browser: Browser, limitMs = FIRST_START_LIMIT_
     for (const { hash, ready, what } of VIEWER_PAGES) {
       const page = await browser.newPage();
       // The size the viewer tests give a page before they load it.
-      await page.viewport(1280, 900);
+      if (process.env.CSH_WARM !== "viewer") await page.viewport(1280, 900); // THROWAWAY: the viewer arm is run 4's warm-up
       const t0 = performance.now();
       await page.goto(viewer.url + hash, left());
       await page.waitFor(ready, what, left());
@@ -157,7 +157,7 @@ async function testStart(chrome: string): Promise<{ startMs: number; pageMs: num
     // THROWAWAY: the arms of the A/B. data and run2: no viewer page here. paired: the paired pages.
     const arm = process.env.CSH_WARM;
     if (arm === "paired") await (await import("./warm-diag.ts")).pairedPages(browser);
-    return { startMs, pageMs, viewerMs: arm === "data" || arm === "run2" || arm === "paired" ? [0, 0] : await viewerPages(browser) };
+    return { startMs, pageMs, viewerMs: arm === "data" || arm === "nostordata" || arm === "run2" || arm === "paired" ? [0, 0] : await viewerPages(browser) };
   } finally {
     await browser.close();
   }
