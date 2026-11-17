@@ -99,7 +99,7 @@ test("ci.yml lets only the quick run of a pull request select", () => {
   // the event too.
   assert.ok(ci.includes("\nenv:\n  FULL: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready') }}\n"));
   const body = job("test");
-  const step = "\n      - name: Test\n        working-directory: packages/coding.sh\n        env:\n          SHARD: ${{ matrix.shard }}/3\n          TEST_DURATIONS_OUT: ${{ runner.temp }}/test-durations.json\n          TEST_SELECT: ${{ github.event_name == 'pull_request' && env.FULL == 'false' && 'HEAD^1' || '' }}\n";
+  const step = "\n      - name: Test\n        working-directory: packages/coding.sh\n        env:\n          SHARD: ${{ matrix.shard }}/${{ matrix.of }}\n          TEST_DURATIONS_OUT: ${{ runner.temp }}/test-durations.json\n          TEST_SELECT: ${{ github.event_name == 'pull_request' && env.FULL == 'false' && 'HEAD^1' || '' }}\n";
   assert.ok(body.includes(step), "the Linux Test step sets TEST_SELECT from the event and FULL");
   // Nothing else sets it: not the Windows legs (the full suite only), not a job or the workflow.
   assert.equal(count(ci, "TEST_SELECT:"), 1);
