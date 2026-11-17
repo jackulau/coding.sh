@@ -13,13 +13,14 @@ import { EXPORT_FORMATS, EXPORT_KINDS, exportRows, sessionsOf, type ExportFormat
 import { scopesSubagents } from "../../query/where.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { agentScope, agentsFlag, autoIngest, queryCliError, readIngest, shellQuote, str, whereFlag, withContext } from "../common.ts";
-import { CliError, plural } from "../output.ts";
+import { CliError, forTerminal, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
-/** Writes to stdout, waiting for 'drain' when the pipe is full. */
+/** Writes to stdout, waiting for 'drain' when the pipe is full. A terminal gets no escape sequence. */
 function stdoutWriter(): (chunk: string) => void | Promise<void> {
+  const tty = process.stdout.isTTY === true;
   return (chunk) => {
-    if (process.stdout.write(chunk)) return;
+    if (process.stdout.write(tty ? forTerminal(chunk) : chunk)) return;
     return new Promise<void>((r) => process.stdout.once("drain", () => r()));
   };
 }
