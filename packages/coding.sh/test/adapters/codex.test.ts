@@ -10,6 +10,17 @@ import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { buildHookCommand, hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
 import { assertGolden, assertWellFormed, collect, FIXTURES, loadSpool, summarize, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
 
+const rolloutDirs: string[] = [];
+/** A new folder for a rollout file a test writes. Removed when the file's tests are done. */
+function rolloutDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  rolloutDirs.push(dir);
+  return dir;
+}
+after(() => {
+  for (const dir of rolloutDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
 const T0 = 1793527200000;
 const SID = "0193aaaa-1111-7222-8333-444455556666";
 const SUB = "0193bbbb-1111-7222-8333-444455556666";
@@ -239,7 +250,7 @@ describe("codex code mode (exec cells)", () => {
   });
 
   it("a cell whose printed result has a nonzero exit fails, with no nested record seen", async () => {
-    const path = join(mkdtempSync(join(tmpdir(), "codex-cm-")), `rollout-${CM}.jsonl`);
+    const path = join(rolloutDir("codex-cm-"), `rollout-${CM}.jsonl`);
     const rec = (type: string, payload: Record<string, unknown>) => JSON.stringify({ timestamp: "2026-11-01T10:00:00.000Z", type, payload });
     const out = (chunk: Record<string, unknown>) => [{ type: "input_text", text: "Script completed\nWall time 0.1 seconds\nOutput:\n" }, { type: "input_text", text: JSON.stringify(chunk) }];
     writeFileSync(
@@ -275,7 +286,7 @@ describe("codex code mode (exec cells)", () => {
     // At PreToolUse time the rollout ends mid-cell: the open cell is the parent.
     const lines = readFileSync(rollout, "utf8").split("\n");
     const cut = lines.findIndex((l) => l.includes('"custom_tool_call_output"') && l.includes('"call_c1"'));
-    const partial = join(mkdtempSync(join(tmpdir(), "codex-cm-")), "rollout.jsonl");
+    const partial = join(rolloutDir("codex-cm-"), "rollout.jsonl");
     writeFileSync(partial, lines.slice(0, cut).join("\n") + "\n");
     const pre = loadSpool("codex/code-mode/hooks.spool.jsonl")[2]!;
     const [e] = await codex.normalize({ ...pre, raw: { ...(pre.raw as object), transcript_path: partial } }, ctx);
@@ -430,7 +441,7 @@ describe("codex failed shell commands keep their exit code", () => {
   const call = (id: string, command: string, ms: number) => rec("response_item", { type: "function_call", name: "exec_command", arguments: JSON.stringify({ cmd: command }), call_id: id }, ms);
   const output = (id: string, text: string, ms: number) => rec("response_item", { type: "function_call_output", call_id: id, output: text }, ms);
   const rolloutPath = (lines: string[]) => {
-    const path = join(mkdtempSync(join(tmpdir(), "codex-exit-")), `rollout-2026-11-01T10-00-00-${FID}.jsonl`);
+    const path = join(rolloutDir("codex-exit-"), `rollout-2026-11-01T10-00-00-${FID}.jsonl`);
     writeFileSync(path, lines.join("\n") + "\n");
     return path;
   };

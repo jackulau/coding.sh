@@ -3,17 +3,28 @@
 // npm and curl are stubs on PATH; nothing touches the network or installs.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { describe, test } from "node:test";
+import { after, describe, test } from "node:test";
 
 const INSTALL_SH = resolve(import.meta.dirname, "../../../../install.sh");
 const RELEASE = "https://github.com/jackulau/coding.sh/releases/download";
 
+const stubDirs: string[] = [];
+/** A new folder for the stub programs, which is also the run's HOME. Removed when the file's tests are done. */
+function stubDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "csh-install-"));
+  stubDirs.push(dir);
+  return dir;
+}
+after(() => {
+  for (const dir of stubDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
 /** Runs install.sh with `npm view` answering `published` (version or "" for E404). */
 function run(published: string, env: Record<string, string> = {}) {
-  const bin = mkdtempSync(join(tmpdir(), "csh-install-"));
+  const bin = stubDir();
   const log = join(bin, "npm.log");
   writeFileSync(
     join(bin, "npm"),
@@ -91,7 +102,7 @@ describe("install.sh source", () => {
 const setsid = spawnSync("sh", ["-c", "command -v setsid"]).status === 0;
 describe("install.sh without a terminal", () => {
   test("CODING_SH_YES=1 runs init --yes and does not start the viewer", { skip: !setsid && "needs setsid" }, () => {
-    const bin = mkdtempSync(join(tmpdir(), "csh-install-"));
+    const bin = stubDir();
     const calls = join(bin, "calls.log");
     writeFileSync(join(bin, "npm"), `#!/bin/sh\ncase "$1" in view) exit 1 ;; prefix) echo /nonexistent ;; esac\nexit 0\n`);
     writeFileSync(join(bin, "curl"), `#!/bin/sh\necho '{"tag_name": "v0.3.0"}'\n`);
@@ -110,7 +121,7 @@ describe("install.sh without a terminal", () => {
 
   // An agent's shell has no terminal: install, set nothing up, and name the command that does (not bare `coding.sh`, which prints help there).
   test("without CODING_SH_YES: installs, runs nothing, and names init --yes as the next step", { skip: !setsid && "needs setsid" }, () => {
-    const bin = mkdtempSync(join(tmpdir(), "csh-install-"));
+    const bin = stubDir();
     const calls = join(bin, "calls.log");
     writeFileSync(join(bin, "npm"), `#!/bin/sh\ncase "$1" in view) exit 1 ;; prefix) echo /nonexistent ;; esac\nexit 0\n`);
     writeFileSync(join(bin, "curl"), `#!/bin/sh\necho '{"tag_name": "v0.3.0"}'\n`);
