@@ -738,12 +738,32 @@ export interface SessionJsonKeep {
 }
 
 /**
+ * A --json copy of stats with float noise taken out: a `...Usd` number rounds to 1e-9 dollars
+ * (0.0041400000000000005 prints 0.00414, as the summed costs do), a `...Ms` number to whole ms.
+ */
+export function tidyNumbers<T>(v: T, key = ""): T {
+  if (typeof v === "number") {
+    if (!Number.isFinite(v) || Number.isInteger(v)) return v;
+    if (key.endsWith("Usd")) return (Math.round(v * 1e9) / 1e9) as T;
+    if (key.endsWith("Ms")) return Math.round(v) as T;
+    return v;
+  }
+  if (Array.isArray(v)) return v.map((x) => tidyNumbers(x, key)) as T;
+  if (v && typeof v === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v)) out[k] = tidyNumbers(x, k);
+    return out as T;
+  }
+  return v;
+}
+
+/**
  * A session for --json. List and tree rows are a digest: `stats.phases` is left out (`show --json`
  * has the phases at its top level) and a derail says what happened and when, without the event
- * it started at. Every other stat is as stored.
+ * it started at. Every other stat is as stored, with float noise taken out (tidyNumbers).
  */
 export function sessionJson(s: Session, keep: SessionJsonKeep = {}): Record<string, unknown> {
-  const { phases, derails, ...rest } = s.stats;
+  const { phases, derails, ...rest } = tidyNumbers(s.stats);
   const stats: Record<string, unknown> = rest;
   if (derails) stats.derails = keep.derailEvents ? derails : derails.map(({ eventId: _e, index: _i, ...d }) => d);
   if (keep.phases && phases) stats.phases = phases;
@@ -759,7 +779,7 @@ export function sessionJson(s: Session, keep: SessionJsonKeep = {}): Record<stri
     branch: s.repo?.branch ?? null,
     startedAt: new Date(s.startedAt).toISOString(),
     endedAt: s.endedAt !== undefined ? new Date(s.endedAt).toISOString() : null,
-    durationMs: s.endedAt !== undefined ? s.endedAt - s.startedAt : null,
+    durationMs: s.endedAt !== undefined ? Math.round(s.endedAt - s.startedAt) : null,
     parentSessionId: s.parent?.sessionId ?? null,
     flags: s.flags,
     stats,
