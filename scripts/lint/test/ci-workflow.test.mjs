@@ -11,13 +11,34 @@ const read = (p) => readFileSync(join(ROOT, p), "utf8");
 const ci = read(".github/workflows/ci.yml");
 const jobs = (text) => new Set([...text.matchAll(/^  ([a-z][a-z-]*):$/gm)].map((m) => m[1]));
 
-test("ci.yml runs the static gate, Postgres, the Python SDK and the release smoke test", () => {
-  for (const job of ["gate-static", "store-postgres", "python-sdk", "runtime-floor"]) assert.ok(jobs(ci).has(job), `${job} job`);
+test("ci.yml runs the static gate, the store plugins, the Python SDK and the release smoke test", () => {
+  for (const job of ["gate-static", "stores", "python-sdk", "runtime-floor"]) assert.ok(jobs(ci).has(job), `${job} job`);
   assert.match(ci, /node scripts\/gate\.mjs --static --strict/);
   assert.match(ci, /CODING_SH_TEST_PG_URL: postgres:\/\/postgres:ci@127\.0\.0\.1:5432\/coding/);
   assert.match(read("packages/sdk-python/pyproject.toml"), /requires-python = ">=3\.9"/);
   assert.match(ci, /sh scripts\/release\/smoke\.sh/);
   assert.match(ci, /packages\/blob-s3\n\s+run: npm run check/);
+});
+
+test("ci.yml tests the Postgres and ClickHouse stores against real servers in one job", () => {
+  assert.ok(!jobs(ci).has("store-postgres") && !jobs(ci).has("store-clickhouse"), "one job, not two");
+  const body = /\n  stores:\n([\s\S]*?)(?=\n  [a-z][a-z-]*:\n)/.exec(ci)?.[1] ?? "";
+  assert.ok(body, "stores job");
+  // Both servers start with the job; each is healthy before the first step runs.
+  assert.match(body, /\n      postgres:\n        image: postgres:17\n/);
+  assert.match(body, /\n      clickhouse:\n        image: clickhouse\/clickhouse-server:[\d.]+\n/);
+  assert.equal(body.match(/--health-cmd /g)?.length, 2, "a health check per server");
+  assert.match(body, /\n        id: install\n        run: npm ci\n/);
+  // One step per package, each against its own server.
+  const steps = body.split(/\n      - /).slice(1).filter((s) => s.includes("run: npm run check"));
+  assert.deepEqual(steps.map((s) => /working-directory: (\S+)/.exec(s)?.[1]), ["packages/store-postgres", "packages/blob-s3", "packages/store-clickhouse"]);
+  assert.match(steps[0], /CODING_SH_TEST_PG_URL: postgres:\/\/postgres:ci@127\.0\.0\.1:5432\/coding/);
+  assert.match(steps[2], /CODING_SH_TEST_CH_URL: clickhouse:\/\/coding:ci@127\.0\.0\.1:8123\/coding/);
+  // A red Postgres step does not hide the ClickHouse result: the later steps still run.
+  const after = "if: ${{ !cancelled() && steps.install.outcome == 'success' }}";
+  assert.ok(!steps[0].includes("\n        if:"), "the first test step has no condition");
+  for (const s of steps.slice(1)) assert.ok(s.includes(after), "later steps run after a failed one");
+  assert.doesNotMatch(body, /continue-on-error/);
 });
 
 test("ci.yml runs the secret scan, the hook budget and a site check that cannot skip", () => {
