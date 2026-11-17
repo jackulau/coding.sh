@@ -288,6 +288,16 @@ export async function readInstructionArg(value: string, cwd: string): Promise<st
 
 // ------------------------------------------------------------ drafting
 
+/** A session with no prompt to take the instruction from (a `coding.sh run` wrapper records none). */
+export class NoInstructionError extends Error {
+  readonly sessionId: string;
+  constructor(sessionId: string) {
+    super(`session ${sessionId} has no user prompt to use as the instruction; pass one with --instruction "<what the agent was asked to do>" or --instruction @FILE`);
+    this.name = "NoInstructionError";
+    this.sessionId = sessionId;
+  }
+}
+
 /** How far back a `coding.sh run` wrapper may have started before the agent session it ran. */
 const WRAPPER_LOOKBACK_MS = 86_400_000;
 
@@ -348,11 +358,7 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
       notes.push("instruction taken from the wrapped command's prompt argument; review it");
     }
   }
-  if (!instruction && !ledgerCands.length) {
-    throw new Error(
-      `session ${sessionId} has no user prompt to use as the instruction; pass one with --instruction "<what the agent was asked to do>" or --instruction @FILE`,
-    );
-  }
+  if (!instruction && !ledgerCands.length) throw new NoInstructionError(sessionId);
   const followUps = instructionSource === "ledger" ? [] : prompts.slice(instructionSource === "session" ? 1 : 0);
   if (followUps.length) notes.push(`${followUps.length} ${instructionSource === "session" ? "follow-up " : "session "}prompt(s) not included in the instruction; review whether the task needs them`);
 

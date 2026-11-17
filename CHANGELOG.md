@@ -37,6 +37,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Evals.** `eval init --sessions` names a command that works for a session with no prompt, such as one `coding.sh run` recorded: `eval new <id> --instruction "…"` with the same `--verifier`. Before, it said to pass `--instruction`, which `eval init` does not take. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#session-to-eval)
 - **Evals.** `eval validate` fails a task whose reference patch edits, deletes or skips the tests the verifier runs, as `eval init` already treats such a diff, and names each file. Before, a reference that only rewrote the expected value validated. A file the verifier only reads, such as `f.txt` in `grep -q b f.txt`, is not a test. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#session-to-eval)
 - **Install.** Uninstall for OpenCode also removes the `plugins/` folder init made for its plugin, and the OpenCode config folder, when nothing else is left in them. A folder that holds any other file stays. [Install](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#uninstall)
 - **Status line.** `statusline` reads at most 1 MiB of stdin, then prints its fallback line, so endless input such as `</dev/zero` no longer hangs it while memory grows. Ctrl-C stops it while it waits for input, with exit code 130. [Status line](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/status-line.md)
