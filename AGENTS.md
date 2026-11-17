@@ -81,6 +81,12 @@ set it for the user's store unless they ask.
   pinned Claude Code against `scripts/e2e/stub-model.mjs`) under a throwaway home, with paths
   scrubbed to `/work/demo` and `/home/user`. They live in `test/fixtures/adapters/<agent>/`.
 - Adapter goldens: `UPDATE_GOLDEN=1` rewrites them. Read the diff before you commit it.
+- **A test removes what it makes.** Make a temp folder with `mkdtempSync(join(tmpdir(), "<name>-"))`
+  and remove it in `after` or `finally`; stop every process and server the test started there
+  too. `npm test` and CI also give each test file a temp folder of its own and remove it when the
+  file exits (`scripts/test-temp-root.mjs`), and CI prints what each file left in it ("Temp entries
+  left behind by test files"). That resets temp files, not processes, and the one-file command
+  above does not load it, so a test still cleans up after itself.
 - Timing tests assume an idle machine. If one fails under load, rerun it alone first. CI does this
   itself (`scripts/test-ci.mjs`): a file that passes alone is a warning, not a failure.
 
