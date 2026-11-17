@@ -1,0 +1,45 @@
+# Throwaway, not for merging: one Windows job that measures what a kill of Chrome leaves behind.
+name: throwaway win close
+on:
+  push:
+    branches: ["throwaway/win-close"]
+permissions:
+  contents: read
+jobs:
+  measure:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # As the suite's Windows legs do.
+      - name: Stop the Storage Service
+        shell: pwsh
+        run: |
+          Stop-Service -Name StorSvc -Force
+          Set-Service -Name StorSvc -StartupType Disabled
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.x
+          cache: npm
+      - name: Install
+        run: npm ci --workspace packages/coding.sh
+      - name: What scans files on this runner
+        shell: pwsh
+        run: |
+          Get-MpPreference | Select-Object DisableRealtimeMonitoring, ExclusionPath, ExclusionProcess | Format-List
+          Get-MpComputerStatus | Select-Object AntivirusEnabled, RealTimeProtectionEnabled, OnAccessProtectionEnabled, BehaviorMonitorEnabled | Format-List
+      - name: Measure
+        working-directory: packages/coding.sh
+        run: node --no-warnings scripts/throwaway/win-close.ts 12
+      - name: The helper's test file, five times
+        if: always()
+        working-directory: packages/coding.sh
+        run: |
+          rc=0
+          for i in 1 2 3 4 5; do
+            node --no-warnings --test test/viewer/browser.test.ts || rc=1
+          done
+          exit $rc
