@@ -97,7 +97,8 @@ pushed into the production DB. An explicit `coding.sh ingest --store …` still 
   in google.rpc.Status form, with code 16.
 - **Viewer, `/api/*` and `/metrics`:**
   - A read key works as a Bearer header, or as `?t=<key>` once. The viewer turns that into a cookie,
-    which is the existing mechanism.
+    which is the existing mechanism. A `?t=` link followed from another site sets no cookie: the
+    viewer shows one button that posts the key from its own page. The sign-in form posts the key.
   - Basic auth also works.
   - A project-scoped read key only sees its project: lists are filtered, and other sessions return 404.
   - `/metrics` needs a `*` read key or basic auth. Its labels name every project, so a scoped key gets 403.

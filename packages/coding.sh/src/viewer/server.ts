@@ -35,7 +35,7 @@ import { getUpdateStatus, type UpdateStatus } from "../update/index.ts";
 import { recordStar, STAR_MIN_SESSIONS, starDue } from "../update/star.ts";
 import { WorkflowStore } from "../workflows/store.ts";
 import { WorkflowApiError, workflowsApi, type WorkflowViewSource } from "../workflows/viewer.ts";
-import { BOOT_LIST_PATHS, BOOT_MAX_BYTES, BOOT_SESSION_EVENTS, renderPage, renderSessionsMain, sessionBootPaths } from "./ssr.ts";
+import { BOOT_LIST_PATHS, BOOT_MAX_BYTES, BOOT_SESSION_EVENTS, esc, renderPage, renderSessionsMain, sessionBootPaths } from "./ssr.ts";
 import { layoutRows, ModelCache, modelOutline, readRows, ROWS_LIMIT, ROWS_MAX } from "./model.ts";
 import { parseRequest as parsePlaygroundRequest, PlaygroundError, rebuildCall, type PlaygroundSource } from "./playground.ts";
 import { computeMetrics, DAY_MS, MAX_GROUPS, METRIC_BUCKETS, METRIC_GROUPS, MetricsError, type MetricBucket, type MetricGroup, type MetricsSpec } from "./metrics.ts";
@@ -229,8 +229,8 @@ export interface ViewerHandlerOptions {
   /** Host header check (DNS-rebinding defense); also checks Origin on POSTs. Lower-cased host:port. */
   checkHost: (host: string) => boolean;
   /**
-   * `/?t=<token>`: returns the Set-Cookie value that replaces the URL token, or
-   * undefined when the token is wrong. Without it, `?t=` is ignored.
+   * `/?t=<token>`, or a form POST of `t` to `/`: returns the Set-Cookie value that replaces the
+   * token, or undefined when the token is wrong. Without it, `?t=` is ignored and POST is 405.
    */
   exchangeToken?: (token: string, req: IncomingMessage) => string | undefined;
   /** Ask browsers for Basic credentials on a 401 page (serve with basic auth). */
@@ -297,9 +297,24 @@ export async function createViewerHandler(opts: ViewerHandlerOptions): Promise<V
     const path = url.pathname;
 
     if (path === "/" || path === "/index.html") {
+      if (req.method === "POST" && opts.exchangeToken) {
+        // The key form: the key travels in the body, never in a URL. Only the viewer's own page may post it.
+        checkOrigin(req, opts.checkHost);
+        if (fetchSite(req) === "cross-site") throw new HttpError(403, "forbidden origin");
+        const t = new URLSearchParams(await readForm(req, res)).get("t");
+        const cookie = t ? opts.exchangeToken(t, req) : undefined;
+        if (!cookie) return unauthorizedPage(res);
+        res.setHeader("Set-Cookie", cookie);
+        res.writeHead(303, { Location: "/", "Cache-Control": "no-store" });
+        res.end();
+        return;
+      }
       if (req.method !== "GET" && req.method !== "HEAD") throw new HttpError(405, "method not allowed");
       const t = url.searchParams.get("t");
       if (t !== null && opts.exchangeToken) {
+        // A link followed from another site never signs the browser in by itself: the user confirms
+        // with a POST from this page. Every key gets that page, so it says nothing about the key.
+        if (!sameSiteNavigation(req)) return sendConfirmPage(res, t);
         const cookie = opts.exchangeToken(t, req);
         if (!cookie) return unauthorizedPage(res);
         // Trade the URL token for a cookie, then drop it from the address bar.
@@ -1805,9 +1820,42 @@ function checkOrigin(req: IncomingMessage, checkHost: (host: string) => boolean)
   if (!checkHost(host)) throw new HttpError(403, "forbidden origin");
 }
 
+/** The browser's Sec-Fetch-Site header, lower-cased; undefined from clients that send none. */
+function fetchSite(req: IncomingMessage): string | undefined {
+  const v = req.headers["sec-fetch-site"];
+  return typeof v === "string" ? v.trim().toLowerCase() : undefined;
+}
+
+/**
+ * True for a navigation the user started (address bar, bookmark, a link in another app) or one
+ * from this site. Clients that send no Sec-Fetch-Site (curl, scripts, old browsers) count too.
+ */
+function sameSiteNavigation(req: IncomingMessage): boolean {
+  const site = fetchSite(req);
+  return site === undefined || site === "none" || site === "same-origin" || site === "same-site";
+}
+
+/** The key form's body: urlencoded and small. */
+async function readForm(req: IncomingMessage, res: ServerResponse): Promise<string> {
+  const type = (req.headers["content-type"] ?? "").split(";")[0]?.trim().toLowerCase();
+  if (type !== "application/x-www-form-urlencoded") throw new HttpError(415, "content-type must be application/x-www-form-urlencoded");
+  return (await readBody(req, res, FORM_MAX_BYTES)).toString("utf8");
+}
+
+const FORM_MAX_BYTES = 4 * 1024;
+
 async function readJson(req: IncomingMessage, res: ServerResponse, max = MAX_BODY_BYTES): Promise<unknown> {
   const type = (req.headers["content-type"] ?? "").split(";")[0]?.trim().toLowerCase();
   if (type !== "application/json") throw new HttpError(415, "content-type must be application/json");
+  const body = await readBody(req, res, max);
+  try {
+    return JSON.parse(body.toString("utf8"));
+  } catch {
+    throw new HttpError(400, "invalid JSON");
+  }
+}
+
+async function readBody(req: IncomingMessage, res: ServerResponse, max: number): Promise<Buffer> {
   const declared = Number(req.headers["content-length"] ?? 0);
   const tooBig = `request body exceeds ${max < 1024 * 1024 ? `${Math.round(max / 1024)} KB` : `${Math.round(max / 1024 / 1024)} MB`}`;
   if (declared > max) {
@@ -1824,11 +1872,7 @@ async function readJson(req: IncomingMessage, res: ServerResponse, max = MAX_BOD
     }
     chunks.push(chunk);
   }
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  } catch {
-    throw new HttpError(400, "invalid JSON");
-  }
+  return Buffer.concat(chunks);
 }
 
 function readCookie(header: string | undefined, name: string): string | undefined {
@@ -1868,7 +1912,24 @@ function sendUnauthorizedPage(res: ServerResponse, text = DEFAULT_UNAUTHORIZED, 
   if (basicRealm) res.setHeader("WWW-Authenticate", `Basic realm="${basicRealm}", charset="UTF-8"`);
   res.writeHead(401, {
     "Content-Type": "text/html; charset=utf-8",
-    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
+    "Content-Security-Policy": FORM_PAGE_CSP,
+    "Cache-Control": "no-store",
+  });
+  res.end(body);
+}
+
+const FORM_PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'";
+
+/** A key link followed from another site: one button posts the key from this page. */
+function sendConfirmPage(res: ServerResponse, token: string): void {
+  const body =
+    "<!doctype html><meta charset=utf-8><title>coding.sh</title>" +
+    "<body style=\"background:#08080a;color:#a8a8ae;font:14px ui-monospace,monospace;padding:3rem\">" +
+    "<p>A link from another site opened this viewer with an access key. Open the viewer with that key?</p>" +
+    `<form method=post action="/"><input type=hidden name=t value="${esc(token)}"><button style="font:inherit;padding:.4rem .8rem">Open</button></form>`;
+  res.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Security-Policy": FORM_PAGE_CSP,
     "Cache-Control": "no-store",
   });
   res.end(body);

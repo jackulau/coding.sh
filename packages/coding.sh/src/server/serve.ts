@@ -310,10 +310,10 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
     exchangeToken: (t, req) =>
       auth.readScope(t) !== undefined ? `${READ_COOKIE}=${t}; HttpOnly; SameSite=Strict; Path=/${secureCookie(req) ? "; Secure" : ""}` : undefined,
     ...(cfg.credentials.basic ? { basicRealm: "coding.sh" } : {}),
-    // A GET form to /?t=…: the same token exchange as a pasted link, which then drops the key from the address bar.
+    // The form posts the key to /, so it never lands in a URL, a log line or the browser history.
     unauthorizedText:
       "This coding.sh server needs a read key (csh_rk_…).</p>" +
-      '<form method=get action="/"><input name=t type=password autocomplete=off required placeholder="csh_rk_…" aria-label="Read key" size=48 style="font:inherit;padding:.4rem"> <button style="font:inherit;padding:.4rem .8rem">Open</button></form>' +
+      '<form method=post action="/"><input name=t type=password autocomplete=off required placeholder="csh_rk_…" aria-label="Read key" size=48 style="font:inherit;padding:.4rem"> <button style="font:inherit;padding:.4rem .8rem">Open</button></form>' +
       "<p>Or open <code>/?t=&lt;read key&gt;</code> once, or sign in with the configured user.",
     // Configured projects plus those in the data (a viewer replica, or keys since removed).
     projects: async () => [...new Set([...cfg.projects, ...(await storeProjects(index))])],

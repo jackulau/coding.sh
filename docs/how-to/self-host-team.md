@@ -187,7 +187,8 @@ and Render handle TLS for you: see [Deploy coding.sh serve](../production/deploy
 ## Read the result
 
 Open `http://<server>:4318/?t=csh_rk_…`, or open `http://<server>:4318` and paste the read key
-into the form. A cookie keeps you signed in until the browser closes.
+into the form. A cookie keeps you signed in until the browser closes. A key link clicked on another
+web page, such as a chat in a browser tab, asks you to press Open first.
 
 ![The team viewer's session list: five Claude Code sessions, each with its title, model, tool count, tokens, cost and duration, and four with a test result](shot:docs/team-list "The team viewer's session list, with sessions sent by machines that connected with --remote-mode full.")
 

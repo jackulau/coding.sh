@@ -123,7 +123,7 @@ describe("coding.sh serve (CLI)", () => {
     );
     const page = await fetch(`${url}/`, { headers: { accept: "text/html" } });
     assert.equal(page.status, 401);
-    assert.match(await page.text(), /<form method=get action="\/"><input name=t /);
+    assert.match(await page.text(), /<form method=post action="\/"><input name=t /);
     await first.stop();
 
     const second = await start();

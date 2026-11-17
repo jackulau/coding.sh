@@ -409,6 +409,9 @@ Without a valid read credential: 401 `{"error":"missing or invalid read key","st
 The viewer page (HTML, also `HEAD`). Auth: read key or basic auth. `/?t=<read key>` trades the key
 for an `HttpOnly; SameSite=Strict` cookie named `csh_rk` and redirects to `/`, so the key leaves the
 address bar. Add `CODING_SH_TRUST_PROXY=1` behind a TLS proxy to mark the cookie `Secure`.
+The exchange happens when the browser opened the link itself (address bar, bookmark, another app)
+or from the same site, and for clients that send no `Sec-Fetch-Site` header, such as curl. A link
+followed from another site gets a page with one button instead, which posts the key to `/`.
 
 ```sh
 curl -sS -i "$CSH/?t=$READ_KEY"
@@ -422,6 +425,16 @@ Location: /
 
 A missing or wrong key gets a 401 HTML page that explains how to sign in, with
 `WWW-Authenticate: Basic` when basic auth is configured. Other methods get 405.
+
+### `POST /`
+
+The sign-in form. The body is `application/x-www-form-urlencoded` with `t=<read key>`, at most
+4 KB. A right key gets the same cookie with a 303 to `/`; a wrong one gets the 401 page. A request
+whose `Origin` is not the viewer's, or that a browser marks as from another site, gets 403.
+
+```sh
+curl -sS -i "$CSH/" --data-urlencode "t=$READ_KEY"
+```
 
 The page arrives with the first sessions page drawn as rows, so the list shows before its script
 runs, and without JavaScript.

@@ -36,6 +36,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Viewer.** The sign-in form posts the key instead of putting it in the URL. A `/?t=` link followed from another site no longer signs the browser in by itself: the viewer shows an Open button that posts the key. A link pasted into the address bar, a bookmark or a link opened from another app signs in as before. [REST API](https://coding.sh/docs/api)
 - **Serve.** First-start keys are printed once, on the start that makes them. Later starts name `serve-keys.json` instead, a start that fails leaves no keys file behind, and a wrong `CODING_SH_INGEST_KEYS` or `CODING_SH_READ_KEYS` entry is named by its position. [Production](https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md)
 - **Capture.** `capture.redactPatterns` in a repo's own `.coding.sh/config.toml` are literal text. Regular expressions count only from your own config, so move a repo's regular expression there to keep it working. [Configuration](https://github.com/jackulau/coding.sh/blob/main/docs/reference/config.md)
 - **Serve.** Forwarded spans send an attribute whose key names a secret, such as `db.password` or `http.request.header.authorization`, as `[redacted:secret-field]`, whatever its value, and ingest stores such a key's value the same way. [Production](https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md#19-forward-and-sinks)
