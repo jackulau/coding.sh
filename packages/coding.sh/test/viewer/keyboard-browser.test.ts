@@ -457,6 +457,11 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     await p.press("{");
     await p.waitFor(`${atTop}.startsWith('Turn 1 · Prompt|')`, "{, turn 1");
     assert.equal(await p.eval("document.querySelector('#chat').hidden"), false, "still in Chat");
+    // A session that only starts before its first prompt has no step line ahead of the prompt.
+    p = await open("#/s/" + START + "?view=chat");
+    await p.waitFor("document.querySelectorAll('#chat .chat-text').length === 4", "the chat");
+    assert.equal(await p.eval("[...document.querySelectorAll('#chat .chat-work')].filter((e) => e.checkVisibility()).length"), 0, "no step line for Session starts");
+    assert.equal(await p.eval("[...document.querySelectorAll('#chat .chat-turn')].find((e) => e.checkVisibility()).querySelector('.chat-who span').textContent"), "Turn 1 · Prompt");
     p = await open("#/s/" + CHAT);
     await p.waitFor(`${selected} && ${pressed} === 'Steps'`, "no link, nothing remembered: Steps");
     await p.press("?");
@@ -476,6 +481,10 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     assert.deepEqual(await p.eval(`[...document.querySelectorAll('${md} li')].map((e) => e.textContent)`), ["see the docs (docs/a.md)", "<script>window.pwned = 1</script>"]);
     assert.deepEqual(await p.eval(`[...document.querySelectorAll('${md} .md-code')].map((e) => [e.querySelector('.md-lang')?.textContent ?? '', e.querySelector('pre').textContent])`),
       [["ts", "const x = 1;"], ["", "unclosed <img src=x onerror=window.pwned=2>"]]);
+    // The language label sits inside the code block's top-right corner, not on a line above it.
+    const inside = await p.eval(`(() => { const c = document.querySelector('${md} .md-code'), l = c.querySelector('.md-lang').getBoundingClientRect(), b = c.querySelector('pre').getBoundingClientRect();
+      return l.top >= b.top && l.bottom <= b.bottom && l.right <= b.right && l.left > b.left + b.width / 2; })()`);
+    assert.equal(inside, true);
     assert.equal(await p.eval(`document.querySelectorAll('#event-pane a, ${md} script, ${md} img, ${md} b').length`), 0);
     assert.equal(await p.eval("window.pwned"), undefined);
     // Copy text gives the original source.

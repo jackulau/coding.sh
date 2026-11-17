@@ -687,6 +687,8 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .chat-empty[hidden] { display: none; }
 .chat-turn { display: grid; gap: 0.55rem; max-width: 46rem; margin: 0 auto; padding: 1rem 0; }
 .chat-turn + .chat-turn { box-shadow: inset 0 1px 0 var(--line); }
+.chat-turn[hidden] { display: none; }
+.chat-turn[hidden] + .chat-turn { box-shadow: none; }
 .chat-msg { display: grid; gap: 0.3rem; min-width: 0; }
 .chat-who { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; font-size: 12px; color: var(--text-muted); }
 .chat-text { overflow-wrap: anywhere; font-size: 14px; line-height: 1.6; color: var(--text); }
@@ -817,8 +819,9 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .md :not(pre) > code { font-family: var(--font-mono); font-size: 0.88em; padding: 0.05rem 0.3rem; border-radius: 4px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
 .md strong { font-weight: 600; }
 .md hr { border: 0; height: 1px; background: var(--line); }
-.md-code { display: grid; gap: 0.25rem; min-width: 0; }
-.md-lang { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+/* The language sits in the block's top-right corner, on the block's own background. */
+.md-code { position: relative; min-width: 0; }
+.md-lang { position: absolute; top: 1px; right: 1px; padding: 0.3rem 0.6rem 0.1rem 0.5rem; border-radius: 0 var(--radius-sm) 0 var(--radius-sm); background: var(--surface); font-family: var(--font-mono); font-size: 11px; line-height: 1.4; color: var(--text-muted); pointer-events: none; }
 .shell { color: var(--text); }
 .shell::before { content: "$ "; color: var(--text-muted); }
 .lines { display: grid; grid-template-columns: auto minmax(0, 1fr); padding: 0.5rem 0; }
@@ -4692,6 +4695,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   }
   // ---- chat view
   const isMsg = (it) => it.type === "user.message" || it.type === "assistant.message";
+  const LIFECYCLE = new Set(["session.start", "session.end"]);
   function chatSig(k) {
     const t = turnInfo[k];
     return items[t.from].id + "|" + items[t.to - 1].id + "|" + (t.to - t.from) + "|" + t.fails + "|" + Math.round(t.dur / 1000);
@@ -4707,11 +4711,13 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   function chatTurnEl(k) {
     const t = turnInfo[k];
     const replies = [];
-    let work = 0;
+    let work = 0, lifecycle = 0;
     for (let i = t.from; i < t.to; i++) {
-      if (!isMsg(items[i])) work++;
+      if (!isMsg(items[i])) { work++; if (LIFECYCLE.has(items[i].type)) lifecycle++; }
       else if (!(t.prompt && i === t.from)) replies.push(chatMsg(i));
     }
+    // Before the first prompt, a session that only started has nothing to read: no line, no section.
+    if (!t.prompt && !replies.length && work === lifecycle) return h("section", { class: "chat-turn", hidden: true });
     let line = null;
     if (work) {
       const w = turnWords(t.from, t.to);
