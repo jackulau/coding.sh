@@ -89,13 +89,28 @@ describe("viewer fixes in a browser", { skip: chrome ? false : "no Chrome/Chromi
 
   test("Explore says why a query cannot parse without leaving the page or asking", async () => {
     const p = await open("#/explore");
-    await p.waitFor("document.querySelector('.mx-body > *')", "explore body");
-    const before = (await apiCalls(p)).length;
-    await p.eval("(() => { const i = document.querySelector('.explore input[type=search]'); i.value = '(agent:codex'; i.form.requestSubmit(); })()");
+    // The body is filled when the page's one request (/api/metrics) has been answered.
+    const metrics = (where = "") => `performance.getEntriesByType('resource').some((e) => new URL(e.name).pathname === '/api/metrics' && decodeURIComponent(new URL(e.name).search).includes(${JSON.stringify(where)}))`;
+    await p.waitFor(`document.querySelector('.mx-body > *') && ${metrics()}`, "explore body");
+    // Asking is a request to /api/metrics. The page's shell sends others on timers for as long as
+    // it is open (/api/ingest every 4 s), so the count of all requests moves under a slow test.
+    const asked = async () => (await apiCalls(p)).filter((u) => u.startsWith("/api/metrics"));
+    const before = await asked();
+    assert.equal(before.length, 1);
+    // One of the shell's polls lands in the middle of the test.
+    await p.eval("fetch('/api/ingest', { credentials: 'same-origin' }).then(() => 0, () => 0)");
+    await p.waitFor("performance.getEntriesByType('resource').filter((e) => new URL(e.name).pathname === '/api/ingest').length > 1", "the poll");
+    const submit = (text: string) => p.eval(`(() => { const i = document.querySelector('.explore input[type=search]'); i.value = ${JSON.stringify(text)}; i.form.requestSubmit(); })()`);
+    await submit("(agent:codex");
     await p.waitFor("document.querySelector('.explore .qbar-err')", "inline error");
     assert.match(await p.eval("document.querySelector('.explore .qbar-err').textContent"), /missing '\)'/);
     assert.equal(await p.eval("location.hash"), "#/explore");
-    assert.equal((await apiCalls(p)).length, before);
+    assert.deepEqual(await asked(), before, "not asked");
+    // A query that parses is asked, so the check above can fail.
+    await submit("agent:codex");
+    await p.waitFor(metrics("where=agent:codex"), "the good query's request");
+    assert.equal((await asked()).filter((u) => u.includes("where=agent:codex")).length, 1);
+    assert.deepEqual(p.errors, []);
   });
 
   test("a year-long Explore range names its year", async () => {
