@@ -21,6 +21,7 @@ grouped by area, with links to the docs for the details.
 ### Fixed
 
 - **Docs.** Below 1280px the "On this page" dropdown lists every subheading of every section, such as each function on the SDKs page. Only the wide rail keeps to the section being read. [SDKs](https://coding.sh/docs/sdk)
+- **Docs.** An API path in "On this page" wraps after a slash or a comma, so entries such as `GET /api/sessions/{id}/events` no longer split in the middle of a word. [REST API](https://coding.sh/docs/api/read)
 
 ## [0.1.7] - 2026-11-16
 

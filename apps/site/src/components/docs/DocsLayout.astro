@@ -108,6 +108,9 @@ for (const m of body.matchAll(/<h([23]) id="([^"]+)"([^>]*)>([\s\S]*?)<\/h\1>|<d
     if (!/\bdata-in-tabs\b/.test(m[3]!)) outline.push((h2 = { id: m[2]!, label: plain(m[4]!), subs: [] }));
   } else if (!steps.has(m[2]!)) (h2?.subs ?? outline).push({ id: m[2]!, label: plain(m[4]!) });
 }
+// A label breaks at a path segment or a list comma, not in the middle of a word:
+// escaped, with a <wbr> after each "/" in a path and each ", ".
+const wrapAt = (s: string) => s.replace(/[&<>]/g, (c) => `&#${c.charCodeAt(0)};`).replace(/(\S\/|, )/g, "$1<wbr>");
 const showOutline = outline.length + (outline[0]?.subs?.length ?? 0) >= 2;
 ---
 
@@ -178,14 +181,14 @@ const showOutline = outline.length + (outline[0]?.subs?.length ?? 0) >= 2;
                 {outline.map((o) => (
                   <li data-in-tab={o.inTab} hidden={o.closed}>
                     <a href={`#${o.id}`} class:list={["onpage__link", { "onpage__link--tab": o.tab, "onpage__link--step": o.inTab }]}>
-                      {o.label}
+                      <Fragment set:html={wrapAt(o.label)} />
                     </a>
                     {!!o.subs?.length && (
                       <ul>
                         {o.subs.map((s) => (
                           <li>
                             <a href={`#${s.id}`} class="onpage__link">
-                              {s.label}
+                              <Fragment set:html={wrapAt(s.label)} />
                             </a>
                           </li>
                         ))}
@@ -695,6 +698,7 @@ const showOutline = outline.length + (outline[0]?.subs?.length ?? 0) >= 2;
     border-left: 1px solid transparent;
     font-size: var(--fs-sm);
     line-height: 1.4;
+    overflow-wrap: break-word;
     color: var(--text-muted);
     transition: color var(--hover-out) ease;
   }
@@ -711,7 +715,6 @@ const showOutline = outline.length + (outline[0]?.subs?.length ?? 0) >= 2;
   }
   .onpage ul ul .onpage__link {
     padding-left: 1.5rem;
-    overflow-wrap: anywhere;
   }
   .onpage__link[data-active] {
     color: var(--text);
