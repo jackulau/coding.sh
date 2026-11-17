@@ -126,6 +126,8 @@ order.
 - **Cost:** T3's running cost (`contextUsage.cost`) is kept as `reportedUsage` and never summed.
 - **When imports run:** the T3 store is re-imported on every lazy ingest (`Adapter.tail`). Threads that
   haven't changed are skipped.
+- **Store copies:** the T3 store is read from a copy in the temp directory, which needs room for it; a
+  failed copy is a backfill error. The next read removes copies a killed read left.
 
 ## Known breakage to design around
 

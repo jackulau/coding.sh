@@ -12,6 +12,7 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+import { reapSqliteCopies } from "../adapters/_shared/sqlite-copies.ts";
 
 /** What /api/ingest reports. */
 export interface IngestStatus {
@@ -120,6 +121,17 @@ export function tailWithin(opts: { env: NodeJS.ProcessEnv; cwd: string; deadline
     const timer = setTimeout(() => {
       finish(reading ? { pending: 1, late: true } : { pending: 0, late: false });
       child.kill();
+      // Killed mid-copy of a big SQLite store (T3 Code's is 1.7 GB), the child can't remove the copy: this process
+      // does, when the child is gone or at the latest as this process exits (a read answers and exits at once).
+      const pid = child.pid;
+      if (pid !== undefined) {
+        const reap = () => {
+          process.off("exit", reap);
+          reapSqliteCopies({ killed: pid });
+        };
+        child.once("exit", reap);
+        process.once("exit", reap);
+      }
     }, Math.max(0, opts.deadline - Date.now()));
     child.stdout!.setEncoding("utf8");
     child.stdout!.on("data", (chunk: string) => {

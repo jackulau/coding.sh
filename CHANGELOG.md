@@ -37,6 +37,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Capture.** A copy of T3 Code's store that a killed read left in the temp directory, up to 1.7 GB each, is removed by the next read, even when the store is unchanged. A copy that fails, such as on a full temp volume, is a backfill error, not an import of nothing. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#host-apps-t3-code)
 - **Viewer.** The shortcut bar at the foot of a session page keeps `? all shortcuts` in view in a window about 1,000 px wide. Hints that do not fit on its one line are left out whole. Before, they wrapped and pushed `? all shortcuts` below the bar. [Concepts](https://coding.sh/docs/concepts#turn)
 - **Viewer.** Pressing the pressed Pass or Fail button on a session page, or its key (`p`, `f`), clears the outcome label: it is stored as `skip`, which calibration and evals leave out. Before, a label could be changed but not taken back. [Concepts](https://coding.sh/docs/concepts#judge)
 - **Viewer.** Back from a session, by Esc or the browser's Back, the session list is scrolled where you left it and focus is on the selected row, so `j` and `k` go on from there. Before, the list opened at the top. [Concepts](https://coding.sh/docs/concepts#session)

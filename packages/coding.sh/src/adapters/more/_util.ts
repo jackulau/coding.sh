@@ -10,7 +10,7 @@
 //   - transcripts: JSONL readers, directory walks, read-only SQLite copies
 import { spawn, execFile } from "../../core/spawn.ts";
 import { randomBytes } from "node:crypto";
-import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync, chmodSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync, chmodSync } from "node:fs";
 import { createReadStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -26,6 +26,7 @@ import { exactUninstall, existedBeforeInstall, forgetInstall, recordInstall, res
 import { resolveWriteTarget } from "../_shared/files.ts";
 import { buildHookCommand, hookPathForCommand } from "../_shared/hooks.ts";
 import { skillFieldsOf } from "../_shared/tools.ts";
+import { makeSqliteCopyDir, onSqliteCopyRelease, reapSqliteCopies, releaseSqliteCopyDir } from "../_shared/sqlite-copies.ts";
 import { editJsonc, parseJsonc as parseJsoncShared } from "../_shared/jsonc.ts";
 
 export type Json = Record<string, unknown>;
@@ -1075,13 +1076,18 @@ export async function loadSqlite(): Promise<SqliteModule | undefined> {
 
 /**
  * Open a COPY of a SQLite database read-only (WAL/SHM included) so the agent's
- * live writer never sees our lock. Caller must call close().
+ * live writer never sees our lock. Caller must call close(). The copy lives in
+ * tmpdir() until close() or this process's exit; copies left by a killed
+ * process are removed by the next open (_shared/sqlite-copies.ts).
+ * A copy that fails (no room in tmpdir()) resolves undefined, or throws with
+ * `throwOnError`: a caller for which the database is its only source says so.
  */
-export async function openSqliteCopy(dbPath: string): Promise<{ db: import("node:sqlite").DatabaseSync; close: () => void } | undefined> {
+export async function openSqliteCopy(dbPath: string, o: { throwOnError?: boolean } = {}): Promise<{ db: import("node:sqlite").DatabaseSync; close: () => void } | undefined> {
   if (!existsSync(dbPath)) return undefined;
   const sqlite = await loadSqlite();
   if (!sqlite) return undefined;
-  const dir = mkdtempSync(join(tmpdir(), "csh-sqlite-"));
+  reapSqliteCopies();
+  const dir = makeSqliteCopyDir();
   const dst = join(dir, basename(dbPath));
   try {
     copyFileSync(dbPath, dst);
@@ -1089,18 +1095,11 @@ export async function openSqliteCopy(dbPath: string): Promise<{ db: import("node
     // Read-only: a writable connection's close folds the copied WAL into the copy before it is deleted
     // (seconds for T3 Code's 600 MB store). A read-only one still reads the WAL, through its own -shm.
     const db = new sqlite.DatabaseSync(dst, { readOnly: true });
-    return {
-      db,
-      close: () => {
-        try {
-          db.close();
-        } finally {
-          rmSync(dir, { recursive: true, force: true });
-        }
-      },
-    };
-  } catch {
-    rmSync(dir, { recursive: true, force: true });
+    onSqliteCopyRelease(dir, () => db.close());
+    return { db, close: () => releaseSqliteCopyDir(dir) };
+  } catch (e) {
+    releaseSqliteCopyDir(dir);
+    if (o.throwOnError) throw new Error(`could not copy ${dbPath} to ${tmpdir()}: ${(e as Error).message}`, { cause: e });
     return undefined;
   }
 }
