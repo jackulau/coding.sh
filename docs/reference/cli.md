@@ -11,7 +11,7 @@ Every command accepts these.
 
 | Option | Default | Description |
 |---|---|---|
-| `--json` |  | Print one JSON document on stdout. |
+| `--json` |  | Print one JSON document on standard output. |
 | `--no-color` |  | Disable color (also NO_COLOR=1) |
 | `--debug` |  | Show stack traces on errors. |
 | `-h, --help` |  | Show help. |
