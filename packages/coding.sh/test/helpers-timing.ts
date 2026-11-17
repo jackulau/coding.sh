@@ -35,8 +35,8 @@ export const cpuMs = (fn: () => unknown): number => {
 
 /**
  * Spins until the clock shows a new value. Returns that value and how far it moved: the clock's
- * step. A thread's CPU clock moves in microseconds on Linux and macOS, and in timer ticks of
- * 15.6 ms on Windows.
+ * step. Measured for a thread's CPU clock: 0.002 ms on a Mac, 1 ms on a Linux CI runner, and a
+ * timer tick of 15.6 ms on Windows.
  */
 const nextStep = (clock: () => number): { at: number; step: number } => {
   const from = clock();
@@ -59,7 +59,7 @@ const MIN_STEPS = 20;
  * The same steps put a 100 ms measurement off by up to 14% either way: it can begin anywhere
  * inside one step and end anywhere inside another. So the measurement begins on a step and runs
  * for at least `MIN_STEPS` of them, which leaves it under by less than one step in twenty. That is
- * 313 ms on Windows; on a fine clock `minMs` is the longer of the two and nothing changes.
+ * 313 ms on Windows; with a step of 1 ms or less `minMs` is the longer of the two.
  */
 export const cpuMsPerCall = (fn: () => unknown, minMs = 100, clock: () => number = threadCpuMs): number => {
   const { at: start, step } = nextStep(clock);
