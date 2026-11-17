@@ -36,6 +36,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Evals.** Codex eval runs pass `--trust` when the installed Codex has it (0.169 and later), so a harness's project `.codex/config.toml` and its MCP servers load in the eval work dir. Only runs in their own `CODEX_HOME` pass it, never a run that uses `--ignore-user-config`, and it writes no hook trust hash. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md)
 - **Serve.** Behind a TLS proxy with `trust_proxy` set, every HTTPS answer carries `Strict-Transport-Security: max-age=31536000`, and a sign-in sets the read cookie as `__Host-csh_rk`, marked `Secure`. Plain HTTP on loopback keeps `csh_rk`, and a browser already signed in stays signed in. Once a browser has seen the header, it refuses plain HTTP to that host for a year. [REST API](https://coding.sh/docs/api)
 - **Viewer.** The sign-in form posts the key instead of putting it in the URL. A `/?t=` link followed from another site no longer signs in by itself: the viewer shows an Open button that posts the key. A link pasted into the address bar, a bookmark or a link opened from another app signs in as before. [REST API](https://coding.sh/docs/api)
 - **Serve.** First-start keys are printed once, on the start that makes them. Later starts name `serve-keys.json` instead, a start that fails leaves no keys file behind, and a wrong `CODING_SH_INGEST_KEYS` or `CODING_SH_READ_KEYS` entry is named by its position. [Production](https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md)
