@@ -31,7 +31,8 @@ describe("package types", () => {
   });
 
   it("emits each declared types file from tsconfig.types.json", () => {
-    const tsc = createRequire(import.meta.url).resolve("typescript/bin/tsc");
+    // The compiler scripts/build.mjs emits with.
+    const tsc = createRequire(import.meta.url).resolve("typescript5/bin/tsc");
     execFileSync(process.execPath, [tsc, "-p", "tsconfig.types.json", "--outDir", out], { cwd: root, stdio: "pipe" });
     for (const [sub, cond] of typed) {
       const file = join(out, cond.types!.replace(/^\.\/dist\/types\//, ""));
