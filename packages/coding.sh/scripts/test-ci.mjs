@@ -11,7 +11,7 @@
 // SHARD=i/n picks the files of shard i by their recorded run time (scripts/test-shards.ts), so
 // the shards end close together. TEST_DURATIONS_OUT=<file> also writes each file's run time there.
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,15 +29,44 @@ const traceDir = process.env.CSH_TRACE_DIR;
 const diag = traceDir ? ["--import", new URL("./diag-preload.mjs", import.meta.url).href] : [];
 if (traceDir) {
   const here = (f) => new URL(f, import.meta.url);
-  const kids = [spawn(process.execPath, ["--no-warnings", fileURLToPath(here("./diag-heartbeat.mjs"))], { stdio: "ignore" })];
-  if (process.platform === "win32") {
+  const kids = process.env.CSH_DIAG_LIGHT === "1" ? [] : [spawn(process.execPath, ["--no-warnings", fileURLToPath(here("./diag-heartbeat.mjs"))], { stdio: "ignore" })];
+  if (process.platform === "win32" && process.env.CSH_DIAG_LIGHT !== "1") {
     kids.push(spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", fileURLToPath(here("./diag-procs.ps1")), "-Out", `${traceDir}\\procs.txt`], { stdio: "ignore" }));
-    kids.push(spawn("typeperf.exe", ["\\Processor(_Total)\\% Processor Time", "\\PhysicalDisk(_Total)\\Current Disk Queue Length", "\\PhysicalDisk(_Total)\\Disk Read Bytes/sec", "\\PhysicalDisk(_Total)\\Disk Write Bytes/sec", "\\PhysicalDisk(_Total)\\Avg. Disk sec/Read", "\\PhysicalDisk(_Total)\\Avg. Disk sec/Write", "\\Memory\\Available MBytes", "\\Memory\\Pages/sec", "\\System\\Processor Queue Length", "\\System\\Context Switches/sec", "-si", "1", "-o", `${traceDir}\\perf.csv`, "-y"], { stdio: "ignore" }));
+    kids.push(spawn("typeperf.exe", ["\\Processor(_Total)\\% Processor Time", "\\PhysicalDisk(_Total)\\Current Disk Queue Length", "\\PhysicalDisk(_Total)\\Disk Read Bytes/sec", "\\PhysicalDisk(_Total)\\Disk Write Bytes/sec", "\\PhysicalDisk(_Total)\\Avg. Disk sec/Read", "\\PhysicalDisk(_Total)\\Avg. Disk sec/Write", "\\Memory\\Available MBytes", "\\Memory\\Pages/sec", "\\System\\Processor Queue Length", "\\System\\Context Switches/sec", "\\Memory\\Page Reads/sec", "\\Memory\\Pages Input/sec", "\\Memory\\Transition Faults/sec", "\\Memory\\Cache Faults/sec", "\\Memory\\Standby Cache Normal Priority Bytes", "-si", "1", "-o", `${traceDir}\\perf.csv`, "-y"], { stdio: "ignore" }));
   }
   for (const k of kids) k.on("error", (e) => console.log(`diag: ${e.message}`));
   process.on("exit", () => {
     for (const k of kids) k.kill();
   });
+}
+// DIAGNOSTICS ONLY: two more modes. "idle" runs the samplers and nothing else until 770 s after
+// boot. "probe" waits until 686 s after boot (inside the service burst seen in every leg of run 1),
+// then runs the browser test files, again and again, until 745 s after boot.
+if (traceDir && (process.env.CSH_DIAG_MODE === "idle" || process.env.CSH_DIAG_MODE === "probe")) {
+  const boot = Date.parse(JSON.parse(readFileSync(join(traceDir, "machine.json"), "utf8").replace(/^\uFEFF/, "")).bootUtc);
+  const mark = (ev, data = {}) => appendFileSync(join(traceDir, "probe.jsonl"), JSON.stringify({ t: Date.now(), afterBootS: Math.round((Date.now() - boot) / 100) / 10, ev, ...data }) + "\n");
+  const until = (s) => {
+    const d = boot + s * 1000 - Date.now();
+    if (d > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, d);
+  };
+  mark("start", { mode: process.env.CSH_DIAG_MODE });
+  if (process.env.CSH_DIAG_MODE === "idle") {
+    until(770);
+    mark("end");
+    process.exit(0);
+  }
+  const browserFiles = readdirSync("test", { recursive: true }).map((f) => join("test", String(f))).filter((f) => /browser[^\\/]*\.test\.ts$/.test(f)).sort();
+  console.log(`probe: ${browserFiles.length} browser test files, ${Math.round((Date.now() - boot) / 1000)} s after boot`);
+  until(686);
+  let bad = 0;
+  for (let i = 1; ; i++) {
+    mark("iter-start", { i });
+    const st = spawnSync(process.execPath, ["--no-warnings", "--import", blocking, ...diag, "--test", "--test-force-exit", "--test-reporter=dot", ...browserFiles], { stdio: "inherit" }).status ?? 1;
+    mark("iter-end", { i, status: st });
+    if (st !== 0) bad++;
+    if (Date.now() > boot + 745_000) break;
+  }
+  process.exit(bad ? 1 : 0);
 }
 const node = (args) => spawnSync(process.execPath, ["--no-warnings", "--import", blocking, ...diag, "--test", "--test-force-exit", ...args], { stdio: "inherit" }).status ?? 1;
 

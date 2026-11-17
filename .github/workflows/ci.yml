@@ -1,6 +1,6 @@
 name: CI
 
-# THROWAWAY: the Windows test legs only, three times, with diagnostics. Never for merge.
+# THROWAWAY: the Windows test legs only, with diagnostics and a warm-up A/B. Never for merge.
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -14,15 +14,30 @@ concurrency:
 
 jobs:
   windows:
-    name: node ${{ matrix.node }} / windows-latest (${{ matrix.shard }}/4) rep ${{ matrix.rep }}
+    name: ${{ matrix.mode }} node ${{ matrix.node }} (${{ matrix.shard }}/4) warm ${{ matrix.warm }} rep ${{ matrix.rep }}
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
+        mode: [suite]
         node: [22.x, 24.x]
         shard: [1, 2, 3, 4]
-        rep: [1, 2, 3]
+        warm: [data, viewer]
+        rep: [1, 2]
+        include:
+          - { mode: probe, node: 24.x, shard: p, warm: data, rep: 1 }
+          - { mode: probe, node: 24.x, shard: p, warm: data, rep: 2 }
+          - { mode: probe, node: 24.x, shard: p, warm: data, rep: 3 }
+          - { mode: probe, node: 24.x, shard: p, warm: data, rep: 4 }
+          - { mode: probe, node: 24.x, shard: p, warm: viewer, rep: 1 }
+          - { mode: probe, node: 24.x, shard: p, warm: viewer, rep: 2 }
+          - { mode: probe, node: 24.x, shard: p, warm: viewer, rep: 3 }
+          - { mode: probe, node: 24.x, shard: p, warm: viewer, rep: 4 }
+          - { mode: idle, node: 24.x, shard: i, warm: none, rep: 1 }
+          - { mode: idle, node: 24.x, shard: i, warm: none, rep: 2 }
+          - { mode: idle, node: 24.x, shard: i, warm: data, rep: 1 }
+          - { mode: idle, node: 24.x, shard: i, warm: data, rep: 2 }
     defaults:
       run:
         shell: bash
@@ -40,12 +55,18 @@ jobs:
           git config --global user.email "ci@coding.sh.invalid"
 
       - name: Install
+        if: matrix.warm != 'none'
         run: npm ci
 
       - name: Start Chrome
+        if: matrix.warm != 'none'
         working-directory: packages/coding.sh
         timeout-minutes: 3
-        run: node scripts/warm-chrome.ts
+        env:
+          CSH_WARM: ${{ matrix.warm }}
+          CSH_WARM_TRACE: ${{ matrix.rep == 1 && '1' || '0' }}
+          CSH_TRACE_DIR: ${{ runner.temp }}/trace
+        run: node --import ./scripts/diag-preload.mjs scripts/warm-chrome.ts
 
       - name: Machine
         shell: pwsh
@@ -78,11 +99,26 @@ jobs:
       - name: Test
         working-directory: packages/coding.sh
         env:
-          SHARD: ${{ matrix.shard }}/4
+          SHARD: ${{ matrix.mode == 'suite' && format('{0}/4', matrix.shard) || '' }}
           TEST_DURATIONS_OUT: ${{ runner.temp }}/trace/test-durations.json
           CSH_TRACE_DIR: ${{ runner.temp }}/trace
-          CSH_DIAG_CHROME_PROBE: ${{ matrix.rep == 3 && '1' || '0' }}
+          CSH_DIAG_MODE: ${{ matrix.mode }}
+          CSH_DIAG_LIGHT: ${{ matrix.mode == 'suite' && matrix.rep == 2 && '1' || '0' }}
         run: node scripts/test-ci.mjs
+
+      - name: After
+        if: always()
+        shell: pwsh
+        run: |
+          $d = "$env:RUNNER_TEMP\trace"
+          $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
+          "{0:o} end" -f [DateTime]::UtcNow | Out-File "$d\after.txt"
+          try { Get-ScheduledTask | Get-ScheduledTaskInfo | Where-Object { $_.LastRunTime -gt $boot } | Sort-Object LastRunTime | ForEach-Object { "{0:o} {1}{2} result={3}" -f $_.LastRunTime.ToUniversalTime(), $_.TaskPath, $_.TaskName, $_.LastTaskResult } | Out-File "$d\tasks.txt" } catch { $_.Exception.Message | Out-File "$d\tasks.txt" }
+          foreach ($log in 'System', 'Application', 'Microsoft-Windows-TaskScheduler/Operational', 'Microsoft-Windows-Windows Defender/Operational', 'Microsoft-Windows-WindowsUpdateClient/Operational', 'Microsoft-Windows-Diagnostics-Performance/Operational') {
+            $f = "$d\events-" + ($log -replace '[^A-Za-z]', '') + ".txt"
+            try { Get-WinEvent -FilterHashtable @{ LogName = $log; StartTime = $boot } -MaxEvents 600 -ErrorAction Stop | Sort-Object TimeCreated | ForEach-Object { "{0:o} {1} {2} {3}" -f $_.TimeCreated.ToUniversalTime(), $_.ProviderName, $_.Id, (([string]$_.Message) -split "`n")[0] } | Out-File $f } catch { $_.Exception.Message | Out-File $f }
+          }
+          Get-ChildItem $d | Format-Table Name, Length
 
       - name: Summary
         if: always()
@@ -94,7 +130,7 @@ jobs:
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: trace-${{ matrix.node }}-${{ matrix.shard }}-${{ matrix.rep }}
+          name: trace-${{ matrix.mode }}-${{ matrix.node }}-${{ matrix.shard }}-${{ matrix.warm }}-${{ matrix.rep }}
           path: ${{ runner.temp }}/trace
           retention-days: 3
           if-no-files-found: warn

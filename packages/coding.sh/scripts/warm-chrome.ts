@@ -122,4 +122,66 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const first = await firstStart(chrome);
   const { startMs, pageMs } = await testStart(chrome);
   console.log(`warm-chrome: first start ${Math.round(first.ms)} ms with ${first.stderrBytes} bytes on stderr, then a start in ${Math.round(startMs)} ms and a page in ${Math.round(pageMs)} ms (${chrome})`);
+  // DIAGNOSTICS ONLY (throwaway branch): the other arm of the A/B also loads the real viewer page here.
+  if (process.env.CSH_WARM === "viewer") await viewerPages(chrome, process.env.CSH_WARM_TRACE === "1");
+}
+
+async function viewerPages(chrome: string, chromeTrace: boolean): Promise<void> {
+  const { MemoryIndexStore } = await import("../src/store/memory.ts");
+  const { startViewer } = await import("../src/viewer/server.ts");
+  const { FakeBlobs, metricFixtures } = await import("../test/viewer/fakes.ts");
+  const { writeFileSync } = await import("node:fs");
+  const tr = (ev: string, data: Record<string, unknown>) => (globalThis as any).__cshTrace?.(ev, data);
+  const index = new MemoryIndexStore();
+  const DAY = 86_400_000;
+  for (const s of metricFixtures(Math.floor(Date.now() / DAY) * DAY - 11 * DAY)) await index.upsertSession(s);
+  const v = await startViewer({ index, blobs: new FakeBlobs(), port: 0, updateStatus: async () => ({ disabled: "test" }) as any });
+  const times: string[] = [];
+  try {
+    for (let b = 1; b <= 2; b++) {
+      const t0 = performance.now();
+      const browser = await launchBrowser(chrome);
+      const startMs = Math.round(performance.now() - t0);
+      try {
+        for (const [i, hash] of ["", "#/explore"].entries()) {
+          const page = await browser.newPage();
+          await page.viewport(1280, 900);
+          const traced = chromeTrace && b === 1 && i === 0;
+          const chunks: any[] = [];
+          let done: () => void = () => {};
+          const ended = new Promise<void>((r) => (done = r));
+          let off = () => {};
+          if (traced) {
+            off = (page as any).on((m: string, q: any) => {
+              if (m === "Tracing.dataCollected") chunks.push(...q.value);
+              else if (m === "Tracing.tracingComplete") done();
+            });
+            await page.send("Tracing.start", { transferMode: "ReportEvents", traceConfig: { includedCategories: ["toplevel", "devtools.timeline", "disabled-by-default-devtools.timeline", "v8", "v8.execute", "blink", "blink.user_timing", "loading", "navigation", "net", "netlog", "fonts", "ipc", "mojom", "startup", "browser", "renderer_host", "disabled-by-default-v8.compile"], excludedCategories: ["*"] } });
+          }
+          const t1 = performance.now();
+          await page.goto(v.url + hash);
+          const loadMs = Math.round(performance.now() - t1);
+          await page.waitFor(hash ? "document.querySelector('.mx-body > *')" : "document.querySelector('[role=listbox], .panel.empty:not([aria-busy])')", "viewer body", 40_000);
+          const bodyMs = Math.round(performance.now() - t1);
+          if (traced) {
+            await page.send("Tracing.end");
+            await Promise.race([ended, new Promise((r) => setTimeout(r, 30_000))]);
+            off();
+            const dir = process.env.CSH_TRACE_DIR;
+            if (dir) writeFileSync(join(dir, "warm-trace.json"), JSON.stringify(chunks));
+            times.push(`(trace ${chunks.length} events)`);
+          }
+          tr("warm-page", { b, i, hash, startMs, loadMs, bodyMs, traced });
+          times.push(`chrome ${b} ${hash || "/"} load ${loadMs} ms body ${bodyMs} ms`);
+          await page.close();
+        }
+      } finally {
+        await browser.close();
+      }
+      times.push(`chrome ${b} start ${startMs} ms`);
+    }
+  } finally {
+    await v.close();
+  }
+  console.log(`warm-chrome viewer: ${times.join(", ")}`);
 }

@@ -242,6 +242,8 @@ export async function launchBrowser(chrome: string): Promise<Browser> {
       const page: Page = {
         errors,
         send,
+        // DIAGNOSTICS ONLY: this page's protocol events (the warm-up's Chrome trace reads them).
+        ...({ on: (fn: (m: string, q: any) => void) => cdp.on((m, q, sid) => (sid === sessionId ? fn(m, q) : undefined)) } as {}),
         async goto(url) {
           const t0 = performance.now();
           tr("goto-start", { b: bseq, p: pseq, s: sessionId.slice(0, 6) });
