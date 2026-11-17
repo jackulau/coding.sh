@@ -129,6 +129,8 @@ export async function viewerPages(browser: Browser, limitMs = FIRST_START_LIMIT_
     const times: number[] = [];
     for (const { hash, ready, what } of VIEWER_PAGES) {
       const page = await browser.newPage();
+      // The size the viewer tests give a page before they load it.
+      await page.viewport(1280, 900);
       const t0 = performance.now();
       await page.goto(viewer.url + hash, left());
       await page.waitFor(ready, what, left());
