@@ -144,6 +144,8 @@ token for this run of `ui`; the viewer needs it.
   cost, tokens, tool error rate and p95 model-call time, split by agent, model, repo or flag.
 - **Events** (<kbd>e</kbd>). The same query as event rows, newest first. Enter opens the event's
   step in its session.
+- **Workflows.** The top bar's last tab lists workflow runs (Flows on a phone). See
+  [Workflow experiments](https://coding.sh/docs/workflows).
 - **Replay** (<kbd>R</kbd> on a session). Plays the session back one step at a time. See
   [Replay a session](https://coding.sh/docs/use-cases/replay-agent-session).
 - **Keys.** <kbd>?</kbd> lists every shortcut. <kbd>j</kbd> and <kbd>k</kbd> move through the

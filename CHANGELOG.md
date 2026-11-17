@@ -17,6 +17,7 @@ grouped by area, with links to the docs for the details.
 - **Viewer.** Prompts and replies show their markdown formatted (headings, lists, code blocks with their language, inline code, bold, italic) and tool output drops terminal escape codes. Links show as text with their address, HTML in a message shows as written, and Copy text gives the original. [Concepts](https://coding.sh/docs/concepts#turn)
 - **Viewer.** A session with a failure opens from the list on its first failing step, and the session header has a First failure button (`F`) that goes back to it, opening a folded turn on the way. A link to a step still opens on that step. [Concepts](https://coding.sh/docs/concepts#session)
 - **Viewer.** Each row in the session list is a link: a middle click, Ctrl or Cmd click, or "Open link in new tab" opens the session in a new tab and leaves the list where it was. A plain click and the keys work as before. [Concepts](https://coding.sh/docs/concepts#session)
+- **Viewer.** The top bar has a Workflows tab (Flows on a phone) beside Benchmarks, so every page of the viewer is one click away. The tab of the page you are on is marked. [Explore](https://coding.sh/docs/explore#open-the-viewer)
 
 ### Changed
 

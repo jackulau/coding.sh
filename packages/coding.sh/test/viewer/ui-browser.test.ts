@@ -1225,6 +1225,23 @@ describe("viewer UI: failed requests and the top bar", { skip: chrome ? false : 
     });
   }
 
+  // Every page the router lists on its own is a tab, and the tab of the page shown is marked.
+  // (#/events is a tab of the sessions page; #/playground needs a call id.)
+  test("the top bar has a tab for every page, and marks the current one", async () => {
+    const page = await open(1280);
+    try {
+      const tabs = "[...document.querySelectorAll('.topbar nav a')].map((a) => [a.getAttribute('href'), a.getAttribute('aria-current')])";
+      assert.deepEqual((await page.eval(tabs)).map(([href]: string[]) => href), ["#/", "#/explore", "#/experiments", "#/benchmarks", "#/workflows"]);
+      for (const hash of ["#/workflows", "#/experiments", "#/benchmarks", "#/explore", "#/events", "#/"]) {
+        await page.eval(`location.hash = ${JSON.stringify(hash)}`);
+        const want = hash === "#/events" ? "#/" : hash;
+        await page.waitFor(`${tabs}.filter(([, c]) => c === 'page').map(([h]) => h).join() === ${JSON.stringify(want)}`, `${hash} marks ${want}`);
+      }
+    } finally {
+      await page.close();
+    }
+  });
+
   // Regression: between 641 and 700px the bar ran out of room and squeezed the theme button to 16px.
   for (const w of [320, 360, 390, 641, 700, 768, 1024]) {
     test(`at ${w}px the top bar fits with 44px targets, pills shown or not`, async () => {
