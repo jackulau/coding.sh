@@ -1,12 +1,14 @@
 // Regressions from round-3 QA of the MCP server against a real backfilled store:
 // turns started by background-task notifications, the session resource's
-// subagent list, and latency reading only the newest sessions.
+// subagent list, latency reading only the newest sessions, and eval_init errors
+// that named CLI flags.
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { openContext } from "../../src/core/context.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import { splitTurns } from "../../src/mcp/data.ts";
 import { createCodingShMcp, type CodingShMcp } from "../../src/mcp/server.ts";
+import { initErrorArgs } from "../../src/mcp/tools.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { schemaViolations } from "../../src/toolevals/jsonschema.ts";
 import { cleanup, makeWorld, type World } from "./helpers.ts";
@@ -196,5 +198,23 @@ describe("latency", () => {
     } finally {
       await ctx.close();
     }
+  });
+});
+
+describe("eval_init errors over MCP", () => {
+  it("a cases suite with no command names the command and url arguments, not CLI flags", async () => {
+    const res = await raw("eval_init", { name: "qa-cases", confirm: true, source: "cases", cases: [{ input: "say hi", expected: "hi" }] });
+    assert.equal(res.isError, true);
+    const text = res.content[0]!.text;
+    assert.match(text, /`command`/);
+    assert.match(text, /`url`/);
+    assert.doesNotMatch(text, /--command|--url/);
+  });
+
+  it("maps the other flags eval init names to eval_init arguments", () => {
+    assert.equal(initErrorArgs("give --command or --url, not both"), "give `command` or `url`, not both");
+    assert.equal(initErrorArgs("ask the user, and pass --force only once they approve"), "ask the user, and pass `force: true` only once they approve");
+    assert.equal(initErrorArgs("pass --force-all (it deletes them)"), "pass --force-all (it deletes them)");
+    assert.equal(initErrorArgs("a skill suite needs the skill dir (--skill <DIR>)"), "a skill suite needs the skill dir (`skill`)");
   });
 });

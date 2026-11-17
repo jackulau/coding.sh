@@ -37,6 +37,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **MCP.** `eval_init` errors name its arguments, such as `command`, `url` and `force: true`, where `eval init` names CLI flags, and no longer suggest `--draft`, which `eval_init` does not take. [MCP server](https://coding.sh/docs/mcp)
 - **MCP.** `latency` reads every session in the window, not only the newest 300 with calls, so a filter no longer finds a slower call than the unfiltered answer. `window` says how much it read (`sessionsRead`, `eventsRead`); after 30 seconds it stops, sets `truncated` and says why in `truncatedNote`. [MCP server](https://coding.sh/docs/mcp)
 - **MCP.** The `codingsh://session/<id>` resource stays under 25,000 characters: it lists the first 40 subagent lines, with descriptions cut to 120 characters, names the `subagents` and `session_tree` tools for the rest, and shortens the timeline to fit. Before, a session with many subagents could return a resource past the limit. [MCP server](https://coding.sh/docs/mcp)
 - **MCP.** `session_get` and the session resource split a session into the turns `stats.turns` counts: a turn a background task's notification starts is its own turn, and a prompt sent while a turn runs stays in it. Before, `turnCount` could disagree with the turn list, and those turns could not be opened. [MCP server](https://coding.sh/docs/mcp)
