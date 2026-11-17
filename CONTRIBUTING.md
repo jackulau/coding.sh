@@ -146,6 +146,19 @@ tests run with `npm run lint:test`.
   read them (`scripts/ci-changes.mjs`). Windows, Node 22, the real agent captures, the container
   image and cli-suite run in the full suite, below. CI does not run macOS: run `npm run check` on
   a Mac for a change that depends on it.
+- Without the `ready` label the Linux tests run the test files the diff can reach
+  (`packages/coding.sh/scripts/test-select.ts`). A changed test file runs, with the test files that
+  import it. A changed helper under `test/` runs the test files that import it or write its file
+  name. A change under `docs/`, `apps/site/`, a root `*.md`, the issue and pull request templates,
+  or one of the other packages runs the test files that name that directory, package or file.
+  Every other path runs every test file: the CLI source, `scripts/`, `skills/`, a workflow, a
+  manifest, a lockfile, a compiler config, a fixture, a golden, a deleted or renamed file, a new
+  file at the top of the repository, and a path no rule knows. So does any error in the selection.
+  Each test leg prints what it selected and the rule and paths behind it, or that it runs every
+  test file and why. `node scripts/test-select.ts origin/main` in `packages/coding.sh` prints the
+  same for your branch. The full suite and a push to `main` never select. A new rule needs a
+  measurement first: make the paths unreadable, run every test file, and list the ones that fail
+  or lose tests. Pin that list in `test/scripts/test-select.test.ts`.
 - `main` takes pull requests only, and each one runs the full suite first. A maintainer adds the
   `ready` label; CI then runs every job on the pull request merged with `main`, skips none for a
   docs or site change, and checks the commit authors as it does on `main`. That run reports one
