@@ -37,6 +37,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **CLI.** A mistyped command, action or flag also gets a suggestion when it is a shell habit (`exp ls` suggests `exp list`, `rm` suggests `delete`) or the start of exactly one name, three letters or more (`gc --dry` suggests `--dry-run`). Before, only a name a few letters off got one. [CLI reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md)
 - **Install.** An agent config written as JSON on one line, such as `{"theme":"dark"}`, stays on one line when coding.sh adds or removes its entries, so `uninstall` gives back its exact bytes even when `~/.coding.sh` and its backups are gone. Before, it came back indented over several lines. [Install](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md)
 - **Install.** `uninstall` removes the coding.sh MCP entry from Codex's `config.toml` after `~/.coding.sh` was deleted, when the entry is exactly the launch coding.sh writes. Before, it stayed and `uninstall` said nothing was installed. [Install](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md)
 - **Capture.** A backfill skips Gemini CLI chat files that have not changed since the last one. Before, it read every chat file again each time and counted all of their sessions as updated. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#transcripts-headless-runs-isolation)
