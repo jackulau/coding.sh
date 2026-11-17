@@ -111,7 +111,18 @@ export interface FirstStart {
   stderr: string;
   /** The pressure totals before the spawn and after the exit, where the system has them. */
   pressure?: { before: Pressure; after: Pressure };
+  /** True when Chrome printed the page and its own teardown watchdog then ended it (see TEARDOWN_WATCHDOG). Absent otherwise. */
+  teardownWatchdog?: true;
 }
+
+/**
+ * What Chrome writes when it has done its work, hangs on its way out and ends itself, with exit
+ * code 2. Seen on macOS with the whole suite running beside it on a busy machine: the page came
+ * after about 1.4 s and the exit about 10 s later. Why Chrome hangs there is not known.
+ */
+export const TEARDOWN_WATCHDOG = "Teardown watchdog expired";
+/** The line a report carries for such a start, so a log can be searched for it. */
+export const TEARDOWN_WATCHDOG_NOTE = "Chrome printed the page, hung on its way out and was ended by its own teardown watchdog (exit 2). The start counts.";
 
 /**
  * What a first start did, to print: when Chrome's first byte came on each pipe, how long the
@@ -129,14 +140,18 @@ export function firstStartReport(s: FirstStart): string {
     const ms = (us: number) => Math.round(us / 1000);
     return before && after ? [`${name} ${ms(after.some - before.some)}/${ms(after.full - before.full)}`] : [];
   });
-  return [
+  const lines = [
     `warm-chrome: the first start ${s.stopped ? `was stopped at its limit of ${s.limitMs} ms` : `took ${Math.round(s.ms)} ms`}. What it did:`,
     `  Chrome was started at ${clock} by this machine's clock, the clock in Chrome's own lines.`,
     `  First byte on stderr: ${at(s.firstStderrMs)}. First byte on stdout: ${at(s.firstStdoutMs)}.`,
+  ];
+  if (s.teardownWatchdog) lines.push(`  ${TEARDOWN_WATCHDOG_NOTE}`);
+  lines.push(
     stalled.length ? `  Milliseconds stalled across the start, some/full, from /proc/pressure: ${stalled.join(", ")}.` : "  /proc/pressure was not read: this system has none.",
     `  Chrome's stderr, ${s.stderr.length} bytes:`,
     ...(s.stderr.trimEnd() ? s.stderr.trimEnd().split("\n").map((l) => `  | ${l.trimEnd()}`) : ["  | (empty)"]),
-  ].join("\n");
+  );
+  return lines.join("\n");
 }
 
 /**
@@ -179,7 +194,11 @@ export function firstStart(chrome: string, limitMs = FIRST_START_LIMIT_MS, print
       const ms = performance.now() - t0;
       clearTimeout(limit);
       const after = readPressure();
+      const page = out.includes("<title>warm</title>");
+      // All three together and nothing less: any other exit that is not 0 still fails the start.
+      const watchdog = !late && code === 2 && page && err.includes(TEARDOWN_WATCHDOG);
       const start: FirstStart = { ms, stderrBytes: err.length, limitMs, stopped: late, spawnedAt, firstStderrMs, firstStdoutMs, stderr: err, pressure: before && after && { before, after } };
+      if (watchdog) start.teardownWatchdog = true;
       print(firstStartReport(start));
       child.stdout?.destroy();
       child.stderr?.destroy();
@@ -188,8 +207,8 @@ export function firstStart(chrome: string, limitMs = FIRST_START_LIMIT_MS, print
         rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
       } catch {}
       if (late) reject(new Error(`Chrome's first start took longer than ${limitMs} ms and was stopped. ${stoppedState(out, err, processes)}`));
-      else if (code !== 0) reject(new Error(`Chrome exited (${code}) on its first start: ${err.slice(-500)}`));
-      else if (!out.includes("<title>warm</title>")) reject(new Error(`Chrome's first start did not load the page: ${(out || err).slice(-500)}`));
+      else if (code !== 0 && !watchdog) reject(new Error(`Chrome exited (${code}) on its first start: ${err.slice(-500)}`));
+      else if (!page) reject(new Error(`Chrome's first start did not load the page: ${(out || err).slice(-500)}`));
       else resolve(start);
     });
   });
