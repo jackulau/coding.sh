@@ -5,6 +5,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { reportProblems } from "../../scripts/report-complete.mjs";
+
 const RUNNER = new URL("../../scripts/test-ci.mjs", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 
 function run(files: Record<string, string>, names: string[]) {
@@ -41,7 +43,18 @@ export function once(): void { it("a shared test that fails the first time only"
 const USES_ALWAYS = `import { always } from "./shared.ts"; always();`;
 const USES_ONCE = `import { once } from "./shared.ts"; once();`;
 
+// Passes, then loses the end of its report the way a file that exits too early does: nothing it
+// writes after its last test reaches the run, and it still exits 0.
+const CUT_SHORT = `import { after, it } from "node:test"; it("passes", () => {}); it("passes too", () => {});
+after(() => { process.stdout.write = () => true; });`;
+
 describe("scripts/test-ci.mjs", () => {
+  it("prints the runner's cores and how busy they were, pass or fail", () => {
+    const line = /\nRunner: \d+ cores? \(.+\), (\d+% busy|load not measured) over \d+ s\n/;
+    assert.match(run({ "a.test.ts": GREEN }, ["a.test.ts"]).out, line);
+    assert.match(run({ "b.test.ts": BROKEN }, ["b.test.ts"]).out, line);
+  });
+
   // Rerun alone, the file that defines a shared suite runs no tests and exits 0.
   it("fails when a test of a shared suite fails, and does not rerun the file that defines the suite", () => {
     const r = run({ "shared.ts": SHARED, "s.test.ts": USES_ALWAYS, "c.test.ts": GREEN }, ["s.test.ts", "c.test.ts"]);
@@ -55,6 +68,33 @@ describe("scripts/test-ci.mjs", () => {
     const r = run({ "shared.ts": SHARED, "s.test.ts": USES_ONCE, "a.test.ts": FLAKY }, ["s.test.ts"]);
     assert.equal(r.code, 1, r.out);
     assert.doesNotMatch(r.out, /Rerunning|::warning/);
+  });
+
+  it("fails a run in which a passing file lost the end of its report, and names the file", () => {
+    const r = run({ "cut.test.ts": CUT_SHORT, "c.test.ts": GREEN }, ["cut.test.ts", "c.test.ts"]);
+    assert.equal(r.code, 1, r.out);
+    assert.match(r.out, /The report of this run is incomplete, so the run fails:\n  cut\.test\.ts did not send the end of its report/);
+    assert.doesNotMatch(r.out, /c\.test\.ts did not send/);
+    assert.doesNotMatch(r.out, /Rerunning/);
+  });
+
+  it("says nothing about the report when every file sent all of it", () => {
+    const r = run({ "c.test.ts": GREEN, "d.test.ts": GREEN }, ["c.test.ts", "d.test.ts"]);
+    assert.equal(r.code, 0, r.out);
+    assert.doesNotMatch(r.out, /incomplete/);
+  });
+
+  it("checks the report: a summary from every file, and as many results as the files counted", () => {
+    const whole = { summaries: { [join(process.cwd(), "a.test.ts")]: 3, [join(process.cwd(), "b.test.ts")]: 2 }, arrived: 5 };
+    assert.deepEqual(reportProblems(["a.test.ts", "b.test.ts"], [], whole), []);
+    assert.deepEqual(reportProblems(["a.test.ts", "b.test.ts", "c.test.ts"], [], whole), ["c.test.ts did not send the end of its report: results of its tests may be missing."]);
+    // A result lost from the middle: every summary is there and the totals differ.
+    assert.deepEqual(reportProblems(["a.test.ts", "b.test.ts"], [], { ...whole, arrived: 4 }), ["The test files counted 5 tests and 4 results arrived."]);
+    // A file that failed is the caller's, with or without its summary; the totals are not compared then.
+    assert.deepEqual(reportProblems(["a.test.ts", "b.test.ts", "c.test.ts"], [join(process.cwd(), "c.test.ts")], { ...whole, arrived: 9 }), []);
+    // No list of files (Node picked them): the totals still count.
+    assert.deepEqual(reportProblems([], [], { ...whole, arrived: 6 }), ["The test files counted 5 tests and 6 results arrived."]);
+    assert.deepEqual(reportProblems(["a.test.ts"], [], undefined), ["The run wrote no record of its report."]);
   });
 
   it("passes when a failed file passes alone, and says so as a warning", () => {
