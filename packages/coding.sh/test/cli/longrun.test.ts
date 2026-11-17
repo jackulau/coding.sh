@@ -22,7 +22,7 @@ import { buildSession, foldSession, isRealPrompt, sessionOf, sessionState, type 
 import type { AgentEvent, Session } from "../../src/core/types.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { generateLongSession, type GenManifest } from "../fixtures/longrun/generate.ts";
-import { cpuMsPerCall, median } from "../helpers-timing.ts";
+import { cpuClockStepMs, cpuMsPerCall, median } from "../helpers-timing.ts";
 import { CLI } from "../_cli.ts";
 
 let root = "";
@@ -194,7 +194,7 @@ describe("a 12-hour session", () => {
     // Against a same-moment baseline: one pass that touches every event's payload.
     const base = cpuMsPerCall(() => JSON.stringify(events));
     const derail = median([0, 1, 2].map(() => cpuMsPerCall(() => detectDerails(events))));
-    console.log(`# longrun CPU ms: ratios ${ratios.map((r) => r.toFixed(1)).join(", ")}; detectDerails ${derail.toFixed(1)}, JSON.stringify ${base.toFixed(1)}`);
+    console.log(`# longrun CPU ms: ratios ${ratios.map((r) => r.toFixed(1)).join(", ")}; detectDerails ${derail.toFixed(1)}, JSON.stringify ${base.toFixed(1)}; clock step ${cpuClockStepMs().toFixed(3)}`);
     assert.ok(derail < Math.max(base * 6, 30), `detectDerails ${derail.toFixed(0)} ms of CPU over ${events.length} events; JSON.stringify ${base.toFixed(0)} ms`);
   });
 });
