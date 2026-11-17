@@ -280,13 +280,42 @@ describe("viewer feel in a browser", { skip: chrome ? false : "no Chrome/Chromiu
       await sleep(400);
       assert.equal(await page.eval(visible), true);
       assert.equal(await page.eval("getComputedStyle(document.querySelector('.sheet-head'), '::before').content"), "none", "no grab handle");
-      await page.eval("document.querySelector('.sheet-head .btn').click()");
-      assert.equal(await page.eval("document.querySelector('.facets-toggle').getAttribute('aria-expanded')"), "false");
-      // Mid-slide the sheet is still on screen and moving down; it is hidden once the slide ends.
-      await sleep(60);
-      assert.equal(await page.eval(`document.querySelector('.facets').dataset.open`), "true");
-      assert.ok((await page.eval(`document.getAnimations().filter((a) => a.animationName === 'sheet-out').length`)) >= 1);
+      // The click and the first look run in one task in the page, so no time passes between them:
+      // the sheet is still shown and the closing slide is on it. No sleep decides what this sees.
+      const atClick = await page.eval(`(() => {
+        const aside = document.querySelector('.facets');
+        const seen = (window.__sheetClose = { ended: false, cutShort: false, hiddenAfterMs: null });
+        // Added before the click, so it runs before the viewer's own listener for the same event.
+        ${groups}.addEventListener('animationend', (e) => { if (e.animationName === 'sheet-out') seen.ended = true; }, true);
+        const t0 = performance.now();
+        // The viewer ends the slide and hides the sheet in one task, so a look after any change to
+        // either finds the sheet hidden, or still sliding. Shown and not sliding is a slide cut short.
+        new MutationObserver((_, o) => {
+          if (aside.dataset.open === 'false') {
+            o.disconnect();
+            seen.hiddenAfterMs = performance.now() - t0;
+          } else if (!aside.classList.contains('closing')) seen.cutShort = true;
+        }).observe(aside, { attributes: true, attributeFilter: ['data-open', 'class'] });
+        document.querySelector('.sheet-head .btn').click();
+        const slide = document.getAnimations().find((a) => a.animationName === 'sheet-out');
+        return {
+          expanded: document.querySelector('.facets-toggle').getAttribute('aria-expanded'),
+          open: aside.dataset.open,
+          visible: ${visible},
+          slideMs: slide ? slide.effect.getComputedTiming().duration : null,
+        };
+      })()`);
+      assert.equal(atClick.expanded, "false");
+      assert.equal(atClick.open, "true", "the sheet stays shown while it slides out");
+      assert.equal(atClick.visible, true);
+      assert.ok(atClick.slideMs > 0, `the closing slide is on the sheet (its length: ${atClick.slideMs})`);
       await page.waitFor(`document.querySelector('.facets').dataset.open === 'false' && !document.querySelector('.facets').classList.contains('closing')`, "sheet closed", 1500);
+      // It is hidden once the slide ends: at the slide's own end event, or, when the viewer's timer got
+      // there first (a busy machine), no sooner than the slide's length after the click. A busy machine
+      // only makes that wait longer, so this does not fail under load.
+      const closed = await page.eval("window.__sheetClose");
+      assert.equal(closed.cutShort, false, `the slide was taken off the sheet while the sheet was still shown: ${JSON.stringify(closed)}`);
+      assert.ok(closed.ended || closed.hiddenAfterMs >= atClick.slideMs, `hidden before the slide ended: ${JSON.stringify({ ...closed, slideMs: atClick.slideMs })}`);
       assert.equal(await page.eval("document.querySelector('.facets-toggle').getAttribute('aria-expanded')"), "false");
     } finally {
       await page.close();
