@@ -9,8 +9,9 @@
 // downscale. Bigger sizes are the same geometry with 4x4 supersampling.
 import { writeFileSync } from "node:fs";
 import { deflateSync } from "node:zlib";
+import { fileURLToPath } from "node:url";
 
-const OUT = new URL("../public/", import.meta.url).pathname;
+const OUT = fileURLToPath(new URL("../public/", import.meta.url));
 const TOP = [0xff, 0xff, 0xff], LEFT = [0xbd, 0xbd, 0xbd], RIGHT = [0x7a, 0x7a, 0x7a], TILE = [0, 0, 0];
 
 // The cube on a 32-unit grid, 28 units wide and tall (88% of the canvas).

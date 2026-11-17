@@ -3,6 +3,7 @@
 // a compaction; folds never hide a failure; the outline and rows routes, one
 // event by id, and byte-range blob reads; and the 150k-event budgets.
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -241,8 +242,37 @@ describe("150k events in SQLite", () => {
     return { ms: performance.now() - t0, bytes: Buffer.byteLength(body), status: r.status, body };
   };
 
-  test("outline: under 30 ms and 20 KB; the first build of the spans runs in the background, then the kv keeps them", async () => {
-    const first = await timed("/api/sessions/long-1/outline");
+  /**
+   * `timed` from another process. The background build reads SQLite synchronously a page at a
+   * time, and a fetch from this process needs several turns of the shared event loop to read its
+   * answer, each of which can wait out a page. So a fetch here measures pages of the build, not
+   * the answer: about 6 of the 30 pages under the full suite (1222 ms of a 6015 ms build) against
+   * a bound of a quarter. A browser is another process, and so is this client; its timer starts
+   * once node is up and stops at the end of the body.
+   */
+  const timedApart = (path: string) =>
+    new Promise<{ ms: number; status: number; body: string }>((resolve, reject) => {
+      const code = `const t0 = performance.now(); fetch(${JSON.stringify(`http://127.0.0.1:${v.port}${path}`)}, { headers: { authorization: ${JSON.stringify(`Bearer ${v.token}`)} } }).then(async (r) => { const body = await r.text(); process.stdout.write(JSON.stringify({ ms: performance.now() - t0, status: r.status, body })); });`;
+      execFile(process.execPath, ["-e", code], { maxBuffer: 1 << 24 }, (err, stdout) => (err ? reject(err) : resolve(JSON.parse(stdout))));
+    });
+
+  /**
+   * A route's budget: `limit`, or 3x a page of 200 raw events through the events route
+   * (`events`, its timings at the same moment), whichever is larger. That page is the same
+   * HTTP round trip, session lookup and SQLite read a rows page makes, without the model.
+   * Idle it is a few ms and the limit holds; under the full suite a rows page took 57 ms once
+   * against 50. A route (or a model load) that folds the session again or reads it from the
+   * start still costs many such pages: 30 pages of 5000 events build the model.
+   */
+  const budget = (limit: number, events: number[]) => Math.max(limit, 3 * [...events].sort((a, b) => a - b)[events.length >> 1]!);
+  const eventsPage = async (turn: number) => {
+    const r = await timed(`/api/sessions/long-1/events?offset=${turn * 150}&limit=200`);
+    assert.equal(r.status, 200);
+    return r.ms;
+  };
+
+  test("outline: under 30 ms (or 3x a page of events under load) and 20 KB; the first build of the spans runs in the background, then the kv keeps them", async () => {
+    const first = await timedApart("/api/sessions/long-1/outline");
     assert.equal(first.status, 200);
     assert.equal(JSON.parse(first.body).spans, "building");
     // The rows route waits for the build; then every outline has the spans.
@@ -252,13 +282,19 @@ describe("150k events in SQLite", () => {
     // The first answer does not wait for the build: 200 ms, or a quarter of the build on a machine slow enough for that to be more.
     assert.ok(first.ms < Math.max(200, build / 4), `first outline ${first.ms} ms, build ${build} ms`);
     const warm: number[] = [];
+    const events: number[] = [];
     let body = "";
-    for (let k = 0; k < 7; k++) { const r = await timed("/api/sessions/long-1/outline"); warm.push(r.ms); body = r.body; }
+    for (let k = 0; k < 7; k++) {
+      const r = await timed("/api/sessions/long-1/outline");
+      warm.push(r.ms);
+      body = r.body;
+      events.push(await eventsPage(k * 100));
+    }
     warm.sort((a, b) => a - b);
     const median = warm[3]!;
     const bytes = Buffer.byteLength(body);
-    console.log(`# outline 150k: first ${first.ms.toFixed(1)} ms (spans building), build ${build.toFixed(0)} ms, then median ${median.toFixed(1)} ms, ${bytes} bytes`);
-    assert.ok(median < 30, `outline ${median} ms`);
+    console.log(`# outline 150k: first ${first.ms.toFixed(1)} ms (spans building), build ${build.toFixed(0)} ms, then median ${median.toFixed(1)} ms, ${bytes} bytes; a page of 200 events ${(budget(0, events) / 3).toFixed(1)} ms`);
+    assert.ok(median < budget(30, events), `outline ${median} ms; a page of 200 events ${budget(0, events) / 3} ms`);
     assert.ok(bytes < 20_000, `outline ${bytes} bytes`);
     assert.ok(JSON.parse(body).turns.count >= 990);
     // A new cache (a restarted viewer) reads the model from the kv instead of folding 150k events.
@@ -268,7 +304,7 @@ describe("150k events in SQLite", () => {
     const restart = performance.now() - t1;
     console.log(`# model from kv after restart: ${restart.toFixed(1)} ms`);
     assert.equal(m?.events, s.stats.events);
-    assert.ok(restart < 100, `model from kv ${restart} ms`);
+    assert.ok(restart < budget(100, events), `model from kv ${restart} ms; a page of 200 events ${budget(0, events) / 3} ms`);
   });
 
   // The budget is this process's CPU time, not the clock: the viewer and the store run in this

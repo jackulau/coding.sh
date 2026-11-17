@@ -10,6 +10,7 @@ import type { Adapter, BlobStore } from "../../src/core/types.ts";
 import { FsBlobStore } from "../../src/store/fs-blobs.ts";
 import { ageBlob, closeBlobs, fsBlobs, track } from "../store/_blobs.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
+import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 
 const DAY = 86_400_000;
 const roots: string[] = [];
@@ -95,6 +96,46 @@ describe("gc", () => {
     assert.equal(existsSync(join(jdir, `${"a".repeat(64)}.json`)), false, "oldest entry evicted");
     t.config.retention.toolOutputDays = 0;
     assert.equal((await gc({ index, blobs, config: t.config, env: t.env, dryRun: true })).blobs.expired, 0, "0 disables expiry");
+  });
+
+  it("expires and keeps the same blobs from SQLite's query as from reading every event", async () => {
+    const t = setup();
+    const sqlite = await SqliteIndexStore.open(join(t.root, "index.db"));
+    const memory = new MemoryIndexStore();
+    const cutoff = Date.now() - 30 * DAY;
+    const ev = (id: string, sessionId: string, kind: "tool.end" | "file.change" | "llm.call", ts: number, refs: string[], payload: Record<string, unknown> = {}) =>
+      ({ id, v: 0 as const, sessionId, ts, agent: "a", kind, payload, blobs: refs });
+    const events = [
+      ev("old", "s", "tool.end", cutoff - DAY, ["sha256:old", "sha256:shared", "sha256:twice"]),
+      ev("old2", "s", "tool.end", cutoff - 2 * DAY, ["sha256:twice"]),
+      ev("diff", "s", "file.change", cutoff - DAY, ["sha256:shared"]),
+      ev("new", "s", "tool.end", cutoff + DAY, ["sha256:new"]),
+      ev("edge", "s", "tool.end", cutoff, ["sha256:edge"]),
+      ev("paged", "s", "llm.call", cutoff + DAY, [], { requestPaged: true, requestRef: "sha256:doc" }),
+      ev("unpaged", "s", "llm.call", cutoff + DAY, [], { requestPaged: false, requestRef: "sha256:flat" }),
+      ev("text", "s", "llm.call", cutoff + DAY, [], { requestPaged: "true", requestRef: "sha256:str" }),
+      // Events of a session with no row (not folded yet) count for neither path.
+      ev("orphan", "gone", "tool.end", cutoff - DAY, ["sha256:orphan"]),
+      ev("orphan-call", "gone", "llm.call", cutoff + DAY, [], { requestPaged: true, requestRef: "sha256:orphan-doc" }),
+    ];
+    const session = { id: "s", agent: "a", startedAt: 0, stats: { events: 8, turns: 0, toolCalls: 4, toolErrors: 0, filesChanged: 1 }, flags: [] };
+    for (const index of [sqlite, memory]) {
+      await index.putEvents(events);
+      await index.upsertSession(session);
+    }
+    try {
+      assert.ok(!("gcEventBlobs" in memory), "the memory store reads every event; SQLite queries");
+      const sorted = (r: { expired: string[]; pagedRequests: string[] }) => ({ expired: [...r.expired].sort(), pagedRequests: [...r.pagedRequests].sort() });
+      assert.deepEqual(sorted(await sqlite.gcEventBlobs(cutoff)), { expired: ["sha256:old", "sha256:twice"], pagedRequests: ["sha256:doc"] });
+      assert.deepEqual(sorted(await sqlite.gcEventBlobs(undefined)), { expired: [], pagedRequests: ["sha256:doc"] });
+      t.config.retention.toolOutputDays = 30;
+      const blobs = new MemoryBlobStore();
+      // gc's own cutoff is a few ms later than this test's, so "edge" expires too.
+      const expired = async (index: SqliteIndexStore | MemoryIndexStore) => (await gc({ index, blobs, config: t.config, env: t.env, dryRun: true })).blobs.expired;
+      assert.deepEqual([await expired(sqlite), await expired(memory)], [3, 3]);
+    } finally {
+      await sqlite.close();
+    }
   });
 
   it("keeps unreferenced blobs when the store cannot report their age", async () => {

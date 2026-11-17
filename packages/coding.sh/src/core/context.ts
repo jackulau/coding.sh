@@ -28,7 +28,7 @@ export interface Context {
   /** Drains the spool through the adapters' normalize into the index and sinks (lazy-loads adapters). */
   ingest(opts?: Pick<IngestOptions, "lock" | "checkpointEvents" | "now" | "deadline" | "signal" | "onProgress" | "repair">): Promise<IngestResult>;
   /** Imports agents' local transcript history (adapter.backfill), skipping copies live capture already has, and sends what it stores to the sinks. */
-  backfill(opts?: { agents?: string[]; since?: number; deadline?: number; onProgress?: (p: BackfillProgress) => void }): Promise<BackfillResult>;
+  backfill(opts?: { agents?: string[]; since?: number; deadline?: number; signal?: AbortSignal; onProgress?: (p: BackfillProgress) => void }): Promise<BackfillResult>;
   /** Rebuilds sessions stored by an older adapter parse (or every one with `all`) from their transcripts and spool. */
   reparse(opts?: Pick<ReparseOptions, "all" | "agents" | "onProgress" | "runLock">): Promise<ReparseResult>;
   /** True when sessions stored by an older adapter parse wait for an automatic re-parse (cheap once none do). */
@@ -112,7 +112,12 @@ export async function openContext(opts: OpenContextOptions = {}): Promise<Contex
     async backfill(o = {}) {
       const [{ backfill }, { ADAPTERS }] = await Promise.all([import("./ingest.ts"), import("../adapters/index.ts")]);
       const chosen = o.agents?.length ? ADAPTERS.filter((a) => o.agents!.includes(a.id)) : ADAPTERS;
-      return backfill({ config, index, blobs, sinks, env, adapters: chosen, ...(o.since !== undefined ? { since: o.since } : {}), ...(o.deadline !== undefined ? { deadline: o.deadline } : {}), ...(o.onProgress ? { onProgress: o.onProgress } : {}) });
+      const opts: Parameters<typeof backfill>[0] = { config, index, blobs, sinks, env, adapters: chosen };
+      if (o.since !== undefined) opts.since = o.since;
+      if (o.deadline !== undefined) opts.deadline = o.deadline;
+      if (o.signal) opts.signal = o.signal;
+      if (o.onProgress) opts.onProgress = o.onProgress;
+      return backfill(opts);
     },
     async reparse(o = {}) {
       const [{ reparse }, { ADAPTERS }] = await Promise.all([import("./reparse.ts"), import("../adapters/index.ts")]);

@@ -38,6 +38,8 @@ export interface LockOptions {
   heartbeatMs?: number;
   /** Poll interval while waiting (default 100 ms). */
   pollMs?: number;
+  /** Stop waiting on abort, with LockBusyError (Ctrl-C while another process holds the lock). */
+  signal?: AbortSignal;
 }
 
 export interface LockInfo {
@@ -256,7 +258,7 @@ export async function acquireLock(path: string, opts: LockOptions = {}): Promise
     const seen = inspect(path, staleMs, Date.now());
     if (seen.state === "free") continue; // released between our create and the look
     if (seen.state === "stale" && breakStale(path, staleMs, nonce)) continue;
-    if (Date.now() >= deadline) throw new LockBusyError(path, readHolder(path));
+    if (Date.now() >= deadline || opts.signal?.aborted) throw new LockBusyError(path, readHolder(path));
     await sleep(opts.pollMs ?? 100);
   }
   held.set(path, nonce);

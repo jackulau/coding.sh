@@ -77,17 +77,18 @@ async function sessionCount(env: NodeJS.ProcessEnv): Promise<number> {
 }
 
 describe("reads during ingest", () => {
-  test("status answers from what is indexed once its budget is spent, and says what is pending on stderr only", async () => {
+  test("status answers from what is indexed once its budget is spent, and explains what is pending on stderr", async () => {
     const h = home(5);
     const r = await runStatus({ ...h.env, CODING_SH_READ_BUDGET_MS: "0" }, h.cwd);
     assert.equal(r.code, 0);
     assert.match(r.stderr, /4 files not yet ingested; showing what is indexed so far \(--fresh waits for all\)/);
-    assert.doesNotMatch(r.stdout, /not yet ingested/);
-    assert.match(r.stderr, /Last 24h\s+1 session from claude-code/, "answered after its first file");
+    assert.doesNotMatch(r.stdout, /showing what is indexed so far/, "the explanation is a note, on stderr");
+    assert.match(r.stdout, /Spool\s+5 files, .*, 4 files not yet ingested/, "the Spool row is part of the report");
+    assert.match(r.stdout, /Last 24h\s+1 session from claude-code/, "answered after its first file");
 
     const fresh = await runStatus({ ...h.env, CODING_SH_READ_BUDGET_MS: "0" }, h.cwd, { fresh: true });
     assert.doesNotMatch(fresh.stderr, /not yet ingested/);
-    assert.match(fresh.stderr, /Last 24h\s+5 sessions/);
+    assert.match(fresh.stdout, /Last 24h\s+5 sessions/);
     assert.equal(await sessionCount(h.env), 5, "nothing lost between the budgeted and the full run");
   });
 

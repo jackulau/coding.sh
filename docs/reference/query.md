@@ -35,7 +35,7 @@ coding.sh export events --where 'agent:codex tool.errors>0' > events.jsonl
 | `30s` `10m` `2h` | A duration needs a unit. | `duration>10m` |
 | `$` | A cost may start with `$`. | `cost>$0.5` |
 | `"…"` | A value with spaces. | `title:"fix the build"` |
-| a bare word | Searches prompts, replies and tool calls. Every word must match within one event. A bare word needs a letter or a digit; for symbols only, use `coding.sh search` (SQLite store only). | `timeout` |
+| a bare word | Searches prompts, replies, tool calls and errors. Every word must match within one event. A bare word needs a letter or a digit; for symbols only, use `coding.sh search` (SQLite store only). | `timeout` |
 
 `sort:` and `limit:` set the order and the row count, and go at the top level only. A query is at
 most 2,000 characters.
@@ -186,6 +186,7 @@ coding.sh sessions --where 'is:flagged since:7d'
 | `skill-copy-conflict` | Used two copies of one skill, such as the project's and a personal one. |
 | `refusal` | Had a model call stop on a refusal (`refusal`, `content_filter` or `safety`). |
 | `text-tool-call` | Had the model write a tool call out as text, so it never ran. |
+| `api-stall` | Was held up by rate limits or an overloaded API: three or more 429 or 529 errors, a minute of retry waits, retries run out, or an error it never got past. |
 | `unapproved-action` | Ran a destructive or paid command that the user's turn did not approve, such as `git reset --hard` or `git push --force`. |
 | `step-retried`, `resumed` | Is a durable workflow run that retried a step, or continued after a crash. Notes, not failures. |
 

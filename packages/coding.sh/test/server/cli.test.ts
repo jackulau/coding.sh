@@ -69,7 +69,7 @@ describe("coding.sh serve (CLI)", () => {
     assert.equal(run(["serve", "--role", "nope"], tmpEnv()).status, 2);
   });
 
-  it("a public bind with no keys makes a key pair on first start, prints it, and reuses it", async () => {
+  it("a public bind with no keys makes a key pair on first start, prints it once, and reuses it", async () => {
     const env = tmpEnv({ CODING_SH_HOST: "0.0.0.0" });
     const file = join(env.CODING_SH_HOME!, "serve-keys.json");
     const start = async () => {
@@ -100,7 +100,7 @@ describe("coding.sh serve (CLI)", () => {
     assert.match(url, /^http:\/\/127\.0\.0\.1:\d+$/);
     const text = first.lines.join("\n");
     assert.ok(text.includes(file), "names the keys file");
-    assert.match(text, /\(made now\)/);
+    assert.match(text, /\(made now;/);
     const doc = JSON.parse(readFileSync(file, "utf8"));
     assert.match(doc.ingest, /^csh_ik_[A-Za-z0-9_-]{43}$/);
     assert.match(doc.read, /^csh_rk_[A-Za-z0-9_-]{43}$/);
@@ -123,13 +123,16 @@ describe("coding.sh serve (CLI)", () => {
     );
     const page = await fetch(`${url}/`, { headers: { accept: "text/html" } });
     assert.equal(page.status, 401);
-    assert.match(await page.text(), /<form method=get action="\/"><input name=t /);
+    assert.match(await page.text(), /<form method=post action="\/"><input name=t /);
     await first.stop();
 
     const second = await start();
     const again = second.lines.join("\n");
-    assert.ok(again.includes(doc.read) && again.includes(doc.ingest), "the same keys on the next start");
+    assert.ok(again.includes(file) && !again.includes(doc.read) && !again.includes(doc.ingest), "the next start names the file, not the keys");
     assert.doesNotMatch(again, /made now/);
+    const reread = await fetch(`${second.lines[0]!}/api/sessions`, { headers: { authorization: `Bearer ${doc.read}` } });
+    assert.equal(reread.status, 200, "the next start accepts the same read key");
+    assert.equal((await reread.json()).items.length, 1);
     await second.stop();
 
     // A damaged file is an error, never silently replaced (clients hold the old keys).

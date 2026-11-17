@@ -6,6 +6,8 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { test } from "node:test";
 import { parseWhere, QueryError } from "../../src/query/where.ts";
+import { startViewer } from "../../src/viewer/server.ts";
+import { FakeBlobs, FakeIndex, session } from "./fakes.ts";
 
 const html = readFileSync(new URL("../../src/viewer/ui/index.html", import.meta.url), "utf8");
 function slice(from: string, to: string): string {
@@ -48,6 +50,55 @@ test("the totals line counts subagents apart from the sessions (\"5 sessions + 2
   assert.deepEqual([...f.summaryLine({ sessions: 5, subagents: 2, toolCalls: 9 })], ["5 sessions", "+ 2 subagents", "9 tool calls"]);
   assert.deepEqual([...f.summaryLine({ sessions: 1, subagents: 1 })], ["1 session", "+ 1 subagent"]);
   assert.deepEqual([...f.summaryLine({ sessions: 1 })], ["1 session"]);
+});
+
+test("with subagents included, the totals line counts each subagent once (scope=all's sessions already hold them)", () => {
+  // A parent and two subagents: scope=top counts 1 session, scope=all counts 3 rows, 2 of them subagents.
+  assert.deepEqual([...f.summaryLine({ scope: "top", sessions: 1, subagents: 2, toolCalls: 6 })], ["1 session", "+ 2 subagents", "6 tool calls"]);
+  assert.deepEqual([...f.summaryLine({ scope: "all", sessions: 3, subagents: 2, toolCalls: 6 })], ["1 session", "+ 2 subagents", "6 tool calls"]);
+  assert.deepEqual([...f.summaryLine({ scope: "all", sessions: 2, subagents: 2 })], ["0 sessions", "+ 2 subagents"], "a filter that only subagents match");
+  // pricedSessions counts subagents in either scope: an unpriced parent leaves the cost partial in both.
+  const partial = (scope: string, sessions: number) => f.summaryLine({ scope, sessions, subagents: 2, costUsd: 0.04, estimatedCostUsd: 0, pricedSessions: 2 })[2];
+  assert.equal(partial("top", 1).text, "$0.04 priced");
+  assert.equal(partial("all", 3).text, "$0.04 priced");
+  const whole = (scope: string, sessions: number) => f.summaryLine({ scope, sessions, subagents: 2, costUsd: 0.07, estimatedCostUsd: 0, pricedSessions: 3 })[2];
+  assert.equal(whole("top", 1).text, "$0.07");
+  assert.equal(whole("all", 3).text, "$0.07");
+});
+
+test("a parent with two subagents: the header reads the same in both scopes and adds up to the list's rows", async () => {
+  const index = new FakeIndex();
+  const usage = (costUsd: number) => ({ inputTokens: 100, outputTokens: 10, costUsd });
+  await index.upsertSession(session("p", { startedAt: 1_700_000_000_000, stats: { events: 3, turns: 1, toolCalls: 2, toolErrors: 0, filesChanged: 1, usage: usage(0.05), latency: { llmCalls: 2 } } }));
+  for (const [i, id] of ["p:sub:a", "p:sub:b"].entries()) {
+    await index.upsertSession(session(id, { startedAt: 1_700_000_100_000 + i, parent: { sessionId: "p", subagentId: id.slice(-1) }, stats: { events: 3, turns: 1, toolCalls: 2, toolErrors: 0, filesChanged: 0, usage: usage(0.01), latency: { llmCalls: 1 } } }));
+  }
+  const v = await startViewer({ index, blobs: new FakeBlobs(), port: 0 });
+  try {
+    const get = async (path: string) => {
+      const r = await fetch(`http://127.0.0.1:${v.port}${path}`, { headers: { authorization: `Bearer ${v.token}` } });
+      assert.equal(r.status, 200, path);
+      return r.json() as Promise<any>;
+    };
+    const lines: Record<string, unknown[]> = {};
+    for (const scope of ["top", "all"]) {
+      const stats = await get(`/api/stats?scope=${scope}`);
+      const rows = (await get(`/api/sessions?scope=${scope}`)).items;
+      // The tab count is the list's rows; the header splits them into sessions and subagents.
+      assert.equal(stats.sessions, rows.length, `${scope}: stats.sessions is the list's row count`);
+      assert.equal(stats.subagents, 2, `${scope}: each subagent counted once`);
+      // Cost, model calls and tool calls cover each session once, in either scope (a parent's usage holds none of its subagents').
+      assert.equal(stats.toolCalls, 6, scope);
+      assert.equal(stats.llmCalls, 4, scope);
+      assert.equal(stats.pricedSessions, 3, scope);
+      assert.ok(Math.abs(stats.costUsd - 0.07) < 1e-9, `${scope}: ${stats.costUsd}`);
+      lines[scope] = JSON.parse(JSON.stringify(f.summaryLine({ ...stats, scope }))); // out of the page's realm
+    }
+    assert.deepEqual(lines.top, ["1 session", "+ 2 subagents", "6 tool calls", "4 model calls", { text: "$0.07", title: "Reported cost" }]);
+    assert.deepEqual(lines.all, lines.top);
+  } finally {
+    await v.close();
+  }
 });
 
 test("the page refuses to send a query the server would refuse, with the server's reason and offset", () => {
@@ -144,4 +195,13 @@ test("the value autocomplete leaves out a rest of the query the parser would ref
   assert.equal(f.facetValueParams(p, "tool", 12, "Bash", "agent:codex").where, "agent:codex");
   assert.equal(f.facetValueParams(p, "tool", 12, "Bash", "").where, undefined);
   assert.equal(f.facetValueParams(p, "tool", 12, "Bash", "(").keys, "tool");
+});
+
+test("the command menu key is Ctrl K off a Mac, the fold toggle keeps one name, and the palette asks the server", () => {
+  assert.match(html, /const MOD_K = IS_MAC \? "⌘K" : "Ctrl K";/);
+  assert.match(html, /keys: \[MOD_K\], label: "Command menu"/);
+  assert.doesNotMatch(html, /"Expand all"/);
+  assert.match(html, /function searchStored\(\)/);
+  assert.match(html, /announce\("Session loaded, " \+ plural\(items\.length, "step"\) \+ \(failIdx\.length \? ", " \+ plural\(failIdx\.length, "failure"\) : ""\)\);\n\s+loadOutline\(\)/);
+  assert.match(html, /"Include subagents"\)\)\n?\s*: null,/);
 });

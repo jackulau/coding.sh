@@ -83,8 +83,10 @@ export function inferGroups(runId: string, agents: WorkflowNode[]): WorkflowNode
           groupKind: "inferred",
           startedAt: Math.min(...cur.map((m) => m.startedAt!)),
           endedAt: Math.max(...cur.map((m) => m.endedAt ?? m.startedAt!)),
-          status: cur.some((m) => m.status === "failed") ? "failed" : "ok",
+          status: cur.some((m) => m.status === "failed") ? "failed" : cur.some((m) => m.status === "running") ? "running" : "ok",
         };
+        // A group is not over while an agent in it is still running.
+        if (g.status === "running") delete g.endedAt;
         if (phase) g.phase = phase;
         groups.push(g);
       }
@@ -373,6 +375,11 @@ function claudeTree(src: TreeSources, opts: BuildOpts): WorkflowTree {
       g.endedAt = Math.max(...t.map((m) => m.endedAt ?? m.startedAt!));
     }
     if (members.some((m) => m.status === "failed")) g.status = "failed";
+    else if (members.some((m) => m.status === "running")) {
+      // Rolls up as the phase does: a group is running, and has no end, while an agent in it is.
+      g.status = "running";
+      delete g.endedAt;
+    }
     if (members.length && members.every((m) => m.status === "cached")) g.status = "cached";
   }
 

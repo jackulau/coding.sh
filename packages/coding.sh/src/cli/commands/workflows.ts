@@ -24,7 +24,9 @@ import { sortableId } from "../../core/ids.ts";
 import { jobConfig, taskFingerprint } from "../../jobs/config.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { finishJob, openJob, resumeField, resumeNote, retryFlag, trialTimeout } from "../jobs.ts";
-import { jsonArg, num, oneLine, list, requireConsent, resolveSession, shellQuote, str, withContext } from "../common.ts";
+import { jsonArg, ingestCli, lockContention, num, oneLine, list, requireConsent, resolveSession, shellQuote, spawnDetachedCli, str, withContext } from "../common.ts";
+import { acquireLock } from "../../core/lock.ts";
+import { paths } from "../../core/paths.ts";
 import { ago, clean, CliError, duration, plural, tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -55,6 +57,19 @@ export async function run(c: CommandContext): Promise<number> {
 }
 
 // ------------------------------------------------------------ helpers
+
+/** How long `workflows list` spends looking for new project dirs before it answers from what is stored. */
+const LIST_SCAN_BUDGET_MS = 1500;
+
+/**
+ * Bytes of changed run transcripts `workflows list` reads before it answers (about 0.3 s). A live run's dir can hold
+ * tens of MB that change every few seconds; those runs are imported by a background `workflows import` instead,
+ * and the list shows them as last imported.
+ */
+const LIST_LOAD_BUDGET_BYTES = 2 * 1024 * 1024;
+
+/** Set on the `workflows import` that `list` starts in the background: one runs at a time, and it prints nothing. */
+const BACKGROUND_IMPORT_ENV = "CODING_SH_WORKFLOWS_BACKGROUND_IMPORT";
 
 const storeOf = (c: CommandContext) => WorkflowStore.forEnv(c.env);
 
@@ -95,10 +110,17 @@ function wallOf(run: WorkflowRun): number | undefined {
 const runJson = runSummary;
 
 /** Imports new or changed Claude Code workflow run dirs (journal + transcripts). */
-async function doImport(c: CommandContext, root: string, force: boolean): Promise<ImportResult> {
+async function doImport(c: CommandContext, root: string, force: boolean, budgetMs?: number, loadBudgetBytes?: number): Promise<ImportResult> {
   const store = storeOf(c);
   // The user-level capture profile: redaction, metadata mode and prices, as backfill uses.
-  return withContext(c, (ctx) => importClaudeWorkflows({ root, store, index: ctx.index, blobs: ctx.blobs, force, profile: profileCache(ctx.config, c.env, () => {})(undefined) }));
+  // Scanning the whole projects dir remembers what it found (a dir can hold tens of thousands of files);
+  // `budgetMs` bounds the scan of new project dirs, and the next call goes on from where it stopped.
+  const scan: { scanCache?: string; scanBudgetMs?: number } = {};
+  if (root === claudeProjectsDir(c.env)) {
+    scan.scanCache = join(store.root, "scan-cache.json");
+    if (budgetMs !== undefined) scan.scanBudgetMs = budgetMs;
+  }
+  return withContext(c, (ctx) => importClaudeWorkflows({ root, store, index: ctx.index, blobs: ctx.blobs, force, profile: profileCache(ctx.config, c.env, () => {})(undefined), ...scan, loadBudgetBytes }));
 }
 
 // ------------------------------------------------------------ list / import
@@ -111,10 +133,17 @@ async function listRuns(c: CommandContext): Promise<number> {
   if (framework !== undefined && !FRAMEWORKS.includes(framework as WorkflowFramework)) {
     throw new UsageError(`--framework must be one of ${FRAMEWORKS.join(", ")}`, { reason: "invalid_value" });
   }
+  let pending: { runs: number; importing: boolean } | undefined;
   if (c.flags.import !== false) {
     const root = claudeProjectsDir(c.env);
     if (existsSync(root)) {
-      const r = await doImport(c, root, false);
+      const r = await doImport(c, root, false, LIST_SCAN_BUDGET_MS, LIST_LOAD_BUDGET_BYTES);
+      if (r.deferred) {
+        const started = c.env.CODING_SH_NO_AUTO_INGEST !== "1" && !!spawnDetachedCli(ingestCli(paths(c.env).cliPointer), ["workflows", "import", root], { ...c.env, [BACKGROUND_IMPORT_ENV]: "1" });
+        pending = { runs: r.deferred, importing: started };
+        out.note(`${plural(r.deferred, "workflow run")} changed since the last import; ${started ? "importing in the background" : "run coding.sh workflows import to read them"}; showing the last import`);
+      }
+      if (r.scanComplete === false) out.note("Still looking for workflow runs in your Claude Code projects; run again, or run coding.sh workflows import, to finish");
       if (r.imported.length) out.note(`Imported ${plural(r.imported.length, "workflow run")}`);
       for (const e of r.errors.slice(0, 3)) out.warn(`Couldn't import ${e.path}: ${e.error}`);
     }
@@ -127,7 +156,7 @@ async function listRuns(c: CommandContext): Promise<number> {
     limit,
   });
   if (out.json) {
-    out.data({ runs: runs.map(runJson) });
+    out.data({ runs: runs.map(runJson), pending });
     return 0;
   }
   if (!runs.length) {
@@ -155,6 +184,7 @@ async function importRuns(c: CommandContext): Promise<number> {
   const { out } = c;
   const root = c.positionals[0] !== undefined ? resolve(c.cwd, c.positionals[0]) : claudeProjectsDir(c.env);
   if (!existsSync(root)) throw new CliError(`Can't find ${root}`, { reason: "not_found", next: ["Pass a Claude Code projects, session or workflow run directory:", "coding.sh workflows import <path>"] });
+  if (c.env[BACKGROUND_IMPORT_ENV] === "1") return backgroundImport(c, root);
   const spin = out.spin(`Importing workflow runs from ${root}`);
   let r: ImportResult;
   try {
@@ -170,6 +200,23 @@ async function importRuns(c: CommandContext): Promise<number> {
   out.ok(`Imported ${plural(r.imported.length, "workflow run")} (${r.skipped} unchanged, ${r.copies ? `${plural(r.copies, "copy", "copies")} of another session's run, ` : ""}${r.found} found)`);
   for (const e of r.errors) out.warn(`Couldn't import ${e.path}: ${e.error}`);
   return r.errors.length && !r.imported.length && r.found ? 1 : 0;
+}
+
+/** The import `list` started: skips when another one runs, reads the whole projects dir, says nothing. */
+async function backgroundImport(c: CommandContext, root: string): Promise<number> {
+  let lock;
+  try {
+    lock = await acquireLock(join(storeOf(c).root, "import.lock"), { waitMs: 0 });
+  } catch (e) {
+    if (lockContention(e)) return 0;
+    throw e;
+  }
+  try {
+    await doImport(c, root, false);
+  } finally {
+    lock.release();
+  }
+  return 0;
 }
 
 // ------------------------------------------------------------ show / stats
@@ -211,10 +258,26 @@ export function renderTree(nodes: readonly WorkflowNode[], full: boolean): strin
   return lines;
 }
 
+/**
+ * A run still marked running is read again from its run dir first, as `list` does for every run:
+ * what is stored is as old as the last import, and its agents would otherwise read as idle since then.
+ */
+async function refreshRunning(c: CommandContext, id: string): Promise<void> {
+  try {
+    const stored = await storeOf(c).getRun(id);
+    const src = stored?.run.source;
+    if (stored?.run.status !== "running" || src?.kind !== "journal" || !src.path || !existsSync(src.path)) return;
+    await doImport(c, src.path, false);
+  } catch {
+    // show what is stored
+  }
+}
+
 async function show(c: CommandContext): Promise<number> {
   const { out } = c;
   const id = c.positionals[0];
   if (!id) throw new UsageError("Missing <run>", { reason: "missing_argument" });
+  await refreshRunning(c, id);
   const { run, nodes } = await getRunOrSession(c, id);
   const stalled = run.status === "running" ? markStalled(nodes, Date.now(), (n) => transcriptMtime(run, n)) : 0;
   const gantt = buildGantt(run, nodes);

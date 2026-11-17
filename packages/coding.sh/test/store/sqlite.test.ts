@@ -136,6 +136,17 @@ describe("SqliteIndexStore", () => {
     await s.close();
   });
 
+  it("search pages equally ranked hits newest first, the same on every call", async () => {
+    const s = await SqliteIndexStore.open(join(root, "ties.db"));
+    const same = Array.from({ length: 8 }, (_, i): AgentEvent => ({ id: `t${i}`, v: 0, sessionId: `s${i}`, ts: i, agent: "a", kind: "user.message", payload: { text: "qa backlog prompt" } }));
+    await s.putEvents(same);
+    for (const limit of [1, 2, 3]) {
+      const ids = (await s.search("backlog", { limit })).map((h) => h.event.id);
+      assert.deepEqual(ids, ["t7", "t6", "t5"].slice(0, limit), `limit ${limit}`);
+    }
+    await s.close();
+  });
+
   it("session_facets holds exactly the distinct (key, value, session) of the events, with repeats deduped in a batch", async () => {
     const path = join(root, "facets.db");
     const s = await SqliteIndexStore.open(path);
@@ -643,6 +654,54 @@ describe("SqliteIndexStore", () => {
       }
     };
     assert.deepEqual(shape(path), shape(freshPath));
+  });
+
+  it("migrating to v12 indexes error text stored before, so search finds a session by its error", async () => {
+    const { DatabaseSync } = await loadSqlite();
+    const path = join(root, "v11-errors.db");
+    const old = new DatabaseSync(path);
+    old.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
+    for (const m of MIGRATIONS.filter((m) => m.version <= 11)) {
+      old.exec(m.sql);
+      m.after?.(old);
+      old.prepare("INSERT INTO migrations (version, applied_at) VALUES (?, 0)").run(m.version);
+    }
+    // Rows as v11 putEvents wrote them: the FTS fed the old search text, none for errors.
+    const rows: { id: string; session: string; kind: string; payload: Record<string, unknown>; fts?: string }[] = [
+      { id: "m1", session: "msg", kind: "user.message", payload: { text: "summarize the changelog" }, fts: "summarize the changelog" },
+      { id: "e1", session: "limited", kind: "error", payload: { message: "API Error: 429", errorType: "rate_limit_error", statusCode: 429 } },
+      { id: "c1", session: "overloaded", kind: "llm.call", payload: { ok: false, error: "upstream connect error", errorType: "overloaded_error" } },
+      { id: "c2", session: "overloaded", kind: "llm.call", payload: { ok: true } },
+      { id: "t1", session: "denied", kind: "tool.end", payload: { tool: "Bash", ok: false, error: "permission denied by sandbox", output: "exit 1" }, fts: "Bash\nexit 1" },
+      { id: "t2", session: "denied", kind: "tool.end", payload: { tool: "Read", ok: true, output: "wombat" }, fts: "Read\nwombat" },
+    ];
+    const insert = old.prepare("INSERT INTO events (id, session_id, ts, agent, kind, tool, payload, error) VALUES (?, ?, ?, 'claude-code', ?, ?, ?, ?)");
+    const fts = old.prepare("INSERT INTO events_fts (rowid, text) VALUES (?, ?)");
+    rows.forEach((r, i) => {
+      const { lastInsertRowid } = insert.run(r.id, r.session, i, r.kind, typeof r.payload.tool === "string" ? r.payload.tool : null, JSON.stringify(r.payload), typeof r.payload.error === "string" ? r.payload.error : null);
+      if (r.fts) fts.run(lastInsertRowid, r.fts);
+    });
+    assert.equal(searchIndexOk(old), false, "under the new search text, the old index misses the errors");
+    old.close();
+
+    const s = await SqliteIndexStore.open(path);
+    const sessions = async (q: string) => [...new Set((await s.search(q)).map((h) => h.event.sessionId))].sort();
+    assert.deepEqual(await sessions("rate_limit_error"), ["limited"]);
+    assert.deepEqual(await sessions("429"), ["limited"]);
+    assert.deepEqual(await sessions("upstream connect"), ["overloaded"]);
+    assert.deepEqual(await sessions("sandbox"), ["denied"], "a failed tool's error, indexed again with its output");
+    assert.deepEqual(await sessions("exit"), ["denied"], "its output is still found");
+    assert.deepEqual(await sessions("wombat"), ["denied"], "a tool result without an error keeps its entry");
+    assert.deepEqual(await sessions("changelog"), ["msg"]);
+    await s.close();
+    // Not read-only: FTS5's integrity-check is written as an INSERT.
+    const check = new DatabaseSync(path);
+    try {
+      assert.equal(searchIndexOk(check), true);
+      assert.equal((check.prepare("SELECT count(*) AS n FROM events_fts_docsize").get() as { n: number }).n, 5, "every row with text once, the model call that did not fail none");
+    } finally {
+      check.close();
+    }
   });
 
   it("a store under the progress threshold upgrades silently", async () => {

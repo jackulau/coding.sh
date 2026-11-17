@@ -119,8 +119,9 @@ SESSION                                              KIND      WHEN     MATCH
 9887c95d-2739-4dae-8222-4471386def67                 tool.end  40m ago  …re-ingested (5.3ms) ✔ applies each «migration» once (41.2ms) ▶ SqliteIndexStore…
 ```
 
-Search covers prompts, replies, tool input and tool output. Every word must match within one
-event. Open a hit with `coding.sh show <session>`.
+Search covers prompts, replies, tool input and tool output, and errors: error events (the
+message, a type such as `rate_limit_error`, the status code), failed model calls and tool errors.
+Every word must match within one event. Open a hit with `coding.sh show <session>`.
 
 ## Open the viewer
 
@@ -143,11 +144,18 @@ token for this run of `ui`; the viewer needs it.
   cost, tokens, tool error rate and p95 model-call time, split by agent, model, repo or flag.
 - **Events** (<kbd>e</kbd>). The same query as event rows, newest first. Enter opens the event's
   step in its session.
+- **Workflows.** The top bar's last tab lists workflow runs (Flows on a phone). See
+  [Workflow experiments](https://coding.sh/docs/workflows).
 - **Replay** (<kbd>R</kbd> on a session). Plays the session back one step at a time. See
   [Replay a session](https://coding.sh/docs/use-cases/replay-agent-session).
 - **Keys.** <kbd>?</kbd> lists every shortcut. <kbd>j</kbd> and <kbd>k</kbd> move through the
   list outside a text field. A focused button keeps Enter and Space, a focused link keeps Enter,
   and the arrow keys scroll the focused step detail.
+- **Theme.** The viewer follows your system's light or dark setting. The theme button in the top
+  bar picks one instead, and the browser remembers that choice.
+- **Copied commands.** Each value is single-quoted for sh and PowerShell. A value with a quote, a
+  control character or `& | < >` is shown but not copied, since no one quoting is safe for it in
+  every shell.
 
 ## Follow a running session
 

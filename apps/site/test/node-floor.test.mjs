@@ -22,7 +22,7 @@ function walk(dir, ext) {
   const abs = join(ROOT, dir);
   if (!existsSync(abs)) return [];
   return readdirSync(abs, { withFileTypes: true }).flatMap((e) => {
-    const rel = join(dir, e.name);
+    const rel = `${dir}/${e.name}`; // "/" on every platform: the callers match and split on it
     if (e.isDirectory()) return ["node_modules", "dist", "research", ".astro"].includes(e.name) ? [] : walk(rel, ext);
     return ext.test(e.name) ? [rel] : [];
   });

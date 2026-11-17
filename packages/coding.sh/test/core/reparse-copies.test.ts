@@ -11,7 +11,7 @@ import { claudeCode } from "../../src/adapters/claude-code.ts";
 import type { Adapter, IndexStore } from "../../src/core/types.ts";
 import { defaultConfig } from "../../src/core/config.ts";
 import { backfill } from "../../src/core/ingest.ts";
-import { REPARSE_LAST, reparse, reparseKeptKey } from "../../src/core/reparse.ts";
+import { REPARSE_LAST, pathNamesSession, reparse, reparseKeptKey } from "../../src/core/reparse.ts";
 import { MemoryBlobStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { tmpEnv, writeFile, type TmpEnv } from "../adapters/_helpers.ts";
@@ -142,4 +142,73 @@ describe("reparse: sessions the adapter now reports as copies of another session
     assert.equal(r.copiesRemoved, 0);
     assert.ok((await index.listEvents(`${B}:sub:a1`)).some((e) => e.id === "otel-1"));
   });
+});
+
+describe("reparse: reads only the transcripts of the sessions it rebuilds", () => {
+  const spy = (read: string[]): Adapter => ({
+    ...claudeCode,
+    async *backfill(ctx, o) {
+      yield* claudeCode.backfill!(ctx, { ...o, changed: async (f) => (await o!.changed!(f)) && (read.push(f.path), true) });
+    },
+  });
+
+  it("skips the files of sessions that are not stale", async () => {
+    buildTree();
+    // 30 other sessions the re-parse has no reason to open (a long-used machine has tens of thousands).
+    for (let i = 0; i < 30; i++) main(`0000000${i.toString(16).padStart(1, "0")}-0000-4000-8000-${String(i).padStart(12, "0")}`, 600_000 + i * 1000);
+    const old: Adapter = { ...claudeCode, parseVersion: 12 };
+    await backfill({ ...opts(), adapters: [old] });
+    // Only B and its subagents were stored by an older parse than the adapter's.
+    for (const s of await index.listSessions({})) if (!s.id.startsWith(B)) await index.upsertSession({ ...s, parseVersion: claudeCode.parseVersion });
+    const read: string[] = [];
+    const r = await reparse({ ...opts(), adapters: new Map([["claude-code", spy(read)]]) });
+    assert.deepEqual(r.errors, []);
+    assert.ok(r.reparsed >= 1, "B was rebuilt");
+    assert.ok(read.length >= 1 && read.length <= 4, `read ${read.length} of 33+ transcripts: ${read.join(", ")}`);
+    assert.ok(read.every((p) => p.includes(B)), "only files under B's id");
+  });
+
+  it("matches a path by session id, and a child session by its parent's id", () => {
+    const names = pathNamesSession([`${A}:sub:a1`, "plain-id"]);
+    assert.equal(names(join("x", "projects", "p", `${A}.jsonl`)), true);
+    assert.equal(names(join("x", "p", A.toUpperCase(), "subagents", "agent-a1.jsonl")), true);
+    assert.equal(names(join("x", "sessions", `rollout-2026-11-01T10-00-00-${B}.jsonl`)), false);
+    assert.equal(names(join("x", "plain-id.jsonl")), true);
+    assert.equal(pathNamesSession([`t3code-thread:${"x".repeat(200)}`])("anything.jsonl"), false, "a long foreign id is not matched as text");
+  });
+});
+
+describe("reparse: a store adapter's covered threads", () => {
+  // A T3-style adapter: its backfill skips a thread whose run a transcript adapter stores, and says so with copied().
+  const covered = "t3code-thread-covered";
+  const store = (): Adapter => ({
+    ...claudeCode,
+    id: "t3code",
+    parseVersion: 8,
+    async *backfill(_ctx, o) {
+      if (o?.changed && !(await o.changed({ path: "state.sqlite#store", size: 1, mtimeMs: 1 }))) return;
+      o?.copied?.(covered, `${A}:sub:a1`);
+    },
+  });
+  const seedStore = async (extra: Record<string, unknown> = {}) => {
+    buildTree();
+    await backfill({ ...opts(), adapters: [{ ...claudeCode, parseVersion: 12 }] });
+    await index.putEvents([{ id: "t3-1", v: 0, sessionId: covered, ts: T0 + 3000, agent: "t3code", kind: "session.start", source: "store", payload: {}, ...extra }]);
+    await index.upsertSession({ id: covered, agent: "t3code", startedAt: T0 + 3000, parseVersion: 7, stats: {}, flags: [] } as never);
+  };
+
+  for (const mode of ["rebuild --agent t3code", "automatic"] as const) {
+    it(`deletes the thread session the adapter now skips as covered (${mode})`, async () => {
+      await seedStore();
+      const adapters = new Map<string, Adapter>([["claude-code", claudeCode], ["t3code", store()]]);
+      const rebuild = mode === "automatic" ? {} : { all: true, agents: ["t3code"] };
+      const r = await reparse({ ...opts(), adapters, ...rebuild });
+      assert.deepEqual(r.errors, []);
+      assert.equal(r.copiesRemoved, 1);
+      assert.equal(await index.getSession(covered), undefined);
+      assert.deepEqual(await index.listEvents(covered), []);
+      assert.ok(await index.getSession(`${A}:sub:a1`), "the owner stays");
+      assert.ok(!r.keptSessions.some((k) => k.id === covered));
+    });
+  }
 });

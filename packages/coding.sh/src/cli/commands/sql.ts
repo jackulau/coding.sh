@@ -8,7 +8,7 @@ import { checkReadOnlySql, runSql, SqlFailed, SqlRejected, SqlTimeout, type SqlR
 import { fileUrlPath, parseStoreUrl } from "../../store/factory.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { autoIngest, oneLine, readIngest, withContext } from "../common.ts";
-import { CliError, clean } from "../output.ts";
+import { CliError, clean, forTerminal } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
 /** Redacts the user:password part of a store URL for messages. */
@@ -62,7 +62,8 @@ export async function run(c: CommandContext): Promise<number> {
     return 0;
   }
   if (c.flags.csv === true) {
-    process.stdout.write(csvRow(r.columns) + r.rows.map(csvRow).join(""));
+    const csv = csvRow(r.columns) + r.rows.map(csvRow).join("");
+    process.stdout.write(out.stdoutTTY ? forTerminal(csv) : csv);
   } else if (!r.rows.length) {
     out.note("No rows");
   } else {

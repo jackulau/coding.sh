@@ -196,6 +196,8 @@ export const FLAG_DIAGNOSIS: Readonly<Record<string, FlagDiagnosis | "context-on
   churn: { typeIds: ["eff.duplicate-action"], nature: "inefficiency" },
   "no-progress": { typeIds: ["orch.loop-deadlock", "eff.context-bloat"], nature: "inefficiency" },
   stalled: { typeIds: ["rt.provider-unavailable"], nature: "inefficiency" },
+  // Rate limits or overload held the session up: capacity, not the agent.
+  "api-stall": { typeIds: ["rt.resource-exhaustion", "rt.provider-unavailable"], nature: "inefficiency" },
   "context-thrash": { typeIds: ["ctx.context-limit", "eff.context-bloat"], nature: "inefficiency" },
   // A vendor token passed through the agent to its model provider; misuse not observed.
   "secret:exposed": { typeIds: ["sec.disclosure"], nature: "risk", reach: 0.6 },

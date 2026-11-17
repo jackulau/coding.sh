@@ -4,6 +4,7 @@
 // with events but no row, rows whose fold failed), and the OTLP receiver port.
 import { accessSync, closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
+import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { ADAPTERS, detectAll } from "../../adapters/index.ts";
 import { mcpTargetOf, readMcpEntry } from "../../adapters/_shared/mcp.ts";
@@ -71,10 +72,18 @@ function spoolCwds(file: string, maxBytes = 64 * 1024): string[] {
   return out;
 }
 
-/** `dir` and its parents, stopping before the home directory and the filesystem root. */
+/**
+ * `dir` and its parents up to the git root, stopping before the home directory,
+ * the OS account's home (on Windows the temp dir sits under it, and its settings
+ * are user settings, not a project's) and the filesystem root.
+ */
 function upward(dir: string, home: string): string[] {
+  const homes = new Set([home, resolve(homedir())]);
   const out: string[] = [];
-  for (let d = resolve(dir); d !== home && dirname(d) !== d; d = dirname(d)) out.push(d);
+  for (let d = resolve(dir); !homes.has(d) && dirname(d) !== d; d = dirname(d)) {
+    out.push(d);
+    if (existsSync(join(d, ".git"))) break; // a project's settings live at or below its repo root
+  }
   return out;
 }
 

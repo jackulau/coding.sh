@@ -127,7 +127,7 @@ import { decodeLogsJson, decodeTraceJson, parseJson, validateMetricsJson } from 
 import { applyPricing, pricesFor, type Prices } from "../core/pricing.ts";
 import { enrichFromEve } from "../integrations/eve/map.ts";
 import { enrichGatewaySpan } from "../integrations/gateway/otel.ts";
-import { type MapContext, type MapResult, mapLogs, mapTraces, type SpanEnricher, SpanTree, TraceSessionMap, traceKvKey } from "./map.ts";
+import { type MapContext, type MapResult, type Rehome, mapLogs, mapTraces, rehomeTarget, type SpanEnricher, SpanTree, TraceSessionMap, traceKvKey } from "./map.ts";
 import { OtlpDecodeError, type ResourceLogs, type ResourceSpans } from "./model.ts";
 import { decodeLogsRequest, decodeTraceRequest, encodeExportResponse, encodeStatus, validateMessage } from "./proto.ts";
 
@@ -374,11 +374,48 @@ export function createOtlpPipeline(opts: OtlpPipelineOptions): OtlpPipeline {
       } finally {
         blobs = opts.blobs;
       }
+      if (mapped.rehome?.length) await rehomeStored(opts.store, mapCtx.spanTree!, mapped.rehome);
       if (opts.store.kvSet) for (const [t, s] of traceSessions.takeDirty()) await opts.store.kvSet(kvKey(t), s);
       const events = redactor ? mapped.events.map((e) => redactEventCounted(redactor, e)) : mapped.events;
       return { events, rejected: mapped.rejected, errors: mapped.errors };
     },
   };
+}
+
+/**
+ * Moves stored events to the subagent session their span now belongs to: spans exported before their
+ * enclosing invoke_agent span are stored in the parent session, and event ids do not depend on the
+ * session, so storing them again would change nothing. Needs replaceSessionEvents (a store without
+ * it leaves them where they are). A subagent.start that moves takes its child session with it:
+ * that session names the session that started it.
+ */
+async function rehomeStored(store: IndexStore, tree: SpanTree, rehome: Rehome[]): Promise<void> {
+  if (!store.replaceSessionEvents) return;
+  for (const r of rehome) {
+    const moves = new Map<string, { target: string; events: AgentEvent[] }>();
+    const ids: string[] = [];
+    for (const e of await store.listEvents(r.from)) {
+      const t = rehomeTarget(tree, e, r);
+      if (!t) continue;
+      ids.push(e.id);
+      const m = moves.get(t.sessionId) ?? moves.set(t.sessionId, { target: t.sessionId, events: [] }).get(t.sessionId)!;
+      m.events.push({ ...e, sessionId: t.sessionId, subagentId: t.subagentId });
+    }
+    if (!ids.length) continue;
+    const add = [...moves.values()].flatMap((m) => m.events);
+    await store.replaceSessionEvents(r.from, ids, add);
+    // The moved subagent.start events are now dispatched from another session: its own session says so.
+    for (const m of moves.values()) {
+      for (const e of m.events) {
+        const child = e.kind === "subagent.start" ? e.payload.childSessionId : undefined;
+        if (typeof child !== "string") continue;
+        const starts = (await store.listEvents(child)).filter((x) => x.kind === "session.start" && x.payload.parentSessionId !== m.target);
+        if (starts.length) await store.replaceSessionEvents(child, starts.map((x) => x.id), starts.map((x) => ({ ...x, payload: { ...x.payload, parentSessionId: m.target } })));
+        await rebuildSessions(store, [child]);
+      }
+    }
+    await rebuildSessions(store, [r.from, ...moves.keys()]);
+  }
 }
 
 /** Spans or log records in a decoded request (serve's admission cost). */

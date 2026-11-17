@@ -15,7 +15,7 @@ import { recorderFor } from "../proxy/index.ts";
 import type { Recorder } from "../proxy/record.ts";
 import { createProxyHandler, type Upstreams } from "../proxy/server.ts";
 import type { UpdateStatus } from "../update/index.ts";
-import { createAuthenticator, READ_COOKIE } from "./auth.ts";
+import { createAuthenticator, READ_COOKIE, SECURE_READ_COOKIE } from "./auth.ts";
 import { DRAIN_TIMEOUT_MS, type ServeConfig } from "./config.ts";
 import { createLogger, type Logger, safeUrl } from "./log.ts";
 import { ServeMetrics } from "./metrics.ts";
@@ -115,7 +115,14 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
   const metrics = new ServeMetrics();
   const loopback = isLoopbackHost(cfg.host);
   const open = loopback || cfg.insecure;
-  const auth = createAuthenticator(cfg.credentials, { openIngest: open, openRead: open });
+  // Without --insecure, loopback is open only to this machine: a request a proxy passed on needs a key.
+  let warnedProxied = false;
+  const onProxied = () => {
+    if (warnedProxied) return;
+    warnedProxied = true;
+    log.warn("refused a request a proxy passed on: this server runs with no keys, so it answers only this machine. Behind a proxy, set keys: coding.sh serve keygen --project <id>");
+  };
+  const auth = createAuthenticator(cfg.credentials, { openIngest: open, openRead: open, directOnly: !cfg.insecure, onProxied });
   const storeScheme = canonicalScheme(parseStoreUrl(cfg.core.store.index).scheme);
 
   // ---- stores
@@ -275,7 +282,7 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
   });
   const proxy = (req: IncomingMessage, res: ServerResponse): void => {
     const h = req.headers[PROXY_KEY_HEADER];
-    const project = auth.ingestKey(typeof h === "string" ? h.trim() : undefined);
+    const project = auth.ingestKey(typeof h === "string" ? h.trim() : undefined, req);
     if (project === undefined) {
       metrics.authFailures.inc({ route: "/proxy" });
       req.resume();
@@ -286,20 +293,33 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
     proxyHandler(req, res, { path: rest, recorder: recorderOf(project) });
   };
 
-  const secureCookie = (req: IncomingMessage) => cfg.trustProxy && String(req.headers["x-forwarded-proto"] ?? "").split(",")[0]!.trim() === "https";
+  // Every route but /healthz (and /readyz on a public bind) answers only Host names it was set up
+  // for: loopback ones, plus serve.allowed_hosts. A public bind with no list answers any (a platform routes by host).
+  const allowedHosts = new Set(cfg.allowedHosts);
+  const hostAllowed = (header: string): boolean => {
+    const name = hostOf(header.toLowerCase());
+    return isLoopbackHost(name) || allowedHosts.has(name) || (!loopback && allowedHosts.size === 0);
+  };
+
+  // HTTPS as the TLS proxy in front saw it; X-Forwarded-Proto counts only with trust_proxy set.
+  const isHttps = (req: IncomingMessage) => cfg.trustProxy && String(req.headers["x-forwarded-proto"] ?? "").split(",")[0]!.trim().toLowerCase() === "https";
   const viewer = await createViewerHandler({
     index,
     blobs,
     authorize: (req) => auth.read(req),
-    // Loopback binds keep the DNS-rebinding guard; a public bind sits behind a platform's host routing.
-    checkHost: (h) => !loopback || isLoopbackHost(hostOf(h)),
+    checkHost: hostAllowed,
     exchangeToken: (t, req) =>
-      auth.readScope(t) !== undefined ? `${READ_COOKIE}=${t}; HttpOnly; SameSite=Strict; Path=/${secureCookie(req) ? "; Secure" : ""}` : undefined,
+      auth.readScope(t) === undefined
+        ? undefined
+        : // __Host- needs Secure, which a browser drops over plain HTTP: there the cookie keeps its plain name.
+          isHttps(req)
+          ? `${SECURE_READ_COOKIE}=${t}; HttpOnly; SameSite=Strict; Path=/; Secure`
+          : `${READ_COOKIE}=${t}; HttpOnly; SameSite=Strict; Path=/`,
     ...(cfg.credentials.basic ? { basicRealm: "coding.sh" } : {}),
-    // A GET form to /?t=…: the same token exchange as a pasted link, which then drops the key from the address bar.
+    // The form posts the key to /, so it never lands in a URL, a log line or the browser history.
     unauthorizedText:
       "This coding.sh server needs a read key (csh_rk_…).</p>" +
-      '<form method=get action="/"><input name=t type=password autocomplete=off required placeholder="csh_rk_…" aria-label="Read key" size=48 style="font:inherit;padding:.4rem"> <button style="font:inherit;padding:.4rem .8rem">Open</button></form>' +
+      '<form method=post action="/"><input name=t type=password autocomplete=off required placeholder="csh_rk_…" aria-label="Read key" size=48 style="font:inherit;padding:.4rem"> <button style="font:inherit;padding:.4rem .8rem">Open</button></form>' +
       "<p>Or open <code>/?t=&lt;read key&gt;</code> once, or sign in with the configured user.",
     // Configured projects plus those in the data (a viewer replica, or keys since removed).
     projects: async () => [...new Set([...cfg.projects, ...(await storeProjects(index))])],
@@ -327,11 +347,15 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const path = (req.url ?? "/").split("?")[0]!;
+    // Once a browser has reached serve over HTTPS, it never tries plain HTTP for this host again.
+    if (isHttps(req)) res.setHeader("Strict-Transport-Security", "max-age=31536000");
     res.once("finish", () => metrics.httpRequests.inc({ route: routeLabel(path), status: String(res.statusCode) }));
     if (OPS_PATHS.has(path) && req.method !== "GET" && req.method !== "HEAD") {
       return sendJson(res, 405, { error: "method not allowed", status: 405 }, { Allow: "GET, HEAD" });
     }
     if (path === "/healthz") return sendJson(res, 200, { ok: true });
+    // A platform or Kubernetes probe sends the pod's address as Host: a public bind answers /readyz for any.
+    if (!(path === "/readyz" && !loopback) && !hostAllowed(req.headers.host ?? "")) return sendJson(res, 403, { error: "forbidden host: add it to serve.allowed_hosts (CODING_SH_ALLOWED_HOSTS)", status: 403 });
     if (path === "/readyz") {
       const r = await ready();
       return sendJson(res, r.status, r.body);

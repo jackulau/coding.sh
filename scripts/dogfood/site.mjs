@@ -8,10 +8,12 @@
 //
 //   node scripts/dogfood/site.mjs [js|lighthouse]... [--json]
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, normalize, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import { log, parseArgs, sh, SITE } from "./lib/util.mjs";
+import { isMain } from "./lib/main.mjs";
 
 export const SITE_TARGETS = {
   jsKb: 60,
@@ -66,7 +68,10 @@ export function findLighthouse() {
 export async function siteLighthouse({ port = 4329 } = {}) {
   const lh = findLighthouse();
   if (!lh) return { value: null, skipped: "lighthouse CLI not installed (the scorer does not download it with npx)" };
-  const preview = spawn("npx", ["astro", "preview", "--host", "127.0.0.1", "--port", String(port)], { cwd: SITE, stdio: "ignore" });
+  // astro's own entry run with this node: npx is a .cmd shim on Windows, which spawn cannot start without a shell.
+  const astro = join(dirname(createRequire(join(SITE, "package.json")).resolve("astro/package.json")), "astro.js");
+  const preview = spawn(process.execPath, [astro, "preview", "--host", "127.0.0.1", "--port", String(port)], { cwd: SITE, stdio: "ignore" });
+  preview.on("error", () => {});
   try {
     const url = `http://127.0.0.1:${port}/`;
     for (let i = 0; i < 100; i++) {
@@ -78,6 +83,8 @@ export async function siteLighthouse({ port = 4329 } = {}) {
     const runs = {};
     for (const [name, extra] of [["mobile", []], ["desktop", ["--preset=desktop"]]]) {
       const r = sh(lh, [url, "--output=json", "--quiet", "--chrome-flags=--headless=new", ...extra], { timeout: 300_000 });
+      // A lighthouse that did not run (on Windows `command -v` finds a shell shim spawn cannot start) is a skip, not a crash.
+      if (r.code !== 0 || !r.stdout.trim()) return { value: null, skipped: `lighthouse did not run (exit ${r.code}${r.error ? `, ${r.error.code}` : ""})` };
       runs[name] = JSON.parse(r.stdout);
     }
     const cats = Object.fromEntries(Object.entries(runs).map(([k, rep]) => [k, Object.fromEntries(Object.entries(rep.categories).map(([c, v]) => [c, v.score]))]));
@@ -92,7 +99,7 @@ export async function siteLighthouse({ port = 4329 } = {}) {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMain(import.meta.url)) {
   const args = parseArgs(process.argv.slice(2), { booleans: ["json"] });
   const which = args._.length ? args._ : ["js", "lighthouse"];
   const out = {};

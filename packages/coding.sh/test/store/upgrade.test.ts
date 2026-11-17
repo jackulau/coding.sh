@@ -107,14 +107,15 @@ describe("a migration keeps the index as it was", () => {
 
   it("a migration that fails removes the copy it made: the store is still what it was", async () => {
     const file = dbPath();
-    await storeAt(file, OLD);
+    const v10 = 10; // the store before v11, whose CREATE INDEX events_duration is made to fail
+    await storeAt(file, v10);
     const { DatabaseSync } = await loadSqlite();
     const db = new DatabaseSync(file);
-    db.exec("CREATE INDEX events_duration ON events(ts)"); // v11's CREATE INDEX events_duration fails
+    db.exec("CREATE INDEX events_duration ON events(ts)");
     db.close();
     await assert.rejects(SqliteIndexStore.open(file), /already exists/);
     assert.deepEqual(siblings(file), ["index.db"]);
-    assert.equal((await peek(file)).schema, OLD);
+    assert.equal((await peek(file)).schema, v10);
   });
 
   it("without copy-on-write it makes a full copy, and refuses with the size needed when that would not fit", async () => {

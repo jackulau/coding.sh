@@ -3,7 +3,7 @@
 // reference, and a report that is safe to publish.
 import assert from "node:assert/strict";
 import { after, describe, test } from "node:test";
-import { buildReport, renderReportHtml, scrubPaths } from "../../src/bench/report.ts";
+import { buildReport, renderReportHtml, scrubPaths, trendSvg } from "../../src/bench/report.ts";
 import { runBench } from "../../src/bench/run.ts";
 import { assignPlaces, comparePairs, countedCells, powerPlan, summarizeContender } from "../../src/bench/stats.ts";
 import { historyRuns, listRuns, series, vsSeries } from "../../src/bench/store.ts";
@@ -112,6 +112,18 @@ describe("bench history and report", () => {
     assert.doesNotMatch(html, /<script|https?:\/\/(?!127\.0\.0\.1)[^"]*\.(css|js)/);
     const open = buildReport(runs, { includePrivate: true, now: day("2026-11-06") });
     assert.ok(open.cases.some((c) => typeof c.input === "object"));
+  });
+
+  test("the score trend's axis grows to fit a mean score above 1 (an objective grader past its reference)", () => {
+    const pt = (date: string, value: number) => ({ date, run: date, value, n: 4 });
+    const svg = trendSvg({ a: [pt("2026-11-01", 0.5), pt("2026-11-02", 2.4)] }, "score", new Map([["a", "#000"]]), "Score");
+    const cys = [...svg.matchAll(/<circle cx="[\d.]+" cy="(-?[\d.]+)"/g)].map((m) => Number(m[1]));
+    assert.equal(cys.length, 2);
+    // Plot area: top margin 14, bottom 220 - 30. Before the fix, 2.4 drew at y < 0, above the chart.
+    for (const y of cys) assert.ok(y >= 14 && y <= 190, `point at y=${y} is outside the plot`);
+    assert.match(svg, />240%</, "the top tick names the highest score");
+    // Scores within 0..1 keep the 0..100% axis.
+    assert.match(trendSvg({ a: [pt("2026-11-01", 0.5)] }, "score", new Map([["a", "#000"]]), "Score"), />100%</);
   });
 
   test("scrubPaths keeps file names only", () => {

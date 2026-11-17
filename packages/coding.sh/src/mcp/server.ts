@@ -26,6 +26,12 @@ export interface CodingShMcpOptions {
   ingestIntervalMs?: number;
   /** How long a tool call waits on ingest before answering from what is indexed (default: the CLI reads' budget). */
   ingestBudgetMs?: number;
+  /** The ingest a tool call runs before reading (default: the CLI reads' autoIngest); tests pass a slow one. */
+  autoIngest?: typeof autoIngest;
+  /** How far past the budget a call waits for an ingest that is still running (default 250 ms). */
+  ingestGraceMs?: number;
+  /** Gap between progress notifications while a call with a progressToken runs (default 5000 ms). */
+  progressIntervalMs?: number;
   now?: () => number;
   log?: (msg: string) => void;
 }
@@ -87,7 +93,7 @@ export function createCodingShMcp(o: CodingShMcpOptions = {}): CodingShMcp {
   // holding the lock is ingesting for us; an unreadable spool still serves what is indexed.
   const ingest = async (ctx: Context): Promise<void> => {
     try {
-      backlog = await autoIngest(ctx, {
+      backlog = await (o.autoIngest ?? autoIngest)(ctx, {
         budgetMs: o.ingestBudgetMs ?? readBudgetMs(env),
         env,
         onErrors: (errors) => log(`ingest: ${errors.length} error(s), first: ${JSON.stringify(errors[0]).slice(0, 300)}`),
@@ -104,7 +110,17 @@ export function createCodingShMcp(o: CodingShMcpOptions = {}): CodingShMcp {
         lastIngest = now();
         ingesting = undefined;
       });
-      await ingesting;
+    }
+    // The budget covers the whole ingest, the scan for new files included: past it the call answers
+    // from what is indexed and the ingest finishes in this process while the next calls reuse it.
+    if (ingesting) {
+      const ms = o.ingestBudgetMs ?? readBudgetMs(env);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const late = new Promise<"late">((r) => {
+        timer = setTimeout(() => r("late"), ms + (o.ingestGraceMs ?? 250)); // a little over: an ingest that honors its deadline ends just after it
+      });
+      const r = await Promise.race([ingesting.then(() => "done" as const), late]).finally(() => clearTimeout(timer));
+      if (r === "late") backlog = { pendingFiles: Math.max(1, backlog.pendingFiles), indexing: true };
     }
     return ctx;
   };
@@ -123,6 +139,7 @@ export function createCodingShMcp(o: CodingShMcpOptions = {}): CodingShMcp {
     skills: buildSkillProvider(log),
     prompts: buildPrompts(),
     context: () => ctx,
+    progressIntervalMs: o.progressIntervalMs, // undefined: the protocol's default
     validate: (args, schema) => schemaViolations(args, schema, 10),
     log,
   });

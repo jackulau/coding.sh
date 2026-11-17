@@ -12,6 +12,8 @@ interface Tab {
   code: string;
   /** Title bar of the panel: a file name or a shell. Defaults to the label. */
   title?: string;
+  /** The fence's language, for colouring (Code.astro). */
+  lang?: string;
 }
 interface Props {
   tabs: Tab[];
@@ -49,7 +51,7 @@ const uid = `ct${(counts.codeTabs = (counts.codeTabs ?? 0) + 1)}`;
     tabs.map((t, i) => (
       <div class="codetabs__panel" role="tabpanel" id={`${uid}-panel-${i}`} aria-labelledby={`${uid}-tab-${i}`} data-label={t.label}>
         <p class="codetabs__label">{t.label}</p>
-        <Code code={t.code} title={t.title ?? t.label} />
+        <Code code={t.code} title={t.title ?? t.label} lang={t.lang} />
       </div>
     ))
   }

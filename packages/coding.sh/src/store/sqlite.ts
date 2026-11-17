@@ -32,7 +32,7 @@ import type { Dataset, DatasetVersionInfo, ExperimentResult, JudgeVersion } from
 import type { DatasetListing } from "../core/types.ts";
 import { HARNESS_LOADED, MEMORY_INPUT_KEYS, MEMORY_PATH_TEXT, MEMORY_PAYLOAD_KEYS, pickSet, SKILL_TOOL, type MemoryEvent } from "../core/memory-events.ts";
 import { BLOB_REF_FIELDS, type BlobRefField, DatasetConflict, errorText, ftsQuery, searchableText, SEARCHABLE_KINDS, searchTerms, snippet, symbolQuery, symbolSnippet } from "./common.ts";
-import { loadSqlite, mkdirPrivate, ownerOnly, switchToWal } from "./sqlite-open.ts";
+import { isBusy, loadSqlite, mkdirPrivate, ownerOnly, retryOnBusy, switchToWal, withoutBusyRetry } from "./sqlite-open.ts";
 import { backupIndex, describeStep, parseWriter, pruneBackups, runningUpgrade, splitSql, StoreNewerError, UPGRADE_PROGRESS_MIN_ROWS, UpgradeProgress, WRITER_KEY, type StoreWriter } from "./upgrade.ts";
 import { labelToScore } from "../scores/labels.ts";
 import { isNewer } from "../update/semver.ts";
@@ -54,6 +54,12 @@ interface Migration {
 }
 
 const sqlList = (xs: readonly string[]) => xs.map((x) => `'${x.replace(/'/g, "''")}'`).join(", ");
+
+/**
+ * The rows of table `t` that can have search text: SEARCHABLE_KINDS, and of the model
+ * calls only the failed ones (common.ts searchableText), found by events.error (v11).
+ */
+const searchableRows = (t: string) => `${t}.kind IN (${sqlList(SEARCHABLE_KINDS)}) AND (${t}.kind <> 'llm.call' OR ${t}.error IS NOT NULL)`;
 
 /** SELECT of the refs at one BLOB_REF_FIELDS entry (paths are constants, not user input). */
 function refFieldSql(f: BlobRefField): string {
@@ -488,6 +494,31 @@ ALTER TABLE events ADD COLUMN error TEXT;
       db.exec("CREATE INDEX events_error ON events(error, session_id) WHERE error IS NOT NULL");
     },
   },
+  {
+    // Error text is searchable: `search rate_limit_error` found nothing, since only messages,
+    // tool calls and subagent launches were indexed. searchableText now gives text to error
+    // events, to failed model calls (llm.call with payload.error) and adds payload.error to
+    // a failed tool.end. Rows stored before are indexed here: the error events (by
+    // events_kind_ts) and the model calls and tool results that have an error (by
+    // events_error), a small share of a store. A tool.end that had an entry is indexed again.
+    version: 12,
+    sql: "",
+    after: (db, progress) => {
+      db.function("coding_sh_search_text", (kind, payload) => {
+        const p = typeof payload === "string" ? parse<Record<string, unknown>>(payload) : undefined;
+        return searchableText({ kind, payload: p ?? {} } as AgentEvent) ?? null;
+      });
+      progress?.step("search index: error text");
+      // Written out (not SEARCHABLE_KINDS) so this migration never changes.
+      db.exec(`DELETE FROM events_fts WHERE rowid IN (SELECT e.rowid FROM events e JOIN events_fts_docsize d ON d.id = e.rowid
+        WHERE e.error IS NOT NULL AND e.kind = 'tool.end')`);
+      db.exec(`INSERT INTO events_fts (rowid, text) SELECT rowid, t FROM (
+        SELECT rowid, coding_sh_search_text(kind, payload) AS t FROM events WHERE kind = 'error'
+        UNION ALL
+        SELECT rowid, coding_sh_search_text(kind, payload) AS t FROM events WHERE error IS NOT NULL AND kind IN ('llm.call', 'tool.end')
+      ) WHERE t IS NOT NULL`);
+    },
+  },
 ];
 
 /** session_facets rows of one session, rebuilt from its events (SESSION_FACET_KEYS). */
@@ -515,8 +546,8 @@ export function searchIndexOk(db: DatabaseSync): boolean {
     return false;
   }
   if (db.prepare("SELECT 1 FROM events_fts_docsize d WHERE NOT EXISTS (SELECT 1 FROM events e WHERE e.rowid = d.id) LIMIT 1").get()) return false;
-  if (db.prepare(`SELECT 1 FROM events_fts_docsize d JOIN events e ON e.rowid = d.id WHERE e.kind NOT IN (${sqlList(SEARCHABLE_KINDS)}) LIMIT 1`).get()) return false;
-  const unindexed = db.prepare(`SELECT kind, payload FROM events e WHERE kind IN (${sqlList(SEARCHABLE_KINDS)})
+  if (db.prepare(`SELECT 1 FROM events_fts_docsize d JOIN events e ON e.rowid = d.id WHERE NOT (${searchableRows("e")}) LIMIT 1`).get()) return false;
+  const unindexed = db.prepare(`SELECT kind, payload FROM events e WHERE ${searchableRows("e")}
     AND NOT EXISTS (SELECT 1 FROM events_fts_docsize d WHERE d.id = e.rowid)`);
   for (const r of unindexed.iterate() as IterableIterator<Row>) {
     if (searchableText({ kind: r.kind, payload: parse<Record<string, unknown>>(r.payload) ?? {} } as AgentEvent) !== undefined) return false;
@@ -762,8 +793,15 @@ export class SqliteIndexStore implements IndexStore {
   /** Opens (creating if needed) the database at `path` (":memory:" for tests) and migrates it. */
   static async open(path: string, opts: SqliteIndexOptions = {}): Promise<SqliteIndexStore> {
     const { DatabaseSync } = await loadSqlite();
-    if (path !== ":memory:") mkdirPrivate(dirname(path));
-    const db = new DatabaseSync(path, { readOnly: opts.readOnly ?? false });
+    let db: DatabaseSync;
+    try {
+      if (path !== ":memory:") mkdirPrivate(dirname(path));
+      db = retryOnBusy(new DatabaseSync(path, { readOnly: opts.readOnly ?? false }));
+    } catch (e) {
+      // SQLite says only "unable to open database file": name the absolute path it tried.
+      if (e instanceof Error && !e.message.includes(path)) e.message = `${e.message} (the index at ${path})`;
+      throw e;
+    }
     try {
       // Before the WAL switch: SQLite gives the -wal and -shm the database file's mode.
       if (!opts.readOnly) ownerOnly(path);
@@ -893,7 +931,7 @@ export class SqliteIndexStore implements IndexStore {
     if (inTransaction) return write();
     try {
       this.db.exec("PRAGMA busy_timeout = 0");
-      write();
+      withoutBusyRetry(this.db, write);
     } catch {
       // busy: not worth waiting for
     } finally {
@@ -1007,10 +1045,10 @@ export class SqliteIndexStore implements IndexStore {
     try {
       for (;;) {
         try {
-          this.db.exec("BEGIN IMMEDIATE");
+          withoutBusyRetry(this.db, () => this.db.exec("BEGIN IMMEDIATE"));
           return;
         } catch (e) {
-          if ((e as { errcode?: number }).errcode !== 5) throw e;
+          if (!isBusy(e)) throw e;
         }
         const other = this.path === ":memory:" ? undefined : runningUpgrade(this.path);
         if (!other && Date.now() - started >= BUSY_TIMEOUT_MS) throw new Error(`${this.path} is locked by another process (database is locked)`);
@@ -1045,7 +1083,7 @@ export class SqliteIndexStore implements IndexStore {
     if (this.closed || this.readOnly || this.path === ":memory:") return;
     try {
       this.db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.floor(waitMs))}`);
-      this.db.prepare(`PRAGMA wal_checkpoint(${mode})`).get();
+      withoutBusyRetry(this.db, () => this.db.prepare(`PRAGMA wal_checkpoint(${mode})`).get());
     } catch {
       // busy or locked: the WAL stays as it is until the next checkpoint
     } finally {
@@ -1072,7 +1110,7 @@ export class SqliteIndexStore implements IndexStore {
 
   async replaceSessionEvents(sessionId: string, removeIds: string[], add: AgentEvent[]): Promise<{ removed: number; inserted: number }> {
     // Contentless FTS with contentless_delete: an entry is removed by rowid (see deleteBefore).
-    const ftsDelete = this.stmt(`DELETE FROM events_fts WHERE rowid = (SELECT rowid FROM events WHERE id = ? AND session_id = ? AND kind IN (${sqlList(SEARCHABLE_KINDS)}))`);
+    const ftsDelete = this.stmt(`DELETE FROM events_fts WHERE rowid = (SELECT rowid FROM events WHERE id = ? AND session_id = ? AND ${searchableRows("events")})`);
     const del = this.stmt("DELETE FROM events WHERE id = ? AND session_id = ?");
     return this.tx(() => {
       let removed = 0;
@@ -1238,7 +1276,7 @@ export class SqliteIndexStore implements IndexStore {
     } else {
       // Unfiltered, the FTS table ranks and cuts the page itself; filtered, it ranks its (at most
       // SEARCH_RANK_MAX_MATCHES) matches and the join keeps the best that pass.
-      const page = where.length ? "" : "ORDER BY rank LIMIT ?";
+      const page = where.length ? "" : "ORDER BY rank, rowid DESC LIMIT ?";
       sql = `SELECT ${eventCols("e")} FROM (SELECT rowid AS r, rank AS rk FROM events_fts WHERE events_fts MATCH ? ${page}) f
         JOIN events e ON e.rowid = f.r ${sessions} ${cond} ORDER BY f.rk, e.ts DESC LIMIT ?`;
       args = where.length ? [fts, ...params, limit] : [fts, limit, limit];
@@ -1269,7 +1307,7 @@ export class SqliteIndexStore implements IndexStore {
       params.push(...c.params);
     }
     const limit = opts.limit ?? 50;
-    const sql = `SELECT ${eventCols("e")} FROM (SELECT rowid AS r FROM events WHERE kind IN (${sqlList(SEARCHABLE_KINDS)}) ORDER BY rowid DESC LIMIT ?) w
+    const sql = `SELECT ${eventCols("e")} FROM (SELECT rowid AS r FROM events WHERE ${searchableRows("events")} ORDER BY rowid DESC LIMIT ?) w
       JOIN events e ON e.rowid = w.r ${q?.root ? "LEFT JOIN sessions s ON s.id = e.session_id" : ""} WHERE ${where.join(" AND ")} ORDER BY e.rowid DESC`;
     const hits: SearchHit[] = [];
     for (const r of this.db.prepare(sql).iterate(this.opts.searchSymbolScanEvents ?? SEARCH_SYMBOL_SCAN_EVENTS, ...params) as Iterable<Row>) {
@@ -1732,6 +1770,23 @@ export class SqliteIndexStore implements IndexStore {
     }
   }
 
+  /** See IndexStore.gcEventBlobs: the scan core/gc.ts does with listEvents, in SQL (no event is parsed in JS). */
+  async gcEventBlobs(cutoff: number | undefined): Promise<{ expired: BlobRef[]; pagedRequests: BlobRef[] }> {
+    const stored = "e.session_id IN (SELECT id FROM sessions)";
+    const refs = (sql: string, ...params: (string | number | null)[]): BlobRef[] =>
+      (this.db.prepare(sql).all(...params) as Row[]).map((r) => r.ref).filter((r): r is BlobRef => typeof r === "string");
+    const pagedRequests = refs(`SELECT DISTINCT e.payload->>'$.requestRef' AS ref FROM events e
+      WHERE (? IS NOT NULL OR e.kind = 'llm.call') AND instr(e.payload, '"requestPaged"') > 0
+        AND json_type(e.payload, '$.requestPaged') = 'true' AND json_type(e.payload, '$.requestRef') = 'text' AND ${stored}`, cutoff ?? null);
+    if (cutoff === undefined) return { expired: [], pagedRequests };
+    const expired = refs(`SELECT j.value AS ref FROM events e, json_each(e.blobs) j
+        WHERE e.blobs IS NOT NULL AND e.kind = 'tool.end' AND e.ts < ?1 AND ${stored}
+      EXCEPT
+      SELECT j.value FROM events e, json_each(e.blobs) j
+        WHERE e.blobs IS NOT NULL AND (e.kind <> 'tool.end' OR e.ts >= ?1) AND ${stored}`, cutoff);
+    return { expired, pagedRequests };
+  }
+
   async compact(): Promise<void> {
     this.slimEvents();
     this.db.exec("INSERT INTO events_fts(events_fts) VALUES ('optimize')");
@@ -1832,8 +1887,8 @@ export class SqliteIndexStore implements IndexStore {
   private dropSessions(ids: string[]): { sessions: number; events: number } {
     let sessions = 0;
     let events = 0;
-    // Contentless FTS with contentless_delete: entries go by rowid. Only searchable kinds can have one.
-    const ftsDelete = this.stmt(`DELETE FROM events_fts WHERE rowid IN (SELECT rowid FROM events WHERE session_id = ? AND kind IN (${sqlList(SEARCHABLE_KINDS)}))`);
+    // Contentless FTS with contentless_delete: entries go by rowid. Only searchable rows can have one.
+    const ftsDelete = this.stmt(`DELETE FROM events_fts WHERE rowid IN (SELECT rowid FROM events WHERE session_id = ? AND ${searchableRows("events")})`);
     const delEvents = this.stmt("DELETE FROM events WHERE session_id = ?");
     const delScores = this.stmt("DELETE FROM scores WHERE session_id = ?");
     const delSession = this.stmt("DELETE FROM sessions WHERE id = ?");

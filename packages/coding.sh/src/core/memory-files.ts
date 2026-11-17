@@ -5,7 +5,7 @@
 // AGENTS.md a few levels below. Then auditMemory over what the sessions' events
 // say: from the session rows (stats.memoryUse) when every stored session was
 // folded by this build, else from the events themselves.
-import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
+import { closeSync, openSync, readdirSync, readSync, statSync, type Dirent } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentId } from "../schema/index.ts";
@@ -54,37 +54,66 @@ function names(dir: string): string[] {
   }
 }
 
+/** A dir's entries with their types, so only links and unknown types cost a stat. */
+function entries(dir: string): Dirent[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+}
+
+/** Whether an entry is a dir or a file, following links (a Windows junction is a link). */
+function kind(dir: string, e: Dirent): "dir" | "file" | undefined {
+  if (e.isDirectory()) return "dir";
+  if (e.isFile()) return "file";
+  // A link, or a type the file system didn't report (every check false): stat it.
+  if (!e.isSymbolicLink() && (e.isBlockDevice() || e.isCharacterDevice() || e.isFIFO() || e.isSocket())) return undefined;
+  const st = stat(join(dir, e.name));
+  return st?.isDirectory() ? "dir" : st?.isFile() ? "file" : undefined;
+}
+
 /** Files under a dir matching `test`, at most `depth` levels down. */
 function walk(dir: string, test: (rel: string) => boolean, depth: number, out: string[], rel = ""): void {
   if (depth < 0) return;
-  for (const n of names(dir)) {
-    const p = join(dir, n);
-    const r = rel ? `${rel}/${n}` : n;
-    const st = stat(p);
-    if (st?.isDirectory()) walk(p, test, depth - 1, out, r);
-    else if (st?.isFile() && test(r)) out.push(p);
+  for (const e of entries(dir)) {
+    const p = join(dir, e.name);
+    const r = rel ? `${rel}/${e.name}` : e.name;
+    const k = kind(dir, e);
+    if (k === "dir") walk(p, test, depth - 1, out, r);
+    else if (k === "file" && test(r)) out.push(p);
   }
 }
 
 /** `skills/<name>/SKILL.md` under a skills dir. */
 const skillFiles = (dir: string): string[] => names(dir).map((n) => join(dir, n, "SKILL.md")).filter(isFile);
 
-/** CLAUDE.md / AGENTS.md below a dir (not in it), skipping dot dirs and build output. */
+const NESTED_NAMES = ["CLAUDE.md", "AGENTS.md"];
+/** Names compare as the file system does: case-blind on Windows and macOS. */
+const sameName = process.platform === "win32" || process.platform === "darwin" ? (a: string, b: string) => a.toLowerCase() === b.toLowerCase() : (a: string, b: string) => a === b;
+
+/**
+ * CLAUDE.md / AGENTS.md below a dir (not in it), skipping dot dirs and build output. Breadth first, so the
+ * cap drops the deepest dirs. A dir it lists is checked from its own listing; a dir below the depth limit
+ * costs a stat per name, and counts toward the cap too: a session can run in a home or temp dir with
+ * thousands of subdirs.
+ */
 function nested(root: string): string[] {
   const out: string[] = [];
-  let visited = 0;
-  const go = (dir: string, depth: number) => {
-    if (depth > NESTED_DEPTH || visited >= NESTED_DIR_CAP) return;
-    visited++;
-    for (const n of names(dir)) {
-      if (n.startsWith(".") || SKIP_DIRS.has(n)) continue;
-      const p = join(dir, n);
-      if (!isDir(p)) continue;
-      for (const f of ["CLAUDE.md", "AGENTS.md"]) if (isFile(join(p, f))) out.push(join(p, f));
-      go(p, depth + 1);
+  const queue: { dir: string; depth: number }[] = [{ dir: root, depth: 1 }];
+  for (let i = 0; i < queue.length && i < NESTED_DIR_CAP; i++) {
+    const { dir, depth } = queue[i]!;
+    if (depth > NESTED_DEPTH) {
+      for (const f of NESTED_NAMES) if (isFile(join(dir, f))) out.push(join(dir, f));
+      continue;
     }
-  };
-  go(root, 1);
+    const list = entries(dir);
+    if (i > 0) for (const f of NESTED_NAMES) if (list.some((e) => sameName(e.name, f) && kind(dir, e) === "file")) out.push(join(dir, f));
+    for (const e of list) {
+      if (e.name.startsWith(".") || SKIP_DIRS.has(e.name)) continue;
+      if (kind(dir, e) === "dir") queue.push({ dir: join(dir, e.name), depth: depth + 1 });
+    }
+  }
   return out;
 }
 

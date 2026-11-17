@@ -24,5 +24,6 @@ test("without a build a dist test skips", () => {
 test("CODING_SH_REQUIRE_DIST=1 with no build fails with \"no build\"", () => {
   const r = run({ DOCS_DIST: "/nonexistent/dist", CODING_SH_REQUIRE_DIST: "1" });
   assert.notEqual(r.status, 0, "the tests should have failed");
-  assert.match(r.stdout, /no build in \/nonexistent\/dist\/docs/);
+  // The path is joined with the platform's separator: \nonexistent\dist\docs on Windows.
+  assert.match(r.stdout, /no build in [\\/]nonexistent[\\/]dist[\\/]docs/);
 });

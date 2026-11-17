@@ -149,7 +149,7 @@ as code text.
 | Symptom | Check |
 |---|---|
 | No commits listed | No captured session in this repo, or no agent lines since `--since`. Run `coding.sh sessions --repo .`, then try `--all`. |
-| A commit you know an agent wrote shows `0/N` | Redaction changed the stored content, or the session had neither an end snapshot nor edit tool calls. Live capture takes the end snapshot when ingest runs soon after the turn ends. |
+| A commit you know an agent wrote shows `0/N` | Redaction changed the stored content, or the session had neither an end snapshot nor edit tool calls. Live capture takes the end snapshot when ingest runs within 10 minutes of the turn's end. A read command leaves it to the background ingest it starts. |
 | A line is credited twice | Commits before `--since` are not read, so a line one of them used can be credited again. Leave `--since` at its default. |
 | A merge commit shows no lines | A merge commit's own changes (conflict resolutions) are not attributed. |
 | A file a person wrote is credited | A session that ran a shell or subagent call can be credited a file written by hand before its end snapshot, at lower confidence. |

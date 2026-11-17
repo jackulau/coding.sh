@@ -2,9 +2,10 @@
 //
 // A repo-level file is untrusted (it arrives with `git clone`), so it may only
 // touch capture/snapshot settings, and only in ways that keep or add privacy:
-// redactors and patterns are unioned, never removed. It can never add sinks or
+// redactors and patterns are unioned, never removed, and its patterns are literal text. It can never add sinks or
 // move the stores, which would let a repository exfiltrate your sessions.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir, userInfo } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { Config, SinkConfig } from "./types.ts";
 import { PRICE_TIERS, type Price, type Prices, type Rates, type TierRates } from "./pricing.ts";
@@ -103,16 +104,35 @@ export function resolveRepoConfig(base: Config, cwd: string, env: NodeJS.Process
   return applyRepoConfig(base, readToml(file), file);
 }
 
-/** Finds `<dir>/.coding.sh/config.toml` walking up from cwd, stopping at the repo root or $HOME. */
+/**
+ * The homes the repo search stops at: $HOME, os.homedir(), and the OS account's home from the
+ * user database. On Windows os.homedir() follows USERPROFILE, so with it moved (a test home) only
+ * the user database still names the account's home, and the temp dir sits under it.
+ */
+export function searchStops(env: NodeJS.ProcessEnv = process.env): Set<string> {
+  const homes = new Set([resolve(expandHome("~", env)), resolve(homedir())]);
+  try {
+    homes.add(resolve(userInfo().homedir));
+  } catch {
+    // No user database entry (a container's arbitrary uid): the other two stand.
+  }
+  return homes;
+}
+
+/**
+ * Finds `<dir>/.coding.sh/config.toml` walking up from cwd, stopping at the repo
+ * root or a home (searchStops): a home's .coding.sh/config.toml is a user config.
+ */
 export function findRepoConfig(cwd: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const home = resolve(expandHome("~", env));
+  const homes = searchStops(env);
   const userConfig = resolve(paths(env).config);
   let dir = resolve(cwd);
   for (;;) {
+    // <home>/.coding.sh/config.toml is a user config, not a repo override.
+    if (homes.has(dir)) return undefined;
     const candidate = join(dir, ".coding.sh", "config.toml");
-    // ~/.coding.sh/config.toml is the user config, not a repo override.
     if (candidate !== userConfig && existsSync(candidate)) return candidate;
-    if (dir === home || existsSync(join(dir, ".git"))) return undefined;
+    if (existsSync(join(dir, ".git"))) return undefined;
     const parent = dirname(dir);
     if (parent === dir) return undefined;
     dir = parent;
@@ -374,7 +394,7 @@ function applyCapture(out: Config, r: Reader, how: "replace" | "union", file: st
       throw new ConfigError(`capture.redact: unknown redactor ${JSON.stringify(name)} (expected ${REDACTORS.map((r) => JSON.stringify(r)).join(", ")})`, file);
     }
   }
-  for (const [i, src] of (patterns ?? []).entries()) {
+  for (const [i, src] of (how === "replace" ? (patterns ?? []) : []).entries()) {
     try {
       new RegExp(src);
     } catch (err) {
@@ -392,10 +412,18 @@ function applyCapture(out: Config, r: Reader, how: "replace" | "union", file: st
     // Repo overrides may only tighten privacy.
     if (mode === "metadata") out.capture.mode = "metadata";
     out.capture.redact = union(out.capture.redact, redact?.filter((x) => x !== "none"));
-    out.capture.redactPatterns = union(out.capture.redactPatterns, patterns);
+    // A repo's patterns are literal text: a regular expression from a cloned repo could take
+    // forever to run on every event. Regular expressions come from the user's own config. An
+    // empty one would match everywhere, so it is dropped.
+    out.capture.redactPatterns = union(out.capture.redactPatterns, patterns?.filter((p) => p !== "").map(literalPattern));
     out.capture.exclude = union(out.capture.exclude, exclude);
     if (maxInline !== undefined) out.capture.maxInlineBytes = Math.min(out.capture.maxInlineBytes, maxInline);
   }
+}
+
+/** A regular expression that matches `s` as plain text. */
+function literalPattern(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
 }
 
 function applySnapshot(out: Config, r: Reader): void {

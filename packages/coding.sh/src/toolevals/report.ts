@@ -1,6 +1,7 @@
 // Plain-text rendering of tool-eval results (stdout of the CLI without --json).
 import { formatDuration } from "../runner/experiment.ts";
 import { CASE_KINDS } from "../datasets/types.ts";
+import { runOutcome } from "./compare.ts";
 import type { CompressReport, ContinuousMetric, SurfaceReport, TapRecord, ToolArmSummary, ToolCompareReport, TrialResult } from "./types.ts";
 
 export interface FormatOpts {
@@ -55,7 +56,16 @@ function errorsCell(a: ToolArmSummary, p: ReturnType<typeof painter>): string {
 /** The line under an arm table when trials failed on infrastructure. */
 function infraLine(arms: readonly ToolArmSummary[], p: ReturnType<typeof painter>): string {
   const n = arms.reduce((s, a) => s + (a.infra ?? 0), 0);
-  return n ? `${p.dim(`infra: ${n} trial(s) failed on infrastructure (a refused login, a failed setup, rate limits) after their retries: outcome unknown, left out of the counts and rates`)}\n` : "";
+  return n ? `${p.dim(`infra: ${n} trial(s) failed on infrastructure (a refused login, a failed setup, rate limits, a network error such as a refused connection) after their retries: outcome unknown, left out of the counts and rates`)}\n` : "";
+}
+
+/** The line for a run that measured nothing (`void`) or only part of it (`incomplete`). */
+export function outcomeLine(outcome: "void" | "incomplete" | undefined, p: ReturnType<typeof painter>): string {
+  if (outcome === "void") return `${p.bold("void: every trial failed on infrastructure, so this run measured nothing and is no quality verdict")}; fix the cause (a refused connection to the model URL, a bad key, a failed setup) and run again
+`;
+  if (outcome === "incomplete") return `${p.bold("incomplete: some trials failed on infrastructure after their retries")}; rates cover the other trials only; run again to fill them
+`;
+  return "";
 }
 
 export function formatArms(arms: readonly ToolArmSummary[], o: FormatOpts = {}): string {
@@ -67,13 +77,13 @@ export function formatArms(arms: readonly ToolArmSummary[], o: FormatOpts = {}):
       const v = a.verdicts ?? { passed: 0, failed: 0, tieBreaks: 0 };
       rows.push([a.arm, `${v.passed}/${v.passed + v.failed}`, String(a.trials), String(v.tieBreaks), errorsCell(a, p)]);
     }
-    return `${table(rows).join("\n")}\n${p.dim("adaptive, no CI: 2 trials per task, a 3rd when they disagree; a task fails at half or more failing")}\n${infraLine(arms, p)}`;
+    return `${table(rows).join("\n")}\n${p.dim("adaptive, no CI: 2 trials per task, a 3rd when they disagree; a task fails at half or more failing")}\n${infraLine(arms, p)}${outcomeLine(runOutcome(arms), p)}`;
   }
   const rows = [["arm", "passes", "success (95% CI)", "pass^k", "pass@k", "errors"].map(p.dim)];
   for (const a of arms) {
-    rows.push([a.arm, `${a.passes}/${a.trials}`, `${pct(a.passRate.p)} [${pct(a.passRate.lo)}, ${pct(a.passRate.hi)}]`, String(a.passAllK), String(a.passAnyK), errorsCell(a, p)]);
+    rows.push([a.arm, `${a.passes}/${a.trials}`, `${pct(a.passRate.p)} [${pct(a.passRate.lo)}, ${pct(a.passRate.hi)}]`, pct(a.passAllK), pct(a.passAnyK), errorsCell(a, p)]);
   }
-  return `${table(rows).join("\n")}\n${infraLine(arms, p)}${armExtras(arms, p)}`;
+  return `${table(rows).join("\n")}\n${infraLine(arms, p)}${outcomeLine(runOutcome(arms), p)}${armExtras(arms, p)}`;
 }
 
 /** Cost under both pricing models (when an arm had cache tokens) and output cuts (when an arm had any). */

@@ -19,6 +19,7 @@ import {
   jsonPathGrader,
   jsonSchemaGrader,
   numericGrader,
+  objectiveGrader,
   progressGrader,
   regexGrader,
   similarityGrader,
@@ -30,6 +31,7 @@ import {
   type JsonPathSpec,
   type JsonSchemaSpec,
   type NumericSpec,
+  type ObjectiveSpec,
   type ProgressSpec,
   type RegexSpec,
   type SimilaritySpec,
@@ -131,6 +133,7 @@ export type GraderSpec =
   | JsonSchemaSpec
   | JsonPathSpec
   | NumericSpec
+  | ObjectiveSpec<GraderSpec>
   | ProgressSpec
   | ExecutabilitySpec
   | SimilaritySpec
@@ -206,6 +209,12 @@ export async function createGrader(spec: GraderSpec, deps: GraderDeps = {}): Pro
       return jsonPathGrader(rest as Omit<JsonPathSpec, "kind">);
     case "numeric":
       return numericGrader(rest as Omit<NumericSpec, "kind">);
+    case "objective": {
+      const { gate, ...o } = rest as Omit<ObjectiveSpec<GraderSpec>, "kind">;
+      const spec: Parameters<typeof objectiveGrader>[0] = { ...o };
+      if (gate) spec.gate = await createGrader(gate, deps);
+      return objectiveGrader(spec);
+    }
     case "progress":
       return progressGrader(rest as Omit<ProgressSpec, "kind">);
     case "executability":

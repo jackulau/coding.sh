@@ -349,6 +349,19 @@ describe("initSuite: a session diff that changes the verifier's own tests", () =
     assert.equal(existsSync(join(r.dir, "..", "..", dir!, "reference.patch")), false);
   });
 
+  it("names two tasks from the same prompt apart, and records the agent T3 Code ran", async () => {
+    const w = await world({ one: { "src/add.js": FIXED["src/add.js"] as string } });
+    for (const id of ["a", "b"]) {
+      await w.index.upsertSession({ ...(await w.index.getSession("one"))!, id, agent: "t3code", provider: "claude-code", endSnapshot: "end-one" });
+      await w.index.putEvents([{ id: `${id}-1`, v: 0, sessionId: id, ts: 1001, agent: "claude-code", kind: "session.start", payload: {}, repo: { root: ROOT, head: "abc", snapshot: "start" } }, { id: `${id}-2`, v: 0, sessionId: id, ts: 1002, agent: "claude-code", kind: "user.message", payload: { text: "fix add in sum" } }]);
+    }
+    const r = await initSuite({ name: "dup", root: await project(), source: "sessions", sessionIds: ["a", "b"], verifier: VERIFIER }, { ...w, now: 12_000 });
+    const names = r.tasks!.map((t) => t.name);
+    assert.equal(new Set(names).size, 2, names.join(","));
+    assert.equal(names[1], "fix-add-in-sum-2");
+    assert.equal(r.spec.agent, "claude-code");
+  });
+
   it("does the same without --validate, and for a deleted test", async () => {
     const w = await world({ tamper: { "test/add.test.js": "console.log('ok');\n" } });
     w.git.add("end-gone", { ...BUGGY, "src/add.js": FIXED["src/add.js"] as string });

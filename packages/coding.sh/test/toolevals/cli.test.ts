@@ -304,7 +304,7 @@ describe("toolevals CLI", () => {
       assert.equal(doc.trials, 8);
       const arms = doc.arms as { arm: string; passAllK: number; tasks: number }[];
       assert.deepEqual(arms.map((a) => a.arm).sort(), ["base@model:anthropic/fake", "base@model:openai-chat/fake"]);
-      for (const a of arms) assert.equal(a.passAllK, 2, JSON.stringify(a));
+      for (const a of arms) assert.equal(a.passAllK, 1, JSON.stringify(a));
 
       const cmp = cli(h, ["toolevals", "compare", String(doc.experimentId), "--baseline", "base@model:anthropic/fake", "--candidate", "base@model:openai-chat/fake", "--json"]);
       assert.equal(cmp.status, 0, cmp.stderr);

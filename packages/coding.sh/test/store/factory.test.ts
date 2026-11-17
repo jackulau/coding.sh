@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { after, describe, it } from "node:test";
 import { defaultConfig } from "../../src/core/config.ts";
 import type { Config } from "../../src/core/types.ts";
-import { fileUrlPath, openStores, parseStoreUrl, registerBlobStore, registerIndexStore, registerSink, storePluginPackage } from "../../src/store/factory.ts";
+import { fileUrlPath, msysPath, openStores, parseStoreUrl, registerBlobStore, registerIndexStore, registerSink, storePluginPackage } from "../../src/store/factory.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
+import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 
 const root = mkdtempSync(join(tmpdir(), "csh-factory-"));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -87,5 +88,49 @@ describe("fileUrlPath", () => {
     assert.equal(fileUrlPath(`coding:secret@/${file}`), resolve(file));
     assert.equal(fileUrlPath(file), resolve(file));
     assert.equal(fileUrlPath(parseStoreUrl(pathToFileURL(file).href).rest), resolve(file), "a file:// URL, as config set store.blobs writes it");
+  });
+});
+
+describe("store URL paths under Git Bash on Windows", () => {
+  const TEMP = String.raw`C:\Users\u\AppData\Local\Temp`;
+  const gitBash = { platform: "win32" as const, env: { MSYSTEM: "MINGW64" }, tmp: TEMP };
+  const rest = (url: string) => parseStoreUrl(url).rest;
+
+  it("reads /tmp as the shell's /tmp, the user's temp dir, and /c/… as the C: drive", () => {
+    assert.equal(msysPath("/tmp/x.db", gitBash), String.raw`${TEMP}\x.db`);
+    assert.equal(msysPath("/tmp", gitBash), TEMP);
+    assert.equal(msysPath("/c/data/index.db", gitBash), String.raw`C:\data\index.db`);
+    assert.equal(msysPath("/d", gitBash), "D:\\");
+    assert.equal(fileUrlPath(rest("sqlite:///tmp/x.db"), gitBash), String.raw`${TEMP}\x.db`);
+    assert.equal(fileUrlPath(rest("file:///tmp/blobs"), gitBash), String.raw`${TEMP}\blobs`);
+    assert.equal(fileUrlPath(rest("sqlite:///c/data/index.db"), gitBash), String.raw`C:\data\index.db`);
+    assert.equal(fileUrlPath(rest("sqlite://u:secret@/tmp/x.db"), gitBash), String.raw`${TEMP}\x.db`);
+  });
+
+  it("leaves Windows paths, other shell paths and lookalikes as they were", () => {
+    assert.equal(fileUrlPath(rest("sqlite:///C:/data/index.db"), gitBash), String.raw`C:\data\index.db`);
+    assert.equal(fileUrlPath(rest(String.raw`sqlite://C:\data\index.db`), gitBash), String.raw`C:\data\index.db`);
+    for (const p of ["/tmpfiles/x.db", "/temp/x.db", "/cc/x.db", "/usr/share/x.db", "relative/x.db", String.raw`C:\tmp\x.db`]) assert.equal(msysPath(p, gitBash), p, p);
+  });
+
+  it("maps nothing outside an MSYS shell or off Windows", () => {
+    const powershell = { platform: "win32" as const, env: {}, tmp: TEMP };
+    assert.equal(msysPath("/tmp/x.db", powershell), "/tmp/x.db");
+    assert.match(fileUrlPath(rest("sqlite:///tmp/x.db"), powershell), /^(?:[A-Za-z]:)?\\tmp\\x\.db$/, "the current drive's \\tmp, as before");
+    for (const platform of ["linux", "darwin"] as const) {
+      const host = { platform, env: { MSYSTEM: "MINGW64" }, tmp: "/var/tmp" };
+      assert.equal(msysPath("/tmp/x.db", host), "/tmp/x.db");
+      assert.equal(fileUrlPath(rest("sqlite:///tmp/x.db"), host), "/tmp/x.db");
+      assert.equal(fileUrlPath(rest("sqlite:///c/x.db"), host), "/c/x.db");
+    }
+  });
+});
+
+describe("SqliteIndexStore.open", () => {
+  it("names the absolute path it tried when the index can't be opened", async () => {
+    // A directory where the database file should be: SQLite alone says "unable to open database file".
+    const dir = join(root, "a-dir.db");
+    mkdirSync(dir, { recursive: true });
+    await assert.rejects(SqliteIndexStore.open(dir), (e: Error) => e.message.includes(dir));
   });
 });

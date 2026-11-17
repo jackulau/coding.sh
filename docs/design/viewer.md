@@ -1,8 +1,12 @@
 # Viewer design: sessions, query, benches
 
-Status: partly built. V-1…V-6 are done (non-blocking ingest, facet columns, the query language, `--where` and facets,
-session list v2, the events tab); V-7…V-13 are open. Build order: tasks/research-queue.md, "Round 2 additions (viewer)".
-Scope: `coding.sh ui` (packages/coding.sh/src/viewer). The site sample (apps/site Viewer.astro) mirrors it.
+Status (checked against the code on 2026-11-17): partly built. V-1…V-6 are done (non-blocking ingest, facet columns,
+the query language, `--where` and facets, session list v2, the events tab). Part of V-8 is built: the session page
+has turns, turn and quiet folding, the failure minimap, failure and turn jumps, find over loaded steps, timing bars,
+a Chat view and one key map. The server has the V-7 `/outline` and `/rows` endpoints; the page reads `/outline` for
+phases and derails and does not read `/rows`. §10 lists what shipped and what is open. Build order:
+tasks/research-queue.md, "Round 2 additions (viewer)".
+Scope: `coding.sh ui` (packages/coding.sh/src/viewer). The site no longer has a viewer sample.
 
 **Decisions**
 
@@ -352,7 +356,7 @@ Target: every facet/autocomplete call < 100 ms warm, < 300 ms cold.
    Index `(status, started_at)`, `(project, started_at)`; at 3.6k rows indexes serve sort keys only.
 2. **session_facets(key, value, session_id)**, `WITHOUT ROWID`, PK in that order: flags, tools and MCP servers used,
    subagent types, models, labels, tags, has:*; rewritten on upsert. Counts: `WHERE key=? AND session_id IN
-   temp_match GROUP BY value` (~5 ms). Replaces `json_each(flags)` (store/sqlite.ts:453).
+   temp_match GROUP BY value` (~5 ms). Replaces `json_each(flags)` (store/sqlite.ts:722).
 3. **events**: generated stored columns `mcp_server, tokens_in, cost_usd, is_error`; covering
    `events_facet(kind, tool, ok, ts, session_id)` and `events_dur(kind, duration_ms)`. Event-level queries are always
    bounded (Events tab defaults to `since:7d`, or a session set), keyset-paged on `(ts DESC, id)`; counts > 10k show
@@ -404,24 +408,58 @@ NULL`. The compiled `error` clause is `(e.error IS NOT NULL AND e.error LIKE …
 when the query repeats its condition. `sessions --where 'event.duration>60s'` and `--where 'error:*timeout*'` on a
 1.4M-event store went from 840 ms and 2,733 ms to under 5 ms each; text stays the slow key.
 
-## 10. Gaps against the current code
+## 10. Status against the code
 
-Paths under packages/coding.sh/src.
+Checked on 2026-11-17. Paths are under packages/coding.sh/src, and `index.html` is viewer/ui/index.html. Line numbers
+drift as the file changes.
 
-| area | gap | where |
+**Session page: what shipped**
+
+| area | what the code does | where |
 |---|---|---|
-| list API | no top-level default or `childCount` (item 16); filters only agent/flag/repo; search is a separate path filtered only by agent | viewer/server.ts:419–440, core/types.ts:36 |
-| data holes | Repo filter never renders (repo_root NULL); cost always blank; duration blank for 3,593 sessions | ui/index.html:740–770, 1092–1135 |
-| events API | offset paging, 5k default / 20k max, full payloads; the 154k session shows "first 5,000" | server.ts:296–304, ui/index.html:1077 |
-| timeline | `buildTimeline` is flat: ignores parentId/subagentId, no `llm.call` in KIND_LABEL, turns only as a separator; no waterfall, folding, minimap, failure jump, find | ui/index.html:934–1090 |
-| render | one DOM button per step (no virtualization); blobs up to 2 MB into one `<pre>` | ui/index.html:1030–1045, 1216–1250 |
-| keys | only j/k, Home/End, Esc, `/` | ui/index.html:861–889, 1081–1088 |
-| experiments | pass bars per bundle; no verdict, CI, paired table or attempt-session links (`RunResult.sessionId` unused); `ExperimentResult` not shown at all | ui/index.html:1317–1395, server.ts:350–360 |
-| store | stats/flags as JSON; single-column `events_kind`; no facet, turn or metric tables | store/sqlite.ts:83–118, 453 |
-| CLI | `sessions`: `--agent --repo --since --subagents`; `search`: text + `--agent`; no `--where`, facets, events | cli/registry.ts:136–165 |
-| MCP | `search` takes `query` + `agent` only; no `facets`/`where`; `experiment_compare` naming ≠ bench | mcp/tools.ts:284–305, 494 |
-| ingest | blocking first ingest; ingest shares the request connection | cli/commands/ui.ts:14–29 |
-| marketing | the site sample already shows a nested waterfall with TTFT the real viewer can't | apps/site/src/components/Viewer.astro:158–215 |
+| layout | Two columns: the step list and a detail pane. There is no turn rail. | index.html:698–701, 4395 |
+| loading | Events load in pages of 5,000 from `/api/sessions/:id/events` (offset paging, at most 20,000 a page); "Load more" fetches the next page. | index.html:3812, 4844; viewer/server.ts:682–689 |
+| virtual list | Rows have a fixed height; only the rows in view plus 40 above and below are in the DOM. | index.html:3819–3821, 4431–4556 |
+| turns | A user prompt starts a turn. Its row shows "Turn N", the prompt's first line and the time into the session. `}` and `{` move between turns and stop at the first and last. | index.html:4197–4239, 4473–4519, 4778–4784 |
+| turn folding | In a session of more than three turns, each finished turn folds to one row with its duration, tool calls, errors and what it did; the row has no timing bar, and on a phone it shows only the turn number, prompt and errors. A turn with a failure, the last turn and a turn with no prompt stay open. Enter or → opens a turn; Enter on an open turn's row, or ←, folds it. | index.html:4284–4287, 4435–4472, 4646 |
+| quiet folding | Six or more successful reads, searches and model calls in a row inside one turn keep their first two steps and the last; the rest fold into one row with per-tool counts. Edits and failures end a run. `z` turns folding off and on, saved as `csh-fold`. | index.html:3821, 4297–4335, 4818 |
+| failures | `]` and `[` move between failing steps and wrap at the ends. `F` and the "First failure" button go to the first one. A session with a failure opens on its first failure; one without opens on its first prompt. | index.html:4099, 4342, 4761–4776 |
+| minimap | A strip beside the list marks each turn start, failure and derail; a click jumps there. It is hidden when every row fits. | index.html:4558–4592 |
+| find | `/` matches loaded steps by label and tool input; `n` and `N` move between matches, and "Only matches" hides the rest. | index.html:4297–4301, 4827–4841 |
+| deep links | `#/s/<id>/<event>` selects a step and opens any fold around it. `?view=chat` or `?view=steps` picks the view, `?where=` makes `n` and `N` step through the query's matches (the newest 200), and `?step=` opens replay. | index.html:2129–2149, 2673, 4635–4645 |
+| timing bars | `w` shows a bar per step on its own turn's time scale. | index.html:4497–4507, 4811 |
+| Chat view | `v` shows every prompt and reply in full (up to 400 lines each), with one button per turn that goes back to its steps. There `}` and `{` move between prompts and `j` and `k` between messages. | index.html:4682–4760 |
+| text | Prompts and replies render a markdown subset through `h()`. Tool output has terminal escape codes removed for display. Blobs load the first 2 MB, with "Load all" for the rest. | index.html:5706–5838, 6192–6221 |
+| tool detail | Per-tool sections, JSON trees, and line and word diffs for edits. | index.html:5868, 5947–5996, 6107–6172 |
+| live tail | A running session fetches new events every 4 s and renders only the rows in view; it reads the outline again at most every 30 s. | index.html:4870–4950 |
+| keys | One `KEYMAP` table drives the key handler, the `?` sheet and the hint bar. The command menu has the session commands too. | index.html:2161–2228, 2305–2400 |
+| replay | `R` plays the session step by step, with changed files and a fork of a step's model call. | index.html:4964–5310 |
+
+Elsewhere in the viewer: the session list has the query bar, facets, a time histogram, subagent rows under their
+parent, rows that are links, and the Events tab (index.html:2778, 3411–3537). The top bar links to Sessions, Explore,
+Experiments, Benchmarks and Workflows (index.html:1608–1612). The theme follows the system until the user picks one
+(index.html:97, 2075–2091). The Explore, Experiments (with a compare page and a verdict line), Benchmarks, Workflows
+and Playground pages exist; this section does not check them against V-10…V-12.
+
+The gaps this section listed before V-1…V-6 in the list API, store, CLI, MCP and ingest are closed. Two remain: the
+events API still pages by offset (viewer/server.ts:682–689), and MCP still names its compare tool
+`experiment_compare` (mcp/tools.ts:1040).
+
+**Session page: still open**
+
+- Subagent cards. A subagent shows as "Subagent starts" and "Subagent ends" steps, and the pane links to the child
+  session (index.html:4020–4025, 6409–6421). Nothing opens in place.
+- Compaction divider. `context.compact` is an ordinary muted "Context compacted" step (index.html:4042), not a
+  full-width divider with tokens before and after.
+- Context-fill track per turn. Not built.
+- Whole-session find. Find covers loaded steps only; nothing searches the server.
+- Notes and judge scores on a step. Not shown. The pass and fail labels (`p`, `f`) are on the session.
+- Saved views and a column chooser in the session list. Not built.
+- Pane resizer. The two columns have fixed proportions (index.html:698–701).
+- Trajectory compare (V-13). Not built. The experiments compare page compares two experiments, not two sessions.
+- Files tab (V-9). Not built. Replay shows the files a step changed.
+- Other parts of §6 that are not built: the turn rail, `J` and `K` (only `}` and `{`), inspector tabs `1`–`4`, the
+  `o`, `y` and `e` keys, blobs loaded in 64 KB steps, and the page reading `/rows`.
 
 ## 11. Build order
 

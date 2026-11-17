@@ -266,6 +266,8 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
     await open(sessionHash(PARENT), true);
     try {
       const m = await page.eval(`(() => {
+        // The eval command sits behind More details on a phone.
+        document.querySelector('.facts-more').click();
         const code = document.querySelector('.make-eval .cmd code');
         return { scrollWidth: document.documentElement.scrollWidth, vw: window.innerWidth,
           head: document.querySelector('.detail-head').getBoundingClientRect().right,
@@ -327,9 +329,13 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
       const facts = () => page.eval("[...document.querySelectorAll('.facts [data-fact]')].filter((e) => e.getClientRects().length).map((e) => e.dataset.fact)");
       const short: string[] = await facts();
       assert.ok(!short.includes("tokens") && short.includes("duration"), "tokens wait behind More details: " + short.join(", "));
+      // So do the Pass and Fail buttons and the eval command.
+      const actions = "document.querySelector('.detail-head .actions').checkVisibility()";
+      assert.equal(await page.eval(actions), false, "the outcome and eval command wait behind More details");
       await page.eval("document.querySelector('.facts-more').click()");
       const all: string[] = await facts();
       assert.ok(all.length > short.length, "More details shows the rest: " + all.join(", "));
+      assert.equal(await page.eval(actions), true, "More details shows the outcome and eval command");
       assert.equal(await page.eval("document.querySelector('.facts-more').getAttribute('aria-expanded')"), "true");
       await page.eval("document.querySelector('.facts-more').click()");
 
@@ -511,6 +517,9 @@ describe("viewer UI: sessions list state", { skip: chrome ? false : "no Chrome/C
         await page.waitFor("document.querySelector('[data-filter=scope] [aria-pressed=true]')?.textContent.startsWith('Include') && document.querySelector('[role=listbox]')", "scope all");
         const rows: string[] = await page.eval(titles);
         assert.equal(rows.filter((t) => t === "CHILD").length, 1, JSON.stringify(rows));
+        // The header counts the child once: two rows are one session and one subagent, as in the top-level scope.
+        await page.waitFor("document.querySelector('.view-tabs .count')?.textContent === '2'", "scope all stats");
+        assert.deepEqual(await page.eval("[...document.querySelectorAll('.fact-line > span')].slice(0, 2).map((s) => s.textContent)"), ["1 session", "+ 1 subagent"]);
       },
     );
   });
@@ -798,7 +807,7 @@ describe("viewer UI: timeline, inspector and compare", { skip: chrome ? false : 
     }
   });
 
-  test("timeline: quiet steps fold, ] jumps to failures, paths read relative to the repo", async () => {
+  test("timeline: quiet steps fold, the page opens on the first failure and ] jumps to the next, paths read relative to the repo", async () => {
     await open("#/s/" + WORK);
     try {
       await page.waitFor(selected, "steps");
@@ -806,8 +815,7 @@ describe("viewer UI: timeline, inspector and compare", { skip: chrome ? false : 
       assert.match(fold ?? "", /5 quiet steps/);
       assert.ok(await page.eval(`!!${stepWhere("src/file0.ts")}`), "relative path in the row");
       assert.equal(await page.eval(`!!${stepWhere("/work/api")}`), false, "no absolute repo path in rows");
-      // Failures: the failed command, then the rate-limited model call.
-      await key("]");
+      // Failures: the session opens on the failed command; ] goes on to the rate-limited model call.
       const first = await page.waitFor(`${selected}?.classList.contains('is-fail') && ${selected}.textContent`, "first failure");
       assert.match(first, /Bash/);
       assert.match(await page.eval("document.querySelector('.fail-nav').textContent"), /1 \/ 2 failures/);
@@ -1227,6 +1235,23 @@ describe("viewer UI: failed requests and the top bar", { skip: chrome ? false : 
       }
     });
   }
+
+  // Every page the router lists on its own is a tab, and the tab of the page shown is marked.
+  // (#/events is a tab of the sessions page; #/playground needs a call id.)
+  test("the top bar has a tab for every page, and marks the current one", async () => {
+    const page = await open(1280);
+    try {
+      const tabs = "[...document.querySelectorAll('.topbar nav a')].map((a) => [a.getAttribute('href'), a.getAttribute('aria-current')])";
+      assert.deepEqual((await page.eval(tabs)).map(([href]: string[]) => href), ["#/", "#/explore", "#/experiments", "#/benchmarks", "#/workflows"]);
+      for (const hash of ["#/workflows", "#/experiments", "#/benchmarks", "#/explore", "#/events", "#/"]) {
+        await page.eval(`location.hash = ${JSON.stringify(hash)}`);
+        const want = hash === "#/events" ? "#/" : hash;
+        await page.waitFor(`${tabs}.filter(([, c]) => c === 'page').map(([h]) => h).join() === ${JSON.stringify(want)}`, `${hash} marks ${want}`);
+      }
+    } finally {
+      await page.close();
+    }
+  });
 
   // Regression: between 641 and 700px the bar ran out of room and squeezed the theme button to 16px.
   for (const w of [320, 360, 390, 641, 700, 768, 1024]) {

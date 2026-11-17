@@ -21,6 +21,7 @@ import http2 from "node:http2";
 import { tmpdir } from "node:os";
 import { extname, join, resolve, sep } from "node:path";
 import { brotliCompressSync, constants as zc, gzipSync } from "node:zlib";
+import { isMain } from "../dogfood/lib/main.mjs";
 
 const TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -176,7 +177,7 @@ export async function serve(dirArg, opts = {}) {
   };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMain(import.meta.url)) {
   const [dir, port] = process.argv.slice(2);
   if (!dir) {
     console.error("usage: node scripts/perf/serve.mjs <built-site-dir> [port]");

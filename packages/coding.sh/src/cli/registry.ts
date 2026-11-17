@@ -71,7 +71,7 @@ const LIMIT = (d: number): FlagSpec => ({ name: "limit", short: "n", type: "numb
 const WHERE = (what: string): FlagSpec => ({ name: "where", type: "string", dashValue: true, value: "<QUERY>", desc: `Only ${what} matching a query, e.g. 'agent:codex cost>0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help)` });
 /** Help notes for the query language, generated from its key table. */
 const WHERE_NOTES: string[] = [
-  "--where: key:value clauses, AND by default; OR between clauses; ( ) to group; - to negate; a,b for either value; * as a wildcard in text; > >= < <= and a..b on numbers. Bare words search prompts, replies and tool calls (every word in one event).",
+  "--where: key:value clauses, AND by default; OR between clauses; ( ) to group; - to negate; a,b for either value; * as a wildcard in text; > >= < <= and a..b on numbers. Bare words search prompts, replies, tool calls and errors (every word in one event).",
   `Session keys: ${keyDocs().filter((k) => k.level === "session").map((k) => k.name).join(", ")}. Event keys (the session has a matching event; event keys in one group match the same event): ${keyDocs().filter((k) => k.level === "event").map((k) => k.name).join(", ")}. Also sort:-cost and limit:N. Full list with examples: https://coding.sh/docs/query.`,
 ];
 const GATEWAY_NAME: FlagSpec = { name: "gateway", type: "string", value: "<NAME>", choices: GATEWAY_IDS, desc: "Only this gateway" };
@@ -287,6 +287,7 @@ export const COMMANDS: CommandSpec[] = [
       "Rarely needed: read commands, the viewer and the MCP server ingest first, and the hook starts one when a session ends.",
       "After an upgrade, sessions stored by an older adapter parse are re-parsed in the background. --rebuild does it for every session now; a session whose transcript and spool lines are gone keeps its rows, minus duplicates, and one the adapter now reads as a copy of another stored session is removed.",
       "Run in the foreground, it also folds sessions that have events but no session row, and sessions tagged fold:error; doctor counts both.",
+      "Ctrl-C stops it at the next line: what was read stays stored, the lock is released and it exits 130 (with --json, outcome interrupted). Run it again to finish.",
     ],
     load: () => import("./commands/ingest.ts"),
   },
@@ -408,7 +409,7 @@ export const COMMANDS: CommandSpec[] = [
     notes: [
       "Routes: POST /v1/traces, /v1/logs, /v1/metrics (OTLP/HTTP), POST /v1/ingest (native), GET / and /api/* (viewer), /healthz, /readyz, /metrics.",
       "Precedence: flags > env > --config file > defaults. See docs/PRODUCTION.md for every setting.",
-      "A non-loopback bind needs an ingest key and a read key (or basic auth), or --insecure; on loopback with no keys, ingest is open to project default.",
+      "A non-loopback bind needs an ingest key and a read key (or basic auth), or --insecure; on loopback with no keys, ingest is open to project default, but only to requests that no proxy passed on. With trust_proxy set, a loopback bind needs keys too.",
       "Prints the URL (or one JSON document with --json) on stdout once ready; logs go to stderr. SIGTERM/SIGINT drain the queue (25s) and exit 0.",
     ],
     load: () => import("./commands/serve.ts"),
@@ -592,7 +593,7 @@ export const COMMANDS: CommandSpec[] = [
   {
     name: "search",
     group: "Explore",
-    summary: "Full-text search over prompts, replies and tool calls",
+    summary: "Full-text search over prompts, replies, tool calls and errors",
     args: [{ name: "text", desc: "Search text", required: true, variadic: true }],
     flags: [AGENT_ONE, LIMIT(20), { name: "project", type: "string", value: "<ID>", desc: "Only matches in this serve project (default: all)" }, WHERE("matches"), FRESH],
     examples: ["coding.sh search 'flaky test'", "coding.sh search migration --where 'agent:codex kind:tool.start'"],
@@ -1579,7 +1580,7 @@ export const COMMANDS: CommandSpec[] = [
           ...IMPROVE_FLAGS("30d", 5),
           { name: "watch", type: "boolean", desc: "Keep running and print a line when a change's verdict moves as new sessions arrive" },
           { name: "interval", type: "number", value: "<SECONDS>", desc: "With --watch: how often to re-check", default: "60" },
-          { name: "sessions", type: "boolean", desc: "List every session still flagged after each change, not just the newest 5" },
+          { name: "sessions", type: "boolean", desc: "List every session still flagged after each change, not only the newest 5" },
         ],
         examples: ["coding.sh improve check", "coding.sh improve check --since 7d --json", "coding.sh improve check --sessions", "coding.sh improve check --watch"],
       },

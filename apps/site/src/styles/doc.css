@@ -30,11 +30,13 @@
   margin-top: 0.75rem;
 }
 /* Blocks in the page flow, at the top level or inside a tab panel. */
-:is(.doc, .tabs__panel) > :is(p, ul, ol, .doc-table, figure, .code, .note, .codetabs, .cards) {
+:is(.doc, .tabs__panel) > :is(p, ul, ol, .doc-table, figure, .code, .note, .codetabs, .cards),
+.steps > li > :is(p, ul, ol, .doc-table, figure, .code, .note, .codetabs, .cards) {
   margin-top: 1rem;
 }
 /* Terminal.astro's scoped .term { margin: 0 } would beat .doc > figure. */
-.doc > figure.term {
+.doc > figure.term,
+.steps > li > figure.term {
   margin-top: 1rem;
 }
 .doc h2 + p,
@@ -120,6 +122,12 @@
 .doc-table .nowrap {
   white-space: nowrap;
 }
+/* A name in the first column (an env var, a flag, a field) stays one token
+   to copy; the table scrolls sideways instead. */
+.doc-table td:first-child code {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
 /* On touch, a cell that is one link is tappable across the whole cell. */
 @media (pointer: coarse) {
   .doc-table td.cell-link {
@@ -182,6 +190,11 @@
   .doc-table--stack td:first-child {
     margin-bottom: 0.6rem;
   }
+  /* A stacked card does not scroll, so its name may wrap again. */
+  .doc-table--stack td:first-child code {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 }
 
 /* A short aside: status, caveats. */
@@ -210,7 +223,8 @@
 }
 
 /* An optional path, folded: the main sequence reads straight through. */
-:is(.doc, .tabs__panel) > details.more {
+:is(.doc, .tabs__panel) > details.more,
+.steps > li > details.more {
   margin-top: 1rem;
   border-radius: var(--radius);
   box-shadow: inset 0 0 0 1px var(--line-strong);
@@ -229,14 +243,18 @@
 .more > summary::-webkit-details-marker {
   display: none;
 }
+/* The sign is drawn, not read: the alt text after "/" is empty, so the
+   summary's name is its words alone. */
 .more > summary::before {
   content: "+";
+  content: "+" / "";
   width: 0.75rem;
   font-family: var(--font-mono);
   color: var(--text-muted);
 }
 .more[open] > summary::before {
   content: "−";
+  content: "−" / "";
 }
 .more > summary:focus-visible {
   outline-offset: -2px;
@@ -251,9 +269,43 @@
 .more > :last-child {
   margin-bottom: 1rem;
 }
+/* The section a link points at, marked without motion (an FAQ question too, in
+   faq.astro). */
+.doc :is(h2, h3, h4):target {
+  text-decoration: underline 1px var(--text-muted);
+  text-underline-offset: 0.3em;
+}
 
 .doc figure {
   margin-inline: 0;
+}
+
+/* The Copy chip in the bar of a code block (Code.astro) and a terminal (Terminal.astro). */
+.code__copy {
+  flex: none;
+  min-width: 4.25rem;
+  justify-content: center;
+}
+/* Shell colours, set at build time on sh blocks (lib/shell.ts). Each is at
+   least 4.5:1 on --term; other words keep the block's --text. */
+.sh-cmd {
+  color: var(--pass-ink);
+}
+.sh-flag {
+  color: var(--text-2);
+}
+.sh-str {
+  color: var(--fail-ink);
+}
+.sh-com {
+  color: var(--text-muted);
+}
+/* Touch: the chip keeps its size inside the 40px bar; .hit gives the 44px target. */
+@media (pointer: coarse) {
+  .code__copy.ctl {
+    height: 1.75rem;
+    padding: 0 0.6rem;
+  }
 }
 
 /* ---------- Code tabs (CodeTabs.astro) ----------

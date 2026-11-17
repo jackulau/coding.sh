@@ -75,3 +75,15 @@ test("long ids that differ at the end keep both ends", () => {
   assert.notEqual(f.midClip(a, 22), f.midClip(b, 22));
   assert.match(f.midClip(a, 22), /^claude-opus.*….*-a$/);
 });
+
+test("compare bar axes fit a grader score gap above 1 (objective grader) and keep pass-rate gaps within ±1", () => {
+  const ns: (x: number) => number = runInNewContext(`${slice("function niceSpan(", "\n")}\nniceSpan`);
+  assert.equal(ns(0.05), 0.1);
+  assert.equal(ns(0.4), 0.5);
+  assert.equal(ns(0.95), 1);
+  assert.equal(ns(1), 1);
+  assert.equal(ns(1.5), 2);
+  assert.equal(ns(2.5), 3);
+  assert.equal(ns(3), 5);
+  assert.equal(ns(12), 14);
+});

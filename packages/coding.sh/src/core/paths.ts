@@ -51,6 +51,8 @@ export function paths(env: NodeJS.ProcessEnv = process.env) {
     importLock: join(root, "import.lock"),
     /** Held while a transcript import stores events and sends them to `[[sinks]]` (core/ingest.ts backfill), so one does at a time. */
     sinkLock: join(root, "sinks.lock"),
+    /** Held while an ingest reads the transcripts of tail-read agents (cli/common.ts tailIngest), so one process does at a time. */
+    tailLock: join(root, "tail.lock"),
     /** Hook ownership for agents whose config files carry no coding.sh marker. */
     installs: join(root, "installs.json"),
     /** The running `coding.sh proxy` (pid, url); see proxy/state.ts. */

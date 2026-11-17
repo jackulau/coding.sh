@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { zstdCompressSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -548,5 +549,126 @@ describe("codex model calls with records written late", () => {
     const calls = (await convertRollout(testCtx().ctx, file, { mode: "full" })).filter((e) => e.kind === "llm.call");
     assert.equal(calls.length, 3);
     for (const c of calls) assert.ok(c.durationMs! > 0 && c.payload.tokensPerSec !== undefined, `${c.payload.responseId} is timed`);
+  });
+});
+
+describe("codex compressed rollouts (.jsonl.zst)", () => {
+  const ROLL = `rollout-2026-11-01T10-00-00-${SID}.jsonl`;
+  const plain = join(FIXTURES, "codex", "home", "sessions", "2026", "11", "01", ROLL);
+  let env: TmpEnv;
+  let dir: string;
+  before(() => {
+    env = tmpEnv();
+    dir = mkdtempSync(join(tmpdir(), "csh-codex-zst-"));
+  });
+  after(() => {
+    env.restore();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function home(name: string, files: Record<string, Buffer | string>): string {
+    const h = join(dir, name);
+    const day = join(h, "sessions", "2026", "11", "01");
+    mkdirSync(day, { recursive: true });
+    for (const [n, c] of Object.entries(files)) writeFileSync(join(day, n), c);
+    return h;
+  }
+  const strip = (events: AgentEvent[]) => JSON.parse(JSON.stringify(events));
+
+  it("backfill of only the .zst file equals the plain file's events, ids included", async () => {
+    const text = readFileSync(plain);
+    process.env.CODEX_HOME = home("plain", { [ROLL]: text });
+    const a = await collect(codex.backfill!(testCtx().ctx));
+    process.env.CODEX_HOME = home("zst", { [`${ROLL}.zst`]: zstdCompressSync(text) });
+    const b = await collect(codex.backfill!(testCtx().ctx));
+    assert.ok(a.length > 5);
+    assert.deepEqual(strip(b), strip(a));
+  });
+
+  it("with both files present, backfill gives one session copy", async () => {
+    const text = readFileSync(plain);
+    process.env.CODEX_HOME = home("both", { [ROLL]: text, [`${ROLL}.zst`]: zstdCompressSync(text) });
+    const events = await collect(codex.backfill!(testCtx().ctx));
+    const ids = events.map((e) => e.id);
+    assert.equal(new Set(ids).size, ids.length);
+    assert.equal(events.filter((e) => e.kind === "session.start").length, 1);
+  });
+
+  it("a truncated .zst gives the events decoded before the cut and does not throw", async () => {
+    const text = Buffer.from(readFileSync(plain, "utf8").repeat(1));
+    const lines = text.toString("utf8").split("\n").filter(Boolean);
+    // Many frames' worth of data so the cut leaves decodable output behind.
+    const big = Buffer.from(lines.join("\n") + "\n" + Array.from({ length: 4000 }, (_, i) => JSON.stringify({ timestamp: "2026-11-01T10:00:00Z", type: "noise", payload: { i, pad: "x".repeat(200) } })).join("\n") + "\n");
+    const z = zstdCompressSync(big);
+    process.env.CODEX_HOME = home("cut", { [`${ROLL}.zst`]: z.subarray(0, Math.floor(z.length * 0.9)) });
+    const events = await collect(codex.backfill!(testCtx().ctx));
+    assert.ok(events.some((e) => e.kind === "session.start"), "the head of the file was decoded");
+  });
+
+  it("a Stop hook pointing at a plain path where only the .zst exists still emits llm.call", async () => {
+    const h = home("hook", { [`${ROLL}.zst`]: zstdCompressSync(readFileSync(plain)) });
+    const missing = join(h, "sessions", "2026", "11", "01", ROLL);
+    const { ctx } = testCtx();
+    const stop = loadSpool("codex/hooks.spool.jsonl").find((l) => JSON.stringify(l).includes('"Stop"') && JSON.stringify(l).includes(SID))!;
+    assert.ok(stop);
+    const raw = JSON.parse(JSON.stringify(stop));
+    const hit = (o: Record<string, unknown>): boolean => {
+      for (const k of Object.keys(o)) {
+        const v = o[k];
+        if (k === "transcript_path" && typeof v === "string") {
+          o[k] = missing;
+          return true;
+        }
+        if (v && typeof v === "object" && hit(v as Record<string, unknown>)) return true;
+      }
+      return false;
+    };
+    assert.ok(hit(raw), "the Stop line carries a transcript_path");
+    const events = await codex.normalize(raw, ctx);
+    assert.ok(events.some((e) => e.kind === "llm.call"));
+  });
+
+  it("readJsonlTail on a .zst keeps the last whole lines", async () => {
+    const { readJsonlTail } = await import("../../src/adapters/_shared/jsonl.ts");
+    const f = join(dir, "tail.jsonl.zst");
+    writeFileSync(f, zstdCompressSync(Array.from({ length: 100 }, (_, i) => JSON.stringify({ i })).join("\n") + "\n"));
+    const tail = (await readJsonlTail(f, 60)) as { i: number }[];
+    assert.ok(tail.length > 0 && tail.length < 100);
+    assert.equal(tail.at(-1)!.i, 99);
+  });
+});
+
+describe("codex turns that fail with an error", () => {
+  const EID = "01a1dccc-4185-7411-91d5-cbde47611d33";
+  const rec = (type: string, payload: Record<string, unknown>, ms = 0) => JSON.stringify({ timestamp: new Date(1793527200000 + ms).toISOString(), type, payload });
+  const LIMIT = "You\u2019ve hit your usage limit. Upgrade to Pro or try again at Nov 17th, 2026 4:35 PM.";
+  const rollout = (lines: string[]) => {
+    const path = join(mkdtempSync(join(tmpdir(), "codex-err-")), `rollout-2026-11-01T10-00-00-${EID}.jsonl`);
+    writeFileSync(path, lines.join("\n") + "\n");
+    return path;
+  };
+  const head = [rec("session_meta", { id: EID, cwd: "/work/demo" }), rec("event_msg", { type: "task_started", turn_id: "t1" }, 10), rec("event_msg", { type: "user_message", message: "hi" }, 20)];
+
+  it("task_complete.error is an error event (source api, rate_limit) as well as turn.end ok:false", async () => {
+    const error = { message: LIMIT, codex_error_info: "usage_limit_exceeded" };
+    const events = await convertRollout(testCtx().ctx, rollout([...head, rec("event_msg", { type: "task_complete", turn_id: "t1", last_agent_message: null, error, duration_ms: 3000 }, 3000)]), { mode: "full" });
+    const errs = events.filter((e) => e.kind === "error");
+    assert.equal(errs.length, 1);
+    assert.deepEqual([errs[0]!.payload.message, errs[0]!.payload.source, errs[0]!.payload.errorType, errs[0]!.payload.errorClass], [LIMIT, "api", "usage_limit_exceeded", "rate_limit"]);
+    assert.equal(events.find((e) => e.kind === "turn.end")!.payload.ok, false);
+    assert.ok(buildSession(events).stats.llmErrors, "the session counts it as a failed model call");
+  });
+
+  it("a bare string error and an error event_msg of the same failure count once", async () => {
+    const lines = [...head, rec("event_msg", { type: "error", message: "stream closed" }, 100), rec("event_msg", { type: "task_complete", turn_id: "t1", error: { message: "stream closed", codex_error_info: { http_connection_failed: { http_status_code: null } } } }, 200)];
+    const events = await convertRollout(testCtx().ctx, rollout(lines), { mode: "full" });
+    assert.equal(events.filter((e) => e.kind === "error").length, 1);
+    const bare = await convertRollout(testCtx().ctx, rollout([...head, rec("event_msg", { type: "task_complete", turn_id: "t1", error: "boom" }, 200)]), { mode: "full" });
+    assert.equal(bare.find((e) => e.kind === "error")!.payload.message, "boom");
+  });
+
+  it("a clean task_complete has no error event", async () => {
+    const events = await convertRollout(testCtx().ctx, rollout([...head, rec("event_msg", { type: "task_complete", turn_id: "t1", error: null }, 200)]), { mode: "full" });
+    assert.equal(events.filter((e) => e.kind === "error").length, 0);
   });
 });

@@ -1176,7 +1176,9 @@ describe("doctor on a dogfood machine", () => {
     printBin(bin, "claude", "2.1.319 (Claude Code)");
     const PATH = pathOf(bin, h.env.PATH);
     const proj = join(h.root, "work", "demo");
-    mkdirSync(proj, { recursive: true });
+    // A repo root, so doctor's search for project settings stops here and never
+    // reaches a real ~/.claude above the temp dir (Windows keeps %TEMP% under the profile).
+    mkdirSync(join(proj, ".git"), { recursive: true });
     const envOf = (extra: NodeJS.ProcessEnv) => {
       const env: Record<string, string> = {};
       for (const [k, v] of Object.entries({ ...h.env, PATH, CODING_SH_NO_AUTO_INGEST: "1", ...extra })) if (v !== undefined) env[k] = v;

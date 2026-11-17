@@ -359,7 +359,7 @@ The command ran and something failed.
 | `surface_failed` | `Couldn't read the gh surface: …` | The CLI or MCP server could not be started or listed. Run it by hand to see why. |
 | `invalid_definition` | `bench/answers.toml: …` | Fix the benchmark file. |
 | `invalid_cases` / `no_cases` | `Can't read cases from …`, `No cases in …`, `No decision points in sessions since 14d` (exp ab, exit 2) | Check the workflow's cases directory. For `exp ab`, look further back (`--since 30d`) or in every repo (`--repo all`); the message lists what each behavior found. |
-| `no_diff` | `Session … has no captured diffs`, `No stored runs in experiment exp_…` (judge slop, exit 2) | The agent's capture records no diffs for its file changes, or the experiment is not a `compare` run (only those keep the agent's diff). Grade a diff directly: `git diff \| coding.sh judge slop --diff -`. |
+| `no_diff` | `Session … has no captured diffs`, `No stored runs in experiment exp_…` (judge slop) | The agent's capture records no diffs for its file changes, or the experiment is not a `compare` run (only those keep the agent's diff). Grade a diff directly: `git diff \| coding.sh judge slop --diff -`. |
 | `over_budget` | `Estimated cost $3.10 is over --max-cost $1.00` (exp ab) | Test fewer decision points (`--limit`), or raise `--max-cost`. A run that passes the cap partway stops and can be resumed. |
 | `cost_unknown` | `--budget needs a cost per run, and none is known: no cost known for 4 tasks (…)` (compare) | No stored run, source session or other task says what a run costs. Pass `--cost-per-run <USD>`. |
 | `budget_too_small` | `--budget $0.10 fits no task: the cheapest costs $0.20 a run, times 2 arms x 1` (compare) | Raise `--budget`, or lower `--k`. |

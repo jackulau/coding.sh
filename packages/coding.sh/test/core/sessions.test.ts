@@ -42,6 +42,19 @@ describe("buildSession", () => {
     assert.equal(buildSession([ev("llm.call", { ok: true })]).stats.llmErrors, undefined, "unset when none failed");
   });
 
+  it("counts API error events (429, 5xx) as failed model calls", () => {
+    const events = [
+      ev("error", { message: "Error 429 rate limit", source: "api", statusCode: 429, errorClass: "rate_limit" }),
+      ev("error", { message: "Error 429 rate limit", source: "api", statusCode: 429, errorClass: "rate_limit" }),
+      ev("error", { message: "stop failure" }),
+    ];
+    const s = buildSession(events);
+    assert.equal(s.stats.llmErrors?.count, 2);
+    assert.equal(s.stats.llmErrors?.statusCode, 429);
+    assert.match(s.stats.llmErrors!.error!, /^Error 429/);
+    assert.equal(buildSession([ev("error", { message: "stop failure" })]).stats.llmErrors, undefined);
+  });
+
   it("folds stats, usage, title, files, tests and end time", () => {
     const long = "Please   fix\nthe bug " + "x".repeat(400);
     const events = [
@@ -88,6 +101,26 @@ describe("buildSession", () => {
     assert.deepEqual(s.parent, { sessionId: "p" });
     assert.equal(s.endedAt, undefined);
     assert.throws(() => buildSession([]), /at least one event/);
+  });
+
+  it("names the parent from a `<parent>:sub:<agentId>` id when there is no session.start", () => {
+    const sid = "abc:sub:a1";
+    const s = buildSession([
+      ev("tool.start", { tool: "Bash", toolUseId: "x1", input: { command: "ls" } }, { sessionId: sid }),
+      ev("tool.end", { tool: "Bash", toolUseId: "x1", ok: true }, { sessionId: sid }),
+    ]);
+    assert.deepEqual(s.parent, { sessionId: "abc", subagentId: "a1", type: "subagent" });
+    assert.equal(buildSession([ev("tool.start", { tool: "Bash", toolUseId: "y", input: { command: "ls" } }, { sessionId: "plain" })]).parent, undefined);
+  });
+
+  it("a session.start parent wins over the id, before or after the tool events", () => {
+    const sid = "abc:sub:a1";
+    const start = ev("session.start", { parentSessionId: "real", subagentId: "a1", subagentType: "explore" }, { sessionId: sid });
+    const tool = ev("tool.start", { tool: "Bash", toolUseId: "z", input: { command: "ls" } }, { sessionId: sid });
+    const want = { sessionId: "real", subagentId: "a1", type: "explore" };
+    assert.deepEqual(buildSession([start, tool]).parent, want);
+    const late = { ...start, ts: tool.ts + 5 };
+    assert.deepEqual(buildSession([tool, late]).parent, want);
   });
 
   it("takes the parent link from session.start", () => {
@@ -224,6 +257,76 @@ describe("failure detectors", () => {
 
   it("compaction", () => {
     assert.deepEqual(detectFlags([ev("context.compact", { trigger: "auto" })]), [FLAGS.compaction]);
+  });
+
+  it("api-stall: repeated rate-limit or overload errors, long retry waits, retries run out, or a last error never got past", () => {
+    // Claude Code's system/api_error lines (claude-transcript.ts apiError).
+    const retry = (statusCode: number, retryAttempt: number, extra: Record<string, unknown> = {}) =>
+      ev("error", { message: `${statusCode} rate limit`, source: "api", statusCode, errorClass: statusCode === 429 ? "rate_limit" : "overloaded", retryAfterMs: 1000, retryAttempt, maxRetries: 10, ...extra });
+    const reply = () => ev("assistant.message", { text: "done" });
+    // A session whose only failures are 429s.
+    const only429 = [ev("user.message", { text: "fix it" }), retry(429, 1), retry(429, 2), retry(429, 3), reply()];
+    assert.deepEqual(buildSession(only429).flags, [FLAGS.apiStall]);
+    assert.equal(buildSession(only429).stats.llmErrors?.count, 3);
+    assert.deepEqual(detectFlags([retry(429, 1), reply(), retry(529, 1), reply(), retry(529, 2), reply()]), [FLAGS.apiStall], "a 529 counts with 429s");
+    assert.deepEqual(detectFlags([retry(429, 1), reply()]), [], "one 429 a retry got past");
+    assert.deepEqual(detectFlags([retry(429, 1), reply(), retry(429, 1), reply()]), [], "two, each got past");
+    assert.deepEqual(detectFlags([retry(429, 1, { retryAfterMs: 90_000 }), reply()]), [FLAGS.apiStall], "a long wait");
+    assert.deepEqual(detectFlags([retry(429, 10), reply()]), [FLAGS.apiStall], "the last retry allowed");
+    // The turn ended on it: Claude Code's surfaced API Error message, a Codex usage_limit_exceeded turn failure.
+    assert.deepEqual(detectFlags([reply(), ev("error", { message: "API Error: Rate limit reached", source: "api" })]), [FLAGS.apiStall]);
+    assert.deepEqual(detectFlags([ev("error", { message: "limit", source: "api", errorType: "usage_limit_exceeded", errorClass: "rate_limit" })]), [FLAGS.apiStall]);
+    // Proxy or OTel model calls that failed, then one that worked.
+    const call = (p: Record<string, unknown>) => ev("llm.call", p);
+    assert.deepEqual(detectFlags([call({ ok: false, statusCode: 429 }), call({ ok: true })]), []);
+    assert.deepEqual(detectFlags([call({ ok: false, statusCode: 429 }), call({ ok: false, statusCode: 429 }), call({ ok: false, statusCode: 529 }), call({ ok: true })]), [FLAGS.apiStall]);
+    // Not capacity: a bad request, a 500, an auth error, a refusal message.
+    assert.deepEqual(detectFlags([call({ ok: false, statusCode: 400 }), call({ ok: false, statusCode: 500 }), call({ ok: false, statusCode: 401 }), call({ ok: false, statusCode: 500 })]), []);
+    assert.deepEqual(detectFlags([ev("error", { message: "Claude Code can't respond to this message", source: "api" })]), []);
+    assert.deepEqual(detectFlags([ev("error", { message: "stop hook failed: rate limit" })]), [], "not an API error");
+  });
+
+  it("filesChanged counts files a shell call writes, keyed with edit-tool paths", () => {
+    const cwd = "/work/demo";
+    const at = { cwd };
+    const sh = (command: string, ok = true, extra: Record<string, unknown> = {}, tool = "Bash") => {
+      const id = `tu${t + 1}`;
+      return [ev("tool.start", { tool, toolUseId: id, input: { command } }, at), ev("tool.end", { tool, toolUseId: id, ok, ...extra }, at)];
+    };
+    const files = (events: AgentEvent[]) => buildSession(events).stats.filesChanged;
+    assert.equal(files(sh("sed -i 's/a/b/' src/a.ts")), 1);
+    assert.equal(files(sh("cat > src/new.ts <<'EOF'\nconst x = 1; // > not/a/file.ts\nEOF")), 1, "a heredoc to a file; its body is data");
+    assert.equal(files(sh("printf 'x' > out.txt && echo y >> log/run.log")), 2);
+    assert.equal(files(sh("echo x | tee a.txt b.txt > /dev/null 2>&1")), 2, "tee, not /dev/null or a fd dup");
+    assert.equal(files(sh("perl -pi -e 's/a/b/' lib/x.pm")), 1);
+    assert.equal(files(sh("cp a.ts b.ts && mv c.ts d.ts")), 2, "the targets of cp and mv");
+    assert.equal(files(sh("Set-Content -Path notes.txt -Value 'hi'; 'x' | Out-File -FilePath out\\log.txt; Add-Content c.md 'y'", true, {}, "PowerShell")), 3);
+    assert.equal(files(sh("Get-Content a.txt > copy.txt", true, {}, "PowerShell")), 1);
+    // Reads, deletes, scratch files, globs, variables and branches do not count.
+    assert.equal(files(sh("cat src/a.ts && grep -r foo src > /dev/null; sed -n 1,5p b.ts; head c.ts")), 0);
+    assert.equal(files(sh("rm -rf dist/out.js")), 0);
+    assert.equal(files(sh("npm test > /tmp/test.log 2>&1; echo x > ~/.bashrc")), 0, "outside the working directory");
+    assert.equal(files(sh('sed -i s/a/b/ src/*.ts; echo x > "$OUT"; echo y > $HOME/z.txt')), 0);
+    assert.equal(files(sh("git checkout feature/x")), 0, "a branch name");
+    assert.equal(files(sh("git checkout -- src/a.ts")), 1, "a file after --");
+    // A call the user turned down never ran; one that ran and failed still wrote.
+    assert.equal(files(sh("sed -i 's/a/b/' a.ts", false, { output: "The user doesn't want to proceed with this tool use." })), 0);
+    assert.equal(files(sh("echo x > a.txt && npm test", false, { output: "Exit code 1\n1 failing" })), 1);
+    // Not a shell tool: an MCP tool with a `command` field.
+    assert.equal(files([ev("tool.start", { tool: "mcp__x__run", toolUseId: "m1", input: { command: "echo x > a.txt" } }, at), ev("tool.end", { tool: "mcp__x__run", toolUseId: "m1", ok: true }, at)]), 0);
+    // A file edited through Edit and through Bash counts once, absolute or relative, ./ or not.
+    const both = [
+      ev("file.change", { path: "src/a.ts", op: "modify" }, at),
+      ...sh("sed -i 's/x/y/' ./src/a.ts && echo z > /work/demo/src/b.ts"),
+      ev("file.change", { path: "/work/demo/src/b.ts", op: "modify" }, at),
+      ...sh("cd src && echo q >> a.ts"),
+    ];
+    assert.equal(files(both), 2);
+    // Codex: the call's workdir.
+    assert.equal(files([ev("tool.start", { tool: "exec_command", toolUseId: "c1", input: { cmd: "echo x > a.txt", workdir: "/work/demo/pkg" } }, at), ev("tool.end", { tool: "exec_command", toolUseId: "c1", ok: true }, at)]), 1);
+    // A started call with no end yet does not count; one with no id counts as it starts.
+    assert.equal(files([ev("tool.start", { tool: "Bash", toolUseId: "open", input: { command: "echo x > a.txt" } }, at)]), 0);
+    assert.equal(files([ev("tool.start", { tool: "Bash", input: { command: "echo x > a.txt" } }, at)]), 1);
   });
 
   it("text-tool-call: a tool call written out as text, not markup quoted in a code block or in prose", () => {

@@ -11,6 +11,8 @@ import { DEFAULT_PROJECT, isProjectId } from "./project.ts";
 export const INGEST_KEY_PREFIX = "csh_ik_";
 export const READ_KEY_PREFIX = "csh_rk_";
 export const READ_COOKIE = "csh_rk";
+/** The read cookie over HTTPS: `__Host-` makes the browser require Secure, Path=/ and no Domain. */
+export const SECURE_READ_COOKIE = `__Host-${READ_COOKIE}`;
 
 /** "*" = every project. */
 export type ReadScope = string;
@@ -56,6 +58,16 @@ export function keyHash(entry: string): string {
   return sha256(k);
 }
 
+/** keyHash, with the entry's position in front of its error. */
+function entryHash(key: string, where: string): string {
+  try {
+    return keyHash(key);
+  } catch (e) {
+    if (e instanceof KeyFormatError) throw new KeyFormatError(`${where}: ${e.message}`);
+    throw e;
+  }
+}
+
 /** Splits `project:rest`, where rest may itself be `sha256:<hex>` or a key. A bare entry has no project. */
 function splitEntry(entry: string): { project?: string; key: string } {
   const e = entry.trim();
@@ -67,22 +79,27 @@ function splitEntry(entry: string): { project?: string; key: string } {
 
 /** `CODING_SH_INGEST_KEYS`: comma-separated `project:key`, `project:sha256:<hex>`, or a bare key (project default). */
 export function parseIngestKeys(value: string | undefined, into: Map<string, string> = new Map()): Map<string, string> {
+  // An entry holds a secret, so an error names its position, never its text.
+  let n = 0;
   for (const raw of (value ?? "").split(",")) {
     if (!raw.trim()) continue;
+    const where = `CODING_SH_INGEST_KEYS entry ${++n}`;
     const { project = DEFAULT_PROJECT, key } = splitEntry(raw);
-    if (!isProjectId(project)) throw new KeyFormatError(`CODING_SH_INGEST_KEYS: invalid project id ${JSON.stringify(project)} (use a-z, 0-9 and -, up to 63 chars)`);
-    into.set(keyHash(key), project);
+    if (!isProjectId(project)) throw new KeyFormatError(`${where} has an invalid project id before its ":" (use a-z, 0-9 and -, up to 63 chars; the form is project:key)`);
+    into.set(entryHash(key, where), project);
   }
   return into;
 }
 
 /** `CODING_SH_READ_KEYS`: comma-separated `*:key` (all projects) or `project:key` (either may be `sha256:<hex>`). A bare key reads all. */
 export function parseReadKeys(value: string | undefined, into: Map<string, ReadScope> = new Map()): Map<string, ReadScope> {
+  let n = 0;
   for (const raw of (value ?? "").split(",")) {
     if (!raw.trim()) continue;
+    const where = `CODING_SH_READ_KEYS entry ${++n}`;
     const { project = "*", key } = splitEntry(raw);
-    if (project !== "*" && !isProjectId(project)) throw new KeyFormatError(`CODING_SH_READ_KEYS: invalid project ${JSON.stringify(project)} (use * or a project id)`);
-    into.set(keyHash(key), project);
+    if (project !== "*" && !isProjectId(project)) throw new KeyFormatError(`${where} has an invalid project before its ":" (use * or a project id; the form is project:key)`);
+    into.set(entryHash(key, where), project);
   }
   return into;
 }
@@ -128,7 +145,7 @@ export interface Authenticator {
   /** Project for an ingest request, or undefined (401). With no ingest keys configured, `open` decides. */
   ingest(req: IncomingMessage): string | undefined;
   /** Same, for a raw key from elsewhere than Authorization (the proxy routes' x-coding-sh-key). */
-  ingestKey(key: string | undefined): string | undefined;
+  ingestKey(key: string | undefined, req: IncomingMessage): string | undefined;
   /** Read access for the viewer, /api and /metrics, or undefined (401). */
   read(req: IncomingMessage): { project?: string; by?: string } | undefined;
   /** The read scope of a raw read key (for the viewer's `?t=` exchange). */
@@ -137,11 +154,18 @@ export interface Authenticator {
   readonly hasReadCredentials: boolean;
 }
 
+/** A request that a proxy passed on: it names a forwarded client, host or hop. */
+export function viaProxy(req: IncomingMessage): boolean {
+  return Object.keys(req.headers).some((h) => h.startsWith("x-forwarded-") || h === "forwarded" || h === "via");
+}
+
 /**
  * openIngest: no ingest keys configured and the server may run open (loopback or
  * --insecure), so ingest lands in project default. openRead: same for reading.
+ * directOnly: the open fallback serves only requests that did not come through a
+ * proxy (a loopback bind is open because only this machine can reach it).
  */
-export function createAuthenticator(creds: Credentials, o: { openIngest: boolean; openRead: boolean }): Authenticator {
+export function createAuthenticator(creds: Credentials, o: { openIngest: boolean; openRead: boolean; directOnly?: boolean; onProxied?: () => void }): Authenticator {
   const hasIngestKeys = creds.ingest.size > 0;
   const hasReadCredentials = creds.read.size > 0 || !!creds.basic;
   const readScope = (key: string): ReadScope | undefined => (key ? creds.read.get(sha256(key)) : undefined);
@@ -151,22 +175,28 @@ export function createAuthenticator(creds: Credentials, o: { openIngest: boolean
     return scope === undefined ? undefined : { ...scoped(scope), by: readKeyId(hash, creds.readNames) };
   };
   const scoped = (scope: ReadScope) => (scope === "*" ? {} : { project: scope });
-  const ingestKey = (key: string | undefined): string | undefined => {
+  const openTo = (req: IncomingMessage) => {
+    if (!o.directOnly || !viaProxy(req)) return true;
+    o.onProxied?.();
+    return false;
+  };
+  const ingestKey = (key: string | undefined, req: IncomingMessage): string | undefined => {
     if (key) return creds.ingest.get(sha256(key));
-    return !hasIngestKeys && o.openIngest ? DEFAULT_PROJECT : undefined;
+    return !hasIngestKeys && o.openIngest && openTo(req) ? DEFAULT_PROJECT : undefined;
   };
 
   return {
     hasIngestKeys,
     hasReadCredentials,
     readScope,
-    ingest: (req) => ingestKey(bearer(req)),
+    ingest: (req) => ingestKey(bearer(req), req),
     ingestKey,
     read(req) {
       const key = bearer(req);
       const byKey = key ? reader(key) : undefined;
       if (byKey) return byKey;
-      const cookie = readCookie(req.headers.cookie, READ_COOKIE);
+      // Either name: a browser signed in before HTTPS was detected still holds the plain one.
+      const cookie = readCookie(req.headers.cookie, SECURE_READ_COOKIE) ?? readCookie(req.headers.cookie, READ_COOKIE);
       const byCookie = cookie ? reader(cookie) : undefined;
       if (byCookie) return byCookie;
       const h = req.headers.authorization;
@@ -180,7 +210,7 @@ export function createAuthenticator(creds: Credentials, o: { openIngest: boolean
           if (okUser && okPass) return { by: user };
         }
       }
-      if (!hasReadCredentials && o.openRead) return {};
+      if (!hasReadCredentials && o.openRead && openTo(req)) return {};
       return undefined;
     },
   };

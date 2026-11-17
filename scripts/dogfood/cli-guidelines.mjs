@@ -17,6 +17,7 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { CLI, EVALS_CLI, log, parseArgs, readJson, sh, tempDir } from "./lib/util.mjs";
+import { isMain } from "./lib/main.mjs";
 
 const ANSI_COLOR = /\x1b\[[0-9;]*m/;
 const BANNED = /\b(successfully|just|simply)\b/i;
@@ -129,7 +130,7 @@ export function runGuidelines({ cli = CLI } = {}) {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMain(import.meta.url)) {
   const args = parseArgs(process.argv.slice(2), { booleans: ["json", "verbose"] });
   const r = runGuidelines();
   if (args.json) process.stdout.write(JSON.stringify(r) + "\n");

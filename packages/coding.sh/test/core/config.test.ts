@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { tmpdir, userInfo } from "node:os";
+import { join, resolve } from "node:path";
 import { after, describe, it } from "node:test";
 import {
   ConfigError,
   defaultConfig,
   expandStoreUrl,
   findRepoConfig,
+  searchStops,
   isExcluded,
   loadConfig,
   writeDefaultConfig,
@@ -138,7 +139,7 @@ maxFiles = 50
     assert.deepEqual(c.sinks, base.sinks, "repo cannot add sinks");
     assert.equal(c.capture.mode, "metadata");
     assert.deepEqual(c.capture.redact, ["secrets", "env"], "union; 'none' cannot remove redactors");
-    assert.deepEqual(c.capture.redactPatterns, ["INTERNAL-\\d+"]);
+    assert.deepEqual(c.capture.redactPatterns, ["INTERNAL\\-\\\\d\\+"], "a repo's pattern is literal text");
     assert.equal(c.capture.maxInlineBytes, 1024);
     assert.equal(c.snapshot.maxFiles, 50);
 
@@ -157,6 +158,40 @@ maxFiles = 50
     mkdirSync(join(repo, ".git"), { recursive: true });
     assert.equal(findRepoConfig(repo, env), undefined);
     assert.equal(loadConfig({ env, cwd: repo }).capture.mode, "full");
+  });
+
+  it("stops the repo search at the OS account's home when $HOME points elsewhere", () => {
+    // On Windows the temp dir sits under the account's home, whose
+    // .coding.sh/config.toml is a user config, not a repo override.
+    const { env, root } = setup();
+    const account = join(root, "account");
+    mkdirSync(join(account, ".coding.sh"), { recursive: true });
+    writeFileSync(join(account, ".coding.sh", "config.toml"), "[capture]\nmode = \"metadata\"\n");
+    const cwd = join(account, "AppData", "Temp", "work");
+    mkdirSync(cwd, { recursive: true });
+    const key = process.platform === "win32" ? "USERPROFILE" : "HOME";
+    const saved = process.env[key];
+    process.env[key] = account;
+    try {
+      assert.equal(findRepoConfig(cwd, env), undefined);
+    } finally {
+      if (saved === undefined) delete process.env[key];
+      else process.env[key] = saved;
+    }
+  });
+
+  it("stops at the account's home from the user database when HOME and USERPROFILE both point elsewhere", () => {
+    // Under a test home on Windows os.homedir() follows USERPROFILE, so it no longer names the
+    // account's home, and a walk up from the temp dir would read the real ~/.coding.sh/config.toml.
+    const { env, root } = setup();
+    const keys = ["HOME", "USERPROFILE"] as const;
+    const saved = keys.map((k) => process.env[k]);
+    for (const k of keys) process.env[k] = root;
+    try {
+      assert.ok(searchStops({ ...env, HOME: root }).has(resolve(userInfo().homedir)));
+    } finally {
+      keys.forEach((k, i) => (saved[i] === undefined ? delete process.env[k] : (process.env[k] = saved[i])));
+    }
   });
 
   it("writes a parseable default config once", () => {

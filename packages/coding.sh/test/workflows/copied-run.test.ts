@@ -4,12 +4,13 @@
 // parent, and the import counts it once.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { copiedSubagentOwner } from "../../src/adapters/claude-code.ts";
+import { removeTestDir } from "../_rm.ts";
 import { CLI as MAIN } from "../_cli.ts";
 
 const FIXTURE = fileURLToPath(new URL("../fixtures/workflows/claude-code-running/projects", import.meta.url));
@@ -40,7 +41,7 @@ before(() => {
   // directory, and Windows cannot remove a directory a live process works in (EBUSY in `after`).
   env = { HOME: home, USERPROFILE: home, CODING_SH_HOME: join(root, "data"), XDG_CONFIG_HOME: join(home, ".config"), CLAUDE_CONFIG_DIR: join(root, "claude"), CODING_SH_NO_AUTO_INGEST: "1", PATH: process.env.PATH, NO_COLOR: "1", CI: "1" };
 });
-after(() => rmSync(root, { recursive: true, force: true }));
+after(() => removeTestDir(root));
 
 describe("a workflow run copied under a second parent", () => {
   it("the adapter sees the copy's agent as the owner's", async () => {

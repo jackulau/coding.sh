@@ -110,7 +110,8 @@ function offenders(page, html) {
   if (!m) return [];
   // A diagram's labels are not prose (its figure caption is counted).
   const b = m[1].replace(/<(pre|nav|aside|script|style|svg)\b[^>]*>[\s\S]*?<\/\1>/g, "");
-  const prose = b.replace(/<table[^>]*>[\s\S]*?<\/table>/g, "");
+  // A step of a Steps list (an <li> that opens with its <h3>) is a section, not a bullet.
+  const prose = b.replace(/<table[^>]*>[\s\S]*?<\/table>/g, "").replace(/<li>\s*(?=<h3[\s>])/g, "");
   const out = [];
   for (const x of inner(prose, /<li\b[^>]*>([\s\S]*?)<\/li>/g)) {
     const n = words(x).length;
@@ -168,6 +169,12 @@ test("a screenshot or a diagram is not read as a paragraph or a bullet", () => {
     `<figure class="diagram"><svg><line x1="0"/><path d="M0 0"/><text>${many(80)}</text></svg></figure><ul><li>${many(5)}</li></ul></main>`;
   assert.deepEqual(offenders("/docs/x", html), []);
   assert.deepEqual(offenders("/docs/x", `<main><p>${many(71)}</p><ul><li>${many(41)}</li></ul></main>`).map((o) => o.split(":")[0]), ["bullet 41 words", "paragraph 71 words"]);
+});
+
+test("a step of a Steps list is a section, not a bullet; a list inside it still counts", () => {
+  const many = (n) => Array(n).fill("word").join(" ");
+  const steps = `<main><ol class="steps"><li><h3 id="a">A</h3><p>${many(30)}</p><p>${many(30)}</p></li><li><h3 id="b">B</h3><ul><li>${many(41)}</li></ul></li></ol></main>`;
+  assert.deepEqual(offenders("/docs/x", steps).map((o) => o.split(":")[0]), ["bullet 41 words"]);
 });
 
 test("the pending list holds only pages that are over budget", opts, () => {

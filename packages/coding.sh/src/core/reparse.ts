@@ -105,6 +105,33 @@ const LOCK_HOLD_MS = 1_000;
 /** Slack when checking that spool lines span the stored hook rows. */
 const SPAN_SLACK_MS = 60_000;
 const MAX_ERRORS = 100;
+/**
+ * Adapters whose source files are named by the session they hold (Claude Code: `<id>.jsonl` or
+ * `<id>/subagents/...`; Codex: `rollout-<time>-<id>.jsonl`). A re-parse reads only the files whose
+ * path names a session it rebuilds; the others are skipped unread, so the cost follows the sessions
+ * to rebuild and not the size of the agent's whole history (tens of thousands of transcripts).
+ */
+const PATH_KEYED = new Set(["claude-code", "codex"]);
+const UUID_G = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
+const UUID_ONLY = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** Longest session id matched as plain text in a path (a longer one is another adapter's, such as a T3 thread id). */
+const MAX_PLAIN_KEY = 80;
+
+/** A test for whether a source file's path names one of these sessions (a child session is named by its parent's id). */
+export function pathNamesSession(sessionIds: Iterable<string>): (path: string) => boolean {
+  const uuids = new Set<string>();
+  const plain: string[] = [];
+  for (const id of sessionIds) {
+    const root = id.split(":sub:")[0]!.toLowerCase();
+    if (UUID_ONLY.test(root)) uuids.add(root);
+    else if (root.length <= MAX_PLAIN_KEY) plain.push(root);
+  }
+  return (path) => {
+    const lower = path.toLowerCase();
+    for (const m of lower.matchAll(UUID_G)) if (uuids.has(m[0])) return true;
+    return plain.some((k) => lower.includes(k));
+  };
+}
 /** Capture-path sources ingest gives hook and wrapper lines. Rows with no source predate the field (hooks only). */
 const SPOOL_SOURCES = new Set(["hook", "wrapper"]);
 
@@ -513,6 +540,7 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
     const ctxBase = profileFor(undefined);
     const metadata = ctxBase.config.capture.mode === "metadata";
     const ctx = normalizeContext(ctxBase, blobStore, metadata);
+    const namesTarget = pathNamesSession(fromTranscript);
     for (const id of transcriptAdapters) {
       const adapter = adapters.get(id)!;
       progress({ phase: "transcripts", agent: id });
@@ -535,10 +563,11 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
         buffered = 0;
         await writeBatch(items);
       };
-      const changed = async (_f: BackfillFile) => {
+      const changed = async (f: BackfillFile) => {
         settle();
         if (buffered >= FLUSH_EVENTS) await flush();
-        return true;
+        // A file that names no session to rebuild is not parsed.
+        return !PATH_KEYED.has(id) || namesTarget(f.path);
       };
       try {
         const copied = (sid: string, ownerId: string) => {

@@ -20,6 +20,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseToml } from "./lib/toml.mjs";
 import { CLI, EVALS_CLI, REPO, log, parseArgs, readJsonl, round, shAsync, tempDir, treeHash, wilson } from "./lib/util.mjs";
+import { isMain } from "./lib/main.mjs";
 
 const HERE = dirname(new URL(import.meta.url).pathname);
 const FIXTURES = join(EVALS_CLI, "fixtures");
@@ -566,7 +567,7 @@ export function aggregate(trials) {
 
 // ---------------------------------------------------------------- main
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMain(import.meta.url)) {
   const args = parseArgs(process.argv.slice(2), { booleans: ["json", "yes", "keep"] });
   const [cmd] = args._;
   const opts = { split: args.split, task: args.task, shard: args.shard, concurrency: args.concurrency ? Number(args.concurrency) : undefined, k: args.k, driver: args.driver, yes: args.yes, keep: args.keep, cli: args.cli ? resolve(args.cli) : undefined, seed: args.seed ? Number(args.seed) : undefined };

@@ -135,6 +135,14 @@ const ENV_SECRET_NAME = "[A-Z0-9_]*(?:API_?KEY|SECRET(?:_KEY)?|TOKEN|PASSWORD|PA
 /** Object keys whose string values are always secrets, regardless of shape. */
 const SECRET_KEY = new RegExp(`^(?:[a-z0-9]+[_-])*${SECRET_NAME}$|^(?:authorization|proxy-authorization|cookie|set-cookie|x-api-key)$`, "i");
 
+/**
+ * True for a dotted attribute key that names a secret: `db.password`, `app.api.key` (the dots
+ * as separators) and `http.request.header.authorization` (its last part on its own).
+ */
+export function isSecretAttrKey(key: string): boolean {
+  return SECRET_KEY.test(key.replace(/\./g, "_")) || SECRET_KEY.test(key.slice(key.lastIndexOf(".") + 1));
+}
+
 /** Keeps capture group 1 (e.g. "Bearer ") and redacts the rest of the match. */
 function keepPrefix(kind: string): (m: string, ...g: string[]) => string {
   return (_m, ...g) => `${g[0] ?? ""}${marker(kind)}`;
@@ -161,7 +169,9 @@ function withFastApply(rule: RedactRule, apply: (s: string, onMatch?: OnMatch) =
 export function secretRules(): RedactRule[] {
   const privateKey: RedactRule = {
     kind: "private-key",
-    pattern: /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----/g,
+    // A BEGIN line to its END line; with no END after it, to the end of the text when key data
+    // (16 base64 characters, or a PEM Proc-Type header) follows the BEGIN line.
+    pattern: /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----(?:[\s\S]*?-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|(?=\s*(?:[A-Za-z0-9+/=]{16}|Proc-Type:))[\s\S]*$)/g,
   };
   // Secrets pasted in prose: "PAT here ya go: abcD3f-…", "the password is hunter22".
   // A secret word, a short gap, then ":", "=" or "is", then one token that mixes
@@ -228,10 +238,13 @@ export function secretRules(): RedactRule[] {
 }
 
 // The private-key regex lazily scans to the next END line from every BEGIN line,
-// so many unterminated BEGIN lines cost O(n²). Every match ends with an END line,
-// so only the text up to the end of the last END line can change; inside that
-// prefix each BEGIN line finds its END and the scan consumes it.
+// so many unterminated BEGIN lines cost O(n²). Up to the end of the last END line,
+// each BEGIN line finds its END and the scan consumes it, so the regex runs on that
+// prefix only. Past it no BEGIN line has an END: the first one followed by key data
+// runs to the end of the text, which is what the regex's second branch matches.
 const PRIVATE_KEY_END = /-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----/y;
+const PRIVATE_KEY_BEGIN = /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----/g;
+const PRIVATE_KEY_DATA = /\s*(?:[A-Za-z0-9+/=]{16}|Proc-Type:)/y;
 function redactPrivateKeys(s: string, re: RegExp, onMatch?: OnMatch): string {
   let cut = -1;
   for (let q = s.lastIndexOf("-----END "); q >= 0; q = q > 0 ? s.lastIndexOf("-----END ", q - 1) : -1) {
@@ -241,17 +254,34 @@ function redactPrivateKeys(s: string, re: RegExp, onMatch?: OnMatch): string {
       break;
     }
   }
-  if (cut < 0 || !s.includes("-----BEGIN ")) return s;
-  re.lastIndex = 0;
-  const head = s.slice(0, cut);
-  return (
-    (onMatch
-      ? head.replace(re, (m) => {
-          onMatch("private-key", m);
-          return marker("private-key");
-        })
-      : head.replace(re, marker("private-key"))) + s.slice(cut)
-  );
+  if (!s.includes("-----BEGIN ")) return s;
+  const parts: string[] = [];
+  let pos = 0;
+  if (cut >= 0) {
+    const head = s.slice(0, cut);
+    re.lastIndex = 0;
+    for (let m = re.exec(head); m; m = re.exec(head)) {
+      onMatch?.("private-key", m[0]);
+      parts.push(s.slice(pos, m.index), marker("private-key"));
+      pos = m.index + m[0].length;
+    }
+  }
+  // A BEGIN line past the last match has no END after it (a clip or a cut paste dropped it):
+  // when key data follows it, the key runs to the end of the text. A BEGIN line in prose is left.
+  PRIVATE_KEY_BEGIN.lastIndex = pos;
+  let open = PRIVATE_KEY_BEGIN.exec(s);
+  for (; open; open = PRIVATE_KEY_BEGIN.exec(s)) {
+    PRIVATE_KEY_DATA.lastIndex = PRIVATE_KEY_BEGIN.lastIndex;
+    if (PRIVATE_KEY_DATA.test(s)) break;
+  }
+  if (open) {
+    onMatch?.("private-key", s.slice(open.index));
+    parts.push(s.slice(pos, open.index), marker("private-key"));
+    pos = s.length;
+  }
+  if (!parts.length) return s;
+  parts.push(s.slice(pos));
+  return parts.join("");
 }
 
 // prose-secret, evaluated by hand. The regex checks "the rest of the token has a
@@ -593,7 +623,18 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
 /** A new value with `f` applied to every string in it (keys are kept). */
 function mapStrings(v: unknown, f: (s: string) => string, depth = 0): unknown {
   if (typeof v === "string") return f(v);
-  if (depth > 64 || v === null || typeof v !== "object" || v instanceof Uint8Array) return v;
+  if (v === null || typeof v !== "object" || v instanceof Uint8Array) return v;
+  // Too deep to follow: a copy parsed from the subtree's JSON text, mapped from depth 0.
+  if (depth > 64) {
+    try {
+      const text = JSON.stringify(v);
+      if (text === undefined) return v;
+      const out = mapStrings(JSON.parse(text), f, 0);
+      return JSON.stringify(out) === text ? v : out;
+    } catch {
+      return v; // a cycle, or too deep for the stack: the redaction walk replaces it
+    }
+  }
   if (Array.isArray(v)) return v.map((x) => mapStrings(x, f, depth + 1));
   const out: Record<string, unknown> = {};
   for (const [k, x] of Object.entries(v)) Object.defineProperty(out, k, { value: mapStrings(x, f, depth + 1), writable: true, enumerable: true, configurable: true });
@@ -707,7 +748,8 @@ export function redactArgv<T>(args: readonly T[]): T[] {
 
 function walk(v: unknown, redact: (s: string) => string, depth: number, tally?: RedactionTally): unknown {
   if (typeof v === "string") return redact(v);
-  if (depth > 64 || v === null || typeof v !== "object") return v;
+  if (v === null || typeof v !== "object") return v;
+  if (depth > 64) return tooDeep(v, redact, tally);
   // Arrays may be argv (wrapper session.start args, tool command vectors).
   if (Array.isArray(v)) {
     const argv = redactArgv(v);
@@ -717,7 +759,7 @@ function walk(v: unknown, redact: (s: string) => string, depth: number, tally?: 
   if (v instanceof Uint8Array) return v;
   const out: Record<string, unknown> = {};
   for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
-    const secretKey = typeof x === "string" && x.length > 0 && SECRET_KEY.test(k) && !isAlreadyRedacted(x);
+    const secretKey = typeof x === "string" && x.length > 0 && isSecretAttrKey(k) && !isAlreadyRedacted(x);
     if (secretKey && tally) tally.kinds["secret-field"] = (tally.kinds["secret-field"] ?? 0) + 1;
     const val = secretKey
       ? marker("secret-field")
@@ -725,6 +767,22 @@ function walk(v: unknown, redact: (s: string) => string, depth: number, tally?: 
     Object.defineProperty(out, k, { value: val, writable: true, enumerable: true, configurable: true });
   }
   return out;
+}
+
+/**
+ * A subtree deeper than the walk goes: a copy of it, parsed from its JSON text, is walked from depth
+ * 0, so every rule sees each string as a string. A copy that comes out the same keeps the subtree as
+ * it was. A subtree with no JSON text (a cycle), or too deep for the stack, becomes a marker.
+ */
+function tooDeep(v: object, redact: (s: string) => string, tally?: RedactionTally): unknown {
+  try {
+    const text = JSON.stringify(v);
+    if (text === undefined) return v;
+    const out = walk(JSON.parse(text), redact, 0, tally);
+    return JSON.stringify(out) === text ? v : out;
+  } catch {
+    return marker("too-deep");
+  }
 }
 
 function isAlreadyRedacted(s: string): boolean {

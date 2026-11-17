@@ -1,12 +1,41 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { envVar, fileTouches, findBinary, isOurCommand, parseJsonc, parseTestSummary, spawnAgent, toMs, usageFrom } from "../../../src/adapters/more/_util.ts";
+import { envVar, fileTouches, findBinary, isOurCommand, openSqliteCopy, parseJsonc, parseTestSummary, spawnAgent, toMs, usageFrom } from "../../../src/adapters/more/_util.ts";
 import type { TmpEnv } from "../_helpers.ts";
 import { fakeBinary, moreEnv } from "./_helpers.ts";
 import { nodeBin } from "../../_bin.ts";
+
+describe("openSqliteCopy", () => {
+  it("reads rows still in the agent's WAL from a read-only copy, and leaves the agent's files as they were", async () => {
+    const { DatabaseSync } = await import("node:sqlite");
+    const root = mkdtempSync(join(tmpdir(), "csh-sqlcopy-"));
+    const path = join(root, "agent.sqlite");
+    // The agent's writer stays open with its rows in the WAL, as a running app's would.
+    const writer = new DatabaseSync(path);
+    try {
+      writer.exec("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; CREATE TABLE t (x INTEGER); INSERT INTO t VALUES (1), (2), (3);");
+      const before = [path, `${path}-wal`].map((f) => readFileSync(f));
+      assert.ok(before[1]!.length > 0, "the rows are in the WAL");
+      const h = await openSqliteCopy(path);
+      assert.ok(h);
+      try {
+        assert.equal(h.db.prepare("SELECT count(*) AS n FROM t").get()?.n, 3);
+        // Read-only: closing it doesn't fold the copied WAL into the copy (seconds for a large store).
+        assert.throws(() => h.db.exec("INSERT INTO t VALUES (4)"), /readonly/i);
+      } finally {
+        h.close();
+      }
+      assert.deepEqual([path, `${path}-wal`].map((f) => readFileSync(f)), before);
+      assert.equal(existsSync(path), true);
+    } finally {
+      writer.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("parseTestSummary", () => {
   const cases: [string, string, unknown][] = [

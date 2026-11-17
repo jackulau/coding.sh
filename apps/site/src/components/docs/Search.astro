@@ -45,8 +45,10 @@ const list = `search-${id}-list`;
   <span class="sr-only" role="status" data-search-status></span>
 </div>
 
-<style>
-  :global(html:not(.js)) .search {
+<style is:global>
+  /* Global: every class here is this component's own (.search, .search__*), and
+     scoping would add an attribute to each of its elements on every docs page. */
+  html:not(.js) .search {
     display: none;
   }
   .search__field {
@@ -156,7 +158,7 @@ const list = `search-${id}-list`;
   .search__list:empty {
     display: none;
   }
-  .search__list :global(.search__hit) {
+  .search__list .search__hit {
     display: flex;
     flex-direction: column;
     gap: 0.2rem;
@@ -164,26 +166,26 @@ const list = `search-${id}-list`;
     border-radius: var(--radius-sm);
     color: var(--text-2);
   }
-  .search__list :global([aria-selected="true"] .search__hit),
-  .search__list :global(.search__hit:active) {
+  .search__list [aria-selected="true"] .search__hit,
+  .search__list .search__hit:active {
     background: var(--raised);
   }
   @media (hover: hover) and (pointer: fine) {
-    .search__list :global(.search__hit:hover) {
+    .search__list .search__hit:hover {
       background: var(--raised);
     }
   }
-  .search__list :global(.search__title) {
+  .search__list .search__title {
     color: var(--text);
     font-size: var(--fs-base);
     font-weight: 520;
     line-height: 1.4;
   }
-  .search__list :global(.search__section) {
+  .search__list .search__section {
     color: var(--text-muted);
     font-weight: 400;
   }
-  .search__list :global(.search__excerpt) {
+  .search__list .search__excerpt {
     font-size: var(--fs-sm);
     line-height: 1.5;
     overflow-wrap: anywhere;
@@ -193,7 +195,7 @@ const list = `search-${id}-list`;
     line-clamp: 2;
     overflow: hidden;
   }
-  .search__list :global(mark) {
+  .search__list mark {
     background: var(--raised-2);
     color: var(--text);
     border-radius: 2px;

@@ -443,9 +443,13 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
   if (setupSource === "guessed") notes.push(`setup guessed from ${setupFrom.join(", ")}: ${(setup ?? []).join(" && ")}`);
 
   const now = opts.now ?? Date.now();
-  const tags = [...new Set(["from-session", `agent:${session.agent}`, ...(prompts.length > 1 ? ["multi-turn"] : []), ...(opts.tags ?? [])])];
+  const id = `task_${hashParts("task", sessionId, start.snapshot, instruction).slice(0, 16)}`;
+  // The same session and prompt give the same id: drafting again updates that task, so keep its tags (suite:<name>) and say so.
+  const prior = await index.getTask(id);
+  if (prior) notes.push(`updated the existing task ${prior.name} (${prior.tags.filter((t) => t.startsWith("suite:")).join(", ") || "no suite"}), same id ${id}`);
+  const tags = [...new Set(["from-session", `agent:${session.agent}`, ...(prompts.length > 1 ? ["multi-turn"] : []), ...(prior?.tags ?? []), ...(opts.tags ?? [])])];
   return {
-    id: `task_${hashParts("task", sessionId, start.snapshot, instruction).slice(0, 16)}`,
+    id,
     name: opts.name ?? defaultName(instruction),
     status: "draft",
     sourceSessionId: sessionId,

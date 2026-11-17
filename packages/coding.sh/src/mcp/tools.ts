@@ -138,7 +138,14 @@ function treeNodeJson(n: TreeNode, top = false): Obj {
 export const CHARACTER_LIMIT = 25_000;
 
 /**
- * The page `render(limit)` makes, with fewer rows while its text is over CHARACTER_LIMIT: the largest
+ * What a page may take of CHARACTER_LIMIT: the server adds `pending` to an answer after the page is cut
+ * (mcp/server.ts, when an ingest is still running), and it must not push a full page over the limit.
+ * The longest `pending` is about 65 characters.
+ */
+export const PAGE_LIMIT = CHARACTER_LIMIT - 100;
+
+/**
+ * The page `render(limit)` makes, with fewer rows while its text is over PAGE_LIMIT: the largest
  * n whose page fits. Rows are dropped, never cut, so a cursor of offset + n still points at the first
  * row left out. A shortened page carries `limitUsed`; one that already fit is returned as it is. When
  * not even one row fits (the size is in the fixed part of the answer), the page for `limit` comes back
@@ -147,12 +154,12 @@ export const CHARACTER_LIMIT = 25_000;
 export async function fitPage(limit: number, render: (n: number) => Obj | Promise<Obj>): Promise<Obj> {
   const first = await render(limit);
   const len = toolText(first).length;
-  if (len <= CHARACTER_LIMIT) return first;
+  if (len <= PAGE_LIMIT) return first;
   const tooLong = (): Obj => ({ ...first, truncated: true, note: `This answer is over ${CHARACTER_LIMIT.toLocaleString("en-US")} characters even with one row: most of it is not in the rows.` });
   if (limit <= 1) return tooLong();
   const fits = async (n: number): Promise<Obj | undefined> => {
     const page = { ...(await render(n)), limitUsed: n };
-    return toolText(page).length <= CHARACTER_LIMIT ? page : undefined;
+    return toolText(page).length <= PAGE_LIMIT ? page : undefined;
   };
   // One row first: when it does not fit, no page does.
   let best = await fits(1);
@@ -160,7 +167,7 @@ export async function fitPage(limit: number, render: (n: number) => Obj | Promis
   // The length grows with n: bisect for the largest n that fits, probing an estimate first.
   let lo = 1;
   let hi = limit;
-  for (let n = Math.min(limit - 1, Math.max(2, Math.floor((limit * CHARACTER_LIMIT * 0.9) / len))); hi - lo > 1; n = lo + Math.floor((hi - lo) / 2)) {
+  for (let n = Math.min(limit - 1, Math.max(2, Math.floor((limit * PAGE_LIMIT * 0.9) / len))); hi - lo > 1; n = lo + Math.floor((hi - lo) / 2)) {
     const page = await fits(n);
     if (page) [lo, best] = [n, page];
     else hi = n;
@@ -186,8 +193,8 @@ function withCharacterLimit(t: ToolDef<ToolCtx>): ToolDef<ToolCtx> {
   };
 }
 
-/** What session_replay's text may take of CHARACTER_LIMIT: the rest is for `limitUsed` and the page's own keys. */
-const REPLAY_TEXT_LIMIT = CHARACTER_LIMIT - 60;
+/** What session_replay's text may take of PAGE_LIMIT: the rest is for `limitUsed` and the page's own keys. */
+const REPLAY_TEXT_LIMIT = PAGE_LIMIT - 60;
 
 const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } as const;
 

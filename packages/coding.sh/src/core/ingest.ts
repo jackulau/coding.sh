@@ -60,7 +60,7 @@
 // reported. Before, one such session ended the run there, and every session
 // after it kept its events with no row (RT-11). `repair` (`coding.sh ingest`)
 // folds sessions that have events but no row, and fold:error rows, again.
-import type { AgentEvent, Session } from "../schema/index.ts";
+import type { AgentEvent, RepoState, Session } from "../schema/index.ts";
 import { isEventKind } from "../schema/index.ts";
 import type { Adapter, BackfillFile, BlobStore, Config, IndexStore, NormalizeContext, OpenSession, Sink, SinkAck, SpoolLine } from "./types.ts";
 import { resolveRepoConfig, isExcluded } from "./config.ts";
@@ -77,6 +77,7 @@ import { priceEvent, pricesFor } from "./pricing.ts";
 import { listSpoolFiles, readSpoolFile, resolveRawFile, spoolFileDay, type SpoolFile } from "./spool-read.ts";
 import { scrubRawFile, scrubSpoolFile } from "./spool-scrub.ts";
 import { repoResolver, type RepoResolver } from "./repo-state.ts";
+import { addDeferred, canDefer, readDeferred, settleDeferred } from "./ingest-deferred.ts";
 import { snapshot } from "./snapshot.ts";
 import { isWrapperLine } from "../adapters/more/wrapper.ts";
 import { rememberTraceSessions } from "../adapters/_shared/traceparent.ts";
@@ -87,6 +88,8 @@ import { readDisabledSessions } from "../spool/write.ts";
 import { matchSpawnedParent, openAt } from "../spool/spawned-match.ts";
 
 export const PUT_BATCH = 500;
+/** Backfill file cursors set per transaction (three rows each). */
+const CURSOR_BATCH = 2000;
 const DEFAULT_CHECKPOINT_EVENTS = 5000;
 /** A run that stored more events than this folds the store's write-ahead log back in before it returns. */
 export const BULK_WRITE_EVENTS = 10_000;
@@ -168,6 +171,8 @@ export interface IngestResult {
   repaired?: number;
   /** The blob store write that stopped this ingest (StoreWriteError): the lines from there on wait for the next run. Unset otherwise. */
   storeWriteFailed?: string;
+  /** Sessions whose git work (end snapshot, start repo state) this run left for an ingest without a deadline. Unset when none. */
+  deferred?: number;
 }
 
 interface LineEvents {
@@ -273,8 +278,8 @@ export async function ingest(opts: IngestOptions): Promise<IngestResult> {
     } finally {
       lock.release();
     }
-    // Out of time: the marker stays for whoever ingests next.
-    if (total.pendingFiles) break;
+    // Out of time, or stopped: the marker stays for whoever ingests next.
+    if (total.pendingFiles || opts.signal?.aborted) break;
     // Checked after release: a hook that saw the lock held touched the marker before it looked.
     if (!existsSync(marker)) break;
   }
@@ -311,6 +316,7 @@ function mergeResults(a: IngestResult, b: IngestResult): IngestResult {
     pendingFiles: b.pendingFiles,
   };
   if (a.repaired || b.repaired) merged.repaired = (a.repaired ?? 0) + (b.repaired ?? 0);
+  if (a.deferred || b.deferred) merged.deferred = (a.deferred ?? 0) + (b.deferred ?? 0);
   const failed = b.storeWriteFailed ?? a.storeWriteFailed;
   if (failed !== undefined) merged.storeWriteFailed = failed;
   return merged;
@@ -353,10 +359,34 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     if (!kept.length) result.excluded++;
     return kept;
   };
-  const repo = repoResolver();
+  // Git work a budgeted or stopped run leaves for a later ingest (ingest-deferred.ts). Only
+  // with a store that can keep it; without one the work runs here, as it always did.
+  const budgeted = opts.deadline !== undefined;
+  const deferring = canDefer(index);
+  const gitLate = () => deferring && (!!opts.signal?.aborted || (opts.deadline !== undefined && Date.now() >= opts.deadline));
+  /** Sessions folded without their start repo state (gitLate), not yet recorded as deferred. */
+  const repoSkipped = new Set<string>();
+  const deferredIds = new Set<string>();
+  const repo = repoResolver({ stop: gitLate, skipped: (id) => repoSkipped.add(id) });
+  const deferRepos = async () => {
+    if (!repoSkipped.size) return;
+    if (await addDeferred(index, { repos: repoSkipped })) for (const id of repoSkipped) deferredIds.add(id);
+    repoSkipped.clear();
+  };
   const versionFor = (agent: string) => parseVersionFor(adapters, agent);
   // Latest live end-of-turn/session ts per session, from lines new in this run.
   const freshEnds = new Map<string, number>();
+  const deferSnapshots = async () => {
+    if (!freshEnds.size) return;
+    if (await addDeferred(index, { snapshots: freshEnds })) for (const id of freshEnds.keys()) deferredIds.add(id);
+    freshEnds.clear();
+  };
+  // Work an earlier run deferred: a run without a deadline does it (snapshots with its first checkpoint, repos after its files).
+  const due = budgeted ? undefined : await readDeferred(index).catch(() => undefined);
+  const dueSnapshots = new Map<string, number>(Object.entries(due?.snapshots ?? {}));
+  for (const [id, ts] of dueSnapshots) freshEnds.set(id, ts);
+  /** Snapshots taken in one snapshotEnded call, per repo: sessions that ended in one repo get its tree as it is now, taken once. */
+  let snapsByRoot = new Map<string, Promise<RepoState | undefined>>();
   const endSnapshot = async (s: Session) => {
     const endTs = freshEnds.get(s.id);
     if (endTs === undefined) return;
@@ -365,12 +395,18 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     if (!root || s.runId || now() - endTs > END_SNAPSHOT_MAX_AGE_MS) return;
     const snap = profileFor(s.cwd).config.snapshot;
     if (!snap.enabled) return;
-    try {
-      const state = await snapshot(root, { env, maxFiles: snap.maxFiles, timeoutMs: snap.timeoutMs, message: `coding.sh end ${s.id}` });
-      if (state?.snapshot && state.root === root) s.endSnapshot = state.snapshot;
-    } catch (err) {
-      error({ message: `end snapshot of ${root} for session ${s.id} failed: ${(err as Error).message}` });
+    const key = `${root}\0${snap.maxFiles}\0${snap.timeoutMs}`;
+    let taken = snapsByRoot.get(key);
+    if (!taken) {
+      taken = snapshot(root, { env, maxFiles: snap.maxFiles, timeoutMs: snap.timeoutMs, message: `coding.sh end ${s.id}` }).catch((err: unknown) => {
+        // Reported once per repo: the other sessions that ended there fail the same way.
+        error({ message: `end snapshot of ${root} for session ${s.id} failed: ${err instanceof Error ? err.message : String(err)}` });
+        return undefined;
+      });
+      snapsByRoot.set(key, taken);
     }
+    const state = await taken;
+    if (state?.snapshot && state.root === root) s.endSnapshot = state.snapshot;
   };
   const onFoldError = (f: FoldFailure) => error({ message: foldFailureMessage(f) });
   const recompute = async (ids: Iterable<string>) => {
@@ -379,8 +415,18 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     }
   };
   // After the checkpoint commits: git can take seconds, too long to hold the index's write lock.
+  // A budgeted run deferred them already, at its checkpoint; a run stopped part way defers the rest.
   const snapshotEnded = async () => {
+    if (!freshEnds.size) return;
+    snapsByRoot = new Map();
+    const handled: [string, number][] = [];
     for (const id of [...freshEnds.keys()]) {
+      if (gitLate()) break;
+      const dueTs = dueSnapshots.get(id);
+      if (dueTs !== undefined) {
+        handled.push([id, dueTs]);
+        dueSnapshots.delete(id);
+      }
       const s = await index.getSession(id);
       if (!s) {
         freshEnds.delete(id);
@@ -396,6 +442,8 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
         if (row) await index.upsertSession({ ...row, endSnapshot: snap });
       });
     }
+    if (freshEnds.size && gitLate()) await deferSnapshots();
+    if (handled.length) await settleDeferred(index, { snapshots: handled });
   };
   const atomically = <T>(fn: () => Promise<T>): Promise<T> => inTransaction(index, fn);
 
@@ -506,6 +554,9 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
       await rememberTraceSessions(index, pending, traceKvKey);
       durations.settle();
       await recompute(touched);
+      // Kept with the cursors past the lines they came from: a run killed after this commit loses none of it.
+      await deferRepos();
+      if (budgeted && deferring) await deferSnapshots();
       for (const f of open) {
         if (f.readPos <= f.local) continue;
         fence();
@@ -537,11 +588,30 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     return true;
   };
 
+  // Sessions an earlier run folded without their start repo state: folded again, now with git. First, so a
+  // deferred end snapshot (taken at the first checkpoint) finds the session's repo.
+  if (due?.repos.length) {
+    const done: string[] = [];
+    for (const id of due.repos) {
+      if (gitLate()) break;
+      const s = await index.getSession(id);
+      if (s && !s.repo && s.cwd) {
+        fence();
+        if (await recomputeSession(index, id, { linker, repo, versionFor, onFoldError })) touchedAll.add(id);
+      }
+      if (!repoSkipped.has(id)) done.push(id);
+    }
+    await settleDeferred(index, { repos: done });
+  }
+
   const files = await listSpoolFiles(spoolDir);
   // The deadline counts once a file has been read, so a budgeted run always makes progress
   // (a slow start, such as loading the adapters, never leaves a read with nothing new).
   let readAny = false;
   const outOfTime = () => !!opts.signal?.aborted || (readAny && opts.deadline !== undefined && Date.now() >= opts.deadline);
+  /** Files read through in this run: past the deadline, a file is left part way only after the first. */
+  let filesRead = 0;
+  const stopMidFile = () => !!opts.signal?.aborted || (filesRead > 0 && opts.deadline !== undefined && Date.now() >= opts.deadline);
   /** Files from `from` on whose local cursor is short of their end. */
   const unread = async (from: number) => {
     let n = 0;
@@ -638,9 +708,15 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
           break;
         }
       }
+      // Stopped (Ctrl-C) or out of time part way through a file: the lines read commit below, the rest wait.
+      if (stopMidFile()) {
+        stopped = true;
+        break;
+      }
     }
     if (stopped) result.pendingFiles = (fr.readPos < file.size ? 1 : 0) + (await unread(fi + 1));
     else if (local < file.size) left--;
+    filesRead++;
   }
   if (!(await checkpoint())) stopped = true;
   // A window the blob store refused left its cursors where they were: every file short of its end waits.
@@ -648,7 +724,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   opts.onProgress?.({ filesPending: result.pendingFiles });
   await scrubPastDays(index, spoolDir, files, now(), (cwd) => profileFor(cwd).redactor, () => !stopped && !outOfTime(), fence);
 
-  if (opts.repair) {
+  if (opts.repair && !opts.signal?.aborted) {
     fence();
     const repaired = await repairSessions(index, { linker, repo, versionFor, onFoldError });
     for (const id of repaired) touchedAll.add(id);
@@ -657,6 +733,8 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
 
   // Applied after every file so a child ingested before its parent is still linked.
   for (const id of await linker.apply()) touchedAll.add(id);
+  await deferRepos();
+  if (deferredIds.size) result.deferred = deferredIds.size;
 
   result.sessions = touchedAll.size;
   // A bulk drain leaves a WAL as big as what it wrote until some later read-write close.
@@ -1469,8 +1547,14 @@ export interface BackfillOptions {
   sinks?: Sink[];
   env?: NodeJS.ProcessEnv;
   since?: number;
-  /** Read no further source files (after the first) once Date.now() passes this (ms epoch); they count in `pendingFiles`. */
+  /**
+   * Read no further source files (after the first) once Date.now() passes this (ms epoch); they count in
+   * `pendingFiles`. With a deadline the cursors of each file read commit as it ends, so a run killed at its
+   * deadline keeps what it read, and git work (a session's start repo state) left past it is deferred.
+   */
   deadline?: number;
+  /** On abort, stop before the next event: the files read through commit, the one part way is read again next time. */
+  signal?: AbortSignal;
   /** Called as the import goes: source files read so far and events stored, for the agent being read. */
   onProgress?: (p: BackfillProgress) => void;
   now?: () => number;
@@ -1498,12 +1582,21 @@ export interface BackfillResult {
   excluded: number;
   errors: IngestError[];
   agents: { agent: string; events: number; error?: string }[];
-  /** Changed source files left unread because `deadline` passed (0 otherwise). */
+  /** Changed source files left unread because `deadline` passed or `signal` aborted (0 otherwise). */
   pendingFiles: number;
+  /** Sessions whose start repo state was left for an ingest without a deadline. Unset when none. */
+  deferred?: number;
   /** Per sink, what this import sent it. Absent without sinks. */
   sinks?: SinkReport[];
   /** Another import was storing and sending to the sinks: this one read nothing. */
   busy?: true;
+}
+
+/** Thrown by the `changed` callback of a backfill that is out of time: the adapter's walk of its source files ends there. */
+export class BackfillStop extends Error {
+  constructor() {
+    super("backfill out of time");
+  }
 }
 
 /** Cursor keys for one backfill source file: size, mtime (floored ms) and the `since` it was read with. */
@@ -1602,7 +1695,18 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
   let accepted = 0;
 
   const linker = childLinker(index);
-  const repo = repoResolver();
+  const aborted = () => !!opts.signal?.aborted;
+  // Past the deadline or stopped, a session's start repo state waits for an ingest without one (ingest-deferred.ts).
+  const deferring = canDefer(index);
+  const gitLate = () => deferring && (aborted() || (opts.deadline !== undefined && Date.now() >= opts.deadline));
+  const repoSkipped = new Set<string>();
+  let deferred = 0;
+  const repo = repoResolver({ stop: gitLate, skipped: (id) => repoSkipped.add(id) });
+  const deferRepos = async () => {
+    if (!repoSkipped.size) return;
+    if (await addDeferred(index, { repos: repoSkipped })) deferred += repoSkipped.size;
+    repoSkipped.clear();
+  };
   const byId = new Map(opts.adapters.map((a) => [a.id, a]));
   const versionFor = (agent: string) => parseVersionFor(byId, agent);
   const updated = new Set<string>();
@@ -1611,6 +1715,18 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
     for (const id of touched) if (await recomputeSession(index, id, { linker, repo, versionFor, onFoldError })) updated.add(id);
     touched.clear();
   };
+  /** Marks files read: mtime last, it is what says a file was read. */
+  const setFileCursors = async (list: { agent: string; file: BackfillFile }[]) => {
+    for (const { agent, file } of list) {
+      await index.setCursor(backfillCursorKey(agent, file.path, "size"), file.size);
+      await index.setCursor(backfillCursorKey(agent, file.path, "since"), since);
+      await index.setCursor(backfillCursorKey(agent, file.path, "mtime"), Math.floor(file.mtimeMs));
+    }
+  };
+  // With a deadline (a read's tail import, which its parent kills at the deadline) each file commits as it
+  // ends, with the sessions it touched folded first; without one they commit at the end, a few thousand
+  // to a transaction (a commit per file took over a minute for a 90,000-file projects dir).
+  const perFile = opts.deadline !== undefined;
 
   // ---- sinks (see "backfill → sinks" above). Nothing below runs without one.
   const sinkStates = await sinkStatesFor(index, opts.sinks ?? [], now);
@@ -1735,6 +1851,19 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
     if (!adapter.backfill) continue;
     const report = { agent: adapter.id, events: 0 } as BackfillResult["agents"][number];
     result.agents.push(report);
+    // Out of time before the adapter starts, with an earlier one having read a file (a run always makes
+    // progress): its first step can be a scan of tens of thousands of files, which no later check could cut
+    // short. It stays for the next run; one file stands for what was not looked at, so the caller starts a
+    // background ingest.
+    // Stopped (Ctrl-C): one file stands for every adapter left (none more when the stop cut a file short).
+    if (aborted()) {
+      if (!result.pendingFiles) result.pendingFiles = 1;
+      break;
+    }
+    if (accepted > 0 && opts.deadline !== undefined && Date.now() >= opts.deadline) {
+      result.pendingFiles++;
+      continue;
+    }
     let pending: AgentEvent[] = [];
     const flush = async () => {
       if (!pending.length) return;
@@ -1753,19 +1882,26 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
       // counts them, so each is put by itself (in one transaction when the store has them).
       const from = src;
       const fresh: AgentEvent[] | undefined = from && [...from.takes.values()].includes(false) ? [] : undefined;
-      let stored = 0;
-      for (const [id, events] of bySession) {
-        let inserted: number;
-        if (fresh) {
-          const before = fresh.length;
-          await inTransaction(index, async () => {
+      // One transaction for the batch: a commit per session (a projects dir holds tens of thousands of
+      // subagent transcripts, each its own session) rewrote the same index and search pages each time.
+      const put = await inTransaction(index, async () => {
+        const out: { id: string; inserted: number; timed: boolean }[] = [];
+        for (const [id, events] of bySession) {
+          let inserted: number;
+          if (fresh) {
+            const before = fresh.length;
             for (const e of events) if ((await index.putEvents([e])).inserted) fresh.push(e);
-          });
-          inserted = fresh.length - before;
-        } else ({ inserted } = await index.putEvents(events));
-        // A model call a hook stored first, from part of the response, has no timing: this copy read all of it.
-        if (index.fillCallTiming && inserted < events.length && (await index.fillCallTiming(events)).length) touched.add(id);
-        if (inserted) touched.add(id);
+            inserted = fresh.length - before;
+          } else ({ inserted } = await index.putEvents(events));
+          // A model call a hook stored first, from part of the response, has no timing: this copy read all of it.
+          const timed = !!index.fillCallTiming && inserted < events.length && (await index.fillCallTiming(events)).length > 0;
+          out.push({ id, inserted, timed });
+        }
+        return out;
+      });
+      let stored = 0;
+      for (const { id, inserted, timed } of put) {
+        if (inserted || timed) touched.add(id);
         stored += inserted;
         result.events += inserted;
         report.events += inserted;
@@ -1786,9 +1922,31 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
     // Whether events now being yielded come from a file this adapter reported as
     // read for the first time; undefined = the adapter reports no files.
     let firstRead: boolean | undefined;
-    const files: BackfillFile[] = [];
+    let files: BackfillFile[] = [];
+    /** The changed file being read: its cursors wait until it is read through. */
+    let reading: BackfillFile | undefined;
+    /** Commits the files read through so far, with the sessions they touched. */
+    const commitFiles = async () => {
+      reading = undefined;
+      if (!files.length) return;
+      await flush();
+      await blobBatch?.flush();
+      await recompute();
+      const done = files.map((file) => ({ agent: adapter.id, file }));
+      files = [];
+      await inTransaction(index, async () => {
+        await deferRepos();
+        await setFileCursors(done);
+      });
+    };
     const changed = async (f: BackfillFile): Promise<boolean> => {
       await endSource();
+      if (perFile) await commitFiles();
+      reading = undefined;
+      if (aborted()) {
+        result.pendingFiles++;
+        throw new BackfillStop();
+      }
       const key = (field: "size" | "mtime" | "since") => backfillCursorKey(adapter.id, f.path, field);
       const [size, mtime, readSince] = await Promise.all([index.getCursor(key("size")), index.getCursor(key("mtime")), index.getCursor(key("since"))]);
       const seen = mtime > 0;
@@ -1798,9 +1956,16 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
       // A sink that lacks what the index stored from the file has it read again.
       const at = sinkStates.size ? await sinkCursors(adapter.id, f.path) : undefined;
       const behind = at !== undefined && [...at.values()].some((c) => c !== mtime);
-      if (unchanged && !behind) return false;
+      const late = opts.deadline !== undefined && Date.now() >= opts.deadline;
+      if (unchanged && !behind) {
+        if (!late) return false;
+        // Out of time on a file nothing changed in: the adapter's walk over the files left is not worth waiting
+        // for (a projects dir can hold tens of thousands). Stop it; one file stands for the ones not looked at.
+        result.pendingFiles++;
+        throw new BackfillStop();
+      }
       // Out of time (after reading one, so every run makes progress): left for the next backfill, which finds it still changed.
-      if (accepted > 0 && opts.deadline !== undefined && Date.now() >= opts.deadline) {
+      if (late && accepted > 0) {
         if (!unchanged) result.pendingFiles++;
         return false;
       }
@@ -1808,13 +1973,21 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
       if (at) src = await openSource(adapter.id, f.path, { current, had: mtime, at, reading: !unchanged });
       firstRead = unchanged ? false : !seen;
       // Read only for a sink: the index's own cursors stay as they are.
-      if (!unchanged) files.push(f);
+      if (!unchanged) {
+        files.push(f);
+        reading = f;
+      }
       opts.onProgress?.({ agent: adapter.id, files: accepted, events: result.events });
       return true;
     };
     const adapterOpts = opts.since !== undefined ? { since: opts.since, changed } : { changed };
     try {
+      let stop = false;
       for await (const e of adapter.backfill(ctx, adapterOpts)) {
+        if (aborted()) {
+          stop = true;
+          break;
+        }
         const ev = backfillEvent(e, profileFor, metadata, env);
         if (typeof ev === "string") {
           if (ev === "excluded") result.excluded++;
@@ -1835,10 +2008,28 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
         if (firstRead !== false) touched.add(ev.sessionId);
         if (pending.length >= PUT_BATCH) await flush();
       }
-      await flush();
-      await endSource();
+      if (stop) {
+        // Stopped part way through a file: what it yielded is stored (ids make a re-read idempotent), its
+        // cursors are not, so the next run reads it again. Its source stays open: the sinks stay behind on it.
+        if (reading) {
+          files = files.filter((f) => f !== reading);
+          result.pendingFiles++;
+        }
+        await flush();
+        src = undefined;
+      } else {
+        await flush();
+        await endSource();
+      }
       for (const file of files) fileCursors.push({ agent: adapter.id, file });
     } catch (err) {
+      if (err instanceof BackfillStop) {
+        // Not a failure: what was read is stored and its cursors are set, as at the end of a whole walk.
+        await flush();
+        await endSource();
+        for (const file of files) fileCursors.push({ agent: adapter.id, file });
+        continue;
+      }
       await flush().catch(() => {});
       // Cut short: its sinks stay behind on it.
       src = undefined;
@@ -1850,14 +2041,15 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
   await blobBatch?.flush();
   await recompute();
   for (const id of await linker.apply()) updated.add(id);
-  for (const { agent, file } of fileCursors) {
-    await index.setCursor(backfillCursorKey(agent, file.path, "size"), file.size);
-    await index.setCursor(backfillCursorKey(agent, file.path, "since"), since);
-    // mtime last: it marks the file as read.
-    await index.setCursor(backfillCursorKey(agent, file.path, "mtime"), Math.floor(file.mtimeMs));
+  await deferRepos();
+  // A few thousand files to a transaction: a commit per cursor took over a minute for a 90,000-file projects dir.
+  for (let i = 0; i < fileCursors.length; i += CURSOR_BATCH) {
+    await inTransaction(index, () => setFileCursors(fileCursors.slice(i, i + CURSOR_BATCH)));
   }
   // After the rows are linked and the index's cursors are in: a sink's cursor never runs ahead of them.
-  await deliver();
+  // Stopped (Ctrl-C): nothing is sent; the sinks stay behind on what this run read, for the next.
+  if (!aborted()) await deliver();
+  if (deferred) result.deferred = deferred;
   result.sessions = updated.size;
   if (sinkStates.size) result.sinks = sinkReports(sinkStates);
   if (result.events > BULK_WRITE_EVENTS) await Promise.all([index.checkpoint?.(), blobs.checkpoint?.()]);

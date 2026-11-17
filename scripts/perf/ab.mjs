@@ -41,7 +41,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -157,7 +157,7 @@ if (values.part) {
   console.log(`part written to ${resolve(values.out)}: ${result.summary.pairsComplete} of ${result.pairs} pairs, ${result.summary.failedRuns} failed runs`);
   process.exit(status);
 }
-const { renderMetrics } = await import(join(ROOT, "packages/coding.sh/src/experiments/metrics.ts"));
+const { renderMetrics } = await import(pathToFileURL(join(ROOT, "packages/coding.sh/src/experiments/metrics.ts")).href);
 const { checkBudgets, checkGate } = await import("./gate.mjs");
 process.stdout.write(`${renderMetrics(result, { color: process.stdout.isTTY === true })}\n`);
 
@@ -182,7 +182,7 @@ if (values.budgets) {
 for (const f of failures) console.log(`${process.env.GITHUB_ACTIONS ? "::error::perf: " : "FAIL "}${f}`);
 
 if (values.baseline) {
-  const { median, stddev } = await import(join(ROOT, "packages/coding.sh/src/stats/summary.ts"));
+  const { median, stddev } = await import(pathToFileURL(join(ROOT, "packages/coding.sh/src/stats/summary.ts")).href);
   const runs = result.runs.filter((x) => !x.warmup && x.metrics);
   const metrics = {};
   for (const m of result.metrics) {

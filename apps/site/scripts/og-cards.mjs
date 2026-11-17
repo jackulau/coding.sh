@@ -4,8 +4,9 @@
 // that manifest against this list, so a changed title cannot keep its old card.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const SITE = new URL("../", import.meta.url).pathname;
+const SITE = fileURLToPath(new URL("../", import.meta.url));
 
 /** Bump when svg() in gen-og.mjs changes how a card looks, so every card is drawn again. */
 export const TEMPLATE_VERSION = 1;

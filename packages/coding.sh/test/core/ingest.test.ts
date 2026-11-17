@@ -6,7 +6,7 @@ import { after, describe, it } from "node:test";
 import type { AgentEvent, EventKind, Session } from "../../src/schema/index.ts";
 import type { Adapter, BlobBatch, BlobStore, Config, OpenSession, Sink, SinkAck } from "../../src/core/types.ts";
 import { defaultConfig } from "../../src/core/config.ts";
-import { backfill, childLinker, ingest, recomputeSession, SINK_BEHIND, SINK_CURRENT, sinkBackfillKey, sinkCursorKey, sinkRetryKey, storeEnrichment } from "../../src/core/ingest.ts";
+import { backfill, backfillCursorKey, childLinker, ingest, recomputeSession, SINK_BEHIND, SINK_CURRENT, sinkBackfillKey, sinkCursorKey, sinkRetryKey, storeEnrichment } from "../../src/core/ingest.ts";
 import { paths } from "../../src/core/paths.ts";
 import type { RepoResolver } from "../../src/core/repo-state.ts";
 import { acquireLock, isStale, LockBusyError, LockLostError } from "../../src/core/lock.ts";
@@ -896,6 +896,77 @@ describe("transcript import sends to the sinks (qa:server-7)", () => {
   });
   const A = "/t/a.jsonl";
   const threeEvents = () => [ev("a", "session.start", 0), ev("a", "user.message", 1000, { text: "secret prompt" }), ev("a", "assistant.message", 2000, { text: "ok" })];
+
+  it("a backfill of many small files writes their events and file cursors a batch to a transaction, not one per session or cursor", async () => {
+    const t = setup();
+    const files = new Map<string, TFile>(Array.from({ length: 40 }, (_, i) => [`/t/s${i}.jsonl`, { mtimeMs: base + i, events: [ev(`s${i}`, "session.start", i), ev(`s${i}`, "user.message", i + 100, { text: "hi" })] }]));
+    // Counts the transactions the writes land in (an inner one joins the outer, as SQLite's does).
+    let open = 0;
+    let txs = 0;
+    let outside = 0;
+    const writing = new Set<number>();
+    const store = t.index;
+    const index = new Proxy(store, {
+      get(target, key) {
+        if (key === "transaction")
+          return async <T>(fn: () => Promise<T>) => {
+            if (!open++) txs++;
+            try {
+              return await fn();
+            } finally {
+              open--;
+            }
+          };
+        const v = Reflect.get(target, key, target);
+        if (typeof v !== "function") return v;
+        if (key !== "putEvents" && key !== "setCursor") return v.bind(target);
+        return (...a: unknown[]) => {
+          if (key === "putEvents" || String(a[0]).startsWith("backfill:")) open ? writing.add(txs) : outside++;
+          return v.apply(target, a);
+        };
+      },
+    });
+    const r = await backfill({ config: t.config, index, blobs: t.blobs, env: t.env, adapters: [historian(files, [])] });
+    assert.equal(r.events, 80);
+    assert.equal((await store.listSessions()).length, 40);
+    assert.equal(outside, 0, "no event or file cursor is written outside a transaction");
+    assert.ok(writing.size <= 2, `${writing.size} transactions wrote the events and cursors`);
+    assert.equal(await store.getCursor(backfillCursorKey("hist", "/t/s7.jsonl", "mtime")), base + 7);
+  });
+
+  it("a backfill out of time stops walking at the first file nothing changed in, and a changed file is still read", async () => {
+    const t = setup();
+    const files = new Map<string, TFile>(["a", "b", "c", "d"].map((n, i) => [`/t/${n}.jsonl`, { mtimeMs: base + i, events: [ev(n, "session.start", i), ev(n, "user.message", i + 100, { text: n })] }]));
+    const asked: string[] = [];
+    const walker: Adapter = {
+      ...fakeAdapter,
+      id: "hist",
+      async *backfill(_ctx, o) {
+        for (const [path, f] of files) {
+          asked.push(path);
+          if (o?.changed && !(await o.changed({ path, size: f.events.length, mtimeMs: f.mtimeMs }))) continue;
+          yield* f.events;
+        }
+      },
+    };
+    const opts = { config: t.config, index: t.index, blobs: t.blobs, env: t.env, adapters: [walker] };
+    await backfill(opts);
+    assert.equal(asked.length, 4);
+
+    // Nothing changed and no time left: one file stands for the rest; the walk ends there, without an error.
+    asked.length = 0;
+    const idle = await backfill({ ...opts, deadline: Date.now() - 1 });
+    assert.deepEqual([asked.length, idle.pendingFiles, idle.errors, idle.events], [1, 1, [], 0]);
+
+    // A changed file is read even when out of time, so every run makes progress; the walk stops after it.
+    files.get("/t/a.jsonl")!.mtimeMs += 5000;
+    files.get("/t/a.jsonl")!.events.push(ev("a", "user.message", 900, { text: "more" }));
+    asked.length = 0;
+    const grown = await backfill({ ...opts, deadline: Date.now() - 1 });
+    assert.equal(grown.events, 1);
+    assert.deepEqual(grown.errors, []);
+    assert.ok(asked.length <= 2, `walk stopped early (${asked.length} files asked)`);
+  });
 
   it("sends only what is new as a file grows, in the sink's batches; a failed sink gets the file once it is back", async () => {
     const t = setup();

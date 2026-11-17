@@ -4,11 +4,12 @@
 // at the worst-flagged node to fix first.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { removeTestDir } from "../_rm.ts";
 import { CLI } from "../_cli.ts";
 
 const CONFIG = fileURLToPath(new URL("../fixtures/adapters/claude-code/config", import.meta.url));
@@ -36,13 +37,16 @@ before(() => {
     CLAUDE_CONFIG_DIR: CONFIG,
     CODEX_HOME: join(root, "codex"),
     CODING_SH_NO_UPDATE_CHECK: "1",
+    // A read that runs past its budget (a loaded machine) starts a detached ingest in this home; on
+    // Windows it would still hold the store when `after` removes it.
+    CODING_SH_NO_AUTO_INGEST: "1",
     NO_COLOR: "1",
   };
   const r = run("ingest", "--backfill", "--agent", "claude-code");
   assert.equal(r.status, 0, r.stderr);
 });
 
-after(() => rmSync(root, { recursive: true, force: true }));
+after(() => removeTestDir(root));
 
 describe("coding.sh tree", () => {
   test("from a session, shows the whole run with rolled-up totals and the node to fix first", () => {

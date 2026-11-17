@@ -235,6 +235,30 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
       assert.ok(hit!.snippet.includes(`${SNIPPET_OPEN}pgrep${SNIPPET_CLOSE}`), hit!.snippet);
     }));
 
+    it("search finds a session by its error text: error events, failed model calls and tool errors", withStore(async (s) => {
+      await s.putEvents([
+        fixtureEvent({ id: "q1", sessionId: "quiet", kind: "user.message", payload: { text: "Summarize the changelog" } }),
+        fixtureEvent({ id: "err", sessionId: "limited", kind: "error", payload: { message: "API Error: 429 Too Many Requests", source: "api", statusCode: 429, errorType: "rate_limit_error", errorClass: "rate_limit", rateLimitType: "seven_day" } }),
+        fixtureEvent({ id: "call", sessionId: "overloaded", kind: "llm.call", payload: { ok: false, error: "upstream connect error or disconnect", errorType: "overloaded_error", statusCode: 529 } }),
+        fixtureEvent({ id: "ok-call", sessionId: "overloaded", kind: "llm.call", payload: { ok: true, stopReason: "end_turn", errorType: "unused_marker" } }),
+        fixtureEvent({ id: "te", sessionId: "failing", kind: "tool.end", payload: { tool: "Bash", toolUseId: "x1", ok: false, error: "permission denied by sandbox policy", output: "exit 1" } }),
+        fixtureEvent({ id: "same", sessionId: "failing", kind: "tool.end", payload: { tool: "Read", toolUseId: "x2", ok: false, error: "ENOENT wombat.txt", output: "ENOENT wombat.txt" } }),
+      ]);
+      const ids = async (q: string) => (await s.search(q)).map((h) => h.event.id).sort();
+      const sessions = async (q: string) => [...new Set((await s.search(q)).map((h) => h.event.sessionId))].sort();
+      assert.deepEqual(await sessions("rate_limit_error"), ["limited"], "the error event's type");
+      assert.deepEqual(await ids("too many requests"), ["err"], "the error event's message");
+      assert.deepEqual(await ids("seven_day"), ["err"], "the rate limit type");
+      assert.deepEqual(await ids("429"), ["err"], "the status code");
+      assert.deepEqual(await sessions("upstream disconnect"), ["overloaded"], "a failed model call");
+      assert.deepEqual(await ids("overloaded_error"), ["call"]);
+      assert.deepEqual(await ids("unused_marker"), [], "a model call that did not fail has no search text");
+      assert.deepEqual(await sessions("sandbox policy"), ["failing"], "a failed tool's error, not only its output");
+      assert.deepEqual(await ids("wombat"), ["same"]);
+      const [hit] = await s.search("rate_limit_error");
+      assert.ok(hit!.snippet.includes(`${SNIPPET_OPEN}rate_limit_error${SNIPPET_CLOSE}`), hit!.snippet);
+    }));
+
     it("upserts, gets and lists sessions with filters", withStore(async (s) => {
       await s.upsertSession(fixtureSession({ id: "a", startedAt: 1, agent: "codex", repo: { root: "/r1", head: "h" }, flags: ["compaction"] }));
       await s.upsertSession(fixtureSession({ id: "b", startedAt: 2, runId: "run-1", parent: { sessionId: "a", subagentId: "x", type: "explore" } }));

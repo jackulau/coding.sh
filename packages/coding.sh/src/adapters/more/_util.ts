@@ -1086,7 +1086,9 @@ export async function openSqliteCopy(dbPath: string): Promise<{ db: import("node
   try {
     copyFileSync(dbPath, dst);
     for (const sfx of ["-wal", "-shm"]) if (existsSync(dbPath + sfx)) copyFileSync(dbPath + sfx, dst + sfx);
-    const db = new sqlite.DatabaseSync(dst);
+    // Read-only: a writable connection's close folds the copied WAL into the copy before it is deleted
+    // (seconds for T3 Code's 600 MB store). A read-only one still reads the WAL, through its own -shm.
+    const db = new sqlite.DatabaseSync(dst, { readOnly: true });
     return {
       db,
       close: () => {

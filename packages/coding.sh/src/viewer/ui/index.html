@@ -61,6 +61,7 @@
   --gutter: 1rem;
   color-scheme: dark;
 }
+/* A light theme the person picked. The block under it is the same, for the system setting. */
 :root[data-theme="light"] {
   --bg: #f7f7f8;
   --surface: #ffffff;
@@ -91,6 +92,40 @@
   --s4: #b07400;
   --shadow: 0 18px 50px -20px rgba(0, 0, 0, 0.3);
   color-scheme: light;
+}
+/* No choice stored: follow the system. Kept in CSS so the first paint already has the right theme. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg: #f7f7f8;
+    --surface: #ffffff;
+    --raised: #f2f2f4;
+    --raised-2: #e9e9ec;
+    --hover: rgba(0, 0, 0, 0.03);
+    --select: rgba(0, 0, 0, 0.055);
+    --text: #0c0c0e;
+    --text-2: #4f4f57;
+    --text-muted: #62626a;
+    --text-faint: #b4b4bb;
+    --line: rgba(0, 0, 0, 0.08);
+    --line-strong: rgba(0, 0, 0, 0.14);
+    --pass: #15a352;
+    --pass-ink: #0b7a3b;
+    --pass-wash: rgba(21, 163, 82, 0.1);
+    --fail: #e5484d;
+    --fail-ink: #c2262c;
+    --fail-wash: rgba(229, 72, 77, 0.09);
+    --warn: #c98a12;
+    --warn-ink: #8a5a06;
+    --warn-wash: rgba(201, 138, 18, 0.12);
+    --bar: rgba(0, 0, 0, 0.28);
+    --bar-strong: rgba(0, 0, 0, 0.58);
+    --s1: #2a78d6;
+    --s2: #0d9a93;
+    --s3: #6250d6;
+    --s4: #b07400;
+    --shadow: 0 18px 50px -20px rgba(0, 0, 0, 0.3);
+    color-scheme: light;
+  }
 }
 @media (min-width: 768px) { :root { --gutter: 1.5rem; } }
 
@@ -166,7 +201,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
    pushing the page past the screen. The label clips, not the link, so its hit area stays. */
 .nav a, .nav a > span { min-width: 0; }
 .nav a > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Four tabs fit a phone only with short names. */
+/* Five tabs fit a phone only with short names. */
 .nav-short { display: none; }
 @media (max-width: 640px) { .nav-long { display: none; } .nav-short { display: inline; } }
 .nav a {
@@ -531,6 +566,8 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .parent-link { display: inline-flex; align-items: baseline; gap: 0.35rem; font-family: var(--font-mono); font-size: 12px; color: var(--text-2); transition: color var(--dur-hover-out) ease-out; max-width: 100%; min-width: 0; }
 .parent-link .truncate { text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; max-width: 28rem; }
 .head-row { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0.5rem 1.5rem; }
+.head-row .first-fail { flex: none; color: var(--fail-ink); }
+.head-row .first-fail[hidden] { display: none; }
 .detail-head h1 { font-size: 1.0625rem; line-height: 1.35; font-weight: 540; letter-spacing: -0.01em; overflow-wrap: anywhere; flex: 1 1 24rem; min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .facts { display: flex; flex-wrap: wrap; gap: 0.25rem 1.25rem; margin: 0; }
 .facts-more { display: none; }
@@ -641,6 +678,23 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .find-only { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 12px; color: var(--text-muted); cursor: pointer; }
 .find-only input { accent-color: var(--text); margin: 0; }
 .timeline-more[hidden] { display: none; }
+.session-grid[hidden], .chat[hidden] { display: none; }
+/* Chat view: prompts and replies in full, one readable column; each turn's other steps are one line. */
+.chat-on .tl-tools > :not(.timeline-head, .view-seg, .spacer) { display: none; }
+.chat { position: relative; flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0.4rem var(--gutter) 3rem; outline: none; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.chat:focus-visible { box-shadow: inset 0 0 0 1px var(--line-strong); }
+.chat-empty { max-width: 46rem; margin: 1rem auto 0; }
+.chat-empty[hidden] { display: none; }
+.chat-turn { display: grid; gap: 0.55rem; max-width: 46rem; margin: 0 auto; padding: 1rem 0; }
+.chat-turn + .chat-turn { box-shadow: inset 0 1px 0 var(--line); }
+.chat-turn[hidden] { display: none; }
+.chat-turn[hidden] + .chat-turn { box-shadow: none; }
+.chat-msg { display: grid; gap: 0.3rem; min-width: 0; }
+.chat-who { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; font-size: 12px; color: var(--text-muted); }
+.chat-text { overflow-wrap: anywhere; font-size: 14px; line-height: 1.6; color: var(--text); }
+.chat-msg.is-user .chat-text { padding: 0.55rem 0.8rem; border-radius: var(--radius-sm); background: var(--raised); box-shadow: inset 0 0 0 1px var(--line); }
+.chat-work { justify-self: start; display: inline-flex; align-items: baseline; gap: 0.4rem; max-width: 100%; min-height: 28px; padding: 0.25rem 0.5rem; border-radius: var(--radius-sm); font-size: 12.5px; color: var(--text-muted); text-align: left; box-shadow: inset 0 0 0 1px var(--line); }
+.chat-work .err { color: var(--fail-ink); }
 .timeline-more { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.4rem var(--gutter); box-shadow: inset 0 -1px 0 var(--line); background: var(--surface); flex: none; }
 
 .session-grid { display: grid; grid-template-columns: minmax(0, 1fr); flex: 1 1 auto; min-height: 0; }
@@ -701,6 +755,15 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .st.fold .lbl { gap: 0.45rem; }
 .st.fold .caret { display: inline-block; width: 10px; color: var(--text-faint); }
 .st.fold .arg { font-family: var(--font-mono); font-size: 11.5px; }
+/* A folded turn: its prompt, then what it did. The caret on an open turn's row points down and folds it. */
+.st.turn.fold .arg { flex: 0 1 auto; max-width: 65%; font-family: var(--font-sans); font-size: 13px; color: var(--text); }
+/* A folded turn has no bar, so its prompt and summary take the timing column too. */
+.st.turn.fold { grid-template-columns: 3.4rem minmax(0, 1fr) auto; }
+.tl.wf-on .st.turn.fold .wf { display: none; }
+.st.turn.fold .sum { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted); }
+.st.turn.fold .sum .err { color: var(--fail-ink); }
+.st.turn .caret { flex: none; display: inline-block; width: 10px; color: var(--text-faint); }
+.st.turn .caret.open { transform: rotate(90deg); cursor: pointer; }
 .st.is-match .lbl::after { content: ""; position: absolute; inset: 4px auto 4px 3.4rem; }
 .st.is-match .name, .st.is-match .arg { color: var(--warn-ink); }
 .st.is-match { background: color-mix(in srgb, var(--warn-wash) 60%, transparent); }
@@ -709,6 +772,7 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .tl-map i { position: absolute; right: 1px; width: 4px; height: 2px; border-radius: 1px; background: var(--text-faint); pointer-events: none; }
 .tl-map i.f { background: var(--fail); height: 3px; }
 .tl-map i.d { background: var(--warn); height: 4px; right: 0; width: 6px; }
+.tl-map i.t { background: var(--text-muted); height: 1px; right: 0; width: 6px; border-radius: 0; }
 .st.is-derail { box-shadow: inset 2px 0 0 var(--warn); }
 .st .derail-flag { flex: none; margin-left: 0.5rem; padding: 0 6px; border-radius: 4px; font-family: var(--font-mono); font-size: 11px; line-height: 18px; color: var(--warn-ink); background: var(--warn-wash); }
 .st.phase-start { box-shadow: inset 0 2px 0 var(--line-strong, var(--line)); }
@@ -744,6 +808,20 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .code.wrap-lines { white-space: pre-wrap; overflow-wrap: anywhere; }
 .code.is-fail { background: color-mix(in srgb, var(--fail-wash) 50%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fail) 25%, transparent); color: var(--text); }
 .text-block { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-sans); font-size: 13.5px; line-height: 1.6; color: var(--text); }
+.md { display: grid; gap: 0.6rem; min-width: 0; font-size: 13.5px; line-height: 1.6; color: var(--text); overflow-wrap: anywhere; }
+.md > *, .md li > ul, .md li > ol { margin: 0; }
+.md p, .md li { white-space: pre-wrap; }
+.md .md-h { margin: 0.35rem 0 0; font-size: 1em; font-weight: 600; line-height: 1.4; letter-spacing: 0; color: var(--text); }
+.md h3.md-h { font-size: 1.15em; }
+.md h4.md-h { font-size: 1.05em; }
+.md ul, .md ol { display: grid; gap: 0.2rem; padding-left: 1.4rem; }
+.md li > ul, .md li > ol { margin-top: 0.2rem; }
+.md :not(pre) > code { font-family: var(--font-mono); font-size: 0.88em; padding: 0.05rem 0.3rem; border-radius: 4px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+.md strong { font-weight: 600; }
+.md hr { border: 0; height: 1px; background: var(--line); }
+/* The language sits in the block's top-right corner, on the block's own background. */
+.md-code { position: relative; min-width: 0; }
+.md-lang { position: absolute; top: 1px; right: 1px; padding: 0.3rem 0.6rem 0.1rem 0.5rem; border-radius: 0 var(--radius-sm) 0 var(--radius-sm); background: var(--surface); font-family: var(--font-mono); font-size: 11px; line-height: 1.4; color: var(--text-muted); pointer-events: none; }
 .shell { color: var(--text); }
 .shell::before { content: "$ "; color: var(--text-muted); }
 .lines { display: grid; grid-template-columns: auto minmax(0, 1fr); padding: 0.5rem 0; }
@@ -854,6 +932,7 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 }
 @media (max-width: 860px) {
   .hintbar { display: none; }
+  .chat { flex: none; overflow: visible; }
   .tl { flex: none; height: 62vh; }
   .timeline { box-shadow: inset 0 -1px 0 var(--line); }
   .to-steps { display: inline-flex; }
@@ -864,6 +943,12 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 }
 @media (max-width: 560px) {
   .st { grid-template-columns: 2.6rem minmax(0, 1fr) auto; padding-right: 0.6rem; }
+  /* A folded turn keeps its number, its prompt and its error count; length and tools are in its detail. */
+  .st.turn.fold { grid-template-columns: 1.4rem minmax(0, 1fr) auto; padding-right: 0.6rem; }
+  .st.turn.fold .t .tw { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .st.turn.fold .arg { max-width: none; }
+  .st.turn.fold .sum { flex: none; font-size: 0; }
+  .st.turn.fold .sum .err { font-size: 11.5px; }
   .tl.wf-on { --wf: 0px; }
   .st .wf { display: none !important; }
   .actions { width: 100%; }
@@ -880,6 +965,8 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
   .make-eval > .meta { display: none; }
   /* Phones keep the facts that answer "what ran and what did it cost". */
   .facts:not(.all) :is([data-fact="snapshot"], [data-fact="started"], [data-fact="repo"], [data-fact="tokens"], [data-fact="latency"]) { display: none; }
+  /* Labelling and the eval command are desk tasks: on a phone they wait under "More details". */
+  .detail-head:not(:has(.facts.all)) .actions { display: none; }
   .facts-more { display: inline-flex; align-self: flex-start; font-size: 12.5px; color: var(--text-2); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
   /* Short facts in two columns; tokens get the full line. */
   .facts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.2rem 1rem; }
@@ -1405,6 +1492,7 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 
 @media (hover: hover) and (pointer: fine) {
   .bench-card:hover .chev { color: var(--text); }
+  .chat-work:hover { color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
   .nav a:hover:not([aria-current="page"]) { color: var(--text); transition-duration: var(--dur-hover-in); }
   .cmdk:hover { box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--text-2); transition-duration: var(--dur-hover-in); }
   .icon-btn:hover { background: var(--hover); color: var(--text); transition-duration: var(--dur-hover-in); }
@@ -1419,6 +1507,7 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
   .row[aria-selected="true"]:hover { background: var(--select); }
   .st:hover:not([aria-selected="true"]) { background: var(--hover); }
   .st.fold:hover { color: var(--text); }
+  .st.turn .caret.open:hover { color: var(--text); }
   .back:hover { color: var(--text); transition-duration: var(--dur-hover-in); }
   .copy-id:hover { color: var(--text); }
   .sub-toggle:hover { background: var(--hover); color: var(--text); transition-duration: var(--dur-hover-in); }
@@ -1534,11 +1623,12 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
     <a href="#/explore" data-nav="explore"><span>Explore</span></a>
     <a href="#/experiments" data-nav="experiments"><span><span class="nav-long">Experiments</span><span class="nav-short">Exps</span></span></a>
     <a href="#/benchmarks" data-nav="benchmarks"><span><span class="nav-long">Benchmarks</span><span class="nav-short">Bench</span></span></a>
+    <a href="#/workflows" data-nav="workflows"><span><span class="nav-long">Workflows</span><span class="nav-short">Flows</span></span></a>
   </nav>
   <span class="spacer"></span>
   <span class="update-pill indexing-pill" id="indexing" hidden></span>
   <button class="update-pill" id="update" type="button" hidden><span class="dot" aria-hidden="true"></span><span class="long">Update available</span><span class="ver"></span></button>
-  <button class="cmdk" id="cmdk" type="button" aria-label="Open command menu" aria-keyshortcuts="Meta+K Control+K"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4l3.1 3.1"/></svg><span>Jump to…</span><kbd>⌘K</kbd></button>
+  <button class="cmdk" id="cmdk" type="button" aria-label="Open command menu" aria-keyshortcuts="Meta+K Control+K"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4l3.1 3.1"/></svg><span>Jump to…</span><kbd id="cmdk-key">⌘K</kbd></button>
   <button class="icon-btn" id="theme" type="button" aria-label="Switch to light theme"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="3.2"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"/></svg></button>
   <button class="icon-btn" id="help" type="button" aria-label="Keyboard shortcuts" aria-keyshortcuts="?"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="1.5" y="4" width="13" height="8.5" rx="1.5"/><path d="M4 7h1M7 7h1M10 7h2M4.5 9.8h7"/></svg></button>
   <span class="loading-bar" id="loading" aria-hidden="true"></span>
@@ -1762,6 +1852,12 @@ function midClip(s, n) {
   return s.slice(0, n - 1 - tail) + "…" + s.slice(-tail);
 }
 function clip(s, n) { s = String(s ?? ""); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+// A prompt's first line with words in it, for its turn's header row.
+function promptLine(it) {
+  const text = String((((it.ev || it.start || it.end || {}).payload) || {}).text ?? "");
+  const line = text.split(/\r?\n/).find((l) => l.trim()) || "";
+  return clip(oneLine(line), 200);
+}
 function oneLine(s) { return String(s ?? "").replace(/\s+/g, " ").trim(); }
 function fmtBytes(n) {
   if (n < 1024) return n + " B";
@@ -1944,12 +2040,33 @@ function toast(msg) {
   toastTimer = setTimeout(() => t.setAttribute("data-hidden", ""), 2200);
 }
 async function copy(text, what) {
+  if (unsafeCmds.has(text)) {
+    toast("Not copied: a value in this command holds a quote, a control character or & | < >, which no one quoting is safe for in every shell.");
+    return;
+  }
   try {
     await navigator.clipboard.writeText(text);
     toast(what ? "Copied " + what : "Copied");
   } catch {
     toast("Copy failed. Select the text and copy it manually.");
   }
+}
+// One shell word: plain words as they are, anything else in single quotes. Copied commands get
+// pasted into a shell, and session ids, paths and names are not ours to trust.
+function shq(s) {
+  s = String(s);
+  return /^[A-Za-z0-9_@%+=:,.\/-]+$/.test(s) ? s : "'" + s.replace(/'/g, "'\\''") + "'";
+}
+// Single quotes hold a value in sh and PowerShell, but PowerShell also ends them at a curly
+// quote, cmd.exe ignores them, and a control character acts before any shell reads it. A
+// command with such a value is shown but never copied.
+const PASTE_UNSAFE = /[\u0000-\u001f\u007f-\u009f'\u2018-\u201b&|<>]/;
+const unsafeCmds = new Set();
+// A command for the clipboard: the fixed command words, then each value quoted.
+function shCmd(command, ...args) {
+  const cmd = [command, ...args.map(shq)].join(" ");
+  if (args.some((a) => PASTE_UNSAFE.test(String(a)))) unsafeCmds.add(cmd);
+  return cmd;
 }
 function copyBtn(getText, label, what, text) {
   return h("button", { class: "btn btn-sm btn-ghost", type: "button", "aria-label": label || "Copy", onclick: () => copy(typeof getText === "function" ? getText() : getText, what) }, text || "Copy");
@@ -1990,22 +2107,25 @@ function typing(e) {
 
 // ------------------------------------------------------------ theme
 
+// A stored choice (csh-theme) wins. Without one, the CSS follows prefers-color-scheme and the page
+// only keeps the button's label in step, also when the system setting changes.
+const SYSTEM_LIGHT = matchMedia("(prefers-color-scheme: light)");
 const theme = {
-  get() { try { return localStorage.getItem("csh-theme") === "light" ? "light" : "dark"; } catch { return "dark"; } },
-  apply(t) {
-    if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+  chosen: (() => { try { const t = localStorage.getItem("csh-theme"); return t === "light" || t === "dark" ? t : null; } catch { return null; } })(),
+  get() { return theme.chosen ?? (SYSTEM_LIGHT.matches ? "light" : "dark"); },
+  apply() {
+    if (theme.chosen) document.documentElement.setAttribute("data-theme", theme.chosen);
     else document.documentElement.removeAttribute("data-theme");
-    $("#theme").setAttribute("aria-label", t === "light" ? "Switch to dark theme" : "Switch to light theme");
+    $("#theme").setAttribute("aria-label", theme.get() === "light" ? "Switch to dark theme" : "Switch to light theme");
   },
   toggle() {
-    const next = theme.get() === "light" ? "dark" : "light";
-    try { localStorage.setItem("csh-theme", next); } catch { /* private window: this page only */ }
-    theme.apply(next);
-    if (!localStorageWorks()) document.documentElement.toggleAttribute("data-theme", next === "light");
+    theme.chosen = theme.get() === "light" ? "dark" : "light";
+    try { localStorage.setItem("csh-theme", theme.chosen); } catch { /* private window: this page only */ }
+    theme.apply();
   },
 };
-function localStorageWorks() { try { localStorage.setItem("csh-t", "1"); localStorage.removeItem("csh-t"); return true; } catch { return false; } }
-theme.apply(theme.get());
+theme.apply();
+SYSTEM_LIGHT.addEventListener("change", () => theme.apply());
 $("#theme").addEventListener("click", () => theme.toggle());
 
 // Relative times ("3m ago") are rewritten once a minute, and when the tab comes back.
@@ -2050,7 +2170,7 @@ function route() {
     if (a.dataset.nav === section) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }
   if (parts[0] === "s" && parts[1]) return showSession(seq, parts[1], parts[2] || "", (query.get("where") || "").trim().slice(0, WHERE_MAX),
-    /^\d{1,9}$/.test(query.get("step") || "") ? Number(query.get("step")) : 0);
+    /^\d{1,9}$/.test(query.get("step") || "") ? Number(query.get("step")) : 0, query.get("view") || "");
   if (parts[0] === "experiments" && parts[1] && parts[2] === "vs" && parts[3]) return showCompare(seq, parts[1], parts[3]);
   if (parts[0] === "experiments" && parts[1]) return showExperiment(seq, parts[1]);
   if (parts[0] === "experiments") return showExperiments(seq);
@@ -2069,8 +2189,12 @@ window.addEventListener("hashchange", route);
 
 // One table drives the handler, the shortcut sheet and the hint bar.
 // scope: where it applies; id: the action a view (or the app) provides.
+// The command menu opens on Cmd+K on a Mac and Ctrl+K elsewhere; show the key that works.
+const IS_MAC = /Mac|iPhone|iPad|iPod/.test(String((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || ""));
+const MOD_K = IS_MAC ? "⌘K" : "Ctrl K";
+{ const k = document.getElementById("cmdk-key"); if (k) k.textContent = MOD_K; }
 const KEYMAP = [
-  { scope: "global", id: "palette", keys: ["⌘K"], label: "Command menu" },
+  { scope: "global", id: "palette", keys: [MOD_K], label: "Command menu" },
   { scope: "global", id: "help", keys: ["?"], label: "Keyboard shortcuts" },
   { scope: "global", id: "go-sessions", keys: ["g", "s"], label: "Go to sessions", chord: true },
   { scope: "global", id: "go-experiments", keys: ["g", "e"], label: "Go to experiments", chord: true },
@@ -2094,10 +2218,15 @@ const KEYMAP = [
   { scope: "session", id: "last", keys: ["End"], label: "Last step" },
   { scope: "session", id: "next-fail", keys: ["]"], label: "Next failure", hint: true },
   { scope: "session", id: "prev-fail", keys: ["["], label: "Previous failure" },
+  { scope: "session", id: "first-fail", keys: ["F"], label: "First failure" },
+  { scope: "session", id: "next-turn", keys: ["}"], label: "Next turn", hint: true },
+  { scope: "session", id: "prev-turn", keys: ["{"], label: "Previous turn" },
   { scope: "session", id: "find", keys: ["/"], label: "Find in steps", hint: true },
+  { scope: "session", id: "chat", keys: ["v"], label: "Chat or steps view", hint: true },
   { scope: "session", id: "next-match", keys: ["n"], label: "Next match (find, or the query you came from)" },
   { scope: "session", id: "prev-match", keys: ["N"], label: "Previous match" },
-  { scope: "session", id: "open-fold", keys: ["Enter"], alt: ["ArrowRight"], label: "Expand folded steps" },
+  { scope: "session", id: "open-fold", keys: ["Enter"], alt: ["ArrowRight"], label: "Expand folded steps or turn (Enter on a turn folds it)" },
+  { scope: "session", id: "fold-turn", keys: ["←"], alt: ["ArrowLeft"], label: "Fold the turn" },
   { scope: "session", id: "folds", keys: ["z"], label: "Expand or fold quiet steps", hint: true },
   { scope: "session", id: "waterfall", keys: ["w"], label: "Show or hide timing bars", hint: true },
   { scope: "session", id: "raw", keys: ["r"], label: "Raw event JSON", hint: true },
@@ -2227,6 +2356,23 @@ function openPalette() {
   ].filter(Boolean);
   if (!expCache) api("/api/experiments", null, true).then((b) => { expCache = b.items; if (overlayOpen() && d.isConnected) render(); }, () => { expCache = []; });
   if (!benchCache) api("/api/benchmarks", null, true).then((b) => { benchCache = b.items; if (overlayOpen() && d.isConnected) render(); }, () => { benchCache = []; });
+  // Stored sessions that match the typed text, from the server: the loaded list may be filtered or empty.
+  let found = [];
+  let findSeq = 0;
+  let findTimer = 0;
+  function searchStored() {
+    clearTimeout(findTimer);
+    const text = input.value.trim();
+    const mine = ++findSeq;
+    if (!text) { if (found.length) { found = []; render(); } return; }
+    findTimer = setTimeout(() => {
+      api("/api/sessions" + qs({ where: text.replace(/["()]/g, " ").slice(0, 200), limit: 8 }), null, true).then((b) => {
+        if (mine !== findSeq || !d.isConnected) return;
+        found = (b && b.items) || [];
+        render();
+      }, () => {});
+    }, 120);
+  }
   function results() {
     const q = input.value.trim().toLowerCase();
     const m = (s) => !q || String(s).toLowerCase().includes(q);
@@ -2237,6 +2383,12 @@ function openPalette() {
       seen.add(s.id);
       out.push({ group: "Sessions", label: sessionTitle(s), hint: s.agent, run: () => { location.hash = sessionHref(s.id); } });
       if (seen.size >= 8) break;
+    }
+    for (const s of found) {
+      if (seen.size >= 8) break;
+      if (!s || !s.id || seen.has(s.id)) continue;
+      seen.add(s.id);
+      out.push({ group: "Sessions", label: sessionTitle(s), hint: s.agent, run: () => { location.hash = sessionHref(s.id); } });
     }
     for (const e of (expCache || []).filter((e) => m(e.name) || m(e.id)).slice(0, 6)) {
       out.push({ group: "Experiments", label: e.name || e.id, hint: pct(e.summary && e.summary.passRate && e.summary.passRate.p), run: () => { location.hash = "#/experiments/" + encodeURIComponent(e.id); } });
@@ -2271,7 +2423,7 @@ function openPalette() {
     closeOverlay();
     it.run();
   }
-  input.addEventListener("input", () => { palette.active = 0; render(); });
+  input.addEventListener("input", () => { palette.active = 0; render(); searchStored(); });
   input.addEventListener("keydown", (e) => {
     if (e.key === "ArrowDown") { e.preventDefault(); palette.active = Math.min(palette.items.length - 1, palette.active + 1); sync(); }
     else if (e.key === "ArrowUp") { e.preventDefault(); palette.active = Math.max(0, palette.active - 1); sync(); }
@@ -2552,9 +2704,9 @@ function rowFlags(flags) {
   return [flagBadges(flags.slice(0, 1)), h("span", { class: "badge", title: "Flags: " + flags.join(", ") }, "+" + (flags.length - 1))];
 }
 function sessionTitle(s) { return oneLine(s.title) || "Untitled session"; }
-/** A session, or one of its events; `where` carries the query it was opened from (n and N step through its matches). */
-function sessionHref(id, eventId, where) {
-  return "#/s/" + encodeURIComponent(id) + (eventId ? "/" + encodeURIComponent(eventId) : "") + (where ? qs({ where }) : "");
+/** A session, or one of its events; `where` carries the query it was opened from (n and N step through its matches), `view` "chat" or "steps". */
+function sessionHref(id, eventId, where, view) {
+  return "#/s/" + encodeURIComponent(id) + (eventId ? "/" + encodeURIComponent(eventId) : "") + qs({ where, view });
 }
 /** API and production traces: model requests, no tool calls. "0 tool calls" would be noise there. */
 function isApiSession(s) {
@@ -2568,11 +2720,11 @@ function activityText(s) {
   if (!st.toolCalls && !st.toolErrors) return ["", ""];
   return [plural(st.toolCalls || 0, "tool"), st.toolErrors ? fmtNum(st.toolErrors) + " failed" : ""];
 }
-/** API rows: "1 failed request (429)" in red, the first failure's message on hover. */
+/** "1 failed request (429)" on API rows, "7,172 model errors (429)" on agent rows, in red, the first failure's message on hover. */
 function failedRequestsBadge(s) {
-  const e = isApiSession(s) && (s.stats || {}).llmErrors;
+  const e = (s.stats || {}).llmErrors;
   if (!e || !e.count) return null;
-  const text = plural(e.count, "failed request") + (typeof e.statusCode === "number" ? " (" + e.statusCode + ")" : "");
+  const text = plural(e.count, isApiSession(s) ? "failed request" : "model error") + (typeof e.statusCode === "number" ? " (" + e.statusCode + ")" : "");
   return h("span", { class: "badge fail", title: e.error ? "First failure: " + e.error : text }, text);
 }
 /** "1.6k tokens": everything the session sent and got back, cache included. */
@@ -2591,7 +2743,8 @@ const FACET_PAGE = 40;
 function isQueryError(e) { return !!(e && e.status === 400 && e.body && e.body.reason); }
 
 function fetchStats(p) {
-  return api("/api/stats" + qs(p)).catch((e) => { if (e.status === 401 || isQueryError(e)) throw e; return null; });
+  // The totals keep the scope they were counted in: summaryLine reads `sessions` by it.
+  return api("/api/stats" + qs(p)).then((s) => s && Object.assign(s, { scope: p.scope })).catch((e) => { if (e.status === 401 || isQueryError(e)) throw e; return null; });
 }
 async function fetchFacets(p) {
   const get = (keys) => api("/api/facets" + qs({ ...p, keys: keys.join(","), limit: FACET_PAGE }), null, true).then((b) => b.facets || {});
@@ -2774,14 +2927,22 @@ function viewTabs() {
     h("span", { class: "spacer" }),
     ev && list.events.length ? h("span", { class: "meta" }, "Newest first") : null);
 }
+/**
+ * "1 session + 2 subagents · …" in either scope. With scope=all the stats' `sessions` already
+ * counts the subagents (it is the list's row count), so they are taken out of it here; cost and
+ * tool totals cover every session, each once, in both scopes.
+ */
 function summaryLine(s) {
-  const parts = [plural(s.sessions, "session")];
-  if (s.subagents) parts.push("+ " + plural(s.subagents, "subagent"));
+  const subs = s.subagents || 0;
+  const top = s.scope === "all" ? Math.max(0, s.sessions - subs) : s.sessions;
+  const parts = [plural(top, "session")];
+  if (subs) parts.push("+ " + plural(subs, "subagent"));
   if (s.toolCalls) parts.push(plural(s.toolCalls, "tool call"));
   if (s.llmCalls) parts.push((s.llmCalls === 1 ? "1" : fmtCompact(s.llmCalls)) + (s.llmCalls === 1 ? " model call" : " model calls"));
   if (s.costUsd) {
     const est = s.estimatedCostUsd > 0;
-    const partial = s.pricedSessions && s.pricedSessions < s.sessions;
+    // pricedSessions counts subagents in either scope, so it is weighed against every session.
+    const partial = s.pricedSessions && s.pricedSessions < top + subs;
     parts.push({
       text: (est ? "~" : "") + fmtCost(s.costUsd) + (partial ? " priced" : ""),
       title: [partial ? "Cost of the " + plural(s.pricedSessions, "session") + " with a price" : "", est ? (s.estimatedCostUsd < s.costUsd - 1e-9 ? fmtCost(s.estimatedCostUsd) + " of it estimated from list prices" : EST_TITLE) : ""].filter(Boolean).join(". ") || "Reported cost",
@@ -3295,6 +3456,9 @@ function sessionList(view) {
       list.where.trim()
         ? h("p", null, "Nothing matches ", h("code", null, clip(list.where.trim(), 120)), list.filters.since || list.filters.until ? " in this time range." : ".", " Remove a clause, or widen the time range.")
         : h("p", { text: "Widen the time range, or include subagents." }),
+      list.stats && list.stats.subagents && list.filters.scope !== "all"
+        ? h("p", null, plural(list.stats.subagents, "subagent"), " match. ", h("button", { class: "btn", type: "button", onclick: () => { list.filters.scope = "all"; filtersChanged(view); } }, "Include subagents"))
+        : null,
       h("button", { class: "btn", type: "button", onclick: () => clearFilters(view) }, "Clear filters"));
   }
   const lb = h("div", { class: "list", role: "listbox", tabindex: "0", "aria-label": "Sessions. j and k to move, Enter to open, right and left arrows to show or hide subagents." });
@@ -3311,19 +3475,31 @@ function sessionList(view) {
     const failedReqs = failedRequestsBadge(s);
     const cost = usageCost(st.usage, s.model);
     // Nested rows already sit under their parent; in the flat "all" scope the
-    // parent's subagents are separate rows, so the count is only a label.
+    // parent's subagents are separate rows, so the count is only a label. The toggle sits
+    // inside the row's link, so its click must not follow the link.
     const toggle = kids
       ? topLevelOnly()
         ? h("button", {
           class: "sub-toggle", type: "button", tabindex: "-1", "aria-expanded": String(expanded),
           "aria-label": (expanded ? "Hide " : "Show ") + plural(kids, "subagent"),
-          onclick: (e) => { e.stopPropagation(); list.active = i; toggleSubagents(view, s.id); },
+          onclick: (e) => { e.preventDefault(); e.stopPropagation(); list.active = i; toggleSubagents(view, s.id); },
         }, h("span", { class: "caret", "aria-hidden": "true" }, "▸"), plural(kids, "subagent"))
         : h("span", { class: "badge" }, plural(kids, "subagent"))
       : null;
-    const row = h("div", {
+    // A real link, so middle click, Ctrl or Cmd click and "Open in new tab" work. It takes no Tab
+    // stop: the listbox keeps focus and moves through rows with aria-activedescendant.
+    const row = h("a", {
       class: "row" + (depth ? " child" : ""), role: "option", id: "opt-" + i, "aria-selected": String(i === list.active), "data-sid": s.id,
-      onclick: () => { list.active = i; location.hash = sessionHref(s.id); },
+      href: sessionHref(s.id), tabindex: "-1",
+      // A middle click fires auxclick, not click. The browser opens the link elsewhere; this page keeps the list and selects the row.
+      onauxclick: (e) => { if (e.button === 1) { list.active = i; syncActive(lb); } },
+      onclick: (e) => {
+        list.active = i;
+        if (e.button || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) { syncActive(lb); return; }
+        e.preventDefault();
+        fromList = s.id;
+        location.hash = sessionHref(s.id);
+      },
     },
       h("span", { class: "dot " + (tone ? "tone-" + tone : actErr || failedReqs ? "tone-fail ring" : "tone-muted"), "aria-hidden": "true", title: tone === "fail" ? "Tests failing" : tone === "pass" ? "Tests passing" : undefined }),
       h("div", { class: "row-main" },
@@ -3346,12 +3522,14 @@ function sessionList(view) {
   lb.addEventListener("pointermove", (e) => { if (e.pointerType !== "touch") sessionIntent.move(rowSid(e), e.clientX, e.clientY); });
   lb.addEventListener("pointerleave", () => sessionIntent.leave());
   lb.addEventListener("pointerdown", (e) => { const id = rowSid(e); if (id) sessionIntent.press(id); });
+  // A press on a row link would focus the link; the listbox keeps focus, so j and k go on from there.
+  lb.addEventListener("focusin", (e) => { if (e.target !== lb && e.target.matches("[role=option]")) lb.focus({ preventScroll: true }); });
   lb.addEventListener("keydown", (e) => {
     if ((e.key === "Enter" || e.key === " ") && !ownKey(e)) {
       e.preventDefault();
       e.stopPropagation();
       const r = list.rows[list.active];
-      if (r) location.hash = sessionHref(r.s.id);
+      if (r) { fromList = r.s.id; location.hash = sessionHref(r.s.id); }
     }
   });
   // One repo in the whole index (or one picked): the column would repeat it on every row.
@@ -3426,6 +3604,8 @@ async function toggleSubagents(view, id) {
 // Events are indexed in batches before their session row is written, so a fresh
 // hit can point at a session that is still importing. Remember where we came from.
 let fromHit = "";
+// A session opened from the list's row opens on its first failure; a link opens where it points.
+let fromList = "";
 function openHit(ev) {
   fromHit = ev.sessionId;
   location.hash = sessionHref(ev.sessionId, ev.id, list.where.trim());
@@ -3674,6 +3854,10 @@ const rowHeight = () => (PHONE.matches ? 44 : 30);
 let ROW = rowHeight();
 const OVERSCAN = 40;
 const FOLD_MIN = 6;
+// Tool kinds a folded turn counts in words (edits are EDIT_TOOLS).
+const READ_TOOL = /^(Read|read|read_file|view|View|NotebookRead)$/;
+const SHELL_TOOL = /^(Bash|bash|shell|exec_command|local_shell|run_shell_command)$/;
+const SEARCH_TOOL = /^(Grep|Glob|LS|grep|glob|ls|list_directory|search_files|grep_search|file_search|codebase_search|search|find|WebSearch|WebFetch|web_search|web_fetch)$/;
 
 // Paths inside the session's repo (or cwd) read better relative to it:
 // "src/store/sqlite.ts", not the absolute checkout path.
@@ -3935,7 +4119,7 @@ const prefs = {
   set(k, v) { try { localStorage.setItem("csh-" + k, v ? "1" : "0"); } catch { /* private window */ } },
 };
 
-async function showSession(seq, id, eventId, where = "", linkStep = 0) {
+async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView = "") {
   const view = h("section", { class: "session-view", "aria-label": "Session" });
   const keys = { scope: "session", actions: {}, palette: [] };
   view.append(h("div", { class: "detail-head" }, h("div", { class: "crumbs" }, h("a", { class: "back", href: listHref() }, h("span", { class: "nudge", "aria-hidden": "true" }, "←"), list.mode === "events" ? "Events" : "Sessions"))));
@@ -3947,6 +4131,8 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   const eventsPath = "/api/sessions/" + encodeURIComponent(id) + "/events";
   const viaHit = fromHit === id;
   fromHit = "";
+  const viaList = fromList === id && !eventId && !linkStep;
+  fromList = "";
   const replaceBody = (node) => keepFocus(view, () => { view.lastChild.replaceWith(h("div", { class: "wrap" }, node)); });
   let session, events, labels, children, parent = null;
   const sessionPath = "/api/sessions/" + encodeURIComponent(id);
@@ -4036,7 +4222,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     childByEvent: new Map(kids.filter((c) => c.parent && c.parent.eventId).map((c) => [c.parent.eventId, c])),
     backToSteps: () => { tl.focus({ preventScroll: true }); timeline.scrollIntoView({ block: "start", behavior: smoothScroll() }); },
     raw: false,
-    openFold: (key) => { openFolds.add(key); rebuildRows(); },
+    openFold: (key) => { openFold(key); rebuildRows(); },
   };
 
   // ---- model: items (every step), rows (what the list shows after folding and find)
@@ -4077,8 +4263,12 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
       void turnStart;
     }
     for (const m of meta) { const t = turns[m.turn]; m.t0 = t.start; m.span = Math.max(1, t.end - t.start); }
+    // Each turn's steps (from, to), failures and length, for its folded row.
+    turnInfo = turns.map((t, k) => ({ from: t.index, to: k + 1 < turns.length ? turns[k + 1].index : items.length, dur: t.end - t.start, fails: 0, prompt: items[t.index].type === "user.message" }));
+    for (const m of meta) if (m.fail) turnInfo[m.turn].fails++;
     failIdx = [];
-    for (let i = 0; i < meta.length; i++) if (meta[i].fail) failIdx.push(i);
+    turnIdx = [];
+    for (let i = 0; i < meta.length; i++) { if (meta[i].fail) failIdx.push(i); if (meta[i].isTurn) turnIdx.push(i); }
     markQuery();
     turnCount = turns.length;
     markOutline();
@@ -4114,11 +4304,22 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     for (const p of outline.phases) { const i = p.n > 1 ? at(p.eventId) : undefined; if (i !== undefined) meta[i].phase = p; }
   }
   let failIdx = [];
+  // The item index of each user prompt: where each turn starts ({ and }).
+  let turnIdx = [];
   // Opened from the Events tab: the ids of this session's events that match its query (n and N).
   let queryIds = [];
   let queryIdx = [];
   let turnCount = 0;
+  let turnInfo = [];
   const openFolds = new Set();
+  // Turns folded by hand (Enter on a turn's row, or ←), including ones that would start open.
+  const closedTurns = new Set();
+  const turnKey = (k) => "turn:" + items[turnInfo[k].from].id;
+  // A finished turn (any but the last) with a prompt can fold; z and find show every step.
+  const turnFoldable = (k) => !foldsOff && !findQ && turnInfo[k].prompt && k < turnInfo.length - 1;
+  // In a session of more than three turns, finished turns start folded, unless one holds a failure.
+  const turnFolded = (k) => turnFoldable(k) && (closedTurns.has(turnKey(k)) || (turnIdx.length > 3 && !turnInfo[k].fails && !openFolds.has(turnKey(k))));
+  function openFold(key) { openFolds.add(key); closedTurns.delete(key); }
   let foldsOff = !prefs.get("fold", true);
   let findQ = "";
   let matchOnly = false;
@@ -4143,6 +4344,8 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
       // calls inside one turn keeps its first two and last step; the middle folds.
       let i = 0;
       while (i < items.length) {
+        const t = turnInfo[meta[i].turn];
+        if (i === t.from && turnFolded(meta[i].turn)) { out.push({ key: turnKey(meta[i].turn), from: i, to: t.to, turn: meta[i].turn }); i = t.to; continue; }
         if (!meta[i].quiet) { out.push(i); i++; continue; }
         let j = i;
         while (j < items.length && meta[j].quiet && meta[j].turn === meta[i].turn) j++;
@@ -4163,13 +4366,17 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     renderWindow(true);
     renderMap();
     renderTools();
+    renderChat();
   }
 
   reindex();
   let activeItem = Math.max(0, items.indexOf(byEvent.get(eventId)));
   let activeRow = 0;
 
-  view.firstChild.replaceWith(sessionHeader(session, labels.items, { parent, children: kids, events: allEvents }));
+  // Shown while the loaded steps hold a failure (renderTools keeps it in step with the live tail).
+  const firstFailBtn = h("button", { class: "btn btn-sm first-fail", type: "button", hidden: failIdx.length === 0, "aria-keyshortcuts": "Shift+F", title: "Select the first failing step (Shift+F)",
+    onclick: () => { if (chatOn) setChat(false); firstFail(); } }, "First failure");
+  view.firstChild.replaceWith(sessionHeader(session, labels.items, { parent, children: kids, events: allEvents, firstFail: firstFailBtn }));
   if (items.length === 0) {
     replaceBody(h("div", { class: "panel empty" }, h("h2", { text: "No events" }), h("p", { text: "This session has no recorded events yet." })));
     announce("Session loaded, no events");
@@ -4178,7 +4385,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
 
   // ---- DOM
   const inner = h("div", { class: "tl-inner" });
-  const tl = h("div", { class: "tl" + (prefs.get("wf", true) ? " wf-on" : ""), role: "listbox", tabindex: "0", id: "steps", "aria-label": "Session steps. j and k to move, ] and [ for failures, / to find." }, inner);
+  const tl = h("div", { class: "tl" + (prefs.get("wf", true) ? " wf-on" : ""), role: "listbox", tabindex: "0", id: "steps", "aria-label": "Session steps. j and k to move, } and { for turns, ] and [ for failures, / to find." }, inner);
   const map = h("div", { class: "tl-map", "aria-hidden": "true" });
   const tailPill = h("button", { class: "live-pill tl-tail", type: "button", hidden: true }, h("span", { class: "dot", "aria-hidden": "true" }), h("span", { class: "txt" }, ""));
   const pane = h("div", { class: "pane", role: "region", id: "event-pane", tabindex: "0", "aria-label": "Step detail" });
@@ -4195,7 +4402,18 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   // Replay state; the replay section below drives it.
   const rp = { on: false, index: null, n: 0, playing: false, speed: rpSpeedPref(), timer: 0, view: null, range: null, want: "", shown: "", busy: false, syncing: false, tab: "changes", file: "", from: 0, stepItems: null, lastPaneStep: 0, fork: null };
   const rpBtn = h("button", { class: "btn btn-sm btn-ghost rp-toggle", type: "button", "aria-pressed": "false", "aria-keyshortcuts": "Shift+R", title: "Replay step by step (Shift+R)", onclick: () => (rp.on ? exitReplay() : enterReplay()) }, "Replay");
-  const tools = h("div", { class: "tl-tools" }, head, failNav, derailNav, queryNav, h("span", { class: "spacer" }),
+  // Chat view: prompts and replies only, in order. A link's ?view= wins over the remembered choice; a replay link opens steps.
+  let chatOn = !linkStep && (linkView === "chat" || (linkView !== "steps" && prefs.get("chat", false)));
+  const viewBtn = (on, label) => h("button", { type: "button", "aria-pressed": String(chatOn === on), "aria-keyshortcuts": "v", title: (on ? "Prompts and replies only" : "Every step") + " (v)", onclick: () => setChat(on) }, label);
+  const stepsBtn = viewBtn(false, "Steps"), chatBtn = viewBtn(true, "Chat");
+  const viewSeg = h("div", { class: "seg view-seg", role: "group", "aria-label": "View" }, stepsBtn, chatBtn);
+  const chatEmpty = h("p", { class: "note chat-empty", hidden: true }, "No prompts or replies were recorded in this session. Its steps are in Steps.");
+  const chat = h("div", { class: "chat", id: "chat", role: "region", tabindex: "0", "aria-label": "Chat: prompts and replies", hidden: true }, chatEmpty);
+  // One element per turn, kept while the turn is unchanged, so a live tail redraws only the turns that grew.
+  let chatTurns = [];
+  // The URL keeps the view when it differs from the default (steps) or from what this browser remembers.
+  const here = (eventId) => sessionHref(session.id, eventId, where, chatOn ? "chat" : prefs.get("chat", false) ? "steps" : "");
+  const tools = h("div", { class: "tl-tools" }, viewSeg, head, failNav, derailNav, queryNav, h("span", { class: "spacer" }),
     h("div", { class: "find" }, findInput, findCount), h("label", { class: "find-only" }, onlyBox, h("span", null, "Only matches")), rpBtn, foldBtn, wfBtn);
   // The ‹ › buttons are built once and only their label changes, so a click never loses hover or focus to a rebuild.
   const navPair = (nav, noun, move, keys) => {
@@ -4209,6 +4427,8 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   const failLbl = navPair(failNav, "failure", (d) => jumpFail(d), ["[", "]"]);
   const timeline = h("div", { class: "timeline" }, tl, map, tailPill);
   const narrow = window.matchMedia("(max-width: 860px)");
+  const grid = h("div", { class: "session-grid" }, timeline, pane);
+  const CHAT_KEYS = new Set(["chat", "back", "label-pass", "label-fail"]);
 
   function renderTools() {
     const total = session.stats && session.stats.events;
@@ -4235,10 +4455,10 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     queryNav.title = where;
     queryLbl.textContent = (qpos >= 0 ? fmtNum(qpos + 1) + " / " : "") + plural(queryIdx.length, "match", "matches");
     failNav.hidden = failIdx.length === 0;
+    firstFailBtn.hidden = failIdx.length === 0;
     const pos = failIdx.indexOf(activeItem);
     failLbl.textContent = (pos >= 0 ? fmtNum(pos + 1) + " / " : "") + plural(failIdx.length, "failure");
-    const anyFold = rows.some((r) => typeof r !== "number");
-    foldBtn.textContent = foldsOff ? "Fold quiet" : anyFold ? "Expand all" : "Fold quiet";
+    foldBtn.textContent = "Fold quiet";
     foldBtn.setAttribute("aria-pressed", String(!foldsOff));
     findCount.textContent = findQ ? (matches.length ? (Math.max(0, matches.indexOf(activeItem)) + 1) + "/" + matches.length : "0") : "";
   }
@@ -4246,9 +4466,49 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   // ---- virtual list
   let rendered = new Map();
   let winFrom = -1, winTo = -1;
+  // What a turn did, in words drawn from its steps: "read 6 files, 2 edits +40 −12, 3 commands".
+  function turnWords(from, to) {
+    const files = new Set();
+    let tools = 0, edits = 0, adds = 0, dels = 0, cmds = 0, searches = 0, other = 0, changes = 0;
+    for (let k = from; k < to; k++) {
+      const it = items[k], m = meta[k];
+      // Line counts come from the recorded file changes; an edit tool's own row has none.
+      if (it.type === "file.change") { changes++; adds += m.v.adds || 0; dels += m.v.dels || 0; continue; }
+      if (it.type !== "tool") continue;
+      tools++;
+      const inp = ((it.start || {}).payload || {}).input || {};
+      if (READ_TOOL.test(m.tool)) files.add(String(inp.file_path || inp.path || inp.notebook_path || "#" + k));
+      else if (EDIT_TOOLS.has(m.tool)) edits++;
+      else if (SHELL_TOOL.test(m.tool)) cmds++;
+      else if (SEARCH_TOOL.test(m.tool)) searches++;
+      else other++;
+    }
+    if (!edits) edits = changes;
+    const parts = [
+      files.size ? "read " + plural(files.size, "file") : "",
+      edits ? plural(edits, "edit") + (adds || dels ? " +" + adds + " −" + dels : "") : "",
+      cmds ? plural(cmds, "command") : "",
+      searches ? plural(searches, "search", "searches") : "",
+      other ? plural(other, "other tool") : "",
+    ].filter(Boolean);
+    return { tools, words: parts.join(", ") || "no tool calls" };
+  }
+  function turnRowEl(r, x) {
+    const it = items[x.from], t = turnInfo[x.turn], w = turnWords(x.from, x.to);
+    const el = h("div", { class: "st turn fold" + (x.from === 0 ? " first" : "") + (t.fails ? " is-fail" : ""), role: "option", id: "st-" + r, "aria-selected": String(r === activeRow), "aria-expanded": "false", "aria-setsize": String(rows.length), "aria-posinset": String(r + 1),
+      onclick: () => { activeItem = x.from; ctx.openFold(x.key); selectRow(rowOf[x.from]); } },
+      h("span", { class: "t", title: new Date(it.ts).toLocaleTimeString() }, h("span", { class: "tw" }, "Turn "), String(meta[x.from].prompt)),
+      // Length, tool calls and errors first, so a narrow row cuts the words, not the counts.
+      h("span", { class: "lbl" }, h("span", { class: "caret", "aria-hidden": "true" }, "▸"), h("span", { class: "dot tone-" + meta[x.from].v.tone, "aria-hidden": "true" }), h("span", { class: "arg" }, promptLine(it) || "Prompt"),
+        h("span", { class: "sum" }, (t.dur > 0 ? fmtDuration(t.dur) + " · " : "") + plural(w.tools, "tool call") + " · ", t.fails ? [h("span", { class: "err" }, plural(t.fails, "error")), " · "] : null, w.words)),
+      h("span", { class: "d" }, h("time", { datetime: new Date(it.ts).toISOString() }, fmtClock(it.ts - session.startedAt))), h("span", { class: "wf" }));
+    el.style.transform = "translateY(" + r * ROW + "px)";
+    return el;
+  }
   function rowEl(r) {
     const x = rows[r];
     const top = r * ROW;
+    if (typeof x !== "number" && x.turn !== undefined) return turnRowEl(r, x);
     if (typeof x !== "number") {
       const counts = new Map();
       for (let k = x.from; k < x.to; k++) { const n = meta[k].v.name; counts.set(n, (counts.get(n) || 0) + 1); }
@@ -4280,11 +4540,14 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
       bar.style.width = Math.max(0.6, Math.min(100 - left, ((v.dur || 0) / m.span) * 100)) + "%";
       wf.append(bar);
     }
-    const el = h("div", { class: cls, role: "option", id: "st-" + r, "aria-selected": String(r === activeRow), "aria-setsize": String(rows.length), "aria-posinset": String(r + 1),
+    const canFold = m.isTurn && turnFoldable(m.turn);
+    // An open turn that can fold: its caret folds it (so do Enter on the row and ←).
+    const caret = m.isTurn ? h("span", { class: "caret open", "aria-hidden": "true", title: canFold ? "Fold this turn" : null, onclick: canFold ? (e) => { e.stopPropagation(); foldTurn(m.turn); } : null }, canFold ? "▸" : "") : null;
+    const el = h("div", { class: cls, role: "option", id: "st-" + r, "aria-selected": String(r === activeRow), "aria-expanded": canFold ? "true" : null, "aria-setsize": String(rows.length), "aria-posinset": String(r + 1),
       onclick: () => selectRow(r, true) },
       h("span", { class: "t", title: new Date(it.ts).toLocaleTimeString() }, m.isTurn ? "Turn " + m.prompt : fmtClock(it.ts - session.startedAt)),
-      h("span", { class: "lbl" }, chip, h("span", { class: "dot tone-" + v.tone, "aria-hidden": "true" }), m.isTurn ? null : h("span", { class: "name" }, v.name), m.isTurn ? h("span", { class: "arg" }, v.arg || "Prompt") : argNode(v.arg), v.cost ? h("span", { class: "cost", title: v.cost.title }, v.cost.text) : null, flag),
-      h("span", { class: "d" }, v.adds !== undefined || v.dels !== undefined
+      h("span", { class: "lbl" }, chip, caret, h("span", { class: "dot tone-" + v.tone, "aria-hidden": "true" }), m.isTurn ? null : h("span", { class: "name" }, v.name), m.isTurn ? h("span", { class: "arg" }, promptLine(it) || "Prompt") : argNode(v.arg), v.cost ? h("span", { class: "cost", title: v.cost.title }, v.cost.text) : null, flag),
+      h("span", { class: "d" }, m.isTurn ? h("time", { datetime: new Date(it.ts).toISOString() }, fmtClock(it.ts - session.startedAt)) : v.adds !== undefined || v.dels !== undefined
         ? [v.adds !== undefined ? h("span", { class: "add" }, "+" + v.adds) : null, v.adds !== undefined && v.dels !== undefined ? " " : null, v.dels !== undefined ? h("span", { class: "del" }, "−" + v.dels) : null]
         : v.meta || ""), wf);
     el.style.transform = "translateY(" + top + "px)";
@@ -4330,6 +4593,15 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   function renderMap() {
     const marks = [];
     const n = rows.length || 1;
+    // Turn starts first, so failure and derail marks paint over them.
+    for (const i of turnIdx) {
+      if (marks.length > 300) break;
+      const r = rowOf[i];
+      if (r < 0) continue;
+      const mk = h("i", { class: "t" });
+      mk.style.top = (r / n) * 100 + "%";
+      marks.push(mk);
+    }
     for (const [i, m] of meta.entries()) {
       if (!m.fail) continue;
       if (marks.length > 600) break;
@@ -4362,7 +4634,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     stepTimer = 0;
     stepAt = performance.now();
     renderPane(pane, items[stepItem], session, ctx);
-    history.replaceState(null, "", sessionHref(session.id, items[stepItem].id, where));
+    history.replaceState(null, "", here(items[stepItem].id));
   }
   function showStep(i) {
     stepItem = i;
@@ -4382,7 +4654,9 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     if (prev) prev.setAttribute("aria-selected", "false");
     activeRow = r;
     const x = rows[r];
+    // A folded turn stands at its prompt, so { and } go on from there.
     if (typeof x === "number") activeItem = x;
+    else if (x.turn !== undefined) activeItem = x.from;
     ensureVisible(r, center);
     const el = rendered.get(r);
     if (el) { el.setAttribute("aria-selected", "true"); tl.setAttribute("aria-activedescendant", el.id); }
@@ -4397,18 +4671,42 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     if (fromPointer && narrow.matches) pane.scrollIntoView({ block: "start", behavior: smoothScroll() });
   }
   function selectItem(i, center) {
-    if (rowOf[i] < 0 || typeof rows[rowOf[i]] !== "number") {
-      // Hidden by a fold or by "only matches": open the way to it.
+    // Hidden by a fold (a quiet run inside a folded turn takes two) or by "only matches": open the way to it.
+    for (let n = 0; n < 3 && (rowOf[i] < 0 || typeof rows[rowOf[i]] !== "number"); n++) {
       const r = rows[rowOf[i]];
-      if (r && typeof r !== "number") openFolds.add(r.key);
+      if (r && typeof r !== "number") openFold(r.key);
       else { matchOnly = false; onlyBox.checked = false; }
       activeItem = i;
       rebuildRows();
     }
     selectRow(rowOf[i], false, center);
   }
+  function foldTurn(k) {
+    if (!turnFoldable(k)) return false;
+    const key = turnKey(k);
+    openFolds.delete(key);
+    closedTurns.add(key);
+    activeItem = turnInfo[k].from;
+    rebuildRows();
+    selectRow(rowOf[activeItem]);
+    tl.focus({ preventScroll: true });
+    announce("Turn " + meta[activeItem].prompt + " folded");
+  }
   function foldPane(x) {
     delete pane.dataset.item;
+    if (x.turn !== undefined) {
+      const it = items[x.from], t = turnInfo[x.turn], w = turnWords(x.from, x.to);
+      swap(pane,
+        h("div", { class: "pane-top" }, h("p", { class: "meta" }, "Folded turn")),
+        h("h2", { class: "pane-title" }, "Turn " + meta[x.from].prompt + ": " + (promptLine(it) || "Prompt")),
+        h("p", { class: "note" }, [w.words, plural(w.tools, "tool call"), plural(t.fails, "error"), t.dur > 0 ? fmtDuration(t.dur) : ""].filter(Boolean).join(", ") + ". Press Enter or click to expand."),
+        h("ul", { class: "fold-list" }, Array.from({ length: Math.min(60, x.to - x.from) }, (_, k) => {
+          const m = meta[x.from + k];
+          return h("li", null, h("span", { class: "dot tone-" + m.v.tone }), h("span", { class: "truncate" }, m.v.label), h("span", { class: "meta" }, m.v.meta));
+        })),
+        h("button", { class: "btn btn-sm", type: "button", onclick: () => { ctx.openFold(x.key); selectRow(rowOf[x.from]); } }, "Expand"));
+      return;
+    }
     swap(pane, 
       h("div", { class: "pane-top" }, h("p", { class: "meta" }, "Folded steps")),
       h("h2", { class: "pane-title" }, plural(x.to - x.from, "quiet step")),
@@ -4419,14 +4717,111 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
       })),
       h("button", { class: "btn btn-sm", type: "button", onclick: () => ctx.openFold(x.key) }, "Expand"));
   }
+  // ---- chat view
+  const isMsg = (it) => it.type === "user.message" || it.type === "assistant.message";
+  const LIFECYCLE = new Set(["session.start", "session.end"]);
+  function chatSig(k) {
+    const t = turnInfo[k];
+    return items[t.from].id + "|" + items[t.to - 1].id + "|" + (t.to - t.from) + "|" + t.fails + "|" + Math.round(t.dur / 1000);
+  }
+  function chatMsg(i) {
+    const it = items[i], user = it.type === "user.message";
+    const text = String(((it.ev || {}).payload || {}).text ?? "");
+    return h("div", { class: "chat-msg " + (user ? "is-user" : "is-agent") },
+      h("div", { class: "chat-who" }, h("span", null, user ? "Turn " + meta[i].prompt + " · Prompt" : "Assistant"), h("time", { datetime: new Date(it.ts).toISOString() }, fmtClock(it.ts - session.startedAt))),
+      text.trim() ? clipped(text, (x) => mdView(x, "chat-text"), { lines: 400 }) : h("p", { class: "note" }, "No inline text."));
+  }
+  // A turn: its prompt, one line for the steps between prompt and replies, then the replies in order.
+  function chatTurnEl(k) {
+    const t = turnInfo[k];
+    const replies = [];
+    let work = 0, lifecycle = 0;
+    for (let i = t.from; i < t.to; i++) {
+      if (!isMsg(items[i])) { work++; if (LIFECYCLE.has(items[i].type)) lifecycle++; }
+      else if (!(t.prompt && i === t.from)) replies.push(chatMsg(i));
+    }
+    // Before the first prompt, a session that only started has nothing to read: no line, no section.
+    if (!t.prompt && !replies.length && work === lifecycle) return h("section", { class: "chat-turn", hidden: true });
+    let line = null;
+    if (work) {
+      const w = turnWords(t.from, t.to);
+      const text = plural(work, "step") + (w.tools ? " · " + w.words : "") + (t.fails ? " · " : "");
+      line = h("button", { class: "chat-work", type: "button", title: "Show this turn in Steps",
+        "aria-label": text + (t.fails ? plural(t.fails, "error") : "") + ". Show this turn in Steps", onclick: () => toSteps(t.from) },
+        h("span", { class: "caret", "aria-hidden": "true" }, "▸"), h("span", null, text, t.fails ? h("span", { class: "err" }, plural(t.fails, "error")) : null));
+    }
+    return h("section", { class: "chat-turn", "aria-label": t.prompt ? "Turn " + meta[t.from].prompt : "Before the first prompt" },
+      t.prompt ? chatMsg(t.from) : null, line, replies);
+  }
+  function renderChat() {
+    if (!chatOn) return;
+    const atEnd = chatTurns.length > 0 && chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 40;
+    let grew = false;
+    for (let k = 0; k < turnInfo.length; k++) {
+      const sig = chatSig(k), c = chatTurns[k];
+      if (c && c.sig === sig) continue;
+      const el = chatTurnEl(k);
+      if (c) {
+        const had = c.el.contains(document.activeElement);
+        c.el.replaceWith(el);
+        if (had) chat.focus({ preventScroll: true });
+      } else chat.append(el);
+      chatTurns[k] = { sig, el };
+      grew = true;
+    }
+    while (chatTurns.length > turnInfo.length) chatTurns.pop().el.remove();
+    chatEmpty.hidden = items.some(isMsg);
+    if (grew && atEnd) chat.scrollTop = chat.scrollHeight;
+  }
+  function setChat(on) {
+    if (on && rp.on) exitReplay();
+    chatOn = on;
+    prefs.set("chat", on);
+    showChat();
+    history.replaceState(null, "", here(items[activeItem] ? items[activeItem].id : ""));
+    announce(on ? "Chat view: prompts and replies" : "Steps view");
+  }
+  function showChat(atTop) {
+    view.classList.toggle("chat-on", chatOn);
+    grid.hidden = chatOn;
+    chat.hidden = !chatOn;
+    stepsBtn.setAttribute("aria-pressed", String(!chatOn));
+    chatBtn.setAttribute("aria-pressed", String(chatOn));
+    renderHint();
+    if (!chatOn) { selectRow(activeRow, false, true); renderMap(); return; }
+    renderChat();
+    // Opens at the turn of the step that was selected (or linked).
+    const c = !atTop && activeItem > 0 && chatTurns[meta[activeItem].turn];
+    if (c) { if (narrow.matches) c.el.scrollIntoView({ block: "start" }); else chat.scrollTop = c.el.offsetTop; }
+  }
+  function toSteps(i) {
+    setChat(false);
+    selectItem(i, true);
+    tl.focus({ preventScroll: true });
+  }
   function jumpFail(dir) {
     if (!failIdx.length) return;
     let next;
     if (dir > 0) next = failIdx.find((i) => i > activeItem) ?? failIdx[0];
     else next = [...failIdx].reverse().find((i) => i < activeItem) ?? failIdx[failIdx.length - 1];
+    goFail(next);
+  }
+  function firstFail() {
+    if (!failIdx.length) { announce("No failures"); return; }
+    goFail(failIdx[0]);
+  }
+  function goFail(i) {
+    selectItem(i, true);
+    tl.focus({ preventScroll: true });
+    announce("Failure " + (failIdx.indexOf(i) + 1) + " of " + failIdx.length + ": " + meta[i].v.label);
+  }
+  // No wrap: past the last turn, } stays put, so a held key cannot loop back to the start.
+  function jumpTurn(dir) {
+    const next = dir > 0 ? turnIdx.find((i) => i > activeItem) : [...turnIdx].reverse().find((i) => i < activeItem);
+    if (next === undefined) { announce(turnIdx.length ? (dir > 0 ? "No later turn" : "No earlier turn") : "No user turns"); return; }
     selectItem(next, true);
     tl.focus({ preventScroll: true });
-    announce("Failure " + (failIdx.indexOf(next) + 1) + " of " + failIdx.length + ": " + meta[next].v.label);
+    announce("Turn " + meta[next].prompt + " of " + turnIdx.length + ": " + meta[next].v.label);
   }
   function jumpDerail(dir) {
     if (!derailIdx.length) return;
@@ -4464,7 +4859,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   function toggleFolds() {
     const anyFold = rows.some((r) => typeof r !== "number");
     if (!foldsOff && anyFold) { foldsOff = true; }
-    else { foldsOff = !foldsOff; openFolds.clear(); }
+    else { foldsOff = !foldsOff; openFolds.clear(); closedTurns.clear(); }
     prefs.set("fold", !foldsOff);
     rebuildRows();
     selectRow(activeItem >= 0 && rowOf[activeItem] >= 0 ? rowOf[activeItem] : activeRow, false, true);
@@ -4534,14 +4929,17 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
       for (const k of Object.keys(session)) delete session[k];
       Object.assign(session, next);
       durableSpans = indexDurable(session.stats && session.stats.durable);
-      head.replaceWith(sessionHeader(session, labels.items, { parent, children: kids, events: allEvents }));
+      head.replaceWith(sessionHeader(session, labels.items, { parent, children: kids, events: allEvents, firstFail: firstFailBtn }));
     } catch { /* the header keeps what it showed; the next tick tries again */ } finally { headerBusy = false; }
   }
   // Rebuild the steps from allEvents, keeping the selected step and the scroll position.
   function refresh() {
     const activeId = items[activeItem] && items[activeItem].id;
+    const onStep = typeof rows[activeRow] === "number";
     reindex();
     activeItem = Math.max(0, items.indexOf(byEvent.get(activeId)));
+    // A turn that just finished would fold; the step being read keeps its turn open.
+    if (onStep && items.length && !closedTurns.has(turnKey(meta[activeItem].turn))) openFolds.add(turnKey(meta[activeItem].turn));
     rebuildRows();
   }
   // A long session: the first page is on screen; the rest streams in behind it, so the
@@ -4560,7 +4958,10 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     loadingRest = false;
     if (!current(seq)) return;
     renderTools();
-    if (!hasMore) loadOutline();
+    if (!hasMore) {
+      announce("Session loaded, " + plural(items.length, "step") + (failIdx.length ? ", " + plural(failIdx.length, "failure") : ""));
+      loadOutline();
+    }
   }
   let outlineAt = 0;
   async function loadOutline() {
@@ -4719,8 +5120,8 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     delete pane.dataset.item;
     if (typeof x === "number") {
       renderPane(pane, items[x], session, ctx);
-      history.replaceState(null, "", sessionHref(session.id, items[x].id, where));
-    } else history.replaceState(null, "", sessionHref(session.id, "", where));
+      history.replaceState(null, "", here(items[x].id));
+    } else history.replaceState(null, "", here(""));
   }
   function rpGo(n) {
     const steps = rpSteps();
@@ -4862,8 +5263,8 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     if (r) {
       const ok = r.trials.filter((t) => !t.error).length;
       if (pv.recorded && ok) out.push(h("p", { class: "note" }, r.differ ? r.differ + " of " + plural(ok, "forked call") + " took another action than the recorded one." : "Every forked call took the recorded action."));
-      const withs = r.edits.filter((e) => e.how !== "absent").map((e) => " --with " + (e.how === "removed" ? e.path + "=" : e.path)).join("");
-      out.push(cmdBlock("coding.sh replay " + session.id.slice(0, 8) + " --step " + n + " --fork" + withs + " --save-case forks", "Keep this step as a regression case (with the edited files saved in the project)"));
+      const withs = r.edits.filter((e) => e.how !== "absent").flatMap((e) => ["--with", e.how === "removed" ? e.path + "=" : e.path]);
+      out.push(cmdBlock(shCmd("coding.sh replay", session.id.slice(0, 8), "--step", n, "--fork", ...withs, "--save-case", "forks"), "Keep this step as a regression case (with the edited files saved in the project)"));
     }
     return out;
   }
@@ -4886,10 +5287,10 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
       const sh = d.shell;
       const facts = [sh.exitCode !== undefined ? "exit " + sh.exitCode : sh.ok === false ? "failed" : sh.ok === true ? "ok" : "no result recorded", sh.durationMs !== undefined ? fmtDuration(sh.durationMs) : ""].filter(Boolean).join(" · ");
       nodes.push(section("command", h("div", null, codeBlock("$ " + sh.command), h("p", { class: "meta" + (sh.ok === false ? " tone-fail" : "") }, facts))));
-      if (sh.output) nodes.push(section("output at this step", clipped(sh.output, (x) => codeBlock(x), { lines: 200 })));
+      if (sh.output) nodes.push(section("output at this step", clipped(stripAnsi(sh.output), (x) => codeBlock(x), { lines: 200 })));
       if (sh.outputBlob) nodes.push(blobView({ name: "full output", sha: sh.outputBlob }));
     } else if (d.text !== undefined) {
-      nodes.push(section(st.kind === "prompt" ? "prompt" : st.kind === "reply" ? "reply" : "detail", clipped(d.text, textBlock, { lines: 80 })));
+      nodes.push(section(st.kind === "prompt" ? "prompt" : st.kind === "reply" ? "reply" : "detail", clipped(d.text, (x) => mdView(x), { lines: 80 })));
     } else {
       if (d.input !== undefined && st.kind !== "edit") nodes.push(section("input", clipped(json(d.input), (x) => codeBlock(x), { lines: 60 })));
       if (d.output && (st.kind !== "edit" || st.ok === false)) nodes.push(section(st.ok === false ? "error" : "output", clipped(d.output, (x) => smartBlock(x), { lines: 80 })));
@@ -4952,7 +5353,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   function renderHint() {
     const scope = rp.on ? "replay" : "session";
     swap(hint, 
-      ...KEYMAP.filter((k) => k.scope === scope && k.hint).map((k) => h("span", null, keyCaps(k.id === "down" ? ["j", "k"] : k.keys), k.id === "down" ? "move" : k.label.replace(/^Show or hide |^Expand or fold /, "").toLowerCase())),
+      ...KEYMAP.filter((k) => k.scope === scope && k.hint && (!chatOn || CHAT_KEYS.has(k.id) || k.id === "down" || k.id === "next-turn")).map((k) => h("span", null, keyCaps(k.id === "down" ? ["j", "k"] : k.id === "next-turn" ? ["{", "}"] : k.keys), k.id === "down" ? "move" : k.id === "next-turn" ? "turns" : k.label.replace(/^Show or hide |^Expand or fold /, "").toLowerCase())),
       h("span", { class: "spacer" }), h("span", null, keyCaps(["?"]), "all shortcuts"));
   }
 
@@ -4964,10 +5365,21 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     last: () => selectRow(rows.length - 1),
     "next-fail": () => jumpFail(1),
     "prev-fail": () => jumpFail(-1),
+    "first-fail": () => firstFail(),
+    "next-turn": () => jumpTurn(1),
+    "prev-turn": () => jumpTurn(-1),
     find: () => { findInput.focus(); findInput.select(); },
+    chat: () => { setChat(!chatOn); (chatOn ? chat : tl).focus({ preventScroll: true }); },
     "next-match": () => (findQ ? jumpMatch(1) : jumpQuery(1)),
     "prev-match": () => (findQ ? jumpMatch(-1) : jumpQuery(-1)),
-    "open-fold": () => { const x = rows[activeRow]; if (typeof x === "number") return false; ctx.openFold(x.key); selectRow(rowOf[x.from]); },
+    "open-fold": (e) => {
+      const x = rows[activeRow];
+      // Enter on an open turn's row folds it again.
+      if (typeof x === "number") return e && e.key === "Enter" && meta[x].isTurn ? foldTurn(meta[x].turn) : false;
+      ctx.openFold(x.key);
+      selectRow(rowOf[x.from]);
+    },
+    "fold-turn": () => { const x = rows[activeRow]; return typeof x === "number" ? foldTurn(meta[x].turn) : false; },
     folds: () => toggleFolds(),
     waterfall: () => toggleWf(),
     raw: () => { if (rp.on) return false; ctx.raw = !ctx.raw; const x = rows[activeRow]; if (typeof x === "number") renderPane(pane, items[x], session, ctx); },
@@ -4986,12 +5398,36 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   };
   keys.palette = [
     { group: "Session", label: "Next failure", hint: "]", run: () => jumpFail(1) },
+    { group: "Session", label: "First failure", hint: "F", run: () => { if (chatOn) setChat(false); firstFail(); } },
+    { group: "Session", label: "Next turn", hint: "}", run: () => jumpTurn(1) },
+    { group: "Session", label: "Previous turn", hint: "{", run: () => jumpTurn(-1) },
     { group: "Session", label: "Find in steps", hint: "/", run: () => setTimeout(() => findInput.focus(), 0) },
+    { group: "Session", label: "Chat or steps view", hint: "v", run: () => { setChat(!chatOn); setTimeout(() => (chatOn ? chat : tl).focus({ preventScroll: true }), 0); } },
     { group: "Session", label: "Copy session id", run: () => copy(session.id, "session id") },
-    { group: "Session", label: "Copy eval command", run: () => copy("coding.sh eval new " + session.id, "eval command") },
+    { group: "Session", label: "Copy eval command", run: () => copy(shCmd("coding.sh eval new", session.id), "eval command") },
     { group: "Session", label: "Show or hide timing bars", hint: "w", run: () => toggleWf() },
     { group: "Session", label: "Replay step by step", hint: "R", run: () => enterReplay() },
   ];
+  // In chat view j and k move between messages and } and { between prompts; the arrows keep
+  // scrolling the chat. The other step keys do nothing; v, Esc and the label keys still work.
+  function chatJump(sel, dir, e) {
+    if (e && e.key.startsWith("Arrow")) return false;
+    const top = narrow.matches ? parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--top")) || 0 : chat.getBoundingClientRect().top;
+    const els = [...chat.querySelectorAll(sel)];
+    const at = (el) => el.getBoundingClientRect().top - top;
+    const to = dir > 0 ? els.find((el) => at(el) > 2) : els.reverse().find((el) => at(el) < -2);
+    if (!to) return;
+    if (narrow.matches) window.scrollBy(0, at(to));
+    else chat.scrollTop += at(to);
+    chat.focus({ preventScroll: true });
+  }
+  const chatNav = {
+    down: (e) => chatJump(".chat-msg", 1, e),
+    up: (e) => chatJump(".chat-msg", -1, e),
+    "next-turn": () => chatJump(".chat-msg.is-user", 1),
+    "prev-turn": () => chatJump(".chat-msg.is-user", -1),
+  };
+  for (const [k, fn] of Object.entries(keys.actions)) if (!CHAT_KEYS.has(k)) keys.actions[k] = (e) => (chatOn ? (chatNav[k] ? chatNav[k](e) : false) : fn(e));
   // Clicks inside the step list keep keyboard focus on it.
   tl.addEventListener("mousedown", () => { requestAnimationFrame(() => { if (!typing({ target: document.activeElement })) tl.focus({ preventScroll: true }); }); });
 
@@ -5001,11 +5437,18 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     const i = items.findIndex((it) => ((it.ev || it.start || it.end || {}).spanId) === spanId);
     if (i >= 0) { selectItem(i, true); tl.focus({ preventScroll: true }); }
   };
-  view.lastChild.replaceWith(...[durableStrip(session, pickSpan)].filter(Boolean), tools, rpBar, more, h("div", { class: "session-grid" }, timeline, pane), hint);
+  view.lastChild.replaceWith(...[durableStrip(session, pickSpan)].filter(Boolean), tools, rpBar, more, grid, chat, hint);
   rebuildRows();
-  selectItem(activeItem, !!eventId);
-  if (!eventId) tl.scrollTop = 0, renderWindow(true);
+  // A link to a step opens its turn; a session with a failure opens on its first failure; a clean
+  // one opens on its first prompt (a folded turn stays folded), not on "Session starts".
+  const linked = eventId && byEvent.has(eventId);
+  const atFail = !linked && failIdx.length > 0;
+  if (linked) selectItem(activeItem, true);
+  else if (atFail) { selectItem(failIdx[0], true); if (viaList) tl.focus({ preventScroll: true }); }
+  else selectRow(turnIdx.length ? rowOf[turnIdx[0]] : 0);
+  if (!linked && !atFail) tl.scrollTop = 0, renderWindow(true);
   // A link ending in ?step=N opens the replay at that step.
+  if (chatOn) showChat(!linked && !atFail);
   if (linkStep) enterReplay(linkStep);
   if (hasMore) loadRest(); else loadOutline();
   announce("Session loaded, " + plural(items.length, "step") + (failIdx.length ? ", " + plural(failIdx.length, "failure") : "") + (hasMore ? ", more events available" : ""));
@@ -5065,7 +5508,7 @@ function sessionHeader(s, labels, rel) {
   const waste = wasteFact(st);
   const fact = (dt, dd, title, cls) => dd ? h("div", { "data-fact": dt }, h("dt", null, dt), h("dd", { title, class: cls }, dd)) : null;
   const outcome = latestLabel(labels, "outcome");
-  const evalCmd = "coding.sh eval new " + s.id;
+  const evalCmd = shCmd("coding.sh eval new", s.id);
   const kids = (rel && rel.children) || [];
   const parent = rel && rel.parent;
   const api_ = isApiSession(s);
@@ -5076,9 +5519,10 @@ function sessionHeader(s, labels, rel) {
     onclick: (e) => postLabel(s.id, value, e.currentTarget.closest(".label-group")),
   }, text);
 
-  // Phones show agent, model, duration and cost; "More" opens the rest and stays open next time.
+  // Phones show agent, model, duration and cost; "More" opens the rest, with the outcome and eval
+  // command, and stays open next time.
   const factsAll = prefs.get("facts", false);
-  const moreBtn = h("button", { class: "facts-more", type: "button", "aria-expanded": String(factsAll), "aria-controls": "facts", onclick: () => {
+  const moreBtn = h("button", { class: "facts-more", type: "button", "aria-expanded": String(factsAll), "aria-controls": "facts head-actions", onclick: () => {
     const on = !factsList.classList.contains("all");
     factsList.classList.toggle("all", on);
     moreBtn.setAttribute("aria-expanded", String(on));
@@ -5095,7 +5539,7 @@ function sessionHeader(s, labels, rel) {
         h("span", { class: "truncate", dir: "auto" }, parent ? sessionTitle(parent) : clip(s.parent.sessionId, 40))), h("span", { class: "sep", "aria-hidden": "true" }, "/")] : null,
       h("span", { class: "sid truncate", title: s.id }, (s.parent ? "subagent " : "") + s.id),
       h("button", { class: "copy-id", type: "button", "aria-label": "Copy session id", onclick: () => copy(s.id, "session id") }, "copy")),
-    h("div", { class: "head-row" }, h("h1", { title: sessionTitle(s), dir: "auto" }, sessionTitle(s))),
+    h("div", { class: "head-row" }, h("h1", { title: sessionTitle(s), dir: "auto" }, sessionTitle(s)), rel && rel.firstFail),
     factsList = h("dl", { class: "facts" + (factsAll ? " all" : ""), id: "facts" },
       fact("agent", s.agent + (s.agentVersion ? " " + s.agentVersion : "")),
       fact("model", s.model),
@@ -5118,6 +5562,7 @@ function sessionHeader(s, labels, rel) {
           ? [h("span", { class: "badge" }, plural(st.latency.llmCalls, "request")), failedRequests ? h("span", { class: "badge fail" }, plural(failedRequests, "failed request")) : null]
           : [st.toolCalls ? h("span", { class: "badge" }, plural(st.toolCalls, "tool call")) : null,
             st.toolErrors ? h("span", { class: "badge fail" }, plural(st.toolErrors, "tool error")) : null],
+        !api_ && st.llmErrors && st.llmErrors.count ? h("span", { class: "badge fail", title: st.llmErrors.error ? "First failure: " + st.llmErrors.error : undefined }, plural(st.llmErrors.count, "model error") + (typeof st.llmErrors.statusCode === "number" ? " (" + st.llmErrors.statusCode + ")" : "")) : null,
         st.filesChanged ? h("span", { class: "badge" }, plural(st.filesChanged, "file") + " changed") : null,
         st.weightEdits && st.weightEdits.events ? h("span", { class: "badge", title: fmtNum(st.weightEdits.weightsChanged) + " weights changed" + (st.weightEdits.tensors ? " in " + plural(st.weightEdits.tensors, "tensor") : "") }, plural(st.weightEdits.events, "weight edit")) : null,
         st.weightEdits && st.weightEdits.checkpoints && st.weightEdits.checkpoints.length ? h("span", { class: "badge", title: "SHA-256 of the weights file this session saved (exp run --weights takes it): " + st.weightEdits.checkpoints.join(", ") }, st.weightEdits.checkpoints.length === 1 ? "checkpoint " + shortWeights(st.weightEdits.checkpoints[0]) : plural(st.weightEdits.checkpoints.length, "checkpoint")) : null,
@@ -5129,7 +5574,7 @@ function sessionHeader(s, labels, rel) {
         s.parent && s.parent.type ? h("span", { class: "badge" }, "subagent · " + s.parent.type) : null,
         s.runId ? h("span", { class: "badge", title: s.runId }, "eval run") : null,
         flagBadges(s.flags)),
-      h("div", { class: "actions" },
+      h("div", { class: "actions", id: "head-actions" },
         h("div", { class: "label-group", role: "group", "aria-label": "Label outcome" },
           h("span", { class: "meta outcome-lbl" }, "Outcome"),
           labelBtn("pass", "Pass", "p"),
@@ -5309,6 +5754,149 @@ function section(label, content, extra) {
 }
 function textBlock(text) { return h("pre", { class: "text-block" }, String(text)); }
 function codeBlock(text, cls) { return h("pre", { class: "code" + (cls ? " " + cls : "") }, h("code", null, String(text))); }
+// ---- Markdown: a small, safe subset for prompts and replies (headings, paragraphs, lists, fenced
+// code, inline code, bold, italic). mdParse returns plain data and mdView builds it with h(), so
+// every character reaches the page as text: angle brackets stay text and links stay plain text.
+// One pass over the lines, and each inline closer is looked up at most once per position, so a
+// 200 KB reply parses in linear time.
+const MD_FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*([^\s`]*)/;
+const MD_FENCE_END = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
+const MD_HEAD = /^ {0,3}(#{1,6})(?:[ \t]+|$)/;
+const MD_RULE = /^ {0,3}([-*_])[ \t]*(?:\1[ \t]*){2,}$/;
+const MD_ITEM = /^([ \t]*)([-*+]|\d{1,9}[.)])[ \t]+/;
+function mdParse(src) {
+  const lines = String(src ?? "").replace(/\r\n?/g, "\n").split("\n");
+  const out = [];
+  let para = null, list = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    let m = MD_FENCE.exec(line);
+    if (m) {
+      const body = [];
+      let j = i + 1;
+      for (; j < lines.length; j++) {
+        const c = MD_FENCE_END.exec(lines[j]);
+        if (c && c[1][0] === m[1][0] && c[1].length >= m[1].length) break;
+        body.push(lines[j]);
+      }
+      // An unclosed fence runs to the end of the text, as CommonMark has it.
+      out.push({ t: "code", lang: m[2], text: body.join("\n") });
+      i = j; para = list = null;
+      continue;
+    }
+    if (!line.trim()) { para = list = null; continue; }
+    m = MD_HEAD.exec(line);
+    if (m) {
+      let s = line.slice(m[0].length).trimEnd(), e = s.length;
+      while (e > 0 && s[e - 1] === "#") e--;
+      if (e < s.length && (e === 0 || s[e - 1] === " " || s[e - 1] === "\t")) s = s.slice(0, e).trimEnd();
+      out.push({ t: "h", level: m[1].length, text: s });
+      para = list = null;
+      continue;
+    }
+    if (MD_RULE.test(line)) { out.push({ t: "hr" }); para = list = null; continue; }
+    m = MD_ITEM.exec(line);
+    if (m) {
+      const ind = m[1].replace(/\t/g, "    ").length, ordered = m[2] >= "0" && m[2] <= "9";
+      if (list && ind <= list.items[0].ind && list.items[0].ordered !== ordered) list = null;
+      if (!list) { list = { t: "list", items: [] }; out.push(list); }
+      list.items.push({ ind, ordered, n: ordered ? parseInt(m[2], 10) : 0, text: line.slice(m[0].length) });
+      para = null;
+      continue;
+    }
+    if (list && (line[0] === " " || line[0] === "\t")) { const it = list.items[list.items.length - 1]; it.text += "\n" + line.trim(); continue; }
+    list = null;
+    if (para) para.text += "\n" + line;
+    else { para = { t: "p", text: line }; out.push(para); }
+  }
+  return out;
+}
+const MD_WORD = /[\p{L}\p{N}]/u;
+/** Inline spans as [kind, content, url]: "t" text, "c" code, "b" bold, "i" italic (content is spans), "a" link. */
+function mdInline(s, depth) {
+  s = String(s ?? "");
+  depth = depth || 0;
+  const out = [], seen = new Map();
+  // The first `d` at or after `from`, remembered so repeated openers do not rescan the text.
+  const find = (d, from) => {
+    const c = seen.get(d);
+    if (c && c[0] <= from && (c[1] === -1 || c[1] >= from)) return c[1];
+    const at = s.indexOf(d, from);
+    seen.set(d, [from, at]);
+    return at;
+  };
+  const word = (ch) => !!ch && MD_WORD.test(ch);
+  const n = s.length;
+  let i = 0, t = 0, urlAt = -1, urlOk = false;
+  const flush = (end) => { if (end > t) out.push(["t", s.slice(t, end)]); };
+  while (i < n) {
+    const ch = s[i];
+    if (ch === "\\" && i + 1 < n && /[!-\/:-@[-`{-~]/.test(s[i + 1])) { flush(i); t = i + 1; i += 2; continue; }
+    if (ch === "`") {
+      let k = i; while (k < n && s[k] === "`") k++;
+      const run = s.slice(i, k), j = find(run, k);
+      if (j > k) { flush(i); out.push(["c", s.slice(k, j).trim() || s.slice(k, j)]); i = t = j + run.length; continue; }
+      i = k; continue;
+    }
+    if ((ch === "*" || ch === "_") && depth < 2) {
+      const dbl = s[i + 1] === ch, d = dbl ? ch + ch : ch, from = i + d.length;
+      const okOpen = from < n && !/\s/.test(s[from]) && !(ch === "_" && word(s[i - 1]));
+      const j = okOpen ? find(d, from) : -1;
+      if (j > from && !/\s/.test(s[j - 1]) && !(ch === "_" && word(s[j + d.length]))) {
+        flush(i); out.push([dbl ? "b" : "i", mdInline(s.slice(from, j), depth + 1)]); i = t = j + d.length; continue;
+      }
+      i = from; continue;
+    }
+    if (ch === "[") {
+      const j = find("]", i + 1);
+      if (j > i + 1 && j - i <= 500 && s[j + 1] === "(") {
+        const k = find(")", j + 2);
+        if (k !== urlAt) { urlAt = k; urlOk = k > j + 2 && k - j <= 2050 && !/\s/.test(s.slice(j + 2, k)); }
+        if (urlOk) { flush(i); out.push(["a", s.slice(i + 1, j), s.slice(j + 2, k)]); i = t = k + 1; continue; }
+      }
+    }
+    i++;
+  }
+  flush(n);
+  return out;
+}
+function mdSpans(spans) {
+  return spans.map(([k, a, url]) => k === "t" ? a : k === "c" ? h("code", null, a) : k === "b" ? h("strong", null, mdSpans(a)) : k === "i" ? h("em", null, mdSpans(a))
+    : a === url || !a ? url : [mdSpans(mdInline(a, 2)), " (" + url + ")"]);
+}
+/** Prompt or reply text, formatted. The source is never parsed as HTML. */
+function mdView(text, cls) {
+  const root = h("div", { class: "md" + (cls ? " " + cls : "") });
+  for (const b of mdParse(text)) {
+    if (b.t === "p") root.append(h("p", null, mdSpans(mdInline(b.text))));
+    else if (b.t === "h") root.append(h("h" + Math.min(6, b.level + 2), { class: "md-h" }, mdSpans(mdInline(b.text))));
+    else if (b.t === "hr") root.append(h("hr"));
+    else if (b.t === "code") root.append(h("div", { class: "md-code" }, b.lang ? h("span", { class: "md-lang" }, b.lang) : null, codeBlock(b.text)));
+    else {
+      // Deeper-indented items nest under the item above them.
+      const top = b.items[0], mk = (it) => it.ordered ? h("ol", it.n !== 1 ? { start: it.n } : null) : h("ul");
+      const stack = [{ ind: top.ind, el: mk(top) }];
+      root.append(stack[0].el);
+      for (const it of b.items) {
+        while (stack.length > 1 && it.ind < stack[stack.length - 1].ind) stack.pop();
+        let cur = stack[stack.length - 1];
+        if (it.ind > cur.ind && cur.el.lastElementChild) {
+          cur = { ind: it.ind, el: mk(it) };
+          stack[stack.length - 1].el.lastElementChild.append(cur.el);
+          stack.push(cur);
+        }
+        cur.el.append(h("li", null, mdSpans(mdInline(it.text))));
+      }
+    }
+  }
+  return root;
+}
+/** Tool output without terminal escape codes: CSI colour and cursor codes, OSC titles and links, and lone ESC pairs. */
+const ANSI_RE = /\x1b\[[0-?]*[ -\/]*[@-~]|\x9b[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][0-9A-Za-z]|\x1b[0-~]|\x1b(?![\s\S])/g;
+function stripAnsi(text) {
+  text = String(text ?? "");
+  return text.indexOf("\x1b") < 0 && text.indexOf("\x9b") < 0 ? text : text.replace(ANSI_RE, "");
+}
 function looksLikeDiff(text) {
   return /^(diff --git |--- |\+\+\+ |@@ )/m.test(text) && /^[+-]/m.test(text);
 }
@@ -5581,7 +6169,8 @@ function toolSections(tool, input, e, failed, item, ctx) {
   const out = [];
   const inp = input && typeof input === "object" ? input : {};
   const base = String(tool).replace(/^.*__/, "");
-  const text = outputText(e.output);
+  // Escape codes are dropped for display only; the stored output and Copy step as JSON keep them.
+  const rawText = outputText(e.output), text = rawText === null ? null : stripAnsi(rawText);
   const outLabel = "output" + (e.truncated ? " (truncated)" : "");
   const hasOut = e.output !== undefined && e.output !== null && e.output !== "";
   let inputShown = false, outputShown = false;
@@ -5829,7 +6418,7 @@ function renderPane(pane, item, session, ctx) {
       case "user.message":
       case "assistant.message":
         nodes.push(h("h2", { class: "pane-title" }, item.type === "user.message" ? "Prompt" : "Assistant"));
-        nodes.push(p.text ? clipped(p.text, textBlock, { lines: 300 }) : h("p", { class: "note" }, "No inline text."));
+        nodes.push(p.text ? section(fmtNum(String(p.text).length) + " chars", clipped(p.text, (x) => mdView(x), { lines: 300 }), copyBtn(() => String(p.text), "Copy the original text", "text", "Copy text")) : h("p", { class: "note" }, "No inline text."));
         break;
       case "file.change": {
         nodes.push(h("h2", { class: "pane-title" }, h("span", { class: "tool" }, p.op === "add" ? "Add" : p.op === "delete" ? "Delete" : "Edit"), h("span", { class: "arg" }, relPath(String(p.path || "")))));
@@ -6365,7 +6954,8 @@ async function showExperiment(seq, id) {
 // ---- compare two experiments (a = baseline, b = candidate)
 
 /** A symmetric axis that ends on a round number: ±10, 20, 25, 50 or 100 pts. */
-function niceSpan(x) { return [0.1, 0.2, 0.25, 0.5, 1].find((v) => v >= x * 1.1) || 1; }
+// Pass-rate gaps stop at 1; an objective grader's score gap can reach its clip (default 3), so the axis grows past 1 instead of pinning the bar to its end.
+function niceSpan(x) { return [0.1, 0.2, 0.25, 0.5, 1].find((v) => v >= x * 1.1) || (x <= 1 ? 1 : [2, 3, 5, 10].find((v) => v >= x * 1.1) || Math.ceil(x * 1.1)); }
 /** The side of the verdict card: role, name (when it says more than the role) and pass rate. */
 /** `stamped`: one side at least records its weights (`exp run --weights`), so both say what they recorded. */
 function side(cls, role, e, stamped) {
@@ -7688,7 +8278,7 @@ async function showBenchmark(seq, name) {
   };
   keys.palette = [
     { group: "Benchmark", label: "Copy benchmark name", run: () => copy(r.bench, "benchmark name") },
-    { group: "Benchmark", label: "Copy bench show command", run: () => copy("coding.sh bench show " + r.bench, "command") },
+    { group: "Benchmark", label: "Copy bench show command", run: () => copy(shCmd("coding.sh bench show", r.bench), "command") },
   ];
   const top = sums[0];
   announce("Benchmark loaded" + (top ? ", " + top.contender + " leads at " + pct(top.passRate.p) : "") + ", " + plural(fails.length, "failed case"));
@@ -7708,7 +8298,7 @@ async function loadUpdate() {
   if (!u || !u.updateAvailable || typeof u.latest !== "string" || !/^[0-9A-Za-z.+-]{1,40}$/.test(u.latest)) return;
   const pill = $("#update");
   pill.querySelector(".ver").textContent = "v" + u.latest;
-  pill.title = "coding.sh " + u.latest + " is available (you have " + u.current + "). Click to copy: coding.sh update";
+  pill.title = "Version " + u.latest + " of coding.sh is available (you have " + u.current + "). Click to copy: coding.sh update";
   pill.setAttribute("aria-label", "Update available: coding.sh " + u.latest + ". Copy the update command.");
   pill.addEventListener("click", () => copy("coding.sh update"));
   pill.hidden = false;

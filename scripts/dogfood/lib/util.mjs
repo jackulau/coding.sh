@@ -28,10 +28,19 @@ export function isolatedEnv(root, extra = {}) {
   return { ...env, HOME: home, USERPROFILE: home, CODING_SH_HOME: join(home, ".coding.sh"), XDG_CONFIG_HOME: join(home, ".config"), XDG_DATA_HOME: join(home, ".local", "share"), ...extra };
 }
 
+/**
+ * On Windows npm and npx are .cmd shims, which spawn runs only through a shell. The line is passed
+ * whole (the scripts' npm arguments have no spaces or quotes), as Node deprecates args with shell.
+ */
+function spawnArgs(cmd, args, opts) {
+  if (process.platform !== "win32" || (cmd !== "npm" && cmd !== "npx") || opts.shell !== undefined) return [cmd, args, opts];
+  return [[cmd, ...args].join(" "), [], { ...opts, shell: true }];
+}
+
 /** Run a command synchronously and return { code, stdout, stderr, ms }. Never throws on non-zero exit. */
 export function sh(cmd, args, opts = {}) {
   const t0 = performance.now();
-  const r = spawnSync(cmd, args, { encoding: "utf8", maxBuffer: 256 << 20, ...opts });
+  const r = spawnSync(...spawnArgs(cmd, args, { encoding: "utf8", maxBuffer: 256 << 20, ...opts }));
   return { code: r.status ?? (r.signal ? 128 : 1), signal: r.signal, stdout: r.stdout ?? "", stderr: r.stderr ?? "", ms: performance.now() - t0, error: r.error };
 }
 
@@ -40,7 +49,7 @@ export function shAsync(cmd, args, opts = {}) {
   const { timeoutMs = 600_000, input, onStdout, ...rest } = opts;
   return new Promise((resolveP) => {
     const t0 = performance.now();
-    const p = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], ...rest });
+    const p = spawn(...spawnArgs(cmd, args, { stdio: ["pipe", "pipe", "pipe"], ...rest }));
     let stdout = "";
     let stderr = "";
     let timedOut = false;

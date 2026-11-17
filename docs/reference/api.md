@@ -25,7 +25,8 @@ or a proxy in front of it.
 - Create keys with `coding.sh serve keygen`. The key goes to stdout once; the server keeps only its sha256.
 - Ingest keys cannot read and read keys cannot ingest. Each gets 401.
 - On a loopback bind with no keys configured, ingest is open and lands in project `default`, and reads are open too.
-- A non-loopback bind with no credentials at all makes one ingest key and one read key on first start. It keeps them in `<CODING_SH_HOME>/serve-keys.json` and prints them on every start.
+- A non-loopback bind with no credentials at all makes one ingest key and one read key on first start, in `<CODING_SH_HOME>/serve-keys.json`.
+- Those keys are printed once, on the start that makes them. Later starts and `--json` name the file and never print the keys.
 - A non-loopback bind with only some credentials (an ingest key but no read key, say) refuses to start unless you pass `--insecure`.
 
 **Projects.** The ingest key decides the project of everything it sends; a client cannot pick one.
@@ -406,9 +407,20 @@ Without a valid read credential: 401 `{"error":"missing or invalid read key","st
 
 ### `GET /`, `GET /index.html`
 
-The viewer page (HTML, also `HEAD`). Auth: read key or basic auth. `/?t=<read key>` trades the key
-for an `HttpOnly; SameSite=Strict` cookie named `csh_rk` and redirects to `/`, so the key leaves the
-address bar. Add `CODING_SH_TRUST_PROXY=1` behind a TLS proxy to mark the cookie `Secure`.
+The viewer page (HTML, also `HEAD`). Auth: read key or basic auth.
+
+`/?t=<read key>` trades the key for an `HttpOnly; SameSite=Strict` cookie named `csh_rk` and
+redirects to `/`, so the key leaves the address bar. The exchange happens when:
+
+- the browser opened the link itself (address bar, bookmark, another app) or from the same site;
+- the client sends no `Sec-Fetch-Site` header, such as curl.
+
+A link followed from another site gets a page with one button instead, which posts the key to `/`.
+
+Behind a TLS proxy with `CODING_SH_TRUST_PROXY=1`, a request with `X-Forwarded-Proto: https` gets
+the cookie as `__Host-csh_rk` marked `Secure`, and every answer carries
+`Strict-Transport-Security: max-age=31536000`. Plain HTTP keeps the `csh_rk` name, and either name
+is accepted.
 
 ```sh
 curl -sS -i "$CSH/?t=$READ_KEY"
@@ -422,6 +434,16 @@ Location: /
 
 A missing or wrong key gets a 401 HTML page that explains how to sign in, with
 `WWW-Authenticate: Basic` when basic auth is configured. Other methods get 405.
+
+### `POST /`
+
+The sign-in form. The body is `application/x-www-form-urlencoded` with `t=<read key>`, at most
+4 KB. A right key gets the same cookie with a 303 to `/`; a wrong one gets the 401 page. A request
+whose `Origin` is not the viewer's, or that a browser marks as from another site, gets 403.
+
+```sh
+curl -sS -i "$CSH/" --data-urlencode "t=$READ_KEY"
+```
 
 The page arrives with the first sessions page drawn as rows, so the list shows before its script
 runs, and without JavaScript.
@@ -642,6 +664,18 @@ Each API error Claude Code retried (a transcript's `api_error` line) is an `erro
 A weekly-limit stall then reads as hundreds of `rate_limit` errors on `seven_day`, not as one
 transient error.
 
+The `api-stall` flag marks a session that rate limits or an overloaded API held up. It counts the
+failed model calls and API `error` events with status 429 or 529, error class `rate_limit` or
+`overloaded`, or a message that names a rate limit, an overload or a usage limit. The session is
+flagged when:
+
+- there are three or more of them,
+- their `retryAfterMs` add up to a minute or more,
+- one was the last retry allowed (`retryAttempt` reached `maxRetries`), or
+- no model call, reply or tool call came after the last one.
+
+One 429 that a retry got past does not flag. A 500, a 400 or an auth error does not count.
+
 **Waste and cache breaks.** Both stats are absent when there is nothing to report.
 
 | Field | Meaning |
@@ -704,6 +738,7 @@ skills). It is what `coding.sh harness audit` counts.
 
 | Field | Meaning |
 |---|---|
+| `stats.filesChanged` | Distinct files the session changed, by path relative to its working directory. Each `file.change` event counts, and so does each file a finished shell call wrote (rules below) |
 | `stats.toolErrors` | Tool calls that really failed |
 | `stats.benignToolErrors` | Non-zero exits that are not errors: a shell search that found nothing (`grep`, `rg`, `git grep` and the like exiting 1 with no output), a probe that answered no (`test -f`, `which`, `command -v`), and a `diff`, `cmp` or `git diff --exit-code` that found differences. Absent when zero |
 | `stats.interruptedToolCalls` | Calls the user or the agent stopped (exit 130, or an interrupted result). Absent when zero |
@@ -711,6 +746,10 @@ skills). It is what `coding.sh harness audit` counts.
 
 - A session with `stats.foldError` holds only what the events say directly: the agent, the first and last event times, the cwd and `stats.events`, plus the `fold:error` tag. `coding.sh ingest` folds it again, and `coding.sh doctor` counts these sessions.
 - The benign and interrupted rule also decides `repeated-tool-failure`, which only counts real failures, and each phase's `toolErrors` in the outline.
+- A shell call writes a file when its command names it as the target of `>`, `>>`, `tee`, `sed -i`, `perl -i`, `truncate`, `cp`, `mv` or `git checkout|restore -- <path>`.
+- PowerShell's `Set-Content`, `Add-Content` and `Out-File` count too. A file written both by an edit tool and by a shell call counts once.
+- Reads, deletes, `/dev/null`, paths with a variable or a glob, and paths outside the working directory (`/tmp`, `~`) do not count.
+- Neither does a call the user stopped or turned down, nor a script that writes files without naming them in the command (`python fix.py`).
 
 Three `notification` kinds carry the events behind these stats:
 
@@ -1213,6 +1252,8 @@ Totals and facet counts for the session list. Takes `project`, `scope`, `agent`,
 
 - A `where` query narrows the totals, facets and histogram (its `sort:` and `limit:` do not apply). A bad one answers 400 as on `/api/sessions`.
 - Each facet applies every filter except its own.
+- `sessions` counts the rows the list shows: top-level sessions with `scope=top`, every session (subagents included) with `scope=all`, the default. `subagents` counts the matching subagent sessions in either scope.
+- `toolCalls`, `llmCalls`, `costUsd` and `pricedSessions` cover every matching session in either scope, each once: a parent's numbers do not include its subagents'.
 - `histogram` buckets session starts over at most the 90 days before the newest session.
 
 ```sh
@@ -1424,6 +1465,10 @@ Body (JSON, up to 1 MB):
 - A stored score keeps its type: a value of another type is a 400 unless the body gives `dataType` or the name has a config.
 - An event id an SDK client sent to `/v1/ingest` works as `targetId` with its `sessionId` (serve stores such ids hashed with the project).
 - A project-scoped key may only score its project's sessions and their events.
+- An id that is already stored can be written again only by the caller who wrote it, on a session it can see. Any other caller gets 404.
+- The caller is the read key's name (`reader:<hash>` for an unnamed key), so a renamed or rotated key is a new caller.
+- A stored score with no session can be replaced only by a key not limited to one project.
+- A given `id` of 64 hex characters, the form of a default id, must be this score's own default id. Any other gets 400.
 
 ```sh
 curl -sS -X POST "$CSH/api/scores" \

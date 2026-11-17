@@ -62,7 +62,8 @@ test("the scan opens the Python wheel and sdist and reports a token inside them"
   const py = process.platform === "win32" ? "python" : "python3";
   const zip = spawnSync(py, ["-c", "import sys, zipfile\nwith zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z: z.write(sys.argv[2], 'coding_sh/_client.py')", join(dist, "coding_sh-0.1.0-py3-none-any.whl"), join(dist, "src/coding_sh/_client.py")]);
   assert.equal(zip.status, 0, String(zip.stderr));
-  const tgz = spawnSync("tar", ["-czf", join(dist, "coding_sh-0.1.0.tar.gz"), "-C", join(dist, "src"), "coding_sh"]);
+  // Relative paths: GNU tar on Windows reads "C:" in an archive name as a remote host.
+  const tgz = spawnSync("tar", ["-czf", "coding_sh-0.1.0.tar.gz", "-C", "src", "coding_sh"], { cwd: dist });
   assert.equal(tgz.status, 0, String(tgz.stderr));
   rmSync(join(dist, "src"), { recursive: true });
   const r = secretScan(root);

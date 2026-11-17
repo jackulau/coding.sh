@@ -5,11 +5,13 @@
 // and graceful shutdown.
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { request as httpRequest } from "node:http";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { generateKey, sha256 } from "../../src/server/auth.ts";
 import { resolveServeConfig, type ServeConfig } from "../../src/server/config.ts";
+import { isLoopbackHost } from "../../src/otel/receiver.ts";
 import { createLogger } from "../../src/server/log.ts";
 import { DIRTY_KEY, IngestQueue } from "../../src/server/queue.ts";
 import { startServe, type ServeHandle, type ServeOptions } from "../../src/server/serve.ts";
@@ -701,6 +703,113 @@ describe("serve API audit", () => {
     assert.match(raw.json.error, /%2F/);
     assert.equal((await call(h, "/api/sessions/demo%2Fchat-1", { key: rk })).status, 200);
     assert.equal((await call(h, "/api/sessions/demo%2Fchat-1/events", { key: rk })).status, 200);
+    await h.shutdown();
+  });
+});
+
+describe("serve on loopback with no keys", () => {
+  const forwarded: Record<string, string>[] = [{ "x-forwarded-for": "203.0.113.9" }, { "x-forwarded-host": "obs.example.com" }, { forwarded: "for=203.0.113.9" }, { via: "1.1 proxy" }];
+
+  it("answers a direct request and refuses one that came through a proxy", async () => {
+    const { h, cfg } = await serve("memory", tmpEnv());
+    assert.ok(isLoopbackHost(cfg.host) && !cfg.insecure);
+    assert.equal((await call(h, "/v1/ingest", { body: batch([ev("a", "chat-1")]) })).status, 200);
+    assert.equal((await call(h, "/api/sessions")).status, 200);
+    for (const headers of forwarded) {
+      const name = Object.keys(headers)[0];
+      assert.equal((await call(h, "/v1/ingest", { body: batch([ev("b", "chat-1")]), headers })).status, 401, `ingest with ${name}`);
+      assert.equal((await call(h, "/api/sessions", { headers })).status, 401, `read with ${name}`);
+      const proxied = await call(h, "/proxy/anthropic/v1/messages", { body: {}, headers });
+      assert.equal(proxied.status, 401, `proxy with ${name}`);
+      assert.equal(proxied.json?.error?.type, "authentication_error");
+    }
+    await h.shutdown();
+  });
+
+  it("logs once that it refused a proxied request, naming keygen", async () => {
+    const lines: string[] = [];
+    const { h } = await serve("memory", tmpEnv(), { log: createLogger({ format: "json", write: (l) => lines.push(l) }) });
+    for (const headers of forwarded) assert.equal((await call(h, "/api/sessions", { headers })).status, 401);
+    const warned = lines.filter((l) => /a proxy passed on/.test(l));
+    assert.equal(warned.length, 1);
+    assert.match(warned[0]!, /serve keygen/);
+    await h.shutdown();
+  });
+
+  it("still lets a proxied request in with a key", async () => {
+    const ik = generateKey("ingest");
+    const rk = generateKey("read");
+    const { h } = await serve("memory", tmpEnv({ CODING_SH_INGEST_KEYS: ik, CODING_SH_READ_KEYS: rk }));
+    const headers = forwarded[0]!;
+    assert.equal((await call(h, "/v1/ingest", { key: ik, body: batch([ev("a", "chat-1")]), headers })).status, 200);
+    assert.equal((await call(h, "/api/sessions", { key: rk, headers })).status, 200);
+    await h.shutdown();
+  });
+});
+
+describe("serve Host check", () => {
+  // fetch may not send its own Host header; a raw request can, as a DNS-rebinding page's would.
+  const asHost = (h: ServeHandle, path: string, host: string, method = "GET", body?: string): Promise<number> =>
+    new Promise((resolve, reject) => {
+      const u = new URL(h.url + path);
+      const headers: Record<string, string> = { host };
+      if (body) headers["content-type"] = "application/json";
+      const r = httpRequest({ host: u.hostname, port: u.port, path, method, headers }, (res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+      });
+      r.on("error", reject);
+      r.end(body);
+    });
+  const routes: [string, string, string?][] = [["/readyz", "GET"], ["/metrics", "GET"], ["/api/sessions", "GET"], ["/v1/ingest", "POST", JSON.stringify(batch([ev("a", "chat-1")]))], ["/v1/traces", "POST", "{}"]];
+
+  it("on loopback answers no route for a Host that is not loopback or allowed; /healthz stays open", async () => {
+    const { h } = await serve("memory", tmpEnv());
+    for (const [path, method, body] of routes) {
+      assert.equal(await asHost(h, path, "rebind.example:4318", method, body), 403, `${method} ${path}`);
+      assert.notEqual(await asHost(h, path, "localhost:4318", method, body), 403, `${method} ${path} on localhost`);
+    }
+    assert.equal(await asHost(h, "/healthz", "rebind.example"), 200);
+    await h.shutdown();
+  });
+
+  it("serve.allowed_hosts adds names on loopback and limits a public bind to them", async () => {
+    const rk = generateKey("read");
+    const local = await serve("memory", tmpEnv({ CODING_SH_ALLOWED_HOSTS: "Obs.Example.com" }));
+    assert.equal(await asHost(local.h, "/readyz", "obs.example.com"), 200);
+    assert.equal(await asHost(local.h, "/readyz", "other.example"), 403);
+    await local.h.shutdown();
+    const env = { CODING_SH_INGEST_KEYS: generateKey("ingest"), CODING_SH_READ_KEYS: rk };
+    const open = await serve("memory", tmpEnv(env), { flags: { host: "0.0.0.0" } });
+    assert.equal(await asHost(open.h, "/readyz", "anything.example"), 200, "a public bind with no list answers any Host, as before");
+    await open.h.shutdown();
+    const pub = await serve("memory", tmpEnv({ ...env, CODING_SH_ALLOWED_HOSTS: "obs.example.com" }), { flags: { host: "0.0.0.0" } });
+    assert.equal(await asHost(pub.h, "/readyz", "obs.example.com:443"), 200);
+    assert.equal(await asHost(pub.h, "/readyz", "127.0.0.1:4318"), 200, "loopback names stay allowed for health checks inside the box");
+    assert.equal(await asHost(pub.h, "/readyz", "10.0.3.7:4318"), 200, "a probe by pod address still gets an answer on a public bind");
+    assert.equal(await asHost(pub.h, "/metrics", "other.example"), 403);
+    assert.equal(await asHost(pub.h, "/api/sessions", "10.0.3.7:4318"), 403);
+    await pub.h.shutdown();
+  });
+});
+
+describe("serve Origin check", () => {
+  it("a POST from a page must come from the host it was sent to, on a public bind too", async () => {
+    const ik = generateKey("ingest");
+    const { h } = await serve("memory", tmpEnv({ CODING_SH_INGEST_KEYS: ik, CODING_SH_BASIC_AUTH: "ops:pw" }), { flags: { host: "0.0.0.0" } });
+    assert.equal((await call(h, "/v1/ingest", { key: ik, body: batch([ev("a", "chat-1")]) })).status, 200);
+    const basic = `Basic ${Buffer.from("ops:pw").toString("base64")}`;
+    const label = (headers: Record<string, string>) => call(h, "/api/labels", { body: { sessionId: "chat-1", criterion: "outcome", value: "pass" }, headers: { authorization: basic, ...headers } });
+    const self = new URL(h.url).host;
+    const refused = await label({ origin: "https://elsewhere.example" });
+    assert.equal(refused.status, 403, "another site");
+    assert.match(refused.json.error, /proxy_set_header Host/, "the refusal names the proxy setting that fixes a rewritten Host");
+    assert.equal((await label({ origin: "null" })).status, 403, "an opaque origin");
+    assert.equal((await label({ origin: `http://${new URL(h.url).hostname}:1` })).status, 403, "another port");
+    assert.equal((await label({ origin: "https://elsewhere.example", "x-forwarded-host": "obs.example.com" })).status, 403, "another site behind a proxy");
+    assert.equal((await label({ origin: `http://${self}` })).status, 201, "the page serve sent");
+    assert.equal((await label({ origin: "https://obs.example.com", "x-forwarded-host": "obs.example.com" })).status, 201, "the page, through a proxy that rewrites Host");
+    assert.equal((await label({})).status, 201, "no Origin: not a browser page");
     await h.shutdown();
   });
 });

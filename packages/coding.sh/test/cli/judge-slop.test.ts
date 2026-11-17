@@ -108,10 +108,10 @@ describe("judge slop", () => {
     assert.match(text, /fail  agent-slop  score 0\.50  run run_A1 \(b1, task t1\)/);
   });
 
-  test("one run by id; an experiment with no runs exits 2", () => {
+  test("one run by id; an experiment with no runs exits 1 (a runtime condition, not a usage error)", () => {
     assert.equal(run("judge", "slop", "run_B1").status, 0);
     assert.equal(run("judge", "slop", "run_A1").status, 1);
-    assert.equal(run("judge", "slop", "exp_none").status, 2);
+    assert.equal(run("judge", "slop", "exp_none").status, 1);
   });
 
   test("--list-rules prints the catalog with defaults and opt-ins", () => {

@@ -12,6 +12,7 @@ import { writeFileSync, readFileSync, readdirSync, mkdirSync, rmSync, existsSync
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // Checked before anything else is loaded, so `--missing` (the build) only warns
 // on a machine without rsvg-convert, or on a Node that can't import .ts files.
@@ -35,9 +36,9 @@ try {
   skip(`could not load the page list (${String(err.message).split("\n")[0]})`);
 }
 
-const PUBLIC = new URL("../public/", import.meta.url).pathname;
+const PUBLIC = fileURLToPath(new URL("../public/", import.meta.url));
 // Full source fonts live in src/assets/fonts/source; public/fonts is the old home.
-const SOURCE_FONTS = new URL("../src/assets/fonts/source/", import.meta.url).pathname;
+const SOURCE_FONTS = fileURLToPath(new URL("../src/assets/fonts/source/", import.meta.url));
 const FONTS = existsSync(SOURCE_FONTS) ? SOURCE_FONTS : join(PUBLIC, "fonts");
 const font = (f) => readFileSync(join(FONTS, f)).toString("base64");
 const sans = font("geist-latin.woff2");

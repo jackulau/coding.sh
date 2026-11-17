@@ -51,7 +51,7 @@ Every command accepts these.
 | [`attribution`](#codingsh-attribution) | Explore | Which agent session wrote the lines each commit added; export them as Agent Trace |
 | [`blame`](#codingsh-blame) | Explore | git blame with the agent session that wrote each line |
 | [`diff-calls`](#codingsh-diff-calls) | Explore | Show what changed between two model calls, and why the second missed the prompt cache |
-| [`search`](#codingsh-search) | Explore | Full-text search over prompts, replies and tool calls |
+| [`search`](#codingsh-search) | Explore | Full-text search over prompts, replies, tool calls and errors |
 | [`usage`](#codingsh-usage) | Explore | Tokens, cost, turns and cache hits by agent, model or day |
 | [`cache`](#codingsh-cache) | Explore | Score prompt-cache health and name what breaks the cached prefix |
 | [`stats`](#codingsh-stats) | Explore | Sessions, failures, cost, tokens and latency per day or week, split by agent, model, repo or flag |
@@ -238,6 +238,7 @@ coding.sh ingest --rebuild --agent pi
 - Rarely needed: read commands, the viewer and the MCP server ingest first, and the hook starts one when a session ends.
 - After an upgrade, sessions stored by an older adapter parse are re-parsed in the background. --rebuild does it for every session now; a session whose transcript and spool lines are gone keeps its rows, minus duplicates, and one the adapter now reads as a copy of another stored session is removed.
 - Run in the foreground, it also folds sessions that have events but no session row, and sessions tagged fold:error; doctor counts both.
+- Ctrl-C stops it at the next line: what was read stays stored, the lock is released and it exits 130 (with --json, outcome interrupted). Run it again to finish.
 
 ## `coding.sh run`
 
@@ -413,7 +414,7 @@ coding.sh serve --role viewer --host 0.0.0.0
 
 - Routes: POST /v1/traces, /v1/logs, /v1/metrics (OTLP/HTTP), POST /v1/ingest (native), GET / and /api/\* (viewer), /healthz, /readyz, /metrics.
 - Precedence: flags &gt; env &gt; --config file &gt; defaults. See docs/PRODUCTION.md for every setting.
-- A non-loopback bind needs an ingest key and a read key (or basic auth), or --insecure; on loopback with no keys, ingest is open to project default.
+- A non-loopback bind needs an ingest key and a read key (or basic auth), or --insecure; on loopback with no keys, ingest is open to project default, but only to requests that no proxy passed on. With trust_proxy set, a loopback bind needs keys too.
 - Prints the URL (or one JSON document with --json) on stdout once ready; logs go to stderr. SIGTERM/SIGINT drain the queue (25s) and exit 0.
 
 ### `coding.sh serve keygen`
@@ -507,7 +508,7 @@ coding.sh sessions --facets model,tool --where 'repo:coding-sh'
 coding.sh sessions --agent codex --since 7d
 ```
 
-- --where: key:value clauses, AND by default; OR between clauses; ( ) to group; - to negate; a,b for either value; \* as a wildcard in text; &gt; &gt;= &lt; &lt;= and a..b on numbers. Bare words search prompts, replies and tool calls (every word in one event).
+- --where: key:value clauses, AND by default; OR between clauses; ( ) to group; - to negate; a,b for either value; \* as a wildcard in text; &gt; &gt;= &lt; &lt;= and a..b on numbers. Bare words search prompts, replies, tool calls and errors (every word in one event).
 - Session keys: agent, model, provider, repo, launch, branch, dir, title, id, run, parent, flag, skill, hook, hook.tokens, weights.edits, weights.changed, weights.checkpoint, since, until, duration, turns, tools, tool.errors, llm.errors, files, events, tests.passed, tests.failed, tokens, tokens.in, tokens.out, cost, cache.breaks, cache.lost, cache.cost, unapproved, has, is. Event keys (the session has a matching event; event keys in one group match the same event): kind, tool, ok, mcp, error, event.duration. Also sort:-cost and limit:N. Full list with examples: https://coding.sh/docs/query.
 - --facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).
 - With --json each session is a digest: its stats without stats.phases, and each derail without the event it started at (eventId, index). show &lt;id&gt; --json has both, and --fields stats.phases or --fields stats.derails prints them here.
@@ -725,7 +726,7 @@ coding.sh diff-calls 9f1c2e 4b7d1a --json
 
 ## `coding.sh search`
 
-Full-text search over prompts, replies and tool calls.
+Full-text search over prompts, replies, tool calls and errors.
 
 ```text
 coding.sh search <TEXT>... [options]
@@ -2723,7 +2724,7 @@ coding.sh improve check [options]
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 | `--watch` |  | Keep running and print a line when a change's verdict moves as new sessions arrive. |
 | `--interval <SECONDS>` | `60` | With --watch: how often to re-check. |
-| `--sessions` |  | List every session still flagged after each change, not just the newest 5. |
+| `--sessions` |  | List every session still flagged after each change, not only the newest 5. |
 
 ```sh
 coding.sh improve check

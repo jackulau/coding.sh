@@ -286,6 +286,12 @@ export interface IndexStore {
   compact?(): Promise<void>;
   /** Fold a write-ahead log back into the store and shrink it (SQLite: wal_checkpoint). Ingest and backfill call it after a bulk write. */
   checkpoint?(): Promise<void>;
+  /**
+   * gc's pass over the events of stored sessions, without reading them one by one. `expired`: blob refs held
+   * by tool.end events older than `cutoff` and by no other event (none without a cutoff). `pagedRequests`:
+   * the request documents of events with payload.requestPaged (only llm.call events without a cutoff).
+   */
+  gcEventBlobs?(cutoff: number | undefined): Promise<{ expired: BlobRef[]; pagedRequests: BlobRef[] }>;
 
   /** Cheap round trip that throws when the store is unreachable (serve's /readyz). */
   ping?(): Promise<void>;

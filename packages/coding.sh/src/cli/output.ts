@@ -71,6 +71,25 @@ export function clean(s: string): string {
   return s.replace(UNSAFE, "");
 }
 
+// What Output writes to stdout. A whole escape sequence goes (an OSC title or hyperlink, a CSI
+// cursor move), so its text does not show either, then any control char left. With color on, the
+// codes style() writes stay: they set color or weight and nothing else.
+const PRINT_UNSAFE = new RegExp(
+  // eslint-disable-next-line no-control-regex
+  /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)?|\u001b\[[0-?]*[ -/]*[@-~]|\u009b[0-?]*[ -/]*[@-~]|/.source + UNSAFE.source,
+  "g",
+);
+// eslint-disable-next-line no-control-regex
+const OUR_CODES = /^\u001b\[(?:1|2|22|31|32|33|35|36|39)m$/;
+function printable(s: string, color: boolean): string {
+  return s.replace(PRINT_UNSAFE, (m) => (color && OUR_CODES.test(m) ? m : ""));
+}
+
+/** CSV or JSONL bound for a terminal: no escape sequence or control char, CRLF row ends kept. */
+export function forTerminal(s: string): string {
+  return s.split("\r\n").map((part) => printable(part, false)).join("\r\n");
+}
+
 export class Output {
   readonly json: boolean;
   readonly color: boolean;
@@ -110,7 +129,7 @@ export class Output {
   /** One line of the answer. Ignored in --json mode (the document is the answer). */
   print(line = ""): void {
     if (this.json) return;
-    this.so.write(line + "\n");
+    this.so.write(printable(line, this.color) + "\n");
   }
 
   /** The single JSON document (pretty on a TTY, compact otherwise). */
@@ -130,6 +149,9 @@ export class Output {
    */
   table(headers: readonly string[], rows: readonly (readonly string[])[], opts: { keep?: readonly string[]; collapse?: readonly string[] } = {}): void {
     if (this.json) return;
+    // Cells are text we did not write: no escape sequence in them reaches the terminal, and none
+    // throws the widths off (color codes from style() stay, as in print).
+    rows = rows.map((r) => r.map((c) => printable(c, this.color)));
     if (!this.stdoutTTY) {
       this.so.write([headers, ...rows].map((r) => r.join("\t")).join("\n") + "\n");
       return;
@@ -170,10 +192,15 @@ export class Output {
 
   // ------------------------------------------------------------ stderr (everything else)
 
+  /** Human text on stderr, filtered as stdout is: messages carry captured text too. */
+  private ew(s: string): void {
+    this.se.write(printable(s, this.errColor));
+  }
+
   private err(line: string): void {
     if (this.json) return;
     this.stopSpinner();
-    this.se.write(line + "\n");
+    this.ew(line + "\n");
   }
 
   /** Completed primary result. */
@@ -195,10 +222,13 @@ export class Output {
     this.err(msg ? `  ${msg}` : "");
   }
 
-  /** Label/value row: label at column 2 in a 16-column field, value at column 18. */
-  row(label: string, value: string, glyph: "ok" | "warn" | "fail" | "none" = "none"): void {
-    const g = glyph === "ok" ? this.style("✓", "green", "err") : glyph === "warn" ? this.style("!", "yellow", "err") : glyph === "fail" ? this.style("✗", "red", "err") : " ";
-    this.err(`${g} ${formatLabel(label)}${value}`);
+  /** Label/value row: label at column 2 in a 16-column field, value at column 18. `answer` puts it on stdout (a report is the answer). */
+  row(label: string, value: string, glyph: "ok" | "warn" | "fail" | "none" = "none", answer = false): void {
+    const sink = answer ? "out" : "err";
+    const g = glyph === "ok" ? this.style("✓", "green", sink) : glyph === "warn" ? this.style("!", "yellow", sink) : glyph === "fail" ? this.style("✗", "red", sink) : " ";
+    const line = `${g} ${formatLabel(label)}${value}`;
+    if (answer) this.print(line);
+    else this.err(line);
   }
 
   /** Next step: benefit, colon, then the command on its own line. */
@@ -214,18 +244,18 @@ export class Output {
   spin(text: string): { stop(): void; update(text: string): void } {
     if (this.json) return { stop() {}, update() {} };
     if (!this.errColor || this.se.isTTY !== true) {
-      this.se.write(`  ${text}\n`);
+      this.ew(`  ${text}\n`);
       return { stop() {}, update() {} };
     }
     this.stopSpinner();
     const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     let i = 0;
-    this.spinnerText = text;
+    this.spinnerText = printable(text, false);
     const draw = () => this.se.write(`\r${frames[i++ % frames.length]} ${this.spinnerText}\u001b[K`);
     draw();
     this.spinnerTimer = setInterval(draw, 80);
     this.spinnerTimer.unref?.();
-    return { stop: () => this.stopSpinner(), update: (t: string) => void (this.spinnerText = t) };
+    return { stop: () => this.stopSpinner(), update: (t: string) => void (this.spinnerText = printable(t, false)) };
   }
 
   private stopSpinner(): void {
@@ -299,17 +329,17 @@ export class Output {
       if (this.json) {
         this.se.write(JSON.stringify({ status: "error", reason: e.reason, message: e.message, ...(e.askUser ? { askUser: true } : {}), next: this.usageNext(e) }) + "\n");
       } else {
-        this.se.write(`${this.style("✗", "red", "err")} ${e.message}\n`);
+        this.ew(`${this.style("✗", "red", "err")} ${e.message}\n`);
         if (e.askUser) {
-          this.se.write(`    ${ASK_USER}\n`);
-          if (e.suggestion) this.se.write(`    With their approval: ${this.style(e.suggestion, "cyan", "err")}\n`);
-        } else if (e.suggestion) this.se.write(`    Did you mean ${this.style(e.suggestion, "cyan", "err")}?\n`);
+          this.ew(`    ${ASK_USER}\n`);
+          if (e.suggestion) this.ew(`    With their approval: ${this.style(e.suggestion, "cyan", "err")}\n`);
+        } else if (e.suggestion) this.ew(`    Did you mean ${this.style(e.suggestion, "cyan", "err")}?\n`);
       }
       return 2;
     }
     if (e instanceof Interrupted) {
       if (this.json) this.se.write(JSON.stringify({ status: "error", reason: "canceled", message: "Canceled" }) + "\n");
-      else this.se.write(`${this.style("✗", "red", "err")} Canceled\n`);
+      else this.ew(`${this.style("✗", "red", "err")} Canceled\n`);
       return 130;
     }
     const ce = e instanceof CliError ? e : undefined;
@@ -319,11 +349,11 @@ export class Output {
       if (ce?.data !== undefined) doc.data = ce.data;
       this.se.write(JSON.stringify(doc) + "\n");
     } else {
-      this.se.write(`${this.style("✗", "red", "err")} ${message}\n`);
-      for (const [k, v] of ce?.details ?? []) this.se.write(`  ${formatLabel(k)}${v}\n`);
-      if (ce?.askUser) this.se.write(`    ${ASK_USER}\n`);
-      for (const n of ce?.next ?? []) this.se.write(`    ${n}\n`);
-      if (debug && e instanceof Error && e.stack) this.se.write(e.stack + "\n");
+      this.ew(`${this.style("✗", "red", "err")} ${message}\n`);
+      for (const [k, v] of ce?.details ?? []) this.ew(`  ${formatLabel(k)}${v}\n`);
+      if (ce?.askUser) this.ew(`    ${ASK_USER}\n`);
+      for (const n of ce?.next ?? []) this.ew(`    ${n}\n`);
+      if (debug && e instanceof Error && e.stack) this.ew(e.stack + "\n");
     }
     return ce?.exitCode ?? 1;
   }

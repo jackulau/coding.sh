@@ -135,11 +135,11 @@ function testsTone(s: Session): string {
   return "";
 }
 
-/** API rows: "1 failed request (429)" (failedRequestsBadge in ui/index.html). */
+/** "1 failed request (429)" on API rows, "7,172 model errors (429)" on agent rows (failedRequestsBadge in ui/index.html). */
 function failedRequests(s: Session): { text: string; title: string } | undefined {
-  const e = isApi(s) ? s.stats.llmErrors : undefined;
+  const e = s.stats.llmErrors;
   if (!e?.count) return undefined;
-  const text = plural(e.count, "failed request") + (typeof e.statusCode === "number" ? ` (${e.statusCode})` : "");
+  const text = plural(e.count, isApi(s) ? "failed request" : "model error") + (typeof e.statusCode === "number" ? ` (${e.statusCode})` : "");
   return { text, title: e.error ? "First failure: " + e.error : text };
 }
 

@@ -51,11 +51,18 @@ tool calls with their input and output, file changes, errors, model names, token
 - **A repo's own `.coding.sh/config.toml` can only add privacy.** It can add redaction rules or
   switch to metadata mode, but never add a sink or move the store, so a cloned repo cannot send
   your sessions anywhere.
+- **A repo's `redactPatterns` are literal text.** Regular expressions count only from your own
+  config.
 
 ## Redaction
 
 Redaction runs at ingest, before anything is written to the index, the blobs or a sink. Each
 match becomes `[redacted:<kind>]`.
+
+- A value nested more than 64 levels deep is redacted with the same rules. A value too deep to
+  copy is stored as `[redacted:too-deep]`.
+- A private key's `BEGIN` line with no `END` line, as in output cut short, is redacted to the end
+  of the text when key data follows it. A `BEGIN` line named in prose is left as it is.
 
 | `[capture] redact` | Replaces | On by default |
 | --- | --- | --- |

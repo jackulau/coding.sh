@@ -20,7 +20,7 @@
 import type { AgentEvent, Session, Usage } from "../schema/index.ts";
 import type { BlobStore, OpenSession, Sink, SinkAck, SinkConfig } from "../core/types.ts";
 import { hashParts } from "../core/ids.ts";
-import { sessionToMetadata, toMetadata } from "../core/redact.ts";
+import { redactShown, sessionToMetadata, toMetadata } from "../core/redact.ts";
 import { isWeightsCheckpoint, isWeightsEdit, WEIGHTS_CHECKPOINT_KIND, WEIGHTS_EDIT_KIND, weightsCheckpointAttrs, weightsEditAttrs } from "../core/weights.ts";
 import { postJson } from "./post.ts";
 
@@ -33,7 +33,10 @@ type AnyValue =
   | { intValue: string }
   | { doubleValue: number }
   | { boolValue: boolean }
-  | { arrayValue: { values: AnyValue[] } };
+  | { arrayValue: { values: AnyValue[] } }
+  | { kvlistValue: { values: KeyValue[] } };
+
+const MAX_DEPTH = 8;
 
 export interface KeyValue {
   key: string;
@@ -64,13 +67,23 @@ function nanos(ms: number): string {
   return (BigInt(Math.round(ms)) * 1_000_000n).toString();
 }
 
-function anyValue(v: unknown): AnyValue | undefined {
+function anyValue(v: unknown, depth = 0): AnyValue | undefined {
+  if (depth > MAX_DEPTH) return undefined;
   if (typeof v === "string") return { stringValue: v };
   if (typeof v === "boolean") return { boolValue: v };
   if (typeof v === "number") return Number.isInteger(v) ? { intValue: String(v) } : { doubleValue: v };
   if (Array.isArray(v)) {
-    const values = v.map(anyValue).filter((x): x is AnyValue => x !== undefined);
+    const values = v.map((x) => anyValue(x, depth + 1)).filter((x): x is AnyValue => x !== undefined);
     return { arrayValue: { values } };
+  }
+  if (v !== null && typeof v === "object") {
+    const values: KeyValue[] = [];
+    for (const [key, x] of Object.entries(v)) {
+      if (x === undefined || x === null) continue;
+      const value = anyValue(x, depth + 1);
+      if (value) values.push({ key, value });
+    }
+    return { kvlistValue: { values } };
   }
   return undefined;
 }
@@ -108,6 +121,15 @@ function content(v: unknown): string | undefined {
   return s.length > MAX_CONTENT ? `${s.slice(0, MAX_CONTENT)}…` : s;
 }
 
+/**
+ * A chat message as semconv structured content: {role, parts:[{type:"text", content}]}.
+ * The text goes through the redactor and is cut at MAX_CONTENT inside its part.
+ */
+function textMessage(role: string, text: string): Record<string, unknown> {
+  const t = redactShown(text);
+  return { role, parts: [{ type: "text", content: t.length > MAX_CONTENT ? `${t.slice(0, MAX_CONTENT)}…` : t }] };
+}
+
 /** Subagent sessions join their parent's trace (walking up as far as the batch knows). */
 function rootIn(sessionsById: Map<string, Session>): (id: string) => string {
   return (id) => {
@@ -143,7 +165,9 @@ export function toOtlpSpans(batch: AgentEvent[], sessions: Session[], mode: "ful
   const rootOf = rootIn(sessionsById);
 
   const spans: OtlpSpan[] = [];
+  const lastPrompt = new Map<string, string>();
   for (const e of events) {
+    if (e.kind === "user.message" && typeof e.payload.text === "string") lastPrompt.set(e.sessionId, e.payload.text);
     const traceId = traceIdFor(rootOf(e.sessionId));
     const parentSpanId = sessionSpanId(e.sessionId);
     if (e.kind === "tool.end") {
@@ -212,8 +236,10 @@ export function toOtlpSpans(batch: AgentEvent[], sessions: Session[], mode: "ful
           "gen_ai.agent.name": e.agent,
           "coding_sh.event.id": e.id,
           ...usageAttrs(e.usage),
+          // attrs() drops undefined values, so the attribute is absent outside full mode.
+          "gen_ai.input.messages": full && lastPrompt.has(e.sessionId) ? [textMessage("user", lastPrompt.get(e.sessionId)!)] : undefined,
           ...(full && typeof e.payload.text === "string"
-            ? { "gen_ai.output.messages": content([{ role: "assistant", parts: [{ type: "text", content: e.payload.text }] }]) }
+            ? { "gen_ai.output.messages": [textMessage("assistant", e.payload.text)] }
             : {}),
         }),
       });

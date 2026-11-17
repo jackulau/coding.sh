@@ -60,6 +60,13 @@ export const trialArm = (t: TrialResult): string => `${t.variant}@${t.driver}`;
 /** Trials with a known outcome: one that failed on infrastructure is left out of every rate. */
 export const known = (t: TrialResult): boolean => !t.infra;
 
+/** How a run ended, from its arm summaries: `void` when no trial had a known outcome, `incomplete` when some failed on infrastructure. */
+export function runOutcome(arms: readonly ToolArmSummary[]): "void" | "incomplete" | undefined {
+  const infra = arms.reduce((n, a) => n + (a.infra ?? 0), 0);
+  if (!infra) return undefined;
+  return arms.every((a) => a.trials === 0) ? "void" : "incomplete";
+}
+
 export function summarizeArm(trials: readonly TrialResult[], arm: string): ToolArmSummary {
   const { variant, driver } = splitArm(arm);
   const all = trials.filter((t) => t.variant === variant && t.driver === driver);
@@ -101,8 +108,8 @@ export function summarizeArm(trials: readonly TrialResult[], arm: string): ToolA
     trials: mine.length,
     passes,
     passRate: wilson(passes, mine.length),
-    passAllK,
-    passAnyK,
+    passAllK: byTask.size ? passAllK / byTask.size : 0,
+    passAnyK: byTask.size ? passAnyK / byTask.size : 0,
     errors: mine.filter((t) => t.error).length,
     infra,
     latencySource: sources.size === 1 ? ([...sources][0] as ToolArmSummary["latencySource"]) : sources.size === 0 ? "none" : "mixed",

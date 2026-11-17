@@ -27,7 +27,7 @@ test("sessions with a typo in --store sqlite://: store_missing, and no file is c
 });
 
 test("every read with a typo in --store sqlite:// is store_missing and creates nothing; a write still creates the store", () => {
-  const reads = [["usage"], ["dataset", "list"], ["score", "list"], ["score", "configs"], ["eval", "list"], ["exp", "list"], ["exp", "show", "latest"], ["replay", "latest"], ["sessions"], ["stats"], ["search", "x"], ["show", "latest"], ["export", "sessions"], ["tree", "latest"], ["cache", "doctor"], ["diff-calls", "latest"]];
+  const reads = [["usage"], ["dataset", "list"], ["score", "list"], ["score", "configs"], ["eval", "list"], ["exp", "list"], ["exp", "show", "latest"], ["replay", "latest"], ["sessions"], ["stats"], ["search", "x"], ["show", "latest"], ["tree", "latest"], ["cache", "doctor"], ["diff-calls", "latest"]];
   for (const argv of reads) {
     const dir = join(root, `typo-${argv.join("-")}`);
     const r = cli(...argv, "--json", "--store", `sqlite://${join(dir, "index.db")}`);
@@ -35,6 +35,11 @@ test("every read with a typo in --store sqlite:// is store_missing and creates n
     assert.equal((JSON.parse(r.stderr) as { reason: string }).reason, "store_missing", argv.join(" "));
     assert.equal(existsSync(join(dir, "index.db")), false, `${argv.join(" ")} created a stray index.db`);
   }
+  // export prints JSONL, so it has no --json: its error is the plain text.
+  const exp = join(root, "typo-export", "index.db");
+  const e = cli("export", "sessions", "--store", `sqlite://${exp}`);
+  assert.equal(e.status, 1, e.stdout + e.stderr);
+  assert.equal(existsSync(exp), false, "export created a stray index.db");
   const made = join(root, "written", "index.db");
   const w = cli("ingest", "--json", "--store", `sqlite://${made}`);
   assert.equal(w.status, 0, w.stdout + w.stderr);

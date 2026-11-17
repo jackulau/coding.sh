@@ -5,7 +5,7 @@
 // on load. That warning is noise for CLI users, so it is filtered once while
 // the module is dynamically imported; every other warning passes through.
 import { chmodSync, mkdirSync } from "node:fs";
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync, StatementSync } from "node:sqlite";
 
 type SqliteModule = typeof import("node:sqlite");
 let sqliteModule: Promise<SqliteModule> | undefined;
@@ -40,10 +40,71 @@ export async function switchToWal(db: DatabaseSync): Promise<void> {
       db.exec("PRAGMA journal_mode = WAL");
       return;
     } catch (e) {
-      if ((e as { errcode?: number }).errcode !== 5 || i >= 50) throw e;
+      if (!isBusy(e) || i >= 50) throw e;
       await new Promise((r) => setTimeout(r, 10 + Math.random() * 40));
     }
   }
+}
+
+/** SQLITE_BUSY or one of its extended codes (SQLITE_BUSY_RECOVERY, SQLITE_BUSY_SNAPSHOT, ...). */
+export function isBusy(err: unknown): boolean {
+  return ((err as { errcode?: number }).errcode ?? 0) % 256 === 5;
+}
+
+const retryOff = new WeakMap<object, number>();
+const sleeper = new Int32Array(new SharedArrayBuffer(4));
+
+/** Runs `fn` with the busy retry of retryOnBusy() off, for code that sets a short busy_timeout on purpose. */
+export function withoutBusyRetry<T>(db: object, fn: () => T): T {
+  retryOff.set(db, (retryOff.get(db) ?? 0) + 1);
+  try {
+    return fn();
+  } finally {
+    retryOff.set(db, (retryOff.get(db) ?? 1) - 1);
+  }
+}
+
+/**
+ * Wraps a connection so a statement that fails with SQLITE_BUSY is tried again, for up to
+ * `budgetMs`, after the busy_timeout already waited. SQLite skips the busy handler in some
+ * cases (a WAL being recovered or reset by a closing process, a lock upgrade that could
+ * deadlock), and a read command that starts while the hook's background ingest opens or
+ * closes the index would otherwise fail with "database is locked". Applies to exec() and to
+ * run/get/all of prepared statements; iterate() and close() pass through.
+ */
+export function retryOnBusy(db: DatabaseSync, budgetMs = 5000): DatabaseSync {
+  const retry = <T>(fn: () => T): T => {
+    let deadline = 0;
+    for (let i = 0; ; i++) {
+      try {
+        return fn();
+      } catch (e) {
+        if (!isBusy(e) || retryOff.get(proxy)) throw e;
+        deadline ||= Date.now() + budgetMs;
+        if (Date.now() >= deadline) throw e;
+        Atomics.wait(sleeper, 0, 0, Math.min(5 * 2 ** Math.min(i, 4), 80) * (0.5 + Math.random()));
+      }
+    }
+  };
+  const wrapStatement = (st: StatementSync): StatementSync =>
+    new Proxy(st, {
+      get(target, prop) {
+        const v = Reflect.get(target, prop, target);
+        if (typeof v !== "function") return v;
+        if (prop === "run" || prop === "get" || prop === "all") return (...a: unknown[]) => retry(() => (v as (...x: unknown[]) => unknown).apply(target, a));
+        return v.bind(target);
+      },
+    });
+  const proxy: DatabaseSync = new Proxy(db, {
+    get(target, prop) {
+      const v = Reflect.get(target, prop, target);
+      if (typeof v !== "function") return v;
+      if (prop === "exec") return (sql: string) => retry(() => target.exec(sql));
+      if (prop === "prepare") return (sql: string) => wrapStatement(retry(() => target.prepare(sql)));
+      return v.bind(target);
+    },
+  });
+  return proxy;
 }
 
 const POSIX = process.platform !== "win32";

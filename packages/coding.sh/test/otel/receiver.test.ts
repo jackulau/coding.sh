@@ -238,6 +238,65 @@ describe("OTLP receiver over HTTP", () => {
     assert.equal(parent?.stats.toolCalls, 0);
   });
 
+  describe("spans exported before their subagent span", () => {
+    const T = "6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d";
+    const [root, reader, inner, wrap] = ["a000000000000001", "a000000000000002", "a000000000000003", "a000000000000004"];
+    const agent = (id: string, parent: string | undefined, name: string, s: number, e: number) =>
+      otlpSpan(T, id, parent, `invoke_agent ${name}`, [sAttr("gen_ai.operation.name", "invoke_agent"), sAttr("gen_ai.agent.name", name)], s, e);
+    const chat = (id: string, parent: string, input: number, s: number, e: number) =>
+      otlpSpan(T, id, parent, "chat gpt-5-mini", [sAttr("gen_ai.operation.name", "chat"), sAttr("gen_ai.request.model", "gpt-5-mini"), iAttr("gen_ai.usage.input_tokens", input), iAttr("gen_ai.usage.output_tokens", 5)], s, e);
+    const tool = (id: string, parent: string, s: number, e: number) =>
+      otlpSpan(T, id, parent, "execute_tool web_search", [sAttr("gen_ai.operation.name", "execute_tool"), sAttr("gen_ai.tool.name", "web_search")], s, e);
+    const post = async (...spans: ReturnType<typeof chat>[]) => assert.equal((await send(rx.url, json("/v1/traces", otlpTraces("orchestrator", spans)))).status, 200);
+    /** What a session holds, to compare however the spans were split across requests. */
+    const shape = async (id: string) => {
+      const s = await store.getSession(id);
+      return s && { parent: s.parent?.sessionId, llm: s.stats.latency?.llmCalls, tools: s.stats.toolCalls, usage: s.stats.usage?.inputTokens, subagents: s.stats.latency?.subagents };
+    };
+
+    it("moves a subagent's model and tool spans into its session when its span arrives later", async () => {
+      await post(chat("a000000000000011", reader, 500, 200, 2000), tool("a000000000000012", reader, 2100, 2500));
+      assert.equal((await store.getSession(T))?.stats.toolCalls, 1, "stored in the trace session until the subagent span arrives");
+      await post(agent(reader, root, "researcher", 100, 4900), agent(root, undefined, "orchestrator", 0, 5000));
+      const child = `otel-sub-${T}-${reader}`;
+      assert.deepEqual(await shape(child), { parent: T, llm: 1, tools: 1, usage: 500, subagents: undefined });
+      const parent = await shape(T);
+      assert.equal(parent?.llm, undefined);
+      assert.equal(parent?.tools, 0);
+      assert.equal(parent?.subagents, 1);
+      assert.ok((await store.listEvents(child)).filter((e) => e.kind === "llm.call" || e.kind === "tool.start").every((e) => e.subagentId === reader));
+      assert.ok((await store.listEvents(T)).every((e) => e.kind !== "llm.call" && e.kind !== "tool.start"));
+    });
+
+    it("gives the same sessions whatever the split, for nested subagents and a plain span between", async () => {
+      const spans = [
+        chat("a000000000000021", inner, 100, 300, 600),
+        tool("a000000000000022", wrap, 310, 320),
+        otlpSpan(T, wrap, inner, "wrapper", [], 305, 330),
+        agent(inner, reader, "grep", 250, 700),
+        chat("a000000000000011", reader, 500, 200, 2000),
+        agent(reader, root, "researcher", 100, 4900),
+        agent(root, undefined, "orchestrator", 0, 5000),
+      ];
+      const ids = [T, `otel-sub-${T}-${reader}`, `otel-sub-${T}-${inner}`];
+      // Leaf first, one span per request, against everything in one request.
+      for (const s of spans) await post(s);
+      const split = [];
+      for (const id of ids) split.push(await shape(id));
+      const innerParent = (await store.getSession(ids[2]!))?.parent?.sessionId;
+      await rx.close();
+      await start();
+      await post(...spans);
+      const whole = [];
+      for (const id of ids) whole.push(await shape(id));
+      assert.deepEqual(split, whole);
+      assert.equal(innerParent, ids[1], "the inner subagent is dispatched by the reader");
+      assert.equal(split[2]?.tools, 1);
+      assert.equal(split[2]?.llm, 1);
+      assert.equal(split[1]?.llm, 1);
+    });
+  });
+
   it("runs the enrichSpan hook on every span", async () => {
     await rx.close();
     const names: string[] = [];

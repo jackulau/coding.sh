@@ -3,7 +3,10 @@
 // working context on the left, then a fixed-width body that scrolls inside
 // its own box rather than widening the page. When it does overflow, the right
 // edge fades until the reader has scrolled to the end, so clipped output
-// always looks clipped.
+// always looks clipped. A Copy button in the bar copies the body's text, or
+// only its commands when it is a "$ " transcript (lib/shell.ts); the click is
+// handled for every block by the delegated handler in Nav.astro.
+import { htmlText, promptCommands } from "../lib/shell";
 interface Props {
   /** Left of the title bar: cwd, file name, or command context. */
   title?: string;
@@ -13,18 +16,24 @@ interface Props {
   label?: string;
 }
 const { title, class: klass, bodyClass, label } = Astro.props;
+// Trimmed: the text between the body and its <pre> would be copied too.
+const body = (await Astro.slots.render("default")).trim();
+const commands = promptCommands(htmlText(body));
+const what = label ? label[0]!.toLowerCase() + label.slice(1) : title;
 ---
 
-<figure class:list={["term", klass]} aria-label={label}>
+<figure class:list={["term code", klass]} aria-label={label}>
   <figcaption class="term__bar">
     <span class="term__title">{title}<slot name="title" /></span>
     <span class="term__meta">
       <slot name="meta" />
+      <button type="button" class="code__copy ctl hit" data-code-copy data-copy={commands} aria-label={what ? `Copy ${what}` : "Copy"} data-agent-skip>
+        <span data-copy-label>Copy</span>
+      </button>
+      <span class="sr-only" role="status" data-code-status data-agent-skip></span>
     </span>
   </figcaption>
-  <div class:list={["term__body", bodyClass]} data-term-body>
-    <slot />
-  </div>
+  <div class:list={["term__body", bodyClass]} data-term-body data-code-text set:html={body} />
   <slot name="footer" />
 </figure>
 
@@ -49,7 +58,7 @@ const { title, class: klass, bodyClass, label } = Astro.props;
     justify-content: space-between;
     gap: 1rem;
     height: 2.5rem;
-    padding: 0 0.75rem 0 1rem;
+    padding: 0 0.5rem 0 1rem;
     background: var(--term-bar);
     border-bottom: 1px solid var(--line);
     font-size: var(--fs-xs);

@@ -40,6 +40,7 @@ import { cpus, homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { serve } from "./serve.mjs";
+import { isMain } from "../dogfood/lib/main.mjs";
 
 export const PAGES = { home: "/", quickstart: "/docs/quickstart", evals: "/docs/evals", changelog: "/changelog", cli: "/docs/cli" };
 export const PROFILES = ["desktop", "mobile"];
@@ -230,7 +231,7 @@ async function main() {
   process.exit(0);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMain(import.meta.url)) {
   main().catch((e) => {
     console.error(e instanceof Error ? e.message : String(e));
     process.exit(1);

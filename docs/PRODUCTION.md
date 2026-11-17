@@ -67,7 +67,8 @@ the existing `${ENV}` interpolation.
 | `CODING_SH_RETENTION_DAYS` | `serve.retention_days`, per project `retention_days` | `0` (keep forever) |
 | `CODING_SH_CAPTURE_MODE` | `capture.mode` | `full` (`metadata` drops message text and tool I/O on ingest) |
 | `CODING_SH_INSECURE=1` | `serve.insecure` | off |
-| `CODING_SH_TRUST_PROXY=1` | `serve.trust_proxy` | off. When on, X-Forwarded-Proto/For are honored for cookie `Secure` and for logs. |
+| `CODING_SH_TRUST_PROXY=1` | `serve.trust_proxy` | off. When on, X-Forwarded-Proto/For are honored for logs, and a request the proxy saw as HTTPS gets `Strict-Transport-Security: max-age=31536000` and the `__Host-csh_rk` cookie marked `Secure`. |
+| `CODING_SH_ALLOWED_HOSTS` (comma list) | `serve.allowed_hosts = ["obs.example.com"]` | none. Host names, without scheme or port, that requests may name besides loopback ones. |
 | `CODING_SH_LOG` (`json`\|`text`) | `serve.log` | `json` when stderr is not a TTY. Logs go to stderr; stdout gets only the URL (or one JSON document with `--json`) once ready. |
 
 Other fixed limits: body ≤ 16 MiB (before and after decompression), ≤ 10,000 events per request,
@@ -96,7 +97,8 @@ pushed into the production DB. An explicit `coding.sh ingest --store …` still 
   in google.rpc.Status form, with code 16.
 - **Viewer, `/api/*` and `/metrics`:**
   - A read key works as a Bearer header, or as `?t=<key>` once. The viewer turns that into a cookie,
-    which is the existing mechanism.
+    which is the existing mechanism. A `?t=` link followed from another site sets no cookie: the
+    viewer shows one button that posts the key from its own page. The sign-in form posts the key.
   - Basic auth also works.
   - A project-scoped read key only sees its project: lists are filtered, and other sessions return 404.
   - `/metrics` needs a `*` read key or basic auth. Its labels name every project, so a scoped key gets 403.
@@ -108,19 +110,40 @@ pushed into the production DB. An explicit `coding.sh ingest --store …` still 
 - **First-start keys:** if the bind address is not loopback and no ingest key, read key or basic
   auth is configured (and no `--insecure`), serve makes one ingest key (project `default`) and one
   read key (every project). It keeps them in `<CODING_SH_HOME>/serve-keys.json` (mode 600) and uses
-  the same file on every later start. Each start prints both keys, the viewer link and the
-  `coding.sh init --remote` line on stdout, after the URL. A damaged file stops serve with exit 2; it
+  the same file on every later start. The start that makes the file prints both keys, the viewer
+  link and the `coding.sh init --remote` line on stdout, after the URL. A later start names the file
+  and prints no keys, and `--json` never carries them: read them from the file. A start that fails,
+  on a busy port say, removes the file it made, so the next start makes and prints new keys. Two
+  starts at once share one file. A damaged file stops serve with exit 2; it
   is never replaced, because clients hold the old keys. Delete the file to make new keys. Configuring
   any key or basic auth turns this off. A `--role viewer` replica never makes keys.
 - **Refusal rule:** otherwise, if the bind address is not loopback, serve exits 2 unless at least one
   ingest key **and** (a read key or basic auth) are configured, or `--insecure` is passed. The error
   message names the env vars and `--insecure`. On loopback with no keys, ingest is open to project
   `default` (single-user mode, J4). `--insecure` logs a warning at start and sets `insecure: true` in `/readyz`.
+- **Loopback behind a proxy:** with `serve.trust_proxy` set, a loopback bind follows the refusal rule
+  too. Its error does not offer `--insecure`.
+- **Open mode is for this machine only:** on loopback with no keys, a request that carries an
+  `X-Forwarded-*`, `Forwarded` or `Via` header gets 401, and serve logs a warning the first time.
+  `--insecure` turns this check off.
+- **A proxy that adds none of those headers is not detected.** nginx `proxy_pass` with its defaults,
+  `ssh -R` and TCP tunnels look like this machine. Anything you put behind a proxy or tunnel needs keys.
+- **Host names:** every route but `/healthz` answers 403 to a `Host` header it was not set up for.
+  On loopback, that is any name but a loopback one. `serve.allowed_hosts` adds names.
+- **A public bind** answers any `Host` while `serve.allowed_hosts` is empty. Once it lists names,
+  only those and the loopback names get an answer, except on `/readyz`, which answers a probe sent
+  to the pod's address.
+- **Another name for this machine,** such as `host.docker.internal` from a container, needs
+  `CODING_SH_ALLOWED_HOSTS=host.docker.internal` on a loopback serve.
 - Serve speaks plain HTTP. TLS is terminated by the platform or a proxy.
 - CORS is closed by default. `serve.cors_origins` opens the ingest routes (`/v1/ingest` with its
   `OPTIONS` preflight, and OTLP) to the listed browser origins; any other `Origin` gets 403. The viewer
   and `/api/*` stay same-origin. Browser ingest needs a key in the page, so give it a dedicated
   project's ingest key and treat that project's data as untrusted.
+- **Same-origin writes:** a viewer `POST` that carries an `Origin` gets 403 unless the Origin's host
+  is the request's `Host`. Behind a proxy that rewrites `Host`, the proxy's `X-Forwarded-Host` counts.
+  nginx sends neither by default: add `proxy_set_header Host $host;`, or every label, score and fork
+  gets 403. Caddy keeps `Host`.
 
 ### 1.3 Projects
 
@@ -273,6 +296,10 @@ max_buffer_spans = 20000
   A `weights.checkpoint` span keeps `coding_sh.weights.sha256` and `coding_sh.weights.base_sha256`: they join the session to an experiment.
   Messages, prompts, tool arguments and results, `input.value`, `output.value`, span event
   attributes other than `exception.type`, and status messages are dropped. `full` mode sends every attribute after `capture.redact`.
+- In both modes, an attribute whose key names a secret is sent as `[redacted:secret-field]`,
+  whatever its value: `db.password`, `app.api.key` and `http.request.header.authorization` are
+  examples. Dots count as separators, as `_` and `-` do. Ingest redacts the same keys in the
+  events it stores.
 - Spans are sent in batches of up to 1,000, about once a second. A network error, 408, 429 or 5xx
   keeps the batch and retries with backoff from 1 s to 60 s (`Retry-After` wins). Another 4xx drops
   the batch and logs it.
@@ -346,7 +373,7 @@ strings that go into text columns.
 | 200 | `{"accepted":n,"inserted":k,"rejected":[{"index":i,"error":"…"}]}` (committed). A tick makes one `putEvents`, so when it holds several requests its `inserted` total is credited to them in arrival order (ids repeated within the tick belong to the first request). |
 | 400 | invalid envelope (body is not valid JSON, not an object, `v` is not 0, `events` missing or not an array, over 10,000 events), or a corrupt compressed body |
 | 401 | missing or bad key, or a read key; `WWW-Authenticate: Bearer` |
-| 403 | `Origin` not in `serve.cors_origins` |
+| 403 | `Origin` not in `serve.cors_origins`, or a `Host` that `serve.allowed_hosts` does not allow |
 | 404 | the server runs `--role viewer` (no ingest) |
 | 405 | method other than POST or OPTIONS; `Allow: POST, OPTIONS` |
 | 413 | body (compressed or decompressed) over 16 MiB |

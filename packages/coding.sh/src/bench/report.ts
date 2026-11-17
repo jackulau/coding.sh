@@ -266,7 +266,8 @@ export function trendSvg(data: Record<string, SeriesPoint[]>, metric: string, co
   const ratio = metric === "pass" || metric === "errors" || metric === "score";
   const gap = metric === "gap";
   let lo = ratio ? 0 : Math.min(...pts);
-  let hi = ratio ? 1 : Math.max(...pts);
+  // A mean score passes 1 when an `objective` grader beats its reference; the axis grows to fit it.
+  let hi = metric === "score" ? Math.max(1, ...pts) : ratio ? 1 : Math.max(...pts);
   if (gap) {
     const ends = names.flatMap((n) => data[n]!.flatMap((p) => [p.lo, p.hi])).filter((v): v is number => v !== undefined && Number.isFinite(v));
     const m = Math.max(0.05, ...pts.map(Math.abs), ...ends.map(Math.abs));

@@ -20,6 +20,7 @@ import { runGuidelines } from "./cli-guidelines.mjs";
 import { captureHealth, fixtures, smoke } from "./conformance.mjs";
 import { siteJs, siteLighthouse, SITE_TARGETS } from "./site.mjs";
 import { DOGFOOD_TASKS, git, log, parseArgs, PKG, readJsonl, REPO, round, sh, shAsync, tempDir } from "./lib/util.mjs";
+import { isMain } from "./lib/main.mjs";
 
 export const WEIGHTS = {
   "cli.heldout.success": 30,
@@ -97,6 +98,8 @@ export function compare(cur, prev) {
 async function gate(name, cmd, args, opts = {}) {
   const r = await shAsync(cmd, args, { timeoutMs: 900_000, ...opts });
   log(`gate ${name}: ${r.code === 0 ? "pass" : `FAIL (exit ${r.code})`} ${Math.round(r.ms / 1000)} s`);
+  // Name what failed: the test runner marks each failing test with ✖.
+  if (r.code !== 0) for (const l of [...new Set((r.stdout + r.stderr).split("\n").filter((x) => /^\s*✖/.test(x)).map((x) => x.trim()))].slice(0, 10)) log(`  ${l}`);
   return { ok: r.code === 0, ms: Math.round(r.ms), tail: r.code === 0 ? undefined : (r.stdout + r.stderr).slice(-1500) };
 }
 
@@ -302,7 +305,7 @@ export async function score(opts = {}) {
   return card;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMain(import.meta.url)) {
   const args = parseArgs(process.argv.slice(2), { booleans: ["json", "skip-gates", "dry-run"] });
   const mode = args.mode ?? "auto";
   if (!["quick", "full", "auto"].includes(mode)) {

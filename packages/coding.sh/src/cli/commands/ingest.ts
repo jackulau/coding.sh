@@ -81,10 +81,11 @@ async function ingest(c: CommandContext, o: { agents: string[]; since: number | 
       let r: IngestResult | undefined;
       let rp: ReparseResult | null = null;
       try {
-        r = await ctx.ingest({ lock: { waitMs: 0 } });
-        await tailIngest(ctx);
+        r = await ctx.ingest({ lock: { waitMs: 0 }, signal: c.signal });
+        // Another process reading the transcripts (a read's tail child, another background ingest) has them.
+        if (!c.signal.aborted) await tailIngest(ctx, { signal: c.signal, waitMs: 0 });
         try {
-          if (await ctx.reparseDue()) rp = await ctx.reparse();
+          if (!c.signal.aborted && (await ctx.reparseDue())) rp = await ctx.reparse();
         } catch (e) {
           if (!lockContention(e)) throw e; // another re-parse runs, or an ingest kept the lock: the next one does it
         }
@@ -93,7 +94,7 @@ async function ingest(c: CommandContext, o: { agents: string[]; since: number | 
       }
       // --backfill: the rest of init's history import. It needs no spool lock, so it runs even
       // while another ingest drains the spool; another import running makes it a no-op.
-      const bf = c.flags.backfill === true ? ((await underImportLock(ctx, 5000, () => ctx.backfill({ ...(agents.length ? { agents } : {}), ...(since !== undefined ? { since } : {}) }))) ?? null) : null;
+      const bf = c.flags.backfill === true && !c.signal.aborted ? ((await underImportLock(ctx, 5000, () => ctx.backfill({ ...(agents.length ? { agents } : {}), ...(since !== undefined ? { since } : {}), signal: c.signal }))) ?? null) : null;
       if (!r && !bf) {
         if (out.json) out.data({ outcome: "busy" });
         return 0;
@@ -105,18 +106,29 @@ async function ingest(c: CommandContext, o: { agents: string[]; since: number | 
     const spin = out.spin("Ingesting spool…");
     let r;
     try {
-      r = await ctx.ingest({ repair: true });
+      // Ctrl-C stops it at the next line: what was read commits, the lock is released, and main exits 130.
+      r = await ctx.ingest({ repair: true, signal: c.signal, lock: { signal: c.signal } });
     } catch (e) {
       spin.stop();
-      if ((e as Error).name === "LockBusyError") throw new CliError(`Can't ingest: ${(e as Error).message}`, { reason: "locked", next: ["Wait for the other ingest to finish, then run:", "coding.sh ingest"] });
+      if ((e as Error).name === "LockBusyError") {
+        if (c.signal.aborted) return 130; // Ctrl-C while waiting for the other ingest
+        throw new CliError(`Can't ingest: ${(e as Error).message}`, { reason: "locked", next: ["Wait for the other ingest to finish, then run:", "coding.sh ingest"] });
+      }
       throw e;
     }
     spin.stop();
     let bf;
-    if (c.flags.backfill === true) {
+    if (c.flags.backfill === true && !c.signal.aborted) {
       const s2 = out.spin("Importing transcript history…");
-      bf = await ctx.backfill({ ...(agents.length ? { agents } : {}), ...(since !== undefined ? { since } : {}) });
+      bf = await ctx.backfill({ ...(agents.length ? { agents } : {}), ...(since !== undefined ? { since } : {}), signal: c.signal });
       s2.stop();
+    }
+    if (c.signal.aborted) {
+      // Stopped: what was read is stored; the next ingest (or read) resumes from there.
+      const left = r.pendingFiles + (bf?.pendingFiles ?? 0);
+      if (!out.json) out.note(`Stopped${left ? `: ${plural(left, "file")} left to ingest` : ""}; run coding.sh ingest to finish`);
+      else out.data({ outcome: "interrupted", spool: r, backfill: bf ?? null, reparse: null });
+      return 130;
     }
     const rp = rebuild ? await reparseWithProgress(ctx, out, { all: true, agents }) : (await ctx.reparseDue()) ? await reparseWithProgress(ctx, out, {}).catch(skipBusy) : undefined;
     const errors = r.errors.length + (bf?.errors.length ?? 0) + (rp?.errors.length ?? 0);

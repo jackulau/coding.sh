@@ -19,7 +19,11 @@ share a conversation id become turns of one session.
 One run of your agent, from the first prompt to the end: a Claude Code conversation, a Codex
 thread, one trace from your own agent, or one `coding.sh run -- <command>`.
 
-- In the viewer: a row in the session list. Click it to open its timeline.
+- In the viewer: a row in the session list. Click it to open its timeline. Each row is a link, so
+  a middle click or Ctrl or Cmd click opens the session in a new tab.
+- A session with a failure opens on its first failing step. First failure in the session header,
+  or `F`, goes back to it.
+- A session with no failure opens on its first prompt. A link to a step opens on that step.
 - In the CLI: `coding.sh sessions` lists sessions, and `coding.sh show <id>` prints one.
 
 ### Turn
@@ -27,7 +31,23 @@ thread, one trace from your own agent, or one `coding.sh run -- <command>`.
 One prompt and everything the agent does until it hands control back to you.
 
 - In the viewer: on the session timeline, each turn starts with a row labeled Turn 1, Turn 2 and so
-  on.
+  on, with the first line of the prompt and its time into the session.
+- In the viewer: `}` and `{` move to the next and previous turn. The strip beside the step list marks
+  where each turn starts.
+- In the viewer, a session of more than three turns starts with each finished turn folded to one
+  row: its prompt, what it did ("read 6 files, 2 edits +40 −12"), tool calls, errors and length.
+- A turn with a failure and the last turn stay open. Enter or click opens a folded turn; Enter on
+  an open turn's row or `←` folds it. A link to a step in a folded turn opens it.
+- `z` shows every step, and the viewer remembers that choice.
+- In the viewer: Chat, beside Steps (or `v`), shows only the prompts and replies, in order and in
+  full. The viewer remembers the choice, and the link carries it (`?view=chat`).
+- In Chat, `}` and `{` move between prompts, and `j` and `k` between messages.
+- In Chat, each turn has one line that counts its other steps, such as "4 steps · read 2 files,
+  1 command". Activating it goes back to Steps at that turn.
+- The viewer formats the markdown in prompts and replies: headings, lists, code blocks with their
+  language, inline code, bold and italic.
+- A link shows as its text and its address, and HTML shows as written. Copy text in the step
+  detail copies the original.
 - In the CLI: the `TURNS` column of `coding.sh sessions`, and the turn count in `coding.sh show`.
 
 ### Event
@@ -37,8 +57,14 @@ tool call with its input and output, or a file change.
 
 - In the viewer: one step on the timeline. Press `e` for the Events list, which shows
   events across sessions.
+- In the viewer, tool output is shown without terminal escape codes (colours, cursor moves,
+  window titles). The stored output keeps them.
 - In the CLI: `coding.sh show <id>` prints one line per event, and `coding.sh search` finds text in
   them.
+- The CLI prints captured text without terminal escape sequences or control characters: in tables,
+  lines and messages on stdout and stderr, and in CSV or JSONL written to a terminal.
+- CSV and JSONL written to a file or a pipe keep the text as stored. `--json` output keeps it,
+  escaped as JSON does.
 
 ### Subagent
 
@@ -53,7 +79,11 @@ own session, linked to its parent.
 ### Flag
 
 A failure pattern coding.sh found in a session, such as `no-verification` when files changed but no
-test ran. A flag with a colon, such as `skill:pdf`, is a tag, not a failure.
+test ran, or `api-stall` when rate limits or an overloaded API held the session up. A flag with a
+colon, such as `skill:pdf`, is a tag, not a failure.
+
+A session's files changed count each file once, whether the agent edited it with an edit tool or
+wrote it from a shell command such as `sed -i`, `>` or `Set-Content`.
 
 - In the viewer: a row shows its first flag and a count of the rest, the session page shows them
   all, and a ⚑ marks the step where a long run went off the rails.

@@ -21,6 +21,7 @@ import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { pathOf } from "../_bin.ts";
 import { FIXTURES, collect, testCtx, tmpEnv } from "../adapters/_helpers.ts";
+import { removeTestDir } from "../_rm.ts";
 import { CLI } from "../_cli.ts";
 
 const HOME = "/home/me";
@@ -243,7 +244,7 @@ describe("harness audit over a store and a temp HOME", () => {
       CODING_SH_NO_UPDATE_CHECK: "1",
     };
   });
-  after(() => rmSync(root, { recursive: true, force: true }));
+  after(() => removeTestDir(root));
 
   it("lists memory files on disk, nested CLAUDE.md included, nothing else", () => {
     const keys = listMemoryFiles({ home, claudeDir: join(home, ".claude"), codexDir: join(home, ".codex") }, [join(home, "app")])
@@ -265,6 +266,32 @@ describe("harness audit over a store and a temp HOME", () => {
       symlinkSync(join(root, "app", "a"), join(root, "app", "b"));
       const keys = listMemoryFiles({ home: root, claudeDir: join(root, ".claude"), codexDir: join(root, ".codex") }, [join(root, "app")]).map((f) => f.key);
       assert.deepEqual(keys, ["~/app/pkg/CLAUDE.md"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("finds nested CLAUDE.md / AGENTS.md three levels down, through a linked dir, and spends its dir cap on the shallowest dirs", () => {
+    const root = mkdtempSync(join(tmpdir(), "cs-memnest-"));
+    try {
+      const put = (rel: string) => {
+        mkdirSync(dirname(join(root, rel)), { recursive: true });
+        writeFileSync(join(root, rel), "# x\n");
+      };
+      for (const rel of ["app/CLAUDE.md", "app/a/AGENTS.md", "app/a/b/c/CLAUDE.md", "app/a/b/c/d/CLAUDE.md", "app/node_modules/m/CLAUDE.md", "app/.hidden/CLAUDE.md", "elsewhere/lib/AGENTS.md"]) put(rel);
+      // A junction needs no privileges on Windows; elsewhere a dir symlink.
+      symlinkSync(join(root, "elsewhere"), join(root, "app", "linked"), process.platform === "win32" ? "junction" : "dir");
+      const dirs = { home: root, claudeDir: join(root, ".claude"), codexDir: join(root, ".codex") };
+      const keys = (cwd: string) => listMemoryFiles(dirs, [cwd]).map((f) => f.key).sort();
+      assert.deepEqual(keys(join(root, "app")), ["~/app/CLAUDE.md", "~/app/a/AGENTS.md", "~/app/a/b/c/CLAUDE.md", "~/app/linked/lib/AGENTS.md"], "not d/ (too deep), node_modules or dot dirs");
+      // 2,100 dirs two levels down, each with a CLAUDE.md: the 2,000-dir cap stops before the last of them,
+      // but not before zz/, a sibling of their parent listed later.
+      for (let i = 0; i < 2100; i++) put(`wide/many/d${String(i).padStart(4, "0")}/CLAUDE.md`);
+      put("wide/zz/CLAUDE.md");
+      const wide = keys(join(root, "wide"));
+      assert.ok(wide.includes("~/wide/zz/CLAUDE.md"), "the shallow dir is visited first");
+      const deep = wide.filter((k) => k.startsWith("~/wide/many/")).length;
+      assert.ok(deep > 1900 && deep < 2100, `capped: ${deep}`);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

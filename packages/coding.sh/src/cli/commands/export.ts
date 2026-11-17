@@ -13,13 +13,14 @@ import { EXPORT_FORMATS, EXPORT_KINDS, exportRows, sessionsOf, type ExportFormat
 import { scopesSubagents } from "../../query/where.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { agentScope, agentsFlag, autoIngest, queryCliError, readIngest, shellQuote, str, whereFlag, withContext } from "../common.ts";
-import { CliError, plural } from "../output.ts";
+import { CliError, forTerminal, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
-/** Writes to stdout, waiting for 'drain' when the pipe is full. */
+/** Writes to stdout, waiting for 'drain' when the pipe is full. A terminal gets no escape sequence. */
 function stdoutWriter(): (chunk: string) => void | Promise<void> {
+  const tty = process.stdout.isTTY === true;
   return (chunk) => {
-    if (process.stdout.write(chunk)) return;
+    if (process.stdout.write(tty ? forTerminal(chunk) : chunk)) return;
     return new Promise<void>((r) => process.stdout.once("drain", () => r()));
   };
 }
@@ -60,6 +61,7 @@ export async function run(c: CommandContext): Promise<number> {
   if (evidence && kind !== "sessions") throw new UsageError(`--evidence writes whole sessions; drop "${kind}"`, { reason: "bad_arg" });
   const format = (str(c.flags.format) ?? "jsonl") as ExportFormat;
   if (!(EXPORT_FORMATS as readonly string[]).includes(format)) throw new UsageError(`--format must be one of ${EXPORT_FORMATS.join(", ")}`, { reason: "bad_flag" });
+  if (c.out.json && !evidence) throw new UsageError(`export already prints one ${kind === "sessions" ? "session" : kind === "events" ? "event" : "label"} per line (JSONL); drop --json, or use --format csv`, { reason: "bad_flag" });
   const maxSessions = positiveInt(c.flags.limit, "limit");
   const since = str(c.flags.since) !== undefined ? parseSince(str(c.flags.since)!) : undefined;
   const repo = str(c.flags.repo);

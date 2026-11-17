@@ -928,3 +928,43 @@ describe("viewer server: fork from a replay step", () => {
     assert.equal((await req(v, "/api/sessions/fk/fork?step=2", { auth: false })).status, 401);
   });
 });
+
+describe("viewer server: long ids and the outline", () => {
+  test("a session id of 343 characters (a nested t3code subagent) opens", async () => {
+    const id = "t3code-thread:provider:" + "thread%253Aprovider%25253A".repeat(12) + ":agent:10";
+    assert.ok(id.length > 320 && id.length < 2048);
+    const index = new FakeIndex();
+    await index.upsertSession(session(id));
+    await index.putEvents([event(id, 1)]);
+    const v = await startViewer({ index, blobs: new FakeBlobs(), port: 0 });
+    try {
+      const r = await req(v, "/api/sessions/" + encodeURIComponent(id));
+      assert.equal(r.status, 200);
+      assert.equal(r.json().id, id);
+      const huge = await req(v, "/api/sessions/" + encodeURIComponent("x".repeat(3000)));
+      assert.equal(huge.status, 400);
+    } finally {
+      await v.close();
+    }
+  });
+
+  test("a resume a few seconds after the first event is no phase, and short gaps are labelled in seconds", async () => {
+    const index = new FakeIndex();
+    await index.upsertSession(session("ph", { stats: { events: 5, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0 } }));
+    const t = 1_700_000_000_000;
+    await index.putEvents([
+      event("ph", 1, { ts: t, kind: "notification", payload: { message: "host link" } }),
+      event("ph", 2, { ts: t + 4_600, kind: "session.start", payload: { source: "startup" } }),
+      event("ph", 3, { ts: t + 5_000, kind: "user.message" }),
+      event("ph", 4, { ts: t + 5_000 + 30_000, kind: "session.start", payload: { source: "resume" } }),
+      event("ph", 5, { ts: t + 36_000, kind: "user.message" }),
+    ]);
+    const v = await startViewer({ index, blobs: new FakeBlobs(), port: 0 });
+    try {
+      const body = (await req(v, "/api/sessions/ph/outline")).json();
+      assert.deepEqual(body.phases.map((p: any) => [p.n, p.label]), [[1, "start"], [2, "resumed after 30 s"]]);
+    } finally {
+      await v.close();
+    }
+  });
+});

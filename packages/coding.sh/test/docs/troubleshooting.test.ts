@@ -149,7 +149,7 @@ describe("docs/troubleshooting.md", () => {
     assert.ok(exits.size > 100, `found ${exits.size} reasons`);
     assert.deepEqual([...exits.get("unknown_command")!], [2], "a UsageError");
     assert.deepEqual([...exits.get("store_unavailable")!], [1], "a CliError");
-    assert.deepEqual([...exits.get("no_diff")!], [2], "a CliError with exitCode: 2");
+    assert.deepEqual([...exits.get("no_diff")!], [1], "a runtime CliError, exit 1");
     assert.deepEqual([...exits.get("bad_value")!], [2], "a QueryError, carried by queryCliError");
     assert.deepEqual([...exits.get("bad_query")!], [2], "QueryError's default reason");
     assert.deepEqual([...exits.get("bad_step")!], [1], "a ForkError, carried by replay --fork");

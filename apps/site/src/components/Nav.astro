@@ -651,8 +651,9 @@ const [cmdHead, cmdTail] = INSTALL_SH.split(/ (?=\| )/);
   document.addEventListener("astro:page-load", setupNav);
 
   // Every copy button on the site ([data-copy]: the hero, the closing CTA and
-  // the sheet's install row; [data-code-copy]: a docs code block, which copies
-  // its own text), wired once on the document so it survives page swaps
+  // the sheet's install row; [data-code-copy]: a docs code block or terminal,
+  // which copies its own text, or its data-copy when the build set one: the
+  // commands of a "$ " transcript), wired once on the document so it survives page swaps
   // without rebinding. Enhancement only: without JS the command is still
   // plain, selectable text. A code block announces in its own live region, the
   // sheet in its own (the page's is inert while the sheet is open), everything
@@ -662,7 +663,7 @@ const [cmdHead, cmdTail] = INSTALL_SH.split(/ (?=\| )/);
     if (!btn) return;
     const block = btn.hasAttribute("data-code-copy") ? btn.closest(".code") : null;
     const pre = block?.querySelector<HTMLElement>("[data-code-text]");
-    const ok = await copyText(pre ? (pre.textContent ?? "") : (btn.dataset.copy ?? ""));
+    const ok = await copyText(btn.dataset.copy ?? pre?.textContent ?? "");
     // A block the browser will not copy is selected instead, for the keyboard.
     if (ok) flashCopied(btn);
     else if (pre) getSelection()?.selectAllChildren(pre);

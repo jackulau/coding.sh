@@ -100,6 +100,7 @@ export function directionStability(centered: readonly number[], opts: StabilityO
 /** One line: `stable  B better in 97% of resamples (n*=50)` or `unstable  61% of resamples (n* censored)`. */
 export function stabilityLine(s: DirectionStability): string {
   const pct = Number.isNaN(s.share) ? "—" : `${Math.round(s.share * 100)}%`;
+  if (s.direction === "none" && s.share === 0 && s.bySize.length) return "tie  no difference in any resample";
   const n = s.nStar === "censored" ? "n* censored" : `n*=${s.nStar}`;
   if (s.stable) return `stable  ${s.direction === "b" ? "B" : "A"} better in ${pct} of resamples (${n})`;
   const lead = s.direction === "none" ? "no direction" : `${s.direction === "b" ? "B" : "A"} better`;

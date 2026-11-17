@@ -96,7 +96,7 @@ function mdPages() {
 }
 
 const codes = (blocks) =>
-  blocks.flatMap((b) => (b.kind === "code" ? [b.code] : b.kind === "tabs" ? b.tabs.map((t) => t.code) : b.kind === "more" || b.kind === "note" ? codes(b.blocks) : []));
+  blocks.flatMap((b) => (b.kind === "code" ? [b.code] : b.kind === "tabs" ? b.tabs.map((t) => t.code) : b.kind === "more" || b.kind === "note" ? codes(b.blocks) : b.kind === "steps" ? b.items.flatMap(codes) : []));
 // What Code.astro shows: leading blank lines and trailing whitespace trimmed.
 const shown = (code) => code.replace(/^\n+|\s+$/g, "");
 
@@ -114,5 +114,24 @@ test("every fenced block of a docs/*.md page is on its built page, line for line
       found.push(`${route} (docs/${file}): a ${want.split("\n").length}-line block starting ${JSON.stringify(want.split("\n")[0].slice(0, 60))} is missing or cut`);
     }
   }
+  assert.deepEqual(found, [], found.join("\n"));
+});
+
+// A block that shows what a command prints is captioned "output", not "shell",
+// so a numbered step reads "run this, expect that" (Quickstart, Install).
+test("a Terminal that shows a command's output is not captioned shell", () => {
+  const found = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const abs = join(dir, e.name);
+      if (e.isDirectory()) walk(abs);
+      else if (e.name.endsWith(".astro")) {
+        for (const m of readFileSync(abs, "utf8").matchAll(/<Terminal\b[^>]*>/g)) {
+          if (/\blabel="Output of /.test(m[0]) && /\btitle="shell"/.test(m[0])) found.push(`${relative(SITE, abs)}: ${m[0]}`);
+        }
+      }
+    }
+  };
+  walk(join(SITE, "src", "pages"));
   assert.deepEqual(found, [], found.join("\n"));
 });

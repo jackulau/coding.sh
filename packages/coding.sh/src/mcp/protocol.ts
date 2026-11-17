@@ -155,6 +155,8 @@ export interface ServerOptions<C> {
   /** Validates tool arguments; returns human-readable violations ([] = valid). */
   validate?(args: unknown, schema: Obj): string[];
   log?(msg: string): void;
+  /** Gap between notifications/progress while a tool call that carries a progressToken runs (default 5000 ms). */
+  progressIntervalMs?: number;
 }
 
 export interface RpcResponse {
@@ -229,6 +231,8 @@ export class McpServer<C> {
   /** Legacy version negotiated by `initialize`, scoped to this process. */
   legacyVersion?: string;
   initialized = false;
+  /** Where server-to-client notifications go (serveStdio sets it); without it progress is not sent. */
+  notify?: (msg: Obj) => void;
   private readonly o: ServerOptions<C>;
   private readonly byName: Map<string, ToolDef<C>>;
 
@@ -438,6 +442,24 @@ export class McpServer<C> {
     if (!isObj(args)) return errorResult("Invalid arguments: arguments must be an object");
     const problems = this.o.validate?.(args, tool.inputSchema) ?? [];
     if (problems.length) return errorResult(`Invalid arguments for ${name}: ${problems.join("; ")}. Fix the arguments and call again.`);
+    const meta = isObj(params._meta) ? params._meta : {};
+    const token = meta.progressToken;
+    let ticker: ReturnType<typeof setInterval> | undefined;
+    // A call that outlives a host's tool timeout (eval_init snapshots a repo for minutes) shows it is alive.
+    if ((typeof token === "string" || typeof token === "number") && this.notify) {
+      const notify = this.notify;
+      const started = Date.now();
+      let n = 0;
+      ticker = setInterval(() => {
+        n++;
+        try {
+          notify({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken: token, progress: n, message: `${name} still running (${Math.round((Date.now() - started) / 1000)} s)` } });
+        } catch {
+          // a closed stream ends the call anyway
+        }
+      }, this.o.progressIntervalMs ?? 5000);
+      ticker.unref?.();
+    }
     try {
       const structured = await tool.run(args, this.o.context());
       return { content: [{ type: "text", text: toolText(structured) }], structuredContent: structured };
@@ -445,6 +467,8 @@ export class McpServer<C> {
       if (e instanceof ToolError) return e.error ? { ...errorResult(e.message), structuredContent: { error: { message: clipText(e.message), ...e.error } } } : errorResult(e.message);
       this.o.log?.(`tool ${name} failed: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
       return errorResult(`${name} failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      if (ticker) clearInterval(ticker);
     }
   }
 }
@@ -473,7 +497,8 @@ export function serveStdio<C>(server: McpServer<C>, io: StdioStreams, log: (m: s
     let buf = "";
     let chain = Promise.resolve();
     let ended = false;
-    const write = (m: RpcResponse | RpcResponse[]) => {
+    // A frame: a response, a batch of them, or a server notification.
+    const write = (m: RpcResponse | RpcResponse[] | Obj) => {
       try {
         io.output.write(JSON.stringify(m) + "\n");
       } catch (e) {
@@ -482,6 +507,7 @@ export function serveStdio<C>(server: McpServer<C>, io: StdioStreams, log: (m: s
     };
     // Requests waiting or running, by id. A cancel marks the entry; a marked request is never answered.
     const pending = new Map<string, { cancelled: boolean; method: string }>();
+    server.notify = (m) => write(m);
     // A synchronous store read holds the event loop, so a cancel sent meanwhile is still unread in the
     // pipe. Two turns of the loop include one poll for input, which reads it before we start or answer.
     const readInput = () => new Promise<void>((r) => setImmediate(() => setImmediate(r)));

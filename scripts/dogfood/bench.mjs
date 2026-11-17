@@ -21,6 +21,7 @@ import net from "node:net";
 import { join, resolve } from "node:path";
 import { benchCollector } from "./bench-collector.mjs";
 import { bootstrapMedianDiff, CLI, DIST, isolatedEnv, log, median, nearestRank, parseArgs, prng, quantile, REPO, round, sh, shAsync, tempDir } from "./lib/util.mjs";
+import { isMain } from "./lib/main.mjs";
 
 export const TARGETS = {
   "perf.hook": { target: 10, unit: "ms", dir: "max" },
@@ -956,7 +957,7 @@ export async function runBenches(which = ["hook", "ingest", "help", "viewer"], o
   return { results: out, errors };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMain(import.meta.url)) {
   const args = parseArgs(process.argv.slice(2), { booleans: ["json", "check"] });
   const which = args._.length ? args._ : ["hook", "ingest", "help", "viewer"];
   const baseline = args.baseline ? resolve(args.baseline) : undefined;

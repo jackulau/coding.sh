@@ -56,6 +56,8 @@ export interface ServeConfig {
   trustProxy: boolean;
   log: "json" | "text";
   corsOrigins: string[];
+  /** Host names (lowercase, no port) that requests may name besides loopback ones. Empty: any on a public bind, none on loopback. */
+  allowedHosts: string[];
   /** Config file read (exists or not), for messages. */
   configFile: string;
   /** Unset: serve forwards nothing. */
@@ -209,6 +211,19 @@ export function resolveServeConfig(flags: ServeFlags, envIn: NodeJS.ProcessEnv):
   const cors = serve?.cors_origins;
   if (cors !== undefined && (!Array.isArray(cors) || !cors.every((c) => typeof c === "string"))) throw new ConfigError("serve.cors_origins must be an array of origins", file);
 
+  const hostsToml = serve?.allowed_hosts;
+  if (hostsToml !== undefined && (!Array.isArray(hostsToml) || !hostsToml.every((c) => typeof c === "string"))) throw new ConfigError("serve.allowed_hosts must be an array of host names", file);
+  // An env value with no names in it (",") does not clear the file's list.
+  const hostsEnv = (env.CODING_SH_ALLOWED_HOSTS ?? "").split(",").filter((h) => h.trim());
+  const hostsRaw = hostsEnv.length ? hostsEnv : ((hostsToml as string[] | undefined) ?? []);
+  const allowedHosts: string[] = [];
+  for (const raw of hostsRaw) {
+    const h = raw.trim().toLowerCase();
+    if (!h) continue;
+    if (!/^[a-z0-9.-]+$|^\[[0-9a-f:.]+\]$/.test(h)) throw new ConfigError(`CODING_SH_ALLOWED_HOSTS / serve.allowed_hosts takes host names without scheme or port, got ${JSON.stringify(h)}`, file);
+    allowedHosts.push(h.replace(/^\[|\]$/g, "")); // compared with the Host header's name, which drops the brackets
+  }
+
   const forward = resolveForward(serve, env, core.capture.mode, file);
   const proxyUpstreams = flags.config ? resolveProxyUpstreams(table(root, "proxy", file), file) : proxySettings(env).upstreams;
 
@@ -226,6 +241,7 @@ export function resolveServeConfig(flags: ServeFlags, envIn: NodeJS.ProcessEnv):
     trustProxy: truthy(env.CODING_SH_TRUST_PROXY) || tomlBool(serve, "trust_proxy", "serve.trust_proxy", file) === true,
     log: (logFormat as "json" | "text" | undefined) ?? (process.stderr.isTTY ? "text" : "json"),
     corsOrigins: (cors as string[] | undefined) ?? [],
+    allowedHosts,
     configFile: file,
     proxyUpstreams,
     ...(forward ? { forward } : {}),
@@ -299,10 +315,13 @@ function resolveForward(serve: TomlTable | undefined, env: NodeJS.ProcessEnv, ca
 
 /**
  * The refusal rule: a non-loopback bind needs at least one ingest key and a read
- * key or basic auth, unless --insecure. (A viewer-role replica needs read credentials only.)
+ * key or basic auth, unless --insecure. So does a loopback bind with trust_proxy set,
+ * since a reverse proxy in front of it makes it public. (A viewer-role replica needs
+ * read credentials only.)
  */
 export function checkExposure(c: ServeConfig): void {
-  if (c.insecure || isLoopbackHost(c.host)) return;
+  const loopback = isLoopbackHost(c.host);
+  if (c.insecure || (loopback && !c.trustProxy)) return;
   const ingest = c.credentials.ingest.size > 0;
   const read = c.credentials.read.size > 0 || !!c.credentials.basic;
   if ((c.role === "viewer" || ingest) && read) return;
@@ -310,8 +329,11 @@ export function checkExposure(c: ServeConfig): void {
     ...(c.role !== "viewer" && !ingest ? ["an ingest key (CODING_SH_INGEST_KEYS, or [[serve.projects]] ingest_keys)"] : []),
     ...(!read ? ["a read key or basic auth (CODING_SH_READ_KEYS or CODING_SH_BASIC_AUTH)"] : []),
   ];
+  const where = loopback ? `behind a reverse proxy (CODING_SH_TRUST_PROXY / serve.trust_proxy is set) on ${c.host}` : `on ${c.host}`;
+  // Behind a proxy, --insecure would open the server to everyone the proxy serves: not offered there.
+  const orOpen = loopback ? "" : ", or pass --insecure (CODING_SH_INSECURE=1) to run open";
   throw new ServeRefusal(
-    `refusing to listen on ${c.host} without auth: set ${missing.join(" and ")}, or pass --insecure (CODING_SH_INSECURE=1) to run open. ` +
+    `refusing to listen ${where} without auth: set ${missing.join(" and ")}${orOpen}. ` +
       "Generate keys with `coding.sh serve keygen --project <id>`.",
   );
 }

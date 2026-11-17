@@ -43,7 +43,7 @@ export const SETTABLE = [
 export const FILE_KEYS = [
   "refine.protect", "refine.autoProtect", "refine.maxCostRise", "refine.canary_model",
   "serve.host", "serve.port", "serve.retention_days", "serve.log", "serve.queue_max_events", "serve.queue_max_bytes",
-  "serve.insecure", "serve.trust_proxy", "serve.cors_origins",
+  "serve.insecure", "serve.trust_proxy", "serve.cors_origins", "serve.allowed_hosts",
   "serve.viewer.read_keys", "serve.viewer.basic_user", "serve.viewer.basic_password_sha256",
   "serve.forward.endpoint", "serve.forward.headers", "serve.forward.mode", "serve.forward.max_buffer_spans",
   "proxy.port", "proxy.host", "proxy.anthropic_upstream", "proxy.openai_upstream", "proxy.chatgpt_upstream",
@@ -164,8 +164,22 @@ export async function run(c: CommandContext): Promise<number> {
     }
     const key = c.positionals[0];
     if (key === undefined) {
-      if (out.json) out.data({ config });
-      else out.print(stringifyToml(config as unknown as Record<string, unknown>).trimEnd());
+      // The keys the loaded Config does not carry (refine.*, serve.*, proxy.*) are read from the user's file.
+      const full = structuredClone(config) as unknown as Record<string, unknown>;
+      const table = readUserConfigTable(env).table;
+      for (const k of FILE_KEYS) {
+        const v = getPath(table, k);
+        if (v === undefined || getPath(full, k) !== undefined) continue;
+        const parts = k.split(".");
+        let cur = full;
+        for (const part of parts.slice(0, -1)) {
+          const next = cur[part];
+          cur = next && typeof next === "object" && !Array.isArray(next) ? (next as Record<string, unknown>) : (cur[part] = {}) as Record<string, unknown>;
+        }
+        cur[parts[parts.length - 1]!] = structuredClone(v);
+      }
+      if (out.json) out.data({ config: full });
+      else out.print(stringifyToml(full).trimEnd());
       return 0;
     }
     let value = getPath(config, key);

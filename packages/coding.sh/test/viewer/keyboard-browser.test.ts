@@ -13,6 +13,14 @@ if (!chrome && process.env.GITHUB_ACTIONS) throw new Error("no Chrome found on C
 const T0 = 1_762_400_000_000;
 const LONG = "5a1d2c3b-0f4e-4a6b-8c7d-9e0f1a2b3c4d";
 const RP = "7f3c1e2a-5b6d-4e8f-9a0b-1c2d3e4f5a6b";
+const TURNS = "3b9e4d2a-6c1f-4e7a-8b5d-2f0a9c8e7d61";
+const FOLDS = "8e2d6c4b-1a3f-4b5e-9c7d-0f6a2b8c4e19";
+const CHAT = "c4a7e9d2-3b5f-4c8a-9e1d-6f2b0a7c5e38";
+const MD = "e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b";
+const START = "d2b8f4a6-7c1e-4f3a-b5d9-8e0c6a2f4b17";
+const chatPrompt = (t: number) => `question ${t}: what does module ${t} do?\nSay it in two lines.`;
+const MD_REPLY = "# Summary\n\nRan `npm test`: **3 passed**, *1 skipped*.\n\n- see [the docs](docs/a.md)\n- <script>window.pwned = 1</script>\n\n```ts\nconst x = 1;\n```\n\n```\nunclosed <img src=x onerror=window.pwned=2>";
+const chatReply = (t: number) => `Module ${t} parses the config.\n\n\`\`\`\nparse(${t})\n\`\`\`\nThat is all for answer ${t}.`;
 
 describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no Chrome/Chromium found (set CODING_SH_TEST_CHROME)" }, () => {
   const index = new FakeIndex();
@@ -39,6 +47,73 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
       at(RP, 6, { kind: "tool.start", payload: { tool: "Bash", toolUseId: "b1", input: { command: "npm test" } } }),
       at(RP, 7, { kind: "tool.end", durationMs: 1200, payload: { tool: "Bash", toolUseId: "b1", ok: false, exitCode: 1, output: "1 failing" } }),
       at(RP, 8, { kind: "assistant.message", payload: { text: "The test fails." } }),
+    ]);
+    // Four user turns of ten replies each: long enough that the step list scrolls and shows its minimap.
+    const turnEvents: AgentEvent[] = [];
+    let n = 0;
+    for (let t = 1; t <= 4; t++) {
+      turnEvents.push(at(TURNS, ++n, { kind: "user.message", payload: { text: t === 2 ? "\n  second prompt, first line\nand a second line that stays out of the header" : `prompt number ${t}` } }));
+      for (let r = 0; r < 10; r++) turnEvents.push(at(TURNS, ++n, { kind: "assistant.message", payload: { text: `reply ${t}.${r}` } }));
+    }
+    await index.upsertSession(session(TURNS, { startedAt: T0, endedAt: T0 + n * 1000, title: "Four turns", stats: { events: n, turns: 4, toolCalls: 0, toolErrors: 0, filesChanged: 0 } }));
+    await index.putEvents(turnEvents);
+    // Five turns: the first reads, edits and runs a command; the third holds a failure; the fourth is a step deep links point into.
+    const tool = (n: number, name: string, id: string, input: Record<string, unknown>, end: Record<string, unknown> = { ok: true }) => [
+      at(FOLDS, n, { kind: "tool.start", payload: { tool: name, toolUseId: id, input } }),
+      at(FOLDS, n + 1, { kind: "tool.end", durationMs: 500, payload: { tool: name, toolUseId: id, ...end } }),
+    ];
+    const foldEvents: AgentEvent[] = [
+      at(FOLDS, 1, { kind: "user.message", payload: { text: "fix the parser" } }),
+      ...tool(2, "Read", "r1", { file_path: "/work/demo/a.ts" }),
+      ...tool(4, "Read", "r2", { file_path: "/work/demo/b.ts" }),
+      ...tool(6, "Edit", "e1", { file_path: "/work/demo/a.ts", old_string: "one", new_string: "two" }),
+      { ...at(FOLDS, 23, { kind: "file.change", payload: { path: "/work/demo/a.ts", op: "modify", additions: 1, deletions: 1, tool: "Edit", toolUseId: "e1" } }), ts: T0 + 7500 },
+      ...tool(8, "Bash", "b1", { command: "npm test" }),
+      at(FOLDS, 10, { kind: "assistant.message", payload: { text: "Fixed." } }),
+      at(FOLDS, 11, { kind: "user.message", payload: { text: "find the callers" } }),
+      ...tool(12, "Grep", "g1", { pattern: "parse(" }),
+      at(FOLDS, 14, { kind: "assistant.message", payload: { text: "Two callers." } }),
+      at(FOLDS, 15, { kind: "user.message", payload: { text: "run the build" } }),
+      ...tool(16, "Bash", "b2", { command: "npm run build" }, { ok: false, exitCode: 2, output: "error TS2304" }),
+      at(FOLDS, 18, { kind: "assistant.message", payload: { text: "The build fails." } }),
+      at(FOLDS, 19, { kind: "user.message", payload: { text: "explain it" } }),
+      at(FOLDS, 20, { kind: "assistant.message", payload: { text: "a step inside turn four" } }),
+      at(FOLDS, 21, { kind: "user.message", payload: { text: "thanks" } }),
+      at(FOLDS, 22, { kind: "assistant.message", payload: { text: "Done." } }),
+    ];
+    await index.upsertSession(session(FOLDS, { startedAt: T0, endedAt: T0 + 22_000, title: "Five turns", stats: { events: 23, turns: 5, toolCalls: 6, toolErrors: 1, filesChanged: 1 } }));
+    await index.putEvents(foldEvents);
+    // Ten turns: a prompt, a read, a two-paragraph reply; turn 7 also runs a command that fails.
+    const chatEvents: AgentEvent[] = [];
+    n = 0;
+    for (let t = 1; t <= 10; t++) {
+      chatEvents.push(at(CHAT, ++n, { kind: "user.message", payload: { text: chatPrompt(t) } }));
+      chatEvents.push(at(CHAT, ++n, { kind: "tool.start", payload: { tool: "Read", toolUseId: "r" + t, input: { file_path: `/work/demo/m${t}.ts` } } }));
+      chatEvents.push(at(CHAT, ++n, { kind: "tool.end", durationMs: 200, payload: { tool: "Read", toolUseId: "r" + t, ok: true } }));
+      if (t === 7) {
+        chatEvents.push(at(CHAT, ++n, { kind: "tool.start", payload: { tool: "Bash", toolUseId: "b7", input: { command: "npm test" } } }));
+        chatEvents.push(at(CHAT, ++n, { kind: "tool.end", durationMs: 300, payload: { tool: "Bash", toolUseId: "b7", ok: false, exitCode: 1, output: "1 failing" } }));
+      }
+      chatEvents.push(at(CHAT, ++n, { kind: "assistant.message", payload: { text: chatReply(t) } }));
+    }
+    await index.upsertSession(session(CHAT, { startedAt: T0, endedAt: T0 + n * 1000, title: "Ten turns", stats: { events: n, turns: 10, toolCalls: 11, toolErrors: 1, filesChanged: 0 } }));
+    await index.putEvents(chatEvents);
+    // A reply in markdown with hostile pieces, and a command whose output is coloured with escape codes.
+    await index.upsertSession(session(MD, { startedAt: T0, endedAt: T0 + 4000, title: "Markdown", stats: { events: 4, turns: 1, toolCalls: 1, toolErrors: 0, filesChanged: 0 } }));
+    await index.putEvents([
+      at(MD, 1, { kind: "user.message", payload: { text: "Fix <b>this</b> **now**" } }),
+      at(MD, 2, { kind: "tool.start", payload: { tool: "Bash", toolUseId: "b1", input: { command: "npm test" } } }),
+      at(MD, 3, { kind: "tool.end", durationMs: 900, payload: { tool: "Bash", toolUseId: "b1", ok: true, output: "\x1b[32m3 passed\x1b[0m\n\x1b]0;title\x07\x1b[1;33m1 skipped\x1b[39m" } }),
+      at(MD, 4, { kind: "assistant.message", payload: { text: MD_REPLY } }),
+    ]);
+    // A clean session that starts with a session.start event before its first prompt.
+    await index.upsertSession(session(START, { startedAt: T0, endedAt: T0 + 5000, title: "Starts first", stats: { events: 5, turns: 2, toolCalls: 0, toolErrors: 0, filesChanged: 0 } }));
+    await index.putEvents([
+      at(START, 1, { kind: "session.start", payload: { source: "startup" } }),
+      at(START, 2, { kind: "user.message", payload: { text: "first ask" } }),
+      at(START, 3, { kind: "assistant.message", payload: { text: "first answer" } }),
+      at(START, 4, { kind: "user.message", payload: { text: "second ask" } }),
+      at(START, 5, { kind: "assistant.message", payload: { text: "second answer" } }),
     ]);
     const exp = experimentResult("exp-prod-smoke");
     // The failing case's output is long enough to clip, so its open row holds a "Show all" button.
@@ -131,6 +206,299 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     assert.equal(await p.eval(focused), "#event-pane");
     await p.press("j");
     await p.waitFor(`${selected} !== ${JSON.stringify(step)}`, "j moves on");
+    assert.deepEqual(p.errors, []);
+  });
+
+  test("} and { jump between user turns; each turn has a header row and a minimap mark", async () => {
+    let p = await open("#/s/" + TURNS, 500);
+    const selected = "document.querySelector('#steps .st[aria-selected=true]')";
+    await p.waitFor(`${selected} && /prompt number 1/.test(${selected}.textContent)`, "the session, on its first prompt");
+    // The header row: turn number, the prompt's first line only, and the time into the session.
+    const turn2 = "[...document.querySelectorAll('#steps .st.turn')].find((r) => /Turn 2/.test(r.textContent))";
+    assert.equal(await p.eval(`${turn2}.querySelector('.arg').textContent`), "second prompt, first line");
+    assert.equal(await p.eval(`${turn2}.querySelector('.d time').textContent`), "0:12");
+    // Two presses from open reach the third turn.
+    await p.eval("document.querySelector('#steps').focus()");
+    await p.press("}");
+    await p.press("}");
+    await p.waitFor(`/prompt number 3/.test(${selected}.textContent)`, "} twice lands on turn 3");
+    assert.equal(await p.eval("document.activeElement.id"), "steps");
+    // The URL names the step, so the link opens on the same turn.
+    // Turn 3's prompt is event 23 (each turn is a prompt and ten replies).
+    await p.waitFor(`location.hash.endsWith(${JSON.stringify("/" + TURNS + "-e23")})`, "the URL names turn 3's prompt");
+    p = await open("#/s/" + TURNS + "/" + TURNS + "-e23", 500);
+    await p.waitFor(`${selected} && /prompt number 3/.test(${selected}.textContent)`, "the deep link opens turn 3");
+    await p.eval("document.querySelector('#steps').focus()");
+    // { from inside a turn goes to that turn's own prompt, then to the one before.
+    await p.press("j");
+    await p.press("j");
+    await p.press("{");
+    await p.waitFor(`/prompt number 3/.test(${selected}.textContent)`, "{ back to the turn's start");
+    await p.press("{");
+    await p.waitFor(`/Turn 2/.test(${selected}.textContent)`, "{ again to turn 2");
+    // Past the last turn, } stays put.
+    for (let i = 0; i < 3; i++) await p.press("}");
+    await p.waitFor(`/prompt number 4/.test(${selected}.textContent)`, "the last turn");
+    // The minimap marks each turn start; the help sheet and the hint bar list the keys from KEYMAP.
+    assert.equal(await p.eval("document.querySelectorAll('.tl-map:not([hidden]) i.t').length"), 4);
+    assert.match(await p.eval("document.querySelector('.hintbar')?.textContent || ''"), /\{\}turns/);
+    await p.press("?");
+    await p.waitFor("/Next turn/.test(document.body.textContent) && /Previous turn/.test(document.body.textContent)", "the help sheet lists the turn keys");
+    assert.deepEqual(p.errors, []);
+  });
+
+  test("finished turns fold to one row each; a turn with a failure and the last turn stay open", async () => {
+    let p = await open("#/s/" + FOLDS);
+    const folded = "[...document.querySelectorAll('#steps .st.turn.fold')]";
+    const selected = "document.querySelector('#steps .st[aria-selected=true]')";
+    await p.waitFor(`${folded}.length === 3`, "turns 1, 2 and 4 folded");
+    // The failure is on screen: turn 3 is open, and so is the last turn.
+    assert.match(await p.eval("document.querySelector('#steps .st.is-fail:not(.fold)')?.textContent || ''"), /npm run build/);
+    assert.match(await p.eval("[...document.querySelectorAll('#steps .st:not(.fold)')].map((r) => r.textContent).join('|')"), /Done./);
+    assert.equal(await p.eval("document.querySelectorAll('#steps .st').length"), 8, "17 steps in 8 rows");
+    // The folded row: the prompt, its length and tool calls, what it did in words, and its time.
+    const row1 = `${folded}[0]`;
+    assert.equal(await p.eval(`${row1}.querySelector('.t').textContent`), "Turn 1");
+    assert.equal(await p.eval(`${row1}.querySelector('.arg').textContent`), "fix the parser");
+    assert.equal(await p.eval(`${row1}.querySelector('.sum').textContent`), "9.0s · 4 tool calls · read 2 files, 1 edit +1 −1, 1 command");
+    assert.equal(await p.eval(`${row1}.getAttribute('aria-expanded')`), "false");
+    // A folded turn has no timing bar: its words run on over the timing column the step rows use.
+    const wfLeft: number = await p.eval("document.querySelector('#steps .st:not(.fold) .wf').getBoundingClientRect().left");
+    assert.ok(wfLeft > 0, "timing bars are on");
+    assert.ok(await p.eval(`${row1}.querySelector('.lbl').getBoundingClientRect().right`) > wfLeft, "the folded row's text reaches into the timing column");
+    assert.match(await p.eval(`${selected}.textContent`), /npm run build/, "the session opens on its failure");
+    // Enter opens the turn and its row says so; Enter again folds it.
+    await p.eval("document.querySelector('#steps').focus()");
+    await p.press("Home");
+    await p.waitFor(`${row1}.getAttribute('aria-selected') === 'true'`, "Home selects turn 1");
+    await p.press("Enter");
+    await p.waitFor(`${folded}.length === 2 && /fix the parser/.test(${selected}.textContent) && ${selected}.getAttribute('aria-expanded') === 'true'`, "Enter opens turn 1");
+    assert.match(await p.eval("document.querySelector('#event-pane').textContent"), /fix the parser/);
+    await p.press("Enter");
+    await p.waitFor(`${folded}.length === 3 && ${selected}.getAttribute('aria-expanded') === 'false'`, "Enter folds it again");
+    // A click on a folded row opens it.
+    await p.eval(`${folded}[1].click()`);
+    await p.waitFor(`${folded}.length === 2 && /find the callers/.test(${selected}.textContent)`, "a click opens turn 2");
+    // z shows every step, and the choice is remembered (each test page has its own storage, so reload this one); z again folds them back.
+    await p.press("z");
+    await p.waitFor(`${folded}.length === 0`, "z expands all");
+    await p.eval("window.beforeReload = true; location.reload()");
+    await p.waitFor("!window.beforeReload && document.querySelectorAll('#steps .st').length === 17", "still expanded after a reload");
+    await p.eval("document.querySelector('#steps').focus()");
+    await p.press("z");
+    await p.waitFor(`${folded}.length === 3`, "z folds them back");
+    // A link to a step inside a folded turn opens that turn on the step.
+    p = await open("#/s/" + FOLDS + "/" + FOLDS + "-e20");
+    await p.waitFor(`${selected} && /a step inside turn four/.test(${selected}.textContent)`, "the deep link opens turn 4");
+    assert.equal(await p.eval(`${folded}.length`), 2);
+    // } into a folded turn opens it; { from there goes back to its prompt's turn.
+    await p.eval("document.querySelector('#steps').focus()");
+    await p.press("Home");
+    await p.press("}");
+    await p.waitFor(`/find the callers/.test(${selected}.textContent) && ${selected}.getAttribute('aria-expanded') === 'true'`, "} opens turn 2");
+    // ← folds the turn the selected step is in.
+    await p.press("j");
+    await p.press("ArrowLeft");
+    await p.waitFor(`/find the callers/.test(${selected}.textContent) && ${selected}.classList.contains('fold')`, "← folds turn 2");
+    assert.deepEqual(p.errors, []);
+  });
+
+  test("at 390px a folded turn's row keeps its prompt and error count, and drops its length and tools", async () => {
+    const p = await open("#/s/" + FOLDS);
+    await p.viewport(390, 844, true);
+    const folded = "[...document.querySelectorAll('#steps .st.turn.fold')]";
+    const selected = "document.querySelector('#steps .st[aria-selected=true]')";
+    await p.waitFor(`${folded}.length === 3 && /npm run build/.test(${selected}?.textContent || '')`, "the session, on its failure");
+    const row1 = `${folded}[0]`;
+    const width = (sel: string) => p.eval(`${row1}.querySelector('${sel}').getBoundingClientRect().width`) as Promise<number>;
+    assert.equal(await p.eval(`${row1}.querySelector('.t').textContent`), "Turn 1", "the word stays for screen readers");
+    assert.ok((await width(".t")) < 30, "the number column is narrow");
+    assert.equal(await width(".sum"), 0, "no length or tool count");
+    assert.equal(await p.eval(`(() => { const a = ${row1}.querySelector('.arg'); return a.scrollWidth <= a.clientWidth; })()`), true, "the prompt is not cut");
+    // Folded by hand, the failing turn's row still shows its error count.
+    await p.eval("document.querySelector('#steps').focus()");
+    await p.press("ArrowLeft");
+    const failRow = `${folded}.find((r) => /run the build/.test(r.textContent))`;
+    await p.waitFor(`${failRow} && ${failRow}.querySelector('.sum .err').getBoundingClientRect().width > 20`, "the error count on the folded failing turn");
+    assert.equal(await p.eval("document.documentElement.scrollWidth <= innerWidth"), true, "no sideways scroll");
+    assert.deepEqual(p.errors, []);
+  });
+
+  test("a failed session opens on its first failure and a clean one on its first prompt; the header's First failure and F go back to it", async () => {
+    let p = await open("#/");
+    const selected = "document.querySelector('#steps .st[aria-selected=true]')";
+    const inView = `(() => { const s = ${selected}, b = document.querySelector('#steps').getBoundingClientRect(), r = s.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom + 1 && r.bottom <= innerHeight; })()`;
+    const btn = "[...document.querySelectorAll('.detail-head button')].find((b) => b.textContent === 'First failure')";
+    const row = (id: string) => `document.querySelector('[role=option][data-sid="${id}"]')`;
+    await p.waitFor(row(FOLDS), "the session list");
+    // From the list to the failing step: one action, a click on the session's row.
+    let actions = 0;
+    await p.eval(`${row(FOLDS)}.click()`);
+    actions++;
+    await p.waitFor(`${selected} && /npm run build/.test(${selected}.textContent)`, "the session, on its failing step");
+    assert.equal(await p.eval(inView), true, "the failing step is in view");
+    assert.ok(actions <= 2);
+    assert.match(await p.eval("location.hash"), new RegExp("^#/s/" + FOLDS + "/" + FOLDS + "-e1[67]$"), "the URL names the step");
+    assert.equal(await p.eval("document.activeElement.id"), "steps");
+    // The header control and F go back to it, opening the turn when it was folded by hand.
+    assert.equal(await p.eval(`${btn}.checkVisibility()`), true);
+    assert.equal(await p.eval(`${btn}.getAttribute('aria-keyshortcuts')`), "Shift+F");
+    await p.press("ArrowLeft");
+    await p.waitFor(`/run the build/.test(${selected}.textContent) && ${selected}.classList.contains('fold')`, "← folds the failing turn");
+    await p.press("Home");
+    await p.press("F");
+    await p.waitFor(`/npm run build/.test(${selected}.textContent)`, "F opens the turn on the failure");
+    await p.press("Home");
+    await p.waitFor(`/fix the parser/.test(${selected}.textContent)`, "Home goes back to the top");
+    await p.eval(`${btn}.click()`);
+    await p.waitFor(`/npm run build/.test(${selected}.textContent)`, "the header control selects the failure");
+    assert.equal(await p.eval(inView), true);
+    await p.press("?");
+    await p.waitFor("/First failure/.test(document.querySelector('[role=dialog]')?.textContent || '')", "the help sheet lists F");
+    // A session with no failure opens from the list at the top, with no First failure control.
+    p = await open("#/");
+    await p.waitFor(row(TURNS), "the session list");
+    await p.eval(`${row(TURNS)}.click()`);
+    await p.waitFor(`${selected} && /prompt number 1/.test(${selected}.textContent)`, "a plain session opens at the top");
+    assert.equal(await p.eval(`${btn}?.checkVisibility() ?? false`), false);
+    // An explicit link to a step still opens on that step.
+    p = await open("#/s/" + FOLDS + "/" + FOLDS + "-e20");
+    await p.waitFor(`${selected} && /a step inside turn four/.test(${selected}.textContent)`, "the deep link wins");
+    // A link to the session alone opens on its first failure too.
+    p = await open("#/s/" + FOLDS);
+    await p.waitFor(`${selected} && /npm run build/.test(${selected}.textContent)`, "a session link opens on the failure");
+    // A clean session opens on its first prompt, not on "Session starts", and the detail shows the prompt.
+    p = await open("#/s/" + START);
+    await p.waitFor(`${selected} && /first ask/.test(${selected}.textContent)`, "the first prompt");
+    assert.match(await p.eval("document.querySelector('#event-pane').textContent"), /first ask/);
+    assert.equal(await p.eval("document.querySelector('#steps').scrollTop"), 0, "the rows above it stay in view");
+    assert.deepEqual(p.errors, []);
+  });
+
+  test("session rows are real links: a modified or middle click leaves the list in place, a plain click opens the session", async () => {
+    const p = await open("#/");
+    const row = (id: string) => `document.querySelector('[role=option][data-sid="${id}"]')`;
+    await p.waitFor(row(TURNS), "the session list");
+    assert.equal(await p.eval(`${row(TURNS)}.tagName`), "A");
+    assert.equal(await p.eval(`${row(TURNS)}.getAttribute('href')`), "#/s/" + TURNS);
+    // The listbox keeps the only Tab stop; rows are reached with j and k.
+    assert.equal(await p.eval("[...document.querySelectorAll('[role=listbox] [role=option]')].every((r) => r.tabIndex === -1)"), true);
+    const at: { x: number; y: number } = await p.eval(`(() => { const r = ${row(TURNS)}.querySelector('.row-title').getBoundingClientRect(); return { x: r.left + 4, y: r.top + r.height / 2 }; })()`);
+    const click = async (button: string, modifiers = 0) => {
+      const buttons = button === "middle" ? 4 : 1;
+      await p.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: at.x, y: at.y });
+      await p.send("Input.dispatchMouseEvent", { type: "mousePressed", x: at.x, y: at.y, button, buttons, clickCount: 1, modifiers });
+      await p.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: at.x, y: at.y, button, buttons: 0, clickCount: 1, modifiers });
+    };
+    let clicks = 0;
+    await p.eval(`${row(TURNS)}.addEventListener('click', () => { window.__rowClicks = (window.__rowClicks || 0) + 1; })`);
+    await click("left", 2); // Ctrl
+    clicks++;
+    // Cmd click opens a tab on macOS only; elsewhere the browser treats Meta click as a plain click.
+    if (process.platform === "darwin") { await click("left", 4); clicks++; }
+    await click("middle");
+    await p.waitFor(`window.__rowClicks === ${clicks}`, "the modified clicks reached the row");
+    assert.equal(await p.eval("location.hash"), "#/", "a modified or middle click does not navigate in place");
+    assert.equal(await p.eval(`${row(TURNS)}.getAttribute('aria-selected')`), "true", "the clicked row is selected");
+    assert.equal(await p.eval("document.activeElement.getAttribute('role')"), "listbox", "focus stays on the listbox");
+    await click("left");
+    await p.waitFor(`location.hash === '#/s/${TURNS}' && document.querySelector('#steps .st')`, "a plain click opens the session");
+    assert.deepEqual(p.errors, []);
+  });
+
+  test("Chat shows every prompt and reply in full; a turn's step line goes back to Steps there; the view is linked and remembered", async () => {
+    let p = await open("#/s/" + CHAT);
+    const selected = "document.querySelector('#steps .st[aria-selected=true]')";
+    const pressed = "document.querySelector('.view-seg [aria-pressed=true]')?.textContent";
+    await p.waitFor(`${selected} && ${pressed} === 'Steps'`, "Steps is the default");
+    assert.equal(await p.eval("document.querySelector('#chat').hidden"), true);
+    await p.eval("[...document.querySelectorAll('.view-seg button')].find((b) => b.textContent === 'Chat').click()");
+    await p.waitFor("!document.querySelector('#chat').hidden && document.querySelector('.session-grid').hidden", "the chat replaces the steps");
+    assert.match(await p.eval("location.hash"), /[?&]view=chat/);
+    // Every prompt and reply, in order and whole: no click, no "Show all".
+    const texts: string[] = await p.eval("[...document.querySelectorAll('#chat .chat-text')].map((e) => e.textContent)");
+    // Replies are markdown: the fence becomes a code block, so the text reads without the backticks.
+    assert.deepEqual(texts, Array.from({ length: 10 }, (_, i) => [chatPrompt(i + 1), `Module ${i + 1} parses the config.parse(${i + 1})That is all for answer ${i + 1}.`]).flat());
+    assert.equal(await p.eval("document.querySelectorAll('#chat .chat-text .md-code pre').length"), 10);
+    assert.equal(await p.eval("document.querySelectorAll('#chat .show-all, #chat button[aria-expanded]').length"), 0);
+    assert.equal(await p.eval("document.querySelector('#chat .chat-empty').checkVisibility()"), false, "no empty-state note in a session with prompts");
+    // Each turn has one line that counts the steps hidden between prompt and reply.
+    const lines: string[] = await p.eval("[...document.querySelectorAll('#chat .chat-work')].map((e) => e.textContent)");
+    assert.equal(lines.length, 10);
+    assert.equal(lines[0], "▸1 step · read 1 file");
+    assert.equal(lines[6], "▸2 steps · read 1 file, 1 command · 1 error");
+    // Activating turn 9's line goes back to Steps on turn 9's prompt (a folded turn opens).
+    await p.eval("document.querySelectorAll('#chat .chat-work')[8].click()");
+    await p.waitFor(`document.querySelector('#chat').hidden && /question 9/.test(${selected}.textContent) && ${selected}.getAttribute('aria-expanded') === 'true'`, "Steps at turn 9");
+    assert.equal(await p.eval("document.activeElement.id"), "steps");
+    assert.equal(await p.eval(`${pressed}`), "Steps");
+    assert.doesNotMatch(await p.eval("location.hash"), /view=/);
+    // v toggles; the choice survives a reload.
+    await p.press("v");
+    await p.waitFor("!document.querySelector('#chat').hidden && document.activeElement.id === 'chat'", "v opens the chat");
+    assert.match(await p.eval("document.querySelector('.hintbar')?.textContent || ''"), /vchat or steps view/);
+    await p.eval("window.beforeReload = true; location.reload()");
+    await p.waitFor("!window.beforeReload && document.querySelectorAll('#chat .chat-text').length === 20 && !document.querySelector('#chat').hidden", "still chat after a reload");
+    // A link opens the view it names in a browser that remembers nothing.
+    p = await open("#/s/" + CHAT + "?view=chat");
+    await p.waitFor(`document.querySelectorAll('#chat .chat-text').length === 20 && ${pressed} === 'Chat'`, "the link opens the chat");
+    // In Chat, } and { move between prompts and j and k between messages; the hint bar lists them.
+    const atTop = "(() => { const c = document.querySelector('#chat'), t = c.getBoundingClientRect().top; const m = [...c.querySelectorAll('.chat-msg')].find((e) => Math.abs(e.getBoundingClientRect().top - t) < 3); return m ? m.querySelector('.chat-who span').textContent + '|' + m.textContent : ''; })()";
+    assert.match(await p.eval("document.querySelector('.hintbar').textContent"), /jkmove.*\{\}turns/);
+    await p.eval("document.querySelector('#chat').scrollTop = 0; document.querySelector('#chat').focus()");
+    await p.press("}");
+    await p.waitFor(`${atTop}.startsWith('Turn 1 · Prompt|')`, "} brings turn 1's prompt to the top");
+    await p.press("}");
+    await p.waitFor(`${atTop}.startsWith('Turn 2 · Prompt|')`, "} again, turn 2");
+    await p.press("j");
+    await p.waitFor(`${atTop}.startsWith('Assistant|') && /answer 2/.test(${atTop})`, "j, turn 2's reply");
+    await p.press("k");
+    await p.waitFor(`${atTop}.startsWith('Turn 2 · Prompt|')`, "k, back to the prompt");
+    await p.press("{");
+    await p.waitFor(`${atTop}.startsWith('Turn 1 · Prompt|')`, "{, turn 1");
+    assert.equal(await p.eval("document.querySelector('#chat').hidden"), false, "still in Chat");
+    // A session that only starts before its first prompt has no step line ahead of the prompt.
+    p = await open("#/s/" + START + "?view=chat");
+    await p.waitFor("document.querySelectorAll('#chat .chat-text').length === 4", "the chat");
+    assert.equal(await p.eval("[...document.querySelectorAll('#chat .chat-work')].filter((e) => e.checkVisibility()).length"), 0, "no step line for Session starts");
+    assert.equal(await p.eval("[...document.querySelectorAll('#chat .chat-turn')].find((e) => e.checkVisibility()).querySelector('.chat-who span').textContent"), "Turn 1 · Prompt");
+    p = await open("#/s/" + CHAT);
+    await p.waitFor(`${selected} && ${pressed} === 'Steps'`, "no link, nothing remembered: Steps");
+    await p.press("?");
+    await p.waitFor("/Chat or steps view/.test(document.body.textContent)", "the help sheet lists v");
+    assert.deepEqual(p.errors, []);
+  });
+
+  test("prompts and replies show their markdown as text-only elements; tool output has no escape codes", async () => {
+    const p = await open("#/s/" + MD + "/" + MD + "-e4");
+    const md = "#event-pane .md";
+    await p.waitFor(`document.querySelector('${md} h3')`, "the reply, formatted");
+    assert.equal(await p.eval(`document.querySelector('${md} h3').textContent`), "Summary");
+    assert.equal(await p.eval(`document.querySelector('${md} p code').textContent`), "npm test");
+    assert.equal(await p.eval(`document.querySelector('${md} strong').textContent`), "3 passed");
+    assert.equal(await p.eval(`document.querySelector('${md} em').textContent`), "1 skipped");
+    // A link is its text and its address, as text; tags in the source are text too.
+    assert.deepEqual(await p.eval(`[...document.querySelectorAll('${md} li')].map((e) => e.textContent)`), ["see the docs (docs/a.md)", "<script>window.pwned = 1</script>"]);
+    assert.deepEqual(await p.eval(`[...document.querySelectorAll('${md} .md-code')].map((e) => [e.querySelector('.md-lang')?.textContent ?? '', e.querySelector('pre').textContent])`),
+      [["ts", "const x = 1;"], ["", "unclosed <img src=x onerror=window.pwned=2>"]]);
+    // The language label sits inside the code block's top-right corner, not on a line above it.
+    const inside = await p.eval(`(() => { const c = document.querySelector('${md} .md-code'), l = c.querySelector('.md-lang').getBoundingClientRect(), b = c.querySelector('pre').getBoundingClientRect();
+      return l.top >= b.top && l.bottom <= b.bottom && l.right <= b.right && l.left > b.left + b.width / 2; })()`);
+    assert.equal(inside, true);
+    assert.equal(await p.eval(`document.querySelectorAll('#event-pane a, ${md} script, ${md} img, ${md} b').length`), 0);
+    assert.equal(await p.eval("window.pwned"), undefined);
+    // Copy text gives the original source.
+    await p.eval("window.copied = null; navigator.clipboard.writeText = async (t) => { window.copied = t; }");
+    await p.eval("document.querySelector('#event-pane button[aria-label=\"Copy the original text\"]').click()");
+    assert.equal(await p.waitFor("window.copied", "the copied text"), MD_REPLY);
+    // The prompt: tags stay text, bold is bold.
+    await p.eval(`location.hash = ${JSON.stringify("#/s/" + MD + "/" + MD + "-e1")}`);
+    await p.waitFor(`document.querySelector('${md} p strong')?.textContent === 'now'`, "the prompt, formatted");
+    assert.equal(await p.eval(`document.querySelector('${md} p').textContent`), "Fix <b>this</b> now");
+    // The command's output shows its text without the escape codes.
+    await p.eval(`location.hash = ${JSON.stringify("#/s/" + MD + "/" + MD + "-e2")}`);
+    await p.waitFor("document.querySelector('#event-pane pre.code:not(.shell)')", "the command's output");
+    assert.equal(await p.eval("[...document.querySelectorAll('#event-pane pre.code')].at(-1).textContent"), "3 passed\n1 skipped");
     assert.deepEqual(p.errors, []);
   });
 

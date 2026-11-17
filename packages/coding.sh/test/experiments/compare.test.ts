@@ -229,8 +229,9 @@ describe("compareExperiments", () => {
     const c2 = compareExperiments(plain, plain);
     assert.equal(c2.graders[0]?.corrected, undefined);
     assert.doesNotMatch(renderComparison(c2, { color: false }), /bias-corrected/);
-    assert.equal(c2.graders[0]?.stability?.direction, "none");
-    assert.match(renderComparison(c2, { color: false }), /^judge unstable {2}no direction in 0% of resamples \(n\* censored\)$/m);
+    // Identical scores on every case are a tie: no "unstable" line (regression).
+    assert.equal(c2.graders[0]?.stability, undefined);
+    assert.doesNotMatch(renderComparison(c2, { color: false }), /unstable|resamples/);
     // Deterministic graders never get one.
     const det = compareExperiments(await run("x", new Set(range(1, 5))), await run("y", new Set(range(1, 5)))).graders[0];
     assert.equal(det?.corrected, undefined);

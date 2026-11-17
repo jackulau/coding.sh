@@ -65,10 +65,27 @@ const FAQ: { id: string; q: string; a: string }[] = [
 <DocsLayout schemas={[faqSchema(FAQ)]}>
   {
     FAQ.map((f) => (
-      <>
-        <h2 id={f.id}>{f.q}</h2>
+      <details class="more faq" id={f.id}>
+        <summary>{f.q}</summary>
         <p set:html={f.a} />
-      </>
+      </details>
     ))
   }
 </DocsLayout>
+
+<style is:global>
+  /* Each question is the summary of its folded answer, plain text, so the
+     summary is one control named by the question. The <details> carries the id
+     that links to the question, and is underlined when a link points at it.
+     .doc outranks doc.css's .more > summary, which may come after this. */
+  .doc .faq > summary {
+    padding-block: 0.6rem;
+    line-height: 1.4;
+    font-weight: 600;
+    text-wrap: balance;
+  }
+  .doc .faq:target > summary {
+    text-decoration: underline 1px var(--text-muted);
+    text-underline-offset: 0.3em;
+  }
+</style>

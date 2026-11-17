@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { devNull, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -13,7 +13,8 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const ENV = {
   ...process.env,
   GIT_CONFIG_NOSYSTEM: "1",
-  GIT_CONFIG_GLOBAL: devNull,
+  // Not os.devNull: Git for Windows cannot open the Windows null device path, and reads "/dev/null" on every platform.
+  GIT_CONFIG_GLOBAL: "/dev/null",
   GIT_AUTHOR_NAME: "test",
   GIT_AUTHOR_EMAIL: "1+test@users.noreply.github.com",
   GIT_COMMITTER_NAME: "test",

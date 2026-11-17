@@ -270,6 +270,28 @@ describe("backfill (QA real-traces)", () => {
     assert.deepEqual([r.events, r.pendingFiles, reads.splice(0)], [2, 0, ["b.jsonl", "c.jsonl"]]);
   });
 
+  it("does not start an adapter once out of time after an earlier one read a file (a scan on its first step cannot be cut short)", async () => {
+    const dir = tmp("csh-transcripts-");
+    writeFileSync(join(dir, "a.jsonl"), jl({ session: "A", kind: "user.message", ts: 1000, text: "one" }));
+    const { env: e, config } = env();
+    const index = new MemoryIndexStore();
+    const blobs = new MemoryBlobStore();
+    const reads: string[] = [];
+    let started = 0;
+    const slow: Adapter = {
+      ...fileAdapter(dir, []),
+      id: "slow",
+      async *backfill() {
+        started++;
+      },
+    };
+    const adapters = [fileAdapter(dir, reads), slow];
+    let r = await backfill({ config, index, blobs, adapters, env: e, deadline: Date.now() - 1 });
+    assert.deepEqual([reads, started, r.events, r.pendingFiles], [["a.jsonl"], 0, 1, 1], "the first adapter read one file; the second was left for later");
+    r = await backfill({ config, index, blobs, adapters, env: e });
+    assert.deepEqual([started, r.pendingFiles], [1, 0], "without a deadline it runs");
+  });
+
   it("recomputes sessions of files read for the first time even when their events exist (upgrade path)", async () => {
     const root = makeRepo({ "a.txt": "a\n" });
     const dir = tmp("csh-transcripts-");

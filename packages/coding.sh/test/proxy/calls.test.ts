@@ -4,7 +4,7 @@
 // memory stores, the viewer's /api/calls, and the CLI against a temp store.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -20,6 +20,7 @@ import { openStores } from "../../src/store/factory.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { startViewer, type Viewer } from "../../src/viewer/server.ts";
 import { anthropicStream, call, startTestProxy, startUpstream, type TestProxy, type Upstream } from "./_helpers.ts";
+import { removeTestDir } from "../_rm.ts";
 import { CLI } from "../_cli.ts";
 
 const SECRET = "sk-ant-api03-CALLSCALLSCALLSCALLSCALLSCALLSCALLS-abcdefAA";
@@ -315,7 +316,7 @@ describe("CLI: show <call> and diff-calls", () => {
       await stores.blobs.close?.();
     }
   });
-  after(() => rmSync(root, { recursive: true, force: true }));
+  after(() => removeTestDir(root));
   const cli = (...args: string[]) => spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { env, encoding: "utf8", timeout: 60_000 });
 
   it("diff-calls <session>#3 explains the miss against the call before it", () => {

@@ -1,5 +1,5 @@
 // Codex CLI adapter (tier A): $CODEX_HOME/hooks.json hooks (Claude-shaped),
-// rollout backfill ($CODEX_HOME/sessions/**/rollout-*.jsonl), `codex exec --json`
+// rollout backfill ($CODEX_HOME/sessions/**/rollout-*.jsonl[.zst]), `codex exec --json`
 // headless runs, CODEX_HOME isolation.
 //
 // Verified against codex-rs rust-v0.166.0 (hooks crate + generated schemas):
@@ -20,6 +20,7 @@
 //   response_id so live and backfilled copies dedupe.
 import { execFile } from "../core/spawn.ts";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { basename, isAbsolute, join, relative } from "node:path";
 import { paths, userHome } from "../core/paths.ts";
 import { parseToml } from "../core/toml.ts";
@@ -40,6 +41,7 @@ import {
   clipText,
   clipValue,
   diffHeader,
+  errorClass,
   copyIfExists,
   detectAgent,
   emitDerived,
@@ -458,6 +460,8 @@ export class CodexRolloutConverter {
   /** A task_started not yet closed by task_complete/turn_aborted. */
   private turnOpen = false;
   private lastTotal?: number;
+  /** The error message already emitted in the open turn, so an `error` event_msg and the task_complete error of one failure count once. */
+  private turnError?: string;
   /** A compaction was recorded and no model or user line followed yet (one compaction writes a `compacted` item and a context_compacted event). */
   private compacted = false;
   private readonly calls = new Map<string, Call>();
@@ -561,6 +565,7 @@ export class CodexRolloutConverter {
     if (type === "event_msg") {
       if (pt === "task_started") {
         this.turnOpen = true;
+        this.turnError = undefined;
         this.turnId = str(p.turn_id) ?? this.turnId;
         em.base.turnId = this.turnId;
         this.markInput(ts);
@@ -570,6 +575,8 @@ export class CodexRolloutConverter {
           const ok = pt === "task_complete" && p.error == null;
           this.lastOk = ok;
           const turn = str(p.turn_id) ?? this.turnId;
+          const failure = pt === "task_complete" ? turnFailure(p.error) : undefined;
+          if (failure && failure.message !== this.turnError) em.emit("error", failure, { key: [turn ?? ord, "turn-error"], turnId: turn });
           em.emit("turn.end", { ok, status: pt === "turn_aborted" ? (str(p.reason) ?? "aborted") : undefined, ttftMs: num(p.time_to_first_token_ms) }, { key: [turn ?? ord], turnId: turn, durationMs: num(p.duration_ms) });
         }
       } else if (pt === "item_completed") {
@@ -592,7 +599,9 @@ export class CodexRolloutConverter {
       } else if (pt === "context_compacted" && full && fresh) {
         em.emit("context.compact", {}, { key: ["compact", ord] });
       } else if (pt === "error" && full) {
-        em.emit("error", { message: (str(p.message) ?? "error").slice(0, 1000) });
+        const message = (str(p.message) ?? "error").slice(0, 1000);
+        this.turnError = message;
+        em.emit("error", { message });
       }
     } else if (type === "token_usage_record") {
       if (this.inTurn(str(p.turn_id))) this.llmCall(em, ts, p.usage, [str(p.response_id) ?? `ord:${ord}`], str(p.turn_id), str(p.response_id));
@@ -810,15 +819,50 @@ export class CodexRolloutConverter {
   }
 }
 
+/** Codex compresses a rollout to `<path>.zst` after a week: when the named file is gone, read the compressed one. */
+function rolloutPath(path: string): string {
+  return !existsSync(path) && !path.endsWith(".zst") && existsSync(`${path}.zst`) ? `${path}.zst` : path;
+}
+
+/** codex_error_info (a name, or {name: details}) → coarse errorClass. */
+const CODEX_ERROR_CLASS: Record<string, string> = {
+  usage_limit_exceeded: "rate_limit",
+  context_window_exceeded: "too_large",
+  server_overloaded: "overloaded",
+  internal_server_error: "server",
+  unauthorized: "auth",
+  bad_request: "invalid_request",
+  http_connection_failed: "network",
+  response_stream_connection_failed: "network",
+  response_stream_disconnected: "network",
+  response_too_many_failed_attempts: "server",
+};
+
+/**
+ * A task_complete's `error` ({message, codex_error_info}, or a bare string) as an error payload:
+ * `{message, source: "api", errorType, errorClass, statusCode}`, the shape Claude Code's api_error lines get.
+ */
+export function turnFailure(raw: unknown): Record<string, unknown> | undefined {
+  if (raw == null || raw === false) return undefined;
+  const e = obj(raw);
+  const message = (str(raw) ?? str(e.message) ?? "turn failed").slice(0, 1000);
+  const info = e.codex_error_info;
+  const errorType = typeof info === "string" ? info : isObj(info) ? Object.keys(info)[0] : undefined;
+  const detail = isObj(info) && errorType ? obj(info[errorType]) : {};
+  const statusCode = num(detail.http_status_code) ?? num(detail.status_code);
+  return { message, source: "api", statusCode, errorType, errorClass: (errorType && CODEX_ERROR_CLASS[errorType]) ?? (statusCode !== undefined ? errorClass(statusCode, errorType) : "api") };
+}
+
 /** Convert one rollout file (two streaming passes: detect generation, then convert). */
-export async function convertRollout(ctx: NormalizeContext, path: string, opts: RolloutOpts): Promise<AgentEvent[]> {
+export async function convertRollout(ctx: NormalizeContext, rawPath: string, opts: RolloutOpts): Promise<AgentEvent[]> {
+  const path = rolloutPath(rawPath);
   const flags = { items: false, usageRecords: false };
   try {
     for await (const r of readJsonl(path)) CodexRolloutConverter.scan(r.value, flags);
   } catch {
     return [];
   }
-  const fallback = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/.exec(path)?.[1] ?? basename(path, ".jsonl");
+  const fallback = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl(?:\.zst)?$/.exec(path)?.[1] ?? basename(path).replace(/\.jsonl(?:\.zst)?$/, "");
   const conv = new CodexRolloutConverter(ctx, opts, flags, fallback);
   try {
     for await (const r of readJsonl(path)) await conv.add(r.value, r.lineNo);
@@ -853,7 +897,7 @@ function callStartTs(recs: unknown[], callId: string, endTs: number): number | u
 /** The rollout tail, read at most once per hook line. */
 function transcriptTail(path: string | undefined): () => Promise<unknown[]> {
   let recs: Promise<unknown[]> | undefined;
-  return () => (recs ??= path ? readJsonlTail(path, CALL_TAIL_BYTES).catch(() => []) : Promise.resolve([]));
+  return () => (recs ??= path ? readJsonlTail(rolloutPath(path), CALL_TAIL_BYTES).catch(() => []) : Promise.resolve([]));
 }
 
 /**
@@ -900,7 +944,7 @@ export async function normalizeCodexLine(line: SpoolLine, ctx: NormalizeContext)
   switch (event) {
     case "SessionStart": {
       // How Codex was launched (`codex exec`, the TUI, …) is only in the rollout's session_meta, as the backfill's start records it.
-      const head = obj(raw.transcript_path ? await readJsonlHead(str(raw.transcript_path)!) : undefined);
+      const head = obj(raw.transcript_path ? await readJsonlHead(rolloutPath(str(raw.transcript_path)!)) : undefined);
       const meta = head.type === "session_meta" ? obj(head.payload) : {};
       const launch = { originator: str(meta.originator), launch: typeof meta.source === "string" ? meta.source : undefined };
       em.emit("session.start", { source: "hook", startSource: str(raw.source), transcriptPath: str(raw.transcript_path), permissionMode: str(raw.permission_mode), ...launch }, { key: ["start"] });
@@ -978,7 +1022,8 @@ export async function normalizeCodexLine(line: SpoolLine, ctx: NormalizeContext)
 async function* backfillCodex(ctx: NormalizeContext, opts: BackfillOpts = {}): AsyncIterable<AgentEvent> {
   const home = codexHome();
   for (const dir of ["sessions", "archived_sessions"]) {
-    for await (const f of walkFiles(join(home, dir), { match: (n) => /^rollout-.*\.jsonl$/.test(n), maxDepth: 4, since: opts.since })) {
+    for await (const f of walkFiles(join(home, dir), { match: (n) => /^rollout-.*\.jsonl(\.zst)?$/.test(n), maxDepth: 4, since: opts.since })) {
+      if (f.path.endsWith(".zst") && existsSync(f.path.slice(0, -4))) continue; // the plain file wins when both exist
       if (opts.changed && !(await opts.changed(cursorView(f, ROLLOUT_IDLE_MS)))) continue; // unchanged since the last backfill (or since it went idle)
       for (const e of await convertRollout(ctx, f.path, { mode: "full", endIfIdleMs: ROLLOUT_IDLE_MS })) if (opts.since === undefined || e.ts >= opts.since) yield e;
     }
@@ -1070,7 +1115,9 @@ export const codex: Adapter = {
   // 5 (0.1.5): a subagent thread's task (the agent mail addressed to it) is its user.message, so it has a title. A tool call that loads a skill names it (payload.skill).
   // 7 (0.1.7): an llm.call with a record written late in it (a stretch of the rollout written at once) has no
   //    durationMs, ttftMs or tokensPerSec.
-  parseVersion: 7,
+  // 8 (0.1.5): backfill reads rollout-*.jsonl.zst, the compressed rollouts Codex writes after a week.
+  // 9 (0.1.5): a task_complete with an error keeps it as an error event (source api, errorType, errorClass).
+  parseVersion: 9,
 
   detect() {
     const home = codexHome();
