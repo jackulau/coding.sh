@@ -104,6 +104,7 @@
   "devDependencies": {
     "@types/node": "^22.15.0",
     "esbuild": "^0.25.0",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2",
+    "typescript5": "npm:typescript@^5.9.3"
   }
 }
