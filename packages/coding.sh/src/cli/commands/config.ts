@@ -43,7 +43,7 @@ export const SETTABLE = [
 export const FILE_KEYS = [
   "refine.protect", "refine.autoProtect", "refine.maxCostRise", "refine.canary_model",
   "serve.host", "serve.port", "serve.retention_days", "serve.log", "serve.queue_max_events", "serve.queue_max_bytes",
-  "serve.insecure", "serve.trust_proxy", "serve.cors_origins",
+  "serve.insecure", "serve.trust_proxy", "serve.cors_origins", "serve.allowed_hosts",
   "serve.viewer.read_keys", "serve.viewer.basic_user", "serve.viewer.basic_password_sha256",
   "serve.forward.endpoint", "serve.forward.headers", "serve.forward.mode", "serve.forward.max_buffer_spans",
   "proxy.port", "proxy.host", "proxy.anthropic_upstream", "proxy.openai_upstream", "proxy.chatgpt_upstream",

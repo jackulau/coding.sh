@@ -293,13 +293,20 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
     proxyHandler(req, res, { path: rest, recorder: recorderOf(project) });
   };
 
+  // Every route but /healthz (and /readyz on a public bind) answers only Host names it was set up
+  // for: loopback ones, plus serve.allowed_hosts. A public bind with no list answers any (a platform routes by host).
+  const allowedHosts = new Set(cfg.allowedHosts);
+  const hostAllowed = (header: string): boolean => {
+    const name = hostOf(header.toLowerCase());
+    return isLoopbackHost(name) || allowedHosts.has(name) || (!loopback && allowedHosts.size === 0);
+  };
+
   const secureCookie = (req: IncomingMessage) => cfg.trustProxy && String(req.headers["x-forwarded-proto"] ?? "").split(",")[0]!.trim() === "https";
   const viewer = await createViewerHandler({
     index,
     blobs,
     authorize: (req) => auth.read(req),
-    // Loopback binds keep the DNS-rebinding guard; a public bind sits behind a platform's host routing.
-    checkHost: (h) => !loopback || isLoopbackHost(hostOf(h)),
+    checkHost: hostAllowed,
     exchangeToken: (t, req) =>
       auth.readScope(t) !== undefined ? `${READ_COOKIE}=${t}; HttpOnly; SameSite=Strict; Path=/${secureCookie(req) ? "; Secure" : ""}` : undefined,
     ...(cfg.credentials.basic ? { basicRealm: "coding.sh" } : {}),
@@ -339,6 +346,8 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
       return sendJson(res, 405, { error: "method not allowed", status: 405 }, { Allow: "GET, HEAD" });
     }
     if (path === "/healthz") return sendJson(res, 200, { ok: true });
+    // A platform or Kubernetes probe sends the pod's address as Host: a public bind answers /readyz for any.
+    if (!(path === "/readyz" && !loopback) && !hostAllowed(req.headers.host ?? "")) return sendJson(res, 403, { error: "forbidden host: add it to serve.allowed_hosts (CODING_SH_ALLOWED_HOSTS)", status: 403 });
     if (path === "/readyz") {
       const r = await ready();
       return sendJson(res, r.status, r.body);

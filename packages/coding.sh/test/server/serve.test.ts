@@ -5,6 +5,7 @@
 // and graceful shutdown.
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { request as httpRequest } from "node:http";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -743,5 +744,51 @@ describe("serve on loopback with no keys", () => {
     assert.equal((await call(h, "/v1/ingest", { key: ik, body: batch([ev("a", "chat-1")]), headers })).status, 200);
     assert.equal((await call(h, "/api/sessions", { key: rk, headers })).status, 200);
     await h.shutdown();
+  });
+});
+
+describe("serve Host check", () => {
+  // fetch may not send its own Host header; a raw request can, as a DNS-rebinding page's would.
+  const asHost = (h: ServeHandle, path: string, host: string, method = "GET", body?: string): Promise<number> =>
+    new Promise((resolve, reject) => {
+      const u = new URL(h.url + path);
+      const headers: Record<string, string> = { host };
+      if (body) headers["content-type"] = "application/json";
+      const r = httpRequest({ host: u.hostname, port: u.port, path, method, headers }, (res) => {
+        res.resume();
+        resolve(res.statusCode ?? 0);
+      });
+      r.on("error", reject);
+      r.end(body);
+    });
+  const routes: [string, string, string?][] = [["/readyz", "GET"], ["/metrics", "GET"], ["/api/sessions", "GET"], ["/v1/ingest", "POST", JSON.stringify(batch([ev("a", "chat-1")]))], ["/v1/traces", "POST", "{}"]];
+
+  it("on loopback answers no route for a Host that is not loopback or allowed; /healthz stays open", async () => {
+    const { h } = await serve("memory", tmpEnv());
+    for (const [path, method, body] of routes) {
+      assert.equal(await asHost(h, path, "rebind.example:4318", method, body), 403, `${method} ${path}`);
+      assert.notEqual(await asHost(h, path, "localhost:4318", method, body), 403, `${method} ${path} on localhost`);
+    }
+    assert.equal(await asHost(h, "/healthz", "rebind.example"), 200);
+    await h.shutdown();
+  });
+
+  it("serve.allowed_hosts adds names on loopback and limits a public bind to them", async () => {
+    const rk = generateKey("read");
+    const local = await serve("memory", tmpEnv({ CODING_SH_ALLOWED_HOSTS: "Obs.Example.com" }));
+    assert.equal(await asHost(local.h, "/readyz", "obs.example.com"), 200);
+    assert.equal(await asHost(local.h, "/readyz", "other.example"), 403);
+    await local.h.shutdown();
+    const env = { CODING_SH_INGEST_KEYS: generateKey("ingest"), CODING_SH_READ_KEYS: rk };
+    const open = await serve("memory", tmpEnv(env), { flags: { host: "0.0.0.0" } });
+    assert.equal(await asHost(open.h, "/readyz", "anything.example"), 200, "a public bind with no list answers any Host, as before");
+    await open.h.shutdown();
+    const pub = await serve("memory", tmpEnv({ ...env, CODING_SH_ALLOWED_HOSTS: "obs.example.com" }), { flags: { host: "0.0.0.0" } });
+    assert.equal(await asHost(pub.h, "/readyz", "obs.example.com:443"), 200);
+    assert.equal(await asHost(pub.h, "/readyz", "127.0.0.1:4318"), 200, "loopback names stay allowed for health checks inside the box");
+    assert.equal(await asHost(pub.h, "/readyz", "10.0.3.7:4318"), 200, "a probe by pod address still gets an answer on a public bind");
+    assert.equal(await asHost(pub.h, "/metrics", "other.example"), 403);
+    assert.equal(await asHost(pub.h, "/api/sessions", "10.0.3.7:4318"), 403);
+    await pub.h.shutdown();
   });
 });

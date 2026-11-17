@@ -116,6 +116,18 @@ describe("serve config", () => {
     checkExposure(behind({}, { insecure: true }));
   });
 
+  it("reads serve.allowed_hosts as lowercase names and refuses one with a scheme or port", () => {
+    assert.deepEqual(resolveServeConfig({ port: 0 }, tmpEnv({ CODING_SH_ALLOWED_HOSTS: " Obs.Example.com, [::1] ," })).allowedHosts, ["obs.example.com", "::1"]);
+    assert.deepEqual(resolveServeConfig({ port: 0 }, tmpEnv()).allowedHosts, []);
+    for (const bad of ["https://obs.example.com", "obs.example.com:443", "obs example"]) {
+      assert.throws(() => resolveServeConfig({ port: 0 }, tmpEnv({ CODING_SH_ALLOWED_HOSTS: bad })), /serve\.allowed_hosts takes host names without scheme or port/);
+    }
+    const env = tmpEnv({ CODING_SH_ALLOWED_HOSTS: " , " });
+    const file = join(env.HOME!, "hosts.toml");
+    writeFileSync(file, ["[serve]", 'allowed_hosts = ["obs.example.com"]'].join("\n"));
+    assert.deepEqual(resolveServeConfig({ port: 0, config: file }, env).allowedHosts, ["obs.example.com"], "an env value with no names keeps the file's list");
+  });
+
   it("follows flags > env > file > defaults, and DATABASE_URL only when postgres", () => {
     const env = tmpEnv({ CODING_SH_PORT: "5000" });
     const file = join(env.HOME!, "serve.toml");

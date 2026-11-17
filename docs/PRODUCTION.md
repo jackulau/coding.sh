@@ -68,6 +68,7 @@ the existing `${ENV}` interpolation.
 | `CODING_SH_CAPTURE_MODE` | `capture.mode` | `full` (`metadata` drops message text and tool I/O on ingest) |
 | `CODING_SH_INSECURE=1` | `serve.insecure` | off |
 | `CODING_SH_TRUST_PROXY=1` | `serve.trust_proxy` | off. When on, X-Forwarded-Proto/For are honored for cookie `Secure` and for logs. |
+| `CODING_SH_ALLOWED_HOSTS` (comma list) | `serve.allowed_hosts = ["obs.example.com"]` | none. Host names, without scheme or port, that requests may name besides loopback ones. |
 | `CODING_SH_LOG` (`json`\|`text`) | `serve.log` | `json` when stderr is not a TTY. Logs go to stderr; stdout gets only the URL (or one JSON document with `--json`) once ready. |
 
 Other fixed limits: body ≤ 16 MiB (before and after decompression), ≤ 10,000 events per request,
@@ -123,6 +124,13 @@ pushed into the production DB. An explicit `coding.sh ingest --store …` still 
   `--insecure` turns this check off.
 - **A proxy that adds none of those headers is not detected.** nginx `proxy_pass` with its defaults,
   `ssh -R` and TCP tunnels look like this machine. Anything you put behind a proxy or tunnel needs keys.
+- **Host names:** every route but `/healthz` answers 403 to a `Host` header it was not set up for.
+  On loopback, that is any name but a loopback one. `serve.allowed_hosts` adds names.
+- **A public bind** answers any `Host` while `serve.allowed_hosts` is empty. Once it lists names,
+  only those and the loopback names get an answer, except on `/readyz`, which answers a probe sent
+  to the pod's address.
+- **Another name for this machine,** such as `host.docker.internal` from a container, needs
+  `CODING_SH_ALLOWED_HOSTS=host.docker.internal` on a loopback serve.
 - Serve speaks plain HTTP. TLS is terminated by the platform or a proxy.
 - CORS is closed by default. `serve.cors_origins` opens the ingest routes (`/v1/ingest` with its
   `OPTIONS` preflight, and OTLP) to the listed browser origins; any other `Origin` gets 403. The viewer
@@ -353,7 +361,7 @@ strings that go into text columns.
 | 200 | `{"accepted":n,"inserted":k,"rejected":[{"index":i,"error":"…"}]}` (committed). A tick makes one `putEvents`, so when it holds several requests its `inserted` total is credited to them in arrival order (ids repeated within the tick belong to the first request). |
 | 400 | invalid envelope (body is not valid JSON, not an object, `v` is not 0, `events` missing or not an array, over 10,000 events), or a corrupt compressed body |
 | 401 | missing or bad key, or a read key; `WWW-Authenticate: Bearer` |
-| 403 | `Origin` not in `serve.cors_origins` |
+| 403 | `Origin` not in `serve.cors_origins`, or a `Host` that `serve.allowed_hosts` does not allow |
 | 404 | the server runs `--role viewer` (no ingest) |
 | 405 | method other than POST or OPTIONS; `Allow: POST, OPTIONS` |
 | 413 | body (compressed or decompressed) over 16 MiB |
