@@ -168,9 +168,9 @@ jobs:
           if-no-files-found: ignore
 
   build:
-    name: build, typecheck and site
-    # The checks that need one run, on Linux and Node 24: the typecheck, the SDK, the bundle, the
-    # package contents, the site and its budgets, the secret scan and the hook budget.
+    name: build and typecheck
+    # The checks that need one run and no site, on Linux and Node 24: the typecheck, the SDK, the
+    # bundle, the package contents, the secret scan and the hook budget.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -214,6 +214,39 @@ jobs:
         working-directory: packages/coding.sh
         run: npm pack --dry-run
 
+      # The built packages hold nothing shaped like a secret. The site job scans the site's output.
+      - name: Secret scan of the built output
+        run: node scripts/gate.mjs --only secret-scan
+
+      # The hook budget: a slow hook slows every agent. A shared runner measures main's own build
+      # a few percent over the design budget (docs/design/dogfood.md), so the step fails on more
+      # than 20% over it. It runs once: a miss fails the step.
+      - name: Hook budget
+        run: node scripts/dogfood/bench.mjs hook --check --tolerance 20
+
+  site:
+    name: site build, check and perf budget
+    # The site by itself, on Linux and Node 24: it was the longest part of the build job. The
+    # site's build builds the CLI first (apps/site's prebuild), so this job has no build step of
+    # its own.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Git identity
+        run: |
+          git config --global user.name "coding.sh CI"
+          git config --global user.email "ci@coding.sh.invalid"
+
+      - name: Install
+        run: npm ci
+
       - name: Site build
         working-directory: apps/site
         run: npm run build
@@ -231,15 +264,9 @@ jobs:
         working-directory: apps/site
         run: npm run perf:budget
 
-      # The built output holds nothing shaped like a secret.
+      # The built site holds nothing shaped like a secret.
       - name: Secret scan of the built output
         run: node scripts/gate.mjs --only secret-scan
-
-      # The hook budget: a slow hook slows every agent. A shared runner measures main's own build
-      # a few percent over the design budget (docs/design/dogfood.md), so the step fails on more
-      # than 20% over it. It runs once: a miss fails the step.
-      - name: Hook budget
-        run: node scripts/dogfood/bench.mjs hook --check --tolerance 20
 
   gate-static:
     name: gate (static checks)
@@ -854,7 +881,7 @@ jobs:
   # to main does not run this job: it runs the quick jobs and the real captures, not the suite.
   full-suite:
     name: ${{ github.event_name == 'workflow_dispatch' && 'full suite without site perf' || contains(github.event.pull_request.labels.*.name, 'ready') && 'full suite' || 'full suite (not run, add the ready label)' }}
-    needs: [changes, test, build, gate-static, stores, python-sdk, runtime-floor, action, image, windows, real-capture, cli-suite, site-perf]
+    needs: [changes, test, build, site, gate-static, stores, python-sdk, runtime-floor, action, image, windows, real-capture, cli-suite, site-perf]
     if: ${{ always() && (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

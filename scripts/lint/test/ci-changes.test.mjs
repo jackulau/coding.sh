@@ -164,7 +164,10 @@ test("ci.yml gates every code-only job on the changes job, and never skips when 
   assert.ok(job("test").indexOf("Build the CLI the tests launch") < job("test").indexOf("run: node scripts/test-ci.mjs"), "built before the tests run");
   assert.equal([...ci.matchAll(new RegExp(cliEnv, "g"))].length, 2, "the comment and the step, nowhere else");
   // The checks that read docs and the site always run.
-  for (const name of ["gate-static", "build", "test"]) assert.doesNotMatch(job(name), /needs: changes/, name);
+  for (const name of ["gate-static", "build", "site", "test"]) {
+    assert.ok(job(name), `${name} job`);
+    assert.doesNotMatch(job(name), /needs: changes/, name);
+  }
   // Pushes to main, manual runs and the full suite on a pull request skip no job for the diff:
   // only a pull request reads its diff, whatever FULL says.
   assert.match(job("changes"), /if \[ "\$FULL" != true \] && \[ "\$EVENT" = pull_request \] && files=/);

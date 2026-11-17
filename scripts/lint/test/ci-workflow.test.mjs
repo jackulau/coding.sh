@@ -12,7 +12,7 @@ const ci = read(".github/workflows/ci.yml");
 const jobs = (text) => new Set([...text.matchAll(/^  ([a-z][a-z-]*):$/gm)].map((m) => m[1]));
 
 test("ci.yml runs the static gate, the store plugins, the Python SDK and the release smoke test", () => {
-  for (const job of ["gate-static", "stores", "python-sdk", "runtime-floor"]) assert.ok(jobs(ci).has(job), `${job} job`);
+  for (const job of ["gate-static", "build", "site", "stores", "python-sdk", "runtime-floor"]) assert.ok(jobs(ci).has(job), `${job} job`);
   assert.match(ci, /node scripts\/gate\.mjs --static --strict/);
   assert.match(ci, /CODING_SH_TEST_PG_URL: postgres:\/\/postgres:ci@127\.0\.0\.1:5432\/coding/);
   assert.match(read("packages/sdk-python/pyproject.toml"), /requires-python = ">=3\.9"/);
@@ -45,6 +45,33 @@ test("ci.yml runs the secret scan, the hook budget and a site check that cannot 
   assert.match(ci, /node scripts\/gate\.mjs --only secret-scan/);
   assert.match(ci, /bench\.mjs hook --check/);
   assert.match(ci, /name: Site check[\s\S]*?CODING_SH_REQUIRE_DIST: "1"/);
+});
+
+test("ci.yml builds and checks the site in a job of its own", () => {
+  const job = (name) => new RegExp(`\\n  ${name}:\\n([\\s\\S]*?)(?=\\n  [a-z][a-z-]*:\\n|$)`).exec(ci)?.[1] ?? "";
+  const names = (body) => [...body.matchAll(/\n      - name: (.+)\n/g)].map((m) => m[1]);
+  const build = job("build");
+  const site = job("site");
+  assert.deepEqual(names(build), [
+    "Git identity", "Install", "Typecheck", "SDK typecheck and test", "Build", "Smoke test the bundle",
+    "Package contents", "Secret scan of the built output", "Hook budget",
+  ]);
+  assert.deepEqual(names(site), ["Git identity", "Install", "Site build", "Site check", "Site perf budget", "Secret scan of the built output"]);
+  // Each job scans what it built: the packages in one, the site (and the CLI its build makes) in the other.
+  for (const body of [build, site]) assert.match(body, /\n        run: node scripts\/gate\.mjs --only secret-scan\n/);
+  // The site's build makes the CLI it documents, so the site job has no build step of its own.
+  assert.match(read("apps/site/package.json"), /"prebuild": "npm run build -w coding\.sh"/);
+  assert.match(site, /\n      - name: Site build\n        working-directory: apps\/site\n        run: npm run build\n/);
+  assert.match(site, /\n      - name: Site check\n        working-directory: apps\/site\n        env:\n          CODING_SH_REQUIRE_DIST: "1"\n        run: npm run check\n/);
+  assert.match(site, /\n      - name: Install\n        run: npm ci\n/);
+  // No step of either job is skipped or let through: a failure fails the job.
+  for (const body of [build, site]) {
+    assert.doesNotMatch(body, /\n        if: /);
+    assert.doesNotMatch(body, /continue-on-error/);
+    assert.doesNotMatch(body, /needs: /);
+  }
+  // The closing check waits for both.
+  assert.match(job("full-suite"), /\n    needs: \[changes, test, build, site, /);
 });
 
 test("ci.yml runs the packed CLI on the Node floor itself", () => {
