@@ -1,11 +1,13 @@
 // coding.sh harness snapshot|list|audit
 import { statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getAdapter } from "../../adapters/index.ts";
 import { agentFileProblems } from "../../core/agent-files.ts";
-import { bundleFromDir, bundleFromToml, DEFAULT_INCLUDE } from "../../runner/bundle.ts";
+import { userHome } from "../../core/paths.ts";
+import { bundleFromDir, bundleFromToml, bundleId, DEFAULT_INCLUDE } from "../../runner/bundle.ts";
 import { claudeDirOf, isPluginPath } from "../../runner/plugins.ts";
-import type { HarnessBundle } from "../../core/types.ts";
+import type { BlobRef, BlobStore, HarnessBundle } from "../../core/types.ts";
 import { parseSince, positiveInt, suggest, UsageError } from "../args.ts";
 import { autoIngest, list, str, withContext, pendingField, readIngest } from "../common.ts";
 import { ago, bytes, CliError, plural, tokens } from "../output.ts";
@@ -24,6 +26,77 @@ export function bundleJson(b: HarnessBundle): Record<string, unknown> {
     createdAt: new Date(b.createdAt).toISOString(),
     note: b.note ?? null,
   };
+}
+
+/** A bundle path under a dot dir of Claude Code's skills dir (its `.trash` of deleted skills), which Claude Code does not load. */
+const HIDDEN_SKILL = /^(?:~\/)?\.claude\/skills\/\.[^/]+\//;
+
+/** Claude Code memory files whose `@path` imports it loads: every CLAUDE.md and CLAUDE.local.md, and its rules. */
+const IMPORTING = /(?:^|\/)CLAUDE(?:\.local)?\.md$|^(?:~\/)?\.claude\/rules\/.+\.md$/;
+
+/** Claude Code follows imports this many hops deep. */
+const IMPORT_HOPS = 5;
+
+/** The `@path` imports in a memory file's text, outside code spans and fences. */
+export function importPaths(text: string): string[] {
+  const t = text.replace(/```[^]*?```/g, "").replace(/`[^`\n]*`/g, "");
+  const out: string[] = [];
+  for (const m of t.matchAll(/(?:^|\s)@((?:~[\\/]|[\\/]|[A-Za-z]:[\\/]|\.{1,2}[\\/])?[\w.-][\w.~\\/-]*)/g)) {
+    const p = m[1]!.replace(/[.,:;]+$/, "");
+    if (p) out.push(p);
+  }
+  return out;
+}
+
+/**
+ * The bundle with what Claude Code loads that the include globs miss or wrongly take: the files
+ * CLAUDE.md and rules pull in with `@path` imports (followed up to 5 hops, relative to the
+ * importing file, `~/` from the home), and without dot dirs under skills/. An import inside
+ * `dir` is stored repo-relative, one in the home as `~/…`; one elsewhere is left out.
+ */
+export async function claudeCodeBundle(bundle: HarnessBundle, o: { dir: string; home: string; blobs: BlobStore }): Promise<HarnessBundle> {
+  const files: Record<string, BlobRef> = {};
+  for (const [k, v] of Object.entries(bundle.files)) if (!HIDDEN_SKILL.test(k)) files[k] = v;
+  const local = (key: string) => (key.startsWith("~/") ? join(o.home, key.slice(2)) : join(o.dir, key));
+  const keyOf = (abs: string): string | undefined => {
+    for (const [base, prefix] of [[o.dir, ""], [o.home, "~/"]] as const) {
+      const rel = relative(base, abs);
+      if (rel && !rel.startsWith("..") && !isAbsolute(rel)) return prefix + rel.split(sep).join("/");
+    }
+    return undefined;
+  };
+  let frontier = Object.keys(files).filter((k) => IMPORTING.test(k));
+  const read = new Set<string>();
+  for (let hop = 0; hop < IMPORT_HOPS && frontier.length; hop++) {
+    const next: string[] = [];
+    for (const from of frontier) {
+      if (read.has(from)) continue;
+      read.add(from);
+      const abs = local(from);
+      const text = await readFile(abs, "utf8").catch(() => "");
+      for (const p of importPaths(text)) {
+        const target = p.startsWith("~/") || p.startsWith("~\\") ? join(o.home, p.slice(2)) : resolve(dirname(abs), p);
+        const key = keyOf(target);
+        if (!key || HIDDEN_SKILL.test(key)) continue;
+        // Already in the bundle (an include took it): its own imports still count.
+        if (key in files) {
+          if (!read.has(key)) next.push(key);
+          continue;
+        }
+        if (!statSync(target, { throwIfNoEntry: false })?.isFile()) continue;
+        files[key] = await o.blobs.put(await readFile(target));
+        next.push(key);
+      }
+    }
+    frontier = next;
+  }
+  const keys = Object.keys(files).sort();
+  const same = keys.length === Object.keys(bundle.files).length && keys.every((k) => bundle.files[k] === files[k]);
+  if (same) return bundle;
+  const sorted: Record<string, BlobRef> = {};
+  for (const k of keys) sorted[k] = files[k]!;
+  const out = { ...bundle, files: sorted };
+  return { ...out, id: bundleId(out) };
 }
 
 /** coding.sh harness audit: which memory and instruction files sessions loaded, read and wrote. */
@@ -141,6 +214,7 @@ export async function run(c: CommandContext): Promise<number> {
         if (!plugins.length) throw e;
         throw new CliError(e instanceof Error ? e.message : String(e), { reason: "invalid_argument" });
       }
+      if (agent === "claude-code") bundle = await claudeCodeBundle(bundle, { dir, home: userHome(), blobs: ctx.blobs });
     }
     await ctx.index.putBundle(bundle);
     if (out.json) out.data({ outcome: "created", bundle: bundleJson(bundle) });
