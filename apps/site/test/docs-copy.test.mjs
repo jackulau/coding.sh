@@ -118,3 +118,16 @@ test("each shell colour is at least 4.5:1 on the code background", () => {
     assert.ok(ratio >= 4.5, `${cls} (${token}) is ${ratio.toFixed(2)}:1`);
   }
 });
+
+// "Copy page" and "View as Markdown" sit above the title. They stay 28px tall
+// on touch too, so on a phone the row does not push the title down; .hit (a
+// 44px ::after on coarse pointers) keeps the touch target.
+test("the Copy page row stays 28px on touch, with a 44px hit area", distOpts(DIST), () => {
+  needDist(DIST);
+  const tools = read("docs/quickstart").match(/<div class="doc__tools"[\s\S]*?<\/div>/)?.[0] ?? "";
+  const items = [...tools.matchAll(/<(?:button|a)\b[^>]*class="([^"]*)"/g)].map((m) => m[1].split(/\s+/));
+  assert.equal(items.length, 2, "Copy page and View as Markdown");
+  for (const c of items) assert.ok(c.includes("doc__tool") && c.includes("hit"), `${c.join(" ")} has the .hit touch target`);
+  const layout = readFileSync(join(SITE, "src/components/docs/DocsLayout.astro"), "utf8");
+  assert.doesNotMatch(layout, /\(pointer: coarse\)\s*\{\s*\.doc__tool\s*\{[^}]*min-height/, "no taller row on touch");
+});

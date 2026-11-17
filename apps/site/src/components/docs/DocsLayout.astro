@@ -238,8 +238,8 @@ const showOutline = outline.length + (outline[0]?.subs?.length ?? 0) >= 2;
         {
           markdownURL && (
             <div class="doc__tools" data-agent-skip data-pagefind-ignore>
-              <button type="button" class="doc__tool" data-copy-page={markdownURL}>Copy page</button>
-              <a class="doc__tool" href={markdownURL}>View as Markdown</a>
+              <button type="button" class="doc__tool hit" data-copy-page={markdownURL}>Copy page</button>
+              <a class="doc__tool hit" href={markdownURL}>View as Markdown</a>
             </div>
           )
         }
@@ -728,6 +728,8 @@ const showOutline = outline.length + (outline[0]?.subs?.length ?? 0) >= 2;
   }
 
   /* ---------- Copy page / View as Markdown ---------- */
+  /* 28px tall everywhere, so on a phone the row above the title stays short;
+     on touch .hit grows each one to a 44px target without moving anything. */
   .doc__tools {
     display: flex;
     flex-wrap: wrap;
@@ -751,11 +753,6 @@ const showOutline = outline.length + (outline[0]?.subs?.length ?? 0) >= 2;
     cursor: pointer;
     text-decoration: none;
     transition: color var(--hover-out) ease;
-  }
-  @media (pointer: coarse) {
-    .doc__tool {
-      min-height: 2.75rem;
-    }
   }
   @media (hover: hover) and (pointer: fine) {
     .doc__tool:hover {

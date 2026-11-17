@@ -24,6 +24,7 @@ grouped by area, with links to the docs for the details.
 - **Docs.** An API path in "On this page" wraps after a slash or a comma, so entries such as `GET /api/sessions/{id}/events` no longer split in the middle of a word. [REST API](https://coding.sh/docs/api/read)
 - **Docs.** A name in a reference table's first column, such as `CODING_SH_INGEST_KEY`, stays on one line; the table scrolls sideways instead. [SDKs](https://coding.sh/docs/sdk)
 - **Docs.** On Quickstart and Install, a block that shows what a command prints is captioned "output" instead of "shell", so each step reads as the command to run and what to expect. [Quickstart](https://coding.sh/docs/quickstart)
+- **Docs.** On phones the "Copy page" and "View as Markdown" buttons above the title are as short as on a desktop, with the same 44px touch target, so the title sits higher on the first screen. [Quickstart](https://coding.sh/docs/quickstart)
 
 ## [0.1.7] - 2026-11-16
 
