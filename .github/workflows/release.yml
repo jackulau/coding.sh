@@ -75,16 +75,16 @@ jobs:
         options: >-
           --health-cmd "wget -qO- http://127.0.0.1:8123/ping" --health-interval 2s --health-timeout 5s --health-retries 30
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.x
           cache: npm
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
 
@@ -182,13 +182,13 @@ jobs:
         run: |
           "$GITHUB_WORKSPACE/scripts/release/publish-npm.sh" npm --dry-run
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: npm-tarballs
           path: ${{ runner.temp }}/npm/*.tgz
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: python-dist
           path: ${{ runner.temp }}/pypi/*
@@ -205,11 +205,11 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: npm-tarballs
           path: npm
@@ -253,11 +253,11 @@ jobs:
       VERSION: ${{ needs.verify.outputs.version }}
       IMAGE: ghcr.io/${{ github.repository }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.x
           cache: npm
@@ -267,8 +267,7 @@ jobs:
           npm ci --no-audit --no-fund
           npm run build -w coding.sh
 
-      - uses: docker/setup-buildx-action@v4
-
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       # Test the exact build first: docker run with no configuration, an OTLP trace, a Claude Code
       # session through the real hook and `init --remote`, the viewer, and a restart.
       - name: Build and smoke test (linux/amd64)
@@ -276,7 +275,7 @@ jobs:
           docker buildx build --load --build-arg "VERSION=$VERSION" -t coding-sh:smoke .
           node deploy/test/smoke.mjs docker coding-sh:smoke
 
-      - uses: docker/login-action@v4
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -304,11 +303,11 @@ jobs:
     permissions:
       id-token: write   # npm trusted publishing and provenance
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24.x
           registry-url: https://registry.npmjs.org
@@ -321,7 +320,7 @@ jobs:
           fi
           npm --version
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: npm-tarballs
           path: npm
@@ -342,11 +341,11 @@ jobs:
     permissions:
       id-token: write   # PyPI trusted publishing
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: python-dist
           path: dist
 
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           skip-existing: true

@@ -120,6 +120,10 @@ No release job runs on the self-hosted desk runner: npm and PyPI trusted publish
 GitHub-hosted runners, and the workflow only runs for `v*.*.*` tags, which only people with write access can push. The
 `release` environment also accepts deployments from those tags only.
 
+Every action in `release.yml` is pinned to a full commit, with the version in a comment beside
+it, so a moved tag upstream cannot change what a release runs. To update one, replace the
+commit and the comment together.
+
 ## Release checklist (every release)
 
 ```sh
