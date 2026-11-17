@@ -235,6 +235,11 @@ reference introduces, which the instruction never mentions (`_parseCidr`, `src/a
 valid solution that names things differently fails such a test. Each case is listed as a note and
 in `report.coupling`. It does not block validation unless you pass `--strict-coupling`.
 
+Validation fails a task whose reference patch edits, deletes or skips the tests the verifier runs:
+such a patch passes whatever the code does. The error names each file, and the task stays a draft.
+A file the verifier only reads, such as `f.txt` in `grep -q b f.txt`, is the output a fix makes,
+not a test, here and in `eval init`.
+
 `coding.sh eval crosscheck <task> [--experiment <id>] [--max 5]` checks the verifier from the
 other side. A reviewer model reads the instruction and each stored run's diff, with the reference
 shown as one valid answer among many, and decides whether the change is valid. Where it disagrees

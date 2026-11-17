@@ -11,7 +11,7 @@ import { join } from "node:path";
 import type { EvalTask, TamperFlag } from "../core/types.ts";
 import { safeJoin } from "../runner/fsutil.ts";
 import { applyPatch, rmrf, type DiffFile, type SnapshotOps, type WorkdirDiff } from "../runner/git.ts";
-import { detectTamper, tamperOptsFor, type TamperOpts } from "../runner/tamper.ts";
+import { detectTamper, tamperOptsFor, verifierDataPaths, type TamperOpts } from "../runner/tamper.ts";
 import { parsePatch } from "./patch.ts";
 
 /** A patch's files as the runner's diff lists them: path, add / delete / modify, line counts. */
@@ -28,9 +28,17 @@ export function patchDiff(patch: string): WorkdirDiff {
   return { patch, files };
 }
 
-/** Existing tests rewritten, deleted or skipped. New test files, runner config and CI are a task's own business. */
-const testEdits = (diff: WorkdirDiff, opts: TamperOpts): TamperFlag[] =>
-  detectTamper(diff, opts).flags.filter((f) => (f.kind === "edit" || f.kind === "delete" || f.kind === "skip") && (f.why === "verifier" || f.why === "hidden" || f.why === "test-glob"));
+/**
+ * Existing tests rewritten, deleted or skipped. New test files, runner config and CI are a task's
+ * own business, and so is a file the verifier only reads (`grep -q b f.txt`): that is the output
+ * the fix produces, not a test.
+ */
+const testEdits = (diff: WorkdirDiff, opts: TamperOpts): TamperFlag[] => {
+  const data = opts.verifierCommand ? verifierDataPaths(opts.verifierCommand) : new Set<string>();
+  return detectTamper(diff, opts).flags.filter(
+    (f) => (f.kind === "edit" || f.kind === "delete" || f.kind === "skip") && (f.why === "hidden" || f.why === "test-glob" || (f.why === "verifier" && !data.has(f.path))),
+  );
+};
 
 /**
  * The changes `patch` makes to the tests `task`'s verifier runs (empty = none): a file the
