@@ -17,7 +17,7 @@ import { execFile } from "../core/spawn.ts";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { copyFile, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { paths, userHome } from "../core/paths.ts";
 import type { Adapter, AgentRunOutput, FileChange, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../core/types.ts";
 import type { AgentEvent, Usage } from "../schema/index.ts";
@@ -50,6 +50,7 @@ import {
   lineKey,
   mcpInstaller,
 } from "./_shared/index.ts";
+import { removeEmptyDirs } from "./more/_util.ts";
 import { isWrapperLine, normalizeWrapperLine } from "./more/wrapper.ts";
 
 export const OPENCODE_AGENT = "opencode";
@@ -714,7 +715,14 @@ export const opencode: Adapter = {
   },
 
   async uninstall(opts) {
-    return applyChanges([planRemovePlugin(pluginPath(opts, 2)), planRemovePlugin(pluginPath(opts, 1))], { agent: OPENCODE_AGENT, dryRun: opts.dryRun });
+    const changes = await applyChanges([planRemovePlugin(pluginPath(opts, 2)), planRemovePlugin(pluginPath(opts, 1))], { agent: OPENCODE_AGENT, dryRun: opts.dryRun });
+    // Init made plugin(s)/ (and often the config dir) to hold the plugin: drop the dirs it leaves empty,
+    // the stale plugin/ an API upgrade emptied included. Only empty dirs go, never one with a user's file.
+    if (!opts.dryRun && changes.some((c) => c.action === "delete")) {
+      const root = dirname(dirname(pluginPath(opts, 2)));
+      for (const api of [2, 1] as const) removeEmptyDirs(dirname(pluginPath(opts, api)), root);
+    }
+    return changes;
   },
 
   // OpenCode's global opencode.json: { "mcp": { name: { type: "local", command: [...] } } }.
