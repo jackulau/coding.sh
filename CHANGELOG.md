@@ -37,6 +37,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Viewer.** Pressing the pressed Pass or Fail button on a session page, or its key (`p`, `f`), clears the outcome label: it is stored as `skip`, which calibration and evals leave out. Before, a label could be changed but not taken back. [Concepts](https://coding.sh/docs/concepts#judge)
 - **Viewer.** Back from a session, by Esc or the browser's Back, the session list is scrolled where you left it and focus is on the selected row, so `j` and `k` go on from there. Before, the list opened at the top. [Concepts](https://coding.sh/docs/concepts#session)
 - **Viewer.** In the session and event lists, `j` on the last loaded row loads the next page, as Load more does, and selects its first row. Before, it stayed on the last row. [Concepts](https://coding.sh/docs/concepts#session)
 - **Viewer.** A command that fails inside a Codex code-mode cell is one failure stop: the cell that ran it is marked, not counted as a second failure, and the calls a cell runs sit indented under it. A cell that fails on its own is still a failure stop. [Concepts](https://coding.sh/docs/concepts#session)

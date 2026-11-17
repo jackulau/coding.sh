@@ -5556,7 +5556,7 @@ function sessionHeader(s, labels, rel) {
 
   const labelBtn = (value, text, key) => h("button", {
     class: "btn btn-sm btn-label is-" + value, type: "button", "aria-pressed": String(!!outcome && outcome.value === value), "aria-keyshortcuts": key, title: text + " (" + key + ")",
-    onclick: (e) => postLabel(s.id, value, e.currentTarget.closest(".label-group")),
+    onclick: (e) => postLabel(s.id, e.currentTarget.getAttribute("aria-pressed") === "true" ? "skip" : value, e.currentTarget.closest(".label-group")),
   }, text);
 
   // Phones show agent, model, duration and cost; "More" opens the rest, with the outcome and eval
@@ -5619,7 +5619,7 @@ function sessionHeader(s, labels, rel) {
           h("span", { class: "meta outcome-lbl" }, "Outcome"),
           labelBtn("pass", "Pass", "p"),
           labelBtn("fail", "Fail", "f"),
-          h("span", { class: "meta label-by" }, outcome ? "by " + outcome.by + " · " + fmtRel(outcome.ts) : "")),
+          h("span", { class: "meta label-by" }, outcome && outcome.value !== "skip" ? "by " + outcome.by + " · " + fmtRel(outcome.ts) : "")),
         h("div", { class: "make-eval" },
           h("span", { class: "meta" }, "Make eval"),
           cmdBlock(evalCmd, "Copy eval command")))),
@@ -5767,6 +5767,8 @@ function latestLabel(labels, criterion) {
   return best;
 }
 
+// Pressing the pressed button clears the outcome: the store keeps one label per session, criterion
+// and person, so writing "skip" over it takes back the verdict (calibration and evals leave skips out).
 async function postLabel(sessionId, value, group) {
   const btns = group.querySelectorAll("button");
   const before = [...btns].map((b) => b.getAttribute("aria-pressed"));
@@ -5777,8 +5779,8 @@ async function postLabel(sessionId, value, group) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sessionId, criterion: "outcome", value }),
     });
-    $(".label-by", group).textContent = "by " + label.by + " · just now";
-    toast("Labelled " + value);
+    $(".label-by", group).textContent = value === "skip" ? "" : "by " + label.by + " · just now";
+    toast(value === "skip" ? "Outcome label cleared" : "Labelled " + value);
   } catch (e) {
     btns.forEach((b, i) => b.setAttribute("aria-pressed", before[i]));
     toast("Could not save label: " + e.message);

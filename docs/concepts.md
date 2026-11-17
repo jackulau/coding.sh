@@ -180,7 +180,7 @@ A check that scores one output: an exact match, a regex, a JSON schema, your own
 A grader that asks a model. Trust it only after you check it against your own pass or fail labels.
 
 - In the viewer: mark a session Pass (`p`) or Fail (`f`) on its page. That
-  label is stored as a human score.
+  label is stored as a human score. Press the same one again to clear it.
 - In the CLI: `coding.sh judge calibrate` measures how often the judge agrees with human labels. See
   [Judges](https://coding.sh/docs/judges).
 

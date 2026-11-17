@@ -1,6 +1,7 @@
 // Viewer fixes from hands-on QA, seen in headless Chrome: a failed command inside a Codex code-mode
 // cell is one failure stop (the cell is not a second one, and its calls sit nested under it), going
-// back to the list keeps its scroll and focus, and j past the last loaded row loads the next page.
+// back to the list keeps its scroll and focus, j past the last loaded row loads the next page, and a
+// pressed outcome button clears the label.
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
@@ -134,6 +135,28 @@ describe("viewer QA fixes in a browser", { skip: chrome ? false : "no Chrome/Chr
     await pause(100);
     assert.ok(Math.abs((await p.eval("window.scrollY")) - y) < 80);
     assert.equal(await p.eval("document.activeElement === document.querySelector('.list[role=listbox]')"), true);
+    assert.deepEqual(p.errors, []);
+  });
+
+  test("pressing the pressed outcome button clears the label", async () => {
+    const p = await open("#/s/" + CELL);
+    await p.waitFor("document.querySelector('.btn-label.is-pass')", "outcome buttons");
+    const pressed = (): Promise<string> => p.eval("document.querySelector('.btn-label.is-pass').getAttribute('aria-pressed')");
+    const latest = (): Promise<string | null> => p.eval(`fetch('/api/labels?sessionId=${CELL}').then((r) => r.json()).then((j) => j.items.length ? j.items.sort((a, b) => b.ts - a.ts)[0].value : null)`);
+    await p.eval("document.querySelector('.btn-label.is-pass').click()");
+    await p.waitFor("document.querySelector('.btn-label.is-pass').getAttribute('aria-pressed') === 'true' && !document.querySelector('.btn-label.is-pass').disabled", "pass pressed");
+    assert.equal(await latest(), "pass");
+    await p.eval("document.querySelector('.btn-label.is-pass').click()");
+    await p.waitFor("document.querySelector('.btn-label.is-pass').getAttribute('aria-pressed') === 'false' && !document.querySelector('.btn-label.is-pass').disabled", "pass unpressed");
+    assert.equal(await pressed(), "false");
+    assert.equal(await p.eval("document.querySelector('.btn-label.is-fail').getAttribute('aria-pressed')"), "false");
+    assert.equal(await latest(), "skip", "the verdict is taken back");
+    // A reload shows neither pressed.
+    await p.eval("location.reload()");
+    await pause(300);
+    await p.waitFor("document.querySelector('.btn-label.is-pass')", "outcome buttons after reload");
+    assert.equal(await pressed(), "false");
+    assert.equal(await p.eval("document.querySelector('.label-by').textContent"), "");
     assert.deepEqual(p.errors, []);
   });
 });
