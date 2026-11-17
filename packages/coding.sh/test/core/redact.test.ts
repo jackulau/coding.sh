@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -169,9 +169,10 @@ describe("redact: secrets", () => {
     assert.equal(r.string(`${sha} token`), `${sha} token`);
   });
 
-  it("RT-2: env redaction leaves the cwd and other places, and still redacts a key", () => {
+  it("RT-2: env redaction leaves the cwd and other places, and still redacts a key", (t) => {
     const key = ["sk-", "proj-", "Xy7", "Qm2Lp9Rs4Tv8Wn3Kd6"].join("");
     const dir = mkdtempSync(join(tmpdir(), "csh-redact-env-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
     const er = createRedactor({
       redact: ["env"],
       env: { PWD: "/Users/x/proj", OLDPWD: "/Users/x/old-proj", SESSION_MANAGER: "local/host:@/tmp/.ICE-unix/1234", AUTH_CONFIG_DIR: "/etc/auth-config", SSH_AUTH_SOCK: "/private/tmp/launch-abc/Listeners", MY_SECRET_HOME: dir, OPENAI_API_KEY: key },
