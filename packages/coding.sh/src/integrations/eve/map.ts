@@ -19,14 +19,17 @@
 //               the step's reported agent.usage.* (kept out of `usage`: the
 //               chat spans below it already count those tokens).
 //   llm.call  = chat <model> spans, unchanged (usage, latency, ttft, stop reason).
-//   workflow  = Workflow SDK infrastructure spans ("workflow" scope) are dropped.
+//   workflow  = Workflow SDK infrastructure spans ("workflow" scope) are dropped,
+//               and so are the spans of eve's own runtime workflows
+//               (workflow//eve//..., step//eve@...//...), durable shape or not.
+//               A user's own Workflow SDK run keeps its shape (durableShape).
 //
 // Event ids stay deterministic: replaced events keep the generic mapper's slot
 // ids, and new ones use spanEventId(traceId, spanId, slot) with slots 20+.
 import type { AgentEvent } from "../../schema/index.ts";
 import type { Attrs, OtelScope, OtelSpan } from "../../otel/model.ts";
 import { spanEventId } from "../../otel/map.ts";
-import { A, AGENT_CALL_KINDS, bool, isEveSpan, isWorkflowInfraSpan, num, str } from "./attrs.ts";
+import { A, AGENT_CALL_KINDS, bool, isEveRuntimeWorkflowSpan, isEveSpan, isWorkflowInfraSpan, num, str } from "./attrs.ts";
 
 export const EVE_AGENT_ID = "eve";
 
@@ -63,6 +66,31 @@ function durableShape(span: OtelSpan, events: AgentEvent[]): boolean {
   const d = events[0]?.payload.durable;
   if (!isObj(d)) return false;
   return d.orphan === true || d.role === "invocation" || d.role === "orchestrate" || d.role === "step" || d.role === "wait";
+}
+
+/**
+ * Traces that carry eve's own runtime workflows (see isEveRuntimeWorkflowSpan).
+ * The bare `step.execute` inside each step attempt has no attributes at all,
+ * so its trace is what tells it is eve's: each delivery of an eve workflow is
+ * its own trace, and its named spans (workflow.run, step.execute <name>) come
+ * in the same export as the bare one or earlier. Bounded: oldest traces go first.
+ */
+const eveRuntimeTraces = new Set<string>();
+const EVE_RUNTIME_TRACES_MAX = 4096;
+
+function rememberEveRuntimeTrace(traceId: string | undefined): void {
+  if (!traceId || eveRuntimeTraces.has(traceId)) return;
+  eveRuntimeTraces.add(traceId);
+  if (eveRuntimeTraces.size > EVE_RUNTIME_TRACES_MAX) eveRuntimeTraces.delete(eveRuntimeTraces.values().next().value!);
+}
+
+/** A span of eve's runtime workflows: named as eve's, or a bare span in a trace that is. */
+function eveRuntimeSpan(span: OtelSpan): boolean {
+  if (isEveRuntimeWorkflowSpan(span)) {
+    rememberEveRuntimeTrace(span.traceId);
+    return true;
+  }
+  return !!span.traceId && eveRuntimeTraces.has(span.traceId);
 }
 
 function parseJson(v: unknown): unknown {
@@ -104,17 +132,23 @@ function moveContent(from: Record<string, unknown> | undefined, fromKey: string,
 
 /**
  * Enrich the events the OTLP mapper produced for one span with eve semantics.
- * Pure and synchronous; returns a new list (never mutates `events`). Spans
- * that are not eve's are returned unchanged, except Workflow SDK
- * infrastructure spans, which are dropped (`[]`) unless keepWorkflowSpans.
- * Spans that tell the shape of a durable run (start, deliveries, steps,
- * waits, recovery; tagged payload.durable by the mapper) are kept: they join
- * the run's session (workflow.run.id, which is also eve's agent.run.id).
+ * Synchronous; returns a new list (never mutates `events`). Spans that are
+ * not eve's are returned unchanged, except Workflow SDK infrastructure spans,
+ * which are dropped (`[]`) unless keepWorkflowSpans. Spans that tell the
+ * shape of a user's durable run (deliveries, steps, waits, recovery; tagged
+ * payload.durable by the mapper) are kept. Spans of eve's own runtime
+ * workflows are dropped even then: they would fill the eve session with span
+ * rows, stretch it to the last delivery, and add 0-turn sessions for eve's
+ * session timeouts and workflow tool runs. The only state is the set of
+ * traces seen to carry eve's runtime (for the bare step.execute spans).
  *
  * Signature-compatible with MapContext.enrichSpan in src/otel/map.ts.
  */
 export function enrichFromEve(span: OtelSpan, events: AgentEvent[], info: EveEnrichInfo = {}, opts: EveEnrichOptions = {}): AgentEvent[] {
-  if (isWorkflowInfraSpan(span, info.scope)) return opts.keepWorkflowSpans || durableShape(span, events) ? events : [];
+  if (isWorkflowInfraSpan(span, info.scope)) {
+    if (opts.keepWorkflowSpans) return events;
+    return !eveRuntimeSpan(span) && durableShape(span, events) ? events : [];
+  }
   if (!isEveSpan(span, info.scope)) return events;
 
   const a = span.attributes;

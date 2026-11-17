@@ -119,3 +119,23 @@ export function isWorkflowInfraSpan(span: OtelSpan, scope?: Pick<OtelScope, "nam
   if (scope) return scope.name === WORKFLOW_SCOPE;
   return span.name.startsWith("workflow.");
 }
+
+// eve's runtime is itself a set of Workflow SDK workflows and steps, named by
+// module: workflow//eve//workflowEntry, workflow//eve//sessionTimeoutWorkflow,
+// step//eve@1.0.0-rc.6//turnStep. A user's own workflows are named by file
+// (workflow//./workflows/research//researchAgent).
+const EVE_WORKFLOW = /^workflow\/\/eve\/\//;
+const EVE_STEP = /^step\/\/eve(?:@[^/]*)?\/\//;
+
+/**
+ * A Workflow SDK span of eve's own runtime: its workflowEntry (one per eve
+ * session), session timeouts, workflow tool runs and their steps. Its agent
+ * spans already tell the session; these are plumbing.
+ */
+export function isEveRuntimeWorkflowSpan(span: OtelSpan): boolean {
+  const a = span.attributes;
+  const wf = str(a, "workflow.name");
+  if (wf !== undefined && EVE_WORKFLOW.test(wf)) return true;
+  const step = str(a, "step.name");
+  return step !== undefined && EVE_STEP.test(step);
+}

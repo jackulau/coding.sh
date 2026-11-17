@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { sha256Hex } from "../../../src/core/ids.ts";
 import { buildSession } from "../../../src/core/sessions.ts";
 import { decodeTraceJson } from "../../../src/otel/json.ts";
 import { mapTraces, type MapContext, type SpanEnricher, TraceSessionMap } from "../../../src/otel/map.ts";
+import { defaultEnricher } from "../../../src/otel/receiver.ts";
 import type { OtelSpan, ResourceSpans } from "../../../src/otel/model.ts";
 import type { AgentEvent } from "../../../src/schema/index.ts";
 import { enrichFromEve, EVE_AGENT_ID, eveSessionId, isEveSpan, isWorkflowInfraSpan } from "../../../src/integrations/eve/index.ts";
-import { bySession, CHILD_A0, CHILD_A1, ofKind, OTLP_EXPORT, readJson, ROOT_A, ROOT_B } from "./helpers.ts";
+import { bySession, CHILD_A0, CHILD_A1, FIXTURES, ofKind, OTLP_EXPORT, readJson, ROOT_A, ROOT_B } from "./helpers.ts";
 
 // The hook contract src/otel exposes: enrichFromEve plugs in as-is.
 const hook: SpanEnricher = enrichFromEve;
@@ -181,5 +184,57 @@ describe("enrichFromEve over a real eve OTLP export", async () => {
       events.map((e) => e.id),
     );
     assert.equal(new Set(events.map((e) => e.id)).size, events.length);
+  });
+});
+
+// eve runs on the Workflow SDK, and its runtime exports its own workflows
+// (workflow//eve//workflowEntry, sessionTimeoutWorkflow, workflowToolRunWorkflow)
+// and steps (step//eve@<version>//turnStep, ...) under the "workflow" scope.
+// workflow-runtime.json holds those spans from a real one-message `eve dev`
+// run (eve 1.0.0-rc.6, 5 workflow runs): the root session's workflowEntry, a
+// forecaster child's, two session timeouts and a workflow tool run. They are
+// eve's plumbing, not the user's durable workflow.
+describe("eve's own Workflow runtime spans", () => {
+  const RUNTIME = join(FIXTURES, "workflow-runtime.json");
+  const VERCEL_WORKFLOW = join(import.meta.dirname, "..", "..", "fixtures", "otel", "durable", "vercel-workflow.jsonl");
+  const mapBodies = async (bodies: unknown[], enrich: SpanEnricher | null) => {
+    const c = ctx(enrich);
+    const out: AgentEvent[] = [];
+    for (const body of bodies) out.push(...(await mapTraces(decodeTraceJson(body), c)).events);
+    return out;
+  };
+
+  it("are dropped: no span rows, no 0-turn sessions, no late span stretching the session", async () => {
+    const bodies = readJson(RUNTIME) as unknown[];
+    const plain = await mapBodies(bodies, null);
+    assert.equal(new Set(plain.map((e) => e.sessionId)).size, 5, "the fixture spans 5 workflow runs");
+    assert.deepEqual(await mapBodies(bodies, hook), []);
+    assert.deepEqual(await mapBodies(bodies, defaultEnricher), []);
+    // keepWorkflowSpans still keeps every one of them.
+    const kept = await mapBodies(bodies, (s, e, i) => enrichFromEve(s, e, i, { keepWorkflowSpans: true }));
+    assert.equal(kept.length, plain.length);
+  });
+
+  it("joined to the eve session leave its duration and phases alone", async () => {
+    // The real run's workflowEntry spans keyed to ROOT_A: 9 of them come before the
+    // first invoke_agent and one more lands 31 s after the reply.
+    const runtime = JSON.stringify(readJson(RUNTIME)).replaceAll("wrun_01M7NJJ50AHSP0XESEYW6RT06W", ROOT_A);
+    const bodies = [...(readJson(OTLP_EXPORT) as unknown[]), ...(JSON.parse(runtime) as unknown[])];
+    const before = buildSession((await mapBodies(readJson(OTLP_EXPORT) as unknown[], hook)).filter((e) => e.sessionId === ROOT_A));
+    const events = (await mapBodies(bodies, hook)).filter((e) => e.sessionId === ROOT_A);
+    assert.equal(events.filter((e) => e.kind === "span").length, 0);
+    const s = buildSession(events);
+    assert.equal(s.endedAt, before.endedAt);
+    assert.equal(s.startedAt, before.startedAt);
+    assert.deepEqual(s.stats.phases, before.stats.phases);
+  });
+
+  it("are told apart from a user's Vercel Workflow, whose run shape stays", async () => {
+    const bodies = readFileSync(VERCEL_WORKFLOW, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as unknown);
+    const durable = (evs: AgentEvent[]) => evs.filter((e) => e.payload.durable !== undefined || e.payload.scope === "workflow").length;
+    const enriched = await mapBodies(bodies, hook);
+    assert.ok(enriched.some((e) => (e.payload.durable as { role?: string } | undefined)?.role === "step"));
+    assert.ok(durable(enriched) > 0);
+    assert.ok(enriched.some((e) => e.payload.name === "step.execute"), "the bare step.execute that parents a step's model calls stays");
   });
 });

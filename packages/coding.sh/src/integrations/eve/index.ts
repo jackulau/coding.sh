@@ -2,7 +2,7 @@
 // a read-only importer for eve's local traces, a session-stream mapper,
 // an experiment task that drives a local eve agent over HTTP, and an eval
 // reporter that stores `eve eval` runs as datasets and experiments.
-export { A as EVE_ATTRS, EVE_SCOPE, EVE_TRACE_SCHEMA_VERSION, isEveSpan, isWorkflowInfraSpan, WORKFLOW_SCOPE } from "./attrs.ts";
+export { A as EVE_ATTRS, EVE_SCOPE, EVE_TRACE_SCHEMA_VERSION, isEveRuntimeWorkflowSpan, isEveSpan, isWorkflowInfraSpan, WORKFLOW_SCOPE } from "./attrs.ts";
 export { enrichFromEve, EVE_AGENT_ID, EVE_SLOTS, eveSessionId, type EveEnrichInfo, type EveEnrichOptions } from "./map.ts";
 export { eveJsonToResourceSpans, importEveRuns, resolveEveTraceStore, type ImportEveOptions } from "./import.ts";
 export { EveStreamMapper, isTransportRecord, mapEveStream, parseEveStream, type EveFact, type EveStreamLine, type EveStreamOptions } from "./stream.ts";

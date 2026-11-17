@@ -37,6 +37,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **OpenTelemetry.** Spans of eve's own Workflow runtime, such as `workflow//eve//workflowEntry` and its steps, are dropped like the other `workflow` scope spans. Before, they added span rows to the eve session, stretched it to the last delivery, and added 0-turn sessions for session timeouts and workflow tool runs. [eve](https://github.com/jackulau/coding.sh/blob/main/docs/integrations/eve.md)
 - **Install.** On Windows, `install.sh` and `init` tell you to type `codingsh` in PowerShell and cmd, where `coding.sh` opens npm's sh script instead of running it. Run from Git Bash, `init` keeps `coding.sh`. The install guide says the same. [Install](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md)
 - **Install.** `install.sh` warns when another `coding.sh` comes first on PATH, such as an older global install, and names its version, its path and the folder to put ahead of it. Before, `coding.sh` went on running the other one without a word. [Install](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md)
 - **Tool evals.** A CLI target whose binary name has a dot, such as `coding.sh`, runs and records through its tap. The tap is now a sh launcher next to a `.<bin>.tap.mjs` module; before, node refused the name with `ERR_UNKNOWN_FILE_EXTENSION`. [Tool evals](https://github.com/jackulau/coding.sh/blob/main/docs/TOOL-EVALS.md)
