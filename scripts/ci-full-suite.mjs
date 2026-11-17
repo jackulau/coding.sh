@@ -2,9 +2,8 @@
 // Reads NEEDS, the workflow's `toJSON(needs)`: {"<job>": {"result": "success" | "failure" |
 // "cancelled" | "skipped", ...}}. A skipped job fails it: GitHub counts a skipped job as passed
 // for a required check, and the full suite skips nothing. MAY_SKIP names the jobs, separated by
-// spaces or commas, that may also end skipped: ci.yml sets it to the Site perf job off a pull
-// request (a push to main, which site-perf.yml measures itself when the push touches the site,
-// and a manual run). Any other result still fails those jobs.
+// spaces or commas, that may also end skipped: ci.yml sets it to the Site perf job in a manual
+// run, which has no pull request to compare with. Any other result still fails those jobs.
 //
 //   NEEDS='{"test":{"result":"success"}}' node scripts/ci-full-suite.mjs
 import { pathToFileURL } from "node:url";

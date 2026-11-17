@@ -80,8 +80,9 @@ Check it worked: `npm view coding.sh version`, `npm view @codingdotsh/sdk versio
 ## How a release flows
 
 1. You push a tag `vX.Y.Z` that matches `packages/coding.sh/package.json`.
-2. `.github/workflows/release.yml`, job **verify** (GitHub-hosted): checks that the tag matches
-   the version and that `CHANGELOG.md` has a `## [X.Y.Z]` section, typechecks and tests every
+2. `.github/workflows/release.yml`, job **verify** (GitHub-hosted): checks that the tag points
+   at a commit that is on `main` (a tag on any other commit fails here, before anything is
+   published), that the tag matches the version and that `CHANGELOG.md` has a `## [X.Y.Z]` section, typechecks and tests every
    package (store-postgres and store-clickhouse against real servers), packs the five npm tarballs, builds
    the Python sdist and wheel, runs `scripts/release/smoke.sh` on those exact files, and dry-runs the
    npm publish with `scripts/release/publish-npm.sh`, the same script publish-npm runs.
@@ -118,6 +119,10 @@ produces. `install.sh` and `coding.sh update` depend on that name.
 No release job runs on the self-hosted desk runner: npm and PyPI trusted publishing only accept
 GitHub-hosted runners, and the workflow only runs for `v*.*.*` tags, which only people with write access can push. The
 `release` environment also accepts deployments from those tags only.
+
+Every action in `release.yml` is pinned to a full commit, with the version in a comment beside
+it, so a moved tag upstream cannot change what a release runs. To update one, replace the
+commit and the comment together.
 
 ## Release checklist (every release)
 

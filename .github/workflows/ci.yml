@@ -18,16 +18,22 @@ concurrency:
 # The full suite is every job below. It runs on a pull request that carries the `ready` label.
 # Only then does a check named "full suite" exist, and main requires it (CONTRIBUTING.md, "Pull
 # requests"), so nothing merges before every job has passed on the pull request merged with an
-# up-to-date main. A push to main and a manual run run every job but Site perf, and their closing
-# check has another name ("full suite without site perf"). Without the label a pull request
-# gets the quick jobs only: the Linux tests on Node 24, the build, the gate, the stores, the
-# Python SDK, the Node floor, the release smoke test and the GitHub Action, minus the ones
-# scripts/ci-changes.mjs can prove it does not need. Its Linux tests run the test files its diff
-# can reach, or all of them when a changed path has no rule (packages/coding.sh/scripts/
-# test-select.ts). Windows, Node 22, the real agent captures, the container image and cli-suite
-# run in the full suite only, and the full suite always runs every test file.
+# up-to-date main. A manual run runs every job but Site perf, and its closing check has another
+# name ("full suite without site perf"). Without the label a pull request gets the quick jobs
+# only: the Linux tests on Node 24, the build, the gate, the stores, the Python SDK, the Node
+# floor, the release smoke test and the GitHub Action, minus the ones scripts/ci-changes.mjs can
+# prove it does not need. Its Linux tests run the test files its diff can reach, or all of them
+# when a changed path has no rule (packages/coding.sh/scripts/test-select.ts). Windows, Node 22,
+# the container image and cli-suite run in the full suite only, and the full suite always runs
+# every test file.
+# A push to main is a merge the full suite has already passed on, tree for tree: main requires
+# the check on a branch that is up to date. So the push runs the quick jobs, with every test
+# file and no job skipped, and the real agent captures. The captures install agents from npm,
+# GitHub and PyPI, the part of CI that can change with no commit here, and their Windows leg
+# saves the Windows npm and uv caches: a pull request can restore main's caches and its own,
+# never another pull request's. A push has no closing check: nothing reads one.
 env:
-  FULL: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
+  FULL: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready') }}
 
 jobs:
   # A pull request that only touches docs or the site (scripts/ci-changes.mjs) skips the jobs
@@ -59,8 +65,8 @@ jobs:
 
   # The test suite runs on Linux and Windows in shards of about equal time
   # (scripts/test-shards.ts), so the checks that need one run only, not one per OS and Node, live
-  # in the build job below. A pull request runs Linux on Node 24. The full suite (a push to main,
-  # or the `ready` label) runs both Nodes on both. No job runs on macOS.
+  # in the build job below. A pull request and a push to main run Linux on Node 24. The full
+  # suite (the `ready` label, or a manual run) runs both Nodes on both. No job runs on macOS.
   # Everything here is GitHub-hosted: free for this public repo, and it leaves the desk runners
   # to deploys and Site perf.
   test:
@@ -74,7 +80,7 @@ jobs:
         # default). The runtime-floor job runs the packed CLI on the engines floor.
         # A pull request runs Node 24; the full suite adds Node 22. The Node 24 legs launch the
         # built CLI and the Node 22 legs launch it from source (the build step below).
-        node: ${{ fromJSON((github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready')) && '["24.x"]' || '["22.x", "24.x"]') }}
+        node: ${{ fromJSON((github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready')) && '["22.x", "24.x"]' || '["24.x"]') }}
         shard: [1, 2, 3]
     env:
       # The viewer UI tests drive headless Chrome and skip without one. GitHub's Linux image ships
@@ -114,7 +120,10 @@ jobs:
       # A fresh runner's first Chrome start waits on a cold disk and can take longer than the 20 s a
       # viewer test gives a start. This step takes that start under a 60 s limit of its own and
       # prints its time, then starts Chrome once more under the tests' own limits
-      # (scripts/warm-chrome.ts). No Chrome fails here.
+      # (scripts/warm-chrome.ts). No Chrome fails here. The runner's first viewer page is cold as
+      # well: on Windows it took a median of 1.6 s, and 5-37 s while Windows was reading the disk
+      # for itself, against the 5 s a test gives a page. So the step also loads the viewer's list and
+      # Explore once, at the tests' page size, under the same 60 s.
       - name: Start Chrome
         working-directory: packages/coding.sh
         timeout-minutes: 3
@@ -123,14 +132,15 @@ jobs:
       # The quick run of a pull request (no `ready` label) runs the test files its diff can reach
       # (scripts/test-select.ts): TEST_SELECT names the commit to diff against, the base the pull
       # request is merged with. A path without a rule runs every test file, and so does any error.
-      # The full suite and a push leave TEST_SELECT empty and never select. Each leg prints what it
-      # runs and why. A narrowed run writes no run times, so the upload below finds no file.
+      # The full suite and a push leave TEST_SELECT empty and never select: FULL is 'false' on a
+      # push too, so the event is read here as well. Each leg prints what it runs and why. A
+      # narrowed run writes no run times, so the upload below finds no file.
       - name: Test
         working-directory: packages/coding.sh
         env:
           SHARD: ${{ matrix.shard }}/3
           TEST_DURATIONS_OUT: ${{ runner.temp }}/test-durations.json
-          TEST_SELECT: ${{ env.FULL == 'false' && 'HEAD^1' || '' }}
+          TEST_SELECT: ${{ github.event_name == 'pull_request' && env.FULL == 'false' && 'HEAD^1' || '' }}
         # A file that fails is run again alone; one that then passes is a warning, not a failure.
         run: node scripts/test-ci.mjs
 
@@ -491,7 +501,7 @@ jobs:
 
   image:
     name: container image / self-host smoke
-    if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready') }}
     # GitHub-hosted: it builds and runs pull-request code in Docker. Nothing is pushed; the
     # release workflow publishes the image on version tags.
     runs-on: ubuntu-latest
@@ -546,7 +556,7 @@ jobs:
 
   windows:
     name: node ${{ matrix.node }} / windows-latest (${{ matrix.shard }}/4)
-    if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready') }}
     runs-on: windows-latest
     timeout-minutes: 20
     strategy:
@@ -561,6 +571,18 @@ jobs:
         # bash (Git for Windows) keeps the quoted test glob and /dev/null the same as on Linux.
         shell: bash
     steps:
+      # About 11 minutes after a hosted Windows runner boots, its Storage Service reads the disk at
+      # 25-47 MB/s for 30 s or more, and the Volume Shadow Copy service starts. A viewer page that
+      # first loaded during that read took 5-37 s, against the 5 s a test gives a page. The tests
+      # do not use the service, so it is stopped before anything else, and disabled so that nothing
+      # starts it again. The step fails if the service cannot be stopped.
+      - name: Stop the Storage Service
+        shell: pwsh
+        run: |
+          Stop-Service -Name StorSvc -Force
+          Set-Service -Name StorSvc -StartupType Disabled
+          Get-Service -Name StorSvc | ForEach-Object { "Storage Service: $($_.Status), start type $($_.StartType)" }
+
       # .gitattributes keeps LF in the checkout, whatever core.autocrlf says.
       - uses: actions/checkout@v5
 
@@ -577,8 +599,8 @@ jobs:
       - name: Install
         run: npm ci
 
-      # As on Linux: the runner's first Chrome start, outside the tests. GitHub's Windows image
-      # ships Chrome, and the step fails if it is gone.
+      # As on Linux: the runner's first Chrome start and first viewer pages, outside the tests.
+      # GitHub's Windows image ships Chrome, and the step fails if it is gone.
       - name: Start Chrome
         working-directory: packages/coding.sh
         timeout-minutes: 3
@@ -635,6 +657,7 @@ jobs:
           grep 'hook.mjs\\" claude-code' "$HOME/.claude/settings.json"
           coding.sh doctor --agent claude-code
 
+  # The one slow job a push to main runs too (the comment at the top says why).
   real-capture:
     name: real capture / ${{ matrix.os }}${{ matrix.os == 'ubuntu-latest' && format(' ({0}/2)', matrix.part) || '' }}
     if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
@@ -763,7 +786,7 @@ jobs:
 
   cli-suite:
     name: cli-suite (dev tasks, ${{ matrix.part }}/2)
-    if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready') }}
     # The CLI effectiveness suite's own health, on the committed dev tasks only: held-out tasks
     # live outside the repo, so this never passes --split all or heldout. It needs no API key and
     # starts no agent. Always GitHub-hosted. Every task builds its own fixture home twice, which
@@ -826,12 +849,13 @@ jobs:
   # the event, not another job's output: with the label this job always runs, and it fails
   # unless every other job ended in success (a skipped or cancelled job fails it). And it is
   # `always()`, not `!cancelled()`: a cancelled run ends with this check failed, never skipped.
-  # A push or a manual run does not measure Site perf here (MAY_SKIP below), so it reports under
-  # another name: a manual run on a pull request's branch cannot stand in for the required check.
+  # A manual run does not measure Site perf here (MAY_SKIP below), so it reports under another
+  # name: a manual run on a pull request's branch cannot stand in for the required check. A push
+  # to main does not run this job: it runs the quick jobs and the real captures, not the suite.
   full-suite:
-    name: ${{ github.event_name != 'pull_request' && 'full suite without site perf' || contains(github.event.pull_request.labels.*.name, 'ready') && 'full suite' || 'full suite (not run, add the ready label)' }}
+    name: ${{ github.event_name == 'workflow_dispatch' && 'full suite without site perf' || contains(github.event.pull_request.labels.*.name, 'ready') && 'full suite' || 'full suite (not run, add the ready label)' }}
     needs: [changes, test, build, gate-static, store-postgres, python-sdk, runtime-floor, release-smoke, action, store-clickhouse, image, windows, real-capture, cli-suite, site-perf]
-    if: ${{ always() && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready')) }}
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -840,7 +864,7 @@ jobs:
       - name: Every job passed
         env:
           NEEDS: ${{ toJSON(needs) }}
-          # The one job that may end skipped, and only off a pull request: site-perf.yml measures
-          # a push to main itself. This reads the event, not a job's output.
-          MAY_SKIP: ${{ github.event_name != 'pull_request' && 'site-perf' || '' }}
+          # The one job that may end skipped, and only in a manual run, which has no pull request
+          # to compare with. This reads the event, not a job's output.
+          MAY_SKIP: ${{ github.event_name == 'workflow_dispatch' && 'site-perf' || '' }}
         run: node scripts/ci-full-suite.mjs

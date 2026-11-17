@@ -170,11 +170,20 @@ tests run with `npm run lint:test`.
   request gets Site perf only when it touches the site's measured paths. The timing budgets were
   set on the desk and are checked there after the merge, when the push to `main` touches those
   paths.
+- The push to `main` that a merge makes does not run the full suite again: the merge commit
+  holds the files the check passed on. It runs the quick jobs, with every test file and no job
+  skipped, and the real agent captures, whose Windows job saves the caches the next pull
+  request's Windows jobs restore. A manual run of the workflow runs every job but Site perf.
 - Timing tests (hook latency, help startup) assume an idle machine. If one fails on a loaded
   machine, rerun it alone before you treat it as a regression.
 - The viewer UI tests drive headless Chrome and skip when none is installed. In CI a missing
   Chrome is a failure: each test job starts Chrome once before its tests
   (`packages/coding.sh/scripts/warm-chrome.ts`), because a fresh runner's first start can take
-  longer than the 20 s a test gives it. That first start has 60 s; past it the job fails.
+  longer than the 20 s a test gives it. That first start has 60 s; past it the job fails. The
+  same step loads the viewer's list and Explore once, at the size the tests give a page, because
+  the first viewer page on a runner does work no later page does (it reads Chrome's number and
+  date data from disk, for one) and can take longer than the 5 s a test gives a page. A page
+  load that runs out of time says how long `Page.navigate` took, how long the page took to
+  answer, and the state it was in.
 
 By contributing you agree that your contributions are licensed under the MIT license.

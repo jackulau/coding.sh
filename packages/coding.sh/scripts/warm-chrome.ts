@@ -8,13 +8,26 @@
 // the way a test runs them, under the tests' limits: if that fails, Chrome is not ready and the job
 // stops before the tests. No Chrome is an error here, never a skip.
 //
+// The first page of the viewer on a machine is cold too, and the page above does not warm it. The
+// viewer's script formats numbers and dates, and Chrome reads its ICU data (icudtl.dat, 10.8 MB)
+// from disk on the first use: about 1 s on a Windows runner. The first page at the size the tests
+// give a page (1280x900) costs more again. On Windows runners the first viewer page of the tests
+// took a median of 1.6 s with neither warm, 1.0 s after a warm-up that loaded these pages at
+// Chrome's default size, and 0.35 s after this one. While Windows was reading the disk for itself
+// that page took 5-37 s with neither warm, against the 5 s a test gives a page, and up to 4.4 s
+// after this warm-up. So the viewer's list and Explore load here once, as a test loads them, with
+// the first start's limit.
+//
 //   node scripts/warm-chrome.ts
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { chromeArgs, findChrome, launchBrowser } from "../test/viewer/browser.ts";
+import { MemoryIndexStore } from "../src/store/memory.ts";
+import { startViewer } from "../src/viewer/server.ts";
+import { chromeArgs, findChrome, launchBrowser, type Browser } from "../test/viewer/browser.ts";
+import { FakeBlobs, metricFixtures } from "../test/viewer/fakes.ts";
 
 /** A page with markup and a script, so the first start also brings up a renderer and V8. */
 const PAGE = "data:text/html,<title>cold</title><p>warm</p><script>document.title='warm'</script>";
@@ -96,8 +109,45 @@ export function firstStart(chrome: string, limitMs = FIRST_START_LIMIT_MS): Prom
   });
 }
 
-/** One start and one page load through the tests' own launcher, under its limits. */
-async function testStart(chrome: string): Promise<{ startMs: number; pageMs: number }> {
+/** The viewer pages loaded here, and what each shows when it is ready. */
+const VIEWER_PAGES = [
+  { hash: "", ready: "document.querySelector('[role=listbox]')", what: "the viewer's list" },
+  { hash: "#/explore", ready: "document.querySelector('.mx-body > *')", what: "the viewer's Explore page" },
+];
+
+/**
+ * Loads the viewer's list and Explore over the sessions the viewer tests use, each in a page of
+ * its own at the tests' size, as a test does, and returns the time each took. Both share one
+ * limit: the first page is the machine's first, and it waits on the disk as the first start does.
+ */
+export async function viewerPages(browser: Browser, limitMs = FIRST_START_LIMIT_MS): Promise<number[]> {
+  const index = new MemoryIndexStore();
+  const DAY = 86_400_000;
+  // Ten days ending yesterday, inside the ranges both pages show.
+  for (const s of metricFixtures(Math.floor(Date.now() / DAY) * DAY - 11 * DAY)) await index.upsertSession(s);
+  const viewer = await startViewer({ index, blobs: new FakeBlobs(), port: 0, updateStatus: async () => ({ disabled: "test" }) as any });
+  const end = performance.now() + limitMs;
+  const left = () => Math.max(1, end - performance.now());
+  try {
+    const times: number[] = [];
+    for (const { hash, ready, what } of VIEWER_PAGES) {
+      const page = await browser.newPage();
+      // A viewer test sets a page's size before it loads it: 1280x900, in all but one file.
+      await page.viewport(1280, 900);
+      const t0 = performance.now();
+      await page.goto(viewer.url + hash, left());
+      await page.waitFor(ready, what, left());
+      times.push(performance.now() - t0);
+      await page.close();
+    }
+    return times;
+  } finally {
+    await viewer.close();
+  }
+}
+
+/** One start and one page load through the tests' own launcher, under its limits; then the viewer's pages. */
+async function testStart(chrome: string): Promise<{ startMs: number; pageMs: number; viewerMs: number[] }> {
   const t0 = performance.now();
   const browser = await launchBrowser(chrome);
   try {
@@ -107,7 +157,7 @@ async function testStart(chrome: string): Promise<{ startMs: number; pageMs: num
     await page.goto(PAGE);
     const pageMs = performance.now() - t1;
     await page.close();
-    return { startMs, pageMs };
+    return { startMs, pageMs, viewerMs: await viewerPages(browser) };
   } finally {
     await browser.close();
   }
@@ -120,6 +170,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exit(1);
   }
   const first = await firstStart(chrome);
-  const { startMs, pageMs } = await testStart(chrome);
-  console.log(`warm-chrome: first start ${Math.round(first.ms)} ms with ${first.stderrBytes} bytes on stderr, then a start in ${Math.round(startMs)} ms and a page in ${Math.round(pageMs)} ms (${chrome})`);
+  const { startMs, pageMs, viewerMs } = await testStart(chrome);
+  const [listMs, exploreMs] = viewerMs.map(Math.round);
+  console.log(`warm-chrome: first start ${Math.round(first.ms)} ms with ${first.stderrBytes} bytes on stderr, then a start in ${Math.round(startMs)} ms and a page in ${Math.round(pageMs)} ms, then the viewer's list in ${listMs} ms and Explore in ${exploreMs} ms (${chrome})`);
 }

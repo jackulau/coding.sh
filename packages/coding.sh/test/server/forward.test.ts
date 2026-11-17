@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import type { AddressInfo } from "node:net";
+import { createServer as createTcpServer, type AddressInfo, type Server as TcpServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -26,7 +26,7 @@ import { CLI } from "../_cli.ts";
 type J = any;
 
 const dirs: string[] = [];
-const servers: Server[] = [];
+const servers: TcpServer[] = [];
 const handles: ServeHandle[] = [];
 after(async () => {
   for (const h of handles) await h.shutdown().catch(() => {});
@@ -386,10 +386,16 @@ describe("serve forward: failures never touch ingest", () => {
   });
 
   it("a collector that is down never slows ingest, and the buffer drops the oldest past max_buffer_spans", async () => {
-    // A port nothing listens on.
-    const dead = await stub();
-    const deadUrl = dead.url;
-    await new Promise<void>((r) => servers.pop()!.close(() => r()));
+    // A collector that drops every connection at once: to the forwarder that is a failed request,
+    // the same as a refused one. The port stays ours for the whole test. A port that was opened and
+    // closed to find a free one can go to another test file's server, which answers 200.
+    const down = createTcpServer((sock) => {
+      sock.on("error", () => undefined);
+      sock.destroy();
+    });
+    servers.push(down);
+    await new Promise<void>((r) => down.listen(0, "127.0.0.1", r));
+    const deadUrl = `http://127.0.0.1:${(down.address() as AddressInfo).port}`;
     const { h } = await serve(tmpEnv({ CODING_SH_FORWARD_URL: deadUrl, CODING_SH_FORWARD_MAX_BUFFER_SPANS: "3" }), { drainMs: 200 });
     const times: number[] = [];
     for (let i = 0; i < 6; i++) {
@@ -398,8 +404,8 @@ describe("serve forward: failures never touch ingest", () => {
       times.push(r.ms);
     }
     assert.ok(Math.max(...times) < 1000, `ingest latency ${times.map((t) => t.toFixed(0)).join(",")} ms`);
-    // A refused connection takes about 2 s to fail on Windows, so the first attempt may still be under way:
-    // the gauge counts its spans too, and the oldest are dropped once they are back in the buffer.
+    // The first attempt may still be under way: the gauge counts its spans too, and the oldest are
+    // dropped once they are back in the buffer.
     const metricsText = () => fetch(`${h.url}/metrics`).then((x) => x.text());
     let m = await metricsText();
     for (const deadline = Date.now() + 15_000; !m.includes('coding_sh_forward_spans_total{result="dropped"} 3') && Date.now() < deadline; m = await metricsText()) await new Promise((r) => setTimeout(r, 50));
