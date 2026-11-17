@@ -237,9 +237,9 @@ jobs:
 
       # The hook budget: a slow hook slows every agent. A shared runner measures main's own build
       # a few percent over the design budget (docs/design/dogfood.md), so the step fails on more
-      # than 20% over it. One rerun absorbs a noisy runner.
+      # than 20% over it. It runs once: a miss fails the step.
       - name: Hook budget
-        run: node scripts/dogfood/bench.mjs hook --check --tolerance 20 || node scripts/dogfood/bench.mjs hook --check --tolerance 20
+        run: node scripts/dogfood/bench.mjs hook --check --tolerance 20
 
   gate-static:
     name: gate (static checks)
