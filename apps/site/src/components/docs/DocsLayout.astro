@@ -7,7 +7,7 @@
 // command, /docs/cli/<name>) passes `page` and `parent`, and its own prev/next:
 // the sidebar and the breadcrumbs then point at the parent. A nav.ts sub page
 // (`children`) gets the same from nav.ts. At 1280px and wider an "On this
-// page" rail lists the page's h2s, and a Tabs block as its tab labels.
+// page" rail lists the page's h2s, each with its h3s, and a Tabs block as its tab labels.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import Layout from "../../layouts/Layout.astro";
@@ -72,9 +72,10 @@ const faq = [...questions.matchAll(/<h3 [^>]*>([\s\S]*?)<\/h3>([\s\S]*?)(?=<h3[ 
   .filter((f) => f.q.trim().endsWith("?</a>") || f.q.trim().endsWith("?"));
 const faqSchemas = faq.length ? [faqSchema(faq)] : [];
 
-// "On this page": the h2s outside tab panels, in order, and each Tabs block
-// as its tab labels, each followed by its panel's h3 steps (Tabs.astro writes
-// them to data-toc). A step shows only while its tab is open.
+// "On this page": the h2s outside tab panels, in order, each with a nested list
+// of its h3s, and each Tabs block as its tab labels, each followed by its
+// panel's h3 steps (Tabs.astro writes them to data-toc). A step shows only
+// while its tab is open; an h2's h3s show only while that h2 is current (CSS).
 // Astro writes `"` in an attribute as &#34; and the Markdown renderer as &quot;: decode both.
 const NAMED: Record<string, string> = { quot: '"', apos: "'", lt: "<", gt: ">", amp: "&" };
 const unesc = (s: string) =>
@@ -82,18 +83,28 @@ const unesc = (s: string) =>
     d ? String.fromCodePoint(Number(d)) : h ? String.fromCodePoint(parseInt(h, 16)) : (NAMED[n!.toLowerCase()] ?? m),
   );
 const plain = (s: string) => unesc(s.replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim();
-const outline: { id: string; label: string; tab?: boolean; inTab?: string; closed?: boolean }[] = [];
-for (const m of body.matchAll(/<h2 id="([^"]+)"([^>]*)>([\s\S]*?)<\/h2>|<div class="tabs" data-tabs="[^"]*" data-toc="([^"]*)"/g)) {
-  if (m[4] !== undefined) {
-    const tabs = JSON.parse(unesc(m[4])) as { id: string; label: string; steps?: { id: string; label: string }[] }[];
+type Entry = { id: string; label: string; tab?: boolean; inTab?: string; closed?: boolean; subs?: Entry[] };
+const outline: Entry[] = [];
+// Ids of the tab steps, so the same h3s are not listed again under an h2.
+const steps = new Set<string>();
+let h2: Entry | undefined;
+for (const m of body.matchAll(/<h([23]) id="([^"]+)"([^>]*)>([\s\S]*?)<\/h\1>|<div class="tabs" data-tabs="[^"]*" data-toc="([^"]*)"/g)) {
+  if (m[5] !== undefined) {
+    const tabs = JSON.parse(unesc(m[5])) as { id: string; label: string; steps?: { id: string; label: string }[] }[];
+    h2 = undefined;
     for (const t of tabs) {
       outline.push({ id: t.id, label: t.label, tab: true });
       // The first tab opens by default, so the others' steps start hidden.
-      for (const st of t.steps ?? []) outline.push({ id: st.id, label: plain(st.label), inTab: t.id, closed: t !== tabs[0] });
+      for (const st of t.steps ?? []) {
+        steps.add(st.id);
+        outline.push({ id: st.id, label: plain(st.label), inTab: t.id, closed: t !== tabs[0] });
+      }
     }
-  } else if (!/\bdata-in-tabs\b/.test(m[2]!)) outline.push({ id: m[1]!, label: plain(m[3]!) });
+  } else if (m[1] === "2") {
+    if (!/\bdata-in-tabs\b/.test(m[3]!)) outline.push((h2 = { id: m[2]!, label: plain(m[4]!), subs: [] }));
+  } else if (!steps.has(m[2]!)) (h2?.subs ?? outline).push({ id: m[2]!, label: plain(m[4]!) });
 }
-const showOutline = outline.length >= 2;
+const showOutline = outline.length + (outline[0]?.subs?.length ?? 0) >= 2;
 ---
 
 <Layout title={title} description={page.summary} breadcrumbs={breadcrumbs} image={ogImage} schemas={[article, ...faqSchemas, ...schemas]}>
@@ -230,6 +241,17 @@ const showOutline = outline.length >= 2;
                   <a href={`#${o.id}`} class:list={["onpage__link", { "onpage__link--tab": o.tab, "onpage__link--step": o.inTab }]}>
                     {o.label}
                   </a>
+                  {!!o.subs?.length && (
+                    <ul>
+                      {o.subs.map((s) => (
+                        <li>
+                          <a href={`#${s.id}`} class="onpage__link">
+                            {s.label}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </li>
               ))}
             </ul>
@@ -265,8 +287,9 @@ const showOutline = outline.length >= 2;
   });
 
   // Marks the section being read in the "On this page" rail: the last target
-  // whose top has passed under the nav. A tab label and its steps count only
-  // while its tab is open, and a closed tab's steps are hidden.
+  // whose top has passed under the nav, and the h2 an h3 sits under. A tab
+  // label and its steps count only while its tab is open, and a closed tab's
+  // steps are hidden. The rail scrolls itself to keep the current entry in view.
   let queued = 0;
   function mark() {
     queued = 0;
@@ -283,7 +306,9 @@ const showOutline = outline.length >= 2;
       if (box.getBoundingClientRect().top <= line) active = a;
     }
     active ??= links[0];
-    for (const a of links) a.toggleAttribute("data-active", a === active);
+    for (const a of links) a.toggleAttribute("data-active", a.parentElement!.contains(active!));
+    const r = rail.getBoundingClientRect(), b = active?.getBoundingClientRect();
+    if (b && (b.top < r.top || b.bottom > r.bottom)) rail.scrollTop += b.top - r.top - r.height / 2;
   }
   const queue = () => (queued ||= requestAnimationFrame(mark));
   addEventListener("scroll", queue, { passive: true });
@@ -621,6 +646,17 @@ const showOutline = outline.length >= 2;
   }
   .onpage__link--step {
     padding-left: 2.25rem;
+  }
+  /* An h2's h3s, shown only under the current h2 once the script marks one. */
+  .onpage ul ul {
+    border: 0;
+  }
+  .onpage ul ul .onpage__link {
+    padding-left: 1.5rem;
+    overflow-wrap: anywhere;
+  }
+  .onpage:has([data-active]) li:not(:has([data-active])) > ul {
+    display: none;
   }
   .onpage__link[data-active] {
     color: var(--text);
