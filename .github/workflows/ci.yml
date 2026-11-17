@@ -561,6 +561,18 @@ jobs:
         # bash (Git for Windows) keeps the quoted test glob and /dev/null the same as on Linux.
         shell: bash
     steps:
+      # About 11 minutes after a hosted Windows runner boots, its Storage Service reads the disk at
+      # 25-47 MB/s for 30 s or more, and the Volume Shadow Copy service starts. A viewer page that
+      # first loaded during that read took 5-37 s, against the 5 s a test gives a page. The tests
+      # do not use the service, so it is stopped before anything else, and disabled so that nothing
+      # starts it again. The step fails if the service cannot be stopped.
+      - name: Stop the Storage Service
+        shell: pwsh
+        run: |
+          Stop-Service -Name StorSvc -Force
+          Set-Service -Name StorSvc -StartupType Disabled
+          Get-Service -Name StorSvc | ForEach-Object { "Storage Service: $($_.Status), start type $($_.StartType)" }
+
       # .gitattributes keeps LF in the checkout, whatever core.autocrlf says.
       - uses: actions/checkout@v5
 
