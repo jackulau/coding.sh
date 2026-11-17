@@ -19,7 +19,7 @@
 // Without it the selection is not loaded. With it, whatever the selection cannot place or cannot
 // do runs every test file. A narrowed run writes no run times: they would not cover the suite.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { cpus, tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileKey, reportProblems } from "./report-complete.mjs";
@@ -33,7 +33,10 @@ const shard = process.env.SHARD;
 // --import test-blocking-stdout.mjs: with that flag a file can exit before the end of its report
 // has left its process, so each file writes its report with blocking writes.
 const blocking = new URL("./test-blocking-stdout.mjs", import.meta.url).href;
-const node = (args) => spawnSync(process.execPath, ["--no-warnings", "--import", blocking, "--test", "--test-force-exit", ...args], { stdio: "inherit" }).status ?? 1;
+// --import test-temp-root.mjs: each test file gets a temp folder of its own under this run's
+// folder, removed when the file exits. What a file left in it is printed at the end of the run.
+const tempRoot = new URL("./test-temp-root.mjs", import.meta.url).href;
+const node = (args) => spawnSync(process.execPath, ["--no-warnings", "--import", blocking, "--import", tempRoot, "--test", "--test-force-exit", ...args], { stdio: "inherit", env: fileEnv() }).status ?? 1;
 
 /** The test files to split into shards, of `all`: `{ files, narrowed, log }`. */
 async function pick(all) {
@@ -45,9 +48,48 @@ async function pick(all) {
   }
 }
 
-const dir = mkdtempSync(join(tmpdir(), "coding-sh-test-ci-"));
-const failedPath = join(dir, "failed.txt");
-const reportPath = join(dir, "report.json");
+const name = (file) => relative(process.cwd(), file) || file;
+/** The environment of a run of test files, read when the run starts: the run's temp folder in it. */
+function fileEnv() {
+  const env = { ...process.env, TMPDIR: tempBase, TMP: tempBase, TEMP: tempBase, CODING_SH_TEST_TEMP: tempBase };
+  // A runner started by a test file must not hand its files that file's folder as theirs.
+  delete env.CODING_SH_TEST_TEMP_ROOT;
+  return env;
+}
+
+/** What the test files left in their temp folders, as lines to print. It fails nothing. */
+function tempLeft() {
+  let rows = [];
+  try {
+    rows = readFileSync(join(tempBase, "left.jsonl"), "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  } catch {}
+  // A folder that is still there: its file was killed, or a process the file left running made
+  // the folder again after the file removed it.
+  let still = [];
+  try {
+    const owners = new Map(readFileSync(join(tempBase, "roots.txt"), "utf8").split("\n").filter(Boolean).map((line) => line.split("\t")));
+    still = readdirSync(tempBase).filter((entry) => owners.has(entry)).map((entry) => `${name(owners.get(entry))} (${entry}: ${readdirSync(join(tempBase, entry)).slice(0, 4).join(" ") || "empty"})`);
+  } catch {}
+  const entries = rows.reduce((sum, row) => sum + row.left.length, 0);
+  const lines = [`Temp entries left behind by test files: ${entries}${entries ? ` (test files that left some: ${rows.filter((row) => row.left.length).length}; a file's temp folder is removed when the file exits)` : ""}`];
+  for (const row of rows) {
+    if (row.left.length) lines.push(`  temp left: ${name(row.file)}: ${row.left.length} (${row.left.slice(0, 8).join(" ")}${row.left.length > 8 ? " ..." : ""})`);
+    if (row.error) lines.push(`  temp folder not removed: ${name(row.file)}: ${row.error}`);
+  }
+  for (const entry of still) lines.push(`  temp folder still there at the end of the run: ${entry}`);
+  return lines;
+}
+
+/** Print what was left, remove this run's folder, exit. */
+function end(code) {
+  console.log(`\n${tempLeft().join("\n")}`);
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  } catch (err) {
+    console.log(`  this run's folder was not removed: ${err?.message ?? err}`);
+  }
+  process.exit(code);
+}
 const durationsOut = process.env.TEST_DURATIONS_OUT;
 let files = process.argv.length > 2 ? process.argv.slice(2) : ["test/**/*.test.ts"];
 // The test files this run can hold. An argument that is not a file (a flag, a pattern) names none.
@@ -67,6 +109,13 @@ else if (shard) {
   if (files.length === 0 && !narrowed) throw new Error(`shard ${shard} of every test file is empty`);
   if (files.length === 0) process.exit(0);
 }
+// This run's folder, made once the run has something to do: its two reports, and under tmp/ a temp
+// folder per test file (scripts/test-temp-root.mjs).
+const dir = mkdtempSync(join(tmpdir(), "coding-sh-test-ci-"));
+const failedPath = join(dir, "failed.txt");
+const reportPath = join(dir, "report.json");
+const tempBase = join(dir, "tmp");
+mkdirSync(tempBase);
 // The files whose reports must arrive whole. With --test-shard Node picks among the listed files,
 // so only the totals are checked then.
 const whole = shard && process.argv.length > 2 ? [] : listed;
@@ -93,23 +142,21 @@ let report;
 try {
   report = JSON.parse(readFileSync(reportPath, "utf8"));
 } catch {}
-rmSync(dir, { recursive: true, force: true });
 
 const problems = reportProblems(whole, failed, report);
 if (problems.length) console.log(`\nThe report of this run is incomplete, so the run fails:\n${problems.map((p) => `  ${p}`).join("\n")}`);
 const lost = problems.length ? 1 : 0;
 
-if (first === 0) process.exit(lost);
-const name = (file) => relative(process.cwd(), file) || file;
+if (first === 0) end(lost);
 const ours = new Set(listed.map(fileKey));
 const elsewhere = failed.filter((f) => !ours.has(fileKey(f)));
 if (elsewhere.length) {
   console.log(`\nA test failed in ${elsewhere.map(name).join(", ")}, which is not a test file of this run (a suite shared by test files?): not rerun.`);
-  process.exit(first);
+  end(first);
 }
 if (failed.length === 0 || failed.length > MAX_RERUN) {
   console.log(`\n${failed.length ? `${failed.length} files failed (more than ${MAX_RERUN}): not rerun.` : "The run failed outside any test: not rerun."}`);
-  process.exit(first);
+  end(first);
 }
 
 let code = 0;
@@ -118,4 +165,4 @@ for (const file of failed) {
   if (node(["--test-concurrency=1", file]) === 0) console.log(`::warning title=Passed when run alone::${name(file)} failed in the full run and passed alone (a timing test under load?)`);
   else code = 1;
 }
-process.exit(code || lost);
+end(code || lost);
