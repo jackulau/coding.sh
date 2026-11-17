@@ -49,6 +49,12 @@ const CUT_SHORT = `import { after, it } from "node:test"; it("passes", () => {})
 after(() => { process.stdout.write = () => true; });`;
 
 describe("scripts/test-ci.mjs", () => {
+  it("prints the runner's cores and how busy they were, pass or fail", () => {
+    const line = /\nRunner: \d+ cores? \(.+\), (\d+% busy|load not measured) over \d+ s\n/;
+    assert.match(run({ "a.test.ts": GREEN }, ["a.test.ts"]).out, line);
+    assert.match(run({ "b.test.ts": BROKEN }, ["b.test.ts"]).out, line);
+  });
+
   // Rerun alone, the file that defines a shared suite runs no tests and exits 0.
   it("fails when a test of a shared suite fails, and does not rerun the file that defines the suite", () => {
     const r = run({ "shared.ts": SHARED, "s.test.ts": USES_ALWAYS, "c.test.ts": GREEN }, ["s.test.ts", "c.test.ts"]);

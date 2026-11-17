@@ -15,9 +15,10 @@
 // the shards end close together. TEST_DURATIONS_OUT=<file> also writes each file's run time there.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpus, tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileKey, reportProblems } from "./report-complete.mjs";
+import { describeLoad } from "./runner-load.mjs";
 import { readDurations, shardFiles, testFiles } from "./test-shards.ts";
 
 const MAX_RERUN = 5;
@@ -54,7 +55,11 @@ args.push(
   `--test-reporter=${new URL("./report-complete.mjs", import.meta.url).href}`, `--test-reporter-destination=${reportPath}`,
 );
 if (durationsOut) args.push(`--test-reporter=${new URL("./test-durations.mjs", import.meta.url).href}`, `--test-reporter-destination=${durationsOut}`);
+const cores = cpus();
+const started = performance.now();
 const first = node([...args, ...files]);
+// The machine and how full it was, for reading a slow leg: full cores, or a slow or waiting machine.
+console.log(`\n${describeLoad(cores, cpus(), (performance.now() - started) / 1000)}`);
 let failed = [];
 try {
   failed = readFileSync(failedPath, "utf8").split("\n").filter(Boolean);
