@@ -16,7 +16,9 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 if (restoreManifest(root)) console.log(`build: put package.json back from ${BACKUP} (an earlier pack stopped before postpack)`);
 
 await bundle("dist");
-const tsc = createRequire(import.meta.url).resolve("typescript/bin/tsc");
+// Declarations are emitted by TypeScript 5.9 (`typescript5`); `typescript` is 7 and only typechecks.
+// 7 writes the members of three shipped declaration files in another order.
+const tsc = createRequire(import.meta.url).resolve("typescript5/bin/tsc");
 const r = spawnSync(process.execPath, [tsc, "-p", "tsconfig.types.json"], { cwd: root, stdio: "inherit" });
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const missing = Object.values(pkg.exports).flatMap((c) => (typeof c === "object" && c.types && !existsSync(join(root, c.types)) ? [c.types] : []));

@@ -112,7 +112,7 @@ describe("pi install + extension", () => {
     await fire(handlers, "tool_execution_end", { toolCallId: "c1", toolName: "bash", result: { content: [] }, isError: false }, ctx);
     await fire(handlers, "message_end", { message: { role: "toolResult" } }, ctx);
     await fire(handlers, "agent_settled", { aborted: false }, ctx);
-    await waitFor(() => hookCalls(dir).length >= 3);
+    await waitFor(() => hookCalls(dir).length >= 3, 5000, dir);
     const calls = hookCalls(dir);
     assert.equal(calls.length, 3, "toolResult message_end is not forwarded");
     const end = calls.find((c) => c.argv[1] === "tool_execution_end")!;

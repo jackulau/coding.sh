@@ -14,7 +14,8 @@
 // test/docs/sdk-reference.test.ts runs the same check in `npm test`.
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import ts from "typescript";
+// TypeScript 5.9 under its own name: the `typescript` package is 7 here and exports no compiler API.
+import ts from "typescript5";
 
 export const SDK_REFERENCE_PATH = fileURLToPath(new URL("../../../docs/reference/sdk.md", import.meta.url));
 const TS_SDK = fileURLToPath(new URL("../../sdk/", import.meta.url));

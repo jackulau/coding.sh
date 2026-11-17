@@ -36,7 +36,9 @@ before(() => {
   cpSync(FIXTURE, projects, { recursive: true });
   // The second parent holds a byte-identical copy of the run dir and its script.
   cpSync(join(projects, "-work-demo", OWNER), join(projects, "-work-demo", COPY), { recursive: true });
-  env = { HOME: home, USERPROFILE: home, CODING_SH_HOME: join(root, "data"), XDG_CONFIG_HOME: join(home, ".config"), CLAUDE_CONFIG_DIR: join(root, "claude"), PATH: process.env.PATH, NO_COLOR: "1", CI: "1" };
+  // No background ingest: `sessions` would start one, detached, with the temp root as its working
+  // directory, and Windows cannot remove a directory a live process works in (EBUSY in `after`).
+  env = { HOME: home, USERPROFILE: home, CODING_SH_HOME: join(root, "data"), XDG_CONFIG_HOME: join(home, ".config"), CLAUDE_CONFIG_DIR: join(root, "claude"), CODING_SH_NO_AUTO_INGEST: "1", PATH: process.env.PATH, NO_COLOR: "1", CI: "1" };
 });
 after(() => rmSync(root, { recursive: true, force: true }));
 

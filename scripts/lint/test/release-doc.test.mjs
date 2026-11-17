@@ -17,6 +17,28 @@ test("RELEASE.md counts the npm tarballs the workflow packs", () => {
   assert.ok(!/packs the four npm tarballs/.test(doc));
 });
 
+test("verify refuses a tag whose commit is not on main, before any job publishes", () => {
+  const verify = release.slice(release.indexOf("\n  verify:"), release.indexOf("\n  github-release:"));
+  assert.match(verify, /compare\/main\.\.\.\$GITHUB_SHA/);
+  assert.match(verify, /identical\|behind\) ;;/);
+  assert.ok(verify.indexOf("compare/main...") < verify.indexOf("Tag matches package version"), "the check runs first");
+  for (const job of ["github-release", "publish-image", "publish-npm", "publish-pypi"]) {
+    const at = release.indexOf(`\n  ${job}:`);
+    assert.match(release.slice(at, at + 200), /needs: (verify|\[verify, github-release\])/, `${job} needs verify`);
+  }
+  assert.match(doc, /points\s+at a commit that is on `main`/);
+});
+
+test("every action the release workflow runs is pinned to a commit, not a tag or branch", () => {
+  const uses = [...release.matchAll(/^\s*-?\s*uses:\s*(\S+)(.*)$/gm)];
+  assert.ok(uses.length >= 10);
+  for (const [, ref, rest] of uses) {
+    assert.match(ref, /^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/, `${ref} is not pinned to a commit`);
+    assert.match(rest, /^ # v\d+\.\d+\.\d+$/, `${ref} has no version comment`);
+  }
+  assert.match(doc, /pinned to a full commit/);
+});
+
 test("RELEASE.md names publish-image, the Worker deploy and the deploy secret", () => {
   assert.ok(doc.includes("publish-image"));
   assert.ok(doc.includes("coding-sh-site"));

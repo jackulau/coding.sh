@@ -146,6 +146,19 @@ tests run with `npm run lint:test`.
   read them (`scripts/ci-changes.mjs`). Windows, Node 22, the real agent captures, the container
   image and cli-suite run in the full suite, below. CI does not run macOS: run `npm run check` on
   a Mac for a change that depends on it.
+- Without the `ready` label the Linux tests run the test files the diff can reach
+  (`packages/coding.sh/scripts/test-select.ts`). A changed test file runs, with the test files that
+  import it. A changed helper under `test/` runs the test files that import it or write its file
+  name. A change under `docs/`, `apps/site/`, a root `*.md`, the issue and pull request templates,
+  or one of the other packages runs the test files that name that directory, package or file.
+  Every other path runs every test file: the CLI source, `scripts/`, `skills/`, a workflow, a
+  manifest, a lockfile, a compiler config, a fixture, a golden, a deleted or renamed file, a new
+  file at the top of the repository, and a path no rule knows. So does any error in the selection.
+  Each test leg prints what it selected and the rule and paths behind it, or that it runs every
+  test file and why. `node scripts/test-select.ts origin/main` in `packages/coding.sh` prints the
+  same for your branch. The full suite and a push to `main` never select. A new rule needs a
+  measurement first: make the paths unreadable, run every test file, and list the ones that fail
+  or lose tests. Pin that list in `test/scripts/test-select.test.ts`.
 - `main` takes pull requests only, and each one runs the full suite first. A maintainer adds the
   `ready` label; CI then runs every job on the pull request merged with `main`, skips none for a
   docs or site change, and checks the commit authors as it does on `main`. That run reports one
@@ -157,11 +170,20 @@ tests run with `npm run lint:test`.
   request gets Site perf only when it touches the site's measured paths. The timing budgets were
   set on the desk and are checked there after the merge, when the push to `main` touches those
   paths.
+- The push to `main` that a merge makes does not run the full suite again: the merge commit
+  holds the files the check passed on. It runs the quick jobs, with every test file and no job
+  skipped, and the real agent captures, whose Windows job saves the caches the next pull
+  request's Windows jobs restore. A manual run of the workflow runs every job but Site perf.
 - Timing tests (hook latency, help startup) assume an idle machine. If one fails on a loaded
   machine, rerun it alone before you treat it as a regression.
 - The viewer UI tests drive headless Chrome and skip when none is installed. In CI a missing
   Chrome is a failure: each test job starts Chrome once before its tests
   (`packages/coding.sh/scripts/warm-chrome.ts`), because a fresh runner's first start can take
-  longer than the 20 s a test gives it. That first start has 60 s; past it the job fails.
+  longer than the 20 s a test gives it. That first start has 60 s; past it the job fails. The
+  same step loads the viewer's list and Explore once, at the size the tests give a page, because
+  the first viewer page on a runner does work no later page does (it reads Chrome's number and
+  date data from disk, for one) and can take longer than the 5 s a test gives a page. A page
+  load that runs out of time says how long `Page.navigate` took, how long the page took to
+  answer, and the state it was in.
 
 By contributing you agree that your contributions are licensed under the MIT license.
