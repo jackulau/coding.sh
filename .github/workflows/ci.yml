@@ -67,10 +67,12 @@ jobs:
   # (scripts/test-shards.ts), so the checks that need one run only, not one per OS and Node, live
   # in the build job below. A pull request and a push to main run Linux on Node 24. The full
   # suite (the `ready` label, or a manual run) runs both Nodes on both. No job runs on macOS.
+  # The quick run of a pull request is the one a person waits on, so it splits the same files
+  # into six legs; the full suite and a push keep three per Node.
   # Everything here is GitHub-hosted: free for this public repo, and it leaves the desk runners
   # to deploys and Site perf.
   test:
-    name: node ${{ matrix.node }} / ubuntu-latest (${{ matrix.shard }}/3)
+    name: node ${{ matrix.node }} / ubuntu-latest (${{ matrix.shard }}/${{ matrix.of }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -81,7 +83,9 @@ jobs:
         # A pull request runs Node 24; the full suite adds Node 22. The Node 24 legs launch the
         # built CLI and the Node 22 legs launch it from source (the build step below).
         node: ${{ fromJSON((github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready')) && '["22.x", "24.x"]' || '["24.x"]') }}
-        shard: [1, 2, 3]
+        # `of` has one value, the number of legs, so the name and SHARD below can read it.
+        shard: ${{ fromJSON((github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready')) && '[1, 2, 3, 4, 5, 6]' || '[1, 2, 3]') }}
+        of: ${{ fromJSON((github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready')) && '[6]' || '[3]') }}
     env:
       # The viewer UI tests drive headless Chrome and skip without one. GitHub's Linux image ships
       # Chrome; naming it makes a missing one fail instead of skip.
@@ -141,7 +145,7 @@ jobs:
       - name: Test
         working-directory: packages/coding.sh
         env:
-          SHARD: ${{ matrix.shard }}/3
+          SHARD: ${{ matrix.shard }}/${{ matrix.of }}
           TEST_DURATIONS_OUT: ${{ runner.temp }}/test-durations.json
           TEST_SELECT: ${{ github.event_name == 'pull_request' && env.FULL == 'false' && 'HEAD^1' || '' }}
         # A file that fails is run again alone; one that then passes is a warning, not a failure.

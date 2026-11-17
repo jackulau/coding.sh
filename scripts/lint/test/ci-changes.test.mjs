@@ -139,7 +139,22 @@ test("ci.yml gates every code-only job on the changes job, and never skips when 
   assert.equal([...job("windows").matchAll(/matrix\.shard \}\}\/4\b/g)].length, 2, "the job name and SHARD");
   // A pull request without the label and a push test Linux on Node 24; the full suite adds Node 22.
   const wide = "(github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready'))";
-  assert.ok(job("test").includes(`node: \${{ fromJSON(${wide} && '["22.x", "24.x"]' || '["24.x"]') }}\n        shard: [1, 2, 3]\n`));
+  assert.ok(job("test").includes(`node: \${{ fromJSON(${wide} && '["22.x", "24.x"]' || '["24.x"]') }}\n`));
+  // The quick run of a pull request, the one a person waits on, splits the Linux files into six
+  // legs. The full suite and a push keep three per Node. `of` is the count each leg is told: a
+  // list that disagreed with it would run some files twice or not at all.
+  const quick = "(github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready'))";
+  const esc = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pick = `\\$\\{\\{ fromJSON\\(${esc(quick)} && '(\\[[^']+\\])' \\|\\| '(\\[[^']+\\])'\\) \\}\\}\\n`;
+  const lists = new RegExp(`\\n        shard: ${pick}        of: ${pick}`).exec(job("test"));
+  assert.ok(lists, "the shard list and its count read the same condition");
+  const [quickShards, restShards, quickOf, restOf] = lists.slice(1).map((x) => JSON.parse(x));
+  assert.deepEqual(quickShards, [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(restShards, [1, 2, 3]);
+  assert.deepEqual(quickOf, [quickShards.length]);
+  assert.deepEqual(restOf, [restShards.length]);
+  assert.equal([...job("test").matchAll(/matrix\.shard \}\}\/\$\{\{ matrix\.of \}\}/g)].length, 2, "the job name and SHARD");
+  assert.doesNotMatch(job("test"), /matrix\.shard \}\}\/\d/, "no leg is told a fixed count");
   // The Node 24 legs launch the bundle they build; the Node 22 legs launch from source. The
   // variable is the one test/_cli.ts reads, and it is written only by that step: a job-level
   // `env:` would hand the Node 22 legs an empty value.
