@@ -19,7 +19,16 @@ It listens on `127.0.0.1:4318` and takes OTLP over HTTP, as JSON or protobuf.
 
 `agentRuns()` from `durable-harness/instrumentation/otel` takes `spanProcessors`: more
 destinations that get the same spans as Agent Runs. Add a batch processor around an OTLP
-exporter that points at the receiver:
+exporter that points at the receiver. durable-harness is built on version 2 of the OpenTelemetry
+JS SDK (it pins `@opentelemetry/api` 1.9.0), so install the 2.x packages, pinned:
+
+```sh
+npm install @opentelemetry/sdk-trace-base@2 @opentelemetry/resources@2 @opentelemetry/exporter-trace-otlp-http@0.223
+```
+
+An unpinned install gets the 3.x exporter, which needs `@opentelemetry/api` 1.10 and fails with
+`ERESOLVE`. The 2.x `BatchSpanProcessor` takes the exporter as its first argument; the 3.x one in
+`@opentelemetry/sdk-trace` takes `{ exporter }` instead.
 
 ```ts
 // instrumentation.ts
@@ -36,9 +45,8 @@ export function register() {
 }
 ```
 
-Install the exporter next to the tracing peers durable-harness already needs
-(`@opentelemetry/sdk-trace-base`, `@opentelemetry/resources`, `@vercel/agent-runs`). Tracing needs
-Node.js 24.
+These are the tracing peers durable-harness already needs, next to `@vercel/agent-runs`. Tracing
+needs Node.js 24.
 
 A session's `traceAudience` decides what the spans record, for coding.sh as for Agent Runs. With
 the default capture, `private` and `unknown` sessions record models, tools, timing and usage but
@@ -47,7 +55,14 @@ no prompts or replies. Pass `capture` to `agentRuns()` to change that.
 ### eve
 
 eve sets up Agent Runs itself. Add the receiver as another destination in its own file under
-`agent/instrumentation/`:
+`agent/instrumentation/`. Install the same pinned 2.x packages as for durable-harness:
+
+```sh
+npm install @opentelemetry/sdk-trace-base@2 @opentelemetry/resources@2 @opentelemetry/exporter-trace-otlp-http@0.223
+```
+
+If your eve app is on OpenTelemetry JS 3.x instead, import `BatchSpanProcessor` from
+`@opentelemetry/sdk-trace` and write `new BatchSpanProcessor({ exporter: new OTLPTraceExporter(...) })`.
 
 ```ts
 // agent/instrumentation/coding-sh.ts
