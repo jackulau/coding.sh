@@ -37,6 +37,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Install.** `install.sh` warns when another `coding.sh` comes first on PATH, such as an older global install, and names its version, its path and the folder to put ahead of it. Before, `coding.sh` went on running the other one without a word. [Install](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md)
 - **Tool evals.** A CLI target whose binary name has a dot, such as `coding.sh`, runs and records through its tap. The tap is now a sh launcher next to a `.<bin>.tap.mjs` module; before, node refused the name with `ERR_UNKNOWN_FILE_EXTENSION`. [Tool evals](https://github.com/jackulau/coding.sh/blob/main/docs/TOOL-EVALS.md)
 - **Judges.** `judge calibrate` reports a κ of exactly 0 when the judge agrees with your labels no more than chance would, in the estimate and its interval. Before, rounding could print it as `-0.00`. [Judges](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#judges)
 - **Docs.** The durable workflow guide sets up tracing with OpenTelemetry JS 3.x (`@opentelemetry/sdk-trace`, `new BatchSpanProcessor({ exporter })`), and the Agent Runs guide pins the 2.x packages durable-harness and eve need. Before, their unpinned installs failed with `ERESOLVE`. [Trace a durable workflow](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/trace-durable-workflow.md)

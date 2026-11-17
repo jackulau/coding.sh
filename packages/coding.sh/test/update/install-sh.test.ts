@@ -136,7 +136,8 @@ describe("install.sh on Windows shells", () => {
     writeFileSync(join(stubs, "npm"), `#!/bin/sh\ncase "$1" in install) exit 0 ;; prefix) echo '${prefix.split("\\").join("/")}' ;; esac\n`);
     writeFileSync(join(stubs, "uname"), `#!/bin/sh\necho MINGW64_NT-10.0\n`);
     writeFileSync(join(prefix, bin ? "bin/coding.sh" : "coding.sh"), `#!/bin/sh\necho new >> "${log}"\n`);
-    writeFileSync(join(stale, "coding.sh"), `#!/bin/sh\necho stale >> "${log}"\n`);
+    // install.sh asks a shadowing coding.sh for its --version (to warn about it); nothing else may reach it.
+    writeFileSync(join(stale, "coding.sh"), `#!/bin/sh\n[ "$1" = --version ] && exit 0\necho stale >> "${log}"\n`);
     for (const f of ["npm", "uname"]) chmodSync(join(stubs, f), 0o755);
     for (const f of [join(prefix, "coding.sh"), join(prefix, "bin/coding.sh"), join(stale, "coding.sh")]) {
       try {

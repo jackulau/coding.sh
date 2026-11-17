@@ -80,7 +80,17 @@ if [ -n "$PREFIX" ]; then
   # Use the binary just installed, not whichever coding.sh comes first on PATH.
   if [ -f "$BIN_POSIX/coding.sh" ]; then
     CSH="$BIN_POSIX/coding.sh"
-    command -v coding.sh >/dev/null 2>&1 || say "coding.sh: installed in \"$BIN_DIR\", which is not on PATH. Add it to PATH to run coding.sh."
+    FIRST=$(command -v coding.sh 2>/dev/null || true)
+    case "$FIRST" in
+      "") say "coding.sh: installed in \"$BIN_DIR\", which is not on PATH. Add it to PATH to run coding.sh." ;;
+      */*)
+        # Another coding.sh comes first on PATH (an older global install, say):
+        # `coding.sh` would run that one, not the version just installed.
+        if ! [ "$FIRST" -ef "$CSH" ] && [ "$FIRST" != "$CSH" ]; then
+          OTHER_V=$("$FIRST" --version </dev/null 2>/dev/null | head -n 1 || true)
+          say "coding.sh: another coding.sh (${OTHER_V:+$OTHER_V, }$FIRST) comes first on PATH; put \"$BIN_DIR\" ahead of it, or remove it."
+        fi ;;
+    esac
   fi
 fi
 [ "$CSH" != coding.sh ] || command -v coding.sh >/dev/null 2>&1 || die "Installed, but coding.sh is not on PATH. Add \"$BIN_DIR\" to PATH."
