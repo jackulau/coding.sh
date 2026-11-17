@@ -21,6 +21,7 @@ grouped by area, with links to the docs for the details.
 
 ### Changed
 
+- **Viewer.** A folded turn's row has no timing bar, so its prompt and summary run on over the timing column and more of the prompt shows. On a phone the row keeps the turn number, the prompt and its error count, and leaves the length and tool count to the turn's detail. [Concepts](https://coding.sh/docs/concepts#turn)
 - **Viewer.** The theme follows the system's light or dark setting, and changes when the setting does, until you pick one with the theme button. A picked theme is remembered and wins. The first paint already has the right theme. [Explore](https://coding.sh/docs/explore#open-the-viewer)
 - **Docs.** The docs sidebar folds by group on wide screens, as the phone menu does: the first group and the one that holds the page start open, the rest closed, so every group name fits on screen. [Docs](https://coding.sh/docs)
 - **Docs.** The "On this page" rail lists each section's subheadings under it, shows them for the section being read, and marks both; it scrolls itself to keep the current entry in view. [SDKs](https://coding.sh/docs/sdk)

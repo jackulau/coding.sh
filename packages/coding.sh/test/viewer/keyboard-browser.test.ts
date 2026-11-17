@@ -303,6 +303,27 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     assert.deepEqual(p.errors, []);
   });
 
+  test("at 390px a folded turn's row keeps its prompt and error count, and drops its length and tools", async () => {
+    const p = await open("#/s/" + FOLDS);
+    await p.viewport(390, 844, true);
+    const folded = "[...document.querySelectorAll('#steps .st.turn.fold')]";
+    const selected = "document.querySelector('#steps .st[aria-selected=true]')";
+    await p.waitFor(`${folded}.length === 3 && /npm run build/.test(${selected}?.textContent || '')`, "the session, on its failure");
+    const row1 = `${folded}[0]`;
+    const width = (sel: string) => p.eval(`${row1}.querySelector('${sel}').getBoundingClientRect().width`) as Promise<number>;
+    assert.equal(await p.eval(`${row1}.querySelector('.t').textContent`), "Turn 1", "the word stays for screen readers");
+    assert.ok((await width(".t")) < 30, "the number column is narrow");
+    assert.equal(await width(".sum"), 0, "no length or tool count");
+    assert.equal(await p.eval(`(() => { const a = ${row1}.querySelector('.arg'); return a.scrollWidth <= a.clientWidth; })()`), true, "the prompt is not cut");
+    // Folded by hand, the failing turn's row still shows its error count.
+    await p.eval("document.querySelector('#steps').focus()");
+    await p.press("ArrowLeft");
+    const failRow = `${folded}.find((r) => /run the build/.test(r.textContent))`;
+    await p.waitFor(`${failRow} && ${failRow}.querySelector('.sum .err').getBoundingClientRect().width > 20`, "the error count on the folded failing turn");
+    assert.equal(await p.eval("document.documentElement.scrollWidth <= innerWidth"), true, "no sideways scroll");
+    assert.deepEqual(p.errors, []);
+  });
+
   test("a failed session opens on its first failure and a clean one on its first prompt; the header's First failure and F go back to it", async () => {
     let p = await open("#/");
     const selected = "document.querySelector('#steps .st[aria-selected=true]')";
