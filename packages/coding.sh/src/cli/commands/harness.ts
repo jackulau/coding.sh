@@ -119,7 +119,7 @@ async function audit(c: CommandContext): Promise<number> {
   const fallback = claudeOnly ? fallbackModelRisks([memoryDirs(c.env).claudeDir, join(c.cwd, ".claude")]) : [];
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
-    const a = await memoryAudit(ctx.index, { since, env: c.env, ...(agent ? { agent } : {}) });
+    const a = await memoryAudit(ctx.index, { since, env: c.env, signal: c.signal, ...(agent ? { agent } : {}) });
     if (out.json) {
       out.data({ ...a, ...(agentFiles.length ? { agentFiles } : {}), ...(fallback.length ? { fallbackModels: fallback } : {}), ...pendingField(backlog) });
       return 0;

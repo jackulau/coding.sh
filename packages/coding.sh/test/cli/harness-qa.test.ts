@@ -1,5 +1,6 @@
 // harness QA fixes: a claude-code snapshot carries the files CLAUDE.md pulls in with `@path`
-// imports and leaves out Claude Code's skills/.trash.
+// imports and leaves out Claude Code's skills/.trash, and harness audit stops on Ctrl-C (its
+// listing of files on disk gives the event loop turns and honors the abort signal).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
@@ -7,6 +8,9 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { importPaths } from "../../src/cli/commands/harness.ts";
+import { listMemoryFiles, listMemoryFilesAsync, memoryAudit } from "../../src/core/memory-files.ts";
+import type { Session } from "../../src/schema/index.ts";
+import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { removeTestDir } from "../_rm.ts";
 import { CLI } from "../_cli.ts";
 
@@ -75,5 +79,38 @@ describe("harness snapshot --agent claude-code", () => {
 
   it("finds imports only outside code, without trailing punctuation", () => {
     assert.deepEqual(importPaths("@AGENTS.md\nsee @a/b.md, then `@c.md`\n```\n@d.md\n```\nuser@example.test @~/z.md."), ["AGENTS.md", "a/b.md", "~/z.md"]);
+  });
+});
+
+describe("harness audit stops on an abort", () => {
+  it("memoryAudit rejects with the abort when its signal has fired, instead of finishing", async () => {
+    const app = join(home, "audit-app");
+    put(join(app, "CLAUDE.md"), "# app\n");
+    for (let i = 0; i < 50; i++) put(join(app, `d${i}`, "x", "CLAUDE.md"), "# x\n");
+    const index = new MemoryIndexStore();
+    await index.upsertSession({ id: "s1", agent: "claude-code", cwd: app, startedAt: 1, stats: { events: 0, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 } } as Session);
+    const ac = new AbortController();
+    ac.abort(new DOMException("stopped", "AbortError"));
+    await assert.rejects(memoryAudit(index, { env, signal: ac.signal }), { name: "AbortError" });
+    // Without a signal the same audit finishes.
+    const a = await memoryAudit(index, { env });
+    assert.ok(a.files.some((f) => f.path === "~/audit-app/CLAUDE.md"));
+  });
+
+  it("the file listing gives the event loop turns while it walks, so a timer (a signal) runs and stops it", async () => {
+    const app = join(home, "walk-app");
+    for (let i = 0; i < 30; i++) put(join(app, `d${i}`, "CLAUDE.md"), "# x\n");
+    const dirs = { home, claudeDir: join(home, ".claude"), codexDir: join(home, ".codex") };
+    const ac = new AbortController();
+    let fired = false;
+    setImmediate(() => {
+      fired = true;
+      ac.abort(new DOMException("stopped", "AbortError"));
+    });
+    await assert.rejects(listMemoryFilesAsync(dirs, [app], { signal: ac.signal, sliceMs: 0 }), { name: "AbortError" });
+    assert.ok(fired);
+    const all = await listMemoryFilesAsync(dirs, [app], { sliceMs: 0 });
+    assert.deepEqual(all.map((f) => f.key).sort(), listMemoryFiles(dirs, [app]).map((f) => f.key).sort(), "same files as the sync listing");
+    assert.equal(all.filter((f) => f.key.startsWith("~/walk-app/")).length, 30);
   });
 });

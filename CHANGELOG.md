@@ -37,6 +37,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Harness.** Ctrl-C stops `harness audit` while it lists files on disk, and it exits 130. Before, the listing held the process until it finished, which took about 50 s on WSL's `/mnt/c`. [CLI reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-harness-audit)
 - **Harness.** `harness snapshot --agent claude-code` stores the files a CLAUDE.md or rule pulls in with `@path` imports, such as AGENTS.md from a CLAUDE.md of `@AGENTS.md`, followed up to 5 hops as Claude Code does. It leaves out dot directories under `skills/`, such as Claude Code's `.trash` of deleted skills. [Compare agents](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/compare-agents.md)
 - **Evals.** `--hidden-test` also hides a matching test file that is already in the start tree: the task starts from a snapshot without it, and the verifier gets it at check time. Before, only test files the session changed were hidden, so the agent could read the tests that grade it. [CLI reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-eval-new)
 - **Evals.** `eval init --sessions` names a command that works for a session with no prompt, such as one `coding.sh run` recorded: `eval new <id> --instruction "…"` with the same `--verifier`. Before, it said to pass `--instruction`, which `eval init` does not take. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#session-to-eval)

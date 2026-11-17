@@ -73,20 +73,31 @@ function kind(dir: string, e: Dirent): "dir" | "file" | undefined {
   return st?.isDirectory() ? "dir" : st?.isFile() ? "file" : undefined;
 }
 
+// The listing is a generator that yields after each directory it reads: run to the end it is
+// the synchronous listMemoryFiles, and listMemoryFilesAsync lets the event loop run between
+// directories (a Ctrl-C stops it), which matters on a slow file system such as WSL's /mnt/c.
+type Steps<T> = Generator<void, T, void>;
+
 /** Files under a dir matching `test`, at most `depth` levels down. */
-function walk(dir: string, test: (rel: string) => boolean, depth: number, out: string[], rel = ""): void {
+function* walk(dir: string, test: (rel: string) => boolean, depth: number, out: string[], rel = ""): Steps<void> {
   if (depth < 0) return;
-  for (const e of entries(dir)) {
+  const list = entries(dir);
+  yield;
+  for (const e of list) {
     const p = join(dir, e.name);
     const r = rel ? `${rel}/${e.name}` : e.name;
     const k = kind(dir, e);
-    if (k === "dir") walk(p, test, depth - 1, out, r);
+    if (k === "dir") yield* walk(p, test, depth - 1, out, r);
     else if (k === "file" && test(r)) out.push(p);
   }
 }
 
 /** `skills/<name>/SKILL.md` under a skills dir. */
-const skillFiles = (dir: string): string[] => names(dir).map((n) => join(dir, n, "SKILL.md")).filter(isFile);
+function* skillFiles(dir: string): Steps<string[]> {
+  const list = names(dir);
+  yield;
+  return list.map((n) => join(dir, n, "SKILL.md")).filter(isFile);
+}
 
 const NESTED_NAMES = ["CLAUDE.md", "AGENTS.md"];
 /** Names compare as the file system does: case-blind on Windows and macOS. */
@@ -98,16 +109,18 @@ const sameName = process.platform === "win32" || process.platform === "darwin" ?
  * costs a stat per name, and counts toward the cap too: a session can run in a home or temp dir with
  * thousands of subdirs.
  */
-function nested(root: string): string[] {
+function* nested(root: string): Steps<string[]> {
   const out: string[] = [];
   const queue: { dir: string; depth: number }[] = [{ dir: root, depth: 1 }];
   for (let i = 0; i < queue.length && i < NESTED_DIR_CAP; i++) {
     const { dir, depth } = queue[i]!;
     if (depth > NESTED_DEPTH) {
       for (const f of NESTED_NAMES) if (isFile(join(dir, f))) out.push(join(dir, f));
+      yield;
       continue;
     }
     const list = entries(dir);
+    yield;
     if (i > 0) for (const f of NESTED_NAMES) if (list.some((e) => sameName(e.name, f) && kind(dir, e) === "file")) out.push(join(dir, f));
     for (const e of list) {
       if (e.name.startsWith(".") || SKIP_DIRS.has(e.name)) continue;
@@ -159,14 +172,41 @@ export function fileInfo(path: string, home: string): MemoryFileInfo | undefined
 
 /** Memory and instruction files on disk: the agents' user dirs and the session directories. */
 export function listMemoryFiles(dirs: MemoryDirs, sessionDirs: readonly string[]): MemoryFileInfo[] {
+  const steps = memoryFileSteps(dirs, sessionDirs);
+  for (;;) {
+    const r = steps.next();
+    if (r.done) return r.value;
+  }
+}
+
+/**
+ * listMemoryFiles that hands the event loop a turn once `sliceMs` (20) has passed since the last,
+ * so a signal is seen, and stops with the signal's reason once `signal` aborts.
+ */
+export async function listMemoryFilesAsync(dirs: MemoryDirs, sessionDirs: readonly string[], o: { signal?: AbortSignal; sliceMs?: number } = {}): Promise<MemoryFileInfo[]> {
+  const steps = memoryFileSteps(dirs, sessionDirs);
+  const slice = o.sliceMs ?? 20;
+  let last = performance.now();
+  for (;;) {
+    o.signal?.throwIfAborted();
+    const r = steps.next();
+    if (r.done) return r.value;
+    if (performance.now() - last >= slice) {
+      await new Promise((ok) => setImmediate(ok));
+      last = performance.now();
+    }
+  }
+}
+
+function* memoryFileSteps(dirs: MemoryDirs, sessionDirs: readonly string[]): Steps<MemoryFileInfo[]> {
   const paths: string[] = [];
   const { home, claudeDir, codexDir } = dirs;
   paths.push(join(claudeDir, "CLAUDE.md"));
-  walk(join(claudeDir, "rules"), (r) => r.endsWith(".md"), 4, paths);
-  paths.push(...skillFiles(join(claudeDir, "skills")));
-  for (const p of names(join(claudeDir, "projects"))) walk(join(claudeDir, "projects", p, "memory"), (r) => r.endsWith(".md"), 3, paths);
+  yield* walk(join(claudeDir, "rules"), (r) => r.endsWith(".md"), 4, paths);
+  paths.push(...(yield* skillFiles(join(claudeDir, "skills"))));
+  for (const p of names(join(claudeDir, "projects"))) yield* walk(join(claudeDir, "projects", p, "memory"), (r) => r.endsWith(".md"), 3, paths);
   paths.push(join(codexDir, "AGENTS.md"), join(codexDir, "AGENTS.override.md"));
-  paths.push(...skillFiles(join(codexDir, "skills")), ...skillFiles(join(home, ".agents", "skills")));
+  paths.push(...(yield* skillFiles(join(codexDir, "skills"))), ...(yield* skillFiles(join(home, ".agents", "skills"))));
   paths.push(join(home, ".gemini", "GEMINI.md"));
   const seen = new Set<string>();
   const h = home.replace(/[\\/]+$/, "");
@@ -184,15 +224,16 @@ export function listMemoryFiles(dirs: MemoryDirs, sessionDirs: readonly string[]
       if (seen.has(d)) continue;
       seen.add(d);
       for (const n of CONTEXT_NAMES) paths.push(join(d, n));
-      walk(join(d, ".claude", "rules"), (r) => r.endsWith(".md"), 4, paths);
-      for (const s of [".claude/skills", ".agents/skills"]) paths.push(...skillFiles(join(d, s)));
+      yield* walk(join(d, ".claude", "rules"), (r) => r.endsWith(".md"), 4, paths);
+      for (const s of [".claude/skills", ".agents/skills"]) paths.push(...(yield* skillFiles(join(d, s))));
     }
-    paths.push(...nested(dir));
+    paths.push(...(yield* nested(dir)));
   }
   const out = new Map<string, MemoryFileInfo>();
   for (const p of paths) {
     const f = fileInfo(p, home);
     if (f) out.set(f.key, f);
+    yield;
   }
   return [...out.values()];
 }
@@ -204,6 +245,8 @@ export interface MemoryAuditOptions {
   agent?: AgentId;
   since?: number;
   env?: NodeJS.ProcessEnv;
+  /** Stops the audit (with the signal's reason) once aborted: a Ctrl-C. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -238,9 +281,10 @@ export const memoryUseFolded = async (index: IndexStore): Promise<boolean> => (a
  * `git log` per repo), or, for a file git does not track, when it was made on disk. Files
  * outside every repo keep no time: their start-time loads are counted as before.
  */
-async function addSince(files: MemoryFileInfo[], sessions: readonly MemorySession[], home: string): Promise<void> {
+async function addSince(files: MemoryFileInfo[], sessions: readonly MemorySession[], home: string, signal?: AbortSignal): Promise<void> {
   const roots = [...new Set(sessions.map((s) => s.repoRoot).filter((r): r is string => !!r))].map((r) => r.replace(/\\/g, "/").replace(/\/+$/, ""));
   for (const root of roots) {
+    signal?.throwIfAborted();
     const mine = files.filter((f) => localPath(f.key, home).replace(/\\/g, "/").startsWith(`${root}/`));
     if (!mine.length) continue;
     const rel = (f: MemoryFileInfo) => localPath(f.key, home).replace(/\\/g, "/").slice(root.length + 1);
@@ -290,9 +334,10 @@ export async function memoryAudit(index: IndexStore, o: MemoryAuditOptions = {})
   }
   const cwds = [...new Set(list.map((s) => s.cwd).filter((c): c is string => !!c))].map((c) => localPath(homeKey(c, dirs.home), dirs.home));
   const keep = (f: MemoryFileInfo) => !o.agent || forAgent(f.key, o.agent);
-  const files = listMemoryFiles(dirs, cwds).filter(keep);
+  const files = (await listMemoryFilesAsync(dirs, cwds, { signal: o.signal })).filter(keep);
   const opts = { home: dirs.home, claudeDir: homeKey(dirs.claudeDir, dirs.home), codexDir: homeKey(dirs.codexDir, dirs.home) };
-  await addSince(files, list, dirs.home);
+  await addSince(files, list, dirs.home, o.signal);
+  o.signal?.throwIfAborted();
   let report = auditMemory(list, files, opts);
   // Files the sessions touched that the listing missed (outside the dirs it walks): stat them here.
   const extra = report.files.filter((r) => !r.exists).flatMap((r) => fileInfo(localPath(r.path, dirs.home), dirs.home) ?? []);
