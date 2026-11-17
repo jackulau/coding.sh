@@ -287,6 +287,49 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     assert.deepEqual(p.errors, []);
   });
 
+  test("a failed session opened from the list lands on its first failure; the header's First failure and F go back to it", async () => {
+    let p = await open("#/");
+    const selected = "document.querySelector('#steps .st[aria-selected=true]')";
+    const inView = `(() => { const s = ${selected}, b = document.querySelector('#steps').getBoundingClientRect(), r = s.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom + 1 && r.bottom <= innerHeight; })()`;
+    const btn = "[...document.querySelectorAll('.detail-head button')].find((b) => b.textContent === 'First failure')";
+    const row = (id: string) => `document.querySelector('[role=option][data-sid="${id}"]')`;
+    await p.waitFor(row(FOLDS), "the session list");
+    // From the list to the failing step: one action, a click on the session's row.
+    let actions = 0;
+    await p.eval(`${row(FOLDS)}.click()`);
+    actions++;
+    await p.waitFor(`${selected} && /npm run build/.test(${selected}.textContent)`, "the session, on its failing step");
+    assert.equal(await p.eval(inView), true, "the failing step is in view");
+    assert.ok(actions <= 2);
+    assert.match(await p.eval("location.hash"), new RegExp("^#/s/" + FOLDS + "/" + FOLDS + "-e1[67]$"), "the URL names the step");
+    assert.equal(await p.eval("document.activeElement.id"), "steps");
+    // The header control and F go back to it, opening the turn when it was folded by hand.
+    assert.equal(await p.eval(`${btn}.checkVisibility()`), true);
+    assert.equal(await p.eval(`${btn}.getAttribute('aria-keyshortcuts')`), "Shift+F");
+    await p.press("ArrowLeft");
+    await p.waitFor(`/run the build/.test(${selected}.textContent) && ${selected}.classList.contains('fold')`, "← folds the failing turn");
+    await p.press("Home");
+    await p.press("F");
+    await p.waitFor(`/npm run build/.test(${selected}.textContent)`, "F opens the turn on the failure");
+    await p.press("Home");
+    await p.waitFor(`/fix the parser/.test(${selected}.textContent)`, "Home goes back to the top");
+    await p.eval(`${btn}.click()`);
+    await p.waitFor(`/npm run build/.test(${selected}.textContent)`, "the header control selects the failure");
+    assert.equal(await p.eval(inView), true);
+    await p.press("?");
+    await p.waitFor("/First failure/.test(document.querySelector('[role=dialog]')?.textContent || '')", "the help sheet lists F");
+    // A session with no failure opens from the list at the top, with no First failure control.
+    p = await open("#/");
+    await p.waitFor(row(TURNS), "the session list");
+    await p.eval(`${row(TURNS)}.click()`);
+    await p.waitFor(`${selected} && /prompt number 1/.test(${selected}.textContent)`, "a plain session opens at the top");
+    assert.equal(await p.eval(`${btn}?.checkVisibility() ?? false`), false);
+    // An explicit link to a step still opens on that step.
+    p = await open("#/s/" + FOLDS + "/" + FOLDS + "-e20");
+    await p.waitFor(`${selected} && /a step inside turn four/.test(${selected}.textContent)`, "the deep link wins");
+    assert.deepEqual(p.errors, []);
+  });
+
   test("Chat shows every prompt and reply in full; a turn's step line goes back to Steps there; the view is linked and remembered", async () => {
     let p = await open("#/s/" + CHAT);
     const selected = "document.querySelector('#steps .st[aria-selected=true]')";

@@ -20,6 +20,8 @@ One run of your agent, from the first prompt to the end: a Claude Code conversat
 thread, one trace from your own agent, or one `coding.sh run -- <command>`.
 
 - In the viewer: a row in the session list. Click it to open its timeline.
+- A session with a failure opens from the list on its first failing step. First failure in the
+  session header, or `F`, goes back to it. A link to a step opens on that step.
 - In the CLI: `coding.sh sessions` lists sessions, and `coding.sh show <id>` prints one.
 
 ### Turn
