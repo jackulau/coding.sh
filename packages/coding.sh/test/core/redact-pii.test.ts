@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createRedactor, ibanValid, luhnValid, PII_KINDS, REDACTORS } from "../../src/core/redact.ts";
 import { loadConfig } from "../../src/core/config.ts";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -147,9 +147,10 @@ describe("PII pack", () => {
     assert.ok(performance.now() - t0 < 2000);
   });
 
-  it("config accepts pii and each kind, and names them on a typo", () => {
+  it("config accepts pii and each kind, and names them on a typo", (t) => {
     for (const k of ["pii", ...PII_KINDS]) assert.ok((REDACTORS as readonly string[]).includes(k));
     const home = mkdtempSync(join(tmpdir(), "csh-pii-"));
+    t.after(() => rmSync(home, { recursive: true, force: true }));
     const file = join(home, "config.toml");
     writeFileSync(file, '[capture]\nredact = ["secrets", "pii", "phone"]\n');
     const env = { HOME: home, CODING_SH_HOME: home };

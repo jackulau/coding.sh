@@ -119,7 +119,8 @@ class Cdp {
 }
 
 export interface Page {
-  goto(url: string): Promise<void>;
+  /** Navigate and wait for the page to finish loading, for at most `timeoutMs` (5000). */
+  goto(url: string, timeoutMs?: number): Promise<void>;
   /** Evaluate an expression (awaited) and return its JSON value. */
   eval<T = any>(expr: string): Promise<T>;
   /** Poll an expression until it is truthy; returns its value. */
@@ -137,9 +138,71 @@ export interface Page {
   close(): Promise<void>;
 }
 
+/** What Browser.close did, step by step, so a slow close names the step that took the time. */
+export interface CloseSteps {
+  /** The whole close. */
+  ms: number;
+  /** Browser.close until Chrome answered or dropped the socket. */
+  askMs: number;
+  /** The wait for chrome to exit after that; 3 s at most. */
+  exitMs: number;
+  /** Chrome was still running after the wait and was killed. */
+  killed: boolean;
+  /** Removing the profile directory, retries included. */
+  profileMs: number;
+  /** The profile directory could not be removed and was left behind. */
+  profileLeft: boolean;
+}
+
+/** A close slower than this prints its steps. */
+const SLOW_CLOSE_MS = 2000;
+
+/**
+ * Prints a slow close's steps on stderr. Not stdout: that is the result of a script that starts
+ * a browser (scripts/warm-chrome.ts prints one line there). A test file's stderr is in the test
+ * output all the same.
+ */
+export function noteClose(steps: CloseSteps): void {
+  if (steps.ms > SLOW_CLOSE_MS) console.error(`# slow Chrome close, ${describeClose(steps)}`);
+}
+
+export function describeClose(s: CloseSteps): string {
+  return (
+    `${Math.round(s.ms)} ms: Browser.close ${Math.round(s.askMs)} ms, ` +
+    `exit ${Math.round(s.exitMs)} ms${s.killed ? " (killed after the wait)" : ""}, ` +
+    `profile removal ${Math.round(s.profileMs)} ms${s.profileLeft ? " (left behind)" : ""}`
+  );
+}
+
 export interface Browser {
   newPage(): Promise<Page>;
-  close(): Promise<void>;
+  close(): Promise<CloseSteps>;
+}
+
+/** What a page load had done when its time ran out. */
+export interface LoadWait {
+  /** From the call of goto to the timeout. */
+  waitedMs: number;
+  /** How long Chrome took to answer Page.navigate. */
+  navigateMs: number;
+  /** How many times the page was asked for its state, and the longest it took to answer. */
+  checks: number;
+  slowestCheckMs: number;
+  /** The last answer, or why there was none. */
+  readyState?: string;
+  href?: string;
+  error?: string;
+}
+
+/**
+ * The error of a page load that ran out of time. It says where the time went: in Page.navigate,
+ * in a page that did not answer (its main thread was busy or blocked), or in a load that answered
+ * and did not finish.
+ */
+export function loadTimeoutMessage(w: LoadWait): string {
+  const span = (ms: number) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`);
+  const last = w.error !== undefined ? `the last failed: ${w.error}` : `the last saw readyState ${JSON.stringify(w.readyState)} at ${w.href}`;
+  return `timed out waiting for page load after ${span(w.waitedMs)}: Page.navigate took ${span(w.navigateMs)}, then ${w.checks} ${w.checks === 1 ? "check" : "checks"} of the page, the slowest took ${span(w.slowestCheckMs)}; ${last}`;
 }
 
 /** The flags launchBrowser starts Chrome with, for a profile in `dir`. */
@@ -211,9 +274,25 @@ export async function launchBrowser(chrome: string): Promise<Browser> {
       const page: Page = {
         errors,
         send,
-        async goto(url) {
+        async goto(url, timeoutMs = 5000) {
+          const t0 = performance.now();
           await send("Page.navigate", { url });
-          await page.waitFor("document.readyState === 'complete' && location.href !== 'about:blank'", "page load");
+          const navigateMs = performance.now() - t0;
+          // The loop of waitFor, keeping what a timeout has to say.
+          const deadline = Date.now() + timeoutMs;
+          let checks = 0;
+          let slowestCheckMs = 0;
+          for (;;) {
+            const t1 = performance.now();
+            const seen: { readyState?: string; href?: string; error?: string } = await page
+              .eval("({ readyState: document.readyState, href: location.href })")
+              .catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
+            checks++;
+            slowestCheckMs = Math.max(slowestCheckMs, performance.now() - t1);
+            if (seen.readyState === "complete" && seen.href !== "about:blank") return;
+            if (Date.now() > deadline) throw new Error(loadTimeoutMessage({ waitedMs: performance.now() - t0, navigateMs, checks, slowestCheckMs, ...seen }));
+            await new Promise((r) => setTimeout(r, 40));
+          }
         },
         async eval(expr) {
           const r = await send("Runtime.evaluate", { expression: expr, awaitPromise: true, returnByValue: true });
@@ -254,27 +333,37 @@ export async function launchBrowser(chrome: string): Promise<Browser> {
       return page;
     },
     async close() {
+      const t0 = performance.now();
       await cdp.send("Browser.close").catch(() => {});
       cdp.close();
-      await new Promise<void>((resolve) => {
-        if (child.exitCode !== null) return resolve();
+      const t1 = performance.now();
+      const killed = await new Promise<boolean>((resolve) => {
+        if (child.exitCode !== null) return resolve(false);
         const t = setTimeout(() => {
           child.kill("SIGKILL");
-          resolve();
+          resolve(true);
         }, 3000);
         child.once("exit", () => {
           clearTimeout(t);
-          resolve();
+          resolve(false);
         });
       });
+      const t2 = performance.now();
       // On Windows, Chrome's helper processes can outlive chrome.exe and keep its stderr pipe
       // open. Let go of the pipe and the child, or this test file's process never exits.
       child.stderr?.destroy();
       child.unref();
       // On Windows, Chrome's helpers can hold the profile for a moment after it exits.
+      let profileLeft = false;
       try {
         rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-      } catch {}
+      } catch {
+        profileLeft = true;
+      }
+      const t3 = performance.now();
+      const steps: CloseSteps = { ms: t3 - t0, askMs: t1 - t0, exitMs: t2 - t1, killed, profileMs: t3 - t2, profileLeft };
+      noteClose(steps);
+      return steps;
     },
   };
 }

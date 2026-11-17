@@ -18,6 +18,7 @@ grouped by area, with links to the docs for the details.
 - **Viewer.** A session with a failure opens from the list on its first failing step, and the header's First failure button (`F`) goes back to it, opening a folded turn on the way, and stays while a running session grows. A link to a step still opens on that step. [Concepts](https://coding.sh/docs/concepts#session)
 - **Viewer.** Each row in the session list is a link: a middle click, Ctrl or Cmd click, or "Open link in new tab" opens the session in a new tab and leaves the list where it was. A plain click and the keys work as before. [Concepts](https://coding.sh/docs/concepts#session)
 - **Viewer.** The top bar has a Workflows tab (Flows on a phone) beside Benchmarks, so every page of the viewer is one click away. The tab of the page you are on is marked. [Explore](https://coding.sh/docs/explore#open-the-viewer)
+- **Site.** The GitHub link in the header shows the repository's star count, and so does the menu on a phone. The count is read when the site is deployed, so a page makes no request to GitHub. [coding.sh](https://coding.sh)
 
 ### Changed
 
@@ -56,6 +57,8 @@ grouped by area, with links to the docs for the details.
 - **Docs.** On Quickstart and Install, a block that shows what a command prints is captioned "output" instead of "shell", so each step reads as the command to run and what to expect. [Quickstart](https://coding.sh/docs/quickstart)
 - **Docs.** On phones the "Copy page" and "View as Markdown" buttons above the title are as short as on a desktop, with the same 44px touch target, so the title sits higher on the first screen. [Quickstart](https://coding.sh/docs/quickstart)
 - **Viewer.** Esc or a link pressed within 80 ms of a step key (`j`, `k`, `n`) leaves the session. Before, the step's late update of the pane could put the session's URL back, and the page stayed on the session. [Explore sessions](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md)
+- **Self-host.** In the Compose stacks that run serve, Postgres and ClickHouse are healthy only when they answer on the address serve connects to. The old checks passed against the image's first-start setup server on loopback or the unix socket, so `docker compose up -d --wait` could fail on the ClickHouse stack with `clickhouse at http://clickhouse:8123/ is unreachable`. [Deploy](https://github.com/jackulau/coding.sh/blob/main/docs/production/deploy.md#docker-compose)
+- **Examples.** `examples/plugin-ab/check-tasks.py` removes the temp files it makes. Before, each run left 20 answer files and 2 folders in the temp directory. [examples/plugin-ab](https://github.com/jackulau/coding.sh/tree/main/examples/plugin-ab)
 
 ## [0.1.7] - 2026-11-16
 

@@ -110,9 +110,14 @@ undo it.
 
 - **pre-commit** runs the lint on staged files, then the `typecheck` script (the site's
   `astro check`) of each package the commit touches.
-- **pre-push** runs the `test` script of each package the pushed commits touch and of the
-  packages that depend on it (a `packages/coding.sh` change also runs the store plugins' tests),
-  the Python SDK's tests, and the lint, hook and dogfood script tests when those change.
+- **pre-push** checks the pushed commits' author addresses and that no private agent file is
+  tracked, runs the lint on the files the push changes, then the same typecheck as pre-commit for
+  each package the push touches. It runs no tests: CI runs them on the pull request, and
+  `npm run gate` runs them on your machine. The lint and the typecheck read your working tree, so
+  uncommitted edits are checked too. It prints a line when it takes more than 9 seconds.
+
+When a commit or push touches more than one package, their typechecks run at the same time, and a
+hook prints the output of the ones that fail.
 
 Skip a hook once with `--no-verify`, or set `CODING_SH_SKIP_HOOKS=1`.
 `node scripts/hooks/run.mjs pre-commit --dry-run` prints what a hook would run. The lint and hook
@@ -170,11 +175,23 @@ tests run with `npm run lint:test`.
   request gets Site perf only when it touches the site's measured paths. The timing budgets were
   set on the desk and are checked there after the merge, when the push to `main` touches those
   paths.
+- The push to `main` that a merge makes does not run the full suite again: the merge commit
+  holds the files the check passed on. It runs the quick jobs, with every test file and no job
+  skipped, and the real agent captures, whose Windows job saves the caches the next pull
+  request's Windows jobs restore. A manual run of the workflow runs every job but Site perf.
 - Timing tests (hook latency, help startup) assume an idle machine. If one fails on a loaded
   machine, rerun it alone before you treat it as a regression.
 - The viewer UI tests drive headless Chrome and skip when none is installed. In CI a missing
   Chrome is a failure: each test job starts Chrome once before its tests
   (`packages/coding.sh/scripts/warm-chrome.ts`), because a fresh runner's first start can take
-  longer than the 20 s a test gives it. That first start has 60 s; past it the job fails.
+  longer than the 20 s a test gives it. That first start has 60 s; past it the job fails. The
+  first start prints what it did, fast or slow: Chrome's stderr, when the first byte came on
+  stderr and on stdout, and on Linux how long the machine stalled meanwhile (from
+  `/proc/pressure`). The
+  same step loads the viewer's list and Explore once, at the size the tests give a page, because
+  the first viewer page on a runner does work no later page does (it reads Chrome's number and
+  date data from disk, for one) and can take longer than the 5 s a test gives a page. A page
+  load that runs out of time says how long `Page.navigate` took, how long the page took to
+  answer, and the state it was in.
 
 By contributing you agree that your contributions are licensed under the MIT license.

@@ -33,6 +33,47 @@ export const cpuMs = (fn: () => unknown): number => {
   return threadCpuMs() - start;
 };
 
+/**
+ * Spins until the clock shows a new value. Returns that value and how far it moved: the clock's
+ * step. Measured for a thread's CPU clock: 0.002 ms on a Mac, 1 ms on a Linux CI runner, and a
+ * timer tick of 15.6 ms on Windows.
+ */
+const nextStep = (clock: () => number): { at: number; step: number } => {
+  const from = clock();
+  let at = from;
+  while (at === from) at = clock();
+  return { at, step: at - from };
+};
+
+/** The step of this thread's CPU clock, in milliseconds. */
+export const cpuClockStepMs = (): number => nextStep(threadCpuMs).step;
+
+/** How many steps of the clock a measurement covers at least, so one step is at most 5% of it. */
+const MIN_STEPS = 20;
+
+/**
+ * CPU milliseconds one call of `fn` costs this thread, from as many calls as it takes to use
+ * `minMs` of CPU. One short call can't be timed this way: on a clock that moves in 15.6 ms steps
+ * a 4 ms call reads as 0 or 15.6.
+ *
+ * The same steps put a 100 ms measurement off by up to 14% either way: it can begin anywhere
+ * inside one step and end anywhere inside another. So the measurement begins on a step and runs
+ * for at least `MIN_STEPS` of them, which leaves it under by less than one step in twenty. That is
+ * 313 ms on Windows; with a step of 1 ms or less `minMs` is the longer of the two.
+ */
+export const cpuMsPerCall = (fn: () => unknown, minMs = 100, clock: () => number = threadCpuMs): number => {
+  const { at: start, step } = nextStep(clock);
+  const enough = Math.max(minMs, MIN_STEPS * step);
+  let calls = 0;
+  let used = 0;
+  do {
+    fn();
+    calls++;
+    used = clock() - start;
+  } while (used < enough);
+  return used / calls;
+};
+
 let sink = 0;
 
 /**

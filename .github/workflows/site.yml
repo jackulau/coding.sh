@@ -50,6 +50,18 @@ jobs:
       - name: Install
         run: npm ci --no-audit --no-fund
 
+      # The nav shows the repository's star count. The build makes no request, so the count is
+      # read here and handed to it. With no count the nav shows none and the deploy goes on.
+      - name: Star count
+        working-directory: apps/site
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          stars=$(node scripts/stars.mjs || true)
+          if [ -n "$stars" ]; then echo "SITE_GITHUB_STARS=$stars" >> "$GITHUB_ENV"
+          else echo "::warning title=No star count::GitHub gave no star count, so the nav is built without one."
+          fi
+
       - name: Build
         working-directory: apps/site
         run: npm run build

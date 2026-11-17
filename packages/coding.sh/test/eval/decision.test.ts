@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -218,8 +218,9 @@ describe("buildDecisionDataset", () => {
     );
   });
 
-  it("loads anchors from a module and rejects bad ones", async () => {
+  it("loads anchors from a module and rejects bad ones", async (t) => {
     const dir = mkdtempSync(join(tmpdir(), "anchor-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
     const good = join(dir, "good.mjs");
     writeFileSync(good, `export default { id: "any-final", version: 1, frame: "claim", behavior: "x", rubric: "5: good", find: (s) => s.filter((e) => e.kind === "assistant.message").map((e) => ({ cutBeforeEventId: e.id, evidenceEventIds: [e.id] })) };\n`);
     const [a] = await loadAnchor(good);

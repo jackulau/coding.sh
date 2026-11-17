@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { dependents, needsShell, precommitPlan, prepushPlan, pushedFiles, workspaces } from "../lib.mjs";
+import { LINT_PATHS_MAX, needsShell, precommitPlan, prepushPlan, pushedFiles, workspaces } from "../lib.mjs";
 import { main as install } from "../install.mjs";
-import { main as runHook } from "../run.mjs";
+import { batches, BUDGET_S, main as runHook } from "../run.mjs";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const ENV = {
@@ -66,12 +66,11 @@ const LAYOUT = {
 
 const labels = (plan) => plan.map((s) => s.label);
 
-test("workspaces and dependents follow package.json", () => {
+test("workspaces follow package.json", () => {
   const root = repo(LAYOUT);
   const spaces = workspaces(root);
   assert.deepEqual(spaces.map((w) => w.dir), ["apps/site", "packages/core", "packages/sdk", "packages/store"]);
-  assert.deepEqual(spaces.find((w) => w.name === "store").deps, ["core"]);
-  assert.deepEqual(dependents(spaces, ["core"]).map((w) => w.name), ["core", "store"]);
+  assert.deepEqual(spaces.find((w) => w.name === "store").scripts, { test: "node --test", typecheck: "tsc --noEmit" });
 });
 
 test("pre-commit: slop lint on staged files, then typecheck of each touched package", () => {
@@ -92,15 +91,34 @@ test("pre-commit: a site whose check is `astro check && npm test` still gets ast
   assert.deepEqual([plan[1].cwd, plan[1].cmd ?? plan[1].command, plan[1].args], ["apps/site", plan[1].cmd ?? plan[1].command, ["astro", "check"]]);
 });
 
-test("pre-push: tests of touched packages and their dependents, Python and script suites", () => {
+test("pre-push: slop lint on the pushed files, then a typecheck of each touched package, and no tests", () => {
   const root = repo(LAYOUT);
-  assert.deepEqual(labels(prepushPlan(root, ["packages/core/src/a.ts"])), ["test core", "test store (depends on a changed package)"]);
-  assert.deepEqual(labels(prepushPlan(root, ["packages/store/src/a.ts"])), ["test store"]);
-  assert.deepEqual(labels(prepushPlan(root, ["apps/site/src/a.astro", "README.md"])), []);
-  const py = prepushPlan(root, ["packages/sdk-python/src/x.py"]);
-  assert.deepEqual(labels(py), ["test coding-sh (Python)"]);
-  assert.equal(py[0].cwd, "packages/sdk-python");
-  assert.deepEqual(labels(prepushPlan(root, ["scripts/lint/lib/rules.mjs", "scripts/dogfood/score.mjs"])), ["lint and hook tests", "dogfood tests"]);
+  write(root, { "packages/core/src/a.ts": "", "packages/store/src/a.ts": "", "apps/site/src/a.astro": "", "README.md": "", "packages/sdk-python/src/x.py": "" });
+  const core = prepushPlan(root, ["packages/core/src/a.ts"]);
+  assert.deepEqual(labels(core), ["slop lint (pushed files)", "typecheck core"]);
+  assert.deepEqual(core[0].args, ["scripts/lint/slop.mjs", "packages/core/src/a.ts"]);
+  assert.deepEqual([core[1].cwd, core[1].args], ["packages/core", ["run", "--silent", "typecheck"]]);
+  // The store depends on core; its check is CI's job, not the push's.
+  assert.deepEqual(labels(prepushPlan(root, ["packages/store/src/a.ts"])), ["slop lint (pushed files)", "typecheck store"]);
+  assert.deepEqual(labels(prepushPlan(root, ["apps/site/src/a.astro", "README.md"])), ["slop lint (pushed files)", "typecheck site"]);
+  assert.deepEqual(labels(prepushPlan(root, ["README.md", "packages/sdk-python/src/x.py"])), ["slop lint (pushed files)"]);
+  assert.ok(!prepushPlan(root, ["packages/core/src/a.ts", "packages/sdk-python/src/x.py", "scripts/lint/lib/rules.mjs"]).some((s) => /test/.test(`${s.label} ${s.args.join(" ")}`)));
+  assert.deepEqual(prepushPlan(root, []), []);
+});
+
+test("pre-push: a deleted file is not handed to the lint, and a very large push lints the whole tree", () => {
+  const root = repo(LAYOUT);
+  write(root, { "packages/core/src/a.ts": "" });
+  // packages/core/src/gone.ts is in the push's diff and not on disk: its package is still typechecked.
+  const plan = prepushPlan(root, ["packages/core/src/a.ts", "packages/core/src/gone.ts"]);
+  assert.deepEqual(plan[0].args, ["scripts/lint/slop.mjs", "packages/core/src/a.ts"]);
+  assert.deepEqual(labels(prepushPlan(root, ["packages/core/src/gone.ts"])), ["typecheck core"]);
+  const many = Array.from({ length: LINT_PATHS_MAX + 1 }, (_, i) => `docs/${i}.md`);
+  write(root, Object.fromEntries(many.map((f) => [f, ""])));
+  assert.deepEqual(labels(prepushPlan(root, many.slice(1))), ["slop lint (pushed files)"]);
+  const whole = prepushPlan(root, many);
+  assert.deepEqual(labels(whole), ["slop lint (whole tree)"]);
+  assert.deepEqual(whole[0].args, ["scripts/lint/slop.mjs"]);
 });
 
 test("pushedFiles diffs against the remote sha, or the fork point for a new branch", () => {
@@ -121,19 +139,19 @@ test("pushedFiles diffs against the remote sha, or the fork point for a new bran
   assert.deepEqual(pushedFiles(root, `refs/heads/feature ${head} refs/heads/feature ${"1".repeat(40)}\n`).sort(), ["b.txt", "packages/core/x.ts"]);
 });
 
-test("run: --dry-run prints the plan, CODING_SH_SKIP_HOOKS skips it", () => {
+test("run: --dry-run prints the plan, CODING_SH_SKIP_HOOKS skips it", async () => {
   const root = repo(LAYOUT);
   write(root, { "packages/core/src/a.ts": "export const a = 1;\n" });
   git(root, ["add", "packages/core/src/a.ts"]);
   const out = sink();
-  assert.equal(runHook(["pre-commit", "--dry-run", "--json"], { stdout: out, stderr: sink(), cwd: root, env: ENV }), 0);
+  assert.equal(await runHook(["pre-commit", "--dry-run", "--json"], { stdout: out, stderr: sink(), cwd: root, env: ENV }), 0);
   const doc = JSON.parse(out.text);
   assert.equal(doc.files, 1);
   assert.deepEqual(labels(doc.plan), ["slop lint (staged files)", "typecheck core"]);
   const err = sink();
-  assert.equal(runHook(["pre-commit"], { stdout: sink(), stderr: err, cwd: root, env: { ...ENV, CODING_SH_SKIP_HOOKS: "1" } }), 0);
+  assert.equal(await runHook(["pre-commit"], { stdout: sink(), stderr: err, cwd: root, env: { ...ENV, CODING_SH_SKIP_HOOKS: "1" } }), 0);
   assert.match(err.text, /skipped/);
-  assert.equal(runHook(["pre-merge"], { stdout: sink(), stderr: sink(), cwd: root, env: ENV }), 2);
+  assert.equal(await runHook(["pre-merge"], { stdout: sink(), stderr: sink(), cwd: root, env: ENV }), 2);
 });
 
 /** A repo with this checkout's lint, hooks and shared secret patterns copied in. */
@@ -208,11 +226,12 @@ test("end to end: pre-commit blocks a commit with slop and a failing typecheck",
   assert.equal(git(root, ["commit", "--no-verify", "-qm", "skip once"]).code, 0, "--no-verify skips the hook");
 });
 
-test("end to end: pre-push runs the tests of the packages a push touches", { skip: process.platform === "win32" && "sh hooks" }, () => {
+test("end to end: pre-push lints and typechecks what a push touches, and runs no tests", { skip: process.platform === "win32" && "sh hooks" }, () => {
   const failIf = "node -e \"process.exit(require('fs').existsSync('FAIL') ? 1 : 0)\"";
+  const fail = "node -e \"process.exit(1)\"";
   const root = hookedRepo({
-    "packages/core/package.json": { name: "core", scripts: { test: failIf } },
-    "packages/other/package.json": { name: "other", scripts: { test: "node -e \"process.exit(1)\"" } },
+    "packages/core/package.json": { name: "core", scripts: { typecheck: failIf, test: fail } },
+    "packages/other/package.json": { name: "other", scripts: { typecheck: fail, test: fail } },
   });
   const remote = realpathSync(mkdtempSync(join(tmpdir(), "slop-remote-")));
   temps.push(remote);
@@ -223,19 +242,34 @@ test("end to end: pre-push runs the tests of the packages a push touches", { ski
   assert.equal(git(root, ["push", "-q", "--no-verify", "origin", "main"]).code, 0);
   assert.equal(install([], { stdout: sink(), stderr: sink(), cwd: root }), 0);
 
-  // Touches core only: core's tests run, and "other" (always failing) does not.
+  // Touches core only: core's typecheck runs; "other" (always failing) and core's tests (always failing) do not.
   write(root, { "packages/core/src/a.ts": "export const a = 1;\n", "packages/core/FAIL": "" });
   git(root, ["add", "packages/core/src/a.ts"]);
-  git(root, ["commit", "-qm", "core"]);
+  git(root, ["commit", "--no-verify", "-qm", "core"]);
   const blocked = git(root, ["push", "origin", "main"]);
   assert.notEqual(blocked.code, 0);
-  assert.match(blocked.out, /test core failed/);
-  assert.doesNotMatch(blocked.out, /test other/);
+  assert.match(blocked.out, /typecheck core failed/);
+  assert.doesNotMatch(blocked.out, /other|test core/);
   rmSync(join(root, "packages/core/FAIL"));
   const ok = git(root, ["push", "origin", "main"]);
   assert.equal(ok.code, 0, ok.out);
-  assert.match(ok.out, /pre-push: ok \(2 steps/);
+  assert.match(ok.out, /pre-push: ok \(3 steps/);
   assert.match(ok.out, /pre-push: commit identity and private files/);
+  assert.match(ok.out, /pre-push: slop lint \(pushed files\)/);
+  assert.doesNotMatch(ok.out, /over its/);
+
+  // Slop that a `git commit --no-verify` let through is stopped at the push.
+  write(root, { "packages/core/src/s.ts": "declare const raw: string;\nexport const n = raw as unknown as number;\n" });
+  git(root, ["add", "packages/core/src/s.ts"]);
+  git(root, ["commit", "--no-verify", "-qm", "slop"]);
+  const slop = git(root, ["push", "origin", "main"]);
+  assert.notEqual(slop.code, 0);
+  assert.match(slop.out, /packages\/core\/src\/s\.ts:2:\d+ {2}chained-as/);
+  assert.match(slop.out, /slop lint \(pushed files\) failed/);
+  write(root, { "packages/core/src/s.ts": "export const n = Number('1');\n" });
+  git(root, ["add", "packages/core/src/s.ts"]);
+  git(root, ["commit", "--no-verify", "-qm", "no slop"]);
+  assert.equal(git(root, ["push", "origin", "main"]).code, 0);
 
   // rules-11: a commit authored with an address GitHub can't link is stopped before it leaves.
   write(root, { "b.txt": "b\n" });
@@ -251,9 +285,85 @@ test("pre-push: with the pushed ranges, the identity check runs first", () => {
   const root = repo(LAYOUT);
   write(root, { "scripts/gate/hygiene.mjs": "" });
   const plan = prepushPlan(root, ["packages/core/src/a.ts"], ["abc..def"]);
-  assert.deepEqual(labels(plan), ["commit identity and private files", "test core", "test store (depends on a changed package)"]);
+  assert.deepEqual(labels(plan), ["commit identity and private files", "typecheck core"]);
   assert.deepEqual(plan[0].args, ["scripts/gate/hygiene.mjs", "abc..def"]);
   assert.deepEqual(labels(prepushPlan(root, ["README.md"], ["abc..def"])), ["commit identity and private files"]);
+});
+
+test("run: a pre-push slower than its budget says so and still passes; pre-commit has no budget", async () => {
+  const root = repo(LAYOUT);
+  write(root, { "scripts/gate/hygiene.mjs": "" });
+  git(root, ["add", "."]);
+  git(root, ["commit", "-qm", "one"]);
+  const head = git(root, ["rev-parse", "HEAD"]).stdout;
+  const push = async (seconds) => {
+    const err = sink();
+    const clock = [0, seconds * 1000];
+    const code = await runHook(["pre-push", "origin"], { stdout: sink(), stderr: err, cwd: root, env: ENV, stdin: () => `refs/heads/main ${head} refs/heads/main ${head}\n`, now: () => clock.shift() });
+    return { code, err: err.text };
+  };
+  assert.equal(BUDGET_S["pre-push"], 9);
+  const slow = await push(9.4);
+  assert.equal(slow.code, 0, slow.err);
+  assert.match(slow.err, /pre-push: ok \(1 step, 9\.4s\)\npre-push: over its 9s budget/);
+  const fast = await push(8.9);
+  assert.match(fast.err, /pre-push: ok \(1 step, 8\.9s\)\n$/);
+  assert.equal(BUDGET_S["pre-commit"], undefined);
+});
+
+test("the typechecks of a plan are one batch; the identity check and the lint each run alone, first", () => {
+  const root = repo(LAYOUT);
+  write(root, { "scripts/gate/hygiene.mjs": "", "packages/core/src/a.ts": "", "packages/store/src/a.ts": "", "packages/sdk/src/a.ts": "" });
+  const plan = prepushPlan(root, ["packages/core/src/a.ts", "packages/store/src/a.ts", "packages/sdk/src/a.ts"], ["abc..def"]);
+  assert.deepEqual(batches(plan).map(labels), [["commit identity and private files"], ["slop lint (pushed files)"], ["typecheck core", "typecheck sdk", "typecheck store"]]);
+  assert.deepEqual(batches(precommitPlan(root, ["packages/core/src/a.ts"])).map(labels), [["slop lint (staged files)"], ["typecheck core"]]);
+});
+
+/**
+ * A typecheck that passes only when the other package's typecheck is running at
+ * the same time: it leaves a mark, then waits for the other's mark. One after
+ * the other, the first would wait for a mark that is not there yet and fail.
+ */
+const meets = (mine, theirs) => `import { existsSync, writeFileSync } from "node:fs";
+writeFileSync(new URL("../../${mine}", import.meta.url), "");
+const until = Date.now() + 20_000;
+while (!existsSync(new URL("../../${theirs}", import.meta.url))) {
+  if (Date.now() > until) { console.error("${theirs} never started"); process.exit(1); }
+  await new Promise((r) => setTimeout(r, 20));
+}
+`;
+
+test("run: the typechecks of a push run at the same time, and a failing one shows its own output", async () => {
+  const root = hookedRepo({
+    "packages/core/package.json": { name: "core", scripts: { typecheck: "node check.mjs" } },
+    "packages/sdk/package.json": { name: "sdk", scripts: { typecheck: "node check.mjs" } },
+    "packages/core/check.mjs": meets("core.started", "sdk.started"),
+    "packages/sdk/check.mjs": meets("sdk.started", "core.started"),
+    "packages/core/src/a.ts": "",
+    "packages/sdk/src/a.ts": "",
+  });
+  git(root, ["add", "."]);
+  git(root, ["commit", "-qm", "one"]);
+  const base = git(root, ["rev-parse", "HEAD"]).stdout;
+  write(root, { "packages/core/src/a.ts": "export {};\n", "packages/sdk/src/a.ts": "export {};\n" });
+  git(root, ["add", "."]);
+  git(root, ["commit", "-qm", "two"]);
+  const head = git(root, ["rev-parse", "HEAD"]).stdout;
+  const push = async () => {
+    const err = sink();
+    const code = await runHook(["pre-push", "origin"], { stdout: sink(), stderr: err, cwd: root, env: ENV, stdin: () => `refs/heads/main ${head} refs/heads/main ${base}\n` });
+    return { code, err: err.text };
+  };
+  const ok = await push();
+  assert.equal(ok.code, 0, ok.err);
+  assert.match(ok.err, /pre-push: typecheck core\npre-push: typecheck sdk\npre-push: ok \(4 steps, /);
+
+  // One of the two fails: the push is blocked, and only the failing one's output is shown.
+  write(root, { "packages/sdk/check.mjs": 'console.log("sdk says hello");\nconsole.error("sdk/src/a.ts(1,1): error TS0000: planted");\nprocess.exit(1);\n', "packages/core/check.mjs": 'console.log("core is fine");\n' });
+  const blocked = await push();
+  assert.equal(blocked.code, 1, blocked.err);
+  assert.match(blocked.err, /\npre-push: typecheck sdk:\nsdk says hello\nsdk\/src\/a\.ts\(1,1\): error TS0000: planted\npre-push: typecheck sdk failed\.\nnext: /);
+  assert.doesNotMatch(blocked.err, /core is fine/);
 });
 
 test("npm and npx run through a shell on Windows only, where they are .cmd files", () => {

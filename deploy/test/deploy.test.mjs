@@ -92,8 +92,34 @@ describe("Dockerfile", () => {
   });
 });
 
+// On a first start the database images run a setup server that other containers cannot reach
+// (ClickHouse on 127.0.0.1, Postgres on its unix socket), stop it, then start the real one. A check
+// over loopback or the socket passes against the setup server, so Compose starts serve while the
+// address serve connects to still refuses. Each check asks as serve does, on the container's own
+// address.
+function healthcheckOf(dc, service) {
+  const m = dc.match(new RegExp(`^  ${service}:\\n(?:(?:    .*)?\\n)*?    healthcheck:\\n(?:      #.*\\n)*      test: (\\[.*\\])$`, "m"));
+  assert.ok(m, `the ${service} service has a healthcheck`);
+  const [kind, cmd] = JSON.parse(m[1]);
+  assert.equal(kind, "CMD-SHELL");
+  return cmd;
+}
+function assertPostgresHealthcheck(dc) {
+  assert.equal(healthcheckOf(dc, "postgres"), "pg_isready -h $$HOSTNAME -U coding -d coding", "over TCP on the container's own address");
+}
+function assertClickhouseHealthcheck(dc) {
+  const cmd = healthcheckOf(dc, "clickhouse");
+  assert.match(cmd, /"http:\/\/\$\$HOSTNAME:8123\/\?query=SELECT%201"/, "a query over HTTP on the container's own address");
+  assert.doesNotMatch(cmd, /127\.0\.0\.1|localhost|clickhouse-client/, "nothing over loopback");
+  assert.match(cmd, /--header 'X-ClickHouse-User: coding'/);
+  assert.match(cmd, /--header "X-ClickHouse-Key: \$\$CLICKHOUSE_PASSWORD"/);
+}
+
 describe("docker-compose.yml", () => {
   const dc = read("docker-compose.yml");
+  test("Postgres is healthy only when serve can reach it", () => {
+    assertPostgresHealthcheck(dc);
+  });
   test("has the four services", () => {
     for (const s of ["coding-sh", "postgres", "minio", "minio-init"]) assert.match(dc, new RegExp(`^  ${s}:$`, "m"), s);
     assert.match(dc, /image: postgres:17$/m);
@@ -165,6 +191,12 @@ describe("deploy/compose/compose*.yml (the team stacks)", () => {
     assert.match(ch, /CODING_SH_STORE_URL: clickhouse:\/\/coding:\$\{CLICKHOUSE_PASSWORD:-coding\}@clickhouse:8123\/coding$/m);
     assert.match(ch, /CODING_SH_BLOB_URL: file:\/\/\/data\/blobs$/m);
   });
+  test("compose.postgres.yml: Postgres is healthy only when serve can reach it", () => {
+    assertPostgresHealthcheck(read("deploy/compose/compose.postgres.yml"));
+  });
+  test("compose.clickhouse.yml: ClickHouse is healthy only when serve can reach it", () => {
+    assertClickhouseHealthcheck(read("deploy/compose/compose.clickhouse.yml"));
+  });
 });
 
 describe("deploy/compose/clickhouse.yml", () => {
@@ -179,6 +211,9 @@ describe("deploy/compose/clickhouse.yml", () => {
     const ports = [...dc.matchAll(/^\s+- "([^"]+:\d+)"/gm)].map((m) => m[1]);
     assert.deepEqual(ports, ["127.0.0.1:8123:8123"]);
     for (const [, v] of dc.matchAll(/\$\{([A-Z_]+)/g)) assert.ok(NAMES.includes(v), v);
+  });
+  test("ClickHouse is healthy only when serve can reach it", () => {
+    assertClickhouseHealthcheck(dc);
   });
 });
 

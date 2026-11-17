@@ -300,7 +300,9 @@ describe("CLI: show <call> and diff-calls", () => {
   let env: NodeJS.ProcessEnv = {};
   before(async () => {
     root = realpathSync(mkdtempSync(join(tmpdir(), "csh-calls-")));
-    env = { PATH: process.env.PATH, HOME: join(root, "home"), CODING_SH_HOME: join(root, "data"), NO_COLOR: "1", CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1" }; // no detached background ingest holding the home on Windows
+    // No background ingest: a read of a store the proxy wrote starts one detached, and it would
+    // outlive this file and make the store again after the folder is removed.
+    env = { PATH: process.env.PATH, HOME: join(root, "home"), CODING_SH_HOME: join(root, "data"), NO_COLOR: "1", CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1" };
     const config = loadConfig(env);
     const stores = await openStores(config);
     const recorder = recorderFor({ config, index: stores.index, blobs: stores.blobs, env: {} });
