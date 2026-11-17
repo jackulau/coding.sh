@@ -103,6 +103,21 @@ describe("calibrate: metrics", () => {
     assert.ok(calibrate({ judge, ...block("t", "test", { tp: 50, fp: 0, fn: 0, tn: 50 }), seed: 1 }).kappaCI.lo > 0.9);
   });
 
+  it("κ of no agreement beyond chance is exactly 0, in the estimate and the CI, and never prints as -0.00", () => {
+    // tp·tn = fp·fn: the judge's verdicts are independent of the labels. Computing p_o and p_e
+    // separately gave κ = -2.8e-16 here, and resampled bounds like -7.8e-16 that printed "-0.00".
+    const tiny = (x: number) => x !== 0 && Math.abs(x) < 1e-9;
+    for (const counts of [{ tp: 1, fp: 2, fn: 4, tn: 8 }, { tp: 1, fp: 4, fn: 4, tn: 16 }, { tp: 2, fp: 2, fn: 2, tn: 2 }]) {
+      for (let seed = 1; seed <= 20; seed++) {
+        const r = calibrate({ judge, ...block("t", "test", counts), seed, bootstrapIters: 500 });
+        assert.ok(Object.is(r.kappa, 0), `κ ${r.kappa} for ${JSON.stringify(counts)}`);
+        assert.ok(!tiny(r.kappaCI.lo) && !tiny(r.kappaCI.hi) && !Object.is(r.kappaCI.lo, -0) && !Object.is(r.kappaCI.hi, -0), `CI [${r.kappaCI.lo}, ${r.kappaCI.hi}] seed ${seed}`);
+        const text = renderCalibration(r, { color: false });
+        assert.doesNotMatch(text, /-0\.00/, text);
+      }
+    }
+  });
+
   it("insufficient data: too few cases, or one class only", () => {
     const few = calibrate({ judge, ...block("t", "test", { tp: 3, fp: 0, fn: 0, tn: 3 }) });
     assert.equal(few.state, "insufficient-data");

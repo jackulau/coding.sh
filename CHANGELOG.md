@@ -37,6 +37,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Judges.** `judge calibrate` reports a κ of exactly 0 when the judge agrees with your labels no more than chance would, in the estimate and its interval. Before, rounding could print it as `-0.00`. [Judges](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#judges)
 - **Docs.** The durable workflow guide sets up tracing with OpenTelemetry JS 3.x (`@opentelemetry/sdk-trace`, `new BatchSpanProcessor({ exporter })`), and the Agent Runs guide pins the 2.x packages durable-harness and eve need. Before, their unpinned installs failed with `ERESOLVE`. [Trace a durable workflow](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/trace-durable-workflow.md)
 - **Evals.** Codex eval runs pass `--trust` when the installed Codex has it (0.169 and later), so a harness's project `.codex/config.toml` and its MCP servers load in the eval work dir. Only runs in their own `CODEX_HOME` pass it, never a run that uses `--ignore-user-config`, and it writes no hook trust hash. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md)
 - **Serve.** Behind a TLS proxy with `trust_proxy` set, every HTTPS answer carries `Strict-Transport-Security: max-age=31536000`, and a sign-in sets the read cookie as `__Host-csh_rk`, marked `Secure`. Plain HTTP on loopback keeps `csh_rk`, and a browser already signed in stays signed in. Once a browser has seen the header, it refuses plain HTTP to that host for a year. [REST API](https://coding.sh/docs/api)
