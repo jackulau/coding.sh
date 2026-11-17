@@ -62,3 +62,24 @@ for (const path of ["docs/sdk", "docs/quickstart"]) {
     assert.ok(html.indexOf('<aside class="onpage"') < html.indexOf("<main"), "placed before the article");
   });
 }
+
+// The rail hides the other h2s' h3s to stay short; the dropdown below 1280px
+// lists every h3, so a reader (or a keyboard) reaches observe() from the top.
+const LAYOUT = readFileSync(new URL("../src/components/docs/DocsLayout.astro", import.meta.url), "utf8");
+/** The CSS inside `@media (min-width: 1280px) { ... }` blocks, balanced. */
+function wideBlocks(css) {
+  const out = [];
+  for (const m of css.matchAll(/@media \(min-width: 1280px\) \{/g)) {
+    let depth = 1, i = m.index + m[0].length;
+    for (; depth && i < css.length; i++) depth += css[i] === "{" ? 1 : css[i] === "}" ? -1 : 0;
+    out.push(css.slice(m.index, i));
+  }
+  return out;
+}
+test("only the wide rail hides the h3s of the h2s not being read", () => {
+  const rule = /\.onpage:has\(\[data-active\]\) li:not\(:has\(\[data-active\]\)\) > ul\s*\{\s*display:\s*none/g;
+  const css = LAYOUT.slice(LAYOUT.indexOf("<style>"));
+  const wide = wideBlocks(css).join("\n");
+  assert.equal((css.match(rule) ?? []).length, 1, "one rule hides them");
+  assert.equal((wide.match(rule) ?? []).length, 1, "and it sits in the 1280px media query");
+});

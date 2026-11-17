@@ -77,7 +77,8 @@ const faqSchemas = faq.length ? [faqSchema(faq)] : [];
 // <details class="more faq"> with an id, listed as an h2), in order, each with a nested list
 // of its h3s, and each Tabs block as its tab labels, each followed by its
 // panel's h3 steps (Tabs.astro writes them to data-toc). A step shows only
-// while its tab is open; an h2's h3s show only while that h2 is current (CSS).
+// while its tab is open. In the rail an h2's h3s show only while that h2 is
+// current (CSS); the dropdown below 1280px lists them all.
 // Astro writes `"` in an attribute as &#34; and the Markdown renderer as &quot;: decode both.
 const NAMED: Record<string, string> = { quot: '"', apos: "'", lt: "<", gt: ">", amp: "&" };
 const unesc = (s: string) =>
@@ -660,6 +661,10 @@ const showOutline = outline.length + (outline[0]?.subs?.length ?? 0) >= 2;
     .onpage details > ul {
       margin: 0;
     }
+    /* The rail shows only the current h2's h3s; the dropdown lists them all. */
+    .onpage:has([data-active]) li:not(:has([data-active])) > ul {
+      display: none;
+    }
     @supports selector(::details-content) {
       .onpage .docs__fold-sum {
         display: none;
@@ -699,16 +704,14 @@ const showOutline = outline.length + (outline[0]?.subs?.length ?? 0) >= 2;
   .onpage__link--step {
     padding-left: 2.25rem;
   }
-  /* An h2's h3s, shown only under the current h2 once the script marks one. */
+  /* An h2's h3s. In the rail (1280px and wider) they show only under the
+     current h2 once the script marks one. */
   .onpage ul ul {
     border: 0;
   }
   .onpage ul ul .onpage__link {
     padding-left: 1.5rem;
     overflow-wrap: anywhere;
-  }
-  .onpage:has([data-active]) li:not(:has([data-active])) > ul {
-    display: none;
   }
   .onpage__link[data-active] {
     color: var(--text);

@@ -18,6 +18,10 @@ grouped by area, with links to the docs for the details.
 - **Docs.** The FAQ folds each answer under its question, and each question is one control named by its words. A link to a closed fold, or to a section inside one such as a question or an optional step, opens it and scrolls to it, from the same page or another. [FAQ](https://coding.sh/docs/faq)
 - **Docs.** The `--help` text on each CLI page, and every terminal output block, has a Copy button. Copying a block whose lines start with `$ ` copies only the commands, without the prompt or the output. Shell blocks colour the command, its flags, quoted strings and comments. [CLI](https://coding.sh/docs/cli)
 
+### Fixed
+
+- **Docs.** Below 1280px the "On this page" dropdown lists every subheading of every section, such as each function on the SDKs page. Only the wide rail keeps to the section being read. [SDKs](https://coding.sh/docs/sdk)
+
 ## [0.1.7] - 2026-11-16
 
 ### Added
