@@ -115,20 +115,31 @@ test("ci.yml gates every code-only job on the changes job, and never skips when 
     assert.match(body, /\n    needs: changes\n/, `${name} needs changes`);
     assert.ok(body.includes(`\n    ${gate}\n`), `${name} runs unless changes says code=false`);
   }
-  // The slow jobs run in the full suite only (a push, a manual run, or the `ready` label). Their
+  // The slow jobs run in the full suite only (the `ready` label, or a manual run). Their
   // condition reads the event and the label, so nothing a pull request changes can skip them there.
-  const full = "if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}";
-  for (const name of ["windows", "real-capture", "cli-suite", "image"]) {
+  const full = "if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready') }}";
+  for (const name of ["windows", "cli-suite", "image"]) {
     const body = job(name);
     assert.ok(body.includes(`\n    ${full}\n`), `${name} runs in the full suite`);
     assert.doesNotMatch(body, /needs\.changes/, `${name} does not read the changes job`);
   }
+  // A push to main is a merge the full suite passed on, so it runs the quick jobs and one slow
+  // job, the real captures: every event but a pull request without the label. Their Windows leg
+  // is the push's only Windows job, and it saves the two caches a full suite restores there.
+  const andPush = "if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}";
+  assert.ok(job("real-capture").includes(`\n    ${andPush}\n`), "real-capture also runs on a push");
+  assert.doesNotMatch(job("real-capture"), /needs\.changes/);
+  assert.equal(ci.split(andPush).length - 1, 1, "no other job runs on a push and skips the quick run");
+  assert.match(job("real-capture"), /\n          - \{ os: windows-latest, part: 1 \}\n/);
+  const winCapture = job("real-capture");
+  assert.ok(winCapture.includes("\n      - uses: actions/setup-node@v5\n        with:\n          node-version: 24.x\n          cache: npm\n"), "saves the npm cache");
+  assert.ok(winCapture.includes("\n      - uses: astral-sh/setup-uv@v7\n"), "saves the uv cache");
   // Windows has one shape: both Node versions, and the shard count each leg is told.
   assert.match(job("windows"), /\n        node: \[22\.x, 24\.x\]\n        shard: \[1, 2, 3, 4\]\n/);
   assert.equal([...job("windows").matchAll(/matrix\.shard \}\}\/4\b/g)].length, 2, "the job name and SHARD");
-  // A pull request without the label tests Linux on Node 24; the full suite adds Node 22.
-  const narrow = "(github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready'))";
-  assert.ok(job("test").includes(`node: \${{ fromJSON(${narrow} && '["24.x"]' || '["22.x", "24.x"]') }}\n        shard: [1, 2, 3]\n`));
+  // A pull request without the label and a push test Linux on Node 24; the full suite adds Node 22.
+  const wide = "(github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready'))";
+  assert.ok(job("test").includes(`node: \${{ fromJSON(${wide} && '["22.x", "24.x"]' || '["24.x"]') }}\n        shard: [1, 2, 3]\n`));
   // The Node 24 legs launch the bundle they build; the Node 22 legs launch from source. The
   // variable is the one test/_cli.ts reads, and it is written only by that step: a job-level
   // `env:` would hand the Node 22 legs an empty value.
@@ -139,7 +150,8 @@ test("ci.yml gates every code-only job on the changes job, and never skips when 
   assert.equal([...ci.matchAll(new RegExp(cliEnv, "g"))].length, 2, "the comment and the step, nowhere else");
   // The checks that read docs and the site always run.
   for (const name of ["gate-static", "build", "test"]) assert.doesNotMatch(job(name), /needs: changes/, name);
-  // Pushes to main, manual runs and the full suite on a pull request skip no job for the diff.
+  // Pushes to main, manual runs and the full suite on a pull request skip no job for the diff:
+  // only a pull request reads its diff, whatever FULL says.
   assert.match(job("changes"), /if \[ "\$FULL" != true \] && \[ "\$EVENT" = pull_request \] && files=/);
 });
 
@@ -159,4 +171,15 @@ test("ci.yml starts Chrome before the tests in every job that runs them", () => 
   // On Linux the path is named for the whole job, so a missing Chrome fails both steps.
   assert.match(running[0].body, /\n    env:\n(?:      #.*\n)*      CODING_SH_TEST_CHROME: \/usr\/bin\/google-chrome\n    steps:\n/);
   assert.ok(existsSync(join(ROOT, "packages/coding.sh/scripts/warm-chrome.ts")));
+});
+
+test("ci.yml stops the Storage Service before anything else in the Windows job", () => {
+  const ci = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
+  const windows = /\n  windows:\n([\s\S]*?)(?=\n  [a-z][a-z-]*:\n|$)/.exec(ci)?.[1] ?? "";
+  // The service starts a disk read about 11 minutes after boot; a viewer page that first loads
+  // during it outlasts the 5 s a test gives it. The step as it must stay: the first one, and a
+  // service that cannot be stopped fails the job.
+  const step = "\n      - name: Stop the Storage Service\n        shell: pwsh\n        run: |\n          Stop-Service -Name StorSvc -Force\n          Set-Service -Name StorSvc -StartupType Disabled\n";
+  assert.equal(windows.split(step).length, 2, "the step, once");
+  assert.equal(windows.indexOf("\n      - "), windows.indexOf(step), "it is the first step");
 });

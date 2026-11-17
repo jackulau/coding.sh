@@ -170,6 +170,10 @@ tests run with `npm run lint:test`.
   request gets Site perf only when it touches the site's measured paths. The timing budgets were
   set on the desk and are checked there after the merge, when the push to `main` touches those
   paths.
+- The push to `main` that a merge makes does not run the full suite again: the merge commit
+  holds the files the check passed on. It runs the quick jobs, with every test file and no job
+  skipped, and the real agent captures, whose Windows job saves the caches the next pull
+  request's Windows jobs restore. A manual run of the workflow runs every job but Site perf.
 - Timing tests (hook latency, help startup) assume an idle machine. If one fails on a loaded
   machine, rerun it alone before you treat it as a regression.
 - The viewer UI tests drive headless Chrome and skip when none is installed. In CI a missing
