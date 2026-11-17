@@ -21,7 +21,7 @@ const blocks = Astro.props.blocks ?? renderDoc(Astro.props.file!, Astro.url.path
 {
   blocks.map((b) =>
     b.kind === "code" ? (
-      <Code code={b.code} title={b.title} />
+      <Code code={b.code} title={b.title} lang={b.lang} />
     ) : b.kind === "tabs" ? (
       <CodeTabs tabs={b.tabs} group={b.group} />
     ) : b.kind === "shot" ? (

@@ -28,11 +28,13 @@ export interface CodeTab {
   label: string;
   code: string;
   title: string;
+  /** The fence's language: "sh", "json", or "" when it names none. */
+  lang: string;
 }
 
 export type MdBlock =
   | { kind: "html"; html: string }
-  | { kind: "code"; code: string; title: string }
+  | { kind: "code"; code: string; title: string; lang: string }
   | { kind: "tabs"; group: string; tabs: CodeTab[] }
   | { kind: "more"; summary: string; blocks: MdBlock[] }
   | { kind: "note"; blocks: MdBlock[] }
@@ -364,25 +366,25 @@ export function renderMarkdown(text: string, file: string, here: string = SITE_P
         for (; j < lines.length && !lines[j]!.startsWith("```"); j++) body.push(lines[j]!);
         const attrs = fenceAttrs(m[2] ?? "");
         const title = attrs.title ?? FENCE_TITLES[m[1]!] ?? (m[1] || "shell");
-        return { attrs, title, code: body.join("\n"), end: j + 1 };
+        return { attrs, title, lang: m[1]!, code: body.join("\n"), end: j + 1 };
       };
       let f = read(i);
       i = f.end;
       flush();
       if (!f.attrs.tab) {
-        emit({ kind: "code", code: f.code, title: f.title });
+        emit({ kind: "code", code: f.code, title: f.title, lang: f.lang });
         continue;
       }
       // Consecutive tab= fences, blank lines between them allowed, are one CodeTabs.
       const group = f.attrs.group ?? "lang";
-      const tabs: CodeTab[] = [{ label: f.attrs.tab, code: f.code, title: f.title }];
+      const tabs: CodeTab[] = [{ label: f.attrs.tab, code: f.code, title: f.title, lang: f.lang }];
       for (;;) {
         let j = i;
         while (j < lines.length && !lines[j]!.trim()) j++;
         const next = lines[j]?.match(FENCE);
         if (!next || !fenceAttrs(next[2] ?? "").tab) break;
         f = read(j);
-        tabs.push({ label: f.attrs.tab!, code: f.code, title: f.title });
+        tabs.push({ label: f.attrs.tab!, code: f.code, title: f.title, lang: f.lang });
         i = f.end;
       }
       emit({ kind: "tabs", group, tabs });

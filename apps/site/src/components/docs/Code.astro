@@ -1,26 +1,33 @@
 ---
 // A copyable code block in the same frame as the install line: a title bar
 // with a Copy button, then a body that scrolls sideways inside its own box.
-// `code` is the exact text copied, so what you paste is what you read.
+// `code` is the exact text copied, so what you paste is what you read, except
+// in a "$ " transcript, which copies only its commands (lib/shell.ts).
+import { promptCommands, shellHtml } from "../../lib/shell";
 interface Props {
   code: string;
   /** Title bar text: a file name, a shell, a language. */
   title?: string;
+  /** The fence's language. A sh or bash block, or one that names no language
+      under the default "shell" title, is coloured at build time (lib/shell.ts). */
+  lang?: string;
   class?: string;
 }
-const { code, title = "shell", class: klass } = Astro.props;
+const { code, title = "shell", lang, class: klass } = Astro.props;
 const text = code.replace(/^\n+|\s+$/g, "");
+const commands = promptCommands(text);
+const sh = lang === undefined ? title === "shell" : lang === "sh" || lang === "bash";
 ---
 
 <div class:list={["code", klass]}>
   <div class="code__bar" data-pagefind-ignore>
     <span class="code__title">{title}</span>
-    <button type="button" class="code__copy ctl hit" data-code-copy aria-label={`Copy ${title}`} data-agent-skip>
+    <button type="button" class="code__copy ctl hit" data-code-copy data-copy={commands} aria-label={`Copy ${title}`} data-agent-skip>
       <span data-copy-label>Copy</span>
     </button>
     <span class="sr-only" role="status" data-code-status data-agent-skip></span>
   </div>
-  <pre class="code__body" data-code-text><code>{text}</code></pre>
+  <pre class="code__body" data-code-text>{sh ? <code set:html={shellHtml(text)} /> : <code>{text}</code>}</pre>
 </div>
 
 <style>
@@ -46,18 +53,6 @@ const text = code.replace(/^\n+|\s+$/g, "");
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .code__copy {
-    flex: none;
-    min-width: 4.25rem;
-    justify-content: center;
-  }
-  /* Touch: the chip keeps its size inside the 40px bar; .hit gives the 44px target. */
-  @media (pointer: coarse) {
-    .code__copy.ctl {
-      height: 1.75rem;
-      padding: 0 0.6rem;
-    }
   }
   .code__body {
     margin: 0;

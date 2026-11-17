@@ -316,6 +316,34 @@
   margin-inline: 0;
 }
 
+/* The Copy chip in the bar of a code block (Code.astro) and a terminal (Terminal.astro). */
+.code__copy {
+  flex: none;
+  min-width: 4.25rem;
+  justify-content: center;
+}
+/* Shell colours, set at build time on sh blocks (lib/shell.ts). Each is at
+   least 4.5:1 on --term; other words keep the block's --text. */
+.sh-cmd {
+  color: var(--pass-ink);
+}
+.sh-flag {
+  color: var(--text-2);
+}
+.sh-str {
+  color: var(--fail-ink);
+}
+.sh-com {
+  color: var(--text-muted);
+}
+/* Touch: the chip keeps its size inside the 40px bar; .hit gives the 44px target. */
+@media (pointer: coarse) {
+  .code__copy.ctl {
+    height: 1.75rem;
+    padding: 0 0.6rem;
+  }
+}
+
 /* ---------- Code tabs (CodeTabs.astro) ----------
    Without JS every panel shows under its label. With JS (data-ready) a tab
    row sits on the panel's own title bar and only the picked panel shows. */
