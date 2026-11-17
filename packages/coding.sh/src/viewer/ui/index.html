@@ -641,6 +641,21 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .find-only { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 12px; color: var(--text-muted); cursor: pointer; }
 .find-only input { accent-color: var(--text); margin: 0; }
 .timeline-more[hidden] { display: none; }
+.session-grid[hidden], .chat[hidden] { display: none; }
+/* Chat view: prompts and replies in full, one readable column; each turn's other steps are one line. */
+.chat-on .tl-tools > :not(.timeline-head, .view-seg, .spacer) { display: none; }
+.chat { position: relative; flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0.4rem var(--gutter) 3rem; outline: none; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.chat:focus-visible { box-shadow: inset 0 0 0 1px var(--line-strong); }
+.chat-empty { max-width: 46rem; margin: 1rem auto 0; }
+.chat-empty[hidden] { display: none; }
+.chat-turn { display: grid; gap: 0.55rem; max-width: 46rem; margin: 0 auto; padding: 1rem 0; }
+.chat-turn + .chat-turn { box-shadow: inset 0 1px 0 var(--line); }
+.chat-msg { display: grid; gap: 0.3rem; min-width: 0; }
+.chat-who { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; font-size: 12px; color: var(--text-muted); }
+.chat-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.6; color: var(--text); }
+.chat-msg.is-user .chat-text { padding: 0.55rem 0.8rem; border-radius: var(--radius-sm); background: var(--raised); box-shadow: inset 0 0 0 1px var(--line); }
+.chat-work { justify-self: start; display: inline-flex; align-items: baseline; gap: 0.4rem; max-width: 100%; min-height: 28px; padding: 0.25rem 0.5rem; border-radius: var(--radius-sm); font-size: 12.5px; color: var(--text-muted); text-align: left; box-shadow: inset 0 0 0 1px var(--line); }
+.chat-work .err { color: var(--fail-ink); }
 .timeline-more { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.4rem var(--gutter); box-shadow: inset 0 -1px 0 var(--line); background: var(--surface); flex: none; }
 
 .session-grid { display: grid; grid-template-columns: minmax(0, 1fr); flex: 1 1 auto; min-height: 0; }
@@ -861,6 +876,7 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 }
 @media (max-width: 860px) {
   .hintbar { display: none; }
+  .chat { flex: none; overflow: visible; }
   .tl { flex: none; height: 62vh; }
   .timeline { box-shadow: inset 0 -1px 0 var(--line); }
   .to-steps { display: inline-flex; }
@@ -1412,6 +1428,7 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 
 @media (hover: hover) and (pointer: fine) {
   .bench-card:hover .chev { color: var(--text); }
+  .chat-work:hover { color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
   .nav a:hover:not([aria-current="page"]) { color: var(--text); transition-duration: var(--dur-hover-in); }
   .cmdk:hover { box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--text-2); transition-duration: var(--dur-hover-in); }
   .icon-btn:hover { background: var(--hover); color: var(--text); transition-duration: var(--dur-hover-in); }
@@ -2064,7 +2081,7 @@ function route() {
     if (a.dataset.nav === section) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }
   if (parts[0] === "s" && parts[1]) return showSession(seq, parts[1], parts[2] || "", (query.get("where") || "").trim().slice(0, WHERE_MAX),
-    /^\d{1,9}$/.test(query.get("step") || "") ? Number(query.get("step")) : 0);
+    /^\d{1,9}$/.test(query.get("step") || "") ? Number(query.get("step")) : 0, query.get("view") || "");
   if (parts[0] === "experiments" && parts[1] && parts[2] === "vs" && parts[3]) return showCompare(seq, parts[1], parts[3]);
   if (parts[0] === "experiments" && parts[1]) return showExperiment(seq, parts[1]);
   if (parts[0] === "experiments") return showExperiments(seq);
@@ -2115,6 +2132,7 @@ const KEYMAP = [
   { scope: "session", id: "next-turn", keys: ["}"], label: "Next turn", hint: true },
   { scope: "session", id: "prev-turn", keys: ["{"], label: "Previous turn" },
   { scope: "session", id: "find", keys: ["/"], label: "Find in steps", hint: true },
+  { scope: "session", id: "chat", keys: ["v"], label: "Chat or steps view", hint: true },
   { scope: "session", id: "next-match", keys: ["n"], label: "Next match (find, or the query you came from)" },
   { scope: "session", id: "prev-match", keys: ["N"], label: "Previous match" },
   { scope: "session", id: "open-fold", keys: ["Enter"], alt: ["ArrowRight"], label: "Expand folded steps or turn (Enter on a turn folds it)" },
@@ -2596,9 +2614,9 @@ function rowFlags(flags) {
   return [flagBadges(flags.slice(0, 1)), h("span", { class: "badge", title: "Flags: " + flags.join(", ") }, "+" + (flags.length - 1))];
 }
 function sessionTitle(s) { return oneLine(s.title) || "Untitled session"; }
-/** A session, or one of its events; `where` carries the query it was opened from (n and N step through its matches). */
-function sessionHref(id, eventId, where) {
-  return "#/s/" + encodeURIComponent(id) + (eventId ? "/" + encodeURIComponent(eventId) : "") + (where ? qs({ where }) : "");
+/** A session, or one of its events; `where` carries the query it was opened from (n and N step through its matches), `view` "chat" or "steps". */
+function sessionHref(id, eventId, where, view) {
+  return "#/s/" + encodeURIComponent(id) + (eventId ? "/" + encodeURIComponent(eventId) : "") + qs({ where, view });
 }
 /** API and production traces: model requests, no tool calls. "0 tool calls" would be noise there. */
 function isApiSession(s) {
@@ -3995,7 +4013,7 @@ const prefs = {
   set(k, v) { try { localStorage.setItem("csh-" + k, v ? "1" : "0"); } catch { /* private window */ } },
 };
 
-async function showSession(seq, id, eventId, where = "", linkStep = 0) {
+async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView = "") {
   const view = h("section", { class: "session-view", "aria-label": "Session" });
   const keys = { scope: "session", actions: {}, palette: [] };
   view.append(h("div", { class: "detail-head" }, h("div", { class: "crumbs" }, h("a", { class: "back", href: listHref() }, h("span", { class: "nudge", "aria-hidden": "true" }, "←"), list.mode === "events" ? "Events" : "Sessions"))));
@@ -4240,6 +4258,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     renderWindow(true);
     renderMap();
     renderTools();
+    renderChat();
   }
 
   reindex();
@@ -4272,7 +4291,18 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   // Replay state; the replay section below drives it.
   const rp = { on: false, index: null, n: 0, playing: false, speed: rpSpeedPref(), timer: 0, view: null, range: null, want: "", shown: "", busy: false, syncing: false, tab: "changes", file: "", from: 0, stepItems: null, lastPaneStep: 0, fork: null };
   const rpBtn = h("button", { class: "btn btn-sm btn-ghost rp-toggle", type: "button", "aria-pressed": "false", "aria-keyshortcuts": "Shift+R", title: "Replay step by step (Shift+R)", onclick: () => (rp.on ? exitReplay() : enterReplay()) }, "Replay");
-  const tools = h("div", { class: "tl-tools" }, head, failNav, derailNav, queryNav, h("span", { class: "spacer" }),
+  // Chat view: prompts and replies only, in order. A link's ?view= wins over the remembered choice; a replay link opens steps.
+  let chatOn = !linkStep && (linkView === "chat" || (linkView !== "steps" && prefs.get("chat", false)));
+  const viewBtn = (on, label) => h("button", { type: "button", "aria-pressed": String(chatOn === on), "aria-keyshortcuts": "v", title: (on ? "Prompts and replies only" : "Every step") + " (v)", onclick: () => setChat(on) }, label);
+  const stepsBtn = viewBtn(false, "Steps"), chatBtn = viewBtn(true, "Chat");
+  const viewSeg = h("div", { class: "seg view-seg", role: "group", "aria-label": "View" }, stepsBtn, chatBtn);
+  const chatEmpty = h("p", { class: "note chat-empty", hidden: true }, "No prompts or replies were recorded in this session. Its steps are in Steps.");
+  const chat = h("div", { class: "chat", id: "chat", role: "region", tabindex: "0", "aria-label": "Chat: prompts and replies", hidden: true }, chatEmpty);
+  // One element per turn, kept while the turn is unchanged, so a live tail redraws only the turns that grew.
+  let chatTurns = [];
+  // The URL keeps the view when it differs from the default (steps) or from what this browser remembers.
+  const here = (eventId) => sessionHref(session.id, eventId, where, chatOn ? "chat" : prefs.get("chat", false) ? "steps" : "");
+  const tools = h("div", { class: "tl-tools" }, viewSeg, head, failNav, derailNav, queryNav, h("span", { class: "spacer" }),
     h("div", { class: "find" }, findInput, findCount), h("label", { class: "find-only" }, onlyBox, h("span", null, "Only matches")), rpBtn, foldBtn, wfBtn);
   // The ‹ › buttons are built once and only their label changes, so a click never loses hover or focus to a rebuild.
   const navPair = (nav, noun, move, keys) => {
@@ -4286,6 +4316,8 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   const failLbl = navPair(failNav, "failure", (d) => jumpFail(d), ["[", "]"]);
   const timeline = h("div", { class: "timeline" }, tl, map, tailPill);
   const narrow = window.matchMedia("(max-width: 860px)");
+  const grid = h("div", { class: "session-grid" }, timeline, pane);
+  const CHAT_KEYS = new Set(["chat", "back", "label-pass", "label-fail"]);
 
   function renderTools() {
     const total = session.stats && session.stats.events;
@@ -4490,7 +4522,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     stepTimer = 0;
     stepAt = performance.now();
     renderPane(pane, items[stepItem], session, ctx);
-    history.replaceState(null, "", sessionHref(session.id, items[stepItem].id, where));
+    history.replaceState(null, "", here(items[stepItem].id));
   }
   function showStep(i) {
     stepItem = i;
@@ -4569,6 +4601,85 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
         return h("li", null, h("span", { class: "dot tone-" + m.v.tone }), h("span", { class: "truncate" }, m.v.label), h("span", { class: "meta" }, m.v.meta));
       })),
       h("button", { class: "btn btn-sm", type: "button", onclick: () => ctx.openFold(x.key) }, "Expand"));
+  }
+  // ---- chat view
+  const isMsg = (it) => it.type === "user.message" || it.type === "assistant.message";
+  function chatSig(k) {
+    const t = turnInfo[k];
+    return items[t.from].id + "|" + items[t.to - 1].id + "|" + (t.to - t.from) + "|" + t.fails + "|" + Math.round(t.dur / 1000);
+  }
+  function chatMsg(i) {
+    const it = items[i], user = it.type === "user.message";
+    const text = String(((it.ev || {}).payload || {}).text ?? "");
+    return h("div", { class: "chat-msg " + (user ? "is-user" : "is-agent") },
+      h("div", { class: "chat-who" }, h("span", null, user ? "Turn " + meta[i].prompt + " · Prompt" : "Assistant"), h("time", { datetime: new Date(it.ts).toISOString() }, fmtClock(it.ts - session.startedAt))),
+      text.trim() ? clipped(text, (x) => h("div", { class: "chat-text" }, x), { lines: 400 }) : h("p", { class: "note" }, "No inline text."));
+  }
+  // A turn: its prompt, one line for the steps between prompt and replies, then the replies in order.
+  function chatTurnEl(k) {
+    const t = turnInfo[k];
+    const replies = [];
+    let work = 0;
+    for (let i = t.from; i < t.to; i++) {
+      if (!isMsg(items[i])) work++;
+      else if (!(t.prompt && i === t.from)) replies.push(chatMsg(i));
+    }
+    let line = null;
+    if (work) {
+      const w = turnWords(t.from, t.to);
+      const text = plural(work, "step") + (w.tools ? " · " + w.words : "") + (t.fails ? " · " : "");
+      line = h("button", { class: "chat-work", type: "button", title: "Show this turn in Steps",
+        "aria-label": text + (t.fails ? plural(t.fails, "error") : "") + ". Show this turn in Steps", onclick: () => toSteps(t.from) },
+        h("span", { class: "caret", "aria-hidden": "true" }, "▸"), h("span", null, text, t.fails ? h("span", { class: "err" }, plural(t.fails, "error")) : null));
+    }
+    return h("section", { class: "chat-turn", "aria-label": t.prompt ? "Turn " + meta[t.from].prompt : "Before the first prompt" },
+      t.prompt ? chatMsg(t.from) : null, line, replies);
+  }
+  function renderChat() {
+    if (!chatOn) return;
+    const atEnd = chatTurns.length > 0 && chat.scrollTop + chat.clientHeight >= chat.scrollHeight - 40;
+    let grew = false;
+    for (let k = 0; k < turnInfo.length; k++) {
+      const sig = chatSig(k), c = chatTurns[k];
+      if (c && c.sig === sig) continue;
+      const el = chatTurnEl(k);
+      if (c) {
+        const had = c.el.contains(document.activeElement);
+        c.el.replaceWith(el);
+        if (had) chat.focus({ preventScroll: true });
+      } else chat.append(el);
+      chatTurns[k] = { sig, el };
+      grew = true;
+    }
+    while (chatTurns.length > turnInfo.length) chatTurns.pop().el.remove();
+    chatEmpty.hidden = items.some(isMsg);
+    if (grew && atEnd) chat.scrollTop = chat.scrollHeight;
+  }
+  function setChat(on) {
+    if (on && rp.on) exitReplay();
+    chatOn = on;
+    prefs.set("chat", on);
+    showChat();
+    history.replaceState(null, "", here(items[activeItem] ? items[activeItem].id : ""));
+    announce(on ? "Chat view: prompts and replies" : "Steps view");
+  }
+  function showChat() {
+    view.classList.toggle("chat-on", chatOn);
+    grid.hidden = chatOn;
+    chat.hidden = !chatOn;
+    stepsBtn.setAttribute("aria-pressed", String(!chatOn));
+    chatBtn.setAttribute("aria-pressed", String(chatOn));
+    renderHint();
+    if (!chatOn) { selectRow(activeRow, false, true); renderMap(); return; }
+    renderChat();
+    // Opens at the turn of the step that was selected (or linked).
+    const c = activeItem > 0 && chatTurns[meta[activeItem].turn];
+    if (c) { if (narrow.matches) c.el.scrollIntoView({ block: "start" }); else chat.scrollTop = c.el.offsetTop; }
+  }
+  function toSteps(i) {
+    setChat(false);
+    selectItem(i, true);
+    tl.focus({ preventScroll: true });
   }
   function jumpFail(dir) {
     if (!failIdx.length) return;
@@ -4884,8 +4995,8 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     delete pane.dataset.item;
     if (typeof x === "number") {
       renderPane(pane, items[x], session, ctx);
-      history.replaceState(null, "", sessionHref(session.id, items[x].id, where));
-    } else history.replaceState(null, "", sessionHref(session.id, "", where));
+      history.replaceState(null, "", here(items[x].id));
+    } else history.replaceState(null, "", here(""));
   }
   function rpGo(n) {
     const steps = rpSteps();
@@ -5117,7 +5228,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   function renderHint() {
     const scope = rp.on ? "replay" : "session";
     swap(hint, 
-      ...KEYMAP.filter((k) => k.scope === scope && k.hint).map((k) => h("span", null, keyCaps(k.id === "down" ? ["j", "k"] : k.id === "next-turn" ? ["{", "}"] : k.keys), k.id === "down" ? "move" : k.id === "next-turn" ? "turns" : k.label.replace(/^Show or hide |^Expand or fold /, "").toLowerCase())),
+      ...KEYMAP.filter((k) => k.scope === scope && k.hint && (!chatOn || CHAT_KEYS.has(k.id))).map((k) => h("span", null, keyCaps(k.id === "down" ? ["j", "k"] : k.id === "next-turn" ? ["{", "}"] : k.keys), k.id === "down" ? "move" : k.id === "next-turn" ? "turns" : k.label.replace(/^Show or hide |^Expand or fold /, "").toLowerCase())),
       h("span", { class: "spacer" }), h("span", null, keyCaps(["?"]), "all shortcuts"));
   }
 
@@ -5132,6 +5243,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     "next-turn": () => jumpTurn(1),
     "prev-turn": () => jumpTurn(-1),
     find: () => { findInput.focus(); findInput.select(); },
+    chat: () => { setChat(!chatOn); (chatOn ? chat : tl).focus({ preventScroll: true }); },
     "next-match": () => (findQ ? jumpMatch(1) : jumpQuery(1)),
     "prev-match": () => (findQ ? jumpMatch(-1) : jumpQuery(-1)),
     "open-fold": (e) => {
@@ -5163,11 +5275,14 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     { group: "Session", label: "Next turn", hint: "}", run: () => jumpTurn(1) },
     { group: "Session", label: "Previous turn", hint: "{", run: () => jumpTurn(-1) },
     { group: "Session", label: "Find in steps", hint: "/", run: () => setTimeout(() => findInput.focus(), 0) },
+    { group: "Session", label: "Chat or steps view", hint: "v", run: () => { setChat(!chatOn); setTimeout(() => (chatOn ? chat : tl).focus({ preventScroll: true }), 0); } },
     { group: "Session", label: "Copy session id", run: () => copy(session.id, "session id") },
     { group: "Session", label: "Copy eval command", run: () => copy("coding.sh eval new " + session.id, "eval command") },
     { group: "Session", label: "Show or hide timing bars", hint: "w", run: () => toggleWf() },
     { group: "Session", label: "Replay step by step", hint: "R", run: () => enterReplay() },
   ];
+  // In chat view the step keys do nothing; v, Esc and the label keys still work.
+  for (const [k, fn] of Object.entries(keys.actions)) if (!CHAT_KEYS.has(k)) keys.actions[k] = (e) => (chatOn ? false : fn(e));
   // Clicks inside the step list keep keyboard focus on it.
   tl.addEventListener("mousedown", () => { requestAnimationFrame(() => { if (!typing({ target: document.activeElement })) tl.focus({ preventScroll: true }); }); });
 
@@ -5177,13 +5292,14 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     const i = items.findIndex((it) => ((it.ev || it.start || it.end || {}).spanId) === spanId);
     if (i >= 0) { selectItem(i, true); tl.focus({ preventScroll: true }); }
   };
-  view.lastChild.replaceWith(...[durableStrip(session, pickSpan)].filter(Boolean), tools, rpBar, more, h("div", { class: "session-grid" }, timeline, pane), hint);
+  view.lastChild.replaceWith(...[durableStrip(session, pickSpan)].filter(Boolean), tools, rpBar, more, grid, chat, hint);
   rebuildRows();
   // A link to a step opens its turn; otherwise the list opens at the top, folded turns and all.
   if (eventId && byEvent.has(eventId)) selectItem(activeItem, true);
   else selectRow(0);
   if (!eventId) tl.scrollTop = 0, renderWindow(true);
   // A link ending in ?step=N opens the replay at that step.
+  if (chatOn) showChat();
   if (linkStep) enterReplay(linkStep);
   if (hasMore) loadRest(); else loadOutline();
   announce("Session loaded, " + plural(items.length, "step") + (failIdx.length ? ", " + plural(failIdx.length, "failure") : "") + (hasMore ? ", more events available" : ""));

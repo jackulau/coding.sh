@@ -35,6 +35,10 @@ One prompt and everything the agent does until it hands control back to you.
 - A turn with a failure and the last turn stay open. Enter or click opens a folded turn; Enter on
   an open turn's row or `←` folds it. A link to a step in a folded turn opens it.
 - `z` shows every step, and the viewer remembers that choice.
+- In the viewer: Chat, beside Steps (or `v`), shows only the prompts and replies, in order and in
+  full. The viewer remembers the choice, and the link carries it (`?view=chat`).
+- In Chat, each turn has one line that counts its other steps, such as "4 steps · read 2 files,
+  1 command". Activating it goes back to Steps at that turn.
 - In the CLI: the `TURNS` column of `coding.sh sessions`, and the turn count in `coding.sh show`.
 
 ### Event

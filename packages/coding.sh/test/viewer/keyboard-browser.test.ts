@@ -15,6 +15,9 @@ const LONG = "5a1d2c3b-0f4e-4a6b-8c7d-9e0f1a2b3c4d";
 const RP = "7f3c1e2a-5b6d-4e8f-9a0b-1c2d3e4f5a6b";
 const TURNS = "3b9e4d2a-6c1f-4e7a-8b5d-2f0a9c8e7d61";
 const FOLDS = "8e2d6c4b-1a3f-4b5e-9c7d-0f6a2b8c4e19";
+const CHAT = "c4a7e9d2-3b5f-4c8a-9e1d-6f2b0a7c5e38";
+const chatPrompt = (t: number) => `question ${t}: what does module ${t} do?\nSay it in two lines.`;
+const chatReply = (t: number) => `Module ${t} parses the config.\n\n\`\`\`\nparse(${t})\n\`\`\`\nThat is all for answer ${t}.`;
 
 describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no Chrome/Chromium found (set CODING_SH_TEST_CHROME)" }, () => {
   const index = new FakeIndex();
@@ -77,6 +80,21 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     ];
     await index.upsertSession(session(FOLDS, { startedAt: T0, endedAt: T0 + 22_000, title: "Five turns", stats: { events: 23, turns: 5, toolCalls: 6, toolErrors: 1, filesChanged: 1 } }));
     await index.putEvents(foldEvents);
+    // Ten turns: a prompt, a read, a two-paragraph reply; turn 7 also runs a command that fails.
+    const chatEvents: AgentEvent[] = [];
+    n = 0;
+    for (let t = 1; t <= 10; t++) {
+      chatEvents.push(at(CHAT, ++n, { kind: "user.message", payload: { text: chatPrompt(t) } }));
+      chatEvents.push(at(CHAT, ++n, { kind: "tool.start", payload: { tool: "Read", toolUseId: "r" + t, input: { file_path: `/work/demo/m${t}.ts` } } }));
+      chatEvents.push(at(CHAT, ++n, { kind: "tool.end", durationMs: 200, payload: { tool: "Read", toolUseId: "r" + t, ok: true } }));
+      if (t === 7) {
+        chatEvents.push(at(CHAT, ++n, { kind: "tool.start", payload: { tool: "Bash", toolUseId: "b7", input: { command: "npm test" } } }));
+        chatEvents.push(at(CHAT, ++n, { kind: "tool.end", durationMs: 300, payload: { tool: "Bash", toolUseId: "b7", ok: false, exitCode: 1, output: "1 failing" } }));
+      }
+      chatEvents.push(at(CHAT, ++n, { kind: "assistant.message", payload: { text: chatReply(t) } }));
+    }
+    await index.upsertSession(session(CHAT, { startedAt: T0, endedAt: T0 + n * 1000, title: "Ten turns", stats: { events: n, turns: 10, toolCalls: 11, toolErrors: 1, filesChanged: 0 } }));
+    await index.putEvents(chatEvents);
     const exp = experimentResult("exp-prod-smoke");
     // The failing case's output is long enough to clip, so its open row holds a "Show all" button.
     exp.runs[1]!.output = Array.from({ length: 600 }, (_, i) => `line ${i}`).join("\n");
@@ -256,6 +274,47 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     await p.press("j");
     await p.press("ArrowLeft");
     await p.waitFor(`/find the callers/.test(${selected}.textContent) && ${selected}.classList.contains('fold')`, "← folds turn 2");
+    assert.deepEqual(p.errors, []);
+  });
+
+  test("Chat shows every prompt and reply in full; a turn's step line goes back to Steps there; the view is linked and remembered", async () => {
+    let p = await open("#/s/" + CHAT);
+    const selected = "document.querySelector('#steps .st[aria-selected=true]')";
+    const pressed = "document.querySelector('.view-seg [aria-pressed=true]')?.textContent";
+    await p.waitFor(`${selected} && ${pressed} === 'Steps'`, "Steps is the default");
+    assert.equal(await p.eval("document.querySelector('#chat').hidden"), true);
+    await p.eval("[...document.querySelectorAll('.view-seg button')].find((b) => b.textContent === 'Chat').click()");
+    await p.waitFor("!document.querySelector('#chat').hidden && document.querySelector('.session-grid').hidden", "the chat replaces the steps");
+    assert.match(await p.eval("location.hash"), /[?&]view=chat/);
+    // Every prompt and reply, in order and whole: no click, no "Show all".
+    const texts: string[] = await p.eval("[...document.querySelectorAll('#chat .chat-text')].map((e) => e.textContent)");
+    assert.deepEqual(texts, Array.from({ length: 10 }, (_, i) => [chatPrompt(i + 1), chatReply(i + 1)]).flat());
+    assert.equal(await p.eval("document.querySelectorAll('#chat .show-all, #chat button[aria-expanded]').length"), 0);
+    assert.equal(await p.eval("document.querySelector('#chat .chat-empty').checkVisibility()"), false, "no empty-state note in a session with prompts");
+    // Each turn has one line that counts the steps hidden between prompt and reply.
+    const lines: string[] = await p.eval("[...document.querySelectorAll('#chat .chat-work')].map((e) => e.textContent)");
+    assert.equal(lines.length, 10);
+    assert.equal(lines[0], "▸1 step · read 1 file");
+    assert.equal(lines[6], "▸2 steps · read 1 file, 1 command · 1 error");
+    // Activating turn 9's line goes back to Steps on turn 9's prompt (a folded turn opens).
+    await p.eval("document.querySelectorAll('#chat .chat-work')[8].click()");
+    await p.waitFor(`document.querySelector('#chat').hidden && /question 9/.test(${selected}.textContent) && ${selected}.getAttribute('aria-expanded') === 'true'`, "Steps at turn 9");
+    assert.equal(await p.eval("document.activeElement.id"), "steps");
+    assert.equal(await p.eval(`${pressed}`), "Steps");
+    assert.doesNotMatch(await p.eval("location.hash"), /view=/);
+    // v toggles; the choice survives a reload.
+    await p.press("v");
+    await p.waitFor("!document.querySelector('#chat').hidden && document.activeElement.id === 'chat'", "v opens the chat");
+    assert.match(await p.eval("document.querySelector('.hintbar')?.textContent || ''"), /vchat or steps view/);
+    await p.eval("window.beforeReload = true; location.reload()");
+    await p.waitFor("!window.beforeReload && document.querySelectorAll('#chat .chat-text').length === 20 && !document.querySelector('#chat').hidden", "still chat after a reload");
+    // A link opens the view it names in a browser that remembers nothing.
+    p = await open("#/s/" + CHAT + "?view=chat");
+    await p.waitFor(`document.querySelectorAll('#chat .chat-text').length === 20 && ${pressed} === 'Chat'`, "the link opens the chat");
+    p = await open("#/s/" + CHAT);
+    await p.waitFor(`${selected} && ${pressed} === 'Steps'`, "no link, nothing remembered: Steps");
+    await p.press("?");
+    await p.waitFor("/Chat or steps view/.test(document.body.textContent)", "the help sheet lists v");
     assert.deepEqual(p.errors, []);
   });
 
