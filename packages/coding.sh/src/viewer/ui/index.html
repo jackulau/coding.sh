@@ -754,7 +754,10 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .st.fold .caret { display: inline-block; width: 10px; color: var(--text-faint); }
 .st.fold .arg { font-family: var(--font-mono); font-size: 11.5px; }
 /* A folded turn: its prompt, then what it did. The caret on an open turn's row points down and folds it. */
-.st.turn.fold .arg { flex: 0 1 auto; max-width: 45%; font-family: var(--font-sans); font-size: 13px; color: var(--text); }
+.st.turn.fold .arg { flex: 0 1 auto; max-width: 65%; font-family: var(--font-sans); font-size: 13px; color: var(--text); }
+/* A folded turn has no bar, so its prompt and summary take the timing column too. */
+.st.turn.fold { grid-template-columns: 3.4rem minmax(0, 1fr) auto; }
+.tl.wf-on .st.turn.fold .wf { display: none; }
 .st.turn.fold .sum { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted); }
 .st.turn.fold .sum .err { color: var(--fail-ink); }
 .st.turn .caret { flex: none; display: inline-block; width: 10px; color: var(--text-faint); }
@@ -936,7 +939,7 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
   .crumbs .sid { max-width: 12rem; }
 }
 @media (max-width: 560px) {
-  .st { grid-template-columns: 2.6rem minmax(0, 1fr) auto; padding-right: 0.6rem; }
+  .st, .st.turn.fold { grid-template-columns: 2.6rem minmax(0, 1fr) auto; padding-right: 0.6rem; }
   .tl.wf-on { --wf: 0px; }
   .st .wf { display: none !important; }
   .actions { width: 100%; }

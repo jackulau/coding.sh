@@ -262,6 +262,10 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     assert.equal(await p.eval(`${row1}.querySelector('.arg').textContent`), "fix the parser");
     assert.equal(await p.eval(`${row1}.querySelector('.sum').textContent`), "9.0s · 4 tool calls · read 2 files, 1 edit +1 −1, 1 command");
     assert.equal(await p.eval(`${row1}.getAttribute('aria-expanded')`), "false");
+    // A folded turn has no timing bar: its words run on over the timing column the step rows use.
+    const wfLeft: number = await p.eval("document.querySelector('#steps .st:not(.fold) .wf').getBoundingClientRect().left");
+    assert.ok(wfLeft > 0, "timing bars are on");
+    assert.ok(await p.eval(`${row1}.querySelector('.lbl').getBoundingClientRect().right`) > wfLeft, "the folded row's text reaches into the timing column");
     assert.match(await p.eval(`${selected}.textContent`), /npm run build/, "the session opens on its failure");
     // Enter opens the turn and its row says so; Enter again folds it.
     await p.eval("document.querySelector('#steps').focus()");
