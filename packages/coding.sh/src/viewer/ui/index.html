@@ -652,7 +652,7 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .chat-turn + .chat-turn { box-shadow: inset 0 1px 0 var(--line); }
 .chat-msg { display: grid; gap: 0.3rem; min-width: 0; }
 .chat-who { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; font-size: 12px; color: var(--text-muted); }
-.chat-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.6; color: var(--text); }
+.chat-text { overflow-wrap: anywhere; font-size: 14px; line-height: 1.6; color: var(--text); }
 .chat-msg.is-user .chat-text { padding: 0.55rem 0.8rem; border-radius: var(--radius-sm); background: var(--raised); box-shadow: inset 0 0 0 1px var(--line); }
 .chat-work { justify-self: start; display: inline-flex; align-items: baseline; gap: 0.4rem; max-width: 100%; min-height: 28px; padding: 0.25rem 0.5rem; border-radius: var(--radius-sm); font-size: 12.5px; color: var(--text-muted); text-align: left; box-shadow: inset 0 0 0 1px var(--line); }
 .chat-work .err { color: var(--fail-ink); }
@@ -766,6 +766,19 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .code.wrap-lines { white-space: pre-wrap; overflow-wrap: anywhere; }
 .code.is-fail { background: color-mix(in srgb, var(--fail-wash) 50%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fail) 25%, transparent); color: var(--text); }
 .text-block { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-sans); font-size: 13.5px; line-height: 1.6; color: var(--text); }
+.md { display: grid; gap: 0.6rem; min-width: 0; font-size: 13.5px; line-height: 1.6; color: var(--text); overflow-wrap: anywhere; }
+.md > *, .md li > ul, .md li > ol { margin: 0; }
+.md p, .md li { white-space: pre-wrap; }
+.md .md-h { margin: 0.35rem 0 0; font-size: 1em; font-weight: 600; line-height: 1.4; letter-spacing: 0; color: var(--text); }
+.md h3.md-h { font-size: 1.15em; }
+.md h4.md-h { font-size: 1.05em; }
+.md ul, .md ol { display: grid; gap: 0.2rem; padding-left: 1.4rem; }
+.md li > ul, .md li > ol { margin-top: 0.2rem; }
+.md :not(pre) > code { font-family: var(--font-mono); font-size: 0.88em; padding: 0.05rem 0.3rem; border-radius: 4px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
+.md strong { font-weight: 600; }
+.md hr { border: 0; height: 1px; background: var(--line); }
+.md-code { display: grid; gap: 0.25rem; min-width: 0; }
+.md-lang { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
 .shell { color: var(--text); }
 .shell::before { content: "$ "; color: var(--text-muted); }
 .lines { display: grid; grid-template-columns: auto minmax(0, 1fr); padding: 0.5rem 0; }
@@ -4613,7 +4626,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     const text = String(((it.ev || {}).payload || {}).text ?? "");
     return h("div", { class: "chat-msg " + (user ? "is-user" : "is-agent") },
       h("div", { class: "chat-who" }, h("span", null, user ? "Turn " + meta[i].prompt + " · Prompt" : "Assistant"), h("time", { datetime: new Date(it.ts).toISOString() }, fmtClock(it.ts - session.startedAt))),
-      text.trim() ? clipped(text, (x) => h("div", { class: "chat-text" }, x), { lines: 400 }) : h("p", { class: "note" }, "No inline text."));
+      text.trim() ? clipped(text, (x) => mdView(x, "chat-text"), { lines: 400 }) : h("p", { class: "note" }, "No inline text."));
   }
   // A turn: its prompt, one line for the steps between prompt and replies, then the replies in order.
   function chatTurnEl(k) {
@@ -5162,10 +5175,10 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
       const sh = d.shell;
       const facts = [sh.exitCode !== undefined ? "exit " + sh.exitCode : sh.ok === false ? "failed" : sh.ok === true ? "ok" : "no result recorded", sh.durationMs !== undefined ? fmtDuration(sh.durationMs) : ""].filter(Boolean).join(" · ");
       nodes.push(section("command", h("div", null, codeBlock("$ " + sh.command), h("p", { class: "meta" + (sh.ok === false ? " tone-fail" : "") }, facts))));
-      if (sh.output) nodes.push(section("output at this step", clipped(sh.output, (x) => codeBlock(x), { lines: 200 })));
+      if (sh.output) nodes.push(section("output at this step", clipped(stripAnsi(sh.output), (x) => codeBlock(x), { lines: 200 })));
       if (sh.outputBlob) nodes.push(blobView({ name: "full output", sha: sh.outputBlob }));
     } else if (d.text !== undefined) {
-      nodes.push(section(st.kind === "prompt" ? "prompt" : st.kind === "reply" ? "reply" : "detail", clipped(d.text, textBlock, { lines: 80 })));
+      nodes.push(section(st.kind === "prompt" ? "prompt" : st.kind === "reply" ? "reply" : "detail", clipped(d.text, (x) => mdView(x), { lines: 80 })));
     } else {
       if (d.input !== undefined && st.kind !== "edit") nodes.push(section("input", clipped(json(d.input), (x) => codeBlock(x), { lines: 60 })));
       if (d.output && (st.kind !== "edit" || st.ok === false)) nodes.push(section(st.ok === false ? "error" : "output", clipped(d.output, (x) => smartBlock(x), { lines: 80 })));
@@ -5604,6 +5617,149 @@ function section(label, content, extra) {
 }
 function textBlock(text) { return h("pre", { class: "text-block" }, String(text)); }
 function codeBlock(text, cls) { return h("pre", { class: "code" + (cls ? " " + cls : "") }, h("code", null, String(text))); }
+// ---- Markdown: a small, safe subset for prompts and replies (headings, paragraphs, lists, fenced
+// code, inline code, bold, italic). mdParse returns plain data and mdView builds it with h(), so
+// every character reaches the page as text: angle brackets stay text and links stay plain text.
+// One pass over the lines, and each inline closer is looked up at most once per position, so a
+// 200 KB reply parses in linear time.
+const MD_FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*([^\s`]*)/;
+const MD_FENCE_END = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
+const MD_HEAD = /^ {0,3}(#{1,6})(?:[ \t]+|$)/;
+const MD_RULE = /^ {0,3}([-*_])[ \t]*(?:\1[ \t]*){2,}$/;
+const MD_ITEM = /^([ \t]*)([-*+]|\d{1,9}[.)])[ \t]+/;
+function mdParse(src) {
+  const lines = String(src ?? "").replace(/\r\n?/g, "\n").split("\n");
+  const out = [];
+  let para = null, list = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    let m = MD_FENCE.exec(line);
+    if (m) {
+      const body = [];
+      let j = i + 1;
+      for (; j < lines.length; j++) {
+        const c = MD_FENCE_END.exec(lines[j]);
+        if (c && c[1][0] === m[1][0] && c[1].length >= m[1].length) break;
+        body.push(lines[j]);
+      }
+      // An unclosed fence runs to the end of the text, as CommonMark has it.
+      out.push({ t: "code", lang: m[2], text: body.join("\n") });
+      i = j; para = list = null;
+      continue;
+    }
+    if (!line.trim()) { para = list = null; continue; }
+    m = MD_HEAD.exec(line);
+    if (m) {
+      let s = line.slice(m[0].length).trimEnd(), e = s.length;
+      while (e > 0 && s[e - 1] === "#") e--;
+      if (e < s.length && (e === 0 || s[e - 1] === " " || s[e - 1] === "\t")) s = s.slice(0, e).trimEnd();
+      out.push({ t: "h", level: m[1].length, text: s });
+      para = list = null;
+      continue;
+    }
+    if (MD_RULE.test(line)) { out.push({ t: "hr" }); para = list = null; continue; }
+    m = MD_ITEM.exec(line);
+    if (m) {
+      const ind = m[1].replace(/\t/g, "    ").length, ordered = m[2] >= "0" && m[2] <= "9";
+      if (list && ind <= list.items[0].ind && list.items[0].ordered !== ordered) list = null;
+      if (!list) { list = { t: "list", items: [] }; out.push(list); }
+      list.items.push({ ind, ordered, n: ordered ? parseInt(m[2], 10) : 0, text: line.slice(m[0].length) });
+      para = null;
+      continue;
+    }
+    if (list && (line[0] === " " || line[0] === "\t")) { const it = list.items[list.items.length - 1]; it.text += "\n" + line.trim(); continue; }
+    list = null;
+    if (para) para.text += "\n" + line;
+    else { para = { t: "p", text: line }; out.push(para); }
+  }
+  return out;
+}
+const MD_WORD = /[\p{L}\p{N}]/u;
+/** Inline spans as [kind, content, url]: "t" text, "c" code, "b" bold, "i" italic (content is spans), "a" link. */
+function mdInline(s, depth) {
+  s = String(s ?? "");
+  depth = depth || 0;
+  const out = [], seen = new Map();
+  // The first `d` at or after `from`, remembered so repeated openers do not rescan the text.
+  const find = (d, from) => {
+    const c = seen.get(d);
+    if (c && c[0] <= from && (c[1] === -1 || c[1] >= from)) return c[1];
+    const at = s.indexOf(d, from);
+    seen.set(d, [from, at]);
+    return at;
+  };
+  const word = (ch) => !!ch && MD_WORD.test(ch);
+  const n = s.length;
+  let i = 0, t = 0, urlAt = -1, urlOk = false;
+  const flush = (end) => { if (end > t) out.push(["t", s.slice(t, end)]); };
+  while (i < n) {
+    const ch = s[i];
+    if (ch === "\\" && i + 1 < n && /[!-\/:-@[-`{-~]/.test(s[i + 1])) { flush(i); t = i + 1; i += 2; continue; }
+    if (ch === "`") {
+      let k = i; while (k < n && s[k] === "`") k++;
+      const run = s.slice(i, k), j = find(run, k);
+      if (j > k) { flush(i); out.push(["c", s.slice(k, j).trim() || s.slice(k, j)]); i = t = j + run.length; continue; }
+      i = k; continue;
+    }
+    if ((ch === "*" || ch === "_") && depth < 2) {
+      const dbl = s[i + 1] === ch, d = dbl ? ch + ch : ch, from = i + d.length;
+      const okOpen = from < n && !/\s/.test(s[from]) && !(ch === "_" && word(s[i - 1]));
+      const j = okOpen ? find(d, from) : -1;
+      if (j > from && !/\s/.test(s[j - 1]) && !(ch === "_" && word(s[j + d.length]))) {
+        flush(i); out.push([dbl ? "b" : "i", mdInline(s.slice(from, j), depth + 1)]); i = t = j + d.length; continue;
+      }
+      i = from; continue;
+    }
+    if (ch === "[") {
+      const j = find("]", i + 1);
+      if (j > i + 1 && j - i <= 500 && s[j + 1] === "(") {
+        const k = find(")", j + 2);
+        if (k !== urlAt) { urlAt = k; urlOk = k > j + 2 && k - j <= 2050 && !/\s/.test(s.slice(j + 2, k)); }
+        if (urlOk) { flush(i); out.push(["a", s.slice(i + 1, j), s.slice(j + 2, k)]); i = t = k + 1; continue; }
+      }
+    }
+    i++;
+  }
+  flush(n);
+  return out;
+}
+function mdSpans(spans) {
+  return spans.map(([k, a, url]) => k === "t" ? a : k === "c" ? h("code", null, a) : k === "b" ? h("strong", null, mdSpans(a)) : k === "i" ? h("em", null, mdSpans(a))
+    : a === url || !a ? url : [mdSpans(mdInline(a, 2)), " (" + url + ")"]);
+}
+/** Prompt or reply text, formatted. The source is never parsed as HTML. */
+function mdView(text, cls) {
+  const root = h("div", { class: "md" + (cls ? " " + cls : "") });
+  for (const b of mdParse(text)) {
+    if (b.t === "p") root.append(h("p", null, mdSpans(mdInline(b.text))));
+    else if (b.t === "h") root.append(h("h" + Math.min(6, b.level + 2), { class: "md-h" }, mdSpans(mdInline(b.text))));
+    else if (b.t === "hr") root.append(h("hr"));
+    else if (b.t === "code") root.append(h("div", { class: "md-code" }, b.lang ? h("span", { class: "md-lang" }, b.lang) : null, codeBlock(b.text)));
+    else {
+      // Deeper-indented items nest under the item above them.
+      const top = b.items[0], mk = (it) => it.ordered ? h("ol", it.n !== 1 ? { start: it.n } : null) : h("ul");
+      const stack = [{ ind: top.ind, el: mk(top) }];
+      root.append(stack[0].el);
+      for (const it of b.items) {
+        while (stack.length > 1 && it.ind < stack[stack.length - 1].ind) stack.pop();
+        let cur = stack[stack.length - 1];
+        if (it.ind > cur.ind && cur.el.lastElementChild) {
+          cur = { ind: it.ind, el: mk(it) };
+          stack[stack.length - 1].el.lastElementChild.append(cur.el);
+          stack.push(cur);
+        }
+        cur.el.append(h("li", null, mdSpans(mdInline(it.text))));
+      }
+    }
+  }
+  return root;
+}
+/** Tool output without terminal escape codes: CSI colour and cursor codes, OSC titles and links, and lone ESC pairs. */
+const ANSI_RE = /\x1b\[[0-?]*[ -\/]*[@-~]|\x9b[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][0-9A-Za-z]|\x1b[0-~]|\x1b(?![\s\S])/g;
+function stripAnsi(text) {
+  text = String(text ?? "");
+  return text.indexOf("\x1b") < 0 && text.indexOf("\x9b") < 0 ? text : text.replace(ANSI_RE, "");
+}
 function looksLikeDiff(text) {
   return /^(diff --git |--- |\+\+\+ |@@ )/m.test(text) && /^[+-]/m.test(text);
 }
@@ -5876,7 +6032,8 @@ function toolSections(tool, input, e, failed, item, ctx) {
   const out = [];
   const inp = input && typeof input === "object" ? input : {};
   const base = String(tool).replace(/^.*__/, "");
-  const text = outputText(e.output);
+  // Escape codes are dropped for display only; the stored output and Copy step as JSON keep them.
+  const rawText = outputText(e.output), text = rawText === null ? null : stripAnsi(rawText);
   const outLabel = "output" + (e.truncated ? " (truncated)" : "");
   const hasOut = e.output !== undefined && e.output !== null && e.output !== "";
   let inputShown = false, outputShown = false;
@@ -6124,7 +6281,7 @@ function renderPane(pane, item, session, ctx) {
       case "user.message":
       case "assistant.message":
         nodes.push(h("h2", { class: "pane-title" }, item.type === "user.message" ? "Prompt" : "Assistant"));
-        nodes.push(p.text ? clipped(p.text, textBlock, { lines: 300 }) : h("p", { class: "note" }, "No inline text."));
+        nodes.push(p.text ? section(fmtNum(String(p.text).length) + " chars", clipped(p.text, (x) => mdView(x), { lines: 300 }), copyBtn(() => String(p.text), "Copy the original text", "text", "Copy text")) : h("p", { class: "note" }, "No inline text."));
         break;
       case "file.change": {
         nodes.push(h("h2", { class: "pane-title" }, h("span", { class: "tool" }, p.op === "add" ? "Add" : p.op === "delete" ? "Delete" : "Edit"), h("span", { class: "arg" }, relPath(String(p.path || "")))));

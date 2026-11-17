@@ -39,6 +39,10 @@ One prompt and everything the agent does until it hands control back to you.
   full. The viewer remembers the choice, and the link carries it (`?view=chat`).
 - In Chat, each turn has one line that counts its other steps, such as "4 steps · read 2 files,
   1 command". Activating it goes back to Steps at that turn.
+- The viewer formats the markdown in prompts and replies: headings, lists, code blocks with their
+  language, inline code, bold and italic.
+- A link shows as its text and its address, and HTML shows as written. Copy text in the step
+  detail copies the original.
 - In the CLI: the `TURNS` column of `coding.sh sessions`, and the turn count in `coding.sh show`.
 
 ### Event
@@ -48,6 +52,8 @@ tool call with its input and output, or a file change.
 
 - In the viewer: one step on the timeline. Press `e` for the Events list, which shows
   events across sessions.
+- In the viewer, tool output is shown without terminal escape codes (colours, cursor moves,
+  window titles). The stored output keeps them.
 - In the CLI: `coding.sh show <id>` prints one line per event, and `coding.sh search` finds text in
   them.
 

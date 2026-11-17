@@ -16,7 +16,9 @@ const RP = "7f3c1e2a-5b6d-4e8f-9a0b-1c2d3e4f5a6b";
 const TURNS = "3b9e4d2a-6c1f-4e7a-8b5d-2f0a9c8e7d61";
 const FOLDS = "8e2d6c4b-1a3f-4b5e-9c7d-0f6a2b8c4e19";
 const CHAT = "c4a7e9d2-3b5f-4c8a-9e1d-6f2b0a7c5e38";
+const MD = "e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b";
 const chatPrompt = (t: number) => `question ${t}: what does module ${t} do?\nSay it in two lines.`;
+const MD_REPLY = "# Summary\n\nRan `npm test`: **3 passed**, *1 skipped*.\n\n- see [the docs](docs/a.md)\n- <script>window.pwned = 1</script>\n\n```ts\nconst x = 1;\n```\n\n```\nunclosed <img src=x onerror=window.pwned=2>";
 const chatReply = (t: number) => `Module ${t} parses the config.\n\n\`\`\`\nparse(${t})\n\`\`\`\nThat is all for answer ${t}.`;
 
 describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no Chrome/Chromium found (set CODING_SH_TEST_CHROME)" }, () => {
@@ -95,6 +97,14 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     }
     await index.upsertSession(session(CHAT, { startedAt: T0, endedAt: T0 + n * 1000, title: "Ten turns", stats: { events: n, turns: 10, toolCalls: 11, toolErrors: 1, filesChanged: 0 } }));
     await index.putEvents(chatEvents);
+    // A reply in markdown with hostile pieces, and a command whose output is coloured with escape codes.
+    await index.upsertSession(session(MD, { startedAt: T0, endedAt: T0 + 4000, title: "Markdown", stats: { events: 4, turns: 1, toolCalls: 1, toolErrors: 0, filesChanged: 0 } }));
+    await index.putEvents([
+      at(MD, 1, { kind: "user.message", payload: { text: "Fix <b>this</b> **now**" } }),
+      at(MD, 2, { kind: "tool.start", payload: { tool: "Bash", toolUseId: "b1", input: { command: "npm test" } } }),
+      at(MD, 3, { kind: "tool.end", durationMs: 900, payload: { tool: "Bash", toolUseId: "b1", ok: true, output: "\x1b[32m3 passed\x1b[0m\n\x1b]0;title\x07\x1b[1;33m1 skipped\x1b[39m" } }),
+      at(MD, 4, { kind: "assistant.message", payload: { text: MD_REPLY } }),
+    ]);
     const exp = experimentResult("exp-prod-smoke");
     // The failing case's output is long enough to clip, so its open row holds a "Show all" button.
     exp.runs[1]!.output = Array.from({ length: 600 }, (_, i) => `line ${i}`).join("\n");
@@ -288,7 +298,9 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     assert.match(await p.eval("location.hash"), /[?&]view=chat/);
     // Every prompt and reply, in order and whole: no click, no "Show all".
     const texts: string[] = await p.eval("[...document.querySelectorAll('#chat .chat-text')].map((e) => e.textContent)");
-    assert.deepEqual(texts, Array.from({ length: 10 }, (_, i) => [chatPrompt(i + 1), chatReply(i + 1)]).flat());
+    // Replies are markdown: the fence becomes a code block, so the text reads without the backticks.
+    assert.deepEqual(texts, Array.from({ length: 10 }, (_, i) => [chatPrompt(i + 1), `Module ${i + 1} parses the config.parse(${i + 1})That is all for answer ${i + 1}.`]).flat());
+    assert.equal(await p.eval("document.querySelectorAll('#chat .chat-text .md-code pre').length"), 10);
     assert.equal(await p.eval("document.querySelectorAll('#chat .show-all, #chat button[aria-expanded]').length"), 0);
     assert.equal(await p.eval("document.querySelector('#chat .chat-empty').checkVisibility()"), false, "no empty-state note in a session with prompts");
     // Each turn has one line that counts the steps hidden between prompt and reply.
@@ -315,6 +327,35 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     await p.waitFor(`${selected} && ${pressed} === 'Steps'`, "no link, nothing remembered: Steps");
     await p.press("?");
     await p.waitFor("/Chat or steps view/.test(document.body.textContent)", "the help sheet lists v");
+    assert.deepEqual(p.errors, []);
+  });
+
+  test("prompts and replies show their markdown as text-only elements; tool output has no escape codes", async () => {
+    const p = await open("#/s/" + MD + "/" + MD + "-e4");
+    const md = "#event-pane .md";
+    await p.waitFor(`document.querySelector('${md} h3')`, "the reply, formatted");
+    assert.equal(await p.eval(`document.querySelector('${md} h3').textContent`), "Summary");
+    assert.equal(await p.eval(`document.querySelector('${md} p code').textContent`), "npm test");
+    assert.equal(await p.eval(`document.querySelector('${md} strong').textContent`), "3 passed");
+    assert.equal(await p.eval(`document.querySelector('${md} em').textContent`), "1 skipped");
+    // A link is its text and its address, as text; tags in the source are text too.
+    assert.deepEqual(await p.eval(`[...document.querySelectorAll('${md} li')].map((e) => e.textContent)`), ["see the docs (docs/a.md)", "<script>window.pwned = 1</script>"]);
+    assert.deepEqual(await p.eval(`[...document.querySelectorAll('${md} .md-code')].map((e) => [e.querySelector('.md-lang')?.textContent ?? '', e.querySelector('pre').textContent])`),
+      [["ts", "const x = 1;"], ["", "unclosed <img src=x onerror=window.pwned=2>"]]);
+    assert.equal(await p.eval(`document.querySelectorAll('#event-pane a, ${md} script, ${md} img, ${md} b').length`), 0);
+    assert.equal(await p.eval("window.pwned"), undefined);
+    // Copy text gives the original source.
+    await p.eval("window.copied = null; navigator.clipboard.writeText = async (t) => { window.copied = t; }");
+    await p.eval("document.querySelector('#event-pane button[aria-label=\"Copy the original text\"]').click()");
+    assert.equal(await p.waitFor("window.copied", "the copied text"), MD_REPLY);
+    // The prompt: tags stay text, bold is bold.
+    await p.eval(`location.hash = ${JSON.stringify("#/s/" + MD + "/" + MD + "-e1")}`);
+    await p.waitFor(`document.querySelector('${md} p strong')?.textContent === 'now'`, "the prompt, formatted");
+    assert.equal(await p.eval(`document.querySelector('${md} p').textContent`), "Fix <b>this</b> now");
+    // The command's output shows its text without the escape codes.
+    await p.eval(`location.hash = ${JSON.stringify("#/s/" + MD + "/" + MD + "-e2")}`);
+    await p.waitFor("document.querySelector('#event-pane pre.code:not(.shell)')", "the command's output");
+    assert.equal(await p.eval("[...document.querySelectorAll('#event-pane pre.code')].at(-1).textContent"), "3 passed\n1 skipped");
     assert.deepEqual(p.errors, []);
   });
 
