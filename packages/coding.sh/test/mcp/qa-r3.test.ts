@@ -1,5 +1,6 @@
 // Regressions from round-3 QA of the MCP server against a real backfilled store:
-// turns started by background-task notifications.
+// turns started by background-task notifications, and the session resource's
+// subagent list.
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { openContext } from "../../src/core/context.ts";
@@ -19,7 +20,7 @@ function ev(sessionId: string, ts: number, kind: AgentEvent["kind"], payload: Re
 let w: World;
 let mcp: CodingShMcp;
 let tools: { name: string; outputSchema: Record<string, unknown> }[];
-const IDS = { notified: "r3-notified" };
+const IDS = { notified: "r3-notified", fan: "r3-fanout" };
 
 async function raw(name: string, args: Record<string, unknown> = {}) {
   const r = await mcp.server.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } });
@@ -60,6 +61,18 @@ before(async () => {
   delete process.env.CODEX_HOME;
   const now = w.now;
   const sessions: AgentEvent[][] = [notifiedSession(IDS.notified, now - 2 * H, 3)];
+
+  // A parent with 120 subagents, each with a long brief, and a long timeline.
+  const F = IDS.fan;
+  const f0 = now - 3 * H;
+  const fan: AgentEvent[] = [ev(F, f0, "session.start", {}, { cwd: w.repo }), ev(F, f0 + 1, "user.message", { text: "fan out" })];
+  for (let i = 0; i < 120; i++) {
+    const sub = `sub${i}`;
+    fan.push(ev(F, f0 + 10 + i * 10, "subagent.start", { subagentId: sub, type: "general-purpose", description: `Review part ${i} of the brief: ${"read every file under the module and report what each one does ".repeat(3)}` }));
+    fan.push(ev(F, f0 + 15 + i * 10, "subagent.end", { subagentId: sub, ok: true }, { durationMs: 5 }));
+  }
+  for (let i = 0; i < 200; i++) fan.push(ev(F, f0 + 5000 + i, "assistant.message", { text: `step ${i}: ${"x".repeat(220)}` }));
+  sessions.push(fan);
 
   const ctx = await openContext({ env: w.env, cwd: w.root });
   try {
@@ -122,5 +135,16 @@ describe("turns a background-task notification starts", () => {
     ];
     assert.equal(buildSession(evs).stats.turns, 2);
     assert.equal(splitTurns(evs).length, 2);
+  });
+});
+
+describe("codingsh://session/<id> resource", () => {
+  it("stays under 25,000 characters and caps the subagent list with a pointer to the tools", async () => {
+    const r = await mcp.server.handle({ jsonrpc: "2.0", id: 4, method: "resources/read", params: { uri: `codingsh://session/${IDS.fan}` } });
+    const text = (r!.result as { contents: { text: string }[] }).contents[0]!.text;
+    assert.ok(text.length < 25_000, `resource text is ${text.length} chars`);
+    assert.match(text, /## Subagents \(120\)/);
+    assert.match(text, /… \d+ more \(use the subagents or session_tree tool/);
+    assert.match(text, /more entries \(use the session_get tool with a cursor\)/);
   });
 });

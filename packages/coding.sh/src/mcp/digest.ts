@@ -77,11 +77,16 @@ const esc = (s: string) => s.replace(/[\r\n]+/g, " ");
 
 function treeLines(t: SubagentNode[], depth: number, out: string[]): void {
   for (const n of t) {
-    const bits = [n.type ?? "subagent", n.description ? `"${esc(n.description)}"` : "", n.durationMs !== undefined ? fmtMs(n.durationMs) : "", n.toolCalls !== undefined ? `${n.toolCalls} tools${n.toolErrors ? ` (${n.toolErrors} failed)` : ""}` : "", n.sessionId ? `session ${n.sessionId}` : "", n.ok === false ? "FAILED" : ""].filter(Boolean);
+    const bits = [n.type ?? "subagent", n.description ? `"${esc(clip(n.description, 120)!)}"` : "", n.durationMs !== undefined ? fmtMs(n.durationMs) : "", n.toolCalls !== undefined ? `${n.toolCalls} tools${n.toolErrors ? ` (${n.toolErrors} failed)` : ""}` : "", n.sessionId ? `session ${n.sessionId}` : "", n.ok === false ? "FAILED" : ""].filter(Boolean);
     out.push(`${"  ".repeat(depth)}- ${bits.join(" · ")}`);
     treeLines(n.children, depth + 1, out);
   }
 }
+
+/** Lines of the subagent tree a markdown digest lists; the subagents and session_tree tools page the rest. */
+const SUBAGENT_LINES = 40;
+/** A markdown digest stays under the server's 25,000-character answer limit; the timeline gives way first. */
+const MARKDOWN_TEXT_LIMIT = 24_000;
 
 /** Markdown digest of a session: header, turns, the first `maxEntries` timeline lines, subagents. */
 export async function sessionMarkdown(index: IndexStore, s: Session, maxEntries = 120, now = Date.now()): Promise<string> {
@@ -121,14 +126,29 @@ export async function sessionMarkdown(index: IndexStore, s: Session, maxEntries 
     for (const t of turns.slice(0, 50)) lines.push(`${t.turn}. +${fmtMs(t.at)} ${t.prompt ? `"${esc(t.prompt)}"` : "(no prompt)"} · ${t.toolCalls} tools${t.toolErrors ? ` (${t.toolErrors} failed)` : ""}`);
     if (turns.length > 50) lines.push(`… ${turns.length - 50} more turns`);
   }
-  lines.push("", "## Timeline", "");
-  for (const e of tl.slice(0, maxEntries)) lines.push(`- \`+${fmtMs(e.at)}\` **${e.kind}** ${esc(e.text)}`);
-  if (tl.length > maxEntries) lines.push(`- … ${tl.length - maxEntries} more entries (use the session_get tool with a cursor)`);
-  if (!tl.length) lines.push("_No events._");
+  // The subagent list is built first, so the timeline takes what the answer limit leaves.
   const tree = await subagentTree(index, s.id);
+  const sub: string[] = [];
   if (tree.length) {
-    lines.push("", `## Subagents (${countNodes(tree)})`, "");
-    treeLines(tree, 0, lines);
+    const all: string[] = [];
+    treeLines(tree, 0, all);
+    sub.push("", `## Subagents (${countNodes(tree)})`, "", ...all.slice(0, SUBAGENT_LINES));
+    if (all.length > SUBAGENT_LINES) sub.push(`- … ${all.length - SUBAGENT_LINES} more (use the subagents or session_tree tool with sessionId ${s.id})`);
   }
+  const size = (a: string[]) => a.reduce((n, l) => n + l.length + 1, 0);
+  // 200: the timeline heading and its "more entries" line.
+  let room = MARKDOWN_TEXT_LIMIT - size(lines) - size(sub) - 200;
+  lines.push("", "## Timeline", "");
+  let shown = 0;
+  for (const e of tl.slice(0, maxEntries)) {
+    const l = `- \`+${fmtMs(e.at)}\` **${e.kind}** ${esc(e.text)}`;
+    room -= l.length + 1;
+    if (room < 0) break;
+    lines.push(l);
+    shown++;
+  }
+  if (tl.length > shown) lines.push(`- … ${tl.length - shown} more entries (use the session_get tool with a cursor)`);
+  if (!tl.length) lines.push("_No events._");
+  lines.push(...sub);
   return lines.join("\n") + "\n";
 }

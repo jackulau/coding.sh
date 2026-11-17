@@ -37,6 +37,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **MCP.** The `codingsh://session/<id>` resource stays under 25,000 characters: it lists the first 40 subagent lines, with descriptions cut to 120 characters, names the `subagents` and `session_tree` tools for the rest, and shortens the timeline to fit. Before, a session with many subagents could return a resource past the limit. [MCP server](https://coding.sh/docs/mcp)
 - **MCP.** `session_get` and the session resource split a session into the turns `stats.turns` counts: a turn a background task's notification starts is its own turn, and a prompt sent while a turn runs stays in it. Before, `turnCount` could disagree with the turn list, and those turns could not be opened. [MCP server](https://coding.sh/docs/mcp)
 - **OpenTelemetry.** `coding.sh collector` stores a Claude Code model call sent both as an `api_request` log record and, with `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA`, as a span, as one call with the reported cost and the span's TTFT. Before, it kept whichever copy came first, and a prompt logged before its trace read as a resume. [OpenTelemetry](https://coding.sh/docs/otel)
 - **OpenTelemetry.** When a batching exporter sends the span that names the conversation, such as the root `invoke_agent` with `gen_ai.conversation.id`, after the trace's other spans, those spans and their subagents move into the conversation. Before, they stayed in a session named after the trace id, and the conversation had no subagent. [OpenTelemetry](https://coding.sh/docs/otel)
