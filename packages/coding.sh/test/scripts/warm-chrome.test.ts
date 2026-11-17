@@ -5,8 +5,8 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FIRST_START_LIMIT_MS, chromeProcesses, firstStart, firstStartArgs, stoppedState } from "../../scripts/warm-chrome.ts";
-import { chromeArgs, findChrome } from "../viewer/browser.ts";
+import { FIRST_START_LIMIT_MS, chromeProcesses, firstStart, firstStartArgs, stoppedState, viewerPages } from "../../scripts/warm-chrome.ts";
+import { chromeArgs, findChrome, launchBrowser } from "../viewer/browser.ts";
 
 const SCRIPT = fileURLToPath(new URL("../../scripts/warm-chrome.ts", import.meta.url));
 const run = (env: NodeJS.ProcessEnv) => spawnSync(process.execPath, ["--no-warnings", SCRIPT], { encoding: "utf8", env, timeout: 120_000 });
@@ -60,8 +60,56 @@ test("Windows counts its Chrome processes, and no other system is asked", () => 
 });
 
 const chrome = findChrome();
-test("starts Chrome twice and prints the three times", { skip: !chrome && "no Chrome installed" }, () => {
+test("starts Chrome twice, loads the viewer's list and Explore, and prints the five times", { skip: !chrome && "no Chrome installed" }, () => {
   const r = run(process.env);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /^warm-chrome: first start \d+ ms with \d+ bytes on stderr, then a start in \d+ ms and a page in \d+ ms \(.+\)\n$/);
+  assert.match(r.stdout, /^warm-chrome: first start \d+ ms with \d+ bytes on stderr, then a start in \d+ ms and a page in \d+ ms, then the viewer's list in \d+ ms and Explore in \d+ ms \(.+\)\n$/);
+});
+
+test("the viewer pages are the real ones: they format numbers and dates, which the first page does not", { skip: !chrome && "no Chrome installed", timeout: 120_000 }, async () => {
+  const browser = await launchBrowser(chrome!);
+  // Every viewer page the warm-up loads, with what its script had done when it was ready.
+  const seen: { url: string; intl: number; rows: number }[] = [];
+  const newPage = browser.newPage.bind(browser);
+  browser.newPage = async () => {
+    const page = await newPage();
+    await page.send("Page.addScriptToEvaluateOnNewDocument", { source: "window.__intl = 0; for (const k of ['NumberFormat', 'DateTimeFormat']) { const F = Intl[k]; Intl[k] = function (...a) { window.__intl++; return new F(...a); }; Intl[k].prototype = F.prototype; Intl[k].supportedLocalesOf = F.supportedLocalesOf; }" });
+    const close = page.close.bind(page);
+    page.close = async () => {
+      seen.push(await page.eval("({ url: location.pathname + location.hash, intl: window.__intl, rows: document.querySelectorAll('[role=listbox] [role=option], .mx-panel').length })"));
+      await close();
+    };
+    return page;
+  };
+  try {
+    const times = await viewerPages(browser);
+    assert.equal(times.length, 2);
+    assert.deepEqual(seen.map((s) => s.url), ["/", "/#/explore"]);
+    for (const s of seen) {
+      assert.ok(s.intl > 0, `${s.url} formatted nothing`);
+      assert.ok(s.rows > 0, `${s.url} showed no sessions`);
+    }
+  } finally {
+    await browser.close();
+  }
+});
+
+test("a viewer page past the limit fails with where the time went", { skip: !chrome && "no Chrome installed", timeout: 120_000 }, async () => {
+  const browser = await launchBrowser(chrome!);
+  // Every answer of the viewer comes 1.5 s late, so no page is ready inside the limit.
+  const newPage = browser.newPage.bind(browser);
+  browser.newPage = async () => {
+    const page = await newPage();
+    await page.send("Network.enable");
+    await page.send("Network.emulateNetworkConditions", { offline: false, latency: 1500, downloadThroughput: -1, uploadThroughput: -1 });
+    return page;
+  };
+  try {
+    const t0 = Date.now();
+    await assert.rejects(viewerPages(browser, 500), /^Error: timed out waiting for (page load after .+ readyState|the viewer's list)/);
+    // The limit is for the pages together: the second is not given a new one.
+    assert.ok(Date.now() - t0 < 30_000, `stopped after ${Date.now() - t0} ms`);
+  } finally {
+    await browser.close();
+  }
 });
