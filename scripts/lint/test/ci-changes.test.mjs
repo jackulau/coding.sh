@@ -172,3 +172,14 @@ test("ci.yml starts Chrome before the tests in every job that runs them", () => 
   assert.match(running[0].body, /\n    env:\n(?:      #.*\n)*      CODING_SH_TEST_CHROME: \/usr\/bin\/google-chrome\n    steps:\n/);
   assert.ok(existsSync(join(ROOT, "packages/coding.sh/scripts/warm-chrome.ts")));
 });
+
+test("ci.yml stops the Storage Service before anything else in the Windows job", () => {
+  const ci = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
+  const windows = /\n  windows:\n([\s\S]*?)(?=\n  [a-z][a-z-]*:\n|$)/.exec(ci)?.[1] ?? "";
+  // The service starts a disk read about 11 minutes after boot; a viewer page that first loads
+  // during it outlasts the 5 s a test gives it. The step as it must stay: the first one, and a
+  // service that cannot be stopped fails the job.
+  const step = "\n      - name: Stop the Storage Service\n        shell: pwsh\n        run: |\n          Stop-Service -Name StorSvc -Force\n          Set-Service -Name StorSvc -StartupType Disabled\n";
+  assert.equal(windows.split(step).length, 2, "the step, once");
+  assert.equal(windows.indexOf("\n      - "), windows.indexOf(step), "it is the first step");
+});
