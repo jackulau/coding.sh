@@ -175,6 +175,11 @@ tests run with `npm run lint:test`.
 - The viewer UI tests drive headless Chrome and skip when none is installed. In CI a missing
   Chrome is a failure: each test job starts Chrome once before its tests
   (`packages/coding.sh/scripts/warm-chrome.ts`), because a fresh runner's first start can take
-  longer than the 20 s a test gives it. That first start has 60 s; past it the job fails.
+  longer than the 20 s a test gives it. That first start has 60 s; past it the job fails. The
+  same step loads the viewer's list and Explore once, at the size the tests give a page, because
+  the first viewer page on a runner does work no later page does (it reads Chrome's number and
+  date data from disk, for one) and can take longer than the 5 s a test gives a page. A page
+  load that runs out of time says how long `Page.navigate` took, how long the page took to
+  answer, and the state it was in.
 
 By contributing you agree that your contributions are licensed under the MIT license.
