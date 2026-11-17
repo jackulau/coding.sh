@@ -197,3 +197,11 @@ test("ci.yml installs only what the tests need on the test legs, and everything 
   // The npm cache is keyed and saved as before.
   for (const name of ["test", "windows"]) assert.match(job(name), /\n          cache: npm\n/, `${name} keeps the npm cache`);
 });
+
+// A second attempt would hide a hook that is over its budget half the time.
+test("ci.yml runs the hook budget once: a miss fails the step", () => {
+  const step = /\n      - name: Hook budget\n([\s\S]*?)(?=\n\n|\n      - name: |$)/.exec(ci)?.[1] ?? "";
+  assert.match(step, /^        run: node scripts\/dogfood\/bench\.mjs hook --check --tolerance 20$/m);
+  assert.equal(step.match(/bench\.mjs/g)?.length, 1, "one run of the benchmark");
+  assert.doesNotMatch(step, /\|\||continue-on-error|retry|if:/);
+});
