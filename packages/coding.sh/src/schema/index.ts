@@ -104,6 +104,19 @@ export interface WasteStats {
 }
 
 /**
+ * Session.stats.compactionRefetches: read-only calls that fetched again a result a
+ * compaction took out of the context, with nothing written to it in between.
+ */
+export interface CompactionRefetchStats {
+  /** Reads after a compaction that matched a read from before it; each dropped result counts once. */
+  calls: number;
+  /** Estimated tokens those reads re-sent: output characters / 4. */
+  tokens: number;
+  /** Compactions that at least one of those reads followed. */
+  compactions: number;
+}
+
+/**
  * Session.stats.memoryUse: one memory or instruction file a session used, or a
  * skill its events name without a path.
  */
@@ -380,6 +393,8 @@ export interface Session {
     phases?: SessionPhase[];
     /** Read-only calls repeated with an unchanged result (core/waste.ts). Unset when none repeated. */
     waste?: WasteStats;
+    /** Read-only calls that fetched again what a compaction dropped (core/waste.ts). Unset when none did. */
+    compactionRefetches?: CompactionRefetchStats;
     /** Model calls that found the prompt cache gone and paid for the prompt again (core/cache-breaks.ts). Unset when none did. */
     cacheBreaks?: CacheBreakStats;
     /**

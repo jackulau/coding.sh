@@ -307,6 +307,30 @@
       ],
       "additionalProperties": false
     },
+    "CompactionRefetchStats": {
+      "description": "Session.stats.compactionRefetches: read-only calls that fetched again a result a\ncompaction took out of the context, with nothing written to it in between.",
+      "type": "object",
+      "properties": {
+        "calls": {
+          "description": "Reads after a compaction that matched a read from before it; each dropped result counts once.",
+          "type": "number"
+        },
+        "tokens": {
+          "description": "Estimated tokens those reads re-sent: output characters / 4.",
+          "type": "number"
+        },
+        "compactions": {
+          "description": "Compactions that at least one of those reads followed.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "calls",
+        "tokens",
+        "compactions"
+      ],
+      "additionalProperties": false
+    },
     "DuplicateUsage": {
       "description": "Usage a session did not count because another model call already covered it (a nested span, a repeated response id).",
       "type": "object",
@@ -910,6 +934,10 @@
             "waste": {
               "description": "Read-only calls repeated with an unchanged result (core/waste.ts). Unset when none repeated.",
               "$ref": "#/$defs/WasteStats"
+            },
+            "compactionRefetches": {
+              "description": "Read-only calls that fetched again what a compaction dropped (core/waste.ts). Unset when none did.",
+              "$ref": "#/$defs/CompactionRefetchStats"
             },
             "cacheBreaks": {
               "description": "Model calls that found the prompt cache gone and paid for the prompt again (core/cache-breaks.ts). Unset when none did.",

@@ -674,11 +674,12 @@ flagged when:
 
 One 429 that a retry got past does not flag. A 500, a 400 or an auth error does not count.
 
-**Waste and cache breaks.** Both stats are absent when there is nothing to report.
+**Waste and cache breaks.** Each stat is absent when there is nothing to report.
 
 | Field | Meaning |
 |---|---|
 | `stats.waste` (`duplicateFetches`, `duplicateFetchTokens`, `readOnlyCalls`) | Read-only calls that repeated an earlier call in the same context with the same result, and the tokens they sent again (output length / 4) |
+| `stats.compactionRefetches` (`calls`, `tokens`, `compactions`) | Read-only calls that fetched again a result a compaction took out of the context, with no write to it in between. Each dropped result counts once. `tokens` is their output length / 4, and `compactions` counts the compactions they followed |
 | `stats.cacheBreaks` (`count`, `lostTokens`, `extraUsd`, `byCause`) | Model calls that found the prompt cache gone: the previous prompt was over 4,096 tokens, this call read less than half of it from cache, and more than 2,048 tokens were billed again |
 | `stats.cacheBreaks.byCause` | `compaction`, `model-switch`, `idle` (5 minutes, or an hour after a 1-hour cache write) and `other` |
 | `stats.cacheBreaks.byIdle` | Idle breaks by where the wait was: `wait` (one tool call in the same scope ran past the cache lifetime, such as a Bash command polling a job), `subagent` (a subagent sat idle between turns) or `away` (the main session did). Absent when no break was idle |
