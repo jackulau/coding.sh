@@ -37,6 +37,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Install.** An agent config written as JSON on one line, such as `{"theme":"dark"}`, stays on one line when coding.sh adds or removes its entries, so `uninstall` gives back its exact bytes even when `~/.coding.sh` and its backups are gone. Before, it came back indented over several lines. [Install](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md)
 - **Install.** `uninstall` removes the coding.sh MCP entry from Codex's `config.toml` after `~/.coding.sh` was deleted, when the entry is exactly the launch coding.sh writes. Before, it stayed and `uninstall` said nothing was installed. [Install](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md)
 - **Capture.** A backfill skips Gemini CLI chat files that have not changed since the last one. Before, it read every chat file again each time and counted all of their sessions as updated. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#transcripts-headless-runs-isolation)
 - **Capture.** A copy of T3 Code's store that a killed read left in the temp directory, up to 1.7 GB each, is removed by the next read, even when the store is unchanged. A copy that fails, such as on a full temp volume, is a backfill error, not an import of nothing. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#host-apps-t3-code)

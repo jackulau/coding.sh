@@ -621,6 +621,29 @@ describe("cli zero setup", () => {
     }
   });
 
+  it("uninstall after the coding.sh home was deleted leaves one-line configs byte-identical and reports nothing left", () => {
+    const h = tmpHome();
+    const settings = join(h.home, ".claude", "settings.json");
+    const toml = mcpFiles(h).codex;
+    mkdirSync(dirname(settings), { recursive: true });
+    mkdirSync(dirname(toml), { recursive: true });
+    writeFileSync(settings, '{"theme":"dark"}\n');
+    writeFileSync(toml, 'model = "x"\n');
+    const agents = ["--agent", "claude-code", "--agent", "codex"];
+    assert.equal(cli(h, ["init", "--yes", "--no-import", ...agents]).status, 0);
+    assert.match(readFileSync(settings, "utf8"), /coding-sh|hook/);
+    rmSync(h.data, { recursive: true, force: true });
+    const u = cli(h, ["uninstall", "--yes", ...agents]);
+    assert.equal(u.status, 0, u.stderr);
+    // No backup to restore from: removing our entries must still give back the user's bytes.
+    assert.equal(readFileSync(settings, "utf8"), '{"theme":"dark"}\n');
+    assert.equal(readFileSync(toml, "utf8"), 'model = "x"\n');
+    const again = cli(h, ["uninstall", "--yes", ...agents]);
+    assert.match(again.stderr, /No coding\.sh hooks or MCP entries installed/);
+    const doc = parseJson(cli(h, ["doctor", "--json"]).stdout, "doctor") as { mcp?: { agent: string }[] };
+    assert.deepEqual(doc.mcp ?? [], [], "doctor finds no coding.sh MCP entry once uninstall says nothing is installed");
+  });
+
   it("captured sessions show up without running ingest: the hook ingests in the background at session end", async () => {
     const h = tmpHome();
     assert.equal(cli(h, ["init", "--agent", "claude-code", "--yes"]).status, 0);
