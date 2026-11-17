@@ -657,7 +657,8 @@ function toolDefs(): ToolDef<ToolCtx>[] {
       inputSchema: input({ since: SINCE("7d"), until: UNTIL, agent: AGENT, repo: REPO, model: { type: "string", description: "Only model calls whose model name contains this." }, limit: LIMIT(10, 50) }),
       outputSchema: out(
         {
-          window: WINDOW_OUT,
+          window: out({ sessions: I, truncated: B, sessionsRead: I, eventsRead: I }),
+          truncatedNote: S,
           llm: out({ calls: I, p50Ms: N, p95Ms: N, ttftP50Ms: N }, ["calls"]),
           byModel: arr(out({ model: S, calls: I, p95Ms: N }, ["model", "calls"])),
           slowestTools: arr(out({ tool: S, p95Ms: N }, ["tool"])),

@@ -1,6 +1,6 @@
 // Regressions from round-3 QA of the MCP server against a real backfilled store:
-// turns started by background-task notifications, and the session resource's
-// subagent list.
+// turns started by background-task notifications, the session resource's
+// subagent list, and latency reading only the newest sessions.
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { openContext } from "../../src/core/context.ts";
@@ -21,6 +21,9 @@ let w: World;
 let mcp: CodingShMcp;
 let tools: { name: string; outputSchema: Record<string, unknown> }[];
 const IDS = { notified: "r3-notified", fan: "r3-fanout" };
+/** Sessions with one Bash call each; the slowest is the oldest, past the old 300-session sample. */
+const LAT_SESSIONS = 320;
+const SLOWEST_MS = 4_378_957;
 
 async function raw(name: string, args: Record<string, unknown> = {}) {
   const r = await mcp.server.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } });
@@ -73,6 +76,20 @@ before(async () => {
   }
   for (let i = 0; i < 200; i++) fan.push(ev(F, f0 + 5000 + i, "assistant.message", { text: `step ${i}: ${"x".repeat(220)}` }));
   sessions.push(fan);
+
+  // Latency: LAT_SESSIONS sessions in the window, newest first; the slowest call is in the oldest.
+  for (let i = 0; i < LAT_SESSIONS; i++) {
+    const id = `r3-lat-${String(i).padStart(3, "0")}`;
+    const t0 = now - 4 * H - i * 60_000;
+    const ms = i === LAT_SESSIONS - 1 ? SLOWEST_MS : 1000 + i;
+    sessions.push([
+      ev(id, t0, "session.start", {}, { agent: "codex" }),
+      ev(id, t0 + 1, "user.message", { text: "build" }, { agent: "codex" }),
+      ev(id, t0 + 2, "tool.start", { tool: "Bash", toolUseId: `u${i}`, input: { command: `make ${i}` } }, { agent: "codex" }),
+      ev(id, t0 + 2 + ms, "tool.end", { tool: "Bash", toolUseId: `u${i}`, ok: true }, { agent: "codex", durationMs: ms }),
+      ev(id, t0 + 3 + ms, "turn.end", {}, { agent: "codex" }),
+    ]);
+  }
 
   const ctx = await openContext({ env: w.env, cwd: w.root });
   try {
@@ -146,5 +163,38 @@ describe("codingsh://session/<id> resource", () => {
     assert.match(text, /## Subagents \(120\)/);
     assert.match(text, /… \d+ more \(use the subagents or session_tree tool/);
     assert.match(text, /more entries \(use the session_get tool with a cursor\)/);
+  });
+});
+
+describe("latency", () => {
+  it("reads every session in the window and says how much it read", async () => {
+    const all = await call("latency", { since: "7d", limit: 5 });
+    const win = all.window as Record<string, unknown>;
+    assert.equal(win.truncated, undefined, "the whole window was read");
+    assert.equal(win.sessionsRead, win.sessionsWithCalls);
+    assert.ok((win.sessionsRead as number) >= LAT_SESSIONS);
+    assert.ok((win.eventsRead as number) > 0);
+    const bash = (all.slowestTools as { tool: string; calls: number; maxMs: number }[]).find((t) => t.tool === "Bash")!;
+    assert.equal(bash.maxMs, SLOWEST_MS, "the slowest call, in the oldest session, is read");
+    assert.ok(bash.calls >= LAT_SESSIONS + 1);
+    const codex = await call("latency", { since: "7d", agent: "codex", limit: 5 });
+    const cBash = (codex.slowestTools as { tool: string; maxMs: number }[]).find((t) => t.tool === "Bash")!;
+    assert.ok(cBash.maxMs <= bash.maxMs, "a filter never finds a slower call than the unfiltered answer");
+    assert.equal((all.slowestCalls as { ms: number }[])[0]!.ms, SLOWEST_MS);
+  });
+
+  it("when it runs out of time it says truncated and what it read", async () => {
+    const { latency } = await import("../../src/mcp/data.ts");
+    const ctx = await openContext({ env: w.env, cwd: w.root });
+    try {
+      let clock = 0;
+      const r = (await latency(ctx.index, { since: w.now - 7 * 24 * H, topLevel: false }, { limit: 5, budgetMs: 10, now: () => (clock += 1) })) as Record<string, Record<string, unknown> | string>;
+      const win = r.window as Record<string, number | boolean>;
+      assert.equal(win.truncated, true);
+      assert.ok((win.sessionsRead as number) < (win.sessionsWithCalls as number));
+      assert.match(r.truncatedNote as string, /read \d+ of \d+ sessions with calls/);
+    } finally {
+      await ctx.close();
+    }
   });
 });

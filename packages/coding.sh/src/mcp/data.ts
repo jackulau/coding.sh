@@ -540,20 +540,47 @@ export function waitKind(tool: string): WaitKind | undefined {
   return WAIT_TOOLS[t] ?? WAIT_TOOLS[t.replace(/^mcp__.*__/, "")];
 }
 
-export async function latency(index: IndexStore, q: ScanQuery, opts: { model?: string; limit: number }): Promise<Obj> {
-  const { sessions, truncated } = await collectSessions(index, { ...q, topLevel: false });
+/** Events of one kind set latency reads per session; a session with more is read in part and counted in `window.eventsTruncated`. */
+export const LATENCY_SESSION_EVENTS = 50_000;
+/** Wall time latency reads events for before it stops and says so: a stop for a runaway store, not a page. */
+export const LATENCY_TIME_BUDGET_MS = 30_000;
+/** Slowest calls kept while reading (the answer shows at most 5). */
+const SLOWEST_KEEP = 50;
+
+export async function latency(index: IndexStore, q: ScanQuery, opts: { model?: string; limit: number; budgetMs?: number; now?: () => number }): Promise<Obj> {
+  // Every session in the window: a sample of the newest ones misses the slowest calls, and a
+  // filter (agent:codex) then finds a slower call than the unfiltered answer.
+  const { sessions, truncated } = await collectSessions(index, { ...q, topLevel: false }, TOTALS_SCAN_CAP);
+  const now = opts.now ?? Date.now;
+  const deadline = now() + (opts.budgetMs ?? LATENCY_TIME_BUDGET_MS);
   const llm: number[] = [];
   const ttft: number[] = [];
   const byModel = new Map<string, { d: number[]; ttft: number[] }>();
   const byTool = new Map<string, number[]>();
-  const slowest: { tool: string; ms: number; sessionId: string; input?: string; ok: boolean }[] = [];
-  let scanned = 0;
+  let slowest: { tool: string; ms: number; sessionId: string; input?: string; ok: boolean }[] = [];
+  const keepSlowest = () => {
+    slowest.sort((a, b) => b.ms - a.ms);
+    slowest = slowest.slice(0, SLOWEST_KEEP);
+  };
+  let withCalls = 0;
+  let read = 0;
+  let eventsRead = 0;
+  let partial = 0;
+  let outOfTime = false;
   for (const s of sessions) {
-    if (scanned >= EVENT_SCAN_CAP) break;
     if (!s.stats.toolCalls && !s.stats.latency?.llmCalls) continue;
-    scanned++;
+    withCalls++;
+    if (outOfTime) continue;
+    if (now() > deadline) {
+      outOfTime = true;
+      continue;
+    }
+    read++;
     // A call the proxy and the agent both logged is one sample.
-    const evs = mergeCallCopies(await index.listEvents(s.id, { kinds: ["llm.call", "tool.start", "tool.end"], limit: 20_000 }));
+    const raw = await index.listEvents(s.id, { kinds: ["llm.call", "tool.start", "tool.end"], limit: LATENCY_SESSION_EVENTS });
+    if (raw.length >= LATENCY_SESSION_EVENTS) partial++;
+    eventsRead += raw.length;
+    const evs = mergeCallCopies(raw);
     const starts = new Map<string, AgentEvent>();
     for (const e of evs) {
       if (e.kind === "llm.call") {
@@ -579,11 +606,12 @@ export async function latency(index: IndexStore, q: ScanQuery, opts: { model?: s
         const arr = byTool.get(tool) ?? [];
         arr.push(d);
         byTool.set(tool, arr);
-        slowest.push({ tool, ms: d, sessionId: s.id, input: clip(toolArg(start?.payload.input ?? e.payload.input), 100), ok: e.payload.ok !== false });
+        if (!waitKind(tool)) slowest.push({ tool, ms: d, sessionId: s.id, input: clip(toolArg(start?.payload.input ?? e.payload.input), 100), ok: e.payload.ok !== false });
       }
     }
+    if (slowest.length > SLOWEST_KEEP * 4) keepSlowest();
   }
-  slowest.sort((a, b) => b.ms - a.ms);
+  keepSlowest();
   const l = dist(llm);
   const t = dist(ttft);
   const toolRow = ([tool, v]: [string, number[]]) => {
@@ -593,8 +621,18 @@ export async function latency(index: IndexStore, q: ScanQuery, opts: { model?: s
   const byP95 = (a: { p95Ms?: number }, b: { p95Ms?: number }) => (b.p95Ms ?? 0) - (a.p95Ms ?? 0);
   const tools = [...byTool];
   const waiting = tools.filter(([tool]) => waitKind(tool));
+  // What was read, so a cut answer says how much it covers.
+  const window: Obj = { ...windowOf(q, sessions.length, truncated || outOfTime || partial > 0), sessionsWithCalls: withCalls, sessionsRead: read, eventsRead };
+  if (partial) window.eventsTruncated = partial;
+  const cut = [
+    truncated ? `the window holds more than ${TOTALS_SCAN_CAP} sessions; only the newest ${TOTALS_SCAN_CAP} were considered` : "",
+    outOfTime ? `stopped after ${Math.round((opts.budgetMs ?? LATENCY_TIME_BUDGET_MS) / 1000)}s: read ${read} of ${withCalls} sessions with calls (the newest), ${eventsRead} events; narrow since/agent/repo for the rest` : "",
+    partial ? `${partial} session(s) have more than ${LATENCY_SESSION_EVENTS} call events; only their first ${LATENCY_SESSION_EVENTS} were read` : "",
+  ].filter(Boolean);
+  const head: Obj = { window };
+  if (cut.length) head.truncatedNote = cut.join("; ");
   return {
-    window: windowOf(q, sessions.length, truncated || scanned >= EVENT_SCAN_CAP),
+    ...head,
     llm: { calls: l.n, p50Ms: l.p50Ms, p95Ms: l.p95Ms, maxMs: l.maxMs, ttftP50Ms: t.p50Ms, ttftP95Ms: t.p95Ms },
     byModel: [...byModel]
       .map(([model, g]) => {
@@ -609,7 +647,7 @@ export async function latency(index: IndexStore, q: ScanQuery, opts: { model?: s
       .map(toolRow)
       .sort(byP95)
       .slice(0, opts.limit),
-    slowestCalls: slowest.filter((x) => !waitKind(x.tool)).slice(0, Math.min(5, opts.limit)),
+    slowestCalls: slowest.slice(0, Math.min(5, opts.limit)),
     ...(waiting.length
       ? {
           waitingTools: waiting
