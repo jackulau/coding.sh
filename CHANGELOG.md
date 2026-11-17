@@ -35,6 +35,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Capture.** Redaction reaches values nested more than 64 levels deep in an event or a blob, with the same rules as any other value. A value too deep to copy is stored as `[redacted:too-deep]`. [Privacy](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction)
 - **CLI.** Text output and messages drop terminal escape sequences and control characters from captured text, such as a line `blame` prints or an error that quotes it, so printed text cannot move the cursor, set the window title or add a link. CSV and JSONL do the same when written to a terminal. [Concepts](https://github.com/jackulau/coding.sh/blob/main/docs/concepts.md#event)
 - **Viewer.** Commands the viewer copies (`eval new`, `replay --fork --with`, `bench show`) quote each session id, path and name for sh and PowerShell. A command whose value holds a quote, a control character or `& | < >` is shown but not copied. [Explore](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#open-the-viewer)
 - **Serve.** A viewer `POST` that carries an `Origin` is accepted only when the Origin's host is the host the request was sent to, on a public bind as well as on loopback. Behind nginx, add `proxy_set_header Host $host;`: the 403 says so. [Production](https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md)

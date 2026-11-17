@@ -56,6 +56,8 @@ tool calls with their input and output, file changes, errors, model names, token
 
 Redaction runs at ingest, before anything is written to the index, the blobs or a sink. Each
 match becomes `[redacted:<kind>]`.
+A value nested more than 64 levels deep is redacted with the same rules. A value too deep to copy
+is stored as `[redacted:too-deep]`.
 
 | `[capture] redact` | Replaces | On by default |
 | --- | --- | --- |

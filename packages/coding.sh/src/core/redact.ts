@@ -593,7 +593,18 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
 /** A new value with `f` applied to every string in it (keys are kept). */
 function mapStrings(v: unknown, f: (s: string) => string, depth = 0): unknown {
   if (typeof v === "string") return f(v);
-  if (depth > 64 || v === null || typeof v !== "object" || v instanceof Uint8Array) return v;
+  if (v === null || typeof v !== "object" || v instanceof Uint8Array) return v;
+  // Too deep to follow: a copy parsed from the subtree's JSON text, mapped from depth 0.
+  if (depth > 64) {
+    try {
+      const text = JSON.stringify(v);
+      if (text === undefined) return v;
+      const out = mapStrings(JSON.parse(text), f, 0);
+      return JSON.stringify(out) === text ? v : out;
+    } catch {
+      return v; // a cycle, or too deep for the stack: the redaction walk replaces it
+    }
+  }
   if (Array.isArray(v)) return v.map((x) => mapStrings(x, f, depth + 1));
   const out: Record<string, unknown> = {};
   for (const [k, x] of Object.entries(v)) Object.defineProperty(out, k, { value: mapStrings(x, f, depth + 1), writable: true, enumerable: true, configurable: true });
@@ -707,7 +718,8 @@ export function redactArgv<T>(args: readonly T[]): T[] {
 
 function walk(v: unknown, redact: (s: string) => string, depth: number, tally?: RedactionTally): unknown {
   if (typeof v === "string") return redact(v);
-  if (depth > 64 || v === null || typeof v !== "object") return v;
+  if (v === null || typeof v !== "object") return v;
+  if (depth > 64) return tooDeep(v, redact, tally);
   // Arrays may be argv (wrapper session.start args, tool command vectors).
   if (Array.isArray(v)) {
     const argv = redactArgv(v);
@@ -725,6 +737,22 @@ function walk(v: unknown, redact: (s: string) => string, depth: number, tally?: 
     Object.defineProperty(out, k, { value: val, writable: true, enumerable: true, configurable: true });
   }
   return out;
+}
+
+/**
+ * A subtree deeper than the walk goes: a copy of it, parsed from its JSON text, is walked from depth
+ * 0, so every rule sees each string as a string. A copy that comes out the same keeps the subtree as
+ * it was. A subtree with no JSON text (a cycle), or too deep for the stack, becomes a marker.
+ */
+function tooDeep(v: object, redact: (s: string) => string, tally?: RedactionTally): unknown {
+  try {
+    const text = JSON.stringify(v);
+    if (text === undefined) return v;
+    const out = walk(JSON.parse(text), redact, 0, tally);
+    return JSON.stringify(out) === text ? v : out;
+  } catch {
+    return marker("too-deep");
+  }
 }
 
 function isAlreadyRedacted(s: string): boolean {
