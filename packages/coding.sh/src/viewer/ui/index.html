@@ -4888,7 +4888,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
       for (const k of Object.keys(session)) delete session[k];
       Object.assign(session, next);
       durableSpans = indexDurable(session.stats && session.stats.durable);
-      head.replaceWith(sessionHeader(session, labels.items, { parent, children: kids, events: allEvents }));
+      head.replaceWith(sessionHeader(session, labels.items, { parent, children: kids, events: allEvents, firstFail: firstFailBtn }));
     } catch { /* the header keeps what it showed; the next tick tries again */ } finally { headerBusy = false; }
   }
   // Rebuild the steps from allEvents, keeping the selected step and the scroll position.
