@@ -1,10 +1,12 @@
 // Starts Chrome once before the tests do. CI runs it as a step of its own, before
 // scripts/test-ci.mjs (.github/workflows/ci.yml).
 //
-// The first Chrome start on a fresh runner waits on a cold disk: 5-30 s in measured runs, against
-// the 20 s a viewer test gives a start (launchBrowser in test/viewer/browser.ts). Every later start
-// on the same machine takes under a second. So the first start happens here, where it is timed and
-// printed and has a limit of its own (FIRST_START_LIMIT_MS). Then one start and one page load run
+// The first Chrome start on a fresh runner is slow: 1-26 s in most measured runs and past 60 s in
+// one, against the 20 s a viewer test gives a start (launchBrowser in test/viewer/browser.ts). Why
+// is not known; a cold disk was the guess and was never measured apart from the start. Every later
+// start on the same machine takes under a second. So the first start happens here, where it is
+// timed and has a limit of its own (FIRST_START_LIMIT_MS), and prints what it did, fast or slow,
+// so the two can be set side by side (firstStartReport). Then one start and one page load run
 // the way a test runs them, under the tests' limits: if that fails, Chrome is not ready and the job
 // stops before the tests. No Chrome is an error here, never a skip.
 //
@@ -20,7 +22,7 @@
 //
 //   node scripts/warm-chrome.ts
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -67,19 +69,100 @@ export function chromeProcesses(): number | undefined {
   return r.status === 0 ? r.stdout.split("\n").filter((l) => l.startsWith('"chrome.exe"')).length : undefined;
 }
 
+/** The files of /proc/pressure: what Linux counts as time stalled waiting for the disk, a core or memory. */
+const PRESSURE = ["io", "cpu", "memory"] as const;
+/** Microseconds stalled: `some` with one task or more waiting, `full` with every task waiting. */
+export type Pressure = Partial<Record<(typeof PRESSURE)[number], { some: number; full: number }>>;
+
+/** The stalled totals of one /proc/pressure file, in microseconds, or undefined when it has none. */
+export function pressureTotals(text: string): { some: number; full: number } | undefined {
+  const total = (kind: string) => {
+    const m = new RegExp(`^${kind} .*\\btotal=(\\d+)`, "m").exec(text);
+    return m ? Number(m[1]) : undefined;
+  };
+  const some = total("some");
+  return some === undefined ? undefined : { some, full: total("full") ?? 0 };
+}
+
+/** The stalled totals of each pressure file there is, or undefined where there are none (not Linux, or a kernel without them). */
+export function readPressure(dir = "/proc/pressure"): Pressure | undefined {
+  const p: Pressure = {};
+  for (const name of PRESSURE) {
+    try {
+      const totals = pressureTotals(readFileSync(join(dir, name), "utf8"));
+      if (totals) p[name] = totals;
+    } catch {}
+  }
+  return Object.keys(p).length ? p : undefined;
+}
+
+/** What a first start did, for its report. */
+export interface FirstStart {
+  ms: number;
+  stderrBytes: number;
+  limitMs: number;
+  /** True when the start ran past its limit and was killed. */
+  stopped: boolean;
+  /** The clock at the spawn, to set against the stamps in Chrome's own lines. */
+  spawnedAt: Date;
+  /** Milliseconds from the spawn to the first byte on each pipe; absent when there was none. */
+  firstStderrMs?: number;
+  firstStdoutMs?: number;
+  stderr: string;
+  /** The pressure totals before the spawn and after the exit, where the system has them. */
+  pressure?: { before: Pressure; after: Pressure };
+}
+
 /**
- * Runs Chrome to its own exit and returns the time it took and how much it wrote to stderr. Past the
- * limit it is killed and the start fails, with what it had done until then.
+ * What a first start did, to print: when Chrome's first byte came on each pipe, how long the
+ * machine stalled meanwhile, and all the stderr read by Chrome's exit. Chrome stamps its own lines
+ * with the clock, so the time of the spawn is here in the same form.
  */
-export function firstStart(chrome: string, limitMs = FIRST_START_LIMIT_MS): Promise<{ ms: number; stderrBytes: number }> {
+export function firstStartReport(s: FirstStart): string {
+  const two = (n: number) => String(n).padStart(2, "0");
+  const d = s.spawnedAt;
+  const clock = `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, "0")}`;
+  const at = (ms: number | undefined) => (ms === undefined ? "never" : `after ${Math.round(ms)} ms`);
+  const stalled = PRESSURE.flatMap((name) => {
+    const before = s.pressure?.before[name];
+    const after = s.pressure?.after[name];
+    const ms = (us: number) => Math.round(us / 1000);
+    return before && after ? [`${name} ${ms(after.some - before.some)}/${ms(after.full - before.full)}`] : [];
+  });
+  return [
+    `warm-chrome: the first start ${s.stopped ? `was stopped at its limit of ${s.limitMs} ms` : `took ${Math.round(s.ms)} ms`}. What it did:`,
+    `  Chrome was started at ${clock} by this machine's clock, the clock in Chrome's own lines.`,
+    `  First byte on stderr: ${at(s.firstStderrMs)}. First byte on stdout: ${at(s.firstStdoutMs)}.`,
+    stalled.length ? `  Milliseconds stalled across the start, some/full, from /proc/pressure: ${stalled.join(", ")}.` : "  /proc/pressure was not read: this system has none.",
+    `  Chrome's stderr, ${s.stderr.length} bytes:`,
+    ...(s.stderr.trimEnd() ? s.stderr.trimEnd().split("\n").map((l) => `  | ${l.trimEnd()}`) : ["  | (empty)"]),
+  ].join("\n");
+}
+
+/**
+ * Runs Chrome to its own exit and returns the time it took and what it wrote to stderr. Past the
+ * limit it is killed and the start fails, with what it had done until then. Every start prints its
+ * report first (firstStartReport), to stderr unless it is given somewhere else to print.
+ */
+export function firstStart(chrome: string, limitMs = FIRST_START_LIMIT_MS, print: (text: string) => void = console.error): Promise<FirstStart> {
   const dir = mkdtempSync(join(tmpdir(), "csh-chrome-warm-"));
+  const before = readPressure();
+  const spawnedAt = new Date();
   const t0 = performance.now();
   const child = spawn(chrome, firstStartArgs(dir), { stdio: ["ignore", "pipe", "pipe"] });
   let out = "";
   let err = "";
-  child.stdout!.on("data", (d: Buffer) => (out += d.toString()));
-  child.stderr!.on("data", (d: Buffer) => (err += d.toString()));
-  return new Promise<{ ms: number; stderrBytes: number }>((resolve, reject) => {
+  let firstStdoutMs: number | undefined;
+  let firstStderrMs: number | undefined;
+  child.stdout!.on("data", (d: Buffer) => {
+    firstStdoutMs ??= performance.now() - t0;
+    out += d.toString();
+  });
+  child.stderr!.on("data", (d: Buffer) => {
+    firstStderrMs ??= performance.now() - t0;
+    err += d.toString();
+  });
+  return new Promise<FirstStart>((resolve, reject) => {
     let late = false;
     let processes: number | undefined;
     const limit = setTimeout(() => {
@@ -95,6 +178,9 @@ export function firstStart(chrome: string, limitMs = FIRST_START_LIMIT_MS): Prom
     child.once("exit", (code) => {
       const ms = performance.now() - t0;
       clearTimeout(limit);
+      const after = readPressure();
+      const start: FirstStart = { ms, stderrBytes: err.length, limitMs, stopped: late, spawnedAt, firstStderrMs, firstStdoutMs, stderr: err, pressure: before && after && { before, after } };
+      print(firstStartReport(start));
       child.stdout?.destroy();
       child.stderr?.destroy();
       // On Windows, Chrome's helpers can hold the profile for a moment after it exits.
@@ -104,7 +190,7 @@ export function firstStart(chrome: string, limitMs = FIRST_START_LIMIT_MS): Prom
       if (late) reject(new Error(`Chrome's first start took longer than ${limitMs} ms and was stopped. ${stoppedState(out, err, processes)}`));
       else if (code !== 0) reject(new Error(`Chrome exited (${code}) on its first start: ${err.slice(-500)}`));
       else if (!out.includes("<title>warm</title>")) reject(new Error(`Chrome's first start did not load the page: ${(out || err).slice(-500)}`));
-      else resolve({ ms, stderrBytes: err.length });
+      else resolve(start);
     });
   });
 }
