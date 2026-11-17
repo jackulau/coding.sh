@@ -149,3 +149,12 @@ test("every docs page carries the opener once, :::more pages included", distOpts
   needDist(DIST);
   for (const p of ["docs/quickstart", "docs/privacy", "docs/troubleshooting", "docs/cli"]) opener(page(p));
 });
+
+test("the FAQ question styles ship on /docs/faq only, and outrank .more > summary in any order", distOpts(DIST), () => {
+  needDist(DIST);
+  const faq = page("docs/faq");
+  // .more > summary (doc.css) sets padding too and may come later in the page.
+  assert.match(faq, /\.doc \.faq\s*>\s*summary\s*\{[^}]*padding-block/);
+  assert.match(faq, /\.doc \.faq:target\s*>\s*summary/);
+  assert.doesNotMatch(page("docs/cli"), /\.faq\b/);
+});
