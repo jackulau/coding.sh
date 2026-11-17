@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   FIRST_START_LIMIT_MS,
+  TEARDOWN_WATCHDOG_NOTE,
   chromeProcesses,
   firstStart,
   firstStartArgs,
@@ -97,6 +98,52 @@ test("a first start that ends in time prints its report too", { skip: process.pl
     assert.equal(printed[0]!, firstStartReport(fast));
     assert.match(printed[0]!, /^warm-chrome: the first start took \d+ ms\. What it did:\n/);
     assert.match(printed[0]!, /Chrome's stderr, 26 bytes:\n  \| an early line\n  \| a last line$/);
+    // An ordinary start carries nothing about the teardown watchdog.
+    assert.equal("teardownWatchdog" in fast, false);
+    assert.ok(!printed[0]!.includes(TEARDOWN_WATCHDOG_NOTE));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a Chrome ended by its own teardown watchdog counts only when it had printed the page, and the report says so", { skip: process.platform === "win32" && "the stand-in for Chrome is a shell script" }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "csh-warm-test-"));
+  try {
+    const PAGE = "echo '<title>warm</title>'\n";
+    const LINE = "echo 'Teardown watchdog expired; recording dump and terminating.' >&2\n";
+    const standIn = (name: string, body: string) => {
+      const path = join(dir, name);
+      writeFileSync(path, `#!/bin/sh\n${body}`);
+      chmodSync(path, 0o755);
+      return path;
+    };
+    const printed: string[] = [];
+    const print = (text: string) => printed.push(text);
+
+    // The page, the watchdog's line and exit 2, all three: the start did its work, so it counts.
+    const hung = await firstStart(standIn("hung", `${PAGE}${LINE}exit 2\n`), 10_000, print);
+    assert.equal(hung.teardownWatchdog, true);
+    assert.equal(hung.stopped, false);
+    assert.equal(printed.length, 1);
+    assert.equal(printed[0]!, firstStartReport(hung));
+    assert.ok(printed[0]!.includes(`\n  ${TEARDOWN_WATCHDOG_NOTE}\n`), printed[0]);
+    assert.match(printed[0]!, /\n  \| Teardown watchdog expired; recording dump and terminating\.$/);
+
+    // Any one of the three missing and the start fails as before, with no such line in its report.
+    const fails = async (name: string, body: string, why: RegExp) => {
+      printed.length = 0;
+      await assert.rejects(firstStart(standIn(name, body), 10_000, print), why, name);
+      assert.equal(printed.length, 1, name);
+      assert.ok(!printed[0]!.includes(TEARDOWN_WATCHDOG_NOTE), name);
+    };
+    // The watchdog's line without the page: Chrome hung before it did its work.
+    await fails("no-page", `${LINE}exit 2\n`, /^Error: Chrome exited \(2\) on its first start: Teardown watchdog expired/);
+    // The page without the line: exit 2 for some other reason.
+    await fails("no-line", `${PAGE}echo 'something else went wrong' >&2\nexit 2\n`, /^Error: Chrome exited \(2\) on its first start: something else went wrong/);
+    // The page and the line with another exit code.
+    await fails("exit-1", `${PAGE}${LINE}exit 1\n`, /^Error: Chrome exited \(1\) on its first start: Teardown watchdog expired/);
+    // The line and exit 0 with no page is still a start that did not load the page.
+    await fails("exit-0-no-page", `${LINE}exit 0\n`, /^Error: Chrome's first start did not load the page/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -188,6 +235,9 @@ const chrome = findChrome();
 test("starts Chrome twice, loads the viewer's list and Explore, and prints the five times", { skip: !chrome && "no Chrome installed" }, () => {
   const r = run(process.env);
   assert.equal(r.status, 0, r.stderr);
+  // A passing test keeps the script's stderr to itself, so say it when this start was one that
+  // Chrome's teardown watchdog ended: a log can then be searched for how often that happens.
+  if (r.stderr.includes(TEARDOWN_WATCHDOG_NOTE)) console.error(`# warm-chrome test: ${TEARDOWN_WATCHDOG_NOTE}`);
   assert.match(r.stdout, /^warm-chrome: first start \d+ ms with \d+ bytes on stderr, then a start in \d+ ms and a page in \d+ ms, then the viewer's list in \d+ ms and Explore in \d+ ms \(.+\)\n$/);
   // The first start's report goes to stderr, so stdout stays the one line above.
   assert.match(r.stderr, /^warm-chrome: the first start took \d+ ms\. What it did:\n  Chrome was started at \d\d:\d\d:\d\d\.\d{3} by this machine's clock/);
