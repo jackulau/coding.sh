@@ -9,6 +9,10 @@ grouped by area, with links to the docs for the details.
 
 ## [0.1.8] - Unreleased
 
+### Added
+
+- **Site.** The GitHub link in the header shows the repository's star count, and so does the menu on a phone. The count is read when the site is deployed, so a page makes no request to GitHub. [coding.sh](https://coding.sh)
+
 ### Fixed
 
 - **Viewer.** Esc or a link pressed within 80 ms of a step key (`j`, `k`, `n`) leaves the session. Before, the step's late update of the pane could put the session's URL back, and the page stayed on the session. [Explore sessions](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md)

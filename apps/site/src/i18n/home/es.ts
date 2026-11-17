@@ -112,6 +112,7 @@ export default {
   "Close menu": "Cerrar menú",
   Primary: "Principal",
   "coding.sh home": "Inicio de coding.sh",
+  "Stars: {{N}}": "Estrellas: {{N}}",
   "Copied to clipboard": "Copiado al portapapeles",
   "Selected, copy it with your keyboard": "Seleccionado, cópialo con el teclado",
   "Skip to content": "Saltar al contenido",

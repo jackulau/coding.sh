@@ -231,6 +231,10 @@ jobs:
     # its own.
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # The deploy builds the nav with the repository's star count (site.yml). A fixed count
+      # here puts that nav through the build, the site tests and the perf budget.
+      SITE_GITHUB_STARS: "1234"
     steps:
       - uses: actions/checkout@v5
 

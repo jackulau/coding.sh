@@ -3,7 +3,8 @@
 // once the page scrolls it becomes a floating pill: near-black, a 1px hairline,
 // a little blur. Only opacity and transform animate, and nothing moves under
 // reduced motion. Mark and pixel wordmark on the left, links in the centre,
-// GitHub on the right.
+// GitHub on the right, with the repository's star count when the build was
+// given one (src/lib/stars.mjs).
 //
 // Under 880px the links, GitHub and the install command move into a sheet
 // that opens under the bar. The sheet shares the
@@ -18,9 +19,11 @@ import Wordmark from "./Wordmark.astro";
 import Mark from "./Mark.astro";
 import GitHubIcon from "./GitHubIcon.astro";
 import CopyIcon from "./CopyIcon.astro";
+import StarIcon from "./StarIcon.astro";
 import { REPO_URL, INSTALL_SH } from "../data/site";
 import { localeOf } from "../i18n/locales.mjs";
 import { translator } from "../i18n/home";
+import { parseStars, formatStars } from "../lib/stars.mjs";
 
 interface Props {
   /** The page's language (src/i18n/locales.mjs); English when absent. Only the front page has others. */
@@ -29,6 +32,11 @@ interface Props {
 const locale = localeOf(Astro.props.lang);
 const { t } = translator(locale.code);
 const english = locale.code === "en";
+
+// The short figure is for the eye; a screen reader gets the whole number, with its label.
+const stars = parseStars(process.env.SITE_GITHUB_STARS);
+const starsShort = stars && formatStars(stars);
+const starsLabel = stars && t("Stars: {{N}}").replace("{{N}}", String(stars));
 
 const path = Astro.url.pathname.replace(/\/+$/, "") || "/";
 const LINKS = [
@@ -64,6 +72,15 @@ const [cmdHead, cmdTail] = INSTALL_SH.split(/ (?=\| )/);
       <a href={REPO_URL} class="nav__src">
         <GitHubIcon />
         GitHub
+        {
+          stars && (
+            <span class="nav__stars nav__stars--split" data-stars>
+              <StarIcon />
+              <span aria-hidden="true">{starsShort}</span>
+              <span class="sr-only">{starsLabel}</span>
+            </span>
+          )
+        }
       </a>
       <button type="button" class="nav__menu-btn" aria-expanded="false" aria-controls="nav-sheet" aria-label={t("Menu")} data-nav-btn>
         <span class="nav__burger" aria-hidden="true"><i></i><i></i></span>
@@ -81,9 +98,20 @@ const [cmdHead, cmdTail] = INSTALL_SH.split(/ (?=\| )/);
         }
         <a href={REPO_URL} class="nav__row">
           <span class="nav__row-main"><GitHubIcon /> GitHub</span>
-          <svg class="nav__ext" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
-            <path d="M4 2.5h5.5V8M9.5 2.5 3 9" fill="none" stroke="currentColor" stroke-width="1.3" />
-          </svg>
+          <span class="nav__row-end">
+            {
+              stars && (
+                <span class="nav__stars" data-stars>
+                  <StarIcon />
+                  <span aria-hidden="true">{starsShort}</span>
+                  <span class="sr-only">{starsLabel}</span>
+                </span>
+              )
+            }
+            <svg class="nav__ext" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+              <path d="M4 2.5h5.5V8M9.5 2.5 3 9" fill="none" stroke="currentColor" stroke-width="1.3" />
+            </svg>
+          </span>
         </a>
       </nav>
 
@@ -210,6 +238,26 @@ const [cmdHead, cmdTail] = INSTALL_SH.split(/ (?=\| )/);
   }
   .nav__src:active {
     transform: scale(0.97);
+  }
+  /* The star count: a star and a figure, in the bar's link and the sheet's row. */
+  .nav__stars {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: var(--fs-sm);
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-2);
+  }
+  .nav__stars :global(svg) {
+    color: var(--text-muted);
+  }
+  /* In the bar a hairline, the height of the link, sets it apart from the name. */
+  .nav__stars--split {
+    align-self: stretch;
+    margin-left: 0.25rem;
+    padding-left: 0.75rem;
+    box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.11);
   }
   @media (hover: hover) and (pointer: fine) {
     .nav__link:hover {
@@ -395,6 +443,11 @@ const [cmdHead, cmdTail] = INSTALL_SH.split(/ (?=\| )/);
     display: inline-flex;
     align-items: center;
     gap: 0.6rem;
+  }
+  .nav__row-end {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75rem;
   }
   .nav__ext {
     color: var(--text-muted);
