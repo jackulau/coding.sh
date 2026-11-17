@@ -2,8 +2,20 @@
 //   serve (default)  JSON-RPC on stdio until stdin closes. Agents launch this;
 //                    stdout carries protocol frames only, notes go to stderr.
 //   config           prints how to register the server with agents.
-import { UsageError } from "../args.ts";
+import { shellQuote, UsageError } from "../args.ts";
 import type { CommandContext } from "../types.ts";
+
+/**
+ * One argument of a printed register command, read the same by Git Bash, PowerShell and cmd.
+ * A Windows path takes forward slashes (Windows and node accept them; to a POSIX shell a bare
+ * backslash is an escape, so C:\Users\me arrived as C:Usersme). Spaces get double quotes; a
+ * character that is special inside those falls back to POSIX single quotes.
+ */
+export function commandArg(a: string): string {
+  const p = /^(?:[A-Za-z]:\\|\\\\)/.test(a) ? a.replace(/\\/g, "/") : a;
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(p)) return p;
+  return /[$`"\\!]/.test(p) ? shellQuote(p) : `"${p}"`;
+}
 
 export async function run(c: CommandContext): Promise<number> {
   const action = c.action ?? c.positionals[0] ?? "serve";
@@ -15,7 +27,7 @@ export async function run(c: CommandContext): Promise<number> {
   const spec = cli && !existsSync(paths(c.env).mcpLauncher) ? pinnedLaunchSpec(cli) : mcpLaunchSpec(cli, c.env);
   if (action === "config") {
     const doc = { mcpServers: { [spec.name]: { command: spec.command, args: spec.args } } };
-    const cmd = [spec.command, ...spec.args].map((a) => (/[\s'"]/.test(a) ? JSON.stringify(a) : a)).join(" ");
+    const cmd = [spec.command, ...spec.args].map(commandArg).join(" ");
     if (c.out.json) {
       c.out.data({ server: spec, config: doc, commands: { claudeCode: `claude mcp add -s user ${spec.name} -- ${cmd}`, codex: `codex mcp add ${spec.name} -- ${cmd}` } });
       return 0;

@@ -1,9 +1,11 @@
 // Regression tests for the third hands-on QA round on the CLI: float noise in --json, a
-// misspelled --agent, and typo suggestions for prefixes and shell habits.
+// misspelled --agent, typo suggestions for prefixes and shell habits, and the printed MCP
+// register command on Windows paths.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { after, before, describe, test } from "node:test";
 import { suggest } from "../../src/cli/args.ts";
+import { commandArg } from "../../src/cli/commands/mcp.ts";
 import * as sessions from "../../src/cli/commands/sessions.ts";
 import * as usage from "../../src/cli/commands/usage.ts";
 import { tidyNumbers } from "../../src/cli/common.ts";
@@ -95,5 +97,22 @@ describe("typo suggestions", () => {
     } finally {
       sb.cleanup();
     }
+  });
+});
+
+describe("mcp config register command", () => {
+  test("Windows paths take forward slashes, and spaces take double quotes", () => {
+    assert.equal(commandArg("C:\\Program Files\\nodejs\\node.exe"), '"C:/Program Files/nodejs/node.exe"');
+    assert.equal(commandArg("C:\\Users\\me\\.t3\\dist\\cli.mjs"), "C:/Users/me/.t3/dist/cli.mjs");
+    assert.equal(commandArg("\\\\server\\share\\cli.mjs"), "//server/share/cli.mjs");
+    assert.equal(commandArg("mcp"), "mcp");
+    assert.equal(commandArg("/home/o'brien/cli.mjs"), "\"/home/o'brien/cli.mjs\"");
+    assert.equal(commandArg("/opt/$x/cli.mjs"), "'/opt/$x/cli.mjs'");
+  });
+
+  test("a POSIX shell reads each argument back whole", { skip: spawnSync("sh", ["-c", "true"]).status !== 0 && "no sh on PATH" }, () => {
+    const args = ["C:\\Program Files\\nodejs\\node.exe", "C:\\Users\\me\\dist\\cli.mjs", "mcp"];
+    const r = spawnSync("sh", ["-c", `for a in ${args.map(commandArg).join(" ")}; do printf '%s\\n' "$a"; done`], { encoding: "utf8" });
+    assert.deepEqual(r.stdout.trim().split("\n"), ["C:/Program Files/nodejs/node.exe", "C:/Users/me/dist/cli.mjs", "mcp"]);
   });
 });
