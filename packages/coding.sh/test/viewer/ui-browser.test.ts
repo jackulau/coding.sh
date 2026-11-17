@@ -578,7 +578,13 @@ describe("viewer UI: sessions list state", { skip: chrome ? false : "no Chrome/C
         assert.equal(await page.eval("document.querySelector('.back').textContent"), "←Events");
         await key("n");
         await page.waitFor(`/^2 \\/ 2 matches/.test(${nav})`, "n moves to the next match");
-        await key("Escape");
+        // Esc while the pane still owes a step its paint (it follows a key at most once per 80 ms), with
+        // that paint due before the browser gets to the hash change: the late paint leaves the URL alone.
+        const press = (k: string) => `document.dispatchEvent(new KeyboardEvent('keydown', { key: '${k}', bubbles: true, cancelable: true }))`;
+        await Promise.all([
+          page.eval(`(() => { ${press("N")}; ${press("n")}; const due = performance.now() + 120; while (performance.now() < due); })()`),
+          page.eval(press("Escape")),
+        ]);
         await page.waitFor(`${rows}.length === 2 && location.hash === '#/events?where=${q.replace(/%20/g, "+")}'`, "back to the Events tab");
         await key("s");
         await page.waitFor(`location.hash === '#/?where=${q.replace(/%20/g, "+")}' && ${titles}.join() === 'BUILD'`, "s shows the matching sessions");

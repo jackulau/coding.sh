@@ -9,7 +9,7 @@
 // stops before the tests. No Chrome is an error here, never a skip.
 //
 //   node scripts/warm-chrome.ts
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,13 +21,14 @@ const PAGE = "data:text/html,<title>cold</title><p>warm</p><script>document.titl
 
 /**
  * The tests' flags, with the two that keep Chrome open swapped for a page to print: Chrome starts,
- * loads the page, writes its DOM and exits by itself.
+ * loads the page, writes its DOM and exits by itself. --enable-logging=stderr makes Chrome write
+ * its errors to stderr, which is what a stopped start has to show for itself.
  */
 export function firstStartArgs(dir: string): string[] {
   const args = chromeArgs(dir);
   const kept = args.filter((a) => a !== "--remote-debugging-port=0" && a !== "about:blank");
   if (kept.length !== args.length - 2) throw new Error("chromeArgs no longer has --remote-debugging-port=0 and about:blank");
-  return [...kept, "--dump-dom", PAGE];
+  return [...kept, "--enable-logging=stderr", "--dump-dom", PAGE];
 }
 
 /**
@@ -36,8 +37,28 @@ export function firstStartArgs(dir: string): string[] {
  */
 export const FIRST_START_LIMIT_MS = 60_000;
 
-/** Runs Chrome to its own exit and returns the time it took. Past the limit it is killed and the start fails. */
-export function firstStart(chrome: string, limitMs = FIRST_START_LIMIT_MS): Promise<number> {
+/**
+ * What a Chrome stopped at the limit had done, for the error. "Printed nothing" is a Chrome that
+ * never came up; "printed the page" is one that did its work and did not exit.
+ */
+export function stoppedState(out: string, err: string, processes?: number): string {
+  const printed = out.includes("<title>warm</title>") ? "It had printed the page and had not exited" : out ? `It had printed ${out.length} bytes that are not the page` : "It had printed nothing";
+  const running = processes === undefined ? "" : ` ${processes} chrome.exe processes were running.`;
+  return `${printed}.${running} Its stderr ended: ${err.trim().slice(-800) || "(empty)"}`;
+}
+
+/** How many chrome.exe processes Windows lists, or undefined elsewhere and when the list fails. */
+export function chromeProcesses(): number | undefined {
+  if (process.platform !== "win32") return undefined;
+  const r = spawnSync("tasklist", ["/FI", "IMAGENAME eq chrome.exe", "/FO", "CSV", "/NH"], { encoding: "utf8", timeout: 10_000 });
+  return r.status === 0 ? r.stdout.split("\n").filter((l) => l.startsWith('"chrome.exe"')).length : undefined;
+}
+
+/**
+ * Runs Chrome to its own exit and returns the time it took and how much it wrote to stderr. Past the
+ * limit it is killed and the start fails, with what it had done until then.
+ */
+export function firstStart(chrome: string, limitMs = FIRST_START_LIMIT_MS): Promise<{ ms: number; stderrBytes: number }> {
   const dir = mkdtempSync(join(tmpdir(), "csh-chrome-warm-"));
   const t0 = performance.now();
   const child = spawn(chrome, firstStartArgs(dir), { stdio: ["ignore", "pipe", "pipe"] });
@@ -45,10 +66,12 @@ export function firstStart(chrome: string, limitMs = FIRST_START_LIMIT_MS): Prom
   let err = "";
   child.stdout!.on("data", (d: Buffer) => (out += d.toString()));
   child.stderr!.on("data", (d: Buffer) => (err += d.toString()));
-  return new Promise<number>((resolve, reject) => {
+  return new Promise<{ ms: number; stderrBytes: number }>((resolve, reject) => {
     let late = false;
+    let processes: number | undefined;
     const limit = setTimeout(() => {
       late = true;
+      processes = chromeProcesses();
       child.kill("SIGKILL");
     }, limitMs);
     child.once("error", (e) => {
@@ -65,10 +88,10 @@ export function firstStart(chrome: string, limitMs = FIRST_START_LIMIT_MS): Prom
       try {
         rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
       } catch {}
-      if (late) reject(new Error(`Chrome's first start took longer than ${limitMs} ms and was stopped`));
+      if (late) reject(new Error(`Chrome's first start took longer than ${limitMs} ms and was stopped. ${stoppedState(out, err, processes)}`));
       else if (code !== 0) reject(new Error(`Chrome exited (${code}) on its first start: ${err.slice(-500)}`));
       else if (!out.includes("<title>warm</title>")) reject(new Error(`Chrome's first start did not load the page: ${(out || err).slice(-500)}`));
-      else resolve(ms);
+      else resolve({ ms, stderrBytes: err.length });
     });
   });
 }
@@ -98,5 +121,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   }
   const first = await firstStart(chrome);
   const { startMs, pageMs } = await testStart(chrome);
-  console.log(`warm-chrome: first start ${Math.round(first)} ms, then a start in ${Math.round(startMs)} ms and a page in ${Math.round(pageMs)} ms (${chrome})`);
+  console.log(`warm-chrome: first start ${Math.round(first.ms)} ms with ${first.stderrBytes} bytes on stderr, then a start in ${Math.round(startMs)} ms and a page in ${Math.round(pageMs)} ms (${chrome})`);
 }
