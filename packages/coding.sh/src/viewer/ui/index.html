@@ -709,6 +709,7 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .tl-map i { position: absolute; right: 1px; width: 4px; height: 2px; border-radius: 1px; background: var(--text-faint); pointer-events: none; }
 .tl-map i.f { background: var(--fail); height: 3px; }
 .tl-map i.d { background: var(--warn); height: 4px; right: 0; width: 6px; }
+.tl-map i.t { background: var(--text-muted); height: 1px; right: 0; width: 6px; border-radius: 0; }
 .st.is-derail { box-shadow: inset 2px 0 0 var(--warn); }
 .st .derail-flag { flex: none; margin-left: 0.5rem; padding: 0 6px; border-radius: 4px; font-family: var(--font-mono); font-size: 11px; line-height: 18px; color: var(--warn-ink); background: var(--warn-wash); }
 .st.phase-start { box-shadow: inset 0 2px 0 var(--line-strong, var(--line)); }
@@ -1762,6 +1763,12 @@ function midClip(s, n) {
   return s.slice(0, n - 1 - tail) + "…" + s.slice(-tail);
 }
 function clip(s, n) { s = String(s ?? ""); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+// A prompt's first line with words in it, for its turn's header row.
+function promptLine(it) {
+  const text = String((((it.ev || it.start || it.end || {}).payload) || {}).text ?? "");
+  const line = text.split(/\r?\n/).find((l) => l.trim()) || "";
+  return clip(oneLine(line), 200);
+}
 function oneLine(s) { return String(s ?? "").replace(/\s+/g, " ").trim(); }
 function fmtBytes(n) {
   if (n < 1024) return n + " B";
@@ -2098,6 +2105,8 @@ const KEYMAP = [
   { scope: "session", id: "last", keys: ["End"], label: "Last step" },
   { scope: "session", id: "next-fail", keys: ["]"], label: "Next failure", hint: true },
   { scope: "session", id: "prev-fail", keys: ["["], label: "Previous failure" },
+  { scope: "session", id: "next-turn", keys: ["}"], label: "Next turn", hint: true },
+  { scope: "session", id: "prev-turn", keys: ["{"], label: "Previous turn" },
   { scope: "session", id: "find", keys: ["/"], label: "Find in steps", hint: true },
   { scope: "session", id: "next-match", keys: ["n"], label: "Next match (find, or the query you came from)" },
   { scope: "session", id: "prev-match", keys: ["N"], label: "Previous match" },
@@ -4117,7 +4126,8 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     }
     for (const m of meta) { const t = turns[m.turn]; m.t0 = t.start; m.span = Math.max(1, t.end - t.start); }
     failIdx = [];
-    for (let i = 0; i < meta.length; i++) if (meta[i].fail) failIdx.push(i);
+    turnIdx = [];
+    for (let i = 0; i < meta.length; i++) { if (meta[i].fail) failIdx.push(i); if (meta[i].isTurn) turnIdx.push(i); }
     markQuery();
     turnCount = turns.length;
     markOutline();
@@ -4153,6 +4163,8 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     for (const p of outline.phases) { const i = p.n > 1 ? at(p.eventId) : undefined; if (i !== undefined) meta[i].phase = p; }
   }
   let failIdx = [];
+  // The item index of each user prompt: where each turn starts ({ and }).
+  let turnIdx = [];
   // Opened from the Events tab: the ids of this session's events that match its query (n and N).
   let queryIds = [];
   let queryIdx = [];
@@ -4217,7 +4229,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
 
   // ---- DOM
   const inner = h("div", { class: "tl-inner" });
-  const tl = h("div", { class: "tl" + (prefs.get("wf", true) ? " wf-on" : ""), role: "listbox", tabindex: "0", id: "steps", "aria-label": "Session steps. j and k to move, ] and [ for failures, / to find." }, inner);
+  const tl = h("div", { class: "tl" + (prefs.get("wf", true) ? " wf-on" : ""), role: "listbox", tabindex: "0", id: "steps", "aria-label": "Session steps. j and k to move, } and { for turns, ] and [ for failures, / to find." }, inner);
   const map = h("div", { class: "tl-map", "aria-hidden": "true" });
   const tailPill = h("button", { class: "live-pill tl-tail", type: "button", hidden: true }, h("span", { class: "dot", "aria-hidden": "true" }), h("span", { class: "txt" }, ""));
   const pane = h("div", { class: "pane", role: "region", id: "event-pane", tabindex: "0", "aria-label": "Step detail" });
@@ -4321,8 +4333,8 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     const el = h("div", { class: cls, role: "option", id: "st-" + r, "aria-selected": String(r === activeRow), "aria-setsize": String(rows.length), "aria-posinset": String(r + 1),
       onclick: () => selectRow(r, true) },
       h("span", { class: "t", title: new Date(it.ts).toLocaleTimeString() }, m.isTurn ? "Turn " + m.prompt : fmtClock(it.ts - session.startedAt)),
-      h("span", { class: "lbl" }, chip, h("span", { class: "dot tone-" + v.tone, "aria-hidden": "true" }), m.isTurn ? null : h("span", { class: "name" }, v.name), m.isTurn ? h("span", { class: "arg" }, v.arg || "Prompt") : argNode(v.arg), v.cost ? h("span", { class: "cost", title: v.cost.title }, v.cost.text) : null, flag),
-      h("span", { class: "d" }, v.adds !== undefined || v.dels !== undefined
+      h("span", { class: "lbl" }, chip, h("span", { class: "dot tone-" + v.tone, "aria-hidden": "true" }), m.isTurn ? null : h("span", { class: "name" }, v.name), m.isTurn ? h("span", { class: "arg" }, promptLine(it) || "Prompt") : argNode(v.arg), v.cost ? h("span", { class: "cost", title: v.cost.title }, v.cost.text) : null, flag),
+      h("span", { class: "d" }, m.isTurn ? h("time", { datetime: new Date(it.ts).toISOString() }, fmtClock(it.ts - session.startedAt)) : v.adds !== undefined || v.dels !== undefined
         ? [v.adds !== undefined ? h("span", { class: "add" }, "+" + v.adds) : null, v.adds !== undefined && v.dels !== undefined ? " " : null, v.dels !== undefined ? h("span", { class: "del" }, "−" + v.dels) : null]
         : v.meta || ""), wf);
     el.style.transform = "translateY(" + top + "px)";
@@ -4368,6 +4380,15 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   function renderMap() {
     const marks = [];
     const n = rows.length || 1;
+    // Turn starts first, so failure and derail marks paint over them.
+    for (const i of turnIdx) {
+      if (marks.length > 300) break;
+      const r = rowOf[i];
+      if (r < 0) continue;
+      const mk = h("i", { class: "t" });
+      mk.style.top = (r / n) * 100 + "%";
+      marks.push(mk);
+    }
     for (const [i, m] of meta.entries()) {
       if (!m.fail) continue;
       if (marks.length > 600) break;
@@ -4462,6 +4483,14 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     selectItem(next, true);
     tl.focus({ preventScroll: true });
     announce("Failure " + (failIdx.indexOf(next) + 1) + " of " + failIdx.length + ": " + meta[next].v.label);
+  }
+  // No wrap: past the last turn, } stays put, so a held key cannot loop back to the start.
+  function jumpTurn(dir) {
+    const next = dir > 0 ? turnIdx.find((i) => i > activeItem) : [...turnIdx].reverse().find((i) => i < activeItem);
+    if (next === undefined) { announce(turnIdx.length ? (dir > 0 ? "No later turn" : "No earlier turn") : "No user turns"); return; }
+    selectItem(next, true);
+    tl.focus({ preventScroll: true });
+    announce("Turn " + meta[next].prompt + " of " + turnIdx.length + ": " + meta[next].v.label);
   }
   function jumpDerail(dir) {
     if (!derailIdx.length) return;
@@ -4990,7 +5019,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   function renderHint() {
     const scope = rp.on ? "replay" : "session";
     swap(hint, 
-      ...KEYMAP.filter((k) => k.scope === scope && k.hint).map((k) => h("span", null, keyCaps(k.id === "down" ? ["j", "k"] : k.keys), k.id === "down" ? "move" : k.label.replace(/^Show or hide |^Expand or fold /, "").toLowerCase())),
+      ...KEYMAP.filter((k) => k.scope === scope && k.hint).map((k) => h("span", null, keyCaps(k.id === "down" ? ["j", "k"] : k.id === "next-turn" ? ["{", "}"] : k.keys), k.id === "down" ? "move" : k.id === "next-turn" ? "turns" : k.label.replace(/^Show or hide |^Expand or fold /, "").toLowerCase())),
       h("span", { class: "spacer" }), h("span", null, keyCaps(["?"]), "all shortcuts"));
   }
 
@@ -5002,6 +5031,8 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     last: () => selectRow(rows.length - 1),
     "next-fail": () => jumpFail(1),
     "prev-fail": () => jumpFail(-1),
+    "next-turn": () => jumpTurn(1),
+    "prev-turn": () => jumpTurn(-1),
     find: () => { findInput.focus(); findInput.select(); },
     "next-match": () => (findQ ? jumpMatch(1) : jumpQuery(1)),
     "prev-match": () => (findQ ? jumpMatch(-1) : jumpQuery(-1)),
@@ -5024,6 +5055,8 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   };
   keys.palette = [
     { group: "Session", label: "Next failure", hint: "]", run: () => jumpFail(1) },
+    { group: "Session", label: "Next turn", hint: "}", run: () => jumpTurn(1) },
+    { group: "Session", label: "Previous turn", hint: "{", run: () => jumpTurn(-1) },
     { group: "Session", label: "Find in steps", hint: "/", run: () => setTimeout(() => findInput.focus(), 0) },
     { group: "Session", label: "Copy session id", run: () => copy(session.id, "session id") },
     { group: "Session", label: "Copy eval command", run: () => copy("coding.sh eval new " + session.id, "eval command") },

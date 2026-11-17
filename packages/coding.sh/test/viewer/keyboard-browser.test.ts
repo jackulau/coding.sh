@@ -13,6 +13,7 @@ if (!chrome && process.env.GITHUB_ACTIONS) throw new Error("no Chrome found on C
 const T0 = 1_762_400_000_000;
 const LONG = "5a1d2c3b-0f4e-4a6b-8c7d-9e0f1a2b3c4d";
 const RP = "7f3c1e2a-5b6d-4e8f-9a0b-1c2d3e4f5a6b";
+const TURNS = "3b9e4d2a-6c1f-4e7a-8b5d-2f0a9c8e7d61";
 
 describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no Chrome/Chromium found (set CODING_SH_TEST_CHROME)" }, () => {
   const index = new FakeIndex();
@@ -40,6 +41,15 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
       at(RP, 7, { kind: "tool.end", durationMs: 1200, payload: { tool: "Bash", toolUseId: "b1", ok: false, exitCode: 1, output: "1 failing" } }),
       at(RP, 8, { kind: "assistant.message", payload: { text: "The test fails." } }),
     ]);
+    // Four user turns of ten replies each: long enough that the step list scrolls and shows its minimap.
+    const turnEvents: AgentEvent[] = [];
+    let n = 0;
+    for (let t = 1; t <= 4; t++) {
+      turnEvents.push(at(TURNS, ++n, { kind: "user.message", payload: { text: t === 2 ? "\n  second prompt, first line\nand a second line that stays out of the header" : `prompt number ${t}` } }));
+      for (let r = 0; r < 10; r++) turnEvents.push(at(TURNS, ++n, { kind: "assistant.message", payload: { text: `reply ${t}.${r}` } }));
+    }
+    await index.upsertSession(session(TURNS, { startedAt: T0, endedAt: T0 + n * 1000, title: "Four turns", stats: { events: n, turns: 4, toolCalls: 0, toolErrors: 0, filesChanged: 0 } }));
+    await index.putEvents(turnEvents);
     const exp = experimentResult("exp-prod-smoke");
     // The failing case's output is long enough to clip, so its open row holds a "Show all" button.
     exp.runs[1]!.output = Array.from({ length: 600 }, (_, i) => `line ${i}`).join("\n");
@@ -131,6 +141,44 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     assert.equal(await p.eval(focused), "#event-pane");
     await p.press("j");
     await p.waitFor(`${selected} !== ${JSON.stringify(step)}`, "j moves on");
+    assert.deepEqual(p.errors, []);
+  });
+
+  test("} and { jump between user turns; each turn has a header row and a minimap mark", async () => {
+    let p = await open("#/s/" + TURNS, 500);
+    const selected = "document.querySelector('#steps .st[aria-selected=true]')";
+    await p.waitFor(`${selected} && /prompt number 1/.test(${selected}.textContent)`, "the session, on its first prompt");
+    // The header row: turn number, the prompt's first line only, and the time into the session.
+    const turn2 = "[...document.querySelectorAll('#steps .st.turn')].find((r) => /Turn 2/.test(r.textContent))";
+    assert.equal(await p.eval(`${turn2}.querySelector('.arg').textContent`), "second prompt, first line");
+    assert.equal(await p.eval(`${turn2}.querySelector('.d time').textContent`), "0:12");
+    // Two presses from open reach the third turn.
+    await p.eval("document.querySelector('#steps').focus()");
+    await p.press("}");
+    await p.press("}");
+    await p.waitFor(`/prompt number 3/.test(${selected}.textContent)`, "} twice lands on turn 3");
+    assert.equal(await p.eval("document.activeElement.id"), "steps");
+    // The URL names the step, so the link opens on the same turn.
+    // Turn 3's prompt is event 23 (each turn is a prompt and ten replies).
+    await p.waitFor(`location.hash.endsWith(${JSON.stringify("/" + TURNS + "-e23")})`, "the URL names turn 3's prompt");
+    p = await open("#/s/" + TURNS + "/" + TURNS + "-e23", 500);
+    await p.waitFor(`${selected} && /prompt number 3/.test(${selected}.textContent)`, "the deep link opens turn 3");
+    await p.eval("document.querySelector('#steps').focus()");
+    // { from inside a turn goes to that turn's own prompt, then to the one before.
+    await p.press("j");
+    await p.press("j");
+    await p.press("{");
+    await p.waitFor(`/prompt number 3/.test(${selected}.textContent)`, "{ back to the turn's start");
+    await p.press("{");
+    await p.waitFor(`/Turn 2/.test(${selected}.textContent)`, "{ again to turn 2");
+    // Past the last turn, } stays put.
+    for (let i = 0; i < 3; i++) await p.press("}");
+    await p.waitFor(`/prompt number 4/.test(${selected}.textContent)`, "the last turn");
+    // The minimap marks each turn start; the help sheet and the hint bar list the keys from KEYMAP.
+    assert.equal(await p.eval("document.querySelectorAll('.tl-map:not([hidden]) i.t').length"), 4);
+    assert.match(await p.eval("document.querySelector('.hintbar')?.textContent || ''"), /\{\}turns/);
+    await p.press("?");
+    await p.waitFor("/Next turn/.test(document.body.textContent) && /Previous turn/.test(document.body.textContent)", "the help sheet lists the turn keys");
     assert.deepEqual(p.errors, []);
   });
 

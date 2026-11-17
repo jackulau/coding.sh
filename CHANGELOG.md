@@ -9,6 +9,10 @@ grouped by area, with links to the docs for the details.
 
 ## [0.1.8] - Unreleased
 
+### Added
+
+- **Viewer.** On a session page, `}` and `{` move to the next and previous user turn, and the help sheet and hint bar list them. Each turn's row shows the first line of the prompt and its time into the session, and the strip beside the step list marks each turn start. [Concepts](https://coding.sh/docs/concepts#turn)
+
 ### Changed
 
 - **Docs.** The docs sidebar folds by group on wide screens, as the phone menu does: the first group and the one that holds the page start open, the rest closed, so every group name fits on screen. [Docs](https://coding.sh/docs)

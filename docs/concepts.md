@@ -27,7 +27,9 @@ thread, one trace from your own agent, or one `coding.sh run -- <command>`.
 One prompt and everything the agent does until it hands control back to you.
 
 - In the viewer: on the session timeline, each turn starts with a row labeled Turn 1, Turn 2 and so
-  on.
+  on, with the first line of the prompt and its time into the session.
+- In the viewer: `}` and `{` move to the next and previous turn. The strip beside the step list marks
+  where each turn starts.
 - In the CLI: the `TURNS` column of `coding.sh sessions`, and the turn count in `coding.sh show`.
 
 ### Event
