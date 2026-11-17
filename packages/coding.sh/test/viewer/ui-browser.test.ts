@@ -266,6 +266,8 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
     await open(sessionHash(PARENT), true);
     try {
       const m = await page.eval(`(() => {
+        // The eval command sits behind More details on a phone.
+        document.querySelector('.facts-more').click();
         const code = document.querySelector('.make-eval .cmd code');
         return { scrollWidth: document.documentElement.scrollWidth, vw: window.innerWidth,
           head: document.querySelector('.detail-head').getBoundingClientRect().right,
@@ -327,9 +329,13 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
       const facts = () => page.eval("[...document.querySelectorAll('.facts [data-fact]')].filter((e) => e.getClientRects().length).map((e) => e.dataset.fact)");
       const short: string[] = await facts();
       assert.ok(!short.includes("tokens") && short.includes("duration"), "tokens wait behind More details: " + short.join(", "));
+      // So do the Pass and Fail buttons and the eval command.
+      const actions = "document.querySelector('.detail-head .actions').checkVisibility()";
+      assert.equal(await page.eval(actions), false, "the outcome and eval command wait behind More details");
       await page.eval("document.querySelector('.facts-more').click()");
       const all: string[] = await facts();
       assert.ok(all.length > short.length, "More details shows the rest: " + all.join(", "));
+      assert.equal(await page.eval(actions), true, "More details shows the outcome and eval command");
       assert.equal(await page.eval("document.querySelector('.facts-more').getAttribute('aria-expanded')"), "true");
       await page.eval("document.querySelector('.facts-more').click()");
 

@@ -21,6 +21,7 @@ grouped by area, with links to the docs for the details.
 
 ### Changed
 
+- **Viewer.** On a phone, a session's Pass and Fail buttons and its eval command wait under "More details" with the other facts, so the steps start higher on the first screen. `p` and `f` still label the session. [Concepts](https://coding.sh/docs/concepts#session)
 - **Viewer.** In a session's Chat view, `}` and `{` bring the next or previous prompt to the top and `j` and `k` the next or previous message, and the hint bar lists them. Before, every step key did nothing there. [Concepts](https://coding.sh/docs/concepts#turn)
 - **Viewer.** A folded turn's row has no timing bar, so its prompt and summary run on over the timing column and more of the prompt shows. On a phone the row keeps the turn number, the prompt and its error count, and leaves the length and tool count to the turn's detail. [Concepts](https://coding.sh/docs/concepts#turn)
 - **Viewer.** The theme follows the system's light or dark setting, and changes when the setting does, until you pick one with the theme button. A picked theme is remembered and wins. The first paint already has the right theme. [Explore](https://coding.sh/docs/explore#open-the-viewer)
