@@ -20,7 +20,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import ts from "typescript";
+// TypeScript 5.9 under its own name: the `typescript` package is 7 here and exports no compiler API.
+import ts from "typescript5";
 
 export type Schema = { [k: string]: unknown };
 
