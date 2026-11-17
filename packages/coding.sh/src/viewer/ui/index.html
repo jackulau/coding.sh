@@ -2491,6 +2491,8 @@ const list = {
   // The store has no event query path (a store plugin): the tab says so instead of failing.
   eventsUnsupported: false,
   fresh: 0,
+  // The page's scroll position as the list was left for another page, restored on the way back.
+  scrollY: 0,
 };
 function topLevelOnly() { return list.filters.scope !== "all"; }
 function listParams() {
@@ -2805,7 +2807,7 @@ async function reload(view, opts = {}) {
   if (mine !== list.seq || !current(seq)) return false;
   if (events) Object.assign(list, { items: [], hasMore: false, events: page.items, eventsNext: page.next || null, eventsTotal: page.total ?? null, eventsCapped: !!page.totalCapped, eventsUnsupported: !!page.unsupported });
   else Object.assign(list, { items: page.items, hasMore: page.hasMore, nextCursor: page.nextCursor || null });
-  Object.assign(list, { stats, facets, loaded: true, error: null, whereError: null, active: 0, fresh: 0 });
+  Object.assign(list, { stats, facets, loaded: true, error: null, whereError: null, active: 0, fresh: 0, scrollY: 0 });
   renderSessions(view);
   announceList();
   const b = opts.focus && $(opts.focus, view);
@@ -2830,10 +2832,21 @@ async function showSessions(seq, query, mode = "sessions") {
     list.error = null;
     await reload(view);
     if (!current(seq)) return;
-  } else announceList();
+  } else {
+    // Back from a session (Esc, the browser's Back): the page where it was, the selected row in sight,
+    // and focus on the list so j and k go on from that row.
+    window.scrollTo(0, list.scrollY || 0);
+    const lb = $(".list[role=listbox]", view);
+    if (lb && list.active >= 0 && !lb.contains(document.activeElement) && !(qbar && document.activeElement === qbar.input)) {
+      lb.focus({ preventScroll: true });
+      syncActive(lb);
+    }
+    announceList();
+  }
   // Live updates: count sessions newer than the list's head; the pill loads them.
   const timer = setInterval(() => pollNew(view, seq), 5000);
-  cleanup = () => clearInterval(timer);
+  // Runs as the next page replaces this one, so the scroll position is still the list's.
+  cleanup = () => { clearInterval(timer); list.scrollY = window.scrollY; };
 }
 
 async function pollNew(view, seq) {

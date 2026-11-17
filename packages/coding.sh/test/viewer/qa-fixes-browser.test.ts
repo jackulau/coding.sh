@@ -1,6 +1,6 @@
 // Viewer fixes from hands-on QA, seen in headless Chrome: a failed command inside a Codex code-mode
-// cell is one failure stop (the cell is not a second one, and its calls sit nested under it), and j
-// past the last loaded row loads the next page.
+// cell is one failure stop (the cell is not a second one, and its calls sit nested under it), going
+// back to the list keeps its scroll and focus, and j past the last loaded row loads the next page.
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
@@ -101,6 +101,39 @@ describe("viewer QA fixes in a browser", { skip: chrome ? false : "no Chrome/Chr
     assert.equal(await p.eval("document.activeElement === document.querySelector('.list[role=listbox]')"), true);
     await p.press("j");
     assert.equal(await p.eval("document.querySelector('.list').getAttribute('aria-activedescendant')"), "opt-51");
+    assert.deepEqual(p.errors, []);
+  });
+
+  test("back from a session keeps the list's scroll and puts focus on the selected row", async () => {
+    const p = await open("#/");
+    await p.waitFor("document.querySelectorAll('.list .row').length === 50", "first page");
+    await p.eval("document.querySelector('.list[role=listbox]').focus()");
+    for (let i = 0; i < 40; i++) await p.press("j");
+    await pause(100);
+    const y: number = await p.eval("window.scrollY");
+    assert.ok(y > 500, "the page scrolled down to row 41: " + y);
+    const sid: string = await p.eval("document.querySelector('.list [aria-selected=true]').dataset.sid");
+    await p.press("Enter");
+    await p.waitFor("document.querySelector('#steps')", "session");
+    await p.press("Escape");
+    await p.waitFor("document.querySelector('.list [aria-selected=true]')", "the list again");
+    await pause(100);
+    assert.equal(await p.eval("document.querySelector('.list [aria-selected=true]').dataset.sid"), sid);
+    const back: number = await p.eval("window.scrollY");
+    assert.ok(Math.abs(back - y) < 60, `scroll ${back}, was ${y}`);
+    const top: number = await p.eval("document.querySelector('.list [aria-selected=true]').getBoundingClientRect().top");
+    assert.ok(top >= 0 && top < 800, "selected row in view: " + top);
+    assert.equal(await p.eval("document.activeElement === document.querySelector('.list[role=listbox]')"), true, "focus on the list");
+    await p.press("j");
+    assert.equal(await p.eval("document.querySelector('.list').getAttribute('aria-activedescendant')"), "opt-41");
+    // The browser's Back does the same.
+    await p.press("Enter");
+    await p.waitFor("document.querySelector('#steps')", "session again");
+    await p.eval("history.back()");
+    await p.waitFor("document.querySelector('.list [aria-selected=true]')", "the list after Back");
+    await pause(100);
+    assert.ok(Math.abs((await p.eval("window.scrollY")) - y) < 80);
+    assert.equal(await p.eval("document.activeElement === document.querySelector('.list[role=listbox]')"), true);
     assert.deepEqual(p.errors, []);
   });
 });
