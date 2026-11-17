@@ -6,8 +6,9 @@
 // A page that sits under a nav.ts entry without its own sidebar row (one CLI
 // command, /docs/cli/<name>) passes `page` and `parent`, and its own prev/next:
 // the sidebar and the breadcrumbs then point at the parent. A nav.ts sub page
-// (`children`) gets the same from nav.ts. At 1280px and wider an "On this
-// page" rail lists the page's h2s, each with its h3s, and a Tabs block as its tab labels.
+// (`children`) gets the same from nav.ts. "On this page" lists the page's h2s,
+// each with its h3s, and a Tabs block as its tab labels: a rail at 1280px and
+// wider, a closed dropdown above the article below that.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import Layout from "../../layouts/Layout.astro";
@@ -163,6 +164,37 @@ const showOutline = outline.length + (outline[0]?.subs?.length ?? 0) >= 2;
           }
         </nav>
       </details>
+      {/* One list: the rail at 1280px and wider (CSS shows it open), a closed
+          "On this page" dropdown at the top of the article below that. */}
+      {
+        showOutline && (
+          <aside class="onpage" aria-label="On this page" data-onpage data-agent-skip data-pagefind-ignore>
+            <details class="docs__fold">
+              <summary class="docs__fold-sum">On this page</summary>
+              <ul>
+                {outline.map((o) => (
+                  <li data-in-tab={o.inTab} hidden={o.closed}>
+                    <a href={`#${o.id}`} class:list={["onpage__link", { "onpage__link--tab": o.tab, "onpage__link--step": o.inTab }]}>
+                      {o.label}
+                    </a>
+                    {!!o.subs?.length && (
+                      <ul>
+                        {o.subs.map((s) => (
+                          <li>
+                            <a href={`#${s.id}`} class="onpage__link">
+                              {s.label}
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          </aside>
+        )
+      }
       {/* Keep the current page in view: in the sidebar in the first frame, in
           the menu when it opens. A click on a visible link leaves the sidebar
           where it was. Runs again after each page swap (data-astro-rerun).
@@ -231,33 +263,6 @@ const showOutline = outline.length + (outline[0]?.subs?.length ?? 0) >= 2;
         }
       </main>
 
-      {
-        showOutline && (
-          <aside class="onpage" aria-label="On this page" data-onpage data-agent-skip data-pagefind-ignore>
-            <p class="onpage__title">On this page</p>
-            <ul>
-              {outline.map((o) => (
-                <li data-in-tab={o.inTab} hidden={o.closed}>
-                  <a href={`#${o.id}`} class:list={["onpage__link", { "onpage__link--tab": o.tab, "onpage__link--step": o.inTab }]}>
-                    {o.label}
-                  </a>
-                  {!!o.subs?.length && (
-                    <ul>
-                      {o.subs.map((s) => (
-                        <li>
-                          <a href={`#${s.id}`} class="onpage__link">
-                            {s.label}
-                          </a>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </aside>
-        )
-      }
     </div>
   </div>
 </Layout>
@@ -587,10 +592,29 @@ const showOutline = outline.length + (outline[0]?.subs?.length ?? 0) >= 2;
     }
   }
 
-  /* ---------- On this page (1280px and wider) ---------- */
+  /* ---------- On this page ---------- */
+  /* Below 1280px: a closed dropdown at the top of the article, boxed like the
+     docs menu. A link scrolls its heading under the nav (scroll-padding-top). */
   .onpage {
-    display: none;
+    max-width: 46rem;
+    margin-bottom: 2rem;
+    border-radius: var(--radius);
+    background: var(--term);
+    box-shadow: inset 0 0 0 1px var(--line-strong);
   }
+  @media (max-width: 1023px) {
+    .docs__menu + .onpage {
+      margin-top: -1.25rem;
+    }
+  }
+  .onpage .docs__fold-sum {
+    padding: 0 1rem;
+  }
+  .onpage details > ul {
+    margin: 0 1rem 1rem;
+  }
+  /* 1280px and wider: the same list, open, as a sticky rail beside the
+     article. A browser without ::details-content keeps the summary to open it. */
   @media (min-width: 1280px) {
     .docs {
       grid-template-columns: 12rem minmax(0, 1fr);
@@ -607,23 +631,41 @@ const showOutline = outline.length + (outline[0]?.subs?.length ?? 0) >= 2;
       grid-row: 1;
     }
     .onpage {
-      display: block;
       grid-column: 2;
       grid-row: 1;
       position: sticky;
       top: calc(var(--nav-h) + 3rem);
       max-height: calc(100dvh - var(--nav-h) - 4rem);
+      margin: 0;
+      background: none;
+      box-shadow: none;
       overflow-y: auto;
       overscroll-behavior: contain;
       scrollbar-width: thin;
       scrollbar-color: var(--line-strong) transparent;
     }
-  }
-  .onpage__title {
-    margin-bottom: 0.5rem;
-    font-family: var(--font-mono);
-    font-size: var(--fs-xs);
-    color: var(--text-muted);
+    .onpage .docs__fold-sum {
+      padding: 0;
+    }
+    .onpage details > ul {
+      margin: 0;
+    }
+    @supports selector(::details-content) {
+      .onpage .docs__fold-sum {
+        display: none;
+      }
+      .onpage::before {
+        content: "On this page";
+        display: block;
+        margin-bottom: 0.5rem;
+        font-family: var(--font-mono);
+        font-size: var(--fs-xs);
+        color: var(--text-muted);
+      }
+      .onpage details::details-content {
+        content-visibility: visible;
+      }
+    }
   }
   .onpage ul {
     list-style: none;

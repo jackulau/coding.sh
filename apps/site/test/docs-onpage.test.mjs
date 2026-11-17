@@ -46,3 +46,19 @@ test("/docs/quickstart: each tab step is listed once, under its tab", distOpts(D
   assert.equal(new Set(ids).size, ids.length, "no entry twice");
   assert.ok(ids.includes("your-agent") && ids.includes("coding-agent"), "the tab labels are listed");
 });
+
+// Below 1280px the same list is a closed "On this page" dropdown at the top of
+// the article: one <details> that CSS shows open as the rail on wide screens.
+for (const path of ["docs/sdk", "docs/quickstart"]) {
+  test(`/${path}: "On this page" is one closed <details> above the article`, distOpts(DIST), () => {
+    needDist(DIST);
+    const html = read(path);
+    const r = rail(html);
+    assert.equal((html.match(/<aside class="onpage"/g) ?? []).length, 1, "one copy of the list");
+    const d = r.match(/<details\b[^>]*>\s*<summary\b[^>]*>On this page<\/summary>/);
+    assert.ok(d, "a <details> whose summary reads On this page");
+    assert.ok(!/\sopen\b/.test(d[0].match(/<details\b[^>]*>/)[0]), "closed by default");
+    assert.ok(hrefs(r.slice(r.indexOf("</summary>"))).length >= 2, "the entries sit inside the details");
+    assert.ok(html.indexOf('<aside class="onpage"') < html.indexOf("<main"), "placed before the article");
+  });
+}
