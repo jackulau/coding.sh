@@ -109,7 +109,7 @@ test("ci.yml gates every code-only job on the changes job, and never skips when 
   const ci = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
   const job = (name) => new RegExp(`\\n  ${name}:\\n([\\s\\S]*?)(?=\\n  [a-z][a-z-]*:\\n|$)`).exec(ci)?.[1] ?? "";
   const gate = "if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}";
-  for (const name of ["store-postgres", "store-clickhouse", "python-sdk", "runtime-floor", "release-smoke", "action"]) {
+  for (const name of ["store-postgres", "store-clickhouse", "python-sdk", "runtime-floor", "action"]) {
     const body = job(name);
     assert.ok(body, `${name} job`);
     assert.match(body, /\n    needs: changes\n/, `${name} needs changes`);

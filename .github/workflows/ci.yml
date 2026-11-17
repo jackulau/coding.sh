@@ -354,40 +354,13 @@ jobs:
           python3.13 -m unittest discover -s tests
 
   runtime-floor:
-    name: packed CLI on the Node floor
+    name: release smoke test and the packed CLI on the Node floor
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    # Builds and packs on a current Node, then installs the tarball and runs it on the
-    # oldest Node packages/coding.sh/package.json allows (engines).
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24.x
-          cache: npm
-
-      - name: Build and pack
-        run: |
-          npm ci
-          cd packages/coding.sh
-          npm run build
-          mv "$(npm pack --silent | tail -n 1)" "$RUNNER_TEMP/coding.sh.tgz"
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22.16.0
-
-      - name: Run it on the floor
-        run: sh scripts/release/runtime-floor.sh "$RUNNER_TEMP/coding.sh.tgz"
-
-  release-smoke:
-    name: release smoke test
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    # The pre-publish smoke test, on a build of this checkout, in a throwaway home.
+    # Two checks of what would be published, in one job with one install. The pre-publish smoke
+    # test runs on a build of this checkout, in a throwaway home, on a current Node. Then the
+    # job builds and packs on that Node, installs the tarball and runs it on the oldest Node
+    # packages/coding.sh/package.json allows (engines).
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -399,10 +372,29 @@ jobs:
           cache: npm
 
       - name: Install
+        id: install
         run: npm ci
 
       - name: Smoke test
         run: sh scripts/release/smoke.sh
+
+      # The floor steps run when the smoke test fails too, so one run shows both results.
+      - name: Build and pack
+        id: pack
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: |
+          cd packages/coding.sh
+          npm run build
+          mv "$(npm pack --silent | tail -n 1)" "$RUNNER_TEMP/coding.sh.tgz"
+
+      - uses: actions/setup-node@v5
+        if: ${{ !cancelled() && steps.pack.outcome == 'success' }}
+        with:
+          node-version: 22.16.0
+
+      - name: Run it on the floor
+        if: ${{ !cancelled() && steps.pack.outcome == 'success' }}
+        run: sh scripts/release/runtime-floor.sh "$RUNNER_TEMP/coding.sh.tgz"
 
   action:
     name: GitHub Action
@@ -868,7 +860,7 @@ jobs:
   # to main does not run this job: it runs the quick jobs and the real captures, not the suite.
   full-suite:
     name: ${{ github.event_name == 'workflow_dispatch' && 'full suite without site perf' || contains(github.event.pull_request.labels.*.name, 'ready') && 'full suite' || 'full suite (not run, add the ready label)' }}
-    needs: [changes, test, build, gate-static, store-postgres, python-sdk, runtime-floor, release-smoke, action, store-clickhouse, image, windows, real-capture, cli-suite, site-perf]
+    needs: [changes, test, build, gate-static, store-postgres, python-sdk, runtime-floor, action, store-clickhouse, image, windows, real-capture, cli-suite, site-perf]
     if: ${{ always() && (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
