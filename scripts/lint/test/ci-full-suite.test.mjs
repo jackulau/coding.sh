@@ -58,25 +58,26 @@ const jobs = ci.slice(ci.indexOf("\njobs:\n"));
 const jobIds = [...jobs.matchAll(/^  ([a-z][a-z-]*):$/gm)].map((m) => m[1]);
 // A job's lines, each with the newline before it.
 const job = (name) => new RegExp(`\\n  ${name}:(\\n[\\s\\S]*?)(?=\\n  [a-z][a-z-]*:\\n|$)`).exec(jobs)?.[1] ?? "";
-const FULL = "github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready')";
+const FULL = "github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready')";
 
 test("ci.yml's full-suite job needs every other job", () => {
   const needs = /\n    needs: \[([^\]]+)\]\n/.exec(job("full-suite"))?.[1].split(",").map((s) => s.trim());
   assert.ok(jobIds.length > 10, "the jobs of ci.yml were read");
   assert.deepEqual([...(needs ?? [])].sort(), jobIds.filter((id) => id !== "full-suite").sort());
   assert.match(job("full-suite"), /NEEDS: \$\{\{ toJSON\(needs\) \}\}\n(?:\s+#.*\n)*\s+MAY_SKIP: .*\n\s+run: node scripts\/ci-full-suite\.mjs\n/);
-  // Site perf is the one job that may be skipped, and only off a pull request, where
-  // site-perf.yml measures the push itself. The condition reads the event, not a job's output.
-  assert.ok(job("full-suite").includes("\n          MAY_SKIP: ${{ github.event_name != 'pull_request' && 'site-perf' || '' }}\n"));
+  // Site perf is the one job that may be skipped, and only in a manual run, which has no pull
+  // request to compare with. The condition reads the event, not a job's output.
+  assert.ok(job("full-suite").includes("\n          MAY_SKIP: ${{ github.event_name == 'workflow_dispatch' && 'site-perf' || '' }}\n"));
 });
 
 test("the check is named \"full suite\" only when the full suite runs, and then it always runs", () => {
   const body = job("full-suite");
   // The name and the condition read the same thing, and neither reads another job's output: a
   // failed job must not be able to skip this one under the required name.
-  // Off a pull request Site perf is skipped (MAY_SKIP), so the check has another name: a manual
+  // In a manual run Site perf is skipped (MAY_SKIP), so the check has another name: a manual
   // run on a pull request's branch reports on the same commit and must not satisfy main's rule.
-  assert.ok(body.includes("\n    name: ${{ github.event_name != 'pull_request' && 'full suite without site perf' || contains(github.event.pull_request.labels.*.name, 'ready') && 'full suite' || 'full suite (not run, add the ready label)' }}\n"));
+  // A push to main does not run this job at all: it is not the full suite.
+  assert.ok(body.includes("\n    name: ${{ github.event_name == 'workflow_dispatch' && 'full suite without site perf' || contains(github.event.pull_request.labels.*.name, 'ready') && 'full suite' || 'full suite (not run, add the ready label)' }}\n"));
   assert.ok(body.includes(`\n    if: \${{ always() && (${FULL}) }}\n`));
   assert.doesNotMatch(body, /needs\.[a-z-]+\.outputs/);
   // No other job can report under the required name.
