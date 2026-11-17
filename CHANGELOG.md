@@ -35,6 +35,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Capture.** `capture.redactPatterns` in a repo's own `.coding.sh/config.toml` are literal text. Regular expressions count only from your own config, so move a repo's regular expression there to keep it working. [Configuration](https://github.com/jackulau/coding.sh/blob/main/docs/reference/config.md)
 - **Serve.** Forwarded spans send an attribute whose key names a secret, such as `db.password` or `http.request.header.authorization`, as `[redacted:secret-field]`, whatever its value, and ingest stores such a key's value the same way. [Production](https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md#19-forward-and-sinks)
 - **Capture.** A private key whose `END` line is missing, as in a tool output cut short, is redacted from its `BEGIN` line to the end of the text when key data follows that line. [Privacy](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction)
 - **Capture.** Redaction reaches values nested more than 64 levels deep in an event or a blob, with the same rules as any other value. A value too deep to copy is stored as `[redacted:too-deep]`. [Privacy](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction)

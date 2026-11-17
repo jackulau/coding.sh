@@ -50,7 +50,8 @@ tool calls with their input and output, file changes, errors, model names, token
 - **The viewer** listens on 127.0.0.1 and needs the token in the URL it prints.
 - **A repo's own `.coding.sh/config.toml` can only add privacy.** It can add redaction rules or
   switch to metadata mode, but never add a sink or move the store, so a cloned repo cannot send
-  your sessions anywhere.
+  your sessions anywhere. Its `redactPatterns` are literal text; regular expressions count only
+  from your own config.
 
 ## Redaction
 

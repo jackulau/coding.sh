@@ -18,6 +18,8 @@ Later layers win:
 A repo file arrives with `git clone`, so it may only make capture more private:
 
 - It can set `capture` and `snapshot` keys. Redaction lists are merged, not replaced.
+- Its `capture.redactPatterns` are literal text, not regular expressions, and an empty entry is
+  skipped. Put a regular expression in your own `~/.coding.sh/config.toml`.
 - `capture.mode` can only become `metadata`, and `capture.maxInlineBytes` can only go down.
 - It can add `refine.protect` patterns but not turn `refine.autoProtect` off.
 - It can never set sinks or stores.
@@ -56,7 +58,7 @@ keep tokens out of the file.
 |---|---|---|---|
 | `capture.mode` | `"full"` | yes | `full` keeps prompts, replies and tool input and output. `metadata` keeps ids, times, kinds, durations, token counts and short labels only. |
 | `capture.redact` | `["secrets"]` | yes | Built-in redactors: `secrets` (API keys, tokens, private keys), `env` (values of environment variables), `email` (email addresses), `pii` (all of `email`, `phone`, `card`, `iban` and `national-id`), `phone` (phone numbers with a `+` country code, and North American numbers), `card` (card numbers with a known issuer prefix that pass the Luhn check), `iban` (IBANs with the right length for their country and a valid check), `national-id` (US SSNs, UK National Insurance numbers, Canadian SINs that pass the Luhn check), `none` (clears the list in your user config). |
-| `capture.redactPatterns` | `[]` | yes | Extra regular expressions to redact. Matches become `[redacted:<kind>]`. |
+| `capture.redactPatterns` | `[]` | yes | Extra regular expressions to redact. Matches become `[redacted:<kind>]`. In a repo's file, each entry is literal text. |
 | `capture.exclude` | `[]` | yes | Path globs (`*`, `**`, `?`, `~`). Sessions whose working directory, or a parent of it, matches are dropped at ingest. |
 | `capture.maxInlineBytes` | `4096` | yes | Payloads larger than this go to the blob store. Minimum 256. |
 

@@ -139,7 +139,7 @@ maxFiles = 50
     assert.deepEqual(c.sinks, base.sinks, "repo cannot add sinks");
     assert.equal(c.capture.mode, "metadata");
     assert.deepEqual(c.capture.redact, ["secrets", "env"], "union; 'none' cannot remove redactors");
-    assert.deepEqual(c.capture.redactPatterns, ["INTERNAL-\\d+"]);
+    assert.deepEqual(c.capture.redactPatterns, ["INTERNAL\\-\\\\d\\+"], "a repo's pattern is literal text");
     assert.equal(c.capture.maxInlineBytes, 1024);
     assert.equal(c.snapshot.maxFiles, 50);
 

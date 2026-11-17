@@ -2,7 +2,7 @@
 //
 // A repo-level file is untrusted (it arrives with `git clone`), so it may only
 // touch capture/snapshot settings, and only in ways that keep or add privacy:
-// redactors and patterns are unioned, never removed. It can never add sinks or
+// redactors and patterns are unioned, never removed, and its patterns are literal text. It can never add sinks or
 // move the stores, which would let a repository exfiltrate your sessions.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
@@ -394,7 +394,7 @@ function applyCapture(out: Config, r: Reader, how: "replace" | "union", file: st
       throw new ConfigError(`capture.redact: unknown redactor ${JSON.stringify(name)} (expected ${REDACTORS.map((r) => JSON.stringify(r)).join(", ")})`, file);
     }
   }
-  for (const [i, src] of (patterns ?? []).entries()) {
+  for (const [i, src] of (how === "replace" ? (patterns ?? []) : []).entries()) {
     try {
       new RegExp(src);
     } catch (err) {
@@ -412,10 +412,18 @@ function applyCapture(out: Config, r: Reader, how: "replace" | "union", file: st
     // Repo overrides may only tighten privacy.
     if (mode === "metadata") out.capture.mode = "metadata";
     out.capture.redact = union(out.capture.redact, redact?.filter((x) => x !== "none"));
-    out.capture.redactPatterns = union(out.capture.redactPatterns, patterns);
+    // A repo's patterns are literal text: a regular expression from a cloned repo could take
+    // forever to run on every event. Regular expressions come from the user's own config. An
+    // empty one would match everywhere, so it is dropped.
+    out.capture.redactPatterns = union(out.capture.redactPatterns, patterns?.filter((p) => p !== "").map(literalPattern));
     out.capture.exclude = union(out.capture.exclude, exclude);
     if (maxInline !== undefined) out.capture.maxInlineBytes = Math.min(out.capture.maxInlineBytes, maxInline);
   }
+}
+
+/** A regular expression that matches `s` as plain text. */
+function literalPattern(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
 }
 
 function applySnapshot(out: Config, r: Reader): void {
