@@ -1,7 +1,7 @@
 // Viewer fixes from hands-on QA, seen in headless Chrome: a failed command inside a Codex code-mode
 // cell is one failure stop (the cell is not a second one, and its calls sit nested under it), going
-// back to the list keeps its scroll and focus, j past the last loaded row loads the next page, and a
-// pressed outcome button clears the label.
+// back to the list keeps its scroll and focus, j past the last loaded row loads the next page, a
+// pressed outcome button clears the label, and the shortcut bar keeps "? all shortcuts" in view at 1024px.
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
@@ -159,4 +159,20 @@ describe("viewer QA fixes in a browser", { skip: chrome ? false : "no Chrome/Chr
     assert.equal(await p.eval("document.querySelector('.label-by').textContent"), "");
     assert.deepEqual(p.errors, []);
   });
+
+  for (const [w, hgt] of [[1024, 768], [988, 597]] as const) {
+    test(`the shortcut bar keeps "? all shortcuts" in view at ${w}x${hgt}`, async () => {
+      const p = await open("#/s/" + CELL, w, hgt);
+      await p.waitFor("/all shortcuts$/.test(document.querySelector('.hintbar > :last-child')?.textContent ?? '')", "shortcut bar");
+      const r: { top: number; bottom: number; barTop: number; barBottom: number } = await p.eval("(() => { const a = document.querySelector('.hintbar > :last-child').getBoundingClientRect(); const b = document.querySelector('.hintbar').getBoundingClientRect(); return { top: a.top, bottom: a.bottom, barTop: b.top, barBottom: b.bottom }; })()");
+      assert.ok(r.top >= r.barTop && r.bottom <= r.barBottom, JSON.stringify(r));
+      assert.ok(r.bottom <= hgt, JSON.stringify(r));
+      // Every hint shown sits on the bar's one line; the ones that do not fit drop whole.
+      const tops: number[] = await p.eval("[...document.querySelectorAll('.hintbar span')].filter((s) => s.querySelector('kbd') && !/all shortcuts$/.test(s.textContent)).map((s) => s.getBoundingClientRect().top)");
+      const shown = tops.filter((t) => t < r.barBottom);
+      assert.ok(shown.length >= 4, "the first hints show: " + tops);
+      assert.ok(shown.every((t) => t >= r.barTop), "shown hints are on the one line: " + tops);
+      assert.deepEqual(p.errors, []);
+    });
+  }
 });
