@@ -15,9 +15,6 @@ test("ci.yml runs the static gate, Postgres, the Python SDK and the release smok
   for (const job of ["gate-static", "store-postgres", "python-sdk", "release-smoke"]) assert.ok(jobs(ci).has(job), `${job} job`);
   assert.match(ci, /node scripts\/gate\.mjs --static --strict/);
   assert.match(ci, /CODING_SH_TEST_PG_URL: postgres:\/\/postgres:ci@127\.0\.0\.1:5432\/coding/);
-  // The SDK's floor (pyproject requires-python) and the newest; 3.9 has no build for ubuntu-latest.
-  assert.match(ci, /- \{ python: "3\.9", os: ubuntu-24\.04 \}/);
-  assert.match(ci, /- \{ python: "3\.13", os: ubuntu-latest \}/);
   assert.match(read("packages/sdk-python/pyproject.toml"), /requires-python = ">=3\.9"/);
   assert.match(ci, /sh scripts\/release\/smoke\.sh/);
   assert.match(ci, /packages\/blob-s3\n\s+run: npm run check/);
@@ -36,6 +33,30 @@ test("ci.yml runs the packed CLI on the Node floor itself", () => {
   assert.match(job, /sh scripts\/release\/runtime-floor\.sh "\$RUNNER_TEMP\/coding\.sh\.tgz"/);
   // The suite runs .ts from source, which the floor can't without a flag: no test leg on it.
   assert.doesNotMatch(ci, new RegExp(`node: \\[[^\\]]*${floor.replaceAll(".", "\\.")}\\.0`));
+});
+
+// One job, not one per Python: the SDK's floor (pyproject requires-python) and the newest, each
+// with its own install and its own test step.
+test("ci.yml runs the Python SDK's tests on Python 3.9 and on 3.13 in one job", () => {
+  const job = /\n  python-sdk:\n([\s\S]*?)\n  [a-z-]+:\n/.exec(ci)?.[1] ?? "";
+  assert.doesNotMatch(job, /\n    strategy:\n/, "no matrix: one job");
+  // 3.9 has no build for ubuntu-latest.
+  assert.match(job, /\n    runs-on: ubuntu-24\.04\n/);
+  assert.match(job, /\n          python-version: \|\n            3\.9\n            3\.13\n/);
+  const steps = job.split(/\n      - /).slice(1);
+  for (const v of ["3.9", "3.13"]) {
+    const py = `python${v}`.replace(".", "\\.");
+    assert.match(job, new RegExp(`\\n          ${py} -m pip install[^\\n]*"\\.\\[otel,openai,anthropic\\]"[^\\n]*mypy\\n`), `${v}: every extra and mypy are installed`);
+    const tests = steps.filter((s) => new RegExp(`\\n          ${py} -m unittest discover -s tests(\\n|$)`).test(s));
+    assert.equal(tests.length, 1, `${v}: one test step`);
+    assert.match(tests[0], /\n          CODING_SH_SDK_REQUIRE_ALL: "1"\n/, `${v}: a missing tool fails the step`);
+    assert.doesNotMatch(tests[0], /continue-on-error/, `${v}: a failed test fails the job`);
+    assert.equal(tests[0].match(/-m unittest/g).length, 1, `${v}: the step runs one Python`);
+  }
+  // The 3.13 tests run when the 3.9 tests fail, as the two jobs did: one run shows both results.
+  const last = steps.find((s) => s.includes("python3.13 -m unittest"));
+  assert.ok(last.includes("\n        if: ${{ !cancelled() && steps.install.outcome == 'success' }}\n"));
+  assert.match(job, /\n        id: install\n/);
 });
 
 test("ci.yml runs the Python SDK's typing, golden, otel and real-SDK tests instead of skipping them", () => {

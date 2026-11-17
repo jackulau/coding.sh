@@ -303,24 +303,23 @@ jobs:
         run: npm run check
 
   python-sdk:
-    name: python sdk / python ${{ matrix.python }}
+    name: python sdk / python 3.9 and 3.13
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    # pyproject allows Python 3.9, which has no build for ubuntu-latest (26.04); it runs on 24.04.
-    runs-on: ${{ matrix.os }}
+    # One job for the SDK's floor (pyproject requires-python) and the newest Python: each has its
+    # own install and its own test step. Python 3.9 has no build for ubuntu-latest (26.04), so
+    # the job runs on 24.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { python: "3.9", os: ubuntu-24.04 }
-          - { python: "3.13", os: ubuntu-latest }
     steps:
       - uses: actions/checkout@v5
 
+      # Both end up on PATH as python3.9 and python3.13.
       - uses: actions/setup-python@v6
         with:
-          python-version: ${{ matrix.python }}
+          python-version: |
+            3.9
+            3.13
 
       # The golden test runs the core package's .ts sources on Node. The typing, golden, otel
       # and real-SDK tests need mypy and the otel, openai and anthropic extras, so CI installs
@@ -330,14 +329,29 @@ jobs:
           node-version: 24.x
 
       - name: Install the extras and mypy
+        id: install
         working-directory: packages/sdk-python
-        run: python -m pip install --quiet ".[otel,openai,anthropic]" mypy
+        run: |
+          python3.9 -m pip install --quiet ".[otel,openai,anthropic]" mypy
+          python3.13 -m pip install --quiet ".[otel,openai,anthropic]" mypy
 
-      - name: Unit tests
+      - name: Unit tests on Python 3.9
         working-directory: packages/sdk-python
         env:
           CODING_SH_SDK_REQUIRE_ALL: "1"
-        run: python -m unittest discover -s tests
+        run: |
+          python3.9 --version
+          python3.9 -m unittest discover -s tests
+
+      # Runs when the 3.9 tests fail too, so one run shows both results.
+      - name: Unit tests on Python 3.13
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: packages/sdk-python
+        env:
+          CODING_SH_SDK_REQUIRE_ALL: "1"
+        run: |
+          python3.13 --version
+          python3.13 -m unittest discover -s tests
 
   runtime-floor:
     name: packed CLI on the Node floor
