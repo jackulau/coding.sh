@@ -2,7 +2,7 @@
 // with Node's built-in WebSocket (no dependencies). Tests skip when no Chrome
 // or Chromium is installed; set CODING_SH_TEST_CHROME to pick a binary (CI does,
 // and then a missing binary fails the run instead of skipping the tests).
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -148,6 +148,8 @@ export interface CloseSteps {
   exitMs: number;
   /** Chrome was still running after the wait and was killed. */
   killed: boolean;
+  /** Set when Chrome was killed on Windows: whether every process it started was ended too (killTree). */
+  tree?: boolean;
   /** Removing the profile directory, retries included. */
   profileMs: number;
   /** The profile directory could not be removed and was left behind. */
@@ -170,8 +172,25 @@ export function describeClose(s: CloseSteps): string {
   return (
     `${Math.round(s.ms)} ms: Browser.close ${Math.round(s.askMs)} ms, ` +
     `exit ${Math.round(s.exitMs)} ms${s.killed ? " (killed after the wait)" : ""}, ` +
-    `profile removal ${Math.round(s.profileMs)} ms${s.profileLeft ? " (left behind)" : ""}`
+    `profile removal ${Math.round(s.profileMs)} ms${s.profileLeft ? " (left behind)" : ""}` +
+    (s.tree === undefined ? "" : s.tree ? "; the kill ended every process Chrome had started" : "; taskkill failed, so the kill ended Chrome's main process alone")
   );
+}
+
+/**
+ * Kills a process that is still running. On Windows it ends every process that one started as
+ * well, and says so by returning true: there, a kill ends the one process, and what it started
+ * lives on and can keep open the files and the folder it was working in. taskkill finds those
+ * through the process it is given, so it runs only while that one is alive. Where there is no
+ * taskkill, or it fails, the one process is killed and the answer is false.
+ */
+export function killTree(child: ChildProcess): boolean {
+  if (process.platform === "win32" && child.pid !== undefined && child.exitCode === null && child.signalCode === null) {
+    const r = spawnSync("taskkill", ["/T", "/F", "/PID", String(child.pid)], { stdio: "ignore", timeout: 5000, windowsHide: true });
+    if (r.status === 0) return true;
+  }
+  child.kill("SIGKILL");
+  return false;
 }
 
 export interface Browser {
@@ -337,10 +356,12 @@ export async function launchBrowser(chrome: string): Promise<Browser> {
       await cdp.send("Browser.close").catch(() => {});
       cdp.close();
       const t1 = performance.now();
+      let tree: boolean | undefined;
       const killed = await new Promise<boolean>((resolve) => {
         if (child.exitCode !== null) return resolve(false);
         const t = setTimeout(() => {
-          child.kill("SIGKILL");
+          const all = killTree(child);
+          if (process.platform === "win32") tree = all;
           resolve(true);
         }, 3000);
         child.once("exit", () => {
@@ -362,6 +383,7 @@ export async function launchBrowser(chrome: string): Promise<Browser> {
       }
       const t3 = performance.now();
       const steps: CloseSteps = { ms: t3 - t0, askMs: t1 - t0, exitMs: t2 - t1, killed, profileMs: t3 - t2, profileLeft };
+      if (tree !== undefined) steps.tree = tree;
       noteClose(steps);
       return steps;
     },

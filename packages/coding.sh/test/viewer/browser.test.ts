@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, test } from "node:test";
-import { chromeArgs, describeClose, findChrome, launchBrowser, loadTimeoutMessage } from "./browser.ts";
+import { chromeArgs, describeClose, findChrome, killTree, launchBrowser, loadTimeoutMessage } from "./browser.ts";
 
 const root = mkdtempSync(join(tmpdir(), "find-chrome-"));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -72,7 +73,76 @@ test("a slow close names its steps", () => {
     describeClose({ ms: 240, askMs: 30, exitMs: 200, killed: false, profileMs: 10, profileLeft: false }),
     "240 ms: Browser.close 30 ms, exit 200 ms, profile removal 10 ms",
   );
+  // What a kill on Windows did comes last, so the text before it stays as it was.
+  const killed = { ms: 3248, askMs: 1, exitMs: 3002, killed: true, profileMs: 245, profileLeft: false };
+  assert.equal(describeClose(killed), "3248 ms: Browser.close 1 ms, exit 3002 ms (killed after the wait), profile removal 245 ms");
+  assert.equal(describeClose({ ...killed, tree: true }), describeClose(killed) + "; the kill ended every process Chrome had started");
+  assert.equal(describeClose({ ...killed, tree: false }), describeClose(killed) + "; taskkill failed, so the kill ended Chrome's main process alone");
 });
+
+/** A process that does nothing until it is killed. */
+const IDLE = "setInterval(() => {}, 1000)";
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+test("a kill ends the process it is given, and a process that has gone is left alone", { timeout: 30_000 }, async () => {
+  const child = spawn(process.execPath, ["-e", IDLE], { stdio: "ignore" });
+  const exited = once(child, "exit");
+  // Only Windows has more to end than the one process.
+  assert.equal(killTree(child), process.platform === "win32");
+  const [code, signal] = await exited;
+  if (process.platform === "win32") assert.notEqual(code, 0);
+  else assert.equal(signal, "SIGKILL");
+  assert.equal(killTree(child), false);
+});
+
+test(
+  "on Windows a kill ends what the process started too, so the folder that was working in can be removed",
+  { skip: process.platform !== "win32" && "elsewhere a kill ends the one process, and a folder in use can still be removed", timeout: 60_000 },
+  async () => {
+    const work = mkdtempSync(join(tmpdir(), "kill-tree-"));
+    const removed = () => {
+      try {
+        rmSync(work, { recursive: true });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    // A parent that starts one more process, working in the folder, and prints that one's pid.
+    const outer = `const c = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(IDLE)}], { cwd: ${JSON.stringify(work)}, stdio: "ignore" }); console.log(c.pid); ${IDLE};`;
+    const parent = spawn(process.execPath, ["-e", outer], { stdio: ["ignore", "pipe", "ignore"] });
+    let inner = 0;
+    try {
+      const [line] = await once(parent.stdout!, "data");
+      inner = Number(String(line).trim());
+      assert.ok(inner > 0 && alive(inner), `the inner process did not start: ${line}`);
+      // What the test stands on: while the inner process works in the folder, it stays.
+      assert.equal(removed(), false, "the folder was removed while a process was working in it");
+      const exited = once(parent, "exit");
+      assert.equal(killTree(parent), true);
+      await exited;
+      // With the parent alone killed, the inner process lives on and this wait runs out.
+      const deadline = Date.now() + 10_000;
+      while (!removed()) {
+        assert.ok(Date.now() < deadline, `the folder is still held 10 s after the kill; the inner process is ${alive(inner) ? "running" : "gone"}`);
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      assert.equal(existsSync(work), false);
+      assert.equal(alive(inner), false);
+    } finally {
+      if (inner > 0 && alive(inner)) process.kill(inner);
+      parent.kill();
+      rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    }
+  },
+);
 
 test("a slow close is printed on stderr, so a script's stdout stays its result", () => {
   const steps = (ms: number) => JSON.stringify({ ms, askMs: 5, exitMs: ms - 20, killed: false, profileMs: 15, profileLeft: false });
