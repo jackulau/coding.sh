@@ -795,7 +795,7 @@ describe("viewer UI: timeline, inspector and compare", { skip: chrome ? false : 
     }
   });
 
-  test("timeline: quiet steps fold, ] jumps to failures, paths read relative to the repo", async () => {
+  test("timeline: quiet steps fold, the page opens on the first failure and ] jumps to the next, paths read relative to the repo", async () => {
     await open("#/s/" + WORK);
     try {
       await page.waitFor(selected, "steps");
@@ -803,8 +803,7 @@ describe("viewer UI: timeline, inspector and compare", { skip: chrome ? false : 
       assert.match(fold ?? "", /5 quiet steps/);
       assert.ok(await page.eval(`!!${stepWhere("src/file0.ts")}`), "relative path in the row");
       assert.equal(await page.eval(`!!${stepWhere("/work/api")}`), false, "no absolute repo path in rows");
-      // Failures: the failed command, then the rate-limited model call.
-      await key("]");
+      // Failures: the session opens on the failed command; ] goes on to the rate-limited model call.
       const first = await page.waitFor(`${selected}?.classList.contains('is-fail') && ${selected}.textContent`, "first failure");
       assert.match(first, /Bash/);
       assert.match(await page.eval("document.querySelector('.fail-nav').textContent"), /1 \/ 2 failures/);

@@ -31,6 +31,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Viewer.** A session opened from a link or a reload, not only from the list, opens on its first failing step; a session with no failure opens on its first prompt instead of "Session starts". [Concepts](https://coding.sh/docs/concepts#session)
 - **Docs.** Below 1280px the "On this page" dropdown lists every subheading of every section, such as each function on the SDKs page. Only the wide rail keeps to the section being read. [SDKs](https://coding.sh/docs/sdk)
 - **Docs.** An API path in "On this page" wraps after a slash or a comma, so entries such as `GET /api/sessions/{id}/events` no longer split in the middle of a word. [REST API](https://coding.sh/docs/api/read)
 - **Docs.** A name in a reference table's first column, such as `CODING_SH_INGEST_KEY`, stays on one line; the table scrolls sideways instead. [SDKs](https://coding.sh/docs/sdk)

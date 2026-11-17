@@ -17,6 +17,7 @@ const TURNS = "3b9e4d2a-6c1f-4e7a-8b5d-2f0a9c8e7d61";
 const FOLDS = "8e2d6c4b-1a3f-4b5e-9c7d-0f6a2b8c4e19";
 const CHAT = "c4a7e9d2-3b5f-4c8a-9e1d-6f2b0a7c5e38";
 const MD = "e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b";
+const START = "d2b8f4a6-7c1e-4f3a-b5d9-8e0c6a2f4b17";
 const chatPrompt = (t: number) => `question ${t}: what does module ${t} do?\nSay it in two lines.`;
 const MD_REPLY = "# Summary\n\nRan `npm test`: **3 passed**, *1 skipped*.\n\n- see [the docs](docs/a.md)\n- <script>window.pwned = 1</script>\n\n```ts\nconst x = 1;\n```\n\n```\nunclosed <img src=x onerror=window.pwned=2>";
 const chatReply = (t: number) => `Module ${t} parses the config.\n\n\`\`\`\nparse(${t})\n\`\`\`\nThat is all for answer ${t}.`;
@@ -104,6 +105,15 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
       at(MD, 2, { kind: "tool.start", payload: { tool: "Bash", toolUseId: "b1", input: { command: "npm test" } } }),
       at(MD, 3, { kind: "tool.end", durationMs: 900, payload: { tool: "Bash", toolUseId: "b1", ok: true, output: "\x1b[32m3 passed\x1b[0m\n\x1b]0;title\x07\x1b[1;33m1 skipped\x1b[39m" } }),
       at(MD, 4, { kind: "assistant.message", payload: { text: MD_REPLY } }),
+    ]);
+    // A clean session that starts with a session.start event before its first prompt.
+    await index.upsertSession(session(START, { startedAt: T0, endedAt: T0 + 5000, title: "Starts first", stats: { events: 5, turns: 2, toolCalls: 0, toolErrors: 0, filesChanged: 0 } }));
+    await index.putEvents([
+      at(START, 1, { kind: "session.start", payload: { source: "startup" } }),
+      at(START, 2, { kind: "user.message", payload: { text: "first ask" } }),
+      at(START, 3, { kind: "assistant.message", payload: { text: "first answer" } }),
+      at(START, 4, { kind: "user.message", payload: { text: "second ask" } }),
+      at(START, 5, { kind: "assistant.message", payload: { text: "second answer" } }),
     ]);
     const exp = experimentResult("exp-prod-smoke");
     // The failing case's output is long enough to clip, so its open row holds a "Show all" button.
@@ -252,9 +262,11 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     assert.equal(await p.eval(`${row1}.querySelector('.arg').textContent`), "fix the parser");
     assert.equal(await p.eval(`${row1}.querySelector('.sum').textContent`), "9.0s · 4 tool calls · read 2 files, 1 edit +1 −1, 1 command");
     assert.equal(await p.eval(`${row1}.getAttribute('aria-expanded')`), "false");
-    assert.equal(await p.eval(`${row1}.getAttribute('aria-selected')`), "true", "the list opens on its first row");
+    assert.match(await p.eval(`${selected}.textContent`), /npm run build/, "the session opens on its failure");
     // Enter opens the turn and its row says so; Enter again folds it.
     await p.eval("document.querySelector('#steps').focus()");
+    await p.press("Home");
+    await p.waitFor(`${row1}.getAttribute('aria-selected') === 'true'`, "Home selects turn 1");
     await p.press("Enter");
     await p.waitFor(`${folded}.length === 2 && /fix the parser/.test(${selected}.textContent) && ${selected}.getAttribute('aria-expanded') === 'true'`, "Enter opens turn 1");
     assert.match(await p.eval("document.querySelector('#event-pane').textContent"), /fix the parser/);
@@ -287,7 +299,7 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     assert.deepEqual(p.errors, []);
   });
 
-  test("a failed session opened from the list lands on its first failure; the header's First failure and F go back to it", async () => {
+  test("a failed session opens on its first failure and a clean one on its first prompt; the header's First failure and F go back to it", async () => {
     let p = await open("#/");
     const selected = "document.querySelector('#steps .st[aria-selected=true]')";
     const inView = `(() => { const s = ${selected}, b = document.querySelector('#steps').getBoundingClientRect(), r = s.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom + 1 && r.bottom <= innerHeight; })()`;
@@ -327,6 +339,14 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     // An explicit link to a step still opens on that step.
     p = await open("#/s/" + FOLDS + "/" + FOLDS + "-e20");
     await p.waitFor(`${selected} && /a step inside turn four/.test(${selected}.textContent)`, "the deep link wins");
+    // A link to the session alone opens on its first failure too.
+    p = await open("#/s/" + FOLDS);
+    await p.waitFor(`${selected} && /npm run build/.test(${selected}.textContent)`, "a session link opens on the failure");
+    // A clean session opens on its first prompt, not on "Session starts", and the detail shows the prompt.
+    p = await open("#/s/" + START);
+    await p.waitFor(`${selected} && /first ask/.test(${selected}.textContent)`, "the first prompt");
+    assert.match(await p.eval("document.querySelector('#event-pane').textContent"), /first ask/);
+    assert.equal(await p.eval("document.querySelector('#steps').scrollTop"), 0, "the rows above it stay in view");
     assert.deepEqual(p.errors, []);
   });
 

@@ -4740,7 +4740,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     history.replaceState(null, "", here(items[activeItem] ? items[activeItem].id : ""));
     announce(on ? "Chat view: prompts and replies" : "Steps view");
   }
-  function showChat() {
+  function showChat(atTop) {
     view.classList.toggle("chat-on", chatOn);
     grid.hidden = chatOn;
     chat.hidden = !chatOn;
@@ -4750,7 +4750,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     if (!chatOn) { selectRow(activeRow, false, true); renderMap(); return; }
     renderChat();
     // Opens at the turn of the step that was selected (or linked).
-    const c = activeItem > 0 && chatTurns[meta[activeItem].turn];
+    const c = !atTop && activeItem > 0 && chatTurns[meta[activeItem].turn];
     if (c) { if (narrow.matches) c.el.scrollIntoView({ block: "start" }); else chat.scrollTop = c.el.offsetTop; }
   }
   function toSteps(i) {
@@ -5380,15 +5380,16 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   };
   view.lastChild.replaceWith(...[durableStrip(session, pickSpan)].filter(Boolean), tools, rpBar, more, grid, chat, hint);
   rebuildRows();
-  // A link to a step opens its turn; a failed session opened from the list opens on its first
-  // failure; otherwise the list opens at the top, folded turns and all.
-  const atFail = viaList && failIdx.length > 0;
-  if (eventId && byEvent.has(eventId)) selectItem(activeItem, true);
-  else if (atFail) { selectItem(failIdx[0], true); tl.focus({ preventScroll: true }); }
-  else selectRow(0);
-  if (!eventId && !atFail) tl.scrollTop = 0, renderWindow(true);
+  // A link to a step opens its turn; a session with a failure opens on its first failure; a clean
+  // one opens on its first prompt (a folded turn stays folded), not on "Session starts".
+  const linked = eventId && byEvent.has(eventId);
+  const atFail = !linked && failIdx.length > 0;
+  if (linked) selectItem(activeItem, true);
+  else if (atFail) { selectItem(failIdx[0], true); if (viaList) tl.focus({ preventScroll: true }); }
+  else selectRow(turnIdx.length ? rowOf[turnIdx[0]] : 0);
+  if (!linked && !atFail) tl.scrollTop = 0, renderWindow(true);
   // A link ending in ?step=N opens the replay at that step.
-  if (chatOn) showChat();
+  if (chatOn) showChat(!linked && !atFail);
   if (linkStep) enterReplay(linkStep);
   if (hasMore) loadRest(); else loadOutline();
   announce("Session loaded, " + plural(items.length, "step") + (failIdx.length ? ", " + plural(failIdx.length, "failure") : "") + (hasMore ? ", more events available" : ""));
