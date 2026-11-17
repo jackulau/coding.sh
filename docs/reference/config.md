@@ -248,7 +248,7 @@ Read only by `coding.sh serve`. Every key has an environment variable, which win
 | `serve.queue_max_events` | `CODING_SH_QUEUE_MAX_EVENTS` | `50000` | Ingest queue limit; over it, requests get 429. |
 | `serve.queue_max_bytes` | `CODING_SH_QUEUE_MAX_BYTES` | `134217728` | Same, in bytes. |
 | `serve.insecure` | `CODING_SH_INSECURE=1` | off | Allow a non-loopback bind without keys. |
-| `serve.trust_proxy` | `CODING_SH_TRUST_PROXY=1` | off | Honor `X-Forwarded-Proto` and `X-Forwarded-For`. A loopback bind then needs an ingest key and a read key (a `viewer` replica: a read key), or `--insecure`. |
+| `serve.trust_proxy` | `CODING_SH_TRUST_PROXY=1` | off | Honor `X-Forwarded-Proto` and `X-Forwarded-For`. A request the proxy saw as HTTPS gets HSTS and a `Secure` cookie. A loopback bind then needs an ingest key and a read key (a `viewer` replica: a read key), or `--insecure`. |
 | `serve.allowed_hosts` | `CODING_SH_ALLOWED_HOSTS` (comma list) | `[]` | Host names, without scheme or port, that requests may name besides loopback ones. Empty: loopback names only on a loopback bind, any name on a public bind. |
 | `serve.cors_origins` | | `[]` | Browser origins allowed to post to the ingest routes (`/v1/ingest`, OTLP). The viewer and `/api/*` stay same-origin. |
 | `[[serve.projects]]` `id`, `ingest_keys`, `retention_days` | `CODING_SH_INGEST_KEYS` | | Projects and their ingest keys (`sha256:<hex>` in the file). |

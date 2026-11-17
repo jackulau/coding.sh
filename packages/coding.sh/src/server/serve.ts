@@ -15,7 +15,7 @@ import { recorderFor } from "../proxy/index.ts";
 import type { Recorder } from "../proxy/record.ts";
 import { createProxyHandler, type Upstreams } from "../proxy/server.ts";
 import type { UpdateStatus } from "../update/index.ts";
-import { createAuthenticator, READ_COOKIE } from "./auth.ts";
+import { createAuthenticator, READ_COOKIE, SECURE_READ_COOKIE } from "./auth.ts";
 import { DRAIN_TIMEOUT_MS, type ServeConfig } from "./config.ts";
 import { createLogger, type Logger, safeUrl } from "./log.ts";
 import { ServeMetrics } from "./metrics.ts";
@@ -301,14 +301,20 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
     return isLoopbackHost(name) || allowedHosts.has(name) || (!loopback && allowedHosts.size === 0);
   };
 
-  const secureCookie = (req: IncomingMessage) => cfg.trustProxy && String(req.headers["x-forwarded-proto"] ?? "").split(",")[0]!.trim() === "https";
+  // HTTPS as the TLS proxy in front saw it; X-Forwarded-Proto counts only with trust_proxy set.
+  const isHttps = (req: IncomingMessage) => cfg.trustProxy && String(req.headers["x-forwarded-proto"] ?? "").split(",")[0]!.trim().toLowerCase() === "https";
   const viewer = await createViewerHandler({
     index,
     blobs,
     authorize: (req) => auth.read(req),
     checkHost: hostAllowed,
     exchangeToken: (t, req) =>
-      auth.readScope(t) !== undefined ? `${READ_COOKIE}=${t}; HttpOnly; SameSite=Strict; Path=/${secureCookie(req) ? "; Secure" : ""}` : undefined,
+      auth.readScope(t) === undefined
+        ? undefined
+        : // __Host- needs Secure, which a browser drops over plain HTTP: there the cookie keeps its plain name.
+          isHttps(req)
+          ? `${SECURE_READ_COOKIE}=${t}; HttpOnly; SameSite=Strict; Path=/; Secure`
+          : `${READ_COOKIE}=${t}; HttpOnly; SameSite=Strict; Path=/`,
     ...(cfg.credentials.basic ? { basicRealm: "coding.sh" } : {}),
     // The form posts the key to /, so it never lands in a URL, a log line or the browser history.
     unauthorizedText:
@@ -341,6 +347,8 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const path = (req.url ?? "/").split("?")[0]!;
+    // Once a browser has reached serve over HTTPS, it never tries plain HTTP for this host again.
+    if (isHttps(req)) res.setHeader("Strict-Transport-Security", "max-age=31536000");
     res.once("finish", () => metrics.httpRequests.inc({ route: routeLabel(path), status: String(res.statusCode) }));
     if (OPS_PATHS.has(path) && req.method !== "GET" && req.method !== "HEAD") {
       return sendJson(res, 405, { error: "method not allowed", status: 405 }, { Allow: "GET, HEAD" });

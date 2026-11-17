@@ -111,7 +111,7 @@ turns of a conversation with `sessionId` (SDK) or `gen_ai.conversation.id` (OTel
 - **Backpressure.** When the queue is full, ingest answers 429 with `Retry-After`. The SDKs and OTel
   exporters retry, and a retried batch never duplicates.
 - **TLS.** Serve speaks plain HTTP. Put it behind the platform's TLS or a proxy and set
-  `CODING_SH_TRUST_PROXY=1`.
+  `CODING_SH_TRUST_PROXY=1`. Serve then sends HSTS and a `Secure` cookie over HTTPS.
 - **Retention.** `CODING_SH_RETENTION_DAYS=30` deletes old sessions hourly. Datasets and experiments
   are kept.
 - **Privacy.** `CODING_SH_CAPTURE_MODE=metadata` drops message text and tool I/O on ingest. Keys and

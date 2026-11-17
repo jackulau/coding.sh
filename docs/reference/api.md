@@ -408,7 +408,10 @@ Without a valid read credential: 401 `{"error":"missing or invalid read key","st
 
 The viewer page (HTML, also `HEAD`). Auth: read key or basic auth. `/?t=<read key>` trades the key
 for an `HttpOnly; SameSite=Strict` cookie named `csh_rk` and redirects to `/`, so the key leaves the
-address bar. Add `CODING_SH_TRUST_PROXY=1` behind a TLS proxy to mark the cookie `Secure`.
+address bar. Behind a TLS proxy with `CODING_SH_TRUST_PROXY=1`, a request with
+`X-Forwarded-Proto: https` gets the cookie as `__Host-csh_rk` marked `Secure`, and every answer
+carries `Strict-Transport-Security: max-age=31536000`. Plain HTTP keeps the `csh_rk` name, and
+either name is accepted.
 The exchange happens when the browser opened the link itself (address bar, bookmark, another app)
 or from the same site, and for clients that send no `Sec-Fetch-Site` header, such as curl. A link
 followed from another site gets a page with one button instead, which posts the key to `/`.

@@ -11,6 +11,8 @@ import { DEFAULT_PROJECT, isProjectId } from "./project.ts";
 export const INGEST_KEY_PREFIX = "csh_ik_";
 export const READ_KEY_PREFIX = "csh_rk_";
 export const READ_COOKIE = "csh_rk";
+/** The read cookie over HTTPS: `__Host-` makes the browser require Secure, Path=/ and no Domain. */
+export const SECURE_READ_COOKIE = `__Host-${READ_COOKIE}`;
 
 /** "*" = every project. */
 export type ReadScope = string;
@@ -193,7 +195,8 @@ export function createAuthenticator(creds: Credentials, o: { openIngest: boolean
       const key = bearer(req);
       const byKey = key ? reader(key) : undefined;
       if (byKey) return byKey;
-      const cookie = readCookie(req.headers.cookie, READ_COOKIE);
+      // Either name: a browser signed in before HTTPS was detected still holds the plain one.
+      const cookie = readCookie(req.headers.cookie, SECURE_READ_COOKIE) ?? readCookie(req.headers.cookie, READ_COOKIE);
       const byCookie = cookie ? reader(cookie) : undefined;
       if (byCookie) return byCookie;
       const h = req.headers.authorization;

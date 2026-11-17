@@ -159,3 +159,60 @@ describe("token exchange (serve)", () => {
     assert.match(cookieOf(r) ?? "", /^csh_rk=/);
   });
 });
+
+describe("token exchange over HTTPS (serve behind a TLS proxy)", () => {
+  let h: ServeHandle;
+  let plain: ServeHandle;
+  let root: string;
+  const rk = generateKey("read");
+  before(async () => {
+    root = mkdtempSync(join(tmpdir(), "csh-token-exchange-tls-"));
+    const env = { HOME: join(root, "home"), CODING_SH_HOME: join(root, "data"), CODING_SH_STORE_URL: "memory://", CODING_SH_LOG: "json", CODING_SH_INGEST_KEYS: `demo:${generateKey("ingest")}`, CODING_SH_READ_KEYS: rk };
+    const start = (extra: NodeJS.ProcessEnv) =>
+      startServe(resolveServeConfig({ port: 0 }, { ...env, ...extra }), { log: createLogger({ format: "json", write: () => {} }), enrichSpan: false, stores: { index: new MemoryIndexStore(), blobs: new MemoryBlobStore() } });
+    h = await start({ CODING_SH_TRUST_PROXY: "1" });
+    plain = await start({});
+  });
+  after(async () => {
+    await h.shutdown();
+    await plain.shutdown();
+    rmSync(root, { recursive: true, force: true });
+  });
+  const https = { "x-forwarded-proto": "https" };
+
+  test("an HTTPS sign-in sets a __Host- cookie marked Secure, and the cookie works", async () => {
+    for (const r of [await send(h.port, `/?t=${rk}`, { headers: { ...https, "sec-fetch-site": "none" } }), await form(h.port, rk, https)]) {
+      const cookie = cookieOf(r) ?? "";
+      assert.match(cookie, /^__Host-csh_rk=csh_rk_[^;]+; HttpOnly; SameSite=Strict; Path=\/; Secure$/);
+      const pair = cookie.split(";")[0]!;
+      assert.equal((await send(h.port, "/api/sessions", { headers: { ...https, cookie: pair } })).status, 200);
+    }
+  });
+
+  test("every HTTPS answer carries Strict-Transport-Security", async () => {
+    for (const path of ["/", "/api/sessions", "/healthz", `/?t=${rk}`]) {
+      const r = await send(h.port, path, { headers: https });
+      assert.match(String(r.headers["strict-transport-security"]), /^max-age=31536000$/, path);
+    }
+  });
+
+  test("a csh_rk cookie from before the upgrade still signs in over HTTPS", async () => {
+    assert.equal((await send(h.port, "/api/sessions", { headers: { ...https, cookie: `csh_rk=${rk}` } })).status, 200);
+  });
+
+  test("plain HTTP on loopback keeps the csh_rk cookie, without Secure or HSTS", async () => {
+    for (const port of [h.port, plain.port]) {
+      const r = await send(port, `/?t=${rk}`, { headers: { "sec-fetch-site": "none" } });
+      const cookie = cookieOf(r) ?? "";
+      assert.match(cookie, /^csh_rk=csh_rk_[^;]+; HttpOnly; SameSite=Strict; Path=\/$/);
+      assert.equal(r.headers["strict-transport-security"], undefined);
+      assert.equal((await send(port, "/api/sessions", { headers: { cookie: cookie.split(";")[0]! } })).status, 200);
+    }
+  });
+
+  test("X-Forwarded-Proto counts only with trust_proxy set", async () => {
+    const r = await send(plain.port, `/?t=${rk}`, { headers: { ...https, "sec-fetch-site": "none" } });
+    assert.match(cookieOf(r) ?? "", /^csh_rk=/);
+    assert.equal(r.headers["strict-transport-security"], undefined);
+  });
+});

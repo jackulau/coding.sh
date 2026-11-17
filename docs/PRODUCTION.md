@@ -67,7 +67,7 @@ the existing `${ENV}` interpolation.
 | `CODING_SH_RETENTION_DAYS` | `serve.retention_days`, per project `retention_days` | `0` (keep forever) |
 | `CODING_SH_CAPTURE_MODE` | `capture.mode` | `full` (`metadata` drops message text and tool I/O on ingest) |
 | `CODING_SH_INSECURE=1` | `serve.insecure` | off |
-| `CODING_SH_TRUST_PROXY=1` | `serve.trust_proxy` | off. When on, X-Forwarded-Proto/For are honored for cookie `Secure` and for logs. |
+| `CODING_SH_TRUST_PROXY=1` | `serve.trust_proxy` | off. When on, X-Forwarded-Proto/For are honored for logs, and a request the proxy saw as HTTPS gets `Strict-Transport-Security: max-age=31536000` and the `__Host-csh_rk` cookie marked `Secure`. |
 | `CODING_SH_ALLOWED_HOSTS` (comma list) | `serve.allowed_hosts = ["obs.example.com"]` | none. Host names, without scheme or port, that requests may name besides loopback ones. |
 | `CODING_SH_LOG` (`json`\|`text`) | `serve.log` | `json` when stderr is not a TTY. Logs go to stderr; stdout gets only the URL (or one JSON document with `--json`) once ready. |
 
