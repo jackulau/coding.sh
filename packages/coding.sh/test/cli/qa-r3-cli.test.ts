@@ -1,12 +1,14 @@
 // Regression tests for the third hands-on QA round on the CLI: float noise in --json, a
-// misspelled --agent, typo suggestions for prefixes and shell habits, and the printed MCP
-// register command on Windows paths.
+// misspelled --agent, typo suggestions for prefixes and shell habits, the printed MCP register
+// command on Windows paths, and a statusline fed endless stdin.
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { PassThrough } from "node:stream";
 import { after, before, describe, test } from "node:test";
 import { suggest } from "../../src/cli/args.ts";
 import { commandArg } from "../../src/cli/commands/mcp.ts";
 import * as sessions from "../../src/cli/commands/sessions.ts";
+import { readStdin } from "../../src/cli/commands/statusline.ts";
 import * as usage from "../../src/cli/commands/usage.ts";
 import { tidyNumbers } from "../../src/cli/common.ts";
 import { CLI } from "../_cli.ts";
@@ -114,5 +116,50 @@ describe("mcp config register command", () => {
     const args = ["C:\\Program Files\\nodejs\\node.exe", "C:\\Users\\me\\dist\\cli.mjs", "mcp"];
     const r = spawnSync("sh", ["-c", `for a in ${args.map(commandArg).join(" ")}; do printf '%s\\n' "$a"; done`], { encoding: "utf8" });
     assert.deepEqual(r.stdout.trim().split("\n"), ["C:/Program Files/nodejs/node.exe", "C:/Users/me/dist/cli.mjs", "mcp"]);
+  });
+});
+
+describe("statusline stdin", () => {
+  test("endless input stops at the cap instead of filling memory", async () => {
+    const s = new PassThrough();
+    const feed = setInterval(() => s.write(Buffer.alloc(64 * 1024)), 1);
+    try {
+      assert.equal(await readStdin(new AbortController().signal, s, 256 * 1024), "");
+    } finally {
+      clearInterval(feed);
+    }
+  });
+
+  test("Ctrl-C while waiting for input ends the read", async () => {
+    const s = new PassThrough();
+    const ac = new AbortController();
+    setTimeout(() => ac.abort(), 20);
+    assert.equal(await readStdin(ac.signal, s), undefined);
+  });
+
+  test("a whole payload reads as before", async () => {
+    const s = new PassThrough();
+    s.end('{"session_id":"x"}');
+    assert.equal(await readStdin(new AbortController().signal, s), '{"session_id":"x"}');
+  });
+
+  test("the CLI prints its fallback line when stdin never ends", async () => {
+    const sb = sandbox();
+    try {
+      const child = spawn(process.execPath, ["--no-warnings", CLI, "statusline"], { env: sb.env, stdio: ["pipe", "pipe", "pipe"] });
+      let stdout = "";
+      child.stdout.setEncoding("utf8").on("data", (d: string) => (stdout += d));
+      child.stdin.on("error", () => {}); // EPIPE once it stops reading
+      const chunk = Buffer.alloc(256 * 1024);
+      const feed = setInterval(() => child.stdin.writable && child.stdin.write(chunk), 5);
+      const killer = setTimeout(() => child.kill("SIGKILL"), 20_000);
+      const code = await new Promise<number | null>((resolve) => child.on("close", resolve));
+      clearInterval(feed);
+      clearTimeout(killer);
+      assert.equal(code, 0, "exits on its own, before the 20 s kill");
+      assert.match(stdout, /\$/, "prints the status line");
+    } finally {
+      sb.cleanup();
+    }
   });
 });

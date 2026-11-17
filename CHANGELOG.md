@@ -37,6 +37,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Status line.** `statusline` reads at most 1 MiB of stdin, then prints its fallback line, so endless input such as `</dev/zero` no longer hangs it while memory grows. Ctrl-C stops it while it waits for input, with exit code 130. [Status line](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/status-line.md)
 - **MCP.** On Windows, `mcp config` prints register commands whose paths survive Git Bash: forward slashes, with double quotes around a path that holds a space. Before, Git Bash dropped the backslashes, so `C:\Users\me\cli.mjs` arrived as `C:Usersmecli.mjs`. [CLI reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-mcp)
 - **Sessions.** The `--json` of a session in `sessions`, `show` and `tree` rounds each cost to 1e-9 dollars and each millisecond figure to a whole one, so a cost of `0.0041400000000000005` prints `0.00414`, as summed costs do. Other numbers are as stored. [CLI reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md)
 - **Sessions.** `sessions` and `usage` reject an `--agent` that no stored session has and that is close to an agent coding.sh knows, such as `claud-code`, and suggest `--agent claude-code`. Before, they printed an empty list. `usage` for an agent with no session at all suggests every agent's usage, not a wider window. [CLI reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md)
