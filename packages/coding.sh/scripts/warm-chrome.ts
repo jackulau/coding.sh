@@ -137,6 +137,9 @@ export async function viewerPages(browser: Browser, limitMs = FIRST_START_LIMIT_
       const t0 = performance.now();
       await page.goto(viewer.url + hash, left());
       await page.waitFor(ready, what, left());
+      // A wait looks once more after its limit, so a slow look can find the page ready late.
+      const over = performance.now() - end;
+      if (over > 0) throw new Error(`timed out waiting for ${what}: it was ready ${Math.round(over)} ms past the limit of ${limitMs} ms`);
       times.push(performance.now() - t0);
       await page.close();
     }
