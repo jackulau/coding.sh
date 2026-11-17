@@ -135,6 +135,14 @@ const ENV_SECRET_NAME = "[A-Z0-9_]*(?:API_?KEY|SECRET(?:_KEY)?|TOKEN|PASSWORD|PA
 /** Object keys whose string values are always secrets, regardless of shape. */
 const SECRET_KEY = new RegExp(`^(?:[a-z0-9]+[_-])*${SECRET_NAME}$|^(?:authorization|proxy-authorization|cookie|set-cookie|x-api-key)$`, "i");
 
+/**
+ * True for a dotted attribute key that names a secret: `db.password`, `app.api.key` (the dots
+ * as separators) and `http.request.header.authorization` (its last part on its own).
+ */
+export function isSecretAttrKey(key: string): boolean {
+  return SECRET_KEY.test(key.replace(/\./g, "_")) || SECRET_KEY.test(key.slice(key.lastIndexOf(".") + 1));
+}
+
 /** Keeps capture group 1 (e.g. "Bearer ") and redacts the rest of the match. */
 function keepPrefix(kind: string): (m: string, ...g: string[]) => string {
   return (_m, ...g) => `${g[0] ?? ""}${marker(kind)}`;
@@ -751,7 +759,7 @@ function walk(v: unknown, redact: (s: string) => string, depth: number, tally?: 
   if (v instanceof Uint8Array) return v;
   const out: Record<string, unknown> = {};
   for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
-    const secretKey = typeof x === "string" && x.length > 0 && SECRET_KEY.test(k) && !isAlreadyRedacted(x);
+    const secretKey = typeof x === "string" && x.length > 0 && isSecretAttrKey(k) && !isAlreadyRedacted(x);
     if (secretKey && tally) tally.kinds["secret-field"] = (tally.kinds["secret-field"] ?? 0) + 1;
     const val = secretKey
       ? marker("secret-field")

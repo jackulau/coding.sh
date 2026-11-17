@@ -292,6 +292,10 @@ max_buffer_spans = 20000
   A `weights.checkpoint` span keeps `coding_sh.weights.sha256` and `coding_sh.weights.base_sha256`: they join the session to an experiment.
   Messages, prompts, tool arguments and results, `input.value`, `output.value`, span event
   attributes other than `exception.type`, and status messages are dropped. `full` mode sends every attribute after `capture.redact`.
+- In both modes, an attribute whose key names a secret is sent as `[redacted:secret-field]`,
+  whatever its value: `db.password`, `app.api.key` and `http.request.header.authorization` are
+  examples. Dots count as separators, as `_` and `-` do. Ingest redacts the same keys in the
+  events it stores.
 - Spans are sent in batches of up to 1,000, about once a second. A network error, 408, 429 or 5xx
   keeps the batch and retries with backoff from 1 s to 60 s (`Retry-After` wins). Another 4xx drops
   the batch and logs it.

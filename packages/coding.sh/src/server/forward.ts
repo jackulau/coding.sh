@@ -13,7 +13,7 @@
 //   flushed every second or at 1,000 spans, with backoff from 1 s to 60 s on
 //   network errors, 429 and 5xx (Retry-After wins). Other 4xx drop the batch.
 import type { AgentEvent, Session } from "../schema/index.ts";
-import type { Redactor } from "../core/redact.ts";
+import { isSecretAttrKey, marker, type Redactor } from "../core/redact.ts";
 import type { OtelValue, ResourceSpans } from "../otel/model.ts";
 import type { OpenSession } from "../core/types.ts";
 import { otlpTracesUrl, toOtlpOpenSessionRequest, toOtlpRequest } from "../sinks/otlp.ts";
@@ -137,8 +137,13 @@ const toKvs = (a: Record<string, OtelValue> | undefined): KeyValue[] => Object.e
 function deepRedact(v: AnyValue, r: Redactor): AnyValue {
   if ("stringValue" in v) return { stringValue: r.string(v.stringValue) };
   if ("arrayValue" in v) return { arrayValue: { values: v.arrayValue.values.map((x) => deepRedact(x, r)) } };
-  if ("kvlistValue" in v) return { kvlistValue: { values: v.kvlistValue.values.map((kv) => ({ key: kv.key, value: deepRedact(kv.value, r) })) } };
+  if ("kvlistValue" in v) return { kvlistValue: { values: v.kvlistValue.values.map((kv) => ({ key: kv.key, value: redactKv(kv, r) })) } };
   return v;
+}
+
+/** An attribute's value: a marker when the key names a secret, whatever the value is. */
+function redactKv(kv: KeyValue, r: Redactor): AnyValue {
+  return isSecretAttrKey(kv.key) && !("stringValue" in kv.value && /^\[redacted:[a-z-]+\]$/.test(kv.value.stringValue)) ? { stringValue: marker("secret-field") } : deepRedact(kv.value, r);
 }
 
 /** Applies the forward mode to a list of attributes (a new list). `span`: the name of the span they are on. */
@@ -146,7 +151,7 @@ export function scrubAttrs(kvs: KeyValue[] | undefined, mode: "full" | "metadata
   const out: KeyValue[] = [];
   for (const kv of kvs ?? []) {
     if (mode === "metadata" && !keepInMetadata(kv.key, kv.value, span)) continue;
-    out.push({ key: kv.key, value: deepRedact(kv.value, r) });
+    out.push({ key: kv.key, value: redactKv(kv, r) });
   }
   return out;
 }

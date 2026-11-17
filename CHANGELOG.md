@@ -35,6 +35,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Serve.** Forwarded spans send an attribute whose key names a secret, such as `db.password` or `http.request.header.authorization`, as `[redacted:secret-field]`, whatever its value, and ingest stores such a key's value the same way. [Production](https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md#19-forward-and-sinks)
 - **Capture.** A private key whose `END` line is missing, as in a tool output cut short, is redacted from its `BEGIN` line to the end of the text when key data follows that line. [Privacy](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction)
 - **Capture.** Redaction reaches values nested more than 64 levels deep in an event or a blob, with the same rules as any other value. A value too deep to copy is stored as `[redacted:too-deep]`. [Privacy](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#redaction)
 - **CLI.** Text output and messages drop terminal escape sequences and control characters from captured text, such as a line `blame` prints or an error that quotes it, so printed text cannot move the cursor, set the window title or add a link. CSV and JSONL do the same when written to a terminal. [Concepts](https://github.com/jackulau/coding.sh/blob/main/docs/concepts.md#event)
