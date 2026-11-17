@@ -627,7 +627,6 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
     referencePasses: { passed: refPassed, of: hasReference && canVerify ? k : 0 },
     nearMissesFail: { failed: nmFailed, of: nmOf },
     leakage,
-    ...(errors.length ? { errors } : {}),
     ...(impossible ? { impossible } : {}),
     ...(passToPass ? { passToPass } : {}),
     ...(coupling.length ? { coupling } : {}),
@@ -642,6 +641,7 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
       !(opts.strictCoupling && coupling.length),
     ts: Date.now(),
   };
+  if (errors.length) report.errors = errors;
   checkpoint();
   const status: EvalTask["status"] = task.status === "archived" ? "archived" : report.ok ? "validated" : "draft";
   const updated: EvalTask = { ...task, validation: report, status };

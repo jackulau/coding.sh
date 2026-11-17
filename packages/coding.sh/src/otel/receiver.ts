@@ -386,7 +386,9 @@ export function createOtlpPipeline(opts: OtlpPipelineOptions): OtlpPipeline {
       if (mapped.rehome?.length && !deferred) await rehomeStored(opts.store, mapCtx.spanTree!, mapped.rehome);
       if (opts.store.kvSet) for (const [t, s] of traceSessions.takeDirty()) await opts.store.kvSet(kvKey(t), s);
       const events = redactor ? mapped.events.map((e) => redactEventCounted(redactor, e)) : mapped.events;
-      return { events, rejected: mapped.rejected, errors: mapped.errors, ...(deferred ? { rehome: deferred } : {}) };
+      const outcome: OtlpMapOutcome = { events, rejected: mapped.rejected, errors: mapped.errors };
+      if (deferred) outcome.rehome = deferred;
+      return outcome;
     },
     async rehome(rehome) {
       if (rehome.length) await rehomeStored(opts.store, mapCtx.spanTree!, rehome);
@@ -478,7 +480,9 @@ export async function mergeAgentCopies(store: IndexStore, events: AgentEvent[], 
       } else if (s.ts >= startOf(d)!.ts && s.source === LOG_SOURCE) {
         // Re-stored, it sorts after the session.start; it keeps the log's fields and gains the span's place in the trace.
         remove.push(d.id);
-        add.push({ ...d, ...s, traceId: d.traceId!, ...(d.spanId ? { spanId: d.spanId } : {}) });
+        const moved: AgentEvent = { ...d, ...s, traceId: d.traceId! };
+        if (d.spanId) moved.spanId = d.spanId;
+        add.push(moved);
       }
     }
     if (remove.length) await store.replaceSessionEvents(sessionId, remove, add);

@@ -229,8 +229,10 @@ export function rehomeTarget(tree: SpanTree, e: AgentEvent, r: Rehome): { sessio
   const sub = node ? enclosingSubagent(tree, r.traceId, node.parentSpanId) : undefined;
   if (sub) return { sessionId: childSessionId(r.traceId, sub), subagentId: sub };
   // In a conversation each trace is a turn (as mapSpan tags it).
-  if (r.to && r.to !== r.from) return { sessionId: r.to, ...(e.subagentId ? { subagentId: e.subagentId } : {}), turnId: r.traceId };
-  return undefined;
+  if (!r.to || r.to === r.from) return undefined;
+  const at: { sessionId: string; subagentId?: string; turnId?: string } = { sessionId: r.to, turnId: r.traceId };
+  if (e.subagentId) at.subagentId = e.subagentId;
+  return at;
 }
 
 /** Index kv key of a persisted trace → conversation entry. */
