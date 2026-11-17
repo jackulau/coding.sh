@@ -22,7 +22,8 @@ docker run --rm ghcr.io/jackulau/coding.sh /app/cli.mjs serve keygen --project m
 ```
 
 Each key is printed once. With a volume on `/data` you can skip this step: with no keys set, the
-first start makes a key pair, keeps it in `/data/serve-keys.json` and prints it in the logs. Without
+first start makes a key pair, keeps it in `/data/serve-keys.json` and prints it in the logs of that
+start only. Without
 a volume (most platforms with a managed database), set your own keys, or they change on every
 deploy. No Node or Docker at hand? A key is just `csh_ik_` (or `csh_rk_`) plus 32
 random bytes in base64url:

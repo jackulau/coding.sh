@@ -24,7 +24,7 @@ key and an ingest key, keeps them on the volume, and prints them:
 
 ```text
 coding-sh-1  | http://127.0.0.1:4318
-coding-sh-1  | No keys are configured, so serve uses the keys in /data/serve-keys.json (made now):
+coding-sh-1  | No keys are configured, so serve uses the keys in /data/serve-keys.json (made now; they are not printed again):
 coding-sh-1  |   read key    csh_rk_…
 coding-sh-1  |   ingest key  csh_ik_…
 coding-sh-1  |   Open        http://127.0.0.1:4318/?t=csh_rk_…
@@ -32,7 +32,11 @@ coding-sh-1  |   Connect     coding.sh init --remote http://127.0.0.1:4318 --key
 coding-sh-1  | Use the server's public URL in place of the one above. Set CODING_SH_INGEST_KEYS and CODING_SH_READ_KEYS to use your own keys.
 ```
 
-These keys are enough to try it: skip to step 4. The URLs are the address inside the container, so
+The keys are printed only on this first start. Later starts name the file, so to see the keys
+again, copy it out of the volume with
+`docker compose cp coding-sh:/data/serve-keys.json ./serve-keys.json`, then delete the copy
+when you are done. These keys are enough to try it: skip
+to step 4. The URLs are the address inside the container, so
 use the server's own host name or IP.
 
 ## 2. Make your own keys

@@ -33,7 +33,7 @@ Every host follows the same rules:
 ```sh
 curl -fsSLO https://raw.githubusercontent.com/jackulau/coding.sh/main/deploy/compose/compose.yml
 docker compose up -d --wait
-docker compose logs coding-sh     # the keys and the connect command
+docker compose logs coding-sh     # the keys and the connect command, on the first start only
 ```
 
 | File | Store |
@@ -82,7 +82,7 @@ fly deploy --config deploy/fly.toml --image ghcr.io/jackulau/coding.sh:latest
 fly logs --config deploy/fly.toml --no-tail | grep -A5 'No keys are configured'
 ```
 
-The logs print the first-start keys. Use `https://my-coding-sh.fly.dev` in place of the URLs they
+The logs of the first start print the keys; later starts only name the file. Use `https://my-coding-sh.fly.dev` in place of the URLs they
 show, then connect with `coding.sh init --remote https://my-coding-sh.fly.dev --key csh_ik_…`.
 
 To move to Postgres, set one secret; blobs follow to the same database:
@@ -128,7 +128,7 @@ Postgres database in the same project. In the dashboard:
 :::more Railway details
 - **No build.** *+ New → Docker Image* with `ghcr.io/jackulau/coding.sh:latest` skips the build.
   Add a volume at `/data` and leave `CODING_SH_STORE_URL` unset to run on SQLite; serve then makes
-  its keys on first start and prints them in the deploy logs.
+  its keys on first start and prints them in that deploy's logs only.
 - **Why `/healthz`.** Railway starts the new deployment while the old one still holds the writer
   lock, so the new one answers `/readyz` with 503 until the old one stops.
 - **Handover.** `drainingSeconds: 30` covers the 25 s queue drain, and clients retry in between.

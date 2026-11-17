@@ -6,7 +6,7 @@ below use the dashboard.
 
 From release 0.1.2 on you can skip the build: *+ New → Docker Image* with
 `ghcr.io/jackulau/coding.sh:latest`, then add a volume mounted at `/data` and a public domain. With
-the volume, serve runs on SQLite and makes its keys on first start; read them in the deploy logs.
+the volume, serve runs on SQLite and makes its keys on first start; read them in that first deploy's logs.
 
 ## 3 steps
 

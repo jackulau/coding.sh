@@ -109,8 +109,11 @@ pushed into the production DB. An explicit `coding.sh ingest --store …` still 
 - **First-start keys:** if the bind address is not loopback and no ingest key, read key or basic
   auth is configured (and no `--insecure`), serve makes one ingest key (project `default`) and one
   read key (every project). It keeps them in `<CODING_SH_HOME>/serve-keys.json` (mode 600) and uses
-  the same file on every later start. Each start prints both keys, the viewer link and the
-  `coding.sh init --remote` line on stdout, after the URL. A damaged file stops serve with exit 2; it
+  the same file on every later start. The start that makes the file prints both keys, the viewer
+  link and the `coding.sh init --remote` line on stdout, after the URL. A later start names the file
+  and prints no keys, and `--json` never carries them: read them from the file. A start that fails,
+  on a busy port say, removes the file it made, so the next start makes and prints new keys. Two
+  starts at once share one file. A damaged file stops serve with exit 2; it
   is never replaced, because clients hold the old keys. Delete the file to make new keys. Configuring
   any key or basic auth turns this off. A `--role viewer` replica never makes keys.
 - **Refusal rule:** otherwise, if the bind address is not loopback, serve exits 2 unless at least one

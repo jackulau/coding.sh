@@ -7,7 +7,7 @@ import { get as httpsGet } from "node:https";
 import { ConfigError } from "../../core/config.ts";
 import { generateKey, sha256 } from "../../server/auth.ts";
 import { checkExposure, DEFAULT_SERVE_PORT, resolveServeConfig, ServeRefusal, type ServeConfig, type ServeRole } from "../../server/config.ts";
-import { applyFirstStartKeys, firstStartText, loadOrCreateKeys, wantsFirstStartKeys, type FirstStartKeys } from "../../server/first-start.ts";
+import { applyFirstStartKeys, dropUnprintedKeys, firstStartText, loadOrCreateKeys, wantsFirstStartKeys, type FirstStartKeys } from "../../server/first-start.ts";
 import { isProjectId } from "../../server/project.ts";
 import { num, str } from "../common.ts";
 import { UsageError } from "../args.ts";
@@ -66,27 +66,34 @@ async function serve(c: CommandContext): Promise<number> {
     }
     applyFirstStartKeys(cfg, firstStart);
   }
-  try {
-    checkExposure(cfg);
-  } catch (e) {
-    if (e instanceof ServeRefusal) throw new UsageError(e.message, { reason: "insecure_bind" });
-    throw e;
-  }
-
-  const { startServe } = await import("../../server/serve.ts");
   let handle;
+  let body;
   try {
-    handle = await startServe(cfg);
-  } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code;
-    if (code === "EADDRINUSE") {
-      throw new CliError(`Can't start the server: port ${cfg.port} is in use`, { reason: "port_in_use", next: ["Pick another port:", "coding.sh serve --port 0"] });
+    try {
+      checkExposure(cfg);
+    } catch (e) {
+      if (e instanceof ServeRefusal) throw new UsageError(e.message, { reason: "insecure_bind" });
+      throw e;
     }
+
+    const { startServe } = await import("../../server/serve.ts");
+    try {
+      handle = await startServe(cfg);
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "EADDRINUSE") {
+        throw new CliError(`Can't start the server: port ${cfg.port} is in use`, { reason: "port_in_use", next: ["Pick another port:", "coding.sh serve --port 0"] });
+      }
+      throw e;
+    }
+    ({ body } = await handle.ready());
+  } catch (e) {
+    // Keys made by this start are printed only once it is up; a failed start leaves none behind.
+    dropUnprintedKeys(firstStart);
     throw e;
   }
-
-  const { body } = await handle.ready();
-  const keys = firstStart ? { keys: { ingest: firstStart.ingest, read: firstStart.read, file: firstStart.file, created: firstStart.created } } : {};
+  // --json output lands in logs and scripts, so it names the keys file and never carries the keys.
+  const keys = firstStart ? { keys: { file: firstStart.file, created: firstStart.created } } : {};
   if (out.json) out.data({ url: handle.url, host: handle.host, port: handle.port, role: cfg.role, ready: body, ...keys });
   else {
     out.print(handle.url);

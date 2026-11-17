@@ -25,7 +25,7 @@ or a proxy in front of it.
 - Create keys with `coding.sh serve keygen`. The key goes to stdout once; the server keeps only its sha256.
 - Ingest keys cannot read and read keys cannot ingest. Each gets 401.
 - On a loopback bind with no keys configured, ingest is open and lands in project `default`, and reads are open too.
-- A non-loopback bind with no credentials at all makes one ingest key and one read key on first start. It keeps them in `<CODING_SH_HOME>/serve-keys.json` and prints them on every start.
+- A non-loopback bind with no credentials at all makes one ingest key and one read key on first start. It keeps them in `<CODING_SH_HOME>/serve-keys.json` and prints them once, on the start that makes them. Later starts and `--json` name the file and never print the keys.
 - A non-loopback bind with only some credentials (an ingest key but no read key, say) refuses to start unless you pass `--insecure`.
 
 **Projects.** The ingest key decides the project of everything it sends; a client cannot pick one.

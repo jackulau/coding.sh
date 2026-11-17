@@ -56,6 +56,16 @@ export function keyHash(entry: string): string {
   return sha256(k);
 }
 
+/** keyHash, with the entry's position in front of its error. */
+function entryHash(key: string, where: string): string {
+  try {
+    return keyHash(key);
+  } catch (e) {
+    if (e instanceof KeyFormatError) throw new KeyFormatError(`${where}: ${e.message}`);
+    throw e;
+  }
+}
+
 /** Splits `project:rest`, where rest may itself be `sha256:<hex>` or a key. A bare entry has no project. */
 function splitEntry(entry: string): { project?: string; key: string } {
   const e = entry.trim();
@@ -67,22 +77,27 @@ function splitEntry(entry: string): { project?: string; key: string } {
 
 /** `CODING_SH_INGEST_KEYS`: comma-separated `project:key`, `project:sha256:<hex>`, or a bare key (project default). */
 export function parseIngestKeys(value: string | undefined, into: Map<string, string> = new Map()): Map<string, string> {
+  // An entry holds a secret, so an error names its position, never its text.
+  let n = 0;
   for (const raw of (value ?? "").split(",")) {
     if (!raw.trim()) continue;
+    const where = `CODING_SH_INGEST_KEYS entry ${++n}`;
     const { project = DEFAULT_PROJECT, key } = splitEntry(raw);
-    if (!isProjectId(project)) throw new KeyFormatError(`CODING_SH_INGEST_KEYS: invalid project id ${JSON.stringify(project)} (use a-z, 0-9 and -, up to 63 chars)`);
-    into.set(keyHash(key), project);
+    if (!isProjectId(project)) throw new KeyFormatError(`${where} has an invalid project id before its ":" (use a-z, 0-9 and -, up to 63 chars; the form is project:key)`);
+    into.set(entryHash(key, where), project);
   }
   return into;
 }
 
 /** `CODING_SH_READ_KEYS`: comma-separated `*:key` (all projects) or `project:key` (either may be `sha256:<hex>`). A bare key reads all. */
 export function parseReadKeys(value: string | undefined, into: Map<string, ReadScope> = new Map()): Map<string, ReadScope> {
+  let n = 0;
   for (const raw of (value ?? "").split(",")) {
     if (!raw.trim()) continue;
+    const where = `CODING_SH_READ_KEYS entry ${++n}`;
     const { project = "*", key } = splitEntry(raw);
-    if (project !== "*" && !isProjectId(project)) throw new KeyFormatError(`CODING_SH_READ_KEYS: invalid project ${JSON.stringify(project)} (use * or a project id)`);
-    into.set(keyHash(key), project);
+    if (project !== "*" && !isProjectId(project)) throw new KeyFormatError(`${where} has an invalid project before its ":" (use * or a project id; the form is project:key)`);
+    into.set(entryHash(key, where), project);
   }
   return into;
 }
