@@ -3,7 +3,7 @@
 // or Chromium is installed; set CODING_SH_TEST_CHROME to pick a binary (CI does,
 // and then a missing binary fails the run instead of skipping the tests).
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -253,8 +253,18 @@ export async function launchBrowser(chrome: string): Promise<Browser> {
               .catch((e) => ({ error: e instanceof Error ? e.message : String(e) }));
             checks++;
             slowestCheckMs = Math.max(slowestCheckMs, performance.now() - t1);
-            if (seen.readyState === "complete" && seen.href !== "about:blank") return;
-            if (Date.now() > deadline) throw new Error(loadTimeoutMessage({ waitedMs: performance.now() - t0, navigateMs, checks, slowestCheckMs, ...seen }));
+            // THROWAWAY: every page load, for the summary step.
+            const log = (ok: boolean) => {
+              if (!process.env.CSH_PAGES) return;
+              try {
+                appendFileSync(process.env.CSH_PAGES, JSON.stringify({ at: Date.now(), ok, ms: Math.round(performance.now() - t0), navigateMs: Math.round(navigateMs), checks, slowestCheckMs: Math.round(slowestCheckMs), pid: process.pid, file: (process.argv[1] ?? "").replace(/^.*[\\/]/, ""), data: url.startsWith("data:") }) + "\n");
+              } catch {}
+            };
+            if (seen.readyState === "complete" && seen.href !== "about:blank") return log(true);
+            if (Date.now() > deadline) {
+              log(false);
+              throw new Error(loadTimeoutMessage({ waitedMs: performance.now() - t0, navigateMs, checks, slowestCheckMs, ...seen }));
+            }
             await new Promise((r) => setTimeout(r, 40));
           }
         },

@@ -154,7 +154,10 @@ async function testStart(chrome: string): Promise<{ startMs: number; pageMs: num
     await page.goto(PAGE);
     const pageMs = performance.now() - t1;
     await page.close();
-    return { startMs, pageMs, viewerMs: await viewerPages(browser) };
+    // THROWAWAY: the arms of the A/B. data and run2: no viewer page here. paired: the paired pages.
+    const arm = process.env.CSH_WARM;
+    if (arm === "paired") await (await import("./warm-diag.ts")).pairedPages(browser);
+    return { startMs, pageMs, viewerMs: arm === "data" || arm === "run2" || arm === "paired" ? [0, 0] : await viewerPages(browser) };
   } finally {
     await browser.close();
   }
@@ -168,6 +171,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   }
   const first = await firstStart(chrome);
   const { startMs, pageMs, viewerMs } = await testStart(chrome);
+  if (process.env.CSH_WARM === "run2") await (await import("./warm-diag.ts")).run2Pages(chrome);
   const [listMs, exploreMs] = viewerMs.map(Math.round);
   console.log(`warm-chrome: first start ${Math.round(first.ms)} ms with ${first.stderrBytes} bytes on stderr, then a start in ${Math.round(startMs)} ms and a page in ${Math.round(pageMs)} ms, then the viewer's list in ${listMs} ms and Explore in ${exploreMs} ms (${chrome})`);
 }
