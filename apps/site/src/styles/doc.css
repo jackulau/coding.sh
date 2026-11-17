@@ -272,14 +272,18 @@
 .more > summary::-webkit-details-marker {
   display: none;
 }
+/* The sign is drawn, not read: the alt text after "/" is empty, so the
+   summary's name is its words alone. */
 .more > summary::before {
   content: "+";
+  content: "+" / "";
   width: 0.75rem;
   font-family: var(--font-mono);
   color: var(--text-muted);
 }
 .more[open] > summary::before {
   content: "−";
+  content: "−" / "";
 }
 .more > summary:focus-visible {
   outline-offset: -2px;
@@ -294,20 +298,18 @@
 .more > :last-child {
   margin-bottom: 1rem;
 }
-/* FAQ: each question is the summary of its folded answer. A click on the
-   question toggles it; its self-link stays for the keyboard and for copying. */
-.faq > summary > h2 {
-  margin: 0;
-  padding: 0.6rem 0;
-  font-size: var(--fs-base);
+/* FAQ: each question is the summary of its folded answer, plain text, so the
+   summary is one control named by the question. The <details> carries the id
+   that links to the question. */
+.faq > summary {
+  padding-block: 0.6rem;
   line-height: 1.4;
-  letter-spacing: normal;
-}
-.faq .h-anchor {
-  pointer-events: none;
+  font-weight: 600;
+  text-wrap: balance;
 }
 /* The section a link points at, marked without motion. */
-.doc :is(h2, h3, h4):target {
+.doc :is(h2, h3, h4):target,
+.faq:target > summary {
   text-decoration: underline 1px var(--text-muted);
   text-underline-offset: 0.3em;
 }

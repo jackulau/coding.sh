@@ -56,15 +56,22 @@ function run(script, ids, hash) {
   return { ctx, location, timers };
 }
 
-test("/docs/faq: each answer folds under its question, which keeps its id and self-link", distOpts(DIST), () => {
+test("/docs/faq: each answer folds under its question, a plain-text summary on a <details> that carries the id", distOpts(DIST), () => {
   needDist(DIST);
   const html = page("docs/faq");
   const main = html.match(/<main[\s\S]*<\/main>/)[0];
-  const folds = [...main.matchAll(/<details class="more faq"[^>]*>\s*<summary[^>]*>\s*<h2 id="([^"]+)"[^>]*>\s*<a class="h-anchor"[^>]*href="#([^"]+)"/g)];
+  const folds = [...main.matchAll(/<details class="more faq" id="([^"]+)"[^>]*>\s*<summary[^>]*>([\s\S]*?)<\/summary>/g)];
   assert.ok(folds.length >= 10, `one <details> per question, found ${folds.length}`);
-  for (const [, id, href] of folds) assert.equal(href, id, `the question ${id} links to itself`);
-  assert.equal((main.match(/<h2[ >]/g) ?? []).length, folds.length, "every question is inside a fold");
+  // A heading or link inside <summary> loses its role to the disclosure button and adds a second tab stop.
+  for (const [, id, q] of folds) assert.doesNotMatch(q, /</, `the question ${id} is plain text in its summary`);
+  assert.doesNotMatch(main, /<h2[ >]/, "no h2 left to fold into a summary");
+  // The drawn + and − have empty alt text, so a question's name is its words alone.
+  assert.match(html, /content:\s*"\+"\s*\/\s*""/, "the + is not read as part of the name");
+  assert.equal((main.match(/<details class="more faq"/g) ?? []).length, folds.length, "every fold has an id");
   assert.doesNotMatch(main, /<details class="more faq"[^>]*\sopen/, "answers start closed");
+  // The "On this page" rail lists each question, linked to its <details>.
+  const rail = html.match(/data-onpage[\s\S]*?<\/aside>/)?.[0] ?? "";
+  for (const [, id] of folds) assert.match(rail, new RegExp(`href="#${id}"`), `the rail links to ${id}`);
 });
 
 test("/docs/troubleshooting stays open, so find-in-page reaches every answer", distOpts(DIST), () => {

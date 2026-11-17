@@ -73,7 +73,8 @@ const faq = [...questions.matchAll(/<h3 [^>]*>([\s\S]*?)<\/h3>([\s\S]*?)(?=<h3[ 
   .filter((f) => f.q.trim().endsWith("?</a>") || f.q.trim().endsWith("?"));
 const faqSchemas = faq.length ? [faqSchema(faq)] : [];
 
-// "On this page": the h2s outside tab panels, in order, each with a nested list
+// "On this page": the h2s outside tab panels and the FAQ's questions (a
+// <details class="more faq"> with an id, listed as an h2), in order, each with a nested list
 // of its h3s, and each Tabs block as its tab labels, each followed by its
 // panel's h3 steps (Tabs.astro writes them to data-toc). A step shows only
 // while its tab is open; an h2's h3s show only while that h2 is current (CSS).
@@ -89,8 +90,9 @@ const outline: Entry[] = [];
 // Ids of the tab steps, so the same h3s are not listed again under an h2.
 const steps = new Set<string>();
 let h2: Entry | undefined;
-for (const m of body.matchAll(/<h([23]) id="([^"]+)"([^>]*)>([\s\S]*?)<\/h\1>|<div class="tabs" data-tabs="[^"]*" data-toc="([^"]*)"/g)) {
-  if (m[5] !== undefined) {
+for (const m of body.matchAll(/<h([23]) id="([^"]+)"([^>]*)>([\s\S]*?)<\/h\1>|<div class="tabs" data-tabs="[^"]*" data-toc="([^"]*)"|<details class="more faq" id="([^"]+)"[^>]*>\s*<summary[^>]*>([\s\S]*?)<\/summary>/g)) {
+  if (m[6] !== undefined) outline.push((h2 = { id: m[6], label: plain(m[7]!), subs: [] }));
+  else if (m[5] !== undefined) {
     const tabs = JSON.parse(unesc(m[5])) as { id: string; label: string; steps?: { id: string; label: string }[] }[];
     h2 = undefined;
     for (const t of tabs) {

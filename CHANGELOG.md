@@ -15,7 +15,7 @@ grouped by area, with links to the docs for the details.
 - **Docs.** The "On this page" rail lists each section's subheadings under it, shows them for the section being read, and marks both; it scrolls itself to keep the current entry in view. [SDKs](https://coding.sh/docs/sdk)
 - **Docs.** Below 1280px, where the rail does not fit, "On this page" is a closed dropdown at the top of the article with the same entries, on tablets and phones. [SDKs](https://coding.sh/docs/sdk)
 - **Docs.** The Quickstart and Tool evals procedures are numbered steps: each step's number sits in a ring beside its heading, with a line joining it to the next. The Markdown copies keep the numbers in the headings. [Quickstart](https://coding.sh/docs/quickstart)
-- **Docs.** The FAQ folds each answer under its question. A link to a closed fold or to a section inside one, such as a question or an optional step, opens the fold and scrolls to it, whether the link is on the same page or another. [FAQ](https://coding.sh/docs/faq)
+- **Docs.** The FAQ folds each answer under its question, and each question is one control named by its words. A link to a closed fold, or to a section inside one such as a question or an optional step, opens it and scrolls to it, from the same page or another. [FAQ](https://coding.sh/docs/faq)
 - **Docs.** The `--help` text on each CLI page, and every terminal output block, has a Copy button. Copying a block whose lines start with `$ ` copies only the commands, without the prompt or the output. Shell blocks colour the command, its flags, quoted strings and comments. [CLI](https://coding.sh/docs/cli)
 
 ## [0.1.7] - 2026-11-16
