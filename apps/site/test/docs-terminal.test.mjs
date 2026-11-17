@@ -96,7 +96,7 @@ function mdPages() {
 }
 
 const codes = (blocks) =>
-  blocks.flatMap((b) => (b.kind === "code" ? [b.code] : b.kind === "tabs" ? b.tabs.map((t) => t.code) : b.kind === "more" || b.kind === "note" ? codes(b.blocks) : []));
+  blocks.flatMap((b) => (b.kind === "code" ? [b.code] : b.kind === "tabs" ? b.tabs.map((t) => t.code) : b.kind === "more" || b.kind === "note" ? codes(b.blocks) : b.kind === "steps" ? b.items.flatMap(codes) : []));
 // What Code.astro shows: leading blank lines and trailing whitespace trimmed.
 const shown = (code) => code.replace(/^\n+|\s+$/g, "");
 

@@ -10,6 +10,7 @@ import CodeTabs from "../../components/docs/CodeTabs.astro";
 import Tabs from "../../components/docs/Tabs.astro";
 import Cards from "../../components/docs/Cards.astro";
 import DocShot from "../../components/docs/DocShot.astro";
+import Steps from "../../components/docs/Steps.astro";
 import Terminal from "../../components/Terminal.astro";
 import { INSTALL_SH } from "../../data/site";
 import { TRIAGE_ANTHROPIC_PY, TRIAGE_ANTHROPIC_TS, TRIAGE_PY, TRIAGE_TS } from "../../data/quickstart";
@@ -150,142 +151,146 @@ const next = [
     <div data-tab="your-agent">
       <p>An agent you wrote, in TypeScript or Python, that calls OpenAI or Anthropic. The example labels a coding.sh GitHub issue.</p>
 
-      <h3 id="sdk-install">1. Install coding.sh</h3>
-      <Code code="npm install -g coding.sh" />
+      <Steps>
+        <h3 id="sdk-install">Install coding.sh</h3>
+        <Code code="npm install -g coding.sh" />
 
-      <h3 id="sdk-serve">2. Start the local server</h3>
-      <Code code="coding.sh serve" />
-      <Terminal title="shell" label="Output of coding.sh serve"><pre set:html={term(SERVE_OUT)} /></Terminal>
-      <p>
-        It logs two JSON lines, then prints its address. It takes traces from the SDK and from OpenTelemetry, keeps them in <code>~/.coding.sh</code> and serves the viewer on the same
-        address. Leave it running and open a second terminal.
-      </p>
-
-      <h3 id="sdk-add">3. Add the SDK</h3>
-      <CodeTabs
-        group="lang"
-        tabs={[
-          { label: "TypeScript", title: "shell", code: "npm install @codingdotsh/sdk openai" },
-          { label: "Python", title: "shell", code: "pip install coding-sh openai" },
-        ]}
-      />
-      <Code code={env} />
-      <p>
-        Without <code>CODING_SH_URL</code> the SDK does nothing, so the same code is safe to ship. <code>CODING_SH_SERVICE</code> is the name
-        your agent gets in the session list.
-      </p>
-      <CodeTabs
-        group="lang"
-        tabs={[
-          { label: "TypeScript", title: "triage.mjs", code: TS },
-          { label: "Python", title: "triage.py", code: PY },
-        ]}
-      />
-      <p>Nothing else in your code changes.</p>
-      <details class="more" id="sdk-anthropic">
-        <summary>Use Anthropic instead of OpenAI</summary>
+        <h3 id="sdk-serve">Start the local server</h3>
+        <Code code="coding.sh serve" />
+        <Terminal title="shell" label="Output of coding.sh serve"><pre set:html={term(SERVE_OUT)} /></Terminal>
         <p>
-          Install <code>@anthropic-ai/sdk</code> (TypeScript) or <code>anthropic</code> (Python) in place of <code>openai</code>, and wrap
-          <code>new Anthropic()</code> the same way. The call takes <code>system</code> and <code>max_tokens</code> as their own fields, and
-          the answer is in <code>content[0].text</code>. The run, the output and the viewer are the same, with the Claude model in place of
-          gpt-5-mini.
+          It logs two JSON lines, then prints its address. It takes traces from the SDK and from OpenTelemetry, keeps them in <code>~/.coding.sh</code> and serves the viewer on the same
+          address. Leave it running and open a second terminal.
+        </p>
+
+        <h3 id="sdk-add">Add the SDK</h3>
+        <CodeTabs
+          group="lang"
+          tabs={[
+            { label: "TypeScript", title: "shell", code: "npm install @codingdotsh/sdk openai" },
+            { label: "Python", title: "shell", code: "pip install coding-sh openai" },
+          ]}
+        />
+        <Code code={env} />
+        <p>
+          Without <code>CODING_SH_URL</code> the SDK does nothing, so the same code is safe to ship. <code>CODING_SH_SERVICE</code> is the name
+          your agent gets in the session list.
         </p>
         <CodeTabs
           group="lang"
           tabs={[
-            { label: "TypeScript", title: "triage.mjs", code: TRIAGE_ANTHROPIC_TS },
-            { label: "Python", title: "triage.py", code: TRIAGE_ANTHROPIC_PY },
+            { label: "TypeScript", title: "triage.mjs", code: TS },
+            { label: "Python", title: "triage.py", code: PY },
           ]}
         />
-      </details>
+        <p>Nothing else in your code changes.</p>
+        <details class="more" id="sdk-anthropic">
+          <summary>Use Anthropic instead of OpenAI</summary>
+          <p>
+            Install <code>@anthropic-ai/sdk</code> (TypeScript) or <code>anthropic</code> (Python) in place of <code>openai</code>, and wrap
+            <code>new Anthropic()</code> the same way. The call takes <code>system</code> and <code>max_tokens</code> as their own fields, and
+            the answer is in <code>content[0].text</code>. The run, the output and the viewer are the same, with the Claude model in place of
+            gpt-5-mini.
+          </p>
+          <CodeTabs
+            group="lang"
+            tabs={[
+              { label: "TypeScript", title: "triage.mjs", code: TRIAGE_ANTHROPIC_TS },
+              { label: "Python", title: "triage.py", code: TRIAGE_ANTHROPIC_PY },
+            ]}
+          />
+        </details>
 
-      <h3 id="sdk-run">4. Run it</h3>
-      <CodeTabs
-        group="lang"
-        tabs={[
-          { label: "TypeScript", title: "shell", code: 'node triage.mjs "Viewer search misses tool output"' },
-          { label: "Python", title: "shell", code: 'python triage.py "Viewer search misses tool output"' },
-        ]}
-      />
-      <Terminal title="shell" label="Output of triage.mjs"><pre>bug, viewer</pre></Terminal>
+        <h3 id="sdk-run">Run it</h3>
+        <CodeTabs
+          group="lang"
+          tabs={[
+            { label: "TypeScript", title: "shell", code: 'node triage.mjs "Viewer search misses tool output"' },
+            { label: "Python", title: "shell", code: 'python triage.py "Viewer search misses tool output"' },
+          ]}
+        />
+        <Terminal title="shell" label="Output of triage.mjs"><pre>bug, viewer</pre></Terminal>
 
-      <h3 id="sdk-see">5. See your run</h3>
-      <Terminal title="shell" label="Output of coding.sh show latest"><pre set:html={term(SDK_SHOW)} /></Terminal>
-      <p>
-        Open <code>http://127.0.0.1:4318</code> and click the row. You see the system and user messages, the model call with its tokens,
-        latency and cost, and the answer.
-      </p>
-      <DocShot
-        name="docs/sdk-session"
-        bar="coding.sh serve"
-        alt="The coding.sh viewer showing one coding-sh-triage run titled Viewer search misses tool output: the gpt-5-mini call from OpenAI selected, with 34 input and 195 output tokens, its duration and cost, and the answer bug, viewer."
-        caption="The run you just recorded, open in the viewer."
-      />
-      <p>To record tool calls and conversations of several turns, see <a href="/docs/how-to/trace-your-agent">Trace your agent with the SDK</a>.</p>
+        <h3 id="sdk-see">See your run</h3>
+        <Terminal title="shell" label="Output of coding.sh show latest"><pre set:html={term(SDK_SHOW)} /></Terminal>
+        <p>
+          Open <code>http://127.0.0.1:4318</code> and click the row. You see the system and user messages, the model call with its tokens,
+          latency and cost, and the answer.
+        </p>
+        <DocShot
+          name="docs/sdk-session"
+          bar="coding.sh serve"
+          alt="The coding.sh viewer showing one coding-sh-triage run titled Viewer search misses tool output: the gpt-5-mini call from OpenAI selected, with 34 input and 195 output tokens, its duration and cost, and the answer bug, viewer."
+          caption="The run you just recorded, open in the viewer."
+        />
+        <p>To record tool calls and conversations of several turns, see <a href="/docs/how-to/trace-your-agent">Trace your agent with the SDK</a>.</p>
+      </Steps>
     </div>
 
     <div data-tab="coding-agent">
       <p>Claude Code, Codex, Cursor, OpenCode and the other <a href="/docs/agents">supported agents</a>. No code changes.</p>
 
-      <h3 id="agent-install">1. Install</h3>
-      <Code code={INSTALL_SH} />
-      <p>
-        The script installs the CLI, finds the agents on your machine and shows one plan. When you say yes, it adds a hook and the coding.sh
-        MCP server to each agent, imports their past sessions and opens the viewer.
-      </p>
-      <div class="note">
+      <Steps>
+        <h3 id="agent-install">Install</h3>
+        <Code code={INSTALL_SH} />
         <p>
-          <strong>Codex</strong> runs new hooks only after you approve them. Until then, coding.sh imports each Codex session from its
-          transcript when you list sessions or open the viewer, with prompts, tool calls, tokens and cost. To see events while a session
-          runs, open Codex, run <code>/hooks</code> and approve the coding.sh entries.
+          The script installs the CLI, finds the agents on your machine and shows one plan. When you say yes, it adds a hook and the coding.sh
+          MCP server to each agent, imports their past sessions and opens the viewer.
         </p>
-      </div>
-      <details class="more" id="init">
-        <summary>Add the hooks yourself</summary>
-        <p>
-          Installed with npm, or want to pick the agents? Run <code>init</code>. It backs up every file it edits to
-          <code>~/.coding.sh/backups</code>, and <code>coding.sh uninstall</code> removes only its own entries.
-        </p>
-        <Code code={init} />
-      </details>
-      <details class="more" id="agent-setup">
-        <summary>Let your coding agent set it up</summary>
-        <p>Paste this into your agent. It installs coding.sh, adds the hooks, checks them with <code>coding.sh doctor</code> and tells you which agents it set up.</p>
-        <Code title="prompt" code={agentPrompt} />
-      </details>
+        <div class="note">
+          <p>
+            <strong>Codex</strong> runs new hooks only after you approve them. Until then, coding.sh imports each Codex session from its
+            transcript when you list sessions or open the viewer, with prompts, tool calls, tokens and cost. To see events while a session
+            runs, open Codex, run <code>/hooks</code> and approve the coding.sh entries.
+          </p>
+        </div>
+        <details class="more" id="init">
+          <summary>Add the hooks yourself</summary>
+          <p>
+            Installed with npm, or want to pick the agents? Run <code>init</code>. It backs up every file it edits to
+            <code>~/.coding.sh/backups</code>, and <code>coding.sh uninstall</code> removes only its own entries.
+          </p>
+          <Code code={init} />
+        </details>
+        <details class="more" id="agent-setup">
+          <summary>Let your coding agent set it up</summary>
+          <p>Paste this into your agent. It installs coding.sh, adds the hooks, checks them with <code>coding.sh doctor</code> and tells you which agents it set up.</p>
+          <Code title="prompt" code={agentPrompt} />
+        </details>
 
-      <h3 id="agent-use">2. Use your agent as usual</h3>
-      <p>
-        Start a new session. Agents read their hooks when a session starts, so a session that was already open during the install may not be
-        recorded. Restart it.
-      </p>
-
-      <h3 id="agent-see">3. See your sessions</h3>
-      <Code code={look} />
-      <Terminal title="~/coding.sh" label="Output of coding.sh sessions"><pre set:html={term(SESSIONS)} /></Terminal>
-      <Terminal title="~/coding.sh" label="Output of coding.sh show latest"><pre set:html={term(SHOW)} /></Terminal>
-      <Terminal title="~/coding.sh" label="Output of coding.sh usage"><pre set:html={term(USAGE)} /></Terminal>
-      <p>A <code>~</code> marks a cost estimated from tokens and list prices, where the agent reported none.</p>
-      <p>
-        A flag such as <code>no-verification</code> (files changed, but no test, lint or build ran) marks a session worth a look.
-        <code>coding.sh improve</code> ranks the problems and proposes the AGENTS.md line that fixes each. See
-        <a href="/docs/improve">What to fix first</a>.
-      </p>
-      <DocShot
-        name="docs/sessions-list"
-        bar="coding.sh ui"
-        alt="The coding.sh viewer's session list: sessions from Claude Code, Codex and OpenCode on the coding.sh repo, each with its agent, title, cost and flags."
-        caption="coding.sh ui lists every session, newest first."
-      />
-      <details class="more" id="wrap">
-        <summary>Agents without hooks</summary>
+        <h3 id="agent-use">Use your agent as usual</h3>
         <p>
-          <code>coding.sh run -- &lt;cmd&gt;</code> records any command. It snapshots the repository before and after, records each changed
-          file, and exits with the command's exit code.
+          Start a new session. Agents read their hooks when a session starts, so a session that was already open during the install may not be
+          recorded. Restart it.
         </p>
-        <Code code={wrap} />
-        <Terminal title="~/coding.sh" label="Output of coding.sh run"><pre set:html={term(WRAP_OUT)} /></Terminal>
-      </details>
+
+        <h3 id="agent-see">See your sessions</h3>
+        <Code code={look} />
+        <Terminal title="~/coding.sh" label="Output of coding.sh sessions"><pre set:html={term(SESSIONS)} /></Terminal>
+        <Terminal title="~/coding.sh" label="Output of coding.sh show latest"><pre set:html={term(SHOW)} /></Terminal>
+        <Terminal title="~/coding.sh" label="Output of coding.sh usage"><pre set:html={term(USAGE)} /></Terminal>
+        <p>A <code>~</code> marks a cost estimated from tokens and list prices, where the agent reported none.</p>
+        <p>
+          A flag such as <code>no-verification</code> (files changed, but no test, lint or build ran) marks a session worth a look.
+          <code>coding.sh improve</code> ranks the problems and proposes the AGENTS.md line that fixes each. See
+          <a href="/docs/improve">What to fix first</a>.
+        </p>
+        <DocShot
+          name="docs/sessions-list"
+          bar="coding.sh ui"
+          alt="The coding.sh viewer's session list: sessions from Claude Code, Codex and OpenCode on the coding.sh repo, each with its agent, title, cost and flags."
+          caption="coding.sh ui lists every session, newest first."
+        />
+        <details class="more" id="wrap">
+          <summary>Agents without hooks</summary>
+          <p>
+            <code>coding.sh run -- &lt;cmd&gt;</code> records any command. It snapshots the repository before and after, records each changed
+            file, and exits with the command's exit code.
+          </p>
+          <Code code={wrap} />
+          <Terminal title="~/coding.sh" label="Output of coding.sh run"><pre set:html={term(WRAP_OUT)} /></Terminal>
+        </details>
+      </Steps>
     </div>
   </Tabs>
 

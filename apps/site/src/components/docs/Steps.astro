@@ -1,0 +1,17 @@
+---
+// A numbered procedure. Each <h3> in the slot starts a step, which runs to the
+// next <h3>; write the headings without numbers. The numbers and the line that
+// joins them are a CSS counter (.steps in doc.css), so there is no script. The
+// h3s keep their anchors and their place in the "On this page" rail, and
+// scripts/gen-agent-text.mjs writes each number into the .md twin's heading.
+// :::steps in a docs/*.md page gives the same list (markdown.ts).
+const html = await Astro.slots.render("default");
+const at = html.search(/<h3[\s>]/);
+// Astro puts a component's script where the page first uses it, which can be
+// before the first step: it goes before the list.
+const lead = html.slice(0, Math.max(at, 0));
+if (at < 0 || lead.replace(/<(script|style)\b[\s\S]*?<\/\1>/g, "").trim()) throw new Error("Steps: the slot must start with an <h3>, the first step's title");
+const items = html.slice(at).trim().split(/(?=<h3[\s>])/);
+---
+
+<Fragment set:html={lead} /><ol class="steps">{items.map((item) => <li set:html={item} />)}</ol>

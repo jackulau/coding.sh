@@ -16,6 +16,7 @@ const toHtml = (blocks: MdBlock[]): string =>
       : b.kind === "tabs" ? b.tabs.map((t) => pre(t.code)).join("")
       : b.kind === "more" ? `<details><summary>${b.summary}</summary>${toHtml(b.blocks)}</details>`
       : b.kind === "note" ? toHtml(b.blocks)
+      : b.kind === "steps" ? `<ol>${b.items.map((i) => `<li>${toHtml(i)}</li>`).join("")}</ol>`
       : b.kind === "shot" ? ""
       : absolute(b.html),
     )

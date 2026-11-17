@@ -2,6 +2,7 @@
 import DocsLayout from "../../components/docs/DocsLayout.astro";
 import Code from "../../components/docs/Code.astro";
 import Cards from "../../components/docs/Cards.astro";
+import Steps from "../../components/docs/Steps.astro";
 import Terminal from "../../components/Terminal.astro";
 
 const task = `id = "count-commits"
@@ -96,41 +97,43 @@ const next = [
   <h2 id="first-run">The shortest run</h2>
   <p>This run measures how well an agent uses <code>git</code>. Any CLI on your <code>PATH</code> works the same way.</p>
 
-  <h3 id="init">1. Add the target</h3>
-  <Terminal title="~/proj" label="Output of coding.sh toolevals init">
-    <pre set:html={INIT} />
-  </Terminal>
-  <p>
-    <code>init</code> writes the target to <code>coding.sh.toml</code>, measures the help an agent would have to read, and writes three
-    draft tasks to fill in. <code>--mcp '&lt;command&gt;'</code>, <code>--mcp-url</code> and <code>--http</code> add the other kinds of
-    target.
-  </p>
+  <Steps>
+    <h3 id="init">Add the target</h3>
+    <Terminal title="~/proj" label="Output of coding.sh toolevals init">
+      <pre set:html={INIT} />
+    </Terminal>
+    <p>
+      <code>init</code> writes the target to <code>coding.sh.toml</code>, measures the help an agent would have to read, and writes three
+      draft tasks to fill in. <code>--mcp '&lt;command&gt;'</code>, <code>--mcp-url</code> and <code>--http</code> add the other kinds of
+      target.
+    </p>
 
-  <h3 id="task">2. Write a task</h3>
-  <Code title="evals/toolevals/git/tasks/count-commits.toml" code={task} />
+    <h3 id="task">Write a task</h3>
+    <Code title="evals/toolevals/git/tasks/count-commits.toml" code={task} />
 
-  <h3 id="validate">3. Check the task</h3>
-  <Terminal title="~/proj" label="Output of coding.sh toolevals validate">
-    <pre set:html={VALIDATE} />
-  </Terminal>
-  <p>
-    A task is valid when its checks fail on the sandbox after setup alone, the <code>reference</code> commands pass them, and the
-    instruction does not give the answer away.
-  </p>
+    <h3 id="validate">Check the task</h3>
+    <Terminal title="~/proj" label="Output of coding.sh toolevals validate">
+      <pre set:html={VALIDATE} />
+    </Terminal>
+    <p>
+      A task is valid when its checks fail on the sandbox after setup alone, the <code>reference</code> commands pass them, and the
+      instruction does not give the answer away.
+    </p>
 
-  <h3 id="run">4. Run it</h3>
-  <Terminal title="~/proj" label="Output of coding.sh toolevals run">
-    <pre set:html={RUN} />
-  </Terminal>
-  <p>
-    A driver is what attempts the task. <code>model:&lt;provider&gt;/&lt;model&gt;</code> is a model in a built-in tool loop with one
-    <code>shell</code> tool, and <code>agent:claude-code</code> or <code>agent:codex</code> is the coding agent itself. Each
-    (variant, driver) pair is an arm, named <code>&lt;variant&gt;@&lt;driver&gt;</code>. Runs estimated above $5 ask first; pass
-    <code>--yes</code> when not on a terminal.
-  </p>
-  <Terminal title="~/proj" label="Output of coding.sh toolevals show">
-    <pre set:html={SHOW} />
-  </Terminal>
+    <h3 id="run">Run it</h3>
+    <Terminal title="~/proj" label="Output of coding.sh toolevals run">
+      <pre set:html={RUN} />
+    </Terminal>
+    <p>
+      A driver is what attempts the task. <code>model:&lt;provider&gt;/&lt;model&gt;</code> is a model in a built-in tool loop with one
+      <code>shell</code> tool, and <code>agent:claude-code</code> or <code>agent:codex</code> is the coding agent itself. Each
+      (variant, driver) pair is an arm, named <code>&lt;variant&gt;@&lt;driver&gt;</code>. Runs estimated above $5 ask first; pass
+      <code>--yes</code> when not on a terminal.
+    </p>
+    <Terminal title="~/proj" label="Output of coding.sh toolevals show">
+      <pre set:html={SHOW} />
+    </Terminal>
+  </Steps>
 
   <h2 id="tasks">Tasks</h2>
   <p>

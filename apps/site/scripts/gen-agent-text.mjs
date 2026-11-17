@@ -115,9 +115,34 @@ function replaceSubtrees(html, open, replace) {
 /** Remove every element marked `data-agent-skip`, including its children. */
 const dropSkipped = (html) => replaceSubtrees(html, /<([a-z][\w-]*)\b[^>]*\bdata-agent-skip\b[^>]*>/i, () => "");
 
+/**
+ * A Steps list (<ol class="steps">, Steps.astro) draws its numbers with a CSS
+ * counter, so the text has none: write each step's number into the heading
+ * that opens it ("### 1. Install").
+ */
+function numberSteps(html) {
+  const lists = [];
+  let n = 0;
+  return html.replace(/<(\/?)(ol|ul|li|h[2-6])\b[^>]*>/gi, (tag, close, name) => {
+    name = name.toLowerCase();
+    if (name === "ol" || name === "ul") {
+      if (close) lists.pop();
+      else lists.push({ steps: name === "ol" && /\bclass="[^"]*\bsteps\b/.test(tag), n: 0 });
+      n = 0;
+    } else if (name === "li") {
+      const list = lists[lists.length - 1];
+      n = !close && list?.steps ? ++list.n : 0;
+    } else if (!close && n) {
+      tag += `${n}. `;
+      n = 0;
+    }
+    return tag;
+  });
+}
+
 /** Turn a rendered <main> into Markdown-ish plain text. */
 function htmlToMarkdown(html) {
-  let s = dropSkipped(html);
+  let s = numberSteps(dropSkipped(html));
   // A visual whose words don't read in order (a big "64 → 79" score) can say
   // what it means with data-agent-text; that text replaces the whole element.
   s = replaceSubtrees(s, /<([a-z][\w-]*)\b[^>]*\bdata-agent-text="([^"]*)"[^>]*>/i, (tag) =>

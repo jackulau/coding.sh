@@ -1,7 +1,8 @@
 ---
 // A docs page whose body is a file under the repo's docs/ folder (see markdown.ts).
 // The block kinds map to the site components: code to <Code>, tabs to
-// <CodeTabs>, shot to <DocShot>; :::more and :::note hold blocks of their own.
+// <CodeTabs>, shot to <DocShot>; :::more, :::note and each of :::steps' steps
+// hold blocks of their own (a step's are wrapped as Steps.astro wraps them).
 import Code from "./Code.astro";
 import CodeTabs from "./CodeTabs.astro";
 import DocShot from "./DocShot.astro";
@@ -10,7 +11,7 @@ import { renderDoc, type MdBlock } from "./markdown";
 interface Props {
   /** Path under docs/, e.g. "concepts.md". */
   file?: string;
-  /** Blocks already parsed: the inside of a :::more or :::note. */
+  /** Blocks already parsed: the inside of a :::more, a :::note or a step. */
   blocks?: MdBlock[];
 }
 // A doc split over several pages renders only this page's part.
@@ -30,6 +31,14 @@ const blocks = Astro.props.blocks ?? renderDoc(Astro.props.file!, Astro.url.path
         <summary set:html={b.summary} />
         <Astro.self blocks={b.blocks} />
       </details>
+    ) : b.kind === "steps" ? (
+      <ol class="steps">
+        {b.items.map((item) => (
+          <li>
+            <Astro.self blocks={item} />
+          </li>
+        ))}
+      </ol>
     ) : b.kind === "note" ? (
       <div class="note">
         <Astro.self blocks={b.blocks} />

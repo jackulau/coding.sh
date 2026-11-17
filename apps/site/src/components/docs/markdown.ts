@@ -8,6 +8,9 @@
 //                                             keeps the pick in sync on the page
 //   :::more Summary text  …  :::              a <details class="more"> disclosure
 //   :::note  …  :::                           a <div class="note"> aside
+//   :::steps  ### 1. Title  …  :::            an <ol class="steps">: each ### starts a
+//                                             step; its "1. " is dropped, as the
+//                                             numbers are a CSS counter (doc.css)
 //   ![alt](shot:docs/name "caption")          a DocShot (src/assets/<name>.webp)
 //   ![alt](diagram:name "caption")            src/assets/docs/diagrams/<name>.svg inline
 //
@@ -33,6 +36,7 @@ export type MdBlock =
   | { kind: "tabs"; group: string; tabs: CodeTab[] }
   | { kind: "more"; summary: string; blocks: MdBlock[] }
   | { kind: "note"; blocks: MdBlock[] }
+  | { kind: "steps"; items: MdBlock[][] }
   | { kind: "shot"; name: string; alt: string; caption?: string }
   | { kind: "diagram"; html: string };
 
@@ -153,7 +157,7 @@ function headingIds() {
 
 const HEADING = /^(#{1,4}) (.*)$/;
 const FENCE = /^```([\w+-]*)[ \t]*(.*)$/;
-const OPEN = /^:::(more|note)\b[ \t]*(.*)$/;
+const OPEN = /^:::(more|note|steps)\b[ \t]*(.*)$/;
 const CLOSE = /^:::\s*$/;
 const PICTURE = /^!\[([^\]]*)\]\((shot|diagram):([\w./-]+)(?:\s+"([^"]*)")?\)\s*$/;
 const splitAt = (file: string, line: string) => SPLITS[file]?.find((s) => line === s.heading)?.path;
@@ -305,11 +309,13 @@ export function renderDoc(file: string, here: string = SITE_PAGES[file] ?? ""): 
   return renderMarkdown(readFileSync(join(REPO_DOCS, file), "utf8"), file, here);
 }
 
-/** A block being filled: the page itself, or an open :::more / :::note. */
+/** A block being filled: the page itself, or an open :::more / :::note / :::steps. */
 interface Frame {
-  kind: "root" | "more" | "note";
+  kind: "root" | "more" | "note" | "steps";
   summary: string;
+  /** For :::steps, the current step's blocks; `items` holds every step. */
   blocks: MdBlock[];
+  items?: MdBlock[][];
   html: string;
   line: number;
 }
@@ -387,8 +393,11 @@ export function renderMarkdown(text: string, file: string, here: string = SITE_P
     if (open) {
       i++;
       flush();
-      stack.push({ kind: open[1] as "more" | "note", summary: md(open[2]!.trim()), blocks: [], html: "", line: i });
-      if (open[1] === "more" && !open[2]!.trim()) throw new Error(`docs: :::more needs a summary (docs/${file}:${i})`);
+      const kind = open[1] as "more" | "note" | "steps";
+      const frame: Frame = { kind, summary: md(open[2]!.trim()), blocks: [], html: "", line: i };
+      if (kind === "steps") frame.items = [];
+      stack.push(frame);
+      if (kind === "more" && !open[2]!.trim()) throw new Error(`docs: :::more needs a summary (docs/${file}:${i})`);
       continue;
     }
     if (CLOSE.test(line)) {
@@ -396,7 +405,12 @@ export function renderMarkdown(text: string, file: string, here: string = SITE_P
       if (stack.length === 1) throw new Error(`docs: ::: closes nothing (docs/${file}:${i})`);
       flush();
       const f = stack.pop()!;
-      emit(f.kind === "more" ? { kind: "more", summary: f.summary, blocks: f.blocks } : { kind: "note", blocks: f.blocks });
+      if (f.items && !f.items.length) throw new Error(`docs: :::steps opened at docs/${file}:${f.line} has no ### step`);
+      emit(
+        f.items ? { kind: "steps", items: f.items }
+        : f.kind === "more" ? { kind: "more", summary: f.summary, blocks: f.blocks }
+        : { kind: "note", blocks: f.blocks },
+      );
       continue;
     }
 
@@ -421,8 +435,18 @@ export function renderMarkdown(text: string, file: string, here: string = SITE_P
         flush();
         page = next;
       }
+      let title = h[2]!;
+      const f = top();
+      if (f.items && h[1] === "###") {
+        // A step: what came before it closes the last step. The source keeps
+        // its "1. " so it reads as numbered on GitHub; the page draws the number.
+        flush();
+        if (!f.items.length && f.blocks.length) throw new Error(`docs: :::steps needs a ### step before its text (docs/${file}:${i})`);
+        f.items.push((f.blocks = []));
+        title = title.replace(/^\d+\.\s+/, "");
+      } else if (f.items && h[1] === "##") throw new Error(`docs: no ## inside :::steps (docs/${file}:${i})`);
       const tag = `h${h[1]!.length}`;
-      add(`<${tag} id="${uniqueId(h[2]!)}">${md(h[2]!)}</${tag}>`);
+      add(`<${tag} id="${uniqueId(title)}">${md(title)}</${tag}>`);
       continue;
     }
     if (isTable(i)) {
