@@ -25,14 +25,14 @@ import { join, relative } from "node:path";
 import { fileKey, reportProblems } from "./report-complete.mjs";
 import { readDurations, shardFiles, testFiles } from "./test-shards.ts";
 
-const MAX_RERUN = 5;
+const MAX_RERUN = 0; // THROWAWAY: show every first-run failure
 const shard = process.env.SHARD;
 // --test-force-exit: a file whose tests are done exits even if a handle (a browser's pipe) is
 // still open, so a leak can't hold the job until its time limit cancels it.
 // --import test-blocking-stdout.mjs: with that flag a file can exit before the end of its report
 // has left its process, so each file writes its report with blocking writes.
 const blocking = new URL("./test-blocking-stdout.mjs", import.meta.url).href;
-const node = (args) => spawnSync(process.execPath, ["--no-warnings", "--import", blocking, "--test", "--test-force-exit", ...args], { stdio: "inherit" }).status ?? 1;
+const node = (args) => spawnSync(process.execPath, ["--no-warnings", "--import", blocking, "--test", "--test-force-exit", "--test-concurrency=1", ...args], { stdio: "inherit" }).status ?? 1;
 
 /** The test files to split into shards, of `all`: `{ files, narrowed, log }`. */
 async function pick(all) {
