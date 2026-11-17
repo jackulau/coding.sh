@@ -26,6 +26,8 @@ export interface SnapshotOps {
   /** Working tree (incl. untracked) vs the dir's start commit (refs/coding.sh/start). */
   diffWorkdir(dir: string): Promise<WorkdirDiff>;
   diffSnapshots(repoRoot: string, a: string, b: string): Promise<WorkdirDiff>;
+  /** A new snapshot of `state` without `paths` (hidden tests out of a task's start). Optional: injected ops may lack it. */
+  snapshotWithout?(state: RepoState, paths: readonly string[]): Promise<string>;
 }
 
 let cached: SnapshotOps | undefined;
@@ -35,7 +37,7 @@ export async function snapshotOps(injected?: SnapshotOps): Promise<SnapshotOps> 
   if (injected) return injected;
   if (!cached) {
     const m = await import("../core/snapshot.ts");
-    cached = { materialize: m.materialize, diffWorkdir: m.diffWorkdir, diffSnapshots: m.diffSnapshots };
+    cached = { materialize: m.materialize, diffWorkdir: m.diffWorkdir, diffSnapshots: m.diffSnapshots, snapshotWithout: m.snapshotWithout };
   }
   return cached;
 }

@@ -146,6 +146,35 @@ describe("draftTaskFromSession", () => {
     assert.equal(t.meta.verifierSource, "given");
     assert.equal(t.meta.setupSource, "given");
   });
+  it("hides a test file that is already in the start tree and the session left alone, and takes it out of the agent's start", async () => {
+    const { index, blobs, git, session } = await fixture();
+    // The test exists at session start; the session only fixes the code.
+    git.add("start", { ...BUGGY, "test/add.test.js": HIDDEN_TEST }).add("end", { ...FIXED, "test/add.test.js": HIDDEN_TEST });
+    const plain = await draftTaskFromSession({ index, blobs, git, sessionId: "s1", verifierCommand: "node test/add.test.js", setup: [] });
+    for (const glob of ["test/add.test.js", "./test/add.test.js", "test/**", "**/add.test.js"]) {
+      const t = await draftTaskFromSession({ index, blobs, git, sessionId: "s1", hiddenTests: [glob], verifierCommand: "node test/add.test.js", setup: [] });
+      assert.deepEqual(Object.keys(t.verifier.hiddenFiles), ["test/add.test.js"], glob);
+      assert.equal(await blobs.getText(t.verifier.hiddenFiles["test/add.test.js"] ?? ""), HIDDEN_TEST);
+      assert.notEqual(t.start.snapshot, "start", "the agent starts from a tree without the hidden test");
+      const dir = await tempDir("csh-hidden-start-");
+      dirs.push(dir);
+      await git.materialize({ root: session.repo!.root, head: t.start.head, snapshot: t.start.snapshot }, join(dir, "w"));
+      assert.equal(existsSync(join(dir, "w", "test", "add.test.js")), false, glob);
+      assert.equal(existsSync(join(dir, "w", "src", "add.js")), true);
+      const ref = (await blobs.getText(t.referencePatch ?? "")) ?? "";
+      assert.match(ref, /src\/add\.js/);
+      assert.doesNotMatch(ref, /add\.test\.js/);
+      assert.equal(t.id, plain.id, "hiding tests does not change the task's id");
+      assert.ok(t.meta.notes.some((n) => /hid 1 test file\(s\) from the agent: test\/add\.test\.js/.test(n)), t.meta.notes.join("; "));
+    }
+  });
+  it("says so when --hidden-test matches nothing", async () => {
+    const { index, blobs, git } = await fixture({ end: FIXED });
+    const t = await draftTaskFromSession({ index, blobs, git, sessionId: "s1", hiddenTests: ["tests/check_*.py"], verifierCommand: "node test/add.test.js", setup: [] });
+    assert.deepEqual(t.verifier.hiddenFiles, {});
+    assert.equal(t.start.snapshot, "start");
+    assert.ok(t.meta.notes.some((n) => /--hidden-test tests\/check_\*\.py matched no file/.test(n)), t.meta.notes.join("; "));
+  });
   it("refuses a session whose start snapshot equals its end snapshot", async () => {
     const { index, blobs, git, session } = await fixture();
     await index.upsertSession({ ...session, endSnapshot: "start" });

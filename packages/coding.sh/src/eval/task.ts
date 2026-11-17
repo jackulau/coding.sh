@@ -370,10 +370,10 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
   let referencePatch: BlobRef | undefined;
   const hiddenFiles: Record<string, BlobRef> = {};
   let refText: string | undefined;
+  const hidden = (opts.hiddenTests ?? []).map((g) => g.replace(/^\.\//, ""));
   if (session.endSnapshot) {
     const d = await ops.diffSnapshots(start.repoRoot, start.snapshot, session.endSnapshot);
     refText = d.patch;
-    const hidden = opts.hiddenTests ?? [];
     if (hidden.length && refText) {
       const testPaths = patchPaths(refText).filter((p) => matchAny(p, hidden));
       if (testPaths.length) {
@@ -396,6 +396,31 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
     else notes.push("session made no net changes; no reference patch");
   } else {
     notes.push("session has no end snapshot; no reference patch (add one before validating)");
+  }
+  // Test files already in the start tree that the glob names: hidden too, and taken out of the
+  // start, or the agent reads (and may edit) the very tests that grade it.
+  const taskStart = { repoRoot: start.repoRoot, snapshot: start.snapshot, head: start.head };
+  if (hidden.length) {
+    const startDir = await mkdtemp(join(tmpdir(), "csh-hide-"));
+    let atStart: string[] = [];
+    try {
+      await ops.materialize({ root: start.repoRoot, head: start.head, snapshot: start.snapshot }, startDir);
+      atStart = (await walkFiles(startDir)).filter((p) => !p.startsWith(".git/") && matchAny(p, hidden));
+      const touched = new Set(refText ? patchPaths(refText) : []);
+      // A file the session changed is hidden as the session left it (above); one it deleted stays as it was.
+      for (const p of atStart) if (!(p in hiddenFiles) && !touched.has(p)) hiddenFiles[p] = await blobs.put(await readFile(safeJoin(startDir, p)));
+    } finally {
+      await rmrf(startDir);
+    }
+    const out = atStart.filter((p) => p in hiddenFiles);
+    if (out.length && ops.snapshotWithout) {
+      taskStart.snapshot = await ops.snapshotWithout({ root: start.repoRoot, head: start.head, snapshot: start.snapshot }, out);
+      const shown = out.slice(0, 5).join(", ") + (out.length > 5 ? `, and ${out.length - 5} more` : "");
+      notes.push(`hid ${out.length} test file(s) from the agent: ${shown}; the verifier gets them at check time`);
+    } else if (out.length) {
+      notes.push(`${out.length} hidden test file(s) stay in the agent's start tree: this snapshot store can't leave files out`);
+    }
+    if (!Object.keys(hiddenFiles).length) notes.push(`--hidden-test ${hidden.join(", ")} matched no file in the start tree or the session's changes; nothing is hidden`);
   }
 
   let ledgerMeta: Pick<TaskMeta, "obligations" | "notImplemented"> = {};
@@ -459,7 +484,7 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
     name: opts.name ?? defaultName(instruction),
     status: "draft",
     sourceSessionId: sessionId,
-    start: { repoRoot: start.repoRoot, snapshot: start.snapshot, head: start.head },
+    start: taskStart,
     instruction,
     setup: setup ?? [],
     verifier: { command: verifier ?? "", hiddenFiles, timeoutMs: opts.verifierTimeoutMs ?? DEFAULT_VERIFIER_TIMEOUT_MS },

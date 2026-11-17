@@ -181,6 +181,14 @@ export class FakeSnapshots implements SnapshotOps {
       });
     return { patch, files };
   }
+  async snapshotWithout(state: RepoState, paths: readonly string[]): Promise<string> {
+    const id = state.snapshot ?? state.head;
+    const tree = this.trees.get(id);
+    if (!tree) throw new Error(`unknown snapshot ${id}`);
+    const out = `${id}-without-${paths.join(",")}`;
+    this.trees.set(out, Object.fromEntries(Object.entries(tree).filter(([p]) => !paths.includes(p))));
+    return out;
+  }
   async diffSnapshots(repoRoot: string, a: string, b: string): Promise<WorkdirDiff> {
     const dir = await mkdtemp(join(tmpdir(), "csh-fake-diff-"));
     try {
