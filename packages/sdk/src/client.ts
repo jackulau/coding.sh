@@ -100,7 +100,7 @@ async function settle(deadline: number): Promise<void> {
 }
 
 /**
- * Waits until everything recorded so far is sent, or timeoutMs passes.
+ * Waits until every recorded item is sent, or timeoutMs passes.
  * Serverless: `waitUntil(flush())`. Resolves true when the queue drained.
  */
 export async function flush(timeoutMs = 5000): Promise<boolean> {
