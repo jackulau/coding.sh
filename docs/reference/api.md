@@ -25,7 +25,8 @@ or a proxy in front of it.
 - Create keys with `coding.sh serve keygen`. The key goes to stdout once; the server keeps only its sha256.
 - Ingest keys cannot read and read keys cannot ingest. Each gets 401.
 - On a loopback bind with no keys configured, ingest is open and lands in project `default`, and reads are open too.
-- A non-loopback bind with no credentials at all makes one ingest key and one read key on first start. It keeps them in `<CODING_SH_HOME>/serve-keys.json` and prints them once, on the start that makes them. Later starts and `--json` name the file and never print the keys.
+- A non-loopback bind with no credentials at all makes one ingest key and one read key on first start, keeps them in `<CODING_SH_HOME>/serve-keys.json` and prints them once.
+- Later starts and `--json` name `serve-keys.json` and never print the keys.
 - A non-loopback bind with only some credentials (an ingest key but no read key, say) refuses to start unless you pass `--insecure`.
 
 **Projects.** The ingest key decides the project of everything it sends; a client cannot pick one.
@@ -408,10 +409,13 @@ Without a valid read credential: 401 `{"error":"missing or invalid read key","st
 
 The viewer page (HTML, also `HEAD`). Auth: read key or basic auth. `/?t=<read key>` trades the key
 for an `HttpOnly; SameSite=Strict` cookie named `csh_rk` and redirects to `/`, so the key leaves the
-address bar. Behind a TLS proxy with `CODING_SH_TRUST_PROXY=1`, a request with
+address bar.
+
+Behind a TLS proxy with `CODING_SH_TRUST_PROXY=1`, a request with
 `X-Forwarded-Proto: https` gets the cookie as `__Host-csh_rk` marked `Secure`, and every answer
 carries `Strict-Transport-Security: max-age=31536000`. Plain HTTP keeps the `csh_rk` name, and
 either name is accepted.
+
 The exchange happens when the browser opened the link itself (address bar, bookmark, another app)
 or from the same site, and for clients that send no `Sec-Fetch-Site` header, such as curl. A link
 followed from another site gets a page with one button instead, which posts the key to `/`.
