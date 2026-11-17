@@ -21,9 +21,9 @@
 // - Headless: `gemini -p … -o stream-json -m M --approval-mode yolo --skip-trust`; stream
 //   events init{session_id,model}, message, tool_use, tool_result, error, result{stats}.
 // - Isolation: GEMINI_CLI_HOME replaces ~ (config, tmp, creds, extensions move with it).
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { basename, dirname, join, sep } from "node:path";
-import type { Adapter, AgentRunOutput, DetectResult, FileChange, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../../core/types.ts";
+import type { Adapter, AgentRunOutput, BackfillFile, BackfillOpts, DetectResult, FileChange, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../../core/types.ts";
 import type { AgentEvent, Usage } from "../../schema/index.ts";
 import {
   Emitter,
@@ -422,12 +422,21 @@ export const geminiCliAdapter: Adapter = {
   // mcpServers in the user settings.json (the same file as the hooks).
   ...mcpInstaller((env) => ({ agent: ID, file: geminiSettingsPath({ scope: "user" }, env), format: "json", key: "mcpServers", entry: commandArgsEntry })),
   normalize: normalizeGemini,
-  async *backfill(ctx: NormalizeContext, opts?: { since?: number }): AsyncIterable<AgentEvent> {
+  async *backfill(ctx: NormalizeContext, opts?: BackfillOpts): AsyncIterable<AgentEvent> {
     const gdir = geminiDir();
     const registry = projectPaths(gdir);
     const files = walkFiles(join(gdir, "tmp"), (n, full) => /^session-.*\.jsonl?$/.test(n) || (n.endsWith(".jsonl") && full.includes(`${sep}chats${sep}`)), 4);
     for (const f of files) {
-      if (opts?.since !== undefined && mtimeMs(f) < opts.since) continue;
+      let file: BackfillFile;
+      try {
+        const st = statSync(f);
+        file = { path: f, size: st.size, mtimeMs: st.mtimeMs };
+      } catch {
+        continue; // removed since the walk
+      }
+      if (opts?.since !== undefined && file.mtimeMs < opts.since) continue;
+      // A chat file unchanged since the last backfill is not read again (nor counted as a session it updated).
+      if (opts?.changed && !(await opts.changed(file))) continue;
       yield* geminiChatEvents(f, ctx, { since: opts?.since, cwd: projectRootOf(f, registry) });
     }
   },

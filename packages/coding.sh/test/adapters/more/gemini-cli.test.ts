@@ -6,6 +6,9 @@ import { geminiCliAdapter, GEMINI_HOOK_EVENTS, replayGeminiChat } from "../../..
 import type { TmpEnv } from "../_helpers.ts";
 import { assertGolden, assertInstallRoundTrip, assertWellFormed, collect, FIXTURES, HOOK, moreEnv, normalizeFixture, summarize, testCtx, writeFile } from "./_helpers.ts";
 import { buildHookCommand } from "../../../src/adapters/_shared/hooks.ts";
+import { defaultConfig } from "../../../src/core/config.ts";
+import { backfill } from "../../../src/core/ingest.ts";
+import { MemoryBlobStore, MemoryIndexStore } from "../../../src/store/memory.ts";
 
 describe("gemini-cli normalize", () => {
   it("maps hook payloads to golden events", async () => {
@@ -83,6 +86,18 @@ describe("gemini-cli chats", () => {
     assert.equal(main.filter((e) => e.kind === "turn.end").length, 2);
     const since = await collect(geminiCliAdapter.backfill!(ctx, { since: Date.parse("2026-09-21T10:01:00.000Z") }));
     assert.ok(since.length > 0 && since.every((e) => e.ts >= Date.parse("2026-09-21T10:01:00.000Z")));
+  });
+
+  it("a second backfill over unchanged chat files reads none and counts no sessions", async () => {
+    const cenv = { ...process.env };
+    const index = new MemoryIndexStore();
+    const run = () => backfill({ config: defaultConfig(cenv), index, blobs: new MemoryBlobStore(), adapters: [geminiCliAdapter], env: cenv });
+    const first = await run();
+    assert.deepEqual(first.errors, []);
+    assert.ok(first.events > 0 && first.sessions > 0);
+    const again = await run();
+    assert.deepEqual(again.errors, []);
+    assert.deepEqual([again.events, again.sessions], [0, 0]);
   });
 });
 
