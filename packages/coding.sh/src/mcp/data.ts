@@ -8,7 +8,7 @@ import type { CacheBreakCause } from "../schema/index.ts";
 import { CACHE_BREAK_FIX, CACHE_IDLE_FIX } from "../core/cache-breaks.ts";
 import { cacheBaseline, CACHE_BASELINE_NOTE } from "../core/cache-baselines.ts";
 import { mergeCallCopies } from "../core/call-copies.ts";
-import { failureFlags, percentile } from "../core/sessions.ts";
+import { failureFlags, isBackfillEvent, percentile } from "../core/sessions.ts";
 import { weightsEventText } from "../core/weights.ts";
 import { sessionMatcher } from "../query/run.ts";
 import type { Node, Query } from "../query/where.ts";
@@ -359,18 +359,43 @@ export interface TurnInfo extends Obj {
   durationMs?: number;
 }
 
-/** Splits events into turns at each user.message (events before the first prompt join turn 1). */
+/** A turn.end that closes a turn: one a blocked Stop hook fired again continues the same turn. */
+const closesTurn = (e: AgentEvent) => e.kind === "turn.end" && e.payload.stopHookActive !== true;
+/** Main-thread kinds that show a turn is under way: events after the last turn.end with none of them (a session.end, a background subagent finishing) are that turn's tail. */
+const TURN_WORK = new Set(["user.message", "assistant.message", "llm.call", "tool.start", "tool.end"]);
+const turnWork = (e: AgentEvent) => TURN_WORK.has(e.kind) && e.subagentId === undefined;
+
+/**
+ * Splits events into turns. Where every turn.end comes from one capture path,
+ * each turn.end closes a turn, as stats.turns counts them: a turn a background
+ * task's notification started is a turn of its own, and prompts sent while a
+ * turn runs (Codex steering) stay in it. Events after the last turn.end make a
+ * turn only once one is under way. A session seen both live and from its
+ * transcript has two turn.end rows per turn, so it is split at each
+ * user.message instead (events before the first prompt join turn 1).
+ */
 export function splitTurns(events: AgentEvent[]): AgentEvent[][] {
+  const ends = events.filter(closesTurn);
+  const backfill = ends.filter(isBackfillEvent).length;
+  const byEnds = ends.length > 0 && (backfill === 0 || backfill === ends.length);
   const turns: AgentEvent[][] = [];
   let cur: AgentEvent[] = [];
+  let closed = false;
   for (const e of events) {
-    if (e.kind === "user.message" && cur.some((x) => x.kind === "user.message")) {
+    const split = byEnds ? closed : e.kind === "user.message" && cur.some((x) => x.kind === "user.message");
+    if (split) {
       turns.push(cur);
       cur = [];
+      closed = false;
     }
     cur.push(e);
+    if (closesTurn(e)) closed = true;
   }
-  if (cur.length) turns.push(cur);
+  if (cur.length) {
+    // A session.end, an idle notice or a background subagent's events after the last turn.end is that turn's tail, not a new turn.
+    if (byEnds && turns.length && !cur.some(turnWork)) turns[turns.length - 1]!.push(...cur);
+    else turns.push(cur);
+  }
   return turns;
 }
 
