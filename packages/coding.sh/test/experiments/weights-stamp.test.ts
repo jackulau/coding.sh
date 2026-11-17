@@ -202,7 +202,11 @@ process.stdout.write(JSON.stringify({answer:right?"ok":"wrong",finish_reason:don
     const text = ok(["exp", "list"]).stdout;
     assert.match(text, /^ID\s+NAME\s+DATASET\s+RUNS\s+CREATED\s+WEIGHTS$/m);
     assert.match(text, new RegExp(`^exp_\\w+\\s+edited\\s.*\\s${short(EDITED)}$`, "m"));
-    assert.match(text, /^exp_\w+\s+plain\s.*\sago\s*$/m, "a run without a stamp has an empty cell");
+    // Read the row by its cells, not by its age: CREATED says "just now" in the run's first second
+    // and "2s ago" after it, and which one this is depends on how fast the machine is.
+    const plain = text.split("\n").map((line) => line.split("\t")).find((cells) => cells[1] === "plain");
+    assert.equal(plain?.length, 6, text);
+    assert.equal(plain?.[5], "", "a run without a stamp has an empty cell");
   });
 
   it("exp compare shows both stamps in the header: short in text, whole in --json", () => {

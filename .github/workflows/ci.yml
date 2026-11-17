@@ -22,8 +22,10 @@ concurrency:
 # check has another name ("full suite without site perf"). Without the label a pull request
 # gets the quick jobs only: the Linux tests on Node 24, the build, the gate, the stores, the
 # Python SDK, the Node floor, the release smoke test and the GitHub Action, minus the ones
-# scripts/ci-changes.mjs can prove it does not need. Windows, Node 22, the real agent captures,
-# the container image and cli-suite run in the full suite only.
+# scripts/ci-changes.mjs can prove it does not need. Its Linux tests run the test files its diff
+# can reach, or all of them when a changed path has no rule (packages/coding.sh/scripts/
+# test-select.ts). Windows, Node 22, the real agent captures, the container image and cli-suite
+# run in the full suite only, and the full suite always runs every test file.
 env:
   FULL: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
 
@@ -79,7 +81,10 @@ jobs:
       # Chrome; naming it makes a missing one fail instead of skip.
       CODING_SH_TEST_CHROME: /usr/bin/google-chrome
     steps:
+      # Two commits: the quick run of a pull request reads its diff (the Test step below).
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
 
       - uses: actions/setup-node@v5
         with:
@@ -115,11 +120,17 @@ jobs:
         timeout-minutes: 3
         run: node scripts/warm-chrome.ts
 
+      # The quick run of a pull request (no `ready` label) runs the test files its diff can reach
+      # (scripts/test-select.ts): TEST_SELECT names the commit to diff against, the base the pull
+      # request is merged with. A path without a rule runs every test file, and so does any error.
+      # The full suite and a push leave TEST_SELECT empty and never select. Each leg prints what it
+      # runs and why. A narrowed run writes no run times, so the upload below finds no file.
       - name: Test
         working-directory: packages/coding.sh
         env:
           SHARD: ${{ matrix.shard }}/3
           TEST_DURATIONS_OUT: ${{ runner.temp }}/test-durations.json
+          TEST_SELECT: ${{ env.FULL == 'false' && 'HEAD^1' || '' }}
         # A file that fails is run again alone; one that then passes is a warning, not a failure.
         run: node scripts/test-ci.mjs
 
