@@ -116,3 +116,22 @@ test("every fenced block of a docs/*.md page is on its built page, line for line
   }
   assert.deepEqual(found, [], found.join("\n"));
 });
+
+// A block that shows what a command prints is captioned "output", not "shell",
+// so a numbered step reads "run this, expect that" (Quickstart, Install).
+test("a Terminal that shows a command's output is not captioned shell", () => {
+  const found = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const abs = join(dir, e.name);
+      if (e.isDirectory()) walk(abs);
+      else if (e.name.endsWith(".astro")) {
+        for (const m of readFileSync(abs, "utf8").matchAll(/<Terminal\b[^>]*>/g)) {
+          if (/\blabel="Output of /.test(m[0]) && /\btitle="shell"/.test(m[0])) found.push(`${relative(SITE, abs)}: ${m[0]}`);
+        }
+      }
+    }
+  };
+  walk(join(SITE, "src", "pages"));
+  assert.deepEqual(found, [], found.join("\n"));
+});

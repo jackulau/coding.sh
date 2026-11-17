@@ -157,7 +157,7 @@ const next = [
 
         <h3 id="sdk-serve">Start the local server</h3>
         <Code code="coding.sh serve" />
-        <Terminal title="shell" label="Output of coding.sh serve"><pre set:html={term(SERVE_OUT)} /></Terminal>
+        <Terminal title="output" label="Output of coding.sh serve"><pre set:html={term(SERVE_OUT)} /></Terminal>
         <p>
           It logs two JSON lines, then prints its address. It takes traces from the SDK and from OpenTelemetry, keeps them in <code>~/.coding.sh</code> and serves the viewer on the same
           address. Leave it running and open a second terminal.
@@ -209,10 +209,10 @@ const next = [
             { label: "Python", title: "shell", code: 'python triage.py "Viewer search misses tool output"' },
           ]}
         />
-        <Terminal title="shell" label="Output of triage.mjs"><pre>bug, viewer</pre></Terminal>
+        <Terminal title="output" label="Output of triage.mjs"><pre>bug, viewer</pre></Terminal>
 
         <h3 id="sdk-see">See your run</h3>
-        <Terminal title="shell" label="Output of coding.sh show latest"><pre set:html={term(SDK_SHOW)} /></Terminal>
+        <Terminal title="output" label="Output of coding.sh show latest"><pre set:html={term(SDK_SHOW)} /></Terminal>
         <p>
           Open <code>http://127.0.0.1:4318</code> and click the row. You see the system and user messages, the model call with its tokens,
           latency and cost, and the answer.
