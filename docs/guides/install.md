@@ -60,6 +60,11 @@ Run the installer from Git Bash, which comes with [Git for Windows](https://gitf
 The source install below works from PowerShell too. Under WSL, coding.sh behaves as it does on
 Linux and records the agents you run inside WSL.
 
+In PowerShell and cmd, type `codingsh` instead of `coding.sh` (for example `codingsh init` and
+`codingsh ui`). npm also installs an extensionless sh script named `coding.sh`, and PowerShell and
+cmd pick it over `coding.sh.cmd`, so `coding.sh` fails there. `codingsh` is the same CLI. In Git
+Bash, `coding.sh` works. `init` names `codingsh` in its next steps when it runs in PowerShell or cmd.
+
 - Hooks run `node "C:/Users/you/.coding.sh/bin/hook.mjs" <agent> <event>`. The forward slashes
   and quotes work in cmd.exe, PowerShell and Git Bash, and with spaces in the path.
 - Eval task `setup` and verifier commands run in `sh`, so they need Git for Windows.

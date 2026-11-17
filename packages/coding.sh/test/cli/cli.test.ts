@@ -571,8 +571,15 @@ describe("cli zero setup", () => {
     assert.match(tail[0]!, /Set up Claude Code.*\(hooks \+ MCP server\)/);
     // Agents load hooks at session start: say capture begins with the next session.
     assert.match(tail[1]!, /Recording starts with the next session: start a new session of any of them\. Sessions already open may not have loaded the hooks$/);
-    assert.match(tail[2]!, /Open the viewer: coding\.sh ui$/);
-    assert.match(tail[3]!, /After a few sessions, see what to fix first: coding\.sh improve$/);
+    // The test env sets no SHELL or MSYSTEM: on Windows that is PowerShell or cmd, where `coding.sh` opens npm's sh shim.
+    const bin = process.platform === "win32" ? "codingsh" : "coding\\.sh";
+    assert.match(tail[2]!, new RegExp(`Open the viewer: ${bin} ui$`));
+    assert.match(tail[3]!, new RegExp(`After a few sessions, see what to fix first: ${bin} improve$`));
+    if (process.platform === "win32") {
+      // From Git Bash (MSYSTEM set), `coding.sh` runs there: keep it.
+      const gitBash = cli(h, ["init", "--yes", ...agentArgs], { MSYSTEM: "MINGW64" }).stderr;
+      assert.match(gitBash, /Open the viewer: coding\.sh ui$/m);
+    }
     assert.match(tail[4]!, /Docs: https:\/\/coding\.sh\/docs$/);
     for (const f of Object.values(files)) assert.match(readFileSync(f, "utf8"), /coding-sh/, f);
     assert.equal(readFileSync(join(h.data, "bin", "cli-path"), "utf8"), `${CLI}\n`, "hook knows the CLI for background ingests");

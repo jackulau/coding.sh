@@ -1,5 +1,6 @@
 // What install.sh tells people about the coding.sh they will run next: another
-// coding.sh earlier on PATH shadows the one just installed.
+// coding.sh earlier on PATH shadows the one just installed, and on Windows
+// PowerShell and cmd resolve `coding.sh` to npm's sh shim, so they need `codingsh`.
 // npm and uname are stubs on PATH; nothing touches the network or installs.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -63,5 +64,26 @@ describe("install.sh: another coding.sh first on PATH", () => {
     const r = install({ stale: true, windows: true });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stderr, /another coding\.sh \(0\.1\.6, [^)]*stale\/coding\.sh\) comes first on PATH; put "[^"]*prefix" ahead of it/);
+  });
+});
+
+describe("install.sh: PowerShell and cmd on Windows", () => {
+  test("names codingsh, since coding.sh there resolves to npm's sh shim", () => {
+    const r = install({ windows: true, onPath: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /Done\. Run: coding\.sh init/);
+    assert.match(r.stderr, /In PowerShell or cmd, type codingsh instead of coding\.sh \(codingsh init\)/);
+  });
+
+  test("names codingsh after init when the viewer is skipped", () => {
+    const r = install({ windows: true, onPath: true, env: { CODING_SH_NO_INIT: "", CODING_SH_YES: "1", CODING_SH_NO_UI: "1" } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /type codingsh instead of coding\.sh/);
+  });
+
+  test("macOS and Linux shells get no such note", () => {
+    const r = install({ onPath: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.doesNotMatch(r.stderr, /codingsh/);
   });
 });

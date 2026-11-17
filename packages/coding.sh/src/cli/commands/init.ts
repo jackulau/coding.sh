@@ -563,10 +563,21 @@ export async function run(c: CommandContext): Promise<number> {
     }
   }
   if (imported) reportImport(out, imported);
-  // Started with npx, `coding.sh` is not on PATH: name the next commands the way this one ran.
-  const bin = env.npm_command === "exec" ? "npx coding.sh" : "coding.sh";
+  const bin = nextStepBin(env);
   out.note(`Open the viewer: ${out.style(`${bin} ui`, "cyan", "err")}`);
   out.note(`After a few sessions, see what to fix first: ${out.style(`${bin} improve`, "cyan", "err")}`);
   out.note(`Docs: ${DOCS_URL}`);
   return errors ? 1 : 0;
+}
+
+/**
+ * How to name the CLI in the next-step lines. Started with npx, `coding.sh` is
+ * not on PATH: npx it. In PowerShell or cmd on Windows (no MSYSTEM or SHELL,
+ * which Git Bash, MSYS2 and Cygwin set), `coding.sh` resolves to npm's
+ * extensionless sh shim and fails, so name the dotless `codingsh` bin.
+ */
+export function nextStepBin(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string {
+  if (env.npm_command === "exec") return "npx coding.sh";
+  if (platform === "win32" && !env.MSYSTEM && !env.SHELL) return "codingsh";
+  return "coding.sh";
 }
