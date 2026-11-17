@@ -23,7 +23,9 @@ function keepPrefix(kind: string): (m: string, ...g: string[]) => string {
 const RULES: Rule[] = [
   {
     kind: "private-key",
-    pattern: /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----/g,
+    // Updated on purpose: a BEGIN line with no END after it, followed by key data, is a key that
+    // runs to the end of the text.
+    pattern: /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----(?:[\s\S]*?-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|(?=\s*(?:[A-Za-z0-9+/=]{16}|Proc-Type:))[\s\S]*$)/g,
   },
   { kind: "anthropic-key", pattern: /(?<![A-Za-z0-9_-])sk-ant-[A-Za-z0-9_-]{20,}/g },
   { kind: "openai-key", pattern: /(?<![A-Za-z0-9_-])sk-(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{20,}/g },

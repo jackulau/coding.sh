@@ -161,7 +161,9 @@ function withFastApply(rule: RedactRule, apply: (s: string, onMatch?: OnMatch) =
 export function secretRules(): RedactRule[] {
   const privateKey: RedactRule = {
     kind: "private-key",
-    pattern: /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----/g,
+    // A BEGIN line to its END line; with no END after it, to the end of the text when key data
+    // (16 base64 characters, or a PEM Proc-Type header) follows the BEGIN line.
+    pattern: /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----(?:[\s\S]*?-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|(?=\s*(?:[A-Za-z0-9+/=]{16}|Proc-Type:))[\s\S]*$)/g,
   };
   // Secrets pasted in prose: "PAT here ya go: abcD3f-…", "the password is hunter22".
   // A secret word, a short gap, then ":", "=" or "is", then one token that mixes
@@ -228,10 +230,13 @@ export function secretRules(): RedactRule[] {
 }
 
 // The private-key regex lazily scans to the next END line from every BEGIN line,
-// so many unterminated BEGIN lines cost O(n²). Every match ends with an END line,
-// so only the text up to the end of the last END line can change; inside that
-// prefix each BEGIN line finds its END and the scan consumes it.
+// so many unterminated BEGIN lines cost O(n²). Up to the end of the last END line,
+// each BEGIN line finds its END and the scan consumes it, so the regex runs on that
+// prefix only. Past it no BEGIN line has an END: the first one followed by key data
+// runs to the end of the text, which is what the regex's second branch matches.
 const PRIVATE_KEY_END = /-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----/y;
+const PRIVATE_KEY_BEGIN = /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----/g;
+const PRIVATE_KEY_DATA = /\s*(?:[A-Za-z0-9+/=]{16}|Proc-Type:)/y;
 function redactPrivateKeys(s: string, re: RegExp, onMatch?: OnMatch): string {
   let cut = -1;
   for (let q = s.lastIndexOf("-----END "); q >= 0; q = q > 0 ? s.lastIndexOf("-----END ", q - 1) : -1) {
@@ -241,17 +246,34 @@ function redactPrivateKeys(s: string, re: RegExp, onMatch?: OnMatch): string {
       break;
     }
   }
-  if (cut < 0 || !s.includes("-----BEGIN ")) return s;
-  re.lastIndex = 0;
-  const head = s.slice(0, cut);
-  return (
-    (onMatch
-      ? head.replace(re, (m) => {
-          onMatch("private-key", m);
-          return marker("private-key");
-        })
-      : head.replace(re, marker("private-key"))) + s.slice(cut)
-  );
+  if (!s.includes("-----BEGIN ")) return s;
+  const parts: string[] = [];
+  let pos = 0;
+  if (cut >= 0) {
+    const head = s.slice(0, cut);
+    re.lastIndex = 0;
+    for (let m = re.exec(head); m; m = re.exec(head)) {
+      onMatch?.("private-key", m[0]);
+      parts.push(s.slice(pos, m.index), marker("private-key"));
+      pos = m.index + m[0].length;
+    }
+  }
+  // A BEGIN line past the last match has no END after it (a clip or a cut paste dropped it):
+  // when key data follows it, the key runs to the end of the text. A BEGIN line in prose is left.
+  PRIVATE_KEY_BEGIN.lastIndex = pos;
+  let open = PRIVATE_KEY_BEGIN.exec(s);
+  for (; open; open = PRIVATE_KEY_BEGIN.exec(s)) {
+    PRIVATE_KEY_DATA.lastIndex = PRIVATE_KEY_BEGIN.lastIndex;
+    if (PRIVATE_KEY_DATA.test(s)) break;
+  }
+  if (open) {
+    onMatch?.("private-key", s.slice(open.index));
+    parts.push(s.slice(pos, open.index), marker("private-key"));
+    pos = s.length;
+  }
+  if (!parts.length) return s;
+  parts.push(s.slice(pos));
+  return parts.join("");
 }
 
 // prose-secret, evaluated by hand. The regex checks "the rest of the token has a

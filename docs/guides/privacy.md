@@ -58,6 +58,9 @@ Redaction runs at ingest, before anything is written to the index, the blobs or 
 match becomes `[redacted:<kind>]`.
 A value nested more than 64 levels deep is redacted with the same rules. A value too deep to copy
 is stored as `[redacted:too-deep]`.
+A private key's `BEGIN` line with no `END` line after it, as in output cut short, is redacted
+from that line to the end of the text when key data follows it. A `BEGIN` line named in prose,
+with no key data after it, is left as it is.
 
 | `[capture] redact` | Replaces | On by default |
 | --- | --- | --- |
