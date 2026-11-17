@@ -12,7 +12,7 @@ const ci = read(".github/workflows/ci.yml");
 const jobs = (text) => new Set([...text.matchAll(/^  ([a-z][a-z-]*):$/gm)].map((m) => m[1]));
 
 test("ci.yml runs the static gate, Postgres, the Python SDK and the release smoke test", () => {
-  for (const job of ["gate-static", "store-postgres", "python-sdk", "release-smoke"]) assert.ok(jobs(ci).has(job), `${job} job`);
+  for (const job of ["gate-static", "store-postgres", "python-sdk", "runtime-floor"]) assert.ok(jobs(ci).has(job), `${job} job`);
   assert.match(ci, /node scripts\/gate\.mjs --static --strict/);
   assert.match(ci, /CODING_SH_TEST_PG_URL: postgres:\/\/postgres:ci@127\.0\.0\.1:5432\/coding/);
   assert.match(read("packages/sdk-python/pyproject.toml"), /requires-python = ">=3\.9"/);
@@ -57,6 +57,27 @@ test("ci.yml runs the Python SDK's tests on Python 3.9 and on 3.13 in one job", 
   const last = steps.find((s) => s.includes("python3.13 -m unittest"));
   assert.ok(last.includes("\n        if: ${{ !cancelled() && steps.install.outcome == 'success' }}\n"));
   assert.match(job, /\n        id: install\n/);
+});
+
+// One job, not two: the smoke test and the floor share a checkout and an install.
+test("ci.yml runs the release smoke test on a current Node, then the floor, in one job", () => {
+  assert.ok(!jobs(ci).has("release-smoke"), "no second job");
+  const job = /\n  runtime-floor:\n([\s\S]*?)\n  [a-z-]+:\n/.exec(ci)?.[1] ?? "";
+  const steps = job.split(/\n      - /).slice(1);
+  const at = (re) => steps.findIndex((s) => re.test(s));
+  const node24 = at(/node-version: 24\.x\n/), install = at(/\n        run: npm ci(\n|$)/), smoke = at(/\n        run: sh scripts\/release\/smoke\.sh(\n|$)/);
+  const pack = at(/npm pack --silent/), floorNode = at(/node-version: 22\.\d+\.0(\n|$)/), floor = at(/scripts\/release\/runtime-floor\.sh/);
+  for (const [name, i] of Object.entries({ node24, install, smoke, pack, floorNode, floor })) assert.notEqual(i, -1, `${name} step`);
+  // The smoke test runs on Node 24: the switch to the floor comes after it and after the build.
+  assert.ok(node24 < install && install < smoke && smoke < pack && pack < floorNode && floorNode < floor, "step order");
+  assert.equal(job.match(/uses: actions\/setup-node@/g).length, 2);
+  // A failed smoke test fails the job and the floor still runs, as the two jobs did.
+  assert.doesNotMatch(job, /continue-on-error/);
+  assert.doesNotMatch(steps[smoke], /\n        if:/);
+  assert.ok(steps[pack].includes("\n        if: ${{ !cancelled() && steps.install.outcome == 'success' }}\n"));
+  for (const i of [floorNode, floor]) assert.ok(steps[i].includes("\n        if: ${{ !cancelled() && steps.pack.outcome == 'success' }}\n"));
+  // The packed CLI is built by the package's own build, as a release builds it.
+  assert.match(steps[pack], /\n          npm run build\n/);
 });
 
 test("ci.yml runs the Python SDK's typing, golden, otel and real-SDK tests instead of skipping them", () => {
