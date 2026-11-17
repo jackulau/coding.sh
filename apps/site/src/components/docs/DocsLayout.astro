@@ -262,12 +262,14 @@ const showOutline = outline.length + (outline[0]?.subs?.length ?? 0) >= 2;
           )
         }
       </main>
-      {/* A link to an id inside a closed <details> (a :::more block, an FAQ
-          answer) opens every closed <details> around it, then scrolls to it.
-          Runs after the article is parsed, again after each page swap, and on
-          each hash change (one handler, so a rerun does not add another). */}
+      {/* A link to a closed <details> (a :::more block, an FAQ answer), or to
+          an id inside one, opens it and every closed <details> around it, then
+          scrolls to the target. Runs after the article is parsed, again after
+          each page swap, on each hash change, and after a click on a link with
+          a hash: the router moves to a same-page hash with pushState, which
+          fires no hashchange. One handler each, so a rerun adds none. */}
       <script is:inline data-astro-rerun>
-        onhashchange=()=>{try{let e=document.getElementById(decodeURIComponent(location.hash.slice(1))),d=e,s;while(d=d?.parentElement?.closest("details:not([open])"))d.open=s=1;s&&e.scrollIntoView()}catch{}};onhashchange()
+        onhashchange=()=>{try{let e=document.getElementById(decodeURIComponent(location.hash.slice(1))),d=e,s;while(d=d?.closest("details:not([open])"))d.open=s=1;s&&e.scrollIntoView()}catch{}};onhashchange();onclick=e=>e.target.closest?.("a[href*='#']")&&setTimeout(onhashchange)
       </script>
     </div>
   </div>

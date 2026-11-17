@@ -1,7 +1,8 @@
 // A link to an id inside a closed <details> opens it: /docs/faq folds each
 // answer under its question, and every docs page carries a small inline script
-// that, on load and on hashchange, opens each closed <details> around the
-// target and scrolls to it. Checks the built pages in dist when there is a build.
+// that, on load, on hashchange and after a click on a link with a hash, opens
+// the target when it is a closed <details> and each closed <details> around
+// it, and scrolls to it. Checks the built pages in dist when there is a build.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -49,9 +50,10 @@ function el(tag, parent, attrs = {}) {
 
 function run(script, ids, hash) {
   const location = { hash };
-  const ctx = vm.createContext({ location, document: { getElementById: (id) => ids[id] ?? null } });
+  const timers = [];
+  const ctx = vm.createContext({ location, setTimeout: (f) => timers.push(f), document: { getElementById: (id) => ids[id] ?? null } });
   vm.runInContext(script, ctx);
-  return { ctx, location };
+  return { ctx, location, timers };
 }
 
 test("/docs/faq: each answer folds under its question, which keeps its id and self-link", distOpts(DIST), () => {
@@ -101,6 +103,39 @@ test("a hash inside closed <details> opens each one around it and scrolls to the
     location.hash = h;
     assert.doesNotThrow(() => ctx.onhashchange());
   }
+});
+
+test("a closed <details> that is itself the target opens", distOpts(DIST), () => {
+  needDist(DIST);
+  // /docs/quickstart#init and /docs/otel#claude-code name the <details> itself.
+  const outer = el("details");
+  const target = el("details", el("div", outer));
+  run(opener(page("docs/quickstart")), { init: target }, "#init");
+  assert.equal(target.open && outer.open, true, "the target and the fold around it open");
+  assert.equal(target.scrolled, 1);
+});
+
+test("a click on a same-page hash link opens the fold, though the router fires no hashchange", distOpts(DIST), () => {
+  needDist(DIST);
+  // The ClientRouter moves to a same-page hash with pushState, so no hashchange
+  // fires: the click itself runs the opener, after the router has moved.
+  const target = el("details");
+  const { ctx, location, timers } = run(opener(page("docs/faq")), { config: target }, "");
+  assert.equal(typeof ctx.onclick, "function", "a click handler, set once like onhashchange");
+  const link = { closest: (sel) => (sel === "a[href*='#']" ? link : null) };
+  const text = { closest: () => null };
+  ctx.onclick({ target: text });
+  assert.equal(timers.length, 0, "a click on anything but a hash link does nothing");
+  ctx.onclick({ target: link });
+  location.hash = "#config";
+  for (const f of timers.splice(0)) f();
+  assert.equal(target.open, true, "the answer opens after the router moves to its hash");
+  assert.equal(target.scrolled, 1);
+  // Closed again by the reader, it stays closed on clicks that are not hash links.
+  target.open = false;
+  ctx.onclick({ target: text });
+  assert.equal(timers.length, 0);
+  assert.equal(target.open, false);
 });
 
 test("every docs page carries the opener once, :::more pages included", distOpts(DIST), () => {
