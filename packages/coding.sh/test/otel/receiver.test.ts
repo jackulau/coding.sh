@@ -297,6 +297,83 @@ describe("OTLP receiver over HTTP", () => {
     });
   });
 
+  // Regression: the root invoke_agent span is the only one with gen_ai.conversation.id, and a
+  // batching exporter sends it after its subagent's spans. The subagent landed under an empty
+  // session named after the trace id, and the conversation got no subagent.
+  describe("a conversation id that arrives after the trace's other spans", () => {
+    const T = "5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c";
+    const [root, sub] = ["b000000000000001", "b000000000000002"];
+    const chat = (id: string, parent: string, input: number, s: number, e: number) =>
+      otlpSpan(T, id, parent, "chat gpt-4o", [sAttr("gen_ai.operation.name", "chat"), sAttr("gen_ai.request.model", "gpt-4o"), iAttr("gen_ai.usage.input_tokens", input), iAttr("gen_ai.usage.output_tokens", 10)], s, e);
+    const spans = [
+      chat("b000000000000011", sub, 1000, 110, 3990),
+      otlpSpan(T, sub, root, "invoke_agent flights", [sAttr("gen_ai.operation.name", "invoke_agent"), sAttr("gen_ai.agent.name", "flights")], 100, 4000),
+      chat("b000000000000021", root, 3000, 8010, 8990),
+      otlpSpan(T, root, undefined, "invoke_agent orchestrator", [sAttr("gen_ai.operation.name", "invoke_agent"), sAttr("gen_ai.agent.name", "orchestrator"), sAttr("gen_ai.conversation.id", "conv-late")], 0, 9000),
+    ];
+    const post = async (part: typeof spans) => assert.equal((await send(rx.url, json("/v1/traces", otlpTraces("orchestrator", part)))).status, 200);
+    const child = `otel-sub-${T}-${sub}`;
+    const shape = async () => {
+      const c = await store.getSession("conv-late");
+      const s = await store.getSession(child);
+      return {
+        trace: (await store.getSession(T)) !== undefined || (await store.listEvents(T)).length > 0,
+        subagents: c?.stats.latency?.subagents,
+        input: c?.stats.usage?.inputTokens,
+        childParent: s?.parent?.sessionId,
+        childInput: s?.stats.usage?.inputTokens,
+      };
+    };
+    const want = { trace: false, subagents: 1, input: 3000, childParent: "conv-late", childInput: 1000 };
+
+    it("moves the subagent and its work into the conversation when the root comes in a later request", async () => {
+      await post(spans.slice(0, 2));
+      await post(spans.slice(2));
+      assert.deepEqual(await shape(), want);
+      const conv = await store.listEvents("conv-late");
+      const moved = conv.filter((e) => e.kind === "subagent.start");
+      assert.equal(moved.length, 1);
+      assert.equal(moved[0]?.turnId, T, "a conversation's trace is a turn");
+      assert.ok(conv.every((e) => e.kind !== "session.end"));
+      await rx.close();
+      await start();
+      await post(spans);
+      assert.deepEqual(await shape(), want, "the same as one request");
+    });
+
+    it("moves them when both requests are committed in one group", async () => {
+      // Hold the first commit, so the next two requests queue and are mapped before either is stored.
+      let release!: () => void;
+      const held = new Promise<void>((r) => (release = r));
+      const put = store.putEvents.bind(store);
+      const replace = store.replaceSessionEvents.bind(store);
+      let calls = 0;
+      let moving = false;
+      store.putEvents = async (b) => {
+        if (!moving && calls++ === 0) await held;
+        return put(b);
+      };
+      store.replaceSessionEvents = async (...args) => {
+        moving = true;
+        try {
+          return await replace(...args);
+        } finally {
+          moving = false;
+        }
+      };
+      const first = post([otlpSpan("4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b4b", "c000000000000001", undefined, "other", [], 0, 10)]);
+      await new Promise((r) => setTimeout(r, 50));
+      const a = post(spans.slice(0, 2));
+      await new Promise((r) => setTimeout(r, 50));
+      const b = post(spans.slice(2));
+      await new Promise((r) => setTimeout(r, 50));
+      release();
+      await Promise.all([first, a, b]);
+      assert.equal(calls, 3, "one put per request, the last two in one group");
+      assert.deepEqual(await shape(), want);
+    });
+  });
+
   it("runs the enrichSpan hook on every span", async () => {
     await rx.close();
     const names: string[] = [];

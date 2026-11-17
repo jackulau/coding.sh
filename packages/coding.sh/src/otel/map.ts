@@ -166,9 +166,18 @@ export class SpanTree {
   private readonly map = new Map<string, SpanNode>();
   /** Parents that spans already seen name but that have not arrived (`${traceId}:${spanId}`). */
   private readonly waiting = new Set<string>();
+  /** Traces with spans already mapped. */
+  private readonly traces = new Set<string>();
   private readonly max: number;
   constructor(max = 50_000) {
     this.max = max;
+  }
+  /** Records that spans of `traceId` were mapped; true when an earlier call already had. */
+  noteTrace(traceId: string): boolean {
+    const had = this.traces.delete(traceId);
+    this.traces.add(traceId);
+    if (this.traces.size > this.max) this.traces.delete(this.traces.values().next().value!);
+    return had;
   }
   /** A span seen named `spanId` as its parent before it arrived. */
   wait(traceId: string, spanId: string): void {
@@ -201,18 +210,27 @@ export interface Rehome {
   traceId: string;
   /** The session those earlier spans were stored in. */
   from: string;
+  /**
+   * The conversation the trace turned out to belong to: a span that names it (often the root, which
+   * a batching exporter sends last) arrived after spans of the trace were stored in the trace's own
+   * session (`from`, the trace id). Every event of the trace there moves to it, or to a subagent's session.
+   */
+  to?: string;
 }
 
 /**
  * Where a stored event of session `from` belongs now that the span tree knows more: the child session
- * of its nearest enclosing subagent. Undefined when it stays (no known subagent above it, or not in `from`).
+ * of its nearest enclosing subagent, else the conversation the trace joined (Rehome.to). Undefined when
+ * it stays (no known subagent above it and no conversation, or not in `from`).
  */
-export function rehomeTarget(tree: SpanTree, e: AgentEvent, r: Rehome): { sessionId: string; subagentId: string } | undefined {
-  if (e.sessionId !== r.from || e.traceId !== r.traceId || !e.spanId) return undefined;
-  const node = tree.get(r.traceId, e.spanId);
-  if (!node) return undefined;
-  const sub = enclosingSubagent(tree, r.traceId, node.parentSpanId);
-  return sub ? { sessionId: childSessionId(r.traceId, sub), subagentId: sub } : undefined;
+export function rehomeTarget(tree: SpanTree, e: AgentEvent, r: Rehome): { sessionId: string; subagentId?: string; turnId?: string } | undefined {
+  if (e.sessionId !== r.from || e.traceId !== r.traceId) return undefined;
+  const node = e.spanId ? tree.get(r.traceId, e.spanId) : undefined;
+  const sub = node ? enclosingSubagent(tree, r.traceId, node.parentSpanId) : undefined;
+  if (sub) return { sessionId: childSessionId(r.traceId, sub), subagentId: sub };
+  // In a conversation each trace is a turn (as mapSpan tags it).
+  if (r.to && r.to !== r.from) return { sessionId: r.to, ...(e.subagentId ? { subagentId: e.subagentId } : {}), turnId: r.traceId };
+  return undefined;
 }
 
 /** Index kv key of a persisted trace → conversation entry. */
@@ -1137,9 +1155,16 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
   const waited = new Set<OtelSpan>();
   const orphans: OtelSpan[] = [];
   const rehome = new Map<string, Rehome>();
+  // Traces of this batch whose spans an earlier batch mapped.
+  const batchTraces = new Set<string>();
+  const earlier = new Set<string>();
   for (const rs of batch)
     for (const ss of rs.scopeSpans)
       for (const sp of ss.spans) {
+        if (sp.traceId && !batchTraces.has(sp.traceId)) {
+          batchTraces.add(sp.traceId);
+          if (tree.noteTrace(sp.traceId)) earlier.add(sp.traceId);
+        }
         const conv = conversationOf(sp.attributes);
         if (sp.traceId && conv && !traceConv.has(sp.traceId)) traceConv.set(sp.traceId, conv);
         const d = durableOf(sp, rs.resource.attributes, ss.scope);
@@ -1173,7 +1198,12 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
     // trace keys the session, so the run's spans that come later join it.
     if (!run && sp.traceId && !known && !traceRun.has(sp.traceId) && !traceConv.has(sp.traceId)) traceRun.set(sp.traceId, sp.traceId);
   }
-  for (const [t, s] of traceConv) ctx.traceSessions?.set(t, s);
+  for (const [t, s] of traceConv) {
+    // The trace's earlier spans named no conversation, so they were stored in the trace's own session:
+    // they move to the conversation (the exporter's split must not change the sessions).
+    if (earlier.has(t) && s !== t && !ctx.traceSessions?.has(t)) rehome.set(`${t}\0${t}`, { traceId: t, from: t, to: s });
+    ctx.traceSessions?.set(t, s);
+  }
   // A trace already keyed (an explicit conversation, or an earlier batch) keeps its session.
   for (const [t, s] of traceRun) if (!traceConv.has(t) && !ctx.traceSessions?.has(t)) ctx.traceSessions?.set(t, s);
   const compactIds = new Set<string>();
