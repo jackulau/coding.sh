@@ -185,6 +185,9 @@ tests run with `npm run lint:test`.
   Chrome is a failure: each test job starts Chrome once before its tests
   (`packages/coding.sh/scripts/warm-chrome.ts`), because a fresh runner's first start can take
   longer than the 20 s a test gives it. That first start has 60 s; past it the job fails. The
+  first start prints what it did, fast or slow: Chrome's stderr, when the first byte came on
+  stderr and on stdout, and on Linux how long the machine stalled meanwhile (from
+  `/proc/pressure`). The
   same step loads the viewer's list and Explore once, at the size the tests give a page, because
   the first viewer page on a runner does work no later page does (it reads Chrome's number and
   date data from disk, for one) and can take longer than the 5 s a test gives a page. A page
