@@ -3,6 +3,7 @@
 // `CODING_SH_BLOB_URL` pointing at the same database share connections), and
 // the schema migrations.
 import pg from "pg";
+import { reindexErrorText } from "./search.ts";
 
 export const DEFAULT_SCHEMA = "public";
 export const DEFAULT_POOL_MAX = 10;
@@ -131,6 +132,8 @@ export async function withTx<T>(pool: pg.Pool, fn: (c: pg.PoolClient) => Promise
 interface Migration {
   version: number;
   sql: (s: string) => string;
+  /** Runs after `sql`, in the same transaction, for data changes SQL alone cannot compute. */
+  after?: (c: pg.PoolClient, s: string) => Promise<void>;
 }
 
 /**
@@ -321,6 +324,16 @@ ALTER TABLE ${s}.sessions ADD COLUMN parse_version integer;
 UPDATE ${s}.sessions SET parse_version = 1;
 `,
   },
+  {
+    // Error text is searchable, as SQLite v12 and v13: error events, failed model calls,
+    // tool errors and the error a subagent or a session ended with. search_folded is
+    // computed in JS, so rows stored before are indexed again here (search.ts).
+    version: 3,
+    sql: () => "",
+    after: async (c, s) => {
+      await reindexErrorText(c, s);
+    },
+  },
 ];
 
 export const PG_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;
@@ -344,7 +357,9 @@ export async function migrateSchema(entry: PoolEntry, schema: string): Promise<v
     }
     for (const m of MIGRATIONS) {
       if (m.version <= current) continue;
-      await c.query(m.sql(s));
+      const sql = m.sql(s);
+      if (sql) await c.query(sql);
+      await m.after?.(c, s);
       await c.query(`INSERT INTO ${s}.coding_sh_migrations (version, applied_at) VALUES ($1, $2)`, [m.version, Date.now()]);
     }
   });

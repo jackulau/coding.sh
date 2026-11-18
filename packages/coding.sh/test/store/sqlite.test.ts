@@ -9,10 +9,27 @@ import { findSessions } from "../../src/query/run.ts";
 import { parseWhere } from "../../src/query/where.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { loadSqlite, MIGRATIONS, searchIndexOk, SQLITE_SCHEMA_VERSION, SqliteIndexStore, WAL_SIZE_LIMIT } from "../../src/store/sqlite.ts";
+import { removeTestDir } from "../_rm.ts";
 import { median, timeMs } from "../helpers-timing.ts";
 
 const root = mkdtempSync(join(tmpdir(), "csh-sqlite-"));
-after(() => rmSync(root, { recursive: true, force: true }));
+// Every database a test opens in root. A test that fails before it closes one leaves it open,
+// and on Windows an open file keeps root from being removed, so `after` closes them all first.
+const opened: { close(): unknown }[] = [];
+function tracked<T extends { close(): unknown }>(db: T): T {
+  opened.push(db);
+  return db;
+}
+after(async () => {
+  for (const db of opened) {
+    try {
+      await db.close();
+    } catch {
+      // closed already
+    }
+  }
+  removeTestDir(root);
+});
 
 function events(n: number, session = "perf"): AgentEvent[] {
   return Array.from({ length: n }, (_, i) => ({
@@ -30,7 +47,7 @@ function events(n: number, session = "perf"): AgentEvent[] {
 describe("SqliteIndexStore writer lock fencing (STO-8)", () => {
   it("assertHeld passes while held and throws once another process took the lease over or after release", async () => {
     const db = join(root, "fence.db");
-    const s = await SqliteIndexStore.open(db);
+    const s = tracked(await SqliteIndexStore.open(db));
     const lock = await s.acquireWriterLock({ waitMs: 0 });
     assert.ok(lock && typeof lock.assertHeld === "function", "writer lock exposes a fence");
     lock.assertHeld!();
@@ -48,8 +65,8 @@ describe("SqliteIndexStore write-ahead log (RT-5)", () => {
 
   it("close() empties the WAL even while another connection keeps the database open", async () => {
     const db = join(root, "wal-close.db");
-    const s = await SqliteIndexStore.open(db);
-    const reader = await SqliteIndexStore.open(db, { readOnly: true });
+    const s = tracked(await SqliteIndexStore.open(db));
+    const reader = tracked(await SqliteIndexStore.open(db, { readOnly: true }));
     await reader.listSessions({ limit: 1 });
     for (let i = 0; i < 4; i++) await s.putEvents(events(5_000, `wal-${i}`));
     assert.ok(walSize(db) > 1 << 20, `WAL holds the writes before close (${walSize(db)} bytes)`);
@@ -61,8 +78,8 @@ describe("SqliteIndexStore write-ahead log (RT-5)", () => {
 
   it("checkpoint() truncates the WAL while the store stays open, and is a no-op read-only", async () => {
     const db = join(root, "wal-checkpoint.db");
-    const s = await SqliteIndexStore.open(db);
-    const pin = await SqliteIndexStore.open(db, { readOnly: true });
+    const s = tracked(await SqliteIndexStore.open(db));
+    const pin = tracked(await SqliteIndexStore.open(db, { readOnly: true }));
     await s.putEvents(events(20_000, "cp"));
     assert.ok(walSize(db) > 1 << 20);
     await pin.checkpoint();
@@ -78,7 +95,7 @@ describe("SqliteIndexStore write-ahead log (RT-5)", () => {
 
   it("a cursor set back to 0 is not kept as a row", async () => {
     const db = join(root, "cursors.db");
-    const s = await SqliteIndexStore.open(db);
+    const s = tracked(await SqliteIndexStore.open(db));
     await s.setCursor("claude-code/2026-11-06.1.jsonl", 10);
     await s.setCursor("claude-code/2026-11-06.2.jsonl", 20);
     await s.setCursor("claude-code/2026-11-06.1.jsonl", 0);
@@ -86,15 +103,15 @@ describe("SqliteIndexStore write-ahead log (RT-5)", () => {
     assert.equal(await s.getCursor("claude-code/2026-11-06.2.jsonl"), 20);
     await s.close();
     const { DatabaseSync } = await loadSqlite();
-    const raw = new DatabaseSync(db);
+    const raw = tracked(new DatabaseSync(db));
     assert.deepEqual(raw.prepare("SELECT source FROM cursors").all().map((r) => (r as { source: string }).source), ["claude-code/2026-11-06.2.jsonl"]);
     // Rows left at 0 by an older version go at the next compact (gc --compact).
     raw.prepare("INSERT INTO cursors (source, offset, updated_at) VALUES ('old', 0, 1)").run();
     raw.close();
-    const again = await SqliteIndexStore.open(db);
+    const again = tracked(await SqliteIndexStore.open(db));
     await again.compact();
     await again.close();
-    const raw2 = new DatabaseSync(db);
+    const raw2 = tracked(new DatabaseSync(db));
     assert.equal((raw2.prepare("SELECT COUNT(*) AS n FROM cursors").get() as { n: number }).n, 1);
     raw2.close();
   });
@@ -102,7 +119,7 @@ describe("SqliteIndexStore write-ahead log (RT-5)", () => {
 
 describe("SqliteIndexStore", () => {
   it("writes 10k events in one batch in under a second (or 10x a raw insert on a loaded machine)", async () => {
-    const s = await SqliteIndexStore.open(join(root, "perf.db"));
+    const s = tracked(await SqliteIndexStore.open(join(root, "perf.db")));
     const batch = events(10_000);
     const t = performance.now();
     const { inserted } = await s.putEvents(batch);
@@ -116,7 +133,7 @@ describe("SqliteIndexStore", () => {
       const { DatabaseSync } = await loadSqlite();
       const raw = median(
         [0, 1, 2].map((i) => {
-          const db = new DatabaseSync(join(root, `raw-${i}.db`));
+          const db = tracked(new DatabaseSync(join(root, `raw-${i}.db`)));
           db.exec("PRAGMA journal_mode=WAL; CREATE TABLE e (id TEXT PRIMARY KEY, session TEXT, ts INTEGER, kind TEXT, payload TEXT); CREATE INDEX e_s ON e (session, ts)");
           const ins = db.prepare("INSERT INTO e VALUES (?, ?, ?, ?, ?)");
           const took = timeMs(() => {
@@ -137,7 +154,7 @@ describe("SqliteIndexStore", () => {
   });
 
   it("search pages equally ranked hits newest first, the same on every call", async () => {
-    const s = await SqliteIndexStore.open(join(root, "ties.db"));
+    const s = tracked(await SqliteIndexStore.open(join(root, "ties.db")));
     const same = Array.from({ length: 8 }, (_, i): AgentEvent => ({ id: `t${i}`, v: 0, sessionId: `s${i}`, ts: i, agent: "a", kind: "user.message", payload: { text: "qa backlog prompt" } }));
     await s.putEvents(same);
     for (const limit of [1, 2, 3]) {
@@ -149,13 +166,13 @@ describe("SqliteIndexStore", () => {
 
   it("session_facets holds exactly the distinct (key, value, session) of the events, with repeats deduped in a batch", async () => {
     const path = join(root, "facets.db");
-    const s = await SqliteIndexStore.open(path);
+    const s = tracked(await SqliteIndexStore.open(path));
     // Two sessions whose events repeat the same few kinds/tools hundreds of times
     // in one batch: the dedup must leave the facet table identical to a rebuild.
     await s.putEvents([...events(600, "sa"), ...events(400, "sb")]);
     await s.close();
     const { DatabaseSync } = await loadSqlite();
-    const db = new DatabaseSync(path, { readOnly: true });
+    const db = tracked(new DatabaseSync(path, { readOnly: true }));
     try {
       const facets = (db.prepare("SELECT key, value, session_id FROM session_facets ORDER BY key, value, session_id").all() as Array<{ key: string; value: string; session_id: string }>).map((r) => `${r.key}|${r.value}|${r.session_id}`);
       const expected = (
@@ -178,18 +195,18 @@ describe("SqliteIndexStore", () => {
 
   it("persists across reopen, records migrations and uses WAL", async () => {
     const path = join(root, "reopen.db");
-    const s = await SqliteIndexStore.open(path);
+    const s = tracked(await SqliteIndexStore.open(path));
     await s.putEvents(events(3, "keep"));
     await s.setCursor("a", 7);
     await s.close();
     await s.close(); // idempotent
-    const again = await SqliteIndexStore.open(path);
+    const again = tracked(await SqliteIndexStore.open(path));
     assert.equal((await again.listEvents("keep")).length, 3);
     assert.equal(await again.getCursor("a"), 7);
     await again.close();
 
     const { DatabaseSync } = await loadSqlite();
-    const db = new DatabaseSync(path);
+    const db = tracked(new DatabaseSync(path));
     assert.equal((db.prepare("PRAGMA journal_mode").get() as { journal_mode: string }).journal_mode, "wal");
     assert.deepEqual((db.prepare("SELECT version FROM migrations").all() as { version: number }[]).map((r) => r.version), Array.from({ length: SQLITE_SCHEMA_VERSION }, (_, i) => i + 1));
     // Promoted columns are populated for querying.
@@ -205,7 +222,7 @@ describe("SqliteIndexStore", () => {
   it("migrates a v2 store so existing tool calls become searchable", async () => {
     const path = join(root, "v2.db");
     const { DatabaseSync } = await loadSqlite();
-    const db = new DatabaseSync(path);
+    const db = tracked(new DatabaseSync(path));
     db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
     for (const m of MIGRATIONS.filter((m) => m.version <= 2)) {
       db.exec(m.sql);
@@ -223,7 +240,7 @@ describe("SqliteIndexStore", () => {
     db.exec("INSERT INTO events_fts (rowid, text) SELECT rowid, text FROM events WHERE text IS NOT NULL");
     db.close();
 
-    const s = await SqliteIndexStore.open(path);
+    const s = tracked(await SqliteIndexStore.open(path));
     const ids = async (q: string) => (await s.search(q)).map((h) => h.event.id).sort();
     assert.deepEqual(await ids("kowalski"), ["u"], "message text survives the reindex");
     assert.deepEqual(await ids("pgrep"), ["t"]);
@@ -236,14 +253,14 @@ describe("SqliteIndexStore", () => {
     assert.deepEqual(await ids("taskstop"), ["n"]);
     await s.close();
 
-    const check = new DatabaseSync(path);
+    const check = tracked(new DatabaseSync(path));
     check.exec("INSERT INTO events_fts(events_fts, rank) VALUES ('integrity-check', 1)"); // throws if index and content disagree
     check.close();
   });
 
   it("retention over empty-text messages leaves the FTS index intact", async () => {
     const path = join(root, "fts-empty.db");
-    const s = await SqliteIndexStore.open(path);
+    const s = tracked(await SqliteIndexStore.open(path));
     const msg = (id: string, sessionId: string, ts: number, text: string): AgentEvent =>
       ({ id, v: 0, sessionId, ts, agent: "claude-code", kind: "assistant.message", payload: { text } });
     const session = (id: string, at: number) => ({ id, agent: "claude-code", startedAt: at, endedAt: at, stats: { events: 0, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 }, flags: [] });
@@ -257,14 +274,14 @@ describe("SqliteIndexStore", () => {
     assert.deepEqual(await s.deleteBefore(10_000), { sessions: 0, events: 0 });
     await s.close();
     const { DatabaseSync } = await loadSqlite();
-    const check = new DatabaseSync(path);
+    const check = tracked(new DatabaseSync(path));
     check.exec("INSERT INTO events_fts(events_fts, rank) VALUES ('integrity-check', 1)");
     check.close();
   });
 
   it("searchIndexOk passes with events that have no text and fails on a missing or stray entry", async () => {
     const path = join(root, "fts-check.db");
-    const s = await SqliteIndexStore.open(path);
+    const s = tracked(await SqliteIndexStore.open(path));
     const ev = (id: string, kind: AgentEvent["kind"], payload: Record<string, unknown>): AgentEvent => ({ id, v: 0, sessionId: "s", ts: 1, agent: "claude-code", kind, payload });
     await s.putEvents([ev("start", "session.start", {}), ev("u", "user.message", { text: "refactor the tokenizer" }), ev("llm", "llm.call", {}), ev("t", "tool.start", { tool: "Bash", input: { command: "ls" } }), ev("end", "session.end", {})]);
     await s.close();
@@ -274,7 +291,7 @@ describe("SqliteIndexStore", () => {
     const verdict = (fault?: string) => {
       const copy = join(root, `fts-check-${copies++}.db`);
       copyFileSync(path, copy);
-      const db = new DatabaseSync(copy);
+      const db = tracked(new DatabaseSync(copy));
       try {
         if (fault) db.exec(fault);
         return searchIndexOk(db);
@@ -292,7 +309,7 @@ describe("SqliteIndexStore", () => {
   it("migrating to v5 repairs an FTS index that v4 retention corrupted", async () => {
     const path = join(root, "v4-corrupt.db");
     const { DatabaseSync } = await loadSqlite();
-    const db = new DatabaseSync(path);
+    const db = tracked(new DatabaseSync(path));
     db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
     for (const m of MIGRATIONS.filter((m) => m.version <= 4)) {
       db.exec(m.sql);
@@ -312,11 +329,11 @@ describe("SqliteIndexStore", () => {
     assert.throws(() => db.exec("INSERT INTO events_fts(events_fts, rank) VALUES ('integrity-check', 1)"), /malformed/, "the v4 index is corrupt");
     db.close();
 
-    const s = await SqliteIndexStore.open(path);
+    const s = tracked(await SqliteIndexStore.open(path));
     assert.deepEqual((await s.search("tokeni")).map((h) => h.event.id), ["k"]);
     assert.deepEqual(await s.search("hello"), []);
     await s.close();
-    const check = new DatabaseSync(path);
+    const check = tracked(new DatabaseSync(path));
     assert.equal((check.prepare("SELECT MAX(version) AS v FROM migrations").get() as { v: number }).v, SQLITE_SCHEMA_VERSION);
     assert.equal(searchIndexOk(check), true, "v10 built a sound index from the events");
     check.close();
@@ -325,7 +342,7 @@ describe("SqliteIndexStore", () => {
   it("migrating to v7 fills stats.llmErrors for sessions stored before it", async () => {
     const path = join(root, "v6-llm-errors.db");
     const { DatabaseSync } = await loadSqlite();
-    const db = new DatabaseSync(path);
+    const db = tracked(new DatabaseSync(path));
     db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
     for (const m of MIGRATIONS.filter((m) => m.version <= 6)) {
       db.exec(m.sql);
@@ -341,7 +358,7 @@ describe("SqliteIndexStore", () => {
     insert.run("o1", "ok", 1, JSON.stringify({ ok: true, statusCode: "500" }));
     db.close();
 
-    const s = await SqliteIndexStore.open(path);
+    const s = tracked(await SqliteIndexStore.open(path));
     assert.deepEqual((await s.getSession("api"))?.stats.llmErrors, { count: 2, statusCode: 429, error: "429 Rate limit reached" });
     assert.equal((await s.getSession("ok"))?.stats.llmErrors, undefined);
     assert.equal((await s.getSession("ok"))?.stats.latency?.llmCalls, 3, "the rest of stats is kept");
@@ -378,7 +395,7 @@ describe("SqliteIndexStore", () => {
   it("migrating to v8 fills session_facets and events.mcp as a fresh store writes them", async () => {
     const { DatabaseSync } = await loadSqlite();
     const old = join(root, "v7-facets.db");
-    const db = new DatabaseSync(old);
+    const db = tracked(new DatabaseSync(old));
     db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
     for (const m of MIGRATIONS.filter((m) => m.version <= 7)) {
       db.exec(m.sql);
@@ -394,7 +411,7 @@ describe("SqliteIndexStore", () => {
     await (await SqliteIndexStore.open(old)).close();
 
     const fresh = join(root, "v8-facets.db");
-    const s = await SqliteIndexStore.open(fresh);
+    const s = tracked(await SqliteIndexStore.open(fresh));
     await s.putEvents(facetEvents());
     await s.close();
 
@@ -410,7 +427,7 @@ describe("SqliteIndexStore", () => {
 
   it("session_facets follows replaced and expired events", async () => {
     const path = join(root, "facets-follow.db");
-    const s = await SqliteIndexStore.open(path);
+    const s = tracked(await SqliteIndexStore.open(path));
     await s.putEvents(facetEvents());
     const session = (id: string) => ({ id, agent: "claude-code", startedAt: 1_700_000_000_000, endedAt: 1_700_000_000_010, flags: [], stats: { events: 0, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 } });
     await s.upsertSession(session("a"));
@@ -473,7 +490,7 @@ describe("SqliteIndexStore", () => {
   /** A database at schema v9, as coding.sh before v10 left it: tool text in search_extra, cwd inline, events_project. */
   async function v9Store(path: string, write: (db: import("node:sqlite").DatabaseSync) => void): Promise<void> {
     const { DatabaseSync } = await loadSqlite();
-    const db = new DatabaseSync(path);
+    const db = tracked(new DatabaseSync(path));
     db.exec("PRAGMA journal_mode = WAL"); // as every store coding.sh opened is
     db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
     for (const m of MIGRATIONS.filter((m) => m.version <= 9)) {
@@ -511,7 +528,7 @@ describe("SqliteIndexStore", () => {
       ]),
     );
     const lines: string[] = [];
-    const s = await SqliteIndexStore.open(path, { progress: (l) => lines.push(l), progressMinRows: 1 });
+    const s = tracked(await SqliteIndexStore.open(path, { progress: (l) => lines.push(l), progressMinRows: 1 }));
     const ids = async (q: string) => (await s.search(q)).map((h) => h.event.id).sort();
     assert.deepEqual(await ids("kowalski"), ["u"]);
     assert.deepEqual(await ids("pgrep"), ["t"]);
@@ -524,7 +541,7 @@ describe("SqliteIndexStore", () => {
     assert.deepEqual(await ids("taskstop"), ["n"]);
     assert.equal((await s.listEvents("s")).at(-1)!.cwd, "/work/other");
     const { DatabaseSync } = await loadSqlite();
-    const peek = new DatabaseSync(path, { readOnly: true });
+    const peek = tracked(new DatabaseSync(path, { readOnly: true }));
     const columns = () => ({ ...(peek.prepare("SELECT count(search_extra) AS extra, count(cwd) AS cwd, count(cwd_id) AS ids FROM events").get() as object) });
     // The upgrade rewrites no rows: old ones keep search_extra and their inline cwd.
     assert.deepEqual(columns(), { extra: 2, cwd: 4, ids: 1 });
@@ -544,7 +561,7 @@ describe("SqliteIndexStore", () => {
     assert.ok(!(peek.prepare("PRAGMA table_xinfo(events)").all() as { name: string }[]).some((c) => c.name === "text"), "the generated text column is gone");
     assert.match(String((peek.prepare("SELECT sql FROM sqlite_schema WHERE name = 'events_fts'").get() as { sql: string }).sql), /content=''.*contentless_delete=1/);
     peek.close();
-    const check = new DatabaseSync(path); // the integrity-check is a write
+    const check = tracked(new DatabaseSync(path)); // the integrity-check is a write
     assert.equal(searchIndexOk(check), true);
     check.close();
   });
@@ -570,7 +587,7 @@ describe("SqliteIndexStore", () => {
     };
     const { DatabaseSync } = await loadSqlite();
     const path = join(root, "v10-alone.db");
-    const old = new DatabaseSync(path);
+    const old = tracked(new DatabaseSync(path));
     old.exec("PRAGMA journal_mode = WAL");
     old.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
     for (const m of MIGRATIONS.filter((m) => m.version <= 10)) {
@@ -599,7 +616,7 @@ describe("SqliteIndexStore", () => {
     const sizeBefore = statSync(path).size;
 
     const lines: string[] = [];
-    const s = await SqliteIndexStore.open(path, { progress: (l) => lines.push(l), progressMinRows: 1 });
+    const s = tracked(await SqliteIndexStore.open(path, { progress: (l) => lines.push(l), progressMinRows: 1 }));
     assert.match(lines[0]!, new RegExp(`the index holds ${rows.length} events; upgrading it from schema v10 to v${SQLITE_SCHEMA_VERSION}\\. This runs once\\.`));
     const ids = async (q: string) => (await findSessions(s, parseWhere(q), {})).sessions.map((x) => x.id).sort();
     for (const [q, want] of before) assert.deepEqual(await ids(q), want, q);
@@ -620,7 +637,7 @@ describe("SqliteIndexStore", () => {
     await s.close();
     assert.ok(statSync(path).size >= sizeBefore);
 
-    const peek = new DatabaseSync(path, { readOnly: true });
+    const peek = tracked(new DatabaseSync(path, { readOnly: true }));
     try {
       assert.equal((peek.prepare("SELECT MAX(version) AS v FROM migrations").get() as { v: number }).v, SQLITE_SCHEMA_VERSION);
       assert.deepEqual(
@@ -638,11 +655,11 @@ describe("SqliteIndexStore", () => {
 
     // A fresh store given the same events holds the same errors and the same schema for events.
     const freshPath = join(root, "v11-alone-fresh.db");
-    const fresh = await SqliteIndexStore.open(freshPath);
+    const fresh = tracked(await SqliteIndexStore.open(freshPath));
     await fresh.putEvents(rows.map(asEvent));
     await fresh.close();
     const shape = (file: string) => {
-      const db = new DatabaseSync(file, { readOnly: true });
+      const db = tracked(new DatabaseSync(file, { readOnly: true }));
       try {
         return {
           errors: (db.prepare("SELECT id, error FROM events WHERE id <> 'i1' ORDER BY id").all() as { id: string; error: string | null }[]).map((r) => [r.id, r.error]),
@@ -659,7 +676,7 @@ describe("SqliteIndexStore", () => {
   it("migrating to v12 indexes error text stored before, so search finds a session by its error", async () => {
     const { DatabaseSync } = await loadSqlite();
     const path = join(root, "v11-errors.db");
-    const old = new DatabaseSync(path);
+    const old = tracked(new DatabaseSync(path));
     old.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
     for (const m of MIGRATIONS.filter((m) => m.version <= 11)) {
       old.exec(m.sql);
@@ -684,7 +701,7 @@ describe("SqliteIndexStore", () => {
     assert.equal(searchIndexOk(old), false, "under the new search text, the old index misses the errors");
     old.close();
 
-    const s = await SqliteIndexStore.open(path);
+    const s = tracked(await SqliteIndexStore.open(path));
     const sessions = async (q: string) => [...new Set((await s.search(q)).map((h) => h.event.sessionId))].sort();
     assert.deepEqual(await sessions("rate_limit_error"), ["limited"]);
     assert.deepEqual(await sessions("429"), ["limited"]);
@@ -695,10 +712,54 @@ describe("SqliteIndexStore", () => {
     assert.deepEqual(await sessions("changelog"), ["msg"]);
     await s.close();
     // Not read-only: FTS5's integrity-check is written as an INSERT.
-    const check = new DatabaseSync(path);
+    const check = tracked(new DatabaseSync(path));
     try {
       assert.equal(searchIndexOk(check), true);
       assert.equal((check.prepare("SELECT count(*) AS n FROM events_fts_docsize").get() as { n: number }).n, 5, "every row with text once, the model call that did not fail none");
+    } finally {
+      check.close();
+    }
+  });
+
+  it("migrating to v13 indexes the error a subagent or a session ended with, stored before", async () => {
+    const { DatabaseSync } = await loadSqlite();
+    const path = join(root, "v12-end-errors.db");
+    const old = tracked(new DatabaseSync(path));
+    old.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
+    for (const m of MIGRATIONS.filter((m) => m.version <= 12)) {
+      old.exec(m.sql);
+      m.after?.(old);
+      old.prepare("INSERT INTO migrations (version, applied_at) VALUES (?, 0)").run(m.version);
+    }
+    // Rows as v12 putEvents wrote them: no entry for a subagent.end or session.end.
+    const rows: { id: string; session: string; kind: string; payload: Record<string, unknown>; fts?: string }[] = [
+      { id: "m1", session: "msg", kind: "user.message", payload: { text: "summarize the changelog" }, fts: "summarize the changelog" },
+      { id: "s1", session: "parent", kind: "subagent.end", payload: { subagentId: "a1", type: "reviewer", ok: false, error: "quota exhausted" } },
+      { id: "s2", session: "parent", kind: "subagent.end", payload: { subagentId: "a2", type: "planner", ok: true } },
+      { id: "x1", session: "crashed", kind: "session.end", payload: { reason: "error", error: "agent process segfaulted" } },
+      { id: "x2", session: "clean", kind: "session.end", payload: { reason: "exit" } },
+    ];
+    const insert = old.prepare("INSERT INTO events (id, session_id, ts, agent, kind, payload, error) VALUES (?, ?, ?, 'cursor', ?, ?, ?)");
+    const fts = old.prepare("INSERT INTO events_fts (rowid, text) VALUES (?, ?)");
+    rows.forEach((r, i) => {
+      const { lastInsertRowid } = insert.run(r.id, r.session, i, r.kind, JSON.stringify(r.payload), typeof r.payload.error === "string" ? r.payload.error : null);
+      if (r.fts) fts.run(lastInsertRowid, r.fts);
+    });
+    assert.equal(searchIndexOk(old), false, "under the new search text, the old index misses the end errors");
+    old.close();
+
+    const s = tracked(await SqliteIndexStore.open(path));
+    const sessions = async (q: string) => [...new Set((await s.search(q)).map((h) => h.event.sessionId))].sort();
+    assert.deepEqual(await sessions("quota exhausted"), ["parent"]);
+    assert.deepEqual(await sessions("reviewer"), ["parent"]);
+    assert.deepEqual(await sessions("segfaulted"), ["crashed"]);
+    assert.deepEqual(await sessions("planner"), [], "a subagent that did not fail stays unindexed");
+    assert.deepEqual(await sessions("changelog"), ["msg"]);
+    await s.close();
+    const check = tracked(new DatabaseSync(path));
+    try {
+      assert.equal(searchIndexOk(check), true);
+      assert.equal((check.prepare("SELECT count(*) AS n FROM events_fts_docsize").get() as { n: number }).n, 3, "the message and the two ends with an error");
     } finally {
       check.close();
     }
@@ -708,7 +769,7 @@ describe("SqliteIndexStore", () => {
     const path = join(root, "v9-quiet.db");
     await v9Store(path, (db) => writeV9Events(db, [{ id: "u", kind: "user.message", payload: { text: "hello" }, text: "hello" }]));
     const lines: string[] = [];
-    const s = await SqliteIndexStore.open(path, { progress: (l) => lines.push(l), progressMinRows: 2 });
+    const s = tracked(await SqliteIndexStore.open(path, { progress: (l) => lines.push(l), progressMinRows: 2 }));
     await s.close();
     assert.deepEqual(lines, []);
   });
@@ -723,7 +784,7 @@ describe("SqliteIndexStore", () => {
     await assert.rejects(SqliteIndexStore.open(path, { progress: (l) => lines.push(l), progressMinRows: 1 }), /cwds already exists/);
     assert.match(lines.at(-1)!, /the index upgrade stopped after [\d.]+s; nothing was changed\./);
     const { DatabaseSync } = await loadSqlite();
-    const db = new DatabaseSync(path);
+    const db = tracked(new DatabaseSync(path));
     assert.equal((db.prepare("SELECT MAX(version) AS v FROM migrations").get() as { v: number }).v, 9);
     assert.equal((db.prepare("SELECT count(*) AS n FROM events WHERE search_extra IS NULL AND text = 'hello'").get() as { n: number }).n, 1);
     db.close();
@@ -733,7 +794,7 @@ describe("SqliteIndexStore", () => {
     const path = join(root, "v9-wait.db");
     await v9Store(path, (db) => writeV9Events(db, [{ id: "u", kind: "user.message", payload: { text: "hello" }, text: "hello" }]));
     const { DatabaseSync } = await loadSqlite();
-    const holder = new DatabaseSync(path);
+    const holder = tracked(new DatabaseSync(path));
     holder.exec("BEGIN IMMEDIATE");
     // What a live upgrading process keeps beside the database (its pid must be another live process).
     writeFileSync(`${path}.upgrade`, JSON.stringify({ pid: process.ppid, host: hostname(), from: 9, to: SQLITE_SCHEMA_VERSION, startedAt: Date.now(), step: "search index", done: 300_000, total: 740_614 }));
@@ -750,13 +811,13 @@ describe("SqliteIndexStore", () => {
     // timeout a plain lock holder would hit, however slow the machine is.
     const guard = setTimeout(release, 60_000);
     const started = Date.now();
-    const s = await SqliteIndexStore.open(path, {
+    const s = tracked(await SqliteIndexStore.open(path, {
       progress: (l) => {
         lines.push(l);
         if (lines.length === 6) release();
       },
       progressMinRows: 1_000_000,
-    });
+    }));
     clearTimeout(guard);
     assert.ok(Date.now() - started >= 5000, "waited past the busy timeout");
     assert.deepEqual((await s.search("hello")).map((h) => h.event.id), ["u"]);
@@ -808,7 +869,7 @@ describe("SqliteIndexStore", () => {
     })));
     for (const r of results) assert.equal(r.code, 0, r.err);
     const { DatabaseSync } = await loadSqlite();
-    const check = new DatabaseSync(path);
+    const check = tracked(new DatabaseSync(path));
     const versions = check.prepare("SELECT version FROM migrations ORDER BY version").all().map((r) => r.version);
     check.close();
     assert.deepEqual(versions, MIGRATIONS.map((m) => m.version));

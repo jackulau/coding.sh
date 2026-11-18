@@ -58,7 +58,8 @@ The tables mirror the SQLite store: `events`, `sessions`, `cursors`, `tasks`, `b
 `coding_sh_migrations`.
 
 - Migrations are versioned and run on open. Every statement is idempotent, so replicas can start
-  together.
+  together. Migration v2 writes `search_text` again for the events with error text stored
+  before, in batches of 1,000.
 - Each table is a `ReplacingMergeTree` with a `ver` column, and every read uses `FINAL`, so the
   newest version of a row wins before ClickHouse merges. `coding.sh gc --compact` runs
   `OPTIMIZE TABLE … FINAL`.

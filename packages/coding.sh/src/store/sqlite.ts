@@ -31,7 +31,7 @@ import { acquireLock, LockBusyError, type Lock } from "../core/lock.ts";
 import type { Dataset, DatasetVersionInfo, ExperimentResult, JudgeVersion } from "../datasets/types.ts";
 import type { DatasetListing } from "../core/types.ts";
 import { HARNESS_LOADED, MEMORY_INPUT_KEYS, MEMORY_PATH_TEXT, MEMORY_PAYLOAD_KEYS, pickSet, SKILL_TOOL, type MemoryEvent } from "../core/memory-events.ts";
-import { BLOB_REF_FIELDS, type BlobRefField, DatasetConflict, errorText, ftsQuery, searchableText, SEARCHABLE_KINDS, searchTerms, snippet, symbolQuery, symbolSnippet } from "./common.ts";
+import { BLOB_REF_FIELDS, type BlobRefField, DatasetConflict, ERROR_SEARCH_KINDS, errorText, ftsQuery, searchableText, SEARCHABLE_KINDS, searchTerms, snippet, symbolQuery, symbolSnippet } from "./common.ts";
 import { isBusy, loadSqlite, mkdirPrivate, ownerOnly, retryOnBusy, switchToWal, withoutBusyRetry } from "./sqlite-open.ts";
 import { backupIndex, describeStep, parseWriter, pruneBackups, runningUpgrade, splitSql, StoreNewerError, UPGRADE_PROGRESS_MIN_ROWS, UpgradeProgress, WRITER_KEY, type StoreWriter } from "./upgrade.ts";
 import { labelToScore } from "../scores/labels.ts";
@@ -56,10 +56,11 @@ interface Migration {
 const sqlList = (xs: readonly string[]) => xs.map((x) => `'${x.replace(/'/g, "''")}'`).join(", ");
 
 /**
- * The rows of table `t` that can have search text: SEARCHABLE_KINDS, and of the model
- * calls only the failed ones (common.ts searchableText), found by events.error (v11).
+ * The rows of table `t` that can have search text: SEARCHABLE_KINDS, and of the
+ * ERROR_SEARCH_KINDS (model calls, subagent and session ends) only the ones with an
+ * error (common.ts searchableText), found by events.error (v11).
  */
-const searchableRows = (t: string) => `${t}.kind IN (${sqlList(SEARCHABLE_KINDS)}) AND (${t}.kind <> 'llm.call' OR ${t}.error IS NOT NULL)`;
+const searchableRows = (t: string) => `${t}.kind IN (${sqlList(SEARCHABLE_KINDS)}) AND (${t}.kind NOT IN (${sqlList(ERROR_SEARCH_KINDS)}) OR ${t}.error IS NOT NULL)`;
 
 /** SELECT of the refs at one BLOB_REF_FIELDS entry (paths are constants, not user input). */
 function refFieldSql(f: BlobRefField): string {
@@ -516,6 +517,26 @@ ALTER TABLE events ADD COLUMN error TEXT;
         SELECT rowid, coding_sh_search_text(kind, payload) AS t FROM events WHERE kind = 'error'
         UNION ALL
         SELECT rowid, coding_sh_search_text(kind, payload) AS t FROM events WHERE error IS NOT NULL AND kind IN ('llm.call', 'tool.end')
+      ) WHERE t IS NOT NULL`);
+    },
+  },
+  {
+    // The error a subagent or a session ended with is searchable: v12 indexed error events,
+    // failed model calls and tool errors, but a subagent.end or session.end with
+    // payload.error (Copilot CLI and Droid subagents, Cursor and wrapped sessions) had no
+    // entry. Rows stored before are indexed here, found by events_error (v11). They had no
+    // entry before, so none is removed.
+    version: 13,
+    sql: "",
+    after: (db, progress) => {
+      db.function("coding_sh_search_text", (kind, payload) => {
+        const p = typeof payload === "string" ? parse<Record<string, unknown>>(payload) : undefined;
+        return searchableText({ kind, payload: p ?? {} } as AgentEvent) ?? null;
+      });
+      progress?.step("search index: subagent and session errors");
+      // Written out (not ERROR_SEARCH_KINDS) so this migration never changes.
+      db.exec(`INSERT INTO events_fts (rowid, text) SELECT rowid, t FROM (
+        SELECT rowid, coding_sh_search_text(kind, payload) AS t FROM events WHERE error IS NOT NULL AND kind IN ('subagent.end', 'session.end')
       ) WHERE t IS NOT NULL`);
     },
   },
