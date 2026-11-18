@@ -13,6 +13,7 @@ import DocShot from "../../components/docs/DocShot.astro";
 import Steps from "../../components/docs/Steps.astro";
 import Terminal from "../../components/Terminal.astro";
 import { INSTALL_SH } from "../../data/site";
+import { QUICKSTART_PATHS } from "../../data/prompts";
 import { TRIAGE_ANTHROPIC_PY, TRIAGE_ANTHROPIC_TS, TRIAGE_PY, TRIAGE_TS } from "../../data/quickstart";
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -55,8 +56,6 @@ const init = `coding.sh init --dry-run              # print the plan, write noth
 coding.sh init                        # hooks for every agent it finds
 coding.sh init --agent claude-code    # or one agent
 coding.sh init --scope project        # this repo's agent config, not yours`;
-
-const agentPrompt = "Set up coding.sh on this machine. Follow https://coding.sh/agents.md";
 
 const look = `coding.sh sessions --since 7d    # newest first
 coding.sh show latest            # one session, step by step
@@ -136,11 +135,26 @@ const next = [
 ---
 
 <DocsLayout>
+  <h2 id="prompt">Copy a prompt</h2>
+  <p>
+    Pick what to record, then paste the prompt into your coding agent. It installs coding.sh, sets it up and checks that it records.
+  </p>
+  <Tabs id="prompt" tabs={QUICKSTART_PATHS.map((p) => ({ id: `prompt-${p.id}`, label: p.label }))}>
+    {
+      QUICKSTART_PATHS.map((p) => (
+        <div data-tab={`prompt-${p.id}`}>
+          <Code title="prompt" code={p.setup} wrap />
+          <p>Then ask your agent:</p>
+          <Code title="prompt" code={p.first} wrap />
+        </div>
+      ))
+    }
+  </Tabs>
+
+  <h2 id="path">Or set it up by hand</h2>
   <p>
     You need Node 22.16 or newer. The example for your own agent also needs an OpenAI or an Anthropic API key.
   </p>
-
-  <h2 id="path">Pick your path</h2>
   <Tabs
     id="path"
     tabs={[
@@ -251,11 +265,6 @@ const next = [
             <code>~/.coding.sh/backups</code>, and <code>coding.sh uninstall</code> removes only its own entries.
           </p>
           <Code code={init} />
-        </details>
-        <details class="more" id="agent-setup">
-          <summary>Let your coding agent set it up</summary>
-          <p>Paste this into your agent. It installs coding.sh, adds the hooks, checks them with <code>coding.sh doctor</code> and tells you which agents it set up.</p>
-          <Code title="prompt" code={agentPrompt} />
         </details>
 
         <h3 id="agent-use">Use your agent as usual</h3>

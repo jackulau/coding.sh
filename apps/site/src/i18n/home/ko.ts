@@ -10,6 +10,7 @@ export default {
   "The Observability Layer for&nbsp;Agents.": "에이전트를 위한 관측성&nbsp;레이어.",
   "Record, measure, compare and benchmark every agent&nbsp;run.": "모든 에이전트 실행을 기록하고, 측정하고, 비교하고, 벤치마크합니다.",
   "Copy the install command: {{INSTALL}}": "설치 명령어 복사: {{INSTALL}}",
+  "Copy the setup prompt for your coding agent": "코딩 에이전트용 설정 프롬프트 복사",
   "Free and open source. <a href=\"{{RELEASE_HREF}}\">What's new in coding.sh <code>v{{RELEASE}}</code></a>":
     "무료 오픈 소스입니다. <a href=\"{{RELEASE_HREF}}\">coding.sh <code>v{{RELEASE}}</code>의 새로운 기능</a>",
   "Get started": "빠른 시작 가이드",
