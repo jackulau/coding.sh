@@ -308,7 +308,10 @@ for (const s of sessions) writeSession(s);
 
 const wrapperSessions = [];
 function wrapped(key, repo, at0, prompt, file, content) {
-  const listing = () => new Set(["wrapper", "claude-code"].flatMap((a) => (existsSync(join(SPOOL, a)) ? readdirSync(join(SPOOL, a)).map((f) => `${a}/${f}`) : [])));
+  // Spool files only: a line over 1023 bytes goes to a side file in <agent>/raw/ (src/spool/write.ts),
+  // which a long --out path causes (the gate's temp dirs), and that dir is not a spool file to rebase.
+  const spoolFiles = (a) => readdirSync(join(SPOOL, a), { withFileTypes: true }).filter((e) => e.isFile() && e.name.endsWith(".jsonl")).map((e) => `${a}/${e.name}`);
+  const listing = () => new Set(["wrapper", "claude-code"].flatMap((a) => (existsSync(join(SPOOL, a)) ? spoolFiles(a) : [])));
   const before = listing();
   const r = JSON.parse(cli(["run", "--json", "--", process.execPath, join(HERE, "fake-agent.mjs"), "--prompt", prompt, "--write", file, "--content", content], { cwd: REPOS[repo] }).stdout);
   const fresh = [...listing()].filter((f) => !before.has(f));

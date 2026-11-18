@@ -4,7 +4,7 @@
 // left git and codex unfound there.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -23,8 +23,8 @@ before(async () => {
 });
 after(() => rmSync(root, { recursive: true, force: true }));
 
-function makeHome(out: string, env: NodeJS.ProcessEnv = process.env) {
-  return spawnSync(process.execPath, [MAKE_HOME, "--seed", "1", "--out", out, "--cli", CLI, "--answers", join(out, "..", "answers.json")], {
+function makeHome(out: string, env: NodeJS.ProcessEnv = process.env, cli = CLI) {
+  return spawnSync(process.execPath, [MAKE_HOME, "--seed", "1", "--out", out, "--cli", cli, "--answers", join(out, "..", "answers.json")], {
     env: { ...env, CODING_SH_HOME: join(out, "home", ".coding.sh") },
     encoding: "utf8",
     timeout: 300_000,
@@ -61,7 +61,32 @@ describe("make-home.mjs", () => {
     assert.equal(codex?.hooked, false);
   });
 
-  it("says why a command it runs failed to start", { skip: !WIN && "POSIX keeps /usr/bin on the fixture PATH" }, () => {
+  it("builds when a wrapper run leaves a raw/ side-file dir in the spool", () => {
+    // The spool writer puts a line over 1023 bytes in <agent>/raw/ (src/spool/write.ts); a long
+    // temp path, as under the gate, makes the wrapper's session.start that long. A --cli shim makes
+    // that dir during each `run`, whatever the path length, then runs the real CLI.
+    const shim = join(dirname(CLI), "raw-dir-shim.mjs");
+    writeFileSync(
+      shim,
+      [
+        `import { spawnSync } from "node:child_process";`,
+        `import { mkdirSync } from "node:fs";`,
+        `import { join } from "node:path";`,
+        `const args = process.argv.slice(2);`,
+        `if (args[0] === "run") mkdirSync(join(process.env.CODING_SH_HOME, "spool", "wrapper", "raw"), { recursive: true });`,
+        `const r = spawnSync(process.execPath, [${JSON.stringify(CLI)}, ...args], { stdio: "inherit" });`,
+        `process.exit(r.status ?? 1);`,
+      ].join("\n"),
+    );
+    const out = join(root, "c", "trial");
+    const r = makeHome(out, process.env, shim);
+    assert.equal(r.status, 0, r.stderr);
+    const res = JSON.parse(r.stdout) as { ok: boolean; sessions: number };
+    assert.equal(res.ok, true);
+    assert.ok(existsSync(join(out, "home", ".coding.sh", "spool", "wrapper", "raw")), "the shim made the dir");
+  });
+
+  it("says why a command it runs failed to start",{ skip: !WIN && "POSIX keeps /usr/bin on the fixture PATH" }, () => {
     // No git on PATH: spawnSync sets r.error (ENOENT) and leaves stderr empty.
     const env: NodeJS.ProcessEnv = { ...process.env, PATH: dirname(process.execPath) };
     delete env.Path;
