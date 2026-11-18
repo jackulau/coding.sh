@@ -44,7 +44,7 @@ coding.sh harness list
 
 A snapshot (a bundle) records the agent, the model and the files the agent reads: AGENTS.md, its
 own instructions file, settings, skills, hooks and MCP config, in the project and in your home.
-For Claude Code it also records the files CLAUDE.md pulls in with `@path` imports.
+For Claude Code it also records the files its instructions and rules pull in with `@path` imports.
 `--dir` snapshots another project.
 
 ## 3. Run both on every validated task
