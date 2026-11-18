@@ -409,11 +409,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     if (state?.snapshot && state.root === root) s.endSnapshot = state.snapshot;
   };
   const onFoldError = (f: FoldFailure) => error({ message: foldFailureMessage(f) });
-  const recompute = async (ids: Iterable<string>) => {
-    for (const id of ids) {
-      if (await recomputeSession(index, id, { linker, repo, versionFor, onFoldError })) touchedAll.add(id);
-    }
-  };
+  const recompute = (ids: Iterable<string>) => recomputeSessions(index, ids, { linker, repo, versionFor, onFoldError }, (id) => touchedAll.add(id));
   // After the checkpoint commits: git can take seconds, too long to hold the index's write lock.
   // A budgeted run deferred them already, at its checkpoint; a run stopped part way defers the rest.
   const snapshotEnded = async () => {
@@ -1234,14 +1230,18 @@ const FOLD_ERROR_MAX = 500;
  * when the store has them); otherwise it is folded again, REFOLD_TRIES times
  * at most.
  */
-export async function recomputeSession(index: IndexStore, id: string, o: RecomputeOptions): Promise<boolean> {
+export async function recomputeSession(index: IndexStore, id: string, o: RecomputeOptions, ahead?: Prefold): Promise<boolean> {
+  if (ahead && "thrown" in ahead) throw ahead.thrown;
   const { linker, repo } = o;
-  const prev = await index.getSession(id);
+  const prev = ahead ? ahead.prev : await index.getSession(id);
   let start: Awaited<ReturnType<RepoResolver["start"]>>;
+  let started = ahead?.start;
   for (let tries = 1; ; tries++) {
     let folded: Awaited<ReturnType<typeof foldRow>>;
     try {
-      folded = await foldRow(index, id, prev, o.parseVersion !== undefined);
+      if (tries > 1 || !ahead) folded = await foldRow(index, id, prev, o.parseVersion !== undefined);
+      else if (ahead.failed) throw ahead.failed;
+      else folded = ahead.folded;
     } catch (err) {
       if (!(err instanceof FoldError)) throw err;
       return flagFoldError(index, id, prev, err, o);
@@ -1266,9 +1266,10 @@ export async function recomputeSession(index: IndexStore, id: string, o: Recompu
       else if (!prev || stale) linker.consider(id);
     }
     if (!session.repo) {
-      start ??= await repo.start(session, { start: state.gitStart, live: state.live });
+      start ??= await (started ?? repo.start(session, { start: state.gitStart, live: state.live }));
       if (start) session.repo = start;
     }
+    started = undefined;
     const written = await inTransaction(index, async () => {
       if (tries < REFOLD_TRIES && (await storedSince(index, id, mark))) return false;
       await index.upsertSession(session);
@@ -1283,6 +1284,50 @@ export async function recomputeSession(index: IndexStore, id: string, o: Recompu
 
 /** Folds of one session by one recomputeSession call: the last one is written whatever was stored meanwhile (the writer that stored it folds the session too). */
 const REFOLD_TRIES = 3;
+
+/**
+ * A session's first fold, done before its turn in recomputeSessions, with its
+ * start repo state already asked of git. `thrown`: what reading or folding it
+ * threw (other than a FoldError), thrown again at its turn.
+ */
+type Prefold = { prev: Session | undefined; folded: Awaited<ReturnType<typeof foldRow>>; failed?: FoldError; start?: Promise<RepoState | undefined> } | { thrown: unknown };
+
+async function prefold(index: IndexStore, id: string, o: RecomputeOptions): Promise<Prefold> {
+  let prev: Session | undefined;
+  try {
+    prev = await index.getSession(id);
+    const folded = await foldRow(index, id, prev, o.parseVersion !== undefined);
+    if (!folded || folded.session.repo) return { prev, folded };
+    const start = o.repo.start(folded.session, { start: folded.state.gitStart, live: folded.state.live });
+    // Awaited at the session's turn; a rejection before then is not unhandled.
+    start.catch(() => {});
+    return { prev, folded, start };
+  } catch (err) {
+    return err instanceof FoldError ? { prev, folded: undefined, failed: err } : { thrown: err };
+  }
+}
+
+/** Sessions recomputeSessions folds ahead of the one it writes. */
+const FOLD_AHEAD = 4;
+
+/**
+ * recomputeSession for each id, in order, calling `done` with each one it
+ * wrote. The next FOLD_AHEAD sessions are folded before a session is written,
+ * and their start repo state asked of git then, so the git commands (one or two
+ * per session new to the index, tens of milliseconds each) run while the
+ * sessions after them fold. Folding a session reads only that session's events,
+ * saved fold and row, which writing another session does not change; the
+ * linker and the writes still go one session at a time, in order. Nothing runs
+ * against the store concurrently: only git does.
+ */
+export async function recomputeSessions(index: IndexStore, ids: Iterable<string>, o: RecomputeOptions, done: (id: string) => void): Promise<void> {
+  const list = [...ids];
+  const ahead: Prefold[] = [];
+  for (let i = 0; i < list.length; i++) {
+    while (ahead.length <= FOLD_AHEAD && i + ahead.length < list.length) ahead.push(await prefold(index, list[i + ahead.length]!, o));
+    if (await recomputeSession(index, list[i]!, o, ahead.shift())) done(list[i]!);
+  }
+}
 
 /**
  * True when the session got events since a fold read them. `mark` is that
@@ -1712,7 +1757,7 @@ async function backfillLocked(opts: BackfillOptions, env: NodeJS.ProcessEnv, fen
   const updated = new Set<string>();
   const onFoldError = (f: FoldFailure) => error({ message: foldFailureMessage(f) });
   const recompute = async () => {
-    for (const id of touched) if (await recomputeSession(index, id, { linker, repo, versionFor, onFoldError })) updated.add(id);
+    await recomputeSessions(index, touched, { linker, repo, versionFor, onFoldError }, (id) => updated.add(id));
     touched.clear();
   };
   /** Marks files read: mtime last, it is what says a file was read. */
