@@ -7,7 +7,7 @@ import { costNote } from "../../core/pricing.ts";
 import { buildRunTree, buildSessionTree, pageTree, TREE_PAGE_NODES, worstNode, worstFirst, type Tree, type TreeNode } from "../../core/tree.ts";
 import type { Session } from "../../core/types.ts";
 import { positiveInt, UsageError } from "../args.ts";
-import { autoIngest, oneLine, resolveSession, sessionJson, withContext, notFoundWithBacklog, pendingField, readIngest } from "../common.ts";
+import { autoIngest, oneLine, resolveSession, sessionJson, withContext, notFoundWithBacklog, pendingField, readIngest, tidyNumbers } from "../common.ts";
 import { clean, duration, plural, tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -43,11 +43,11 @@ function treeJson(t: Tree, offset: number, limit: number) {
     ...(t.runId ? { runId: t.runId } : {}),
     totals: {
       sessions: t.totals.sessions,
-      usage: t.totals.usage,
+      usage: tidyNumbers(t.totals.usage),
       toolCalls: t.totals.toolCalls,
       toolErrors: t.totals.toolErrors,
       filesChanged: t.totals.filesChanged,
-      durationMs: t.totals.wallMs ?? null,
+      durationMs: t.totals.wallMs !== undefined ? Math.round(t.totals.wallMs) : null,
       flags: t.totals.flags,
     },
     worst: worst ? { id: worst.session.id, role: worst.depth === 0 ? "root" : (worst.session.parent?.type ?? "subagent"), flags: worstFirst(worst.session.flags) } : null,

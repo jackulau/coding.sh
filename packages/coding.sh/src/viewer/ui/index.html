@@ -746,6 +746,9 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .st.is-fail[aria-selected="true"] { background: var(--fail-wash); }
 .st.is-fail[aria-selected="true"]::before { background: var(--fail); }
 .st.turn { --indent: 0; box-shadow: inset 0 1px 0 var(--line); }
+/* A tool call a code-mode cell made sits under the cell; a cell whose call failed is marked, not failed again. */
+.st.nested { --indent: 2.1rem; }
+.st.child-fail .name { color: var(--warn-ink); }
 .st.turn .name { font-weight: 560; }
 .st.turn .arg { color: var(--text); font-family: var(--font-sans); font-size: 13px; }
 .st.turn .t { color: var(--text-muted); }
@@ -882,9 +885,13 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .num-tile.fail b { color: var(--fail); }
 .fold-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
 .fold-list li { display: grid; grid-template-columns: 7px minmax(0, 1fr) auto; gap: 0.6rem; align-items: center; font-size: 12.5px; color: var(--text-2); padding: 0.15rem 0; }
-.hintbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 1rem; padding: 0 var(--gutter); height: 30px; box-shadow: inset 0 1px 0 var(--line); flex: none; font-size: 11.5px; color: var(--text-muted); overflow: hidden; }
+.hintbar { display: flex; align-items: center; gap: 1rem; padding: 0 var(--gutter); height: 30px; box-shadow: inset 0 1px 0 var(--line); flex: none; font-size: 11.5px; color: var(--text-muted); overflow: hidden; }
 .hintbar span { display: inline-flex; align-items: center; gap: 0.3rem; white-space: nowrap; }
-.hintbar .spacer { flex: 1; }
+/* Hints that do not fit wrap onto a second line the bar clips, so the last (least used) ones drop
+   whole and "? all shortcuts", outside this row, always shows. */
+.hintbar .hints { display: flex; flex-wrap: wrap; align-content: flex-start; column-gap: 1rem; flex: 1 1 auto; min-width: 0; height: 30px; overflow: hidden; }
+.hintbar .hints > span { height: 30px; }
+.hintbar .all-keys { flex: none; }
 /* ---------- replay ---------- */
 .rp-bar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 0.4rem 0.9rem; padding: 0.45rem var(--gutter); box-shadow: inset 0 -1px 0 var(--line); background: var(--surface); flex: none; }
 .rp-bar[hidden] { display: none; }
@@ -2488,6 +2495,8 @@ const list = {
   // The store has no event query path (a store plugin): the tab says so instead of failing.
   eventsUnsupported: false,
   fresh: 0,
+  // The page's scroll position as the list was left for another page, restored on the way back.
+  scrollY: 0,
 };
 function topLevelOnly() { return list.filters.scope !== "all"; }
 function listParams() {
@@ -2802,7 +2811,7 @@ async function reload(view, opts = {}) {
   if (mine !== list.seq || !current(seq)) return false;
   if (events) Object.assign(list, { items: [], hasMore: false, events: page.items, eventsNext: page.next || null, eventsTotal: page.total ?? null, eventsCapped: !!page.totalCapped, eventsUnsupported: !!page.unsupported });
   else Object.assign(list, { items: page.items, hasMore: page.hasMore, nextCursor: page.nextCursor || null });
-  Object.assign(list, { stats, facets, loaded: true, error: null, whereError: null, active: 0, fresh: 0 });
+  Object.assign(list, { stats, facets, loaded: true, error: null, whereError: null, active: 0, fresh: 0, scrollY: 0 });
   renderSessions(view);
   announceList();
   const b = opts.focus && $(opts.focus, view);
@@ -2827,10 +2836,21 @@ async function showSessions(seq, query, mode = "sessions") {
     list.error = null;
     await reload(view);
     if (!current(seq)) return;
-  } else announceList();
+  } else {
+    // Back from a session (Esc, the browser's Back): the page where it was, the selected row in sight,
+    // and focus on the list so j and k go on from that row.
+    window.scrollTo(0, list.scrollY || 0);
+    const lb = $(".list[role=listbox]", view);
+    if (lb && list.active >= 0 && !lb.contains(document.activeElement) && !(qbar && document.activeElement === qbar.input)) {
+      lb.focus({ preventScroll: true });
+      syncActive(lb);
+    }
+    announceList();
+  }
   // Live updates: count sessions newer than the list's head; the pill loads them.
   const timer = setInterval(() => pollNew(view, seq), 5000);
-  cleanup = () => clearInterval(timer);
+  // Runs as the next page replaces this one, so the scroll position is still the list's.
+  cleanup = () => { clearInterval(timer); list.scrollY = window.scrollY; };
 }
 
 async function pollNew(view, seq) {
@@ -3743,7 +3763,17 @@ function listActions(view) {
   };
   return {
     search: () => { const q = $("#q", view); if (!q) return false; q.focus(); q.select(); if (qbar && qbar.input === q) qbar.suggest(); },
-    down: move(() => list.active + 1),
+    // Down from the last loaded row loads the next page, as "Load more" does, and selects its first row.
+    down: () => {
+      const lb = lbox();
+      const more = lb && lb.parentElement ? lb.parentElement.querySelector(":scope > .more > button") : null;
+      if (more && list.active >= lb.querySelectorAll("[role=option]").length - 1) {
+        if (document.activeElement !== lb) lb.focus({ preventScroll: true });
+        if (!more.disabled) more.click();
+        return;
+      }
+      return move(() => list.active + 1)();
+    },
     up: move(() => list.active - 1),
     open: () => {
       const lb = lbox();
@@ -4237,6 +4267,17 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     let turnStart = 0;
     let prompts = 0;
     const turns = [];
+    // A code-mode cell (Codex `exec`, a tool.start with wrapper: true) runs other tool calls, which
+    // name it as their parentId. When one of them fails the cell fails too: the failure is the inner
+    // call's, so the cell is not a failure stop of its own and its calls show nested under it.
+    const cells = new Set();
+    const failedCells = new Set();
+    for (const it of items) {
+      if (it.type !== "tool") continue;
+      if (it.start && (it.start.payload || {}).wrapper === true) cells.add(it.start.id);
+      const parent = (it.start || it.end).parentId;
+      if (parent && it.end && (it.end.payload || {}).ok === false) failedCells.add(parent);
+    }
     for (const [i, it] of items.entries()) {
       byEvent.set(it.id, it);
       if (it.start) byEvent.set(it.start.id, it);
@@ -4249,10 +4290,13 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
       const end = barStart(it, v) + (v.dur || 0);
       if (end > turns[turn].end) turns[turn].end = end;
       const tool = it.type === "tool" ? String(((it.start || it.end).payload || {}).tool || "") : "";
+      const parent = it.type === "tool" ? (it.start || it.end).parentId : undefined;
+      const nested = !!parent && cells.has(parent);
+      if (v.tone === "fail" && it.start && failedCells.has(it.start.id) && cells.has(it.start.id)) { v.tone = "warn"; v.childFailed = true; }
       const fail = v.tone === "fail";
-      const quiet = !fail && ((it.type === "tool" && it.end && !EDIT_TOOLS.has(tool)) || it.type === "llm.call" || it.type === "turn.end");
+      const quiet = !fail && !v.childFailed && ((it.type === "tool" && it.end && !EDIT_TOOLS.has(tool)) || it.type === "llm.call" || it.type === "turn.end");
       meta[i] = {
-        v, turn, isTurn, fail, quiet, tool,
+        v, turn, isTurn, fail, quiet, tool, nested,
         edit: it.type === "file.change" || (it.type === "tool" && EDIT_TOOLS.has(tool)),
         test: it.type === "test.result",
         api: it.type === "llm.call",
@@ -4524,7 +4568,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     const it = items[x];
     const m = meta[x];
     const v = m.v;
-    const cls = "st" + (m.isTurn ? " turn" + (m.turn === 0 && x === 0 ? " first" : "") : "") + (m.fail ? " is-fail" : "") + (v.tone === "pass" ? " is-pass" : "")
+    const cls = "st" + (m.isTurn ? " turn" + (m.turn === 0 && x === 0 ? " first" : "") : "") + (m.fail ? " is-fail" : "") + (v.tone === "pass" ? " is-pass" : "") + (m.nested ? " nested" : "") + (v.childFailed ? " child-fail" : "")
       + (m.api ? " k-llm" : "") + (m.test ? " k-test" : "") + (it.type === "assistant.message" ? " k-msg" : "")
       + (findQ && m.text.includes(findQ) ? " is-match" : "") + (m.derail ? " is-derail" : "") + (m.phase || m.day ? " phase-start" : "");
     const chip = m.phase || m.day ? h("span", { class: "phase-chip", title: m.phase ? "Phase " + m.phase.n + ": " + m.phase.label : "" },
@@ -5352,9 +5396,9 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   }
   function renderHint() {
     const scope = rp.on ? "replay" : "session";
-    swap(hint, 
-      ...KEYMAP.filter((k) => k.scope === scope && k.hint && (!chatOn || CHAT_KEYS.has(k.id) || k.id === "down" || k.id === "next-turn")).map((k) => h("span", null, keyCaps(k.id === "down" ? ["j", "k"] : k.id === "next-turn" ? ["{", "}"] : k.keys), k.id === "down" ? "move" : k.id === "next-turn" ? "turns" : k.label.replace(/^Show or hide |^Expand or fold /, "").toLowerCase())),
-      h("span", { class: "spacer" }), h("span", null, keyCaps(["?"]), "all shortcuts"));
+    swap(hint,
+      h("div", { class: "hints" }, KEYMAP.filter((k) => k.scope === scope && k.hint && (!chatOn || CHAT_KEYS.has(k.id) || k.id === "down" || k.id === "next-turn")).map((k) => h("span", null, keyCaps(k.id === "down" ? ["j", "k"] : k.id === "next-turn" ? ["{", "}"] : k.keys), k.id === "down" ? "move" : k.id === "next-turn" ? "turns" : k.label.replace(/^Show or hide |^Expand or fold /, "").toLowerCase()))),
+      h("span", { class: "all-keys" }, keyCaps(["?"]), "all shortcuts"));
   }
 
   // ---- keys
@@ -5516,7 +5560,7 @@ function sessionHeader(s, labels, rel) {
 
   const labelBtn = (value, text, key) => h("button", {
     class: "btn btn-sm btn-label is-" + value, type: "button", "aria-pressed": String(!!outcome && outcome.value === value), "aria-keyshortcuts": key, title: text + " (" + key + ")",
-    onclick: (e) => postLabel(s.id, value, e.currentTarget.closest(".label-group")),
+    onclick: (e) => postLabel(s.id, e.currentTarget.getAttribute("aria-pressed") === "true" ? "skip" : value, e.currentTarget.closest(".label-group")),
   }, text);
 
   // Phones show agent, model, duration and cost; "More" opens the rest, with the outcome and eval
@@ -5579,7 +5623,7 @@ function sessionHeader(s, labels, rel) {
           h("span", { class: "meta outcome-lbl" }, "Outcome"),
           labelBtn("pass", "Pass", "p"),
           labelBtn("fail", "Fail", "f"),
-          h("span", { class: "meta label-by" }, outcome ? "by " + outcome.by + " · " + fmtRel(outcome.ts) : "")),
+          h("span", { class: "meta label-by" }, outcome && outcome.value !== "skip" ? "by " + outcome.by + " · " + fmtRel(outcome.ts) : "")),
         h("div", { class: "make-eval" },
           h("span", { class: "meta" }, "Make eval"),
           cmdBlock(evalCmd, "Copy eval command")))),
@@ -5727,6 +5771,8 @@ function latestLabel(labels, criterion) {
   return best;
 }
 
+// Pressing the pressed button clears the outcome: the store keeps one label per session, criterion
+// and person, so writing "skip" over it takes back the verdict (calibration and evals leave skips out).
 async function postLabel(sessionId, value, group) {
   const btns = group.querySelectorAll("button");
   const before = [...btns].map((b) => b.getAttribute("aria-pressed"));
@@ -5737,8 +5783,8 @@ async function postLabel(sessionId, value, group) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sessionId, criterion: "outcome", value }),
     });
-    $(".label-by", group).textContent = "by " + label.by + " · just now";
-    toast("Labelled " + value);
+    $(".label-by", group).textContent = value === "skip" ? "" : "by " + label.by + " · just now";
+    toast(value === "skip" ? "Outcome label cleared" : "Labelled " + value);
   } catch (e) {
     btns.forEach((b, i) => b.setAttribute("aria-pressed", before[i]));
     toast("Could not save label: " + e.message);

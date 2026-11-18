@@ -16,7 +16,7 @@ import { listBackups, StoreNewerError } from "../store/upgrade.ts";
 import { version } from "./meta.ts";
 import { acquireLock, isLocked, type LockOptions, wakeMarker } from "../core/lock.ts";
 import { spawnBackgroundIngest } from "../spool/kick.ts";
-import { UsageError, type FlagValue } from "./args.ts";
+import { suggest, UsageError, type FlagValue } from "./args.ts";
 import { ago, CliError, plural, type Output } from "./output.ts";
 import type { CommandContext } from "./types.ts";
 import { noSessionsNext, noSessionsNextLines } from "./first-session.ts";
@@ -581,6 +581,28 @@ export function agentsFlag(c: CommandContext): string[] {
   return [...new Set(list(c.flags.agent))];
 }
 
+/** The `--agent` names with no stored session at all (a typo, or an agent not captured yet). */
+export async function agentsWithoutSessions(index: IndexStore, agents: readonly string[]): Promise<string[]> {
+  const none: string[] = [];
+  for (const agent of agents) if (!(await index.listSessions({ agent, limit: 1 })).length) none.push(agent);
+  return none;
+}
+
+/**
+ * After an empty result: an `--agent` that names no adapter and no stored session but is close to
+ * an adapter id, as `suggest` judges it, is a typo (`claud-code`), rejected the way `harness audit`
+ * rejects it. An SDK agent's own id is not near an adapter id, so it still filters to an empty list.
+ */
+export async function rejectAgentTypos(index: IndexStore, agents: readonly string[]): Promise<void> {
+  if (!agents.length) return;
+  const { ADAPTERS } = await import("../adapters/index.ts");
+  const ids = ADAPTERS.map((a) => a.id as string);
+  for (const agent of await agentsWithoutSessions(index, agents.filter((a) => !ids.includes(a)))) {
+    const s = suggest(agent, ids);
+    if (s) throw new UsageError(`Unknown agent ${JSON.stringify(agent)}`, { suggestion: `--agent ${s}`, reason: "unknown_agent" });
+  }
+}
+
 /**
  * The agents as a store filter: one agent is SessionFilter.agent; several become an
  * `agent:a,b` clause and-joined to the `--where` query, so every read path filters the same way.
@@ -716,12 +738,32 @@ export interface SessionJsonKeep {
 }
 
 /**
+ * A --json copy of stats with float noise taken out: a `...Usd` number rounds to 1e-9 dollars
+ * (0.0041400000000000005 prints 0.00414, as the summed costs do), a `...Ms` number to whole ms.
+ */
+export function tidyNumbers<T>(v: T, key = ""): T {
+  if (typeof v === "number") {
+    if (!Number.isFinite(v) || Number.isInteger(v)) return v;
+    if (key.endsWith("Usd")) return (Math.round(v * 1e9) / 1e9) as T;
+    if (key.endsWith("Ms")) return Math.round(v) as T;
+    return v;
+  }
+  if (Array.isArray(v)) return v.map((x) => tidyNumbers(x, key)) as T;
+  if (v && typeof v === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v)) out[k] = tidyNumbers(x, k);
+    return out as T;
+  }
+  return v;
+}
+
+/**
  * A session for --json. List and tree rows are a digest: `stats.phases` is left out (`show --json`
  * has the phases at its top level) and a derail says what happened and when, without the event
- * it started at. Every other stat is as stored.
+ * it started at. Every other stat is as stored, with float noise taken out (tidyNumbers).
  */
 export function sessionJson(s: Session, keep: SessionJsonKeep = {}): Record<string, unknown> {
-  const { phases, derails, ...rest } = s.stats;
+  const { phases, derails, ...rest } = tidyNumbers(s.stats);
   const stats: Record<string, unknown> = rest;
   if (derails) stats.derails = keep.derailEvents ? derails : derails.map(({ eventId: _e, index: _i, ...d }) => d);
   if (keep.phases && phases) stats.phases = phases;
@@ -737,7 +779,7 @@ export function sessionJson(s: Session, keep: SessionJsonKeep = {}): Record<stri
     branch: s.repo?.branch ?? null,
     startedAt: new Date(s.startedAt).toISOString(),
     endedAt: s.endedAt !== undefined ? new Date(s.endedAt).toISOString() : null,
-    durationMs: s.endedAt !== undefined ? s.endedAt - s.startedAt : null,
+    durationMs: s.endedAt !== undefined ? Math.round(s.endedAt - s.startedAt) : null,
     parentSessionId: s.parent?.sessionId ?? null,
     flags: s.flags,
     stats,

@@ -5,6 +5,7 @@
 // wire settings.statusLine, backed up and restored byte-for-byte.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Readable } from "node:stream";
 import { CLAUDE_AGENT, claudeConfigDir } from "../../adapters/claude-code.ts";
 import {
   applyChanges,
@@ -33,14 +34,42 @@ export async function run(c: CommandContext): Promise<number> {
   return print(c);
 }
 
-/** Synchronous stdin read; a TTY (manual run with no pipe) returns "". */
-function readStdin(): string {
-  if (process.stdin.isTTY) return "";
-  try {
-    return readFileSync(0, "utf8");
-  } catch {
-    return "";
-  }
+/** The status-line payload is a few kB; past this the read stops and the input counts as invalid. */
+export const MAX_STATUSLINE_STDIN = 1 << 20;
+
+/**
+ * Stdin, read without blocking the event loop so Ctrl-C still stops it (undefined then), and at
+ * most `max` bytes: endless input (`</dev/zero`, a stuck pipe writer) ends the read, never memory.
+ * A TTY (manual run with no pipe) returns "".
+ */
+export function readStdin(signal: AbortSignal, stdin: Readable & { isTTY?: boolean } = process.stdin, max = MAX_STATUSLINE_STDIN): Promise<string | undefined> {
+  if (stdin.isTTY) return Promise.resolve("");
+  if (signal.aborted) return Promise.resolve(undefined);
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    const finish = (v: string | undefined) => {
+      stdin.off("data", onData).off("end", onEnd).off("error", onError);
+      signal.removeEventListener("abort", onAbort);
+      resolve(v);
+    };
+    const onData = (d: Buffer | string) => {
+      const b = typeof d === "string" ? Buffer.from(d) : d;
+      chunks.push(b.subarray(0, max - total));
+      total += b.length;
+      if (total < max) return;
+      stdin.destroy(); // no more reads: whatever follows is not a status-line payload
+      finish("");
+    };
+    const onEnd = () => finish(Buffer.concat(chunks).toString("utf8"));
+    const onError = () => finish("");
+    const onAbort = () => {
+      stdin.destroy();
+      finish(undefined);
+    };
+    stdin.on("data", onData).on("end", onEnd).on("error", onError);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function stdinModel(payload: unknown): string | undefined {
@@ -53,8 +82,10 @@ function stdinModel(payload: unknown): string | undefined {
 
 async function print(c: CommandContext): Promise<number> {
   let payload: unknown = {};
+  const text = await readStdin(c.signal);
+  if (text === undefined) return 130; // Ctrl-C while the payload was still coming
   try {
-    payload = JSON.parse(readStdin());
+    payload = JSON.parse(text);
   } catch {
     // no/invalid stdin: still print today's total below
   }

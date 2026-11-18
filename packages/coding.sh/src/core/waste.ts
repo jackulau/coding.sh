@@ -8,6 +8,8 @@
 // a different context, so it is never a repeat of the parent's call.
 // Invalidation, per scope unless noted:
 // - context.compact clears the scope (the earlier result left the context);
+//   its keys move to the scope's pre-compaction map, where the first matching
+//   read after it counts once as a compaction refetch (compactionRefetches);
 // - a file.change, or an edit/write call naming a path, drops every key that
 //   contains the path, in every scope (the file is shared);
 // - a shell call that is not read-only drops search and listing keys (Grep,
@@ -16,7 +18,7 @@
 // foldWaste is the same rules as a fold live ingest keeps; a call whose end comes
 // after 64 more calls in its scope (or 1,024 in all) can count as unfinished.
 import { createHash } from "node:crypto";
-import type { AgentEvent, WasteStats } from "../schema/index.ts";
+import type { AgentEvent, CompactionRefetchStats, WasteStats } from "../schema/index.ts";
 import { commandOf, FLAGS } from "./sessions.ts";
 
 /** A repeated read-only call (`eventId`, its tool.start) and the call it repeats. */
@@ -142,6 +144,15 @@ const pathOf = (input: unknown): string | undefined => {
 /** The output a tool.end returned, as one comparable string (inline text plus any blob holding the rest). */
 const outputOf = (e: AgentEvent): string => `${typeof e.payload.output === "string" ? e.payload.output : canonical(e.payload.output)}\u0000${(e.blobs ?? []).join(",")}`;
 
+/** A read-only call (`eventId`, its tool.start) that fetched again what a compaction (`compaction`, 1 = the session's first) took out of the context. */
+export interface CompactionRefetch {
+  eventId: string;
+  tool: string;
+  compaction: number;
+  /** Tokens the read re-sent: its output length / 4, rounded up. */
+  estTokens: number;
+}
+
 export interface DuplicateFetchOpts {
   /** Full size (bytes) of a blob, when it can be read: a cut output's real length. */
   blobBytes?: (ref: string) => number | undefined;
@@ -149,6 +160,15 @@ export interface DuplicateFetchOpts {
 
 /** Repeated read-only calls in time-sorted events. */
 export function findDuplicateFetches(sorted: readonly AgentEvent[], opts: DuplicateFetchOpts = {}): DuplicateFetch[] {
+  return scanFetches(sorted, opts).dups;
+}
+
+/** Read-only calls that fetched again what a compaction dropped, with no write to it in between, in time-sorted events. */
+export function findCompactionRefetches(sorted: readonly AgentEvent[], opts: DuplicateFetchOpts = {}): CompactionRefetch[] {
+  return scanFetches(sorted, opts).refetches;
+}
+
+function scanFetches(sorted: readonly AgentEvent[], opts: DuplicateFetchOpts): { dups: DuplicateFetch[]; refetches: CompactionRefetch[] } {
   const ends = new Map<string, AgentEvent>();
   for (const e of sorted) if (e.kind === "tool.end" && typeof e.payload.toolUseId === "string") ends.set(`${e.sessionId}\u0000${e.payload.toolUseId}`, e);
   const endOf = (e: AgentEvent) => (typeof e.payload.toolUseId === "string" ? ends.get(`${e.sessionId}\u0000${e.payload.toolUseId}`) : undefined);
@@ -160,13 +180,27 @@ export function findDuplicateFetches(sorted: readonly AgentEvent[], opts: Duplic
     if (!m) scopes.set(k, (m = new Map()));
     return m;
   };
+  // Per scope: fetch key of a result a compaction dropped -> which compaction (1-based).
+  const pre = new Map<string, Map<string, number>>();
+  const preOf = (e: AgentEvent) => {
+    const k = `${e.sessionId}\u0000${e.subagentId ?? ""}`;
+    let m = pre.get(k);
+    if (!m) pre.set(k, (m = new Map()));
+    return m;
+  };
   const dropPath = (path: string) => {
-    for (const m of scopes.values()) for (const k of [...m.keys()]) if (k.includes(path)) m.delete(k);
+    for (const m of [...scopes.values(), ...pre.values()]) for (const k of [...m.keys()]) if (k.includes(path)) m.delete(k);
   };
   const out: DuplicateFetch[] = [];
+  const refetches: CompactionRefetch[] = [];
+  let compactions = 0;
   for (const e of sorted) {
     if (e.kind === "context.compact") {
-      scopeOf(e).clear();
+      const m = scopeOf(e);
+      const p = preOf(e);
+      compactions++;
+      for (const k of m.keys()) p.set(k, compactions);
+      m.clear();
       continue;
     }
     if (e.kind === "file.change") {
@@ -179,8 +213,7 @@ export function findDuplicateFetches(sorted: readonly AgentEvent[], opts: Duplic
       const path = EDIT_TOOLS.test(tool.toLowerCase()) ? pathOf(e.payload.input) : undefined;
       if (path) dropPath(path);
       if (isShell(tool)) {
-        const m = scopeOf(e);
-        for (const k of [...m.keys()]) if (isSearchKey(k)) m.delete(k);
+        for (const m of [scopeOf(e), preOf(e)]) for (const k of [...m.keys()]) if (isSearchKey(k)) m.delete(k);
       }
       continue;
     }
@@ -190,15 +223,35 @@ export function findDuplicateFetches(sorted: readonly AgentEvent[], opts: Duplic
     const m = scopeOf(e);
     const output = outputOf(end);
     const prior = m.get(key);
-    if (prior && prior.output === output) {
+    const tokens = () => {
       const blob = end.blobs?.[0];
       const chars = (blob && opts.blobBytes?.(blob)) || (typeof end.payload.output === "string" ? end.payload.output.length : canonical(end.payload.output).length);
-      out.push({ eventId: e.id, firstEventId: prior.start.id, tool, estTokens: Math.ceil(chars / 4) });
+      return Math.ceil(chars / 4);
+    };
+    const p = preOf(e);
+    const compaction = p.get(key);
+    if (compaction !== undefined) {
+      p.delete(key);
+      refetches.push({ eventId: e.id, tool, compaction, estTokens: tokens() });
+    }
+    if (prior && prior.output === output) {
+      out.push({ eventId: e.id, firstEventId: prior.start.id, tool, estTokens: tokens() });
       continue;
     }
     m.set(key, { start: e, output });
   }
-  return out;
+  return { dups: out, refetches };
+}
+
+/** Session.stats.compactionRefetches from refetch counts; undefined when there are none. */
+function refetchStats(calls: number, tokens: number, compactions: number): CompactionRefetchStats | undefined {
+  return calls ? { calls, tokens, compactions } : undefined;
+}
+
+/** Session.stats.compactionRefetches over time-sorted events; undefined when no read fetched again what a compaction dropped. */
+export function compactionRefetchesOf(sorted: readonly AgentEvent[], opts?: DuplicateFetchOpts): CompactionRefetchStats | undefined {
+  const r = findCompactionRefetches(sorted, opts);
+  return refetchStats(r.length, r.reduce((s, x) => s + x.estTokens, 0), new Set(r.map((x) => x.compaction)).size);
 }
 
 /** Session.stats.waste and the flags it raises (duplicate-fetch); undefined when nothing repeated. */
@@ -248,10 +301,18 @@ export interface WasteState {
   tokens: number;
   perScope: Map<string, number>;
   readOnly: number;
+  /** Compactions applied so far (the next one is `compacts + 1`). */
+  compacts: number;
+  /** Per scope: fetch key of a result a compaction dropped -> which compaction. */
+  preCompact: Map<string, Map<string, number>>;
+  refetches: number;
+  refetchTokens: number;
+  /** Compactions that at least one refetch followed. */
+  refetchCompactions: Set<number>;
 }
 
 export function wasteState(): WasteState {
-  return { queue: [], open: new Map(), calls: 0, scopeCalls: new Map(), scopes: new Map(), dups: 0, tokens: 0, perScope: new Map(), readOnly: 0 };
+  return { queue: [], open: new Map(), calls: 0, scopeCalls: new Map(), scopes: new Map(), dups: 0, tokens: 0, perScope: new Map(), readOnly: 0, compacts: 0, preCompact: new Map(), refetches: 0, refetchTokens: 0, refetchCompactions: new Set() };
 }
 
 const scopeKey = (e: AgentEvent) => `${e.sessionId}\u0000${e.subagentId ?? ""}`;
@@ -263,16 +324,25 @@ function applyWaste(s: WasteState, x: WasteItem): void {
     if (!m) s.scopes.set(k, (m = new Map()));
     return m;
   };
-  const dropPath = (path: string) => {
-    for (const m of s.scopes.values()) for (const k of [...m.keys()]) if (k.includes(path)) m.delete(k);
+  const pre = (k: string) => {
+    let m = s.preCompact.get(k);
+    if (!m) s.preCompact.set(k, (m = new Map()));
+    return m;
   };
-  if (x.t === "compact") scope(x.scope).clear();
-  else if (x.t === "change") dropPath(x.path);
+  const dropPath = (path: string) => {
+    for (const m of [...s.scopes.values(), ...s.preCompact.values()]) for (const k of [...m.keys()]) if (k.includes(path)) m.delete(k);
+  };
+  if (x.t === "compact") {
+    const m = scope(x.scope);
+    const p = pre(x.scope);
+    s.compacts++;
+    for (const k of m.keys()) p.set(k, s.compacts);
+    m.clear();
+  } else if (x.t === "change") dropPath(x.path);
   else if (x.t === "write") {
     if (x.path) dropPath(x.path);
     if (x.shell) {
-      const m = scope(x.scope);
-      for (const k of [...m.keys()]) if (isSearchKey(k)) m.delete(k);
+      for (const m of [scope(x.scope), pre(x.scope)]) for (const k of [...m.keys()]) if (isSearchKey(k)) m.delete(k);
     }
   } else {
     const open = s.open.get(x.join);
@@ -282,6 +352,14 @@ function applyWaste(s: WasteState, x: WasteItem): void {
     }
     if (!x.end?.ok) return;
     const m = scope(x.scope);
+    const p = s.preCompact.get(x.scope);
+    const compaction = p?.get(x.key);
+    if (p && compaction !== undefined) {
+      p.delete(x.key);
+      s.refetches++;
+      s.refetchTokens += Math.ceil(x.end.chars / 4);
+      s.refetchCompactions.add(compaction);
+    }
     if (m.get(x.key) === x.end.out) {
       s.dups++;
       s.tokens += Math.ceil(x.end.chars / 4);
@@ -338,14 +416,23 @@ export function foldWaste(s: WasteState, e: AgentEvent): void {
   if (s.queue.length) drainWaste(s, false);
 }
 
+/** The state with everything still queued applied, on a copy: what is queued waits on a read's end, and that read counts as unfinished. */
+function drained(state: WasteState): WasteState {
+  if (!state.queue.length) return state;
+  const s = structuredClone(state);
+  drainWaste(s, true);
+  return s;
+}
+
+/** Session.stats.compactionRefetches for the events folded so far; reads still waiting for their end count as unfinished. */
+export function compactionRefetchStatsOf(state: WasteState): CompactionRefetchStats | undefined {
+  const s = drained(state);
+  return refetchStats(s.refetches, s.refetchTokens, s.refetchCompactions.size);
+}
+
 /** Session.stats.waste and its flags for the events folded so far; reads still waiting for their end count as unfinished. */
 export function wasteStatsOf(state: WasteState): { stats: WasteStats; flags: string[] } | undefined {
-  let s = state;
-  // What is still queued waits on a read's end: apply it to a copy, that read unfinished.
-  if (s.queue.length) {
-    s = structuredClone(state);
-    drainWaste(s, true);
-  }
+  const s = drained(state);
   if (!s.dups) return undefined;
   return {
     stats: { duplicateFetches: s.dups, duplicateFetchTokens: s.tokens, readOnlyCalls: s.readOnly },

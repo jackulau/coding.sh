@@ -9,7 +9,8 @@
 //   repos/<name>/        working dirs sessions ran in (calc, strings are git repos)
 //   transcripts/         Claude Code transcripts the Stop hooks point at (model-call timing)
 //   harness/{base,lean}  harness dirs snapshotted into bundles "base" and "lean"
-//   fakebin/codex        stub so `doctor` sees Codex installed (and not hooked)
+//   fakebin/codex        stub so `doctor` sees Codex installed (and not hooked);
+//                        codex.cmd runs the same stub (codex.mjs) on Windows
 //   work/                the agent's working directory (empty)
 // Answers go to <trialRoot>.hidden/answers.json (outside the agent's tree) unless --answers is given.
 //
@@ -20,7 +21,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -46,6 +47,21 @@ const SPOOL = join(DATA, "spool");
 const FAKEBIN = join(R, "fakebin");
 for (const d of [HOME, SPOOL, FAKEBIN, join(R, "work"), join(R, "transcripts"), dirname(ANSWERS)]) mkdirSync(d, { recursive: true });
 
+// The directory that holds git, found on this process's PATH. Windows only: git is not in
+// /usr/bin there, and the fixture's PATH has nothing else on it.
+function gitDir() {
+  const path = process.env.PATH ?? process.env.Path ?? "";
+  for (const d of path.split(delimiter).filter(Boolean)) {
+    for (const exe of ["git.exe", "git.cmd"]) if (existsSync(join(d, exe))) return d;
+  }
+  return undefined;
+}
+const PATH_DIRS = [FAKEBIN, dirname(process.execPath)];
+if (process.platform === "win32") {
+  const g = gitDir();
+  if (g) PATH_DIRS.push(g);
+} else PATH_DIRS.push("/usr/bin", "/bin");
+
 const ENV = {
   HOME,
   USERPROFILE: HOME,
@@ -54,17 +70,22 @@ const ENV = {
   CLAUDE_CONFIG_DIR: join(HOME, ".claude"),
   XDG_CONFIG_HOME: join(HOME, ".config"),
   XDG_DATA_HOME: join(HOME, ".local", "share"),
-  PATH: [FAKEBIN, dirname(process.execPath), "/usr/bin", "/bin"].join(":"),
+  PATH: [...new Set(PATH_DIRS)].join(delimiter),
   TZ: process.env.TZ ?? "",
   LANG: "C",
   NO_COLOR: "1",
   CODING_SH_HOOK_SOURCE: join(dirname(CLI), "hook.mjs"),
 };
 if (!ENV.TZ) delete ENV.TZ;
+if (process.platform === "win32") {
+  // Windows processes need these: SystemRoot for sockets and crypto, PATHEXT to find codex.cmd,
+  // ComSpec to run a .cmd, TEMP/TMP for os.tmpdir().
+  for (const k of ["SystemRoot", "PATHEXT", "ComSpec", "TEMP", "TMP"]) if (process.env[k]) ENV[k] = process.env[k];
+}
 
 function cli(args, opts = {}) {
   const r = spawnSync(process.execPath, [CLI, ...args], { env: ENV, cwd: opts.cwd ?? R, encoding: "utf8", timeout: 120_000 });
-  if (r.status !== 0 && !opts.allowFail) throw new Error(`fixture: coding.sh ${args.join(" ")} exited ${r.status}\n${r.stderr}`);
+  if (r.status !== 0 && !opts.allowFail) throw new Error(`fixture: coding.sh ${args.join(" ")} exited ${r.status}\n${[r.error?.message, r.stderr].filter(Boolean).join("\n")}`);
   return r;
 }
 function cliJson(args, opts) {
@@ -72,7 +93,7 @@ function cliJson(args, opts) {
 }
 function run(cmd, args, cwd) {
   const r = spawnSync(cmd, args, { cwd, env: { ...ENV, GIT_AUTHOR_NAME: "fixture", GIT_AUTHOR_EMAIL: "fixture@example.com", GIT_COMMITTER_NAME: "fixture", GIT_COMMITTER_EMAIL: "fixture@example.com" }, encoding: "utf8" });
-  if (r.status !== 0) throw new Error(`fixture: ${cmd} ${args.join(" ")}: ${r.stderr}`);
+  if (r.status !== 0) throw new Error(`fixture: ${cmd} ${args.join(" ")} exited ${r.status}: ${[r.error?.message, r.stderr].filter(Boolean).join("\n") || "no output"}`);
   return r.stdout;
 }
 
@@ -287,7 +308,10 @@ for (const s of sessions) writeSession(s);
 
 const wrapperSessions = [];
 function wrapped(key, repo, at0, prompt, file, content) {
-  const listing = () => new Set(["wrapper", "claude-code"].flatMap((a) => (existsSync(join(SPOOL, a)) ? readdirSync(join(SPOOL, a)).map((f) => `${a}/${f}`) : [])));
+  // Spool files only: a line over 1023 bytes goes to a side file in <agent>/raw/ (src/spool/write.ts),
+  // which a long --out path causes (the gate's temp dirs), and that dir is not a spool file to rebase.
+  const spoolFiles = (a) => readdirSync(join(SPOOL, a), { withFileTypes: true }).filter((e) => e.isFile() && e.name.endsWith(".jsonl")).map((e) => `${a}/${e.name}`);
+  const listing = () => new Set(["wrapper", "claude-code"].flatMap((a) => (existsSync(join(SPOOL, a)) ? spoolFiles(a) : [])));
   const before = listing();
   const r = JSON.parse(cli(["run", "--json", "--", process.execPath, join(HERE, "fake-agent.mjs"), "--prompt", prompt, "--write", file, "--content", content], { cwd: REPOS[repo] }).stdout);
   const fresh = [...listing()].filter((f) => !before.has(f));
@@ -328,6 +352,9 @@ if (ing.spool.errors.length) throw new Error(`fixture: ingest errors: ${JSON.str
 
 writeFileSync(join(FAKEBIN, "codex"), '#!/bin/sh\ncase "$1" in --version|-V) echo "codex-cli 0.166.0";; *) echo "codex stub" >&2; exit 1;; esac\n');
 chmodSync(join(FAKEBIN, "codex"), 0o755);
+// Windows runs only PATHEXT files: the same stub as a .cmd that runs node (on the fixture PATH).
+writeFileSync(join(FAKEBIN, "codex.mjs"), 'const a = process.argv[2];\nif (a === "--version" || a === "-V") console.log("codex-cli 0.166.0");\nelse {\n  console.error("codex stub");\n  process.exitCode = 1;\n}\n');
+writeFileSync(join(FAKEBIN, "codex.cmd"), '@node "%~dp0codex.mjs" %*\r\n');
 mkdirSync(ENV.CODEX_HOME, { recursive: true });
 writeFileSync(join(ENV.CODEX_HOME, "config.toml"), 'model = "gpt-5.5"\n\n[features]\nhooks = false\n');
 mkdirSync(ENV.CLAUDE_CONFIG_DIR, { recursive: true });

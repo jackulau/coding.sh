@@ -175,6 +175,23 @@ export async function fitPage(limit: number, render: (n: number) => Obj | Promis
   return best;
 }
 
+/**
+ * eval init's errors name its CLI flags; over MCP they name eval_init's arguments,
+ * so the calling agent can fix its call. Flags with no argument stay as they are.
+ */
+export function initErrorArgs(msg: string): string {
+  return msg
+    .replace(/--command '<cmd>'/g, "`command`")
+    .replace(/--url <URL>/g, "`url`")
+    .replace(/--skill <DIR>/g, "`skill`")
+    .replace(/--session <id>/g, "`sessionIds`")
+    .replace(/--cases <FILE> \(JSONL of \{"input", "expected"\}\)/g, '`cases` ([{"input", "expected"}])')
+    // eval_init has no --draft: the calling agent writes the cases itself.
+    .replace(/, or --describe '<what the app does>' --draft to have a model write them/g, "")
+    .replace(/--(command|url)\b(?!-)/g, "`$1`")
+    .replace(/--force\b(?!-)/g, "`force: true`");
+}
+
 /** The rows a tool with a `limit` returns when none is passed, where the schema's default does not say. */
 const LIMIT_DEFAULTS: Record<string, (a: Obj) => number> = { benchmarks: (a) => (a.metric ? 30 : 5) };
 
@@ -657,7 +674,8 @@ function toolDefs(): ToolDef<ToolCtx>[] {
       inputSchema: input({ since: SINCE("7d"), until: UNTIL, agent: AGENT, repo: REPO, model: { type: "string", description: "Only model calls whose model name contains this." }, limit: LIMIT(10, 50) }),
       outputSchema: out(
         {
-          window: WINDOW_OUT,
+          window: out({ sessions: I, truncated: B, sessionsRead: I, eventsRead: I }),
+          truncatedNote: S,
           llm: out({ calls: I, p50Ms: N, p95Ms: N, ttftP50Ms: N }, ["calls"]),
           byModel: arr(out({ model: S, calls: I, p95Ms: N }, ["model", "calls"])),
           slowestTools: arr(out({ tool: S, p95Ms: N }, ["tool"])),
@@ -923,7 +941,7 @@ function toolDefs(): ToolDef<ToolCtx>[] {
           );
         } catch (e) {
           // The message says when replacing needs the user's approval; a structured field would cost context on every turn.
-          if (e instanceof InitError) throw new ToolError(e.message);
+          if (e instanceof InitError) throw new ToolError(initErrorArgs(e.message));
           throw e;
         }
         const rel = relative(c.cwd, r.dir);

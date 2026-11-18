@@ -86,19 +86,35 @@ export function distance(a: string, b: string): number {
   return rows[a.length]![b.length]!;
 }
 
-/** The one closest candidate within a small edit distance, or undefined. */
+/** Shell habits for a name: `exp ls` means `exp list`. Tried in order; the first candidate present wins. */
+const SYNONYMS: Readonly<Record<string, readonly string[]>> = {
+  ls: ["list"],
+  rm: ["remove", "delete"],
+  del: ["delete", "remove"],
+};
+
+/**
+ * The one closest candidate within a small edit distance, or undefined. Failing that, a shell
+ * synonym (`ls` for `list`), or the one candidate a 3+ character input begins (`dry` for `dry-run`).
+ */
 export function suggest(input: string, candidates: readonly string[]): string | undefined {
   let best: string | undefined;
   let bestD = Infinity;
+  const lower = input.toLowerCase();
   const max = Math.max(1, Math.min(3, Math.floor(input.length / 2)));
   for (const c of candidates) {
-    const d = distance(input.toLowerCase(), c.toLowerCase());
+    const d = distance(lower, c.toLowerCase());
     if (d < bestD) {
       bestD = d;
       best = c;
     }
   }
-  return best !== undefined && bestD <= max ? best : undefined;
+  if (best !== undefined && bestD <= max) return best;
+  const synonym = SYNONYMS[lower]?.find((s) => candidates.includes(s));
+  if (synonym) return synonym;
+  if (lower.length < 3) return undefined;
+  const prefixed = [...new Set(candidates.filter((c) => c.toLowerCase().startsWith(lower)))];
+  return prefixed.length === 1 ? prefixed[0] : undefined;
 }
 
 export interface ParseOptions {

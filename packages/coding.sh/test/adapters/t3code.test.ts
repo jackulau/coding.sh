@@ -1,12 +1,14 @@
 // T3 Code adapter: a synthetic T3 store (real v2/v1 table shapes, made-up rows)
 // built in a temp HOME next to Codex and Claude transcripts T3 "ran".
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, it } from "node:test";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { codex } from "../../src/adapters/codex.ts";
+import { SQLITE_COPY_OWNER, SQLITE_COPY_PREFIX } from "../../src/adapters/_shared/sqlite-copies.ts";
 import { ADAPTERS } from "../../src/adapters/index.ts";
 import { backfillT3, t3code, turnUsage } from "../../src/adapters/t3code.ts";
 import { defaultConfig } from "../../src/core/config.ts";
@@ -517,4 +519,63 @@ describe("T3 Claude subagent threads", () => {
     assert.deepEqual(r.errors, []);
     return { index };
   };
+});
+
+describe("T3 store copies", () => {
+  let env: TmpEnv;
+  const saved: Record<string, string | undefined> = {};
+  const TMP = ["TMPDIR", "TEMP", "TMP"];
+  let tmp: string;
+  before(() => {
+    env = tmpEnv();
+    for (const k of [...t3Env, ...TMP]) (saved[k] = process.env[k]), delete process.env[k];
+    tmp = join(env.root, "tmp");
+    mkdirSync(tmp);
+    for (const k of TMP) process.env[k] = tmp;
+    buildStore(env.home);
+  });
+  after(() => {
+    for (const k of [...t3Env, ...TMP]) if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+    env.restore();
+  });
+  const copies = () => readdirSync(tmp).filter((n) => n.startsWith(SQLITE_COPY_PREFIX));
+  const run = (index = new MemoryIndexStore()) => {
+    const cenv = { ...process.env };
+    return backfill({ config: defaultConfig(cenv), index, blobs: new MemoryBlobStore(), adapters: [t3code], env: cenv });
+  };
+
+  it("removes a copy a killed import left, even when the store is unchanged", async () => {
+    const index = new MemoryIndexStore();
+    const first = await run(index);
+    assert.deepEqual(first.errors, []);
+    assert.ok(first.events > 0);
+    assert.deepEqual(copies(), [], "its own copy is removed when the import ends");
+    // A read's tail child killed at its deadline mid-copy: the copy and its owner file, the owner gone.
+    const dead = Number(spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { encoding: "utf8" }).stdout);
+    const left = join(tmp, `${SQLITE_COPY_PREFIX}killed`);
+    mkdirSync(left);
+    writeFileSync(join(left, SQLITE_COPY_OWNER), String(dead));
+    writeFileSync(join(left, "statev2.sqlite"), "partial copy");
+    const again = await run(index);
+    assert.equal(again.events, 0, "the store is unchanged");
+    assert.deepEqual(copies(), []);
+  });
+
+  it("a store it can't copy is a backfill error, not an import of nothing", async () => {
+    // A -wal that can't be copied (a directory), as a full temp volume can't take a 1.7 GB store.
+    const wal = join(env.home, ".t3", "userdata", "statev2.sqlite-wal");
+    mkdirSync(wal);
+    try {
+      const r = await run();
+      assert.equal(r.events, 0);
+      assert.equal(r.errors.length, 1, JSON.stringify(r.errors));
+      assert.match(r.errors[0]!.message, /^t3code\.backfill failed: T3 Code's store was not read: could not copy .*statev2\.sqlite/);
+      assert.match(r.errors[0]!.message, /temp directory/);
+      assert.match(r.agents.find((a) => a.agent === "t3code")?.error ?? "", /could not copy/);
+      assert.deepEqual(copies(), []);
+    } finally {
+      rmSync(wal, { recursive: true, force: true });
+    }
+  });
 });

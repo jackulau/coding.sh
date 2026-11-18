@@ -6,7 +6,7 @@ import { facetCounts, findSessions } from "../../query/run.ts";
 import { FACET_KEYS, scopesSubagents, type Query } from "../../query/where.ts";
 import type { Session } from "../../schema/index.ts";
 import { parseSinceWhen, positiveInt, UsageError } from "../args.ts";
-import { agentScope, agentsFlag, autoIngest, fieldsFlag, pendingField, pickFields, queryCliError, readIngest, num, oneLine, SESSION_FIELDS, sessionJson, str, timeWindow, whereFlag, windowJson, windowNote, withContext, type IngestBacklog } from "../common.ts";
+import { agentScope, agentsFlag, autoIngest, rejectAgentTypos, fieldsFlag, pendingField, pickFields, queryCliError, readIngest, num, oneLine, SESSION_FIELDS, sessionJson, str, timeWindow, whereFlag, windowJson, windowNote, withContext, type IngestBacklog } from "../common.ts";
 import { ago, clean, duration, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { noSessionsNext } from "../first-session.ts";
@@ -69,6 +69,7 @@ export async function run(c: CommandContext): Promise<number> {
       };
     } else listing = await listPlain(ctx.index, filter, limit, empty);
     const { sessions } = listing;
+    if (!sessions.length) await rejectAgentTypos(ctx.index, agents);
     if (out.json) {
       // Rows are a digest; --fields picks from the whole session (stats.phases, each derail's event).
       const rows = fields ? sessions.map((s) => pickFields(sessionJson(s, { derailEvents: true, phases: true }), fields)) : sessions.map((s) => sessionJson(s));

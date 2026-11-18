@@ -577,8 +577,15 @@ describe("cli zero setup", () => {
     assert.match(tail[0]!, /Set up Claude Code.*\(hooks \+ MCP server\)/);
     // Agents load hooks at session start: say capture begins with the next session.
     assert.match(tail[1]!, /Recording starts with the next session: start a new session of any of them\. Sessions already open may not have loaded the hooks$/);
-    assert.match(tail[2]!, /Open the viewer: coding\.sh ui$/);
-    assert.match(tail[3]!, /After a few sessions, see what to fix first: coding\.sh improve$/);
+    // The test env sets no SHELL or MSYSTEM: on Windows that is PowerShell or cmd, where `coding.sh` opens npm's sh shim.
+    const bin = process.platform === "win32" ? "codingsh" : "coding\\.sh";
+    assert.match(tail[2]!, new RegExp(`Open the viewer: ${bin} ui$`));
+    assert.match(tail[3]!, new RegExp(`After a few sessions, see what to fix first: ${bin} improve$`));
+    if (process.platform === "win32") {
+      // From Git Bash (MSYSTEM set), `coding.sh` runs there: keep it.
+      const gitBash = cli(h, ["init", "--yes", ...agentArgs], { MSYSTEM: "MINGW64" }).stderr;
+      assert.match(gitBash, /Open the viewer: coding\.sh ui$/m);
+    }
     assert.match(tail[4]!, /Docs: https:\/\/coding\.sh\/docs$/);
     for (const f of Object.values(files)) assert.match(readFileSync(f, "utf8"), /coding-sh/, f);
     assert.equal(readFileSync(join(h.data, "bin", "cli-path"), "utf8"), `${CLI}\n`, "hook knows the CLI for background ingests");
@@ -599,6 +606,48 @@ describe("cli zero setup", () => {
     assert.equal(existsSync(files.opencode), false, "created file removed");
     const dry = parseJson(cli(h, ["uninstall", "--dry-run", "--json"]).stdout, "uninstall again") as { agents: { changes: unknown[] }[] };
     assert.ok(dry.agents.every((a) => a.changes.length === 0), "nothing left");
+  });
+
+  it("uninstall removes the Codex MCP entry after the coding.sh home was deleted, also after a second init", () => {
+    for (const reinit of [false, true]) {
+      const h = tmpHome();
+      const toml = mcpFiles(h).codex;
+      mkdirSync(dirname(toml), { recursive: true });
+      writeFileSync(toml, 'model = "x"\n');
+      assert.equal(cli(h, ["init", "--yes", "--no-import", "--agent", "codex"]).status, 0);
+      assert.match(readFileSync(toml, "utf8"), /\[mcp_servers\.coding-sh\]/);
+      rmSync(h.data, { recursive: true, force: true });
+      if (reinit) assert.equal(cli(h, ["init", "--yes", "--no-import", "--agent", "codex"]).status, 0);
+      const u = cli(h, ["uninstall", "--yes"]);
+      assert.equal(u.status, 0, u.stderr);
+      assert.doesNotMatch(readFileSync(toml, "utf8"), /coding-sh/, `reinit=${reinit}`);
+      assert.match(readFileSync(toml, "utf8"), /^model = "x"$/m);
+      const dry = parseJson(cli(h, ["uninstall", "--dry-run", "--json"]).stdout, "uninstall again") as { agents: { changes: unknown[] }[] };
+      assert.ok(dry.agents.every((a) => a.changes.length === 0), "nothing left");
+    }
+  });
+
+  it("uninstall after the coding.sh home was deleted leaves one-line configs byte-identical and reports nothing left", () => {
+    const h = tmpHome();
+    const settings = join(h.home, ".claude", "settings.json");
+    const toml = mcpFiles(h).codex;
+    mkdirSync(dirname(settings), { recursive: true });
+    mkdirSync(dirname(toml), { recursive: true });
+    writeFileSync(settings, '{"theme":"dark"}\n');
+    writeFileSync(toml, 'model = "x"\n');
+    const agents = ["--agent", "claude-code", "--agent", "codex"];
+    assert.equal(cli(h, ["init", "--yes", "--no-import", ...agents]).status, 0);
+    assert.match(readFileSync(settings, "utf8"), /coding-sh|hook/);
+    rmSync(h.data, { recursive: true, force: true });
+    const u = cli(h, ["uninstall", "--yes", ...agents]);
+    assert.equal(u.status, 0, u.stderr);
+    // No backup to restore from: removing our entries must still give back the user's bytes.
+    assert.equal(readFileSync(settings, "utf8"), '{"theme":"dark"}\n');
+    assert.equal(readFileSync(toml, "utf8"), 'model = "x"\n');
+    const again = cli(h, ["uninstall", "--yes", ...agents]);
+    assert.match(again.stderr, /No coding\.sh hooks or MCP entries installed/);
+    const doc = parseJson(cli(h, ["doctor", "--json"]).stdout, "doctor") as { mcp?: { agent: string }[] };
+    assert.deepEqual(doc.mcp ?? [], [], "doctor finds no coding.sh MCP entry once uninstall says nothing is installed");
   });
 
   it("captured sessions show up without running ingest: the hook ingests in the background at session end", async () => {

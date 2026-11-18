@@ -329,6 +329,35 @@ export async function snapshotDir(dir: string, env: NodeJS.ProcessEnv = process.
   }
 }
 
+/**
+ * A snapshot of `state` with `paths` left out, as a new commit in the same shadow
+ * repo (child of the original). An eval task's hidden tests come out of the start
+ * tree this way, so the agent never sees them; they are copied in at verify time.
+ */
+export async function snapshotWithout(state: RepoState, paths: readonly string[], env: NodeJS.ProcessEnv = process.env): Promise<string> {
+  const rev = state.snapshot || state.head;
+  if (!rev) throw new Error("snapshotWithout: state has neither snapshot nor head");
+  const shadow = shadowRepoPath(state.root, env);
+  if (!existsSync(join(shadow, "HEAD"))) await ensureShadow(state.root, env);
+  const scratch = mkdtempSync(join(tmpdir(), "coding-sh-drop-"));
+  try {
+    // An empty work tree: update-index needs one, and removing an index entry never touches it.
+    const work = join(scratch, "work");
+    mkdirSync(work);
+    const senv = { GIT_DIR: shadow, GIT_INDEX_FILE: join(scratch, "index"), GIT_WORK_TREE: work };
+    await run(["read-tree", `${rev}^{tree}`], { cwd: work, env: senv, timeoutMs: MATERIALIZE_TIMEOUT_MS });
+    if (paths.length) await run(["update-index", "--force-remove", "--", ...paths], { cwd: work, env: senv, timeoutMs: MATERIALIZE_TIMEOUT_MS });
+    const tree = await git(["write-tree"], { cwd: work, env: senv });
+    const commit = await git(["commit-tree", tree, "-p", rev, "-m", "coding.sh task start (hidden tests removed)"], { cwd: work, env: { ...senv, ...CODING_SH_IDENTITY } });
+    const refDir = join(shadow, "refs", "snapshots");
+    mkdirSync(refDir, { recursive: true });
+    writeFileSync(join(refDir, commit), commit + "\n");
+    return commit;
+  } finally {
+    rmQuiet(scratch);
+  }
+}
+
 function emptyTreeFor(sha: string): string {
   return sha.length === 64 ? EMPTY_TREE_SHA256 : EMPTY_TREE_SHA1;
 }

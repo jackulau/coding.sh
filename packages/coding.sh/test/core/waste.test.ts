@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { buildSession, failureFlags } from "../../src/core/sessions.ts";
-import { findDuplicateFetches, foldWaste, isReadOnlyCommand, isReadOnlyToolStart, WASTE_LATE_END_CALLS, wasteOf, wasteState, wasteStatsOf } from "../../src/core/waste.ts";
+import { compactionRefetchesOf, compactionRefetchStatsOf, findCompactionRefetches, findDuplicateFetches, foldWaste, isReadOnlyCommand, isReadOnlyToolStart, WASTE_LATE_END_CALLS, wasteOf, wasteState, wasteStatsOf } from "../../src/core/waste.ts";
 import type { AgentEvent, EventKind } from "../../src/schema/index.ts";
 
 let n = 0;
@@ -151,5 +151,69 @@ describe("foldWaste", () => {
     const late = [...first, second[0]!, ...greps(WASTE_LATE_END_CALLS.scope), second[1]!];
     assert.equal(findDuplicateFetches(late).length, 1);
     assert.equal(folded(late), undefined);
+  });
+});
+
+describe("compaction refetches", () => {
+  const len = Math.ceil("contents of /w/a.ts".length / 4);
+  const compact = () => ev("context.compact", {});
+  /** Batch and live fold: refetch stats and waste stats, checked equal. */
+  const both = (events: AgentEvent[]) => {
+    const s = wasteState();
+    for (const e of events) foldWaste(s, e);
+    const batch = compactionRefetchesOf(events);
+    assert.deepEqual(compactionRefetchStatsOf(s), batch, "foldWaste agrees with compactionRefetchesOf");
+    assert.deepEqual(wasteStatsOf(s), wasteOf(events), "foldWaste agrees with wasteOf");
+    return { refetches: batch, dups: findDuplicateFetches(events).length };
+  };
+
+  it("(a) read A, compact, read A: one refetch of A's tokens after one compaction, no duplicate", () => {
+    const events = [...read("/w/a.ts"), compact(), ...read("/w/a.ts")];
+    assert.deepEqual(both(events), { refetches: { calls: 1, tokens: len, compactions: 1 }, dups: 0 });
+    assert.deepEqual(findCompactionRefetches(events), [{ eventId: events[3]!.id, tool: "Read", compaction: 1, estTokens: len }]);
+    const session = buildSession(events);
+    assert.deepEqual(session.stats.compactionRefetches, { calls: 1, tokens: len, compactions: 1 });
+    assert.equal(session.stats.waste, undefined);
+  });
+
+  it("(b) read A, write A, compact, read A: absent; a write after the compaction clears it too", () => {
+    const edit = () => call("Edit", { file_path: "/w/a.ts", old_string: "x", new_string: "y" });
+    assert.deepEqual(both([...read("/w/a.ts"), ...edit(), compact(), ...read("/w/a.ts")]), { refetches: undefined, dups: 0 });
+    assert.deepEqual(both([...read("/w/a.ts"), compact(), ...edit(), ...read("/w/a.ts")]), { refetches: undefined, dups: 0 });
+    assert.deepEqual(both([...read("/w/a.ts"), compact(), ev("file.change", { path: "a.ts", op: "modify" }), ...read("/w/a.ts")]), { refetches: undefined, dups: 0 });
+    assert.equal(buildSession([...read("/w/a.ts"), ...edit(), compact(), ...read("/w/a.ts")]).stats.compactionRefetches, undefined);
+  });
+
+  it("(c) read A twice with no compaction: absent, one duplicate", () => {
+    const events = [...read("/w/a.ts"), ...read("/w/a.ts")];
+    assert.deepEqual(both(events), { refetches: undefined, dups: 1 });
+    assert.equal(buildSession(events).stats.compactionRefetches, undefined);
+  });
+
+  it("each dropped result counts once; a later repeat is a duplicate again", () => {
+    assert.deepEqual(both([...read("/w/a.ts"), compact(), ...read("/w/a.ts"), ...read("/w/a.ts")]), { refetches: { calls: 1, tokens: len, compactions: 1 }, dups: 1 });
+  });
+
+  it("counts the compactions that refetches followed, per context", () => {
+    const b = Math.ceil("contents of /w/b.ts".length / 4);
+    const events = [...read("/w/a.ts"), compact(), ...read("/w/a.ts"), ...read("/w/b.ts"), compact(), compact(), ...read("/w/b.ts"), ...read("/w/c.ts")];
+    assert.deepEqual(both(events).refetches, { calls: 2, tokens: len + b, compactions: 2 });
+    // A subagent's compaction drops only its own context; its parent's read after it is not a refetch.
+    const sub = { at: { subagentId: "a1" } };
+    assert.deepEqual(both([...read("/w/a.ts"), ev("context.compact", {}, { subagentId: "a1" }), ...read("/w/a.ts")]).refetches, undefined);
+    assert.deepEqual(both([...read("/w/a.ts", sub), ev("context.compact", {}, { subagentId: "a1" }), ...read("/w/a.ts", sub)]).refetches, { calls: 1, tokens: len, compactions: 1 });
+  });
+
+  it("a writing shell command drops searches from before the compaction; a failed re-read does not count", () => {
+    assert.deepEqual(both([...call("Grep", { pattern: "foo" }), compact(), ...bash("touch x"), ...call("Grep", { pattern: "foo" })]).refetches, undefined);
+    assert.deepEqual(both([...read("/w/a.ts"), compact(), ...read("/w/a.ts", { ok: false, output: "EACCES" })]).refetches, undefined);
+    assert.deepEqual(both([...read("/w/a.ts"), compact(), ...read("/w/a.ts", { ok: false, output: "EACCES" }), ...read("/w/a.ts")]).refetches, { calls: 1, tokens: len, compactions: 1 });
+  });
+
+  it("the live fold waits for the re-read's end, and counts it after a late end like the batch", () => {
+    const first = read("/w/a.ts");
+    const second = read("/w/a.ts");
+    const greps = (k: number) => Array.from({ length: k }, (_, i) => call("Grep", { pattern: `p${i}` })).flat();
+    assert.deepEqual(both([...first, compact(), second[0]!, ...greps(10), second[1]!]).refetches, { calls: 1, tokens: len, compactions: 1 });
   });
 });

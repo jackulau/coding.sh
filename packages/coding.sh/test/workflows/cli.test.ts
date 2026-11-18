@@ -41,12 +41,12 @@ interface Result {
   stderr: string;
 }
 
-async function cli(action: string, positionals: string[], flags: Record<string, FlagValue> = {}, o: { json?: boolean; env?: NodeJS.ProcessEnv } = {}): Promise<Result> {
+async function cli(action: string, positionals: string[], flags: Record<string, FlagValue> = {}, o: { json?: boolean; env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {}): Promise<Result> {
   let stdout = "";
   let stderr = "";
   const e = { ...env, ...o.env };
   const out = new Output({ json: o.json ?? false, env: e, stdout: { write: (s: string) => (stdout += s), isTTY: false }, stderr: { write: (s: string) => (stderr += s), isTTY: false }, stdin: { isTTY: false } });
-  const code = await run({ action, flags, positionals, rest: [], out, env: e, cwd: join(root, "repo"), debug: false, signal: new AbortController().signal });
+  const code = await run({ action, flags, positionals, rest: [], out, env: e, cwd: join(root, "repo"), debug: false, signal: o.signal ?? new AbortController().signal });
   return { code, stdout, stderr };
 }
 
@@ -96,6 +96,22 @@ describe("coding.sh workflows", () => {
     const forced = await json("import", [join(root, "claude", "projects")], { force: true });
     assert.equal(forced.imported.length, 2);
     await assert.rejects(cli("import", [join(root, "missing")]), /Can't find/);
+  });
+
+  it("import stopped by Ctrl-C says it stopped, prints no success line and exits 130", async () => {
+    const projects = join(root, "stop", "projects");
+    writeClaudeWorkflowFixture(projects);
+    const e = { CODING_SH_HOME: join(root, "stop", "home") };
+    const r = await cli("import", [projects], {}, { env: e, signal: AbortSignal.abort() });
+    assert.equal(r.code, 130);
+    assert.doesNotMatch(r.stderr + r.stdout, /Imported/);
+    assert.match(r.stderr, /Stopped: 0 workflow runs imported/);
+    assert.match(r.stderr, /coding\.sh workflows import/);
+    const j = await cli("import", [projects], {}, { json: true, env: e, signal: AbortSignal.abort() });
+    assert.equal(j.code, 130);
+    assert.equal(JSON.parse(j.stdout).outcome, "interrupted");
+    // Nothing was stored, so the next import reads both runs.
+    assert.equal((await json("import", [projects], {}, e)).imported.length, 2);
   });
 
   it("show prints the run tree, the gantt TSV, or the JSON document", async () => {

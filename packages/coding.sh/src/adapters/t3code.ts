@@ -40,6 +40,7 @@ import { CLAUDE_AGENT, TRANSCRIPT_IDLE_MS, claudeConfigDir } from "./claude-code
 import { ROLLOUT_IDLE_MS, codexHome, convertRollout } from "./codex.ts";
 import { cursorConfigDir } from "./cursor.ts";
 import { openSqliteCopy } from "./more/_util.ts";
+import { reapSqliteCopies } from "./_shared/sqlite-copies.ts";
 import { piSessionsDir } from "./more/pi.ts";
 import { opencodeDataDir } from "./opencode.ts";
 
@@ -689,10 +690,30 @@ export async function* backfillT3(ctx: NormalizeContext, opts: BackfillOpts = {}
   const v2Path = join(dir, "statev2.sqlite");
   const v1Path = join(dir, "state.sqlite");
   if (!existsSync(v2Path) && !existsSync(v1Path)) return;
-  if (opts.changed && !(await opts.changed(storeFingerprint(dir, [v2Path, v1Path])))) return;
+  if (opts.changed && !(await opts.changed(storeFingerprint(dir, [v2Path, v1Path])))) {
+    // Copies a killed import left (a read's tail child, killed at its deadline mid-copy) go even when
+    // the store is unchanged; opening a copy removes them otherwise.
+    reapSqliteCopies();
+    return;
+  }
   const native = new NativeIndex(env);
-  const v2 = await openSqliteCopy(v2Path);
-  const v1 = await openSqliteCopy(v1Path);
+  // The store is this adapter's only source: a copy that fails (no room in the temp dir for a
+  // 1.7 GB store) is a backfill error, not an import of nothing.
+  const open = async (path: string) => {
+    try {
+      return await openSqliteCopy(path, { throwOnError: true });
+    } catch (e) {
+      throw new Error(`T3 Code's store was not read: ${(e as Error).message}. It is read from a copy in the temp directory (TMPDIR, or TEMP on Windows), which needs room for it`, { cause: e });
+    }
+  };
+  const v2 = await open(v2Path);
+  let v1: Awaited<ReturnType<typeof open>>;
+  try {
+    v1 = await open(v1Path);
+  } catch (e) {
+    v2?.close();
+    throw e;
+  }
   try {
     // Threads from both stores first, so subagent and provider-switch edges resolve across them.
     const all: { thread: Thread; db: DatabaseSync; path: string; v1: boolean }[] = [];

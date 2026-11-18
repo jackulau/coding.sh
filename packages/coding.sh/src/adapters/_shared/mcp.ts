@@ -11,9 +11,11 @@
 // JSON configs are edited as JSONC in place (Gemini CLI settings.json carries
 // comments): only our server entry changes. The Codex TOML entry is found by
 // its [mcp_servers.<name>] header, and it is ours when it matches what
-// installs.json says we wrote (or still carries our legacy block markers), so
+// installs.json says we wrote, is exactly a launch coding.sh writes (when the
+// home holding installs.json is gone), or still carries our legacy block markers, so
 // `codex mcp add`, which rewrites the file and drops comments, can't orphan it.
 import { rm } from "node:fs/promises";
+import { paths } from "../../core/paths.ts";
 import { parseToml } from "../../core/toml.ts";
 import type { Adapter, FileChange, McpServerSpec } from "../../core/types.ts";
 import { atomicWrite, backupFile, ConfigParseError, isObject, planEdit, readTextIfExists, stringifyJsonLike } from "./files.ts";
@@ -116,13 +118,26 @@ export function readMcpEntry(t: McpTarget, name: string): { command: string; arg
  * Whether the Codex [mcp_servers.<name>] entry in `text` is coding.sh's: it
  * matches the entry installs.json records as written by us, or the file still
  * carries our legacy block markers (a whole block, or the orphan END a
- * rewrite left behind). A hand-written entry of the same name is the user's.
+ * rewrite left behind), or it is exactly the launch init writes (isOurLaunch).
+ * Any other hand-written entry of the same name is the user's.
  */
 function ownsTomlEntry(t: McpTarget, text: string | undefined, name: string, env: NodeJS.ProcessEnv): boolean {
   if (hasTomlMarker(text, TOML_BLOCK)) return true;
   const cur = entryCommand(tomlServers(t.file, text)[name]);
+  if (!cur) return false;
   const rec = installRecord(t.file, env);
-  return !!cur && !!rec?.mcp && jsonEqual(cur, rec.mcp);
+  return (!!rec?.mcp && jsonEqual(cur, rec.mcp)) || isOurLaunch(cur, env);
+}
+
+/**
+ * Whether `cur` is exactly `node <home>/bin/mcp.mjs`, the launch init writes.
+ * installs.json lives in that home, so once the user deletes it only the
+ * entry itself says it is ours. A hand-written `coding.sh mcp` stays theirs.
+ */
+function isOurLaunch(cur: { command: string; args: string[] }, env: NodeJS.ProcessEnv): boolean {
+  if (cur.command !== "node" || cur.args.length !== 1) return false;
+  const norm = (p: string) => (process.platform === "win32" ? p.replace(/\//g, "\\").toLowerCase() : p);
+  return norm(cur.args[0]!) === norm(paths(env).mcpLauncher);
 }
 
 /** Everything in a TOML config except mcp_servers.<name>, for checking that an edit touched nothing else. */

@@ -1,7 +1,7 @@
 // Unit tests for CLI formatting and message helpers.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { blockingNotes, setupSummary } from "../../src/cli/commands/init.ts";
+import { blockingNotes, nextStepBin, setupSummary } from "../../src/cli/commands/init.ts";
 import { checkFailed } from "../../src/cli/commands/update.ts";
 import { duration, formatLabel, LABEL_WIDTH } from "../../src/cli/output.ts";
 import type { UpdateCache } from "../../src/update/index.ts";
@@ -62,5 +62,17 @@ describe("update check failures", () => {
     const bad = checkFailed(cache({ errorKind: "bad_response" }), "0.0.1");
     assert.equal(bad.reason, "update_check_failed");
     assert.doesNotMatch(bad.next.join(" "), /connection/i);
+  });
+});
+
+describe("nextStepBin", () => {
+  it("names codingsh in PowerShell and cmd on Windows, where coding.sh opens npm's sh shim", () => {
+    assert.equal(nextStepBin({}, "win32"), "codingsh");
+    assert.equal(nextStepBin({ PSModulePath: "C:/x" }, "win32"), "codingsh");
+    assert.equal(nextStepBin({ MSYSTEM: "MINGW64" }, "win32"), "coding.sh");
+    assert.equal(nextStepBin({ SHELL: "/usr/bin/bash" }, "win32"), "coding.sh");
+    assert.equal(nextStepBin({}, "linux"), "coding.sh");
+    assert.equal(nextStepBin({}, "darwin"), "coding.sh");
+    assert.equal(nextStepBin({ npm_command: "exec" }, "win32"), "npx coding.sh");
   });
 });

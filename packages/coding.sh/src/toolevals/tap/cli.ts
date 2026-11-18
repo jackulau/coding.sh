@@ -1,4 +1,4 @@
-// CLI tap (§5.3): `bin/<bin>` in the sandbox is a standalone Node shim that
+// CLI tap (§5.3): `bin/<bin>` in the sandbox is a sh launcher for a Node shim that
 // execs the real command, passes stdin/stdout/stderr through unchanged, and
 // appends one TapRecord per call to tap.jsonl. durationMs covers the real
 // binary only (spawn → exit), so shim startup is excluded.
@@ -52,7 +52,7 @@ export interface CliShimOpts extends CliClassifyConfig {
   env: Record<string, string>;
   /** tap.jsonl; omitted for the check-time passthrough (no record). */
   tapLog?: string;
-  /** Node binary for the shebang (default: this process's). */
+  /** Node binary the launcher execs (default: this process's). */
   node?: string;
 }
 
@@ -138,17 +138,35 @@ export function resolveShimSpawn(cmd: string, args: string[], env: Record<string
   return { file: get("COMSPEC") || "cmd.exe", args: ["/d", "/s", "/c", `"${line}"`], verbatim: true };
 }
 
-/** Source of the shim script. */
-export function cliShimSource(o: CliShimOpts, platform: NodeJS.Platform = process.platform): string {
-  const node = o.node ?? process.execPath;
+/** File name of the shim's node module, written next to `<bin>`. */
+export function cliShimScriptName(bin: string): string {
+  return `.${bin}.tap.mjs`;
+}
+
+/**
+ * Source of `<bin>`: a sh launcher that execs node on the `.mjs` module beside
+ * it. The module is a separate file so node loads it as ESM whatever the bin's
+ * name: a bin with an extension node does not know (`coding.sh`) cannot hold
+ * the module itself (ERR_UNKNOWN_FILE_EXTENSION). On Windows Git Bash runs the
+ * extensionless launcher as sh, and `<bin>.cmd` covers cmd.exe, PowerShell and
+ * spawn.
+ */
+export function cliShimLauncher(bin: string, node: string = process.execPath, platform: NodeJS.Platform = process.platform): string {
+  const n = platform === "win32" ? node.replace(/\\/g, "/") : node;
+  const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+  return [
+    "#!/bin/sh",
+    "# coding.sh tool-eval tap (generated). Runs the tap module next to this file with node.",
+    'case $0 in */*|*\\\\*) d=${0%[\\\\/]*} ;; *) d=. ;; esac',
+    `exec ${q(n)} "$d/"${q(cliShimScriptName(bin))} "$@"`,
+    "",
+  ].join("\n");
+}
+
+/** Source of the shim's node module (`.<bin>.tap.mjs`). */
+export function cliShimSource(o: CliShimOpts): string {
   const cfg = { command: o.command, env: o.env, tapLog: o.tapLog ?? null, usageExitCodes: o.usageExitCodes, usagePatterns: o.usagePatterns };
-  // Windows: a sh/node polyglot. Git Bash runs the extensionless file as sh (a
-  // `#!C:\Program Files\…` shebang cannot be parsed), which execs node on it;
-  // to node the second line is a string and a comment. `<bin>.cmd` covers
-  // cmd.exe, PowerShell and spawn.
-  const head = platform === "win32" ? `#!/bin/sh\n":" //; exec "${node.replace(/\\/g, "/")}" "$0" "$@"` : `#!${node}`;
-  return `${head}
-// coding.sh tool-eval tap (generated). Execs the real command and records one line per call.
+  return `// coding.sh tool-eval tap (generated). Execs the real command and records one line per call.
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -224,12 +242,17 @@ export function npmCmdShim(target: string): string {
   ].join("\r\n");
 }
 
-/** Writes `<dir>/<bin>` (mode 755), plus `<bin>.cmd` on Windows, and returns the script's path. */
+/**
+ * Writes `<dir>/<bin>` (a sh launcher, mode 755) and the module it runs,
+ * `<dir>/.<bin>.tap.mjs`, plus `<bin>.cmd` on Windows, and returns the launcher's path.
+ */
 export async function writeCliShim(dir: string, bin: string, o: CliShimOpts): Promise<string> {
   await mkdir(dir, { recursive: true });
   const p = join(dir, bin);
-  await writeFile(p, cliShimSource(o), "utf8");
+  const script = cliShimScriptName(bin);
+  await writeFile(join(dir, script), cliShimSource(o), "utf8");
+  await writeFile(p, cliShimLauncher(bin, o.node), "utf8");
   await chmod(p, 0o755);
-  if (process.platform === "win32") await writeFile(`${p}.cmd`, npmCmdShim(bin), "utf8");
+  if (process.platform === "win32") await writeFile(`${p}.cmd`, npmCmdShim(script), "utf8");
   return p;
 }

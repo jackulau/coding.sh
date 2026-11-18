@@ -453,8 +453,10 @@ export interface FindOpts {
   cacheFile?: string;
   /** Stop listing new or changed project dirs after this many ms; what was listed is kept in the cache, so the next call goes on from there. */
   budgetMs?: number;
-  /** Set to `{ complete: false }` by a scan that stopped at its budget. */
+  /** Set to `{ complete: false }` by a scan that stopped at its budget or its signal. */
   state?: { complete: boolean };
+  /** Stop listing project dirs and looking in session dirs once aborted, as at the budget. */
+  signal?: AbortSignal;
 }
 
 interface ScanEntry {
@@ -521,6 +523,13 @@ export async function findClaudeWorkflowDirs(root: string, opts: FindOpts = {}):
   let changed = !cache;
   let next = 0;
   const visit = async (a: string): Promise<void> => {
+    if (opts.signal?.aborted) {
+      // Stopped (Ctrl-C): no more stats; keep what the cache knew, and say the scan is not whole.
+      complete = false;
+      const known = cache?.entries[a];
+      if (known) entries[a] = known;
+      return;
+    }
     const pa = join(root, a);
     let m: number;
     try {
@@ -563,19 +572,27 @@ export async function findClaudeWorkflowDirs(root: string, opts: FindOpts = {}):
     if (Object.keys(cache.entries).some((k) => !(k in entries))) changed = true;
     if (changed) await writeScanCache(opts.cacheFile, { v: 1, root, entries });
   }
-  if (opts.state) opts.state.complete = complete;
-  for (const a of Object.keys(entries).sort()) {
+  look: for (const a of Object.keys(entries).sort()) {
     const e = entries[a]!;
     const pa = join(root, a);
     if (e.direct) {
+      if (opts.signal?.aborted) {
+        complete = false;
+        break;
+      }
       await trySession(pa);
       continue;
     }
     for (const b of e.dirs) {
+      if (opts.signal?.aborted) {
+        complete = false;
+        break look;
+      }
       const pb = join(pa, b);
       if (await isDir(join(pb, "subagents", "workflows"))) await trySession(pb);
     }
   }
+  if (opts.state) opts.state.complete = complete;
   return out;
 }
 

@@ -390,6 +390,22 @@ describe("initSuite: a session diff that changes the verifier's own tests", () =
   });
 });
 
+describe("initSuite: a session with no prompt (coding.sh run)", () => {
+  it("names a command that takes --instruction, since eval init has none", async () => {
+    const d = deps();
+    const git = new FakeSnapshots().add("start", BUGGY).add("end", FIXED);
+    await d.index.upsertSession({ id: "w1", agent: "wrapper", repo: { root: "/work/toy", head: "abc", snapshot: "start" }, startedAt: 10_000, stats: { events: 0, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 2 }, flags: [], endSnapshot: "end" });
+    await d.index.putEvents([{ id: "w1-1", v: 0, sessionId: "w1", ts: 10_001, agent: "wrapper", kind: "session.start", payload: {}, repo: { root: "/work/toy", head: "abc", snapshot: "start" } }]);
+    const err = await initSuite({ name: "hid", root: await project(), source: "sessions", sessionIds: ["w1"], verifier: "grep -q b f.txt" }, { ...d, git, now: 12_000 }).then(
+      () => assert.fail("expected an InitError"),
+      (e: Error) => e,
+    );
+    assert.ok(err instanceof InitError, String(err));
+    assert.match(err.message, /session w1 has no user prompt to use as the instruction; draft it with coding\.sh eval new w1 --instruction "<what the agent was asked to do>" --verifier 'grep -q b f\.txt'/);
+    assert.doesNotMatch(err.message, /pass one with --instruction/, "eval init has no --instruction option");
+  });
+});
+
 describe("draft", () => {
   it("rejects a reply with no usable draft", async () => {
     await assert.rejects(draftCases(fakeProvider("no json here"), { description: "x" }), DraftError);

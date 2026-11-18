@@ -247,6 +247,34 @@ describe("validateTask", () => {
   });
 });
 
+describe("validateTask: a reference that changes the verifier's own tests", () => {
+  const TEST = 'import assert from "node:assert/strict";\nimport { add } from "../src/add.js";\nassert.equal(add(2, 3), 5);\n';
+  const START = { ...BUGGY, "test/add.test.js": TEST };
+  it("fails validation when the reference only rewrites the test the verifier runs, as eval init does", async () => {
+    // The QA repro: the "fix" flips the expected value to what the bug returns; src/add.js is never fixed.
+    const { blobs, git, task, workRoot } = await setup({ start: START, end: { ...START, "test/add.test.js": TEST.replace("5);", "-1);") } });
+    const visible: EvalTask = { ...task, verifier: { ...task.verifier, hiddenFiles: {} } };
+    const index = new MemIndex();
+    const o = await validateNoSuite({ task: visible, blobs, git, workRoot, k: 1, index });
+    assert.equal(o.report.noopFails, true);
+    assert.deepEqual(o.report.referencePasses, { passed: 1, of: 1 }, "the tampered test passes on its own");
+    assert.equal(o.report.ok, false);
+    assert.equal(o.task.status, "draft");
+    assert.equal((await index.getTask("t1"))?.status, "draft");
+    assert.ok(o.errors.some((e) => /reference patch changes the tests the verifier runs \(edit test\/add\.test\.js\)/.test(e)), o.errors.join("\n"));
+    assert.deepEqual(o.report.errors, o.errors, "the stored report says why");
+    assert.match(formatValidation(o), /error: the reference patch changes the tests[\s\S]*→ kept as draft/);
+  });
+  it("still validates a reference that fixes the code and leaves the visible test alone", async () => {
+    const { blobs, git, task, workRoot } = await setup({ start: START, end: { ...START, "src/add.js": FIXED["src/add.js"] as string } });
+    const visible: EvalTask = { ...task, verifier: { ...task.verifier, hiddenFiles: {} } };
+    const o = await validateNoSuite({ task: visible, blobs, git, workRoot, k: 1 });
+    assert.deepEqual(o.errors, []);
+    assert.equal(o.report.errors, undefined);
+    assert.equal(o.report.ok, true, formatValidation(o));
+  });
+});
+
 describe("validateTask: impossible variant", () => {
   it("builds an impossible variant the reference and the no-op both fail, and stores it", async () => {
     const { blobs, git, task, workRoot } = await setup();

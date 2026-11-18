@@ -57,4 +57,15 @@ describe("referenceTestEdits", () => {
     // A pruned start snapshot: the added test cases can't be told from a rewrite, so the edit stands.
     assert.deepEqual(await edits(FIX + MORE, new FakeSnapshots()), ["edit test/add.test.js"]);
   });
+
+  it("leaves out a file the verifier only reads: that is the output the fix makes, not a test", async () => {
+    const OUT = file("f.txt", "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1 @@\n-a\n+b\n");
+    const PY = file("tests/check_add.py", "--- a/tests/check_add.py\n+++ b/tests/check_add.py\n@@ -1 +1 @@\n-assert add(2, 3) == 5\n+assert add(2, 3) == -1\n");
+    const at = (command: string, patch: string) => referenceTestEdits({ ...task, verifier: { ...task.verifier, command } }, patch, start()).then((r) => r.map((f) => `${f.kind} ${f.path}`));
+    assert.deepEqual(await at("grep -q b f.txt", OUT), []);
+    assert.deepEqual(await at(`test "$(cat f.txt)" = b`, OUT), []);
+    // A file the verifier runs is a test, wherever it lives.
+    assert.deepEqual(await at("python3 tests/check_add.py", PY), ["edit tests/check_add.py"]);
+    assert.deepEqual(await at("sh check.sh f.txt", OUT), ["edit f.txt"]);
+  });
 });

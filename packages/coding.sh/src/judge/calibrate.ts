@@ -217,13 +217,11 @@ function splitLookup(s: CalibrateOpts["splits"]): (id: string) => Split | undefi
 
 /** κ for two binary raters from counts (fast path for the bootstrap). NaN when p_e = 1. */
 function kappaFromCounts(tp: number, fp: number, fn: number, tn: number): number {
-  const n = tp + fp + fn + tn;
-  if (n === 0) return NaN;
-  const po = (tp + tn) / n;
-  const judgeFail = (tp + fp) / n;
-  const humanFail = (tp + fn) / n;
-  const pe = judgeFail * humanFail + (1 - judgeFail) * (1 - humanFail);
-  return 1 - pe < 1e-12 ? NaN : (po - pe) / (1 - pe);
+  // κ = (po − pe) / (1 − pe), written over the integer counts so that no agreement beyond chance
+  // gives exactly 0, not ±1e-16 from rounding po and pe separately (which printed as "-0.00").
+  // Every count is an integer, so the numerator and the denominator are exact.
+  const den = (tp + fp) * (fp + tn) + (tp + fn) * (fn + tn);
+  return tp + fp + fn + tn === 0 || den === 0 ? NaN : (2 * (tp * tn - fp * fn)) / den;
 }
 
 const ratio = (a: number, b: number) => (b > 0 ? a / b : NaN);
@@ -274,7 +272,8 @@ function metrics(pairs: readonly { human: boolean; judge: boolean }[], splits: S
     splits,
     n,
     agreement: k.agreement,
-    kappa: k.kappa,
+    // The same exact form as the resamples, so a κ of 0 is 0 and not -1e-16.
+    kappa: kappaFromCounts(c.tp, c.fp, c.fn, c.tn),
     kappaCI: {
       lo,
       hi,

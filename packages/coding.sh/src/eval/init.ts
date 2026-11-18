@@ -29,7 +29,7 @@ import { CANDIDATE_POOL, rankSessions, rejectSummary } from "./candidates.ts";
 import { draftCases, draftTriggers, type DraftedCase } from "./draft.ts";
 import { type SuitePurpose } from "./report.ts";
 import { DEFAULT_TRIALS, SUITE_FILE, SUITES_DIR, type SuiteKind, type SuiteSpec } from "./suite-spec.ts";
-import { draftTaskFromSession, exportTaskDir, type DraftedTask } from "./task.ts";
+import { draftTaskFromSession, exportTaskDir, NoInstructionError, type DraftedTask } from "./task.ts";
 import { referenceTestEdits } from "./test-edits.ts";
 import { runVerifier, taskWorlds, validateTask } from "./validate.ts";
 import { findSessions } from "../query/run.ts";
@@ -330,7 +330,11 @@ async function fromSessions(o: InitOpts, deps: InitDeps, name: string, _dir: str
         ...(deps.now ? { now: deps.now } : {}),
       });
     } catch (e) {
-      notes.push(`skipped session ${s.id}: ${e instanceof Error ? e.message : String(e)}`);
+      // eval init takes no --instruction: name the command that does.
+      const why = e instanceof NoInstructionError
+        ? `session ${s.id} has no user prompt to use as the instruction; draft it with coding.sh eval new ${s.id} --instruction "<what the agent was asked to do>"${o.verifier ? ` --verifier ${shellWord(o.verifier)}` : ""}`
+        : e instanceof Error ? e.message : String(e);
+      notes.push(`skipped session ${s.id}: ${why}`);
       continue;
     }
     let d = slug(task.name).slice(0, 48) || "task";
@@ -407,6 +411,9 @@ async function endStatePasses(task: EvalTask, deps: InitDeps): Promise<boolean |
     await rm(workRoot, { recursive: true, force: true });
   }
 }
+
+/** `s` as one shell word, for a command a hint prints. */
+const shellWord = (s: string): string => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`);
 
 /** The first check a validation failed, in words. */
 function validationGap(r: { noopFails: boolean; referencePasses: { passed: number; of: number }; nearMissesFail: { failed: number; of: number }; leakage: string[] }): string {

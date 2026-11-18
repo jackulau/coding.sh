@@ -129,9 +129,15 @@ export async function applyChanges(changes: (FileChange | undefined)[], opts: Ap
 
 // ---------------------------------------------------------------- JSON
 
-/** Indent unit used by a JSON text (defaults to 2 spaces). */
+/**
+ * Indent unit used by a JSON text (defaults to 2 spaces). A non-empty object or
+ * array written on one line stays on one line (0), so removing what coding.sh
+ * added gives back the user's bytes even when the backup is gone.
+ */
 export function detectIndent(text: string | undefined): string | number {
   if (!text) return 2;
+  const body = text.trim();
+  if (body && !body.includes("\n") && !/^[{[]\s*[}\]]$/.test(body)) return 0;
   const m = /^[{[][^\n]*\n([ \t]+)\S/m.exec(text);
   if (!m || !m[1]) return 2;
   return m[1].startsWith("\t") ? "\t" : m[1].length;

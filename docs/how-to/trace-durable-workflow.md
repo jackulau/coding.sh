@@ -62,26 +62,40 @@ The Workflow SDK traces itself when `@opentelemetry/api` is installed and a trac
 registered before your code loads. Install the SDK packages next to `workflow`:
 
 ```sh
-npm install @opentelemetry/api @opentelemetry/sdk-trace-node @opentelemetry/resources @opentelemetry/exporter-trace-otlp-http
+npm install @opentelemetry/api @opentelemetry/sdk-trace @opentelemetry/core @opentelemetry/context-async-hooks @opentelemetry/resources @opentelemetry/exporter-trace-otlp-http
 ```
 
-Register the provider in a file you preload, for example `otel.mjs`:
+This is OpenTelemetry JS 3.x. `@opentelemetry/sdk-trace-node` and `sdk-trace-base` are deprecated
+there, and an unpinned install of them next to the 3.x exporter fails with `ERESOLVE`. To stay on
+2.x, pin every package instead: `@opentelemetry/api@1.9 @opentelemetry/sdk-trace-node@2
+@opentelemetry/resources@2 @opentelemetry/exporter-trace-otlp-http@0.223`, and keep 2.x code
+(`NodeTracerProvider`, `provider.register()`, `new BatchSpanProcessor(exporter)`).
+
+Register the provider in a file you preload, for example `otel.mjs`. 3.x has no `register()`: set
+the provider, the context manager and the propagator yourself.
 
 ```js
 import { randomUUID } from "node:crypto";
+import { context, propagation, trace } from "@opentelemetry/api";
+import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
+import { CompositePropagator, W3CBaggagePropagator, W3CTraceContextPropagator } from "@opentelemetry/core";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { resourceFromAttributes } from "@opentelemetry/resources";
-import { BatchSpanProcessor, NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+import { BatchSpanProcessor, TracerProvider } from "@opentelemetry/sdk-trace";
 
-const provider = new NodeTracerProvider({
+const provider = new TracerProvider({
   resource: resourceFromAttributes({
     "service.name": "research-app",
     "service.version": process.env.APP_VERSION ?? "1",
     "service.instance.id": randomUUID(),
   }),
-  spanProcessors: [new BatchSpanProcessor(new OTLPTraceExporter({ url: "http://127.0.0.1:4318/v1/traces" }))],
+  spanProcessors: [new BatchSpanProcessor({ exporter: new OTLPTraceExporter({ url: "http://127.0.0.1:4318/v1/traces" }) })],
 });
-provider.register();
+trace.setGlobalTracerProvider(provider);
+context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
+propagation.setGlobalPropagator(
+  new CompositePropagator({ propagators: [new W3CTraceContextPropagator(), new W3CBaggagePropagator()] }),
+);
 process.once("SIGTERM", () => provider.shutdown().finally(() => process.exit(0)));
 ```
 

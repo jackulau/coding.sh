@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, chmodSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
-import { diffSnapshots, diffWorkdir, ensureShadow, materialize, shadowRepoPath, snapshot } from "../../src/core/snapshot.ts";
+import { diffSnapshots, diffWorkdir, ensureShadow, materialize, shadowRepoPath, snapshot, snapshotWithout } from "../../src/core/snapshot.ts";
 import { branch, head, isRepo, layout, repoRoot, run } from "../../src/core/git.ts";
 import { gitDirFingerprint, gitc, isolate, makeRepo, removeTmp, tmp, treeHash, write } from "../capture/_helpers.ts";
 import { median, timeMs } from "../helpers-timing.ts";
@@ -225,6 +225,24 @@ describe("materialize / diff", () => {
     write(root, { "only.txt": "dirty\n" });
     const m = await materialize({ root, head: gitc(root, "rev-parse", "HEAD") }, join(tmp(), "d"));
     assert.equal(readFileSync(join(m.dir, "only.txt"), "utf8"), "committed\n");
+  });
+
+  test("snapshotWithout: a child snapshot that leaves the named files out", async () => {
+    const CALC = "def add(a, b):\n    return a - b\n";
+    const root = makeRepo({ "calc.py": CALC, "tests/check_add.py": "assert True\n", "tests/other.py": "x = 1\n" });
+    const s = await snapshot(root, ROOMY);
+    assert.ok(s?.snapshot);
+    const without = await snapshotWithout(s, ["tests/check_add.py"]);
+    assert.notEqual(without, s.snapshot);
+    const m = await materialize({ ...s, snapshot: without }, join(tmp(), "without"));
+    assert.equal(existsSync(join(m.dir, "tests", "check_add.py")), false);
+    assert.equal(readFileSync(join(m.dir, "tests", "other.py"), "utf8"), "x = 1\n");
+    assert.equal(readFileSync(join(m.dir, "calc.py"), "utf8"), CALC);
+    const d = await diffSnapshots(root, s.snapshot, without);
+    assert.deepEqual(d.files.map((f) => [f.path, f.status]), [["tests/check_add.py", "delete"]]);
+    // The original snapshot is untouched.
+    const o = await materialize(s, join(tmp(), "orig"));
+    assert.equal(existsSync(join(o.dir, "tests", "check_add.py")), true);
   });
 
   test("diffSnapshots: statuses, numstat and an applicable patch", async () => {

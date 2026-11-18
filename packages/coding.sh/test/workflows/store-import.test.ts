@@ -173,4 +173,39 @@ describe("importClaudeWorkflows", () => {
     const r = await importClaudeWorkflows({ root: join(root, "nowhere"), store });
     assert.deepEqual(r, { found: 0, imported: [], skipped: 0, copies: 0, errors: [] });
   });
+
+  it("stops at the next run boundary once its signal aborts, keeping the runs already imported", async () => {
+    const projects = join(root, "projects-stop");
+    writeClaudeWorkflowFixture(projects);
+    const store = new WorkflowStore(join(root, "imp-stop"));
+    const ac = new AbortController();
+    // Ctrl-C while the first run is being stored.
+    const putRun = store.putRun.bind(store);
+    store.putRun = async (...a: Parameters<typeof putRun>) => {
+      await putRun(...a);
+      ac.abort();
+    };
+    const r = await importClaudeWorkflows({ root: projects, store, signal: ac.signal });
+    assert.equal(r.interrupted, true);
+    assert.equal(r.found, 2);
+    assert.equal(r.imported.length, 1);
+    assert.equal(r.left, 1);
+    assert.equal((await store.listRuns()).length, 1);
+    // The next import goes on from there: the stored run is unchanged, the other one is read.
+    store.putRun = putRun;
+    const next = await importClaudeWorkflows({ root: projects, store });
+    assert.equal(next.interrupted, undefined);
+    assert.equal(next.skipped, 1);
+    assert.equal(next.imported.length, 1);
+  });
+
+  it("finds and imports nothing once its signal has aborted", async () => {
+    const projects = join(root, "projects-aborted");
+    writeClaudeWorkflowFixture(projects);
+    const store = new WorkflowStore(join(root, "imp-aborted"));
+    const r = await importClaudeWorkflows({ root: projects, store, signal: AbortSignal.abort() });
+    assert.equal(r.interrupted, true);
+    assert.equal(r.imported.length, 0);
+    assert.equal((await store.listRuns()).length, 0);
+  });
 });

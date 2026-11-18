@@ -21,7 +21,7 @@
 import { execFile } from "../core/spawn.ts";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { basename, isAbsolute, join, relative } from "node:path";
+import { basename, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import { paths, userHome } from "../core/paths.ts";
 import { parseToml } from "../core/toml.ts";
 import { T3_AGENT, T3_ORIGINATOR } from "../spool/host.ts";
@@ -1048,10 +1048,14 @@ function execHelp(bin: string, env: NodeJS.ProcessEnv): Promise<string> {
  * thread with the instruction as its next prompt (exec's options go before the
  * subcommand, which has no -s or -C of its own).
  */
-export function codexExecArgs(spec: Pick<RunSpec, "cwd" | "model" | "flags" | "resumeSessionId">, help: string): string[] {
+export function codexExecArgs(spec: Pick<RunSpec, "cwd" | "model" | "flags" | "resumeSessionId">, help: string, opts: { isolatedHome?: boolean } = {}): string[] {
   const args = ["exec", "--json"];
   // Our run-local hooks are not trusted in the isolated CODEX_HOME; without this they are skipped silently.
   if (help.includes("--dangerously-bypass-hook-trust") && !hasFlag(spec.flags, "--dangerously-bypass-hook-trust")) args.push("--dangerously-bypass-hook-trust");
+  // Codex 0.169+ keeps a project's .codex/config.toml and MCP servers off in an untrusted dir. --trust saves
+  // project trust, so only in the run's own CODEX_HOME (never the user's), and not when the run asked for no user config.
+  // It trusts the project dir; it writes no hook trust hash.
+  if (opts.isolatedHome && /(^|\s)--trust\b/.test(help) && !hasFlag(spec.flags, "--trust", "--ignore-user-config")) args.push("--trust");
   if (!hasFlag(spec.flags, "-s", "--sandbox", "--dangerously-bypass-approvals-and-sandbox")) args.push("-s", "workspace-write");
   if (spec.model && !hasFlag(spec.flags, "-m", "--model")) args.push("-m", spec.model);
   if (!hasFlag(spec.flags, "-C", "--cd")) args.push("-C", spec.cwd);
@@ -1065,7 +1069,8 @@ export function codexExecArgs(spec: Pick<RunSpec, "cwd" | "model" | "flags" | "r
 export async function runCodex(spec: RunSpec): Promise<AgentRunOutput> {
   const env = runEnv(spec);
   const bin = which("codex", env as NodeJS.ProcessEnv) ?? "codex";
-  const args = codexExecArgs(spec, await execHelp(bin, env as NodeJS.ProcessEnv));
+  const ownHome = !!env.CODEX_HOME && resolvePath(env.CODEX_HOME) !== resolvePath(codexHome(process.env)); // the overlay's home, not the user's
+  const args = codexExecArgs(spec, await execHelp(bin, env as NodeJS.ProcessEnv), { isolatedHome: ownHome });
   let sessionId: string | undefined;
   let usage: Usage | undefined;
   const res = await runHeadless({

@@ -20,7 +20,7 @@ usagePatterns = ["unknown (option|flag|command)", "unrecognized", "did you mean"
 
 # Every task starts from the same deterministic world (see fixtures/make-home.mjs).
 [setup]
-commands = ["node ${fixtures}/make-home.mjs --seed ${seed} --out ${trial} --cli ${cli} --answers ${answersFile}"]
+commands = ["node '${fixtures}/make-home.mjs' --seed ${seed} --out '${trial}' --cli '${cli}' --answers '${answersFile}'"]
 
 [defaults.budget]
 turns = 25

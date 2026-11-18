@@ -10,6 +10,7 @@ import type { AgentEvent } from "../../src/schema/index.ts";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { buildHookCommand, hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
 import { assertGolden, assertWellFormed, collect, FIXTURES, loadSpool, summarize, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
+import { fakeBinary, readArgv, runSpec } from "./more/_helpers.ts";
 
 const rolloutDirs: string[] = [];
 /** A new folder for a rollout file a test writes. Removed when the file's tests are done. */
@@ -391,6 +392,50 @@ describe("codex run/overlay helpers", () => {
     assert.deepEqual(args, ["exec", "--json", "--dangerously-bypass-hook-trust", "-s", "workspace-write", "-m", "gpt-5.5", "-C", "/w", "--skip-git-repo-check", "-"]);
     const custom = codexExecArgs({ cwd: "/w", flags: ["--dangerously-bypass-approvals-and-sandbox", "-m", "o3"] }, "");
     assert.deepEqual(custom, ["exec", "--json", "-C", "/w", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "-m", "o3", "-"]);
+  });
+
+  it("exec argv: --trust only with an isolated CODEX_HOME and a Codex that has it (0.169+)", () => {
+    const help = "Options:\n      --dangerously-bypass-hook-trust\n      --trust\n          Trust the project\n      --ignore-user-config";
+    const spec = { cwd: "/w", flags: [] as string[] };
+    const trusted = codexExecArgs(spec, help, { isolatedHome: true });
+    assert.deepEqual(trusted, ["exec", "--json", "--dangerously-bypass-hook-trust", "--trust", "-s", "workspace-write", "-C", "/w", "--skip-git-repo-check", "-"]);
+    // An older Codex (no --trust in its help), the user's own CODEX_HOME, or no option: never.
+    assert.equal(codexExecArgs(spec, "", { isolatedHome: true }).includes("--trust"), false);
+    assert.equal(codexExecArgs(spec, "--dangerously-bypass-hook-trust --trusted-thing", { isolatedHome: true }).includes("--trust"), false);
+    assert.equal(codexExecArgs(spec, help, { isolatedHome: false }).includes("--trust"), false);
+    assert.equal(codexExecArgs(spec, help).includes("--trust"), false);
+    // A run that ignores user config gets no saved trust.
+    assert.equal(codexExecArgs({ cwd: "/w", flags: ["--ignore-user-config"] }, help, { isolatedHome: true }).includes("--trust"), false);
+    // Already in the flags: once.
+    const own = codexExecArgs({ cwd: "/w", flags: ["--trust"] }, help, { isolatedHome: true });
+    assert.equal(own.filter((a) => a === "--trust").length, 1);
+  });
+
+  it("run passes --trust in the overlay's CODEX_HOME, not in the user's", async () => {
+    const env = tmpEnv();
+    try {
+      const bin = join(env.root, "bin");
+      mkdirSync(bin, { recursive: true });
+      fakeBinary(bin, "codex", `if (process.argv.includes("--help")) { console.log("Options:\\n  --dangerously-bypass-hook-trust\\n  --trust  Trust the project"); process.exit(0); }
+console.log(JSON.stringify({ type: "thread.started", thread_id: "th_1" }));`);
+      const cwd = join(env.root, "work");
+      mkdirSync(cwd, { recursive: true });
+      const base = runSpec(cwd, bin);
+      const overlay = await codex.run!({ ...base, env: { ...base.env, CODEX_HOME: join(env.root, "runs", "r1", "home", ".codex") } });
+      assert.equal(overlay.exitCode, 0, overlay.stderrTail);
+      assert.equal(readArgv(bin, "codex").argv.filter((a) => a === "--trust").length, 1);
+      const user = await codex.run!({ ...base, env: { ...base.env, CODEX_HOME: join(env.home, ".codex") } });
+      assert.equal(user.exitCode, 0, user.stderrTail);
+      assert.equal(readArgv(bin, "codex").argv.includes("--trust"), false);
+      process.env.CODEX_HOME = join(env.root, "mine");
+      await codex.run!({ ...base, env: { ...base.env, CODEX_HOME: join(env.root, "mine") } });
+      assert.equal(readArgv(bin, "codex").argv.includes("--trust"), false, "a CODEX_HOME the user set is theirs");
+      await codex.run!(base);
+      assert.equal(readArgv(bin, "codex").argv.includes("--trust"), false, "no CODEX_HOME: the user's ~/.codex");
+      assert.equal(existsSync(join(env.home, ".codex")), false, "nothing written to the user's CODEX_HOME");
+    } finally {
+      env.restore();
+    }
   });
 
   it("usage: input excludes cached reads and cache writes", () => {

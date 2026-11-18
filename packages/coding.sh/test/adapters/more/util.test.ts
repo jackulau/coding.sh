@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -7,6 +8,28 @@ import { envVar, fileTouches, findBinary, isOurCommand, openSqliteCopy, parseJso
 import type { TmpEnv } from "../_helpers.ts";
 import { fakeBinary, moreEnv } from "./_helpers.ts";
 import { nodeBin } from "../../_bin.ts";
+import { reapSqliteCopies, SQLITE_COPY_OWNER, SQLITE_COPY_PREFIX, UNOWNED_COPY_AGE_MS } from "../../../src/adapters/_shared/sqlite-copies.ts";
+
+const TMP_KEYS = ["TMPDIR", "TEMP", "TMP"] as const;
+/** Points os.tmpdir() at a fresh dir for the test's copies; returns it and a restore. */
+function ownTmpdir(): { dir: string; restore: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), "csh-sqltmp-"));
+  const saved = Object.fromEntries(TMP_KEYS.map((k) => [k, process.env[k]]));
+  for (const k of TMP_KEYS) process.env[k] = dir;
+  assert.equal(tmpdir(), dir);
+  return {
+    dir,
+    restore() {
+      for (const k of TMP_KEYS) {
+        if (saved[k] === undefined) delete process.env[k];
+        else process.env[k] = saved[k];
+      }
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
+}
+const copies = (dir: string) => readdirSync(dir).filter((n) => n.startsWith(SQLITE_COPY_PREFIX));
+const UTIL = new URL("../../../src/adapters/more/_util.ts", import.meta.url).href;
 
 describe("openSqliteCopy", () => {
   it("reads rows still in the agent's WAL from a read-only copy, and leaves the agent's files as they were", async () => {
@@ -33,6 +56,134 @@ describe("openSqliteCopy", () => {
     } finally {
       writer.close();
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("openSqliteCopy temp copies", () => {
+  const makeDb = async (root: string) => {
+    const { DatabaseSync } = await import("node:sqlite");
+    const path = join(root, "agent.sqlite");
+    const db = new DatabaseSync(path);
+    db.exec("CREATE TABLE t (x INTEGER); INSERT INTO t VALUES (1);");
+    db.close();
+    return path;
+  };
+
+  it("removes a copy whose owner was killed before it could, and keeps live owners' copies", async () => {
+    const t = ownTmpdir();
+    const src = mkdtempSync(join(t.dir, "src-"));
+    try {
+      const path = await makeDb(src);
+      // A process killed while it holds a copy (a read's tail child at its deadline): no cleanup runs.
+      const killed = spawnSync(process.execPath, ["--no-warnings", "--input-type=module", "-e", `const { openSqliteCopy } = await import(${JSON.stringify(UTIL)}); const h = await openSqliteCopy(${JSON.stringify(path)}); process.kill(process.pid, "SIGKILL");`], { encoding: "utf8", env: { ...process.env } });
+      assert.equal(killed.status === 0, false, killed.stderr);
+      assert.equal(copies(t.dir).length, 1, "the killed process left its copy");
+      const [left] = copies(t.dir);
+      assert.ok(existsSync(join(t.dir, left!, "agent.sqlite")));
+      // A copy of a process still running, and one being made right now (no owner file yet).
+      const liveDir = join(t.dir, `${SQLITE_COPY_PREFIX}live01`);
+      mkdirSync(liveDir);
+      const sleeper = (await import("node:child_process")).spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
+      try {
+        writeFileSync(join(liveDir, SQLITE_COPY_OWNER), String(sleeper.pid));
+        const fresh = join(t.dir, `${SQLITE_COPY_PREFIX}fresh1`);
+        mkdirSync(fresh);
+        // From before owner files: no owner, untouched for longer than a copy is in use.
+        const old = join(t.dir, `${SQLITE_COPY_PREFIX}old001`);
+        mkdirSync(old);
+        writeFileSync(join(old, "agent.sqlite"), "x");
+        const then = (Date.now() - UNOWNED_COPY_AGE_MS - 60_000) / 1000;
+        utimesSync(join(old, "agent.sqlite"), then, then);
+        utimesSync(old, then, then);
+        // The next open removes the killed process's copy and the old one, and closes its own.
+        const h = await openSqliteCopy(path);
+        assert.ok(h);
+        assert.equal(h.db.prepare("SELECT count(*) AS n FROM t").get()?.n, 1);
+        h.close();
+        assert.deepEqual(copies(t.dir).sort(), [`${SQLITE_COPY_PREFIX}fresh1`, `${SQLITE_COPY_PREFIX}live01`]);
+        // Once its owner has stopped, the live one goes too.
+        sleeper.kill();
+        await new Promise((r) => sleeper.once("exit", r));
+        assert.equal(reapSqliteCopies(), 1);
+        assert.deepEqual(copies(t.dir), [`${SQLITE_COPY_PREFIX}fresh1`]);
+      } finally {
+        sleeper.kill();
+      }
+    } finally {
+      t.restore();
+    }
+  });
+
+  // A removal cut short (the read kills its tail child while the child's exit is removing its copy, or a file is
+  // still held open) used to take the owner file first and leave the rest, which then looked like a copy being made.
+  it("a removal cut short keeps the owner file, and the next reap removes the rest", { skip: process.platform !== "win32" && process.getuid?.() === 0 }, async () => {
+    const t = ownTmpdir();
+    const src = mkdtempSync(join(t.dir, "src-"));
+    try {
+      const { DatabaseSync } = await import("node:sqlite");
+      // Named as T3 Code's store is: it sorts after the owner file.
+      const path = join(src, "statev2.sqlite");
+      const w = new DatabaseSync(path);
+      w.exec("CREATE TABLE t (x INTEGER); INSERT INTO t VALUES (1);");
+      w.close();
+      const killed = spawnSync(process.execPath, ["--no-warnings", "--input-type=module", "-e", `const { openSqliteCopy } = await import(${JSON.stringify(UTIL)}); const h = await openSqliteCopy(${JSON.stringify(path)}); process.kill(process.pid, "SIGKILL");`], { encoding: "utf8", env: { ...process.env } });
+      assert.equal(killed.status === 0, false, killed.stderr);
+      const [name] = copies(t.dir);
+      assert.ok(name, "the killed process left its copy");
+      const dir = join(t.dir, name);
+      // Something the removal can't take: on Windows the database held open by SQLite (no delete sharing),
+      // elsewhere a file in a directory that can't be written.
+      let unblock: () => void;
+      if (process.platform === "win32") {
+        const held = new DatabaseSync(join(dir, "statev2.sqlite"), { readOnly: true });
+        held.prepare("SELECT count(*) FROM t").get();
+        unblock = () => held.close();
+      } else {
+        const locked = join(dir, "statev2.sqlite-wal");
+        mkdirSync(locked);
+        writeFileSync(join(locked, "x"), "x");
+        chmodSync(locked, 0o500);
+        unblock = () => chmodSync(locked, 0o700);
+      }
+      try {
+        assert.equal(reapSqliteCopies(), 0);
+        assert.ok(existsSync(join(dir, SQLITE_COPY_OWNER)), "the owner file stays while the rest can't be removed");
+      } finally {
+        unblock();
+      }
+      assert.equal(reapSqliteCopies(), 1);
+      assert.deepEqual(copies(t.dir), []);
+    } finally {
+      t.restore();
+    }
+  });
+
+  it("removes a copy still open when its process exits", async () => {
+    const t = ownTmpdir();
+    const src = mkdtempSync(join(t.dir, "src-"));
+    try {
+      const path = await makeDb(src);
+      const r = spawnSync(process.execPath, ["--no-warnings", "--input-type=module", "-e", `const { openSqliteCopy } = await import(${JSON.stringify(UTIL)}); const h = await openSqliteCopy(${JSON.stringify(path)}); if (!h) process.exit(3); process.exit(0);`], { encoding: "utf8", env: { ...process.env } });
+      assert.equal(r.status, 0, r.stderr);
+      assert.deepEqual(copies(t.dir), []);
+    } finally {
+      t.restore();
+    }
+  });
+
+  it("a copy that fails resolves undefined, or throws with throwOnError, and leaves no dir", async () => {
+    const t = ownTmpdir();
+    const src = mkdtempSync(join(t.dir, "src-"));
+    try {
+      const path = await makeDb(src);
+      // A -wal that can't be copied (a directory), as a full temp volume can't take the copy.
+      mkdirSync(`${path}-wal`);
+      assert.equal(await openSqliteCopy(path), undefined);
+      await assert.rejects(openSqliteCopy(path, { throwOnError: true }), (e: Error) => e.message.includes("could not copy") && e.message.includes(t.dir));
+      assert.deepEqual(copies(t.dir), []);
+    } finally {
+      t.restore();
     }
   });
 });

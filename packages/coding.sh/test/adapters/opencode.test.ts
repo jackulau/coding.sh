@@ -216,6 +216,9 @@ describe("opencode plugin", () => {
     const un = await opencode.uninstall({ scope: "user", dryRun: false });
     assert.deepEqual(un.map((x) => x.action), ["delete"]);
     assert.ok(!existsSync(v2));
+    // The folders init made are gone too, the plugin/ the API upgrade emptied included (QA r3).
+    assert.ok(!existsSync(dirname(v2)) && !existsSync(dirname(v1)), "no empty plugin(s)/ left behind");
+    assert.ok(!existsSync(dirname(dirname(v2))), "no empty opencode config dir left behind");
     assert.equal((await opencode.detect()).hooked, false);
 
     writeFile(v2, "export default {};\n");
@@ -229,8 +232,11 @@ describe("opencode plugin", () => {
     const proj = join(env.root, "proj");
     const c = await opencode.install({ hookCommand: "/x/hook.mjs", scope: "project", projectDir: proj, dryRun: false });
     assert.equal(c[0]!.path, join(proj, ".opencode", "plugins", "coding-sh.js"));
+    writeFile(join(proj, ".opencode", "opencode.json"), "{}\n");
     await opencode.uninstall({ scope: "project", projectDir: proj, dryRun: false });
     assert.ok(!existsSync(c[0]!.path));
+    assert.ok(!existsSync(dirname(c[0]!.path)), "the emptied plugins/ goes");
+    assert.ok(existsSync(join(proj, ".opencode", "opencode.json")), "a dir holding the user's files stays");
   });
 });
 

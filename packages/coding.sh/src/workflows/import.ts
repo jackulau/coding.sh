@@ -52,6 +52,11 @@ export interface ImportOpts {
    * stays as stored and is counted in `deferred`, for a later import (a live run's dir can hold tens of MB).
    */
   loadBudgetBytes?: number;
+  /**
+   * Stop at the next run boundary once aborted (Ctrl-C): runs already imported stay stored, the rest are
+   * counted in `left` and `interrupted` is set. A run dir being read when it fires is finished first.
+   */
+  signal?: AbortSignal;
 }
 
 export interface ImportResult {
@@ -65,6 +70,10 @@ export interface ImportResult {
   /** Run dirs that are copies of a run another session wrote (imported once, from that session). */
   copies: number;
   errors: { path: string; error: string }[];
+  /** True when `signal` stopped the import before every run dir was looked at (absent otherwise). */
+  interrupted?: true;
+  /** Run dirs found but not looked at because the import was interrupted (absent when not interrupted). */
+  left?: number;
 }
 
 // Events per index write. Each write is one transaction, and committing it flushes the
@@ -94,6 +103,7 @@ export async function importClaudeWorkflows(o: ImportOpts): Promise<ImportResult
   const findOpts: Parameters<typeof findClaudeWorkflowDirs>[1] & {} = { state: scan };
   if (o.scanCache) findOpts.cacheFile = o.scanCache;
   if (o.scanBudgetMs !== undefined) findOpts.budgetMs = o.scanBudgetMs;
+  if (o.signal) findOpts.signal = o.signal;
   const found = await findClaudeWorkflowDirs(o.root, findOpts);
   const res: ImportResult = { found: found.length, imported: [], skipped: 0, copies: 0, errors: [] };
   if (!scan.complete) res.scanComplete = false;
@@ -102,7 +112,10 @@ export async function importClaudeWorkflows(o: ImportOpts): Promise<ImportResult
   // stored once and the run keeps its first host.
   const dirs: ClaudeWorkflowDir[] = [];
   const seen = new Set<string>();
+  let checked = 0;
   for (const d of found) {
+    if (o.signal?.aborted) break;
+    checked++;
     const owner = await copiedRunOwner(d);
     if (owner) res.copies++;
     const use = owner ?? d;
@@ -112,7 +125,10 @@ export async function importClaudeWorkflows(o: ImportOpts): Promise<ImportResult
   }
   const resumed: WorkflowTree[] = [];
   let loadedBytes = 0;
+  let looked = 0;
   for (const d of dirs) {
+    if (o.signal?.aborted) break;
+    looked++;
     try {
       // An unchanged run dir is skipped before its transcripts are read: they are most of the bytes.
       if (!o.force) {
@@ -155,6 +171,11 @@ export async function importClaudeWorkflows(o: ImportOpts): Promise<ImportResult
     } catch (e) {
       res.errors.push({ path: d.runDir, error: e instanceof Error ? e.message : String(e) });
     }
+  }
+  if (o.signal?.aborted) {
+    res.interrupted = true;
+    // Found dirs not checked for copies yet, plus checked dirs not imported or skipped yet.
+    res.left = found.length - checked + dirs.length - looked;
   }
   // Second pass: resumed runs get what their cache hits saved, once every base is stored.
   for (const tree of resumed) {

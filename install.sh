@@ -69,8 +69,9 @@ npm install -g --silent --no-fund --no-audit "$URL" >&2 || die "npm install fail
 
 # Where npm put the shims: <prefix>/bin on POSIX, <prefix> itself on Windows.
 PREFIX=$(npm prefix -g 2>/dev/null || true)
+WINDOWS=
 case "$(uname -s 2>/dev/null || true)" in
-  MINGW*|MSYS*|CYGWIN*) BIN_DIR="$PREFIX" ;;
+  MINGW*|MSYS*|CYGWIN*) BIN_DIR="$PREFIX"; WINDOWS=1 ;;
   *) BIN_DIR="$PREFIX/bin" ;;
 esac
 CSH=coding.sh
@@ -80,12 +81,31 @@ if [ -n "$PREFIX" ]; then
   # Use the binary just installed, not whichever coding.sh comes first on PATH.
   if [ -f "$BIN_POSIX/coding.sh" ]; then
     CSH="$BIN_POSIX/coding.sh"
-    command -v coding.sh >/dev/null 2>&1 || say "coding.sh: installed in \"$BIN_DIR\", which is not on PATH. Add it to PATH to run coding.sh."
+    FIRST=$(command -v coding.sh 2>/dev/null || true)
+    case "$FIRST" in
+      "") say "coding.sh: installed in \"$BIN_DIR\", which is not on PATH. Add it to PATH to run coding.sh." ;;
+      */*)
+        # Another coding.sh comes first on PATH (an older global install, say):
+        # `coding.sh` would run that one, not the version just installed.
+        if ! [ "$FIRST" -ef "$CSH" ] && [ "$FIRST" != "$CSH" ]; then
+          OTHER_V=$("$FIRST" --version </dev/null 2>/dev/null | head -n 1 || true)
+          say "coding.sh: another coding.sh (${OTHER_V:+$OTHER_V, }$FIRST) comes first on PATH; put \"$BIN_DIR\" ahead of it, or remove it."
+        fi ;;
+    esac
   fi
 fi
 [ "$CSH" != coding.sh ] || command -v coding.sh >/dev/null 2>&1 || die "Installed, but coding.sh is not on PATH. Add \"$BIN_DIR\" to PATH."
 
-[ "${CODING_SH_NO_INIT:-}" = "1" ] && { say "Done. Run: coding.sh init"; exit 0; }
+# Prints the command to run next. On Windows npm also writes an extensionless sh
+# shim named coding.sh, and PowerShell and cmd pick it over coding.sh.cmd/.ps1
+# (PowerShell then fails or opens it in the .sh file's app), so name `codingsh`
+# for them: the same CLI under a name without a dot.
+win_note() {
+  [ -z "$WINDOWS" ] || say "In PowerShell or cmd, type codingsh instead of coding.sh${1:+ (codingsh $1)}: there, coding.sh opens npm's sh script instead of running it."
+}
+next() { say "Done. Run: coding.sh $1"; win_note "$1"; }
+
+[ "${CODING_SH_NO_INIT:-}" = "1" ] && { next init; exit 0; }
 
 # stdin is this script when piped into sh; prompts and the viewer use the
 # terminal instead. (Opening /dev/tty fails without a controlling terminal.)
@@ -101,12 +121,13 @@ else
   # (bare `coding.sh` without a terminal only prints help).
   say "Installed. No terminal to ask on, so no agent was set up yet."
   say "Next: coding.sh init --dry-run to see the plan, then coding.sh init --yes (or rerun with CODING_SH_YES=1)."
+  win_note
   exit 0
 fi
 # Canceled at the prompt: stop here. Other failures were already explained by init.
 [ "$status" = "130" ] && exit 130
 
-[ "${CODING_SH_NO_UI:-}" = "1" ] && exit 0
+[ "${CODING_SH_NO_UI:-}" = "1" ] && { win_note; exit 0; }
 # The viewer is a long-running server: start it only for a person at a
 # terminal, never in CI or a Docker build (CODING_SH_YES=1 with no tty).
-if has_tty; then "$CSH" ui </dev/tty; else say "Done. Run: coding.sh ui"; fi
+if has_tty; then win_note ui; "$CSH" ui </dev/tty; else next ui; fi

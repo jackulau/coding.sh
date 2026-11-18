@@ -13,7 +13,7 @@ import type { CacheBreakCause, CacheIdleKind } from "../../schema/index.ts";
 import { repriceStored } from "../../core/reprice.ts";
 import { CACHE_BASELINE_NOTE } from "../../core/cache-baselines.ts";
 import { parseSinceWhen, positiveInt, UsageError } from "../args.ts";
-import { agentScope, agentsFlag, autoIngest, emptyStateNext, queryCliError, scanCap, stoppedAfter, str, timeWindow, whereFlag, windowJson, windowNote, withContext, pendingField, readIngest } from "../common.ts";
+import { agentScope, agentsFlag, agentsWithoutSessions, autoIngest, rejectAgentTypos, emptyStateNext, queryCliError, scanCap, stoppedAfter, str, timeWindow, whereFlag, windowJson, windowNote, withContext, pendingField, readIngest } from "../common.ts";
 import { CliError, Output, plural, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -102,7 +102,8 @@ export async function run(c: CommandContext): Promise<number> {
   const sinceWhen = parseSinceWhen(str(c.flags.since) ?? "30d");
   const since = sinceWhen.ms;
   const limit = positiveInt(c.flags.limit, "limit") ?? 20;
-  const { agent, where } = agentScope(agentsFlag(c), whereFlag(c));
+  const agents = agentsFlag(c);
+  const { agent, where } = agentScope(agents, whereFlag(c));
   const window = timeWindow({ since: sinceWhen }, where);
   const baseline = c.flags.baseline === true;
   if (baseline && by !== "agent" && by !== "agent-model") throw new UsageError("--baseline compares agents: use it with --by agent or --by agent-model", { reason: "invalid_argument" });
@@ -117,6 +118,7 @@ export async function run(c: CommandContext): Promise<number> {
       notes?: string[];
       unpricedModels?: Record<string, number>;
     };
+    if (!r.groups.length) await rejectAgentTypos(ctx.index, agents);
     if (out.json) {
       out.data({ ...r, window: { ...r.window, ...windowJson(window) }, ...(repriced ? { repriced: { events: repriced.events, sessions: repriced.sessions } } : {}), ...pendingField(backlog) });
       return 0;
@@ -124,8 +126,10 @@ export async function run(c: CommandContext): Promise<number> {
     if (repriced) out.note(`Repriced ${plural(repriced.events, "model call")} in ${plural(repriced.sessions, "session")}`);
     windowNote(out, window);
     if (!r.groups.length) {
-      out.note("No sessions in this window");
-      await emptyStateNext(out, c.env, ctx.index, { label: "Widen the window", command: "coding.sh usage --since 90d" });
+      // An --agent with no session at all emptied it, not the window: point at every agent's usage instead.
+      const noneAtAll = agents.length > 0 && (await agentsWithoutSessions(ctx.index, agents)).length === agents.length;
+      out.note(noneAtAll ? `No sessions from ${agents.join(", ")} in the store` : "No sessions in this window");
+      await emptyStateNext(out, c.env, ctx.index, noneAtAll ? { label: "See every agent's usage", command: "coding.sh usage" } : { label: "Widen the window", command: "coding.sh usage --since 90d" });
       return 0;
     }
     if (c.flags.cache === true) {

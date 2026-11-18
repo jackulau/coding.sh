@@ -42,6 +42,16 @@ export class MemIndex implements IndexStore {
     return { removed, ...(await this.putEvents(add)) };
   }
 
+  async deleteSessions(ids: string[]): Promise<{ sessions: number; events: number }> {
+    let sessions = 0;
+    let events = 0;
+    for (const id of new Set(ids)) {
+      if (this.sessions.delete(id)) sessions++;
+      for (const [k, r] of this.events) if (r.event.sessionId === id && this.events.delete(k)) events++;
+    }
+    return { sessions, events };
+  }
+
   async upsertSession(session: Session): Promise<void> {
     this.sessions.set(session.id, clone(session));
   }

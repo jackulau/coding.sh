@@ -6,8 +6,10 @@
 //   (e) fails the reference on an impossible variant (tests flipped to contradict
 //       the instruction); passing it means the verifier is gameable,
 //   (f) the reference keeps the repo's pre-existing tests passing (pass-to-pass),
-//   (g) and no hidden test names an identifier or file only the reference introduces
-//       (gold-only coupling, src/eval/coupling.ts); non-blocking unless strictCoupling.
+//   (g) no hidden test names an identifier or file only the reference introduces
+//       (gold-only coupling, src/eval/coupling.ts); non-blocking unless strictCoupling,
+//   (h) and the reference patch leaves the verifier's own tests alone: one that rewrites,
+//       deletes or skips them passes whatever the code does (src/eval/test-edits.ts).
 // Every step runs in its own freshly materialized dir; hidden verifier files
 // are copied in only right before the verifier runs.
 import { existsSync } from "node:fs";
@@ -25,6 +27,7 @@ import { blockOverlap } from "./leakage.ts";
 import { addedBlocks, addedLines, nearMissMutations, patchPaths } from "./patch.ts";
 import { nearMissRuns, referenceRun, type RecordedRun } from "./task.ts";
 import { comparePassToPass, detectSuiteCommand } from "./suite.ts";
+import { referenceTestEdits } from "./test-edits.ts";
 
 export type StepKind = "noop" | "reference" | "near-miss" | "impossible" | "pass-to-pass";
 
@@ -382,6 +385,17 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
 
   const canVerify = task.verifier.command.trim() !== "";
 
+  // (h) a reference that edits, deletes or skips the tests the verifier runs proves nothing:
+  // `eval init` keeps such a diff as a near miss, and validation fails it the same way.
+  if (refPatch && canVerify) {
+    const edits = await referenceTestEdits(task, refPatch, ops, opts.workRoot);
+    checkpoint();
+    if (edits.length) {
+      const what = [...new Set(edits.map((f) => `${f.kind} ${f.path}`))].join(", ");
+      errors.push(`the reference patch changes the tests the verifier runs (${what}), so it passes whatever the code does; replace reference.patch with a fix that leaves the tests alone`);
+    }
+  }
+
   const p2pOpt = opts.passToPass ?? true;
 
   // (a) no-op, plus tree-level leakage checks on the untouched start state.
@@ -627,6 +641,7 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
       !(opts.strictCoupling && coupling.length),
     ts: Date.now(),
   };
+  if (errors.length) report.errors = errors;
   checkpoint();
   const status: EvalTask["status"] = task.status === "archived" ? "archived" : report.ok ? "validated" : "draft";
   const updated: EvalTask = { ...task, validation: report, status };

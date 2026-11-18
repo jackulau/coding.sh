@@ -117,7 +117,7 @@
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { promisify } from "node:util";
+import { isDeepStrictEqual, promisify } from "node:util";
 import * as zlib from "node:zlib";
 import type { AgentEvent, Session } from "../schema/index.ts";
 import type { BlobStore, IndexStore } from "../core/types.ts";
@@ -127,7 +127,7 @@ import { decodeLogsJson, decodeTraceJson, parseJson, validateMetricsJson } from 
 import { applyPricing, pricesFor, type Prices } from "../core/pricing.ts";
 import { enrichFromEve } from "../integrations/eve/map.ts";
 import { enrichGatewaySpan } from "../integrations/gateway/otel.ts";
-import { type MapContext, type MapResult, type Rehome, mapLogs, mapTraces, rehomeTarget, type SpanEnricher, SpanTree, TraceSessionMap, traceKvKey } from "./map.ts";
+import { LOG_SOURCE, type MapContext, type MapResult, mergeCallCopies, type Rehome, mapLogs, mapTraces, rehomeTarget, type SpanEnricher, SpanTree, TraceSessionMap, traceKvKey } from "./map.ts";
 import { OtlpDecodeError, type ResourceLogs, type ResourceSpans } from "./model.ts";
 import { decodeLogsRequest, decodeTraceRequest, encodeExportResponse, encodeStatus, validateMessage } from "./proto.ts";
 
@@ -321,6 +321,8 @@ export interface OtlpMapOutcome {
   /** Spans/log records rejected (reported back as partial_success). */
   rejected: number;
   errors: string[];
+  /** With `deferRehome`: stored events this request moves to other sessions, for rehome() once earlier requests are stored. */
+  rehome?: Rehome[];
 }
 
 export interface OtlpPipeline {
@@ -330,7 +332,13 @@ export interface OtlpPipeline {
    * `blobs` (a BlobStore.batch() the caller flushes) takes this request's blob
    * writes in place of the pipeline's store.
    */
-  map(signal: Signal, decoded: ResourceSpans[] | ResourceLogs[], blobs?: BlobStore): Promise<OtlpMapOutcome>;
+  map(signal: Signal, decoded: ResourceSpans[] | ResourceLogs[], blobs?: BlobStore, opts?: { deferRehome?: boolean }): Promise<OtlpMapOutcome>;
+  /**
+   * Moves stored events as map() reported with deferRehome (rehomeStored). A caller that maps
+   * several requests before it stores any (the receiver's group commit) calls it after the put,
+   * so events of an earlier request in the same group move too.
+   */
+  rehome(rehome: Rehome[]): Promise<void>;
 }
 
 /** The decode → map → redact half of the receiver, shared with `coding.sh serve`. */
@@ -365,7 +373,7 @@ export function createOtlpPipeline(opts: OtlpPipelineOptions): OtlpPipeline {
   };
 
   return {
-    async map(signal, decoded, into) {
+    async map(signal, decoded, into, mapOpts) {
       await seedTraces(signal, decoded);
       let mapped: MapResult;
       blobs = into ?? opts.blobs;
@@ -374,10 +382,16 @@ export function createOtlpPipeline(opts: OtlpPipelineOptions): OtlpPipeline {
       } finally {
         blobs = opts.blobs;
       }
-      if (mapped.rehome?.length) await rehomeStored(opts.store, mapCtx.spanTree!, mapped.rehome);
+      const deferred = mapOpts?.deferRehome && mapped.rehome?.length ? mapped.rehome : undefined;
+      if (mapped.rehome?.length && !deferred) await rehomeStored(opts.store, mapCtx.spanTree!, mapped.rehome);
       if (opts.store.kvSet) for (const [t, s] of traceSessions.takeDirty()) await opts.store.kvSet(kvKey(t), s);
       const events = redactor ? mapped.events.map((e) => redactEventCounted(redactor, e)) : mapped.events;
-      return { events, rejected: mapped.rejected, errors: mapped.errors };
+      const outcome: OtlpMapOutcome = { events, rejected: mapped.rejected, errors: mapped.errors };
+      if (deferred) outcome.rehome = deferred;
+      return outcome;
+    },
+    async rehome(rehome) {
+      if (rehome.length) await rehomeStored(opts.store, mapCtx.spanTree!, rehome);
     },
   };
 }
@@ -385,25 +399,38 @@ export function createOtlpPipeline(opts: OtlpPipelineOptions): OtlpPipeline {
 /**
  * Moves stored events to the subagent session their span now belongs to: spans exported before their
  * enclosing invoke_agent span are stored in the parent session, and event ids do not depend on the
- * session, so storing them again would change nothing. Needs replaceSessionEvents (a store without
- * it leaves them where they are). A subagent.start that moves takes its child session with it:
- * that session names the session that started it.
+ * session, so storing them again would change nothing. Likewise spans of a trace exported before the
+ * span that names its conversation are stored in the trace's own session and move to the conversation
+ * (Rehome.to), which then has no session.end of that trace; a trace session left empty is deleted
+ * (with deleteSessions). Needs replaceSessionEvents (a store without it leaves them where they are).
+ * A subagent.start that moves takes its child session with it: that session names the session that started it.
  */
 async function rehomeStored(store: IndexStore, tree: SpanTree, rehome: Rehome[]): Promise<void> {
   if (!store.replaceSessionEvents) return;
   for (const r of rehome) {
     const moves = new Map<string, { target: string; events: AgentEvent[] }>();
     const ids: string[] = [];
-    for (const e of await store.listEvents(r.from)) {
+    const stored = await store.listEvents(r.from);
+    for (const e of stored) {
       const t = rehomeTarget(tree, e, r);
       if (!t) continue;
       ids.push(e.id);
+      // The trace's end is not the conversation's (a conversation's traces send no session.end).
+      if (t.sessionId === r.to && e.kind === "session.end") continue;
       const m = moves.get(t.sessionId) ?? moves.set(t.sessionId, { target: t.sessionId, events: [] }).get(t.sessionId)!;
-      m.events.push({ ...e, sessionId: t.sessionId, subagentId: t.subagentId });
+      const { subagentId: _s, turnId: _t, ...rest } = e;
+      const moved: AgentEvent = { ...rest, sessionId: t.sessionId };
+      if (t.subagentId) moved.subagentId = t.subagentId;
+      const turnId = t.turnId ?? e.turnId;
+      if (turnId) moved.turnId = turnId;
+      m.events.push(moved);
     }
     if (!ids.length) continue;
     const add = [...moves.values()].flatMap((m) => m.events);
     await store.replaceSessionEvents(r.from, ids, add);
+    // Everything left the trace's session: no empty session stays behind.
+    const emptied = ids.length === stored.length && store.deleteSessions !== undefined;
+    if (emptied) await store.deleteSessions!([r.from]);
     // The moved subagent.start events are now dispatched from another session: its own session says so.
     for (const m of moves.values()) {
       for (const e of m.events) {
@@ -414,7 +441,51 @@ async function rehomeStored(store: IndexStore, tree: SpanTree, rehome: Rehome[])
         await rebuildSessions(store, [child]);
       }
     }
-    await rebuildSessions(store, [r.from, ...moves.keys()]);
+    await rebuildSessions(store, emptied ? [...moves.keys()] : [r.from, ...moves.keys()]);
+  }
+}
+
+/**
+ * Claude Code sends one model call (and the prompt) both as a log record and, with
+ * CLAUDE_CODE_ENHANCED_TELEMETRY_BETA, as a span, under one event id, so the second copy
+ * inserts nothing. Call after the put, with the ids it inserted: a model call's stored copy
+ * takes the fields of the copy that did not insert (mergeCallCopies). A prompt stored from the
+ * log record before its trace's session.start, at the same time, is stored again after it, so
+ * one prompt does not read as a resume. Needs replaceSessionEvents.
+ */
+export async function mergeAgentCopies(store: IndexStore, events: AgentEvent[], inserted: Set<string>): Promise<void> {
+  if (!store.replaceSessionEvents) return;
+  const startOf = (u: AgentEvent) =>
+    events.find((s) => s.kind === "session.start" && s.sessionId === u.sessionId && s.traceId === u.traceId && !s.subagentId && inserted.has(s.id));
+  const dups = events.filter(
+    (e) =>
+      e.agent === "claude-code" &&
+      !inserted.has(e.id) &&
+      ((e.kind === "llm.call" && typeof e.payload.requestId === "string") || (e.kind === "user.message" && e.traceId !== undefined && startOf(e) !== undefined)),
+  );
+  const bySession = new Map<string, AgentEvent[]>();
+  for (const d of dups) (bySession.get(d.sessionId) ?? bySession.set(d.sessionId, []).get(d.sessionId)!).push(d);
+  for (const [sessionId, copies] of bySession) {
+    const stored = new Map((await store.listEvents(sessionId, { kinds: ["llm.call", "user.message"] })).map((e) => [e.id, e]));
+    const remove: string[] = [];
+    const add: AgentEvent[] = [];
+    for (const d of copies) {
+      const s = stored.get(d.id);
+      if (!s || remove.includes(d.id)) continue;
+      if (d.kind === "llm.call") {
+        const merged = mergeCallCopies(s, d);
+        if (isDeepStrictEqual(merged, s)) continue;
+        remove.push(d.id);
+        add.push(merged);
+      } else if (s.ts >= startOf(d)!.ts && s.source === LOG_SOURCE) {
+        // Re-stored, it sorts after the session.start; it keeps the log's fields and gains the span's place in the trace.
+        remove.push(d.id);
+        const moved: AgentEvent = { ...d, ...s, traceId: d.traceId! };
+        if (d.spanId) moved.spanId = d.spanId;
+        add.push(moved);
+      }
+    }
+    if (remove.length) await store.replaceSessionEvents(sessionId, remove, add);
   }
 }
 
@@ -704,9 +775,13 @@ export async function startReceiver(opts: ReceiverOptions): Promise<Receiver> {
   const commit = async (group: Job[]): Promise<void> => {
     const batch = opts.blobs.batch?.();
     const done: { job: Job; events: AgentEvent[]; rejected: number; errors: string[] }[] = [];
+    // Stored events the group's spans move (see rehomeStored): moved after the put, so that events
+    // of an earlier request in the group, not stored yet when a later one was mapped, move too.
+    const rehome: Rehome[] = [];
     for (const job of group) {
       try {
-        const mapped = await pipeline.map(job.signal, job.decoded, batch);
+        const mapped = await pipeline.map(job.signal, job.decoded, batch, { deferRehome: true });
+        if (mapped.rehome) rehome.push(...mapped.rehome);
         done.push({ job, events: applyPricing(mapped.events, prices), rejected: mapped.rejected, errors: mapped.errors });
       } catch (err) {
         job.reject(err);
@@ -720,9 +795,11 @@ export async function startReceiver(opts: ReceiverOptions): Promise<Receiver> {
       // where the store has them), and each request still counts its own inserts.
       const write = async () => {
         for (const d of done) puts.push(await insertedEvents.put(opts.store, d.events));
-        // A session with no row yet whose events were all new is built from the
-        // events in hand, without reading them back from the store.
-        const fresh = done.every((d, i) => puts[i]!.inserted === d.events.length);
+        for (const [i, d] of done.entries()) await mergeAgentCopies(opts.store, d.events, puts[i]!.ids);
+        await pipeline.rehome(rehome);
+        // A session with no row yet whose events were all new (and stayed where they were) is
+        // built from the events in hand, without reading them back from the store.
+        const fresh = !rehome.length && done.every((d, i) => puts[i]!.inserted === d.events.length);
         const touched = new Map<string, AgentEvent[]>();
         for (const d of done) for (const e of d.events) (touched.get(e.sessionId) ?? touched.set(e.sessionId, []).get(e.sessionId)!).push(e);
         return new Map((await rebuildSessions(opts.store, touched.keys(), fresh ? touched : undefined)).map((s) => [s.id, s]));

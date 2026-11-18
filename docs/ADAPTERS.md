@@ -35,7 +35,7 @@ sessions; `gemini-cli` stays for older Gemini CLI history. Aider is stale (last 
 | Agent | History | Headless | Isolation and overlay | Tier |
 |---|---|---|---|---|
 | Claude Code | `$CLAUDE_CONFIG_DIR/projects/<slug>/<sid>.jsonl` + `subagents/agent-*.jsonl` | `claude -p --output-format stream-json --verbose --model M --permission-mode bypassPermissions --max-turns N --max-budget-usd X --session-id U` | `CLAUDE_CONFIG_DIR`, `--settings <json>`, `--setting-sources project`, `--strict-mcp-config --mcp-config`, `--append-system-prompt`, `--plugin-dir`. `--bare` skips user hooks and plugins. | A |
-| Codex | `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl` (`session_meta`, `turn_context`, `response_item`, `event_msg`; schema churns). Rollouts older than a week are `rollout-*.jsonl.zst`; backfill streams them through zstd and reads only the plain file when both exist. Line numbers, and so event ids, match the plain file; byte offsets are into the decompressed text | `codex exec --json -m M -s workspace-write -C dir --skip-git-repo-check -o last.txt --ignore-user-config --dangerously-bypass-hook-trust` | `CODEX_HOME`, `-c k=v` (`model_instructions_file`, `developer_instructions`, `mcp_servers.*`). AGENTS.md, `.agents/skills`. | A |
+| Codex | `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl` (`session_meta`, `turn_context`, `response_item`, `event_msg`; schema churns). Rollouts older than a week are `rollout-*.jsonl.zst`; backfill streams them through zstd and reads only the plain file when both exist. Line numbers, and so event ids, match the plain file; byte offsets are into the decompressed text | `codex exec --json -m M -s workspace-write -C dir --skip-git-repo-check -o last.txt --ignore-user-config --dangerously-bypass-hook-trust`. In its own `CODEX_HOME`, without `--ignore-user-config`, a run on a Codex whose `exec --help` lists `--trust` (0.169+) also passes `--trust`, so the project `.codex/config.toml` and MCP servers load; it writes no hook trust hash | `CODEX_HOME`, `-c k=v` (`model_instructions_file`, `developer_instructions`, `mcp_servers.*`). AGENTS.md, `.agents/skills`. | A |
 | OpenCode | SQLite `~/.local/share/opencode/opencode.db` (2.x: `session_v2`, `session_message`, `session_part`; 1.x: `session`, `message`, `part`) | `opencode run "…" -m prov/model --format json --auto --standalone` | `OPENCODE_CONFIG_CONTENT`, `OPENCODE_CONFIG_DIR`, `OPENCODE_DISABLE_PROJECT_CONFIG`. **Use `--standalone`, or the shared server ignores your env.** OpenCode 2.x does not read Claude Code's instructions file. | A |
 | Amp | Threads are server-side; local cache `~/.local/share/amp/threads/<T-id>.json` (U); `amp threads export` | `amp -x "…" --stream-json --mode M` | `--settings-file`, `--mcp-config <json>`. AGENTS.md, `.agents/skills`. | A (plugin) |
 | Gemini CLI | `~/.gemini/tmp/<project-slug>/chats/session-*.jsonl` | `gemini -p "…" -o stream-json -m M --approval-mode=yolo --skip-trust` | `GEMINI_CLI_HOME`, `GEMINI_SYSTEM_MD=/path`. Max turns only via `model.maxSessionTurns`. | A |
@@ -126,6 +126,8 @@ order.
 - **Cost:** T3's running cost (`contextUsage.cost`) is kept as `reportedUsage` and never summed.
 - **When imports run:** the T3 store is re-imported on every lazy ingest (`Adapter.tail`). Threads that
   haven't changed are skipped.
+- **Store copies:** the T3 store is read from a copy in the temp directory, which needs room for it; a
+  failed copy is a backfill error. The next read removes copies a killed read left.
 
 ## Known breakage to design around
 
