@@ -110,7 +110,9 @@ export interface GcResult {
 
 type Stat = { size: number; mtimeMs: number };
 type DeleteIfOlder = (ref: BlobRef, opts: { olderThanMs: number; now?: number }) => Promise<number | "kept" | undefined>;
-type SweepTmp = (opts: { olderThanMs: number; now?: number; dryRun?: boolean }) => Promise<{ files: number; bytes: number }>;
+type SweepTmp = (opts: { olderThanMs: number; now?: number; dryRun?: boolean; files?: string[] }) => Promise<{ files: number; bytes: number }>;
+/** FsBlobStore.list: sets seen.tmp to the temp files its walk passed (other stores ignore the argument). */
+type ListSeeing = (opts: { seen: { tmp?: string[] } }) => AsyncIterable<BlobRef>;
 type StatFn = (ref: BlobRef) => Promise<Stat | undefined>;
 type CompactBlobs = () => Promise<{ packed: number; readerHeld: boolean }>;
 
@@ -187,7 +189,8 @@ async function sweepBlobs(opts: GcOptions, result: GcResult, now: number, minAge
   // ---- blobs: sweep
   const statFn = statOf(blobs);
   const deleteIfOlder = (blobs as BlobStore & { deleteIfOlder?: DeleteIfOlder }).deleteIfOlder;
-  for await (const ref of blobs.list()) {
+  const seen: { tmp?: string[] } = {};
+  for await (const ref of (blobs.list as ListSeeing).call(blobs, { seen })) {
     result.blobs.scanned++;
     if (referenced.has(ref)) continue;
     if (!statFn) {
@@ -219,7 +222,10 @@ async function sweepBlobs(opts: GcOptions, result: GcResult, now: number, minAge
   const sweepTmp = (blobs as BlobStore & { sweepTmp?: SweepTmp }).sweepTmp;
   if (typeof sweepTmp === "function") {
     if (!dryRun) lock?.assertHeld();
-    const t = await sweepTmp.call(blobs, { olderThanMs: minAge, now, dryRun: !!dryRun });
+    // The temp files the listing passed, when it says: the blob folders are walked once.
+    const sweep: Parameters<SweepTmp>[0] = { olderThanMs: minAge, now, dryRun: !!dryRun };
+    if (seen.tmp) sweep.files = seen.tmp;
+    const t = await sweepTmp.call(blobs, sweep);
     result.blobs.tmpFiles += t.files;
     result.blobs.tmpBytes += t.bytes;
   }

@@ -338,4 +338,39 @@ describe("gc", () => {
     assert.equal(r.blobs.tmpFiles, 1);
     assert.deepEqual([existsSync(oldTmp), existsSync(freshTmp)], [false, true]);
   });
+
+  it("walks the blob folders once: sweepTmp gets the temp files the listing passed, and removes the same ones as its own walk", async () => {
+    const run = async (passSeen: boolean) => {
+      const t = setup();
+      const given: (string[] | undefined)[] = [];
+      class Store extends FsBlobStore {
+        override list(opts: { seen?: { tmp?: string[] } } = {}) {
+          return super.list(passSeen ? opts : {});
+        }
+        override async sweepTmp(opts: Parameters<FsBlobStore["sweepTmp"]>[0]) {
+          given.push(opts.files);
+          return super.sweepTmp(opts);
+        }
+      }
+      const blobs = track(new Store(join(t.root, "blobs"), { packMaxBytes: 0 }));
+      const refs = [await blobs.put("kept"), await blobs.put("stale garbage"), await blobs.put("other")];
+      const index = new MemoryIndexStore();
+      await index.putEvents([{ id: "e", v: 0, sessionId: "s", ts: 1, agent: "a", kind: "notification", payload: {}, blobs: [refs[0]!] }]);
+      for (const ref of refs) await ageBlob(blobs, ref, 2);
+      const tmps = refs.map((ref, i) => join(blobs.pathFor(ref), "..", `${"c".repeat(63)}${i}.zst.77.ab.tmp`));
+      tmps.forEach((f, i) => writeFileSync(f, "z".repeat(i + 1)));
+      old(tmps[0]!, 2);
+      old(tmps[2]!, 2);
+      const dry = await gc({ index, blobs, config: t.config, env: t.env, judgeCacheDir: false, dryRun: true });
+      const real = await gc({ index, blobs, config: t.config, env: t.env, judgeCacheDir: false });
+      return { dry: dry.blobs, real: real.blobs, left: tmps.map((f) => existsSync(f)), given: given.map((g) => g?.length) };
+    };
+    const once = await run(true);
+    const walked = await run(false);
+    assert.deepEqual(once.given, [3, 3], "the listing's temp files, in place of a second walk");
+    assert.deepEqual(walked.given, [undefined, undefined], "a listing that says nothing: sweepTmp walks");
+    assert.deepEqual([once.dry, once.real, once.left], [walked.dry, walked.real, walked.left]);
+    assert.deepEqual([once.dry.tmpFiles, once.dry.tmpBytes, once.real.deleted], [2, 4, 2]);
+    assert.deepEqual(once.left, [false, true, false]);
+  });
 });

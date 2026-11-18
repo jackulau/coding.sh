@@ -204,7 +204,13 @@ function* memoryFileSteps(dirs: MemoryDirs, sessionDirs: readonly string[]): Ste
   paths.push(join(claudeDir, "CLAUDE.md"));
   yield* walk(join(claudeDir, "rules"), (r) => r.endsWith(".md"), 4, paths);
   paths.push(...(yield* skillFiles(join(claudeDir, "skills"))));
-  for (const p of names(join(claudeDir, "projects"))) yield* walk(join(claudeDir, "projects", p, "memory"), (r) => r.endsWith(".md"), 3, paths);
+  // Most project dirs have no memory/: a stat that finds nothing costs about half a readdir that
+  // throws, and a store can hold tens of thousands of project dirs.
+  for (const p of names(join(claudeDir, "projects"))) {
+    const dir = join(claudeDir, "projects", p, "memory");
+    if (isDir(dir)) yield* walk(dir, (r) => r.endsWith(".md"), 3, paths);
+    else yield;
+  }
   paths.push(join(codexDir, "AGENTS.md"), join(codexDir, "AGENTS.override.md"));
   paths.push(...(yield* skillFiles(join(codexDir, "skills"))), ...(yield* skillFiles(join(home, ".agents", "skills"))));
   paths.push(join(home, ".gemini", "GEMINI.md"));

@@ -6,7 +6,7 @@ import { after, describe, it } from "node:test";
 import type { AgentEvent, EventKind, Session } from "../../src/schema/index.ts";
 import type { Adapter, BlobBatch, BlobStore, Config, OpenSession, Sink, SinkAck } from "../../src/core/types.ts";
 import { defaultConfig } from "../../src/core/config.ts";
-import { backfill, backfillCursorKey, childLinker, ingest, recomputeSession, SINK_BEHIND, SINK_CURRENT, sinkBackfillKey, sinkCursorKey, sinkRetryKey, storeEnrichment } from "../../src/core/ingest.ts";
+import { backfill, backfillCursorKey, childLinker, ingest, recomputeSession, recomputeSessions, SINK_BEHIND, SINK_CURRENT, sinkBackfillKey, sinkCursorKey, sinkRetryKey, storeEnrichment } from "../../src/core/ingest.ts";
 import { paths } from "../../src/core/paths.ts";
 import type { RepoResolver } from "../../src/core/repo-state.ts";
 import { acquireLock, isStale, LockBusyError, LockLostError } from "../../src/core/lock.ts";
@@ -1262,5 +1262,79 @@ describe("a helper's events reach each sink once", () => {
     } finally {
       await h.close();
     }
+  });
+});
+
+describe("recomputeSessions: sessions folded ahead while git runs", () => {
+  const T0 = 1_762_000_000_000;
+  const ev = (sessionId: string, i: number, kind: EventKind, payload: Record<string, unknown> = {}): AgentEvent => ({ id: `${sessionId}-${i}`, v: 0, sessionId, ts: T0 + i * 1000, agent: "claude-code", kind, source: "transcript", cwd: `/work/${sessionId}`, payload });
+  const ids = ["parent", "child", "solo", "empty", "late"];
+  const events = [
+    ev("parent", 0, "session.start"),
+    ev("parent", 1, "subagent.start", { childSessionId: "child", subagentId: "a1", type: "explore" }),
+    ev("parent", 2, "session.end"),
+    ev("child", 3, "session.start"),
+    ev("child", 4, "tool.start", { tool: "Read", input: { file_path: "/work/child/a.ts" } }),
+    ev("solo", 5, "session.start"),
+    ev("late", 6, "session.start"),
+  ];
+  /** A git that answers after a few milliseconds, and counts how many it has in flight. */
+  const slowGit = () => {
+    let now = 0;
+    const seen = { max: 0, calls: [] as string[] };
+    const repo: RepoResolver = {
+      async start(session) {
+        seen.calls.push(session.id);
+        seen.max = Math.max(seen.max, ++now);
+        await new Promise((r) => setTimeout(r, 15));
+        now--;
+        return { root: session.cwd!, head: `head-of-${session.id}` };
+      },
+    };
+    return { repo, seen };
+  };
+  const rows = async (index: { listSessions(): Promise<Session[]> }) => (await index.listSessions()).sort((a, b) => a.id.localeCompare(b.id));
+
+  for (const kind of ["sqlite", "memory"] as const) {
+    it(`${kind}: writes the rows recomputeSession writes one at a time, links included, with git asked for several at once`, async () => {
+      const t = setup();
+      const open = async (name: string) => (kind === "sqlite" ? await SqliteIndexStore.open(join(t.root, `${name}.db`)) : new MemoryIndexStore());
+      const one = await open("one");
+      const many = await open("many");
+      try {
+        for (const index of [one, many]) await index.putEvents(events);
+        const a = slowGit();
+        for (const id of ids) await recomputeSession(one, id, { linker: childLinker(one), repo: a.repo });
+        assert.equal(a.seen.max, 1);
+        const b = slowGit();
+        const done: string[] = [];
+        await recomputeSessions(many, ids, { linker: childLinker(many), repo: b.repo }, (id) => done.push(id));
+        assert.deepEqual(done, ["parent", "child", "solo", "late"], "in order, the one with no events left out");
+        assert.ok(b.seen.max > 1, `git ran for several sessions at once: ${b.seen.max}`);
+        assert.deepEqual(b.seen.calls.sort(), a.seen.calls.sort());
+        const got = await rows(many);
+        assert.deepEqual(got, await rows(one));
+        assert.equal(got.find((s) => s.id === "child")?.parent?.sessionId, "parent", "the child folded ahead still gets the link its parent's events named");
+        assert.equal(got.find((s) => s.id === "solo")?.repo?.head, "head-of-solo");
+      } finally {
+        await one.close();
+        await many.close();
+      }
+    });
+  }
+
+  it("an error reading a session is thrown at its turn: the sessions before it are written, the ones after it are not", async () => {
+    class Store extends MemoryIndexStore {
+      override async getSession(id: string) {
+        if (id === "solo") throw new Error("disk read failed");
+        return super.getSession(id);
+      }
+    }
+    const index = new Store();
+    await index.putEvents(events);
+    const done: string[] = [];
+    await assert.rejects(recomputeSessions(index, ids, { linker: childLinker(index), repo: slowGit().repo }, (id) => done.push(id)), /disk read failed/);
+    assert.deepEqual(done, ["parent", "child"]);
+    assert.deepEqual((await index.listSessions()).map((s) => s.id).sort(), ["child", "parent"]);
   });
 });
