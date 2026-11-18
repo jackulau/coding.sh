@@ -9,7 +9,7 @@
 // commit and say why in the message. Load times (Lighthouse) are budgeted in
 // scripts/perf/budgets.json and checked by .github/workflows/site-perf.yml.
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
-import { join, relative, extname, dirname, resolve } from "node:path";
+import { join, relative, extname, dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { brotliCompressSync, constants } from "node:zlib";
 import { LOCALES, DEFAULT_LOCALE } from "../src/i18n/locales.mjs";
@@ -90,10 +90,12 @@ const hasAttr = (tag, name) => new RegExp(`\\s${name}(\\s|=|/?>)`, "i").test(tag
 const TRANSLATED = new Set(LOCALES.filter((l) => l !== DEFAULT_LOCALE).map((l) => l.path + "/"));
 const PRELOAD_REST = new Set(LOCALES.filter((l) => l.preloadRest).map((l) => l.path + "/"));
 
+// A file's path in dist with /, as the budgets name pages: on Windows relative() gives docs\cli\index.html.
+const distPath = (f) => relative(DIST, f).split(sep).join("/");
 const pages = walk(DIST)
-  .filter((f) => f.endsWith(".html") && !relative(DIST, f).startsWith("pagefind"))
+  .filter((f) => f.endsWith(".html") && !distPath(f).startsWith("pagefind"))
   .map((f) => {
-    const rel = "/" + relative(DIST, f).replace(/index\.html$/, "");
+    const rel = "/" + distPath(f).replace(/index\.html$/, "");
     return { file: f, path: rel, html: read(f) };
   })
   .sort((a, b) => a.path.localeCompare(b.path));
@@ -243,8 +245,8 @@ const ogFiles = [join(DIST, "og-image.png"), ...(existsSync(join(DIST, "og")) ? 
 let worstOg = { size: 0 };
 for (const f of ogFiles) {
   const size = statSync(f).size;
-  if (size > BUDGET.ogPng) fail(relative(DIST, f), `${fmt(size)}, budget ${fmt(BUDGET.ogPng)}`);
-  if (size > worstOg.size) worstOg = { file: relative(DIST, f), size };
+  if (size > BUDGET.ogPng) fail(distPath(f), `${fmt(size)}, budget ${fmt(BUDGET.ogPng)}`);
+  if (size > worstOg.size) worstOg = { file: distPath(f), size };
 }
 
 console.log(`perf-budget: ${pages.length} pages, ${imgCount} images, ${ogFiles.length} OG cards`);
