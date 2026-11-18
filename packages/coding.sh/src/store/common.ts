@@ -12,11 +12,17 @@ export const SNIPPET_ELLIPSIS = "…";
 export const MESSAGE_SEARCH_KINDS: readonly string[] = ["user.message", "assistant.message"];
 
 /**
- * Every kind with searchable text: messages plus tool calls, tool output, subagent launches,
- * error events and failed model calls. An llm.call has search text only when it failed
- * (payload.error is text), so the SQLite index finds those by events.error, not by payload.
+ * Kinds with search text only when they carry an error (payload.error is text): a failed
+ * model call, a failed subagent and a session that ended with an error. The SQLite index
+ * finds these by events.error, not by payload.
  */
-export const SEARCHABLE_KINDS: readonly string[] = [...MESSAGE_SEARCH_KINDS, "tool.start", "tool.end", "subagent.start", "error", "llm.call"];
+export const ERROR_SEARCH_KINDS: readonly string[] = ["llm.call", "subagent.end", "session.end"];
+
+/**
+ * Every kind with searchable text: messages plus tool calls, tool output, subagent launches,
+ * error events, and the ERROR_SEARCH_KINDS when they carry an error.
+ */
+export const SEARCHABLE_KINDS: readonly string[] = [...MESSAGE_SEARCH_KINDS, "tool.start", "tool.end", "subagent.start", "error", ...ERROR_SEARCH_KINDS];
 
 /** Cap on indexed text for tool/subagent events, so a huge Write or tool output cannot bloat the index. */
 export const TOOL_SEARCH_TEXT_CAP = 2000;
@@ -72,6 +78,8 @@ const code = (v: unknown): string | undefined => (typeof v === "number" && Numbe
  * - subagent.start: subagent type, description and prompt.
  * - error: message, error type (`rate_limit_error`), error class, rate limit type and status code.
  * - llm.call: only a failed call (payload.error is text): the error, error type, class and status code.
+ * - subagent.end: only a failed subagent (payload.error is text): the error and the subagent type.
+ * - session.end: only a session that ended with an error (payload.error is text): the error.
  * Text other than messages is capped at TOOL_SEARCH_TEXT_CAP characters.
  * The payload was redacted before it was stored, so this text is redacted too.
  */
@@ -96,6 +104,14 @@ export function searchableText(e: AgentEvent): string | undefined {
     case "llm.call": {
       const err = errorText(p);
       return err ? joinCapped([err, p.errorType, p.errorClass, code(p.statusCode)]) : undefined;
+    }
+    case "subagent.end": {
+      const err = errorText(p);
+      return err ? joinCapped([err, p.type]) : undefined;
+    }
+    case "session.end": {
+      const err = errorText(p);
+      return err ? joinCapped([err]) : undefined;
     }
     default:
       return undefined;

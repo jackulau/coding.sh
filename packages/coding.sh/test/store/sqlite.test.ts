@@ -704,6 +704,50 @@ describe("SqliteIndexStore", () => {
     }
   });
 
+  it("migrating to v13 indexes the error a subagent or a session ended with, stored before", async () => {
+    const { DatabaseSync } = await loadSqlite();
+    const path = join(root, "v12-end-errors.db");
+    const old = new DatabaseSync(path);
+    old.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
+    for (const m of MIGRATIONS.filter((m) => m.version <= 12)) {
+      old.exec(m.sql);
+      m.after?.(old);
+      old.prepare("INSERT INTO migrations (version, applied_at) VALUES (?, 0)").run(m.version);
+    }
+    // Rows as v12 putEvents wrote them: no entry for a subagent.end or session.end.
+    const rows: { id: string; session: string; kind: string; payload: Record<string, unknown>; fts?: string }[] = [
+      { id: "m1", session: "msg", kind: "user.message", payload: { text: "summarize the changelog" }, fts: "summarize the changelog" },
+      { id: "s1", session: "parent", kind: "subagent.end", payload: { subagentId: "a1", type: "reviewer", ok: false, error: "quota exhausted" } },
+      { id: "s2", session: "parent", kind: "subagent.end", payload: { subagentId: "a2", type: "planner", ok: true } },
+      { id: "x1", session: "crashed", kind: "session.end", payload: { reason: "error", error: "agent process segfaulted" } },
+      { id: "x2", session: "clean", kind: "session.end", payload: { reason: "exit" } },
+    ];
+    const insert = old.prepare("INSERT INTO events (id, session_id, ts, agent, kind, payload, error) VALUES (?, ?, ?, 'cursor', ?, ?, ?)");
+    const fts = old.prepare("INSERT INTO events_fts (rowid, text) VALUES (?, ?)");
+    rows.forEach((r, i) => {
+      const { lastInsertRowid } = insert.run(r.id, r.session, i, r.kind, JSON.stringify(r.payload), typeof r.payload.error === "string" ? r.payload.error : null);
+      if (r.fts) fts.run(lastInsertRowid, r.fts);
+    });
+    assert.equal(searchIndexOk(old), false, "under the new search text, the old index misses the end errors");
+    old.close();
+
+    const s = await SqliteIndexStore.open(path);
+    const sessions = async (q: string) => [...new Set((await s.search(q)).map((h) => h.event.sessionId))].sort();
+    assert.deepEqual(await sessions("quota exhausted"), ["parent"]);
+    assert.deepEqual(await sessions("reviewer"), ["parent"]);
+    assert.deepEqual(await sessions("segfaulted"), ["crashed"]);
+    assert.deepEqual(await sessions("planner"), [], "a subagent that did not fail stays unindexed");
+    assert.deepEqual(await sessions("changelog"), ["msg"]);
+    await s.close();
+    const check = new DatabaseSync(path);
+    try {
+      assert.equal(searchIndexOk(check), true);
+      assert.equal((check.prepare("SELECT count(*) AS n FROM events_fts_docsize").get() as { n: number }).n, 3, "the message and the two ends with an error");
+    } finally {
+      check.close();
+    }
+  });
+
   it("a store under the progress threshold upgrades silently", async () => {
     const path = join(root, "v9-quiet.db");
     await v9Store(path, (db) => writeV9Events(db, [{ id: "u", kind: "user.message", payload: { text: "hello" }, text: "hello" }]));
