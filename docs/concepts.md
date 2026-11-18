@@ -135,9 +135,8 @@ estimate.
   (`g x`).
 - In the CLI: `coding.sh usage` shows tokens and cost by agent, model or day. See
   [Track cost](https://coding.sh/docs/cost).
-- In the API: `stats.waste` counts reads that repeated one in the same context, and
-  `stats.compactionRefetches` counts reads that fetched again what a compaction dropped. See the
-  [API reference](https://coding.sh/docs/api).
+- In the API: `stats.compactionRefetches` counts reads that fetched again what a compaction
+  dropped. See the [API reference](https://coding.sh/docs/api).
 
 ## Testing changes
 
