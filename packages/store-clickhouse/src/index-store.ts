@@ -14,7 +14,6 @@ import {
   DatasetConflict,
   DEFAULT_PROJECT,
   searchableText,
-  searchTerms,
   snippet,
   type AgentEvent,
   type AgentId,
@@ -39,6 +38,7 @@ import {
   type WriterLock,
 } from "coding.sh/store";
 import { ChClient, migrateDatabase, nextVer, openError, Params, parseChUrl, quoteIdent, quoteLiteral, type RequestOpts } from "./client.ts";
+import { searchText } from "./search.ts";
 import { compileWhere, facetRows, likeTerms, orderBy, termsSql } from "./where.ts";
 
 /** Rows per INSERT request. */
@@ -47,8 +47,6 @@ const INSERT_CHUNK = 5000;
 const LOOKUP_CHUNK = 1000;
 /** Sessions deleted per retention round. */
 const DELETE_CHUNK = 500;
-/** Cap on indexed text per event, as the Postgres store. */
-const SEARCH_TEXT_CAP = 200_000;
 /** No LIMIT, as a UInt64 bound. */
 const NO_LIMIT = "18446744073709551615";
 
@@ -69,19 +67,6 @@ const str = (v: unknown): string | undefined => (typeof v === "string" ? v : und
 const num = (v: unknown): number | undefined => (typeof v === "number" ? v : typeof v === "string" && v !== "" ? Number(v) : undefined);
 const opt = (v: string | undefined | null): string | null => (v === undefined ? null : v);
 const projectOf = (p: string | undefined): string => p || DEFAULT_PROJECT;
-
-/** Folded search text with a leading space, so a word-prefix match is `LIKE '% term%'`. Empty when the event has none. */
-export function searchText(e: AgentEvent): string {
-  const text = searchableText(e);
-  if (text === undefined) return "";
-  let folded = searchTerms(text).join(" ");
-  if (!folded) return "";
-  if (folded.length > SEARCH_TEXT_CAP) {
-    const cut = folded.lastIndexOf(" ", SEARCH_TEXT_CAP);
-    folded = folded.slice(0, cut > 0 ? cut : SEARCH_TEXT_CAP);
-  }
-  return ` ${folded}`;
-}
 
 function rowToEvent(r: Row): AgentEvent {
   const e: AgentEvent = {

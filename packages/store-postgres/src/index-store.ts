@@ -8,7 +8,6 @@ import {
   DatasetConflict,
   DEFAULT_PROJECT,
   searchableText,
-  searchTerms,
   snippet,
   type AgentEvent,
   type AgentId,
@@ -42,17 +41,13 @@ import {
   withTx,
   type PgUrl,
 } from "./pool.ts";
+import { searchFolded } from "./search.ts";
 import { compileWhere, facetSource, orderBy, tsQuery } from "./where.ts";
 
 /** Rows per INSERT; one transaction covers the whole putEvents batch. */
 const INSERT_CHUNK = 500;
 /** Sessions deleted per retention transaction, so one sweep never holds a huge transaction open. */
 const DELETE_CHUNK = 500;
-/**
- * Cap on indexed text per event. tsvector values must stay under 1 MB; message
- * text has no cap of its own (tool text is already capped by searchableText).
- */
-const SEARCH_TEXT_CAP = 200_000;
 
 type Row = Record<string, unknown>;
 
@@ -68,17 +63,6 @@ const parse = <T>(v: unknown): T | undefined => (typeof v === "string" ? (JSON.p
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 const num = (v: unknown): number | undefined => (typeof v === "number" ? v : typeof v === "string" && v !== "" ? Number(v) : undefined);
 const projectOf = (p: string | undefined): string => p || DEFAULT_PROJECT;
-
-/** Search text for the tsvector: folded terms, so "Café" matches "cafe" like FTS5 remove_diacritics. */
-export function searchFolded(e: AgentEvent): string | null {
-  const text = searchableText(e);
-  if (text === undefined) return null;
-  const folded = searchTerms(text).join(" ");
-  if (!folded) return null;
-  if (folded.length <= SEARCH_TEXT_CAP) return folded;
-  const cut = folded.lastIndexOf(" ", SEARCH_TEXT_CAP);
-  return folded.slice(0, cut > 0 ? cut : SEARCH_TEXT_CAP);
-}
 
 function rowToEvent(r: Row): AgentEvent {
   const e: AgentEvent = {

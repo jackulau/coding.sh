@@ -6,6 +6,7 @@
 // server parses as values of that type (scalars in TSV-escaped form, arrays as
 // quoted literals), so a value can never become SQL.
 import { gzipSync } from "node:zlib";
+import { staleSearchRows } from "./search.ts";
 
 export const DEFAULT_DATABASE = "default";
 export const QUERY_TIMEOUT_MS = 30_000;
@@ -254,6 +255,8 @@ interface Migration {
   version: number;
   /** One statement per entry (the HTTP interface runs one per request). Each must be safe to run twice. */
   statements: (db: string) => string[];
+  /** Runs after `statements`, for data changes SQL alone cannot compute. Must be safe to run twice. */
+  after?: (client: ChClient, db: string) => Promise<void>;
 }
 
 /**
@@ -361,7 +364,60 @@ ENGINE = ReplacingMergeTree(ver) ORDER BY id`,
 ) ENGINE = ReplacingMergeTree(ver) ORDER BY (name, holder)`,
     ],
   },
+  {
+    // Error text is searchable, as SQLite v12 and v13: error events, failed model calls,
+    // tool errors and the error a subagent or a session ended with. search_text is
+    // computed in JS, so rows stored before are indexed again here (reindexErrorText).
+    version: 2,
+    statements: () => [],
+    after: async (client, d) => {
+      await reindexErrorText(client, d);
+    },
+  },
 ];
+
+/** Rows read per batch of the search backfill (their ids travel in the DELETE's URL). */
+export const REINDEX_BATCH = 1000;
+
+/**
+ * Writes search_text again for the events that can have error text and were stored
+ * before it was searchable: error events, and failed model calls, tool results, subagent
+ * ends and session ends (payload.error is text). Read in (session_id, id) order, in
+ * batches; a changed row gets a new version, then its older versions are deleted, so
+ * every version of an event has the same search text again (search skips granules
+ * before FINAL). Rows already up to date are left, so a second run writes nothing.
+ * The kinds are written out (not taken from searchableText's) so this step never changes.
+ */
+export async function reindexErrorText(client: ChClient, d: string, batch = REINDEX_BATCH): Promise<number> {
+  let last: [string, string] | undefined;
+  let updated = 0;
+  for (;;) {
+    const p = new Params();
+    const from = last ? `AND (session_id, id) > (${p.bind("String", last[0])}, ${p.bind("String", last[1])})` : "";
+    const rows = await client.query<Record<string, unknown>>(
+      `SELECT * FROM ${d}.events FINAL
+      WHERE (kind = 'error' OR (kind IN ('llm.call', 'tool.end', 'subagent.end', 'session.end') AND position(payload, '"error":"') > 0)) ${from}
+      ORDER BY session_id, id LIMIT ${batch}`,
+      { params: p.values, timeoutMs: 0 },
+    );
+    if (!rows.length) break;
+    const end = rows[rows.length - 1]!;
+    last = [String(end.session_id), String(end.id)];
+    const stale = staleSearchRows(rows);
+    if (stale.length) {
+      const floor = nextVer();
+      await client.insert(`${d}.events`, stale.map((r) => ({ ...r, ver: nextVer() })));
+      const del = new Params();
+      await client.exec(`DELETE FROM ${d}.events WHERE id IN ${del.bind("Array(String)", stale.map((r) => String(r.id)))} AND ver < ${del.bind("UInt64", floor)}`, {
+        params: del.values,
+        timeoutMs: 0,
+      });
+      updated += stale.length;
+    }
+    if (rows.length < batch) break;
+  }
+  return updated;
+}
 
 export const CH_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;
 
@@ -388,6 +444,7 @@ export async function migrateDatabase(client: ChClient): Promise<void> {
   for (const m of MIGRATIONS) {
     if (m.version <= current) continue;
     for (const sql of m.statements(d)) await retryExists(() => client.exec(sql));
+    await m.after?.(client, d);
     await client.insert(`${d}.coding_sh_migrations`, [{ version: m.version, applied_at: Date.now() }]);
   }
 }

@@ -86,8 +86,8 @@ describe("clickhouse store", { skip: SKIP }, () => {
     const url = dbUrl();
     const stores = await Promise.all([1, 2, 3, 4].map(() => ChIndexStore.open(url)));
     try {
-      const rows = await stores[0]!.client.query<{ version: number }>(`SELECT version FROM ${stores[0]!.database}.coding_sh_migrations FINAL`);
-      assert.deepEqual(rows.map((r) => r.version), [1]);
+      const rows = await stores[0]!.client.query<{ version: number }>(`SELECT version FROM ${stores[0]!.database}.coding_sh_migrations FINAL ORDER BY version`);
+      assert.deepEqual(rows.map((r) => r.version), [1, 2]);
     } finally {
       for (const s of stores) await s.close();
       await (await open(url)).close();

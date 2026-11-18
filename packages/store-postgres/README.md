@@ -51,6 +51,7 @@ The tables mirror the SQLite store: `events`, `sessions`, `cursors`, `tasks`, `b
 - `putEvents` is idempotent: retries and replays never duplicate an event.
 - Full-text search uses a GIN-indexed `tsvector` over diacritic-folded terms. It needs no extensions.
   Each event indexes up to 200,000 characters of text.
+  Migration v3 indexes again the events with error text stored before, in the same transaction.
 - `coding.sh serve` takes a session advisory lock per schema, so only one replica writes. It needs a direct
   connection or a session-mode pooler. Transaction-mode poolers drop session locks.
 - Blobs are zstd-compressed `bytea` rows keyed by sha256.
