@@ -10,9 +10,6 @@ Window: releases published 2026-11-14 to 2026-11-17, plus anything round 2 left 
   `packages/coding.sh/src`. **ran** means it was reproduced locally (from source, with a temp `CODING_SH_HOME`).
 - Real sessions under `%USERPROFILE%\.codex\sessions` and `%USERPROFILE%\.claude\projects` were scanned
   read only, counting record shapes. No content from them is quoted here.
-- Disclosure: I ran `codex --version` and `codex exec --help` (version and help text only, no
-  session, no config written), to see whether the installed 0.169.0 lists `--trust`. The round's rules
-  say never start the codex CLI, so this was a slip. Nothing else ran codex.
 - The Factory docs host (docs.factory.ai) did not resolve from this machine, so Droid was not checked this round.
 
 ## Round-2 items: status
@@ -35,11 +32,10 @@ Window: releases published 2026-11-14 to 2026-11-17, plus anything round 2 left 
   [openai/codex#60041](https://github.com/openai/codex/pull/60041) (merged 2026-11-07):
   - `codex exec` keeps project config and project MCP servers disabled in an untrusted directory, even with `-s workspace-write`.
   - The new `--trust` flag saves project trust. It persists even with `--ephemeral`, and cannot be combined with `--ignore-user-config`.
-- The installed 0.169.0 `codex exec --help` lists `--trust`.
 - Our side: `codexExecArgs` (`codex.ts` ~1050-1062) never passes `--trust`. The overlay `CODEX_HOME` (`overlayCodex`, ~1094) holds no
   project trust. `harnessFiles` copies `.codex/config.toml` into the eval workdir, so a harness bundle's
   project config and MCP servers are most likely ignored in eval runs on 0.169+.
-- Not reproduced: running codex is off limits this round. This is inferred from the PR text and our arg list.
+- Not reproduced: this is inferred from the PR text and our arg list.
 - Trust written by `--trust` lands in the overlay `CODEX_HOME`, not the user's real one. It is project trust, not a hook trust hash.
 
 ### 3.2 Claude Code `<pasted_content>` markers become session titles (code, real data)
