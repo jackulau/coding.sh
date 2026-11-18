@@ -259,6 +259,24 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
       assert.ok(hit!.snippet.includes(`${SNIPPET_OPEN}rate_limit_error${SNIPPET_CLOSE}`), hit!.snippet);
     }));
 
+    it("search finds the error a subagent or a session ended with, and nothing in an end without one", withStore(async (s) => {
+      await s.putEvents([
+        fixtureEvent({ id: "sub-fail", sessionId: "parent", kind: "subagent.end", payload: { subagentId: "a1", type: "reviewer", ok: false, error: "quota exhausted for subagent" } }),
+        fixtureEvent({ id: "sub-ok", sessionId: "parent", kind: "subagent.end", payload: { subagentId: "a2", type: "planner", ok: true, result: "kangaroo plan" } }),
+        fixtureEvent({ id: "end-fail", sessionId: "crashed", kind: "session.end", payload: { reason: "error", error: "agent process segfaulted" } }),
+        fixtureEvent({ id: "end-ok", sessionId: "clean", kind: "session.end", payload: { reason: "exit", status: "platypus" } }),
+      ]);
+      const ids = async (q: string) => (await s.search(q)).map((h) => h.event.id).sort();
+      assert.deepEqual(await ids("quota exhausted"), ["sub-fail"], "a failed subagent's error");
+      assert.deepEqual(await ids("reviewer"), ["sub-fail"], "with its type");
+      assert.deepEqual(await ids("segfaulted"), ["end-fail"], "a session's error");
+      assert.deepEqual(await ids("planner"), [], "a subagent that did not fail has no search text");
+      assert.deepEqual(await ids("kangaroo"), []);
+      assert.deepEqual(await ids("platypus"), [], "a session end without an error has no search text");
+      const [hit] = await s.search("segfaulted");
+      assert.ok(hit!.snippet.includes(`${SNIPPET_OPEN}segfaulted${SNIPPET_CLOSE}`), hit!.snippet);
+    }));
+
     it("upserts, gets and lists sessions with filters", withStore(async (s) => {
       await s.upsertSession(fixtureSession({ id: "a", startedAt: 1, agent: "codex", repo: { root: "/r1", head: "h" }, flags: ["compaction"] }));
       await s.upsertSession(fixtureSession({ id: "b", startedAt: 2, runId: "run-1", parent: { sessionId: "a", subagentId: "x", type: "explore" } }));

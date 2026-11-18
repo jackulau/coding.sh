@@ -120,7 +120,8 @@ SESSION                                              KIND      WHEN     MATCH
 ```
 
 Search covers prompts, replies, tool input and tool output, and errors: error events (the
-message, a type such as `rate_limit_error`, the status code), failed model calls and tool errors.
+message, a type such as `rate_limit_error`, the status code), failed model calls, tool errors, and
+the error a subagent or a session ended with.
 Every word must match within one event. Open a hit with `coding.sh show <session>`.
 
 ## Open the viewer
