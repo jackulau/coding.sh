@@ -35,6 +35,7 @@ grouped by area, with links to the docs for the details.
 - **Docs.** The FAQ folds each answer under its question, and each question is one control named by its words. A link to a closed fold, or to a section inside one such as a question or an optional step, opens it and scrolls to it, from the same page or another. [FAQ](https://coding.sh/docs/faq)
 - **Docs.** The `--help` text on each CLI page, and every terminal output block, has a Copy button. Copying a block whose lines start with `$ ` copies only the commands, without the prompt or the output. Shell blocks colour the command, its flags, quoted strings and comments. [CLI](https://coding.sh/docs/cli)
 - **Docs.** The Quickstart opens with a prompt to paste into your coding agent, with tabs for coding agents and for TypeScript and Python agents: each says how to install, how to set up and how to check that it records, then gives a first task. The home page's install button copies the same setup prompt. [Quickstart](https://coding.sh/docs/quickstart)
+- **Harness.** `coding.sh harness audit` checks for each Claude Code project's `memory/` dir with a stat instead of a directory listing that fails. With 25,800 project dirs, 12 of them with memory, listing the memory files took 0.56 s instead of 1.45 s. [Explore](https://coding.sh/docs/explore)
 - **Serve.** `coding.sh serve --json` no longer has `keys.ingest` and `keys.read`; read the keys from the file `keys.file` names. [Production](https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md)
 
 ### Fixed

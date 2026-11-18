@@ -11,7 +11,7 @@ import { after, before, describe, it } from "node:test";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { auditMemory, claudeProjectSlug, homeKey, memoryKind, shellPaths, skillListingBytes, type MemoryFileInfo, type MemorySession } from "../../src/core/memory-audit.ts";
 import { MEMORY_EVENT_KINDS, MEMORY_INPUT_KEYS, MEMORY_PAYLOAD_KEYS, memoryEventOf, type MemoryEvent } from "../../src/core/memory-events.ts";
-import { listMemoryFiles, memoryAudit, memoryEventsOf, memoryUseFolded } from "../../src/core/memory-files.ts";
+import { listMemoryFiles, listMemoryFilesAsync, memoryAudit, memoryEventsOf, memoryUseFolded } from "../../src/core/memory-files.ts";
 import { foldMemoryUse, memoryUseOf, memoryUseOfEvents, memoryUseState } from "../../src/core/memory-use.ts";
 import { REFOLD_CURSOR } from "../../src/core/ingest.ts";
 import { buildSession, foldStamp } from "../../src/core/sessions.ts";
@@ -292,6 +292,31 @@ describe("harness audit over a store and a temp HOME", () => {
       assert.ok(wide.includes("~/wide/zz/CLAUDE.md"), "the shallow dir is visited first");
       const deep = wide.filter((k) => k.startsWith("~/wide/many/")).length;
       assert.ok(deep > 1900 && deep < 2100, `capped: ${deep}`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("lists project memory from memory/ dirs only: none, a file, a linked dir, files three levels down", async () => {
+    const root = mkdtempSync(join(tmpdir(), "cs-memproj-"));
+    try {
+      const projects = join(root, ".claude", "projects");
+      const put = (rel: string) => {
+        mkdirSync(dirname(join(projects, rel)), { recursive: true });
+        writeFileSync(join(projects, rel), "# x\n");
+      };
+      for (let i = 0; i < 50; i++) mkdirSync(join(projects, `bare${i}`), { recursive: true });
+      put("asfile/memory");
+      put("loose.md");
+      for (const rel of ["real/memory/MEMORY.md", "real/memory/notes.txt", "real/memory/a/b/c/deep.md", "real/memory/a/b/c/d/too-deep.md"]) put(rel);
+      put("../../shared/MEMORY.md");
+      mkdirSync(join(projects, "linked"));
+      // A junction needs no privileges on Windows; elsewhere a dir symlink.
+      symlinkSync(join(root, "shared"), join(projects, "linked", "memory"), process.platform === "win32" ? "junction" : "dir");
+      const dirs = { home: root, claudeDir: join(root, ".claude"), codexDir: join(root, ".codex") };
+      const want = ["~/.claude/projects/linked/memory/MEMORY.md", "~/.claude/projects/real/memory/MEMORY.md", "~/.claude/projects/real/memory/a/b/c/deep.md"];
+      assert.deepEqual(listMemoryFiles(dirs, []).map((f) => f.key).sort(), want);
+      assert.deepEqual((await listMemoryFilesAsync(dirs, [], { sliceMs: 0 })).map((f) => f.key).sort(), want);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
