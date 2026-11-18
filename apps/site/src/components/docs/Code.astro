@@ -11,15 +11,17 @@ interface Props {
   /** The fence's language. A sh or bash block, or one that names no language
       under the default "shell" title, is coloured at build time (lib/shell.ts). */
   lang?: string;
+  /** Wrap long lines instead of scrolling sideways: prose such as a prompt. */
+  wrap?: boolean;
   class?: string;
 }
-const { code, title = "shell", lang, class: klass } = Astro.props;
+const { code, title = "shell", lang, wrap = false, class: klass } = Astro.props;
 const text = code.replace(/^\n+|\s+$/g, "");
 const commands = promptCommands(text);
 const sh = lang === undefined ? title === "shell" : lang === "sh" || lang === "bash";
 ---
 
-<div class:list={["code", klass]}>
+<div class:list={["code", wrap && "code--wrap", klass]}>
   <div class="code__bar" data-pagefind-ignore>
     <span class="code__title">{title}</span>
     <button type="button" class="code__copy ctl hit" data-code-copy data-copy={commands} aria-label={`Copy ${title}`} data-agent-skip>
@@ -70,6 +72,10 @@ const sh = lang === undefined ? title === "shell" : lang === "sh" || lang === "b
     color: var(--text);
     white-space: pre;
     tab-size: 2;
+  }
+  .code--wrap .code__body {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
   .code__body:focus-visible {
     outline: 2px solid var(--text);

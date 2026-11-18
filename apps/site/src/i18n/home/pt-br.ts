@@ -11,6 +11,7 @@ export default {
   "The Observability Layer for&nbsp;Agents.": "A camada de observabilidade para&nbsp;agentes.",
   "Record, measure, compare and benchmark every agent&nbsp;run.": "Registre, meça, compare e faça benchmark de cada execução de&nbsp;agente.",
   "Copy the install command: {{INSTALL}}": "Copiar o comando de instalação: {{INSTALL}}",
+  "Copy the setup prompt for your coding agent": "Copiar o prompt de instalação para o seu agente de código",
   "Free and open source. <a href=\"{{RELEASE_HREF}}\">What's new in coding.sh <code>v{{RELEASE}}</code></a>":
     "Gratuito e de código aberto. <a href=\"{{RELEASE_HREF}}\">Novidades do coding.sh <code>v{{RELEASE}}</code></a>",
   "Get started": "Primeiros passos",

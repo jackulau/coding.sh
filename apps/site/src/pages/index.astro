@@ -9,9 +9,10 @@ import Layout from "../layouts/Layout.astro";
 import Nav from "../components/Nav.astro";
 import Mark from "../components/Mark.astro";
 import Wordmark from "../components/Wordmark.astro";
-import { SITE, INSTALL_SH, REPO_URL, LICENSE_URL, RELEASE } from "../data/site";
+import { SITE, REPO_URL, LICENSE_URL, RELEASE } from "../data/site";
 import { releasePath, slug } from "../lib/changelog";
 import { STATS } from "../data/compare";
+import { SETUP_PROMPT } from "../data/prompts";
 import usage from "../data/usage-rows.json";
 import { logo } from "../lib/logos";
 import { faqSchema } from "../lib/schema";
@@ -72,6 +73,8 @@ const FAQ = [
   { q: "What does it cost?", a: "Nothing. Your model spend stays what your agents already cost." },
 ];
 const esc = (t: string) => t.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+// The setup prompt as a data-copy value: quotes escaped, newlines as &#10; so they survive.
+const attr = (t: string) => esc(t).replaceAll('"', "&quot;").replaceAll("\n", "&#10;");
 const QA = FAQ.map(({ q, a }) => ({ q: t(q), a: t(a) }));
 const faq = QA.map(({ q, a }) => `<details>\n<summary>${esc(q)}</summary>\n<p>${esc(a)}</p>\n</details>`).join("\n");
 
@@ -84,7 +87,7 @@ const intent = `<script>\n(() => {\n${intentCore}\n${intentWire}})();\n</scr` + 
 // padding), and the phone crop is drawn at half its pixel width.
 const desk = await getImage({ src: shot, widths: [777, shot.width], format: "webp", quality: 82 });
 const phone = await getImage({ src: shotM, widths: [shotM.width / 2, shotM.width], format: "webp", quality: 82 });
-const fill: Record<string, string> = { FLOW: tr(flow), INTENT: intent, AGENT_TILES: tiles, SCENE: tr(scene), WORKS: works, FAQ: faq, USAGE, SHOT: desk.src, SHOT_SET: desk.srcSet.attribute, SHOT_M_SET: phone.srcSet.attribute, INSTALL: INSTALL_SH, RELEASE, RELEASE_HREF: releasePath(slug(RELEASE)), BASE_RATE: String(STATS.baseRate), CAND_RATE: String(STATS.candRate), TASKS: String(STATS.tasks), RUNS: String(STATS.runsPerTask) };
+const fill: Record<string, string> = { FLOW: tr(flow), INTENT: intent, AGENT_TILES: tiles, SCENE: tr(scene), WORKS: works, FAQ: faq, USAGE, SHOT: desk.src, SHOT_SET: desk.srcSet.attribute, SHOT_M_SET: phone.srcSet.attribute, SETUP_PROMPT: attr(SETUP_PROMPT), SETUP_LINE: "Set up coding.sh on this machine…", RELEASE, RELEASE_HREF: releasePath(slug(RELEASE)), BASE_RATE: String(STATS.baseRate), CAND_RATE: String(STATS.candRate), TASKS: String(STATS.tasks), RUNS: String(STATS.runsPerTask) };
 // The footer's links, in columns. Every one is a page that exists.
 const FOOT: [string, [string, string][]][] = [
   ["Start", [["Quickstart", "/docs/quickstart"], ["Install", "/docs/install"], ["Agents", "/docs/agents"], ["All docs", "/docs"]]],

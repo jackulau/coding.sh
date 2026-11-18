@@ -10,6 +10,7 @@ export default {
   "The Observability Layer for&nbsp;Agents.": "面向智能体的可观测性层。",
   "Record, measure, compare and benchmark every agent&nbsp;run.": "记录、度量、比较并基准测试每一次智能体运行。",
   "Copy the install command: {{INSTALL}}": "复制安装命令：{{INSTALL}}",
+  "Copy the setup prompt for your coding agent": "复制给编码智能体的安装提示词",
   "Free and open source. <a href=\"{{RELEASE_HREF}}\">What's new in coding.sh <code>v{{RELEASE}}</code></a>":
     "免费且开源。<a href=\"{{RELEASE_HREF}}\">coding.sh <code>v{{RELEASE}}</code> 的新功能</a>",
   "Get started": "开始使用",

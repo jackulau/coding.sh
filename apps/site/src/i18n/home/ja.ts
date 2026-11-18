@@ -10,6 +10,7 @@ export default {
   "The Observability Layer for&nbsp;Agents.": "エージェントのための可観測性レイヤー。",
   "Record, measure, compare and benchmark every agent&nbsp;run.": "エージェントの実行をすべて記録し、測定し、比較し、ベンチマークする。",
   "Copy the install command: {{INSTALL}}": "インストールコマンドをコピー：{{INSTALL}}",
+  "Copy the setup prompt for your coding agent": "コーディングエージェント用のセットアッププロンプトをコピー",
   "Free and open source. <a href=\"{{RELEASE_HREF}}\">What's new in coding.sh <code>v{{RELEASE}}</code></a>":
     "無料のオープンソース。<a href=\"{{RELEASE_HREF}}\">coding.sh <code>v{{RELEASE}}</code> の新機能</a>",
   "Get started": "はじめる",
