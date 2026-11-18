@@ -18,16 +18,22 @@ concurrency:
 # The full suite is every job below. It runs on a pull request that carries the `ready` label.
 # Only then does a check named "full suite" exist, and main requires it (CONTRIBUTING.md, "Pull
 # requests"), so nothing merges before every job has passed on the pull request merged with an
-# up-to-date main. A push to main and a manual run run every job but Site perf, and their closing
-# check has another name ("full suite without site perf"). Without the label a pull request
-# gets the quick jobs only: the Linux tests on Node 24, the build, the gate, the stores, the
-# Python SDK, the Node floor, the release smoke test and the GitHub Action, minus the ones
-# scripts/ci-changes.mjs can prove it does not need. Its Linux tests run the test files its diff
-# can reach, or all of them when a changed path has no rule (packages/coding.sh/scripts/
-# test-select.ts). Windows, Node 22, the real agent captures, the container image and cli-suite
-# run in the full suite only, and the full suite always runs every test file.
+# up-to-date main. A manual run runs every job but Site perf, and its closing check has another
+# name ("full suite without site perf"). Without the label a pull request gets the quick jobs
+# only: the Linux tests on Node 24, the build, the gate, the stores, the Python SDK, the Node
+# floor, the release smoke test and the GitHub Action, minus the ones scripts/ci-changes.mjs can
+# prove it does not need. Its Linux tests run the test files its diff can reach, or all of them
+# when a changed path has no rule (packages/coding.sh/scripts/test-select.ts). Windows, Node 22,
+# the container image and cli-suite run in the full suite only, and the full suite always runs
+# every test file.
+# A push to main is a merge the full suite has already passed on, tree for tree: main requires
+# the check on a branch that is up to date. So the push runs the quick jobs, with every test
+# file and no job skipped, and the real agent captures. The captures install agents from npm,
+# GitHub and PyPI, the part of CI that can change with no commit here, and their Windows leg
+# saves the Windows npm and uv caches: a pull request can restore main's caches and its own,
+# never another pull request's. A push has no closing check: nothing reads one.
 env:
-  FULL: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
+  FULL: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready') }}
 
 jobs:
   # A pull request that only touches docs or the site (scripts/ci-changes.mjs) skips the jobs
@@ -59,12 +65,14 @@ jobs:
 
   # The test suite runs on Linux and Windows in shards of about equal time
   # (scripts/test-shards.ts), so the checks that need one run only, not one per OS and Node, live
-  # in the build job below. A pull request runs Linux on Node 24. The full suite (a push to main,
-  # or the `ready` label) runs both Nodes on both. No job runs on macOS.
+  # in the build job below. A pull request and a push to main run Linux on Node 24. The full
+  # suite (the `ready` label, or a manual run) runs both Nodes on both. No job runs on macOS.
+  # The quick run of a pull request is the one a person waits on, so it splits the same files
+  # into six legs; the full suite and a push keep three per Node.
   # Everything here is GitHub-hosted: free for this public repo, and it leaves the desk runners
   # to deploys and Site perf.
   test:
-    name: node ${{ matrix.node }} / ubuntu-latest (${{ matrix.shard }}/3)
+    name: node ${{ matrix.node }} / ubuntu-latest (${{ matrix.shard }}/${{ matrix.of }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -74,8 +82,10 @@ jobs:
         # default). The runtime-floor job runs the packed CLI on the engines floor.
         # A pull request runs Node 24; the full suite adds Node 22. The Node 24 legs launch the
         # built CLI and the Node 22 legs launch it from source (the build step below).
-        node: ${{ fromJSON((github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready')) && '["24.x"]' || '["22.x", "24.x"]') }}
-        shard: [1, 2, 3]
+        node: ${{ fromJSON((github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready')) && '["22.x", "24.x"]' || '["24.x"]') }}
+        # `of` has one value, the number of legs, so the name and SHARD below can read it.
+        shard: ${{ fromJSON((github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready')) && '[1, 2, 3, 4, 5, 6]' || '[1, 2, 3]') }}
+        of: ${{ fromJSON((github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ready')) && '[6]' || '[3]') }}
     env:
       # The viewer UI tests drive headless Chrome and skip without one. GitHub's Linux image ships
       # Chrome; naming it makes a missing one fail instead of skip.
@@ -97,8 +107,11 @@ jobs:
           git config --global user.name "coding.sh CI"
           git config --global user.email "ci@coding.sh.invalid"
 
+      # The tests need only the CLI package's own dependencies (esbuild, the two TypeScripts and
+      # Node's types). The site's and the SDK's are most of a whole-workspace install, so they are
+      # left out. The one leg that also checks the SDK (below) installs the SDK's too.
       - name: Install
-        run: npm ci
+        run: npm ci --workspace packages/coding.sh ${{ (matrix.node == '22.x' && matrix.shard == 1) && '--workspace packages/sdk' || '' }}
 
       # The Node 24 legs launch the bundle (test/_cli.ts reads CODING_SH_TEST_CLI): a launch from
       # source strips types on every start. The Node 22 legs keep launching src/cli/main.ts, so the
@@ -114,7 +127,10 @@ jobs:
       # A fresh runner's first Chrome start waits on a cold disk and can take longer than the 20 s a
       # viewer test gives a start. This step takes that start under a 60 s limit of its own and
       # prints its time, then starts Chrome once more under the tests' own limits
-      # (scripts/warm-chrome.ts). No Chrome fails here.
+      # (scripts/warm-chrome.ts). No Chrome fails here. The runner's first viewer page is cold as
+      # well: on Windows it took a median of 1.6 s, and 5-37 s while Windows was reading the disk
+      # for itself, against the 5 s a test gives a page. So the step also loads the viewer's list and
+      # Explore once, at the tests' page size, under the same 60 s.
       - name: Start Chrome
         working-directory: packages/coding.sh
         timeout-minutes: 3
@@ -123,14 +139,15 @@ jobs:
       # The quick run of a pull request (no `ready` label) runs the test files its diff can reach
       # (scripts/test-select.ts): TEST_SELECT names the commit to diff against, the base the pull
       # request is merged with. A path without a rule runs every test file, and so does any error.
-      # The full suite and a push leave TEST_SELECT empty and never select. Each leg prints what it
-      # runs and why. A narrowed run writes no run times, so the upload below finds no file.
+      # The full suite and a push leave TEST_SELECT empty and never select: FULL is 'false' on a
+      # push too, so the event is read here as well. Each leg prints what it runs and why. A
+      # narrowed run writes no run times, so the upload below finds no file.
       - name: Test
         working-directory: packages/coding.sh
         env:
-          SHARD: ${{ matrix.shard }}/3
+          SHARD: ${{ matrix.shard }}/${{ matrix.of }}
           TEST_DURATIONS_OUT: ${{ runner.temp }}/test-durations.json
-          TEST_SELECT: ${{ env.FULL == 'false' && 'HEAD^1' || '' }}
+          TEST_SELECT: ${{ github.event_name == 'pull_request' && env.FULL == 'false' && 'HEAD^1' || '' }}
         # A file that fails is run again alone; one that then passes is a warning, not a failure.
         run: node scripts/test-ci.mjs
 
@@ -151,9 +168,9 @@ jobs:
           if-no-files-found: ignore
 
   build:
-    name: build, typecheck and site
-    # The checks that need one run, on Linux and Node 24: the typecheck, the SDK, the bundle, the
-    # package contents, the site and its budgets, the secret scan and the hook budget.
+    name: build and typecheck
+    # The checks that need one run and no site, on Linux and Node 24: the typecheck, the SDK, the
+    # bundle, the package contents, the secret scan and the hook budget.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -197,6 +214,43 @@ jobs:
         working-directory: packages/coding.sh
         run: npm pack --dry-run
 
+      # The built packages hold nothing shaped like a secret. The site job scans the site's output.
+      - name: Secret scan of the built output
+        run: node scripts/gate.mjs --only secret-scan
+
+      # The hook budget: a slow hook slows every agent. A shared runner measures main's own build
+      # a few percent over the design budget (docs/design/dogfood.md), so the step fails on more
+      # than 20% over it. It runs once: a miss fails the step.
+      - name: Hook budget
+        run: node scripts/dogfood/bench.mjs hook --check --tolerance 20
+
+  site:
+    name: site build, check and perf budget
+    # The site by itself, on Linux and Node 24: it was the longest part of the build job. The
+    # site's build builds the CLI first (apps/site's prebuild), so this job has no build step of
+    # its own.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # The deploy builds the nav with the repository's star count (site.yml). A fixed count
+      # here puts that nav through the build, the site tests and the perf budget.
+      SITE_GITHUB_STARS: "1234"
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Git identity
+        run: |
+          git config --global user.name "coding.sh CI"
+          git config --global user.email "ci@coding.sh.invalid"
+
+      - name: Install
+        run: npm ci
+
       - name: Site build
         working-directory: apps/site
         run: npm run build
@@ -214,15 +268,9 @@ jobs:
         working-directory: apps/site
         run: npm run perf:budget
 
-      # The built output holds nothing shaped like a secret.
+      # The built site holds nothing shaped like a secret.
       - name: Secret scan of the built output
         run: node scripts/gate.mjs --only secret-scan
-
-      # The hook budget: a slow hook slows every agent. A shared runner measures main's own build
-      # a few percent over the design budget (docs/design/dogfood.md), so the step fails on more
-      # than 20% over it. One rerun absorbs a noisy runner.
-      - name: Hook budget
-        run: node scripts/dogfood/bench.mjs hook --check --tolerance 20 || node scripts/dogfood/bench.mjs hook --check --tolerance 20
 
   gate-static:
     name: gate (static checks)
@@ -255,11 +303,12 @@ jobs:
           GATE_COMMIT_RANGE: ${{ github.event_name == 'push' && format('{0}..{1}', github.event.before, github.sha) || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ready')) && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || '' }}
         run: node scripts/gate.mjs --static --strict
 
-  store-postgres:
-    name: coding.sh-store-postgres / Postgres 17
+  stores:
+    name: store plugins / Postgres 17 and ClickHouse 26.3
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    # GitHub-hosted, for the service container; the plugin tests run against a real server.
+    # GitHub-hosted, for the service containers; each plugin's tests run against a real server.
+    # One job for both stores: they share a checkout and an install, and each has its own step.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -271,6 +320,14 @@ jobs:
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 30
+      clickhouse:
+        image: clickhouse/clickhouse-server:26.3.62.3
+        env:
+          CLICKHOUSE_USER: coding
+          CLICKHOUSE_PASSWORD: ci
+        ports: ["8123:8123"]
+        options: >-
+          --health-cmd "wget -qO- http://127.0.0.1:8123/ping" --health-interval 2s --health-timeout 5s --health-retries 30
     steps:
       - uses: actions/checkout@v5
 
@@ -280,6 +337,7 @@ jobs:
           cache: npm
 
       - name: Install
+        id: install
         run: npm ci
 
       - name: Typecheck and test (real Postgres)
@@ -288,29 +346,37 @@ jobs:
           CODING_SH_TEST_PG_URL: postgres://postgres:ci@127.0.0.1:5432/coding
         run: npm run check
 
+      # The next two steps run when an earlier one fails too, so one run shows every result.
       - name: Typecheck and test blob-s3
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: packages/blob-s3
         run: npm run check
 
+      - name: Typecheck and test (real ClickHouse)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: packages/store-clickhouse
+        env:
+          CODING_SH_TEST_CH_URL: clickhouse://coding:ci@127.0.0.1:8123/coding
+        run: npm run check
+
   python-sdk:
-    name: python sdk / python ${{ matrix.python }}
+    name: python sdk / python 3.9 and 3.13
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    # pyproject allows Python 3.9, which has no build for ubuntu-latest (26.04); it runs on 24.04.
-    runs-on: ${{ matrix.os }}
+    # One job for the SDK's floor (pyproject requires-python) and the newest Python: each has its
+    # own install and its own test step. Python 3.9 has no build for ubuntu-latest (26.04), so
+    # the job runs on 24.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { python: "3.9", os: ubuntu-24.04 }
-          - { python: "3.13", os: ubuntu-latest }
     steps:
       - uses: actions/checkout@v5
 
+      # Both end up on PATH as python3.9 and python3.13.
       - uses: actions/setup-python@v6
         with:
-          python-version: ${{ matrix.python }}
+          python-version: |
+            3.9
+            3.13
 
       # The golden test runs the core package's .ts sources on Node. The typing, golden, otel
       # and real-SDK tests need mypy and the otel, openai and anthropic extras, so CI installs
@@ -320,50 +386,38 @@ jobs:
           node-version: 24.x
 
       - name: Install the extras and mypy
+        id: install
         working-directory: packages/sdk-python
-        run: python -m pip install --quiet ".[otel,openai,anthropic]" mypy
+        run: |
+          python3.9 -m pip install --quiet ".[otel,openai,anthropic]" mypy
+          python3.13 -m pip install --quiet ".[otel,openai,anthropic]" mypy
 
-      - name: Unit tests
+      - name: Unit tests on Python 3.9
         working-directory: packages/sdk-python
         env:
           CODING_SH_SDK_REQUIRE_ALL: "1"
-        run: python -m unittest discover -s tests
+        run: |
+          python3.9 --version
+          python3.9 -m unittest discover -s tests
+
+      # Runs when the 3.9 tests fail too, so one run shows both results.
+      - name: Unit tests on Python 3.13
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: packages/sdk-python
+        env:
+          CODING_SH_SDK_REQUIRE_ALL: "1"
+        run: |
+          python3.13 --version
+          python3.13 -m unittest discover -s tests
 
   runtime-floor:
-    name: packed CLI on the Node floor
+    name: release smoke test and the packed CLI on the Node floor
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    # Builds and packs on a current Node, then installs the tarball and runs it on the
-    # oldest Node packages/coding.sh/package.json allows (engines).
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24.x
-          cache: npm
-
-      - name: Build and pack
-        run: |
-          npm ci
-          cd packages/coding.sh
-          npm run build
-          mv "$(npm pack --silent | tail -n 1)" "$RUNNER_TEMP/coding.sh.tgz"
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22.16.0
-
-      - name: Run it on the floor
-        run: sh scripts/release/runtime-floor.sh "$RUNNER_TEMP/coding.sh.tgz"
-
-  release-smoke:
-    name: release smoke test
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    # The pre-publish smoke test, on a build of this checkout, in a throwaway home.
+    # Two checks of what would be published, in one job with one install. The pre-publish smoke
+    # test runs on a build of this checkout, in a throwaway home, on a current Node. Then the
+    # job builds and packs on that Node, installs the tarball and runs it on the oldest Node
+    # packages/coding.sh/package.json allows (engines).
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -375,10 +429,29 @@ jobs:
           cache: npm
 
       - name: Install
+        id: install
         run: npm ci
 
       - name: Smoke test
         run: sh scripts/release/smoke.sh
+
+      # The floor steps run when the smoke test fails too, so one run shows both results.
+      - name: Build and pack
+        id: pack
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: |
+          cd packages/coding.sh
+          npm run build
+          mv "$(npm pack --silent | tail -n 1)" "$RUNNER_TEMP/coding.sh.tgz"
+
+      - uses: actions/setup-node@v5
+        if: ${{ !cancelled() && steps.pack.outcome == 'success' }}
+        with:
+          node-version: 22.16.0
+
+      - name: Run it on the floor
+        if: ${{ !cancelled() && steps.pack.outcome == 'success' }}
+        run: sh scripts/release/runtime-floor.sh "$RUNNER_TEMP/coding.sh.tgz"
 
   action:
     name: GitHub Action
@@ -456,42 +529,9 @@ jobs:
           grep -q '^| bad | regression | 2 cases | 1/2 | .* | \*\*fail\*\*: b fails most trials |$' "$BAD_REPORT"
           grep -q '`coding.sh eval run bad --yes` exited 1' "$BAD_REPORT"
 
-  store-clickhouse:
-    name: coding.sh-store-clickhouse / ClickHouse 26.3
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    # GitHub-hosted, for the service container; the plugin tests run against a real server.
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    services:
-      clickhouse:
-        image: clickhouse/clickhouse-server:26.3.62.3
-        env:
-          CLICKHOUSE_USER: coding
-          CLICKHOUSE_PASSWORD: ci
-        ports: ["8123:8123"]
-        options: >-
-          --health-cmd "wget -qO- http://127.0.0.1:8123/ping" --health-interval 2s --health-timeout 5s --health-retries 30
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24.x
-          cache: npm
-
-      - name: Install
-        run: npm ci
-
-      - name: Typecheck and test (real ClickHouse)
-        working-directory: packages/store-clickhouse
-        env:
-          CODING_SH_TEST_CH_URL: clickhouse://coding:ci@127.0.0.1:8123/coding
-        run: npm run check
-
   image:
     name: container image / self-host smoke
-    if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready') }}
     # GitHub-hosted: it builds and runs pull-request code in Docker. Nothing is pushed; the
     # release workflow publishes the image on version tags.
     runs-on: ubuntu-latest
@@ -546,7 +586,7 @@ jobs:
 
   windows:
     name: node ${{ matrix.node }} / windows-latest (${{ matrix.shard }}/4)
-    if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready') }}
     runs-on: windows-latest
     timeout-minutes: 20
     strategy:
@@ -561,6 +601,18 @@ jobs:
         # bash (Git for Windows) keeps the quoted test glob and /dev/null the same as on Linux.
         shell: bash
     steps:
+      # About 11 minutes after a hosted Windows runner boots, its Storage Service reads the disk at
+      # 25-47 MB/s for 30 s or more, and the Volume Shadow Copy service starts. A viewer page that
+      # first loaded during that read took 5-37 s, against the 5 s a test gives a page. The tests
+      # do not use the service, so it is stopped before anything else, and disabled so that nothing
+      # starts it again. The step fails if the service cannot be stopped.
+      - name: Stop the Storage Service
+        shell: pwsh
+        run: |
+          Stop-Service -Name StorSvc -Force
+          Set-Service -Name StorSvc -StartupType Disabled
+          Get-Service -Name StorSvc | ForEach-Object { "Storage Service: $($_.Status), start type $($_.StartType)" }
+
       # .gitattributes keeps LF in the checkout, whatever core.autocrlf says.
       - uses: actions/checkout@v5
 
@@ -574,11 +626,12 @@ jobs:
           git config --global user.name "coding.sh CI"
           git config --global user.email "ci@coding.sh.invalid"
 
+      # As on Linux: the CLI package's own dependencies, not the whole workspace's.
       - name: Install
-        run: npm ci
+        run: npm ci --workspace packages/coding.sh
 
-      # As on Linux: the runner's first Chrome start, outside the tests. GitHub's Windows image
-      # ships Chrome, and the step fails if it is gone.
+      # As on Linux: the runner's first Chrome start and first viewer pages, outside the tests.
+      # GitHub's Windows image ships Chrome, and the step fails if it is gone.
       - name: Start Chrome
         working-directory: packages/coding.sh
         timeout-minutes: 3
@@ -635,6 +688,7 @@ jobs:
           grep 'hook.mjs\\" claude-code' "$HOME/.claude/settings.json"
           coding.sh doctor --agent claude-code
 
+  # The one slow job a push to main runs too (the comment at the top says why).
   real-capture:
     name: real capture / ${{ matrix.os }}${{ matrix.os == 'ubuntu-latest' && format(' ({0}/2)', matrix.part) || '' }}
     if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
@@ -763,7 +817,7 @@ jobs:
 
   cli-suite:
     name: cli-suite (dev tasks, ${{ matrix.part }}/2)
-    if: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready') }}
     # The CLI effectiveness suite's own health, on the committed dev tasks only: held-out tasks
     # live outside the repo, so this never passes --split all or heldout. It needs no API key and
     # starts no agent. Always GitHub-hosted. Every task builds its own fixture home twice, which
@@ -826,12 +880,13 @@ jobs:
   # the event, not another job's output: with the label this job always runs, and it fails
   # unless every other job ended in success (a skipped or cancelled job fails it). And it is
   # `always()`, not `!cancelled()`: a cancelled run ends with this check failed, never skipped.
-  # A push or a manual run does not measure Site perf here (MAY_SKIP below), so it reports under
-  # another name: a manual run on a pull request's branch cannot stand in for the required check.
+  # A manual run does not measure Site perf here (MAY_SKIP below), so it reports under another
+  # name: a manual run on a pull request's branch cannot stand in for the required check. A push
+  # to main does not run this job: it runs the quick jobs and the real captures, not the suite.
   full-suite:
-    name: ${{ github.event_name != 'pull_request' && 'full suite without site perf' || contains(github.event.pull_request.labels.*.name, 'ready') && 'full suite' || 'full suite (not run, add the ready label)' }}
-    needs: [changes, test, build, gate-static, store-postgres, python-sdk, runtime-floor, release-smoke, action, store-clickhouse, image, windows, real-capture, cli-suite, site-perf]
-    if: ${{ always() && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready')) }}
+    name: ${{ github.event_name == 'workflow_dispatch' && 'full suite without site perf' || contains(github.event.pull_request.labels.*.name, 'ready') && 'full suite' || 'full suite (not run, add the ready label)' }}
+    needs: [changes, test, build, site, gate-static, stores, python-sdk, runtime-floor, action, image, windows, real-capture, cli-suite, site-perf]
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ready')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -840,7 +895,7 @@ jobs:
       - name: Every job passed
         env:
           NEEDS: ${{ toJSON(needs) }}
-          # The one job that may end skipped, and only off a pull request: site-perf.yml measures
-          # a push to main itself. This reads the event, not a job's output.
-          MAY_SKIP: ${{ github.event_name != 'pull_request' && 'site-perf' || '' }}
+          # The one job that may end skipped, and only in a manual run, which has no pull request
+          # to compare with. This reads the event, not a job's output.
+          MAY_SKIP: ${{ github.event_name == 'workflow_dispatch' && 'site-perf' || '' }}
         run: node scripts/ci-full-suite.mjs

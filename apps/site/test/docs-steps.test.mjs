@@ -1,5 +1,5 @@
 // Steps: a numbered procedure is an <ol class="steps"> whose numbers are a CSS
-// counter (doc.css), from Steps.astro or :::steps in a docs/*.md page. The
+// counter (steps.css), from Steps.astro or :::steps in a docs/*.md page. The
 // headings carry no number of their own on the page, keep their anchors and
 // their rail entries, and the .md twins and llms-full.txt still number them.
 import { test } from "node:test";
@@ -30,11 +30,17 @@ test(":::steps needs a ### step first and at least one", () => {
   assert.throws(() => renderMarkdown(":::steps\n:::\n", "guides/x.md", "/x"), /has no ### step/);
 });
 
-test("doc.css draws the step numbers with a counter and a rail", () => {
-  const css = readFileSync(new URL("../src/styles/doc.css", import.meta.url), "utf8");
+test("steps.css draws the step numbers with a counter and a rail", () => {
+  const css = readFileSync(new URL("../src/styles/steps.css", import.meta.url), "utf8");
   assert.match(css, /\.steps\s*\{[^}]*counter-reset:\s*step/);
   assert.match(css, /\.steps > li::before\s*\{[^}]*content:\s*counter\(step\)/);
   assert.match(css, /\.steps > li:not\(:last-child\)::after\s*\{[^}]*width:\s*1px/);
+});
+
+test("the step rules ship on pages with steps and docs/*.md pages, not on the others", distOpts(DIST), () => {
+  needDist(DIST);
+  for (const path of ["docs/quickstart", "docs/tool-evals", "docs/config"]) assert.match(read(join(path, "index.html")), /counter\(step\)/, path);
+  for (const path of ["docs/cli", "docs/faq"]) assert.doesNotMatch(read(join(path, "index.html")), /counter\(step\)/, path);
 });
 
 const PAGES = {

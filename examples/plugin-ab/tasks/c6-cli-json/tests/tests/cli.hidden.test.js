@@ -9,6 +9,7 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cli-"));
 fs.writeFileSync(path.join(dir, "a.txt"), "1\n2\n3");
 fs.mkdirSync(path.join(dir, "sub"));
 fs.writeFileSync(path.join(dir, "sub", "b.txt"), "1\n2\n3\n4\n5");
+test.after(() => fs.rmSync(dir, { recursive: true, force: true }));
 const run = (...args) => execFileSync(process.execPath, [cli, ...args], { encoding: "utf8" });
 test("text output unchanged", () => {
   assert.equal(run("stats", dir), `files: 2\nlines: 8\nlargest: ${path.join("sub", "b.txt")}\n`);

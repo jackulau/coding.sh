@@ -8,7 +8,7 @@ import { readOnlyCommand, sessionSource } from "../../src/attribution/sources.ts
 import { snapshot } from "../../src/core/snapshot.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { gitc, isolate, removeTmp, tmp, write } from "../capture/_helpers.ts";
-import { commitAll, event, HOUR, makeSession, T0 } from "./_fixture.ts";
+import { commitAll, event, HOUR, makeSession, ROOMY, T0 } from "./_fixture.ts";
 
 before(() => isolate());
 after(() => removeTmp());
@@ -33,7 +33,7 @@ async function scenario(prefix: string, events: (s: Ses, root: string) => Return
   const head = commitAll(root, T0, "init");
   const s0 = makeSession("s-1", "claude-code", "claude-sonnet-4-5", T0 + HOUR, { root, head });
   write(root, { "src/person.ts": PERSON, "src/own.ts": OWN });
-  const end = (await snapshot(root))!;
+  const end = (await snapshot(root, ROOMY))!;
   const s = { ...s0, endSnapshot: end.snapshot };
   const index = new MemoryIndexStore();
   await index.putEvents(events(s, root));

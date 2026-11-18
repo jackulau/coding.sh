@@ -12,7 +12,7 @@ import type { CommitPatch } from "../../src/attribution/git.ts";
 import { snapshot } from "../../src/core/snapshot.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { gitc, isolate, removeTmp, tmp, write } from "../capture/_helpers.ts";
-import { buildFixture, commitAll, event, HOUR, makeSession, T0, type Fixture } from "./_fixture.ts";
+import { buildFixture, commitAll, event, HOUR, makeSession, ROOMY, T0, type Fixture } from "./_fixture.ts";
 
 before(() => isolate());
 after(() => removeTmp());
@@ -234,7 +234,7 @@ describe("sources", () => {
       const c = commitAll(root, T0 + 2 * HOUR, "auto: add temperature conversions");
       gitc(root, "checkout", "-q", "main");
       write(root, onMain);
-      const end = (await snapshot(root))!;
+      const end = (await snapshot(root, ROOMY))!;
       const s = makeSession(`s-${prefix}`, "claude-code", "claude-sonnet-4-5", T0 + HOUR, { root, head }, end.snapshot);
       const index = new MemoryIndexStore();
       await index.upsertSession(s);
@@ -372,9 +372,9 @@ describe("sources", () => {
     // Long names on Windows (the temp dir has a short name on CI, RUNNER~1): git lists a worktree by its long name.
     const wt = join(realpathSync.native(tmp("csh-attr-wt2-")), "wt");
     gitc(root, "worktree", "add", "-q", "-b", "agent", wt);
-    const start = (await snapshot(wt))!;
+    const start = (await snapshot(wt, ROOMY))!;
     write(wt, { "lib.ts": "export const workerCount = Number(process.env.WORKERS ?? 4);\n" });
-    const end = (await snapshot(wt))!;
+    const end = (await snapshot(wt, ROOMY))!;
     const s = makeSession("s-wt", "codex", "gpt-5-codex", T0 + HOUR, start, end.snapshot);
     const index = new MemoryIndexStore();
     await index.upsertSession(s);

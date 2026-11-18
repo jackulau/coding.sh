@@ -107,13 +107,16 @@ def run(task):
                     assert a in s; s = s.replace(a, b)
                 open(os.path.join(w, "cli.js"), "w").write(s)
         shutil.copytree(os.path.join(d, "tests"), w, dirs_exist_ok=True)  # as coding.sh does: tests/<p> -> <p>
-        ans = os.path.join(w, "..", os.path.basename(w) + "-answer.txt")
+        ans = w + "-answer.txt"
         open(ans, "w").write(ANSWERS.get(task, "") if mode == "ref" else "Looks fine to me.")
-        r = subprocess.run(spec["verifier"]["command"], shell=True, cwd=w, env={**os.environ, "CODING_SH_AGENT_OUTPUT": ans}, capture_output=True, text=True)
+        try:
+            r = subprocess.run(spec["verifier"]["command"], shell=True, cwd=w, env={**os.environ, "CODING_SH_AGENT_OUTPUT": ans}, capture_output=True, text=True)
+        finally:
+            shutil.rmtree(w)
+            os.remove(ans)
         res[mode] = r.returncode
         if mode == "ref" and r.returncode != 0:
             print(task, "REF FAIL", (r.stdout + r.stderr)[-800:])
-        shutil.rmtree(w)
     ok = res["start"] != 0 and res["ref"] == 0
     print(f"{task:14} start={res['start']} ref={res['ref']} {'OK' if ok else 'BAD'}")
     return ok

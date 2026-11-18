@@ -10,7 +10,8 @@
 // Each run: start with no keys -> read the first-start keys from the logs -> send an OTLP trace
 // with curl-like fetch -> connect a throwaway HOME with `coding.sh init --remote` and replay a
 // recorded Claude Code session through the real hook -> both show in /api/sessions and the viewer
-// signs in with the read key -> restart -> the same keys and both sessions are still there.
+// signs in with the read key -> restart -> the keys are not printed again, and the same keys and
+// both sessions still work.
 // Everything runs under a temp HOME; containers, volumes and the compose project are removed.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -70,7 +71,7 @@ async function ready(timeoutMs = 90_000) {
   }
 }
 
-/** The read and ingest keys from the first-start block in the logs; every start prints them. */
+/** The read and ingest keys from the first-start block in the logs; only the start that makes them prints them. */
 function keysFromLogs() {
   const logs = run.logs();
   const read = /read key\s+(csh_rk_[A-Za-z0-9_-]+)/.exec(logs)?.[1];
@@ -168,9 +169,12 @@ try {
   step("restart: same keys, same sessions");
   run.restart();
   await ready();
-  const again = keysFromLogs();
-  assert.equal(again.read, keys.read);
-  assert.equal(again.ingest, keys.ingest);
+  // docker logs still hold the first start; compose down removed that container. Check the last start.
+  const logs = run.logs();
+  const last = logs.slice(logs.lastIndexOf("No keys are configured"));
+  assert.match(last, /uses the keys in \/data\/serve-keys\.json\. They were printed on the start that made them/, `the restart names the keys file:\n${logs}`);
+  assert.ok(!last.includes(keys.read) && !last.includes(keys.ingest), "the restart does not print the keys again");
+  assert.equal((await post(keys.ingest)).status, 200, "the same ingest key still sends");
   await sessions(keys.read, both, 5_000);
   step(`ok: ${mode} smoke passed`);
 } finally {

@@ -127,8 +127,8 @@ Postgres database in the same project. In the dashboard:
 
 :::more Railway details
 - **No build.** *+ New → Docker Image* with `ghcr.io/jackulau/coding.sh:latest` skips the build.
-- **SQLite.** Add a volume at `/data` and leave `CODING_SH_STORE_URL` unset. Serve then makes its
-  keys on first start and prints them in that deploy's logs only.
+  Add a volume at `/data` and leave `CODING_SH_STORE_URL` unset to run on SQLite. Serve then
+  prints its keys in the first deploy's logs.
 - **Why `/healthz`.** Railway starts the new deployment while the old one still holds the writer
   lock, so the new one answers `/readyz` with 503 until the old one stops.
 - **Handover.** `drainingSeconds: 30` covers the 25 s queue drain, and clients retry in between.

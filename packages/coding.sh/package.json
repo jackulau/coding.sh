@@ -94,7 +94,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node --no-warnings --test \"test/**/*.test.ts\"",
+    "test": "node --no-warnings --import ./scripts/test-temp-root.mjs --test \"test/**/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "check": "npm run typecheck && npm test",
     "prepack": "node scripts/pack-manifest.mjs --prepack",

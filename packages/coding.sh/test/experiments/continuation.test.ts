@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import type { CaseRun } from "../../src/datasets/types.ts";
 import {
   actionsDiffer,
@@ -48,8 +48,15 @@ const toolReply = (command: string) => ({
   usage: { input_tokens: 100, output_tokens: 20 },
 });
 
+const cacheDirs: string[] = [];
+after(() => {
+  for (const dir of cacheDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
 function task(extra: Partial<ContinuationTask> = {}): ContinuationTask {
-  return { kind: "continuation", provider: "anthropic", model: "claude-sonnet-5-5", baseURL: "http://127.0.0.1:9", cacheDir: mkdtempSync(join(tmpdir(), "cont-")), env: {}, ...extra };
+  const cacheDir = mkdtempSync(join(tmpdir(), "cont-"));
+  cacheDirs.push(cacheDir);
+  return { kind: "continuation", provider: "anthropic", model: "claude-sonnet-5-5", baseURL: "http://127.0.0.1:9", cacheDir, env: {}, ...extra };
 }
 
 const ctx = (trial = 1) => ({ runId: "r", caseId: "c1", trial });

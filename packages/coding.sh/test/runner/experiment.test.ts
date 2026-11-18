@@ -420,7 +420,10 @@ describe("hard exit mid-run", () => {
       const t = setInterval(() => { if (existsSync(${JSON.stringify(pidFile)})) { clearInterval(t); setTimeout(() => process.exit(130), 100); } }, 20);
     `;
     try {
-      const child = spawn(process.execPath, ["--no-warnings", "--input-type=module", "-e", code], { stdio: ["ignore", "ignore", "pipe"] });
+      // The child exits hard, so it never removes the folder its toyWorld() makes (csh-runs-*). Its
+      // temp folder is this test's own, which the finally below removes.
+      const env = { ...process.env, TMPDIR: dir, TMP: dir, TEMP: dir };
+      const child = spawn(process.execPath, ["--no-warnings", "--input-type=module", "-e", code], { stdio: ["ignore", "ignore", "pipe"], env });
       let err = "";
       child.stderr.on("data", (d) => (err += d));
       assert.equal(await new Promise<number | null>((r) => child.on("close", r)), 130, err);
@@ -435,6 +438,10 @@ describe("hard exit mid-run", () => {
       if (alive) process.kill(pid, "SIGKILL");
       assert.equal(alive, false, "agent killed");
       assert.deepEqual(existsSync(runsDir) ? readdirSync(runsDir) : [], [], "work dir removed by the exit hook");
+      // The child's temp folder is `dir`, so a scratch folder the exit hook failed to remove would
+      // land here and go with the finally below. Only these three names may be here.
+      const held = readdirSync(dir).map((n) => n.replace(/^csh-runs-.+/, "csh-runs-*")).sort();
+      assert.deepEqual(held, ["csh-runs-*", "pid", "runs"], "nothing else is left in the child's temp folder");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

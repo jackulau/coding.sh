@@ -113,6 +113,7 @@ export default {
   "Close menu": "メニューを閉じる",
   Primary: "メイン",
   "coding.sh home": "coding.sh ホーム",
+  "Stars: {{N}}": "スター：{{N}}",
   "Copied to clipboard": "クリップボードにコピーしました",
   "Selected, copy it with your keyboard": "選択しました。キーボードでコピーしてください",
   "Skip to content": "本文へスキップ",

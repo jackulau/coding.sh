@@ -9,7 +9,7 @@ import { sessionSource } from "../../src/attribution/sources.ts";
 import { snapshot } from "../../src/core/snapshot.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { gitc, isolate, removeTmp, tmp, write } from "../capture/_helpers.ts";
-import { commitAll, event, HOUR, makeSession, T0 } from "./_fixture.ts";
+import { commitAll, event, HOUR, makeSession, ROOMY, T0 } from "./_fixture.ts";
 
 before(() => isolate());
 after(() => removeTmp());
@@ -51,7 +51,7 @@ describe("lines a person typed are not a session's", () => {
     const { root, head } = repo("csh-hand-read-");
     write(root, { "src/person.ts": PERSON });
     const c = commitAll(root, T0 + 2 * HOUR, "by hand");
-    const end = (await snapshot(root))!;
+    const end = (await snapshot(root, ROOMY))!;
     const s = makeSession("s-read", "claude-code", "claude-sonnet-4-5", T0 + HOUR, { root, head }, end.snapshot);
     const index = new MemoryIndexStore();
     await index.putEvents(read(s, 1, join(root, "README.md")));
@@ -66,7 +66,7 @@ describe("lines a person typed are not a session's", () => {
     write(root, { "src/person.ts": PERSON });
     const s0 = makeSession("s-dirty", "claude-code", "claude-sonnet-4-5", T0 + HOUR, { root, head });
     write(root, { "src/own.ts": OWN });
-    const end = (await snapshot(root))!;
+    const end = (await snapshot(root, ROOMY))!;
     const s = { ...s0, endSnapshot: end.snapshot };
     const index = new MemoryIndexStore();
     await index.putEvents([...read(s, 1, join(root, "README.md")), ...write_(s, 2, join(root, "src/own.ts"), OWN)]);
@@ -81,7 +81,7 @@ describe("lines a person typed are not a session's", () => {
     const other = makeSession("s-other", "codex", "gpt-5-codex", T0 + HOUR, { root, head });
     const mine = makeSession("s-mine", "claude-code", "claude-sonnet-4-5", T0 + HOUR, { root, head });
     write(root, { "src/other.ts": OWN });
-    const end = (await snapshot(root))!;
+    const end = (await snapshot(root, ROOMY))!;
     const index = new MemoryIndexStore();
     await index.putEvents([...write_(other, 1, join(root, "src/other.ts"), OWN), ...read(mine, 1, join(root, "README.md"))]);
     const c = commitAll(root, T0 + 2 * HOUR, "other");
@@ -94,7 +94,7 @@ describe("lines a person typed are not a session's", () => {
     const { root, head } = repo("csh-hand-edit-");
     const s0 = makeSession("s-edit", "claude-code", "claude-sonnet-4-5", T0 + HOUR, { root, head });
     write(root, { "src/own.ts": OWN, "src/person.ts": PERSON });
-    const end = (await snapshot(root))!;
+    const end = (await snapshot(root, ROOMY))!;
     const s = { ...s0, endSnapshot: end.snapshot };
     const index = new MemoryIndexStore();
     await index.putEvents(write_(s, 1, join(root, "src/own.ts"), OWN));
@@ -108,7 +108,7 @@ describe("lines a person typed are not a session's", () => {
     const { root, head } = repo("csh-hand-samefile-");
     const s0 = makeSession("s-same", "claude-code", "claude-sonnet-4-5", T0 + HOUR, { root, head });
     write(root, { "src/own.ts": OWN + "\n" + PERSON });
-    const end = (await snapshot(root))!;
+    const end = (await snapshot(root, ROOMY))!;
     const s = { ...s0, endSnapshot: end.snapshot };
     const index = new MemoryIndexStore();
     await index.putEvents(write_(s, 1, join(root, "src/own.ts"), OWN));
@@ -121,7 +121,7 @@ describe("lines a person typed are not a session's", () => {
     const { root, head } = repo("csh-hand-shell-");
     const s0 = makeSession("s-shell", "claude-code", "claude-sonnet-4-5", T0 + HOUR, { root, head });
     write(root, { "src/own.ts": OWN, "src/generated.ts": PERSON });
-    const end = (await snapshot(root))!;
+    const end = (await snapshot(root, ROOMY))!;
     const s = { ...s0, endSnapshot: end.snapshot };
     const index = new MemoryIndexStore();
     await index.putEvents([...write_(s, 1, join(root, "src/own.ts"), OWN), ...bash(s, 2, "node gen.js > src/generated.ts")]);

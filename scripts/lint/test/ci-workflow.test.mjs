@@ -11,22 +11,67 @@ const read = (p) => readFileSync(join(ROOT, p), "utf8");
 const ci = read(".github/workflows/ci.yml");
 const jobs = (text) => new Set([...text.matchAll(/^  ([a-z][a-z-]*):$/gm)].map((m) => m[1]));
 
-test("ci.yml runs the static gate, Postgres, the Python SDK and the release smoke test", () => {
-  for (const job of ["gate-static", "store-postgres", "python-sdk", "release-smoke"]) assert.ok(jobs(ci).has(job), `${job} job`);
+test("ci.yml runs the static gate, the store plugins, the Python SDK and the release smoke test", () => {
+  for (const job of ["gate-static", "build", "site", "stores", "python-sdk", "runtime-floor"]) assert.ok(jobs(ci).has(job), `${job} job`);
   assert.match(ci, /node scripts\/gate\.mjs --static --strict/);
   assert.match(ci, /CODING_SH_TEST_PG_URL: postgres:\/\/postgres:ci@127\.0\.0\.1:5432\/coding/);
-  // The SDK's floor (pyproject requires-python) and the newest; 3.9 has no build for ubuntu-latest.
-  assert.match(ci, /- \{ python: "3\.9", os: ubuntu-24\.04 \}/);
-  assert.match(ci, /- \{ python: "3\.13", os: ubuntu-latest \}/);
   assert.match(read("packages/sdk-python/pyproject.toml"), /requires-python = ">=3\.9"/);
   assert.match(ci, /sh scripts\/release\/smoke\.sh/);
   assert.match(ci, /packages\/blob-s3\n\s+run: npm run check/);
+});
+
+test("ci.yml tests the Postgres and ClickHouse stores against real servers in one job", () => {
+  assert.ok(!jobs(ci).has("store-postgres") && !jobs(ci).has("store-clickhouse"), "one job, not two");
+  const body = /\n  stores:\n([\s\S]*?)(?=\n  [a-z][a-z-]*:\n)/.exec(ci)?.[1] ?? "";
+  assert.ok(body, "stores job");
+  // Both servers start with the job; each is healthy before the first step runs.
+  assert.match(body, /\n      postgres:\n        image: postgres:17\n/);
+  assert.match(body, /\n      clickhouse:\n        image: clickhouse\/clickhouse-server:[\d.]+\n/);
+  assert.equal(body.match(/--health-cmd /g)?.length, 2, "a health check per server");
+  assert.match(body, /\n        id: install\n        run: npm ci\n/);
+  // One step per package, each against its own server.
+  const steps = body.split(/\n      - /).slice(1).filter((s) => s.includes("run: npm run check"));
+  assert.deepEqual(steps.map((s) => /working-directory: (\S+)/.exec(s)?.[1]), ["packages/store-postgres", "packages/blob-s3", "packages/store-clickhouse"]);
+  assert.match(steps[0], /CODING_SH_TEST_PG_URL: postgres:\/\/postgres:ci@127\.0\.0\.1:5432\/coding/);
+  assert.match(steps[2], /CODING_SH_TEST_CH_URL: clickhouse:\/\/coding:ci@127\.0\.0\.1:8123\/coding/);
+  // A red Postgres step does not hide the ClickHouse result: the later steps still run.
+  const after = "if: ${{ !cancelled() && steps.install.outcome == 'success' }}";
+  assert.ok(!steps[0].includes("\n        if:"), "the first test step has no condition");
+  for (const s of steps.slice(1)) assert.ok(s.includes(after), "later steps run after a failed one");
+  assert.doesNotMatch(body, /continue-on-error/);
 });
 
 test("ci.yml runs the secret scan, the hook budget and a site check that cannot skip", () => {
   assert.match(ci, /node scripts\/gate\.mjs --only secret-scan/);
   assert.match(ci, /bench\.mjs hook --check/);
   assert.match(ci, /name: Site check[\s\S]*?CODING_SH_REQUIRE_DIST: "1"/);
+});
+
+test("ci.yml builds and checks the site in a job of its own", () => {
+  const job = (name) => new RegExp(`\\n  ${name}:\\n([\\s\\S]*?)(?=\\n  [a-z][a-z-]*:\\n|$)`).exec(ci)?.[1] ?? "";
+  const names = (body) => [...body.matchAll(/\n      - name: (.+)\n/g)].map((m) => m[1]);
+  const build = job("build");
+  const site = job("site");
+  assert.deepEqual(names(build), [
+    "Git identity", "Install", "Typecheck", "SDK typecheck and test", "Build", "Smoke test the bundle",
+    "Package contents", "Secret scan of the built output", "Hook budget",
+  ]);
+  assert.deepEqual(names(site), ["Git identity", "Install", "Site build", "Site check", "Site perf budget", "Secret scan of the built output"]);
+  // Each job scans what it built: the packages in one, the site (and the CLI its build makes) in the other.
+  for (const body of [build, site]) assert.match(body, /\n        run: node scripts\/gate\.mjs --only secret-scan\n/);
+  // The site's build makes the CLI it documents, so the site job has no build step of its own.
+  assert.match(read("apps/site/package.json"), /"prebuild": "npm run build -w coding\.sh"/);
+  assert.match(site, /\n      - name: Site build\n        working-directory: apps\/site\n        run: npm run build\n/);
+  assert.match(site, /\n      - name: Site check\n        working-directory: apps\/site\n        env:\n          CODING_SH_REQUIRE_DIST: "1"\n        run: npm run check\n/);
+  assert.match(site, /\n      - name: Install\n        run: npm ci\n/);
+  // No step of either job is skipped or let through: a failure fails the job.
+  for (const body of [build, site]) {
+    assert.doesNotMatch(body, /\n        if: /);
+    assert.doesNotMatch(body, /continue-on-error/);
+    assert.doesNotMatch(body, /needs: /);
+  }
+  // The closing check waits for both.
+  assert.match(job("full-suite"), /\n    needs: \[changes, test, build, site, /);
 });
 
 test("ci.yml runs the packed CLI on the Node floor itself", () => {
@@ -36,6 +81,51 @@ test("ci.yml runs the packed CLI on the Node floor itself", () => {
   assert.match(job, /sh scripts\/release\/runtime-floor\.sh "\$RUNNER_TEMP\/coding\.sh\.tgz"/);
   // The suite runs .ts from source, which the floor can't without a flag: no test leg on it.
   assert.doesNotMatch(ci, new RegExp(`node: \\[[^\\]]*${floor.replaceAll(".", "\\.")}\\.0`));
+});
+
+// One job, not one per Python: the SDK's floor (pyproject requires-python) and the newest, each
+// with its own install and its own test step.
+test("ci.yml runs the Python SDK's tests on Python 3.9 and on 3.13 in one job", () => {
+  const job = /\n  python-sdk:\n([\s\S]*?)\n  [a-z-]+:\n/.exec(ci)?.[1] ?? "";
+  assert.doesNotMatch(job, /\n    strategy:\n/, "no matrix: one job");
+  // 3.9 has no build for ubuntu-latest.
+  assert.match(job, /\n    runs-on: ubuntu-24\.04\n/);
+  assert.match(job, /\n          python-version: \|\n            3\.9\n            3\.13\n/);
+  const steps = job.split(/\n      - /).slice(1);
+  for (const v of ["3.9", "3.13"]) {
+    const py = `python${v}`.replace(".", "\\.");
+    assert.match(job, new RegExp(`\\n          ${py} -m pip install[^\\n]*"\\.\\[otel,openai,anthropic\\]"[^\\n]*mypy\\n`), `${v}: every extra and mypy are installed`);
+    const tests = steps.filter((s) => new RegExp(`\\n          ${py} -m unittest discover -s tests(\\n|$)`).test(s));
+    assert.equal(tests.length, 1, `${v}: one test step`);
+    assert.match(tests[0], /\n          CODING_SH_SDK_REQUIRE_ALL: "1"\n/, `${v}: a missing tool fails the step`);
+    assert.doesNotMatch(tests[0], /continue-on-error/, `${v}: a failed test fails the job`);
+    assert.equal(tests[0].match(/-m unittest/g).length, 1, `${v}: the step runs one Python`);
+  }
+  // The 3.13 tests run when the 3.9 tests fail, as the two jobs did: one run shows both results.
+  const last = steps.find((s) => s.includes("python3.13 -m unittest"));
+  assert.ok(last.includes("\n        if: ${{ !cancelled() && steps.install.outcome == 'success' }}\n"));
+  assert.match(job, /\n        id: install\n/);
+});
+
+// One job, not two: the smoke test and the floor share a checkout and an install.
+test("ci.yml runs the release smoke test on a current Node, then the floor, in one job", () => {
+  assert.ok(!jobs(ci).has("release-smoke"), "no second job");
+  const job = /\n  runtime-floor:\n([\s\S]*?)\n  [a-z-]+:\n/.exec(ci)?.[1] ?? "";
+  const steps = job.split(/\n      - /).slice(1);
+  const at = (re) => steps.findIndex((s) => re.test(s));
+  const node24 = at(/node-version: 24\.x\n/), install = at(/\n        run: npm ci(\n|$)/), smoke = at(/\n        run: sh scripts\/release\/smoke\.sh(\n|$)/);
+  const pack = at(/npm pack --silent/), floorNode = at(/node-version: 22\.\d+\.0(\n|$)/), floor = at(/scripts\/release\/runtime-floor\.sh/);
+  for (const [name, i] of Object.entries({ node24, install, smoke, pack, floorNode, floor })) assert.notEqual(i, -1, `${name} step`);
+  // The smoke test runs on Node 24: the switch to the floor comes after it and after the build.
+  assert.ok(node24 < install && install < smoke && smoke < pack && pack < floorNode && floorNode < floor, "step order");
+  assert.equal(job.match(/uses: actions\/setup-node@/g).length, 2);
+  // A failed smoke test fails the job and the floor still runs, as the two jobs did.
+  assert.doesNotMatch(job, /continue-on-error/);
+  assert.doesNotMatch(steps[smoke], /\n        if:/);
+  assert.ok(steps[pack].includes("\n        if: ${{ !cancelled() && steps.install.outcome == 'success' }}\n"));
+  for (const i of [floorNode, floor]) assert.ok(steps[i].includes("\n        if: ${{ !cancelled() && steps.pack.outcome == 'success' }}\n"));
+  // The packed CLI is built by the package's own build, as a release builds it.
+  assert.match(steps[pack], /\n          npm run build\n/);
 });
 
 test("ci.yml runs the Python SDK's typing, golden, otel and real-SDK tests instead of skipping them", () => {
@@ -115,4 +205,30 @@ test("every file that names the Node floor names the same one", () => {
     assert.ok(read(p).includes(`Node ${floor}`), `${p} names the runtime floor`);
   }
   for (const p of ["install.sh", "action.yml", "AGENTS.md", "CONTRIBUTING.md", "scripts/release/smoke.sh"]) assert.ok(!read(p).includes("22.15"), `${p} still says 22.15`);
+});
+
+test("ci.yml installs only what the tests need on the test legs, and everything in the build job", () => {
+  const job = (name) => new RegExp(`\\n  ${name}:\\n([\\s\\S]*?)(?=\\n  [a-z][a-z-]*:\\n|$)`).exec(ci)?.[1] ?? "";
+  const installs = (body) => [...body.matchAll(/\n +(?:run: |)(npm ci[^\n]*)\n/g)].map((m) => m[1]);
+  // The CLI package's tests import nothing from the site or the SDK (zero-deps.test.ts pins the
+  // package itself), so the legs install that one workspace.
+  const sdkLeg = "(matrix.node == '22.x' && matrix.shard == 1)";
+  assert.deepEqual(installs(job("test")), [`npm ci --workspace packages/coding.sh \${{ ${sdkLeg} && '--workspace packages/sdk' || '' }}`]);
+  assert.deepEqual(installs(job("windows")), ["npm ci --workspace packages/coding.sh"]);
+  // The leg that checks the SDK is the leg that installs the SDK's dependencies.
+  assert.match(job("test"), /\n      - name: SDK typecheck and test on Node 22\n        if: matrix\.node == '22\.x' && matrix\.shard == 1\n        working-directory: packages\/sdk\n/);
+  assert.doesNotMatch(job("windows"), /packages\/sdk/);
+  // A whole-workspace install still runs in every pull request: it is what reads the lockfile
+  // for every package and what the site and the SDK are built from.
+  assert.deepEqual(installs(job("build")), ["npm ci"]);
+  // The npm cache is keyed and saved as before.
+  for (const name of ["test", "windows"]) assert.match(job(name), /\n          cache: npm\n/, `${name} keeps the npm cache`);
+});
+
+// A second attempt would hide a hook that is over its budget half the time.
+test("ci.yml runs the hook budget once: a miss fails the step", () => {
+  const step = /\n      - name: Hook budget\n([\s\S]*?)(?=\n\n|\n      - name: |$)/.exec(ci)?.[1] ?? "";
+  assert.match(step, /^        run: node scripts\/dogfood\/bench\.mjs hook --check --tolerance 20$/m);
+  assert.equal(step.match(/bench\.mjs/g)?.length, 1, "one run of the benchmark");
+  assert.doesNotMatch(step, /\|\||continue-on-error|retry|if:/);
 });

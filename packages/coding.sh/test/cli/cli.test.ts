@@ -467,8 +467,12 @@ describe("cli init/uninstall round trip", () => {
     const h = tmpHome();
     assert.equal(cli(h, ["init", "--agent", "claude-code", "--yes"]).status, 0);
     const hookBin = join(h.data, "bin", "hook.mjs");
+    // SessionEnd would start a background ingest. While that holds the ingest lock past a read's
+    // 1.5 s wait, the read lists the index as it is (`"pending":{"indexing":true}`) and this list
+    // is empty. That is the read working as designed, and not what this test is about, so the
+    // reads below are the only ingest here.
     const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(h.env)) if (v !== undefined) env[k] = v;
+    for (const [k, v] of Object.entries({ ...h.env, CODING_SH_NO_AUTO_INGEST: "1" })) if (v !== undefined) env[k] = v;
     const hook = (event: string, payload: Record<string, unknown>) => {
       const r = spawnSync(process.execPath, [hookBin, "claude-code", event], { env, input: JSON.stringify({ hook_event_name: event, cwd: h.home, transcript_path: join(h.home, "none.jsonl"), ...payload }), encoding: "utf8" });
       assert.equal(r.status, 0, r.stderr);
@@ -477,14 +481,16 @@ describe("cli init/uninstall round trip", () => {
     // A process that started and stopped a session and did nothing (newest, so it would fill --limit 1).
     hook("SessionStart", { session_id: "no-work", source: "startup" });
     hook("SessionEnd", { session_id: "no-work", reason: "other" });
-    const ids = (...args: string[]) => {
+    // A wrong list fails with the whole document: its `pending` field says whether the read ingested.
+    const lists = (expected: string[], ...args: string[]) => {
       const r = cli(h, ["sessions", "--json", ...args]);
       assert.equal(r.status, 0, r.stderr);
-      return (parseJson(r.stdout, "sessions") as { sessions: { id: string }[] }).sessions.map((s) => s.id);
+      const ids = (parseJson(r.stdout, "sessions") as { sessions: { id: string }[] }).sessions.map((s) => s.id);
+      assert.deepEqual(ids, expected, `sessions ${["--json", ...args].join(" ")} listed ${JSON.stringify(ids)}, expected ${JSON.stringify(expected)}; stdout: ${r.stdout}`);
     };
-    assert.deepEqual(ids(), ["with-work"]);
-    assert.deepEqual(ids("--limit", "1"), ["with-work"]);
-    assert.deepEqual(ids("--empty"), ["no-work", "with-work"]);
+    lists(["with-work"]);
+    lists(["with-work"], "--limit", "1");
+    lists(["no-work", "with-work"], "--empty");
   });
 });
 

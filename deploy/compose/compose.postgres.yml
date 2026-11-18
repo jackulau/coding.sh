@@ -38,7 +38,9 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U coding -d coding"]
+      # Over TCP on the address the other services reach, as serve connects. On a first start the
+      # image runs a setup server on the unix socket only, so a check over the socket passes too early.
+      test: ["CMD-SHELL", "pg_isready -h $$HOSTNAME -U coding -d coding"]
       interval: 2s
       timeout: 5s
       retries: 30

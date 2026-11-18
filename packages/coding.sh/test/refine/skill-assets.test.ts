@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isHarnessPath, isInstructionHarnessPath } from "../../src/core/harness-paths.ts";
@@ -18,8 +18,9 @@ test("a skill's scripts and references are harness files; SKILL.md stays the onl
   assert.equal(isInstructionHarnessPath(".claude/skills/s/SKILL.md"), true);
 });
 
-test("harnessFilesIn carries a skill's text files and leaves binary and large ones out", () => {
+test("harnessFilesIn carries a skill's text files and leaves binary and large ones out", (t) => {
   const d = mkdtempSync(join(tmpdir(), "skill-assets-"));
+  t.after(() => rmSync(d, { recursive: true, force: true }));
   const s = join(d, ".claude/skills/s");
   mkdirSync(join(s, "scripts"), { recursive: true });
   mkdirSync(join(s, "docs"), { recursive: true });

@@ -1,20 +1,35 @@
 // Starts Chrome once before the tests do. CI runs it as a step of its own, before
 // scripts/test-ci.mjs (.github/workflows/ci.yml).
 //
-// The first Chrome start on a fresh runner waits on a cold disk: 5-30 s in measured runs, against
-// the 20 s a viewer test gives a start (launchBrowser in test/viewer/browser.ts). Every later start
-// on the same machine takes under a second. So the first start happens here, where it is timed and
-// printed and has a limit of its own (FIRST_START_LIMIT_MS). Then one start and one page load run
+// The first Chrome start on a fresh runner is slow: 1-26 s in most measured runs and past 60 s in
+// one, against the 20 s a viewer test gives a start (launchBrowser in test/viewer/browser.ts). Why
+// is not known; a cold disk was the guess and was never measured apart from the start. Every later
+// start on the same machine takes under a second. So the first start happens here, where it is
+// timed and has a limit of its own (FIRST_START_LIMIT_MS), and prints what it did, fast or slow,
+// so the two can be set side by side (firstStartReport). Then one start and one page load run
 // the way a test runs them, under the tests' limits: if that fails, Chrome is not ready and the job
 // stops before the tests. No Chrome is an error here, never a skip.
 //
+// The first page of the viewer on a machine is cold too, and the page above does not warm it. The
+// viewer's script formats numbers and dates, and Chrome reads its ICU data (icudtl.dat, 10.8 MB)
+// from disk on the first use: about 1 s on a Windows runner. The first page at the size the tests
+// give a page (1280x900) costs more again. On Windows runners the first viewer page of the tests
+// took a median of 1.6 s with neither warm, 1.0 s after a warm-up that loaded these pages at
+// Chrome's default size, and 0.35 s after this one. While Windows was reading the disk for itself
+// that page took 5-37 s with neither warm, against the 5 s a test gives a page, and up to 4.4 s
+// after this warm-up. So the viewer's list and Explore load here once, as a test loads them, with
+// the first start's limit.
+//
 //   node scripts/warm-chrome.ts
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { chromeArgs, findChrome, launchBrowser } from "../test/viewer/browser.ts";
+import { MemoryIndexStore } from "../src/store/memory.ts";
+import { startViewer } from "../src/viewer/server.ts";
+import { chromeArgs, findChrome, launchBrowser, type Browser } from "../test/viewer/browser.ts";
+import { FakeBlobs, metricFixtures } from "../test/viewer/fakes.ts";
 
 /** A page with markup and a script, so the first start also brings up a renderer and V8. */
 const PAGE = "data:text/html,<title>cold</title><p>warm</p><script>document.title='warm'</script>";
@@ -54,19 +69,115 @@ export function chromeProcesses(): number | undefined {
   return r.status === 0 ? r.stdout.split("\n").filter((l) => l.startsWith('"chrome.exe"')).length : undefined;
 }
 
+/** The files of /proc/pressure: what Linux counts as time stalled waiting for the disk, a core or memory. */
+const PRESSURE = ["io", "cpu", "memory"] as const;
+/** Microseconds stalled: `some` with one task or more waiting, `full` with every task waiting. */
+export type Pressure = Partial<Record<(typeof PRESSURE)[number], { some: number; full: number }>>;
+
+/** The stalled totals of one /proc/pressure file, in microseconds, or undefined when it has none. */
+export function pressureTotals(text: string): { some: number; full: number } | undefined {
+  const total = (kind: string) => {
+    const m = new RegExp(`^${kind} .*\\btotal=(\\d+)`, "m").exec(text);
+    return m ? Number(m[1]) : undefined;
+  };
+  const some = total("some");
+  return some === undefined ? undefined : { some, full: total("full") ?? 0 };
+}
+
+/** The stalled totals of each pressure file there is, or undefined where there are none (not Linux, or a kernel without them). */
+export function readPressure(dir = "/proc/pressure"): Pressure | undefined {
+  const p: Pressure = {};
+  for (const name of PRESSURE) {
+    try {
+      const totals = pressureTotals(readFileSync(join(dir, name), "utf8"));
+      if (totals) p[name] = totals;
+    } catch {}
+  }
+  return Object.keys(p).length ? p : undefined;
+}
+
+/** What a first start did, for its report. */
+export interface FirstStart {
+  ms: number;
+  stderrBytes: number;
+  limitMs: number;
+  /** True when the start ran past its limit and was killed. */
+  stopped: boolean;
+  /** The clock at the spawn, to set against the stamps in Chrome's own lines. */
+  spawnedAt: Date;
+  /** Milliseconds from the spawn to the first byte on each pipe; absent when there was none. */
+  firstStderrMs?: number;
+  firstStdoutMs?: number;
+  stderr: string;
+  /** The pressure totals before the spawn and after the exit, where the system has them. */
+  pressure?: { before: Pressure; after: Pressure };
+  /** True when Chrome printed the page and its own teardown watchdog then ended it (see TEARDOWN_WATCHDOG). Absent otherwise. */
+  teardownWatchdog?: true;
+}
+
 /**
- * Runs Chrome to its own exit and returns the time it took and how much it wrote to stderr. Past the
- * limit it is killed and the start fails, with what it had done until then.
+ * What Chrome writes when it has done its work, hangs on its way out and ends itself, with exit
+ * code 2. Seen on macOS with the whole suite running beside it on a busy machine: the page came
+ * after about 1.4 s and the exit about 10 s later. Why Chrome hangs there is not known.
  */
-export function firstStart(chrome: string, limitMs = FIRST_START_LIMIT_MS): Promise<{ ms: number; stderrBytes: number }> {
+export const TEARDOWN_WATCHDOG = "Teardown watchdog expired";
+/** The line a report carries for such a start, so a log can be searched for it. */
+export const TEARDOWN_WATCHDOG_NOTE = "Chrome printed the page, hung on its way out and was ended by its own teardown watchdog (exit 2). The start counts.";
+
+/**
+ * What a first start did, to print: when Chrome's first byte came on each pipe, how long the
+ * machine stalled meanwhile, and all the stderr read by Chrome's exit. Chrome stamps its own lines
+ * with the clock, so the time of the spawn is here in the same form.
+ */
+export function firstStartReport(s: FirstStart): string {
+  const two = (n: number) => String(n).padStart(2, "0");
+  const d = s.spawnedAt;
+  const clock = `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, "0")}`;
+  const at = (ms: number | undefined) => (ms === undefined ? "never" : `after ${Math.round(ms)} ms`);
+  const stalled = PRESSURE.flatMap((name) => {
+    const before = s.pressure?.before[name];
+    const after = s.pressure?.after[name];
+    const ms = (us: number) => Math.round(us / 1000);
+    return before && after ? [`${name} ${ms(after.some - before.some)}/${ms(after.full - before.full)}`] : [];
+  });
+  const lines = [
+    `warm-chrome: the first start ${s.stopped ? `was stopped at its limit of ${s.limitMs} ms` : `took ${Math.round(s.ms)} ms`}. What it did:`,
+    `  Chrome was started at ${clock} by this machine's clock, the clock in Chrome's own lines.`,
+    `  First byte on stderr: ${at(s.firstStderrMs)}. First byte on stdout: ${at(s.firstStdoutMs)}.`,
+  ];
+  if (s.teardownWatchdog) lines.push(`  ${TEARDOWN_WATCHDOG_NOTE}`);
+  lines.push(
+    stalled.length ? `  Milliseconds stalled across the start, some/full, from /proc/pressure: ${stalled.join(", ")}.` : "  /proc/pressure was not read: this system has none.",
+    `  Chrome's stderr, ${s.stderr.length} bytes:`,
+    ...(s.stderr.trimEnd() ? s.stderr.trimEnd().split("\n").map((l) => `  | ${l.trimEnd()}`) : ["  | (empty)"]),
+  );
+  return lines.join("\n");
+}
+
+/**
+ * Runs Chrome to its own exit and returns the time it took and what it wrote to stderr. Past the
+ * limit it is killed and the start fails, with what it had done until then. Every start prints its
+ * report first (firstStartReport), to stderr unless it is given somewhere else to print.
+ */
+export function firstStart(chrome: string, limitMs = FIRST_START_LIMIT_MS, print: (text: string) => void = console.error): Promise<FirstStart> {
   const dir = mkdtempSync(join(tmpdir(), "csh-chrome-warm-"));
+  const before = readPressure();
+  const spawnedAt = new Date();
   const t0 = performance.now();
   const child = spawn(chrome, firstStartArgs(dir), { stdio: ["ignore", "pipe", "pipe"] });
   let out = "";
   let err = "";
-  child.stdout!.on("data", (d: Buffer) => (out += d.toString()));
-  child.stderr!.on("data", (d: Buffer) => (err += d.toString()));
-  return new Promise<{ ms: number; stderrBytes: number }>((resolve, reject) => {
+  let firstStdoutMs: number | undefined;
+  let firstStderrMs: number | undefined;
+  child.stdout!.on("data", (d: Buffer) => {
+    firstStdoutMs ??= performance.now() - t0;
+    out += d.toString();
+  });
+  child.stderr!.on("data", (d: Buffer) => {
+    firstStderrMs ??= performance.now() - t0;
+    err += d.toString();
+  });
+  return new Promise<FirstStart>((resolve, reject) => {
     let late = false;
     let processes: number | undefined;
     const limit = setTimeout(() => {
@@ -82,6 +193,13 @@ export function firstStart(chrome: string, limitMs = FIRST_START_LIMIT_MS): Prom
     child.once("exit", (code) => {
       const ms = performance.now() - t0;
       clearTimeout(limit);
+      const after = readPressure();
+      const page = out.includes("<title>warm</title>");
+      // All three together and nothing less: any other exit that is not 0 still fails the start.
+      const watchdog = !late && code === 2 && page && err.includes(TEARDOWN_WATCHDOG);
+      const start: FirstStart = { ms, stderrBytes: err.length, limitMs, stopped: late, spawnedAt, firstStderrMs, firstStdoutMs, stderr: err, pressure: before && after && { before, after } };
+      if (watchdog) start.teardownWatchdog = true;
+      print(firstStartReport(start));
       child.stdout?.destroy();
       child.stderr?.destroy();
       // On Windows, Chrome's helpers can hold the profile for a moment after it exits.
@@ -89,15 +207,55 @@ export function firstStart(chrome: string, limitMs = FIRST_START_LIMIT_MS): Prom
         rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
       } catch {}
       if (late) reject(new Error(`Chrome's first start took longer than ${limitMs} ms and was stopped. ${stoppedState(out, err, processes)}`));
-      else if (code !== 0) reject(new Error(`Chrome exited (${code}) on its first start: ${err.slice(-500)}`));
-      else if (!out.includes("<title>warm</title>")) reject(new Error(`Chrome's first start did not load the page: ${(out || err).slice(-500)}`));
-      else resolve({ ms, stderrBytes: err.length });
+      else if (code !== 0 && !watchdog) reject(new Error(`Chrome exited (${code}) on its first start: ${err.slice(-500)}`));
+      else if (!page) reject(new Error(`Chrome's first start did not load the page: ${(out || err).slice(-500)}`));
+      else resolve(start);
     });
   });
 }
 
-/** One start and one page load through the tests' own launcher, under its limits. */
-async function testStart(chrome: string): Promise<{ startMs: number; pageMs: number }> {
+/** The viewer pages loaded here, and what each shows when it is ready. */
+const VIEWER_PAGES = [
+  { hash: "", ready: "document.querySelector('[role=listbox]')", what: "the viewer's list" },
+  { hash: "#/explore", ready: "document.querySelector('.mx-body > *')", what: "the viewer's Explore page" },
+];
+
+/**
+ * Loads the viewer's list and Explore over the sessions the viewer tests use, each in a page of
+ * its own at the tests' size, as a test does, and returns the time each took. Both share one
+ * limit: the first page is the machine's first, and it waits on the disk as the first start does.
+ */
+export async function viewerPages(browser: Browser, limitMs = FIRST_START_LIMIT_MS): Promise<number[]> {
+  const index = new MemoryIndexStore();
+  const DAY = 86_400_000;
+  // Ten days ending yesterday, inside the ranges both pages show.
+  for (const s of metricFixtures(Math.floor(Date.now() / DAY) * DAY - 11 * DAY)) await index.upsertSession(s);
+  const viewer = await startViewer({ index, blobs: new FakeBlobs(), port: 0, updateStatus: async () => ({ disabled: "test" }) as any });
+  const end = performance.now() + limitMs;
+  const left = () => Math.max(1, end - performance.now());
+  try {
+    const times: number[] = [];
+    for (const { hash, ready, what } of VIEWER_PAGES) {
+      const page = await browser.newPage();
+      // A viewer test sets a page's size before it loads it: 1280x900, in all but one file.
+      await page.viewport(1280, 900);
+      const t0 = performance.now();
+      await page.goto(viewer.url + hash, left());
+      await page.waitFor(ready, what, left());
+      // A wait looks once more after its limit, so a slow look can find the page ready late.
+      const over = performance.now() - end;
+      if (over > 0) throw new Error(`timed out waiting for ${what}: it was ready ${Math.round(over)} ms past the limit of ${limitMs} ms`);
+      times.push(performance.now() - t0);
+      await page.close();
+    }
+    return times;
+  } finally {
+    await viewer.close();
+  }
+}
+
+/** One start and one page load through the tests' own launcher, under its limits; then the viewer's pages. */
+async function testStart(chrome: string): Promise<{ startMs: number; pageMs: number; viewerMs: number[] }> {
   const t0 = performance.now();
   const browser = await launchBrowser(chrome);
   try {
@@ -107,7 +265,7 @@ async function testStart(chrome: string): Promise<{ startMs: number; pageMs: num
     await page.goto(PAGE);
     const pageMs = performance.now() - t1;
     await page.close();
-    return { startMs, pageMs };
+    return { startMs, pageMs, viewerMs: await viewerPages(browser) };
   } finally {
     await browser.close();
   }
@@ -120,6 +278,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exit(1);
   }
   const first = await firstStart(chrome);
-  const { startMs, pageMs } = await testStart(chrome);
-  console.log(`warm-chrome: first start ${Math.round(first.ms)} ms with ${first.stderrBytes} bytes on stderr, then a start in ${Math.round(startMs)} ms and a page in ${Math.round(pageMs)} ms (${chrome})`);
+  const { startMs, pageMs, viewerMs } = await testStart(chrome);
+  const [listMs, exploreMs] = viewerMs.map(Math.round);
+  console.log(`warm-chrome: first start ${Math.round(first.ms)} ms with ${first.stderrBytes} bytes on stderr, then a start in ${Math.round(startMs)} ms and a page in ${Math.round(pageMs)} ms, then the viewer's list in ${listMs} ms and Explore in ${exploreMs} ms (${chrome})`);
 }
