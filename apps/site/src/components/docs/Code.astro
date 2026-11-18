@@ -19,12 +19,14 @@ const { code, title = "shell", lang, wrap = false, class: klass } = Astro.props;
 const text = code.replace(/^\n+|\s+$/g, "");
 const commands = promptCommands(text);
 const sh = lang === undefined ? title === "shell" : lang === "sh" || lang === "bash";
+// A command block has no title bar: the commands say what it is, and Copy sits in the block's corner.
+const bare = title === "shell";
 ---
 
-<div class:list={["code", wrap && "code--wrap", klass]}>
+<div class:list={["code", wrap && "code--wrap", bare && "code--bare", klass]}>
   <div class="code__bar" data-pagefind-ignore>
-    <span class="code__title">{title}</span>
-    <button type="button" class="code__copy ctl hit" data-code-copy data-copy={commands} aria-label={`Copy ${title}`} data-agent-skip>
+    {!bare && <span class="code__title">{title}</span>}
+    <button type="button" class="code__copy ctl hit" data-code-copy data-copy={commands} aria-label={bare ? "Copy commands" : `Copy ${title}`} data-agent-skip>
       <span data-copy-label>Copy</span>
     </button>
     <span class="sr-only" role="status" data-code-status data-agent-skip></span>
@@ -72,6 +74,23 @@ const sh = lang === undefined ? title === "shell" : lang === "sh" || lang === "b
     color: var(--text);
     white-space: pre;
     tab-size: 2;
+  }
+  .code--bare {
+    position: relative;
+  }
+  .code--bare .code__bar {
+    position: absolute;
+    top: 0.45rem;
+    right: 0.45rem;
+    min-height: 0;
+    padding: 0;
+    background: none;
+    box-shadow: none;
+  }
+  .code--bare .code__body {
+    padding-right: 5rem;
+    border-radius: var(--radius-sm);
+    box-shadow: inset 0 0 0 1px var(--line-strong);
   }
   .code--wrap .code__body {
     white-space: pre-wrap;

@@ -38,6 +38,7 @@ grouped by area, with links to the docs for the details.
 - **Harness.** `coding.sh harness audit` checks for each Claude Code project's `memory/` dir with a stat instead of a directory listing that fails. With 25,800 project dirs, 12 of them with memory, listing the memory files took 0.56 s instead of 1.45 s. [Explore](https://coding.sh/docs/explore)
 - **Capture.** Ingest and backfill fold the next sessions while git reads repo state, instead of waiting on each git command. A fresh backfill of 358 sessions spent 6.2 s instead of 16.5 s writing sessions. The stored sessions are the same. [CLI reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-ingest)
 - **Storage.** `coding.sh gc` walks the blob folders once instead of twice: the temp files it sweeps are the ones the blob listing passed. On a store of 37,697 blobs, `gc --dry-run` took 5.9 s instead of 9.4 s. It removes the same blobs and temp files. [CLI reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-gc)
+- **Docs.** Command blocks drop their "shell" title bar: the Copy button sits in the block's corner. Blocks with a file name or output keep their title. The star beside the GitHub link is yellow. [Install](https://coding.sh/docs/install)
 - **Serve.** `coding.sh serve --json` no longer has `keys.ingest` and `keys.read`; read the keys from the file `keys.file` names. [Production](https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md)
 
 ### Fixed
