@@ -182,6 +182,32 @@ describe("FsBlobStore", () => {
     assert.deepEqual(await fresh().sweepTmp({ olderThanMs: 0 }), { files: 0, bytes: 0 }, "a missing root is fine");
   });
 
+  it("list reports the temp files its walk passed once it reaches the end, and sweepTmp takes them in place of a walk", async () => {
+    const s = fresh();
+    const refs = await Promise.all(["a", "b", "c"].map((t) => s.put(`blob ${t}`)));
+    const tmpIn = (ref: string, pid: number) => join(s.root, ref.slice(0, 2), ref.slice(2, 4), `${sha256Hex(`t${pid}`)}.zst.${pid}.abcd.tmp`);
+    const tmps = [tmpIn(refs[0]!, 1), tmpIn(refs[2]!, 2)];
+    for (const f of tmps) writeFileSync(f, "partial");
+    writeFileSync(join(dirname(tmps[0]!), "notes.tmp"), "not ours");
+    const past = new Date(Date.now() - 2 * 86_400_000);
+    utimesSync(tmps[0]!, past, past);
+
+    const seen: { tmp?: string[] } = {};
+    const listed: string[] = [];
+    for await (const r of s.list({ seen })) listed.push(r);
+    assert.deepEqual(listed.sort(), [...refs].sort(), "temp files are not blobs");
+    assert.deepEqual(seen.tmp?.sort(), [...tmps].sort());
+    const partial: { tmp?: string[] } = {};
+    for await (const _ of s.list({ seen: partial })) break;
+    assert.equal(partial.tmp, undefined, "a listing stopped part way saw only some");
+
+    const walked = await s.sweepTmp({ olderThanMs: 86_400_000, dryRun: true });
+    assert.deepEqual(await s.sweepTmp({ olderThanMs: 86_400_000, dryRun: true, files: seen.tmp! }), walked);
+    assert.deepEqual(await s.sweepTmp({ olderThanMs: 86_400_000, files: seen.tmp! }), { files: 1, bytes: 7 });
+    assert.deepEqual([existsSync(tmps[0]!), existsSync(tmps[1]!)], [false, true]);
+    assert.deepEqual(await s.sweepTmp({ olderThanMs: 0, files: [tmps[0]!] }), { files: 0, bytes: 0 }, "a file gone since the listing is skipped");
+  });
+
   it("recompresses at a higher level without changing content", async () => {
     const s = fresh();
     const text = Array.from({ length: 5000 }, (_, i) => `line ${i % 97} of some repetitive log output`).join("\n");

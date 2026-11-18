@@ -29,7 +29,7 @@
 // APFS/HFS+ fsync commits the volume's metadata (the renames) with it; this is
 // git's core.fsyncMethod=batch, which git documents as safe there. A batch
 // abandoned before flush() leaves temp files that sweepTmp removes.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { link, mkdir, readdir, rmdir, stat, unlink, utimes } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
@@ -283,21 +283,41 @@ export class FsBlobStore implements BlobStore {
     }));
   }
 
-  /** Pack rows, then files (a ref in both is listed once). */
-  async *list(): AsyncIterable<BlobRef> {
+  /**
+   * Pack rows, then files (a ref in both is listed once). With `seen`, a listing
+   * that reaches the end sets seen.tmp to the temp files it passed in the blob
+   * folders, for sweepTmp's `files` (gc walks the folders once, not twice).
+   */
+  async *list(opts: { seen?: ListSeen } = {}): AsyncIterable<BlobRef> {
     yield* this.pack.list();
-    for await (const ref of this.listFiles()) if (!(await this.pack.has([ref]))[0]) yield ref;
+    for await (const ref of this.listFiles(opts.seen)) if (!(await this.pack.has([ref]))[0]) yield ref;
   }
 
-  private async *listFiles(): AsyncIterable<BlobRef> {
-    for (const a of await listDir(this.root)) {
-      if (!/^[0-9a-f]{2}$/.test(a)) continue;
-      for (const b of await listDir(join(this.root, a))) {
-        if (!/^[0-9a-f]{2}$/.test(b)) continue;
-        for (const name of await listDir(join(this.root, a, b))) {
-          const m = /^([0-9a-f]{64})\.zst$/.exec(name);
-          if (m && m[1]!.startsWith(a + b)) yield m[1]!;
-        }
+  private async *listFiles(seen?: ListSeen): AsyncIterable<BlobRef> {
+    const tmp: string[] = [];
+    for (const { dir, prefix, names } of this.folders()) {
+      for (const name of names) {
+        const m = /^([0-9a-f]{64})\.zst$/.exec(name);
+        if (m) {
+          if (m[1]!.startsWith(prefix)) yield m[1]!;
+        } else if (seen && TMP_NAME.test(name)) tmp.push(join(dir, name));
+      }
+    }
+    if (seen) seen.tmp = tmp;
+  }
+
+  /**
+   * Each blob folder (<root>/ab/cd/) with its entries, sorted. Read synchronously:
+   * a large store has tens of thousands of folders, and a readdir through the
+   * thread pool costs about twice the synchronous one.
+   */
+  private *folders(): Generator<{ dir: string; prefix: string; names: string[] }> {
+    for (const a of listDirSync(this.root)) {
+      if (!HEX_PAIR.test(a)) continue;
+      for (const b of listDirSync(join(this.root, a))) {
+        if (!HEX_PAIR.test(b)) continue;
+        const dir = join(this.root, a, b);
+        yield { dir, prefix: a + b, names: listDirSync(dir) };
       }
     }
   }
@@ -451,33 +471,43 @@ export class FsBlobStore implements BlobStore {
    * into place, so nothing can reference them) once older than `olderThanMs`;
    * younger ones may belong to a put still in flight. gc calls this with its blob
    * age guard. Returns what was (or, with dryRun, would be) removed.
+   *
+   * `files`: the temp files a listing passed (list's seen.tmp), looked at instead
+   * of walking the folders again. A temp file the walk missed was written after
+   * gc's `now`, which gc takes before listing, so it was not old enough to remove
+   * anyway (gc's own renames to a temp name are undone or removed at once).
    */
-  async sweepTmp(opts: { olderThanMs: number; now?: number; dryRun?: boolean }): Promise<{ files: number; bytes: number }> {
+  async sweepTmp(opts: { olderThanMs: number; now?: number; dryRun?: boolean; files?: string[] }): Promise<{ files: number; bytes: number }> {
     const now = opts.now ?? Date.now();
     const out = { files: 0, bytes: 0 };
-    for (const a of await listDir(this.root)) {
-      if (!/^[0-9a-f]{2}$/.test(a)) continue;
-      for (const b of await listDir(join(this.root, a))) {
-        if (!/^[0-9a-f]{2}$/.test(b)) continue;
-        for (const name of await listDir(join(this.root, a, b))) {
-          if (!TMP_NAME.test(name)) continue;
-          const file = join(this.root, a, b, name);
-          let s;
-          try {
-            s = await stat(file);
-          } catch {
-            continue; // renamed into place or removed meanwhile
-          }
-          if (now - s.mtimeMs < opts.olderThanMs) continue;
-          if (!opts.dryRun) await unlink(file).catch(() => {});
-          out.files++;
-          out.bytes += s.size;
-        }
+    for (const file of opts.files ?? this.tmpFiles()) {
+      let s;
+      try {
+        s = await stat(file);
+      } catch {
+        continue; // renamed into place or removed meanwhile
       }
+      if (now - s.mtimeMs < opts.olderThanMs) continue;
+      if (!opts.dryRun) await unlink(file).catch(() => {});
+      out.files++;
+      out.bytes += s.size;
     }
     return out;
   }
+
+  private *tmpFiles(): Generator<string> {
+    for (const { dir, names } of this.folders()) for (const name of names) if (TMP_NAME.test(name)) yield join(dir, name);
+  }
 }
+
+/** Filled by FsBlobStore.list: what its walk of the blob folders saw besides blobs. */
+export interface ListSeen {
+  /** The temp files, as paths. Set once the listing reaches the end. */
+  tmp?: string[];
+}
+
+/** A blob folder's name: two hex digits of its blobs' refs. */
+const HEX_PAIR = /^[0-9a-f]{2}$/;
 
 /** How long a pack statement waits for another process's write. */
 const PACK_BUSY_TIMEOUT_MS = 5000;
@@ -798,6 +828,15 @@ async function eachLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<
 async function listDir(dir: string): Promise<string[]> {
   try {
     return (await readdir(dir)).sort();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+}
+
+function listDirSync(dir: string): string[] {
+  try {
+    return readdirSync(dir).sort();
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw err;
