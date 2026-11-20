@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, test } from "node:test";
@@ -156,6 +156,15 @@ test("the lint step runs the allowlist check and the site step requires the dist
   // Source-level proof: the gate names the flag and the variable it relies on.
   const text = spawnSync("grep", ["-c", "strict-allowlist\\|CODING_SH_REQUIRE_DIST", join(REPO, "scripts/gate.mjs")], { encoding: "utf8" }).stdout.trim();
   assert.ok(Number(text) >= 2);
+});
+
+test("the site step builds, checks and budgets the site with the star count CI uses", () => {
+  const site = buildSteps(REPO).find((s) => s.name === "site");
+  const list = site.list({});
+  assert.deepEqual(list.map((c) => `${c.cwd} ${c.args.join(" ")}`), ["apps/site run build", "apps/site run check", "apps/site run perf:budget"]);
+  // ci.yml's site job sets the same count for the whole job.
+  const ci = readFileSync(join(REPO, ".github/workflows/ci.yml"), "utf8");
+  for (const c of list) assert.ok(ci.includes(`SITE_GITHUB_STARS: "${c.env.SITE_GITHUB_STARS}"`), `${c.args.join(" ")} builds with CI's star count`);
 });
 
 // ---------------------------------------------------------------- store plugins

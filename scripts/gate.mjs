@@ -151,11 +151,15 @@ const which = async (cmd, probe = ["--version"]) => (await exec(cmd, probe, { wr
 const quote = (a) => (/^[\w./:=@%+-]+$/.test(a) ? a : JSON.stringify(a));
 const show = (cmd, args) => [cmd, ...args].map(quote).join(" ");
 
+/** The star count CI's site job builds with (ci.yml, SITE_GITHUB_STARS): the nav's bytes count toward each page's budget. */
+const SITE_ENV = { SITE_GITHUB_STARS: "1234" };
+
 /** A step that runs commands in sequence in a fresh isolated environment and fails on the first non-zero exit. */
 function commands(name, list, { rerun, after } = {}) {
   return {
     name,
     rerun,
+    list,
     async run(ctx) {
       const { env, dir } = ctx.isolated();
       try {
@@ -435,9 +439,12 @@ export function buildSteps(root = ROOT, opts = {}) {
     {
       ...commands(
         "site",
+        // As CI's site job runs it (ci.yml): the nav built with a fixed star count, then the perf
+        // budget, so a page over its budget fails here before it fails the pull request.
         () => [
-          { cmd: "npm", args: ["run", "build"], cwd: "apps/site" },
-          { cmd: "npm", args: ["run", "check"], cwd: "apps/site", env: { CODING_SH_REQUIRE_DIST: "1" } },
+          { cmd: "npm", args: ["run", "build"], cwd: "apps/site", env: SITE_ENV },
+          { cmd: "npm", args: ["run", "check"], cwd: "apps/site", env: { ...SITE_ENV, CODING_SH_REQUIRE_DIST: "1" } },
+          { cmd: "npm", args: ["run", "perf:budget"], cwd: "apps/site", env: SITE_ENV },
         ],
         {
           // The dist tests skip without a build; a skip here means a check did not run.
@@ -447,7 +454,7 @@ export function buildSteps(root = ROOT, opts = {}) {
           },
         },
       ),
-      description: "site build, astro check and its tests (none may skip)",
+      description: "site build, astro check and its tests (none may skip), and the perf budget",
     },
     { name: "secret-scan", static: true, description: "vendor-shaped secrets in built output", run: async (ctx) => secretScan(root, { static: ctx.static }) },
     { name: "adapter-versions", description: "parseVersion and SESSION_FOLD_VERSION bumps (warns)", run: async () => adapterVersions(root, { env }) },

@@ -166,7 +166,7 @@ page has its own blocking-time budget on the slow phone. The rules are in
 |---|---|
 | Pull requests | GitHub's hosted runners, one job per page. Load-time budgets are skipped: they only hold on our own machine. |
 | Pushes to main | The one desk runner labelled `perf`, so two perf runs never overlap. Deploys run beside it. |
-| Pull requests and deploys | `npm run perf:budget` in apps/site checks page weight, inline CSS and script, fonts, scripts and images in the build. CI runs it on every pull request, and the Site workflow runs it again before a deploy. |
+| Pull requests and deploys | `npm run perf:budget` in apps/site checks page weight, inline CSS and script, fonts, scripts and images in the build. CI runs it on every pull request, `npm run gate` runs it in its site step, and the Site workflow runs it again before a deploy. |
 
 The desk runs other jobs, so each sample records `cpu_busy`, the share of CPU in use while the
 page loaded. A load-time budget counts only samples at 0.5 or less (`--quiet-cpu`). When fewer
