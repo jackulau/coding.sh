@@ -1,9 +1,16 @@
 // The improve report over a store: what it shows is redacted, whatever the
 // stored events kept. Synthetic sessions in a memory index.
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, before, describe, it } from "node:test";
+import { buildSession } from "../../src/core/sessions.ts";
+import type { Session } from "../../src/core/types.ts";
 import type { ChangeEffect, Verdict } from "../../src/improve/changes.ts";
-import { findIssues, isHeadless, removalStep, scopeSessions } from "../../src/improve/report.ts";
+import type { Issue } from "../../src/improve/issues.ts";
+import { findIssues, isHeadless, markQuiet, removalStep, scopeSessions } from "../../src/improve/report.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { putSession, sessionEvents } from "../helpers-decision.ts";
 
@@ -68,5 +75,62 @@ describe("improve report", () => {
     assert.equal(removalStep(e("costlier", prev))?.command, "coding.sh refine test git:a1b2c3d");
     assert.equal(removalStep(e("costlier")), undefined, "no previous harness commit");
     for (const v of ["helped", "regressed", "no-clear-change", "too-early"] as const) assert.equal(removalStep(e(v, prev)), undefined, v);
+  });
+});
+
+// A temp git repo with two harness versions: sessions on the old one had the issue
+// at some rate, and `n` clean sessions ran on the current one.
+describe("markQuiet", () => {
+  let root = "";
+  const heads: Record<string, string> = {};
+  const git = (args: string[]): string => {
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+    const r = spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { cwd: root, env, encoding: "utf8" });
+    assert.equal(r.status, 0, `git ${args.join(" ")}: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  const commit = (name: string, text: string): void => {
+    writeFileSync(join(root, "CLAUDE.md"), text);
+    git(["add", "-A"]);
+    git(["commit", "-qm", name]);
+    heads[name] = git(["rev-parse", "HEAD"]);
+  };
+  before(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), "csh-improve-quiet-")));
+    git(["init", "-q"]);
+    commit("old", "Keep answers short.\n");
+    commit("new", "Keep answers short.\nRun the tests before you say you are done.\n");
+  });
+  after(() => rmSync(root, { recursive: true, force: true }));
+
+  const session = (id: string, head: string, k: number): Session => ({
+    ...buildSession(sessionEvents(id, { cwd: root, startedAt: T0 + k * 60_000 }, [["user.message", { text: "Fix it." }], ["turn.end", {}]])),
+    repo: { root, head },
+  });
+  const issue = (id: string, sessionIds: string[]): Issue => ({ id, kind: "failure", title: id, sessions: sessionIds.length, analyzed: 100, sessionIds, examples: [], severity: { score: 1, level: "low" }, fix: "Do the thing." });
+
+  /** 100 sessions, `had` of them (all on the old harness) with the issue, `n` clean on the current one; whether it is quiet. */
+  async function quiet(had: number, n: number): Promise<{ quiet: boolean; order: string[] }> {
+    const sessions = Array.from({ length: 100 }, (_, k) => session(`s${k}`, k < n ? heads.new! : heads.old!, k));
+    const target = issue("it", sessions.slice(n, n + had).map((s) => s.id));
+    const ongoing = issue("ongoing", [sessions[0]!.id]);
+    const marked = await markQuiet(root, sessions, [target, ongoing]);
+    return { quiet: !!marked.find((i) => i.id === "it")!.quietSince, order: marked.map((i) => i.id) };
+  }
+
+  it("leaves an issue in 39% of sessions active after one clean session on the new harness", async () => {
+    // 0.61^1 = 0.61: one clean session is likely by chance.
+    assert.deepEqual(await quiet(39, 1), { quiet: false, order: ["it", "ongoing"] });
+  });
+
+  it("marks an issue in 39% of sessions quiet after ten clean sessions", async () => {
+    // 0.61^10 = 0.007.
+    const r = await quiet(39, 10);
+    assert.deepEqual(r, { quiet: true, order: ["ongoing", "it"] });
+  });
+
+  it("leaves a rare issue (5%) active after three clean sessions", async () => {
+    // 0.95^3 = 0.86.
+    assert.deepEqual(await quiet(5, 3), { quiet: false, order: ["it", "ongoing"] });
   });
 });

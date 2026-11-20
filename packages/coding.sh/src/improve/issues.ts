@@ -48,8 +48,9 @@ export interface Issue {
   /** Every session with it, newest first. */
   sessionIds: string[];
   /**
-   * Set when sessions ran on the repo's current harness version and none of them had
-   * this issue: the last harness change (`commit`) may have fixed it.
+   * Set when sessions ran on the repo's current harness version, none of them had this
+   * issue, and that many clean sessions are unlikely by chance at the issue's rate: the
+   * last harness change (`commit`) may have fixed it.
    */
   quietSince?: { commit: string; sessions: number };
   /** What to try. */

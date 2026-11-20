@@ -169,10 +169,16 @@ export async function findChanges(index: IndexStore, root: string, o: { since: n
   }
 }
 
+/** The largest chance that sessions on the current harness all miss an issue by luck for improve to call it quiet. */
+export const QUIET_CHANCE = 0.2;
+
 /**
- * Marks the issues no session on the repo's current harness version had, when at least
- * one session ran on it: the last harness change may have fixed them. They move after
- * the issues still happening, in their order.
+ * Marks the issues no session on the repo's current harness version had, when that
+ * absence is unlikely to be luck: the last harness change may have fixed them. With
+ * `rate` the share of `sessions` that had the issue and `n` the sessions on the current
+ * version, an issue is quiet only when (1 - rate)^n < QUIET_CHANCE, the chance that n
+ * sessions miss it with nothing changed. Quiet issues move after the others, in their
+ * order; the rest stay where they were.
  */
 export async function markQuiet(root: string, sessions: readonly Session[], issues: readonly Issue[]): Promise<Issue[]> {
   try {
@@ -182,7 +188,8 @@ export async function markQuiet(root: string, sessions: readonly Session[], issu
     const onCurrent = new Set(sessions.filter((s) => versions.get(s.id) === current).map((s) => s.id));
     if (!onCurrent.size) return [...issues];
     const quietSince = { commit: current.slice(0, 7), sessions: onCurrent.size };
-    const marked = issues.map((i) => (i.sessionIds.some((id) => onCurrent.has(id)) ? i : { ...i, quietSince }));
+    const unlikelyByChance = (i: Issue) => (1 - Math.min(1, i.sessionIds.length / sessions.length)) ** onCurrent.size < QUIET_CHANCE;
+    const marked = issues.map((i) => (i.sessionIds.some((id) => onCurrent.has(id)) || !unlikelyByChance(i) ? i : { ...i, quietSince }));
     return [...marked.filter((i) => !i.quietSince), ...marked.filter((i) => i.quietSince)];
   } catch {
     return [...issues];

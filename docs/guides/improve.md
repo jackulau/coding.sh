@@ -48,6 +48,14 @@ Each issue has a count, a severity, the newest example and the commands for the 
 Issues seen in two or more sessions come first, then by severity. Example prompts, error lines and
 commands are redacted before they are shown.
 
+An issue that no session on the repo's current harness version had is marked "Not seen in the N
+sessions since <commit> changed the harness" and goes last, without its Fix line. It is marked only
+when that many clean sessions are unlikely by chance.
+
+With `rate` the share of sessions that had the issue and `n` the sessions on the current version,
+it is marked when (1 - rate)^n is below 0.2. An issue in 39% of sessions needs 4 clean sessions;
+one in 5% needs 32. Until then it stays in its place with its fix.
+
 :::more What improve leaves out
 - Sessions older than 14 days, and sessions in other repos. `--since 30d` and `--repo all` widen it.
 - Subagents, and eval and benchmark runs.
