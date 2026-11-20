@@ -48,9 +48,13 @@ function untrustedLegend(r: Pick<ExperimentResult, "graders">, color: boolean): 
   );
 }
 
-/** Why a run failed, in one line: the task error or the first failing grader. */
-export function failureReason(run: ExperimentResult["runs"][number]): string {
-  if (run.error !== undefined) return `error: ${run.error}`;
+/**
+ * Why a run failed, in one line: the task error or the first failing grader.
+ * With `taskRef` (the task line already names it), a task error that starts
+ * with the task's command drops it, so a cut table cell keeps the exit code and stderr.
+ */
+export function failureReason(run: ExperimentResult["runs"][number], taskRef?: string): string {
+  if (run.error !== undefined) return `error: ${taskRef && run.error.startsWith(`${taskRef}: `) ? run.error.slice(taskRef.length + 2) : run.error}`;
   for (const g of run.grades) {
     if (g.error !== undefined) return `${g.graderId}: grader error: ${g.error}`;
     if (g.result && !g.result.pass) return `${g.graderId}: ${g.result.reason ?? `score ${fixed(g.result.score)}`}`;
@@ -215,7 +219,7 @@ export function renderExperiment(r: ExperimentResult, opts: RenderOpts & { verif
     if (!rows.length) continue;
     out.push("");
     out.push(`${paint(title, "bold", color)} ${rows.length}`);
-    const reasonOf = (x: (typeof rows)[number]) => truncate(shownReason(failureReason(x)), 100);
+    const reasonOf = (x: (typeof rows)[number]) => truncate(shownReason(failureReason(x, r.task.ref)), 100);
     const label = (id: string) => opts.cases?.get(id);
     const labelled = rows.some((x) => label(x.caseId) !== undefined);
     const shown = <T>(cols: T[]) => keepColumns([true, labelled, r.trials > 1, true], cols);
