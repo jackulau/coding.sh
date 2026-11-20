@@ -160,13 +160,13 @@ interface StoreRows {
   totals?: Usage;
 }
 
-/** Session id for a provider thread (native id when T3 knows it). */
 /** A thread's title, unless it is T3's placeholder for a thread it has not named yet. */
 const threadTitle = (v: unknown): string | undefined => {
   const t = str(v)?.trim();
   return t && !/^new thread$/i.test(t) ? t : undefined;
 };
 
+/** Session id for a provider thread (native id when T3 knows it). */
 const ptSessionId = (pt: ProviderThread): string => (pt.nativeId ? unscope(pt.nativeId) : `t3code-${pt.id}`);
 const primaryOf = (t: Thread): string => (t.providerThreads[0] ? ptSessionId(t.providerThreads[0]) : `t3code-${t.id}`);
 
