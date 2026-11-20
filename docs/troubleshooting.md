@@ -324,6 +324,7 @@ The command ran and something failed.
 | `init_failed` | `no failed or flagged sessions in /work/demo in the last 14 days …` (eval init), a draft model that returned no usable JSON, or `evals/pdf has files eval init did not write, or that changed since: …` (eval init --force) | List flagged sessions with `coding.sh sessions --where is:flagged`, or name sessions with `--session <id>`. For a draft, check the provider and its API key. For --force, move the listed files out first, or pass `--force-all` to delete them. |
 | `draft_suite` | `Suite pdf: 6 prompts in evals/pdf/triggers.toml still say TODO:` (eval run) | Write real prompts there, or have a model draft them: `coding.sh eval init pdf --skill <dir> --draft --force`. |
 | `unsafe_edit` | `Can't set capture.mode: the edit would change other settings too` | Edit the config file by hand; the message prints its path. |
+| `bad_budgets` | `Can't read the budgets: …` (budget, proxy --enforce-budget) | `budgets.json` in the data folder is not valid. Fix or delete it, then set the budgets again with `coding.sh budget set`. |
 | `no_budget` | `answers has no budget_usd, so it can't be scheduled` | Add `budget_usd = 5` (or your cap) to the benchmark file. Printing the schedule works without one. |
 | `ambiguous` | `2 tasks are named "…"`, `Session id prefix "9f1c" is ambiguous. It matches: …` | Pass one of the ids it prints, or more of the session id. |
 | `exists` | `Target gh already exists in coding.sh.toml`, `bench/answers.toml already exists` | Pick another name, or `--force` where offered. |

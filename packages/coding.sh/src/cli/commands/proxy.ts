@@ -7,6 +7,8 @@ import { basename, dirname } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { runningCli } from "../../mcp/launch.ts";
 import { isLoopbackHost } from "../../otel/receiver.ts";
+import { budgetStatuses, readBudgets } from "../../budget/index.ts";
+import { budgetGuard } from "../../proxy/budget.ts";
 import { startLocalProxy } from "../../proxy/index.ts";
 import { chainedUpstreams, clearProxyState, pidAlive, probeProxy, proxyEnv, proxyLogPath, proxySettings, proxyUrl, readProxyState, upstreamProblem, writeProxyState, type ProxyState } from "../../proxy/state.ts";
 import type { AgentEvent } from "../../schema/index.ts";
@@ -74,7 +76,16 @@ async function start(c: CommandContext): Promise<number> {
     return 0;
   }
 
+  const enforce = c.flags["enforce-budget"] === true;
+  let budgetCount = 0;
+  try {
+    if (enforce) budgetCount = readBudgets(c.env).length;
+  } catch (e) {
+    throw new CliError(`Can't read the budgets: ${(e as Error).message}`, { reason: "bad_budgets", next: ["See them:", "coding.sh budget list"] });
+  }
   return withContext(c, async (ctx) => {
+    // budgets.json is read with the spend, so a budget set while the proxy runs applies within 30 s.
+    const budget = enforce ? budgetGuard({ load: (now) => budgetStatuses(ctx.index, readBudgets(ctx.env), now) }) : undefined;
     let proxy;
     try {
       proxy = await startLocalProxy({
@@ -89,6 +100,8 @@ async function start(c: CommandContext): Promise<number> {
         info: { version: version(), pid: process.pid },
         onError: (e) => out.warn(`not recorded: ${e.message}`),
         onEvent: c.flags.quiet ? undefined : (e) => out.note(callLine(e)),
+        budget,
+        onBlock: budget ? (b) => out.warn(`blocked a call: budget ${b.status.budget.id} is over its limit ($${b.status.spendUsd.toFixed(2)} of $${b.status.budget.limitUsd.toFixed(2)}); resets in ${b.retryAfter}s`) : undefined,
       });
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
@@ -103,6 +116,7 @@ async function start(c: CommandContext): Promise<number> {
     else for (const [k, v] of Object.entries(vars)) out.print(`export ${k}=${v}`);
     if (!isLoopbackHost(proxy.host)) out.warn(`Listening on ${proxy.host}: the proxy has no auth, so anyone who can reach this port can send calls through it`);
     out.note(`Ready on ${url} (Anthropic → ${s.upstreams.anthropic}, OpenAI → ${s.upstreams.openai})`);
+    if (enforce) out.note(`Enforcing budgets: a call a budget over its limit applies to gets a 429 (${budgetCount} set; coding.sh budget status)`);
     out.note(ctx.config.capture.mode === "metadata" ? "Capture mode metadata: no prompts or responses are stored" : "Logging every call; auth headers are forwarded, never stored");
     // A detached child (proxy --background) has no terminal for Ctrl-C to reach.
     out.note(c.env[DETACHED_ENV] === "1" ? "Stop with: coding.sh proxy stop" : "Press Ctrl-C to stop");
@@ -133,6 +147,7 @@ export async function startInBackground(env: NodeJS.ProcessEnv, flags: Record<st
     const v = flags[k];
     if (v !== undefined) args.push(`--${k}`, String(v));
   }
+  if (flags["enforce-budget"] === true) args.push("--enforce-budget");
   if (flags.port === undefined) args.push("--port", String(port));
   mkdirSync(dirname(proxyLogPath(env)), { recursive: true });
   const log = openSync(proxyLogPath(env), "a");

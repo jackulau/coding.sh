@@ -137,6 +137,8 @@ estimate.
   [Track cost](https://coding.sh/docs/cost).
 - In the API: `stats.compactionRefetches` counts reads that fetched again what a compaction
   dropped. See the [API reference](https://coding.sh/docs/api).
+- Budgets: `coding.sh budget set` sets a spend limit per day, week or month. See
+  [Track cost](https://coding.sh/docs/cost#set-a-budget).
 - Plan usage: `coding.sh quota` shows how much of a plan's 5-hour and weekly windows is used. See
   the [CLI reference](https://coding.sh/docs/cli/quota).
 

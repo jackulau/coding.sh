@@ -37,6 +37,11 @@ Code sent). coding.sh saves that reading to `quota.json` in its data folder, whe
 `coding.sh quota` reads it. Some Claude Code versions leave the field out; the line is then
 unchanged.
 
+With a [spend budget](https://coding.sh/docs/cost#set-a-budget) set (`coding.sh budget set day 20`),
+the line ends with the highest budget's share once it passes 80% (`  ·  budget 82%`). `--json`
+adds `budget` with its id, percent and `over`. A day budget is read every turn; a week or month
+total is reused for up to 60 s (`budget-spend.json` in the data folder).
+
 ## If you already have a status line
 
 `install` will not overwrite another tool's status line. It stops and tells you what is there.

@@ -18,6 +18,8 @@ import {
 import { forgetInstall, installRecord, recordInstall, sha256 } from "../../adapters/_shared/installs.ts";
 import { ingestStoppedField, ingestStoppedJson, readIngestStopped } from "../../core/ingest-health.ts";
 import { paths } from "../../core/paths.ts";
+import { budgetPart, highest, readBudgets, statuslineStatuses, type BudgetStatus } from "../../budget/index.ts";
+import type { IndexStore, Session } from "../../core/types.ts";
 import { claudeRateLimits, quotaPart, saveClaudeQuota } from "../../quota/index.ts";
 import { withContext } from "../common.ts";
 import { CliError } from "../output.ts";
@@ -81,6 +83,15 @@ function stdinModel(payload: unknown): string | undefined {
   return undefined;
 }
 
+/** The budget part over the sessions the line already read for its `today` figure, so the two agree. */
+async function budgetPartOf(index: IndexStore, env: NodeJS.ProcessEnv, today: readonly Session[]): Promise<{ part: string; status: BudgetStatus } | undefined> {
+  const budgets = readBudgets(env);
+  if (!budgets.length) return undefined;
+  const statuses = await statuslineStatuses(index, budgets, today, env);
+  const part = budgetPart(statuses);
+  return part ? { part, status: highest(statuses)! } : undefined;
+}
+
 async function print(c: CommandContext): Promise<number> {
   let payload: unknown = {};
   const text = await readStdin(c.signal);
@@ -111,6 +122,10 @@ async function print(c: CommandContext): Promise<number> {
       const sessionCostUsd = session?.stats.usage?.costUsd;
       const flags = session?.flags;
       const stopped = readIngestStopped(ctx.paths.ingestStopped);
+      // Spend budgets (`budget 82%`), once the highest passes 80%. A budget problem never breaks the line.
+      const budget = await budgetPartOf(ctx.index, c.env, today).catch(() => undefined);
+      const budgetSuffix = budget ? `  ·  ${budget.part}` : "";
+      const budgetField = budget ? { budget: { id: budget.status.budget.id, percent: budget.status.percent, over: budget.status.over } } : {};
       if (c.out.json) {
         c.out.data({
           model: model ?? session?.model ?? null,
@@ -119,9 +134,10 @@ async function print(c: CommandContext): Promise<number> {
           worstFlag: flags ? (worstFailureFlag(flags) ?? null) : null,
           ...ingestStoppedField(stopped),
           ...quotaField,
+          ...budgetField,
         });
       } else {
-        c.out.print(statuslineLine({ model: model ?? session?.model, sessionCostUsd, todayCostUsd, flags, ingestStoppedSince: stopped?.since }) + quotaSuffix);
+        c.out.print(statuslineLine({ model: model ?? session?.model, sessionCostUsd, todayCostUsd, flags, ingestStoppedSince: stopped?.since }) + quotaSuffix + budgetSuffix);
       }
       return 0;
     });

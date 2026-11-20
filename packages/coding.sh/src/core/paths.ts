@@ -66,5 +66,9 @@ export function paths(env: NodeJS.ProcessEnv = process.env) {
     proxyLog: join(root, "proxy.log"),
     /** Agents `init --proxy` routed through the proxy; while it exists, the hook restarts a stopped proxy. */
     proxyInstalls: join(root, "proxy-installs.json"),
+    /** Spend budgets set with `coding.sh budget set` (src/budget). */
+    budgets: join(root, "budgets.json"),
+    /** Week and month spend the status line reuses for up to 60 s (src/budget statuslineStatuses). */
+    budgetSpend: join(root, "budget-spend.json"),
   };
 }

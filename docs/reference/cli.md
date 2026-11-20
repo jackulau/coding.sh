@@ -53,6 +53,7 @@ Every command accepts these.
 | [`blame`](#codingsh-blame) | Explore | git blame with the agent session that wrote each line |
 | [`diff-calls`](#codingsh-diff-calls) | Explore | Show what changed between two model calls, and why the second missed the prompt cache |
 | [`search`](#codingsh-search) | Explore | Full-text search over prompts, replies, tool calls and errors |
+| [`budget`](#codingsh-budget) | Explore | Spend budgets per day, week or month, for every session or one agent or repo |
 | [`usage`](#codingsh-usage) | Explore | Tokens, cost, turns and cache hits by agent, model or day |
 | [`cache`](#codingsh-cache) | Explore | Score prompt-cache health and name what breaks the cached prefix |
 | [`stats`](#codingsh-stats) | Explore | Sessions, failures, cost, tokens and latency per day or week, split by agent, model, repo or flag |
@@ -379,6 +380,7 @@ coding.sh proxy [action] [options]
 | `--openai-upstream <URL>` | `https://api.openai.com` | Where OpenAI calls go ([proxy] openai_upstream) |
 | `--background` |  | Start detached, print the URL once it answers (log: ~/.coding.sh/proxy.log) |
 | `-q, --quiet` |  | No line per call on stderr. |
+| `--enforce-budget` |  | Answer 429 (with Retry-After) instead of calling the API when a budget that applies to the call is over its limit (coding.sh budget) |
 
 ```sh
 coding.sh proxy
@@ -391,6 +393,7 @@ coding.sh proxy --anthropic-upstream https://gateway.example.com/anthropic
 - Streams pass through as they arrive. A failed store write never fails the request.
 - Calls from Claude Code and Codex land in the session their hooks capture; other clients get a proxy-&lt;hash&gt; session per conversation (or send x-coding-sh-session: &lt;id&gt;).
 - Prints the environment to stdout; one line per call goes to stderr.
+- --enforce-budget reads the spend at most every 30 s. It can match a budget for every session or for an agent (claude-code and codex by their headers, every other client as proxy), never one with --repo: the proxy does not know a call's repo. count_tokens and other paths are never blocked. Spend that can't be read lets the call through.
 
 ### `coding.sh proxy status`
 
@@ -796,6 +799,102 @@ coding.sh search migration --where 'agent:codex kind:tool.start'
 - Matches are listed best first. When a search matches more than 20,000 events (a word as common as 'the'), the local store lists them newest first instead.
 - --where applies to each match: event keys (kind, tool, ok, …) to the matching event, session keys (agent, repo, cost, …) to its session. Keys: coding.sh sessions --help.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
+
+## `coding.sh budget`
+
+Spend budgets per day, week or month, for every session or one agent or repo.
+
+```text
+coding.sh budget <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`set`](#codingsh-budget-set) | Add a budget, or change the limit of the one with the same period, agent and repo |
+| [`list`](#codingsh-budget-list) | List the budgets |
+| [`rm`](#codingsh-budget-rm) | Remove a budget |
+| [`status`](#codingsh-budget-status) | Spend against each budget: spend, limit, percent used, over or not, and when the period resets |
+
+```sh
+coding.sh budget set day 20
+coding.sh budget status
+coding.sh proxy --enforce-budget
+```
+
+- Spend is estimated: the cost of the sessions that started in the current period (subagents too), the same total coding.sh usage gives for that window. A session with no reported cost is priced from its tokens.
+- A budget is over once its spend reaches the limit. Budgets are kept in ~/.coding.sh/budgets.json.
+- The status line shows the highest budget once it passes 80% (budget 82%). coding.sh proxy --enforce-budget answers 429 to calls a budget over its limit applies to.
+- With --json, status gives each budget's spendUsd, limitUsd, percent, over, since and resetsAt (ISO times).
+
+### `coding.sh budget set`
+
+Add a budget, or change the limit of the one with the same period, agent and repo.
+
+```text
+coding.sh budget set <PERIOD> <USD> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `period` | yes | day (local calendar day), week (ISO week, from Monday) or month (calendar month) |
+| `usd` | yes | The limit in USD, e.g. 20 or 2.50. |
+
+| Option | Default | Description |
+|---|---|---|
+| `-a, --agent <AGENT>` |  | Only this agent's sessions. |
+| `--repo <PATH|NAME>` |  | Only sessions in this repo: a path (stored absolute; matches at or under it) or a repo name. |
+
+```sh
+coding.sh budget set day 20
+coding.sh budget set week 50 --agent codex
+coding.sh budget set month 200 --repo .
+```
+
+### `coding.sh budget list`
+
+List the budgets.
+
+```text
+coding.sh budget list
+```
+
+```sh
+coding.sh budget list
+coding.sh budget list --json
+```
+
+### `coding.sh budget rm`
+
+Remove a budget.
+
+```text
+coding.sh budget rm <ID>
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `id` | yes | The budget's id (budget list) |
+
+```sh
+coding.sh budget rm week-codex
+```
+
+### `coding.sh budget status`
+
+Spend against each budget: spend, limit, percent used, over or not, and when the period resets.
+
+```text
+coding.sh budget status [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh budget status
+coding.sh budget status --json
+```
 
 ## `coding.sh usage`
 

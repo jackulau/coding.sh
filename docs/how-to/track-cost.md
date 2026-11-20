@@ -178,6 +178,32 @@ opencode     5         89%     979.4k  0       -        1       ~$0.0128
 A break is a model call whose cached prompt prefix was gone, so the prompt was billed again. To
 find the worst sessions: `coding.sh sessions --where 'cache.breaks>0 sort:-cache.cost'`.
 
+## Set a budget
+
+```sh
+coding.sh budget set day 20                  # every session, per local day
+coding.sh budget set week 50 --agent codex   # one agent, per week from Monday
+coding.sh budget set month 200 --repo .      # one repo (a path or a repo name), per calendar month
+coding.sh budget status
+```
+
+Spend is the estimated cost of the sessions that started in the current period, subagents
+included: the same total as `coding.sh usage` over that window, filtered by the budget's agent and
+repo. A session counts in the period it started in.
+
+`budget status` shows spend, limit, percent and when the period resets; `--json` adds `over`. Setting the same period and scope again changes the
+limit. `budget list` and `budget rm <id>` manage them. They are kept in `budgets.json` in the data
+folder.
+
+The [status line](https://coding.sh/docs/agents#status-line) adds `budget 82%` once the highest
+budget passes 80%.
+
+`coding.sh proxy --enforce-budget` answers 429, with a `Retry-After` header in seconds until the
+reset, to a call a budget over its limit applies to. The call never goes upstream. The body is the
+vendor's error shape and names the budget, its limit and its reset. See
+[Log every model call with the proxy](https://coding.sh/docs/how-to/capture-with-proxy#stop-calls-over-a-budget)
+for which budgets it can match.
+
 ## Read the result
 
 | Mark | Means |

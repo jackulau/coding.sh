@@ -378,6 +378,7 @@ export const COMMANDS: CommandSpec[] = [
       { name: "openai-upstream", type: "string", value: "<URL>", desc: "Where OpenAI calls go ([proxy] openai_upstream)", default: "https://api.openai.com" },
       { name: "background", type: "boolean", desc: "Start detached, print the URL once it answers (log: ~/.coding.sh/proxy.log)" },
       { name: "quiet", short: "q", type: "boolean", desc: "No line per call on stderr" },
+      { name: "enforce-budget", type: "boolean", desc: "Answer 429 (with Retry-After) instead of calling the API when a budget that applies to the call is over its limit (coding.sh budget)" },
     ],
     actions: [
       { name: "status", summary: "Show whether a proxy is running, and where (exit 1 when not)", examples: ["coding.sh proxy status"] },
@@ -390,6 +391,7 @@ export const COMMANDS: CommandSpec[] = [
       "Streams pass through as they arrive. A failed store write never fails the request.",
       "Calls from Claude Code and Codex land in the session their hooks capture; other clients get a proxy-<hash> session per conversation (or send x-coding-sh-session: <id>).",
       "Prints the environment to stdout; one line per call goes to stderr.",
+      "--enforce-budget reads the spend at most every 30 s. It can match a budget for every session or for an agent (claude-code and codex by their headers, every other client as proxy), never one with --repo: the proxy does not know a call's repo. count_tokens and other paths are never blocked. Spend that can't be read lets the call through.",
     ],
     load: () => import("./commands/proxy.ts"),
   },
@@ -629,6 +631,37 @@ export const COMMANDS: CommandSpec[] = [
       PENDING_NOTE,
     ],
     load: () => import("./commands/search.ts"),
+  },
+  {
+    name: "budget",
+    group: "Explore",
+    summary: "Spend budgets per day, week or month, for every session or one agent or repo",
+    actions: [
+      {
+        name: "set",
+        summary: "Add a budget, or change the limit of the one with the same period, agent and repo",
+        args: [
+          { name: "period", desc: "day (local calendar day), week (ISO week, from Monday) or month (calendar month)", required: true },
+          { name: "usd", desc: "The limit in USD, e.g. 20 or 2.50", required: true },
+        ],
+        flags: [
+          { name: "agent", short: "a", type: "string", value: "<AGENT>", desc: "Only this agent's sessions" },
+          { name: "repo", type: "string", value: "<PATH|NAME>", desc: "Only sessions in this repo: a path (stored absolute; matches at or under it) or a repo name" },
+        ],
+        examples: ["coding.sh budget set day 20", "coding.sh budget set week 50 --agent codex", "coding.sh budget set month 200 --repo ."],
+      },
+      { name: "list", summary: "List the budgets", examples: ["coding.sh budget list", "coding.sh budget list --json"] },
+      { name: "rm", summary: "Remove a budget", args: [{ name: "id", desc: "The budget's id (budget list)", required: true }], examples: ["coding.sh budget rm week-codex"] },
+      { name: "status", summary: "Spend against each budget: spend, limit, percent used, over or not, and when the period resets", flags: [FRESH], examples: ["coding.sh budget status", "coding.sh budget status --json"] },
+    ],
+    examples: ["coding.sh budget set day 20", "coding.sh budget status", "coding.sh proxy --enforce-budget"],
+    notes: [
+      "Spend is estimated: the cost of the sessions that started in the current period (subagents too), the same total coding.sh usage gives for that window. A session with no reported cost is priced from its tokens.",
+      "A budget is over once its spend reaches the limit. Budgets are kept in ~/.coding.sh/budgets.json.",
+      "The status line shows the highest budget once it passes 80% (budget 82%). coding.sh proxy --enforce-budget answers 429 to calls a budget over its limit applies to.",
+      "With --json, status gives each budget's spendUsd, limitUsd, percent, over, since and resetsAt (ISO times).",
+    ],
+    load: () => import("./commands/budget.ts"),
   },
   {
     name: "usage",
