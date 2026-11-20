@@ -18,13 +18,15 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, appendFileSync, chmodSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseToml } from "./lib/toml.mjs";
-import { CLI, EVALS_CLI, REPO, log, parseArgs, readJsonl, round, shAsync, tempDir, treeHash, wilson } from "./lib/util.mjs";
+import { CLI, EVALS_CLI, REPO, firstErrorLine, log, parseArgs, pathOf, readJsonl, round, shAsync, tempDir, treeHash, wilson } from "./lib/util.mjs";
 import { isMain } from "./lib/main.mjs";
 
-const HERE = dirname(new URL(import.meta.url).pathname);
+// fileURLToPath, not URL.pathname: on Windows the pathname is "/D:/…", which node resolves to no file.
+const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(EVALS_CLI, "fixtures");
-const TAP = join(HERE, "tap.mjs");
+export const TAP = join(HERE, "tap.mjs");
 
 // ---------------------------------------------------------------- loading
 
@@ -154,9 +156,14 @@ export function deepEqual(a, b) {
 const list = (v) => (v === undefined ? [] : Array.isArray(v) ? v : [v]);
 const has = (text, v) => text.toLowerCase().includes(String(v).toLowerCase());
 
-/** Output checks against the final assistant text. Returns { pass, why }. */
-export function checkOutput(c, text) {
-  const t = String(text ?? "");
+/**
+ * Output checks against the final assistant text. Returns { pass, why }. With `slashes`, every
+ * backslash in the text and in the expected strings reads as "/", so a path check holds on Windows.
+ */
+export function checkOutput(c0, text, { slashes = false } = {}) {
+  const fwd = (v) => (typeof v === "string" ? v.replaceAll("\\", "/") : v);
+  const c = slashes ? { ...c0, ...Object.fromEntries(["contains", "set", "absent", "equals"].filter((k) => c0[k] !== undefined).map((k) => [k, Array.isArray(c0[k]) ? c0[k].map(fwd) : fwd(c0[k])])) } : c0;
+  const t = slashes ? fwd(String(text ?? "")) : String(text ?? "");
   const fails = [];
   for (const v of list(c.contains)) if (!has(t, v)) fails.push(`missing ${JSON.stringify(v)}`);
   for (const v of list(c.set)) if (!has(t, v)) fails.push(`missing set member ${JSON.stringify(v)}`);
@@ -175,7 +182,7 @@ export function checkOutput(c, text) {
     if (!nums.some((n) => wants.some((w) => Math.abs(n - w) <= tol))) fails.push(`no number equal to any of ${wants.join(", ")}`);
   }
   if (c.json !== undefined) {
-    const j = firstJson(t);
+    const j = firstJson(String(text ?? ""));
     if (!j.ok) fails.push("no JSON value in output");
     else if (!deepEqual(j.value, c.json)) fails.push(`JSON ${JSON.stringify(j.value)} != ${JSON.stringify(c.json)}`);
   }
@@ -193,9 +200,11 @@ export async function checkState(c, trial) {
   if (c.unchanged === "agent-configs" && configHash(trial) !== trial.configHash) fails.push("agent config files changed");
   if (c.command) {
     const cmd = c.command.replace(/^coding\.sh\b/, `${JSON.stringify(process.execPath)} ${JSON.stringify(trial.cli)}`);
-    const r = await shAsync("bash", ["-c", cmd], { cwd: trial.work, env: trial.targetEnv, timeoutMs: 120_000 });
-    if (r.code !== 0) fails.push(`${c.command} exited ${r.code}: ${r.stderr.slice(0, 300)}`);
-    else {
+    const r = await bash(cmd, trial.root, { cwd: trial.work, env: trial.targetEnv, timeoutMs: 120_000 });
+    if (r.code !== 0) {
+      fails.push(`${c.command} exited ${r.code}: ${r.stderr.slice(0, 300)}`);
+      return { pass: false, why: fails.join("; "), failed: failure("state", c.command, r) };
+    } else {
       let v = r.stdout;
       if (c.jsonPath !== undefined) {
         try {
@@ -213,12 +222,16 @@ export async function checkState(c, trial) {
       if (c.contains !== undefined && !has(typeof v === "string" ? v : JSON.stringify(v ?? ""), c.contains)) fails.push(`output lacks ${JSON.stringify(c.contains)}`);
     }
   }
-  return { pass: fails.length === 0, why: fails.join("; ") };
+  const res = { pass: fails.length === 0, why: fails.join("; ") };
+  if (fails.length && c.command) res.failed = { check: "state", command: c.command };
+  return res;
 }
 
 export async function runChecks(checks, trial, text) {
   const out = [];
-  for (const c of checks) out.push({ kind: c.kind, ...(c.kind === "state" ? await checkState(c, trial) : checkOutput(c, text)) });
+  // Windows tools print C:\x\.claude\settings.json; a check written as .claude/settings.json still matches.
+  const slashes = process.platform === "win32";
+  for (const c of checks) out.push({ kind: c.kind, ...(c.kind === "state" ? await checkState(c, trial) : checkOutput(c, text, { slashes })) });
   return out;
 }
 
@@ -250,12 +263,18 @@ export async function prepareTrial(suite, task, opts) {
   const answersFile = join(root, "hidden", "answers.json");
   const base = { fixtures: FIXTURES, trial: trialDir, cli: opts.cli, seed: opts.seed ?? 1, answersFile, repo: REPO };
   for (const cmd of template(suite.setup?.commands ?? [], base)) {
-    const r = await shAsync("bash", ["-c", cmd], { cwd: root, timeoutMs: 180_000 });
-    if (r.code !== 0) throw new Error(`setup failed (${r.code}): ${cmd}\n${r.stderr.slice(-2000)}`);
+    const r = await bash(cmd, root, { cwd: root, timeoutMs: 180_000 });
+    if (r.code !== 0) throw Object.assign(new Error(`setup failed (${r.code}): ${cmd}\n${r.stderr.slice(-2000)}`), { reason: failure("setup", cmd, r) });
   }
   const answers = JSON.parse(readFileSync(answersFile, "utf8"));
   const vars = { ...base, answers };
-  const resolved = { ...task, instruction: template(task.instruction ?? "", vars).trim(), check: template(task.check, vars), reference: template(task.reference ?? [], vars) };
+  // Reference scripts and state-check commands are bash: their values are shell-escaped (shellVars).
+  const shVars = shellVars(vars);
+  const check = task.check.map((c) => {
+    const t = template(c, vars);
+    return c.command === undefined ? { ...t } : { ...t, command: template(c.command, shVars) };
+  });
+  const resolved = { ...task, instruction: template(task.instruction ?? "", vars).trim(), check, reference: template(task.reference ?? [], shVars) };
   const bin = join(root, "bin");
   mkdirSync(bin, { recursive: true });
   const tapLog = join(root, "tap.jsonl");
@@ -274,19 +293,66 @@ export async function prepareTrial(suite, task, opts) {
     cli: opts.cli,
     answers,
     task: resolved,
-    targetEnv: { ...process.env, ...targetEnv, PATH: `${dirname(process.execPath)}:${process.env.PATH}` },
+    // State checks run bash and the tools a check names (git, grep): this process's PATH, not the fixture's.
+    targetEnv: withPath({ ...process.env, ...targetEnv }, [dirname(process.execPath)], pathOf(process.env)),
   };
   trial.configHash = configHash(trial);
   return trial;
+}
+
+/**
+ * Template values for text bash reads. On Windows every backslash is doubled, so a path such as
+ * C:\Users\x reaches the command intact unquoted, in double quotes, and in a JS string inside single
+ * quotes (`node -e '..."${path}"...'`). Left as is, bash eats the backslashes ("C:Usersx").
+ */
+export function shellVars(vars, platform = process.platform) {
+  if (platform !== "win32") return vars;
+  const esc = (v) => (typeof v === "string" ? v.replaceAll("\\", "\\\\") : Array.isArray(v) ? v.map(esc) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, esc(x)])) : v);
+  return esc(vars);
+}
+
+let scripts = 0;
+/**
+ * Runs a bash script from a file in `dir`, not with `bash -c`. On Windows Node quotes a -c argument
+ * that has spaces, and Git Bash's msys runtime takes one level of backslashes out of it while it
+ * splits the command line: a script's `C:\\x` reached bash as `C:\x`, and bash then read `C:x`.
+ */
+export async function bash(script, dir, opts) {
+  const file = join(dir, `.script-${process.pid}-${++scripts}.sh`);
+  writeFileSync(file, script.endsWith("\n") ? script : `${script}\n`);
+  try {
+    return await shAsync("bash", [file.replaceAll("\\", "/")], opts);
+  } finally {
+    rmSync(file, { force: true });
+  }
+}
+
+/** Why a task is invalid: the check that failed, the command, its exit code and its error line. */
+export function failure(check, command, r) {
+  const out = { check };
+  if (command !== undefined) out.command = String(command).trim().slice(0, 300);
+  if (r) Object.assign(out, { exit: r.code, stderr: firstErrorLine(r.stderr) });
+  return out;
 }
 
 function sq(s) {
   return `'${String(s).replaceAll("'", "'\\''")}'`;
 }
 
-/** PATH for anything acting as the agent: the shim dir first. */
-function agentPath(trial) {
-  return `${trial.bin}:${process.env.PATH}`;
+/**
+ * `env` with `dirs` put first on PATH, joined with the platform's delimiter (";" on Windows). Windows
+ * spells the key "Path" and treats it case-blind, so every spelling is replaced by one PATH key.
+ */
+export function withPath(env, dirs, rest = pathOf(env), platform = process.platform) {
+  const out = { ...env };
+  for (const k of Object.keys(out)) if (k.toUpperCase() === "PATH") delete out[k];
+  out.PATH = (rest ? [...dirs, rest] : dirs).join(platform === "win32" ? ";" : ":");
+  return out;
+}
+
+/** Env for anything acting as the agent: the shim dir first on PATH. */
+function agentEnv(trial, extra = {}) {
+  return withPath({ ...process.env, ...extra }, [trial.bin]);
 }
 
 // ---------------------------------------------------------------- tap metrics
@@ -360,10 +426,11 @@ function pct(xs, p) {
 
 // ---------------------------------------------------------------- validate
 
-async function validateTask(suite, task, opts) {
+export async function validateTask(suite, task, opts) {
   const res = { id: task.id, split: task.split, status: task.status ?? "active", ok: false, noopFails: null, referencePasses: null, leakage: [], errors: [] };
   if (task.loadError) {
     res.errors.push(task.loadError);
+    res.reason = { check: "load", why: task.loadError };
     return res;
   }
   if (task.status === "blocked") {
@@ -372,6 +439,7 @@ async function validateTask(suite, task, opts) {
   }
   if (!task.reference?.length) {
     res.errors.push("no reference solution");
+    res.reason = { check: "reference", why: "no reference solution" };
     return res;
   }
   try {
@@ -381,6 +449,8 @@ async function validateTask(suite, task, opts) {
       const checks = await runChecks(noop.task.check, noop, "");
       res.noopFails = checks.some((c) => !c.pass);
       res.leakage = leakage(noop.task.instruction, noop.task.check);
+      if (!res.noopFails) res.reason = { check: "no-op", why: "every check passes right after setup, before any work" };
+      else if (res.leakage.length) res.reason = { check: "leakage", why: res.leakage[0] };
     } finally {
       if (!opts.keep) rmSync(noop.root, { recursive: true, force: true });
     }
@@ -388,20 +458,33 @@ async function validateTask(suite, task, opts) {
     const ref = await prepareTrial(suite, task, opts);
     try {
       const script = ["set -euo pipefail", ...ref.task.reference].join("\n");
-      const r = await shAsync("bash", ["-c", script], { cwd: ref.work, env: { ...process.env, PATH: agentPath(ref) }, timeoutMs: 300_000 });
+      const r = await bash(script, ref.root, { cwd: ref.work, env: agentEnv(ref), timeoutMs: 300_000 });
       if (r.code !== 0) res.errors.push(`reference exited ${r.code}: ${r.stderr.slice(-800)}`);
       const checks = await runChecks(ref.task.check, ref, r.stdout);
       res.referencePasses = r.code === 0 && checks.every((c) => c.pass);
       if (!res.referencePasses) res.referenceFailures = checks.filter((c) => !c.pass).map((c) => c.why);
+      // The reference's own failure explains the failed checks after it, so it goes first.
+      const bad = checks.find((c) => !c.pass);
+      const refCmd = ref.task.reference.join("\n");
+      if (r.code !== 0) res.reason = failure("reference", refCmd, r);
+      else if (bad) res.reason = { ...(bad.failed ?? { check: bad.kind, command: refCmd.trim().slice(0, 300) }), why: bad.why.slice(0, 300) };
       res.referenceTap = tapMetrics(readJsonl(ref.tapLog), suite.target?.usagePatterns);
     } finally {
       if (!opts.keep) rmSync(ref.root, { recursive: true, force: true });
     }
   } catch (e) {
     res.errors.push(e.message);
+    res.reason = e.reason ?? { check: "error", why: firstErrorLine(e.message) };
   }
   res.ok = res.noopFails === true && res.referencePasses === true && res.leakage.length === 0 && res.errors.length === 0;
   return res;
+}
+
+/** One line for an invalid task's reason: "reference: <command> exited 1: <stderr line>". */
+export function formatReason(r) {
+  if (!r) return "(no reason recorded)";
+  const cmd = r.command ? ` ${r.command.split("\n")[0].slice(0, 120)}` : "";
+  return `${r.check}:${cmd}${r.exit === undefined ? "" : ` exited ${r.exit}`}${r.stderr ? `: ${r.stderr}` : ""}${r.why && r.why !== r.stderr ? ` (${r.why})` : ""}`;
 }
 
 async function pool(items, n, fn) {
@@ -462,7 +545,7 @@ export function driverKeyMissing(driver) {
 
 async function runAgent(driver, trial, budget) {
   const [, agent, model] = driver.split(":");
-  const env = { ...process.env, PATH: agentPath(trial), CODING_SH_DOGFOOD_ROLE: "cli-eval" };
+  const env = agentEnv(trial, { CODING_SH_DOGFOOD_ROLE: "cli-eval" });
   delete env.CLAUDECODE;
   const timeoutMs = budget.wallMs ?? 300_000;
   if (agent === "claude-code") {
@@ -582,7 +665,7 @@ if (isMain(import.meta.url)) {
     if (args.json) process.stdout.write(JSON.stringify(r) + "\n");
     else {
       for (const t of r.tasks) {
-        const state = t.status === "blocked" ? `blocked: ${t.blockedBy}` : t.ok ? "ok" : `INVALID noopFails=${t.noopFails} referencePasses=${t.referencePasses} ${[...t.leakage, ...t.errors, ...(t.referenceFailures ?? [])].join(" | ").slice(0, 600)}`;
+        const state = t.status === "blocked" ? `blocked: ${t.blockedBy}` : t.ok ? "ok" : `INVALID ${formatReason(t.reason)}`;
         process.stdout.write(`${t.split.padEnd(8)} ${t.id.padEnd(26)} ${state}\n`);
       }
       process.stdout.write(`\n${r.counts.validated} valid, ${r.counts.invalid} invalid, ${r.counts.blocked} blocked (dev ${r.counts.dev}, heldout ${r.counts.heldout})\n`);

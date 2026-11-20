@@ -14,13 +14,13 @@
 // needs the 3.6 GB store of bench-where.mjs: `--store <index.db>` reuses one
 // (`bench-where.mjs gen <index.db> --memory`); without it the store is written to the
 // temp dir first, which takes minutes.
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import http from "node:http";
 import net from "node:net";
 import { join, resolve } from "node:path";
 import { benchCollector } from "./bench-collector.mjs";
-import { bootstrapMedianDiff, CLI, DIST, isolatedEnv, log, median, nearestRank, parseArgs, prng, quantile, REPO, round, sh, shAsync, tempDir } from "./lib/util.mjs";
+import { bootstrapMedianDiff, browserEnv, CLI, DIST, findLighthouse, firstErrorLine, isolatedEnv, LIGHTHOUSE_HINT, lighthouseReport, log, median, nearestRank, parseArgs, prng, quantile, REPO, round, runLighthouse, sh, shAsync, tempDir } from "./lib/util.mjs";
 import { isMain } from "./lib/main.mjs";
 
 export const TARGETS = {
@@ -594,13 +594,13 @@ export async function benchProxySession({ cli = CLI, baseline, calls = 1000, com
 
 // ---------------------------------------------------------------- viewer TTI
 
-const CHROME_CANDIDATES = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Chromium.app/Contents/MacOS/Chromium", "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"].filter(Boolean);
-export function findChrome() {
-  return CHROME_CANDIDATES.find((p) => existsSync(p));
+/** Where Chrome lives: CHROME_PATH first, then the default install paths on macOS, Linux and Windows. */
+export function chromeCandidates(env = process.env) {
+  const win = [env.PROGRAMFILES, env["PROGRAMFILES(X86)"], env.LOCALAPPDATA].filter(Boolean).map((d) => join(d, "Google", "Chrome", "Application", "chrome.exe"));
+  return [env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Chromium.app/Contents/MacOS/Chromium", "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser", ...win].filter(Boolean);
 }
-export function findLighthouse() {
-  const r = sh("sh", ["-c", "command -v lighthouse"]);
-  return r.code === 0 ? r.stdout.trim() : undefined;
+export function findChrome(env = process.env) {
+  return chromeCandidates(env).find((p) => existsSync(p));
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -652,10 +652,22 @@ async function cdp(wsUrl) {
  * 2 s quiet window with the session timeline rendered (Lighthouse's definition
  * uses a 5 s quiet window and network quiescence too).
  */
-export async function benchViewer({ cli = CLI, events = 5000, runs = 3 } = {}) {
-  const chrome = findChrome();
-  const lighthouse = findLighthouse();
-  if (!chrome && !lighthouse) return { "perf.viewerTti": null, skipped: "no Chrome and no lighthouse CLI" };
+/** Lighthouse's interactive audit, the median of `runs`. With `port` it attaches to that Chrome. */
+async function lighthouseTti(lighthouse, url, runs, env, events, port) {
+  // Desktop, unthrottled: the viewer is served from localhost, so simulated mobile network and CPU
+  // throttling (Lighthouse's default, about 22 s here) would measure the simulation, not the page.
+  const args = [url, "--only-audits=interactive", "--preset=desktop", "--throttling-method=provided", "--output=json", "--quiet", ...(port ? [`--port=${port}`] : ["--chrome-flags=--headless=new"])];
+  const vals = [];
+  for (let i = 0; i < runs; i++) {
+    const v = lighthouseReport(runLighthouse(lighthouse, args, { env: browserEnv(env), timeout: 300_000 })).audits?.interactive?.numericValue;
+    if (typeof v !== "number") throw new Error("lighthouse report has no interactive audit value");
+    vals.push(v);
+  }
+  return { "perf.viewerTti": Math.round(median(vals)), method: "lighthouse interactive", lighthouse: lighthouse.source, detail: { runs: vals.map(Math.round), events } };
+}
+
+export async function benchViewer({ cli = CLI, events = 5000, runs = 3, chrome = findChrome(), lighthouse = findLighthouse() } = {}) {
+  if (!chrome && !lighthouse) return { "perf.viewerTti": null, skipped: `no Chrome (install Google Chrome or set CHROME_PATH) and no lighthouse CLI (${LIGHTHOUSE_HINT})` };
   const root = tempDir("cs-bench-viewer-");
   let server;
   let browser;
@@ -680,25 +692,31 @@ export async function benchViewer({ cli = CLI, events = 5000, runs = 3 } = {}) {
       const r = await fetch(new URL(`/api/sessions/${encodeURIComponent(corpus.sessions[0])}`, info.url), { headers: { authorization: `Bearer ${token}` } }).catch(() => null);
       return r?.ok && (await r.json()).stats?.events >= corpus.events;
     }, 120_000, "corpus indexed");
-    if (lighthouse) {
-      const vals = [];
-      for (let i = 0; i < runs; i++) {
-        const r = sh(lighthouse, [url, "--only-audits=interactive", "--output=json", "--quiet", "--chrome-flags=--headless=new"], { env });
-        vals.push(JSON.parse(r.stdout).audits.interactive.numericValue);
-      }
-      return { "perf.viewerTti": Math.round(median(vals)), method: "lighthouse interactive", detail: { runs: vals.map(Math.round), events: corpus.events } };
-    }
+    // With no Chrome found here, lighthouse launches its own (chrome-launcher looks further).
+    if (!chrome) return await lighthouseTti(lighthouse, url, runs, env, corpus.events);
     const profile = join(root, "chrome");
     // Chrome will not start as root without --no-sandbox (the desk's WSL runs benches as root).
     const sandbox = process.getuid?.() === 0 ? ["--no-sandbox"] : [];
-    browser = spawn(chrome, ["--headless=new", ...sandbox, "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "--disable-extensions", "--disable-background-networking", "--disable-sync", "--metrics-recording-only", "--mute-audio", "--use-mock-keychain", "--password-store=basic", "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
-    let chromeErr = "";
-    browser.stderr.on("data", (d) => (chromeErr = (chromeErr + d).slice(-2000)));
+    // Chrome's stderr goes to a file: lighthouse runs synchronously below, and a pipe nobody reads can fill.
+    const errLog = join(root, "chrome-stderr.log");
+    const errFd = openSync(errLog, "w");
+    browser = spawn(chrome, ["--headless=new", ...sandbox, "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "--disable-extensions", "--disable-background-networking", "--disable-sync", "--metrics-recording-only", "--mute-audio", "--use-mock-keychain", "--password-store=basic", "about:blank"], { env: browserEnv(env), stdio: ["ignore", "ignore", errFd] });
+    closeSync(errFd);
     const portFile = join(profile, "DevToolsActivePort");
     const portText = await waitFor(() => existsSync(portFile) && readFileSync(portFile, "utf8").trim().split("\n").length >= 2 && readFileSync(portFile, "utf8"), 20_000, "chrome devtools port").catch((e) => {
-      throw new Error(`${e.message}; chrome stderr: ${chromeErr.trim().split("\n").slice(-3).join(" | ") || "(none)"}`);
+      throw new Error(`${e.message}; chrome stderr: ${readFileSync(errLog, "utf8").trim().split("\n").slice(-3).join(" | ") || "(none)"}`);
     });
     const [port, path] = portText.trim().split("\n");
+    // Lighthouse attaches to the Chrome started here (--port), so it and the CDP fallback below
+    // measure the same browser with the same flags.
+    let lighthouseError;
+    if (lighthouse) {
+      try {
+        return await lighthouseTti(lighthouse, url, runs, env, corpus.events, port);
+      } catch (e) {
+        lighthouseError = firstErrorLine(e.message);
+      }
+    }
     const c = await cdp(`ws://127.0.0.1:${port}${path}`);
     const vals = [];
     const detail = [];
@@ -734,10 +752,15 @@ export async function benchViewer({ cli = CLI, events = 5000, runs = 3 } = {}) {
       await c.send("Target.closeTarget", { targetId });
     }
     c.close();
-    return { "perf.viewerTti": Math.round(median(vals)), method: "cdp-proxy (max(DCL, last long task) after a 2 s quiet window; lighthouse not installed)", detail: { runs: detail, events: corpus.events } };
+    const out = { "perf.viewerTti": Math.round(median(vals)), method: `cdp-proxy (max(DCL, last long task) after a 2 s quiet window; ${lighthouse ? "lighthouse failed" : `lighthouse not installed: ${LIGHTHOUSE_HINT}`})` };
+    if (lighthouseError) out.lighthouseError = lighthouseError;
+    out.detail = { runs: detail, events: corpus.events };
+    return out;
   } finally {
     server?.kill("SIGINT");
-    browser?.kill("SIGTERM");
+    // On Windows, killing chrome.exe leaves its renderer and GPU children: end the tree by pid.
+    if (browser?.pid && process.platform === "win32") spawnSync("taskkill", ["/PID", String(browser.pid), "/T", "/F"], { stdio: "ignore" });
+    else browser?.kill("SIGTERM");
     await sleep(300);
     rmSync(root, { recursive: true, force: true, maxRetries: 3 });
   }
@@ -931,7 +954,9 @@ export function benchHarnessAudit({ cli = CLI, baseline, store, n = 7, events, s
   }
 }
 
-export async function runBenches(which = ["hook", "ingest", "help", "viewer"], opts = {}) {
+export async function runBenches(which = ["hook", "ingest", "help", "viewer"], opts0 = {}) {
+  // --dist <dir> points every bench at that build's CLI, not only the ones that take a dist.
+  const opts = opts0.dist && !opts0.cli ? { ...opts0, cli: join(opts0.dist, "cli.mjs") } : opts0;
   const out = {};
   const errors = {};
   const step = async (name, fn) => {

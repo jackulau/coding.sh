@@ -1,7 +1,7 @@
 // Shared helpers for the dogfood scorer. Zero dependencies, Node >= 22.
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -74,6 +74,85 @@ export function shAsync(cmd, args, opts = {}) {
     if (input !== undefined) p.stdin.end(input);
     else p.stdin.end();
   });
+}
+
+/** The stderr line that names the error: the first that reads like one, else the first non-empty line. */
+export function firstErrorLine(stderr) {
+  const lines = String(stderr ?? "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  return (lines.find((l) => /\b(error|fatal|cannot|can't|couldn't|not found|no such|denied|ENOENT|EACCES|EPERM)\b|✗/i.test(l)) ?? lines[0] ?? "").slice(0, 300);
+}
+
+/** The PATH value of `env`, whatever the key's case (Windows spells it "Path"). */
+export function pathOf(env) {
+  return Object.entries(env).find(([k, v]) => k.toUpperCase() === "PATH" && v)?.[1];
+}
+
+/**
+ * Env for Chrome and lighthouse. On Windows, Chrome refuses remote debugging ("requires a
+ * non-default data directory", even with --user-data-dir) when USERPROFILE has no AppData\Local,
+ * as in the temp homes the benches use. Make that folder when it is missing and point LOCALAPPDATA at it.
+ */
+export function browserEnv(env = process.env, platform = process.platform) {
+  const profile = platform === "win32" ? env.USERPROFILE : undefined;
+  if (!profile) return env;
+  const local = join(profile, "AppData", "Local");
+  if (!existsSync(local)) mkdirSync(local, { recursive: true });
+  return { ...env, LOCALAPPDATA: local };
+}
+
+export const LIGHTHOUSE_HINT = "run npm ci at the repo root (apps/site has lighthouse as a devDependency), or put a lighthouse CLI on PATH";
+
+/**
+ * The lighthouse CLI as { cmd, args, shell, source }, or undefined. First the copy npm installed for
+ * the site, run as `node <its cli/index.js>` so no shim is involved; then one on PATH. On Windows an
+ * npm-installed CLI on PATH is a .cmd shim, which spawn starts only through a shell (`shell: true`),
+ * and the extensionless sh shim next to it is not a program Windows can start at all.
+ */
+export function findLighthouse({ env = process.env, platform = process.platform, from = [SITE, REPO] } = {}) {
+  for (const start of from) {
+    for (let d = resolve(start); ; d = dirname(d)) {
+      const pkgPath = join(d, "node_modules", "lighthouse", "package.json");
+      if (existsSync(pkgPath)) {
+        try {
+          const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+          const bin = typeof pkg.bin === "string" ? pkg.bin : pkg.bin?.lighthouse;
+          if (bin && existsSync(join(dirname(pkgPath), bin))) return { cmd: process.execPath, args: [join(dirname(pkgPath), bin)], shell: false, source: `node_modules (lighthouse ${pkg.version})` };
+        } catch {}
+      }
+      if (dirname(d) === d) break;
+    }
+  }
+  const names = platform === "win32" ? ["lighthouse.cmd", "lighthouse.exe"] : ["lighthouse"];
+  for (const dir of (pathOf(env) ?? "").split(platform === "win32" ? ";" : ":").filter(Boolean)) {
+    for (const n of names) {
+      const p = join(dir, n);
+      if (existsSync(p)) return { cmd: p, args: [], shell: n.endsWith(".cmd"), source: p };
+    }
+  }
+  return undefined;
+}
+
+/** Runs lighthouse with `args` (URLs and flags, no quotes): { code, stdout, stderr, error }. */
+export function runLighthouse(lh, args, opts = {}) {
+  if (!lh.shell) return sh(lh.cmd, [...lh.args, ...args], opts);
+  const q = (a) => (/[\s"&|<>^]/.test(a) ? `"${a.replaceAll('"', '""')}"` : a);
+  return sh([lh.cmd, ...lh.args, ...args].map(q).join(" "), [], { ...opts, shell: true });
+}
+
+/**
+ * The report from a lighthouse run. Its stdout counts even on a non-zero exit (on Windows lighthouse
+ * can print the report, then fail to delete Chrome's temp profile and exit 1). A run that printed no
+ * report throws with the exit code and the error line, and names Chrome when Chrome was not found.
+ */
+export function lighthouseReport(r) {
+  try {
+    const rep = JSON.parse(r.stdout);
+    if (rep && typeof rep === "object" && rep.audits) return rep;
+  } catch {}
+  const line = firstErrorLine(r.stderr) || r.error?.code || "no report on stdout";
+  const e = new Error(`lighthouse exited ${r.code}: ${line}`);
+  if (/no chrome installations found|CHROME_PATH/i.test(r.stderr ?? "")) e.missing = "Chrome (install Google Chrome or set CHROME_PATH)";
+  throw e;
 }
 
 export function readJson(path, fallback) {

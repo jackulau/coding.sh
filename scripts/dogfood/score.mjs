@@ -153,6 +153,12 @@ export function agentVersions(env = process.env, run = sh) {
   return { "claude-code": v("claude-code", "claude"), codex: v("codex", "codex") };
 }
 
+/** invalidTasks (ids) and invalidReasons (id → the check that failed, command, exit code, error line). */
+export function invalidSummary(tasks) {
+  const bad = tasks.filter((t) => t.status !== "blocked" && !t.ok);
+  return { invalidTasks: bad.map((t) => t.id), invalidReasons: Object.fromEntries(bad.map((t) => [t.id, t.reason ?? { check: "unknown", why: [...(t.errors ?? []), ...(t.referenceFailures ?? [])].join(" | ").slice(0, 300) || "no reason recorded" }])) };
+}
+
 function lastFull(history) {
   for (let i = history.length - 1; i >= 0; i--) if (history[i].mode === "full") return history[i];
   return undefined;
@@ -239,9 +245,9 @@ export async function score(opts = {}) {
     }
     const lh = await siteLighthouse();
     if (lh.value === null) {
-      put("site.lighthouse", comp(null, { skipped: lh.skipped, group: "site" }));
-      put("site.vitals", comp(null, { skipped: lh.skipped, group: "site" }));
-      notes.push("site.lighthouse and site.vitals skipped: lighthouse CLI not installed");
+      put("site.lighthouse", comp(null, { skipped: lh.skipped, error: lh.error, group: "site" }));
+      put("site.vitals", comp(null, { skipped: lh.skipped, error: lh.error, group: "site" }));
+      notes.push(`site.lighthouse and site.vitals ${lh.skipped ? `skipped: ${lh.skipped}` : `not measured: ${lh.error}`}`);
     } else {
       put("site.lighthouse", comp(lh.value, { categories: lh.categories, met: lh.lighthouseMet, target: SITE_TARGETS.lighthouse, group: "site" }));
       put("site.vitals", comp(lh.vitals.lcpMs, { ...lh.vitals, met: lh.vitalsMet, target: SITE_TARGETS.vitals, unit: "ms LCP", group: "site" }));
@@ -252,7 +258,7 @@ export async function score(opts = {}) {
   let costUsd = 0;
   if (mode === "full") {
     const v = await validate({ concurrency: 8 });
-    put("cli.tasks", comp(v.valid, { unit: "fraction of active tasks whose reference passes, no-op fails, no leakage", ...v.counts, invalidTasks: v.tasks.filter((t) => t.status !== "blocked" && !t.ok).map((t) => t.id), blockedTasks: v.tasks.filter((t) => t.status === "blocked").map((t) => `${t.id}: ${t.blockedBy}`), weight: 0 }));
+    put("cli.tasks", comp(v.valid, { unit: "fraction of active tasks whose reference passes, no-op fails, no leakage", ...v.counts, ...invalidSummary(v.tasks), blockedTasks: v.tasks.filter((t) => t.status === "blocked").map((t) => `${t.id}: ${t.blockedBy}`), weight: 0 }));
     const { suite } = loadSuite();
     const drivers = suite.drivers?.list ?? [];
     const missing = drivers.map((d) => [d, driverKeyMissing(d)]).filter(([, m]) => m);
