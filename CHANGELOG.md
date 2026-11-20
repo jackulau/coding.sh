@@ -40,6 +40,7 @@ grouped by area, with links to the docs for the details.
 - **Storage.** `coding.sh gc` walks the blob folders once instead of twice: the temp files it sweeps are the ones the blob listing passed. On a store of 37,697 blobs, `gc --dry-run` took 5.9 s instead of 9.4 s. It removes the same blobs and temp files. [CLI reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-gc)
 - **Docs.** Command blocks drop their "shell" title bar: the Copy button sits in the block's corner. Blocks with a file name or output keep their title. The star beside the GitHub link is yellow. [Install](https://coding.sh/docs/install)
 - **Serve.** `coding.sh serve --json` no longer has `keys.ingest` and `keys.read`; read the keys from the file `keys.file` names. [Production](https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md)
+- **Checks.** `npm run gate`, and CI's static gate with it, also runs the dogfood scorecard's own tests (`npm run dogfood:test`). Before, no check ran them. [Contributing](https://github.com/jackulau/coding.sh/blob/main/CONTRIBUTING.md)
 
 ### Fixed
 

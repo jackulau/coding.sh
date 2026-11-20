@@ -392,6 +392,7 @@ export function buildSteps(root = ROOT, opts = {}) {
     { ...commands("lint", () => [{ cmd: node, args: ["scripts/lint/slop.mjs", "--strict-allowlist"] }]), static: true, description: "the anti-slop lint" },
     { ...commands("lint-test", () => [{ cmd: "npm", args: ["run", "lint:test"] }]), static: true, description: "tests of the lint, the hooks and the gate" },
     { ...commands("perf-test", () => [{ cmd: "npm", args: ["run", "perf:test"] }]), static: true, description: "tests of the Site perf gate and budgets" },
+    { ...commands("dogfood-test", () => [{ cmd: "npm", args: ["run", "dogfood:test"] }]), static: true, description: "tests of the dogfood scorecard" },
     {
       name: "actionlint",
       static: true,
