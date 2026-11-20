@@ -217,6 +217,11 @@ async function init(c: CommandContext): Promise<number> {
       surf = await measureSurface(target, { name: "base" }, { cwd: root, suiteDir: suite });
     } catch (e) {
       surfaceError = e instanceof Error ? e.message : String(e);
+      // A CLI that isn't installed: write nothing rather than a target with an empty surface.
+      if (target.kind === "cli" && (e as { code?: unknown }).code === "ENOENT") {
+        spin.stop();
+        throw new CliError(surfaceError, { reason: "not_found", next: ["Install it, put it on PATH, or pass its path to --cli"] });
+      }
     } finally {
       spin.stop();
     }

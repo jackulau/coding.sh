@@ -159,6 +159,16 @@ describe("toolevals CLI", () => {
     assert.equal(again.stdout, "");
   });
 
+  it("init --cli with a binary that is not on PATH fails and writes nothing", () => {
+    const h = tmpHome();
+    for (const extra of [["--dry-run"], []]) {
+      const r = cli(h, ["toolevals", "init", "--cli", "no-such-tool-xyz", ...extra]);
+      assert.equal(r.status, 1, r.stdout + r.stderr);
+      assert.match(r.stderr, /no-such-tool-xyz: command not found on PATH/);
+      assert.deepEqual(readdirSync(h.repo), []);
+    }
+  });
+
   it("surface --json emits one document with the crawled help tree", () => {
     const h = tmpHome();
     writeRepo(h);

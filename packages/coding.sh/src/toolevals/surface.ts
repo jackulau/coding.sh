@@ -2,7 +2,9 @@
 // agent has to read to use the target, per variant.
 //   MCP:  JSON.stringify(tools) as delivered after overrides; description bytes
 //         are every `description` string in the tools and their inputSchema.
-//   CLI:  `<bin> --help` crawled to depth 3 (`--help --json` preferred when it parses).
+//   CLI:  `<bin> --help` crawled to depth 3 (`--help --json` preferred when it parses;
+//         a command's own page is skipped when the root JSON already holds its
+//         options and subcommands). An empty crawl throws.
 //   HTTP: the OpenAPI document's bytes when one is given to the agent.
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
@@ -56,17 +58,29 @@ export function parseSubcommands(help: string): string[] {
   return names;
 }
 
+interface HelpJsonCommand {
+  name: string;
+  options?: unknown[];
+  arguments?: unknown[];
+  commands?: { name: string }[];
+}
 interface HelpJson {
-  commands?: { name: string; commands?: { name: string }[] }[];
+  commands?: HelpJsonCommand[];
   command?: { commands?: { name: string }[] };
 }
+
+/** A root `--help --json` entry that already carries the command's own options, arguments or subcommands. */
+const hasDetail = (c: HelpJsonCommand) => [c.options, c.arguments, c.commands].some((x) => Array.isArray(x));
 
 async function crawlCli(t: CliTarget, v: Variant, env: Record<string, string>, cwd: string): Promise<{ items: SurfaceReport["items"]; text: string }> {
   const command = v.command ?? t.command;
   const [file, ...pre] = command;
   if (!file) throw new Error(`target ${t.name}: command is empty`);
+  let rootExit: { code: number | null; notFound: boolean } | undefined;
   const runHelp = async (path: string[], json: boolean) => {
     const r = await execFileTail(file, [...pre, ...path, "--help", ...(json ? ["--json"] : [])], { cwd, env: { ...process.env, ...env, NO_COLOR: "1" }, timeoutMs: 15_000, tailBytes: 1 << 20 });
+    // execFileTail reports a spawn failure (no such binary) as exit 127 plus node's ENOENT message.
+    if (!path.length) rootExit = { code: r.exitCode, notFound: r.exitCode === 127 && /\bENOENT\b/.test(r.stderrTail) };
     return r.exitCode === 0 ? r.stdoutTail || r.stderrTail : "";
   };
   const items: SurfaceReport["items"] = [];
@@ -74,6 +88,12 @@ async function crawlCli(t: CliTarget, v: Variant, env: Record<string, string>, c
   const add = (name: string, page: string) => {
     items.push({ name, bytes: utf8(page), descriptionBytes: utf8(page) });
     pages.push(page);
+  };
+  // An empty crawl is an error, not a 0-byte surface: a missing binary, or a CLI with no help page.
+  const done = () => {
+    if (items.length) return { items, text: pages.join("\n") };
+    if (rootExit?.notFound) throw Object.assign(new Error(`${file}: command not found on PATH`), { code: "ENOENT" });
+    throw new Error(`${t.bin} --help printed nothing (exit ${rootExit?.code ?? "?"})`);
   };
   // Prefer a machine-readable schema (`--help --json`, Vercel guideline).
   const root = await runHelp([], true);
@@ -85,13 +105,16 @@ async function crawlCli(t: CliTarget, v: Variant, env: Record<string, string>, c
   }
   if (tree && (Array.isArray(tree.commands) || tree.command)) {
     add(t.bin, root);
+    // A root entry that already holds the command's options and subcommands
+    // (coding.sh's does) makes the command's own page a repeat: count it once.
     if (t.helpCrawl) {
       for (const c of tree.commands ?? []) {
+        if (hasDetail(c)) continue;
         const page = await runHelp([c.name], true);
         if (page) add(`${t.bin} ${c.name}`, page);
       }
     }
-    return { items, text: pages.join("\n") };
+    return done();
   }
   const seen = new Set<string>();
   const visit = async (path: string[], depth: number) => {
@@ -105,7 +128,7 @@ async function crawlCli(t: CliTarget, v: Variant, env: Record<string, string>, c
     for (const sub of parseSubcommands(page)) if (sub !== "help") await visit([...path, sub], depth + 1);
   };
   await visit([], 1);
-  return { items, text: pages.join("\n") };
+  return done();
 }
 
 export async function measureSurface(

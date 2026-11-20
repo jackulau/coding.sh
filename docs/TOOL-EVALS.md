@@ -58,7 +58,10 @@ helpCrawl = true                         # crawl `--help` of every subcommand fo
 - Surface: `coding.sh toolevals surface <target>` runs `<bin> --help`, parses subcommand names from
   the output, recurses to a depth of 3, and records the bytes of each help page. `helpSurfaceBytes`
   is the sum. If a `--help --json` schema exists (Vercel guideline), it is preferred over parsing
-  text.
+  text. When the root document's commands already carry their options, arguments or
+  subcommands, it is the whole surface and no per-command page is read; otherwise each
+  command's `<bin> <command> --help --json` page is added. A crawl that finds no help page is an
+  error. `toolevals init --cli` with a binary that is not on `PATH` exits 1 and writes nothing.
 
 ### 2.2 MCP server
 
