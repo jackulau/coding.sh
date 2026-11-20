@@ -517,8 +517,13 @@ const PACK_BUSY_TIMEOUT_MS = 5000;
  * process that puts in a loop takes it back at once, so a waiter can lose every try.
  */
 const PACK_WRITE_WAIT_MS = 500;
-/** A reset WAL is truncated to this many bytes, about one auto-checkpoint's worth (PRAGMA journal_size_limit). */
-const PACK_WAL_LIMIT = 4 * 1024 * 1024;
+/**
+ * SQLite checkpoints the pack on its own once its WAL holds this many bytes (PRAGMA
+ * wal_autocheckpoint), not at its default 1000 pages, and a reset WAL is truncated to
+ * this size (PRAGMA journal_size_limit). Each checkpoint fsyncs the pack: a bulk write
+ * of thousands of blobs then pays for a few, not one every 4 MB.
+ */
+const PACK_WAL_LIMIT = 16 * 1024 * 1024;
 /** How long a checkpoint after a bulk write waits for readers. */
 const PACK_CHECKPOINT_WAIT_MS = 2000;
 /** close() barely waits: it runs at the end of every command. */
@@ -563,6 +568,8 @@ class BlobPack {
       db.exec("PRAGMA synchronous = FULL; PRAGMA fullfsync = ON; PRAGMA checkpoint_fullfsync = ON;");
       // Without a limit the WAL keeps its high-water size while another process (the viewer) has the pack open.
       db.exec(`PRAGMA journal_size_limit = ${PACK_WAL_LIMIT}`);
+      const pageSize = Number((db.prepare("PRAGMA page_size").get() as { page_size?: number } | undefined)?.page_size) || 4096;
+      db.exec(`PRAGMA wal_autocheckpoint = ${Math.max(1000, Math.floor(PACK_WAL_LIMIT / pageSize))}`);
       db.exec("CREATE TABLE IF NOT EXISTS blobs (ref BLOB PRIMARY KEY, mtime INTEGER NOT NULL, data BLOB NOT NULL)");
     } catch (e) {
       db.close();

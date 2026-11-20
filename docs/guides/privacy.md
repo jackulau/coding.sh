@@ -151,6 +151,8 @@ Ingest stores a redacted copy either way, and redacts what is left on disk:
 - A short payload inside the day's spool file stays as written until its UTC day has passed and
   ingest has read the whole file. Then ingest redacts it in place, keeping the line's length so
   ingest cursors still hold.
+- Ingest does not open a spool file again when it read the file in one pass and found nothing to
+  redact.
 - With `CODING_SH_DISABLE=1` the hooks write no payload, only the session id, to
   `spool/disabled-sessions`, so ingest and `ingest --backfill` leave that session out.
 - `coding.sh gc` deletes ingested spool files older than 7 days (`[retention] keepSpoolDays`),

@@ -157,7 +157,8 @@ interface Sink {                                          // write-only mirror (
 - A blob whose compressed form is under 4 KiB, such as a hook line's raw payload, is a row of
   `blobs/pack.db` (SQLite, WAL, `synchronous=FULL`); a larger one is a file of its own. A file costs
   a whole disk block, a temp file, a rename and two fsyncs, and most blobs are a few hundred bytes.
-  An ingest checkpoint writes its pack rows in one transaction. One process writes the pack at a
+  An ingest checkpoint writes its pack rows in one transaction. SQLite folds the pack's WAL in
+  (and fsyncs the pack) on its own once the WAL holds 16 MB, not every 4 MB. One process writes the pack at a
   time: a write that waits 500 ms for the lock (other processes putting in a loop) writes its blobs
   as files instead, so contention never fails a put. Reads look in the pack and then for a file, so
   a store written before the pack reads as it did; `coding.sh gc --compact` moves small blob files
@@ -167,7 +168,8 @@ interface Sink {                                          // write-only mirror (
 - `coding.sh gc`: mark-and-sweep of unreferenced blobs, plus retention rules (for example, drop
   file-read blobs older than 90 days while keeping diffs and eval tasks).
 - SQLite settings: `journal_mode=WAL`, `synchronous=NORMAL`, `journal_size_limit` of 64 MB,
-  batched transactions of about 500 events, prepared statements.
+  `wal_autocheckpoint` of 64 MB of pages (SQLite's default of 1000 pages checkpointed after
+  nearly every ingest commit), batched transactions of about 500 events, prepared statements.
 - Search is a contentless FTS5 index over prompt, reply and tool text: each event's text is fed to
   it on insert and not kept a second time, and snippets are cut from the event when a search shows
   it. A working directory is stored once in a `cwds` table, and events point at it.

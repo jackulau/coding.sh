@@ -407,6 +407,23 @@ describe("FsBlobStore pack", () => {
     }
   });
 
+  it("a bulk write of several MB stays in the pack's WAL until checkpoint(): SQLite does not fold it in every 4 MB", async () => {
+    const s = make();
+    await s.put("first");
+    const pack = join(s.root, PACK_FILE);
+    await s.checkpoint();
+    const before = statSync(pack).size;
+    const b = s.batch();
+    for (let i = 0; i < 6000; i++) await b.put(noise(1000));
+    await b.flush();
+    const wal = statSync(`${pack}-wal`).size;
+    assert.ok(wal > 5_000_000, `the bulk write is in the WAL (${wal} bytes)`);
+    assert.equal(statSync(pack).size, before, "no checkpoint ran during the bulk write");
+    await s.checkpoint();
+    assert.ok(statSync(pack).size > before + 5_000_000, "checkpoint() folds it in");
+    assert.equal(statSync(`${pack}-wal`).size, 0);
+  });
+
   it("a put that finds the pack's write lock taken writes a file instead of failing, and compact moves it in", async () => {
     const s = make();
     await s.put("first");
