@@ -43,6 +43,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **MCP.** Following the search tool's `nextCursor` returns every hit once, in the order of `coding.sh search --json`. Before, hits that ranked the same could repeat on one page and never show on any. The session_get summary and the session resource also report failed model calls (`llmErrors`: count, first status and error). [MCP](https://coding.sh/docs/mcp#tools)
 - **Harness.** Ctrl-C stops `harness audit` while it lists files on disk, and it exits 130. Before, the listing held the process until it finished, which took about 50 s on WSL's `/mnt/c`. [CLI reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-harness-audit)
 - **Harness.** `harness snapshot --agent claude-code` stores the files Claude Code's instructions and rules pull in with `@path` imports, such as an imported AGENTS.md, followed up to 5 hops as Claude Code does. It leaves out dot directories under `skills/`, such as Claude Code's `.trash` of deleted skills. [Compare agents](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/compare-agents.md)
 - **Evals.** `--hidden-test` also hides a matching test file that is already in the start tree: the task starts from a snapshot without it, and the verifier gets it at check time. Before, only test files the session changed were hidden, so the agent could read the tests that grade it. [CLI reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-eval-new)
