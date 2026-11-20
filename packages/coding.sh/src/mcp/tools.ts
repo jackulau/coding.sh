@@ -59,8 +59,8 @@ export interface ToolCtx {
 
 // Shared argument descriptions, kept short: every tool definition is sent on every
 // turn, and the schema already carries defaults and bounds (LIMIT's default and maximum).
-const AGENT = { type: "string", description: "Only this agent, e.g. claude-code, codex, cursor, opencode, t3code." };
-const REPO = { type: "string", description: "Only sessions under this path, or in repos with this folder name." };
+const AGENT = { type: "string", description: "Only this agent, e.g. claude-code, codex, cursor." };
+const REPO = { type: "string", description: "Only sessions under this path or repo folder name." };
 const SINCE = (d: string) => ({ type: "string", description: `Window start: 30m, 12h, 7d, today or a local date. Default ${d}.` });
 const UNTIL = { type: "string", description: "Window end. Default now." };
 const LIMIT = (d: number, max: number) => ({ type: "integer", minimum: 1, maximum: max, default: d, description: "Max rows." });
@@ -73,7 +73,7 @@ const WHERE = {
     "Filter query: key:value clauses ANDed; OR, ( ), - negates; a,b either; * wildcard; > >= < <= and a..b on numbers; bare words search text. Keys: agent model repo branch title flag skill cost tokens duration turns tools tool.errors since until has:tests|cost|error is:root|child|flagged; event keys tool kind ok mcp error. E.g. model:claude-* cost>0.5 tool:Bash ok:false",
 };
 const WHERE_SAME = (what: string) => ({ type: "string", description: `Filter query, same language as sessions_list where${what}.` });
-const SESSION_ID = { type: "string", minLength: 1, description: 'Session id, or "latest" for the newest top-level session.' };
+const SESSION_ID = { type: "string", minLength: 1, description: 'Session id, or "latest" (newest top-level).' };
 
 const input = (properties: Obj, required: string[] = []): Obj => ({ type: "object", properties, ...(required.length ? { required } : {}), additionalProperties: false });
 const out = (properties: Obj, required: string[] = []): Obj => ({ type: "object", properties, ...(required.length ? { required } : {}) });
