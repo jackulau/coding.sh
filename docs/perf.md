@@ -162,6 +162,11 @@ page has its own blocking-time budget on the slow phone. The rules are in
 [scripts/perf/gate.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/gate.mjs), with tests in `scripts/perf/test`
 (`npm run perf:test`, which `npm run gate` runs).
 
+Site perf builds both versions with a star count in the nav, as the deployed site shows one. After
+its site build, `npm run gate` checks each page's HTML against these budgets with no browser
+(`scripts/perf/html-budget.mjs`). It compresses each page as the perf server does, so its counts
+match Site perf's, and a page over its HTML budget fails before the pull request.
+
 | Where | What runs |
 |---|---|
 | Pull requests | GitHub's hosted runners, one job per page. Load-time budgets are skipped: they only hold on our own machine. |

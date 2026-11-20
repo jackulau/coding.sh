@@ -161,10 +161,18 @@ test("the lint step runs the allowlist check and the site step requires the dist
 test("the site step builds, checks and budgets the site with the star count CI uses", () => {
   const site = buildSteps(REPO).find((s) => s.name === "site");
   const list = site.list({});
-  assert.deepEqual(list.map((c) => `${c.cwd} ${c.args.join(" ")}`), ["apps/site run build", "apps/site run check", "apps/site run perf:budget"]);
-  // ci.yml's site job sets the same count for the whole job.
-  const ci = readFileSync(join(REPO, ".github/workflows/ci.yml"), "utf8");
-  for (const c of list) assert.ok(ci.includes(`SITE_GITHUB_STARS: "${c.env.SITE_GITHUB_STARS}"`), `${c.args.join(" ")} builds with CI's star count`);
+  assert.deepEqual(list.map((c) => `${c.cwd ?? "."} ${c.args.join(" ")}`), [
+    "apps/site run build",
+    "apps/site run check",
+    "apps/site run perf:budget",
+    ". --no-warnings scripts/perf/html-budget.mjs",
+  ]);
+  // ci.yml's site job and Site perf build with the same count, so one build here stands for both.
+  const stars = list[0].env.SITE_GITHUB_STARS;
+  for (const c of list.filter((c) => c.cwd === "apps/site")) assert.equal(c.env.SITE_GITHUB_STARS, stars, `${c.args.join(" ")} uses the build's star count`);
+  for (const wf of ["ci.yml", "site-perf.yml"]) {
+    assert.ok(readFileSync(join(REPO, ".github/workflows", wf), "utf8").includes(`SITE_GITHUB_STARS: "${stars}"`), `${wf} builds with the gate's star count`);
+  }
 });
 
 // ---------------------------------------------------------------- store plugins

@@ -439,12 +439,14 @@ export function buildSteps(root = ROOT, opts = {}) {
     {
       ...commands(
         "site",
-        // As CI's site job runs it (ci.yml): the nav built with a fixed star count, then the perf
-        // budget, so a page over its budget fails here before it fails the pull request.
+        // As CI runs them: the site built with the star count of ci.yml's site job, which Site perf
+        // builds with too, then the site's perf budget and Site perf's HTML budgets, so a page over
+        // either budget fails here before it fails the pull request.
         () => [
           { cmd: "npm", args: ["run", "build"], cwd: "apps/site", env: SITE_ENV },
           { cmd: "npm", args: ["run", "check"], cwd: "apps/site", env: { ...SITE_ENV, CODING_SH_REQUIRE_DIST: "1" } },
           { cmd: "npm", args: ["run", "perf:budget"], cwd: "apps/site", env: SITE_ENV },
+          { cmd: node, args: ["--no-warnings", "scripts/perf/html-budget.mjs"] },
         ],
         {
           // The dist tests skip without a build; a skip here means a check did not run.
@@ -454,7 +456,7 @@ export function buildSteps(root = ROOT, opts = {}) {
           },
         },
       ),
-      description: "site build, astro check and its tests (none may skip), and the perf budget",
+      description: "site build, astro check and its tests (none may skip), the perf budget and Site perf's HTML budgets",
     },
     { name: "secret-scan", static: true, description: "vendor-shaped secrets in built output", run: async (ctx) => secretScan(root, { static: ctx.static }) },
     { name: "adapter-versions", description: "parseVersion and SESSION_FOLD_VERSION bumps (warns)", run: async () => adapterVersions(root, { env }) },

@@ -44,7 +44,7 @@ grouped by area, with links to the docs for the details.
 - **Capture.** Ingest no longer rewrites a past day's spool file with nothing to redact, and SQLite folds the WAL into the index every 64 MB and into the blob pack every 16 MB, not every 4 MB. Dogfood ingest went from 3,388 to 4,165 events/s (+778, 95% CI +83 to +1,437). The stored sessions are the same. [Architecture](https://github.com/jackulau/coding.sh/blob/main/docs/design/architecture.md#storage)
 - **Serve.** `coding.sh serve --json` no longer has `keys.ingest` and `keys.read`; read the keys from the file `keys.file` names. [Production](https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md)
 - **Checks.** `npm run gate`, and CI's static gate with it, also runs the dogfood scorecard's own tests (`npm run dogfood:test`). Before, no check ran them. [Contributing](https://github.com/jackulau/coding.sh/blob/main/CONTRIBUTING.md)
-- **Checks.** `npm run gate`'s site step runs the site's perf budget and builds the site with the star count CI uses. Before, a page over its budget passed the gate and failed only in CI. [Performance](https://github.com/jackulau/coding.sh/blob/main/docs/perf.md)
+- **Checks.** `npm run gate`'s site step builds the site with the star count CI uses, then runs the site's perf budget and checks each page's HTML against Site perf's budgets. Before, a page over either budget passed the gate and failed only in CI. Site perf now builds with the same star count. [Performance](https://github.com/jackulau/coding.sh/blob/main/docs/perf.md)
 
 ### Fixed
 
