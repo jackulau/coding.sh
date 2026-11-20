@@ -129,6 +129,14 @@ session that never ends has one ([Forward and sinks](https://coding.sh/docs/prod
 Local ingest sends it again when a transcript import adds events to a session without ending it,
 so the span has the session's totals.
 
+With `mode = "full"`, each `execute_tool` span carries the call's input in
+`gen_ai.tool.call.arguments` and its output in `gen_ai.tool.call.result`, as stored (redacted). In
+`metadata` mode neither attribute is sent.
+
+An object or array of 8192 characters or less as JSON goes out as a structured value (`kvlistValue`
+or `arrayValue`). A string, a larger value, or one with a `null` inside a list or nesting past eight
+levels goes out as text, cut at 8192 characters.
+
 ## `[prices]`
 
 One `[prices."<model>"]` table per model, with prices in USD per million tokens. Ingest and

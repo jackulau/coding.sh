@@ -24,6 +24,7 @@ grouped by area, with links to the docs for the details.
 
 ### Changed
 
+- **OTel.** With `mode = "full"`, the `otlp` sink sends a tool call's arguments and result as structured OTLP values (`kvlistValue`, `arrayValue`) when they are an object or array of 8192 characters or less as JSON, so OTLP backends show their fields. Larger values and plain strings are still sent as text cut at 8192 characters. [Config](https://coding.sh/docs/config#sinks)
 - **Viewer.** A code block's language label sits in the block's top-right corner instead of on a loose line above it, and Chat no longer opens with a "1 step" line when the only step before the first prompt is the session starting. [Concepts](https://coding.sh/docs/concepts#turn)
 - **Viewer.** On a phone, a session's Pass and Fail buttons and its eval command wait under "More details" with the other facts, so the steps start higher on the first screen. `p` and `f` still label the session. [Concepts](https://coding.sh/docs/concepts#session)
 - **Viewer.** In a session's Chat view, `}` and `{` bring the next or previous prompt to the top and `j` and `k` the next or previous message, and the hint bar lists them. Before, every step key did nothing there. [Concepts](https://coding.sh/docs/concepts#turn)
