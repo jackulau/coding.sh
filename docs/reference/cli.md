@@ -59,6 +59,7 @@ Every command accepts these.
 | [`export`](#codingsh-export) | Explore | Stream sessions, events or labels as JSONL or CSV, or write raw traces to a directory |
 | [`ui`](#codingsh-ui) | Explore | Open the local session viewer |
 | [`mcp`](#codingsh-mcp) | Explore | Serve captured sessions to agents over MCP (stdio) |
+| [`work`](#codingsh-work) | Explore | What needs you across every agent's sessions: blocked, failed, stalled, your turn, ready for review |
 | [`eval`](#codingsh-eval) | Evaluate | Build eval suites from sessions, skills or cases, and run them |
 | [`dataset`](#codingsh-dataset) | Evaluate | Manage versioned datasets of cases |
 | [`exp`](#codingsh-exp) | Evaluate | Run a task over a dataset, compare experiments and sweep configs |
@@ -964,6 +965,108 @@ coding.sh mcp
 - Agents start this themselves once coding.sh init has registered it.
 - stdout carries MCP frames only.
 - Tool calls ingest pending captures for up to 1.5 s (CODING_SH_READ_BUDGET_MS), then answer from what is indexed with a pending: {files, indexing} field.
+
+## `coding.sh work`
+
+What needs you across every agent's sessions: blocked, failed, stalled, your turn, ready for review.
+
+```text
+coding.sh work [action] [options]
+```
+
+| Action | What it does |
+|---|---|
+| [`show`](#codingsh-work-show) | What one item is doing, what it waits on, its files and child sessions, and the next step |
+| [`ack`](#codingsh-work-ack) | Acknowledge an item's current cause: it leaves the queue until something new happens |
+| [`snooze`](#codingsh-work-snooze) | Hide an item for a while; it comes back sooner if it moves to a more urgent bucket |
+
+| Option | Default | Description |
+|---|---|---|
+| `--all` |  | Also list hidden items: running, done, acknowledged or snoozed. |
+| `-r, --repo <PATH>` |  | Only items whose root session ran under this directory, or in a repo with this name (default: every repo) |
+| `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
+| `--since <WHEN>` | `7d` | Only items with a session started at or after this time: 7d, 12h, 30m, today, yesterday or a date. |
+| `-n, --limit <N>` | `20` | Maximum rows. |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh work
+coding.sh work --agent claude-code --since 24h
+coding.sh work --repo . --json
+coding.sh work show w3f9a1c
+coding.sh work ack w3f9a1c
+```
+
+- A work item is a root session plus every session linked to it by parent (subagents, forks, workflow agents). A session a harness or a host such as T3 Code starts is its own item, and its row names the item that started it. An item's id is w plus 6 hex characters of a hash of its root session id, so it stays the same between reads.
+- Items go in this order: blocked on you (a permission prompt, a question or a plan waits), failed (ended on API errors or failing tests), stalled (no end and quiet for 15 minutes or more), your turn (an interactive session whose turn ended), ready for review (ended with file changes). A wait or stall older than 12 hours is marked probably closed. Items with nothing to act on (running, done, acknowledged or snoozed) are hidden; --all lists them. A session whose end is only its last event (one read from its transcript, or an OpenTelemetry or SDK conversation) counts as running for 15 minutes after that event.
+- Only Claude Code and Gemini CLI hooks report permission prompts. Waits in other agents show as stalled, and the header names those agents; in a T3 Code thread the agent the thread runs counts. Your turn needs the launch mode, which Claude Code and Codex record.
+- ack hides the item's current cause only: a new prompt, failure or change brings it back. Acks and snoozes are kept in work.json in the coding.sh home. coding.sh status counts the items per bucket, and the statusline shows N need you for items blocked on you or failed.
+- With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
+
+### `coding.sh work show`
+
+What one item is doing, what it waits on, its files and child sessions, and the next step.
+
+```text
+coding.sh work show <ID> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `id` | yes | Work item id (w + 6 hex characters), or a session id in the item. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--since <WHEN>` | `7d` | Look the id up among sessions started at or after this time. |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh work show w3f9a1c
+coding.sh work show w3f9a1c --json
+```
+
+### `coding.sh work ack`
+
+Acknowledge an item's current cause: it leaves the queue until something new happens.
+
+```text
+coding.sh work ack <ID> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `id` | yes | Work item id, or a session id in the item. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--since <WHEN>` | `7d` | Look the id up among sessions started at or after this time. |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh work ack w3f9a1c
+```
+
+### `coding.sh work snooze`
+
+Hide an item for a while; it comes back sooner if it moves to a more urgent bucket.
+
+```text
+coding.sh work snooze <ID> <DURATION> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `id` | yes | Work item id, or a session id in the item. |
+| `duration` | yes | How long: 30m, 2h, 1d, 2w. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--since <WHEN>` | `7d` | Look the id up among sessions started at or after this time. |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh work snooze w3f9a1c 2h
+```
 
 ## `coding.sh eval`
 

@@ -92,6 +92,32 @@ describe("buildSession", () => {
     assert.deepEqual(s.flags, []);
   });
 
+  it("marks an end taken from a transcript's last event as inferred, and a session.end as real", () => {
+    const transcript = buildSession([ev("user.message", { text: "a" }, { source: "transcript" }), ev("assistant.message", { text: "b" }, { source: "transcript" })]);
+    assert.equal(transcript.endedAt, transcript.startedAt + 10);
+    assert.equal(transcript.stats.endInferred, true);
+    const ended = buildSession([ev("user.message", { text: "a" }), ev("session.end")]);
+    assert.notEqual(ended.endedAt, undefined);
+    assert.equal(ended.stats.endInferred, undefined);
+    assert.equal("endInferred" in buildSession([ev("user.message", { text: "a" })]).stats, false, "absent when there is no end");
+  });
+
+  it("gives no end to a transcript that stops on an open tool call, even after its quiet marker", () => {
+    const tr = { source: "transcript" } as const;
+    const start = () => [ev("user.message", { text: "a" }, tr), ev("tool.start", { tool: "Write", toolUseId: "w1" }, tr)];
+    const open = buildSession(start());
+    assert.equal(open.endedAt, undefined, "an unanswered call is not an end");
+    assert.equal("endInferred" in open.stats, false);
+    const quiet = buildSession([...start(), ev("session.end", { reason: "idle" }, tr)]);
+    assert.equal(quiet.endedAt, undefined, "a transcript's quiet marker is not an end while a call is open");
+    const answered = buildSession([...start(), ev("tool.end", { tool: "Write", toolUseId: "w1", ok: true }, tr), ev("session.end", { reason: "idle" }, tr)]);
+    assert.notEqual(answered.endedAt, undefined);
+    const inferred = buildSession([...start(), ev("tool.end", { tool: "Write", toolUseId: "w1", ok: true }, tr)]);
+    assert.equal(inferred.stats.endInferred, true);
+    const real = buildSession([ev("user.message", { text: "a" }), ev("tool.start", { tool: "Write", toolUseId: "w2" }), ev("session.end", { reason: "exit" })]);
+    assert.notEqual(real.endedAt, undefined, "a real session.end ends it");
+  });
+
   it("counts turns from prompts when there is no turn.end, and keeps prev-only fields", () => {
     const s = buildSession([ev("user.message", { text: "a" }), ev("user.message", { text: "b" })], {
       id: "s", agent: "codex", startedAt: 0, stats: { events: 0, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 }, flags: [], endSnapshot: "kept", parent: { sessionId: "p" },
@@ -577,5 +603,19 @@ describe("a session captured over OTLP logs and from its transcript", () => {
 
   it("counts the logs' calls when only they arrive", () => {
     assert.deepEqual(totals(logs), { input: 300, output: 20, calls: 2, models: totals(transcript).models });
+  });
+});
+
+describe("stats.waiting (core/waiting.ts)", () => {
+  it("is set while a Claude Code permission prompt is open, and absent once the call ends or nothing waits", () => {
+    const o = { agent: "claude-code" as const };
+    const head = [ev("session.start", {}, o), ev("user.message", { text: "publish it" }, o)];
+    const start = ev("tool.start", { tool: "Bash", toolUseId: "w1", input: { command: "npm publish" } }, o);
+    const prompt = ev("notification", { type: "permission_prompt", text: "Claude needs your permission to use Bash" }, o);
+    const s = buildSession([...head, start, prompt]);
+    assert.deepEqual(s.stats.waiting, { kind: "permission", at: prompt.ts, toolUseId: "w1", text: "Claude needs your permission to use Bash" });
+    const done = buildSession([...head, start, prompt, ev("tool.end", { tool: "Bash", toolUseId: "w1", ok: true }, o)]);
+    assert.equal("waiting" in done.stats, false);
+    assert.equal("waiting" in buildSession([ev("user.message", { text: "hi" }), ev("turn.end")]).stats, false, "a turn end waits only in a session launched interactively");
   });
 });
