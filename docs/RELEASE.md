@@ -208,6 +208,12 @@ serves `coding.sh` and `www.coding.sh`. `.github/workflows/site.yml` deploys it 
 `main` that touches the site, `docs/`, the CLI reference sources, the schema, the SDK, `install.sh`
 or `CHANGELOG.md`. It runs on the self-hosted desk runner.
 
+The Worker (`apps/site/worker/index.ts`) runs first on pages and text, for redirects, statuses and
+headers. The files a page loads (`/_astro/*`, search, social cards, icons) skip it, as
+`run_worker_first` lists. On the Workers free plan, each request the Worker runs on counts toward
+100,000 a day; past that, those paths answer 429 (Error 1027) until midnight UTC. Asset requests
+do not count.
+
 The workflow deploys only when the `CLOUDFLARE_API_TOKEN` secret is set (and
 `CLOUDFLARE_ACCOUNT_ID` names the account). Without it the run builds and checks the site, then
 writes a "Site not deployed" warning and a summary, and https://coding.sh keeps serving the
