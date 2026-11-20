@@ -21,13 +21,16 @@
 //   node scripts/e2e/claude-transcript-capture.mjs --out <dir> [--keep]
 //
 // Needs network for npm. Never touches the real HOME. Exit 0 when a transcript was written.
-import { execFileSync, spawn } from "node:child_process";
+// On Windows npm and claude are .cmd shims: they run through coding.sh's portable spawn, the
+// npm global bin is the prefix itself, and USERPROFILE/APPDATA point into the throwaway home.
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
+import { execFileSync, spawn } from "../../packages/coding.sh/src/core/spawn.ts";
 import { startStub, toolNames } from "./stub-model.mjs";
 
 const PKG = "@anthropic-ai/claude-code@2.1.319";
+const isWin = process.platform === "win32";
 const MODEL = "claude-sonnet-4-5";
 
 const args = process.argv.slice(2);
@@ -38,6 +41,8 @@ if (!outDir) throw new Error("--out <dir> is required");
 const root = mkdtempSync(join(tmpdir(), "csh-cc-capture-"));
 const home = join(root, "home");
 const prefix = join(root, "npm-global");
+// npm -g puts command shims in <prefix>/bin on POSIX and in <prefix> itself on Windows.
+const binDir = isWin ? prefix : join(prefix, "bin");
 const project = join(root, "demo");
 const write = (path, text) => {
   mkdirSync(join(path, ".."), { recursive: true });
@@ -100,9 +105,13 @@ function decide(body) {
 const stub = await startStub({ decide });
 const env = {};
 for (const [k, v] of Object.entries(process.env)) if (!/^(XDG_|CLAUDE|ANTHROPIC|OPENAI|CODEX|CODING_SH|npm_config_|NPM_CONFIG_)/i.test(k)) env[k] = v;
+// Windows spells it Path; a second PATH key would leave which one wins to chance.
+const pathKey = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
 Object.assign(env, {
   HOME: home,
-  PATH: [join(prefix, "bin"), env.PATH].join(delimiter),
+  // Node (and so Claude Code) takes the home directory from USERPROFILE on Windows.
+  USERPROFILE: home,
+  [pathKey]: [binDir, env[pathKey]].filter(Boolean).join(delimiter),
   npm_config_prefix: prefix,
   npm_config_fund: "false",
   npm_config_audit: "false",
@@ -116,11 +125,17 @@ Object.assign(env, {
   DISABLE_TELEMETRY: "1",
   ...(process.getuid?.() === 0 ? { IS_SANDBOX: "1" } : {}),
 });
+if (isWin) {
+  env.APPDATA = join(home, "AppData", "Roaming");
+  env.LOCALAPPDATA = join(home, "AppData", "Local");
+  mkdirSync(env.APPDATA, { recursive: true });
+  mkdirSync(env.LOCALAPPDATA, { recursive: true });
+}
 if (process.env.npm_config_cache) env.npm_config_cache = process.env.npm_config_cache;
 
 try {
   execFileSync("npm", ["install", "-g", "--no-fund", "--no-audit", PKG], { env, cwd: root, stdio: "inherit" });
-  console.error(`claude ${execFileSync("claude", ["--version"], { env, cwd: project }).toString().trim()}`);
+  console.error(`claude ${execFileSync("claude", ["--version"], { env, cwd: project }).trim()}`);
   // Async: the stub answers from this process, so a sync spawn would deadlock it. Three prompts in one
   // process (stream-json input): the task, /compact (which restores the invoked skill), one more check.
   await new Promise((done, fail) => {
@@ -149,19 +164,27 @@ try {
   const projects = join(home, ".claude", "projects");
   mkdirSync(outDir, { recursive: true });
   const dropped = (line) => /^\{"type":"api-request/.test(line) || line.includes('"type":"prompt_snapshot"');
-  const scrub = (s) =>
-    s
+  // Each temp path as written, as JSON escapes it once and twice (tool input quoted inside a
+  // message: a Windows path's backslashes doubled, then doubled again) and with forward slashes;
+  // then on Windows the separators left inside a scrubbed path (two or four backslashes: a lone
+  // one starts an escape such as \n) become forward slashes.
+  const esc = (s) => JSON.stringify(s).slice(1, -1);
+  const forms = (path) => [...new Set([esc(esc(path)), esc(path), path, path.replaceAll("\\", "/")])];
+  const swaps = [
+    ...forms(project).map((f) => [f, "/work/demo"]),
+    [project.replace(/[^A-Za-z0-9]/g, "-"), "-work-demo"],
+    ...forms(home).map((f) => [f, "/home/user"]),
+    ...forms(root).map((f) => [f, "/tmp/capture"]),
+  ];
+  const posixTail = (s) => s.replace(/(\/work\/demo|\/home\/user|\/tmp\/capture)((?:(?:\\\\){1,2}[^"\\\s]+)+)/g, (_, head, tail) => head + tail.replace(/(?:\\\\){1,2}/g, "/"));
+  const scrub = (s) => {
+    const kept = s
       .split("\n")
       .filter((l) => !dropped(l))
-      .join("\n")
-      .split(project)
-      .join("/work/demo")
-      .split(project.replace(/[^A-Za-z0-9]/g, "-"))
-      .join("-work-demo")
-      .split(home)
-      .join("/home/user")
-      .split(root)
-      .join("/tmp/capture");
+      .join("\n");
+    const out = swaps.reduce((text, [from, to]) => text.split(from).join(to), kept);
+    return isWin ? posixTail(out) : out;
+  };
   let n = 0;
   for (const slug of readdirSync(projects)) {
     for (const f of readdirSync(join(projects, slug), { recursive: true })) {
