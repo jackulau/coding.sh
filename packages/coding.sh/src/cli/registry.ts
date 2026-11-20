@@ -272,6 +272,31 @@ export const COMMANDS: CommandSpec[] = [
     load: () => import("./commands/statusline.ts"),
   },
   {
+    name: "quota",
+    group: "Capture",
+    summary: "Plan usage for the 5-hour and weekly windows, per agent, or wait for room",
+    actionOptional: true,
+    actions: [
+      {
+        name: "wait",
+        summary: "Block until a window resets or its use drops below a threshold",
+        flags: [
+          { name: "agent", type: "string", value: "<AGENT>", choices: ["claude-code", "codex"], desc: "Only this agent's windows" },
+          { name: "window", type: "string", value: "<WINDOW>", choices: ["5h", "7d"], desc: "Only this window" },
+          { name: "below", type: "number", value: "<PERCENT>", desc: "Room is back when use is under this percent", default: "90" },
+        ],
+        examples: ["coding.sh quota wait", "coding.sh quota wait --agent codex --window 5h --below 80"],
+      },
+    ],
+    notes: [
+      "With no subcommand it prints one row per agent and window: the percent used, when the window resets and how old the reading is.",
+      "Claude Code's reading is the one the coding.sh status line saved from the rate_limits Claude Code sends it (Pro, Max and Ultra plans; install it with coding.sh statusline install). Codex's is the last token_count event in its newest rollout under CODEX_HOME/sessions (only the last 256 KB is read).",
+      "wait reads again at most once a minute and prints what it waits for on stderr. With several windows it waits until each has room. It exits 0 when there is room, 1 when there is no reading, 2 on a usage error and 130 on Ctrl-C.",
+    ],
+    examples: ["coding.sh quota", "coding.sh quota --json", "coding.sh quota wait --window 5h"],
+    load: () => import("./commands/quota.ts"),
+  },
+  {
     name: "ingest",
     group: "Capture",
     summary: "Move captured hook events from the spool into the index",

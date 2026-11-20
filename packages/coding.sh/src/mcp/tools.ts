@@ -1361,7 +1361,7 @@ function toolDefs(): ToolDef<ToolCtx>[] {
       name: "status",
       title: "coding.sh status",
       description:
-        "Health of coding.sh itself: version and whether an update is available, data dir, sessions captured in the last 24h and per-agent last capture, pending spool and the last capture error. Use when data looks missing or stale.",
+        "Health of coding.sh: version and update, data dir, sessions in the last 24h and last capture per agent, pending spool, last capture error, 5h and weekly plan usage. Use when data looks missing or stale.",
       inputSchema: input({}),
       outputSchema: out(
         {
@@ -1373,6 +1373,8 @@ function toolDefs(): ToolDef<ToolCtx>[] {
           latest: SESSION_OUT,
           lastError: out({ error: S }),
           hints: arr(S),
+          // Plan usage, as `coding.sh quota --json` prints it (resetsAt, readAt, ageSeconds and missing too).
+          quota: out({ windows: arr(out({ agent: S, window: S, usedPercent: N })) }),
         },
         ["version", "update", "home", "last24h"],
       ),
@@ -1395,6 +1397,8 @@ function toolDefs(): ToolDef<ToolCtx>[] {
         if (update.available) hints.push(`coding.sh ${update.latest} is available (running ${update.current}). Tell the user; update with: ${update.install ?? "coding.sh update"}`);
         if (!latest) hints.push(noSessionsHint(ctx.env));
         else if (!day.sessions.length) hints.push("No sessions in the last 24h: if agents ran, check hooks with `coding.sh doctor`.");
+        const [{ quotaJson, quotaReport }, { codexHome }] = await Promise.all([import("../quota/index.ts"), import("../adapters/codex.ts")]);
+        const quota = quotaJson(quotaReport({ claudeFile: ctx.paths.quota, codexHome: codexHome(ctx.env) }), now);
         return {
           version: version(),
           update,
@@ -1406,6 +1410,7 @@ function toolDefs(): ToolDef<ToolCtx>[] {
           spool,
           lastError,
           hints,
+          quota,
         };
       },
     },

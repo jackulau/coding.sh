@@ -18,6 +18,7 @@ import {
 import { forgetInstall, installRecord, recordInstall, sha256 } from "../../adapters/_shared/installs.ts";
 import { ingestStoppedField, ingestStoppedJson, readIngestStopped } from "../../core/ingest-health.ts";
 import { paths } from "../../core/paths.ts";
+import { claudeRateLimits, quotaPart, saveClaudeQuota } from "../../quota/index.ts";
 import { withContext } from "../common.ts";
 import { CliError } from "../output.ts";
 import { ingestStoppedPart, statuslineLine, worstFailureFlag } from "../statusline.ts";
@@ -91,6 +92,15 @@ async function print(c: CommandContext): Promise<number> {
   }
   const sid = isObject(payload) && typeof payload.session_id === "string" ? payload.session_id : undefined;
   const model = stdinModel(payload);
+  // Plan usage (`5h 62% 7d 41%`), when this Claude Code sends rate_limits; saved for `coding.sh quota`.
+  const quota = claudeRateLimits(payload);
+  const quotaSuffix = quota.length ? `  ·  ${quotaPart(quota)}` : "";
+  const quotaField = quota.length ? { quota: quota.map((w) => ({ window: w.window, usedPercent: w.usedPercent, resetsAt: w.resetsAt === undefined ? null : new Date(w.resetsAt).toISOString() })) } : {};
+  try {
+    saveClaudeQuota(paths(c.env).quota, quota);
+  } catch {
+    // a reading not saved is only a stale `coding.sh quota`
+  }
   try {
     return await withContext(c, async (ctx) => {
       const session = sid ? await ctx.index.getSession(sid) : undefined;
@@ -108,9 +118,10 @@ async function print(c: CommandContext): Promise<number> {
           todayCostUsd,
           worstFlag: flags ? (worstFailureFlag(flags) ?? null) : null,
           ...ingestStoppedField(stopped),
+          ...quotaField,
         });
       } else {
-        c.out.print(statuslineLine({ model: model ?? session?.model, sessionCostUsd, todayCostUsd, flags, ingestStoppedSince: stopped?.since }));
+        c.out.print(statuslineLine({ model: model ?? session?.model, sessionCostUsd, todayCostUsd, flags, ingestStoppedSince: stopped?.since }) + quotaSuffix);
       }
       return 0;
     });
@@ -119,8 +130,8 @@ async function print(c: CommandContext): Promise<number> {
     // to show, but a stopped ingest is the one thing worth saying about it.
     try {
       const stopped = readIngestStopped(paths(c.env).ingestStopped);
-      if (stopped && c.out.json) c.out.data({ model: model ?? null, sessionCostUsd: null, todayCostUsd: null, worstFlag: null, ingestStopped: ingestStoppedJson(stopped) });
-      else if (stopped) c.out.print(`${model ? `${model}  ·  ` : ""}${ingestStoppedPart(stopped.since)}`);
+      if (stopped && c.out.json) c.out.data({ model: model ?? null, sessionCostUsd: null, todayCostUsd: null, worstFlag: null, ingestStopped: ingestStoppedJson(stopped), ...quotaField });
+      else if (stopped) c.out.print(`${model ? `${model}  ·  ` : ""}${ingestStoppedPart(stopped.since)}${quotaSuffix}`);
     } catch {
       // nothing to print
     }

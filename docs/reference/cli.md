@@ -38,6 +38,7 @@ Every command accepts these.
 | [`doctor`](#codingsh-doctor) | Capture | Check agents, hooks, spool, store and the OTLP port |
 | [`status`](#codingsh-status) | Capture | Show capture totals and the latest session |
 | [`statusline`](#codingsh-statusline) | Capture | Print a Claude Code status line (model, cost, worst flag), or install it |
+| [`quota`](#codingsh-quota) | Capture | Plan usage for the 5-hour and weekly windows, per agent, or wait for room |
 | [`ingest`](#codingsh-ingest) | Capture | Move captured hook events from the spool into the index |
 | [`run`](#codingsh-run) | Capture | Run any agent command and capture the session |
 | [`collector`](#codingsh-collector) | Capture | Start a local OTLP/HTTP receiver for agents that export traces |
@@ -211,6 +212,47 @@ coding.sh statusline uninstall [options]
 
 ```sh
 coding.sh statusline uninstall
+```
+
+## `coding.sh quota`
+
+Plan usage for the 5-hour and weekly windows, per agent, or wait for room.
+
+```text
+coding.sh quota [action]
+```
+
+| Action | What it does |
+|---|---|
+| [`wait`](#codingsh-quota-wait) | Block until a window resets or its use drops below a threshold |
+
+```sh
+coding.sh quota
+coding.sh quota --json
+coding.sh quota wait --window 5h
+```
+
+- With no subcommand it prints one row per agent and window: the percent used, when the window resets and how old the reading is.
+- Claude Code's reading is the one the coding.sh status line saved from the rate_limits Claude Code sends it (Pro, Max and Ultra plans; install it with coding.sh statusline install). Codex's is the last token_count event in its newest rollout under CODEX_HOME/sessions (only the last 256 KB is read).
+- wait reads again at most once a minute and prints what it waits for on stderr. With several windows it waits until each has room. It exits 0 when there is room, 1 when there is no reading, 2 on a usage error and 130 on Ctrl-C.
+
+### `coding.sh quota wait`
+
+Block until a window resets or its use drops below a threshold.
+
+```text
+coding.sh quota wait [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--agent <AGENT>` |  | Only this agent's windows. One of: `claude-code`, `codex`. |
+| `--window <WINDOW>` |  | Only this window. One of: `5h`, `7d`. |
+| `--below <PERCENT>` | `90` | Room is back when use is under this percent. |
+
+```sh
+coding.sh quota wait
+coding.sh quota wait --agent codex --window 5h --below 80
 ```
 
 ## `coding.sh ingest`

@@ -43,6 +43,8 @@ export function paths(env: NodeJS.ProcessEnv = process.env) {
     llmCache: join(root, "llm-cache"),
     /** Left by a background ingest that failed, until one works again (core/ingest-health.ts). */
     ingestStopped: join(root, "ingest-stopped.json"),
+    /** Claude Code's last plan usage reading, saved by `coding.sh statusline` (src/quota). */
+    quota: join(root, "quota.json"),
     /** Cross-process ingest lock (see core/lock.ts). */
     ingestLock: join(root, "spool", ".ingest.lock"),
     /** Held for a whole re-parse run (core/reparse.ts), so one runs at a time. */

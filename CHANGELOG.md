@@ -11,6 +11,7 @@ grouped by area, with links to the docs for the details.
 
 ### Added
 
+- **Cost.** Plan usage for the 5-hour and weekly windows: the Claude Code status line ends with `5h 62% 7d 41%` when Claude Code sends it, `coding.sh quota` prints each agent's windows with the reset time, `quota wait` blocks until a window has room, and the MCP `status` tool includes the same rows. [CLI reference](https://coding.sh/docs/cli/quota)
 - **Sessions.** `stats.compactionRefetches` counts read-only calls that fetched again a result a compaction took out of the context, with no write to it in between, and the tokens they sent again. It is absent when there are none. [API reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md)
 - **Viewer.** On a session page, `}` and `{` move to the next and previous user turn, and the help sheet and hint bar list them. Each turn's row shows the first line of the prompt and its time into the session, and the strip beside the step list marks each turn start. [Concepts](https://coding.sh/docs/concepts#turn)
 - **Viewer.** In a session of more than three turns, each finished turn starts folded to one row with its prompt, what it did ("read 2 files, 1 edit"), tool calls, errors and length. A turn with a failure and the last turn stay open. Enter, a click or a link to a step inside opens it. [Concepts](https://coding.sh/docs/concepts#turn)

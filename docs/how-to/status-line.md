@@ -31,6 +31,12 @@ colon (`gateway:vercel`, `skill:pdf`) and context-only flags (`compaction`, `mod
 not failures. Among the rest, a defect outranks a risk, which outranks an inefficiency, so the one
 most worth your attention is the one you see.
 
+On a Pro, Max or Ultra plan, Claude Code also sends how much of the plan's 5-hour and weekly
+windows you have used, and the line ends with them (`  ·  5h 62% 7d 41%`, only the windows Claude
+Code sent). coding.sh saves that reading to `quota.json` in its data folder, where
+`coding.sh quota` reads it. Some Claude Code versions leave the field out; the line is then
+unchanged.
+
 ## If you already have a status line
 
 `install` will not overwrite another tool's status line. It stops and tells you what is there.
