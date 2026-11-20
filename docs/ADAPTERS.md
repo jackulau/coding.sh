@@ -122,7 +122,9 @@ order.
   - Other providers: content is built from T3's store, with per-turn usage from `turnTokenUsage`. T3
     counts cache reads and writes inside `inputTokens`, and coding.sh separates them.
 - **Session tree:** a thread's first provider thread is the top-level session. A provider switch or a T3
-  subagent thread becomes a child session.
+  subagent thread becomes a child session. A Claude subagent thread whose run is in a transcript of
+  any Claude session of its parent thread (`subagents/agent-<id>.jsonl`) is not stored again: the
+  claude-code child session `<session>:sub:<id>` is the one copy.
 - **Cost:** T3's running cost (`contextUsage.cost`) is kept as `reportedUsage` and never summed.
 - **When imports run:** the T3 store is re-imported on every lazy ingest (`Adapter.tail`). Threads that
   haven't changed are skipped.

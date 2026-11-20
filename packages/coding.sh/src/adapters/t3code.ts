@@ -288,17 +288,22 @@ const threadTail = (id: string): string => id.split(/%3A|:/i).pop() ?? id;
  * `<root>:sub:<agentId>` (from <root>/subagents/agent-<id>.jsonl). Storing them again as t3code
  * sessions doubles the tree. A thread is covered when the parent transcript has the agent file, or
  * when it is a workflow agent (a numbered child of a workflow thread) and the transcript has a
- * subagents/workflows directory. Maps thread id to the claude-code session that holds a direct subagent's run.
+ * subagents/workflows directory. Every Claude session of the parent thread counts: after a provider
+ * switch the subagent runs in a later one. Maps thread id to the claude-code session that holds a direct subagent's run.
  */
 async function coveredThreads(all: Thread[], native: NativeIndex, owners?: Map<string, string>): Promise<Map<string, string | undefined>> {
   const byId = new Map(all.map((t) => [t.id, t]));
   const out = new Map<string, string | undefined>();
-  const rootDir = async (t: Thread): Promise<{ dir: string; sid: string } | undefined> => {
-    const pt = t.providerThreads[0];
-    if (!pt?.nativeId || providerAgent(pt.driver) !== CLAUDE_AGENT) return undefined;
-    const sid = unscope(pt.nativeId);
-    const path = await native.find(CLAUDE_AGENT, sid, t.cwd);
-    return path ? { dir: join(dirname(path), sid, "subagents"), sid } : undefined;
+  /** The first Claude session of the thread whose transcript dir has `sub` under its subagents dir. */
+  const rootDir = async (t: Thread, sub: string): Promise<{ dir: string; sid: string } | undefined> => {
+    for (const pt of t.providerThreads) {
+      if (!pt.nativeId || providerAgent(pt.driver) !== CLAUDE_AGENT) continue;
+      const sid = unscope(pt.nativeId);
+      const path = await native.find(CLAUDE_AGENT, sid, t.cwd);
+      const dir = path ? join(dirname(path), sid, "subagents") : undefined;
+      if (dir && existsSync(join(dir, sub))) return { dir, sid };
+    }
+    return undefined;
   };
   for (const t of all) {
     if (t.relation !== "subagent" || !t.parentThreadId || t.providerThreads.length) continue;
@@ -306,15 +311,15 @@ async function coveredThreads(all: Thread[], native: NativeIndex, owners?: Map<s
     if (!parent) continue;
     const tail = threadTail(t.id);
     if (parent.relation !== "subagent") {
-      const root = await rootDir(parent);
-      if (root && existsSync(join(root.dir, `agent-${tail}.jsonl`))) {
+      const root = await rootDir(parent, `agent-${tail}.jsonl`);
+      if (root) {
         out.set(t.id, childSessionId(root.sid, tail));
         owners?.set(t.id, childSessionId(root.sid, tail));
       }
     } else {
       const grand = parent.parentThreadId ? byId.get(parent.parentThreadId) : undefined;
-      const root = grand && grand.relation !== "subagent" ? await rootDir(grand) : undefined;
-      if (root && /^\d+$/.test(tail) && existsSync(join(root.dir, "workflows"))) {
+      const root = grand && grand.relation !== "subagent" && /^\d+$/.test(tail) ? await rootDir(grand, "workflows") : undefined;
+      if (root) {
         out.set(t.id, undefined);
         owners?.set(t.id, root.sid);
       }
@@ -749,7 +754,7 @@ export async function* backfillT3(ctx: NormalizeContext, opts: BackfillOpts = {}
     const primary = new Map(all.map((x) => [x.thread.id, covered.get(x.thread.id) ?? primaryOf(x.thread)]));
     for (const { thread, db, path, v1: old } of all) {
       if (covered.has(thread.id)) {
-        // A store parsed before parseVersion 8 holds this thread as a session: re-parse deletes it, its owner has the run.
+        // A store parsed before parseVersion 9 holds this thread as a session: re-parse deletes it, its owner has the run.
         const owner = owners.get(thread.id);
         if (owner) opts.copied?.(primaryOf(thread), owner);
         continue;
@@ -797,7 +802,8 @@ export const t3code: Adapter = {
   // 6 (0.1.3): Claude transcripts' model fallbacks (system/model_fallback, model_refusal_fallback) are model.fallback notifications.
   // 7 (0.1.5): a tool call that loads a skill names it (payload.skill).
   // 8 (0.1.5): a subagent thread of a Claude session whose transcript holds its run is not stored again as a t3code session.
-  parseVersion: 8,
+  // 9 (0.1.8): that holds for a subagent run in any Claude session of the parent thread, not only its first.
+  parseVersion: 9,
 
   async detect() {
     const env = process.env;
