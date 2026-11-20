@@ -1,113 +1,128 @@
-// Round 4 QA on the CLI: the status line's `today` counts subagents like its budget part, monitor
-// messages (one colon, the right error for --run with --judge), list empty states that name the
-// command that fills them, and one line per monitor error from ingest.
+// Hands-on QA, round 4: relative times never print "just now", blame and improve check outside a
+// git repo name the fix with their own command, config set takes the [proxy] keys proxy --help
+// documents, work snooze names its <DURATION> argument, a snooze end reads in local time, and
+// the status line reads the hook spool before it counts what needs you.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { after, describe, test } from "node:test";
-import * as budget from "../../src/cli/commands/budget.ts";
-import * as dataset from "../../src/cli/commands/dataset.ts";
-import * as exp from "../../src/cli/commands/exp.ts";
-import * as ingest from "../../src/cli/commands/ingest.ts";
-import * as monitor from "../../src/cli/commands/monitor.ts";
-import * as workflows from "../../src/cli/commands/workflows.ts";
-import { mkSession, runCmd, sandbox, type Sandbox } from "./_cmd.ts";
-import { MAIN } from "./_run-cli.ts";
+import { fileURLToPath } from "node:url";
+import * as blame from "../../src/cli/commands/blame.ts";
+import * as config from "../../src/cli/commands/config.ts";
+import * as improve from "../../src/cli/commands/improve.ts";
+import * as work from "../../src/cli/commands/work.ts";
+import { nextText } from "../../src/cli/commands/work.ts";
+import { ago, CliError, localTime } from "../../src/cli/output.ts";
+import { UsageError } from "../../src/cli/args.ts";
+import { CLI } from "../_cli.ts";
+import { runCmd, sandbox, type Sandbox } from "./_cmd.ts";
 
+const HOOK = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "spool", "hook.ts");
 const boxes: Sandbox[] = [];
-after(() => {
-  for (const b of boxes) b.cleanup();
-});
-const box = () => {
-  const b = sandbox();
-  boxes.push(b);
-  return b;
-};
+after(() => boxes.forEach((b) => b.cleanup()));
+function box(): Sandbox {
+  const sb = sandbox();
+  boxes.push(sb);
+  return sb;
+}
 
-const priced = (id: string, costUsd: number, extra: Parameters<typeof mkSession>[2] = {}) =>
-  mkSession(id, Date.now() - 60_000, { ...extra, stats: { usage: { inputTokens: 200_000, outputTokens: 20_000, costUsd, estimatedCostUsd: costUsd } } });
-
-describe("status line today", () => {
-  test("counts subagent sessions, so the dollar figure and the budget percent on the line agree", async () => {
-    const b = box();
-    await b.seed([priced("top", 0.5), priced("sub", 0.4, { parent: { sessionId: "top", type: "Explore" } } as never)]);
-    await runCmd(budget, b, { action: "set", positionals: ["day", "1"] });
-    const run = (json: boolean) => spawnSync(process.execPath, ["--no-warnings", MAIN, "statusline", "--json"].slice(0, json ? 4 : 3), { env: b.env, input: "{}", encoding: "utf8", timeout: 30_000 });
-    const text = run(false);
-    assert.equal(text.status, 0, text.stderr);
-    assert.match(text.stdout, /\$0\.90(?:00)? today/);
-    assert.match(text.stdout, /budget 90%/);
-    const j = JSON.parse(run(true).stdout);
-    assert.equal(Math.round(j.todayCostUsd * 100), 90);
-    const status = await runCmd(budget, b, { action: "status", json: true });
-    assert.equal(Math.round(status.json.budgets[0].spendUsd * 100), Math.round(j.todayCostUsd * 100));
+describe("relative times", () => {
+  test("under a second reads 0s ago, never the word just", () => {
+    const now = Date.now();
+    assert.equal(ago(now, { now }), "0s ago");
+    assert.doesNotMatch(ago(now - 10, { now }), /\bjust\b/);
   });
 });
 
-describe("monitor messages", () => {
-  test("monitor add with --run and --judge says they cannot go together", async () => {
-    const r = await runCmd(monitor, box(), { action: "add", positionals: ["x"], flags: { run: "a", judge: "b" } });
-    assert.equal(r.error?.exitCode ?? r.error?.code ?? 2, 2);
-    assert.match(r.error?.message, /not both/);
-    assert.doesNotMatch(r.error?.message, /needs one of/);
-    const none = await runCmd(monitor, box(), { action: "add", positionals: ["x"] });
-    assert.match(none.error?.message, /needs one of/);
+describe("outside a git repo", () => {
+  test("blame names blame --repo, not attribution", async () => {
+    const sb = box();
+    const dir = join(sb.root, "plain");
+    mkdirSync(dir);
+    const r = await runCmd(blame, sb, { positionals: ["AGENTS.md"], cwd: dir, json: true });
+    assert.ok(r.error instanceof CliError, String(r.error));
+    assert.equal(r.error.reason, "not_a_repo");
+    assert.deepEqual(r.error.next, ["Run it inside a git repository, or pass one:", "coding.sh blame <path> --repo <dir>"]);
   });
 
-  test("monitor add's next step and monitor list's empty state end with one colon; the empty state is indented", async () => {
-    const b = box();
-    const empty = await runCmd(monitor, b, { action: "list" });
-    assert.equal(empty.code, 0);
-    assert.match(empty.stderr, /^ {2}No monitors yet$/m);
-    assert.match(empty.stderr, /Score every new session with a command:\n/);
-    const added = await runCmd(monitor, b, { action: "add", positionals: ["qa-x"], flags: { run: "node -e 1" } });
-    assert.equal(added.code, 0, String(added.error?.message));
-    assert.match(added.stderr, / {2}Score the past week now:\n/);
-    assert.doesNotMatch(empty.stderr + added.stderr, /::/);
-  });
-});
-
-describe("list empty states name the next step", () => {
-  for (const [name, mod, cmd] of [
-    ["workflows list", workflows, "coding.sh workflows import"],
-    ["dataset list", dataset, "coding.sh dataset add"],
-    ["exp list", exp, "coding.sh exp run"],
-  ] as const) {
-    test(name, async () => {
-      const b = box();
-      await b.seed([]);
-      const r = await runCmd(mod as never, b, { action: "list", flags: { import: false } });
-      assert.equal(r.error, undefined, String(r.error?.message));
-      assert.match(r.stderr, new RegExp(`:\\n {4}${cmd.replace(/\./g, "\\.")}`));
-    });
-  }
-});
-
-describe("ingest prints each monitor error once", () => {
-  test("under its summary row, and with --json only in monitors[] with no bare stderr line", async () => {
-    const b = box();
-    await b.seed([]);
-    const rubric = join(b.root, "rubric.md");
-    writeFileSync(rubric, "Score 1 when the session did what was asked.\n");
-    const add = await runCmd(monitor, b, { action: "add", positionals: ["qa-judge"], flags: { judge: rubric } });
-    assert.equal(add.code, 0, String(add.error?.message));
-    // The monitor run's log went straight to process.stderr: catch what reaches it.
-    let bare = "";
-    const write = process.stderr.write;
-    process.stderr.write = ((s: string | Uint8Array) => ((bare += String(s)), true)) as typeof process.stderr.write;
-    let human: Awaited<ReturnType<typeof runCmd>>;
-    let json: Awaited<ReturnType<typeof runCmd>>;
-    try {
-      human = await runCmd(ingest, b, {});
-      json = await runCmd(ingest, b, { json: true });
-    } finally {
-      process.stderr.write = write;
+  test("improve check, with or without --repo all, is not_a_repo and names --repo <dir>", async () => {
+    const sb = box();
+    const dir = join(sb.root, "plain");
+    mkdirSync(dir);
+    for (const flags of [{}, { repo: "all" }]) {
+      const r = await runCmd(improve, sb, { action: "check", flags, cwd: dir, json: true });
+      assert.ok(r.error instanceof CliError && !(r.error instanceof UsageError), String(r.error));
+      assert.equal(r.error.reason, "not_a_repo");
+      assert.equal(r.error.exitCode, 1);
+      assert.deepEqual(r.error.next, ["Run it inside a git repository, or pass one:", "coding.sh improve check --repo <dir>"]);
     }
-    assert.equal(human.error, undefined, String(human.error?.message));
-    assert.match(human.stderr, /Monitor qa-jud/);
-    assert.equal(human.stderr.split("no judge provider").length - 1 + (bare.split("no judge provider").length - 1), 2, "the row and one note: " + human.stderr + bare);
-    assert.equal(json.json.monitors[0].error, "no judge provider");
-    assert.doesNotMatch(bare, /monitor qa-judge/);
+  });
+});
+
+describe("config set", () => {
+  test("takes the [proxy] keys proxy --help documents and refuses a bad value", async () => {
+    const sb = box();
+    const s = await runCmd(config, sb, { action: "set", positionals: ["proxy.port", "4400"], json: true });
+    assert.equal(s.error, undefined, String(s.error));
+    const g = await runCmd(config, sb, { action: "get", positionals: ["proxy.port"], json: true });
+    assert.equal(g.json.value, 4400);
+    assert.match(readFileSync(join(sb.env.CODING_SH_HOME!, "config.toml"), "utf8"), /\[proxy\]\r?\nport = 4400/);
+    const h = await runCmd(config, sb, { action: "set", positionals: ["proxy.host", "0.0.0.0"], json: true });
+    assert.equal(h.error, undefined, String(h.error));
+    const bad = await runCmd(config, sb, { action: "set", positionals: ["proxy.port", "99999"] });
+    assert.equal((bad.error as UsageError | undefined)?.reason, "invalid_value");
+    const url = await runCmd(config, sb, { action: "set", positionals: ["proxy.anthropic_upstream", "ftp://x"] });
+    assert.equal((url.error as UsageError | undefined)?.reason, "invalid_value");
+  });
+
+  test("a misspelled key gets a suggestion", async () => {
+    const r = await runCmd(config, box(), { action: "set", positionals: ["retention.keepSpoolDay", "7"] });
+    assert.ok(r.error instanceof UsageError);
+    assert.equal(r.error.suggestion, "coding.sh config set retention.keepSpoolDays 7");
+  });
+});
+
+describe("work snooze", () => {
+  test("a bad duration names the <DURATION> argument, not a --duration flag", async () => {
+    const r = await runCmd(work, box(), { action: "snooze", positionals: ["w000000", "1x"] });
+    assert.ok(r.error instanceof UsageError);
+    assert.equal(r.error.message, '<DURATION> needs a duration such as 30m, 2h, 1d or 2w, got "1x"');
+    assert.doesNotMatch(r.error.message, /--duration/);
+  });
+
+  test("the text view gives a snooze end in local time; other next steps are kept", () => {
+    const until = Date.now() + 3600e3;
+    assert.equal(nextText(`snoozed until ${new Date(until).toISOString()}`), `snoozed until ${localTime(until)}`);
+    assert.equal(nextText("nothing to do"), "nothing to do");
+  });
+});
+
+describe("statusline reads the hook spool", () => {
+  test("need you appears while a permission prompt is open and goes once it is answered", () => {
+    const sb = box();
+    const env: NodeJS.ProcessEnv = { ...process.env, ...sb.env, CLAUDE_CODE_ENTRYPOINT: "cli" };
+    for (const k of ["CODING_SH_STORE_URL", "CODING_SH_BLOB_URL", "CODING_SH_DEV_REAL_STORE", "CODING_SH_DISABLE", "T3CODE_THREAD_ID", "CLAUDE_CODE_SESSION_ID", "CODING_SH_READ_BUDGET_MS"]) delete env[k];
+    const sid = "bbbbbbbb-1111-4222-8333-444444444444";
+    const cwd = join(sb.root, "p");
+    mkdirSync(cwd);
+    const hook = (event: string, extra: Record<string, unknown> = {}) => {
+      const input = JSON.stringify({ session_id: sid, cwd, transcript_path: join(cwd, "t.jsonl"), hook_event_name: event, ...extra });
+      const r = spawnSync(process.execPath, ["--no-warnings", HOOK, "claude-code", event], { env, input, encoding: "utf8", timeout: 60_000 });
+      assert.equal(r.status, 0, r.stderr);
+    };
+    const line = () => {
+      const input = JSON.stringify({ session_id: sid, cwd, model: { display_name: "Opus" }, workspace: { current_dir: cwd } });
+      const r = spawnSync(process.execPath, ["--no-warnings", CLI, "statusline", "--no-color"], { env, input, encoding: "utf8", timeout: 60_000 });
+      assert.equal(r.status, 0, r.stderr);
+      return r.stdout;
+    };
+    hook("SessionStart", { source: "startup" });
+    hook("UserPromptSubmit", { prompt: "x" });
+    hook("PreToolUse", { tool_name: "Bash", tool_use_id: "t1", tool_input: { command: "ls" } });
+    hook("Notification", { message: "Claude needs your permission to use Bash", notification_type: "permission_prompt" });
+    assert.match(line(), /·  1 need you/);
+    hook("PostToolUse", { tool_name: "Bash", tool_use_id: "t1", tool_input: { command: "ls" }, tool_response: { stdout: "" } });
+    assert.doesNotMatch(line(), /need you/);
   });
 });

@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { ConfigError, defaultConfigToml, loadConfig, readUserConfigTable } from "../../core/config.ts";
 import { paths } from "../../core/paths.ts";
 import { parseToml, stringifyToml } from "../../core/toml.ts";
+import { upstreamProblem } from "../../proxy/state.ts";
 import { section as refineSection } from "../../refine/config.ts";
 import { UsageError } from "../args.ts";
 import { printChanges } from "../changes.ts";
@@ -34,6 +35,11 @@ export const SETTABLE = [
   "refine.maxCostRise",
   "refine.canary_model",
   "serve.forward.endpoint",
+  "proxy.port",
+  "proxy.host",
+  "proxy.anthropic_upstream",
+  "proxy.openai_upstream",
+  "proxy.chatgpt_upstream",
 ] as const;
 
 /**
@@ -249,6 +255,15 @@ export async function run(c: CommandContext): Promise<number> {
     const now = loadConfig({ env: fileEnv, file: probe });
     // Keys the loader does not carry are checked where the commands that use them read them.
     if (key === "serve.forward.endpoint" && !/^https?:\/\/[^\s/]+/i.test(raw.trim())) throw new ConfigError("serve.forward.endpoint must be an http:// or https:// URL", probe);
+    if (key === "proxy.port") {
+      const n = Number(raw.trim());
+      if (!/^\d+$/.test(raw.trim()) || n > 65535) throw new ConfigError("proxy.port must be a port from 0 to 65535 (0 = any free port)", probe);
+    }
+    if (key === "proxy.host" && !raw.trim()) throw new ConfigError("proxy.host must be a host name or address", probe);
+    if (key.startsWith("proxy.") && key.endsWith("_upstream")) {
+      const problem = upstreamProblem(raw.trim());
+      if (problem) throw new ConfigError(`${key} ${problem}`, probe);
+    }
     if (key.startsWith("refine.")) {
       refineSection(parseToml(after, probe), probe);
       if (key === "refine.canary_model" && !raw.trim()) throw new ConfigError("refine.canary_model must be a model name", probe);

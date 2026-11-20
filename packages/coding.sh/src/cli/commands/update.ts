@@ -142,7 +142,7 @@ export async function runUpdate(c: CommandContext, deps: UpdateDeps): Promise<nu
   const current = deps.current ?? version();
 
   const spin = out.spin("Checking for updates");
-  const cache = await (deps.check ?? checkForUpdate)(c.env, { force: true, current, timeoutMs: 5000 });
+  const cache = await (deps.check ?? checkForUpdate)(c.env, { force: true, current, timeoutMs: 5000, write: !dryRun });
   spin.stop();
   if (c.signal.aborted) return 130;
 

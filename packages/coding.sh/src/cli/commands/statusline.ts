@@ -19,9 +19,12 @@ import { forgetInstall, installRecord, recordInstall, sha256 } from "../../adapt
 import { ingestStoppedField, ingestStoppedJson, readIngestStopped } from "../../core/ingest-health.ts";
 import { paths } from "../../core/paths.ts";
 import { budgetPart, highest, readBudgets, statuslineStatuses, type BudgetStatus } from "../../budget/index.ts";
+import type { Context } from "../../core/context.ts";
 import type { IndexStore, Session } from "../../core/types.ts";
+import { needYou, readWorkQueue, WORK_WINDOW_MS } from "../../core/work.ts";
+import { readOverlay } from "../../core/work-overlay.ts";
 import { claudeRateLimits, quotaPart, saveClaudeQuota } from "../../quota/index.ts";
-import { withContext } from "../common.ts";
+import { autoIngest, readBudgetMs, withContext } from "../common.ts";
 import { CliError } from "../output.ts";
 import { ingestStoppedPart, statuslineLine, worstFailureFlag } from "../statusline.ts";
 import type { CommandContext } from "../types.ts";
@@ -36,6 +39,12 @@ export async function run(c: CommandContext): Promise<number> {
   if (c.action === "uninstall") return uninstall(c);
   return print(c);
 }
+
+/**
+ * How long the status line spends reading new hook events before it answers. Claude Code runs it on
+ * every turn: a short budget keeps it quick, and what is left goes to a background ingest.
+ */
+export const STATUSLINE_INGEST_BUDGET_MS = 400;
 
 /** The status-line payload is a few kB; past this the read stops and the input counts as invalid. */
 export const MAX_STATUSLINE_STDIN = 1 << 20;
@@ -114,6 +123,13 @@ async function print(c: CommandContext): Promise<number> {
   }
   try {
     return await withContext(c, async (ctx) => {
+      // The hook spools events; without reading them the "need you" count lags until some other
+      // command ingests (a new permission prompt missed, an answered one still counted).
+      try {
+        await autoIngest(ctx, { env: c.env, budgetMs: Math.min(readBudgetMs(c.env), STATUSLINE_INGEST_BUDGET_MS), lockWaitMs: 0 });
+      } catch {
+        // show what is indexed
+      }
       const session = sid ? await ctx.index.getSession(sid) : undefined;
       const dayStart = new Date();
       dayStart.setHours(0, 0, 0, 0);
@@ -127,18 +143,18 @@ async function print(c: CommandContext): Promise<number> {
       const budget = await budgetPartOf(ctx.index, c.env, today).catch(() => undefined);
       const budgetSuffix = budget ? `  ·  ${budget.part}` : "";
       const budgetField = budget ? { budget: { id: budget.status.budget.id, percent: budget.status.percent, over: budget.status.over } } : {};
+      const need = await needYouCount(ctx);
       if (c.out.json) {
-        c.out.data({
+        const doc: Record<string, unknown> = {
           model: model ?? session?.model ?? null,
           sessionCostUsd: sessionCostUsd ?? null,
           todayCostUsd,
           worstFlag: flags ? (worstFailureFlag(flags) ?? null) : null,
-          ...ingestStoppedField(stopped),
-          ...quotaField,
-          ...budgetField,
-        });
+        };
+        if (need) doc.needYou = need;
+        c.out.data({ ...doc, ...ingestStoppedField(stopped), ...quotaField, ...budgetField });
       } else {
-        c.out.print(statuslineLine({ model: model ?? session?.model, sessionCostUsd, todayCostUsd, flags, ingestStoppedSince: stopped?.since }) + quotaSuffix + budgetSuffix);
+        c.out.print(statuslineLine({ model: model ?? session?.model, sessionCostUsd, todayCostUsd, flags, ingestStoppedSince: stopped?.since, needYou: need }) + quotaSuffix + budgetSuffix);
       }
       return 0;
     });
@@ -153,6 +169,16 @@ async function print(c: CommandContext): Promise<number> {
       // nothing to print
     }
     return 0;
+  }
+}
+
+/** Work items blocked on you or failed, over `coding.sh work`'s default window; 0 when they can't be read. */
+async function needYouCount(ctx: Context): Promise<number> {
+  try {
+    const { queue } = await readWorkQueue(ctx.index, { since: Date.now() - WORK_WINDOW_MS, overlay: readOverlay(ctx.paths.work) });
+    return needYou(queue);
+  } catch {
+    return 0; // the costs still print
   }
 }
 

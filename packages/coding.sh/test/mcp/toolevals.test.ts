@@ -77,9 +77,11 @@ describe("tool evals against the coding.sh MCP server", () => {
     // both sides of experiment_compare adds about 0.2 KB of output schema and 23 bytes of description.
     // score_add_batch (the 26th: up to 100 scores in one call, all or none, instead of 100 calls)
     // adds about 0.61 KB, 0.15 KB of it descriptions. status's quota (plan usage) names three window
-    // fields; shorter agent, repo and sessionId descriptions and a shorter status description paid for it.
-    assert.ok(s.surfaceBytes < 44_710, `surface is ${s.surfaceBytes} bytes`);
-    assert.ok(s.descriptionBytes < 12_000, `descriptions are ${s.descriptionBytes} bytes`);
+    // fields; shorter agent, repo and sessionId descriptions paid for it.
+    // status carries the work queue (counts, needYou and the top 10 items) in place of a work tool,
+    // about 0.3 KB; shorter cursor and project descriptions paid for part of it.
+    assert.ok(s.surfaceBytes < 44_950, `surface is ${s.surfaceBytes} bytes`);
+    assert.ok(s.descriptionBytes < 11_850, `descriptions are ${s.descriptionBytes} bytes`);
     for (const it of s.items) assert.ok(it.bytes < 4_000, `${it.name} is ${it.bytes} bytes`);
   });
 

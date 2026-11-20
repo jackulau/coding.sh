@@ -117,6 +117,8 @@ function refreshArgs(env: NodeJS.ProcessEnv, current: string, opts: UpdateOption
 export interface CheckOptions extends UpdateOptions {
   /** Ignore the 24 h throttle and the opt-outs (explicit `coding.sh update`). */
   force?: boolean;
+  /** false: check without rewriting update.json (`coding.sh update --dry-run`). */
+  write?: boolean;
 }
 
 /**
@@ -128,7 +130,9 @@ export async function checkForUpdate(env: NodeJS.ProcessEnv = process.env, opts:
     const now = (opts.now ?? Date.now)();
     const cache = readCache(env);
     if (!opts.force && (updateChecksDisabled(env) || !isStale(cache, now))) return cache;
-    return await refreshUpdateCache(refreshArgs(env, opts.current ?? version(), opts, now), opts.fetch ?? globalThis.fetch);
+    const args = refreshArgs(env, opts.current ?? version(), opts, now);
+    if (opts.write === false) args.write = false;
+    return await refreshUpdateCache(args, opts.fetch ?? globalThis.fetch);
   } catch (e) {
     return { ...readCache(env), error: e instanceof Error ? e.message : String(e) };
   }

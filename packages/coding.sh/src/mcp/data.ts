@@ -101,6 +101,7 @@ export function sessionSummary(s: Session, now: number = Date.now()): SessionSum
     turns: s.stats.turns,
     toolCalls: s.stats.toolCalls,
     toolErrors: s.stats.toolErrors,
+    llmErrors: s.stats.llmErrors,
     filesChanged: s.stats.filesChanged,
     tests: s.stats.testsPassed !== undefined || s.stats.testsFailed !== undefined ? { passed: s.stats.testsPassed ?? 0, failed: s.stats.testsFailed ?? 0 } : undefined,
     tokens: u && (u.inputTokens !== undefined || u.outputTokens !== undefined) ? { input: u.inputTokens ?? 0, output: u.outputTokens ?? 0, cacheRead: u.cacheReadTokens ?? 0, cacheWrite: u.cacheWriteTokens ?? 0 } : undefined,

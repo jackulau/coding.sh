@@ -1705,6 +1705,56 @@ export const COMMANDS: CommandSpec[] = [
     load: () => import("./commands/toolevals.ts"),
   },
   WORKFLOWS_COMMAND,
+  // Explore, listed after workflows so a typo such as `workfl` still suggests workflows.
+  {
+    name: "work",
+    group: "Explore",
+    summary: "What needs you across every agent's sessions: blocked, failed, stalled, your turn, ready for review",
+    actionOptional: true,
+    flags: [
+      { name: "all", type: "boolean", desc: "Also list hidden items: running, done, acknowledged or snoozed" },
+      { name: "repo", short: "r", type: "string", value: "<PATH>", desc: "Only items whose root session ran under this directory, or in a repo with this name (default: every repo)" },
+      AGENT_ONE,
+      { ...SINCE, desc: "Only items with a session started at or after this time: 7d, 12h, 30m, today, yesterday or a date", default: "7d" },
+      LIMIT(20),
+      FRESH,
+    ],
+    actions: [
+      {
+        name: "show",
+        summary: "What one item is doing, what it waits on, its files and child sessions, and the next step",
+        args: [{ name: "id", desc: "Work item id (w + 6 hex characters), or a session id in the item", required: true }],
+        flags: [{ ...SINCE, desc: "Look the id up among sessions started at or after this time", default: "7d" }, FRESH],
+        examples: ["coding.sh work show w3f9a1c", "coding.sh work show w3f9a1c --json"],
+      },
+      {
+        name: "ack",
+        summary: "Acknowledge an item's current cause: it leaves the queue until something new happens",
+        args: [{ name: "id", desc: "Work item id, or a session id in the item", required: true }],
+        flags: [{ ...SINCE, desc: "Look the id up among sessions started at or after this time", default: "7d" }, FRESH],
+        examples: ["coding.sh work ack w3f9a1c"],
+      },
+      {
+        name: "snooze",
+        summary: "Hide an item for a while; it comes back sooner if it moves to a more urgent bucket",
+        args: [
+          { name: "id", desc: "Work item id, or a session id in the item", required: true },
+          { name: "duration", desc: "How long: 30m, 2h, 1d, 2w", required: true },
+        ],
+        flags: [{ ...SINCE, desc: "Look the id up among sessions started at or after this time", default: "7d" }, FRESH],
+        examples: ["coding.sh work snooze w3f9a1c 2h"],
+      },
+    ],
+    examples: ["coding.sh work", "coding.sh work --agent claude-code --since 24h", "coding.sh work --repo . --json", "coding.sh work show w3f9a1c", "coding.sh work ack w3f9a1c"],
+    notes: [
+      "A work item is a root session plus every session linked to it by parent (subagents, forks, workflow agents). A session a harness or a host such as T3 Code starts is its own item, and its row names the item that started it. An item's id is w plus 6 hex characters of a hash of its root session id, so it stays the same between reads.",
+      "Items go in this order: blocked on you (a permission prompt, a question or a plan waits), failed (ended on API errors or failing tests), stalled (no end and quiet for 15 minutes or more), your turn (an interactive session whose turn ended), ready for review (ended with file changes). A wait or stall older than 12 hours is marked probably closed. Items with nothing to act on (running, done, acknowledged or snoozed) are hidden; --all lists them. A session whose end is only its last event (one read from its transcript, or an OpenTelemetry or SDK conversation) counts as running for 15 minutes after that event.",
+      "Only Claude Code and Gemini CLI hooks report permission prompts. Waits in other agents show as stalled, and the header names those agents; in a T3 Code thread the agent the thread runs counts. Your turn needs the launch mode, which Claude Code and Codex record.",
+      "ack hides the item's current cause only: a new prompt, failure or change brings it back. Acks and snoozes are kept in work.json in the coding.sh home. coding.sh status counts the items per bucket, and the statusline shows N need you for items blocked on you or failed.",
+      PENDING_NOTE,
+    ],
+    load: () => import("./commands/work.ts"),
+  },
   BENCH_COMMAND,
   // ---------------------------------------------------------- Harness
   {

@@ -70,5 +70,7 @@ export function paths(env: NodeJS.ProcessEnv = process.env) {
     budgets: join(root, "budgets.json"),
     /** Week and month spend the status line reuses for up to 60 s (src/budget statuslineStatuses). */
     budgetSpend: join(root, "budget-spend.json"),
+    /** Acks and snoozes of `coding.sh work` items (core/work-overlay.ts). */
+    work: join(root, "work.json"),
   };
 }

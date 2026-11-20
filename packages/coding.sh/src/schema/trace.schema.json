@@ -851,7 +851,7 @@
           "type": "number"
         },
         "endedAt": {
-          "description": "ts of the session.end event. Sessions keyed by conversation rather than by\na process (OTel: every event has an \"otel-*\" source, the session id is a\nconversation id such as gen_ai.conversation.id rather than one of its\ntraceIds, and no session.end ever arrives) use the end of the last event\nseen (ts + durationMs for events stamped at their start, ts for *.end\nevents), so the value moves forward as more turns arrive. Log-keyed OTel\nsessions (no traceId at all) and sessions known only from a backfilled\ntranscript do the same. Trace-keyed OTel sessions end with their root\nspan. Unset = still running/unknown.",
+          "description": "ts of the session.end event. Sessions keyed by conversation rather than by\na process (OTel: every event has an \"otel-*\" source, the session id is a\nconversation id such as gen_ai.conversation.id rather than one of its\ntraceIds, and no session.end ever arrives) use the end of the last event\nseen (ts + durationMs for events stamped at their start, ts for *.end\nevents), so the value moves forward as more turns arrive. Log-keyed OTel\nsessions (no traceId at all) and sessions known only from a backfilled\ntranscript do the same. Trace-keyed OTel sessions end with their root\nspan. A session with a tool call still open and no session.end (or only\na transcript's quiet marker) did not finish: it has none. Unset = still\nrunning/unknown.",
           "type": "number"
         },
         "stats": {
@@ -979,6 +979,14 @@
             "unapprovedActions": {
               "description": "Destructive or paid commands the agent ran without a user turn approving them (core/unapproved.ts); it also flags the session `unapproved-action`. Unset when none.",
               "$ref": "#/$defs/UnapprovedActions"
+            },
+            "endInferred": {
+              "description": "True when Session.endedAt is the last activity seen rather than a session.end (a session known\nonly from its transcript, a conversation-keyed OTel or SDK session): it may still be running.\nUnset when the end is real or there is no end.",
+              "const": true
+            },
+            "waiting": {
+              "description": "What the session waits on from the user (a permission prompt, a question, a plan, or the next\nprompt), as of its last event (core/waiting.ts). Unset when nothing waits.",
+              "$ref": "#/$defs/Waiting"
             },
             "foldError": {
               "description": "Why coding.sh could not fold this session's stored events into its stats (a coding.sh bug, not\nthe agent's): the row then holds only what the events say directly (agent, start, end, cwd,\nevent count), and the session is tagged `fold:error`. `coding.sh ingest` folds it again. Unset\nwhen the fold worked.",
@@ -1310,6 +1318,37 @@
           }
         }
       },
+      "additionalProperties": false
+    },
+    "Waiting": {
+      "description": "Session.stats.waiting: what the session waits on from the user, as of its last event (core/waiting.ts).\n- `permission`: the agent asked to approve a tool call (a permission notification from its hook).\n- `question`: a question tool call (AskUserQuestion, request_user_input, …) is open.\n- `plan`: a plan-approval call (ExitPlanMode) is open.\n- `turn`: the main thread's turn ended in a session launched interactively.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "permission",
+            "question",
+            "plan",
+            "turn"
+          ]
+        },
+        "at": {
+          "description": "When the wait began (ms since the epoch).",
+          "type": "number"
+        },
+        "toolUseId": {
+          "description": "The open tool call the wait is on, when the agent named it.",
+          "type": "string"
+        },
+        "text": {
+          "description": "The prompt, question or plan, redacted, up to 300 characters.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "at"
+      ],
       "additionalProperties": false
     },
     "WasteStats": {

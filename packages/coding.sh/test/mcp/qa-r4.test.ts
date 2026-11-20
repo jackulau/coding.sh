@@ -1,49 +1,50 @@
-// Regressions from round-4 QA of the MCP server: sessions_list's where that names
-// subagents (is:child, parent:, id:) came back empty without includeSubagents, and
-// on Windows cwd and repo matching counted case and slash direction.
+// Regressions from round-4 QA of the MCP server against a real backfilled store:
+// search paging that repeated and skipped hits tied in rank, and session_get and
+// the session resource leaving out failed model calls (stats.llmErrors).
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { openContext } from "../../src/core/context.ts";
 import { buildSession } from "../../src/core/sessions.ts";
-import { pathKey, pathUnder } from "../../src/mcp/data.ts";
 import { createCodingShMcp, type CodingShMcp } from "../../src/mcp/server.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { cleanup, makeWorld, type World } from "./helpers.ts";
 
 const H = 3600e3;
-const WIN = process.platform === "win32";
 let n = 0;
-function ev(sessionId: string, ts: number, kind: AgentEvent["kind"], payload: Record<string, unknown> = {}, extra: Partial<AgentEvent> = {}): AgentEvent {
-  return { id: `${sessionId}-r4-${n++}`, v: 0, sessionId, agent: "claude-code", ts, kind, payload, source: "transcript", ...extra };
+function ev(sessionId: string, ts: number, kind: AgentEvent["kind"], payload: Record<string, unknown> = {}): AgentEvent {
+  return { id: `${sessionId}-r${n++}`, v: 0, sessionId, agent: "claude-code", ts, kind, payload, source: "transcript" };
 }
 
 let w: World;
 let mcp: CodingShMcp;
-const PARENT = "r4-parent";
-const CHILD = `${PARENT}:sub:a1b2c3`;
-const SLASHED = "r4-slashed";
-/** w.repo as a VS Code-based agent reports it on Windows: lower-case drive, forward slashes. */
-let slashedRepo: string;
+const TIED = 83;
+const ERR = "r4-llm-errors";
 
-async function call(name: string, args: Record<string, unknown> = {}) {
+async function call(name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   const r = await mcp.server.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } });
-  return r!.result as { structuredContent: Record<string, unknown>; isError?: boolean; content: { text: string }[] };
+  const res = r!.result as { structuredContent: Record<string, unknown>; isError?: boolean; content: { text: string }[] };
+  assert.notEqual(res.isError, true, `${name}: ${res.content?.[0]?.text}`);
+  return res.structuredContent;
 }
-
-const ids = (r: Awaited<ReturnType<typeof call>>) => {
-  assert.notEqual(r.isError, true, r.content?.[0]?.text);
-  return (r.structuredContent.sessions as { id: string }[]).map((s) => s.id);
-};
 
 before(async () => {
   w = makeWorld();
-  slashedRepo = w.repo.replace(/\\/g, "/").replace(/^[A-Z]:/, (d) => d.toLowerCase());
   const now = w.now;
-  const sessions: AgentEvent[][] = [
-    [ev(PARENT, now - 3 * H, "session.start", {}, { cwd: w.root }), ev(PARENT, now - 3 * H + 1, "user.message", { text: "fan out" }), ev(PARENT, now - 3 * H + 2, "turn.end")],
-    [ev(CHILD, now - 3 * H + 10, "user.message", { text: "look around" }, { cwd: w.root }), ev(CHILD, now - 3 * H + 20, "turn.end")],
-    [ev(SLASHED, now - 2 * H, "session.start", {}, { cwd: slashedRepo }), ev(SLASHED, now - 2 * H + 1, "user.message", { text: "fix the parser" }), ev(SLASHED, now - 2 * H + 2, "turn.end")],
-  ];
+  const sessions: AgentEvent[][] = [];
+  // Hits with the same text rank the same; their times run in a different order than they were stored.
+  for (let i = 0; i < TIED; i++) {
+    const id = `r4-tied-${String(i).padStart(3, "0")}`;
+    const t0 = now - 2 * H + ((i * 37) % TIED) * 1000;
+    sessions.push([ev(id, t0, "session.start"), ev(id, t0 + 1, "user.message", { text: "rebuild the gizmo cache" })]);
+  }
+  const t0 = now - H;
+  sessions.push([
+    ev(ERR, t0, "session.start"),
+    ev(ERR, t0 + 1, "user.message", { text: "refactor the parser" }),
+    ev(ERR, t0 + 2, "llm.call", { model: "claude-x", ok: false, statusCode: 400, error: "API Error: the request was refused" }),
+    ev(ERR, t0 + 3, "llm.call", { model: "claude-x", ok: false, statusCode: 400, error: "API Error: the request was refused" }),
+    ev(ERR, t0 + 4, "turn.end", {}),
+  ]);
   const ctx = await openContext({ env: w.env, cwd: w.root });
   try {
     for (const evs of sessions) {
@@ -53,7 +54,7 @@ before(async () => {
   } finally {
     await ctx.close();
   }
-  mcp = createCodingShMcp({ env: w.env, cwd: w.repo, log: () => {}, now: () => w.now });
+  mcp = createCodingShMcp({ env: w.env, cwd: w.root, log: () => {}, now: () => w.now });
 });
 
 after(async () => {
@@ -61,43 +62,51 @@ after(async () => {
   cleanup();
 });
 
-describe("sessions_list where that names subagents", () => {
-  it("is:child, parent: and id: of a child list it without includeSubagents, as the CLI's --where does", async () => {
-    assert.deepEqual(ids(await call("sessions_list", { where: "is:child" })), [CHILD]);
-    assert.deepEqual(ids(await call("sessions_list", { where: `parent:${PARENT}` })), [CHILD]);
-    assert.deepEqual(ids(await call("sessions_list", { where: `id:${CHILD}` })), [CHILD]);
-  });
-
-  it("a where that names none still lists top-level sessions only", async () => {
-    const got = ids(await call("sessions_list", { where: "agent:claude-code" }));
-    assert.ok(got.includes(PARENT));
-    assert.ok(!got.includes(CHILD), "no subagent without includeSubagents");
-    assert.ok(!ids(await call("sessions_list", { where: `-id:${CHILD}` })).includes(CHILD));
+describe("search paging", () => {
+  it("following nextCursor returns every hit once, in the order of one long page", async () => {
+    const all = ((await call("search", { query: "gizmo cache", limit: 50, cursor: "0" })).hits as { eventId: string }[]).map((h) => h.eventId);
+    const ctx = await openContext({ env: w.env, cwd: w.root });
+    let full: string[];
+    try {
+      full = (await ctx.index.search("gizmo cache", { limit: 100_000 })).map((h) => h.event.id);
+    } finally {
+      await ctx.close();
+    }
+    assert.equal(full.length, TIED);
+    assert.deepEqual(all, full.slice(0, 50), "a page is a prefix of the full ranked list");
+    const paged: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const args: Record<string, unknown> = { query: "gizmo cache", limit: 7 };
+      if (cursor) args.cursor = cursor;
+      const r = await call("search", args);
+      paged.push(...(r.hits as { eventId: string }[]).map((h) => h.eventId));
+      cursor = r.nextCursor as string | undefined;
+    } while (cursor);
+    assert.equal(new Set(paged).size, paged.length, "no hit repeats");
+    assert.deepEqual(paged, full);
   });
 });
 
-describe("path matching on Windows", () => {
-  it("pathKey and pathUnder ignore case and slash direction on win32 only", () => {
-    assert.equal(pathKey("c:/Projects/Rodev", "win32"), pathKey("C:\\Projects\\rodev", "win32"));
-    assert.ok(pathUnder("D:/cs/sg/qa/mcp", "d:\\CS\\sg", "win32"));
-    assert.ok(pathUnder("C:\\Projects\\rodev", "c:/projects/rodev/", "win32"));
-    assert.ok(!pathUnder("C:\\Projects\\rodev2", "c:/projects/rodev", "win32"), "a sibling with the same prefix is not inside");
-    assert.ok(!pathUnder("/Work/demo", "/work/demo", "linux"), "case counts off Windows");
-    assert.ok(pathUnder("/work/demo/src", "/work/demo", "linux"));
+describe("failed model calls", () => {
+  it("session_get's summary carries stats.llmErrors", async () => {
+    const d = await call("session_get", { sessionId: ERR, limit: 1 });
+    const le = (d.session as { llmErrors?: { count: number; statusCode?: number; error?: string } }).llmErrors;
+    assert.equal(le?.count, 2);
+    assert.equal(le?.statusCode, 400);
+    assert.match(le?.error ?? "", /request was refused/);
   });
 
-  it("session_current finds a session stored with a lower-case, forward-slash cwd from the server's own cwd", { skip: !WIN && "Windows paths" }, async () => {
-    const def = await call("session_current", { limit: 1 });
-    assert.notEqual(def.isError, true, def.content?.[0]?.text);
-    assert.equal((def.structuredContent.session as { id: string }).id, SLASHED);
-    const upper = await call("session_current", { cwd: w.repo.toUpperCase(), limit: 1 });
-    assert.notEqual(upper.isError, true, upper.content?.[0]?.text);
-    assert.equal((upper.structuredContent.session as { id: string }).id, SLASHED);
+  it("the session resource digest has a line for them", async () => {
+    const r = await mcp.server.handle({ jsonrpc: "2.0", id: 2, method: "resources/read", params: { uri: `codingsh://session/${ERR}` } });
+    const text = (r!.result as { contents: { text: string }[] }).contents[0]!.text;
+    assert.match(text, /\*\*Model errors:\*\* 2 failed model calls, first HTTP 400: "API Error: the request was refused"/);
   });
 
-  it("the repo filter ignores case and slash direction", { skip: !WIN && "Windows paths" }, async () => {
-    assert.deepEqual(ids(await call("sessions_list", { repo: w.repo })), [SLASHED]);
-    assert.deepEqual(ids(await call("sessions_list", { repo: w.repo.toLowerCase() })), [SLASHED]);
-    assert.deepEqual(ids(await call("sessions_list", { repo: "PARSER" })), [SLASHED]);
+  it("a session without failed calls has neither", async () => {
+    const d = await call("session_get", { sessionId: "r4-tied-000", limit: 1 });
+    assert.equal((d.session as Record<string, unknown>).llmErrors, undefined);
+    const r = await mcp.server.handle({ jsonrpc: "2.0", id: 3, method: "resources/read", params: { uri: "codingsh://session/r4-tied-000" } });
+    assert.doesNotMatch((r!.result as { contents: { text: string }[] }).contents[0]!.text, /Model errors/);
   });
 });

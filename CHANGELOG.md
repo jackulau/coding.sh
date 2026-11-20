@@ -24,10 +24,13 @@ grouped by area, with links to the docs for the details.
 - **Viewer.** A session with a failure opens from the list on its first failing step, and the header's First failure button (`F`) goes back to it, opening a folded turn on the way, and stays while a running session grows. A link to a step still opens on that step. [Concepts](https://coding.sh/docs/concepts#session)
 - **Viewer.** Each row in the session list is a link: a middle click, Ctrl or Cmd click, or "Open link in new tab" opens the session in a new tab and leaves the list where it was. A plain click and the keys work as before. [Concepts](https://coding.sh/docs/concepts#session)
 - **Viewer.** The top bar has a Workflows tab (Flows on a phone) beside Benchmarks, so every page of the viewer is one click away. The tab of the page you are on is marked. [Explore](https://coding.sh/docs/explore#open-the-viewer)
+- **Work.** `coding.sh work` lists what needs you across every agent: items blocked on a prompt, failed, stalled, waiting for your next prompt or ready for review, each with a reason and a next step. `work show`, `work ack` and `work snooze` act on one item. `status` and the statusline count them; the MCP `status` tool lists the first 10. [CLI](https://coding.sh/docs/cli/work)
+- **Sessions.** Sessions get `stats.waiting`, the permission prompt, question, plan or next prompt a session waits on when its events end, and `stats.endInferred`, set when `endedAt` is only the last event seen. [API reference](https://coding.sh/docs/api)
 - **Site.** The GitHub link in the header shows the repository's star count, and so does the menu on a phone. The count is read when the site is deployed, so a page makes no request to GitHub. [coding.sh](https://coding.sh)
 
 ### Changed
 
+- **Sessions.** A session whose events stop on a tool call with no result, and with no session end, has no `endedAt`: it did not finish. Before, its last event counted as its end, and for a transcript so did the marker written after 30 quiet minutes. [API reference](https://coding.sh/docs/api)
 - **Viewer.** A code block's language label sits in the block's top-right corner instead of on a loose line above it, and Chat no longer opens with a "1 step" line when the only step before the first prompt is the session starting. [Concepts](https://coding.sh/docs/concepts#turn)
 - **Viewer.** On a phone, a session's Pass and Fail buttons and its eval command wait under "More details" with the other facts, so the steps start higher on the first screen. `p` and `f` still label the session. [Concepts](https://coding.sh/docs/concepts#session)
 - **Viewer.** In a session's Chat view, `}` and `{` bring the next or previous prompt to the top and `j` and `k` the next or previous message, and the hint bar lists them. Before, every step key did nothing there. [Concepts](https://coding.sh/docs/concepts#turn)
@@ -48,6 +51,11 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Sessions.** A Gemini CLI permission prompt counts for the `unapproved-action` flag: a risky call the user approved there is not flagged, whether the prompt came while the call was open or before it started, as in Gemini CLI 0.35 and older. Before, only Claude Code's prompts counted. [Flags](https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md)
+- **CLI.** `config set` takes the `[proxy]` keys. [Configuration](https://coding.sh/docs/config)
+- **CLI.** `blame` and `improve check` outside a git repo name `--repo <dir>` with their own command (`improve check` exits 1, `not_a_repo`). [CLI](https://coding.sh/docs/cli)
+- **MCP.** Following the search tool's `nextCursor` returns every hit once, in the order of `coding.sh search --json`. Before, hits that ranked the same could repeat on one page and never show on any. The session_get summary and the session resource also report failed model calls (`llmErrors`: count, first status and error). [MCP](https://coding.sh/docs/mcp#tools)
+- **CLI.** `coding.sh update --dry-run` checks for a new release without rewriting `~/.coding.sh/update.json`, as its help says. Before, it replaced the cached result with the new one. [CLI reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-update)
 - **CLI.** `harness audit` counts a file that the agent's loaded instructions file imports with `@path` (`@AGENTS.md`) as loaded, adds its size to the load cost and no longer flags it never-read or write-only. [Explore](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md)
 - **Cost.** The status line's `today` cost counts subagent sessions, so it matches `budget status`, `usage --since today` and the budget percent next to it. [Status line](https://coding.sh/docs/agents#status-line)
 - **CLI.** `config get refine` prints the section like `config get retention`; `ingest` shows each monitor error once; `monitor add` with both `--run` and `--judge` says they cannot go together; `workflows list`, `dataset list` and `exp list` name the command that fills them; tables say `0s ago`, not `just now`. [CLI reference](https://coding.sh/docs/cli)

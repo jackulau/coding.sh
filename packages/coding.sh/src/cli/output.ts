@@ -381,7 +381,7 @@ export function localTime(ts: number, now = Date.now()): string {
 }
 
 /**
- * When something happened, for tables and rows: "12s ago", "3m ago", "5h ago"
+ * When something happened, for tables and rows: "0s ago", "12s ago", "3m ago", "5h ago"
  * under a day, then the local time ("Nov 6 14:02"). --json output keeps the
  * full ISO timestamp; this is for people, piped or not.
  */
