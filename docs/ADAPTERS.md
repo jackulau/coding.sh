@@ -119,10 +119,18 @@ order.
 - **Content by provider:**
   - Codex and Claude: content comes from their own transcripts.
   - OpenCode, Cursor and Pi: linked only. Their adapters import the content.
-  - Other providers: content is built from T3's store, with per-turn usage from `turnTokenUsage`. T3
-    counts cache reads and writes inside `inputTokens`, and coding.sh separates them.
+  - Other providers: content is built from T3's store. Each finished provider turn is one `llm.call` on
+    the turn's model (the thread's model when the turn names none), timed from the turn's start to its end,
+    with usage from `turnTokenUsage` when T3 has it. T3 counts cache reads and writes inside `inputTokens`,
+    and coding.sh separates them.
 - **Session tree:** a thread's first provider thread is the top-level session. A provider switch or a T3
   subagent thread becomes a child session.
+- **Claude subagents:** a subagent thread of a Claude thread is not stored when a Claude transcript of the
+  parent thread (any of its provider threads) holds its run, since the claude-code adapter stores that run as
+  `<session>:sub:<agentId>`. That covers an `agent-<id>.jsonl` subagent file, a Workflow-tool run thread
+  whose `subagents/workflows/<runId>` directory exists (the run id comes from T3's
+  `orchestration_v2_projection_subagents` rows), and each agent thread of that run. A re-parse removes the
+  t3code copies an older parse stored.
 - **Cost:** T3's running cost (`contextUsage.cost`) is kept as `reportedUsage` and never summed.
 - **When imports run:** the T3 store is re-imported on every lazy ingest (`Adapter.tail`). Threads that
   haven't changed are skipped.
