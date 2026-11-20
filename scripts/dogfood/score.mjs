@@ -103,7 +103,11 @@ async function gate(name, cmd, args, opts = {}) {
   return { ok: r.code === 0, ms: Math.round(r.ms), tail: r.code === 0 ? undefined : (r.stdout + r.stderr).slice(-1500) };
 }
 
-/** Env for the tests gate: HOME, USERPROFILE and the agent homes under `tmp`, no background ingest. */
+/**
+ * Env for the tests gate: HOME, USERPROFILE and the agent homes under `tmp`, no background ingest.
+ * LOCALAPPDATA sits inside the moved profile, as in scripts/gate.mjs: on Windows, Chrome refuses
+ * --remote-debugging-port when it does not, and every browser test hangs until the gate times out.
+ */
 export function gateTestEnv(env, tmp) {
   const home = join(tmp, "home");
   const out = { ...env };
@@ -112,6 +116,7 @@ export function gateTestEnv(env, tmp) {
     ...out,
     HOME: home,
     USERPROFILE: home,
+    LOCALAPPDATA: join(home, "AppData", "Local"),
     CODING_SH_HOME: join(home, ".coding.sh"),
     CLAUDE_CONFIG_DIR: join(home, ".claude"),
     CODEX_HOME: join(home, ".codex"),
@@ -126,7 +131,7 @@ async function runGates() {
     // Tests run with every home in a temp dir, on top of the tests' own isolation. On Windows Node
     // takes the home from USERPROFILE, so HOME alone isolates nothing there.
     const testEnv = gateTestEnv(process.env, tmp);
-    mkdirSync(testEnv.HOME, { recursive: true });
+    mkdirSync(testEnv.LOCALAPPDATA, { recursive: true });
     const g = {};
     g.typecheck = await gate("typecheck", "npm", ["run", "typecheck", "-w", "coding.sh"], { cwd: REPO });
     g.tests = await gate("tests", process.execPath, ["--no-warnings", "--test", "test/**/*.test.ts"], { cwd: PKG, env: testEnv });

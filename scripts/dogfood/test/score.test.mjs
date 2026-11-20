@@ -99,6 +99,8 @@ test("the tests gate isolates USERPROFILE and the agent homes, not only HOME", (
   assert.equal(env.PATH, "/bin");
   for (const k of ["HOME", "USERPROFILE"]) assert.equal(env[k], join("/t", "home"));
   for (const k of ["CODING_SH_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME"]) assert.ok(env[k].startsWith(env.HOME), k);
+  // Chrome on Windows starts with remote debugging only when LOCALAPPDATA is inside USERPROFILE.
+  assert.equal(env.LOCALAPPDATA, join("/t", "home", "AppData", "Local"));
   assert.equal(env.CODING_SH_NO_AUTO_INGEST, "1");
   assert.equal(env.CODING_SH_DEV_REAL_STORE, undefined);
   assert.equal(env.CODING_SH_STORE_URL, undefined);
