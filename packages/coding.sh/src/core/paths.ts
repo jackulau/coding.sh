@@ -43,6 +43,8 @@ export function paths(env: NodeJS.ProcessEnv = process.env) {
     llmCache: join(root, "llm-cache"),
     /** Left by a background ingest that failed, until one works again (core/ingest-health.ts). */
     ingestStopped: join(root, "ingest-stopped.json"),
+    /** Claude Code's last plan usage reading, saved by `coding.sh statusline` (src/quota). */
+    quota: join(root, "quota.json"),
     /** Cross-process ingest lock (see core/lock.ts). */
     ingestLock: join(root, "spool", ".ingest.lock"),
     /** Held for a whole re-parse run (core/reparse.ts), so one runs at a time. */
@@ -55,11 +57,19 @@ export function paths(env: NodeJS.ProcessEnv = process.env) {
     tailLock: join(root, "tail.lock"),
     /** Hook ownership for agents whose config files carry no coding.sh marker. */
     installs: join(root, "installs.json"),
+    /** Monitors and their cursors, spend and last errors (src/monitor, `coding.sh monitor`). */
+    monitors: join(root, "monitors.json"),
+    /** Alert definitions, their states and their signing secrets (src/alerts, `coding.sh alert`); mode 600. */
+    alerts: join(root, "alerts.json"),
     /** The running `coding.sh proxy` (pid, url); see proxy/state.ts. */
     proxyState: join(root, "proxy.json"),
     proxyLog: join(root, "proxy.log"),
     /** Agents `init --proxy` routed through the proxy; while it exists, the hook restarts a stopped proxy. */
     proxyInstalls: join(root, "proxy-installs.json"),
+    /** Spend budgets set with `coding.sh budget set` (src/budget). */
+    budgets: join(root, "budgets.json"),
+    /** Week and month spend the status line reuses for up to 60 s (src/budget statuslineStatuses). */
+    budgetSpend: join(root, "budget-spend.json"),
     /** Acks and snoozes of `coding.sh work` items (core/work-overlay.ts). */
     work: join(root, "work.json"),
   };

@@ -129,16 +129,36 @@ export interface Place {
 /** "~/x", "./x", "/abs" → a path; "coding-sh" → a repo name. */
 export function parsePlace(v: string, cwd: string, home: string): Place {
   const t = v.trim();
-  if (t === "~" || t.startsWith("~/")) return { path: resolve(home, t.slice(2)) };
-  if (isAbsolute(t) || t.startsWith(".") || t.includes("/") || t.includes(sep)) return { path: resolve(cwd, t) };
+  if (t === "~" || t.startsWith("~/")) return { path: driveUpper(resolve(home, t.slice(2))) };
+  if (isAbsolute(t) || t.startsWith(".") || t.includes("/") || t.includes(sep)) return { path: driveUpper(resolve(cwd, t)) };
   return { name: t };
 }
 
-const under = (x: string | undefined, p: string) => !!x && (x === p || x.startsWith(p.endsWith(sep) ? p : p + sep));
+/** On Windows, an upper-case drive letter: the form stored paths have, which facets (a query, not pathKey) match exactly. */
+const driveUpper = (p: string) => (process.platform === "win32" ? p.replace(/^[a-z]:/, (d) => d.toUpperCase()) : p);
+
+/** A path as it is compared: on Windows, case and slash direction do not count (c:/a and C:\A are one folder). */
+export function pathKey(p: string, platform: string = process.platform): string {
+  return platform === "win32" ? p.replace(/\//g, "\\").toLowerCase() : p;
+}
+
+/** Whether path x is p or inside it, compared by pathKey. */
+export function pathUnder(x: string | undefined, p: string | undefined, platform: string = process.platform): boolean {
+  if (!x || !p) return false;
+  const kx = pathKey(x, platform);
+  const s = platform === "win32" ? "\\" : "/";
+  let kp = pathKey(p, platform);
+  // A trailing separator names the same folder ("/a/" is "/a"), except on a root ("/", "c:\").
+  if (kp.length > 1 && kp.endsWith(s) && !/^[a-z]:\\$/.test(kp)) kp = kp.slice(0, -1);
+  return kx === kp || kx.startsWith(kp.endsWith(s) ? kp : kp + s);
+}
+
+const under = (x: string | undefined, p: string | undefined) => pathUnder(x, p);
+const sameName = (path: string, name: string) => pathKey(basename(path)) === pathKey(name);
 
 export function matchesPlace(s: Session, p: Place): boolean {
   if (p.path) return under(s.repo?.root, p.path) || under(s.cwd, p.path);
-  if (p.name) return (!!s.repo?.root && basename(s.repo.root) === p.name) || (!!s.cwd && basename(s.cwd) === p.name);
+  if (p.name) return (!!s.repo?.root && sameName(s.repo.root, p.name)) || (!!s.cwd && sameName(s.cwd, p.name));
   return true;
 }
 
@@ -985,7 +1005,7 @@ export function gitRoot(dir: string): string | undefined {
 /** Most recent top-level session that ran in `cwd` (or its repo), preferring one still running. */
 export async function currentByCwd(index: IndexStore, cwd: string, now: number = Date.now()): Promise<{ session: Session; matchedBy: "cwd-running" | "cwd-recent" } | undefined> {
   const root = gitRoot(cwd);
-  const here = (s: Session) => s.cwd === cwd || under(cwd, s.cwd ?? "\0") || under(s.cwd, cwd) || (!!root && (s.repo?.root === root || under(s.cwd, root)));
+  const here = (s: Session) => under(cwd, s.cwd) || under(s.cwd, cwd) || (!!root && ((!!s.repo?.root && pathKey(s.repo.root) === pathKey(root)) || under(s.cwd, root)));
   let recent: Session | undefined;
   const it = scanSessions(index, { topLevel: true, where: here }, 1000);
   for (;;) {

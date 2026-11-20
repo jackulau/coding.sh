@@ -7,13 +7,13 @@
 // folded by this build, else from the events themselves.
 import { closeSync, openSync, readdirSync, readSync, statSync, type Dirent } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { AgentId } from "../schema/index.ts";
 import type { IndexStore } from "./types.ts";
 import { run } from "./git.ts";
 import { REFOLD_CURSOR } from "./ingest.ts";
 import { foldStamp } from "./sessions.ts";
-import { auditMemory, homeKey, isScoped, memoryKind, skillListingBytes, type MemoryAudit, type MemoryFileInfo, type MemorySession } from "./memory-audit.ts";
+import { auditMemory, homeKey, importPaths, isScoped, memoryKind, skillListingBytes, type MemoryAudit, type MemoryFileInfo, type MemorySession } from "./memory-audit.ts";
 import { MEMORY_EVENT_KINDS, memoryEventOf, type MemoryEvent } from "./memory-events.ts";
 
 export { MEMORY_EVENT_KINDS };
@@ -130,12 +130,12 @@ function* nested(root: string): Steps<string[]> {
   return out;
 }
 
-/** The first 4 KB, for frontmatter. */
-function head(path: string): string {
+/** The first 4 KB (or `max` bytes), for frontmatter. */
+function head(path: string, max = 4096): string {
   let fd: number | undefined;
   try {
     fd = openSync(path, "r");
-    const buf = Buffer.alloc(4096);
+    const buf = Buffer.alloc(max);
     return buf.subarray(0, readSync(fd, buf, 0, buf.length, 0)).toString("utf8");
   } catch {
     return "";
@@ -157,6 +157,20 @@ export function memoryDirs(env: NodeJS.ProcessEnv = process.env): MemoryDirs {
   return { home, claudeDir: env.CLAUDE_CONFIG_DIR || join(home, ".claude"), codexDir: env.CODEX_HOME || join(home, ".codex") };
 }
 
+/** The memory and instruction files on disk that a Claude Code memory file pulls in with `@path` imports, as keys. */
+function importsOf(path: string, size: number, home: string): string[] {
+  const out: string[] = [];
+  for (const p of importPaths(head(path, Math.min(size, IMPORT_READ_BYTES)))) {
+    const target = p.startsWith("~/") || p.startsWith("~\\") ? join(home, p.slice(2)) : resolve(dirname(path), p);
+    const k = homeKey(target, home);
+    if (memoryKind(k) && isFile(target) && !out.includes(k)) out.push(k);
+  }
+  return out;
+}
+
+/** How much of a memory file is read for its imports. */
+const IMPORT_READ_BYTES = 256 * 1024;
+
 /** One file's audit info, or undefined when it is not a memory or instruction file on disk. */
 export function fileInfo(path: string, home: string): MemoryFileInfo | undefined {
   const st = stat(path);
@@ -164,10 +178,13 @@ export function fileInfo(path: string, home: string): MemoryFileInfo | undefined
   const key = homeKey(path, home);
   const kind = memoryKind(key);
   if (!kind) return undefined;
-  if (kind !== "rule" && kind !== "skill") return { key, bytes: st.size };
+  // Imported files can import too: every context file and rule keeps its imports; the audit follows them from a CLAUDE.md or rule.
+  const imports = kind === "context" || kind === "rule" ? importsOf(path, st.size, home) : [];
+  const withImports = imports.length ? { imports } : {};
+  if (kind !== "rule" && kind !== "skill") return { key, bytes: st.size, ...withImports };
   const text = head(path);
   const listing = kind === "skill" ? skillListingBytes(text) : undefined;
-  return { key, bytes: st.size, ...(isScoped(text) ? { scoped: true } : {}), ...(listing !== undefined && listing < st.size ? { loadBytes: listing } : {}) };
+  return { key, bytes: st.size, ...(isScoped(text) ? { scoped: true } : {}), ...(listing !== undefined && listing < st.size ? { loadBytes: listing } : {}), ...withImports };
 }
 
 /** Memory and instruction files on disk: the agents' user dirs and the session directories. */

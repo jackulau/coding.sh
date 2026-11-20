@@ -2,7 +2,7 @@
 
 Claude Code can show a status line under the prompt. This recipe puts one there that reads from
 your stored sessions: the model, what this session has cost, what today has cost across all
-sessions, and the worst failure flag coding.sh found in the session so far.
+sessions (subagents included, the same spend `coding.sh budget status` counts), and the worst failure flag coding.sh found in the session so far.
 
 You need: coding.sh capturing your Claude Code sessions (`coding.sh init`), and coding.sh on your
 `PATH` (a global install, `npm i -g coding.sh`).
@@ -30,6 +30,17 @@ dropped when there is nothing to report. Only real failures show. A tag with a
 colon (`gateway:vercel`, `skill:pdf`) and context-only flags (`compaction`, `model:switch`) are
 not failures. Among the rest, a defect outranks a risk, which outranks an inefficiency, so the one
 most worth your attention is the one you see.
+
+On a Pro, Max or Ultra plan, Claude Code also sends how much of the plan's 5-hour and weekly
+windows you have used, and the line ends with them (`  ·  5h 62% 7d 41%`, only the windows Claude
+Code sent). coding.sh saves that reading to `quota.json` in its data folder, where
+`coding.sh quota` reads it. Some Claude Code versions leave the field out; the line is then
+unchanged.
+
+With a [spend budget](https://coding.sh/docs/cost#set-a-budget) set (`coding.sh budget set day 20`),
+the line ends with the highest budget's share once it passes 80% (`  ·  budget 82%`). `--json`
+adds `budget` with its id, percent and `over`. A day budget is read every turn; a week or month
+total is reused for up to 60 s (`budget-spend.json` in the data folder).
 
 ## If you already have a status line
 

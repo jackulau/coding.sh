@@ -234,7 +234,7 @@ export class Output {
   /** Next step: benefit, colon, then the command on its own line. */
   next(benefit: string, command: string): void {
     this.err("");
-    this.err(`  ${benefit}:`);
+    this.err(`  ${benefit.replace(/:+$/, "")}:`);
     this.err(`    ${this.style(command, "cyan", "err")}`);
   }
 

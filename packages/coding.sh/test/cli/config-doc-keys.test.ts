@@ -107,3 +107,26 @@ test("every FILE_KEYS entry is documented", () => {
   const k = documentedKeys();
   for (const key of FILE_KEYS) assert.ok(k.includes(key) || doc.includes(`\`${key.split(".").pop()}\``), `${key} is in config.md`);
 });
+
+test("config get <section> prints a file-only section ([refine]) like the others, and says when it is unset", async () => {
+  const { writeFileSync, mkdirSync } = await import("node:fs");
+  const file = join(sb.env.CODING_SH_HOME!, "config.toml");
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, "");
+  try {
+    const none = await runCmd(config, sb, { action: "get", positionals: ["refine"] });
+    assert.equal(none.error, undefined, none.error?.message);
+    assert.match(none.stdout, /refine is not set/);
+    await runCmd(config, sb, { action: "set", positionals: ["refine.maxCostRise", "0.2"] });
+    const r = await runCmd(config, sb, { action: "get", positionals: ["refine"] });
+    assert.equal(r.error, undefined, r.error?.message);
+    assert.equal(r.code, 0);
+    assert.deepEqual(JSON.parse(r.stdout), { maxCostRise: 0.2 });
+    const j = await runCmd(config, sb, { action: "get", positionals: ["refine"], json: true });
+    assert.deepEqual(j.json, { key: "refine", value: { maxCostRise: 0.2 } });
+    const bad = await runCmd(config, sb, { action: "get", positionals: ["refin"] });
+    assert.match(bad.error?.message, /Unknown config key/);
+  } finally {
+    writeFileSync(file, "");
+  }
+});

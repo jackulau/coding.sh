@@ -49,7 +49,7 @@ describe("tool evals against the coding.sh MCP server", () => {
     const target = cfg.targets.get(TARGET) as McpTarget;
     const env = { HOME: join(root, "home"), CODING_SH_HOME: join(root, "surface-data") };
     const s = await measureSurface({ ...target, env }, { name: "base" }, { cwd: root });
-    assert.equal(s.items.length, 25);
+    assert.equal(s.items.length, 26);
     // Every tool definition (name, description, input + output schema) costs context in every turn.
     // 24 KB for 13 tools; harness_compare (the 14th) adds about 1.3 KB, exp_session_summary and
     // exp_session_note about 1.9 KB together. The where query on sessions_list, search and usage
@@ -75,9 +75,12 @@ describe("tool evals against the coding.sh MCP server", () => {
     // fields (treeTotal, changesTotal, filesTotal, unchanged, truncated, note), add about 0.95 KB, 0.1 KB of it descriptions.
     // weights (the checkpoint a run recorded with exp run --weights) on experiments_list rows and on
     // both sides of experiment_compare adds about 0.2 KB of output schema and 23 bytes of description.
+    // score_add_batch (the 26th: up to 100 scores in one call, all or none, instead of 100 calls)
+    // adds about 0.61 KB, 0.15 KB of it descriptions. status's quota (plan usage) names three window
+    // fields; shorter agent, repo and sessionId descriptions paid for it.
     // status carries the work queue (counts, needYou and the top 10 items) in place of a work tool,
-    // about 0.3 KB; shorter shared argument descriptions (agent, cursor, project, sessionId) paid for it.
-    assert.ok(s.surfaceBytes < 44_100, `surface is ${s.surfaceBytes} bytes`);
+    // about 0.3 KB; shorter cursor and project descriptions paid for part of it.
+    assert.ok(s.surfaceBytes < 44_950, `surface is ${s.surfaceBytes} bytes`);
     assert.ok(s.descriptionBytes < 11_850, `descriptions are ${s.descriptionBytes} bytes`);
     for (const it of s.items) assert.ok(it.bytes < 4_000, `${it.name} is ${it.bytes} bytes`);
   });

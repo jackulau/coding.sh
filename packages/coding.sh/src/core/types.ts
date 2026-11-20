@@ -3,6 +3,7 @@
 // and cli/ all build against these types.
 import type { AgentEvent, AgentId, BlobRef, RepoState, Session, Usage } from "../schema/index.ts";
 import type { Dataset, DatasetVersionInfo, ExperimentResult, JudgeVersion } from "../datasets/types.ts";
+import type { McpCall } from "./mcp-usage.ts";
 import type { MemoryEvent } from "./memory-events.ts";
 import type { Prices } from "./pricing.ts";
 import type { Query } from "../query/where.ts";
@@ -432,6 +433,14 @@ export interface IndexStore {
    * listEvents, one session at a time.
    */
   memoryEvents?(sessionIds: readonly string[]): Promise<MemoryEvent[]>;
+  /**
+   * `usage --by mcp`'s narrow read (core/mcp-usage.ts): the MCP tool calls of the
+   * sessions matching the query (session keys) and the filter, each with its
+   * session's model and its result's size. The rows equal mcpCallsOf over each
+   * session's tool.start and tool.end events, in any order. A store without it is
+   * read with listEvents, one session at a time.
+   */
+  mcpCalls?(q: Query, opts?: QueryOpts): Promise<McpCall[]>;
 
   /**
    * Stores an immutable dataset version and points "latest" at it. Same content → `created: false`.

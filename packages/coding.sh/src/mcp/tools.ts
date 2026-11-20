@@ -38,7 +38,7 @@ import {
 } from "./data.ts";
 import { sessionDigest } from "./digest.ts";
 import { facetCounts, searchWhere } from "../query/run.ts";
-import { andQuery, FACET_KEYS, parseWhere, QueryError, QueryUnsupported, type Query } from "../query/where.ts";
+import { andQuery, FACET_KEYS, parseWhere, QueryError, QueryUnsupported, scopesSubagents, type Query } from "../query/where.ts";
 import { fitAnswer, pageIndex, pageRange, pageStep } from "./replay-page.ts";
 import { toolText, ToolError, type ToolDef } from "./protocol.ts";
 import { scoreTools } from "../scores/mcp.ts";
@@ -62,7 +62,7 @@ export interface ToolCtx {
 // Shared argument descriptions, kept short: every tool definition is sent on every
 // turn, and the schema already carries defaults and bounds (LIMIT's default and maximum).
 const AGENT = { type: "string", description: "Only this agent, e.g. claude-code, codex." };
-const REPO = { type: "string", description: "Only sessions under this path, or in repos with this folder name." };
+const REPO = { type: "string", description: "Only sessions under this path or repo folder name." };
 const SINCE = (d: string) => ({ type: "string", description: `Window start: 30m, 12h, 7d, today or a local date. Default ${d}.` });
 const UNTIL = { type: "string", description: "Window end. Default now." };
 const LIMIT = (d: number, max: number) => ({ type: "integer", minimum: 1, maximum: max, default: d, description: "Max rows." });
@@ -75,7 +75,7 @@ const WHERE = {
     "Filter query: key:value clauses ANDed; OR, ( ), - negates; a,b either; * wildcard; > >= < <= and a..b on numbers; bare words search text. Keys: agent model repo branch title flag skill cost tokens duration turns tools tool.errors since until has:tests|cost|error is:root|child|flagged; event keys tool kind ok mcp error. E.g. model:claude-* cost>0.5 tool:Bash ok:false",
 };
 const WHERE_SAME = (what: string) => ({ type: "string", description: `Filter query, same language as sessions_list where${what}.` });
-const SESSION_ID = { type: "string", minLength: 1, description: 'Session id, or "latest" (newest top-level session).' };
+const SESSION_ID = { type: "string", minLength: 1, description: 'Session id, or "latest" (newest top-level).' };
 
 const input = (properties: Obj, required: string[] = []): Obj => ({ type: "object", properties, ...(required.length ? { required } : {}), additionalProperties: false });
 const out = (properties: Obj, required: string[] = []): Obj => ({ type: "object", properties, ...(required.length ? { required } : {}) });
@@ -406,7 +406,7 @@ function toolDefs(): ToolDef<ToolCtx>[] {
         flagged: { type: "boolean", description: "Only sessions with any failure flag." },
         where: WHERE,
         facets: { type: "array", items: { type: "string", enum: [...FACET_KEYS] }, description: "Also count matching sessions per value of these keys." },
-        includeSubagents: { type: "boolean", default: false, description: "Also list subagent (child) sessions. Default false." },
+        includeSubagents: { type: "boolean", default: false, description: "Also list subagent (child) sessions. Default false; a where naming id:, parent: or is:child picks them itself." },
         project: PROJECT,
         limit: LIMIT(20, 100),
         cursor: CURSOR,
@@ -415,11 +415,12 @@ function toolDefs(): ToolDef<ToolCtx>[] {
       annotations: READ,
       async run(a, c) {
         const ctx = await c.store();
-        const q = query(a, c, { topLevel: a.includeSubagents !== true });
+        const where = whereArg(a, c.now());
+        // A where that names id:, parent:, is:root or is:child picks subagents itself, as the CLI's --where does.
+        const q = query(a, c, { topLevel: a.includeSubagents !== true && !scopesSubagents(where?.root) });
         const flag = strArg(a, "flag");
         if (flag) q.flag = flag;
         if (a.flagged === true) q.where = (s) => failureFlags(s.flags).length > 0;
-        const where = whereArg(a, c.now());
         if (where) q.query = where;
         const offset = cursorArg(a);
         const limit = numArg(a, "limit", 20);
@@ -1366,7 +1367,7 @@ function toolDefs(): ToolDef<ToolCtx>[] {
       name: "status",
       title: "coding.sh status",
       description:
-        "Health of coding.sh: version and update, data dir, sessions in the last 24h, last capture per agent, pending spool, last capture error. Use when data looks missing or stale. work: what needs the user (7d), as bucket counts and the top 10 items with reason and next step.",
+        "Health of coding.sh: version and update, data dir, sessions in the last 24h and last capture per agent, pending spool, last capture error, 5h and weekly plan usage. Use when data looks missing or stale. work: what needs the user (7d), as bucket counts and the top 10 items with reason and next step.",
       inputSchema: input({}),
       outputSchema: out(
         {
@@ -1379,6 +1380,8 @@ function toolDefs(): ToolDef<ToolCtx>[] {
           lastError: out({ error: S }),
           work: out({ needYou: I, items: arr(out({ id: S, bucket: S, reason: S, next: S, rootId: S })) }),
           hints: arr(S),
+          // Plan usage, as `coding.sh quota --json` prints it (resetsAt, readAt, ageSeconds and missing too).
+          quota: out({ windows: arr(out({ agent: S, window: S, usedPercent: N })) }),
         },
         ["version", "update", "home", "last24h", "work"],
       ),
@@ -1403,6 +1406,8 @@ function toolDefs(): ToolDef<ToolCtx>[] {
         if (update.available) hints.push(`coding.sh ${update.latest} is available (running ${update.current}). Tell the user; update with: ${update.install ?? "coding.sh update"}`);
         if (!latest) hints.push(noSessionsHint(ctx.env));
         else if (!day.sessions.length) hints.push("No sessions in the last 24h: if agents ran, check hooks with `coding.sh doctor`.");
+        const [{ quotaJson, quotaReport }, { codexHome }] = await Promise.all([import("../quota/index.ts"), import("../adapters/codex.ts")]);
+        const quota = quotaJson(quotaReport({ claudeFile: ctx.paths.quota, codexHome: codexHome(ctx.env) }), now);
         return {
           version: version(),
           update,
@@ -1421,6 +1426,7 @@ function toolDefs(): ToolDef<ToolCtx>[] {
             truncated: truncated || undefined,
           },
           hints,
+          quota,
         };
       },
     },

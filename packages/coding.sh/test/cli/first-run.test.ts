@@ -143,7 +143,7 @@ describe("show <prefix> resolves a unique session id prefix, like git", () => {
         await assert.rejects(resolveSession(ctx, "9f1c"), (e: CliError) => {
           assert.equal(e.reason, "ambiguous");
           assert.match(e.message, /Session id prefix "9f1c" is ambiguous/);
-          assert.match(e.message, new RegExp(`^  ${ids[0]}  claude-code  0s ago`, "m"));
+          assert.match(e.message, new RegExp(`^  ${ids[0]}  claude-code  \\d+s ago`, "m"));
           assert.match(e.message, new RegExp(`^  ${ids[1]}  claude-code  1m ago`, "m"));
           assert.deepEqual((e.data as { candidates: { id: string }[] }).candidates.map((x) => x.id), [ids[0], ids[1]]);
           return true;
@@ -162,7 +162,8 @@ describe("show <prefix> resolves a unique session id prefix, like git", () => {
 describe("times in CLI tables: short and local; --json keeps ISO", () => {
   const now = new Date(2026, 10, 6, 14, 30).getTime();
   test("relative under a day, then the local date and time", () => {
-    assert.equal(ago(now - 400, { now }), "0s ago", "no banned word: just");
+    // Under a second reads "0s ago": the same short form as the rest, with no filler word.
+    assert.equal(ago(now - 400, { now }), "0s ago");
     assert.equal(ago(now + 5000, { now }), "0s ago", "clock skew");
     assert.equal(ago(now - 12e3, { now }), "12s ago");
     assert.equal(ago(now - 3 * 60e3, { now }), "3m ago");

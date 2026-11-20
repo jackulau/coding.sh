@@ -114,7 +114,7 @@ test each hit.
 
 `sessions` and `export` leave out subagent sessions unless you pass `--subagents`. A query with
 `id:`, `parent:`, `is:root` or `is:child` decides that itself, so `--where is:child` lists
-subagents.
+subagents. The MCP tool `sessions_list` does the same with `includeSubagents` and `where`.
 
 ### Dates and times
 

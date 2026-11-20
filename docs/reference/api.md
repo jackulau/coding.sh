@@ -1481,6 +1481,10 @@ Body (JSON, up to 1 MB):
 - The caller is the read key's name (`reader:<hash>` for an unnamed key), so a renamed or rotated key is a new caller.
 - A stored score with no session can be replaced only by a key not limited to one project.
 - A given `id` of 64 hex characters, the form of a default id, must be this score's own default id. Any other gets 400.
+- Monitors (`coding.sh monitor`) store their scores with source `monitor`, `by` `monitor`, the monitor's name as `name`, the rationale as `comment`, and a hash of the rubric or command as `judgeVersion`. See [Concepts](../concepts.md#monitor).
+- The MCP tool `score_add_batch` takes `{"scores": [...]}`: 1 to 100 bodies in the `score_add` shape, each checked as here.
+- A body has `targetId`, `name` and `value`, and optionally `target`, `dataType`, `comment`, `source`, `sessionId` and `id`; `"latest"` names the newest session.
+- One invalid score stores none, and the error names its index (`scores[2]: ...`). It returns `{"items": [...]}`, one `{score, created, changed}` per input, in order.
 
 ```sh
 curl -sS -X POST "$CSH/api/scores" \
