@@ -47,6 +47,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Evals.** The verifier-corrected pass rate in `exp show` and `exp compare` builds its 95% interval from the Wilson intervals of the pass rate and the audited precision, so it carries the uncertainty of both and no longer collapses to zero width, such as [100.0%, 100.0%], at a 0% or 100% rate. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md)
 - **Viewer.** In the session list, the row `j` and `k` move to scrolls in below the sticky header and column titles instead of under them. Jump to (Ctrl K) lists sessions whose title matches before sessions that match only in their events, and opens one of those on the step that matched, with the query's matches marked. [Explore](https://coding.sh/docs/explore#open-the-viewer)
 - **CLI.** `init` and `doctor` read Gemini CLI's and OpenCode's version from their npm package instead of launching them, so they no longer leave `~/.gemini/projects.json.<uuid>.tmp` files or empty OpenCode cache dirs behind. [Troubleshooting](https://coding.sh/docs/troubleshooting)
 - **CLI.** `attribution` and `blame` print a subagent as `a03d2f6b:sub:a7d49789`, which `show` opens, not as its parent's id. `bench show`, `history` and `report` on a benchmark that does not exist say they can't find it, as `bench run` does. `upgrade-store --json` reports `"status": "owned"` when it only took ownership of the store. [Troubleshooting](https://coding.sh/docs/troubleshooting)

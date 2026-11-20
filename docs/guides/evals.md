@@ -1572,7 +1572,9 @@ labels, so every labelled case counts and there is no held-out split. The comman
 The audit is stored per grader version. After that, `exp show` puts the precision in the trust
 column, and `exp show` and `exp compare` add a verifier-corrected pass rate: pass rate × precision
 + fail rate × P(human pass | verifier fail). Without labelled fails, the second term is taken as
-0, and the line says it assumes no false rejects. Precision is measured on one experiment's
+0, and the line says it assumes no false rejects. Its 95% interval combines the Wilson intervals
+of the pass rate, the precision and the false-reject rate, so it stays open at a 0% or 100% rate.
+Precision is measured on one experiment's
 passes, so it carries over only roughly to configs that pass different cases. `--json` returns
 the audit as `verifier` (`checked`, `agree`, `falseAccepts`, `falseRejects`, `precision`, …).
 These are the same counts a blind-solver cross-check stores at `task.meta.crossCheck`.

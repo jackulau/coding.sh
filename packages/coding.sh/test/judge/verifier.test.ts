@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import type { ExperimentResult } from "../../src/datasets/types.ts";
 import { compareExperiments } from "../../src/experiments/compare.ts";
 import { renderComparison, renderExperiment } from "../../src/experiments/render.ts";
+import { wilson } from "../../src/stats/interval.ts";
 import {
   auditVerifier,
   formatVerifierAudit,
@@ -84,6 +85,23 @@ describe("verifierCorrected", () => {
     assert.ok(Math.abs(w.p - (0.45 + 0.04)) < 1e-12);
     assert.equal(w.assumesNoFalseRejects, false);
     assert.equal(verifierCorrected(0.6, 100, { passes: 0, fails: 0 } as unknown as VerifierAudit), undefined);
+  });
+
+  it("keeps the interval open at a 100% or 0% rate and carries the precision's uncertainty", () => {
+    // 20 of 20 pass, precision 14 of 14: the Wald band collapsed to [100%, 100%].
+    const all = verifierCorrected(1, 20, audit(1, 14))!;
+    assert.equal(all.p, 1);
+    assert.equal(all.hi, 1);
+    const precisionLo = wilson(14, 14).lo;
+    const rateLo = wilson(20, 20).lo;
+    assert.ok(all.lo < Math.min(precisionLo, rateLo), `lo ${all.lo} should sit below both inputs' lower bounds`);
+    const none = verifierCorrected(0, 20, audit(1, 14))!;
+    assert.equal(none.lo, 0);
+    assert.ok(none.hi > 0);
+    // 14 of 20: wider below than the raw Wilson interval, since precision can only pull it down.
+    const some = verifierCorrected(0.7, 20, audit(1, 14))!;
+    assert.ok(some.lo < wilson(14, 20).lo);
+    assert.ok(some.hi <= wilson(14, 20).hi + 1e-12);
   });
 });
 
