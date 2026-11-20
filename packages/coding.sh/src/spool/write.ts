@@ -55,8 +55,19 @@ export function spoolDir(agent: string, env: NodeJS.ProcessEnv = process.env): s
   return join(paths(env).spool, safeAgentId(agent));
 }
 
-function utcDay(ts: number): string {
-  return new Date(ts).toISOString().slice(0, 10);
+/**
+ * The UTC day of `ts` as toISOString() writes it (YYYY-MM-DD). The hook names a spool
+ * file on every event, and the first toISOString() call in its process took about 0.8 ms
+ * on Windows; the getters take a hundredth of that.
+ */
+export function utcDay(ts: number): string {
+  const d = new Date(ts);
+  const y = d.getUTCFullYear();
+  // toISOString() writes these years with a sign and six digits, and throws for an invalid date.
+  if (!(y >= 0 && y <= 9999)) return d.toISOString().slice(0, 10);
+  const m = d.getUTCMonth() + 1;
+  const day = d.getUTCDate();
+  return `${String(y).padStart(4, "0")}-${m < 10 ? "0" : ""}${m}-${day < 10 ? "0" : ""}${day}`;
 }
 
 /** A day's spool file at this size is full: the day continues in the next numbered file. */

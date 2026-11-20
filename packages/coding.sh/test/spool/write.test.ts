@@ -1,6 +1,6 @@
 // The spool writer on a full disk: a write cut short leaves no fragment, so the
 // next line (from hook.sh, which appends without looking at the file's end) is a
-// line of its own.
+// line of its own. And the day in a spool file's name.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs, { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { SpoolLine } from "../../src/core/types.ts";
-import { appendSpool, spoolFile } from "../../src/spool/write.ts";
+import { appendSpool, spoolFile, utcDay } from "../../src/spool/write.ts";
 import { PKG_ROOT } from "../capture/_helpers.ts";
 
 const roots: string[] = [];
@@ -38,6 +38,34 @@ function withFullDisk<T>(fn: () => T): T {
     syncBuiltinESMExports();
   }
 }
+
+describe("utcDay", () => {
+  const iso = (ts: number) => new Date(ts).toISOString().slice(0, 10);
+  /** The time of a UTC date, with no two-digit year mapping (Date.UTC(99, …) is 1999). */
+  const at = (y: number, m: number, d: number, ms = 0) => {
+    const t = new Date(ms);
+    t.setUTCFullYear(y, m, d);
+    return t.getTime();
+  };
+
+  it("names the day as toISOString() does", () => {
+    const day = 864e5;
+    const cases = [0, 1, -1, day - 1, day, -day, -day - 1, Date.now()];
+    cases.push(at(2024, 1, 29, day - 1), at(2024, 2, 1), at(1999, 11, 31, day - 1), at(2000, 0, 1), at(1900, 1, 28));
+    cases.push(at(0, 0, 1), at(9, 8, 9), at(99, 11, 31), at(999, 0, 1), at(9999, 11, 31, day - 1));
+    for (const ts of cases) assert.equal(utcDay(ts), iso(ts), `ts ${ts}`);
+    for (let ts = at(2023, 0, 1); ts < at(2026, 0, 1); ts += 7 * 3600e3 + 1234) assert.equal(utcDay(ts), iso(ts), `ts ${ts}`);
+  });
+
+  it("falls back to toISOString() outside the years 0 to 9999", () => {
+    for (const ts of [at(-1, 11, 31, 864e5 - 1), at(10000, 0, 1), 8.64e15, -8.64e15]) assert.equal(utcDay(ts), iso(ts), `ts ${ts}`);
+  });
+
+  it("throws for an invalid date, as toISOString() does", () => {
+    assert.throws(() => utcDay(Number.NaN), RangeError);
+    assert.throws(() => utcDay(8.64e15 + 1), RangeError);
+  });
+});
 
 describe("appendSpool on a full disk", () => {
   it("cuts a partly written line back off, so the file is as it was", () => {
