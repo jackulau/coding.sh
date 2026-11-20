@@ -476,6 +476,8 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   content-visibility: auto; contain-intrinsic-size: auto 40px;
 }
 .row:last-child { box-shadow: none; }
+/* A row moved to with j/k scrolls in below the sticky app bar and the table head, not under them. */
+.table .row { scroll-margin-top: calc(var(--top) + 32px); }
 .row[aria-selected="true"] { background: var(--select); }
 .row[aria-selected="true"]::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--text); }
 .row-main { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
@@ -531,6 +533,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .skeleton i { display: block; height: 8px; border-radius: 4px; background: var(--raised-2); }
 @media (max-width: 860px) {
   .thead { display: none; }
+  .table .row { scroll-margin-top: var(--top); }
   .row { grid-template-columns: 12px minmax(0, 1fr); gap: 0.15rem 0.7rem; padding-top: 0.6rem; padding-bottom: 0.6rem; align-items: start; }
   .row > .dot { margin-top: 6px; }
   .row-main { flex-wrap: wrap; row-gap: 0.3rem; }
@@ -2364,38 +2367,49 @@ function openPalette() {
   if (!expCache) api("/api/experiments", null, true).then((b) => { expCache = b.items; if (overlayOpen() && d.isConnected) render(); }, () => { expCache = []; });
   if (!benchCache) api("/api/benchmarks", null, true).then((b) => { benchCache = b.items; if (overlayOpen() && d.isConnected) render(); }, () => { benchCache = []; });
   // Stored sessions that match the typed text, from the server: the loaded list may be filtered or empty.
+  // Two asks: sessions whose title or id holds the text (q), and sessions whose events do (where).
   let found = [];
   let findSeq = 0;
   let findTimer = 0;
+  const findWhere = (text) => text.replace(/["()]/g, " ").slice(0, 200);
   function searchStored() {
     clearTimeout(findTimer);
     const text = input.value.trim();
     const mine = ++findSeq;
     if (!text) { if (found.length) { found = []; render(); } return; }
     findTimer = setTimeout(() => {
-      api("/api/sessions" + qs({ where: text.replace(/["()]/g, " ").slice(0, 200), limit: 8 }), null, true).then((b) => {
+      const ask = (p) => api("/api/sessions" + qs(p), null, true).then((b) => (b && b.items) || [], () => []);
+      Promise.all([ask({ q: text.slice(0, 200), limit: 8 }), ask({ where: findWhere(text), limit: 8 })]).then(([byTitle, byContent]) => {
         if (mine !== findSeq || !d.isConnected) return;
-        found = (b && b.items) || [];
+        found = byTitle.concat(byContent);
         render();
-      }, () => {});
+      });
     }, 120);
+  }
+  /** A session listed for its content, not its title: open it on the first event that matched. */
+  function openContentHit(s, text) {
+    const where = findWhere(text).trim();
+    api("/api/events" + qs({ where: addClause(where, "id:" + quoteValue(s.id)), limit: 200 }), null, true).then((b) => {
+      const evs = ((b && b.items) || []).filter((e) => e && e.sessionId === s.id).sort((a, b) => a.ts - b.ts);
+      location.hash = sessionHref(s.id, evs.length ? evs[0].id : null, where);
+    }, () => { location.hash = sessionHref(s.id, null, where); });
   }
   function results() {
     const q = input.value.trim().toLowerCase();
     const m = (s) => !q || String(s).toLowerCase().includes(q);
     const out = commands.filter((c) => m(c.label));
     const seen = new Set();
-    for (const s of list.items.concat(...list.children.values())) {
-      if (seen.has(s.id) || !(m(s.title) || m(s.id))) continue;
-      seen.add(s.id);
-      out.push({ group: "Sessions", label: sessionTitle(s), hint: s.agent, run: () => { location.hash = sessionHref(s.id); } });
+    const titled = (s) => m(sessionTitle(s)) || (s.title && m(s.title)) || m(s.id);
+    // Title matches first, then sessions that match only in their events.
+    const stored = found.filter((s) => s && s.id);
+    const ranked = list.items.concat(...list.children.values()).filter(titled)
+      .concat(stored.filter(titled), stored.filter((s) => !titled(s)));
+    for (const s of ranked) {
       if (seen.size >= 8) break;
-    }
-    for (const s of found) {
-      if (seen.size >= 8) break;
-      if (!s || !s.id || seen.has(s.id)) continue;
+      if (seen.has(s.id)) continue;
       seen.add(s.id);
-      out.push({ group: "Sessions", label: sessionTitle(s), hint: s.agent, run: () => { location.hash = sessionHref(s.id); } });
+      const text = input.value.trim();
+      out.push({ group: "Sessions", label: sessionTitle(s), hint: s.agent, run: titled(s) ? () => { location.hash = sessionHref(s.id); } : () => openContentHit(s, text) });
     }
     for (const e of (expCache || []).filter((e) => m(e.name) || m(e.id)).slice(0, 6)) {
       out.push({ group: "Experiments", label: e.name || e.id, hint: pct(e.summary && e.summary.passRate && e.summary.passRate.p), run: () => { location.hash = "#/experiments/" + encodeURIComponent(e.id); } });
