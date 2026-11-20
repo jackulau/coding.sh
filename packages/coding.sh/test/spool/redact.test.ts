@@ -12,7 +12,7 @@ import type { Adapter, SpoolLine } from "../../src/core/types.ts";
 import { defaultConfig } from "../../src/core/config.ts";
 import { ingest } from "../../src/core/ingest.ts";
 import { createRedactor, redactionTally } from "../../src/core/redact.ts";
-import { redactPayload, withSpoolRedactions } from "../../src/spool/redact.ts";
+import { redactPayload, spoolLineRedactor, withSpoolRedactions } from "../../src/spool/redact.ts";
 import { appendSpool, MAX_INLINE_LINE_BYTES } from "../../src/spool/write.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { PKG_ROOT, tsNodeArgs } from "../capture/_helpers.ts";
@@ -24,6 +24,9 @@ const AWS = ["AK", "IA", "Q3ZT7XW2LMNB4KRP"].join("");
 /** Only redacted inside its JSON document: in the document's text the name follows the `n` of `\n`. */
 const HIDDEN = ["Wq7", "Lp2Zr9Kx4Vb8"].join("");
 const SECRETS = [GITHUB, ANTHROPIC, AWS, HIDDEN];
+
+/** appendSpool's options with the redaction rules of the env's config. */
+const R = (env: NodeJS.ProcessEnv) => ({ redact: spoolLineRedactor(env) });
 
 const roots: string[] = [];
 after(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true })));
@@ -145,7 +148,7 @@ describe("the hook redacts before it writes", () => {
     mkdirSync(h, { recursive: true });
     writeFileSync(join(h, "config.toml"), `[capture]\nredact = ["none"]\n`);
     const raw = { text: `token ${GITHUB}` };
-    appendSpool({ v: 0, agent: "fake", event: "a", ts: Date.now(), pid: 1, cwd: "/w", raw }, env);
+    appendSpool({ v: 0, agent: "fake", event: "a", ts: Date.now(), pid: 1, cwd: "/w", raw }, env, R(env));
     const [line] = spoolLines(h);
     assert.deepEqual(line!.raw, raw);
 
@@ -153,7 +156,7 @@ describe("the hook redacts before it writes", () => {
     mkdirSync(h2, { recursive: true });
     writeFileSync(join(h2, "config.toml"), `[capture]\nredact = ["secrets", "email"]\n`);
     const mail = ["dev", "@", "example.org"].join("");
-    appendSpool({ v: 0, agent: "fake", event: "a", ts: Date.now(), pid: 1, cwd: "/w", raw: { text: `${mail} ${GITHUB}` } }, env2);
+    appendSpool({ v: 0, agent: "fake", event: "a", ts: Date.now(), pid: 1, cwd: "/w", raw: { text: `${mail} ${GITHUB}` } }, env2, R(env2));
     const [line2] = spoolLines(h2);
     assert.deepEqual(line2!.raw, { text: "[redacted:email] [redacted:github-token]" });
     assert.deepEqual(line2!.redactions, { email: 1, "github-token": 1 });

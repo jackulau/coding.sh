@@ -24,7 +24,7 @@ import { spawnBackgroundIngest } from "../../spool/kick.ts";
 import { suggest, UsageError } from "../args.ts";
 import { changeJson, printChanges, shortPath } from "../changes.ts";
 import { ingestCli, list, requireConsent, str, underImportLock, withContext } from "../common.ts";
-import { hookShSource, hookSource, planHookBin, writeHookBin } from "../hookbin.ts";
+import { hookRedactSource, hookShSource, hookSource, planHookBin, writeHookBin } from "../hookbin.ts";
 import { parseRemote, probeRemote, REMOTE_SINK, validateConfigText, withRemoteSink } from "../remote.ts";
 import { CliError, plural, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -214,7 +214,7 @@ function renderPlan(out: Output, plans: AgentPlan[], own: FileChange[], scope: s
 
 /**
  * Each file under bin/ that writeHookBin writes and that differs from what this
- * CLI ships (hook.mjs, hook.sh, mcp.mjs, cli-path), so the plan names every file
+ * CLI ships (hook.mjs, hook-redact.mjs, hook.sh, mcp.mjs, cli-path), so the plan names every file
  * the run creates. `hookChange` is planHookBin's entry for hook.mjs.
  */
 function hookBinFiles(env: NodeJS.ProcessEnv, hookChange: FileChange): FileChange[] {
@@ -228,7 +228,9 @@ function hookBinFiles(env: NodeJS.ProcessEnv, hookChange: FileChange): FileChang
   };
   const cli = runningCli();
   const out: FileChange[] = readOr(p.hook) === readFileSync(hookSource(env), "utf8") ? [] : [hookChange];
+  const redact = hookRedactSource(env);
   const others: [string, string | undefined, string][] = [
+    [p.hookRedact, redact === undefined ? undefined : readFileSync(redact, "utf8"), "the hook's redaction rules"],
     [p.hookSh, readFileSync(hookShSource(env), "utf8"), "the hook's sh fast path"],
     [p.mcpLauncher, mcpLauncherSource(), "the coding.sh MCP server launcher"],
     [p.cliPointer, cli === undefined ? undefined : cli + "\n", "the CLI the hook starts ingest with"],

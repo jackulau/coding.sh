@@ -36,6 +36,7 @@ describe("paths", () => {
     const p = paths({ CODING_SH_HOME: root });
     assert.equal(p.config, join(root, "config.toml"));
     assert.equal(p.hook, join(root, "bin", "hook.mjs"));
+    assert.equal(p.hookRedact, join(root, "bin", "hook-redact.mjs"));
     assert.equal(p.spoolErrors, join(root, "spool", "errors.log"));
     assert.equal(p.ingestLock, join(root, "spool", ".ingest.lock"));
     assert.equal(p.index, join(root, "index.db"));

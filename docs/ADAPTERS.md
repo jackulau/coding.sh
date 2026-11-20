@@ -252,6 +252,11 @@ node "<~/.coding.sh/bin/hook.mjs>" <agent-id> <EventName> [flags]
   settings in your user `config.toml` ([privacy](guides/privacy.md#the-raw-spool)). The line
   records the counts in `redactions`, and ingest adds them to the event. `hook.sh` writes the payload
   as it came; ingest redacts it.
+- `hook.mjs` loads the rules from `hook-redact.mjs` beside it only when the payload's text may hold a
+  secret or `config.toml` sets other rules. Other payloads are written as they came, since the rules
+  would not change them. If `hook-redact.mjs` is missing, such a payload gets no line and the error
+  goes to `spool/errors.log`. `coding.sh doctor` then reports the hook as stale, and
+  `coding.sh update --refresh-bin` writes the file again.
 - With `CODING_SH_DISABLE=1` both hooks read the payload and write no line. They add the payload's
   session id (`session_id`, `conversation_id`, `sessionId` or `conversationId`) to
   `spool/disabled-sessions`. Ingest and `ingest --backfill` store no event of a session listed there.

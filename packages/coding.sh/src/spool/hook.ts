@@ -37,25 +37,27 @@
 //   as spawnedBy (./spawned.ts).
 //
 // Work done: read stdin (synchronously, capped at 64 MB; a TTY counts as empty),
-// JSON.parse it when possible, and append one SpoolLine via appendSpool(). No
+// JSON.parse it when possible, redact it when ./gate.ts finds it may hold a
+// secret, and append one SpoolLine via appendSpool(). No
 // network and no git work: the hook neither runs git nor reads .git. The repo
 // and the HEAD a session started from are worked out at ingest, from the
 // reflog (../core/repo-state.ts). The one child process: on end-of-turn/session
 // events the hook starts a detached, lock-guarded `coding.sh ingest
 // --background` and does not wait for it (./kick.ts).
 //
-// Imports: node:fs, node:path, node:os only (via ./write.ts, ./kick.ts and
-// ../core/paths.ts, plus the pure ../integrations/gateway/ids.ts, and
-// ../core/redact.ts and ../core/toml.ts via ./redact.ts, which redacts a
-// payload before appendSpool writes it);
-// node:child_process is loaded only when an ingest starts.
+// Imports: node:fs, node:path, node:os only (via ./write.ts, ./kick.ts,
+// ./gate.ts and ../core/paths.ts, plus the pure ../integrations/gateway/ids.ts).
+// The redaction rules (./redact.ts with ../core/redact.ts and ../core/toml.ts,
+// bundled to dist/hook-redact.mjs) are imported only for a payload ./gate.ts
+// says may hold a secret; node:child_process only when an ingest starts.
 import { fstatSync, readSync, writeSync } from "node:fs";
 import type { SpoolLine } from "../core/types.ts";
 import { gatewayFromEnv } from "../integrations/gateway/ids.ts";
+import { needsRedaction } from "./gate.ts";
 import { hostOf } from "./host.ts";
 import { kickIngest, kickProxy } from "./kick.ts";
 import { spawnedByFromEnv } from "./spawned.ts";
-import { MAX_INLINE_LINE_BYTES, appendSpool, isDisabled, logSpoolError, payloadSessionId, recordDisabledSession } from "./write.ts";
+import { MAX_INLINE_LINE_BYTES, appendSpool, isDisabled, logSpoolError, payloadSessionId, recordDisabledSession, type RedactLine } from "./write.ts";
 
 const MAX_STDIN_BYTES = 64 * 1024 * 1024;
 /** A paused call's payload up to this size is parsed for its session id; a larger one is searched. */
@@ -120,7 +122,23 @@ function sniffCwd(text: string): string | undefined {
   }
 }
 
-function main(): void {
+/** The line as it is: what the redaction rules would return for a payload ./gate.ts passes. */
+const asIs: RedactLine = (line, rawText) => ({ line, rawText });
+
+/**
+ * How to redact this payload: as it is when ./gate.ts finds nothing the rules would
+ * replace, else with the rules of the user's config, imported now (hook-redact.mjs
+ * beside the bundled hook, ./redact.ts from source). A failed import throws, and the
+ * hook logs it and writes no line.
+ */
+async function lineRedactor(text: string, env: NodeJS.ProcessEnv): Promise<RedactLine> {
+  if (!needsRedaction(text, env)) return asIs;
+  const engine = new URL(import.meta.url.endsWith(".ts") ? "./redact.ts" : "./hook-redact.mjs", import.meta.url);
+  const { spoolLineRedactor } = (await import(engine.href)) as typeof import("./redact.ts");
+  return spoolLineRedactor(env);
+}
+
+async function main(): Promise<void> {
   const env = process.env;
   const argv = process.argv.slice(2);
   const echo = argv.includes("--echo-continue") || env.CODING_SH_ECHO_CONTINUE === "1";
@@ -188,7 +206,7 @@ function main(): void {
       // Started from another agent's shell tool: that agent's session id is in the env (./spawned.ts).
       const spawnedBy = spawnedByFromEnv(env);
       if (spawnedBy) line.spawnedBy = spawnedBy;
-      appendSpool(line, env, { rawText: text });
+      appendSpool(line, env, { rawText: text, redact: await lineRedactor(text, env) });
       if (truncated) logSpoolError(new Error(`stdin truncated at ${MAX_STDIN_BYTES} bytes`), { agent, event }, env);
       captured = true;
     }
@@ -231,4 +249,4 @@ process.on("uncaughtException", (e) => {
   logSpoolError(e, { where: "uncaughtException" });
   process.exit(0);
 });
-main();
+main().catch((e: unknown) => logSpoolError(e, { where: "main" }));

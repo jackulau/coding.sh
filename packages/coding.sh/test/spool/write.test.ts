@@ -9,8 +9,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { SpoolLine } from "../../src/core/types.ts";
+import { spoolLineRedactor } from "../../src/spool/redact.ts";
 import { appendSpool, spoolFile, utcDay } from "../../src/spool/write.ts";
 import { PKG_ROOT } from "../capture/_helpers.ts";
+
+/** appendSpool's options with the redaction rules of the env's config. */
+const R = (env: NodeJS.ProcessEnv) => ({ redact: spoolLineRedactor(env) });
 
 const roots: string[] = [];
 after(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true })));
@@ -71,9 +75,9 @@ describe("appendSpool on a full disk", () => {
   it("cuts a partly written line back off, so the file is as it was", () => {
     const { env } = home();
     const base: SpoolLine = { v: 0, agent: "fake", event: "PostToolUse", ts: Date.now(), pid: 1, cwd: "/w", raw: { a: 1 } };
-    const file = appendSpool(base, env)!;
+    const file = appendSpool(base, env, R(env))!;
     const before = readFileSync(file);
-    assert.throws(() => withFullDisk(() => appendSpool({ ...base, event: "Stop", raw: { b: "x".repeat(200) } }, env)), { code: "ENOSPC" });
+    assert.throws(() => withFullDisk(() => appendSpool({ ...base, event: "Stop", raw: { b: "x".repeat(200) } }, env, R(env))), { code: "ENOSPC" });
     assert.deepEqual(readFileSync(file), before);
   });
 
@@ -83,7 +87,7 @@ describe("appendSpool on a full disk", () => {
     const file = spoolFile("fake", base.ts, env);
     mkdirSync(join(file, ".."), { recursive: true });
     writeFileSync(file, JSON.stringify(base) + "\n");
-    assert.throws(() => withFullDisk(() => appendSpool({ ...base, event: "Stop", raw: { b: "x".repeat(200) } }, env)), { code: "ENOSPC" });
+    assert.throws(() => withFullDisk(() => appendSpool({ ...base, event: "Stop", raw: { b: "x".repeat(200) } }, env, R(env))), { code: "ENOSPC" });
     const sh = join(root, "hook.sh");
     copyFileSync(join(PKG_ROOT, "src", "spool", "hook.sh"), sh);
     const r = spawnSync("/bin/sh", [sh, "fake", "UserPromptSubmit"], { input: '{"cwd":"/w","p":"hi"}', env: { PATH: "/usr/bin:/bin", CODING_SH_HOME: env.CODING_SH_HOME! }, encoding: "utf8" });

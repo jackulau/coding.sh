@@ -31,6 +31,8 @@ export function paths(env: NodeJS.ProcessEnv = process.env) {
     config: r + "config.toml",
     bin,
     hook: bin + sep + "hook.mjs",
+    /** The redaction rules hook.mjs imports for a payload that may hold a secret (spool/redact.ts, bundled). */
+    hookRedact: bin + sep + "hook-redact.mjs",
     /** The POSIX sh fast path agents run outside Windows (spool/hook.sh); it hands what it does not cover to hook.mjs. */
     hookSh: bin + sep + "hook.sh",
     /** Text file holding the absolute path of the installed dist/cli.mjs (the hook starts background ingests with it). */

@@ -9,13 +9,17 @@ import { dirname, join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { pathToFileURL } from "node:url";
 import type { SpoolLine } from "../../src/core/types.ts";
+import { spoolLineRedactor } from "../../src/spool/redact.ts";
 import { MAX_INLINE_LINE_BYTES, SPOOL_FILE_CAP, appendSpool, resolveRaw, safeAgentId, spoolFile } from "../../src/spool/write.ts";
-import { CALLER_ENV, PKG_ROOT, gitc, isolate, makeRepo, removeTmp, tmp, tsNodeArgs } from "./_helpers.ts";
+import { CALLER_ENV, PKG_ROOT, bundleHook, gitc, isolate, makeRepo, removeTmp, tmp, tsNodeArgs } from "./_helpers.ts";
 import { median, pairedRatio, timeMs } from "../helpers-timing.ts";
 
 const HOOK_TS = join(PKG_ROOT, "src", "spool", "hook.ts");
 const HOOK_SH_SRC = join(PKG_ROOT, "src", "spool", "hook.sh");
 let home = "";
+
+/** appendSpool's options with the redaction rules of the env's config. */
+const R = (env: NodeJS.ProcessEnv) => ({ redact: spoolLineRedactor(env) });
 
 type Impl = "node" | "sh";
 /** The sh fast path is what agents run outside Windows. */
@@ -30,8 +34,7 @@ before(async () => {
   home = isolate();
   if (!IMPLS.includes("sh")) return;
   const bin = tmp("csh-hookbin-");
-  const { build } = await import("esbuild");
-  await build({ entryPoints: [HOOK_TS], bundle: true, platform: "node", format: "esm", target: "node22", minify: true, outfile: join(bin, "hook.mjs"), logLevel: "silent" });
+  await bundleHook(bin);
   HOOK_SH = join(bin, "hook.sh");
   copyFileSync(HOOK_SH_SRC, HOOK_SH);
   const shim = tmp("csh-nodeshim-");
@@ -749,6 +752,11 @@ process.on("exit", () => write(${JSON.stringify(log)}, touched.map((t) => t + "\
       const src = readFileSync(file, "utf8").replace(/^\s*\/\/.*$/gm, ""); // comments may say "no git work"
       assert.doesNotMatch(src, /["'`/\\]\.git\b|packed-refs|githead|["'`]git["'`]/, file);
     }
+    // The redaction rules and the TOML parser load only for a payload that may hold a secret
+    // (spool/gate.ts), so most hook runs skip them.
+    const loaded = [...seen].map((f) => f.slice(PKG_ROOT.length + 1).replace(/\\/g, "/"));
+    for (const lazy of ["src/core/redact.ts", "src/core/toml.ts", "src/spool/redact.ts"]) assert.ok(!loaded.includes(lazy), `${lazy} is loaded by every hook run: ${loaded.join(", ")}`);
+    assert.ok(loaded.includes("src/spool/gate.ts"), loaded.join(", "));
   });
 
   test("processes appending to the shared day file at the same time never interleave lines", async () => {
@@ -758,10 +766,12 @@ process.on("exit", () => write(${JSON.stringify(log)}, touched.map((t) => t + "\
     const start = Date.now() + 1500; // every writer starts its loop at the same moment
     const script = `
       const { appendSpool } = await import(${JSON.stringify(pathToFileURL(join(PKG_ROOT, "src", "spool", "write.ts")).href)});
+      const { spoolLineRedactor } = await import(${JSON.stringify(pathToFileURL(join(PKG_ROOT, "src", "spool", "redact.ts")).href)});
+      const redact = spoolLineRedactor(process.env);
       while (Date.now() < ${start});
       const w = Number(process.argv[1]);
       for (let i = 0; i < ${each}; i++)
-        appendSpool({ v: 0, agent: "fake", event: "w" + w + "-" + i, ts: ${Date.UTC(2026, 0, 2)}, pid: process.pid, cwd: "/c", raw: { data: String(w).repeat(i % 2 ? 200 + ((i * 37) % 700) : 5_000 + ((i * 7919) % 120_000)) } });
+        appendSpool({ v: 0, agent: "fake", event: "w" + w + "-" + i, ts: ${Date.UTC(2026, 0, 2)}, pid: process.pid, cwd: "/c", raw: { data: String(w).repeat(i % 2 ? 200 + ((i * 37) % 700) : 5_000 + ((i * 7919) % 120_000)) } }, process.env, { redact });
     `;
     await Promise.all(
       Array.from({ length: writers }, (_, w) =>
@@ -786,15 +796,15 @@ describe("appendSpool", () => {
   test("writes one file per UTC day for every writer, honors disable, offloads big raw objects", () => {
     const env = { ...process.env, CODING_SH_HOME: freshHome() };
     const base: SpoolLine = { v: 0, agent: "wrapper", event: "session.start", ts: Date.UTC(2026, 0, 2, 3), pid: 4242, cwd: "/r", raw: { a: 1 } };
-    const f = appendSpool(base, env);
+    const f = appendSpool(base, env, R(env));
     assert.equal(f, spoolFile("wrapper", base.ts, env));
     assert.ok(f?.endsWith("2026-01-02.jsonl"));
-    assert.equal(appendSpool({ ...base, event: "session.end", pid: 4343 }, env), f, "another process, same file");
+    assert.equal(appendSpool({ ...base, event: "session.end", pid: 4343 }, env, R(env)), f, "another process, same file");
     const lines = readFileSync(f!, "utf8").trim().split("\n").map((l) => JSON.parse(l));
     assert.deepEqual(lines.map((l) => l.event), ["session.start", "session.end"]);
-    assert.equal(appendSpool(base, { ...env, CODING_SH_DISABLE: "1" }), undefined);
+    assert.equal(appendSpool(base, { ...env, CODING_SH_DISABLE: "1" }, R(env)), undefined);
     const bigRaw = { patch: "+".repeat(MAX_INLINE_LINE_BYTES) };
-    appendSpool({ ...base, event: "big", raw: bigRaw }, env);
+    appendSpool({ ...base, event: "big", raw: bigRaw }, env, R(env));
     const last = JSON.parse(readFileSync(f!, "utf8").trim().split("\n").pop()!) as SpoolLine;
     assert.ok(last.rawFile);
     assert.deepEqual(resolveRaw(last), bigRaw);
@@ -805,7 +815,7 @@ describe("appendSpool", () => {
     const line: SpoolLine = { v: 0, agent: "fake", event: "PostToolUse", ts: Date.now(), pid: 777, cwd: "/r", raw: null };
     mkdirSync(spoolFile("fake", line.ts, env), { recursive: true }); // the append fails (EISDIR, like ENOSPC)
     const big = JSON.stringify({ secret: "sk-live-" + "A".repeat(MAX_INLINE_LINE_BYTES) });
-    assert.throws(() => appendSpool({ ...line, raw: JSON.parse(big) }, env, { rawText: big }), { code: "EISDIR" });
+    assert.throws(() => appendSpool({ ...line, raw: JSON.parse(big) }, env, { rawText: big, ...R(env) }), { code: "EISDIR" });
     const rawDir = join(env.CODING_SH_HOME, "spool", "fake", "raw");
     assert.deepEqual(existsSync(rawDir) ? readdirSync(rawDir) : [], [], "payload not orphaned");
   });
@@ -816,7 +826,7 @@ describe("appendSpool", () => {
     const f = spoolFile("fake", base.ts, env);
     mkdirSync(join(f, ".."), { recursive: true });
     appendFileSync(f, JSON.stringify(base) + "\n" + JSON.stringify(base).slice(0, 30)); // partial write (ENOSPC)
-    appendSpool({ ...base, event: "UserPromptSubmit" }, env);
+    appendSpool({ ...base, event: "UserPromptSubmit" }, env, R(env));
     const lines = readFileSync(f, "utf8").split("\n");
     assert.equal(lines.length, 4);
     assert.equal(lines[1], JSON.stringify(base).slice(0, 30), "fragment isolated on its own line");
@@ -827,16 +837,16 @@ describe("appendSpool", () => {
   test("a day file at the size cap is left alone: the day continues in <day>.1.jsonl, then <day>.2.jsonl", () => {
     const env = { ...process.env, CODING_SH_HOME: freshHome() };
     const base: SpoolLine = { v: 0, agent: "fake", event: "PostToolUse", ts: Date.UTC(2026, 0, 2, 3), pid: 1, cwd: "/r", raw: { a: 1 } };
-    const first = appendSpool(base, env)!;
+    const first = appendSpool(base, env, R(env))!;
     assert.ok(first.endsWith("2026-01-02.jsonl"));
     truncateSync(first, SPOOL_FILE_CAP); // sparse: no 64 MB written
-    const second = appendSpool({ ...base, event: "Stop" }, env)!;
+    const second = appendSpool({ ...base, event: "Stop" }, env, R(env))!;
     assert.ok(second.endsWith("2026-01-02.1.jsonl"), second);
     assert.equal(statSync(first).size, SPOOL_FILE_CAP, "the full file is not appended to");
-    assert.equal(appendSpool({ ...base, event: "Stop2" }, env), second);
+    assert.equal(appendSpool({ ...base, event: "Stop2" }, env, R(env)), second);
     truncateSync(second, SPOOL_FILE_CAP + 10);
-    assert.ok(appendSpool(base, env)!.endsWith("2026-01-02.2.jsonl"));
-    assert.ok(appendSpool({ ...base, ts: Date.UTC(2026, 0, 3) }, env)!.endsWith("2026-01-03.jsonl"), "a new day starts a new file");
+    assert.ok(appendSpool(base, env, R(env))!.endsWith("2026-01-02.2.jsonl"));
+    assert.ok(appendSpool({ ...base, ts: Date.UTC(2026, 0, 3) }, env, R(env))!.endsWith("2026-01-03.jsonl"), "a new day starts a new file");
   });
 });
 
@@ -853,10 +863,7 @@ describe("hook performance", () => {
   test("bundled hook: 10 KB payload costs under 1.5x a bare node start", { timeout: 120_000 }, async () => {
     let script = HOOK_TS;
     try {
-      const { build } = await import("esbuild");
-      const out = join(tmp("csh-bundle-"), "hook.mjs");
-      await build({ entryPoints: [HOOK_TS], bundle: true, platform: "node", format: "esm", target: "node22", minify: true, outfile: out, logLevel: "silent" });
-      script = out;
+      script = await bundleHook(tmp("csh-bundle-"));
     } catch {
       // esbuild unavailable: measure the .ts source (slower: type stripping at startup)
     }

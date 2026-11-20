@@ -66,6 +66,9 @@ and the Python SDK is on PyPI as `coding-sh`.
 - The hook command is `~/.coding.sh/bin/csh-hook <agent> <event>`, a plain Node script with no
   imports beyond `node:fs`. Its startup time is the only cost the agent sees.
 - It reads stdin and wraps it as `{"v":0,"agent":…,"event":…,"ts":…,"pid":…,"cwd":…,"raw":<stdin>}`.
+- The node hook redacts the payload first. It loads the rules (`bin/hook-redact.mjs`) only when the
+  payload's text may hold a secret or `config.toml` sets other rules (`src/spool/gate.ts`). The sh
+  hook writes the payload as it came, and ingest redacts it.
 - It appends that line to `~/.coding.sh/spool/<agent>/<yyyy-mm-dd>.jsonl` (UTC day), one file that
   every hook process shares. Each line is one `write` on a descriptor opened with `O_APPEND`, so lines
   from concurrent hooks never interleave on a local filesystem. A file that reaches 64 MB is left

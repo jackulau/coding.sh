@@ -1,7 +1,9 @@
 // The hook entry agents run: dist/hook.mjs copied to ~/.coding.sh/bin/hook.mjs,
 // and its POSIX sh fast path dist/hook.sh to bin/hook.sh (what agents run
 // outside Windows), so agent configs point at a stable path that survives
-// package upgrades and `npx` cache eviction. Next to it, bin/cli-path names the installed
+// package upgrades and `npx` cache eviction. dist/hook-redact.mjs goes beside
+// them: the redaction rules hook.mjs imports for a payload that may hold a
+// secret (spool/gate.ts). Next to it, bin/cli-path names the installed
 // dist/cli.mjs so the hook can start a background ingest when a session ends,
 // and bin/mcp.mjs launches that CLI's MCP server for agents. `coding.sh
 // update` refreshes all three from the new install (refreshHookBin).
@@ -30,6 +32,15 @@ export function hookShSource(env: NodeJS.ProcessEnv = process.env): string {
   throw new CliError("Can't find hook.sh to install", { reason: "hook_missing", next: ["Build the package first:", "npm run build"] });
 }
 
+/**
+ * The redaction rules shipped with that hook.mjs: hook-redact.mjs beside it
+ * (undefined when there is none, as beside a test's stand-in hook).
+ */
+export function hookRedactSource(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const file = join(dirname(hookSource(env)), "hook-redact.mjs");
+  return existsSync(file) ? file : undefined;
+}
+
 function readOr(path: string): string | undefined {
   try {
     return readFileSync(path, "utf8");
@@ -38,13 +49,19 @@ function readOr(path: string): string | undefined {
   }
 }
 
+/** bin/hook-redact.mjs matches the one shipped with the hook, or none ships. */
+function hookRedactCurrent(env: NodeJS.ProcessEnv): boolean {
+  const src = hookRedactSource(env);
+  return src === undefined || readOr(paths(env).hookRedact) === readFileSync(src, "utf8");
+}
+
 /** Planned write of the hook bin, MCP launcher and CLI pointer (undefined when all are current). */
 export function planHookBin(env: NodeJS.ProcessEnv = process.env, cli: string | undefined = runningCli()): FileChange | undefined {
   const p = paths(env);
   const dest = p.hook;
   const after = readFileSync(hookSource(env), "utf8");
   const before = readOr(dest);
-  if (before === after && readOr(p.hookSh) === readFileSync(hookShSource(env), "utf8") && readOr(p.mcpLauncher) === mcpLauncherSource() && (cli === undefined || readOr(p.cliPointer) === cli + "\n")) return undefined;
+  if (before === after && hookRedactCurrent(env) && readOr(p.hookSh) === readFileSync(hookShSource(env), "utf8") && readOr(p.mcpLauncher) === mcpLauncherSource() && (cli === undefined || readOr(p.cliPointer) === cli + "\n")) return undefined;
   // Text is omitted from the plan (a minified bundle is not a useful diff).
   return { path: dest, action: before === undefined ? "create" : "modify", summary: before === undefined ? "install the coding.sh hook" : "update the coding.sh hook" };
 }
@@ -52,6 +69,10 @@ export function planHookBin(env: NodeJS.ProcessEnv = process.env, cli: string | 
 export async function writeHookBin(env: NodeJS.ProcessEnv = process.env, cli: string | undefined = runningCli()): Promise<string> {
   const { atomicWrite } = await import("../adapters/_shared/files.ts");
   const p = paths(env);
+  // The rules before the hook that imports them: a hook.mjs that can't import them writes no
+  // line for a payload that may hold a secret.
+  const redact = hookRedactSource(env);
+  if (redact !== undefined) await atomicWrite(p.hookRedact, readFileSync(redact, "utf8"), 0o644);
   await atomicWrite(p.hook, readFileSync(hookSource(env), "utf8"), 0o755);
   await atomicWrite(p.hookSh, readFileSync(hookShSource(env), "utf8"), 0o755);
   await atomicWrite(p.mcpLauncher, mcpLauncherSource(), 0o755);
@@ -67,12 +88,22 @@ export async function writeHookBin(env: NodeJS.ProcessEnv = process.env, cli: st
 export async function ensureHookBin(env: NodeJS.ProcessEnv = process.env): Promise<"present" | "written" | "unavailable"> {
   const p = paths(env);
   const hasHook = existsSync(p.hook);
-  if (hasHook && existsSync(p.hookSh)) return "present";
+  const needSh = !existsSync(p.hookSh);
+  // A hook.mjs that imports the rules writes no line for a payload that may hold a secret
+  // when they are gone. A hook from before them imports nothing.
+  const needRules = hasHook && !existsSync(p.hookRedact) && (readOr(p.hook)?.includes("hook-redact.mjs") ?? false);
+  if (hasHook && !needSh && !needRules) return "present";
   try {
     if (hasHook) {
-      // A bin from before the sh fast path: add hook.sh, leave the installed hook.mjs as it is.
+      // A bin from before the sh fast path, or one that lost its rules: add what is missing,
+      // leave the installed hook.mjs as it is.
       const { atomicWrite } = await import("../adapters/_shared/files.ts");
-      await atomicWrite(p.hookSh, readFileSync(hookShSource(env), "utf8"), 0o755);
+      if (needRules) {
+        const rules = hookRedactSource(env);
+        if (rules === undefined) return "unavailable";
+        await atomicWrite(p.hookRedact, readFileSync(rules, "utf8"), 0o644);
+      }
+      if (needSh) await atomicWrite(p.hookSh, readFileSync(hookShSource(env), "utf8"), 0o755);
     } else await writeHookBin(env);
     return "written";
   } catch {
@@ -114,7 +145,7 @@ export async function healHookBin(env: NodeJS.ProcessEnv = process.env, cli: str
 }
 
 export interface HookBinHealth {
-  /** hook.mjs and hook.sh match the hook this CLI ships (null: no bundled hook to compare with). */
+  /** hook.mjs, hook-redact.mjs and hook.sh match the hook this CLI ships (null: no bundled hook to compare with). */
   hookCurrent: boolean | null;
   /** What bin/cli-path names, if anything. */
   cliPath: string | null;
@@ -131,7 +162,7 @@ export function hookBinHealth(env: NodeJS.ProcessEnv = process.env, cli: string 
   let hookCurrent: boolean | null = null;
   try {
     const installed = readOr(p.hook);
-    hookCurrent = installed === undefined ? false : installed === readFileSync(hookSource(env), "utf8") && readOr(p.hookSh) === readFileSync(hookShSource(env), "utf8");
+    hookCurrent = installed === undefined ? false : installed === readFileSync(hookSource(env), "utf8") && hookRedactCurrent(env) && readOr(p.hookSh) === readFileSync(hookShSource(env), "utf8");
   } catch {
     hookCurrent = null; // running from source without a build: nothing to compare against
   }

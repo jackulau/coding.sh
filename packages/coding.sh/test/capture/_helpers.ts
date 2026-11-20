@@ -117,3 +117,11 @@ export function tsNodeArgs(): string[] {
   const f = (process.features as { typescript?: string | false }).typescript;
   return f ? ["--no-warnings"] : ["--no-warnings", "--experimental-strip-types"];
 }
+
+/** hook.mjs and the hook-redact.mjs it imports, bundled into `dir` as dist/ holds them. Returns hook.mjs. */
+export async function bundleHook(dir: string): Promise<string> {
+  const { build } = await import("esbuild");
+  const entryPoints = { hook: join(PKG_ROOT, "src", "spool", "hook.ts"), "hook-redact": join(PKG_ROOT, "src", "spool", "redact.ts") };
+  await build({ entryPoints, bundle: true, platform: "node", format: "esm", target: "node22", minify: true, outdir: dir, outExtension: { ".js": ".mjs" }, logLevel: "silent" });
+  return join(dir, "hook.mjs");
+}

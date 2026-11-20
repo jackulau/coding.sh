@@ -2,11 +2,13 @@
 // dist/hook.mjs) and the `coding.sh run` wrapper (src/capture/wrapper.ts).
 //
 // This file is on the hook's hot path. It may only import node:fs, node:path
-// (and node:os via ../core/paths.ts), ./redact.ts and type-only imports.
+// (and node:os via ../core/paths.ts) and type-only imports.
 //
-// Redaction: every payload is redacted (./redact.ts, the rules of the user's
-// config) before any byte of it is written, inline or to a side file. What it
-// replaced is counted in the line's `redactions`.
+// Redaction: the caller says how to redact a line (AppendOptions.redact), and
+// appendSpool does it before any byte of the payload is written, inline or to a
+// side file. spoolLineRedactor() in ./redact.ts applies the rules of the user's
+// config and counts what they replaced in the line's `redactions`. The hook
+// loads it only for a payload ./gate.ts says may hold a secret.
 //
 // On-disk layout (all under dataHome()/spool):
 //   <agent>/<yyyy-mm-dd>.jsonl         one SpoolLine per line, every writer that UTC day
@@ -32,8 +34,6 @@ import { closeSync, fstatSync, ftruncateSync, mkdirSync, openSync, readFileSync,
 import { join } from "node:path";
 import type { SpoolLine } from "../core/types.ts";
 import { paths } from "../core/paths.ts";
-import { redactionTally, type Redactor } from "../core/redact.ts";
-import { redactPayload, spoolRedactor } from "./redact.ts";
 
 /**
  * A serialized line above this many bytes (1024 with its newline, hook.sh's
@@ -200,44 +200,21 @@ export function readDisabledSessions(spoolDir: string): Set<string> {
   return new Set(text.split("\n").map((l) => l.trim()).filter((l) => SESSION_ID_RE.test(l)));
 }
 
+/**
+ * Redacts a line before appendSpool writes it. Returns the line with its payload
+ * redacted, and the text a side file stores in place of `rawText`.
+ * spoolLineRedactor() in ./redact.ts makes one from the user's config.
+ */
+export type RedactLine = (line: SpoolLine, rawText: string | undefined) => { line: SpoolLine; rawText: string | undefined };
+
 export interface AppendOptions {
   /**
    * The payload exactly as received (e.g. stdin text). When given, a side file
    * stores these bytes verbatim instead of re-serializing `line.raw`.
    */
   rawText?: string;
-  /** Redacts the payload before it is written (default: spoolRedactor(env), the user's config). */
-  redactor?: Redactor;
-}
-
-/**
- * The line with its payload redacted, and the side-file text when the payload came
- * as text too long to inline (the hook parses only a payload that fits, so it is
- * parsed here, as a reader parses the side file). A payload with nothing to redact
- * comes back as it was, so its side file keeps the bytes the agent sent.
- */
-function redactLine(line: SpoolLine, rawText: string | undefined, r: Redactor): { line: SpoolLine; rawText: string | undefined } {
-  if (!r.rules.length) return { line, rawText };
-  const fromText = rawText !== undefined && line.raw === undefined;
-  let value: unknown = line.raw;
-  let json = true;
-  if (fromText) {
-    try {
-      value = JSON.parse(rawText);
-    } catch {
-      value = rawText;
-      json = false;
-    }
-  }
-  const tally = redactionTally();
-  const clean = redactPayload(r, value, tally);
-  if (!Object.keys(tally.kinds).length) return { line, rawText };
-  const out: SpoolLine = { ...line, redactions: { ...tally.kinds } };
-  if (!fromText) {
-    out.raw = clean;
-    return { line: out, rawText: undefined };
-  }
-  return { line: out, rawText: json ? JSON.stringify(clean) : String(clean) };
+  /** Redacts the line before any of it is written. */
+  redact: RedactLine;
 }
 
 /**
@@ -252,12 +229,12 @@ function redactLine(line: SpoolLine, rawText: string | undefined, r: Redactor): 
  * resolveRaw(): JSON.parse the file, falling back to the plain string — the
  * same rule the hook applies to stdin.
  */
-export function appendSpool(line: SpoolLine, env: NodeJS.ProcessEnv = process.env, opts: AppendOptions = {}): string | undefined {
+export function appendSpool(line: SpoolLine, env: NodeJS.ProcessEnv, opts: AppendOptions): string | undefined {
   if (isDisabled(env)) return undefined;
   const agent = safeAgentId(line.agent);
   const dir = spoolDir(agent, env);
   const file = spoolFile(agent, line.ts, env, line.pid);
-  const redacted = redactLine(line, opts.rawText, opts.redactor ?? spoolRedactor(env));
+  const redacted = opts.redact(line, opts.rawText);
   line = redacted.line;
   const rawText = redacted.rawText;
 

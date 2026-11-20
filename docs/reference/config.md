@@ -299,7 +299,7 @@ Read only by `coding.sh serve`. Every key has an environment variable, which win
 | `CODING_SH_WORKFLOWS_BACKGROUND_IMPORT`, `CODING_SH_TAIL_CHILD` | Set by coding.sh on the import processes it starts. Not for you to set. |
 | `CODING_SH_NO_PROXY_AUTOSTART=1` | The hook does not restart a stopped `coding.sh proxy` when a session starts (it does only after `init --proxy`). |
 | `CODING_SH_ECHO_CONTINUE=1` | The hook prints `{"continue":true}`, for agents that need a JSON reply. `init` sets this up where needed. |
-| `CODING_SH_HOOK_SOURCE` | Path of the `hook.mjs` that `init` copies into `~/.coding.sh/bin`. |
+| `CODING_SH_HOOK_SOURCE` | Path of the `hook.mjs` that `init` copies into `~/.coding.sh/bin`, with the `hook-redact.mjs` beside it when there is one. |
 | `CODING_SH_INIT_IMPORT_BUDGET_MS` | How long `init` imports past sessions before it hands the rest to a background import. Default 8000. |
 | `CODING_SH_CAPTURE_MODE` | `coding.sh serve` and the SDKs: `full` or `metadata`. |
 

@@ -1,19 +1,25 @@
 // Redaction before a payload reaches the spool. The hook (./hook.ts) and the
-// `coding.sh run` wrapper write every payload through appendSpool (./write.ts),
-// which passes it through spoolRedactor() first, so no secret the rules know
-// waits on disk for ingest. Ingest redacts again with the same rules
-// (core/redact.ts): a value already redacted comes out unchanged, so it stores
-// the same event as it would from the original payload. The counts, which a
-// second pass cannot see, travel on the line (SpoolLine.redactions) and ingest
-// puts them on the line's first event (withSpoolRedactions).
+// `coding.sh run` wrapper write every payload through appendSpool (./write.ts)
+// with spoolLineRedactor(), so no secret the rules know waits on disk for
+// ingest. The hook skips it for a payload the rules would leave as it is
+// (./gate.ts). Ingest redacts again with the same rules (core/redact.ts): a
+// value already redacted comes out unchanged, so it stores the same event as it
+// would from the original payload. The counts, which a second pass cannot see,
+// travel on the line (SpoolLine.redactions) and ingest puts them on the line's
+// first event (withSpoolRedactions).
 //
-// On the hook's hot path: node:fs plus core/redact.ts, core/paths.ts and
-// core/toml.ts, no other module.
+// The build bundles this file on its own, to dist/hook-redact.mjs, and the hook
+// imports it only when ./gate.ts says a payload needs it: the rules and the TOML
+// parser cost the hook more time to load than the rest of its work.
+// It imports node:fs plus core/redact.ts (which brings core/weights.ts and
+// core/ids.ts), core/paths.ts and core/toml.ts.
 import { readFileSync } from "node:fs";
 import type { AgentEvent } from "../schema/index.ts";
-import { createRedactor, redactForBlob, redactionCounts, type RedactionTally, type Redactor } from "../core/redact.ts";
+import type { SpoolLine } from "../core/types.ts";
+import { createRedactor, redactForBlob, redactionCounts, redactionTally, type RedactionTally, type Redactor } from "../core/redact.ts";
 import { paths } from "../core/paths.ts";
 import { parseToml } from "../core/toml.ts";
+import type { RedactLine } from "./write.ts";
 
 const cache = new WeakMap<NodeJS.ProcessEnv, Redactor>();
 
@@ -99,6 +105,42 @@ function mapJsonStrings(v: unknown, f: (s: string) => string, depth = 0): unknow
 export function redactPayload(r: Redactor, v: unknown, tally: RedactionTally): unknown {
   if (!r.rules.length) return v;
   return mapJsonStrings(r.value(v, tally), (s) => redactForBlob(r, s, tally) as string);
+}
+
+/**
+ * The line with its payload redacted, and the side-file text when the payload came
+ * as text too long to inline (the hook parses only a payload that fits, so it is
+ * parsed here, as a reader parses the side file). A payload with nothing to redact
+ * comes back as it was, so its side file keeps the bytes the agent sent.
+ */
+export function redactLine(line: SpoolLine, rawText: string | undefined, r: Redactor): { line: SpoolLine; rawText: string | undefined } {
+  if (!r.rules.length) return { line, rawText };
+  const fromText = rawText !== undefined && line.raw === undefined;
+  let value: unknown = line.raw;
+  let json = true;
+  if (fromText) {
+    try {
+      value = JSON.parse(rawText);
+    } catch {
+      value = rawText;
+      json = false;
+    }
+  }
+  const tally = redactionTally();
+  const clean = redactPayload(r, value, tally);
+  if (!Object.keys(tally.kinds).length) return { line, rawText };
+  const out: SpoolLine = { ...line, redactions: { ...tally.kinds } };
+  if (!fromText) {
+    out.raw = clean;
+    return { line: out, rawText: undefined };
+  }
+  return { line: out, rawText: json ? JSON.stringify(clean) : String(clean) };
+}
+
+/** appendSpool's `redact` with the rules of the user's config (spoolRedactor). */
+export function spoolLineRedactor(env: NodeJS.ProcessEnv = process.env): RedactLine {
+  const r = spoolRedactor(env);
+  return (line, rawText) => redactLine(line, rawText, r);
 }
 
 /**

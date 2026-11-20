@@ -139,7 +139,9 @@ timing. It listens on 127.0.0.1 unless you pass `--host`.
 The hook writes what the agent sends to `~/.coding.sh/spool` (mode 600). The node hook (`hook.mjs`,
 what agents run on Windows) redacts the payload first, with `capture.redact` and
 `capture.redactPatterns` from your `config.toml`, so a secret those rules match never reaches the
-spool.
+spool. To stay fast, it loads those rules only for a payload whose text may hold a secret, or when
+your `config.toml` sets other rules; the rules would leave any other payload as it is. If it can't
+load them, it writes no line for that payload and logs the error to `spool/errors.log`.
 
 The line records how many values the node hook replaced, by rule, and ingest adds those counts to the
 stored event. A repo's `.coding.sh/config.toml` can add rules; ingest applies them. The POSIX sh hook
