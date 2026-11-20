@@ -103,11 +103,29 @@ async function gate(name, cmd, args, opts = {}) {
   return { ok: r.code === 0, ms: Math.round(r.ms), tail: r.code === 0 ? undefined : (r.stdout + r.stderr).slice(-1500) };
 }
 
+/** Env for the tests gate: HOME, USERPROFILE and the agent homes under `tmp`, no background ingest. */
+export function gateTestEnv(env, tmp) {
+  const home = join(tmp, "home");
+  const out = { ...env };
+  for (const k of ["CODING_SH_STORE_URL", "CODING_SH_BLOB_URL", "CODING_SH_DEV_REAL_STORE"]) delete out[k];
+  return {
+    ...out,
+    HOME: home,
+    USERPROFILE: home,
+    CODING_SH_HOME: join(home, ".coding.sh"),
+    CLAUDE_CONFIG_DIR: join(home, ".claude"),
+    CODEX_HOME: join(home, ".codex"),
+    CODING_SH_NO_AUTO_INGEST: "1",
+    NO_COLOR: "1",
+  };
+}
+
 async function runGates() {
   const tmp = tempDir("cs-gates-");
   try {
-    // Tests run with HOME and CODING_SH_HOME in a temp dir, on top of the tests' own isolation.
-    const testEnv = { ...process.env, HOME: join(tmp, "home"), CODING_SH_HOME: join(tmp, "home", ".coding.sh"), NO_COLOR: "1" };
+    // Tests run with every home in a temp dir, on top of the tests' own isolation. On Windows Node
+    // takes the home from USERPROFILE, so HOME alone isolates nothing there.
+    const testEnv = gateTestEnv(process.env, tmp);
     mkdirSync(testEnv.HOME, { recursive: true });
     const g = {};
     g.typecheck = await gate("typecheck", "npm", ["run", "typecheck", "-w", "coding.sh"], { cwd: REPO });
@@ -120,12 +138,19 @@ async function runGates() {
   }
 }
 
-function agentVersions() {
-  const v = (cmd) => {
-    const r = sh(cmd, ["--version"], { timeout: 15_000 });
+/**
+ * Versions of the agent CLIs on PATH, from `<cli> --version`. CODING_SH_DOGFOOD_SKIP_AGENTS is a
+ * comma list of agent ids (e.g. "codex") whose CLI is never started: a machine where that CLI must
+ * not run records null for it.
+ */
+export function agentVersions(env = process.env, run = sh) {
+  const skip = new Set((env.CODING_SH_DOGFOOD_SKIP_AGENTS ?? "").split(",").map((s) => s.trim()).filter(Boolean));
+  const v = (id, cmd) => {
+    if (skip.has(id)) return null;
+    const r = run(cmd, ["--version"], { timeout: 15_000 });
     return r.code === 0 ? (/\d+\.\d+\.\d+/.exec(r.stdout)?.[0] ?? r.stdout.trim()) : null;
   };
-  return { "claude-code": v("claude"), codex: v("codex") };
+  return { "claude-code": v("claude-code", "claude"), codex: v("codex", "codex") };
 }
 
 function lastFull(history) {

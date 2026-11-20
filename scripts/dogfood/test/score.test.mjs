@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import { test } from "node:test";
-import { compare, headline, normalized, WEIGHTS } from "../score.mjs";
+import { agentVersions, compare, gateTestEnv, headline, normalized, WEIGHTS } from "../score.mjs";
 import { meets } from "../bench.mjs";
 import { parseTapSummary } from "../conformance.mjs";
 import { bootstrapMedianDiff, nearestRank, quantile, wilson } from "../lib/util.mjs";
@@ -81,4 +82,24 @@ test("stats helpers", () => {
   const d = bootstrapMedianDiff([10, 11, 12, 10, 11, 12, 10, 11], [20, 21, 22, 20, 21, 22, 20, 21]);
   assert.equal(d.diff, 10);
   assert.ok(d.ci[0] > 8 && d.ci[1] < 12);
+});
+
+test("agentVersions never starts a CLI named in CODING_SH_DOGFOOD_SKIP_AGENTS", () => {
+  const started = [];
+  const run = (cmd) => (started.push(cmd), { code: 0, stdout: `${cmd} 1.2.3\n` });
+  assert.deepEqual(agentVersions({ CODING_SH_DOGFOOD_SKIP_AGENTS: " codex " }, run), { "claude-code": "1.2.3", codex: null });
+  assert.deepEqual(started, ["claude"]);
+  started.length = 0;
+  assert.deepEqual(agentVersions({}, run), { "claude-code": "1.2.3", codex: "1.2.3" });
+  assert.deepEqual(started, ["claude", "codex"]);
+});
+
+test("the tests gate isolates USERPROFILE and the agent homes, not only HOME", () => {
+  const env = gateTestEnv({ PATH: "/bin", USERPROFILE: "/real", HOME: "/real", CODING_SH_DEV_REAL_STORE: "1", CODING_SH_STORE_URL: "x" }, "/t");
+  assert.equal(env.PATH, "/bin");
+  for (const k of ["HOME", "USERPROFILE"]) assert.equal(env[k], join("/t", "home"));
+  for (const k of ["CODING_SH_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME"]) assert.ok(env[k].startsWith(env.HOME), k);
+  assert.equal(env.CODING_SH_NO_AUTO_INGEST, "1");
+  assert.equal(env.CODING_SH_DEV_REAL_STORE, undefined);
+  assert.equal(env.CODING_SH_STORE_URL, undefined);
 });

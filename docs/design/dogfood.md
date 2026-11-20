@@ -285,6 +285,10 @@ time is Vercel's limit. After 10 runs, each throughput or size target tightens t
 In `quick` mode, components that were not run keep their last `full` value and are marked
 `stale: true` with their age.
 
+`agents` holds the version each agent CLI prints for `--version`. To keep the scorer from starting
+a CLI, list its agent id in `CODING_SH_DOGFOOD_SKIP_AGENTS` (for example `codex`); its version is
+then `null`. The tests gate runs with `HOME`, `USERPROFILE` and the agent homes in a temp dir.
+
 ```jsonc
 // tasks/dogfood/scorecard.json
 {
