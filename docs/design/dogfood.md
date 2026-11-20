@@ -289,6 +289,11 @@ In `quick` mode, components that were not run keep their last `full` value and a
 a CLI, list its agent id in `CODING_SH_DOGFOOD_SKIP_AGENTS` (for example `codex`); its version is
 then `null`. The tests gate runs with `HOME`, `USERPROFILE` and the agent homes in a temp dir.
 
+`capture.health` copies the index from `CODING_SH_LIVE_HOME` (default `~/.coding.sh`) and scores the
+sessions whose folder is this checkout or under it. When the scorer runs in a worktree but the
+sessions ran in another checkout, set `CODING_SH_HEALTH_REPO` to that checkout. On Windows the
+match ignores case and slash direction.
+
 ```jsonc
 // tasks/dogfood/scorecard.json
 {
