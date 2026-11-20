@@ -239,6 +239,10 @@ node "<~/.coding.sh/bin/hook.mjs>" <agent-id> <EventName> [flags]
   fails. It waits for `hook.mjs` and exits 0 whatever node does. When node is not on the agent's
   `PATH` or cannot run `hook.mjs`, that event is not captured, and `--echo-continue` and
   `--reply={}` still get their reply. A reader of the reply that has gone away does not fail the call.
+- `hook.mjs` redacts the payload before it writes it, inline or to a side file, with the redaction
+  settings in your user `config.toml` ([privacy](guides/privacy.md#the-raw-spool)). The line
+  records the counts in `redactions`, and ingest adds them to the event. `hook.sh` writes the payload
+  as it came; ingest redacts it.
 - With `CODING_SH_DISABLE=1` both hooks read the payload and write no line. They add the payload's
   session id (`session_id`, `conversation_id`, `sessionId` or `conversationId`) to
   `spool/disabled-sessions`. Ingest and `ingest --backfill` store no event of a session listed there.

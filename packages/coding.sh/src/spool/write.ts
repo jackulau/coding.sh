@@ -2,7 +2,11 @@
 // dist/hook.mjs) and the `coding.sh run` wrapper (src/capture/wrapper.ts).
 //
 // This file is on the hook's hot path. It may only import node:fs, node:path
-// (and node:os via ../core/paths.ts) and type-only imports.
+// (and node:os via ../core/paths.ts), ./redact.ts and type-only imports.
+//
+// Redaction: every payload is redacted (./redact.ts, the rules of the user's
+// config) before any byte of it is written, inline or to a side file. What it
+// replaced is counted in the line's `redactions`.
 //
 // On-disk layout (all under dataHome()/spool):
 //   <agent>/<yyyy-mm-dd>.jsonl         one SpoolLine per line, every writer that UTC day
@@ -28,12 +32,16 @@ import { closeSync, fstatSync, ftruncateSync, mkdirSync, openSync, readFileSync,
 import { join } from "node:path";
 import type { SpoolLine } from "../core/types.ts";
 import { paths } from "../core/paths.ts";
+import { redactionTally, type Redactor } from "../core/redact.ts";
+import { redactPayload, spoolRedactor } from "./redact.ts";
 
 /**
  * A serialized line above this many bytes (1024 with its newline, hook.sh's
- * limit) moves `raw` to a side file. Ingest rewrites side files with their
- * secrets redacted once it has stored their line (core/spool-scrub.ts); a day
- * file's short inline lines are redacted in place once the day has passed.
+ * limit) moves `raw` to a side file. Both are redacted before they are written.
+ * Ingest also rewrites side files with their secrets redacted once it has stored
+ * their line (core/spool-scrub.ts), and a day file's short inline lines in place
+ * once the day has passed: hook.sh writes without redacting, and a repo config
+ * can add rules.
  */
 export const MAX_INLINE_LINE_BYTES = 1023;
 
@@ -187,6 +195,38 @@ export interface AppendOptions {
    * stores these bytes verbatim instead of re-serializing `line.raw`.
    */
   rawText?: string;
+  /** Redacts the payload before it is written (default: spoolRedactor(env), the user's config). */
+  redactor?: Redactor;
+}
+
+/**
+ * The line with its payload redacted, and the side-file text when the payload came
+ * as text too long to inline (the hook parses only a payload that fits, so it is
+ * parsed here, as a reader parses the side file). A payload with nothing to redact
+ * comes back as it was, so its side file keeps the bytes the agent sent.
+ */
+function redactLine(line: SpoolLine, rawText: string | undefined, r: Redactor): { line: SpoolLine; rawText: string | undefined } {
+  if (!r.rules.length) return { line, rawText };
+  const fromText = rawText !== undefined && line.raw === undefined;
+  let value: unknown = line.raw;
+  let json = true;
+  if (fromText) {
+    try {
+      value = JSON.parse(rawText);
+    } catch {
+      value = rawText;
+      json = false;
+    }
+  }
+  const tally = redactionTally();
+  const clean = redactPayload(r, value, tally);
+  if (!Object.keys(tally.kinds).length) return { line, rawText };
+  const out: SpoolLine = { ...line, redactions: { ...tally.kinds } };
+  if (!fromText) {
+    out.raw = clean;
+    return { line: out, rawText: undefined };
+  }
+  return { line: out, rawText: json ? JSON.stringify(clean) : String(clean) };
 }
 
 /**
@@ -197,7 +237,7 @@ export interface AppendOptions {
  * When the serialized line exceeds MAX_INLINE_LINE_BYTES, `raw` is written to
  * `<agent>/raw/<ts>-<pid>-<rand>.json`, removed from the line, and the absolute
  * side-file path is set as `rawFile`. Side-file contents: `rawText` verbatim
- * when provided, else JSON.stringify(raw). Readers recover `raw` with
+ * when provided and nothing in it was redacted, else JSON.stringify(raw). Readers recover `raw` with
  * resolveRaw(): JSON.parse the file, falling back to the plain string — the
  * same rule the hook applies to stdin.
  */
@@ -206,9 +246,12 @@ export function appendSpool(line: SpoolLine, env: NodeJS.ProcessEnv = process.en
   const agent = safeAgentId(line.agent);
   const dir = spoolDir(agent, env);
   const file = spoolFile(agent, line.ts, env, line.pid);
+  const redacted = redactLine(line, opts.rawText, opts.redactor ?? spoolRedactor(env));
+  line = redacted.line;
+  const rawText = redacted.rawText;
 
   let out: string | undefined;
-  const rawTooBig = opts.rawText !== undefined && Buffer.byteLength(opts.rawText) > MAX_INLINE_LINE_BYTES;
+  const rawTooBig = rawText !== undefined && Buffer.byteLength(rawText) > MAX_INLINE_LINE_BYTES;
   if (!rawTooBig) {
     out = JSON.stringify(line);
     if (Buffer.byteLength(out) > MAX_INLINE_LINE_BYTES) out = undefined;
@@ -217,7 +260,7 @@ export function appendSpool(line: SpoolLine, env: NodeJS.ProcessEnv = process.en
     const rawDir = join(dir, "raw");
     const rand = Math.random().toString(36).slice(2, 10);
     const rawFile = join(rawDir, `${line.ts}-${line.pid}-${rand}.json`);
-    const body = opts.rawText ?? JSON.stringify(line.raw ?? null);
+    const body = rawText ?? JSON.stringify(line.raw ?? null);
     try {
       writeFileSync(rawFile, body, { mode: 0o600, flag: "wx" });
     } catch (e) {

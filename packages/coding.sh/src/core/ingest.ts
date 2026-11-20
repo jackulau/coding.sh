@@ -85,6 +85,7 @@ import { traceKvKey } from "../otel/map.ts";
 import { InsertedEvents } from "../otel/receiver.ts";
 import { linkSpawned } from "../spool/spawned.ts";
 import { readDisabledSessions } from "../spool/write.ts";
+import { withSpoolRedactions } from "../spool/redact.ts";
 import { matchSpawnedParent, openAt } from "../spool/spawned-match.ts";
 
 export const PUT_BATCH = 500;
@@ -899,7 +900,9 @@ export function spoolNormalizer(o: SpoolNormalizerOptions): (line: SpoolLine, so
         if (line.git.branch) git.branch = line.git.branch;
         if (git.commit || git.branch) ev = { ...ev, payload: { ...ev.payload, git } };
       }
-      out.push(finishEvent(ev, profile, metadata));
+      const done = finishEvent(ev, profile, metadata);
+      // The hook redacted the payload before writing it (spool/redact.ts): its counts go on the line's first event.
+      out.push(out.length === 0 && line.redactions ? withSpoolRedactions(done, line.redactions) : done);
     }
     return out;
   };

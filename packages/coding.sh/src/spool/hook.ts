@@ -45,7 +45,9 @@
 // --background` and does not wait for it (./kick.ts).
 //
 // Imports: node:fs, node:path, node:os only (via ./write.ts, ./kick.ts and
-// ../core/paths.ts, plus the pure ../integrations/gateway/ids.ts);
+// ../core/paths.ts, plus the pure ../integrations/gateway/ids.ts, and
+// ../core/redact.ts and ../core/toml.ts via ./redact.ts, which redacts a
+// payload before appendSpool writes it);
 // node:child_process is loaded only when an ingest starts.
 import { fstatSync, readSync, writeSync } from "node:fs";
 import type { SpoolLine } from "../core/types.ts";
