@@ -55,7 +55,7 @@ Every command accepts these.
 | [`search`](#codingsh-search) | Explore | Full-text search over prompts, replies, tool calls and errors |
 | [`alert`](#codingsh-alert) | Explore | Notify a webhook or a command when failures, cost, sessions or a flag cross a threshold |
 | [`budget`](#codingsh-budget) | Explore | Spend budgets per day, week or month, for every session or one agent or repo |
-| [`usage`](#codingsh-usage) | Explore | Tokens, cost, turns and cache hits by agent, model or day |
+| [`usage`](#codingsh-usage) | Explore | Tokens, cost, turns and cache hits by agent, model or day; cost by MCP server, skill or subagent type |
 | [`cache`](#codingsh-cache) | Explore | Score prompt-cache health and name what breaks the cached prefix |
 | [`stats`](#codingsh-stats) | Explore | Sessions, failures, cost, tokens and latency per day or week, split by agent, model, repo or flag |
 | [`sql`](#codingsh-sql) | Explore | Run one read-only SQL query against the SQLite index |
@@ -1018,7 +1018,7 @@ coding.sh budget status --json
 
 ## `coding.sh usage`
 
-Tokens, cost, turns and cache hits by agent, model or day.
+Tokens, cost, turns and cache hits by agent, model or day; cost by MCP server, skill or subagent type.
 
 ```text
 coding.sh usage [options]
@@ -1026,8 +1026,8 @@ coding.sh usage [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `--by <GROUP>` | `agent` | Group rows by. One of: `agent`, `model`, `agent-model`, `day`, `repo`. |
-| `--cache` |  | Prompt-cache economics instead: hit rate, read vs write tokens, read:write ratio, breaks and their cost, with what to change. |
+| `--by <GROUP>` | `agent` | Group rows by. One of: `agent`, `model`, `agent-model`, `day`, `repo`, `mcp`, `skill`, `subagent`. |
+| `--cache` |  | Prompt-cache economics instead: hit rate, read vs write tokens, read:write ratio, breaks and their cost, with what to change. Not with --by mcp, skill or subagent. |
 | `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
 | `--since <WHEN>` | `30d` | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
 | `-n, --limit <N>` | `20` | Maximum rows. |
@@ -1042,9 +1042,12 @@ coding.sh usage --baseline
 coding.sh usage --cache --by model
 coding.sh usage --by agent-model --since 90d
 coding.sh usage --by model --where 'repo:coding-sh tool:Bash'
+coding.sh usage --by mcp
+coding.sh usage --by subagent --json
 ```
 
 - Totals cover every session in the window. A scan that stops at 100,000 sessions says so under the table (Stopped after 100,000 sessions) and sets window.truncated in --json; cache doctor does the same.
+- --by mcp, skill and subagent attribute cost to what sessions used, and every row in --json has basis: "attributed". mcp: one row per MCP server, with calls, failed calls, the bytes the results returned and their tokens (the stored count, else bytes / 4, marked ~), priced at the input rate of the session's model. skill: the whole sessions tagged skill:&lt;name&gt;; a session with two skills counts in both rows, so the rows do not add up to the total (rowsOverlap in --json). subagent: child sessions by subagent type (unnamed when there is none), with count, tokens, cost and median duration; their parents' own cost is left out.
 
 ## `coding.sh cache`
 

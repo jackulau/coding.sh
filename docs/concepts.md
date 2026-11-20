@@ -133,8 +133,8 @@ estimate.
 
 - In the viewer: the cost of each session in the list, and cost per day on Explore
   (`g x`).
-- In the CLI: `coding.sh usage` shows tokens and cost by agent, model or day. See
-  [Track cost](https://coding.sh/docs/cost).
+- In the CLI: `coding.sh usage` shows tokens and cost by agent, model, day, MCP server, skill or
+  subagent. See [Track cost](https://coding.sh/docs/cost).
 - In the API: `stats.compactionRefetches` counts reads that fetched again what a compaction
   dropped. See the [API reference](https://coding.sh/docs/api).
 - Budgets: `coding.sh budget set` sets a spend limit per day, week or month. See

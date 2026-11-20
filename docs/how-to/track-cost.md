@@ -98,6 +98,31 @@ gpt-5-mini         5         5      6079    109     1216      0%          ~$0.00
 | `agent-model` | Agent and model pair |
 | `repo` | Repo root |
 | `day` | Local day, newest first |
+| `mcp` | MCP server, by the calls the agent made to it |
+| `skill` | Skill tag (`skill:<name>`) |
+| `subagent` | Subagent type, over child sessions only |
+
+### Cost by MCP server, skill or subagent
+
+`--by mcp`, `--by skill` and `--by subagent` attribute cost to what a session used. A line under the
+table says how each column is attributed, and each `--json` row has `"basis": "attributed"`.
+
+```sh
+coding.sh usage --since 7d --by mcp
+```
+
+```text
+SERVER  CALLS  FAILED  RESULT  TOKENS  COST
+docs    1      1       32 B    ~8      ~<$0.0001
+```
+
+| Group | What a row shows |
+|---|---|
+| `mcp` | The calls to one server, the failed ones, and the bytes the calls returned. `TOKENS` is the token count the source stored, else the bytes / 4, marked `~`. `COST` is those tokens at the input price of the session's model, so it is always an estimate. A `≥` on `RESULT` means some results were clipped in the index and their full size is not known. |
+| `skill` | The sessions tagged with one skill, with their whole tokens and cost. A session with two skills counts in both rows, so the rows do not add up to the total; the line under the table gives the total, and `--json` has `"rowsOverlap": true`. |
+| `subagent` | Child sessions of one subagent type (`unnamed` when the agent recorded none), with their count, tokens, cost and median duration. The parents' own cost is left out. |
+
+`--cache` and `--baseline` work with the other groups only; with these three they exit 2.
 
 ## Where cost comes from
 
