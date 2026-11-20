@@ -49,3 +49,19 @@ describe("draftTaskFromSession: start of a hooked session", () => {
     }
   });
 });
+
+describe("draftTaskFromSession: a session with a repo but no commit", () => {
+  it("names the fix: record with hooks or coding.sh run --", async () => {
+    const index = new MemIndex();
+    // As a transcript backfill stores a session that ran in a repo: root and branch, no HEAD, no snapshot.
+    const s: Session = { id: "bf1", agent: "claude-code", repo: { root: ROOT, head: "", branch: "main", partial: true }, startedAt: 2000, endedAt: 9000, stats: { events: 2, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 1 }, flags: [] };
+    await index.upsertSession(s);
+    await index.putEvents([{ id: "b1", v: 0, sessionId: "bf1", ts: 2001, agent: "claude-code", kind: "user.message", payload: { text: "fix add" } }]);
+    await assert.rejects(draftTaskFromSession({ index, blobs: new MemBlobs(), git: new FakeSnapshots(), sessionId: "bf1", now: 5 }), (e: Error) => {
+      assert.match(e.message, /neither a start snapshot nor a HEAD/);
+      assert.match(e.message, /transcript/);
+      assert.match(e.message, /coding\.sh run --/);
+      return true;
+    });
+  });
+});

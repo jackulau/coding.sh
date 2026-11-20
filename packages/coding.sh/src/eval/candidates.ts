@@ -26,7 +26,8 @@
 //   verifier guessable  +2 when the agent ran a test command (verifierGuess)
 //   test edit after a failing test run  +1 (the agent may have bent the test)
 //   multi-turn          +1 with 2 or more user messages
-//   compaction          −1 (long context: harder to replay faithfully)
+//   compacted context   −1 (long context: harder to replay faithfully). Labeled apart from
+//                       the compaction failure flag, which scores +1 above as any other flag.
 //   size                −1 over 300 tool calls
 //   recency             +1 when it started within the last 7 days
 // Ties: newer first, then id.
@@ -192,7 +193,7 @@ export function scoreCandidate(item: CandidateItem, now = Date.now()): Candidate
   if (verifierGuess) add(SCORE.verifier, "verifier guessable");
   if (testEditAfterFailure(events)) add(SCORE.testEditAfterFailure, "test edited after a failing run");
   if (prompts.length >= 2) add(SCORE.multiTurn, "multi-turn");
-  if (s.flags.includes(FLAGS.compaction) || events.some((e) => e.kind === "context.compact")) add(SCORE.compaction, "compaction");
+  if (s.flags.includes(FLAGS.compaction) || events.some((e) => e.kind === "context.compact")) add(SCORE.compaction, "compacted context (harder to replay)");
   if (s.stats.toolCalls > SCORE.bigToolCalls) add(SCORE.big, `over ${SCORE.bigToolCalls} tool calls`);
   if (now - s.startedAt <= SCORE.recentMs) add(SCORE.recent, "last 7 days");
   return { ...base, eligible: true, score, reasons, pushback, ...(verifierGuess ? { verifierGuess } : {}) };

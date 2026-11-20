@@ -325,7 +325,8 @@ async function startOf(index: IndexStore, session: Session, events: readonly Age
   if (repo && !repo.snapshot) repo = (await wrapperStart(index, session, repo)) ?? repo;
   if (!repo) throw new Error(`session ${session.id} has no repo state; cannot build a task`);
   const snap = repo.snapshot || repo.head;
-  if (!snap) throw new Error(`session ${session.id} has neither a start snapshot nor a HEAD`);
+  // A transcript backfill knows the repo and branch but no commit: nothing records the tree at the start.
+  if (!snap) throw new Error(`session ${session.id} has neither a start snapshot nor a HEAD: it was read from a transcript with no git commit at its start, so there is no start state to replay. Record the task again with hooks (coding.sh init) or with coding.sh run -- <agent> inside the repository`);
   if (session.endSnapshot && snap === session.endSnapshot) {
     throw new Error(`session ${session.id}: start snapshot equals endSnapshot; refusing to start a task from the post-agent state`);
   }
