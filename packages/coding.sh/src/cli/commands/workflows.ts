@@ -162,6 +162,7 @@ async function listRuns(c: CommandContext): Promise<number> {
   }
   if (!runs.length) {
     out.note("No workflow runs");
+    out.next("Import the workflow runs in your Claude Code projects, or in a run directory", "coding.sh workflows import [path]");
     return 0;
   }
   const tty = out.stdoutTTY;

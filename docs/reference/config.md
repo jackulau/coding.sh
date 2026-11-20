@@ -33,7 +33,7 @@ coding.sh config set capture.redact '["secrets","env"]'
 
 `config set` accepts the keys marked **settable** below, parses numbers, `true`/`false` and JSON
 arrays, and keeps the rest of the file as it is. It also sets `refine.maxCostRise`,
-`refine.canary_model` and `serve.forward.endpoint`. Edit the file by hand for sinks, prices, gateway
+`refine.canary_model`, `serve.forward.endpoint` and the `[proxy]` keys. Edit the file by hand for sinks, prices, gateway
 and the other serve settings.
 
 `config get <key>` reads the single keys on this page, the `[refine]`, `[proxy]` and `[serve]` ones

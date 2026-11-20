@@ -169,6 +169,32 @@ For your own client, pass `--anthropic-upstream` or `--openai-upstream`, or set 
 session keeps its `gateway:<name>` tag ([LLM gateways](../integrations/ai-gateway.md)).
 :::
 
+## Stop calls over a budget
+
+```sh
+coding.sh budget set day 20
+coding.sh proxy --enforce-budget
+```
+
+With `--enforce-budget`, a model call that a [budget](https://coding.sh/docs/cost#set-a-budget)
+over its limit applies to gets a 429 and never goes upstream. The body uses the vendor's error
+shape (`rate_limit_error` for Anthropic, `insufficient_quota` for OpenAI) and names the budget,
+its limit, its estimated spend and when it resets. `Retry-After` gives the seconds until the
+reset.
+
+Which budgets the proxy can match:
+
+- A budget with no `--agent` and no `--repo` applies to every call.
+- A budget with `--agent claude-code` or `--agent codex` applies to that agent's calls, known from
+  their headers. Every other client's calls count as agent `proxy`.
+- A budget with `--repo` never blocks a call: the proxy does not know a call's repo.
+
+Only `/v1/messages`, `/v1/chat/completions` and `/v1/responses` calls are blocked;
+`count_tokens` and other paths go through. The proxy reads spend from the store at most every
+30 s, so a call can go through for up to 30 s after a budget passes its limit. If spend can't be
+read, the call goes through. Without the flag nothing is blocked. A proxy the hook restarts (step
+5) runs without the flag.
+
 ## Read the result
 
 | `Why` says | Do |

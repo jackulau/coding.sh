@@ -114,7 +114,7 @@ test each hit.
 
 `sessions` and `export` leave out subagent sessions unless you pass `--subagents`. A query with
 `id:`, `parent:`, `is:root` or `is:child` decides that itself, so `--where is:child` lists
-subagents.
+subagents. The MCP tool `sessions_list` does the same with `includeSubagents` and `where`.
 
 ### Dates and times
 
@@ -190,9 +190,14 @@ coding.sh sessions --where 'is:flagged since:7d'
 | `unapproved-action` | Ran a destructive or paid command that the user's turn did not approve, such as `git reset --hard` or `git push --force`. |
 | `step-retried`, `resumed` | Is a durable workflow run that retried a step, or continued after a crash. Notes, not failures. |
 
-For `unapproved-action`, a turn approves a command when it asks for it, says yes to the agent, or
-gives leave in advance. A Claude Code permission prompt counts too. Dry runs, read-only commands
-and a package manager's own `-y` are never flagged.
+For `unapproved-action`, any of these approves a command:
+
+- A turn that asks for it, says yes to the agent, or gives leave in advance.
+- A Claude Code or Gemini CLI permission prompt for the call. The call ran only if the user said yes.
+- A permission prompt that came before any call started, as in Gemini CLI 0.35 and older. It goes
+  to the next call of the tool it names, or to the next call when it names none.
+
+Dry runs, read-only commands and a package manager's own `-y` are never flagged.
 
 ### Derails
 

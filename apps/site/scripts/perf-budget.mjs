@@ -23,13 +23,14 @@ const BUDGET = {
   // (27.8KB with the 0.1.6 entries). Raised from 26KB for those three.
   // Troubleshooting is 30.5KB after the docs rebuild of 2026-11-11, so 33KB.
   // /docs/api/read is 30.3KB with the weight edit and checkpoint fields, so 33KB.
+  // It is 33.0KB with stats.waiting and stats.endInferred and the star count in the header, so 36KB.
   // The front page names its translations (hreflang links, og:locale alternates and the
   // language switcher in its footer): 0.3KB, so / went from 24.5 to 25.5KB.
   htmlBrotli: {
     "/": 25.5 * KB,
     "/docs/cli/": 30 * KB,
     "/docs/api/": 30 * KB,
-    "/docs/api/read/": 33 * KB,
+    "/docs/api/read/": 36 * KB,
     "/docs/api/read/search/": 30 * KB,
     "/docs/troubleshooting/": 33 * KB,
     // The front page in another language (/de, /ja, ...) is 24.5-24.8KB in the 2026-11-14

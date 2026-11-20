@@ -38,6 +38,7 @@ Every command accepts these.
 | [`doctor`](#codingsh-doctor) | Capture | Check agents, hooks, spool, store and the OTLP port |
 | [`status`](#codingsh-status) | Capture | Show capture totals and the latest session |
 | [`statusline`](#codingsh-statusline) | Capture | Print a Claude Code status line (model, cost, worst flag), or install it |
+| [`quota`](#codingsh-quota) | Capture | Plan usage for the 5-hour and weekly windows, per agent, or wait for room |
 | [`ingest`](#codingsh-ingest) | Capture | Move captured hook events from the spool into the index |
 | [`run`](#codingsh-run) | Capture | Run any agent command and capture the session |
 | [`collector`](#codingsh-collector) | Capture | Start a local OTLP/HTTP receiver for agents that export traces |
@@ -52,17 +53,21 @@ Every command accepts these.
 | [`blame`](#codingsh-blame) | Explore | git blame with the agent session that wrote each line |
 | [`diff-calls`](#codingsh-diff-calls) | Explore | Show what changed between two model calls, and why the second missed the prompt cache |
 | [`search`](#codingsh-search) | Explore | Full-text search over prompts, replies, tool calls and errors |
-| [`usage`](#codingsh-usage) | Explore | Tokens, cost, turns and cache hits by agent, model or day |
+| [`alert`](#codingsh-alert) | Explore | Notify a webhook or a command when failures, cost, sessions or a flag cross a threshold |
+| [`budget`](#codingsh-budget) | Explore | Spend budgets per day, week or month, for every session or one agent or repo |
+| [`usage`](#codingsh-usage) | Explore | Tokens, cost, turns and cache hits by agent, model or day; cost by MCP server, skill or subagent type |
 | [`cache`](#codingsh-cache) | Explore | Score prompt-cache health and name what breaks the cached prefix |
 | [`stats`](#codingsh-stats) | Explore | Sessions, failures, cost, tokens and latency per day or week, split by agent, model, repo or flag |
 | [`sql`](#codingsh-sql) | Explore | Run one read-only SQL query against the SQLite index |
 | [`export`](#codingsh-export) | Explore | Stream sessions, events or labels as JSONL or CSV, or write raw traces to a directory |
 | [`ui`](#codingsh-ui) | Explore | Open the local session viewer |
 | [`mcp`](#codingsh-mcp) | Explore | Serve captured sessions to agents over MCP (stdio) |
+| [`work`](#codingsh-work) | Explore | What needs you across every agent's sessions: blocked, failed, stalled, your turn, ready for review |
 | [`eval`](#codingsh-eval) | Evaluate | Build eval suites from sessions, skills or cases, and run them |
 | [`dataset`](#codingsh-dataset) | Evaluate | Manage versioned datasets of cases |
 | [`exp`](#codingsh-exp) | Evaluate | Run a task over a dataset, compare experiments and sweep configs |
 | [`score`](#codingsh-score) | Evaluate | Add and list typed scores on sessions, events, cases and runs |
+| [`monitor`](#codingsh-monitor) | Evaluate | Score new sessions automatically with an LLM judge rubric or a command |
 | [`judge`](#codingsh-judge) | Evaluate | Grade one output or the slop in captured diffs, or check an LLM judge or a test verifier against human labels |
 | [`toolevals`](#codingsh-toolevals) | Evaluate | Measure how well agents use a CLI, MCP server or API |
 | [`workflows`](#codingsh-workflows) | Evaluate | Capture, measure and A/B-test multi-agent workflow runs |
@@ -213,6 +218,47 @@ coding.sh statusline uninstall [options]
 coding.sh statusline uninstall
 ```
 
+## `coding.sh quota`
+
+Plan usage for the 5-hour and weekly windows, per agent, or wait for room.
+
+```text
+coding.sh quota [action]
+```
+
+| Action | What it does |
+|---|---|
+| [`wait`](#codingsh-quota-wait) | Block until a window resets or its use drops below a threshold |
+
+```sh
+coding.sh quota
+coding.sh quota --json
+coding.sh quota wait --window 5h
+```
+
+- With no subcommand it prints one row per agent and window: the percent used, when the window resets and how old the reading is.
+- Claude Code's reading is the one the coding.sh status line saved from the rate_limits Claude Code sends it (Pro, Max and Ultra plans; install it with coding.sh statusline install). Codex's is the last token_count event in its newest rollout under CODEX_HOME/sessions (only the last 256 KB is read).
+- wait reads again at most once a minute and prints what it waits for on stderr. With several windows it waits until each has room. It exits 0 when there is room, 1 when there is no reading, 2 on a usage error and 130 on Ctrl-C.
+
+### `coding.sh quota wait`
+
+Block until a window resets or its use drops below a threshold.
+
+```text
+coding.sh quota wait [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--agent <AGENT>` |  | Only this agent's windows. One of: `claude-code`, `codex`. |
+| `--window <WINDOW>` |  | Only this window. One of: `5h`, `7d`. |
+| `--below <PERCENT>` | `90` | Room is back when use is under this percent. |
+
+```sh
+coding.sh quota wait
+coding.sh quota wait --agent codex --window 5h --below 80
+```
+
 ## `coding.sh ingest`
 
 Move captured hook events from the spool into the index.
@@ -336,6 +382,7 @@ coding.sh proxy [action] [options]
 | `--openai-upstream <URL>` | `https://api.openai.com` | Where OpenAI calls go ([proxy] openai_upstream) |
 | `--background` |  | Start detached, print the URL once it answers (log: ~/.coding.sh/proxy.log) |
 | `-q, --quiet` |  | No line per call on stderr. |
+| `--enforce-budget` |  | Answer 429 (with Retry-After) instead of calling the API when a budget that applies to the call is over its limit (coding.sh budget) |
 
 ```sh
 coding.sh proxy
@@ -348,6 +395,7 @@ coding.sh proxy --anthropic-upstream https://gateway.example.com/anthropic
 - Streams pass through as they arrive. A failed store write never fails the request.
 - Calls from Claude Code and Codex land in the session their hooks capture; other clients get a proxy-&lt;hash&gt; session per conversation (or send x-coding-sh-session: &lt;id&gt;).
 - Prints the environment to stdout; one line per call goes to stderr.
+- --enforce-budget reads the spend at most every 30 s. It can match a budget for every session or for an agent (claude-code and codex by their headers, every other client as proxy), never one with --repo: the proxy does not know a call's repo. count_tokens and other paths are never blocked. Spend that can't be read lets the call through.
 
 ### `coding.sh proxy status`
 
@@ -754,9 +802,224 @@ coding.sh search migration --where 'agent:codex kind:tool.start'
 - --where applies to each match: event keys (kind, tool, ok, …) to the matching event, session keys (agent, repo, cost, …) to its session. Keys: coding.sh sessions --help.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
+## `coding.sh alert`
+
+Notify a webhook or a command when failures, cost, sessions or a flag cross a threshold.
+
+```text
+coding.sh alert <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`add`](#codingsh-alert-add) | Add an alert; a webhook alert prints its signing secret once |
+| [`list`](#codingsh-alert-list) | List the alerts with their last state, and say which targets are off after failed deliveries |
+| [`rm`](#codingsh-alert-rm) | Remove an alert |
+| [`check`](#codingsh-alert-check) | Read every alert's measure, save its state, and notify each change of state |
+| [`test`](#codingsh-alert-test) | Send a test notification (test: true) to an alert's target; a success turns a disabled target back on |
+
+```sh
+coding.sh alert add failures --measure failure-rate --over 0.5 --window 1d --notify webhook:https://example.com/hook
+coding.sh alert check
+coding.sh alert list
+```
+
+- States are OK, WARNING, ALERT and NO_DATA. An alert starts at OK, and only a change of state notifies. The measures are the ones coding.sh stats computes, over top-level sessions with their subagents' cost added.
+- A webhook gets a POST with the JSON body {alert, state, previous, value, threshold, window, by, at} (by only with --by agent) and the header X-Coding-Sh-Signature: sha256=&lt;HMAC-SHA256 of the body, keyed with the alert's secret&gt;. A command gets the same JSON on stdin and succeeds by exiting 0.
+- Each notification is tried 3 times, 1 s and then 2 s apart. After 5 failed deliveries in a row the target is turned off; alert list says so, and a successful alert test turns it back on.
+- alert check exits 0 unless the usage is wrong; with --json it lists each alert's state, value and groups. Run it from cron or Task Scheduler. coding.sh serve runs the same check every minute. The hook and the read commands never run alerts.
+- Alerts, their states and their secrets are kept in ~/.coding.sh/alerts.json, mode 600.
+
+### `coding.sh alert add`
+
+Add an alert; a webhook alert prints its signing secret once.
+
+```text
+coding.sh alert add <NAME> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | Letters, digits, dot, dash and underscore, up to 64. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--measure <MEASURE>` |  | failure-rate (a share from 0 to 1), cost (USD), sessions, or flag:&lt;FLAG&gt; (sessions with that flag or tag) |
+| `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
+| `--by <GROUP>` |  | One state per agent, each notified on its own (default: one state for all sessions) One of: `agent`. |
+| `--over <N>` |  | ALERT when the measure is above N. |
+| `--warn <N>` |  | WARNING when the measure is above N and not above --over. |
+| `--window <WINDOW>` |  | The sessions that started in this much time before the check. One of: `1h`, `1d`, `7d`. |
+| `--notify <TARGET>` |  | webhook:&lt;URL&gt; (a signed JSON POST) or command:"&lt;CMD&gt;" (the same JSON on stdin) |
+| `--no-data <STATE>` |  | State when the window has no sessions (or, for cost, no priced session): ok, alert, or keep the last state (default: NO_DATA) One of: `ok`, `alert`, `keep`. |
+
+```sh
+coding.sh alert add failures --measure failure-rate --over 0.5 --window 1d --notify webhook:https://example.com/hook
+coding.sh alert add spend --measure cost --warn 20 --over 50 --window 1d --by agent --notify command:"notify-send coding.sh"
+coding.sh alert add loops --measure flag:repeated-tool-failure --over 3 --window 1h --where 'agent:codex' --notify webhook:https://example.com/hook
+```
+
+### `coding.sh alert list`
+
+List the alerts with their last state, and say which targets are off after failed deliveries.
+
+```text
+coding.sh alert list
+```
+
+```sh
+coding.sh alert list
+coding.sh alert list --json
+```
+
+### `coding.sh alert rm`
+
+Remove an alert.
+
+```text
+coding.sh alert rm <NAME>
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | The alert's name (alert list) |
+
+```sh
+coding.sh alert rm failures
+```
+
+### `coding.sh alert check`
+
+Read every alert's measure, save its state, and notify each change of state.
+
+```text
+coding.sh alert check [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh alert check
+coding.sh alert check --json
+```
+
+### `coding.sh alert test`
+
+Send a test notification (test: true) to an alert's target; a success turns a disabled target back on.
+
+```text
+coding.sh alert test <NAME>
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | The alert's name (alert list) |
+
+```sh
+coding.sh alert test failures
+```
+
+## `coding.sh budget`
+
+Spend budgets per day, week or month, for every session or one agent or repo.
+
+```text
+coding.sh budget <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`set`](#codingsh-budget-set) | Add a budget, or change the limit of the one with the same period, agent and repo |
+| [`list`](#codingsh-budget-list) | List the budgets |
+| [`rm`](#codingsh-budget-rm) | Remove a budget |
+| [`status`](#codingsh-budget-status) | Spend against each budget: spend, limit, percent used, over or not, and when the period resets |
+
+```sh
+coding.sh budget set day 20
+coding.sh budget status
+coding.sh proxy --enforce-budget
+```
+
+- Spend is estimated: the cost of the sessions that started in the current period (subagents too), the same total coding.sh usage gives for that window. A session with no reported cost is priced from its tokens.
+- A budget is over once its spend reaches the limit. Budgets are kept in ~/.coding.sh/budgets.json.
+- The status line shows the highest budget once it passes 80% (budget 82%). coding.sh proxy --enforce-budget answers 429 to calls a budget over its limit applies to.
+- With --json, status gives each budget's spendUsd, limitUsd, percent, over, since and resetsAt (ISO times).
+
+### `coding.sh budget set`
+
+Add a budget, or change the limit of the one with the same period, agent and repo.
+
+```text
+coding.sh budget set <PERIOD> <USD> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `period` | yes | day (local calendar day), week (ISO week, from Monday) or month (calendar month) |
+| `usd` | yes | The limit in USD, e.g. 20 or 2.50. |
+
+| Option | Default | Description |
+|---|---|---|
+| `-a, --agent <AGENT>` |  | Only this agent's sessions. |
+| `--repo <PATH|NAME>` |  | Only sessions in this repo: a path (stored absolute; matches at or under it) or a repo name. |
+
+```sh
+coding.sh budget set day 20
+coding.sh budget set week 50 --agent codex
+coding.sh budget set month 200 --repo .
+```
+
+### `coding.sh budget list`
+
+List the budgets.
+
+```text
+coding.sh budget list
+```
+
+```sh
+coding.sh budget list
+coding.sh budget list --json
+```
+
+### `coding.sh budget rm`
+
+Remove a budget.
+
+```text
+coding.sh budget rm <ID>
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `id` | yes | The budget's id (budget list) |
+
+```sh
+coding.sh budget rm week-codex
+```
+
+### `coding.sh budget status`
+
+Spend against each budget: spend, limit, percent used, over or not, and when the period resets.
+
+```text
+coding.sh budget status [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh budget status
+coding.sh budget status --json
+```
+
 ## `coding.sh usage`
 
-Tokens, cost, turns and cache hits by agent, model or day.
+Tokens, cost, turns and cache hits by agent, model or day; cost by MCP server, skill or subagent type.
 
 ```text
 coding.sh usage [options]
@@ -764,8 +1027,8 @@ coding.sh usage [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `--by <GROUP>` | `agent` | Group rows by. One of: `agent`, `model`, `agent-model`, `day`, `repo`. |
-| `--cache` |  | Prompt-cache economics instead: hit rate, read vs write tokens, read:write ratio, breaks and their cost, with what to change. |
+| `--by <GROUP>` | `agent` | Group rows by. One of: `agent`, `model`, `agent-model`, `day`, `repo`, `mcp`, `skill`, `subagent`. |
+| `--cache` |  | Prompt-cache economics instead: hit rate, read vs write tokens, read:write ratio, breaks and their cost, with what to change. Not with --by mcp, skill or subagent. |
 | `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
 | `--since <WHEN>` | `30d` | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
 | `-n, --limit <N>` | `20` | Maximum rows. |
@@ -780,9 +1043,12 @@ coding.sh usage --baseline
 coding.sh usage --cache --by model
 coding.sh usage --by agent-model --since 90d
 coding.sh usage --by model --where 'repo:coding-sh tool:Bash'
+coding.sh usage --by mcp
+coding.sh usage --by subagent --json
 ```
 
 - Totals cover every session in the window. A scan that stops at 100,000 sessions says so under the table (Stopped after 100,000 sessions) and sets window.truncated in --json; cache doctor does the same.
+- --by mcp, skill and subagent attribute cost to what sessions used, and every row in --json has basis: "attributed". mcp: one row per MCP server, with calls, failed calls, the bytes the results returned and their tokens (the stored count, else bytes / 4, marked ~), priced at the input rate of the session's model. skill: the whole sessions tagged skill:&lt;name&gt;; a session with two skills counts in both rows, so the rows do not add up to the total (rowsOverlap in --json). subagent: child sessions by subagent type (unnamed when there is none), with count, tokens, cost and median duration; their parents' own cost is left out.
 
 ## `coding.sh cache`
 
@@ -964,6 +1230,108 @@ coding.sh mcp
 - Agents start this themselves once coding.sh init has registered it.
 - stdout carries MCP frames only.
 - Tool calls ingest pending captures for up to 1.5 s (CODING_SH_READ_BUDGET_MS), then answer from what is indexed with a pending: {files, indexing} field.
+
+## `coding.sh work`
+
+What needs you across every agent's sessions: blocked, failed, stalled, your turn, ready for review.
+
+```text
+coding.sh work [action] [options]
+```
+
+| Action | What it does |
+|---|---|
+| [`show`](#codingsh-work-show) | What one item is doing, what it waits on, its files and child sessions, and the next step |
+| [`ack`](#codingsh-work-ack) | Acknowledge an item's current cause: it leaves the queue until something new happens |
+| [`snooze`](#codingsh-work-snooze) | Hide an item for a while; it comes back sooner if it moves to a more urgent bucket |
+
+| Option | Default | Description |
+|---|---|---|
+| `--all` |  | Also list hidden items: running, done, acknowledged or snoozed. |
+| `-r, --repo <PATH>` |  | Only items whose root session ran under this directory, or in a repo with this name (default: every repo) |
+| `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
+| `--since <WHEN>` | `7d` | Only items with a session started at or after this time: 7d, 12h, 30m, today, yesterday or a date. |
+| `-n, --limit <N>` | `20` | Maximum rows. |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh work
+coding.sh work --agent claude-code --since 24h
+coding.sh work --repo . --json
+coding.sh work show w3f9a1c
+coding.sh work ack w3f9a1c
+```
+
+- A work item is a root session plus every session linked to it by parent (subagents, forks, workflow agents). A session a harness or a host such as T3 Code starts is its own item, and its row names the item that started it. An item's id is w plus 6 hex characters of a hash of its root session id, so it stays the same between reads.
+- Items go in this order: blocked on you (a permission prompt, a question or a plan waits), failed (ended on API errors or failing tests), stalled (no end and quiet for 15 minutes or more), your turn (an interactive session whose turn ended), ready for review (ended with file changes). A wait or stall older than 12 hours is marked probably closed. Items with nothing to act on (running, done, acknowledged or snoozed) are hidden; --all lists them. A session whose end is only its last event (one read from its transcript, or an OpenTelemetry or SDK conversation) counts as running for 15 minutes after that event.
+- Only Claude Code and Gemini CLI hooks report permission prompts. Waits in other agents show as stalled, and the header names those agents; in a T3 Code thread the agent the thread runs counts. Your turn needs the launch mode, which Claude Code and Codex record.
+- ack hides the item's current cause only: a new prompt, failure or change brings it back. Acks and snoozes are kept in work.json in the coding.sh home. coding.sh status counts the items per bucket, and the statusline shows N need you for items blocked on you or failed.
+- With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
+
+### `coding.sh work show`
+
+What one item is doing, what it waits on, its files and child sessions, and the next step.
+
+```text
+coding.sh work show <ID> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `id` | yes | Work item id (w + 6 hex characters), or a session id in the item. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--since <WHEN>` | `7d` | Look the id up among sessions started at or after this time. |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh work show w3f9a1c
+coding.sh work show w3f9a1c --json
+```
+
+### `coding.sh work ack`
+
+Acknowledge an item's current cause: it leaves the queue until something new happens.
+
+```text
+coding.sh work ack <ID> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `id` | yes | Work item id, or a session id in the item. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--since <WHEN>` | `7d` | Look the id up among sessions started at or after this time. |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh work ack w3f9a1c
+```
+
+### `coding.sh work snooze`
+
+Hide an item for a while; it comes back sooner if it moves to a more urgent bucket.
+
+```text
+coding.sh work snooze <ID> <DURATION> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `id` | yes | Work item id, or a session id in the item. |
+| `duration` | yes | How long: 30m, 2h, 1d, 2w. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--since <WHEN>` | `7d` | Look the id up among sessions started at or after this time. |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh work snooze w3f9a1c 2h
+```
 
 ## `coding.sh eval`
 
@@ -1906,6 +2274,108 @@ List score configs.
 
 ```text
 coding.sh score configs
+```
+
+## `coding.sh monitor`
+
+Score new sessions automatically with an LLM judge rubric or a command.
+
+```text
+coding.sh monitor <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`add`](#codingsh-monitor-add) | Add a monitor: every new session that matches gets one score from it |
+| [`list`](#codingsh-monitor-list) | List monitors with their scores, today's judge spend and last error |
+| [`rm`](#codingsh-monitor-rm) | Remove a monitor (its scores stay) |
+| [`run`](#codingsh-monitor-run) | Run monitors now on sessions that ended in the window, skipping sessions they already scored |
+
+- Monitors run after each coding.sh ingest, in the viewer's ingest loop and in serve's writer, at most once a minute each; never in the hook or in the ingest a read command does first.
+- Each monitor scores sessions that ended after its cursor (the past day on its first run), one score per session; a session it already scored is skipped.
+- A monitor's failure never fails the ingest: it is recorded as the monitor's last error, which monitor list shows. A command that exits non-zero or prints no value scores nothing.
+- --judge with no provider records 'no judge provider' and scores nothing until one is set.
+- Definitions, cursors, spend and errors are in monitors.json, next to the config file (coding.sh config path shows it).
+
+### `coding.sh monitor add`
+
+Add a monitor: every new session that matches gets one score from it.
+
+```text
+coding.sh monitor add <NAME> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | Monitor name; its scores carry this name and source monitor. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--judge <RUBRIC.md>` |  | Score with the LLM judge against this rubric file (a score from 0 to 1, the reason as its comment) |
+| `--run <COMMAND>` |  | Score with a shell command: it gets the session JSON (as show --json, redacted) on stdin and prints {"value": ..., "comment"?: ...}; stopped after 60 s. |
+| `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
+| `--sample <0..1>` |  | Score this fraction of sessions, picked by a hash of the session id (default: all) |
+| `--max-usd-day <USD>` | `1` | --judge: stop for the day once the estimated judge spend reaches this. |
+| `--provider <PROVIDER>` |  | --judge: the model provider (default: the first of ANTHROPIC_API_KEY, OPENAI_API_KEY, AI_GATEWAY_API_KEY that is set) One of: `anthropic`, `openai`, `gateway`, `mock`. |
+| `--model <MODEL>` |  | --judge: the judge model (default: the provider's) |
+| `--force` |  | Replace a monitor with the same name (its cursor starts again; its scores stay) |
+
+```sh
+coding.sh monitor add tests-pass --run "node check.mjs"
+coding.sh monitor add helpful --judge rubric.md --where 'agent:claude-code' --sample 0.2
+coding.sh monitor add helpful --judge rubric.md --max-usd-day 5
+```
+
+### `coding.sh monitor list`
+
+List monitors with their scores, today's judge spend and last error.
+
+```text
+coding.sh monitor list
+```
+
+```sh
+coding.sh monitor list
+coding.sh monitor list --json
+```
+
+### `coding.sh monitor rm`
+
+Remove a monitor (its scores stay).
+
+```text
+coding.sh monitor rm <NAME>
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | Monitor name. |
+
+```sh
+coding.sh monitor rm helpful
+```
+
+### `coding.sh monitor run`
+
+Run monitors now on sessions that ended in the window, skipping sessions they already scored.
+
+```text
+coding.sh monitor run [name] [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | no | Only this monitor (default: all) |
+
+| Option | Default | Description |
+|---|---|---|
+| `--since <WHEN>` | `1d` | Sessions that ended at or after this time: 7d, 12h, 30m, today or a date. |
+| `--watch` |  | Keep going: ingest and score new sessions every 10 s until Ctrl-C. |
+
+```sh
+coding.sh monitor run
+coding.sh monitor run helpful --since 7d
+coding.sh monitor run --watch
 ```
 
 ## `coding.sh judge`

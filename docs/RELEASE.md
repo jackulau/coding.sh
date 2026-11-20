@@ -231,6 +231,12 @@ The Cloudflare Worker `coding-sh-site` (`apps/site/wrangler.jsonc`) still builds
 `dist` but holds no custom domain; `npx wrangler@4 deploy` updates only its workers.dev URL. The
 comment in `wrangler.jsonc` says how to move the domains back.
 
+If the domains go back to the Worker: it runs first on pages and text, for redirects, statuses and
+headers. The files a page loads (`/_astro/*`, search, social cards, icons) skip it, as
+`run_worker_first` lists. On the Workers free plan, each request the Worker runs on counts toward
+100,000 a day; past that, those paths answer 429 (Error 1027) until midnight UTC. Asset requests
+do not count.
+
 `public/_headers` sets immutable caching for `/_astro/*`, UTF-8 text for `/install`, `/install.sh`,
 `*.txt` and `*.md`, and `application/xml` for `/changelog.xml`, which the edge compresses (it does
 not compress the Atom type).

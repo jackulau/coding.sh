@@ -735,6 +735,17 @@ skills). It is what `coding.sh harness audit` counts.
 | `stats.unapprovedActions.byKind` | `rm-rf`, `git-reset-hard`, `git-clean`, `git-discard`, `git-push-force`, `db-drop`, `forced-subcommand`, `data-dir` and `paid` |
 | `stats.unapprovedActions.first` | `kind`, `command` (whitespace collapsed, at most 200 characters), `at` (ms), and `afterError: true` when a tool call had failed since the user's turn |
 
+**Waiting.**
+
+| Field | Meaning |
+|---|---|
+| `stats.waiting` (`kind`, `at`, `toolUseId`, `text`) | What the session waits on from the user when its events end. `coding.sh work` puts the session's item in "blocked on you" or "your turn" from it ([`coding.sh work`](cli.md#codingsh-work)). Absent when nothing waits |
+| `stats.waiting.kind` | `permission` (a live hook notification asked to approve a tool call: Claude Code's `permission_prompt` or Gemini CLI's `ToolPermission`), `question` (an open question tool call), `plan` (an open plan-approval call) or `turn` (the main thread's turn ended in a session launched interactively, so it waits for the next prompt) |
+| `stats.waiting.at` | When the wait started (ms) |
+| `stats.waiting.toolUseId` | The open call it waits on. Absent for a turn wait, and for a permission prompt that came before its call started |
+| `stats.waiting.text` | The prompt, question or plan, redacted, whitespace collapsed, at most 300 characters |
+| `stats.endInferred` | `true` when `endedAt` is the last event seen, not a session end: a session known only from a transcript with no end marker, or a conversation-keyed OpenTelemetry or SDK session. It may still be running. Absent when the end is real or there is no end |
+
 **Tool errors and fold errors.**
 
 | Field | Meaning |
@@ -1470,6 +1481,10 @@ Body (JSON, up to 1 MB):
 - The caller is the read key's name (`reader:<hash>` for an unnamed key), so a renamed or rotated key is a new caller.
 - A stored score with no session can be replaced only by a key not limited to one project.
 - A given `id` of 64 hex characters, the form of a default id, must be this score's own default id. Any other gets 400.
+- Monitors (`coding.sh monitor`) store their scores with source `monitor`, `by` `monitor`, the monitor's name as `name`, the rationale as `comment`, and a hash of the rubric or command as `judgeVersion`. See [Concepts](../concepts.md#monitor).
+- The MCP tool `score_add_batch` takes `{"scores": [...]}`: 1 to 100 bodies in the `score_add` shape, each checked as here.
+- A body has `targetId`, `name` and `value`, and optionally `target`, `dataType`, `comment`, `source`, `sessionId` and `id`; `"latest"` names the newest session.
+- One invalid score stores none, and the error names its index (`scores[2]: ...`). It returns `{"items": [...]}`, one `{score, created, changed}` per input, in order.
 
 ```sh
 curl -sS -X POST "$CSH/api/scores" \

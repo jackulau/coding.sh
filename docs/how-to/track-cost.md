@@ -98,6 +98,31 @@ gpt-5-mini         5         5      6079    109     1216      0%          ~$0.00
 | `agent-model` | Agent and model pair |
 | `repo` | Repo root |
 | `day` | Local day, newest first |
+| `mcp` | MCP server, by the calls the agent made to it |
+| `skill` | Skill tag (`skill:<name>`) |
+| `subagent` | Subagent type, over child sessions only |
+
+### Cost by MCP server, skill or subagent
+
+`--by mcp`, `--by skill` and `--by subagent` attribute cost to what a session used. A line under the
+table says how each column is attributed, and each `--json` row has `"basis": "attributed"`.
+
+```sh
+coding.sh usage --since 7d --by mcp
+```
+
+```text
+SERVER  CALLS  FAILED  RESULT  TOKENS  COST
+docs    1      1       32 B    ~8      ~<$0.0001
+```
+
+| Group | What a row shows |
+|---|---|
+| `mcp` | The calls to one server, the failed ones, and the bytes the calls returned. `TOKENS` is the token count the source stored, else the bytes / 4, marked `~`. `COST` is those tokens at the input price of the session's model, so it is always an estimate. A `≥` on `RESULT` means some results were clipped in the index and their full size is not known. |
+| `skill` | The sessions tagged with one skill, with their whole tokens and cost. A session with two skills counts in both rows, so the rows do not add up to the total; the line under the table gives the total, and `--json` has `"rowsOverlap": true`. |
+| `subagent` | Child sessions of one subagent type (`unnamed` when the agent recorded none), with their count, tokens, cost and median duration. The parents' own cost is left out. |
+
+`--cache` and `--baseline` work with the other groups only; with these three they exit 2.
 
 ## Where cost comes from
 
@@ -177,6 +202,32 @@ opencode     5         89%     979.4k  0       -        1       ~$0.0128
 
 A break is a model call whose cached prompt prefix was gone, so the prompt was billed again. To
 find the worst sessions: `coding.sh sessions --where 'cache.breaks>0 sort:-cache.cost'`.
+
+## Set a budget
+
+```sh
+coding.sh budget set day 20                  # every session, per local day
+coding.sh budget set week 50 --agent codex   # one agent, per week from Monday
+coding.sh budget set month 200 --repo .      # one repo (a path or a repo name), per calendar month
+coding.sh budget status
+```
+
+Spend is the estimated cost of the sessions that started in the current period, subagents
+included: the same total as `coding.sh usage` over that window, filtered by the budget's agent and
+repo. A session counts in the period it started in.
+
+`budget status` shows spend, limit, percent and when the period resets; `--json` adds `over`. Setting the same period and scope again changes the
+limit. `budget list` and `budget rm <id>` manage them. They are kept in `budgets.json` in the data
+folder.
+
+The [status line](https://coding.sh/docs/agents#status-line) adds `budget 82%` once the highest
+budget passes 80%.
+
+`coding.sh proxy --enforce-budget` answers 429, with a `Retry-After` header in seconds until the
+reset, to a call a budget over its limit applies to. The call never goes upstream. The body is the
+vendor's error shape and names the budget, its limit and its reset. See
+[Log every model call with the proxy](https://coding.sh/docs/how-to/capture-with-proxy#stop-calls-over-a-budget)
+for which budgets it can match.
 
 ## Read the result
 

@@ -7,6 +7,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, test } from "node:test";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
+import { geminiCliAdapter } from "../../src/adapters/more/gemini-cli.ts";
+import { normalizeFixture } from "../adapters/more/_helpers.ts";
 import { approves, detectUnapproved, riskyAction } from "../../src/core/unapproved.ts";
 import { buildSession, detectFlags, FLAGS } from "../../src/core/sessions.ts";
 import type { AgentEvent, EventKind } from "../../src/schema/index.ts";
@@ -163,6 +165,71 @@ describe("unapproved-action flag", () => {
       ev("tool.end", { tool: "Bash", toolUseId: "b", ok: false, output: "The user doesn't want to proceed with this tool use. The tool use was rejected" }),
     ];
     assert.equal(detectUnapproved(events), undefined);
+  });
+
+  describe("permission prompts", () => {
+    const gem = (kind: EventKind, payload: Record<string, unknown>) => ev(kind, payload, { agent: "gemini-cli" });
+    /** A Gemini CLI hook call: BeforeTool and AfterTool carry no call id (the hook fixture's golden has none). */
+    const gemStart = (tool: string, input: unknown) => gem("tool.start", { tool, input });
+    const gemEnd = (tool: string) => gem("tool.end", { tool, ok: true, output: "" });
+    const shell = (command: string) => [gemStart("run_shell_command", { command }), gemEnd("run_shell_command")];
+    /** The hook fixture's ToolPermission notification, `{ kind, message }`, as the adapter stores it. */
+    const toolPermission = async (): Promise<AgentEvent> => {
+      const note = (await normalizeFixture(geminiCliAdapter, "gemini-cli/hooks.spool.jsonl")).find((e) => e.kind === "notification" && e.payload.kind === "ToolPermission")!;
+      assert.equal(note.payload.message, "Gemini CLI needs your permission to use run_shell_command");
+      return { ...note, sessionId: "s1", ts: 1_000 + ++n };
+    };
+    const ask = "Fix the failing test in src/math.ts";
+
+    test("Gemini CLI: a ToolPermission prompt before the call starts approves it", async () => {
+      // Gemini CLI 0.35 and older ask before BeforeTool, so no call is open when the prompt comes.
+      const asked = [prompt(ask), await toolPermission(), ...shell("git push --force")];
+      assert.equal(detectUnapproved(asked), undefined);
+      assert.ok(!buildSession(asked).flags.includes(FLAGS.unapprovedAction));
+      const unasked = [prompt(ask), ...shell("git push --force")];
+      assert.equal(detectUnapproved(unasked)?.first.kind, "git-push-force");
+    });
+
+    test("Gemini CLI: a ToolPermission prompt while the call is open approves it, with no call id", async () => {
+      // Gemini CLI 0.36 and newer run BeforeTool before they ask.
+      const [start, end] = shell("git push --force");
+      assert.equal(detectUnapproved([prompt(ask), start!, await toolPermission(), end!]), undefined);
+      // A prompt for a call that already ended approves nothing that follows.
+      const later = [prompt(ask), gemStart("run_shell_command", { command: "npm test" }), await toolPermission(), gemEnd("run_shell_command"), ...shell("git push --force")];
+      assert.equal(detectUnapproved(later)?.first.kind, "git-push-force");
+    });
+
+    test("a call of another tool that starts in between does not take a prompt that names its tool", async () => {
+      const read = [gemStart("read_file", { absolute_path: "/work/demo/src/math.ts" }), gemEnd("read_file")];
+      assert.equal(detectUnapproved([prompt(ask), await toolPermission(), ...read, ...shell("git push --force")]), undefined);
+      // A prompt that names no tool goes to the next call, whatever it is.
+      const unnamed = gem("notification", { kind: "ToolPermission", message: "Tool Confirm Shell Command requires execution" });
+      assert.equal(detectUnapproved([prompt(ask), unnamed, ...read, ...shell("git push --force")])?.first.kind, "git-push-force");
+      assert.equal(detectUnapproved([prompt(ask), unnamed, ...shell("git push --force")]), undefined);
+    });
+
+    test("a prompt no call took does not carry past the next user turn", async () => {
+      const events = [prompt(ask), await toolPermission(), prompt("now tidy up"), ...shell("git push --force")];
+      assert.equal(detectUnapproved(events)?.first.kind, "git-push-force");
+    });
+
+    test("Claude Code: a permission_prompt drops the open call, as before", () => {
+      const start = ev("tool.start", { tool: "Bash", toolUseId: "p1", input: { command: "git push --force" } });
+      const end = ev("tool.end", { tool: "Bash", toolUseId: "p1", ok: true });
+      const note = ev("notification", { text: "Claude needs your permission to use Bash", type: "permission_prompt" });
+      assert.equal(detectUnapproved([prompt("tidy up the repo"), start, note, end]), undefined);
+      assert.equal(detectUnapproved([prompt("tidy up the repo"), start, end])?.first.kind, "git-push-force");
+    });
+
+    test("an idle_prompt notification approves nothing", () => {
+      const idle = ev("notification", { text: "Claude is waiting for your input", type: "idle_prompt" });
+      const start = ev("tool.start", { tool: "Bash", toolUseId: "i1", input: { command: "git push --force" } });
+      const end = ev("tool.end", { tool: "Bash", toolUseId: "i1", ok: true });
+      assert.equal(detectUnapproved([prompt("tidy up the repo"), start, idle, end])?.count, 1);
+      assert.equal(detectUnapproved([prompt("tidy up the repo"), idle, start, end])?.count, 1);
+      const geminiIdle = gem("notification", { kind: "idle_prompt", message: "Gemini CLI needs your permission to use run_shell_command" });
+      assert.equal(detectUnapproved([prompt(ask), geminiIdle, ...shell("git push --force")])?.count, 1);
+    });
   });
 
   test("the user's answer to the agent's question tool approves what follows", () => {

@@ -227,9 +227,9 @@ describe("ingest links harness children", () => {
     assert.deepEqual((await index.getSession("waits"))?.parent, { sessionId: "codex-later", type: "harness" });
   });
 
-  it("a parent known only from its transcript, read as far as the call that started the child, links the child once it is read further", async () => {
-    // A transcript has no end marker: the session ends at its last line so far, which is the
-    // call (T + 1 s) until the call returns. The child's hooks have all run by then.
+  it("a parent known only from its transcript, read as far as the call that started the child, links the child at once, and drops a later one when the call returns", async () => {
+    // A transcript has no end marker. Read as far as the call (T + 1 s) that is still open, the
+    // session has no end until the call returns: it is running, so the child's link holds.
     const t = setup();
     const index = new MemoryIndexStore();
     const transcript = { agent: "codex", source: "transcript" } as const;
@@ -240,17 +240,18 @@ describe("ingest links harness children", () => {
       await linker.apply();
     };
     await read([event("codex-parent", "session.start", T, {}, transcript), event("codex-parent", "tool.start", T + 1_000, bash("./review.sh", "tu1"), transcript)]);
-    assert.equal((await index.getSession("codex-parent"))?.endedAt, T + 1_000);
+    assert.equal((await index.getSession("codex-parent"))?.endedAt, undefined);
     const by = [{ agent: "codex", session: "codex-parent" }];
     t.write("claude-code", T + 2_000, { session: "claude-child", kind: "session.start" }, { spawnedBy: by });
     t.write("claude-code", T + 8_000, { session: "claude-child", kind: "session.end" }, { spawnedBy: by });
-    // A session that started after the parent had ended names it too: a shell that outlived it.
+    // A session that started after the call returned names it too: a shell that outlived the call.
     t.write("claude-code", T + 60_000, { session: "claude-late", kind: "session.start" }, { spawnedBy: by });
     await ingest({ config: t.config, index, blobs: new MemoryBlobStore(), adapters, env: t.env, lock: false });
-    assert.equal((await index.getSession("claude-child"))?.parent, undefined);
-    await read([event("codex-parent", "tool.end", T + 9_000, { tool: "Bash", toolUseId: "tu1" }, transcript)]);
     assert.deepEqual((await index.getSession("claude-child"))?.parent, { sessionId: "codex-parent", type: "harness" });
-    assert.equal((await index.getSession("claude-late"))?.parent, undefined);
+    await read([event("codex-parent", "tool.end", T + 9_000, { tool: "Bash", toolUseId: "tu1" }, transcript)]);
+    assert.equal((await index.getSession("codex-parent"))?.endedAt, T + 9_000);
+    assert.deepEqual((await index.getSession("claude-child"))?.parent, { sessionId: "codex-parent", type: "harness" });
+    assert.equal((await index.getSession("claude-late"))?.parent, undefined, "started after the parent's end: top-level again");
     assert.deepEqual((await index.listSessions({ parentSessionId: null })).map((s) => s.id).sort(), ["claude-late", "codex-parent"]);
   });
 

@@ -401,6 +401,8 @@ export class IngestQueue {
         }
         p.resolve({ inserted: ins, stored: r.events.length, rejected: r.rejected, message: r.message });
       });
+      // Sessions whose session.end this tick stored feed the session counters on /metrics.
+      metrics?.observeCommit(unique, rebuilt);
       if (this.o.onCommit) {
         const byId = new Map(rebuilt.map((s) => [s.id, s]));
         const fresh = newIds ?? new Set<string>();

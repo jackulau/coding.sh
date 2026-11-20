@@ -298,8 +298,12 @@ coding.sh harness audit --agent codex --since 90d
 | `write-only` | Was written, and no other session loaded or read it. |
 | `loaded-not-read` | Is a skill that was listed but never invoked or read. |
 
-The load cost is the file's tokens (bytes / 4) times the sessions that loaded it. The audit also
-warns about a Claude Code subagent file whose `tools:` is a map, which leaves that subagent with no
+A file that the agent's loaded instructions file or a rule pulls in with an `@path` import
+(`@AGENTS.md`) counts as loaded in each Claude Code session that loaded the importing file, and so
+do its own imports, up to 5 deep. The load cost is the file's tokens (bytes / 4) times the sessions
+that loaded it.
+
+The audit also warns about a Claude Code subagent file whose `tools:` is a map, which leaves that subagent with no
 tools.
 
 ## See trends

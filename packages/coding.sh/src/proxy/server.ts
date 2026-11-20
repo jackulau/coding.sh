@@ -15,6 +15,7 @@ import type { Socket } from "node:net";
 import type { Transform } from "node:stream";
 import zlib from "node:zlib";
 import { hostOf, isLoopbackHost } from "../otel/receiver.ts";
+import { type BudgetBlock, type BudgetGuard, budgetResponse } from "./budget.ts";
 import type { CapturedCall, Recorder } from "./record.ts";
 import { SseParser } from "./sse.ts";
 import { accumulatorFor, type CallResult, classify, parseJsonResponse, type Route } from "./wire.ts";
@@ -48,6 +49,10 @@ export interface ProxyHandlerOptions {
   onError?: (err: Error) => void;
   /** Health response extras. */
   info?: Record<string, unknown>;
+  /** `proxy --enforce-budget`: a billed call a budget over its limit applies to gets a 429 and never goes upstream. */
+  budget?: BudgetGuard;
+  /** A call the budget stopped. */
+  onBlock?: (block: BudgetBlock, route: Route) => void;
 }
 
 export interface ProxyRequestContext {
@@ -132,6 +137,44 @@ function decoderFor(encoding: string | undefined): Transform | undefined | null 
 const jsonError = (status: number, message: string): string => JSON.stringify({ type: "error", error: { type: status === 502 ? "api_error" : "invalid_request_error", message } });
 
 export function createProxyHandler(o: ProxyHandlerOptions = {}): ProxyHandler {
+  const forward = forwardingHandler(o);
+  const guard = o.budget;
+  if (!guard) return forward;
+  return (req, res, ctx) => {
+    const path = ctx?.path ?? req.url ?? "/";
+    // The forwarding handler answers its own refusals (Host, control paths) first.
+    if (path.startsWith(CONTROL_PREFIX) || (!o.allowRemote && !isLoopbackHost(hostOf(req.headers.host ?? "")))) return forward(req, res, ctx);
+    const route = classify(req.method ?? "GET", path, req.headers);
+    // The body waits, unread, until the check is done.
+    guard.check(route, req.headers).then(
+      (block) => {
+        if (!block) {
+          if (!res.destroyed) forward(req, res, ctx);
+          return;
+        }
+        req.resume();
+        const r = budgetResponse(route, block);
+        res.writeHead(r.status, r.headers).end(r.body);
+        try {
+          o.onBlock?.(block, route);
+        } catch {
+          // a failing listener never changes the answer
+        }
+      },
+      (err: unknown) => {
+        // Spend that can't be read never stops a call.
+        try {
+          o.onError?.(err instanceof Error ? err : new Error(String(err)));
+        } catch {
+          // ignore
+        }
+        if (!res.destroyed) forward(req, res, ctx);
+      },
+    );
+  };
+}
+
+function forwardingHandler(o: ProxyHandlerOptions): ProxyHandler {
   const up: Upstreams = { ...DEFAULT_UPSTREAMS, ...o.upstreams };
   const explicitOpenai = o.upstreams?.openai !== undefined && o.upstreams.openai !== DEFAULT_UPSTREAMS.openai;
   const max = o.maxCaptureBytes ?? DEFAULT_MAX_CAPTURE_BYTES;
