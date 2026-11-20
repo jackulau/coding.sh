@@ -134,12 +134,22 @@ const ENV_SECRET_NAME = "[A-Z0-9_]*(?:API_?KEY|SECRET(?:_KEY)?|TOKEN|PASSWORD|PA
 
 /** Object keys whose string values are always secrets, regardless of shape. */
 const SECRET_KEY = new RegExp(`^(?:[a-z0-9]+[_-])*${SECRET_NAME}$|^(?:authorization|proxy-authorization|cookie|set-cookie|x-api-key)$`, "i");
+/** Lower-case text that every SECRET_NAME holds. */
+const SECRET_NAME_NEEDLES: readonly string[] = ["key", "secret", "token", "passw"];
+/** Lower-case text that every key SECRET_KEY matches holds. */
+const SECRET_KEY_NEEDLES: readonly string[] = [...SECRET_NAME_NEEDLES, "authorization", "cookie"];
+
+function holdsAny(s: string, needles: readonly string[]): boolean {
+  for (const n of needles) if (s.includes(n)) return true;
+  return false;
+}
 
 /**
  * True for a dotted attribute key that names a secret: `db.password`, `app.api.key` (the dots
  * as separators) and `http.request.header.authorization` (its last part on its own).
  */
 export function isSecretAttrKey(key: string): boolean {
+  if (!holdsAny(key.toLowerCase(), SECRET_KEY_NEEDLES)) return false;
   return SECRET_KEY.test(key.replace(/\./g, "_")) || SECRET_KEY.test(key.slice(key.lastIndexOf(".") + 1));
 }
 
@@ -165,8 +175,59 @@ function withFastApply(rule: RedactRule, apply: (s: string, onMatch?: OnMatch) =
   return rule;
 }
 
+/** Text that every match of a rule's regex holds. */
+export interface RuleNeedles {
+  /** The regex can only match a string that holds one of these. */
+  any: readonly string[];
+  /** The regex has the `i` flag: `any` is lower-case, and is looked for in the lower-cased string. */
+  fold?: boolean;
+}
+
+/**
+ * The text each built-in secret rule needs, by kind. createRedactor runs a rule's regex only on
+ * a string that holds one of the rule's needles. The hook redacts each payload in a new process,
+ * where a regex is compiled the first time it runs, so skipping the rules a payload cannot match
+ * saves most of the hook's redaction time. Lower-casing is safe for an `i` regex without the `u`
+ * flag: it matches an ASCII letter only with an ASCII letter, so lower-casing the text can add a
+ * needle but never hide one. test/core/redact.test.ts checks that every match holds a needle.
+ */
+export const SECRET_NEEDLES: Readonly<Record<string, RuleNeedles>> = {
+  "private-key": { any: ["-----BEGIN "] },
+  "anthropic-key": { any: ["sk-ant-"] },
+  "openai-key": { any: ["sk-"] },
+  "github-token": { any: ["ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"] },
+  "gitlab-token": { any: ["glpat-"] },
+  "slack-token": { any: ["xox"] },
+  "slack-webhook": { any: ["https://hooks.slack.com/services/"] },
+  "aws-access-key": { any: ["AKIA", "ASIA", "AROA", "AIDA"] },
+  "google-api-key": { any: ["AIza"] },
+  "stripe-key": { any: ["_live_", "_test_"] },
+  "npm-token": { any: ["npm_"] },
+  "coding-sh-key": { any: ["csh_"] },
+  "vercel-ai-gateway-key": { any: ["vck_"] },
+  jwt: { any: ["eyJ"] },
+  bearer: { any: ["earer"] },
+  "basic-auth": { any: ["authorization"], fold: true },
+  password: { any: ["://"] },
+  "url-secret": { any: SECRET_NAME_NEEDLES, fold: true },
+  "secret-assignment": { any: ["KEY", "SECRET", "TOKEN", "PASSW", "CREDENTIAL"] },
+  "secret-field": { any: SECRET_NAME_NEEDLES, fold: true },
+  "prose-secret": { any: ["pat", "token", "pass", "key", "secret"], fold: true },
+};
+
+const needles = new WeakMap<RedactRule, RuleNeedles>();
+
 /** Built-in "secrets" rules. Order matters: specific vendor formats first. */
 export function secretRules(): RedactRule[] {
+  const rules = builtInSecretRules();
+  for (const rule of rules) {
+    const n = SECRET_NEEDLES[rule.kind];
+    if (n) needles.set(rule, n);
+  }
+  return rules;
+}
+
+function builtInSecretRules(): RedactRule[] {
   const privateKey: RedactRule = {
     kind: "private-key",
     // A BEGIN line to its END line; with no END after it, to the end of the text when key data
@@ -590,22 +651,15 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
 
   const apply = (s: string, onMatch?: OnMatch): string => {
     let out = s;
+    let lower: string | undefined;
     for (const r of rules) {
-      const fast = fastApply.get(r);
-      if (fast) {
-        out = fast(out, onMatch);
-        continue;
-      }
-      r.pattern.lastIndex = 0;
-      if (!r.pattern.test(out)) continue;
-      r.pattern.lastIndex = 0;
-      if (r.replace) out = out.replace(r.pattern, r.replace as (m: string, ...g: unknown[]) => string);
-      else if (onMatch && HIGH_CONFIDENCE_KINDS.has(r.kind)) {
-        out = out.replace(r.pattern, (m) => {
-          onMatch(r.kind, m);
-          return marker(r.kind);
-        });
-      } else out = out.replace(r.pattern, marker(r.kind));
+      // On the text as the rules before left it: a marker they wrote can hold a needle.
+      const need = needles.get(r);
+      if (need && !holdsAny(need.fold ? (lower ??= out.toLowerCase()) : out, need.any)) continue;
+      const next = applyRule(r, out, onMatch);
+      if (next === out) continue;
+      out = next;
+      lower = undefined;
     }
     return out;
   };
@@ -618,6 +672,23 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
     value,
     event: (e, tally) => ({ ...e, payload: value(e.payload, tally) }),
   };
+}
+
+/** `s` with one rule applied. */
+function applyRule(r: RedactRule, s: string, onMatch?: OnMatch): string {
+  const fast = fastApply.get(r);
+  if (fast) return fast(s, onMatch);
+  r.pattern.lastIndex = 0;
+  if (!r.pattern.test(s)) return s;
+  r.pattern.lastIndex = 0;
+  if (r.replace) return s.replace(r.pattern, r.replace as (m: string, ...g: unknown[]) => string);
+  if (onMatch && HIGH_CONFIDENCE_KINDS.has(r.kind)) {
+    return s.replace(r.pattern, (m) => {
+      onMatch(r.kind, m);
+      return marker(r.kind);
+    });
+  }
+  return s.replace(r.pattern, marker(r.kind));
 }
 
 /** A new value with `f` applied to every string in it (keys are kept). */
@@ -733,7 +804,8 @@ export function redactArgv<T>(args: readonly T[]): T[] {
   const out = [...args];
   for (let i = 0; i < out.length; i++) {
     const a = out[i];
-    if (typeof a !== "string") continue;
+    // A flag starts with "-": other elements skip the regex.
+    if (typeof a !== "string" || a.charCodeAt(0) !== 45) continue;
     const m = SECRET_FLAG.exec(a);
     if (!m) continue;
     if (m[2] !== undefined) {
