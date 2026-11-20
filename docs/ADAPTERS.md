@@ -116,6 +116,9 @@ order.
   The sources are the T3 adapter's `host-link` notification, the hook's env marker, or a Codex
   `session_meta.originator` of "T3 Code". The session then gets `agent: "t3code"`, and `provider` names the
   agent T3 ran.
+- **Title:** the `host-link` notification carries T3's thread title, and the session takes that title, not its
+  first prompt. T3's placeholder for a thread it has not named yet ("New thread") is skipped, so such a session
+  keeps its prompt as the title. In `show`, the notification reads `T3 Code thread: <title>`.
 - **Content by provider:**
   - Codex and Claude: content comes from their own transcripts.
   - OpenCode, Cursor and Pi: linked only. Their adapters import the content.

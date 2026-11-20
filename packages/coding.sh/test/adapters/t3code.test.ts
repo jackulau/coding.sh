@@ -189,7 +189,11 @@ describe("t3code adapter", () => {
     assert.ok(by[CLAUDE_ID]!.stats.toolCalls > 0);
     // Store-built Grok session: messages, tools, file change, per-turn usage.
     const g = by["grok-session-1"]!;
-    assert.equal(g.title, "List files and run the tests");
+    // T3's thread title titles the session, not its first prompt.
+    assert.equal(g.title, "List files");
+    assert.equal(by[CLAUDE_ID]!.title, "Add sum", "a transcript session takes the title of the T3 thread that ran it");
+    const link = (await index.listEvents(CLAUDE_ID)).find((e) => e.payload.type === "host-link");
+    assert.equal(link?.payload.message, "T3 Code thread: Add sum", "show names the thread");
     assert.equal(g.cwd, "/work/demo");
     assert.equal(g.model, "grok-model");
     assert.deepEqual(g.stats.usage, { inputTokens: 300, outputTokens: 50, cacheReadTokens: 600, cacheWriteTokens: 100 });
@@ -206,7 +210,7 @@ describe("t3code adapter", () => {
     assert.deepEqual(report?.payload.reportedUsage, { costUsd: 0.42 });
     // v1-only thread: store messages, tool activity, totals from the last context snapshot.
     const old = by["v1-codex-thread-not-on-disk"]!;
-    assert.equal(old.title, "Old prompt");
+    assert.equal(old.title, "Old thread");
     assert.equal(old.stats.toolCalls, 1);
     const { costUsd, estimatedCostUsd, ...tokens } = old.stats.usage!;
     assert.deepEqual(tokens, { inputTokens: 300, cacheReadTokens: 500, outputTokens: 100 });
@@ -311,6 +315,14 @@ describe("host attribution", () => {
     const plain = buildSession([ev({ kind: "session.start" })]);
     assert.equal(plain.agent, "codex");
     assert.equal(plain.provider, undefined);
+  });
+
+  it("titles the session with the host's thread title, before its prompt", () => {
+    const prompt = ev({ kind: "user.message", ts: 3, payload: { text: "Context handoff (full_thread_summary): Provider context handoff." } });
+    const s = buildSession([ev({ kind: "session.start", ts: 1 }), prompt, ev({ agent: "t3code", ts: 2, payload: { type: "host-link", via: "t3code", title: "Coding.sh 100-Star Milestone Graphic" } })]);
+    assert.equal(s.title, "Coding.sh 100-Star Milestone Graphic");
+    const untitled = buildSession([ev({ kind: "session.start", ts: 1 }), prompt, ev({ agent: "t3code", ts: 2, payload: { type: "host-link", via: "t3code" } })]);
+    assert.equal(untitled.title, "Context handoff (full_thread_summary): Provider context handoff.");
   });
 
   it("persists provider in sqlite", async () => {
@@ -653,6 +665,22 @@ describe("T3 store-built model calls", () => {
         ["tu-3", "gpt-5.5", "gpt-5.5", 60_000, true],
       ],
     );
+  });
+
+  it("names no thread title for T3's unnamed-thread placeholder", async () => {
+    const dir = join(env.home, ".t3", "userdata");
+    mkdirSync(dir, { recursive: true });
+    rmSync(join(dir, "statev2.sqlite"), { force: true });
+    const db = new DatabaseSync(join(dir, "statev2.sqlite"));
+    db.exec(V2_SCHEMA);
+    db.prepare("INSERT INTO projection_projects VALUES ('proj-1', 'demo', '/work/demo', '[]', ?, ?, NULL, NULL)").run(T(0), T(0));
+    thread(db, "thr-new", { provider: "grok", title: "New thread", created: T(0) });
+    providerThread(db, "pt-new", "thr-new", "grok", "grok-session-new", 1);
+    db.close();
+    const link = (await collect(backfillT3(testCtx().ctx))).find((e) => e.sessionId === "grok-session-new" && e.payload.type === "host-link");
+    assert.ok(link);
+    assert.equal(link.payload.title, undefined);
+    assert.equal(link.payload.message, "T3 Code thread");
   });
 });
 

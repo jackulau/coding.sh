@@ -161,6 +161,12 @@ interface StoreRows {
 }
 
 /** Session id for a provider thread (native id when T3 knows it). */
+/** A thread's title, unless it is T3's placeholder for a thread it has not named yet. */
+const threadTitle = (v: unknown): string | undefined => {
+  const t = str(v)?.trim();
+  return t && !/^new thread$/i.test(t) ? t : undefined;
+};
+
 const ptSessionId = (pt: ProviderThread): string => (pt.nativeId ? unscope(pt.nativeId) : `t3code-${pt.id}`);
 const primaryOf = (t: Thread): string => (t.providerThreads[0] ? ptSessionId(t.providerThreads[0]) : `t3code-${t.id}`);
 
@@ -431,7 +437,10 @@ async function storeEvents(ctx: NormalizeContext, p: SessionPlan, rows: StoreRow
 function linkEvents(ctx: NormalizeContext, p: SessionPlan): AgentEvent[] {
   const t = p.thread;
   const em = new Emitter(ctx, { agent: T3_AGENT, sessionId: p.sessionId, ts: p.start, cwd: t.cwd, model: p.pt?.model ?? t.model }, ["t3", p.sessionId, "link"]);
-  em.emit("notification", { type: "host-link", via: T3_AGENT, provider: p.provider, t3ThreadId: t.id, t3ProviderThreadId: p.pt?.id, title: t.title?.slice(0, 280), project: t.project }, { key: ["host-link"] });
+  // The thread title titles the session (core/sessions.ts) and names the thread in show.
+  const title = t.title?.slice(0, 280);
+  const message = title ? `T3 Code thread: ${title}` : "T3 Code thread";
+  em.emit("notification", { type: "host-link", via: T3_AGENT, provider: p.provider, t3ThreadId: t.id, t3ProviderThreadId: p.pt?.id, title, project: t.project, message }, { key: ["host-link"] });
   // T3's cost is a running total: reported, never summed into usage.
   if (p.pt?.costUsd !== undefined) em.emit("notification", { type: "usage-report", via: T3_AGENT, reportedUsage: { costUsd: p.pt.costUsd } }, { key: ["usage-report", p.pt.updated], ts: Math.max(p.start, p.pt.updated) });
   if (p.parent) em.emit("subagent.start", { subagentId: p.sessionId, type: p.parent.type, childSessionId: p.sessionId }, { sessionId: p.parent.sessionId, key: [p.sessionId], model: undefined });
@@ -517,7 +526,7 @@ function readV2Threads(db: DatabaseSync): Thread[] {
     const created = ms(r.created_at) ?? ms(pl.createdAt) ?? 0;
     out.push({
       id: String(r.thread_id),
-      title: str(r.title) ?? str(pl.title),
+      title: threadTitle(r.title) ?? threadTitle(pl.title),
       project: str(project?.title),
       cwd: str(pl.worktreePath) ?? str(project?.workspace_root),
       model: str(obj(pl.modelSelection).model),
@@ -646,7 +655,7 @@ function readV1Threads(db: DatabaseSync, skip: Set<string>): { thread: Thread; v
     const project = projects.get(String(r.project_id));
     const created = ms(r.created_at) ?? 0;
     const updated = ms(r.updated_at) ?? created;
-    const thread: Thread = { id, title: str(r.title), project: str(project?.title), cwd: str(r.worktree_path) ?? str(project?.workspace_root), model: str(sel.model), driver, created, updated, providerThreads: [] };
+    const thread: Thread = { id, title: threadTitle(r.title), project: str(project?.title), cwd: str(r.worktree_path) ?? str(project?.workspace_root), model: str(sel.model), driver, created, updated, providerThreads: [] };
     if (driver && nativeId) thread.providerThreads.push({ id: `v1:${id}`, driver, nativeId, model: str(sel.model), updated });
     out.push({ thread, v1: true });
   }
@@ -859,7 +868,7 @@ export const t3code: Adapter = {
   // 8 (0.1.7): a subagent thread of a Claude session whose transcript holds its run is not stored again as a t3code session.
   // 9 (0.1.8): that also holds when the run sits under a later provider thread's transcript, and for Workflow-tool run
   //    threads and agents T3 records in projection_subagents; a store-built llm.call names the turn's model.
-  parseVersion: 9,
+  parseVersion: 10,
 
   async detect() {
     const env = process.env;
