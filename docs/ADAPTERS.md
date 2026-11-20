@@ -188,6 +188,12 @@ order.
   seconds), and a command's adds `The command exited with code N.` The call's `tool.end` takes
   `exitCode` from it, fails on a nonzero code, and is timed by the header when it spans a second or
   more.
+- **Gemini CLI:** the Notification hook (`notification_type: "ToolPermission"`) fires while a tool
+  call waits for the user's approval, stored as a `notification` with `payload.kind` and
+  `payload.message`. Since 0.36, BeforeTool fires before the approval, so the call is open when the
+  prompt comes. In 0.35 and older, BeforeTool fires once the call runs, after the prompt. The
+  `unapproved-action` flag handles both orders. The message names the prompt's title, not the
+  tool: `Tool Confirm Shell Command requires execution` (0.20 through 0.70).
 - **Copilot:** bash-only hooks fail on Windows, so provide `powershell` too. Token totals are written after hooks return, so read them at backfill.
 - **Amp:** no session id in tool payloads. Correlate by `thread.id` from `session.start`.
 - **Cross-cutting:**

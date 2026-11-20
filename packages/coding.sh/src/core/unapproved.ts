@@ -11,7 +11,8 @@
 // judges each risky call against it: the call is approved when that turn asks
 // for the action (names it, or its verb), pre-approves it ("go ahead", "without
 // asking"), or is a short yes to the agent; when the user answered a question
-// tool or a permission prompt while the call was open; or when the call never
+// tool or a permission prompt while the call was open, or a permission prompt
+// before it started (older Gemini CLI asks first); or when the call never
 // ran (the user or a hook rejected it). Precision first: a session with no user
 // turn is never flagged, temp and build dirs are left alone, and a git discard
 // right after a commit or a stash is not one. Pure: no I/O.
@@ -387,9 +388,27 @@ export function approves(turn: string | undefined, action: RiskyAction): boolean
 // ---------------------------------------------------------------- fold
 
 /** The tool asks the user and the answer comes back as its result. */
-const QUESTION_TOOL = /^(?:AskUserQuestion|ask_user\w*|request_user_input\w*|ask_followup_question)$/i;
+export const QUESTION_TOOL = /^(?:AskUserQuestion|ask_user\w*|request_user_input\w*|ask_followup_question)$/i;
 /** A notification that the agent asked the user to approve a tool call (Claude Code's permission prompt). */
-const PERMISSION_TEXT = /needs your (?:permission|approval)|permission to use|requires? (?:your )?approval/i;
+export const PERMISSION_TEXT = /needs your (?:permission|approval)|permission to use|requires? (?:your )?approval/i;
+/** Notification types that mean "approve this tool call": Claude Code's and Gemini CLI's. */
+const PERMISSION_TYPE = /^(?:permission_prompt|ToolPermission)$/i;
+/** The tool a permission prompt names: "Claude needs your permission to use Bash". */
+const PERMISSION_TOOL = /permission to use [`'"]?([\w.:-]*\w)/i;
+/** Calls that start a subagent: they stay open while it runs, so a prompt is never about them. */
+const SPAWN_TOOL = /^(?:Agent|Task|spawn_agent|invoke_agent)$/;
+
+const nonEmpty = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
+
+/** A notification asking the user to approve a tool call. Claude Code sends `type`/`text`, Gemini CLI `kind`/`message`. */
+export function isPermissionNotification(e: AgentEvent): boolean {
+  if (e.kind !== "notification") return false;
+  const type = nonEmpty(e.payload.type) ?? nonEmpty(e.payload.kind);
+  if (type && PERMISSION_TYPE.test(type)) return true;
+  if (type === "idle_prompt") return false;
+  const text = nonEmpty(e.payload.text) ?? nonEmpty(e.payload.message);
+  return text !== undefined && PERMISSION_TEXT.test(text);
+}
 /** A call that never ran: the user, the harness or a hook refused it. */
 const REJECTED = /doesn'?t want to proceed|tool use was rejected|rejected by (?:the )?user|denied by (?:the )?user|user (?:declined|denied|rejected)|permission (?:to use \S+ )?(?:has been |was )?denied|blocked by (?:a |the )?\w*\s*hook|hook \S* ?blocked/i;
 const EDIT_TOOL = /^(?:edit|write|multiedit|notebookedit|apply_patch|write_file|replace|str_replace\w*|create_file|edit_file)$/i;
@@ -397,6 +416,9 @@ const TURN_MAX = 4000;
 const COMMAND_MAX = 200;
 /** Hits kept in a saved fold (counts go on past it). */
 const HITS_MAX = 100;
+/** Open calls and unclaimed permission prompts kept; the oldest go first. */
+const CALLS_MAX = 64;
+const PENDING_MAX = 16;
 
 interface Hit {
   kind: UnapprovedKind;
@@ -404,6 +426,14 @@ interface Hit {
   at: number;
   toolUseId?: string;
   afterError?: boolean;
+  /** A call with no toolUseId that has not ended: its tool, so its end or a permission prompt finds it. */
+  running?: string;
+}
+
+/** A call that started and has not ended. */
+interface OpenCall {
+  id?: string;
+  tool: string;
 }
 
 export interface UnapprovedState {
@@ -422,9 +452,17 @@ export interface UnapprovedState {
   extra: Partial<Record<UnapprovedKind, number>>;
   /** toolUseIds of hits whose call has not ended: a permission prompt or a rejection meanwhile clears them. */
   open: Set<string>;
+  /** Every call (risky or not, subagent starts aside) that started and has not ended. */
+  calls: OpenCall[];
+  /**
+   * Permission prompts that came while no call was open (Gemini CLI before 0.36 asks before
+   * BeforeTool): the tool each names, "" when it names none. The next call of that tool, or the
+   * next call, takes one; it ran only if the user said yes. A user turn clears them.
+   */
+  pending: string[];
 }
 
-export const unapprovedState = (): UnapprovedState => ({ briefs: new Map(), errored: false, saved: false, made: [], hits: [], extra: {}, open: new Set() });
+export const unapprovedState = (): UnapprovedState => ({ briefs: new Map(), errored: false, saved: false, made: [], hits: [], extra: {}, open: new Set(), calls: [], pending: [] });
 
 const text = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 const clip = (s: string, n: number) => (s.length <= n ? s : s.slice(-n));
@@ -433,6 +471,18 @@ function dropOpen(s: UnapprovedState, ids: Iterable<string>): void {
   const gone = new Set(ids);
   s.hits = s.hits.filter((h) => !h.toolUseId || !gone.has(h.toolUseId));
   for (const id of gone) s.open.delete(id);
+}
+
+/** A permission prompt: the open risky calls ran only if the user said yes. With no call open, the call it asks about has not started yet. */
+function permissionPrompt(s: UnapprovedState, e: AgentEvent): void {
+  if (s.open.size || s.calls.length || s.hits.some((h) => h.running !== undefined)) {
+    dropOpen(s, [...s.open]);
+    s.hits = s.hits.filter((h) => h.running === undefined);
+    return;
+  }
+  const named = PERMISSION_TOOL.exec(nonEmpty(e.payload.text) ?? nonEmpty(e.payload.message) ?? "")?.[1];
+  s.pending.push(named ?? "");
+  if (s.pending.length > PENDING_MAX) s.pending.splice(0, s.pending.length - PENDING_MAX);
 }
 
 /** Folds the next event, in time order. */
@@ -449,11 +499,12 @@ export function foldUnapproved(s: UnapprovedState, e: AgentEvent): void {
       }
       s.turn = clip(t, TURN_MAX);
       s.errored = false;
+      // A prompt no call took was refused, or was about a call that never came.
+      s.pending = [];
       return;
     }
     case "notification": {
-      // The user was asked to approve the open calls; they ran only if the user said yes.
-      if (s.open.size && (p.type === "permission_prompt" || PERMISSION_TEXT.test(text(p.text) ?? ""))) dropOpen(s, [...s.open]);
+      if (isPermissionNotification(e)) permissionPrompt(s, e);
       return;
     }
     case "file.change":
@@ -462,10 +513,22 @@ export function foldUnapproved(s: UnapprovedState, e: AgentEvent): void {
     case "tool.end": {
       if (p.wrapper === true) return;
       const id = text(p.toolUseId);
+      const tool = text(p.tool);
       const out = text(p.output) ?? text(p.error) ?? "";
+      // Gemini CLI's BeforeTool may carry no id while its AfterTool has one: then the tool matches.
+      let at = id ? s.calls.findIndex((c) => c.id === id) : -1;
+      const byId = at >= 0;
+      if (at < 0) at = s.calls.findLastIndex((c) => !c.id && (tool === undefined || c.tool === tool));
+      if (at >= 0) s.calls.splice(at, 1);
       if (id && s.open.has(id)) {
         s.open.delete(id);
         if (p.ok === false && REJECTED.test(out)) dropOpen(s, [id]);
+      } else if (!byId) {
+        const hit = s.hits.findLast((h) => h.running !== undefined && (tool === undefined || h.running === tool));
+        if (hit) {
+          delete hit.running;
+          if (p.ok === false && REJECTED.test(out)) s.hits = s.hits.filter((h) => h !== hit);
+        }
       }
       if (QUESTION_TOOL.test(text(p.tool) ?? "") && p.ok !== false) {
         // The user's answer to the agent's question is a user turn.
@@ -479,6 +542,19 @@ export function foldUnapproved(s: UnapprovedState, e: AgentEvent): void {
     case "tool.start": {
       if (p.wrapper === true) return;
       const tool = text(p.tool) ?? "";
+      const id = text(p.toolUseId);
+      // A hook and a transcript can both report one call: it opens once and takes one prompt.
+      let prompted = false;
+      if (!SPAWN_TOOL.test(tool) && !(id && s.calls.some((c) => c.id === id))) {
+        s.calls.push(id ? { id, tool } : { tool });
+        if (s.calls.length > CALLS_MAX) s.calls.splice(0, s.calls.length - CALLS_MAX);
+        // A prompt that came before any call started was about this one when it names this tool or none.
+        const i = s.pending.findIndex((t) => t === "" || t === tool);
+        if (i >= 0) {
+          s.pending.splice(i, 1);
+          prompted = true;
+        }
+      }
       if (EDIT_TOOL.test(tool)) s.saved = false;
       const command = shellCommand(tool, p.input);
       let action: RiskyAction | undefined;
@@ -495,18 +571,17 @@ export function foldUnapproved(s: UnapprovedState, e: AgentEvent): void {
           shown = `${tool}: ${sql}`;
         }
       }
-      if (!action) return;
+      if (!action || prompted) return;
       const brief = e.subagentId ? s.briefs.get(e.subagentId) : undefined;
       // No user turn at all (an OTel or proxy-only session): nothing to judge against.
       if (s.turn === undefined && brief === undefined) return;
       if (approves(s.turn, action) || approves(brief, action)) return;
-      const id = text(p.toolUseId);
       if (id && s.hits.some((h) => h.toolUseId === id)) return;
       if (s.hits.length >= HITS_MAX) {
         s.extra[action.kind] = (s.extra[action.kind] ?? 0) + 1;
         return;
       }
-      s.hits.push({ kind: action.kind, command: (shown ?? "").replace(/\s+/g, " ").trim().slice(0, COMMAND_MAX), at: e.ts, ...(id ? { toolUseId: id } : {}), ...(s.errored ? { afterError: true } : {}) });
+      s.hits.push({ kind: action.kind, command: (shown ?? "").replace(/\s+/g, " ").trim().slice(0, COMMAND_MAX), at: e.ts, ...(id ? { toolUseId: id } : { running: tool }), ...(s.errored ? { afterError: true } : {}) });
       if (id) s.open.add(id);
       return;
     }
