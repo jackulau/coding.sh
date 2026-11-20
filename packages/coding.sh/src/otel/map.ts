@@ -14,6 +14,11 @@
 //   root span (no parent)   0 session.start · 1 turn.end · 2 user.message (root input)
 //                           6 session.end (only when the session is the trace)
 //   model call (llm)        0 llm.call (usage, model, durationMs) · 3 assistant.message (text)
+//                           The newest user message of a model call under a root agent span (an
+//                           invoke_agent > chat trace with the content on the chat span) is the
+//                           turn's prompt: it takes the root's slot 2 id, so the root's own input,
+//                           or the earliest call's, wins in the batch and ingest keeps one. Only
+//                           when the root is already known (same or earlier batch; see turnRoot).
 //   tool                    0 tool.start · 1 tool.end
 //   agent (non-root)        0 subagent.start · 1 subagent.end (parent session)
 //                           7 session.start · 8 user.message · 9 assistant.message
@@ -152,6 +157,8 @@ export interface SpanNode {
   parentSpanId?: string;
   /** A nested (non-root) agent span: it has a child session. */
   subagent: boolean;
+  /** A root agent span (invoke_agent): a model call under it gives the turn its prompt. */
+  turn?: boolean;
   /** A durable-workflow replay span: model calls under it were made before (see durable.ts). */
   replay?: boolean;
 }
@@ -488,13 +495,17 @@ function eventMessages(span: OtelSpan, names: string[], keys: string[]): Msg[] {
   return out;
 }
 
+// GenAI semconv: the opt-in content event of a model call carries the messages as its attributes.
+const DETAILS_EVENTS = ["gen_ai.client.inference.operation.details", "gen_ai.client.operation.details"];
+
 function inputMessages(a: Attrs, span?: OtelSpan): Msg[] {
   let m = messagesFrom(first(a, "gen_ai.input.messages", "gen_ai.prompt", "ai.prompt.messages", "ai.prompt"), true);
   if (!m.length) m = flattened(a, "llm.input_messages");
   if (!m.length) m = flattened(a, "gen_ai.prompt");
   if (!m.length) m = messagesFrom(first(a, "input.value"), str(a, "input.mime_type") !== "text/plain");
   if (!m.length && span) {
-    m = eventMessages(span, ["gen_ai.content.prompt"], ["gen_ai.prompt"]);
+    m = eventMessages(span, DETAILS_EVENTS, ["gen_ai.input.messages"]);
+    if (!m.length) m = eventMessages(span, ["gen_ai.content.prompt"], ["gen_ai.prompt"]);
     if (!m.length) m = eventMessages(span, ["gen_ai.user.message", "gen_ai.system.message"], ["content", "gen_ai.event.content"]);
   }
   return m;
@@ -510,7 +521,8 @@ function outputMessages(a: Attrs, span?: OtelSpan): Msg[] {
   }
   if (!m.length) m = messagesFrom(first(a, "output.value", "ai.response.object"), str(a, "output.mime_type") !== "text/plain");
   if (!m.length && span) {
-    m = eventMessages(span, ["gen_ai.content.completion"], ["gen_ai.completion"]);
+    m = eventMessages(span, DETAILS_EVENTS, ["gen_ai.output.messages"]);
+    if (!m.length) m = eventMessages(span, ["gen_ai.content.completion"], ["gen_ai.completion"]);
     if (!m.length) m = eventMessages(span, ["gen_ai.choice"], ["message", "content", "gen_ai.event.content"]);
   }
   return m;
@@ -795,9 +807,14 @@ interface SpanCtx {
   replayed?: boolean;
   /** service.instance.id of a span whose parent ran in another process (payload.instance on its first event). */
   instance?: string;
+  /** Span id of the trace's root agent span above a nested span of the main session: a model call's prompt is the turn's. */
+  turnRoot?: string;
 }
 
 export const spanEventId = (traceId: string, spanId: string, slot: number): string => hashParts("otel", traceId, spanId, slot);
+
+/** user.message events a nested model call gave its turn (they carry the root's slot 2 id): the root's own copy wins. */
+const derivedPrompts = new WeakSet<AgentEvent>();
 
 /**
  * Session of a nested agent span. The subagent's own start/prompt/result/end
@@ -1012,6 +1029,10 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
     const requestId = cc ? str(a, "request_id") : undefined;
     const callId = requestId ? ccLlmId(c.sessionId, requestId, "call") : undefined;
     emit(slot, "llm.call", startMs, d.set("requestId", requestId), { durationMs, ...(model ? { model } : {}), ...(usage ? { usage } : {}) }, callId);
+    if (c.turnRoot) {
+      const prompt = userText(inputMessages(a, span));
+      if (prompt) derivedPrompts.add(emit(2, "user.message", startMs, await draft().content("text", prompt), {}, spanEventId(traceId, c.turnRoot, 2)));
+    }
     const text = assistantText(outputMessages(a, span));
     if (text) {
       const m = await draft().content("text", text);
@@ -1142,7 +1163,12 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
   if (ctx.enrichSpan) {
     const replaced = await ctx.enrichSpan(span, out, { resource: c.resource, scope: c.scope, sessionId: c.sessionId, agent: c.agent });
     if (replaced) {
-      for (const e of replaced) e.source ??= SPAN_SOURCE;
+      // A copy of this call's turn prompt is still the call's, not the root's.
+      const turnPrompt = c.turnRoot ? spanEventId(traceId, c.turnRoot, 2) : undefined;
+      for (const e of replaced) {
+        e.source ??= SPAN_SOURCE;
+        if (turnPrompt && e.kind === "user.message" && e.id === turnPrompt) derivedPrompts.add(e);
+      }
       return replaced;
     }
     for (const e of out) e.source ??= SPAN_SOURCE;
@@ -1156,6 +1182,17 @@ function enclosingSubagent(tree: SpanTree, traceId: string, spanId: string | und
     const node = tree.get(traceId, spanId);
     if (!node) return undefined;
     if (node.subagent) return spanId;
+    spanId = node.parentSpanId;
+  }
+  return undefined;
+}
+
+/** The root agent span above `spanId`, when the whole chain up to it is known and holds no subagent. */
+function turnRootAbove(tree: SpanTree, traceId: string, spanId: string | undefined): string | undefined {
+  for (let depth = 0; spanId && depth < 256; depth++) {
+    const node = tree.get(traceId, spanId);
+    if (!node || node.subagent) return undefined;
+    if (!node.parentSpanId) return node.turn ? spanId : undefined;
     spanId = node.parentSpanId;
   }
   return undefined;
@@ -1218,7 +1255,9 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
           for (const l of sp.links) if (l.traceId && l.traceId !== sp.traceId && !traceRun.has(l.traceId)) traceRun.set(l.traceId, sid);
         }
         if (sp.traceId && sp.spanId) {
-          const node: SpanNode = { subagent: !!sp.parentSpanId && classifySpan(sp) === "agent" };
+          const agentSpan = classifySpan(sp) === "agent";
+          const node: SpanNode = { subagent: !!sp.parentSpanId && agentSpan };
+          if (!sp.parentSpanId && agentSpan) node.turn = true;
           if (sp.parentSpanId) node.parentSpanId = sp.parentSpanId;
           if (d?.replay) node.replay = true;
           tree.set(sp.traceId, sp.spanId, node);
@@ -1244,6 +1283,8 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
   // A trace already keyed (an explicit conversation, or an earlier batch) keeps its session.
   for (const [t, s] of traceRun) if (!traceConv.has(t) && !ctx.traceSessions?.has(t)) ctx.traceSessions?.set(t, s);
   const compactIds = new Set<string>();
+  const prompts = new Map<string, number>();
+  const dropped = new Set<number>();
 
   for (const rs of batch) {
     const resource = rs.resource.attributes;
@@ -1296,6 +1337,11 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
           const aid = str(span.attributes, "agent_id");
           if (aid) c.subagentId = aid;
         }
+        // A nested span of the main session (not a durable run's: its traces are steps, not turns).
+        if (!sub && !d && agent !== "claude-code" && span.parentSpanId) {
+          const root = turnRootAbove(tree, span.traceId, span.parentSpanId);
+          if (root) c.turnRoot = root;
+        }
         try {
           for (const e of await mapSpan(c, ctx, store)) {
             // One context.compact per session (see mapSpan): the first compacted span of the batch places it.
@@ -1303,6 +1349,15 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
               if (compactIds.has(e.id)) continue;
               compactIds.add(e.id);
             }
+            // One prompt per turn: the root's own input over a model call's, else the earliest call's.
+            // The kept copy moves to where the later one sits, so the root's prompt stays after its session.start.
+            const i = e.kind === "user.message" ? prompts.get(e.id) : undefined;
+            if (i !== undefined && (derivedPrompts.has(e) || derivedPrompts.has(result.events[i]!))) {
+              const had = result.events[i]!;
+              if (derivedPrompts.has(e) && !(derivedPrompts.has(had) && e.ts < had.ts)) continue;
+              dropped.add(i);
+            }
+            if (e.kind === "user.message") prompts.set(e.id, result.events.length);
             result.events.push(e);
           }
         } catch (err) {
@@ -1312,6 +1367,7 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
       }
     }
   }
+  if (dropped.size) result.events = result.events.filter((_, i) => !dropped.has(i));
   if (rehome.size) result.rehome = [...rehome.values()];
   return result;
 }
