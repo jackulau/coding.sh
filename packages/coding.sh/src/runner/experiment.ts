@@ -18,6 +18,7 @@ import { failureAnatomy, nestedVarianceShares, type ArmAnatomy, type VarianceSha
 import { diffBundles, formatBundleDiff, type BundleDiff, type InstructionSurface } from "./bundle.ts";
 import { firstDivergence, type Divergence } from "./divergence.ts";
 import { selfCheckSummary, type SelfCheckSummary } from "./selfcheck.ts";
+import { claimCalibration, NO_CLAIMS, type ArmClaims } from "./claims.ts";
 import type { SnapshotOps } from "./git.ts";
 import { attributeTamper, tamperDisclosure, type TamperAttribution, type TamperDisclosure } from "./tamper.ts";
 import type { RepairOpts } from "./repair.ts";
@@ -708,6 +709,11 @@ export interface CompareReport {
   plan: ComparePlan;
   /** Sequential comparisons (`compare --sequential`): pass rate by position per arm. */
   learning?: LearningReport;
+  /**
+   * Claim calibration per arm (runner/claims.ts): how often the final answer claims success,
+   * how often the verifier agrees, and claims the verifier failed. Absent when no arm claimed.
+   */
+  claims?: { baseline: ArmClaims; candidate: ArmClaims };
 }
 
 export interface OneTaskRuns {
@@ -1093,6 +1099,10 @@ export const COST_PER_SOLVED_NOTE = 0.25;
 
 function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareReport {
   const alpha = opts.alpha ?? 0.05;
+  const calib = claimCalibration(all.filter((r) => r.bundleId === opts.baseline || r.bundleId === opts.candidate));
+  const ca = calib.get(opts.baseline) ?? NO_CLAIMS;
+  const cb = calib.get(opts.candidate) ?? NO_CLAIMS;
+  const claims = ca.claims || cb.claims ? { baseline: ca, candidate: cb } : undefined;
   // Interrupted runs were killed mid-flight, and runs that failed on infrastructure (rate
   // limit, 5xx, network) never measured the agent: neither says anything about either harness.
   // A superseded attempt was retried; its retry is the run that counts.
@@ -1336,7 +1346,7 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
     // A promotion across agent releases would credit B with what the release did.
     else pareto = releases?.confound === "arms-differ" ? { ...p, promote: false, reason: "none", refused: "release_confound" } : p;
   }
-  return {
+  const report: CompareReport = {
     baseline: sa,
     candidate: sb,
     tasks,
@@ -1371,6 +1381,8 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
     plan,
     ...(learning ? { learning } : {}),
   };
+  if (claims) report.claims = claims;
+  return report;
 }
 
 function surfaceDelta(baseline: InstructionSurface, candidate: InstructionSurface): NonNullable<CompareReport["surface"]> {
@@ -1859,6 +1871,14 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
       out.push(dim(`${pad("", W[0] as number)}  own-green runs passed the verifier ${ci(s.greenPassRate)} vs ${ci(s.otherPassRate)} otherwise`));
     }
   });
+  const cl = r.claims;
+  if (cl) {
+    const frac = (n: number, d: number) => (d ? `${share(n / d)} (${n}/${d})` : "—");
+    const sd = cl.candidate.silentFailureRate - cl.baseline.silentFailureRate;
+    out.push(row(["claim rate", frac(cl.baseline.claims, cl.baseline.runs), frac(cl.candidate.claims, cl.candidate.runs), dim("final answer says done")]));
+    out.push(row(["claim precision", frac(cl.baseline.claims - cl.baseline.silentFailures, cl.baseline.claims), frac(cl.candidate.claims - cl.candidate.silentFailures, cl.candidate.claims), dim("claims the verifier passed")]));
+    out.push(row(["silent failures", frac(cl.baseline.silentFailures, cl.baseline.runs), frac(cl.candidate.silentFailures, cl.candidate.runs), cl.baseline.runs && cl.candidate.runs ? signed(sd, true, pp(sd)) : ""]));
+  }
   out.push(...tamperedPassLines(r, { pad: (s) => pad(s, W[0] as number), bad, dim }));
   out.push(...repairLines(r, { row: (cells) => row(cells), bad, dim, signed }));
   if (r.learning) {

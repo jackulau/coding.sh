@@ -1746,6 +1746,14 @@ run (`own-green runs passed the verifier 71% [..] vs 40% [..] otherwise`); in BO
 2611.02207) a green local run barely changed the hidden-test pass rate. `--json` has the counts and
 both rates under `baseline.selfCheck` and `candidate.selfCheck`.
 
+Compare also reads each run's final answer against the verifier. A run claims success when its
+final answer says the work is done, fixed or passing and does not report a failing check. Per arm,
+`claim rate` is claims over runs, `claim precision` is the share of claims the verifier passed, and
+`silent failures` is claims the verifier failed, over runs. An arm with no claim shows `—` for
+precision. Runs lost to infrastructure are left out. The three rows, and `claims` in `--json`, appear
+only when some arm has a claim. Under a measure-before-claim rule (arXiv 2611.10063), claim precision
+rose from 64% to 96% and silent failures fell from 14.1% to 3.2%.
+
 Every replay run gets a tamper check on its diff: edits, deletes and skip markers in tests, the
 verifier's files, test-runner configs, CI files and `package.json` test scripts. Tampered runs that
 passed still count as passes. An edit that only adds new test cases to an existing test file, and
