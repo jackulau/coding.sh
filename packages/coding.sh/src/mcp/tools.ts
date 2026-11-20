@@ -38,7 +38,7 @@ import {
 } from "./data.ts";
 import { sessionDigest } from "./digest.ts";
 import { facetCounts, searchWhere } from "../query/run.ts";
-import { andQuery, FACET_KEYS, parseWhere, QueryError, QueryUnsupported, type Query } from "../query/where.ts";
+import { andQuery, FACET_KEYS, parseWhere, QueryError, QueryUnsupported, scopesSubagents, type Query } from "../query/where.ts";
 import { fitAnswer, pageIndex, pageRange, pageStep } from "./replay-page.ts";
 import { toolText, ToolError, type ToolDef } from "./protocol.ts";
 import { scoreTools } from "../scores/mcp.ts";
@@ -401,7 +401,7 @@ function toolDefs(): ToolDef<ToolCtx>[] {
         flagged: { type: "boolean", description: "Only sessions with any failure flag." },
         where: WHERE,
         facets: { type: "array", items: { type: "string", enum: [...FACET_KEYS] }, description: "Also count matching sessions per value of these keys." },
-        includeSubagents: { type: "boolean", default: false, description: "Also list subagent (child) sessions. Default false." },
+        includeSubagents: { type: "boolean", default: false, description: "Also list subagent (child) sessions. Default false; a where naming id:, parent: or is:child picks them itself." },
         project: PROJECT,
         limit: LIMIT(20, 100),
         cursor: CURSOR,
@@ -410,11 +410,12 @@ function toolDefs(): ToolDef<ToolCtx>[] {
       annotations: READ,
       async run(a, c) {
         const ctx = await c.store();
-        const q = query(a, c, { topLevel: a.includeSubagents !== true });
+        const where = whereArg(a, c.now());
+        // A where that names id:, parent:, is:root or is:child picks subagents itself, as the CLI's --where does.
+        const q = query(a, c, { topLevel: a.includeSubagents !== true && !scopesSubagents(where?.root) });
         const flag = strArg(a, "flag");
         if (flag) q.flag = flag;
         if (a.flagged === true) q.where = (s) => failureFlags(s.flags).length > 0;
-        const where = whereArg(a, c.now());
         if (where) q.query = where;
         const offset = cursorArg(a);
         const limit = numArg(a, "limit", 20);
