@@ -142,6 +142,11 @@ estimate.
 - Plan usage: `coding.sh quota` shows how much of a plan's 5-hour and weekly windows is used. See
   the [CLI reference](https://coding.sh/docs/cli/quota).
 
+### Alert
+
+A threshold on failure rate, cost, session count or one flag over a recent window. Only a change of
+state notifies. See the [CLI reference](https://coding.sh/docs/cli/alert).
+
 ## Testing changes
 
 ### Case

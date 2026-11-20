@@ -53,6 +53,7 @@ Every command accepts these.
 | [`blame`](#codingsh-blame) | Explore | git blame with the agent session that wrote each line |
 | [`diff-calls`](#codingsh-diff-calls) | Explore | Show what changed between two model calls, and why the second missed the prompt cache |
 | [`search`](#codingsh-search) | Explore | Full-text search over prompts, replies, tool calls and errors |
+| [`alert`](#codingsh-alert) | Explore | Notify a webhook or a command when failures, cost, sessions or a flag cross a threshold |
 | [`budget`](#codingsh-budget) | Explore | Spend budgets per day, week or month, for every session or one agent or repo |
 | [`usage`](#codingsh-usage) | Explore | Tokens, cost, turns and cache hits by agent, model or day |
 | [`cache`](#codingsh-cache) | Explore | Score prompt-cache health and name what breaks the cached prefix |
@@ -799,6 +800,125 @@ coding.sh search migration --where 'agent:codex kind:tool.start'
 - Matches are listed best first. When a search matches more than 20,000 events (a word as common as 'the'), the local store lists them newest first instead.
 - --where applies to each match: event keys (kind, tool, ok, …) to the matching event, session keys (agent, repo, cost, …) to its session. Keys: coding.sh sessions --help.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
+
+## `coding.sh alert`
+
+Notify a webhook or a command when failures, cost, sessions or a flag cross a threshold.
+
+```text
+coding.sh alert <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`add`](#codingsh-alert-add) | Add an alert; a webhook alert prints its signing secret once |
+| [`list`](#codingsh-alert-list) | List the alerts with their last state, and say which targets are off after failed deliveries |
+| [`rm`](#codingsh-alert-rm) | Remove an alert |
+| [`check`](#codingsh-alert-check) | Read every alert's measure, save its state, and notify each change of state |
+| [`test`](#codingsh-alert-test) | Send a test notification (test: true) to an alert's target; a success turns a disabled target back on |
+
+```sh
+coding.sh alert add failures --measure failure-rate --over 0.5 --window 1d --notify webhook:https://example.com/hook
+coding.sh alert check
+coding.sh alert list
+```
+
+- States are OK, WARNING, ALERT and NO_DATA. An alert starts at OK, and only a change of state notifies. The measures are the ones coding.sh stats computes, over top-level sessions with their subagents' cost added.
+- A webhook gets a POST with the JSON body {alert, state, previous, value, threshold, window, by, at} (by only with --by agent) and the header X-Coding-Sh-Signature: sha256=&lt;HMAC-SHA256 of the body, keyed with the alert's secret&gt;. A command gets the same JSON on stdin and succeeds by exiting 0.
+- Each notification is tried 3 times, 1 s and then 2 s apart. After 5 failed deliveries in a row the target is turned off; alert list says so, and a successful alert test turns it back on.
+- alert check exits 0 unless the usage is wrong; with --json it lists each alert's state, value and groups. Run it from cron or Task Scheduler. coding.sh serve runs the same check every minute. The hook and the read commands never run alerts.
+- Alerts, their states and their secrets are kept in ~/.coding.sh/alerts.json, mode 600.
+
+### `coding.sh alert add`
+
+Add an alert; a webhook alert prints its signing secret once.
+
+```text
+coding.sh alert add <NAME> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | Letters, digits, dot, dash and underscore, up to 64. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--measure <MEASURE>` |  | failure-rate (a share from 0 to 1), cost (USD), sessions, or flag:&lt;FLAG&gt; (sessions with that flag or tag) |
+| `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
+| `--by <GROUP>` |  | One state per agent, each notified on its own (default: one state for all sessions) One of: `agent`. |
+| `--over <N>` |  | ALERT when the measure is above N. |
+| `--warn <N>` |  | WARNING when the measure is above N and not above --over. |
+| `--window <WINDOW>` |  | The sessions that started in this much time before the check. One of: `1h`, `1d`, `7d`. |
+| `--notify <TARGET>` |  | webhook:&lt;URL&gt; (a signed JSON POST) or command:"&lt;CMD&gt;" (the same JSON on stdin) |
+| `--no-data <STATE>` |  | State when the window has no sessions (or, for cost, no priced session): ok, alert, or keep the last state (default: NO_DATA) One of: `ok`, `alert`, `keep`. |
+
+```sh
+coding.sh alert add failures --measure failure-rate --over 0.5 --window 1d --notify webhook:https://example.com/hook
+coding.sh alert add spend --measure cost --warn 20 --over 50 --window 1d --by agent --notify command:"notify-send coding.sh"
+coding.sh alert add loops --measure flag:repeated-tool-failure --over 3 --window 1h --where 'agent:codex' --notify webhook:https://example.com/hook
+```
+
+### `coding.sh alert list`
+
+List the alerts with their last state, and say which targets are off after failed deliveries.
+
+```text
+coding.sh alert list
+```
+
+```sh
+coding.sh alert list
+coding.sh alert list --json
+```
+
+### `coding.sh alert rm`
+
+Remove an alert.
+
+```text
+coding.sh alert rm <NAME>
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | The alert's name (alert list) |
+
+```sh
+coding.sh alert rm failures
+```
+
+### `coding.sh alert check`
+
+Read every alert's measure, save its state, and notify each change of state.
+
+```text
+coding.sh alert check [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh alert check
+coding.sh alert check --json
+```
+
+### `coding.sh alert test`
+
+Send a test notification (test: true) to an alert's target; a success turns a disabled target back on.
+
+```text
+coding.sh alert test <NAME>
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | The alert's name (alert list) |
+
+```sh
+coding.sh alert test failures
+```
 
 ## `coding.sh budget`
 

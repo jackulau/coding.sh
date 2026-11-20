@@ -2,7 +2,9 @@
 // through a bounded queue to a single writer; the viewer, its API, health and
 // Prometheus metrics are served next to them. See docs/PRODUCTION.md §1.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { existsSync } from "node:fs";
 import type { AddressInfo } from "node:net";
+import { runAlertChecks } from "../alerts/check.ts";
 import { paths } from "../core/paths.ts";
 import type { BlobStore, IndexStore, Sink, WriterLock } from "../core/types.ts";
 import { canonicalScheme, openBlobStore, openIndexStore, openSink, parseStoreUrl } from "../store/factory.ts";
@@ -48,6 +50,10 @@ export interface ServeOptions {
   fetch?: typeof fetch;
   /** Forward and sink flush/backoff timing (tests). */
   hookTiming?: HookTiming;
+  /** false: do not run the alert check (`coding.sh alert`) every minute. */
+  alerts?: false;
+  /** Alert check interval (default 60 s; tests shrink it). */
+  alertIntervalMs?: number;
   /** How often the writer runs monitors (`coding.sh monitor`; default 60 s, tests shrink it). */
   monitorIntervalMs?: number;
 }
@@ -458,6 +464,29 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
   }, 60_000);
   summary.unref();
 
+  // ---- alerts (coding.sh alert): the writer checks them every minute, as `alert check` does
+  const alertsFile = paths({ CODING_SH_HOME: cfg.core.home }).alerts;
+  const alertsAbort = new AbortController();
+  let alertRun: Promise<void> | undefined;
+  const checkAlerts = () => {
+    if (alertRun || shuttingDown || !queue.isWritable || !existsSync(alertsFile)) return;
+    alertRun = runAlertChecks({ file: alertsFile, index, signal: alertsAbort.signal, lockWaitMs: 5_000 })
+      .then((results) => {
+        for (const r of results) {
+          if (r.error) log.warn("alert not checked", { alert: r.name, error: r.error });
+          for (const g of r.groups) if (g.changed) log.info("alert state changed", { alert: r.name, agent: g.agent, state: g.state, previous: g.previous, value: g.value });
+          if (r.failed) log.warn("alert notification not delivered", { alert: r.name, error: r.deliveryError });
+          if (r.skipped) log.warn("alert target is off after 5 failed deliveries; run coding.sh alert test", { alert: r.name });
+        }
+      })
+      .catch((e: Error) => log.warn("alert check failed", { error: e.message }))
+      .finally(() => {
+        alertRun = undefined;
+      });
+  };
+  const alertTimer = o.alerts === false || cfg.role !== "all" ? undefined : setInterval(checkAlerts, o.alertIntervalMs ?? 60_000);
+  alertTimer?.unref();
+
   let shutdown: Promise<{ drained: boolean }> | undefined;
   return {
     url,
@@ -473,6 +502,8 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
         shuttingDown = true;
         log.info("shutting down", { queueEvents: queue.depth.events });
         clearInterval(summary);
+        if (alertTimer) clearInterval(alertTimer);
+        alertsAbort.abort();
         if (lockTimer) clearTimeout(lockTimer);
         const closed = new Promise<void>((resolve) => server.close(() => resolve()));
         server.closeIdleConnections();
@@ -489,6 +520,7 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
         // Requests answered during the drain have flushed; drop what is left (keep-alive sockets).
         server.closeAllConnections();
         await closed;
+        await alertRun;
         await lock?.release().catch(() => {});
         await index.close().catch((e: Error) => log.error("closing the store failed", { error: e.message }));
         await blobs.close?.().catch(() => {});

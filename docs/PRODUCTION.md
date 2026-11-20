@@ -252,6 +252,20 @@ In serve, an `llm.call` that has tokens but no `costUsd` gets
 - `coding_sh_forward_spans_total{result="sent|dropped|failed"}`, `coding_sh_forward_buffer_spans`
   (only when `[serve.forward]` is set)
 - `coding_sh_sink_events_total{sink,result="sent|failed"}` (only when `[[sinks]]` are set)
+- `coding_sh_session_cost_usd_total{agent,model}`: the cost of sessions, subagent sessions
+  included
+- `coding_sh_sessions_total{agent,outcome="ok|failed"}`: top-level sessions; `failed` means the
+  session has a failure flag (a flag with no colon)
+- `coding_sh_session_flags_total{flag}`: the failure flags on those sessions, tags left out
+
+The three session counters appear once a session is counted. A session counts once, when a commit
+stores its `session.end` event; cost or flags it gains later are not added. A session that never
+gets a `session.end` (a conversation-keyed OpenTelemetry session) is not counted. They start at 0
+when serve starts. Past 500 label sets a counter puts new label values under `other`.
+
+**Alerts.** The writer runs the same check as `coding.sh alert check` every minute, on the alerts in
+`alerts.json` in the data folder (`CODING_SH_HOME`), and logs each change of state. A
+`--role viewer` replica and a standby run none.
 
 **Logs.** One JSON line per event. Store URLs pass through `redactUrl` (`src/sinks/post.ts`).
 There is one summary line per minute (events in/out, throttled, queue depth).
