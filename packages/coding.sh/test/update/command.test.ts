@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { installedCli, npmInstall, runUpdate, type InstallResult, type UpdateDeps } from "../../src/cli/commands/update.ts";
 import { Output } from "../../src/cli/output.ts";
 import type { CommandContext } from "../../src/cli/types.ts";
-import type { CheckOptions, UpdateCache } from "../../src/update/index.ts";
+import { cacheFile, checkForUpdate, type CheckOptions, type UpdateCache } from "../../src/update/index.ts";
 import { nodeBin, pathOf } from "../_bin.ts";
-import { tmpEnv, ttyStream } from "./helpers.ts";
+import { fakeFetch, GH, release, tmpEnv, ttyStream } from "./helpers.ts";
 
 const TGZ = "https://github.com/jackulau/coding.sh/releases/download/v0.2.0/coding.sh-0.2.0.tgz";
 const available: UpdateCache = { latest: "0.2.0", checkedAt: 1, url: "https://github.com/jackulau/coding.sh/releases/tag/v0.2.0", install: TGZ, source: "github" };
@@ -52,6 +52,26 @@ describe("coding.sh update", () => {
     assert.equal(seen.installs.length, 0);
     assert.equal(stdout.text, `npm install -g --silent --no-fund --no-audit ${TGZ}\n`);
     assert.match(stderr.text, /Dry run/);
+  });
+
+  test("--dry-run leaves update.json as it was; a real run refreshes it", async () => {
+    const seeded = JSON.stringify({ checkedAt: 1, latest: "9.9.9" });
+    const real: UpdateDeps = {
+      current: "0.1.0",
+      check: (env, opts) => checkForUpdate(env, { ...opts, fetch: fakeFetch({ [GH]: release("v0.1.0") }).fetch }),
+    };
+    for (const json of [false, true]) {
+      const { c } = ctx({ "dry-run": true }, json);
+      mkdirSync(dirname(cacheFile(c.env)), { recursive: true });
+      writeFileSync(cacheFile(c.env), seeded);
+      assert.equal(await runUpdate(c, real), 0);
+      assert.equal(readFileSync(cacheFile(c.env), "utf8"), seeded, "--dry-run writes nothing");
+    }
+    const { c } = ctx({ check: true }, true);
+    mkdirSync(dirname(cacheFile(c.env)), { recursive: true });
+    writeFileSync(cacheFile(c.env), seeded);
+    assert.equal(await runUpdate(c, real), 0);
+    assert.equal((JSON.parse(readFileSync(cacheFile(c.env), "utf8")) as UpdateCache).latest, "0.1.0", "--check refreshes the cache");
   });
 
   test("--check reports the latest version without installing", async () => {

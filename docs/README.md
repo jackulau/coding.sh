@@ -119,6 +119,7 @@ Specs and plans. Each one states its status at the top.
 |---|---|
 | [design/architecture.md](design/architecture.md) | capture, spool, ingest, store, viewer and runner |
 | [design/workflows.md](design/workflows.md) | capturing and A/B-testing multi-agent workflow runs |
+| [design/work.md](design/work.md) | `coding.sh work`: what needs you across every agent's sessions |
 | [design/bench-cli.md](design/bench-cli.md) | `coding.sh bench`: benchmarks in one noun |
 | [design/viewer.md](design/viewer.md) | viewer: sessions, query language, benches |
 | [design/dogfood.md](design/dogfood.md) | testing coding.sh on itself: scorecard and improvement loop |

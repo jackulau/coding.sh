@@ -60,5 +60,7 @@ export function paths(env: NodeJS.ProcessEnv = process.env) {
     proxyLog: join(root, "proxy.log"),
     /** Agents `init --proxy` routed through the proxy; while it exists, the hook restarts a stopped proxy. */
     proxyInstalls: join(root, "proxy-installs.json"),
+    /** Acks and snoozes of `coding.sh work` items (core/work-overlay.ts). */
+    work: join(root, "work.json"),
   };
 }

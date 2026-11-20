@@ -29,7 +29,7 @@ const TOOLS: [string, string][] = [
   ["eval_init", "Write an eval suite to evals/<name>/: tasks from failed sessions, a skill's trigger prompts, or cases the agent writes. What the agent writes is marked draft."],
   ["score_list", "Typed scores on sessions, events, dataset cases and eval runs, newest first, with filters."],
   ["score_add", "Score a session, event, case or run: a number, true or false, or a category. Scoring the same thing again replaces it."],
-  ["status", "Health of coding.sh: version, available update, recent captures, pending spool, last error."],
+  ["status", "Health of coding.sh: version, available update, recent captures, pending spool, last error. Its work field holds what needs you (coding.sh work): the count per bucket and the first 10 items, each with a reason and a next step."],
 ];
 
 // The skills follow packages/coding.sh/skills/<name>/SKILL.md.

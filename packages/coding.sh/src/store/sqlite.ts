@@ -1296,10 +1296,12 @@ export class SqliteIndexStore implements IndexStore {
       args = [fts, ...params, limit];
     } else {
       // Unfiltered, the FTS table ranks and cuts the page itself; filtered, it ranks its (at most
-      // SEARCH_RANK_MAX_MATCHES) matches and the join keeps the best that pass.
+      // SEARCH_RANK_MAX_MATCHES) matches and the join keeps the best that pass. Ties in rank break
+      // the same way the cut does (rowid, newest first), so a longer limit only appends hits and
+      // paging by offset never repeats or skips one.
       const page = where.length ? "" : "ORDER BY rank, rowid DESC LIMIT ?";
       sql = `SELECT ${eventCols("e")} FROM (SELECT rowid AS r, rank AS rk FROM events_fts WHERE events_fts MATCH ? ${page}) f
-        JOIN events e ON e.rowid = f.r ${sessions} ${cond} ORDER BY f.rk, e.ts DESC LIMIT ?`;
+        JOIN events e ON e.rowid = f.r ${sessions} ${cond} ORDER BY f.rk, f.r DESC LIMIT ?`;
       args = where.length ? [fts, ...params, limit] : [fts, limit, limit];
     }
     const terms = searchTerms(text);

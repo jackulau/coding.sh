@@ -245,6 +245,23 @@ export interface UnapprovedActions {
   first: { kind: UnapprovedKind; command: string; at: number; afterError?: boolean };
 }
 
+/**
+ * Session.stats.waiting: what the session waits on from the user, as of its last event (core/waiting.ts).
+ * - `permission`: the agent asked to approve a tool call (a permission notification from its hook).
+ * - `question`: a question tool call (AskUserQuestion, request_user_input, …) is open.
+ * - `plan`: a plan-approval call (ExitPlanMode) is open.
+ * - `turn`: the main thread's turn ended in a session launched interactively.
+ */
+export interface Waiting {
+  kind: "permission" | "question" | "plan" | "turn";
+  /** When the wait began (ms since the epoch). */
+  at: number;
+  /** The open tool call the wait is on, when the agent named it. */
+  toolUseId?: string;
+  /** The prompt, question or plan, redacted, up to 300 characters. */
+  text?: string;
+}
+
 /** Session.stats.llmErrors: how many model calls failed, and why the first one did. */
 export interface LlmErrors {
   count: number;
@@ -354,7 +371,9 @@ export interface Session {
    * events), so the value moves forward as more turns arrive. Log-keyed OTel
    * sessions (no traceId at all) and sessions known only from a backfilled
    * transcript do the same. Trace-keyed OTel sessions end with their root
-   * span. Unset = still running/unknown.
+   * span. A session with a tool call still open and no session.end (or only
+   * a transcript's quiet marker) did not finish: it has none. Unset = still
+   * running/unknown.
    */
   endedAt?: number;
   /** Aggregates maintained at ingest. */
@@ -426,6 +445,17 @@ export interface Session {
     redactions?: Record<string, number>;
     /** Destructive or paid commands the agent ran without a user turn approving them (core/unapproved.ts); it also flags the session `unapproved-action`. Unset when none. */
     unapprovedActions?: UnapprovedActions;
+    /**
+     * True when Session.endedAt is the last activity seen rather than a session.end (a session known
+     * only from its transcript, a conversation-keyed OTel or SDK session): it may still be running.
+     * Unset when the end is real or there is no end.
+     */
+    endInferred?: true;
+    /**
+     * What the session waits on from the user (a permission prompt, a question, a plan, or the next
+     * prompt), as of its last event (core/waiting.ts). Unset when nothing waits.
+     */
+    waiting?: Waiting;
     /**
      * Why coding.sh could not fold this session's stored events into its stats (a coding.sh bug, not
      * the agent's): the row then holds only what the events say directly (agent, start, end, cwd,

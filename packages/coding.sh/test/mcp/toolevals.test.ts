@@ -75,6 +75,8 @@ describe("tool evals against the coding.sh MCP server", () => {
     // fields (treeTotal, changesTotal, filesTotal, unchanged, truncated, note), add about 0.95 KB, 0.1 KB of it descriptions.
     // weights (the checkpoint a run recorded with exp run --weights) on experiments_list rows and on
     // both sides of experiment_compare adds about 0.2 KB of output schema and 23 bytes of description.
+    // status carries the work queue (counts, needYou and the top 10 items) in place of a work tool,
+    // about 0.3 KB; shorter shared argument descriptions (agent, cursor, project, sessionId) paid for it.
     assert.ok(s.surfaceBytes < 44_100, `surface is ${s.surfaceBytes} bytes`);
     assert.ok(s.descriptionBytes < 11_850, `descriptions are ${s.descriptionBytes} bytes`);
     for (const it of s.items) assert.ok(it.bytes < 4_000, `${it.name} is ${it.bytes} bytes`);

@@ -31,6 +31,8 @@ export interface StatuslineInput {
   flags?: readonly string[];
   /** Since when the ingest the hook starts has been failing (core/ingest-health.ts); unset while it works. */
   ingestStoppedSince?: number;
+  /** Work items blocked on the user or failed (core/work.ts needYou); the part is left out at 0. */
+  needYou?: number;
 }
 
 /** `! ingest stopped 4h ago`: the costs on the line are then as old as that. */
@@ -41,7 +43,7 @@ export function ingestStoppedPart(since: number, now = Date.now()): string {
 /**
  * One compact line: `model  ·  $x session  ·  $y today  ·  ! worst-flag`.
  * The flag part is dropped when there is no real failure to report; a stopped
- * ingest adds `! ingest stopped 4h ago`.
+ * ingest adds `! ingest stopped 4h ago`, and work items blocked on you or failed add `2 need you`.
  */
 export function statuslineLine(input: StatuslineInput): string {
   const parts: string[] = [];
@@ -51,5 +53,6 @@ export function statuslineLine(input: StatuslineInput): string {
   const worst = input.flags ? worstFailureFlag(input.flags) : undefined;
   if (worst) parts.push(`! ${worst}`);
   if (input.ingestStoppedSince !== undefined) parts.push(ingestStoppedPart(input.ingestStoppedSince));
+  if (input.needYou) parts.push(`${input.needYou} need you`);
   return parts.join("  ·  ");
 }

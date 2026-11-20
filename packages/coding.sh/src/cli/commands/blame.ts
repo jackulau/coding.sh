@@ -13,15 +13,15 @@ export async function run(c: CommandContext): Promise<number> {
   try {
     target = parseBlameTarget(c.positionals[0]!);
   } catch (e) {
-    throw attributionCliError(e);
+    throw attributionCliError(e, "blame");
   }
   return withContext(c, async (ctx) => {
-    const r = await report(c, ctx);
+    const r = await report(c, ctx, {}, "blame");
     let b;
     try {
       b = await blameFile(ctx, { cwd: resolve(c.cwd, str(c.flags.repo) ?? "."), path: resolve(c.cwd, target.path), ...(target.lines ? { lines: target.lines } : {}), report: r });
     } catch (e) {
-      throw attributionCliError(e);
+      throw attributionCliError(e, "blame");
     }
     if (out.json) {
       out.data({ root: b.root, rev: b.rev, path: b.path, unattributed: b.unattributed, sessions: b.sessions.map((s) => ({ ...s, startedAt: new Date(s.startedAt).toISOString() })), lines: b.rows });

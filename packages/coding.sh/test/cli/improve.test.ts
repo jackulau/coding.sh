@@ -256,7 +256,8 @@ describe("cli improve", () => {
     const dir = join(root, "norepo", "plain");
     mkdirSync(dir);
     const r = spawnSync(process.execPath, ["--no-warnings", CLI, "improve", "check"], { cwd: dir, env: w.env, encoding: "utf8" });
-    assert.equal(r.status, 2);
+    assert.equal(r.status, 1, "not a usage error: no argument is missing");
     assert.match(r.stderr, /Not in a git repo/);
+    assert.match(r.stderr, /coding\.sh improve check --repo <dir>/);
   });
 });
