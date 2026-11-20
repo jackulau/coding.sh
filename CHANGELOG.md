@@ -51,6 +51,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Site.** The files a page loads (scripts, fonts, search, images and icons) are served without running the site's edge Worker, so they no longer count toward its daily request limit. Past that limit, coding.sh answered every request with a 429 error until midnight UTC. [Release](https://github.com/jackulau/coding.sh/blob/main/docs/RELEASE.md#cloudflare-worker-coding-sh-site)
 - **Sessions.** A Gemini CLI permission prompt counts for the `unapproved-action` flag: a risky call the user approved there is not flagged, whether the prompt came while the call was open or before it started, as in Gemini CLI 0.35 and older. Before, only Claude Code's prompts counted. [Flags](https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md)
 - **CLI.** `config set` takes the `[proxy]` keys. [Configuration](https://coding.sh/docs/config)
 - **CLI.** `blame` and `improve check` outside a git repo name `--repo <dir>` with their own command (`improve check` exits 1, `not_a_repo`). [CLI](https://coding.sh/docs/cli)

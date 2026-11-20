@@ -5,7 +5,7 @@
 // Rollback: `npx wrangler rollback` (previous version) — or reattach the domains
 // to the old `coding-sh-placeholder` worker.
 //
-// worker/index.ts runs first on every request: www and http 301 to
+// worker/index.ts runs first on every page and text path: www and http 301 to
 // https://coding.sh, /sitemap.xml points at the sitemap index, a moved page 301s
 // to its new path, /404 gets a 404 status. Everything else falls through to the static assets (and _headers).
 {
@@ -16,7 +16,28 @@
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
-    "run_worker_first": true,
+    // The Worker runs first on every path except the files a page loads:
+    // Astro's hashed files, search, social cards, icons and the manifest.
+    // Those come straight from the assets, with _headers. Each request the
+    // Worker runs on counts toward the plan's daily limit, and an asset
+    // request does not. Past the free plan's 100,000 a day, every path the
+    // Worker runs on answers 429 (Error 1027) until midnight UTC.
+    // test/worker-first.test.mjs checks this list against the built site.
+    "run_worker_first": [
+      "/*",
+      "!/_astro/*",
+      "!/pagefind/*",
+      "!/og/*",
+      "!/og-image.png",
+      "!/favicon.ico",
+      "!/favicon.svg",
+      "!/apple-touch-icon.png",
+      "!/icon-16.png",
+      "!/icon-32.png",
+      "!/icon-192.png",
+      "!/icon-512.png",
+      "!/site.webmanifest"
+    ],
     "not_found_handling": "404-page",
     // Pages live at /docs/quickstart (no trailing slash): the form every
     // internal link, the canonical tags and the sitemap use (trailingSlash:

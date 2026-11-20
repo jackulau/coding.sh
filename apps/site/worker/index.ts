@@ -1,5 +1,6 @@
-// coding.sh edge worker. Runs before the static assets (run_worker_first in
-// wrangler.jsonc) and does only what static files cannot:
+// coding.sh edge worker. Runs before the static assets on every page and text
+// path (run_worker_first in wrangler.jsonc; the files a page loads, such as
+// /_astro/*, skip it) and does only what static files cannot:
 //   - one canonical origin: www.coding.sh and plain http 301 to https://coding.sh,
 //     path and query kept;
 //   - /sitemap.xml 301s to the sitemap index Astro writes;
@@ -7,7 +8,8 @@
 //   - /404 itself answers with a 404 status, not 200;
 //   - the assets' trailing-slash redirect (/docs/ to /docs) becomes a 301;
 //   - a changelog page number that no longer exists 301s to the release;
-//   - any other host (workers.dev, preview URLs) is served but marked noindex;
+//   - any other host (workers.dev, preview URLs) is served but marked noindex
+//     (the files that skip the Worker are not marked);
 //   - /llms-full.txt and the installer (/install, /install.sh) are marked noindex.
 // Everything else is env.ASSETS.fetch, so public/_headers still applies.
 
