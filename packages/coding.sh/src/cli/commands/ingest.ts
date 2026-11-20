@@ -15,6 +15,7 @@
 //
 // The foreground run also folds sessions that have events but no row, and rows
 // tagged fold:error (core/ingest.ts repairSessions): the repair `doctor` names.
+import { existsSync } from "node:fs";
 import { parseSince } from "../args.ts";
 import { list, lockContention, oneLine, str, tailIngest, underImportLock, withContext } from "../common.ts";
 import { CliError, plural, type Output } from "../output.ts";
@@ -22,6 +23,7 @@ import type { CommandContext } from "../types.ts";
 import type { Context } from "../../core/context.ts";
 import type { IngestResult } from "../../core/ingest.ts";
 import type { ReparseResult } from "../../core/reparse.ts";
+import type { RunMonitorsResult } from "../../monitor/run.ts";
 import { markIngestStopped, type IngestStopped } from "../../core/ingest-health.ts";
 import { paths } from "../../core/paths.ts";
 import { healHookBin } from "../hookbin.ts";
@@ -99,8 +101,10 @@ async function ingest(c: CommandContext, o: { agents: string[]; since: number | 
         if (out.json) out.data({ outcome: "busy" });
         return 0;
       }
+      // Monitors score what this pass stored, at most once a minute each; a monitor's failure is never the ingest's.
+      const mon = c.signal.aborted ? undefined : await monitorsAfter(ctx, c, false, true);
       const blobStopped = markBlobStop(ctx, [r]);
-      if (out.json) out.data({ outcome: blobStopped ? "stopped" : "ingested", spool: r ?? null, backfill: bf, reparse: rp });
+      if (out.json) out.data(withMonitors({ outcome: blobStopped ? "stopped" : "ingested", spool: r ?? null, backfill: bf, reparse: rp }, mon));
       return (r?.errors.length ?? 0) + (bf?.errors.length ?? 0) ? 1 : 0;
     }
     const spin = out.spin("Ingesting spool…");
@@ -131,10 +135,11 @@ async function ingest(c: CommandContext, o: { agents: string[]; since: number | 
       return 130;
     }
     const rp = rebuild ? await reparseWithProgress(ctx, out, { all: true, agents }) : (await ctx.reparseDue()) ? await reparseWithProgress(ctx, out, {}).catch(skipBusy) : undefined;
+    const mon = c.signal.aborted ? undefined : await monitorsAfter(ctx, c, true);
     const errors = r.errors.length + (bf?.errors.length ?? 0) + (rp?.errors.length ?? 0);
     const blobStopped = markBlobStop(ctx, [r]);
     if (out.json) {
-      out.data({ outcome: blobStopped ? "stopped" : rebuild ? "rebuilt" : "ingested", spool: r, backfill: bf ?? null, reparse: rp ?? null });
+      out.data(withMonitors({ outcome: blobStopped ? "stopped" : rebuild ? "rebuilt" : "ingested", spool: r, backfill: bf ?? null, reparse: rp ?? null }, mon));
       return errors ? 1 : 0;
     }
     out.row("Spool", `${plural(r.events, "event")}, ${plural(r.sessions, "session")}${r.errors.length ? `, ${plural(r.errors.length, "error")}` : ""}`, r.errors.length ? "warn" : "ok");
@@ -147,9 +152,41 @@ async function ingest(c: CommandContext, o: { agents: string[]; since: number | 
       if (rp.refolded) out.row("Refolded", `${plural(rp.refolded, "session")} from their stored rows (new stats and flags)`, "ok");
       for (const [reason, n] of keptReasons(rp).slice(0, 3)) out.note(`${n} kept: ${reason}`);
     }
+    if (mon) monitorRows(out, mon);
     for (const e of [...r.errors, ...(bf?.errors ?? []), ...(rp?.errors ?? [])].slice(0, 5)) out.note(typeof e === "string" ? e : JSON.stringify(e));
     return errors ? 1 : 0;
   });
+}
+
+/**
+ * Runs the monitors (src/monitor) after an ingest pass; undefined when there are none. Never throws.
+ * Each monitor error is shown once, from the result (its summary row, or monitors[] with --json): the
+ * log lines that repeat one are dropped, and the rest (a state that could not be saved) are kept.
+ */
+async function monitorsAfter(ctx: Context, c: CommandContext, force: boolean, background = false): Promise<(RunMonitorsResult & { logs: string[] }) | undefined> {
+  if (!existsSync(ctx.paths.monitors)) return undefined;
+  const { monitorsAfterIngest } = await import("../../monitor/run.ts");
+  const lines: string[] = [];
+  const r = await monitorsAfterIngest(ctx, { force, signal: c.signal, log: (m) => lines.push(m) });
+  if (!r) return undefined;
+  const shown = new Set(r.monitors.flatMap((m) => (m.error ? [`monitor ${m.name}: ${m.error}`] : [])));
+  if (r.error) shown.add(`monitors: ${r.error}`);
+  const logs = lines.filter((l) => !shown.has(l));
+  // With --json stdout is the document: the lines no result carries go to stderr. A background
+  // ingest shows no summary rows, so its stderr keeps every line.
+  for (const l of c.out.json ? logs : background ? lines : []) process.stderr.write(`${l}\n`);
+  return { ...r, logs };
+}
+
+function monitorRows(out: Output, mon: RunMonitorsResult & { logs: string[] }): void {
+  for (const l of mon.logs) out.note(l);
+  if (mon.error) return out.row("Monitors", mon.error, "warn");
+  if (mon.busy) return out.row("Monitors", "another process is running them", "ok");
+  for (const m of mon.monitors) {
+    const parts = [`${m.scored} scored`, m.failed ? `${m.failed} failed` : "", m.stopped === "budget" ? "daily spend limit reached" : "", m.stopped === "no-provider" ? "no judge provider" : ""].filter(Boolean);
+    out.row(`Monitor ${m.name}`, parts.join(", "), m.error ? "warn" : "ok");
+    if (m.error) out.note(`${m.name}: ${m.error}`);
+  }
 }
 
 /** An automatic re-parse another process is running (or a held ingest lock) is not this command's failure. */
@@ -164,6 +201,12 @@ function keptReasons(rp: ReparseResult): [string, number][] {
   const n = new Map<string, number>();
   for (const k of rp.keptSessions) n.set(k.reason, (n.get(k.reason) ?? 0) + 1);
   return [...n].sort((a, b) => b[1] - a[1]);
+}
+
+/** The ingest's JSON, with the monitors' results when monitors ran. */
+function withMonitors(data: Record<string, unknown>, mon: { monitors: unknown } | undefined): Record<string, unknown> {
+  if (mon) data.monitors = mon.monitors;
+  return data;
 }
 
 async function reparseWithProgress(ctx: Context, out: Output, o: { all?: boolean; agents?: string[] }): Promise<ReparseResult> {

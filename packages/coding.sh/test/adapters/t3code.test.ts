@@ -491,6 +491,34 @@ describe("T3 Claude subagent threads", () => {
     assert.ok(ids.includes(CLAUDE_ID));
   });
 
+  it("does not store a subagent a later Claude session of the parent thread holds a second time", async () => {
+    // A thread that switched to a second Claude session: the subagent ran in the second one, whose
+    // transcript holds it. T3 nests the provider thread id in the subagent thread id, encoded again each level.
+    const { claude } = nativeTranscripts(env.home);
+    const LATER = "b0b0b0b0-0000-4000-8000-000000000002";
+    const later = join(dirname(claude), `${LATER}.jsonl`);
+    writeFile(later, readFileSync(claude, "utf8").replaceAll(CLAUDE_ID, LATER));
+    writeFile(join(later.slice(0, -".jsonl".length), "subagents", "agent-a333.jsonl"), "{}\n");
+    const dir = join(env.home, ".t3", "userdata");
+    mkdirSync(dir, { recursive: true });
+    rmSync(join(dir, "statev2.sqlite"), { force: true });
+    const db = new DatabaseSync(join(dir, "statev2.sqlite"));
+    db.exec(V2_SCHEMA);
+    db.prepare("INSERT INTO projection_projects VALUES ('proj-1', 'demo', '/work/demo', '[]', ?, ?, NULL, NULL)").run(T(0), T(0));
+    thread(db, "mcp:launch:root", { provider: "claudeAgent", title: "Root", created: T(0) });
+    providerThread(db, "pt-root", "mcp:launch:root", "claudeAgent", CLAUDE_ID, 1);
+    const pt2 = "provider:claudeAgent:native-thread:pending%3Arun%3Athread%3Amcp%253Alaunch%253Aroot%3Aordinal%3A15";
+    providerThread(db, pt2, "mcp:launch:root", "claudeAgent", LATER, 15);
+    const subId = `provider:claudeAgent:native-thread:${encodeURIComponent(`provider-thread:${pt2}`)}%3Aa333`;
+    thread(db, subId, { provider: "claudeAgent", title: "Smoke test", created: T(1), payload: { lineage: { parentThreadId: "mcp:launch:root", relationshipToParent: "subagent", rootThreadId: "mcp:launch:root" } } });
+    db.close();
+
+    const { index } = await runAll();
+    const ids = (await index.listSessions({})).map((s) => s.id);
+    assert.ok(!ids.some((i) => i.endsWith("a333")), `the subagent is the claude-code child of the later session only: ${ids.join(", ")}`);
+    assert.ok(ids.includes(LATER));
+  });
+
   it("re-parse deletes the t3code copies an older parse stored of subagents the claude-code transcript holds", async () => {
     const { claude } = nativeTranscripts(env.home);
     const subDir = join(claude.slice(0, -".jsonl".length), "subagents");

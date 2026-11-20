@@ -12,17 +12,21 @@ import { autoIngest, oneLine, readIngest, shortSessionId, str, withContext } fro
 import { CliError, localTime, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
-export function attributionCliError(e: unknown): unknown {
+/** The command that ran: the next steps name it, with its own arguments. */
+export type AttributionCommand = "attribution" | "blame";
+
+export function attributionCliError(e: unknown, command: AttributionCommand = "attribution"): unknown {
   if (!(e instanceof AttributionError)) return e;
-  if (e.reason === "not_a_repo") return new CliError(e.message, { reason: "not_a_repo", next: ["Run it inside a git repository, or pass one:", "coding.sh attribution --repo <dir>"] });
+  const withRepo = command === "blame" ? "coding.sh blame <path> --repo <dir>" : "coding.sh attribution --repo <dir>";
+  if (e.reason === "not_a_repo") return new CliError(e.message, { reason: "not_a_repo", next: ["Run it inside a git repository, or pass one:", withRepo] });
   if (e.reason === "unknown_rev") return new CliError(e.message, { reason: "unknown_rev", next: ["List branches and commits:", "git log --oneline -n 20"] });
   if (e.reason === "invalid_range") return new UsageError(e.message, { reason: "invalid_argument" });
   if (e.reason === "not_found") return new CliError(e.message, { reason: "not_found", next: e.next ?? ["See the files git tracks:", "git ls-files"] });
-  return new CliError(e.message, { reason: e.reason, next: ["See the options:", "coding.sh attribution --help"] });
+  return new CliError(e.message, { reason: e.reason, next: ["See the options:", `coding.sh ${command} --help`] });
 }
 
 /** Shared by attribution and blame: repo, rev, since, and a progress line on stderr. */
-export async function report(c: CommandContext, ctx: Context, extra: Partial<AttributeOptions> = {}): Promise<AttributionReport> {
+export async function report(c: CommandContext, ctx: Context, extra: Partial<AttributeOptions> = {}, command: AttributionCommand = "attribution"): Promise<AttributionReport> {
   await autoIngest(ctx, readIngest(c));
   const since = str(c.flags.since);
   const spin = c.out.spin("Matching commits to sessions");
@@ -35,7 +39,7 @@ export async function report(c: CommandContext, ctx: Context, extra: Partial<Att
       ...extra,
     });
   } catch (e) {
-    throw attributionCliError(e);
+    throw attributionCliError(e, command);
   } finally {
     spin.stop();
   }

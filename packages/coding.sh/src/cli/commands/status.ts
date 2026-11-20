@@ -5,6 +5,8 @@
 import { ingestStoppedField, readIngestStopped, spoolSize, type IngestStopped } from "../../core/ingest-health.ts";
 import { paths } from "../../core/paths.ts";
 import { maskStoreUrl } from "../../core/store-url.ts";
+import { countsLine, needYou, readWorkQueue, WORK_WINDOW_MS } from "../../core/work.ts";
+import { readOverlay } from "../../core/work-overlay.ts";
 import { autoIngest, pendingField, readIngest, oneLine, sessionJson, withContext } from "../common.ts";
 import { ago, bytes, CliError, plural, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -50,8 +52,10 @@ async function status(c: CommandContext): Promise<number> {
     const [latest] = await ctx.index.listSessions({ limit: 1, parentSessionId: null });
     const agents = [...new Set(recent.map((s) => s.agent))].sort();
     const spool = spoolSize(ctx.paths.spool);
+    // The work queue's counts (core/work.ts), over the window `coding.sh work` reads by default.
+    const { queue } = await readWorkQueue(ctx.index, { since: Date.now() - WORK_WINDOW_MS, overlay: readOverlay(ctx.paths.work) });
     if (out.json) {
-      out.data({ home: ctx.paths.root, store: maskStoreUrl(ctx.config.store.index), last24h: { sessions: recent.length, agents }, spool, latest: latest ? sessionJson(latest) : null, ...pendingField(backlog), ...ingestStoppedField(stopped) });
+      out.data({ home: ctx.paths.root, store: maskStoreUrl(ctx.config.store.index), last24h: { sessions: recent.length, agents }, work: { ...queue.counts, needYou: needYou(queue) }, spool, latest: latest ? sessionJson(latest) : null, ...pendingField(backlog), ...ingestStoppedField(stopped) });
       return 0;
     }
     out.row("Home", ctx.paths.root, "none", true);
@@ -61,6 +65,7 @@ async function status(c: CommandContext): Promise<number> {
     const waiting = backlog.pendingFiles ? `, ${plural(backlog.pendingFiles, "file")} not yet ingested${backlog.indexing ? " (ingest running)" : ""}` : "";
     out.row("Spool", `${plural(spool.files, "file")}, ${bytes(spool.bytes)}${waiting}`, "none", true);
     ingestRow(out, stopped, true);
+    out.row("Work", `${countsLine(queue.counts)}${needYou(queue) ? " (coding.sh work)" : ""}`, needYou(queue) ? "warn" : "none", true);
     if (latest) {
       out.print(`${latest.id}  ${latest.agent}  ${ago(latest.startedAt)}  ${oneLine(latest.title, 60)}`);
     } else {

@@ -1371,7 +1371,7 @@
     {
       "rule": "conditional-empty-spread",
       "path": "packages/coding.sh/src/core/unapproved.ts",
-      "max": 4,
+      "max": 3,
       "reason": "baseline 2026-11-09: existing code, do not add more"
     },
     {

@@ -82,6 +82,30 @@ describe("harness snapshot --agent claude-code", () => {
   });
 });
 
+describe("harness audit follows @imports", () => {
+  it("counts a file a loaded CLAUDE.md imports as loaded, with its size in the load cost", async () => {
+    const app = join(home, "import-app");
+    put(join(app, "CLAUDE.md"), "@AGENTS.md\n");
+    put(join(app, "AGENTS.md"), `# rules\n${"x".repeat(4000)}\n@docs/CLAUDE.md\n`);
+    put(join(app, "docs", "CLAUDE.md"), "# deeper\n");
+    const index = new MemoryIndexStore();
+    const stats = { events: 0, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 };
+    await index.upsertSession({ id: "i1", agent: "claude-code", cwd: app, startedAt: Date.now() - 60_000, stats } as Session);
+    await index.upsertSession({ id: "i2", agent: "claude-code", cwd: app, startedAt: Date.now() - 30_000, stats } as Session);
+    const a = await memoryAudit(index, { env });
+    const row = (p: string) => a.files.find((f) => f.path === p);
+    const agents = row("~/import-app/AGENTS.md");
+    assert.ok(agents, a.files.map((f) => f.path).join(", "));
+    assert.equal(agents.loaded, 2);
+    assert.deepEqual(agents.flags, []);
+    assert.ok((agents.loadTokens ?? 0) >= 2000, `load tokens ${agents.loadTokens}`);
+    // An import of an import loads too.
+    assert.equal(row("~/import-app/docs/CLAUDE.md")?.loaded, 2);
+    assert.ok(a.totals.loadTokens >= (agents.loadTokens ?? 0) + (row("~/import-app/CLAUDE.md")?.loadTokens ?? 0));
+    assert.equal(a.totals.neverRead, 0);
+  });
+});
+
 describe("harness audit stops on an abort", () => {
   it("memoryAudit rejects with the abort when its signal has fired, instead of finishing", async () => {
     const app = join(home, "audit-app");

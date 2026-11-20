@@ -109,6 +109,8 @@ export async function sessionMarkdown(index: IndexStore, s: Session, maxEntries 
   row("Activity", `${s.stats.turns} turns, ${s.stats.toolCalls} tool calls${s.stats.toolErrors ? ` (${s.stats.toolErrors} failed)` : ""}, ${s.stats.filesChanged} files changed`);
   if (s.stats.testsPassed !== undefined || s.stats.testsFailed !== undefined) row("Tests", `${s.stats.testsPassed ?? 0} passed, ${s.stats.testsFailed ?? 0} failed`);
   if (u) row("Tokens", `in ${u.inputTokens ?? 0}, out ${u.outputTokens ?? 0}, cache read ${u.cacheReadTokens ?? 0}, cache write ${u.cacheWriteTokens ?? 0}${u.costUsd !== undefined ? `, $${u.costUsd.toFixed(4)}${costNote(u)}` : ""}`);
+  const le = s.stats.llmErrors;
+  if (le?.count) row("Model errors", `${le.count} failed model ${le.count === 1 ? "call" : "calls"}${le.statusCode !== undefined ? `, first HTTP ${le.statusCode}` : ""}${le.error ? `: "${esc(clip(le.error, 200)!)}"` : ""}`);
   if (lat?.llmCalls) row("Latency", `${lat.llmCalls} model calls, p50 ${fmtMs(lat.llmP50Ms)}, p95 ${fmtMs(lat.llmP95Ms)}${lat.ttftP50Ms !== undefined ? `, TTFT p50 ${fmtMs(lat.ttftP50Ms)}` : ""}`);
   if (s.flags.length) row("Flags", s.flags.join(", "));
   const sw = s.stats.modelSwitch;

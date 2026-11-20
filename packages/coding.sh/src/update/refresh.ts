@@ -25,6 +25,8 @@ export interface RefreshArgs {
   now?: number;
   /** User-Agent header (GitHub's API rejects requests without one). */
   userAgent: string;
+  /** false: return the result without rewriting the cache file (`update --dry-run`). */
+  write?: boolean;
 }
 
 export interface UpdateCache {
@@ -54,7 +56,7 @@ export interface UpdateCache {
   notified?: { version: string; at: number };
 }
 
-/** Fetches the latest release and rewrites the cache file. Never throws; returns the new cache. */
+/** Fetches the latest release and rewrites the cache file (unless `write: false`). Never throws; returns the new cache. */
 export async function refreshUpdateCache(a: RefreshArgs, fetchImpl: typeof fetch = globalThis.fetch): Promise<UpdateCache> {
   const now = typeof a.now === "number" ? a.now : Date.now();
   const VERSION_RE = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
@@ -138,6 +140,7 @@ export async function refreshUpdateCache(a: RefreshArgs, fetchImpl: typeof fetch
     ? { ...found, checkedAt: now, attemptedAt: now, current: a.current, ...(prev.notified ? { notified: prev.notified } : {}) }
     : { ...prev, attemptedAt: now, current: a.current, error: errors.join("; "), errorKind };
 
+  if (a.write === false) return next;
   try {
     fsp ??= await import("node:fs/promises");
     const { dirname } = await import("node:path");

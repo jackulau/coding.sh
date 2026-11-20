@@ -1067,8 +1067,12 @@ export interface ChildLinker {
   holds(child: Pick<Session, "startedAt">, link: NonNullable<Session["parent"]>): Promise<boolean>;
   /** A session new to the index that nothing links: apply() matches it to another session's shell call. */
   consider(childId: string): void;
-  /** A session's row was written: children that named it before their link held offer it again. */
-  arrived(parent: Session): Promise<void>;
+  /**
+   * A session's row was written: children that named it before their link held offer it again. When
+   * the row gained an end it lacked (`prev`, the row it replaced), a harness child linked while it was
+   * open that started after that end is top-level again, and waits.
+   */
+  arrived(parent: Session, prev?: Session): Promise<void>;
   /** Applies links observed this run to children already in the index. Returns updated ids. */
   apply(): Promise<string[]>;
 }
@@ -1086,10 +1090,12 @@ export interface ChildLinker {
  * parent whose lines came later in the run counts. A link that does not hold is
  * not made and the session stays top-level. The named session may still be its
  * parent: one known only from its transcript is read later than the child's
- * hooks, and ends at its last activity so far, which is the shell call that
- * started the child until that call returns. So the child waits under that
- * session's id (kv, the newest MAX_WAITING), and is offered again when the
- * session's row is written (arrived()), as it is by its own later lines.
+ * hooks. So the child waits under that session's id (kv, the newest
+ * MAX_WAITING), and is offered again when the session's row is written
+ * (arrived()), as it is by its own later lines. A transcript read as far as
+ * the shell call that started the child has no end until the call returns, so
+ * the child links at once; when the end arrives, arrived() makes top-level
+ * again a child that started after it.
  *
  * New sessions linked by neither are matched at apply() to a shell call of
  * another session that ran their agent's CLI (spool/spawned-match.ts).
@@ -1154,7 +1160,19 @@ export function childLinker(index: IndexStore): ChildLinker {
     consider(childId) {
       unlinked.add(childId);
     },
-    async arrived(parent) {
+    async arrived(parent, prev) {
+      // A transcript that stopped on the shell call that started a child has no end until
+      // the call returns (core/sessions.ts midCall); a child that started after that end
+      // named it from a shell that outlived the call.
+      if (parent.endedAt !== undefined && prev && prev.endedAt === undefined) {
+        for (const child of await index.listSessions({ parentSessionId: parent.id, since: parent.endedAt + 1 })) {
+          const link = child.parent;
+          if (!link || link.type !== "harness" || link.eventId !== undefined || openAt(parent, child.startedAt)) continue;
+          const { parent: _dropped, ...rest } = child;
+          await index.upsertSession(rest);
+          await wait(child.id, parent.id);
+        }
+      }
       const raw = kv ? await kv.get(childWaitKey(parent.id)) : undefined;
       if (!raw) return;
       const ids = waiting(raw);
@@ -1304,7 +1322,7 @@ export async function recomputeSession(index: IndexStore, id: string, o: Recompu
       return true;
     });
     if (!written) continue;
-    await linker.arrived(session);
+    await linker.arrived(session, prev);
     await linker.observe(id, folded.read);
     return true;
   }

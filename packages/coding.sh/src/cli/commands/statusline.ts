@@ -18,7 +18,13 @@ import {
 import { forgetInstall, installRecord, recordInstall, sha256 } from "../../adapters/_shared/installs.ts";
 import { ingestStoppedField, ingestStoppedJson, readIngestStopped } from "../../core/ingest-health.ts";
 import { paths } from "../../core/paths.ts";
-import { withContext } from "../common.ts";
+import { budgetPart, highest, readBudgets, statuslineStatuses, type BudgetStatus } from "../../budget/index.ts";
+import type { Context } from "../../core/context.ts";
+import type { IndexStore, Session } from "../../core/types.ts";
+import { needYou, readWorkQueue, WORK_WINDOW_MS } from "../../core/work.ts";
+import { readOverlay } from "../../core/work-overlay.ts";
+import { claudeRateLimits, quotaPart, saveClaudeQuota } from "../../quota/index.ts";
+import { autoIngest, readBudgetMs, withContext } from "../common.ts";
 import { CliError } from "../output.ts";
 import { ingestStoppedPart, statuslineLine, worstFailureFlag } from "../statusline.ts";
 import type { CommandContext } from "../types.ts";
@@ -33,6 +39,12 @@ export async function run(c: CommandContext): Promise<number> {
   if (c.action === "uninstall") return uninstall(c);
   return print(c);
 }
+
+/**
+ * How long the status line spends reading new hook events before it answers. Claude Code runs it on
+ * every turn: a short budget keeps it quick, and what is left goes to a background ingest.
+ */
+export const STATUSLINE_INGEST_BUDGET_MS = 400;
 
 /** The status-line payload is a few kB; past this the read stops and the input counts as invalid. */
 export const MAX_STATUSLINE_STDIN = 1 << 20;
@@ -80,6 +92,15 @@ function stdinModel(payload: unknown): string | undefined {
   return undefined;
 }
 
+/** The budget part over the sessions the line already read for its `today` figure, so the two agree. */
+async function budgetPartOf(index: IndexStore, env: NodeJS.ProcessEnv, today: readonly Session[]): Promise<{ part: string; status: BudgetStatus } | undefined> {
+  const budgets = readBudgets(env);
+  if (!budgets.length) return undefined;
+  const statuses = await statuslineStatuses(index, budgets, today, env);
+  const part = budgetPart(statuses);
+  return part ? { part, status: highest(statuses)! } : undefined;
+}
+
 async function print(c: CommandContext): Promise<number> {
   let payload: unknown = {};
   const text = await readStdin(c.signal);
@@ -91,26 +112,49 @@ async function print(c: CommandContext): Promise<number> {
   }
   const sid = isObject(payload) && typeof payload.session_id === "string" ? payload.session_id : undefined;
   const model = stdinModel(payload);
+  // Plan usage (`5h 62% 7d 41%`), when this Claude Code sends rate_limits; saved for `coding.sh quota`.
+  const quota = claudeRateLimits(payload);
+  const quotaSuffix = quota.length ? `  ·  ${quotaPart(quota)}` : "";
+  const quotaField = quota.length ? { quota: quota.map((w) => ({ window: w.window, usedPercent: w.usedPercent, resetsAt: w.resetsAt === undefined ? null : new Date(w.resetsAt).toISOString() })) } : {};
+  try {
+    saveClaudeQuota(paths(c.env).quota, quota);
+  } catch {
+    // a reading not saved is only a stale `coding.sh quota`
+  }
   try {
     return await withContext(c, async (ctx) => {
+      // The hook spools events; without reading them the "need you" count lags until some other
+      // command ingests (a new permission prompt missed, an answered one still counted).
+      try {
+        await autoIngest(ctx, { env: c.env, budgetMs: Math.min(readBudgetMs(c.env), STATUSLINE_INGEST_BUDGET_MS), lockWaitMs: 0 });
+      } catch {
+        // show what is indexed
+      }
       const session = sid ? await ctx.index.getSession(sid) : undefined;
       const dayStart = new Date();
       dayStart.setHours(0, 0, 0, 0);
-      const today = await ctx.index.listSessions({ since: dayStart.getTime(), parentSessionId: null });
+      // Every session that started today, subagents too: the spend budget status, usage and stats count.
+      const today = await ctx.index.listSessions({ since: dayStart.getTime() });
       const todayCostUsd = today.reduce((sum, s) => sum + (s.stats.usage?.costUsd ?? 0), 0);
       const sessionCostUsd = session?.stats.usage?.costUsd;
       const flags = session?.flags;
       const stopped = readIngestStopped(ctx.paths.ingestStopped);
+      // Spend budgets (`budget 82%`), once the highest passes 80%. A budget problem never breaks the line.
+      const budget = await budgetPartOf(ctx.index, c.env, today).catch(() => undefined);
+      const budgetSuffix = budget ? `  ·  ${budget.part}` : "";
+      const budgetField = budget ? { budget: { id: budget.status.budget.id, percent: budget.status.percent, over: budget.status.over } } : {};
+      const need = await needYouCount(ctx);
       if (c.out.json) {
-        c.out.data({
+        const doc: Record<string, unknown> = {
           model: model ?? session?.model ?? null,
           sessionCostUsd: sessionCostUsd ?? null,
           todayCostUsd,
           worstFlag: flags ? (worstFailureFlag(flags) ?? null) : null,
-          ...ingestStoppedField(stopped),
-        });
+        };
+        if (need) doc.needYou = need;
+        c.out.data({ ...doc, ...ingestStoppedField(stopped), ...quotaField, ...budgetField });
       } else {
-        c.out.print(statuslineLine({ model: model ?? session?.model, sessionCostUsd, todayCostUsd, flags, ingestStoppedSince: stopped?.since }));
+        c.out.print(statuslineLine({ model: model ?? session?.model, sessionCostUsd, todayCostUsd, flags, ingestStoppedSince: stopped?.since, needYou: need }) + quotaSuffix + budgetSuffix);
       }
       return 0;
     });
@@ -119,12 +163,22 @@ async function print(c: CommandContext): Promise<number> {
     // to show, but a stopped ingest is the one thing worth saying about it.
     try {
       const stopped = readIngestStopped(paths(c.env).ingestStopped);
-      if (stopped && c.out.json) c.out.data({ model: model ?? null, sessionCostUsd: null, todayCostUsd: null, worstFlag: null, ingestStopped: ingestStoppedJson(stopped) });
-      else if (stopped) c.out.print(`${model ? `${model}  ·  ` : ""}${ingestStoppedPart(stopped.since)}`);
+      if (stopped && c.out.json) c.out.data({ model: model ?? null, sessionCostUsd: null, todayCostUsd: null, worstFlag: null, ingestStopped: ingestStoppedJson(stopped), ...quotaField });
+      else if (stopped) c.out.print(`${model ? `${model}  ·  ` : ""}${ingestStoppedPart(stopped.since)}${quotaSuffix}`);
     } catch {
       // nothing to print
     }
     return 0;
+  }
+}
+
+/** Work items blocked on you or failed, over `coding.sh work`'s default window; 0 when they can't be read. */
+async function needYouCount(ctx: Context): Promise<number> {
+  try {
+    const { queue } = await readWorkQueue(ctx.index, { since: Date.now() - WORK_WINDOW_MS, overlay: readOverlay(ctx.paths.work) });
+    return needYou(queue);
+  } catch {
+    return 0; // the costs still print
   }
 }
 

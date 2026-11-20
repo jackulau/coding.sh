@@ -30,6 +30,7 @@ import type { Query } from "../query/where.ts";
 import { acquireLock, LockBusyError, type Lock } from "../core/lock.ts";
 import type { Dataset, DatasetVersionInfo, ExperimentResult, JudgeVersion } from "../datasets/types.ts";
 import type { DatasetListing } from "../core/types.ts";
+import { CLIP_MARK, type McpCall } from "../core/mcp-usage.ts";
 import { HARNESS_LOADED, MEMORY_INPUT_KEYS, MEMORY_PATH_TEXT, MEMORY_PAYLOAD_KEYS, pickSet, SKILL_TOOL, type MemoryEvent } from "../core/memory-events.ts";
 import { BLOB_REF_FIELDS, type BlobRefField, DatasetConflict, ERROR_SEARCH_KINDS, errorText, ftsQuery, searchableText, SEARCHABLE_KINDS, searchTerms, snippet, symbolQuery, symbolSnippet } from "./common.ts";
 import { isBusy, loadSqlite, mkdirPrivate, ownerOnly, retryOnBusy, switchToWal, withoutBusyRetry } from "./sqlite-open.ts";
@@ -1267,6 +1268,52 @@ export class SqliteIndexStore implements IndexStore {
     });
   }
 
+  /**
+   * IndexStore.mcpCalls: the rows core/mcp-usage.ts names. The starts come from events_mcp,
+   * which holds only the calls that name a server; their ends from events_tool_ok, by the
+   * tools those calls used. Only the fields the report reads are taken from the payloads.
+   */
+  async mcpCalls(q: Query, o: QueryOpts = {}): Promise<McpCall[]> {
+    const { where, params } = filterSql(o.filter ?? {}, "s.");
+    if (q.root) {
+      const c = compileWhere(q.root, "session");
+      where.push(c.sql);
+      params.push(...c.params);
+    }
+    const starts = this.db.prepare(`SELECT e.session_id AS sid, e.mcp AS server, e.tool AS tool, json_extract(e.payload, '$.toolUseId') AS uid, s.model AS model
+      FROM events e JOIN sessions s ON s.id = e.session_id
+      WHERE e.mcp IS NOT NULL AND e.mcp <> '' AND e.kind = 'tool.start'${where.length ? ` AND ${where.join(" AND ")}` : ""}`).all(...params) as Row[];
+    if (!starts.length) return [];
+    const ends = new Map<string, Pick<McpCall, "ok" | "resultBytes" | "resultTokens" | "clipped">>();
+    const tools = [...new Set(starts.map((r) => r.tool).filter((t): t is string => typeof t === "string"))];
+    const count = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
+    for (let i = 0; i < tools.length; i += 500) {
+      const chunk = tools.slice(i, i + 500);
+      const rows = this.db.prepare(`SELECT e.session_id AS sid, json_extract(e.payload, '$.toolUseId') AS uid, json_type(e.payload, '$.ok') AS okt,
+          json_extract(e.payload, '$.outputBytes') AS ob, json_extract(e.payload, '$.cut.deliveredBytes') AS db, json_extract(e.payload, '$.outputTokens') AS ot,
+          length(CAST(json_extract(e.payload, '$.output') AS BLOB)) AS sb,
+          (e.blobs IS NOT NULL AND json_type(e.payload, '$.output') = 'text' AND substr(json_extract(e.payload, '$.output'), -1) = ?) AS clip
+        FROM events e WHERE e.tool IN (${chunk.map(() => "?").join(", ")}) AND e.kind = 'tool.end'`).all(CLIP_MARK, ...chunk) as Row[];
+      for (const r of rows) {
+        if (typeof r.uid !== "string") continue;
+        const bytes = count(r.ob) ?? count(r.db);
+        const tokens = count(r.ot);
+        const end: Pick<McpCall, "ok" | "resultBytes" | "resultTokens" | "clipped"> = {};
+        if (r.okt === "true" || r.okt === "false") end.ok = r.okt === "true";
+        end.resultBytes = bytes ?? num(r.sb) ?? 0;
+        if (tokens !== undefined) end.resultTokens = tokens;
+        if (bytes === undefined && num(r.clip) === 1) end.clipped = true;
+        ends.set(`${r.sid}\u0000${r.uid}`, end);
+      }
+    }
+    return starts.map((r) => {
+      const end = typeof r.uid === "string" ? ends.get(`${r.sid}\u0000${r.uid}`) : undefined;
+      const call: McpCall = { sessionId: String(r.sid), server: String(r.server) };
+      if (typeof r.model === "string" && r.model) call.model = r.model;
+      return Object.assign(call, end);
+    });
+  }
+
   async search(text: string, opts: SearchOpts = {}): Promise<SearchHit[]> {
     return this.searchHits(text, opts);
   }
@@ -1307,10 +1354,12 @@ export class SqliteIndexStore implements IndexStore {
       args = [fts, ...params, limit];
     } else {
       // Unfiltered, the FTS table ranks and cuts the page itself; filtered, it ranks its (at most
-      // SEARCH_RANK_MAX_MATCHES) matches and the join keeps the best that pass.
+      // SEARCH_RANK_MAX_MATCHES) matches and the join keeps the best that pass. Ties in rank break
+      // the same way the cut does (rowid, newest first), so a longer limit only appends hits and
+      // paging by offset never repeats or skips one.
       const page = where.length ? "" : "ORDER BY rank, rowid DESC LIMIT ?";
       sql = `SELECT ${eventCols("e")} FROM (SELECT rowid AS r, rank AS rk FROM events_fts WHERE events_fts MATCH ? ${page}) f
-        JOIN events e ON e.rowid = f.r ${sessions} ${cond} ORDER BY f.rk, e.ts DESC LIMIT ?`;
+        JOIN events e ON e.rowid = f.r ${sessions} ${cond} ORDER BY f.rk, f.r DESC LIMIT ?`;
       args = where.length ? [fts, ...params, limit] : [fts, limit, limit];
     }
     const terms = searchTerms(text);

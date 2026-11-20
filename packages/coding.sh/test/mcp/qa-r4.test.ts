@@ -1,67 +1,60 @@
-// Regressions from round-4 QA of the MCP server against a real backfilled
-// store: search filtered and labeled hits by the event's agent, so a Claude
-// Code session hosted by T3 Code (session agent t3code, events claude-code)
-// was missed by agent "t3code" and its hits said claude-code.
+// Regressions from round-4 QA of the MCP server against a real backfilled store:
+// search paging that repeated and skipped hits tied in rank, and session_get and
+// the session resource leaving out failed model calls (stats.llmErrors).
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 import { openContext } from "../../src/core/context.ts";
 import { buildSession } from "../../src/core/sessions.ts";
-import type { Session } from "../../src/core/types.ts";
 import { createCodingShMcp, type CodingShMcp } from "../../src/mcp/server.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
-import { schemaViolations } from "../../src/toolevals/jsonschema.ts";
 import { cleanup, makeWorld, type World } from "./helpers.ts";
 
 const H = 3600e3;
 let n = 0;
-function ev(sessionId: string, agent: string, ts: number, kind: AgentEvent["kind"], payload: Record<string, unknown> = {}): AgentEvent {
-  return { id: `${sessionId}-r4${n++}`, v: 0, sessionId, agent, ts, kind, payload, source: "transcript" };
+function ev(sessionId: string, ts: number, kind: AgentEvent["kind"], payload: Record<string, unknown> = {}): AgentEvent {
+  return { id: `${sessionId}-r${n++}`, v: 0, sessionId, agent: "claude-code", ts, kind, payload, source: "transcript" };
 }
 
 let w: World;
 let mcp: CodingShMcp;
-let tools: { name: string; outputSchema: Record<string, unknown> }[];
-const IDS = { t3: "r4-t3-hosted", cc: "r4-claude", cx: "r4-codex" };
+const TIED = 83;
+const ERR = "r4-llm-errors";
 
 async function call(name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   const r = await mcp.server.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } });
   const res = r!.result as { structuredContent: Record<string, unknown>; isError?: boolean; content: { text: string }[] };
   assert.notEqual(res.isError, true, `${name}: ${res.content?.[0]?.text}`);
-  const sc = JSON.parse(JSON.stringify(res.structuredContent)) as Record<string, unknown>;
-  assert.deepEqual(schemaViolations(sc, tools.find((t) => t.name === name)!.outputSchema), [], `${name} output matches its outputSchema`);
-  return sc;
+  return res.structuredContent;
 }
-
-type Hit = { sessionId: string; agent: string };
-const hitsOf = (r: Record<string, unknown>) => r.hits as Hit[];
 
 before(async () => {
   w = makeWorld();
   const now = w.now;
-  const session = (id: string, eventAgent: string, t0: number, sessionAgent?: string): { evs: AgentEvent[]; s: Session } => {
-    const evs = [
-      ev(id, eventAgent, t0, "session.start"),
-      ev(id, eventAgent, t0 + 1, "user.message", { text: "make a worktree for the fix" }),
-      ev(id, eventAgent, t0 + 2, "assistant.message", { text: "created the worktree" }),
-      ev(id, eventAgent, t0 + 3, "turn.end"),
-    ];
-    const s = buildSession(evs);
-    return { evs, s: sessionAgent ? { ...s, agent: sessionAgent } : s };
-  };
-  // T3 Code hosts Claude Code: the session is t3code, its transcript events carry claude-code.
-  const all = [session(IDS.t3, "claude-code", now - H, "t3code"), session(IDS.cc, "claude-code", now - 2 * H), session(IDS.cx, "codex", now - 3 * H)];
+  const sessions: AgentEvent[][] = [];
+  // Hits with the same text rank the same; their times run in a different order than they were stored.
+  for (let i = 0; i < TIED; i++) {
+    const id = `r4-tied-${String(i).padStart(3, "0")}`;
+    const t0 = now - 2 * H + ((i * 37) % TIED) * 1000;
+    sessions.push([ev(id, t0, "session.start"), ev(id, t0 + 1, "user.message", { text: "rebuild the gizmo cache" })]);
+  }
+  const t0 = now - H;
+  sessions.push([
+    ev(ERR, t0, "session.start"),
+    ev(ERR, t0 + 1, "user.message", { text: "refactor the parser" }),
+    ev(ERR, t0 + 2, "llm.call", { model: "claude-x", ok: false, statusCode: 400, error: "API Error: the request was refused" }),
+    ev(ERR, t0 + 3, "llm.call", { model: "claude-x", ok: false, statusCode: 400, error: "API Error: the request was refused" }),
+    ev(ERR, t0 + 4, "turn.end", {}),
+  ]);
   const ctx = await openContext({ env: w.env, cwd: w.root });
   try {
-    for (const { evs, s } of all) {
+    for (const evs of sessions) {
       await ctx.index.putEvents(evs);
-      await ctx.index.upsertSession(s);
+      await ctx.index.upsertSession(buildSession(evs));
     }
   } finally {
     await ctx.close();
   }
   mcp = createCodingShMcp({ env: w.env, cwd: w.root, log: () => {}, now: () => w.now });
-  const r = await mcp.server.handle({ jsonrpc: "2.0", id: 0, method: "tools/list" });
-  tools = (r!.result as { tools: typeof tools }).tools;
 });
 
 after(async () => {
@@ -69,32 +62,51 @@ after(async () => {
   cleanup();
 });
 
-describe("search picks and labels hits by the session's agent", () => {
-  it("agent t3code finds the T3 Code session's hits, labeled t3code", async () => {
-    const hits = hitsOf(await call("search", { query: "worktree", agent: "t3code" }));
-    assert.ok(hits.length > 0, "the t3code session matches");
-    assert.deepEqual([...new Set(hits.map((h) => h.sessionId))], [IDS.t3]);
-    assert.deepEqual([...new Set(hits.map((h) => h.agent))], ["t3code"]);
+describe("search paging", () => {
+  it("following nextCursor returns every hit once, in the order of one long page", async () => {
+    const all = ((await call("search", { query: "gizmo cache", limit: 50, cursor: "0" })).hits as { eventId: string }[]).map((h) => h.eventId);
+    const ctx = await openContext({ env: w.env, cwd: w.root });
+    let full: string[];
+    try {
+      full = (await ctx.index.search("gizmo cache", { limit: 100_000 })).map((h) => h.event.id);
+    } finally {
+      await ctx.close();
+    }
+    assert.equal(full.length, TIED);
+    assert.deepEqual(all, full.slice(0, 50), "a page is a prefix of the full ranked list");
+    const paged: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const args: Record<string, unknown> = { query: "gizmo cache", limit: 7 };
+      if (cursor) args.cursor = cursor;
+      const r = await call("search", args);
+      paged.push(...(r.hits as { eventId: string }[]).map((h) => h.eventId));
+      cursor = r.nextCursor as string | undefined;
+    } while (cursor);
+    assert.equal(new Set(paged).size, paged.length, "no hit repeats");
+    assert.deepEqual(paged, full);
+  });
+});
+
+describe("failed model calls", () => {
+  it("session_get's summary carries stats.llmErrors", async () => {
+    const d = await call("session_get", { sessionId: ERR, limit: 1 });
+    const le = (d.session as { llmErrors?: { count: number; statusCode?: number; error?: string } }).llmErrors;
+    assert.equal(le?.count, 2);
+    assert.equal(le?.statusCode, 400);
+    assert.match(le?.error ?? "", /request was refused/);
   });
 
-  it("agent claude-code leaves out the T3 Code session, as sessions_list does", async () => {
-    const hits = hitsOf(await call("search", { query: "worktree", agent: "claude-code" }));
-    assert.deepEqual([...new Set(hits.map((h) => h.sessionId))], [IDS.cc]);
-    const listed = (await call("sessions_list", { agent: "claude-code", since: "30d" })).sessions as { id: string }[];
-    assert.deepEqual(listed.map((s) => s.id), [IDS.cc]);
+  it("the session resource digest has a line for them", async () => {
+    const r = await mcp.server.handle({ jsonrpc: "2.0", id: 2, method: "resources/read", params: { uri: `codingsh://session/${ERR}` } });
+    const text = (r!.result as { contents: { text: string }[] }).contents[0]!.text;
+    assert.match(text, /\*\*Model errors:\*\* 2 failed model calls, first HTTP 400: "API Error: the request was refused"/);
   });
 
-  it("agent and where combine, and where agent: hits carry the session's agent", async () => {
-    const both = hitsOf(await call("search", { query: "worktree", agent: "t3code", where: "kind:assistant.message" }));
-    assert.deepEqual(both.map((h) => [h.sessionId, h.agent]), [[IDS.t3, "t3code"]]);
-    const viaWhere = hitsOf(await call("search", { query: "worktree", where: "agent:t3code" }));
-    assert.ok(viaWhere.length > 0);
-    assert.deepEqual([...new Set(viaWhere.map((h) => h.agent))], ["t3code"]);
-  });
-
-  it("unfiltered hits carry each session's agent", async () => {
-    const hits = hitsOf(await call("search", { query: "worktree", limit: 50 }));
-    const bySession = new Map(hits.map((h) => [h.sessionId, h.agent]));
-    assert.deepEqual(Object.fromEntries(bySession), { [IDS.t3]: "t3code", [IDS.cc]: "claude-code", [IDS.cx]: "codex" });
+  it("a session without failed calls has neither", async () => {
+    const d = await call("session_get", { sessionId: "r4-tied-000", limit: 1 });
+    assert.equal((d.session as Record<string, unknown>).llmErrors, undefined);
+    const r = await mcp.server.handle({ jsonrpc: "2.0", id: 3, method: "resources/read", params: { uri: "codingsh://session/r4-tied-000" } });
+    assert.doesNotMatch((r!.result as { contents: { text: string }[] }).contents[0]!.text, /Model errors/);
   });
 });

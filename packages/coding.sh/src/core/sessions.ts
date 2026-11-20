@@ -14,6 +14,7 @@ import { cacheBreakState, cacheBreaksOf, cacheUnderused, foldCacheBreaks, type C
 import { foldSkills, skillFlags, skillState, skillUseOf, type SkillState } from "./skills-use.ts";
 import { foldMemoryUse, memoryUseOf, memoryUseState, type MemoryUseState } from "./memory-use.ts";
 import { foldHookContext, hookContextFlags, hookContextOf, hookContextState, type HookContextState } from "./hook-context.ts";
+import { foldWaiting, waitingOf, waitingState, type WaitingState } from "./waiting.ts";
 import { shellCommandsInCode } from "./cells.ts";
 import { claimsSuccess, reportsFailure } from "./failure-report.ts";
 import { failureState, foldFailure, type FailureClass, type FailureState } from "./failures.ts";
@@ -464,7 +465,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * new derivation. A new or retyped sub-state changes the stamp by itself; a
  * new optional field or a change of meaning still needs the bump.
  */
-export const SESSION_FOLD_VERSION = 27; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory). 19: a session with transcript model calls counts them, not the copies its OTLP logs carry (sansOtel, transcriptCalls). 20: weight edits (stats.weightEdits, the weights:edited tag, SessionState.weightEdits). 21: weight checkpoints (stats.weightEdits.checkpoints, the weights:checkpoint tag), and stats.weightEdits on a session with a checkpoint and no edit. 22: a `<parent>:sub:<agentId>` session with no session.start takes its parent from the id. 23: an API error event (source api, or status 400 or more) counts in stats.llmErrors. 24: api-stall (FlagState.apiStall); filesChanged counts files a shell call writes (shellCallFiles, SessionState.shellFiles), and keys file.change paths relative to the cwd. 25: a session with no prompt is titled by its session.start's name (SessionState.startName), so an SDK trace() of weight edits is not untitled. 26: stats.compactionRefetches (core/waste.ts WasteState.preCompact), reads that fetched again what a compaction dropped. 27: a host's thread title (a host-link notification's `title`, T3 Code) titles the session before its prompt (SessionState.hostTitle).
+export const SESSION_FOLD_VERSION = 30; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory). 19: a session with transcript model calls counts them, not the copies its OTLP logs carry (sansOtel, transcriptCalls). 20: weight edits (stats.weightEdits, the weights:edited tag, SessionState.weightEdits). 21: weight checkpoints (stats.weightEdits.checkpoints, the weights:checkpoint tag), and stats.weightEdits on a session with a checkpoint and no edit. 22: a `<parent>:sub:<agentId>` session with no session.start takes its parent from the id. 23: an API error event (source api, or status 400 or more) counts in stats.llmErrors. 24: api-stall (FlagState.apiStall); filesChanged counts files a shell call writes (shellCallFiles, SessionState.shellFiles), and keys file.change paths relative to the cwd. 25: a session with no prompt is titled by its session.start's name (SessionState.startName), so an SDK trace() of weight edits is not untitled. 26: stats.compactionRefetches (core/waste.ts WasteState.preCompact), reads that fetched again what a compaction dropped. 27: stats.waiting (core/waiting.ts). 28: stats.endInferred, an endedAt that is the last activity seen rather than a session.end. 29: a session with a tool call still open and no real end (no session.end, or only a transcript's quiet marker) has no endedAt (SessionState.endIdle). 30: a host's thread title (a host-link notification's `title`, T3 Code) titles the session before its prompt (SessionState.hostTitle).
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -511,6 +512,8 @@ export interface SessionState {
   /** Earliest repo state from the events (see sessionOf for how it meets the previous row's). */
   repo?: Session["repo"];
   endedAt?: number;
+  /** The last session.end was a transcript's quiet marker (reason "idle"), not a real end. */
+  endIdle?: boolean;
   endSnapshot?: Session["endSnapshot"];
   parent?: Session["parent"];
   /** `parent` came from a proxied call's parentSessionId; a session.start replaces it. */
@@ -576,6 +579,8 @@ export interface SessionState {
   redactions: RedactionState;
   hookContext: HookContextState;
   weightEdits: WeightEditState;
+  /** What the session waits on from the user (core/waiting.ts). */
+  waiting: WaitingState;
   /**
    * Models of the agent's own model calls (core/models.ts), and of the
    * proxy's: the proxy's count only in a session with no other model calls.
@@ -624,6 +629,7 @@ export function sessionState(): SessionState {
     redactions: redactionState(),
     hookContext: hookContextState(),
     weightEdits: weightEditState(),
+    waiting: waitingState(),
     models: modelState(),
     proxyModels: modelState(),
   };
@@ -781,6 +787,7 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
   foldHookContext(s.hookContext, e);
   foldWeightEdits(s.weightEdits, e);
   if (isEnrichment(e)) return;
+  foldWaiting(s.waiting, e, isBackfillEvent(e));
 
   s.captured++;
   if (!s.agents.includes(e.agent)) s.agents.push(e.agent);
@@ -880,6 +887,7 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
       break;
     case "session.end":
       s.endedAt = e.ts;
+      s.endIdle = isBackfillEvent(e) && e.payload.reason === "idle";
       if (e.repo?.snapshot) s.endSnapshot = e.repo.snapshot;
       break;
     case "notification":
@@ -956,6 +964,8 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
   const hookContext = hookContextOf(s.hookContext);
   if (hookContext) session.stats.hookContext = hookContext;
   if (s.launch) session.stats.launch = s.launch;
+  const waiting = waitingOf(s.waiting, s.launch);
+  if (waiting) session.stats.waiting = waiting;
   if (s.inheritedTokens) session.stats.inheritedTokens = s.inheritedTokens;
   const memoryUse = memoryUseOf(s.memory, s.cwd ?? prev?.cwd);
   if (memoryUse) session.stats.memoryUse = memoryUse;
@@ -1013,7 +1023,20 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
   const allLive = s.captured > 0 && s.allLive;
   const allTranscript = s.captured > 0 && s.allTranscript;
   const endsAtLastActivity = (allLive && !traceIds.has(id)) || allTranscript;
-  set("endedAt", endedAt ?? (endsAtLastActivity ? s.lastEnd : undefined) ?? (reopened ? undefined : prev?.endedAt));
+  // A tool call still open with no real end (a transcript that stops mid-call, then
+  // only its quiet marker): the session did not finish, so it has no end. A real
+  // session.end closes every open call (core/waiting.ts).
+  const midCall = s.waiting.open.length > 0 && (endedAt === undefined || s.endIdle === true);
+  if (midCall) endedAt = undefined;
+  const inferredEnd = endsAtLastActivity && !midCall ? s.lastEnd : undefined;
+  // An inferred end is worked out again from the events on every fold: the previous
+  // row's is kept only by a fold with no events of its own, so the row stays what
+  // a fold from scratch gives (a hook line that joins a transcript session drops it).
+  const prevInferred = prev?.stats?.endInferred === true && s.captured === 0;
+  const dropPrev = reopened || midCall || (prev?.stats?.endInferred === true && !prevInferred);
+  set("endedAt", endedAt ?? inferredEnd ?? (dropPrev ? undefined : prev?.endedAt));
+  // No session.end: the end above is only the last activity seen (stats.endInferred).
+  if (endedAt === undefined && session.endedAt !== undefined && (inferredEnd !== undefined || prevInferred)) session.stats.endInferred = true;
   if (traceIds.size) session.traceIds = [...traceIds];
   set("runId", s.runId ?? prev?.runId);
   set("endSnapshot", s.endSnapshot ?? prev?.endSnapshot);

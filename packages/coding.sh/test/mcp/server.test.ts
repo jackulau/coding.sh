@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { openContext } from "../../src/core/context.ts";
@@ -88,6 +88,7 @@ describe("handshake (legacy era)", () => {
       "improve",
       "latency",
       "score_add",
+      "score_add_batch",
       "score_list",
       "search",
       "session_current",
@@ -106,9 +107,9 @@ describe("handshake (legacy era)", () => {
       assert.equal(t.inputSchema.additionalProperties, false, `${t.name} rejects unknown args`);
       for (const [k, p] of Object.entries((t.inputSchema.properties ?? {}) as Record<string, { description?: string }>)) assert.ok(p.description, `${t.name}.${k} has a description`);
       assert.equal(t.outputSchema.type, "object", `${t.name} outputSchema`);
-      assert.equal(t.annotations.readOnlyHint, !["eval_from_session", "eval_init", "exp_session_note", "score_add"].includes(t.name), `${t.name} readOnlyHint`);
-      // eval_init's force replaces a suite; score_add replaces the score for the same target and name.
-      assert.equal(t.annotations.destructiveHint, ["eval_init", "score_add"].includes(t.name), `${t.name} destructiveHint`);
+      assert.equal(t.annotations.readOnlyHint, !["eval_from_session", "eval_init", "exp_session_note", "score_add", "score_add_batch"].includes(t.name), `${t.name} readOnlyHint`);
+      // eval_init's force replaces a suite; score_add (and score_add_batch) replace the score for the same target and name.
+      assert.equal(t.annotations.destructiveHint, ["eval_init", "score_add", "score_add_batch"].includes(t.name), `${t.name} destructiveHint`);
       // session_replay's fork calls the model API.
       assert.equal(t.annotations.openWorldHint, t.name === "session_replay", `${t.name} openWorldHint`);
     }
@@ -426,6 +427,30 @@ describe("tools", () => {
     assert.match(await callError("harness_compare", { experiment: "exp_none" }), /No harness A\/B experiment "exp_none"/);
   });
 
+  it("status carries the work queue in place of a work tool", async () => {
+    assert.equal(tools.some((t) => t.name === "work"), false);
+    const q = (await call("status")).work as Record<string, unknown>;
+    assert.deepEqual({ ...q, items: undefined }, { blocked: 0, failed: 0, stalled: 0, turn: 0, review: 1, needYou: 0, items: undefined });
+    const items = q.items as Record<string, unknown>[];
+    assert.deepEqual(items.map((i) => [i.sessionId, i.rootId, i.bucket]), [[SEED.a, SEED.a, "review"]], "sess-b is done, sess-d is running");
+    const [i] = items;
+    assert.match(String(i!.id), /^w[0-9a-f]{6}$/);
+    assert.equal(i!.sessions, 2, "sess-c is sess-a's subagent");
+    assert.ok(typeof i!.reason === "string" && i!.reason, "a reason");
+    assert.ok(typeof i!.next === "string" && i!.next, "a next step");
+    assert.match(String(i!.lastActivity), /^\d{4}-\d\d-\d\dT/, "times are ISO strings");
+
+    // A snooze in work.json hides the item, as it does from `coding.sh work`.
+    const overlay = join(w.env.CODING_SH_HOME!, "work.json");
+    writeFileSync(overlay, JSON.stringify({ v: 1, acks: {}, snoozes: { [SEED.a]: { until: Date.now() + 3600e3, bucket: "review" } } }));
+    try {
+      const z = (await call("status")).work as Record<string, unknown>;
+      assert.deepEqual([z.review, z.items], [0, []]);
+    } finally {
+      rmSync(overlay, { force: true });
+    }
+  });
+
   it("status reports capture health and update availability", async () => {
     const s = await call("status");
     assert.equal(s.home, w.env.CODING_SH_HOME);
@@ -531,7 +556,7 @@ describe("modern era (2026-07-28)", () => {
     try {
       assert.equal(client.era, "2026-07-28");
       assert.equal(client.serverInfo?.name, "coding.sh");
-      assert.equal((await client.listTools()).length, 25);
+      assert.equal((await client.listTools()).length, 26);
       const r = await client.callTool("session_get", { sessionId: SEED.b });
       assert.equal((r.structuredContent as { session: { agent: string } }).session.agent, "codex");
     } finally {

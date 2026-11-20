@@ -1,140 +1,128 @@
-// Regression tests for the fourth hands-on QA round on the CLI: agent detection that left files in
-// Gemini CLI's home, a subagent printed as its parent's short id, bench commands on a benchmark
-// that does not exist, and upgrade-store --json calling a change of owner a migration (that one
-// is in upgrade-store.test.ts).
+// Hands-on QA, round 4: relative times never print "just now", blame and improve check outside a
+// git repo name the fix with their own command, config set takes the [proxy] keys proxy --help
+// documents, work snooze names its <DURATION> argument, a snooze end reads in local time, and
+// the status line reads the hook spool before it counts what needs you.
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { after, before, describe, test } from "node:test";
-import { packageVersion } from "../../src/adapters/_shared/detect.ts";
-import * as bench from "../../src/cli/commands/bench.ts";
-import * as show from "../../src/cli/commands/show.ts";
-import { shortSessionId } from "../../src/cli/common.ts";
-import { nodeBin, pathOf } from "../_bin.ts";
-import { removeTestDir } from "../_rm.ts";
-import { mkSession, runCmd, sandbox, type Sandbox } from "./_cmd.ts";
-import { cleanup, runSync, tmpHome } from "./_run-cli.ts";
+import { after, describe, test } from "node:test";
+import { fileURLToPath } from "node:url";
+import * as blame from "../../src/cli/commands/blame.ts";
+import * as config from "../../src/cli/commands/config.ts";
+import * as improve from "../../src/cli/commands/improve.ts";
+import * as work from "../../src/cli/commands/work.ts";
+import { nextText } from "../../src/cli/commands/work.ts";
+import { ago, CliError, localTime } from "../../src/cli/output.ts";
+import { UsageError } from "../../src/cli/args.ts";
+import { CLI } from "../_cli.ts";
+import { runCmd, sandbox, type Sandbox } from "./_cmd.ts";
 
-describe("detecting Gemini CLI", () => {
-  after(cleanup);
+const HOOK = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "spool", "hook.ts");
+const boxes: Sandbox[] = [];
+after(() => boxes.forEach((b) => b.cleanup()));
+function box(): Sandbox {
+  const sb = sandbox();
+  boxes.push(sb);
+  return sb;
+}
 
-  /** A fake `gemini` that, like the real one, writes into its home on every launch. */
-  function fakeGemini(dir: string): void {
-    nodeBin(
-      dir,
-      "gemini",
-      [
-        'const { mkdirSync, writeFileSync } = require("node:fs");',
-        'const { join } = require("node:path");',
-        'const dir = join(process.env.GEMINI_CLI_HOME || process.env.HOME || process.env.USERPROFILE, ".gemini");',
-        "mkdirSync(dir, { recursive: true });",
-        'writeFileSync(join(dir, "projects.json." + process.pid + ".tmp"), "{}");',
-        'process.stdout.write("0.55.1\\n");',
-      ].join("\n"),
-    );
-  }
-
-  function doctorGemini(h: ReturnType<typeof tmpHome>, bin: string): { version: string | null } {
-    const r = runSync(["doctor", "--json", "--agent", "gemini-cli"], { ...h.env, PATH: pathOf(bin, dirname(process.execPath)) }, 60_000);
-    assert.ok(r.status === 0 || r.status === 1, r.stderr);
-    const doc = JSON.parse(r.stdout) as { agents: { id: string; version: string | null }[] };
-    return doc.agents.find((a) => a.id === "gemini-cli")!;
-  }
-
-  test("reads the version from the npm package and does not launch the CLI", () => {
-    const h = tmpHome();
-    const bin = join(h.root, "prefix");
-    fakeGemini(bin);
-    const pkg = join(bin, "node_modules", "@google", "gemini-cli");
-    mkdirSync(pkg, { recursive: true });
-    writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "@google/gemini-cli", version: "9.8.7" }));
-    assert.equal(doctorGemini(h, bin).version, "9.8.7");
-    assert.equal(existsSync(join(h.home, ".gemini")), false, "nothing written in the user's Gemini home");
-  });
-
-  test("without a package.json the launch it falls back to runs in a temp home, not the user's", () => {
-    const h = tmpHome();
-    const bin = join(h.root, "bin");
-    fakeGemini(bin);
-    assert.equal(doctorGemini(h, bin).version, "0.55.1", "the version still comes from the CLI");
-    assert.equal(existsSync(join(h.home, ".gemini")), false, "nothing written in the user's Gemini home");
+describe("relative times", () => {
+  test("under a second reads 0s ago, never the word just", () => {
+    const now = Date.now();
+    assert.equal(ago(now, { now }), "0s ago");
+    assert.doesNotMatch(ago(now - 10, { now }), /\bjust\b/);
   });
 });
 
-describe("packageVersion", () => {
-  test("finds the npm package next to a shim, under lib/node_modules, and above the binary", () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "csh-pkgver-")));
-    try {
-      const put = (dir: string, name: string, version: string) => {
-        mkdirSync(dir, { recursive: true });
-        writeFileSync(join(dir, "package.json"), JSON.stringify({ name, version }));
-      };
-      put(join(root, "win", "node_modules", "opencode-ai"), "opencode-ai", "1.18.10");
-      assert.equal(packageVersion(join(root, "win", "opencode.cmd"), "opencode-ai"), "1.18.10");
-      put(join(root, "unix", "lib", "node_modules", "@google", "gemini-cli"), "@google/gemini-cli", "0.55.1");
-      assert.equal(packageVersion(join(root, "unix", "bin", "gemini"), "@google/gemini-cli"), "0.55.1");
-      const pkg = join(root, "up", "gemini-cli");
-      put(pkg, "@google/gemini-cli", "1.2.3");
-      mkdirSync(join(pkg, "bundle"), { recursive: true });
-      writeFileSync(join(pkg, "bundle", "gemini.js"), "");
-      assert.equal(packageVersion(join(pkg, "bundle", "gemini.js"), "@google/gemini-cli"), "1.2.3");
-      assert.equal(packageVersion(join(root, "win", "opencode.cmd"), "@google/gemini-cli"), undefined, "another package's file is not it");
-    } finally {
-      removeTestDir(root);
+describe("outside a git repo", () => {
+  test("blame names blame --repo, not attribution", async () => {
+    const sb = box();
+    const dir = join(sb.root, "plain");
+    mkdirSync(dir);
+    const r = await runCmd(blame, sb, { positionals: ["AGENTS.md"], cwd: dir, json: true });
+    assert.ok(r.error instanceof CliError, String(r.error));
+    assert.equal(r.error.reason, "not_a_repo");
+    assert.deepEqual(r.error.next, ["Run it inside a git repository, or pass one:", "coding.sh blame <path> --repo <dir>"]);
+  });
+
+  test("improve check, with or without --repo all, is not_a_repo and names --repo <dir>", async () => {
+    const sb = box();
+    const dir = join(sb.root, "plain");
+    mkdirSync(dir);
+    for (const flags of [{}, { repo: "all" }]) {
+      const r = await runCmd(improve, sb, { action: "check", flags, cwd: dir, json: true });
+      assert.ok(r.error instanceof CliError && !(r.error instanceof UsageError), String(r.error));
+      assert.equal(r.error.reason, "not_a_repo");
+      assert.equal(r.error.exitCode, 1);
+      assert.deepEqual(r.error.next, ["Run it inside a git repository, or pass one:", "coding.sh improve check --repo <dir>"]);
     }
   });
 });
 
-describe("a subagent's short id", () => {
-  const parent = "a03d2f6b-2cdc-4540-b67d-876ed57908c5";
-  const sub = `${parent}:sub:a7d4978917f0661cd`;
-  let sb: Sandbox;
-  before(async () => {
-    sb = sandbox();
-    await sb.seed([mkSession(parent, Date.now() - 120_000, { agent: "t3code" as never }), mkSession(sub, Date.now() - 60_000, { parent: { sessionId: parent, subagentId: "a7d4978917f0661cd" } })]);
+describe("config set", () => {
+  test("takes the [proxy] keys proxy --help documents and refuses a bad value", async () => {
+    const sb = box();
+    const s = await runCmd(config, sb, { action: "set", positionals: ["proxy.port", "4400"], json: true });
+    assert.equal(s.error, undefined, String(s.error));
+    const g = await runCmd(config, sb, { action: "get", positionals: ["proxy.port"], json: true });
+    assert.equal(g.json.value, 4400);
+    assert.match(readFileSync(join(sb.env.CODING_SH_HOME!, "config.toml"), "utf8"), /\[proxy\]\r?\nport = 4400/);
+    const h = await runCmd(config, sb, { action: "set", positionals: ["proxy.host", "0.0.0.0"], json: true });
+    assert.equal(h.error, undefined, String(h.error));
+    const bad = await runCmd(config, sb, { action: "set", positionals: ["proxy.port", "99999"] });
+    assert.equal((bad.error as UsageError | undefined)?.reason, "invalid_value");
+    const url = await runCmd(config, sb, { action: "set", positionals: ["proxy.anthropic_upstream", "ftp://x"] });
+    assert.equal((url.error as UsageError | undefined)?.reason, "invalid_value");
   });
-  after(() => sb.cleanup());
 
-  test("names the subagent, not its parent", () => {
-    assert.equal(shortSessionId(sub), "a03d2f6b:sub:a7d49789");
-    assert.equal(shortSessionId(parent), "a03d2f6b");
-    assert.equal(shortSessionId(`${sub}:sub:bbbbccccdddd`), "a03d2f6b:sub:a7d49789:sub:bbbbcccc");
-  });
-
-  test("opens the subagent with show; the parent's prefix still opens the parent", async () => {
-    const r = await runCmd(show, sb, { positionals: [shortSessionId(sub)], json: true, flags: { fields: "session.id" } });
-    assert.equal(r.error, undefined, String(r.error?.message));
-    assert.equal(r.json.session.id, sub);
-    const p = await runCmd(show, sb, { positionals: ["a03d2f6b"], json: true, flags: { fields: "session.id" } });
-    assert.equal(p.json.session.id, parent);
+  test("a misspelled key gets a suggestion", async () => {
+    const r = await runCmd(config, box(), { action: "set", positionals: ["retention.keepSpoolDay", "7"] });
+    assert.ok(r.error instanceof UsageError);
+    assert.equal(r.error.suggestion, "coding.sh config set retention.keepSpoolDays 7");
   });
 });
 
-describe("bench on a benchmark that does not exist", () => {
-  let sb: Sandbox;
-  let cwd: string;
-  before(() => {
-    sb = sandbox();
-    cwd = realpathSync(mkdtempSync(join(tmpdir(), "csh-bench-none-")));
-  });
-  after(() => {
-    sb.cleanup();
-    removeTestDir(cwd);
+describe("work snooze", () => {
+  test("a bad duration names the <DURATION> argument, not a --duration flag", async () => {
+    const r = await runCmd(work, box(), { action: "snooze", positionals: ["w000000", "1x"] });
+    assert.ok(r.error instanceof UsageError);
+    assert.equal(r.error.message, '<DURATION> needs a duration such as 30m, 2h, 1d or 2w, got "1x"');
+    assert.doesNotMatch(r.error.message, /--duration/);
   });
 
-  for (const action of ["show", "history", "report"]) {
-    test(`bench ${action} says it can't find it, as bench run does`, async () => {
-      const r = await runCmd(bench, sb, { action, positionals: ["nope"], cwd });
-      assert.match(String(r.error?.message), /Can't find benchmark "nope"/);
-      assert.equal(r.error.reason, "not_found");
-      assert.ok(r.error.next.some((l: string) => l.includes("coding.sh bench new nope")), JSON.stringify(r.error.next));
-      assert.ok(!r.error.next.some((l: string) => l.includes("bench run nope")), "no next step that fails too");
-    });
-  }
+  test("the text view gives a snooze end in local time; other next steps are kept", () => {
+    const until = Date.now() + 3600e3;
+    assert.equal(nextText(`snoozed until ${new Date(until).toISOString()}`), `snoozed until ${localTime(until)}`);
+    assert.equal(nextText("nothing to do"), "nothing to do");
+  });
+});
 
-  test("bench show latest is a benchmark name too", async () => {
-    const r = await runCmd(bench, sb, { action: "show", positionals: ["latest"], cwd });
-    assert.match(String(r.error?.message), /Can't find benchmark "latest"/);
+describe("statusline reads the hook spool", () => {
+  test("need you appears while a permission prompt is open and goes once it is answered", () => {
+    const sb = box();
+    const env: NodeJS.ProcessEnv = { ...process.env, ...sb.env, CLAUDE_CODE_ENTRYPOINT: "cli" };
+    for (const k of ["CODING_SH_STORE_URL", "CODING_SH_BLOB_URL", "CODING_SH_DEV_REAL_STORE", "CODING_SH_DISABLE", "T3CODE_THREAD_ID", "CLAUDE_CODE_SESSION_ID", "CODING_SH_READ_BUDGET_MS"]) delete env[k];
+    const sid = "bbbbbbbb-1111-4222-8333-444444444444";
+    const cwd = join(sb.root, "p");
+    mkdirSync(cwd);
+    const hook = (event: string, extra: Record<string, unknown> = {}) => {
+      const input = JSON.stringify({ session_id: sid, cwd, transcript_path: join(cwd, "t.jsonl"), hook_event_name: event, ...extra });
+      const r = spawnSync(process.execPath, ["--no-warnings", HOOK, "claude-code", event], { env, input, encoding: "utf8", timeout: 60_000 });
+      assert.equal(r.status, 0, r.stderr);
+    };
+    const line = () => {
+      const input = JSON.stringify({ session_id: sid, cwd, model: { display_name: "Opus" }, workspace: { current_dir: cwd } });
+      const r = spawnSync(process.execPath, ["--no-warnings", CLI, "statusline", "--no-color"], { env, input, encoding: "utf8", timeout: 60_000 });
+      assert.equal(r.status, 0, r.stderr);
+      return r.stdout;
+    };
+    hook("SessionStart", { source: "startup" });
+    hook("UserPromptSubmit", { prompt: "x" });
+    hook("PreToolUse", { tool_name: "Bash", tool_use_id: "t1", tool_input: { command: "ls" } });
+    hook("Notification", { message: "Claude needs your permission to use Bash", notification_type: "permission_prompt" });
+    assert.match(line(), /·  1 need you/);
+    hook("PostToolUse", { tool_name: "Bash", tool_use_id: "t1", tool_input: { command: "ls" }, tool_response: { stdout: "" } });
+    assert.doesNotMatch(line(), /need you/);
   });
 });

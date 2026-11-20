@@ -371,7 +371,7 @@ export async function snapshotChanges(s: Session, env: NodeJS.ProcessEnv): Promi
 /** "Nov 6 14:02 (3m ago)" within a day, else "Nov 6 14:02"; --json keeps the ISO timestamp. */
 export function startedText(ts: number, now = Date.now()): string {
   const rel = ago(ts, { now });
-  return rel.endsWith("ago") || rel === "just now" ? `${localTime(ts, now)} (${rel})` : localTime(ts, now);
+  return rel.endsWith("ago") ? `${localTime(ts, now)} (${rel})` : localTime(ts, now);
 }
 
 /** The top-level fields of `show --json` (a session, or a model call), for --fields. */
