@@ -131,7 +131,7 @@ describe("show <prefix> resolves a unique session id prefix, like git", () => {
     test(`${kind} store: unique prefix, ambiguous prefix, too short, exact id`, async () => {
       const index = kind === "memory" ? new MemoryIndexStore() : await SqliteIndexStore.open(join(t.root, "index.db"));
       await index.migrate();
-      // Taken per test: "just now" means under a second old, and the other store's test runs first.
+      // Taken per test: "0s ago" means under a second old, and the other store's test runs first.
       const now = Date.now();
       for (const [i, id] of ids.entries()) await index.upsertSession(session(id, now - i * 60e3));
       const ctx = { index } as unknown as Context;
@@ -143,7 +143,7 @@ describe("show <prefix> resolves a unique session id prefix, like git", () => {
         await assert.rejects(resolveSession(ctx, "9f1c"), (e: CliError) => {
           assert.equal(e.reason, "ambiguous");
           assert.match(e.message, /Session id prefix "9f1c" is ambiguous/);
-          assert.match(e.message, new RegExp(`^  ${ids[0]}  claude-code  just now`, "m"));
+          assert.match(e.message, new RegExp(`^  ${ids[0]}  claude-code  0s ago`, "m"));
           assert.match(e.message, new RegExp(`^  ${ids[1]}  claude-code  1m ago`, "m"));
           assert.deepEqual((e.data as { candidates: { id: string }[] }).candidates.map((x) => x.id), [ids[0], ids[1]]);
           return true;
@@ -162,8 +162,8 @@ describe("show <prefix> resolves a unique session id prefix, like git", () => {
 describe("times in CLI tables: short and local; --json keeps ISO", () => {
   const now = new Date(2026, 10, 6, 14, 30).getTime();
   test("relative under a day, then the local date and time", () => {
-    assert.equal(ago(now - 400, { now }), "just now");
-    assert.equal(ago(now + 5000, { now }), "just now", "clock skew");
+    assert.equal(ago(now - 400, { now }), "0s ago", "no banned word: just");
+    assert.equal(ago(now + 5000, { now }), "0s ago", "clock skew");
     assert.equal(ago(now - 12e3, { now }), "12s ago");
     assert.equal(ago(now - 3 * 60e3, { now }), "3m ago");
     assert.equal(ago(now - 5 * 3600e3, { now }), "5h ago");

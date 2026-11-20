@@ -206,7 +206,7 @@ async function fix(c: CommandContext): Promise<number> {
   const ref = c.positionals[0];
   if (!ref) throw new UsageError("Name the issue to fix: its number in coding.sh improve, or its id", { reason: "missing_argument", suggestion: "coding.sh improve fix 1" });
   const o = await options(c, "14d", 50);
-  if (!o.root) throw new UsageError("Not in a git repo: improve fix edits this repo's AGENTS.md or other instructions file", { reason: "missing_argument" });
+  if (!o.root) throw notARepo(c, "improve fix edits this repo's AGENTS.md or other instructions file", "fix");
   const root = o.root;
   return withContext(c, async (ctx: Context) => {
     await autoIngest(ctx, readIngest(c));
@@ -267,6 +267,15 @@ async function fix(c: CommandContext): Promise<number> {
   });
 }
 
+/**
+ * Run outside a git repo: fix and check need one (--repo all only widens the sessions read), so
+ * the next step passes a repo. Not a usage error: no argument is missing.
+ */
+function notARepo(c: CommandContext, why: string, action: "check" | "fix"): CliError {
+  const all = c.flags.repo === "all" ? " (--repo all picks the sessions; the repo is still needed)" : "";
+  return new CliError(`Not in a git repo: ${why}${all}`, { reason: "not_a_repo", next: ["Run it inside a git repository, or pass one:", `coding.sh improve ${action}${action === "fix" ? " <n>" : ""} --repo <dir>`] });
+}
+
 // ---------------------------------------------------------------- check
 
 const SECOND = 1000;
@@ -274,7 +283,7 @@ const SECOND = 1000;
 async function check(c: CommandContext): Promise<number> {
   const { out } = c;
   const o = await options(c, "30d", 5);
-  if (!o.root) throw new UsageError("Not in a git repo: improve check reads the history of AGENTS.md and other instructions files, rules and skills", { reason: "missing_argument" });
+  if (!o.root) throw notARepo(c, "improve check reads the history of AGENTS.md and other instructions files, rules and skills", "check");
   const root = o.root;
   const watch = c.flags.watch === true;
   if (watch && out.json) throw new UsageError("--watch prints a line per change; it does not combine with --json", { reason: "invalid_argument" });
