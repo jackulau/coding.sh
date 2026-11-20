@@ -48,10 +48,11 @@ grouped by area, with links to the docs for the details.
 - **Storage.** `coding.sh gc` walks the blob folders once instead of twice: the temp files it sweeps are the ones the blob listing passed. On a store of 37,697 blobs, `gc --dry-run` took 5.9 s instead of 9.4 s. It removes the same blobs and temp files. [CLI reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-gc)
 - **Docs.** Command blocks drop their "shell" title bar: the Copy button sits in the block's corner. Blocks with a file name or output keep their title. The star beside the GitHub link is yellow. [Install](https://coding.sh/docs/install)
 - **Serve.** `coding.sh serve --json` no longer has `keys.ingest` and `keys.read`; read the keys from the file `keys.file` names. [Production](https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md)
+- **Site.** coding.sh is served by Vercel instead of a Cloudflare Worker, which had hit its daily request limit and answered 429. Moved pages, `www`, the headers and the installer behave as before. [Release](https://github.com/jackulau/coding.sh/blob/main/docs/RELEASE.md#deploying-the-site)
 
 ### Fixed
 
-- **Site.** The files a page loads (scripts, fonts, search, images and icons) are served without running the site's edge Worker, so they no longer count toward its daily request limit. Past that limit, coding.sh answered every request with a 429 error until midnight UTC. [Release](https://github.com/jackulau/coding.sh/blob/main/docs/RELEASE.md#cloudflare-worker-coding-sh-site)
+- **Site.** The files a page loads (scripts, fonts, search, images and icons) are served without running the site's edge Worker, so they no longer count toward its daily request limit. Past that limit, coding.sh answered every request with a 429 error until midnight UTC. [Release](https://github.com/jackulau/coding.sh/blob/main/docs/RELEASE.md#deploying-the-site)
 - **Sessions.** A Gemini CLI permission prompt counts for the `unapproved-action` flag: a risky call the user approved there is not flagged, whether the prompt came while the call was open or before it started, as in Gemini CLI 0.35 and older. Before, only Claude Code's prompts counted. [Flags](https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md)
 - **CLI.** `config set` takes the `[proxy]` keys. [Configuration](https://coding.sh/docs/config)
 - **CLI.** `blame` and `improve check` outside a git repo name `--repo <dir>` with their own command (`improve check` exits 1, `not_a_repo`). [CLI](https://coding.sh/docs/cli)

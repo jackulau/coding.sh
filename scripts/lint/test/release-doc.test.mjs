@@ -39,10 +39,11 @@ test("every action the release workflow runs is pinned to a commit, not a tag or
   assert.match(doc, /pinned to a full commit/);
 });
 
-test("RELEASE.md names publish-image, the Worker deploy and the deploy secret", () => {
+test("RELEASE.md names publish-image, the Vercel deploy, its secret and the Worker fallback", () => {
   assert.ok(doc.includes("publish-image"));
+  assert.ok(doc.includes("### Vercel (`coding-sh`)"));
+  assert.ok(doc.includes("VERCEL_TOKEN"));
   assert.ok(doc.includes("coding-sh-site"));
-  assert.ok(doc.includes("CLOUDFLARE_API_TOKEN"));
   assert.ok(!doc.includes("Cloudflare Pages"));
   assert.ok(!doc.includes("wrangler pages"));
 });
