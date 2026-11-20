@@ -10,6 +10,7 @@
 // `intervalMs` until told to stop. Stopping aborts the pass at its next
 // checkpoint, so the ingest lock is released and cursors cover what was stored.
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
 import { reapSqliteCopies } from "../adapters/_shared/sqlite-copies.ts";
@@ -209,6 +210,11 @@ async function runWorker(d: Data): Promise<void> {
         post({ type: "error", message: e instanceof Error ? e.message : String(e) });
       }
       set({ ingesting: false, filesPending: 0, lastIngestAt: Date.now() });
+      // Monitors score new sessions, each at most once a minute (src/monitor); their errors go to monitors.json.
+      if (!stop.signal.aborted && existsSync(ctx.paths.monitors)) {
+        const { monitorsAfterIngest } = await import("../monitor/run.ts");
+        await monitorsAfterIngest(ctx, { signal: stop.signal });
+      }
       if (stop.signal.aborted) break;
       await new Promise<void>((resolve) => {
         const t = setTimeout(resolve, d.intervalMs);

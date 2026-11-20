@@ -57,6 +57,10 @@ export function paths(env: NodeJS.ProcessEnv = process.env) {
     tailLock: join(root, "tail.lock"),
     /** Hook ownership for agents whose config files carry no coding.sh marker. */
     installs: join(root, "installs.json"),
+    /** Monitors and their cursors, spend and last errors (src/monitor, `coding.sh monitor`). */
+    monitors: join(root, "monitors.json"),
+    /** Alert definitions, their states and their signing secrets (src/alerts, `coding.sh alert`); mode 600. */
+    alerts: join(root, "alerts.json"),
     /** The running `coding.sh proxy` (pid, url); see proxy/state.ts. */
     proxyState: join(root, "proxy.json"),
     proxyLog: join(root, "proxy.log"),

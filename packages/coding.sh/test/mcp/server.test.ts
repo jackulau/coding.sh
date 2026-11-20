@@ -88,6 +88,7 @@ describe("handshake (legacy era)", () => {
       "improve",
       "latency",
       "score_add",
+      "score_add_batch",
       "score_list",
       "search",
       "session_current",
@@ -106,9 +107,9 @@ describe("handshake (legacy era)", () => {
       assert.equal(t.inputSchema.additionalProperties, false, `${t.name} rejects unknown args`);
       for (const [k, p] of Object.entries((t.inputSchema.properties ?? {}) as Record<string, { description?: string }>)) assert.ok(p.description, `${t.name}.${k} has a description`);
       assert.equal(t.outputSchema.type, "object", `${t.name} outputSchema`);
-      assert.equal(t.annotations.readOnlyHint, !["eval_from_session", "eval_init", "exp_session_note", "score_add"].includes(t.name), `${t.name} readOnlyHint`);
-      // eval_init's force replaces a suite; score_add replaces the score for the same target and name.
-      assert.equal(t.annotations.destructiveHint, ["eval_init", "score_add"].includes(t.name), `${t.name} destructiveHint`);
+      assert.equal(t.annotations.readOnlyHint, !["eval_from_session", "eval_init", "exp_session_note", "score_add", "score_add_batch"].includes(t.name), `${t.name} readOnlyHint`);
+      // eval_init's force replaces a suite; score_add (and score_add_batch) replace the score for the same target and name.
+      assert.equal(t.annotations.destructiveHint, ["eval_init", "score_add", "score_add_batch"].includes(t.name), `${t.name} destructiveHint`);
       // session_replay's fork calls the model API.
       assert.equal(t.annotations.openWorldHint, t.name === "session_replay", `${t.name} openWorldHint`);
     }
@@ -531,7 +532,7 @@ describe("modern era (2026-07-28)", () => {
     try {
       assert.equal(client.era, "2026-07-28");
       assert.equal(client.serverInfo?.name, "coding.sh");
-      assert.equal((await client.listTools()).length, 25);
+      assert.equal((await client.listTools()).length, 26);
       const r = await client.callTool("session_get", { sessionId: SEED.b });
       assert.equal((r.structuredContent as { session: { agent: string } }).session.agent, "codex");
     } finally {

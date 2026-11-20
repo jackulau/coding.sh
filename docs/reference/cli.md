@@ -64,6 +64,7 @@ Every command accepts these.
 | [`dataset`](#codingsh-dataset) | Evaluate | Manage versioned datasets of cases |
 | [`exp`](#codingsh-exp) | Evaluate | Run a task over a dataset, compare experiments and sweep configs |
 | [`score`](#codingsh-score) | Evaluate | Add and list typed scores on sessions, events, cases and runs |
+| [`monitor`](#codingsh-monitor) | Evaluate | Score new sessions automatically with an LLM judge rubric or a command |
 | [`judge`](#codingsh-judge) | Evaluate | Grade one output or the slop in captured diffs, or check an LLM judge or a test verifier against human labels |
 | [`toolevals`](#codingsh-toolevals) | Evaluate | Measure how well agents use a CLI, MCP server or API |
 | [`workflows`](#codingsh-workflows) | Evaluate | Capture, measure and A/B-test multi-agent workflow runs |
@@ -1948,6 +1949,108 @@ List score configs.
 
 ```text
 coding.sh score configs
+```
+
+## `coding.sh monitor`
+
+Score new sessions automatically with an LLM judge rubric or a command.
+
+```text
+coding.sh monitor <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`add`](#codingsh-monitor-add) | Add a monitor: every new session that matches gets one score from it |
+| [`list`](#codingsh-monitor-list) | List monitors with their scores, today's judge spend and last error |
+| [`rm`](#codingsh-monitor-rm) | Remove a monitor (its scores stay) |
+| [`run`](#codingsh-monitor-run) | Run monitors now on sessions that ended in the window, skipping sessions they already scored |
+
+- Monitors run after each coding.sh ingest, in the viewer's ingest loop and in serve's writer, at most once a minute each; never in the hook or in the ingest a read command does first.
+- Each monitor scores sessions that ended after its cursor (the past day on its first run), one score per session; a session it already scored is skipped.
+- A monitor's failure never fails the ingest: it is recorded as the monitor's last error, which monitor list shows. A command that exits non-zero or prints no value scores nothing.
+- --judge with no provider records 'no judge provider' and scores nothing until one is set.
+- Definitions, cursors, spend and errors are in monitors.json, next to the config file (coding.sh config path shows it).
+
+### `coding.sh monitor add`
+
+Add a monitor: every new session that matches gets one score from it.
+
+```text
+coding.sh monitor add <NAME> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | Monitor name; its scores carry this name and source monitor. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--judge <RUBRIC.md>` |  | Score with the LLM judge against this rubric file (a score from 0 to 1, the reason as its comment) |
+| `--run <COMMAND>` |  | Score with a shell command: it gets the session JSON (as show --json, redacted) on stdin and prints {"value": ..., "comment"?: ...}; stopped after 60 s. |
+| `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
+| `--sample <0..1>` |  | Score this fraction of sessions, picked by a hash of the session id (default: all) |
+| `--max-usd-day <USD>` | `1` | --judge: stop for the day once the estimated judge spend reaches this. |
+| `--provider <PROVIDER>` |  | --judge: the model provider (default: the first of ANTHROPIC_API_KEY, OPENAI_API_KEY, AI_GATEWAY_API_KEY that is set) One of: `anthropic`, `openai`, `gateway`, `mock`. |
+| `--model <MODEL>` |  | --judge: the judge model (default: the provider's) |
+| `--force` |  | Replace a monitor with the same name (its cursor starts again; its scores stay) |
+
+```sh
+coding.sh monitor add tests-pass --run "node check.mjs"
+coding.sh monitor add helpful --judge rubric.md --where 'agent:claude-code' --sample 0.2
+coding.sh monitor add helpful --judge rubric.md --max-usd-day 5
+```
+
+### `coding.sh monitor list`
+
+List monitors with their scores, today's judge spend and last error.
+
+```text
+coding.sh monitor list
+```
+
+```sh
+coding.sh monitor list
+coding.sh monitor list --json
+```
+
+### `coding.sh monitor rm`
+
+Remove a monitor (its scores stay).
+
+```text
+coding.sh monitor rm <NAME>
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | Monitor name. |
+
+```sh
+coding.sh monitor rm helpful
+```
+
+### `coding.sh monitor run`
+
+Run monitors now on sessions that ended in the window, skipping sessions they already scored.
+
+```text
+coding.sh monitor run [name] [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | no | Only this monitor (default: all) |
+
+| Option | Default | Description |
+|---|---|---|
+| `--since <WHEN>` | `1d` | Sessions that ended at or after this time: 7d, 12h, 30m, today or a date. |
+| `--watch` |  | Keep going: ingest and score new sessions every 10 s until Ctrl-C. |
+
+```sh
+coding.sh monitor run
+coding.sh monitor run helpful --since 7d
+coding.sh monitor run --watch
 ```
 
 ## `coding.sh judge`

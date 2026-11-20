@@ -3,6 +3,7 @@
 // Prometheus metrics are served next to them. See docs/PRODUCTION.md §1.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { paths } from "../core/paths.ts";
 import type { BlobStore, IndexStore, Sink, WriterLock } from "../core/types.ts";
 import { canonicalScheme, openBlobStore, openIndexStore, openSink, parseStoreUrl } from "../store/factory.ts";
 import type { SpanEnricher } from "../otel/map.ts";
@@ -21,6 +22,7 @@ import { createLogger, type Logger, safeUrl } from "./log.ts";
 import { ServeMetrics } from "./metrics.ts";
 import { IngestQueue } from "./queue.ts";
 import { startRetention } from "./retention.ts";
+import { startMonitorTimer } from "../monitor/timer.ts";
 import { createCommitHooks, createNativeIngestHandler, createServeOtlpHandler, type HookTiming, sendJson } from "./routes.ts";
 import { retryTransient } from "./startup.ts";
 
@@ -46,6 +48,8 @@ export interface ServeOptions {
   fetch?: typeof fetch;
   /** Forward and sink flush/backoff timing (tests). */
   hookTiming?: HookTiming;
+  /** How often the writer runs monitors (`coding.sh monitor`; default 60 s, tests shrink it). */
+  monitorIntervalMs?: number;
 }
 
 export interface ServeHandle {
@@ -180,6 +184,12 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
   let lock: WriterLock | undefined;
   let lockTimer: NodeJS.Timeout | undefined;
   let stopRetention: (() => void) | undefined;
+  let stopMonitors: (() => Promise<void>) | undefined;
+  const endMonitors = async () => {
+    const stop = stopMonitors;
+    stopMonitors = undefined;
+    await stop?.().catch(() => {});
+  };
   let shuttingDown = false;
   const becomeWriter = async (): Promise<boolean> => {
     if (!index.acquireWriterLock) {
@@ -193,6 +203,17 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
     const held = lock;
     queue.setWritable(true, held?.assertHeld ? () => held.assertHeld!() : undefined);
     stopRetention = startRetention({ store: index, blobs, config: cfg.core, days: cfg.retentionDays, run: (fn) => queue.runExclusive(fn), log });
+    // Monitors (coding.sh monitor) score new sessions; each score write takes the writer's lane.
+    const monitorEnv = { ...process.env, CODING_SH_HOME: cfg.core.home };
+    stopMonitors = startMonitorTimer({
+      index,
+      env: monitorEnv,
+      config: cfg.core,
+      paths: paths(monitorEnv),
+      write: (fn) => queue.runExclusive(fn),
+      log: (m) => log.warn("monitor", { error: m }),
+      intervalMs: o.monitorIntervalMs || undefined,
+    });
     return true;
   };
   Object.assign(metrics.gauges, { queueEvents: () => queue.depth.events, queueBytes: () => queue.depth.bytes, writerLockHeld: () => queue.isWritable });
@@ -215,6 +236,7 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
   const loseWriter = async () => {
     stopRetention?.();
     stopRetention = undefined;
+    await endMonitors();
     const l = lock;
     lock = undefined;
     await l?.release().catch(() => {});
@@ -408,6 +430,7 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
     });
   } catch (e) {
     stopRetention?.();
+    await endMonitors();
     await hooks.close(0);
     if (lockTimer) clearTimeout(lockTimer);
     await lock?.release().catch(() => {});
@@ -455,6 +478,8 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
         server.closeIdleConnections();
         // Calls the proxy routes answered reach the queue before it drains.
         await Promise.all([...recorders.values()].map((r) => r.flush().catch(() => {})));
+        // A monitor pass stops at its next session; its last score write still takes the writer's lane.
+        await endMonitors();
         const drainMs = o.drainMs ?? DRAIN_TIMEOUT_MS;
         const t0 = Date.now();
         const { drained } = cfg.role === "all" ? await queue.drain(drainMs) : { drained: true };

@@ -49,7 +49,7 @@ describe("tool evals against the coding.sh MCP server", () => {
     const target = cfg.targets.get(TARGET) as McpTarget;
     const env = { HOME: join(root, "home"), CODING_SH_HOME: join(root, "surface-data") };
     const s = await measureSurface({ ...target, env }, { name: "base" }, { cwd: root });
-    assert.equal(s.items.length, 25);
+    assert.equal(s.items.length, 26);
     // Every tool definition (name, description, input + output schema) costs context in every turn.
     // 24 KB for 13 tools; harness_compare (the 14th) adds about 1.3 KB, exp_session_summary and
     // exp_session_note about 1.9 KB together. The where query on sessions_list, search and usage

@@ -185,6 +185,11 @@ A grader that asks a model. Trust it only after you check it against your own pa
 - In the CLI: `coding.sh judge calibrate` measures how often the judge agrees with human labels. See
   [Judges](https://coding.sh/docs/judges).
 
+### Monitor
+
+A judge rubric or a command that scores each new session once, after it ends. See the
+[CLI reference](https://coding.sh/docs/cli/monitor).
+
 ## Which one to use
 
 | | Eval suite (`eval run`) | Experiment (`exp run`) | A/B on sessions (`exp ab`) |

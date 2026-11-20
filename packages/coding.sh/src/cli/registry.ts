@@ -1383,6 +1383,53 @@ export const COMMANDS: CommandSpec[] = [
     load: () => import("../scores/cli.ts"),
   },
   {
+    name: "monitor",
+    group: "Evaluate",
+    summary: "Score new sessions automatically with an LLM judge rubric or a command",
+    actions: [
+      {
+        name: "add",
+        summary: "Add a monitor: every new session that matches gets one score from it",
+        args: [{ name: "name", desc: "Monitor name; its scores carry this name and source monitor", required: true }],
+        flags: [
+          { name: "judge", type: "string", value: "<RUBRIC.md>", desc: "Score with the LLM judge against this rubric file (a score from 0 to 1, the reason as its comment)" },
+          { name: "run", type: "string", value: "<COMMAND>", desc: 'Score with a shell command: it gets the session JSON (as show --json, redacted) on stdin and prints {"value": ..., "comment"?: ...}; stopped after 60 s' },
+          WHERE("sessions"),
+          { name: "sample", type: "number", value: "<0..1>", desc: "Score this fraction of sessions, picked by a hash of the session id (default: all)" },
+          { name: "max-usd-day", type: "number", value: "<USD>", desc: "--judge: stop for the day once the estimated judge spend reaches this", default: "1" },
+          { name: "provider", type: "string", value: "<PROVIDER>", choices: ["anthropic", "openai", "gateway", "mock"], desc: "--judge: the model provider (default: the first of ANTHROPIC_API_KEY, OPENAI_API_KEY, AI_GATEWAY_API_KEY that is set)" },
+          { name: "model", type: "string", value: "<MODEL>", desc: "--judge: the judge model (default: the provider's)" },
+          { name: "force", type: "boolean", desc: "Replace a monitor with the same name (its cursor starts again; its scores stay)" },
+        ],
+        examples: [
+          'coding.sh monitor add tests-pass --run "node check.mjs"',
+          "coding.sh monitor add helpful --judge rubric.md --where 'agent:claude-code' --sample 0.2",
+          "coding.sh monitor add helpful --judge rubric.md --max-usd-day 5",
+        ],
+      },
+      { name: "list", summary: "List monitors with their scores, today's judge spend and last error", examples: ["coding.sh monitor list", "coding.sh monitor list --json"] },
+      { name: "rm", summary: "Remove a monitor (its scores stay)", args: [{ name: "name", desc: "Monitor name", required: true }], examples: ["coding.sh monitor rm helpful"] },
+      {
+        name: "run",
+        summary: "Run monitors now on sessions that ended in the window, skipping sessions they already scored",
+        args: [{ name: "name", desc: "Only this monitor (default: all)" }],
+        flags: [
+          { name: "since", type: "string", value: "<WHEN>", desc: "Sessions that ended at or after this time: 7d, 12h, 30m, today or a date", default: "1d" },
+          { name: "watch", type: "boolean", desc: "Keep going: ingest and score new sessions every 10 s until Ctrl-C" },
+        ],
+        examples: ["coding.sh monitor run", "coding.sh monitor run helpful --since 7d", "coding.sh monitor run --watch"],
+      },
+    ],
+    notes: [
+      "Monitors run after each coding.sh ingest, in the viewer's ingest loop and in serve's writer, at most once a minute each; never in the hook or in the ingest a read command does first.",
+      "Each monitor scores sessions that ended after its cursor (the past day on its first run), one score per session; a session it already scored is skipped.",
+      "A monitor's failure never fails the ingest: it is recorded as the monitor's last error, which monitor list shows. A command that exits non-zero or prints no value scores nothing.",
+      "--judge with no provider records 'no judge provider' and scores nothing until one is set.",
+      "Definitions, cursors, spend and errors are in monitors.json, next to the config file (coding.sh config path shows it).",
+    ],
+    load: () => import("./commands/monitor.ts"),
+  },
+  {
     name: "judge",
     group: "Evaluate",
     summary: "Grade one output or the slop in captured diffs, or check an LLM judge or a test verifier against human labels",
