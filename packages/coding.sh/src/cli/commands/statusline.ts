@@ -117,7 +117,8 @@ async function print(c: CommandContext): Promise<number> {
       const session = sid ? await ctx.index.getSession(sid) : undefined;
       const dayStart = new Date();
       dayStart.setHours(0, 0, 0, 0);
-      const today = await ctx.index.listSessions({ since: dayStart.getTime(), parentSessionId: null });
+      // Every session that started today, subagents too: the spend budget status, usage and stats count.
+      const today = await ctx.index.listSessions({ since: dayStart.getTime() });
       const todayCostUsd = today.reduce((sum, s) => sum + (s.stats.usage?.costUsd ?? 0), 0);
       const sessionCostUsd = session?.stats.usage?.costUsd;
       const flags = session?.flags;

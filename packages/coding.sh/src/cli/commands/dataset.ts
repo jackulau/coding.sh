@@ -111,6 +111,7 @@ export async function run(c: CommandContext): Promise<number> {
         }
         if (!all.length) {
           out.note("No datasets");
+          out.next("Add a dataset with its first case", `coding.sh dataset add smoke --case '{"input":"2+2","expected":"4"}'`);
           return 0;
         }
         out.table(["ID", "NAME", "LATEST", "VERSIONS", "CASES"], all.map((d) => [d.id, d.name, d.latest, String(d.versions), String(d.cases)]));

@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getAdapter } from "../../adapters/index.ts";
 import { agentFileProblems } from "../../core/agent-files.ts";
+import { IMPORT_HOPS, IMPORTING, importPaths } from "../../core/memory-audit.ts";
 import { userHome } from "../../core/paths.ts";
 import { bundleFromDir, bundleFromToml, bundleId, DEFAULT_INCLUDE } from "../../runner/bundle.ts";
 import { claudeDirOf, isPluginPath } from "../../runner/plugins.ts";
@@ -12,6 +13,8 @@ import { parseSince, positiveInt, suggest, UsageError } from "../args.ts";
 import { autoIngest, list, str, withContext, pendingField, readIngest } from "../common.ts";
 import { ago, bytes, CliError, plural, tokens } from "../output.ts";
 import type { CommandContext } from "../types.ts";
+
+export { importPaths };
 
 export function bundleJson(b: HarnessBundle): Record<string, unknown> {
   return {
@@ -30,23 +33,6 @@ export function bundleJson(b: HarnessBundle): Record<string, unknown> {
 
 /** A bundle path under a dot dir of Claude Code's skills dir (its `.trash` of deleted skills), which Claude Code does not load. */
 const HIDDEN_SKILL = /^(?:~\/)?\.claude\/skills\/\.[^/]+\//;
-
-/** Claude Code memory files whose `@path` imports it loads: every CLAUDE.md and CLAUDE.local.md, and its rules. */
-const IMPORTING = /(?:^|\/)CLAUDE(?:\.local)?\.md$|^(?:~\/)?\.claude\/rules\/.+\.md$/;
-
-/** Claude Code follows imports this many hops deep. */
-const IMPORT_HOPS = 5;
-
-/** The `@path` imports in a memory file's text, outside code spans and fences. */
-export function importPaths(text: string): string[] {
-  const t = text.replace(/```[^]*?```/g, "").replace(/`[^`\n]*`/g, "");
-  const out: string[] = [];
-  for (const m of t.matchAll(/(?:^|\s)@((?:~[\\/]|[\\/]|[A-Za-z]:[\\/]|\.{1,2}[\\/])?[\w.-][\w.~\\/-]*)/g)) {
-    const p = m[1]!.replace(/[.,:;]+$/, "");
-    if (p) out.push(p);
-  }
-  return out;
-}
 
 /**
  * The bundle with what Claude Code loads that the include globs miss or wrongly take: the files

@@ -1336,6 +1336,7 @@ export async function run(c: CommandContext): Promise<number> {
         }
         if (!all.length) {
           out.note("No experiments");
+          out.next("Run one from a spec file that names a dataset, a task and graders", "coding.sh exp run spec.json");
           return 0;
         }
         // The WEIGHTS column is there only when a listed run recorded its checkpoint.

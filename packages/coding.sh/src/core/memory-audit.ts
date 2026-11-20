@@ -35,6 +35,8 @@ export interface MemoryFileInfo {
   loadBytes?: number;
   /** When the file first existed (ms): its first commit, or when it was made if git does not track it. A session that started before it never loaded it at start. */
   since?: number;
+  /** Keys of the files on disk it pulls in with `@path` imports (Claude Code memory files): a session that loads it loads them too. */
+  imports?: string[];
 }
 
 /** The events of one session that the audit reads. */
@@ -139,6 +141,23 @@ export function skillListingBytes(text: string): number | undefined {
   const desc = typeof fm.description === "string" ? fm.description : "";
   return name || desc ? Buffer.byteLength(`${name}: ${desc}`) : undefined;
 }
+
+/** The `@path` imports in a memory file's text, outside code spans and fences. */
+export function importPaths(text: string): string[] {
+  const t = text.replace(/```[^]*?```/g, "").replace(/`[^`\n]*`/g, "");
+  const out: string[] = [];
+  for (const m of t.matchAll(/(?:^|\s)@((?:~[\\/]|[\\/]|[A-Za-z]:[\\/]|\.{1,2}[\\/])?[\w.-][\w.~\\/-]*)/g)) {
+    const p = m[1]!.replace(/[.,:;]+$/, "");
+    if (p) out.push(p);
+  }
+  return out;
+}
+
+/** Claude Code memory files whose `@path` imports it loads: every CLAUDE.md and CLAUDE.local.md, and its rules. */
+export const IMPORTING = /(?:^|\/)CLAUDE(?:\.local)?\.md$|(?:^|\/)\.claude\/rules\/.+\.md$/;
+
+/** Claude Code follows imports this many hops deep. */
+export const IMPORT_HOPS = 5;
 
 /** Claude Code's project directory name for a cwd: every non-alphanumeric character becomes `-`. */
 export const claudeProjectSlug = (cwd: string): string => cwd.replace(/[^a-zA-Z0-9]/g, "-");
@@ -329,8 +348,10 @@ export function auditMemory(sessions: readonly MemorySession[], files: readonly 
     if (!memoryKind(k)) return;
     addSkill(k);
     const t = touch(k, s.rootId ?? s.id);
-    if (what === "loaded") t.loaded = true;
-    else if (what === "read") {
+    if (what === "loaded") {
+      t.loaded = true;
+      if (s.agent === "claude-code") loadImports(k, s, false);
+    } else if (what === "read") {
       t.read = true;
       t.lastRead = Math.max(t.lastRead ?? 0, ts);
     } else {
@@ -346,6 +367,31 @@ export function auditMemory(sessions: readonly MemorySession[], files: readonly 
     if (f.since !== undefined && s.startedAt < f.since) return;
     const t = touch(k, s.rootId ?? s.id);
     if (!t.loaded) t.loaded = t.loadedAtStart = true;
+    if (s.agent === "claude-code") loadImports(k, s, true);
+  };
+  // Claude Code loads what a loaded memory file imports with `@path`, and their imports, up to IMPORT_HOPS deep.
+  const loadImports = (from: string, s: MemorySession, atStart: boolean) => {
+    if (!IMPORTING.test(from)) return;
+    let frontier = [from];
+    const seen = new Set(frontier);
+    for (let hop = 0; hop < IMPORT_HOPS && frontier.length; hop++) {
+      const next: string[] = [];
+      for (const k of frontier) {
+        for (const imp of onDisk.get(k)?.imports ?? []) {
+          if (seen.has(imp)) continue;
+          seen.add(imp);
+          const f = onDisk.get(imp);
+          if (!f || (f.since !== undefined && s.startedAt < f.since)) continue;
+          const t = touch(imp, s.rootId ?? s.id);
+          if (!t.loaded) {
+            t.loaded = true;
+            if (atStart) t.loadedAtStart = true;
+          }
+          next.push(imp);
+        }
+      }
+      frontier = next;
+    }
   };
   const skillsIn = (dirKey: string) => files.filter((f) => f.key.startsWith(`${dirKey}/`) && /^[^/]+\/SKILL\.md$/.test(f.key.slice(dirKey.length + 1))).map((f) => f.key);
 

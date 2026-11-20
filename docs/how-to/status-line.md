@@ -2,7 +2,7 @@
 
 Claude Code can show a status line under the prompt. This recipe puts one there that reads from
 your stored sessions: the model, what this session has cost, what today has cost across all
-sessions, and the worst failure flag coding.sh found in the session so far.
+sessions (subagents included, the same spend `coding.sh budget status` counts), and the worst failure flag coding.sh found in the session so far.
 
 You need: coding.sh capturing your Claude Code sessions (`coding.sh init`), and coding.sh on your
 `PATH` (a global install, `npm i -g coding.sh`).

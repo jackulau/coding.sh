@@ -183,8 +183,15 @@ export async function run(c: CommandContext): Promise<number> {
       return 0;
     }
     let value = getPath(config, key);
-    if (value === undefined && ((FILE_KEYS as readonly string[]).includes(key) || isGatewayKey(key))) {
+    // A section the loaded Config does not carry ([refine], [serve], [proxy]): the file's table, as the full listing shows it.
+    const fileSection = FILE_KEYS.some((k) => k.startsWith(`${key}.`));
+    if (value === undefined && ((FILE_KEYS as readonly string[]).includes(key) || isGatewayKey(key) || fileSection)) {
       value = getPath(readUserConfigTable(env).table, key);
+      if (fileSection && value && typeof value === "object" && !Array.isArray(value)) {
+        const v = value as Record<string, unknown>;
+        const known = Object.keys(v).filter((k) => FILE_KEYS.some((f) => f === `${key}.${k}` || f.startsWith(`${key}.${k}.`)));
+        value = known.length ? Object.fromEntries(known.map((k) => [k, v[k]])) : undefined;
+      }
       if (value === undefined) {
         if (out.json) out.data({ key, value: null });
         else out.print(`${key} is not set`);

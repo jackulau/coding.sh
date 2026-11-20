@@ -234,7 +234,7 @@ export class Output {
   /** Next step: benefit, colon, then the command on its own line. */
   next(benefit: string, command: string): void {
     this.err("");
-    this.err(`  ${benefit}:`);
+    this.err(`  ${benefit.replace(/:+$/, "")}:`);
     this.err(`    ${this.style(command, "cyan", "err")}`);
   }
 
@@ -389,7 +389,7 @@ export function ago(ts: number | undefined, opts: { now?: number } = {}): string
   if (ts === undefined || !Number.isFinite(ts)) return "-";
   const now = opts.now ?? Date.now();
   const d = now - ts;
-  if (d < 1e3) return "just now"; // includes small clock skew (a timestamp slightly in the future)
+  if (d < 1e3) return "0s ago"; // includes small clock skew (a timestamp slightly in the future)
   if (d < 60e3) return `${Math.floor(d / 1e3)}s ago`;
   if (d < 3600e3) return `${Math.floor(d / 60e3)}m ago`;
   if (d < 86400e3) return `${Math.floor(d / 3600e3)}h ago`;
