@@ -1,7 +1,8 @@
 name: Site
 
-# Deploys apps/site to Cloudflare Workers (static assets) as `coding-sh-site`,
-# which serves coding.sh and www.coding.sh. Runs only on trusted events, on a
+# Deploys apps/site to Vercel (project coding-sh, team jack-github12s-projects),
+# which serves coding.sh and www.coding.sh. scripts/vercel-config.mjs writes
+# dist/vercel.json from worker/moved.ts and public/_headers. Runs only on trusted events, on a
 # self-hosted desk runner (either one, so a deploy never waits behind Site
 # perf), so deploys use no GitHub-hosted minutes.
 
@@ -77,26 +78,33 @@ jobs:
         working-directory: apps/site
         run: npm run perf:budget
 
+      - name: Vercel config
+        working-directory: apps/site
+        run: node --no-warnings scripts/vercel-config.mjs
+
       - name: Deploy credentials
         id: creds
         env:
-          HAS_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+          HAS_TOKEN: ${{ secrets.VERCEL_TOKEN != '' }}
         run: |
           if [ "$HAS_TOKEN" = "true" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"
           else
             # A green run with no deploy reads as "the site is live". Say it is not, on the run page and in the log.
-            echo "::warning title=Site not deployed::CLOUDFLARE_API_TOKEN is not set; built and checked, deploy skipped (run: gh secret set CLOUDFLARE_API_TOKEN)"
+            echo "::warning title=Site not deployed::VERCEL_TOKEN is not set; built and checked, deploy skipped (run: gh secret set VERCEL_TOKEN)"
             echo "### Site not deployed" >> "$GITHUB_STEP_SUMMARY"
-            echo "The build and checks passed, but \`CLOUDFLARE_API_TOKEN\` is not set, so https://coding.sh still serves the previous deploy." >> "$GITHUB_STEP_SUMMARY"
+            echo "The build and checks passed, but \`VERCEL_TOKEN\` is not set, so https://coding.sh still serves the previous deploy." >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      # dist is uploaded as built: Vercel runs no build. The two IDs name the
+      # project, so the run needs no `vercel link`.
       - name: Deploy
         if: steps.creds.outputs.ok == 'true'
         working-directory: apps/site
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx wrangler@4 deploy
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: team_8fC53H833QIj4TRacHGNrTsQ
+          VERCEL_PROJECT_ID: prj_hYh07lIzxy9qY7336K1XjFBsIlKW
+        run: npx --yes vercel@66 deploy --cwd dist --prod --yes --token "$VERCEL_TOKEN"
 
       - name: Smoke test
         if: steps.creds.outputs.ok == 'true'
@@ -105,19 +113,6 @@ jobs:
             code=$(curl -s -o /dev/null -w "%{http_code}" "https://coding.sh$p")
             echo "$p $code"; [ "$code" = 200 ] || exit 1
           done
-
-      # The build ships no analytics script, but Cloudflare's edge adds its Web
-      # Analytics beacon when that is on for the zone. This only warns.
-      - name: Analytics beacon
-        if: steps.creds.outputs.ok == 'true'
-        continue-on-error: true
-        run: |
-          n=$(curl -s -H 'Accept: text/html' https://coding.sh/ | grep -c cloudflareinsights || true)
-          if [ "${n:-0}" != 0 ]; then
-            echo "::warning::The live home page has Cloudflare's analytics beacon (cloudflareinsights). Turn off Web Analytics injection for the zone, or say in docs/perf.md what it collects."
-          else
-            echo "No analytics beacon on the live home page."
-          fi
 
       # Ping IndexNow (Bing, Yandex and others) with every URL in the live sitemap.
       - name: IndexNow

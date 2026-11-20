@@ -201,24 +201,35 @@ installer at `/install` and `/install.sh` (copied from the repo's `install.sh` a
 `llms.txt`, the Markdown twins and `_headers`. It needs Node 22 or newer and reads files outside
 `apps/site` (`install.sh`, `CHANGELOG.md`), so build from the repository root.
 
-### Cloudflare Worker (`coding-sh-site`)
+### Vercel (`coding-sh`)
 
-The site is a Cloudflare Worker with static assets, configured in `apps/site/wrangler.jsonc`. It
-serves `coding.sh` and `www.coding.sh`. `.github/workflows/site.yml` deploys it on every push to
-`main` that touches the site, `docs/`, the CLI reference sources, the schema, the SDK, `install.sh`
-or `CHANGELOG.md`. It runs on the self-hosted desk runner.
+The site is a static deploy on Vercel: project `coding-sh` in the `jack-github12s-projects` team.
+It serves `coding.sh` and `www.coding.sh`; DNS stays on Cloudflare, with DNS-only (grey cloud)
+records pointing at Vercel. The project's domain settings 301 `www.coding.sh` to the apex.
+`.github/workflows/site.yml` deploys it on every push to `main` that
+touches the site, `docs/`, the CLI reference sources, the schema, the SDK, `install.sh` or
+`CHANGELOG.md`. It runs on the self-hosted desk runner.
 
-The workflow deploys only when the `CLOUDFLARE_API_TOKEN` secret is set (and
-`CLOUDFLARE_ACCOUNT_ID` names the account). Without it the run builds and checks the site, then
-writes a "Site not deployed" warning and a summary, and https://coding.sh keeps serving the
-previous deploy. To set it: `gh secret set CLOUDFLARE_API_TOKEN`.
+`apps/site/scripts/vercel-config.mjs` writes `dist/vercel.json` from `worker/moved.ts` and
+`public/_headers`: the moved-page redirects, www to the apex, the headers, and the noindex rules
+the worker set. Vercel runs no build; the workflow uploads `dist` as it is.
 
-Or deploy from your machine, with your own Cloudflare login:
+The workflow deploys only when the `VERCEL_TOKEN` secret is set. Without it the run builds and
+checks the site, then writes a "Site not deployed" warning and a summary, and https://coding.sh
+keeps serving the previous deploy. To set it: `gh secret set VERCEL_TOKEN`.
+
+Or deploy from your machine, with your own Vercel login:
 
 ```sh
 npm ci && npm run build -w @coding.sh/site
-cd apps/site && npx wrangler@4 deploy
+cd apps/site && node --no-warnings scripts/vercel-config.mjs
+VERCEL_ORG_ID=team_8fC53H833QIj4TRacHGNrTsQ VERCEL_PROJECT_ID=prj_hYh07lIzxy9qY7336K1XjFBsIlKW \
+  npx vercel@66 deploy --cwd dist --prod
 ```
+
+The Cloudflare Worker `coding-sh-site` (`apps/site/wrangler.jsonc`) still builds from the same
+`dist` but holds no custom domain; `npx wrangler@4 deploy` updates only its workers.dev URL. The
+comment in `wrangler.jsonc` says how to move the domains back.
 
 `public/_headers` sets immutable caching for `/_astro/*`, UTF-8 text for `/install`, `/install.sh`,
 `*.txt` and `*.md`, and `application/xml` for `/changelog.xml`, which the edge compresses (it does

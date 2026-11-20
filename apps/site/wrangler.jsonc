@@ -1,9 +1,10 @@
-// coding.sh site: static Astro build served by Cloudflare Workers static assets.
-// Deploy: `npx wrangler deploy` from apps/site after `npm run build`
-// (CI does this on the self-hosted runner: .github/workflows/site.yml).
-// The coding.sh / www.coding.sh custom domains are attached to this worker.
-// Rollback: `npx wrangler rollback` (previous version) — or reattach the domains
-// to the old `coding-sh-placeholder` worker.
+// The Cloudflare fallback for the site. coding.sh is served by Vercel
+// (scripts/vercel-config.mjs, .github/workflows/site.yml). This worker holds no
+// custom domain, so `npx wrangler deploy` from apps/site after `npm run build`
+// updates only its workers.dev URL. To serve coding.sh from it again: remove the
+// domains from the Vercel project, delete the Vercel DNS records, and add
+//   "routes": [{ "pattern": "coding.sh", "custom_domain": true },
+//              { "pattern": "www.coding.sh", "custom_domain": true }]
 //
 // worker/index.ts runs first on every request: www and http 301 to
 // https://coding.sh, /sitemap.xml points at the sitemap index, a moved page 301s
@@ -23,10 +24,6 @@
     // "never" in astro.config.mjs). /docs/quickstart/ redirects to it.
     "html_handling": "drop-trailing-slash"
   },
-  "routes": [
-    { "pattern": "coding.sh", "custom_domain": true },
-    { "pattern": "www.coding.sh", "custom_domain": true }
-  ],
   "workers_dev": true,
   "preview_urls": true
 }
