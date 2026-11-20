@@ -431,6 +431,9 @@ Before a migration changes a store that holds data, coding.sh copies the index t
   are ingested again from the spool.
 - **After a restore** the build that migrated the store does not migrate it again by itself, and
   `bin/cli-path` points back at the install the upgrade took the hooks from.
+- **In `--json`,** `upgrade-store` reports `"status": "migrated"` when it changed the schema,
+  `"owned"` when it only made this install the store's owner (`from` equals `to`, no `backup`),
+  and `"current"` when there was nothing to do.
 :::
 
 ## Still stuck
