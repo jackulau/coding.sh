@@ -95,23 +95,42 @@ export function compare(cur, prev) {
   return { headline: { prev: prev.headline, cur: cur.headline }, components: out };
 }
 
+/**
+ * The test files that scripts/test-ci.mjs says failed in the full run and passed when run alone,
+ * from its output, each once.
+ */
+export function passedAlone(output) {
+  const files = new Set();
+  for (const line of output.split("\n")) {
+    const m = /::warning title=Passed when run alone::(\S+)/.exec(line);
+    if (m) files.add(m[1]);
+  }
+  return [...files];
+}
+
 async function gate(name, cmd, args, opts = {}) {
   const r = await shAsync(cmd, args, { timeoutMs: 900_000, ...opts });
+  const out = r.stdout + r.stderr;
   log(`gate ${name}: ${r.code === 0 ? "pass" : `FAIL (exit ${r.code})`} ${Math.round(r.ms / 1000)} s`);
   // Name what failed: the test runner marks each failing test with ✖.
-  if (r.code !== 0) for (const l of [...new Set((r.stdout + r.stderr).split("\n").filter((x) => /^\s*✖/.test(x)).map((x) => x.trim()))].slice(0, 10)) log(`  ${l}`);
-  return { ok: r.code === 0, ms: Math.round(r.ms), tail: r.code === 0 ? undefined : (r.stdout + r.stderr).slice(-1500) };
+  if (r.code !== 0) for (const l of [...new Set(out.split("\n").filter((x) => /^\s*✖/.test(x)).map((x) => x.trim()))].slice(0, 10)) log(`  ${l}`);
+  const alone = passedAlone(out);
+  for (const f of alone) log(`  ${f} failed in the full run and passed alone`);
+  const result = { ok: r.code === 0, ms: Math.round(r.ms), tail: r.code === 0 ? undefined : out.slice(-1500) };
+  if (alone.length) result.passedAlone = alone;
+  return result;
 }
 
 /**
  * Env for the tests gate: HOME, USERPROFILE and the agent homes under `tmp`, no background ingest.
  * LOCALAPPDATA sits inside the moved profile, as in scripts/gate.mjs: on Windows, Chrome refuses
  * --remote-debugging-port when it does not, and every browser test hangs until the gate times out.
+ * SHARD, TEST_SELECT and TEST_DURATIONS_OUT are dropped, so test-ci.mjs runs every test file.
  */
 export function gateTestEnv(env, tmp) {
   const home = join(tmp, "home");
   const out = { ...env };
-  for (const k of ["CODING_SH_STORE_URL", "CODING_SH_BLOB_URL", "CODING_SH_DEV_REAL_STORE"]) delete out[k];
+  for (const k of ["CODING_SH_STORE_URL", "CODING_SH_BLOB_URL", "CODING_SH_DEV_REAL_STORE", "SHARD", "TEST_SELECT", "TEST_DURATIONS_OUT"]) delete out[k];
   return {
     ...out,
     HOME: home,
@@ -125,6 +144,16 @@ export function gateTestEnv(env, tmp) {
   };
 }
 
+/**
+ * The tests gate: every test file under `cwd`, run as CI and `npm run gate` run them. When five or
+ * fewer files fail, each is run again alone, and one that passes then does not fail the gate:
+ * timing tests assume an idle machine, and the scorer's machine is busy. The result names such
+ * files in `passedAlone`.
+ */
+export function testsGate(env, cwd = PKG) {
+  return gate("tests", process.execPath, ["--no-warnings", join(PKG, "scripts", "test-ci.mjs")], { cwd, env });
+}
+
 async function runGates() {
   const tmp = tempDir("cs-gates-");
   try {
@@ -134,7 +163,7 @@ async function runGates() {
     mkdirSync(testEnv.LOCALAPPDATA, { recursive: true });
     const g = {};
     g.typecheck = await gate("typecheck", "npm", ["run", "typecheck", "-w", "coding.sh"], { cwd: REPO });
-    g.tests = await gate("tests", process.execPath, ["--no-warnings", "--test", "test/**/*.test.ts"], { cwd: PKG, env: testEnv });
+    g.tests = await testsGate(testEnv);
     g.build = await gate("build", "npm", ["run", "build", "-w", "coding.sh"], { cwd: REPO });
     g.siteBuild = await gate("siteBuild", "npm", ["run", "build", "-w", "@coding.sh/site"], { cwd: REPO });
     return g;
@@ -195,6 +224,7 @@ export async function score(opts = {}) {
   } else {
     gateDetail = await runGates();
     gates = Object.fromEntries(Object.entries(gateDetail).map(([k, v]) => [k, v.ok]));
+    for (const [k, v] of Object.entries(gateDetail)) if (v.passedAlone) notes.push(`gate ${k}: failed in the full run and passed alone, so it passes: ${v.passedAlone.join(", ")}`);
   }
   const built = gates.build !== false;
 

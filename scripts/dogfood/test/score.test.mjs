@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { agentVersions, compare, gateTestEnv, headline, normalized, WEIGHTS } from "../score.mjs";
+import { agentVersions, compare, gateTestEnv, headline, normalized, passedAlone, testsGate, WEIGHTS } from "../score.mjs";
 import { meets } from "../bench.mjs";
 import { parseTapSummary } from "../conformance.mjs";
 import { bootstrapMedianDiff, nearestRank, quantile, wilson } from "../lib/util.mjs";
@@ -104,4 +106,31 @@ test("the tests gate isolates USERPROFILE and the agent homes, not only HOME", (
   assert.equal(env.CODING_SH_NO_AUTO_INGEST, "1");
   assert.equal(env.CODING_SH_DEV_REAL_STORE, undefined);
   assert.equal(env.CODING_SH_STORE_URL, undefined);
+  // test-ci.mjs would run one shard, or only the files a diff reaches.
+  const ci = gateTestEnv({ SHARD: "1/6", TEST_SELECT: "origin/main", TEST_DURATIONS_OUT: "/d.json" }, "/t");
+  for (const k of ["SHARD", "TEST_SELECT", "TEST_DURATIONS_OUT"]) assert.equal(ci[k], undefined, k);
+});
+
+test("the tests gate passes a test file that fails in the full run and passes alone, and names it", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "score-tests-gate-"));
+  try {
+    mkdirSync(join(dir, "test"));
+    // Fails the first time it runs, as a timing test can on a busy machine.
+    writeFileSync(join(dir, "test", "a.test.ts"), `import { it } from "node:test"; import { existsSync, writeFileSync } from "node:fs";
+it("fails the first time only", () => { if (!existsSync(process.env.FLAKE_FLAG)) { writeFileSync(process.env.FLAKE_FLAG, "1"); throw new Error("under load"); } });\n`);
+    writeFileSync(join(dir, "test", "b.test.ts"), `import { it } from "node:test"; it("passes", () => {});\n`);
+    const env = { ...gateTestEnv(process.env, dir), FLAKE_FLAG: join(dir, "flag") };
+    delete env.NODE_TEST_CONTEXT; // else the runs inside report to this test run
+    const g = await testsGate(env, dir);
+    assert.equal(g.ok, true, g.tail);
+    assert.deepEqual(g.passedAlone, [join("test", "a.test.ts")]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("passedAlone reads test-ci.mjs's warning once per file, and nothing from a plain failure", () => {
+  const warn = "::warning title=Passed when run alone::test/cli/usage.test.ts failed in the full run and passed alone (a timing test under load?)";
+  assert.deepEqual(passedAlone(`Rerunning test/cli/usage.test.ts alone\n${warn}\n${warn}\n`), ["test/cli/usage.test.ts"]);
+  assert.deepEqual(passedAlone("✖ over 100,000 events it answers in under 2 s (17231.74ms)\n✖ failing tests:\n"), []);
 });

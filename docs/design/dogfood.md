@@ -314,6 +314,9 @@ In `quick` mode, components that were not run keep their last `full` value and a
 `agents` holds the version each agent CLI prints for `--version`. To keep the scorer from starting
 a CLI, list its agent id in `CODING_SH_DOGFOOD_SKIP_AGENTS` (for example `codex`); its version is
 then `null`. The tests gate runs with `HOME`, `USERPROFILE` and the agent homes in a temp dir.
+It runs the tests as CI does, with `packages/coding.sh/scripts/test-ci.mjs`: when five or fewer test
+files fail, each is run again alone. A file that passes then does not fail the gate, and `notes`
+names it.
 
 `capture.health` copies the index from `CODING_SH_LIVE_HOME` (default `~/.coding.sh`) and scores the
 sessions whose folder is this checkout or under it. When the scorer runs in a worktree but the
