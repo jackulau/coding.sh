@@ -1325,6 +1325,10 @@ A session counts in the bucket it started in. With `scope=top`, a subagent count
 session's bucket and group; one whose top-level session is not in the range, or does not match
 `where`, counts as a session of its own. Cost, token and call totals then equal `scope=all`.
 
+Each subagent's p95 model-call time and median time to first token count in `llmP95Ms` and `ttftP50Ms`
+as one more session's, so a top-level session whose model calls all ran in subagents still has
+latency.
+
 | Field | Meaning |
 |---|---|
 | `failures` | Sessions with a flag that has no colon |

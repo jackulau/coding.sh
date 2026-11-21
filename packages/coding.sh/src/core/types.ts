@@ -289,6 +289,13 @@ export interface MetricRow {
   llmErrors?: number;
   llmP95Ms?: number;
   ttftP50Ms?: number;
+  /**
+   * Set by rollUpSubagents (src/viewer/metrics.ts): the p95 model-call latency and the
+   * median TTFT of each subagent rolled into this row, so latency totals rank them as
+   * the per-session view does. Absent when no rolled-in subagent has one.
+   */
+  subagentLlmP95Ms?: number[];
+  subagentTtftP50Ms?: number[];
 }
 
 /** The queryable index. Default: SQLite. Must be idempotent on ids. */

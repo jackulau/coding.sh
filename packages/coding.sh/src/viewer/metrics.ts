@@ -55,7 +55,8 @@ export interface MetricsSpec {
   /**
    * project, top-level only (parentSessionId: null), …; since/until come from the spec.
    * Top-level only counts top-level sessions, and adds each subagent's cost, tokens,
-   * tool calls and model calls to the top-level session it ran under (rollUpSubagents).
+   * tool calls and model calls to the top-level session it ran under, and ranks its
+   * model-call latency with the top session's (rollUpSubagents).
    */
   filter?: Omit<SessionFilter, "limit" | "offset" | "since" | "until">;
   maxGroups?: number;
@@ -82,7 +83,7 @@ export interface MetricTotals {
   toolErrorRate?: number;
   llmCalls: number;
   llmErrors: number;
-  /** 95th percentile of the sessions' own p95 model-call latency. */
+  /** 95th percentile of the sessions' own p95 model-call latency (a rolled-up subagent's p95 counts as one more). */
   llmP95Ms?: number;
   /** Median of the sessions' own median time to first token. */
   ttftP50Ms?: number;
@@ -212,7 +213,8 @@ function addTo(a: MetricRow, b: MetricRow, k: "inputTokens" | "outputTokens" | "
  * Top-level sessions with their subagents' spend. Each subagent's cost, tokens, tool
  * calls and model calls are added to the session at the top of its parent chain, so a
  * total counts every dollar once and `sessions` counts top-level sessions. The top
- * session keeps its own start (bucket), agent, model, repo, flags and latency. A
+ * session keeps its own start (bucket), agent, model, repo and flags; its subagents'
+ * latency joins its own as separate samples (subagentLlmP95Ms, subagentTtftP50Ms). A
  * subagent whose parent is not among the rows (it started before the range, or does not
  * match the query) stays a row of its own.
  */
@@ -240,6 +242,9 @@ export function rollUpSubagents(rows: readonly MetricRow[]): MetricRow[] {
     for (const k of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "costUsd", "estimatedCostUsd", "llmCalls", "llmErrors"] as const) addTo(acc, r, k);
     acc.toolCalls += r.toolCalls;
     acc.toolErrors += r.toolErrors;
+    // Latency does not add up: each subagent's p95 and TTFT stay samples of their own.
+    if (r.llmP95Ms !== undefined) (acc.subagentLlmP95Ms ??= []).push(r.llmP95Ms);
+    if (r.ttftP50Ms !== undefined) (acc.subagentTtftP50Ms ??= []).push(r.ttftP50Ms);
   }
   return [...out.values()];
 }
@@ -286,6 +291,8 @@ export function totalsOf(rows: readonly MetricRow[]): MetricTotals {
     t.llmErrors += r.llmErrors ?? 0;
     if (r.llmP95Ms !== undefined) p95.push(r.llmP95Ms);
     if (r.ttftP50Ms !== undefined) ttft.push(r.ttftP50Ms);
+    if (r.subagentLlmP95Ms) p95.push(...r.subagentLlmP95Ms);
+    if (r.subagentTtftP50Ms) ttft.push(...r.subagentTtftP50Ms);
   }
   t.tokens = t.inputTokens + t.outputTokens + t.cacheReadTokens + t.cacheWriteTokens;
   t.costUsd = round(t.costUsd);
