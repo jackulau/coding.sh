@@ -4,12 +4,17 @@
 // npm and uname are stubs on PATH; nothing touches the network or installs.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
-import { describe, test } from "node:test";
+import { after, describe, test } from "node:test";
 
 const INSTALL_SH = resolve(import.meta.dirname, "../../../../install.sh");
+
+const roots: string[] = [];
+after(() => {
+  for (const dir of roots.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 function script(path: string, body: string) {
   writeFileSync(path, `#!/bin/sh\n${body}\n`);
@@ -25,6 +30,7 @@ function script(path: string, body: string) {
  */
 function install(opts: { windows?: boolean; stale?: boolean; onPath?: boolean; env?: Record<string, string> }) {
   const root = mkdtempSync(join(tmpdir(), "csh-path-"));
+  roots.push(root);
   const prefix = join(root, "prefix");
   const bin = opts.windows ? prefix : join(prefix, "bin");
   const stale = join(root, "stale");

@@ -27,6 +27,16 @@ it("a launched process keeps this file's temp folder", () => {
   assert.equal(r.stdout.trim(), tmpdir());
   assert.ok(existsSync(tmpdir()), "the launched process did not remove the folder");
 });`;
+// Launches a process that turns on Node's compile cache, as npm and tsc do.
+const CACHES = `import { it } from "node:test"; import assert from "node:assert/strict"; import { spawnSync } from "node:child_process"; import { existsSync } from "node:fs"; import { tmpdir } from "node:os"; import { join } from "node:path";
+it("a launched process writes Node's compile cache in the file's temp folder", () => {
+  const env = { ...process.env };
+  delete env.NODE_COMPILE_CACHE;
+  delete env.NODE_DISABLE_COMPILE_CACHE;
+  const r = spawnSync(process.execPath, ["-e", "require('node:module').enableCompileCache()"], { encoding: "utf8", env });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(existsSync(join(tmpdir(), "node-compile-cache")));
+});`;
 
 /** Run `command` on `files` in a folder of their own, with an empty folder as the machine's temp folder. */
 function run(files: Record<string, string>, command: (names: string[]) => string[], extra: NodeJS.ProcessEnv = {}) {
@@ -96,6 +106,13 @@ describe("scripts/test-temp-root.mjs under scripts/test-ci.mjs", () => {
   it("a process the file launches with the same Node flags keeps the file's folder", () => {
     const r = run({ "launches.test.ts": LAUNCHES }, runner);
     assert.equal(r.code, 0, r.out);
+    assert.deepEqual(r.outerLeft, []);
+  });
+
+  it("does not list Node's compile cache, which npm and tsc write there, and removes it with the folder", () => {
+    const r = run({ "caches.test.ts": CACHES }, runner);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /\nTemp entries left behind by test files: 0\n/);
     assert.deepEqual(r.outerLeft, []);
   });
 });

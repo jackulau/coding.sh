@@ -33,7 +33,10 @@ if (isMainThread && process.env.NODE_TEST_CONTEXT && !process.env.CODING_SH_TEST
     let left = [];
     let error;
     try {
-      left = readdirSync(root);
+      // npm and tsc (TypeScript 5.7 and later) turn on Node's compile cache, which Node keeps in
+      // os.tmpdir()/node-compile-cache. A test does not make it, and outside these folders every
+      // Node program shares it, so it is not listed. It is removed with the rest of the folder.
+      left = readdirSync(root).filter((name) => name !== "node-compile-cache");
     } catch (err) {
       error = String(err?.message ?? err);
     }
