@@ -11,6 +11,7 @@ grouped by area, with links to the docs for the details.
 
 ### Added
 
+- **Capture.** The Claude Code status line shows how full the context window is (`ctx 62%`, `ctx 87% full` from 85%) and the Claude apps gateway spend limit (`spend 63%`). `quota --json` lists a `spend` row with `usedUsd`, `limitUsd` and `period`, and `quota wait --window spend` waits on it. [Agents](https://coding.sh/docs/agents#status-line)
 - **Work.** Each `coding.sh work` item has a stage (planning, executing, review, approval or done), a kind (research or change) and a line of evidence. The header counts items per stage, and `--stage approval` lists every item in that stage, hidden ones too. [Work](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#stages-and-kinds)
 - **Evals.** `coding.sh compare` prints claim rate, claim precision and silent failures per arm: how often the final answer says the work is done, how often the verifier agrees, and how often it claimed success on a failed run. The rows and `claims` in `--json` appear only when some arm claims. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#harness-ab)
 - **Cost.** Plan usage for the 5-hour and weekly windows: the Claude Code status line ends with `5h 62% 7d 41%` when Claude Code sends it, `coding.sh quota` prints each agent's windows with the reset time, `quota wait` blocks until a window has room, and the MCP `status` tool includes the same rows. [CLI reference](https://coding.sh/docs/cli/quota)
@@ -72,6 +73,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Capture.** The status line prints from what arrived when stdin stays open for 1 s, instead of waiting forever. It leaves out `$0.0000 session` for a session it has not stored, and `statusline --json` and `quota --json` round amounts and percents to 4 decimals. [Agents](https://coding.sh/docs/agents#status-line)
 - **CLI.** `init --dry-run` and `doctor` no longer run another tool's `agent` command (Grok's made `~/.grok`). `uninstall` warns and exits 1 when an OpenCode install sits under another `OPENCODE_CONFIG_DIR`. Blame and attribution credit edits made in a removed worktree, and `diff-calls` says "not recorded" instead of "same" without stored requests. [CLI reference](https://coding.sh/docs/cli/uninstall)
 - **Viewer.** The command menu lists a session whose title holds the typed word first, even when newer sessions on a branch named for it fill the results. A t3code subagent's badge reads "subagent", not "subagent · subagent", whole-minute axis ticks read "1m", and a phase chip no longer pushes a step into its duration. [Open the viewer](https://coding.sh/docs/explore#open-the-viewer)
 - **Work.** A second Claude Code permission prompt with the same message, for the next tool call and under 2 s after the first, is kept. Before, it was taken for a copy of the first, and `coding.sh work` showed the session running while it waited on you. [Work](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#waiting-state)

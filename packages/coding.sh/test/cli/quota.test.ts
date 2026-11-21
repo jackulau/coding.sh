@@ -122,6 +122,17 @@ describe("coding.sh quota wait", () => {
     assert.equal(cli(["quota", "wait", "--window", "7d", "--below", "96"], env).status, 0);
   });
 
+  test("--window spend waits on the spend limit; its row shows the amounts", () => {
+    const env = home();
+    claudeQuota(env, [{ window: "5h", usedPercent: 95, resetsAt: Date.now() + 86400e3 }, { window: "spend", usedPercent: 40 }]);
+    const r = cli(["quota", "wait", "--window", "spend", "--json"], env);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout).windows.map((w: { window: string }) => w.window), ["spend"]);
+    mkdirSync(env.CODING_SH_HOME!, { recursive: true });
+    writeFileSync(join(env.CODING_SH_HOME!, "quota.json"), JSON.stringify({ agent: "claude-code", readAt: Date.now(), windows: [{ window: "spend", usedPercent: 63, usedUsd: 31.5, limitUsd: 50, period: "month" }] }));
+    assert.match(cli(["quota"], env).stdout, /claude-code\s+spend\s+63% \(\$31\.50 of \$50\.00\)/);
+  });
+
   test("no reading: exit 1; a bad flag: exit 2", () => {
     const env = home();
     const r = cli(["quota", "wait", "--agent", "codex"], env);

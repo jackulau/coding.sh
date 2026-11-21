@@ -6,9 +6,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
-import { run } from "../../src/cli/commands/statusline.ts";
+import { PassThrough } from "node:stream";
+import { MAX_STATUSLINE_STDIN, readStdin, run, STATUSLINE_STDIN_MS } from "../../src/cli/commands/statusline.ts";
 import { Output } from "../../src/cli/output.ts";
-import { statuslineLine, worstFailureFlag } from "../../src/cli/statusline.ts";
+import { contextPart, statuslineLine, worstFailureFlag } from "../../src/cli/statusline.ts";
 import type { FlagValue } from "../../src/cli/args.ts";
 import type { CommandContext } from "../../src/cli/types.ts";
 
@@ -24,6 +25,38 @@ describe("statuslineLine", () => {
   });
   test("costs still print with no model or session", () => {
     assert.equal(statuslineLine({ sessionCostUsd: 0, todayCostUsd: 0 }), "$0.0000 session  ·  $0.0000 today");
+  });
+  test("no session part for a session the store does not know", () => {
+    assert.equal(statuslineLine({ model: "Opus", todayCostUsd: 1.5 }), "Opus  ·  $1.50 today");
+  });
+  test("context fill after the model: ctx 62%, and full from 85%", () => {
+    assert.equal(statuslineLine({ model: "Opus", contextPercent: 62, sessionCostUsd: 1.5, todayCostUsd: 2 }), "Opus  ·  ctx 62%  ·  $1.50 session  ·  $2.00 today");
+    assert.equal(contextPart(87), "ctx 87% full");
+    assert.equal(contextPart(85), "ctx 85% full");
+    assert.equal(contextPart(84.4), "ctx 84%");
+    assert.equal(contextPart(0), "ctx 0%");
+  });
+});
+
+describe("statusline stdin", () => {
+  test("a stdin that stays open ends the read after the limit, with what arrived", async () => {
+    const stdin = new PassThrough();
+    stdin.write('{"session_id":"x"}');
+    const started = Date.now();
+    const text = await readStdin(new AbortController().signal, stdin, MAX_STATUSLINE_STDIN, 150);
+    assert.equal(text, '{"session_id":"x"}');
+    assert.ok(Date.now() - started >= 140, "it waited for the limit");
+    assert.ok(stdin.destroyed, "no more reads keep the process alive");
+  });
+  test("a stdin that closes is read at once", async () => {
+    const stdin = new PassThrough();
+    stdin.end("{}");
+    const started = Date.now();
+    assert.equal(await readStdin(new AbortController().signal, stdin, MAX_STATUSLINE_STDIN, 10_000), "{}");
+    assert.ok(Date.now() - started < 5_000);
+  });
+  test("the limit fits the status line's time budget", () => {
+    assert.ok(STATUSLINE_STDIN_MS >= 1000 && STATUSLINE_STDIN_MS <= 2000);
   });
 });
 

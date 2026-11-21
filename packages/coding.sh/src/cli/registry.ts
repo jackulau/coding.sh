@@ -282,7 +282,7 @@ export const COMMANDS: CommandSpec[] = [
         summary: "Block until a window resets or its use drops below a threshold",
         flags: [
           { name: "agent", type: "string", value: "<AGENT>", choices: ["claude-code", "codex"], desc: "Only this agent's windows" },
-          { name: "window", type: "string", value: "<WINDOW>", choices: ["5h", "7d"], desc: "Only this window" },
+          { name: "window", type: "string", value: "<WINDOW>", choices: ["5h", "7d", "spend"], desc: "Only this window (spend: Claude Code's spend limit behind a Claude apps gateway)" },
           { name: "below", type: "number", value: "<PERCENT>", desc: "Room is back when use is under this percent", default: "90" },
         ],
         examples: ["coding.sh quota wait", "coding.sh quota wait --agent codex --window 5h --below 80"],
@@ -291,6 +291,7 @@ export const COMMANDS: CommandSpec[] = [
     notes: [
       "With no subcommand it prints one row per agent and window: the percent used, when the window resets and how old the reading is.",
       "Claude Code's reading is the one the coding.sh status line saved from the rate_limits Claude Code sends it (Pro, Max and Ultra plans; install it with coding.sh statusline install). Codex's is the last token_count event in its newest rollout under CODEX_HOME/sessions (only the last 256 KB is read).",
+      "Behind a Claude apps gateway, Claude Code also sends a spend limit: the row's window is spend, its use may pass 100%, and --json adds usedUsd, limitUsd and period when the gateway sent them.",
       "wait reads again at most once a minute and prints what it waits for on stderr. With several windows it waits until each has room. It exits 0 when there is room, 1 when there is no reading, 2 on a usage error and 130 on Ctrl-C.",
     ],
     examples: ["coding.sh quota", "coding.sh quota --json", "coding.sh quota wait --window 5h"],
