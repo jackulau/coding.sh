@@ -1198,9 +1198,14 @@ monitor sends one POST:
 `X-Coding-Sh-Signature: sha256=<hex>`, the HMAC-SHA256 of the body keyed with the secret, as
 [alert](../reference/cli.md#codingsh-alert-add) webhooks do. Redirects are not followed. Each try has 10 s. A 5xx,
 408, 425 or 429 answer or a network error is tried again, up to 3 tries, 1 s and then 2 s apart. At
-most 256 KB of the answer is read. A 2xx answer `{"value": ..., "comment"?: ...}` writes the score;
-any other answer writes none and becomes the monitor's last error, with the status, which `monitor
-list` shows.
+most 256 KB of the answer is read. A 2xx answer `{"value": ..., "comment"?: ...}` writes the score.
+Any other answer (another 4xx, a redirect, no `value`, over 256 KB) writes none, and the monitor
+moves past the session; [`monitor run`](../reference/cli.md#codingsh-monitor-run) sends it again,
+as it does every session in its window that has no score. When the evaluator can't be reached (a
+network error, a try over 10 s, or a 5xx, 408, 425 or 429 on all 3 tries), the session gets no
+score and the monitor's cursor stays before it, so the next pass starts at that session again. A
+pass stops after 2 such sessions in a row. Either failure becomes the monitor's last error, with
+the status, which `monitor list` shows.
 
 ### Review queues
 

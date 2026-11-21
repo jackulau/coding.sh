@@ -26,6 +26,8 @@ export const MONITOR_TIMEOUT_MS = 60_000;
 export const MONITOR_INTERVAL_MS = 60_000;
 /** Sessions one automatic pass of one monitor handles; the rest wait for the next pass. */
 const MAX_PER_PASS = 100;
+/** An --http pass stops after this many sessions in a row the evaluator could not be reached for. */
+const UNREACHABLE_IN_A_ROW = 2;
 /** Sessions are found among those that started up to this long before the window. */
 const LOOKBACK_MS = 7 * DAY;
 const SCAN_LIMIT = 5000;
@@ -72,8 +74,8 @@ export interface MonitorResult {
   failed: number;
   /** The last error of this pass. */
   error?: string;
-  /** Why the pass stopped before the end: the day's spend limit or no judge provider. */
-  stopped?: "budget" | "no-provider";
+  /** Why the pass stopped before the end: the day's spend limit, no judge provider, or an --http evaluator that could not be reached. */
+  stopped?: "budget" | "no-provider" | "unreachable";
 }
 
 export interface RunMonitorsResult {
@@ -171,6 +173,13 @@ class Stop extends Error {
 /** A session-level failure: recorded, no score, the pass goes on. */
 class Failed extends Error {}
 
+/**
+ * The --http evaluator could not be reached for this session: a network error, a try that timed
+ * out, or a 5xx, 408, 425 or 429 on every try. That is not about the session, so the cursor
+ * stays before it and the next pass starts there again.
+ */
+class Unreachable extends Error {}
+
 /** Nothing to score in this session (a judge monitor and no user message). */
 class Nothing extends Error {}
 
@@ -203,8 +212,21 @@ async function runOne(deps: MonitorDeps, def: MonitorDef, state: MonitorState, r
     state.lastError = { message, at: now() };
     return { ...r, error: message, stopped: "no-provider" };
   }
+  // Once a session is held (the pass stopped at it, or the evaluator could not be reached for it),
+  // the cursor moves no further this pass: the sessions after it may still be scored, and the next
+  // pass skips those as already scored.
+  const start = state.cursor;
+  let held: Session | undefined;
+  let unreachable = 0;
   const advance = (s: Session) => {
-    if (state.cursor === undefined || s.endedAt! > state.cursor) state.cursor = s.endedAt!;
+    if (!held && (state.cursor === undefined || s.endedAt! > state.cursor)) state.cursor = s.endedAt!;
+  };
+  const hold = (s: Session) => {
+    if (held) return;
+    held = s;
+    // A session that ended at the same moment and was handled just before may have moved the
+    // cursor to this end already; step back so the next pass finds this one.
+    if (state.cursor !== undefined && state.cursor >= s.endedAt! && (start === undefined || start < s.endedAt!)) state.cursor = Math.max(start ?? 0, s.endedAt! - 1);
   };
   let clean = true;
   for (const s of list) {
@@ -222,6 +244,7 @@ async function runOne(deps: MonitorDeps, def: MonitorDef, state: MonitorState, r
     }
     try {
       const { value, comment } = await scorer.score(s);
+      unreachable = 0;
       const body: Record<string, unknown> = { target: "session", targetId: s.id, name: def.name, value, source: "monitor", judgeVersion: scorer.version };
       if (comment) body.comment = redactor.string(comment).slice(0, 4000);
       const write = () => addScore(deps.index, body, { by: "monitor", source: "monitor", now: now() });
@@ -230,11 +253,26 @@ async function runOne(deps: MonitorDeps, def: MonitorDef, state: MonitorState, r
       state.scored++;
     } catch (e) {
       if (e instanceof Stop) {
+        hold(s);
         r.stopped = e.why;
         r.error = e.message;
         state.lastError = { message: e.message, at: now() };
         return r;
       }
+      if (e instanceof Unreachable) {
+        hold(s);
+        clean = false;
+        r.failed++;
+        const stop = ++unreachable >= UNREACHABLE_IN_A_ROW;
+        r.error = stop ? `${e.message}; stopped after ${UNREACHABLE_IN_A_ROW} sessions in a row` : e.message;
+        state.lastError = { message: r.error, at: now(), sessionId: s.id };
+        if (stop) {
+          r.stopped = "unreachable";
+          return r;
+        }
+        continue;
+      }
+      unreachable = 0;
       if (e instanceof Nothing) r.skipped++;
       else {
         if (!(e instanceof Failed || e instanceof ScoreError)) throw e;
@@ -426,9 +464,10 @@ function httpScorer(deps: MonitorDeps, def: MonitorDef, redactor: Redactor, o: R
       const snippet = redactor.string(text.trim().slice(0, 200));
       if (res.status >= 200 && res.status < 300) return parseAnswer(text, `${s.id}: POST ${shown} → ${res.status}`, redactor);
       failure = `POST ${shown} → ${res.status}${snippet ? `: ${snippet}` : ""}`;
-      if (!(res.status >= 500 || RETRY_STATUS.has(res.status))) break;
+      // Another 4xx or a redirect is about this session: no retry, and the monitor moves past it.
+      if (!(res.status >= 500 || RETRY_STATUS.has(res.status))) throw new Failed(`${s.id}: ${failure}`);
     }
-    throw new Failed(`${s.id}: ${failure}`);
+    throw new Unreachable(`${s.id}: ${failure}`);
   };
   return { score, version: monitorVersion(url) };
 }

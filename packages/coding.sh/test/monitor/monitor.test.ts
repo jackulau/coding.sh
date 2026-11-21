@@ -19,7 +19,7 @@ import type { ChatProvider } from "../../src/judge/providers.ts";
 import { monitorVersion, NO_PROVIDER, parseOutput, runMonitors, sampleKey } from "../../src/monitor/run.ts";
 import { readMonitors } from "../../src/monitor/state.ts";
 import { startMonitorTimer } from "../../src/monitor/timer.ts";
-import { runCmd, sandbox, type Sandbox } from "../cli/_cmd.ts";
+import { mkSession, runCmd, sandbox, type Sandbox } from "../cli/_cmd.ts";
 
 const HOOK = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "spool", "hook.ts");
 const NODE = `"${process.execPath}"`;
@@ -366,7 +366,58 @@ describe("monitor --http", () => {
       const def = readMonitors(paths(sb.env).monitors).monitors[0]!;
       assert.match(def.lastError!.message, re, name);
       assert.equal(def.lastError!.sessionId, `mon-http-${name}`);
+      // An answer is about the session, so the monitor moves past it; an evaluator that is down is not.
+      assert.equal(def.cursor === undefined, name === "down", `${name}: cursor ${def.cursor}`);
     }
+  });
+
+  it("an evaluator that can't be reached stops the pass after 2 sessions, and the next pass starts at the first of them", async () => {
+    const sb = box();
+    const now = Date.now();
+    const sessions = [mkSession("out-1", now - 30_000), mkSession("out-2", now - 20_000), mkSession("out-3", now - 10_000)];
+    await sb.seed(sessions);
+    const drop = (res: ServerResponse) => res.socket?.destroy();
+    // out-1 gets a 500 on each of its 3 tries, out-2 a dropped connection; after that the evaluator is back.
+    const ev = await evaluator([answer(500, "down"), answer(500, "down"), answer(500, "down"), drop, drop, drop, answer(200, '{"value":1}')]);
+    await addHttp(sb, "out", ev.url);
+    const ctx = await openContext({ env: sb.env, cwd: sb.root });
+    try {
+      const first = (await runMonitors(ctx, { force: true })).monitors[0]!;
+      assert.deepEqual([first.scored, first.failed, first.stopped], [0, 2, "unreachable"]);
+      assert.deepEqual(ev.posts.map((p) => JSON.parse(p.body).session.session.id), ["out-1", "out-1", "out-1", "out-2", "out-2", "out-2"], "out-3 is not tried");
+      let def = readMonitors(paths(sb.env).monitors).monitors[0]!;
+      assert.equal(def.cursor, undefined, "the cursor stays before out-1");
+      assert.equal(def.lastError!.sessionId, "out-2");
+      assert.match(def.lastError!.message, /out-2: POST http:\/\/127\.0\.0\.1:\d+\/score failed: .*; stopped after 2 sessions in a row/);
+
+      const second = (await runMonitors(ctx, { force: true })).monitors[0]!;
+      assert.deepEqual([second.scored, second.failed, second.stopped], [3, 0, undefined]);
+      def = readMonitors(paths(sb.env).monitors).monitors[0]!;
+      assert.equal(def.cursor, sessions[2]!.endedAt);
+      assert.equal(def.lastError, undefined, "a clean pass clears the error");
+    } finally {
+      await ctx.close();
+    }
+    assert.deepEqual((await monitorScores(sb)).map((s) => s.targetId).sort(), ["out-1", "out-2", "out-3"]);
+  });
+
+  it("a session held for the next pass is found again when one that ended at the same moment was scored before it", async () => {
+    const sb = box();
+    const at = Date.now() - 10_000;
+    await sb.seed([mkSession("tie-a", at), mkSession("tie-b", at)]);
+    const ev = await evaluator([answer(200, '{"value":1}'), answer(503, "busy"), answer(503, "busy"), answer(503, "busy"), answer(200, '{"value":2}')]);
+    await addHttp(sb, "tie", ev.url);
+    const ctx = await openContext({ env: sb.env, cwd: sb.root });
+    try {
+      const first = (await runMonitors(ctx, { force: true })).monitors[0]!;
+      assert.deepEqual([first.scored, first.failed], [1, 1]);
+      assert.ok(readMonitors(paths(sb.env).monitors).monitors[0]!.cursor! < at + 1000, "the cursor is before the end both sessions share");
+      const second = (await runMonitors(ctx, { force: true })).monitors[0]!;
+      assert.deepEqual([second.scored, second.skipped], [1, 1]);
+    } finally {
+      await ctx.close();
+    }
+    assert.deepEqual((await monitorScores(sb)).map((s) => [s.targetId, s.value]).sort(), [["tie-a", 1], ["tie-b", 2]]);
   });
 
   it("add takes exactly one of --judge, --run or --http, and an http(s) URL without credentials", async () => {
