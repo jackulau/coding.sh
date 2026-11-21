@@ -128,7 +128,8 @@ export const aiderAdapter: Adapter = {
   // 2 (0.1.2): prompt and model from aider's argv. 3: live usage (llm.usage lines from the wrapper).
   // 4: a reply's cost from its tokens when the model has a price (Aider's figure counts cache twice).
   // 5: stdout usage: inputTokens is "sent" less the cache reads and twice the cache writes.
-  parseVersion: 5,
+  // 6 (0.1.8): an output chunk's test.result comes from the shared parser, as for the wrapper.
+  parseVersion: 6,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["aider"]);
     const r: DetectResult = { installed: !!binary, hooked: false, notes: ["Aider has no hooks. Capture with `coding.sh run -- aider …`."] };

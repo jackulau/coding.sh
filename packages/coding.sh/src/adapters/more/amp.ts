@@ -234,6 +234,8 @@ export const ampAdapter: Adapter = {
   id: ID,
   displayName: "Amp",
   tier: "A",
+  // 2 (0.1.8): test.result comes from the shared parser: pytest -q's bare summary line counts, the node runner is "node:test", and skipped is absent when 0.
+  parseVersion: 2,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["amp"]);
     const dir = ampConfigDir();

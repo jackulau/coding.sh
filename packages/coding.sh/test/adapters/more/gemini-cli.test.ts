@@ -19,7 +19,7 @@ describe("gemini-cli normalize", () => {
     for (const k of ["session.start", "user.message", "tool.start", "tool.end", "file.change", "test.result", "llm.call", "assistant.message", "turn.end", "context.compact", "notification", "session.end"]) assert.ok(kinds.has(k as never), `missing ${k}`);
     assert.deepEqual(events.find((e) => e.kind === "file.change")!.payload, { path: "src/math.ts", op: "modify", tool: "replace" });
     const tr = events.find((e) => e.kind === "test.result")!;
-    assert.equal(tr.payload.runner, "node");
+    assert.equal(tr.payload.runner, "node:test");
     assert.equal(tr.payload.passed, 4);
     const failed = events.filter((e) => e.kind === "tool.end" && e.payload.ok === false);
     assert.equal(failed.length, 1);

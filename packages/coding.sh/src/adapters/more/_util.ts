@@ -1,11 +1,11 @@
 // Private helpers for the "more" adapters (Gemini CLI, Copilot CLI, Amp, Pi,
-// Droid, Goose, Aider, wrapper). Kept local so these adapters don't depend on
-// src/adapters/_shared, which another module owns and builds in parallel.
+// Droid, Goose, Aider, wrapper).
 //
 // Four groups:
 //   - config files: JSON(C) read, planned writes with backups, Claude-shaped hook merging
 //   - normalization: event builder with deterministic ids, payload clipping into blobs,
-//     usage/test/file-change heuristics shared across agents
+//     usage and file-change heuristics shared across agents (test summaries come from
+//     _shared/heuristics.ts, the parser every adapter uses)
 //   - processes: binary lookup, version probe, headless spawn with a group-kill timeout
 //   - transcripts: JSONL readers, directory walks, read-only SQLite copies
 import { spawn, execFile } from "../../core/spawn.ts";
@@ -26,6 +26,7 @@ import { exactUninstall, existedBeforeInstall, forgetInstall, recordInstall, res
 import { resolveWriteTarget } from "../_shared/files.ts";
 import { buildHookCommand, hookPathForCommand } from "../_shared/hooks.ts";
 import { skillFieldsOf } from "../_shared/tools.ts";
+import { parseTestOutput, type TestSummary } from "../_shared/heuristics.ts";
 import { makeSqliteCopyDir, onSqliteCopyRelease, reapSqliteCopies, releaseSqliteCopyDir } from "../_shared/sqlite-copies.ts";
 import { editJsonc, parseJsonc as parseJsoncShared } from "../_shared/jsonc.ts";
 import { isolatedHome } from "../_shared/overlay.ts";
@@ -523,81 +524,15 @@ export function addUsage(a: Usage | undefined, b: Usage | undefined): Usage | un
   return out;
 }
 
-export interface TestSummary {
-  runner?: string;
-  passed: number;
-  failed: number;
-  skipped?: number;
-}
-
 /**
- * Pass/fail counts from common test-runner summaries. Returns the LAST summary
- * found (watch modes and retries print several). Undefined when nothing matched.
+ * Test summary for a finished shell tool call, only when the command runs tests
+ * or checks. The command vouches for the output, so mocha and go summaries count
+ * after a check command too (`npm run check`, `make verify`).
  */
-export function parseTestSummary(text: string | undefined): TestSummary | undefined {
-  if (!text) return undefined;
-  const t = text.replace(/\x1b\[[0-9;]*m/g, "");
-  let m: RegExpExecArray | null;
-  const last = (re: RegExp): RegExpExecArray | null => {
-    let found: RegExpExecArray | null = null;
-    const g = new RegExp(re.source, re.flags.includes("g") ? re.flags : `${re.flags}g`);
-    while ((m = g.exec(t))) found = m;
-    return found;
-  };
-  const n = (s: string | undefined) => (s ? Number(s) : 0);
-  // cargo: test result: ok. 5 passed; 1 failed; 2 ignored
-  if ((m = last(/test result: \w+\. (\d+) passed; (\d+) failed; (\d+) ignored/))) return { runner: "cargo", passed: n(m[1]), failed: n(m[2]), skipped: n(m[3]) };
-  // jest: Tests:       1 failed, 2 skipped, 5 passed, 8 total
-  if ((m = last(/^Tests:\s+(.*\d+ total)$/m))) {
-    const s = m[1]!;
-    return { runner: "jest", passed: n(/(\d+) passed/.exec(s)?.[1]), failed: n(/(\d+) failed/.exec(s)?.[1]), skipped: n(/(\d+) (?:skipped|pending|todo)/.exec(s)?.[1]) };
-  }
-  // vitest:      Tests  2 failed | 10 passed | 1 skipped (13)
-  if ((m = last(/^\s*Tests\s+((?:\d+ \w+(?: \| )?)+)\s*\(\d+\)/m))) {
-    const s = m[1]!;
-    return { runner: "vitest", passed: n(/(\d+) passed/.exec(s)?.[1]), failed: n(/(\d+) failed/.exec(s)?.[1]), skipped: n(/(\d+) (?:skipped|todo)/.exec(s)?.[1]) };
-  }
-  // node:test / tap: "# pass 5" "# fail 1" ("ℹ pass 5" in spec reporter)
-  const np = last(/^(?:#|ℹ) pass (\d+)$/m);
-  const nf = last(/^(?:#|ℹ) fail (\d+)$/m);
-  if (np || nf) {
-    const ns = last(/^(?:#|ℹ) skipped (\d+)$/m);
-    const r: TestSummary = { runner: "node", passed: n(np?.[1]), failed: n(nf?.[1]) };
-    if (ns) r.skipped = n(ns[1]);
-    return r;
-  }
-  // pytest: ==== 3 failed, 10 passed, 1 skipped in 0.52s ====
-  if ((m = last(/^=+ (.*?(?:passed|failed|error|errors).*?) in [\d.]+s(?: \([^)]*\))? =+$/m))) {
-    const s = m[1]!;
-    return {
-      runner: "pytest",
-      passed: n(/(\d+) passed/.exec(s)?.[1]),
-      failed: n(/(\d+) failed/.exec(s)?.[1]) + n(/(\d+) errors?/.exec(s)?.[1]),
-      skipped: n(/(\d+) skipped/.exec(s)?.[1]),
-    };
-  }
-  // mocha: "  5 passing (20ms)" "  1 failing"
-  const mp = last(/^\s+(\d+) passing\b/m);
-  if (mp) {
-    const r: TestSummary = { runner: "mocha", passed: n(mp[1]), failed: n(last(/^\s+(\d+) failing\b/m)?.[1]) };
-    const pend = last(/^\s+(\d+) pending\b/m);
-    if (pend) r.skipped = n(pend[1]);
-    return r;
-  }
-  // go test: count "--- PASS" / "--- FAIL" lines, or package-level ok/FAIL lines
-  const goPass = t.match(/^\s*--- PASS:/gm)?.length ?? 0;
-  const goFail = t.match(/^\s*--- FAIL:/gm)?.length ?? 0;
-  if (goPass || goFail) return { runner: "go", passed: goPass, failed: goFail };
-  const pkgOk = t.match(/^ok\s+\S+\s+[\d.]+s/gm)?.length ?? 0;
-  const pkgFail = t.match(/^FAIL\s+\S+\s+[\d.]+s/gm)?.length ?? 0;
-  if (pkgOk || pkgFail) return { runner: "go", passed: pkgOk, failed: pkgFail };
-  return undefined;
-}
-
-/** Test summary for a finished shell tool call, only when the command looks like a test/check run. */
 export function testResultFor(input: unknown, output: string | undefined): TestSummary | undefined {
-  if (!isVerifyCommand(commandOf(input))) return undefined;
-  return parseTestSummary(output);
+  const cmd = commandOf(input);
+  if (!isVerifyCommand(cmd)) return undefined;
+  return parseTestOutput(output, cmd, true);
 }
 
 export interface FileTouch {

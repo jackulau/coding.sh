@@ -111,7 +111,6 @@
       "runner": "jest",
       "passed": 12,
       "failed": 0,
-      "skipped": 0,
       "toolUseId": "toolu_02"
     },
     "id": "7d0dc67c87ac894e3c6e455cbe10e291a6e19e20b18387ce7ca5d78d797f7498",

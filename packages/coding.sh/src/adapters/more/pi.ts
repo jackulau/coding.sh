@@ -325,7 +325,8 @@ export const piAdapter: Adapter = {
   tier: "A",
   // 2 (0.1.2): hook and transcript copies share ids; tokens counted once.
   // 3 (0.1.5): a tool call that loads a skill names it (payload.skill).
-  parseVersion: 3,
+  // 4 (0.1.8): test.result comes from the shared parser: pytest -q's bare summary line counts, the node runner is "node:test", and skipped is absent when 0.
+  parseVersion: 4,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["pi"]);
     const dir = piAgentDir();

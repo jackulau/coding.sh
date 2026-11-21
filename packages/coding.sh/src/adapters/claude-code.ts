@@ -685,7 +685,9 @@ export const claudeCode: Adapter = {
   // 15 (0.1.7): an llm.call whose start the lines read don't show (a window that opens mid-response, a line written
   //    out of order) has no durationMs, ttftMs or tokensPerSec; an api-request record stamped after a response's
   //    first line is left for the next call; a prompt command's call is one llm.call, in its own turn.
-  parseVersion: 15,
+  // 16 (0.1.8): a shell call's test.result reads the last jest, vitest, node:test or mocha summary in its
+  //    output, not the first.
+  parseVersion: 16,
 
   detect() {
     const dir = claudeConfigDir();

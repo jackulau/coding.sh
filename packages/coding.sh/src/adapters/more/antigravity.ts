@@ -558,7 +558,8 @@ export const antigravityAdapter: Adapter = {
   tier: "A",
   // 2 (0.1.2): calls named by their result step, turns by the last planner step, as hooks do.
   // 3 (0.1.5): a command result's exit code (nonzero fails the call) and its Created/Completed At time it. A tool call that loads a skill names it (payload.skill).
-  parseVersion: 3,
+  // 4 (0.1.8): test.result comes from the shared parser: pytest -q's bare summary line counts, the node runner is "node:test", and skipped is absent when 0.
+  parseVersion: 4,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["agy"]);
     const dir = agyCliDir();
