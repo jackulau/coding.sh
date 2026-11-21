@@ -2,7 +2,8 @@
 // them (pricing.ts priceEvent); events stored before that, or under an older
 // price table, are filled in here, in place (same ids):
 // - only calls (and usage snapshots) with tokens and no cost, or with a cost we
-//   estimated earlier; a cost the agent reported is never touched;
+//   estimated earlier (rewritten when the estimate, or its split by token type,
+//   `payload.costByTokenType`, differs); a cost the agent reported is never touched;
 // - a call a gateway companion billed (`coding.sh gateway enrich`) is skipped:
 //   the companion holds billed minus the cost the call had, so a new estimate
 //   would be counted twice. A companion with no billed cost bills nothing, and
@@ -11,9 +12,9 @@
 // It runs once per price table (built-in + `[prices]` overrides) and lookup-rule
 // version: the stamp is kept under a cursor, so later opens cost one read.
 // `coding.sh usage --reprice` forces a pass.
-import type { AgentEvent, Session } from "../schema/index.ts";
+import type { AgentEvent, CostByTokenType, Session } from "../schema/index.ts";
 import { sha256Hex } from "./ids.ts";
-import { priceEvent, PRICING_RULES_VERSION, pricesFor, type Prices } from "./pricing.ts";
+import { priceEvent, PRICING_RULES_VERSION, pricesFor, TOKEN_TYPES, type Prices } from "./pricing.ts";
 import { billedCallOf, buildSession } from "./sessions.ts";
 import type { EventCost, IndexStore } from "./types.ts";
 
@@ -56,8 +57,12 @@ export async function repriceStored(index: IndexStore, overrides?: Prices, opts:
       estimates = true;
       const pricedAs = typeof priced.payload.pricedAs === "string" ? priced.payload.pricedAs : undefined;
       const priceTier = typeof priced.payload.priceTier === "string" ? priced.payload.priceTier : undefined;
-      if (cost !== e.usage?.costUsd || pricedAs !== e.payload?.pricedAs || priceTier !== e.payload?.priceTier)
-        costs.push({ id: e.id, costUsd: cost, ...(pricedAs ? { pricedAs } : {}), ...(priceTier ? { priceTier } : {}) });
+      const parts = priced.payload.costByTokenType as CostByTokenType | undefined;
+      if (cost !== e.usage?.costUsd || pricedAs !== e.payload?.pricedAs || priceTier !== e.payload?.priceTier || !sameParts(parts, e.payload?.costByTokenType)) {
+        const c: EventCost = { id: e.id, costUsd: cost, ...(pricedAs ? { pricedAs } : {}), ...(priceTier ? { priceTier } : {}) };
+        if (parts) c.costByTokenType = parts;
+        costs.push(c);
+      }
     }
     // Sessions folded before session totals said which part is estimated are refolded once.
     const unmarked = estimates && prev.stats.usage?.estimatedCostUsd === undefined;
@@ -72,8 +77,14 @@ export async function repriceStored(index: IndexStore, overrides?: Prices, opts:
 
 function withoutCost(e: AgentEvent): AgentEvent {
   const { costUsd: _drop, ...usage } = e.usage ?? {};
-  const { pricedAs: _was, priceTier: _tier, ...payload } = e.payload ?? {};
+  const { pricedAs: _was, priceTier: _tier, costByTokenType: _parts, ...payload } = e.payload ?? {};
   return { ...e, usage, payload };
+}
+
+/** Whether a stored `payload.costByTokenType` holds exactly these parts. */
+function sameParts(parts: CostByTokenType | undefined, stored: unknown): boolean {
+  if (!parts || !stored || typeof stored !== "object") return !parts && stored === undefined;
+  return TOKEN_TYPES.every((k) => (stored as Record<string, unknown>)[k] === parts[k]);
 }
 
 /** The stored session with only its priced totals refolded (links, repo state and the rest stay). */

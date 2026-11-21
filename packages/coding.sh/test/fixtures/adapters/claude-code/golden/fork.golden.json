@@ -96,7 +96,13 @@
       "tokensPerSec": 2142.9,
       "ok": true,
       "messageId": "msg_mw9alccf4",
-      "costEstimated": true
+      "costEstimated": true,
+      "costByTokenType": {
+        "cacheRead": 0.00612,
+        "cacheWrite": 0.00225,
+        "input": 0.00012,
+        "output": 0.00045
+      }
     },
     "id": "f43b1622981efa0ba4beaf7f79a4017173c8d26c7d4881e9f218ca9bcfe34c89",
     "turnId": "c7ab002094a16865439bef088a37b0c768aee0bfc4e066ae9a0d833dad46d0b1",
@@ -141,7 +147,13 @@
       "tokensPerSec": 3333.3,
       "ok": true,
       "messageId": "msg_mw9alcd08",
-      "costEstimated": true
+      "costEstimated": true,
+      "costByTokenType": {
+        "cacheRead": 0.0063,
+        "cacheWrite": 0.001125,
+        "input": 0.00012,
+        "output": 0.00045
+      }
     },
     "id": "cf69b0a5ec1352d9a27788c436bc352317fda4c58aeb49b3390fd43c6731acc5",
     "turnId": "c7ab002094a16865439bef088a37b0c768aee0bfc4e066ae9a0d833dad46d0b1",

@@ -763,7 +763,8 @@ export interface SessionJsonKeep {
 
 /**
  * A --json copy of stats with float noise taken out: a `...Usd` number rounds to 1e-9 dollars
- * (0.0041400000000000005 prints 0.00414, as the summed costs do), a `...Ms` number to whole ms.
+ * (0.0041400000000000005 prints 0.00414, as the summed costs do), and so does every number in
+ * an `estimatedCostBy...` map (by tier, by token type); a `...Ms` number rounds to whole ms.
  */
 export function tidyNumbers<T>(v: T, key = ""): T {
   if (typeof v === "number") {
@@ -775,7 +776,8 @@ export function tidyNumbers<T>(v: T, key = ""): T {
   if (Array.isArray(v)) return v.map((x) => tidyNumbers(x, key)) as T;
   if (v && typeof v === "object") {
     const out: Record<string, unknown> = {};
-    for (const [k, x] of Object.entries(v)) out[k] = tidyNumbers(x, k);
+    const usd = key.startsWith("estimatedCostBy");
+    for (const [k, x] of Object.entries(v)) out[k] = tidyNumbers(x, usd ? "Usd" : k);
     return out as T;
   }
   return v;

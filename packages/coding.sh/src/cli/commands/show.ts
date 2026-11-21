@@ -7,14 +7,14 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { callCopies } from "../../core/call-copies.ts";
 import { sessionOutline, phaseLabel, storedOutline, type Outline, type Phase } from "../../core/outline.ts";
-import { costNote } from "../../core/pricing.ts";
+import { apportion, costNote, TOKEN_TYPES } from "../../core/pricing.ts";
 import { failureFlags } from "../../core/sessions.ts";
 import { SKILL_EVENT_KINDS, SKILL_TAG_PREFIX, skillUse, type SkillUseReport } from "../../core/skills-use.ts";
 import { pageTree, subagentsOf, type TreeNode } from "../../core/tree.ts";
 import { checkpointRunsText, weightsEventText, weightsSummaryText } from "../../core/weights.ts";
 import type { AgentEvent, Session } from "../../core/types.ts";
 import type { CheckpointRun } from "../../experiments/checkpoints.ts";
-import type { DurableStats } from "../../schema/index.ts";
+import type { DurableStats, Usage } from "../../schema/index.ts";
 import { positiveInt } from "../args.ts";
 import { CallRefError, loadCall, resolveCall } from "../../proxy/calls.ts";
 import { autoIngest, fieldsFlag, oneLine, pickFields, resolveSession, sessionJson, withContext, notFoundWithBacklog, pendingField, readIngest } from "../common.ts";
@@ -58,6 +58,23 @@ function callCost(e: AgentEvent): string {
   if (e.payload.costEstimated !== true) return ` ${usd(c)}`;
   const how = [typeof e.payload.pricedAs === "string" ? `as ${e.payload.pricedAs}` : "", typeof e.payload.priceTier === "string" ? e.payload.priceTier : ""].filter(Boolean);
   return ` ${usd(c)} est${how.length ? ` (${how.join(", ")})` : ""}`;
+}
+
+const SPLIT_LABEL = { cacheRead: "cache read", cacheWrite: "cache write", input: "in", output: "out" } as const;
+
+/**
+ * "cache read 61% $0.2512  cache write 22% $0.0907  in 4% $0.0165  out 13% $0.0539": the
+ * estimate by token type, under Tokens. Labelled "Est. split" when part of the cost was
+ * reported or billed, which has no split: the parts then add up to the estimate the
+ * Tokens row names ("incl. $0.4123 estimated"), not to the cost.
+ */
+function costSplitRow(u: Usage | undefined): [string, string] | undefined {
+  const by = u?.estimatedCostByTokenType;
+  const est = u?.estimatedCostUsd;
+  if (!by || !(est !== undefined && est > 0)) return undefined;
+  const pct = apportion(by, 100);
+  const partial = u.costUsd !== undefined && est < u.costUsd - 1e-9;
+  return [partial ? "Est. split" : "Cost split", TOKEN_TYPES.map((k) => `${SPLIT_LABEL[k]} ${pct[k]}% ${usd(by[k])}`).join("  ")];
 }
 
 /** Short description of a tool input (command, path, pattern…). */
@@ -470,6 +487,8 @@ export async function run(c: CommandContext): Promise<number> {
     const flags = failureFlags(s.flags);
     if (flags.length) rows.push(["Flags", flags.join(", ")]);
     if (u) rows.push(["Tokens", `in ${tokens(u.inputTokens)}  out ${tokens(u.outputTokens)}  cache ${tokens(u.cacheReadTokens)}  ${usd(u.costUsd)}${costNote(u)}`]);
+    const split = costSplitRow(u);
+    if (split) rows.push(split);
     if (lat) {
       const parts: string[] = [];
       if (lat.llmCalls) parts.push(`${lat.llmCalls} llm calls, p50 ${duration(lat.llmP50Ms)}, p95 ${duration(lat.llmP95Ms)}`);

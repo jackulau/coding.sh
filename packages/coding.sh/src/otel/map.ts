@@ -859,7 +859,7 @@ const ccToolId = (sessionId: string, toolUseId: string, part: "start" | "end"): 
 const ccPromptId = (sessionId: string, promptId: string): string => hashParts("otel-cc-prompt", sessionId, promptId);
 
 /** What applyPricing (core/pricing.ts) sets with an estimated cost. */
-const ESTIMATE_KEYS = ["costEstimated", "pricedAs", "priceTier"];
+const ESTIMATE_KEYS = ["costEstimated", "pricedAs", "priceTier", "costByTokenType"];
 /** Timing a span measures better than a log record (whose ts is its end less duration_ms). */
 const SPAN_TIMING_KEYS = ["ttftMs", "tokensPerSec"];
 

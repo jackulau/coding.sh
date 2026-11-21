@@ -145,3 +145,57 @@ describe("usage --cache: idle breaks by where the wait was", () => {
     assert.ok(j.notes.some((n: string) => /Idle breaks by where the wait was: wait 2 \(~\$0\.2\): cap foreground waits/.test(n)), j.notes.join("\n"));
   });
 });
+
+// The estimate by token type. Opus 4.5 rates: 1M cache reads $0.50, 48k cache writes $0.30,
+// 20k uncached input $0.10 and 4k output $0.10. Beside it, an estimate stored before splits
+// and a reported cost, which have none.
+const stats = { events: 10, turns: 2, toolCalls: 1, toolErrors: 0, filesChanged: 0 };
+const splitSession = session("split", {
+  agent: "claude-code",
+  model: "claude-opus-4-5",
+  ...base,
+  stats: { ...stats, usage: { inputTokens: 20_000, outputTokens: 4000, cacheReadTokens: 1_000_000, cacheWriteTokens: 48_000, costUsd: 1, estimatedCostUsd: 1, estimatedCostByTokenType: { cacheRead: 0.5, cacheWrite: 0.3, input: 0.1, output: 0.1 } } },
+}) as Session;
+const unsplitSession = session("unsplit", { agent: "codex", model: "gpt-5.1-codex", ...base, stats: { ...stats, usage: { inputTokens: 160_000, costUsd: 0.2, estimatedCostUsd: 0.2 } } }) as Session;
+const reportedSession = session("reported", { agent: "opencode", ...base, stats: { ...stats, usage: { inputTokens: 1000, costUsd: 0.5 } } }) as Session;
+
+describe("usage --cache: the estimate by token type", () => {
+  let env: TmpEnv;
+  before(async () => {
+    env = tmpEnv();
+    await seed(env.dataHome, { sessions: [splitSession, unsplitSession, reportedSession] });
+  });
+  after(() => env.restore());
+
+  test("a note gives each part's dollars and share, and what has no split", () => {
+    const r = ok(["usage", "--cache", "--by", "agent"]);
+    assert.ok(
+      r.stderr.includes("Estimated cost by token type: cache reads ~$0.5000 (50%), cache writes ~$0.3000 (30%), uncached input ~$0.1000 (10%), output ~$0.1000 (10%); ~$1.00 in all. Not split by token type: ~$0.2000 of the estimate and $0.5000 reported or billed."),
+      r.stderr,
+    );
+    assert.match(r.stdout, /CACHED\s+READ\s+WRITE\s+R:W\s+BREAKS\s+WASTE/, "the table keeps its columns");
+    for (const l of r.stdout.split("\n")) assert.ok(l.length <= 100, `fits in 100 columns: ${l}`);
+  });
+
+  test("--json carries the dollars, the shares and the unsplit part, per group and in all", () => {
+    const j = JSON.parse(ok(["usage", "--cache", "--by", "agent", "--json"]).stdout);
+    const parts = { cacheRead: 0.5, cacheWrite: 0.3, input: 0.1, output: 0.1 };
+    assert.deepEqual([j.total.costUsd, j.total.estimatedCostUsd], [1.7, 1.2]);
+    assert.deepEqual(j.total.estimatedCostByTokenType, parts);
+    assert.deepEqual(j.total.estimatedCostShareByTokenType, parts);
+    assert.equal(j.total.estimatedCostUnsplitUsd, 0.2);
+    const g = (k: string) => j.groups.find((x: { key: string }) => x.key === k);
+    assert.deepEqual([g("claude-code").estimatedCostByTokenType, g("claude-code").estimatedCostUnsplitUsd], [parts, undefined]);
+    assert.deepEqual([g("codex").estimatedCostByTokenType, g("codex").estimatedCostShareByTokenType, g("codex").estimatedCostUnsplitUsd], [undefined, undefined, 0.2]);
+    assert.deepEqual([g("opencode").estimatedCostByTokenType, g("opencode").estimatedCostUnsplitUsd], [undefined, undefined]);
+    const note = "The estimate by token type: cache reads $0.5 (50%), cache writes $0.3 (30%), uncached input $0.1 (10%), output $0.1 (10%) (estimatedCostByTokenType; shares in estimatedCostShareByTokenType). Not split by token type: $0.2 of the estimate (estimatedCostUnsplitUsd) and $0.5 reported or billed.";
+    assert.ok(j.notes.includes(note), j.notes.join("\n"));
+  });
+
+  test("no note and no split when nothing in the window has one", () => {
+    assert.doesNotMatch(ok(["usage", "--cache", "--agent", "opencode"]).stderr, /by token type/);
+    const j = JSON.parse(ok(["usage", "--cache", "--agent", "codex", "--json"]).stdout);
+    assert.deepEqual([j.total.estimatedCostByTokenType, j.total.estimatedCostShareByTokenType, j.total.estimatedCostUnsplitUsd], [undefined, undefined, 0.2]);
+    assert.ok(!j.notes.some((n: string) => /by token type/.test(n)), j.notes.join("\n"));
+  });
+});

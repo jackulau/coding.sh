@@ -193,12 +193,18 @@ describe("real aider sessions", () => {
     assert.equal(s.agent, "aider");
     assert.equal(s.model, "anthropic/claude-3-5-sonnet-20241022");
     assert.deepEqual(
-      { ...s.stats.usage, estimatedCostUsd: undefined, estimatedCostByTier: undefined },
-      { inputTokens: 3000, outputTokens: 60, cacheReadTokens: 24000, cacheWriteTokens: 4800, costUsd: s.stats.usage?.costUsd, estimatedCostUsd: undefined, estimatedCostByTier: undefined },
+      { ...s.stats.usage, estimatedCostUsd: undefined, estimatedCostByTier: undefined, estimatedCostByTokenType: undefined },
+      { inputTokens: 3000, outputTokens: 60, cacheReadTokens: 24000, cacheWriteTokens: 4800, costUsd: s.stats.usage?.costUsd, estimatedCostUsd: undefined, estimatedCostByTier: undefined, estimatedCostByTokenType: undefined },
     );
     // Priced from the tokens, not Aider's $0.1215 (which counts the cache twice): each reply is
     // 1500 × $3 + 2400 × $3.75 + 12000 × $0.30 + 30 × $15 per million = $0.01755.
     assert.ok(Math.abs(s.stats.usage!.costUsd! - 0.0351) < 1e-9, `costUsd ${s.stats.usage?.costUsd}`);
+    // The same terms by token type, over both replies: cache writes are the largest part here.
+    const split = s.stats.usage!.estimatedCostByTokenType!;
+    const want = { cacheRead: 0.0072, cacheWrite: 0.018, input: 0.009, output: 0.0009 };
+    assert.deepEqual(Object.keys(split), Object.keys(want));
+    for (const k of Object.keys(want) as (keyof typeof want)[]) assert.ok(Math.abs(split[k] - want[k]) < 1e-12, `${k} ${split[k]}`);
+    for (const c of calls) assert.ok(Math.abs(Object.values(c.payload.costByTokenType as Record<string, number>).reduce((a, b) => a + b, 0) - c.usage!.costUsd!) < 1e-12);
     for (const c of calls) assert.equal(c.payload.aiderCostUsd, 0.06075, "Aider's own figure stays on the call");
     assert.equal(s.stats.latency?.llmCalls, 2);
   });
