@@ -380,6 +380,8 @@ export interface TurnInfo extends Obj {
   toolCalls: number;
   toolErrors: number;
   durationMs?: number;
+  /** The turn is still under way: listed, but not in turnCount or stats.turns. */
+  open?: boolean;
 }
 
 /** A turn.end that closes a turn: one a blocked Stop hook fired again continues the same turn. */
@@ -420,6 +422,17 @@ export function splitTurns(events: AgentEvent[]): AgentEvent[][] {
     else turns.push(cur);
   }
   return turns;
+}
+
+/**
+ * True when the last turn is still under way: some turn closed with a turn.end
+ * and the last one has none yet. stats.turns counts closed turns only (a
+ * backfill closes an idle transcript's turn), so the digest lists this turn but
+ * leaves it out of the count. Without any turn.end every prompt counts.
+ */
+export function lastTurnOpen(turns: AgentEvent[][]): boolean {
+  const last = turns[turns.length - 1];
+  return !!last && !last.some(closesTurn) && turns.some((t) => t.some(closesTurn));
 }
 
 export function turnIndex(turns: AgentEvent[][], startedAt: number): TurnInfo[] {
