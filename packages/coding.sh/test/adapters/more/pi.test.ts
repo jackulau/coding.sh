@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { piAdapter, piExtensionSource } from "../../../src/adapters/more/pi.ts";
@@ -150,10 +150,12 @@ describe("pi run + overlay", () => {
 
   it("overlay isolates the agent dir and copies auth.json privately", async () => {
     writeFile(join(env.home, ".pi", "agent", "auth.json"), '{"anthropic":{}}');
-    const runDir = join(env.root, "run");
+    const runDir = join(env.root, "run", "work");
+    const home = join(env.root, "run", "home");
     const o = await piAdapter.overlay!({ files: {}, flags: [] } as never, runDir);
-    assert.equal(o.env.PI_CODING_AGENT_DIR, join(runDir, "home", ".pi", "agent"));
-    assert.equal(o.env.PI_CODING_AGENT_SESSION_DIR, join(runDir, "pi-sessions"));
-    assert.equal(readFileSync(join(runDir, "home", ".pi", "agent", "auth.json"), "utf8"), '{"anthropic":{}}');
+    assert.equal(o.env.PI_CODING_AGENT_DIR, join(home, ".pi", "agent"));
+    assert.equal(o.env.PI_CODING_AGENT_SESSION_DIR, join(home, "pi-sessions"));
+    assert.equal(readFileSync(join(home, ".pi", "agent", "auth.json"), "utf8"), '{"anthropic":{}}');
+    assert.equal(existsSync(runDir), false, "nothing is written into the work tree");
   });
 });

@@ -28,6 +28,7 @@ import { buildHookCommand, hookPathForCommand } from "../_shared/hooks.ts";
 import { skillFieldsOf } from "../_shared/tools.ts";
 import { makeSqliteCopyDir, onSqliteCopyRelease, reapSqliteCopies, releaseSqliteCopyDir } from "../_shared/sqlite-copies.ts";
 import { editJsonc, parseJsonc as parseJsoncShared } from "../_shared/jsonc.ts";
+import { isolatedHome } from "../_shared/overlay.ts";
 
 export type Json = Record<string, unknown>;
 
@@ -904,9 +905,12 @@ export function hasFlag(flags: readonly string[], ...names: string[]): boolean {
 
 // ---------------------------------------------------------------- overlay
 
-/** Isolated home for a run. The runner materializes "~/…" bundle files here. */
+/**
+ * Isolated home for a run: the runner's runs/<id>/home next to the work dir, where it
+ * writes the bundle's "~/…" files. Never inside the work dir, or it lands in the diff.
+ */
 export function overlayHome(runDir: string): string {
-  return join(runDir, "home");
+  return isolatedHome(runDir);
 }
 
 /**
