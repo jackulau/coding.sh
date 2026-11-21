@@ -1,6 +1,6 @@
 // coding.sh alert add|list|rm|check|test
 //
-// Thresholds on failures, cost, sessions or a flag over a rolling window, with a
+// Thresholds on failures, cost, sessions, a flag or a score over a rolling window, with a
 // webhook or a command told about each change of state (OK, WARNING, ALERT,
 // NO_DATA). Definitions and states live in <CODING_SH_HOME>/alerts.json. `check`
 // is what cron or Task Scheduler runs; `coding.sh serve` runs it every minute.
@@ -42,6 +42,13 @@ export function valueText(measure: string, v: number | null): string {
   return String(v);
 }
 
+/** A threshold as a table cell: `> 50%`, or `< 0.5` for an alert that fires below it. */
+export function thresholdText(a: { measure: string; direction?: "under" }, v: number): string {
+  return `${a.direction === "under" ? "<" : ">"} ${valueText(a.measure, v)}`;
+}
+
+const MEASURES_TEXT = "failure-rate, cost, sessions, flag:<FLAG> or score:<NAME>";
+
 function parseTarget(raw: string): AlertTarget {
   if (raw.startsWith("webhook:")) {
     const url = raw.slice("webhook:".length).trim();
@@ -76,13 +83,17 @@ async function add(c: CommandContext, file: string): Promise<number> {
   const { out } = c;
   const name = requireName(c);
   const measure = str(c.flags.measure);
-  if (!measure) throw new UsageError("--measure is required: failure-rate, cost, sessions or flag:<FLAG>", { reason: "missing_value" });
-  if (!parseMeasure(measure)) throw new UsageError(`--measure must be failure-rate, cost, sessions or flag:<FLAG>, got ${JSON.stringify(measure)}`, { reason: "invalid_value" });
-  const over = num(c.flags.over);
-  if (over === undefined || !Number.isFinite(over) || over < 0) throw new UsageError("--over is required: the value above which the alert fires, a number >= 0", { reason: over === undefined ? "missing_value" : "invalid_value" });
-  if (measure === "failure-rate" && over > 1) throw new UsageError(`failure-rate is a share from 0 to 1: --over 0.5 is 50%, got ${over}`, { reason: "invalid_value" });
-  const warn = num(c.flags.warn);
-  if (warn !== undefined && !(Number.isFinite(warn) && warn >= 0 && warn < over)) throw new UsageError(`--warn must be >= 0 and below --over (${over}), got ${warn}`, { reason: "invalid_value" });
+  if (!measure) throw new UsageError(`--measure is required: ${MEASURES_TEXT}`, { reason: "missing_value" });
+  if (!parseMeasure(measure)) throw new UsageError(`--measure must be ${MEASURES_TEXT}, got ${JSON.stringify(measure)}`, { reason: "invalid_value" });
+  // --over/--warn fire above the threshold, --under/--warn-under below it: one pair or the other.
+  const under = c.flags.under !== undefined || c.flags["warn-under"] !== undefined;
+  if (under && (c.flags.over !== undefined || c.flags.warn !== undefined)) throw new UsageError("--under and --warn-under can't be used with --over or --warn: an alert fires above its threshold or below it", { reason: "invalid_usage" });
+  const [hi, lo] = under ? ["under", "warn-under"] : ["over", "warn"];
+  const over = num(c.flags[hi]);
+  if (over === undefined || !Number.isFinite(over) || over < 0) throw new UsageError(`--over or --under is required: the value ${under ? "below" : "above"} which the alert fires, a number >= 0`, { reason: over === undefined ? "missing_value" : "invalid_value" });
+  if (measure === "failure-rate" && over > 1) throw new UsageError(`failure-rate is a share from 0 to 1: --${hi} 0.5 is 50%, got ${over}`, { reason: "invalid_value" });
+  const warn = num(c.flags[lo]);
+  if (warn !== undefined && !(Number.isFinite(warn) && warn >= 0 && (under ? warn > over : warn < over))) throw new UsageError(`--${lo} must be >= 0 and ${under ? "above --under" : "below --over"} (${over}), got ${warn}`, { reason: "invalid_value" });
   const window = str(c.flags.window) as AlertWindow | undefined;
   if (!window) throw new UsageError(`--window is required: ${Object.keys(ALERT_WINDOWS).join(", ")}`, { reason: "missing_value" });
   const notifyRaw = str(c.flags.notify);
@@ -98,6 +109,7 @@ async function add(c: CommandContext, file: string): Promise<number> {
   if (where) def.where = where;
   if (by) def.by = by;
   if (warn !== undefined) def.warn = warn;
+  if (under) def.direction = "under";
   if (noData) def.noData = noData;
   if (notify.kind === "webhook") def.secret = `csh_whsec_${randomBytes(24).toString("hex")}`;
 
@@ -114,7 +126,8 @@ async function add(c: CommandContext, file: string): Promise<number> {
     out.data(doc);
     return 0;
   }
-  out.ok(`Added alert ${name}: ${measure} over ${valueText(measure, over)}${warn !== undefined ? ` (warning over ${valueText(measure, warn)})` : ""} in the last ${window}${by ? " per agent" : ""}, to ${targetText(notify)}`);
+  const side = under ? "under" : "over";
+  out.ok(`Added alert ${name}: ${measure} ${side} ${valueText(measure, over)}${warn !== undefined ? ` (warning ${side} ${valueText(measure, warn)})` : ""} in the last ${window}${by ? " per agent" : ""}, to ${targetText(notify)}`);
   if (def.secret) {
     out.print(`Signing secret (shown once): ${def.secret}`);
     out.note(`Each POST carries ${SIGNATURE_HEADER}: sha256=<HMAC-SHA256 of the body, keyed with this secret>.`);
@@ -143,11 +156,11 @@ async function list(c: CommandContext, file: string): Promise<number> {
     return 0;
   }
   out.table(
-    ["NAME", "MEASURE", "OVER", "WARN", "WINDOW", "BY", "STATE", "VALUE", "NOTIFY"],
+    ["NAME", "MEASURE", "ALERT AT", "WARN AT", "WINDOW", "BY", "STATE", "VALUE", "NOTIFY"],
     doc.alerts.map((a) => {
       const s = stateText(a);
       const target = targetText(a.notify) + (a.delivery.disabledAt !== undefined ? " (disabled)" : "");
-      return [a.name, a.measure, valueText(a.measure, a.over), a.warn === undefined ? "-" : valueText(a.measure, a.warn), a.window, a.by ?? "-", s.state, s.value, target];
+      return [a.name, a.measure, thresholdText(a, a.over), a.warn === undefined ? "-" : thresholdText(a, a.warn), a.window, a.by ?? "-", s.state, s.value, target];
     }),
   );
   for (const a of doc.alerts) {
@@ -173,8 +186,8 @@ async function rm(c: CommandContext, file: string): Promise<number> {
 }
 
 function resultRows(r: AlertResult): string[][] {
-  const threshold = (state: string) => valueText(r.measure, state === "WARNING" && r.warn !== undefined ? r.warn : r.over);
-  if (r.error) return [[r.name, "ERROR", "-", valueText(r.measure, r.over), r.window, r.error]];
+  const threshold = (state: string) => thresholdText(r, state === "WARNING" && r.warn !== undefined ? r.warn : r.over);
+  if (r.error) return [[r.name, "ERROR", "-", thresholdText(r, r.over), r.window, r.error]];
   if (!r.groups.length) return [[r.name, r.state, "-", threshold(r.state), r.window, ""]];
   return r.groups.map((g) => [g.agent !== undefined ? `${r.name} (${g.agent})` : r.name, g.state, valueText(r.measure, g.value), threshold(g.state), r.window, g.changed ? `was ${g.previous}` : ""]);
 }

@@ -54,8 +54,8 @@ Every command accepts these.
 | [`blame`](#codingsh-blame) | Explore | git blame with the agent session that wrote each line |
 | [`diff-calls`](#codingsh-diff-calls) | Explore | Show what changed between two model calls, and why the second missed the prompt cache |
 | [`search`](#codingsh-search) | Explore | Full-text search over prompts, replies, tool calls and errors |
-| [`alert`](#codingsh-alert) | Explore | Notify a webhook or a command when failures, cost, sessions or a flag cross a threshold |
-| [`budget`](#codingsh-budget) | Explore | Spend budgets per day, week or month, for every session or one agent or repo |
+| [`alert`](#codingsh-alert) | Explore | Notify a webhook or a command when failures, cost, sessions, a flag or a score cross a threshold |
+| [`budget`](#codingsh-budget) | Explore | Spend budgets per day, week or month, for every session, one agent or repo, or the sessions a query matches |
 | [`usage`](#codingsh-usage) | Explore | Tokens, cost, turns and cache hits by agent, model or day; cost by MCP server, skill or subagent type |
 | [`cache`](#codingsh-cache) | Explore | Score prompt-cache health and name what breaks the cached prefix |
 | [`stats`](#codingsh-stats) | Explore | Sessions, failures, cost, tokens and latency per day or week, split by agent, model, repo or flag |
@@ -883,7 +883,7 @@ coding.sh search migration --where 'agent:codex kind:tool.start'
 
 ## `coding.sh alert`
 
-Notify a webhook or a command when failures, cost, sessions or a flag cross a threshold.
+Notify a webhook or a command when failures, cost, sessions, a flag or a score cross a threshold.
 
 ```text
 coding.sh alert <action>
@@ -903,8 +903,8 @@ coding.sh alert check
 coding.sh alert list
 ```
 
-- States are OK, WARNING, ALERT and NO_DATA. An alert starts at OK, and only a change of state notifies. The measures are the ones coding.sh stats computes, over top-level sessions with their subagents' cost added.
-- A webhook gets a POST with the JSON body {alert, state, previous, value, threshold, window, by, at} (by only with --by agent) and the header X-Coding-Sh-Signature: sha256=&lt;HMAC-SHA256 of the body, keyed with the alert's secret&gt;. A command gets the same JSON on stdin and succeeds by exiting 0.
+- States are OK, WARNING, ALERT and NO_DATA. An alert starts at OK, and only a change of state notifies. The measures are the ones coding.sh stats computes, over top-level sessions with their subagents' cost added; score:&lt;NAME&gt; averages the scores of that name given to those sessions (coding.sh score, a judge, a review).
+- A webhook gets a POST with the JSON body {alert, state, previous, value, threshold, direction, window, by, at} (direction: "under" only with --under, by only with --by agent) and the header X-Coding-Sh-Signature: sha256=&lt;HMAC-SHA256 of the body, keyed with the alert's secret&gt;. A command gets the same JSON on stdin and succeeds by exiting 0.
 - Each notification is tried 3 times, 1 s and then 2 s apart. After 5 failed deliveries in a row the target is turned off; alert list says so, and a successful alert test turns it back on.
 - alert check exits 0 unless the usage is wrong; with --json it lists each alert's state, value and groups. Run it from cron or Task Scheduler. coding.sh serve runs the same check every minute. The hook and the read commands never run alerts.
 - Alerts, their states and their secrets are kept in ~/.coding.sh/alerts.json, mode 600.
@@ -923,19 +923,22 @@ coding.sh alert add <NAME> [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `--measure <MEASURE>` |  | failure-rate (a share from 0 to 1), cost (USD), sessions, or flag:&lt;FLAG&gt; (sessions with that flag or tag) |
+| `--measure <MEASURE>` |  | failure-rate (a share from 0 to 1), cost (USD), sessions, flag:&lt;FLAG&gt; (sessions with that flag or tag), or score:&lt;NAME&gt; (the mean of that numeric or boolean session score, true as 1; categorical and text scores are skipped) |
 | `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
 | `--by <GROUP>` |  | One state per agent, each notified on its own (default: one state for all sessions) One of: `agent`. |
 | `--over <N>` |  | ALERT when the measure is above N. |
 | `--warn <N>` |  | WARNING when the measure is above N and not above --over. |
+| `--under <N>` |  | ALERT when the measure is below N instead (a falling score); not with --over or --warn. |
+| `--warn-under <N>` |  | WARNING when the measure is below N and not below --under. |
 | `--window <WINDOW>` |  | The sessions that started in this much time before the check. One of: `1h`, `1d`, `7d`. |
 | `--notify <TARGET>` |  | webhook:&lt;URL&gt; (a signed JSON POST) or command:"&lt;CMD&gt;" (the same JSON on stdin) |
-| `--no-data <STATE>` |  | State when the window has no sessions (or, for cost, no priced session): ok, alert, or keep the last state (default: NO_DATA) One of: `ok`, `alert`, `keep`. |
+| `--no-data <STATE>` |  | State when the window has no sessions (or, for cost, no priced session; for score:&lt;NAME&gt;, no such score): ok, alert, or keep the last state (default: NO_DATA) One of: `ok`, `alert`, `keep`. |
 
 ```sh
 coding.sh alert add failures --measure failure-rate --over 0.5 --window 1d --notify webhook:https://example.com/hook
 coding.sh alert add spend --measure cost --warn 20 --over 50 --window 1d --by agent --notify command:"notify-send coding.sh"
 coding.sh alert add loops --measure flag:repeated-tool-failure --over 3 --window 1h --where 'agent:codex' --notify webhook:https://example.com/hook
+coding.sh alert add helpful --measure score:helpful --under 0.5 --window 1d --notify webhook:https://example.com/hook
 ```
 
 ### `coding.sh alert list`
@@ -1002,7 +1005,7 @@ coding.sh alert test failures
 
 ## `coding.sh budget`
 
-Spend budgets per day, week or month, for every session or one agent or repo.
+Spend budgets per day, week or month, for every session, one agent or repo, or the sessions a query matches.
 
 ```text
 coding.sh budget <action>
@@ -1010,7 +1013,7 @@ coding.sh budget <action>
 
 | Action | What it does |
 |---|---|
-| [`set`](#codingsh-budget-set) | Add a budget, or change the limit of the one with the same period, agent and repo |
+| [`set`](#codingsh-budget-set) | Add a budget, or change the limit of the one with the same period, agent, repo and --where |
 | [`list`](#codingsh-budget-list) | List the budgets |
 | [`rm`](#codingsh-budget-rm) | Remove a budget |
 | [`status`](#codingsh-budget-status) | Spend against each budget: spend, limit, percent used, over or not, and when the period resets |
@@ -1024,11 +1027,12 @@ coding.sh proxy --enforce-budget
 - Spend is estimated: the cost of the sessions that started in the current period (subagents too), the same total coding.sh usage gives for that window. A session with no reported cost is priced from its tokens.
 - A budget is over once its spend reaches the limit. Budgets are kept in ~/.coding.sh/budgets.json.
 - The status line shows the highest budget once it passes 80% (budget 82%). coding.sh proxy --enforce-budget answers 429 to calls a budget over its limit applies to.
-- With --json, status gives each budget's spendUsd, limitUsd, percent, over, since and resetsAt (ISO times).
+- A --where budget counts the sessions its query matches and their subagents. The status line counts it only for a day budget whose query uses session keys (agent, model, repo, flag, cost, ...), matched on the day's sessions it already read; a week or month --where budget, or one with an event key such as user:, env: or release:, is left out of the line. coding.sh proxy --enforce-budget never applies a --where budget.
+- With --json, status gives each budget's spendUsd, limitUsd, percent, over, since and resetsAt (ISO times), and where when the budget has one.
 
 ### `coding.sh budget set`
 
-Add a budget, or change the limit of the one with the same period, agent and repo.
+Add a budget, or change the limit of the one with the same period, agent, repo and --where.
 
 ```text
 coding.sh budget set <PERIOD> <USD> [options]
@@ -1043,11 +1047,13 @@ coding.sh budget set <PERIOD> <USD> [options]
 |---|---|---|
 | `-a, --agent <AGENT>` |  | Only this agent's sessions. |
 | `--repo <PATH|NAME>` |  | Only sessions in this repo: a path (stored absolute; matches at or under it) or a repo name. |
+| `--where <QUERY>` |  | Only the sessions this query matches, with their subagents, e.g. 'user:u1', 'model:claude-opus-\*' or 'env:production' (keys: coding.sh sessions --help). The id ends in -w and 6 hex characters of the query's SHA-256. |
 
 ```sh
 coding.sh budget set day 20
 coding.sh budget set week 50 --agent codex
 coding.sh budget set month 200 --repo .
+coding.sh budget set day 5 --where 'user:alice'
 ```
 
 ### `coding.sh budget list`

@@ -54,7 +54,9 @@ when the gateway sent them. `coding.sh quota wait --window spend` waits for it t
 With a [spend budget](https://coding.sh/docs/cost#set-a-budget) set (`coding.sh budget set day 20`),
 the line ends with the highest budget's share once it passes 80% (`  ·  budget 82%`). `--json`
 adds `budget` with its id, percent and `over`. A day budget is read every turn; a week or month
-total is reused for up to 60 s (`budget-spend.json` in the data folder).
+total is reused for up to 60 s (`budget-spend.json` in the data folder). A `--where` budget counts
+only when it is a day budget whose query uses session keys, matched against the day's sessions the
+line already read; the others are left out of the line.
 
 ## If you already have a status line
 

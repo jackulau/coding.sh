@@ -660,26 +660,29 @@ export const COMMANDS: CommandSpec[] = [
   {
     name: "alert",
     group: "Explore",
-    summary: "Notify a webhook or a command when failures, cost, sessions or a flag cross a threshold",
+    summary: "Notify a webhook or a command when failures, cost, sessions, a flag or a score cross a threshold",
     actions: [
       {
         name: "add",
         summary: "Add an alert; a webhook alert prints its signing secret once",
         args: [{ name: "name", desc: "Letters, digits, dot, dash and underscore, up to 64", required: true }],
         flags: [
-          { name: "measure", type: "string", value: "<MEASURE>", desc: "failure-rate (a share from 0 to 1), cost (USD), sessions, or flag:<FLAG> (sessions with that flag or tag)" },
+          { name: "measure", type: "string", value: "<MEASURE>", desc: "failure-rate (a share from 0 to 1), cost (USD), sessions, flag:<FLAG> (sessions with that flag or tag), or score:<NAME> (the mean of that numeric or boolean session score, true as 1; categorical and text scores are skipped)" },
           WHERE("sessions"),
           { name: "by", type: "string", value: "<GROUP>", choices: ["agent"], desc: "One state per agent, each notified on its own (default: one state for all sessions)" },
           { name: "over", type: "number", value: "<N>", desc: "ALERT when the measure is above N" },
           { name: "warn", type: "number", value: "<N>", desc: "WARNING when the measure is above N and not above --over" },
+          { name: "under", type: "number", value: "<N>", desc: "ALERT when the measure is below N instead (a falling score); not with --over or --warn" },
+          { name: "warn-under", type: "number", value: "<N>", desc: "WARNING when the measure is below N and not below --under" },
           { name: "window", type: "string", value: "<WINDOW>", choices: ["1h", "1d", "7d"], desc: "The sessions that started in this much time before the check" },
           { name: "notify", type: "string", value: "<TARGET>", desc: 'webhook:<URL> (a signed JSON POST) or command:"<CMD>" (the same JSON on stdin)' },
-          { name: "no-data", type: "string", value: "<STATE>", choices: ["ok", "alert", "keep"], desc: "State when the window has no sessions (or, for cost, no priced session): ok, alert, or keep the last state (default: NO_DATA)" },
+          { name: "no-data", type: "string", value: "<STATE>", choices: ["ok", "alert", "keep"], desc: "State when the window has no sessions (or, for cost, no priced session; for score:<NAME>, no such score): ok, alert, or keep the last state (default: NO_DATA)" },
         ],
         examples: [
           "coding.sh alert add failures --measure failure-rate --over 0.5 --window 1d --notify webhook:https://example.com/hook",
           "coding.sh alert add spend --measure cost --warn 20 --over 50 --window 1d --by agent --notify command:\"notify-send coding.sh\"",
           "coding.sh alert add loops --measure flag:repeated-tool-failure --over 3 --window 1h --where 'agent:codex' --notify webhook:https://example.com/hook",
+          "coding.sh alert add helpful --measure score:helpful --under 0.5 --window 1d --notify webhook:https://example.com/hook",
         ],
       },
       { name: "list", summary: "List the alerts with their last state, and say which targets are off after failed deliveries", examples: ["coding.sh alert list", "coding.sh alert list --json"] },
@@ -689,8 +692,8 @@ export const COMMANDS: CommandSpec[] = [
     ],
     examples: ["coding.sh alert add failures --measure failure-rate --over 0.5 --window 1d --notify webhook:https://example.com/hook", "coding.sh alert check", "coding.sh alert list"],
     notes: [
-      "States are OK, WARNING, ALERT and NO_DATA. An alert starts at OK, and only a change of state notifies. The measures are the ones coding.sh stats computes, over top-level sessions with their subagents' cost added.",
-      "A webhook gets a POST with the JSON body {alert, state, previous, value, threshold, window, by, at} (by only with --by agent) and the header X-Coding-Sh-Signature: sha256=<HMAC-SHA256 of the body, keyed with the alert's secret>. A command gets the same JSON on stdin and succeeds by exiting 0.",
+      "States are OK, WARNING, ALERT and NO_DATA. An alert starts at OK, and only a change of state notifies. The measures are the ones coding.sh stats computes, over top-level sessions with their subagents' cost added; score:<NAME> averages the scores of that name given to those sessions (coding.sh score, a judge, a review).",
+      "A webhook gets a POST with the JSON body {alert, state, previous, value, threshold, direction, window, by, at} (direction: \"under\" only with --under, by only with --by agent) and the header X-Coding-Sh-Signature: sha256=<HMAC-SHA256 of the body, keyed with the alert's secret>. A command gets the same JSON on stdin and succeeds by exiting 0.",
       "Each notification is tried 3 times, 1 s and then 2 s apart. After 5 failed deliveries in a row the target is turned off; alert list says so, and a successful alert test turns it back on.",
       "alert check exits 0 unless the usage is wrong; with --json it lists each alert's state, value and groups. Run it from cron or Task Scheduler. coding.sh serve runs the same check every minute. The hook and the read commands never run alerts.",
       "Alerts, their states and their secrets are kept in ~/.coding.sh/alerts.json, mode 600.",
@@ -700,11 +703,11 @@ export const COMMANDS: CommandSpec[] = [
   {
     name: "budget",
     group: "Explore",
-    summary: "Spend budgets per day, week or month, for every session or one agent or repo",
+    summary: "Spend budgets per day, week or month, for every session, one agent or repo, or the sessions a query matches",
     actions: [
       {
         name: "set",
-        summary: "Add a budget, or change the limit of the one with the same period, agent and repo",
+        summary: "Add a budget, or change the limit of the one with the same period, agent, repo and --where",
         args: [
           { name: "period", desc: "day (local calendar day), week (ISO week, from Monday) or month (calendar month)", required: true },
           { name: "usd", desc: "The limit in USD, e.g. 20 or 2.50", required: true },
@@ -712,8 +715,9 @@ export const COMMANDS: CommandSpec[] = [
         flags: [
           { name: "agent", short: "a", type: "string", value: "<AGENT>", desc: "Only this agent's sessions" },
           { name: "repo", type: "string", value: "<PATH|NAME>", desc: "Only sessions in this repo: a path (stored absolute; matches at or under it) or a repo name" },
+          { name: "where", type: "string", dashValue: true, value: "<QUERY>", desc: "Only the sessions this query matches, with their subagents, e.g. 'user:u1', 'model:claude-opus-*' or 'env:production' (keys: coding.sh sessions --help). The id ends in -w and 6 hex characters of the query's SHA-256" },
         ],
-        examples: ["coding.sh budget set day 20", "coding.sh budget set week 50 --agent codex", "coding.sh budget set month 200 --repo ."],
+        examples: ["coding.sh budget set day 20", "coding.sh budget set week 50 --agent codex", "coding.sh budget set month 200 --repo .", "coding.sh budget set day 5 --where 'user:alice'"],
       },
       { name: "list", summary: "List the budgets", examples: ["coding.sh budget list", "coding.sh budget list --json"] },
       { name: "rm", summary: "Remove a budget", args: [{ name: "id", desc: "The budget's id (budget list)", required: true }], examples: ["coding.sh budget rm week-codex"] },
@@ -724,7 +728,8 @@ export const COMMANDS: CommandSpec[] = [
       "Spend is estimated: the cost of the sessions that started in the current period (subagents too), the same total coding.sh usage gives for that window. A session with no reported cost is priced from its tokens.",
       "A budget is over once its spend reaches the limit. Budgets are kept in ~/.coding.sh/budgets.json.",
       "The status line shows the highest budget once it passes 80% (budget 82%). coding.sh proxy --enforce-budget answers 429 to calls a budget over its limit applies to.",
-      "With --json, status gives each budget's spendUsd, limitUsd, percent, over, since and resetsAt (ISO times).",
+      "A --where budget counts the sessions its query matches and their subagents. The status line counts it only for a day budget whose query uses session keys (agent, model, repo, flag, cost, ...), matched on the day's sessions it already read; a week or month --where budget, or one with an event key such as user:, env: or release:, is left out of the line. coding.sh proxy --enforce-budget never applies a --where budget.",
+      "With --json, status gives each budget's spendUsd, limitUsd, percent, over, since and resetsAt (ISO times), and where when the budget has one.",
     ],
     load: () => import("./commands/budget.ts"),
   },

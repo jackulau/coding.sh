@@ -7,16 +7,17 @@ import { type AlertPayload, deliver, type DeliverOptions } from "./notify.ts";
 import { readMeasure } from "./measure.ts";
 import { type AlertDef, type AlertState, loadAlerts, MAX_FAILED_DELIVERIES, saveAlerts, withAlertsLock } from "./store.ts";
 
-/** A group's state for a value; null is no data, which --no-data maps. */
-export function classify(def: Pick<AlertDef, "over" | "warn" | "noData">, value: number | null, previous: AlertState): AlertState {
+/** A group's state for a value; null is no data, which --no-data maps. Direction "under" fires below the thresholds. */
+export function classify(def: Pick<AlertDef, "over" | "warn" | "noData" | "direction">, value: number | null, previous: AlertState): AlertState {
   if (value === null) {
     if (def.noData === "ok") return "OK";
     if (def.noData === "alert") return "ALERT";
     if (def.noData === "keep") return previous;
     return "NO_DATA";
   }
-  if (value > def.over) return "ALERT";
-  if (def.warn !== undefined && value > def.warn) return "WARNING";
+  const past = def.direction === "under" ? (t: number) => value < t : (t: number) => value > t;
+  if (past(def.over)) return "ALERT";
+  if (def.warn !== undefined && past(def.warn)) return "WARNING";
   return "OK";
 }
 
@@ -40,6 +41,8 @@ export interface AlertResult {
   window: string;
   over: number;
   warn?: number;
+  /** "under": the thresholds are lower bounds (--under). */
+  direction?: "under";
   by?: "agent";
   /** The worst group's state; NO_DATA when no group has data. */
   state: AlertState;
@@ -66,8 +69,9 @@ export interface CheckOptions extends DeliverOptions {
 }
 
 export function payloadOf(def: AlertDef, g: Pick<GroupResult, "agent" | "state" | "previous" | "value">, at: number): AlertPayload {
-  // Key order is the documented body order: ..., window, by?, at.
-  const head = { alert: def.name, state: g.state, previous: g.previous, value: g.value, threshold: thresholdOf(def, g.state), window: def.window };
+  // Key order is the documented body order: ..., threshold, direction?, window, by?, at.
+  const dir = def.direction === "under" ? { direction: "under" as const } : {};
+  const head = { alert: def.name, state: g.state, previous: g.previous, value: g.value, threshold: thresholdOf(def, g.state), ...dir, window: def.window };
   const iso = new Date(at).toISOString();
   return g.agent !== undefined ? { ...head, by: { agent: g.agent }, at: iso } : { ...head, at: iso };
 }
@@ -86,6 +90,7 @@ export function recordDelivery(def: AlertDef, d: { ok: boolean; error?: string }
 async function checkOne(def: AlertDef, o: CheckOptions, now: number): Promise<AlertResult> {
   const r: AlertResult = { name: def.name, measure: def.measure, window: def.window, over: def.over, state: "NO_DATA", value: null, groups: [], notified: 0, failed: 0, skipped: 0, disabled: def.delivery.disabledAt !== undefined };
   if (def.warn !== undefined) r.warn = def.warn;
+  if (def.direction === "under") r.direction = "under";
   if (def.by) r.by = def.by;
   let values: Map<string, number | null>;
   try {
