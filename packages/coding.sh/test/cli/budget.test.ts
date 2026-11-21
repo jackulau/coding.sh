@@ -71,6 +71,11 @@ describe("coding.sh budget (in process)", () => {
     const b = box();
     let r = await runCmd(budget, b, { action: "set", positionals: ["year", "5"] });
     assert.match(String(r.error?.message), /day, week, month/);
+    assert.equal(r.error?.suggestion, undefined, "no near period to name");
+    r = await runCmd(budget, b, { action: "set", positionals: ["dya", "20"] });
+    assert.equal(r.error?.suggestion, "coding.sh budget set day 20", "a near miss names the period it meant");
+    r = await runCmd(budget, b, { action: "set", positionals: ["wekk", "5"], flags: { agent: "codex" } });
+    assert.equal(r.error?.suggestion, "coding.sh budget set week 5 --agent codex");
     r = await runCmd(budget, b, { action: "set", positionals: ["day", "-3"] });
     assert.match(String(r.error?.message), /USD amount/);
     r = await runCmd(budget, b, { action: "set", positionals: ["day", "0"] });
