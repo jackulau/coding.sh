@@ -20,30 +20,43 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { adapterVersions, branchFresh, repoHygiene, secretScan } from "./gate/checks.mjs";
 import { needsShell } from "./hooks/lib.mjs";
+import { AGENT_HOME_DIRS, AGENT_HOME_KEYS } from "../packages/coding.sh/test/_agent-env.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // ---------------------------------------------------------------- environment
 
-/** The variables each child gets its own temp directory for. */
+/**
+ * The variables each child gets its own temp directory for. Every agent home directory variable
+ * (the list in packages/coding.sh/test/_agent-env.ts, shared with the tests' tmpEnv()) points
+ * where its adapter looks by default under the temp HOME: APPDATA at home/AppData/Roaming,
+ * XDG_CONFIG_HOME at home/.config, GEMINI_CLI_HOME at home, and so on.
+ */
 export const ISOLATED = {
   HOME: "home",
   USERPROFILE: "home",
   // Windows: LOCALAPPDATA must sit inside USERPROFILE. With the profile moved and LOCALAPPDATA
   // left on the real one, Chrome refuses --remote-debugging-port ("requires a non-default data
-  // directory") and every browser test times out. Nothing reads it elsewhere.
+  // directory") and every browser test times out.
   LOCALAPPDATA: join("home", "AppData", "Local"),
   CODING_SH_HOME: "coding.sh",
-  CLAUDE_CONFIG_DIR: "claude",
-  CODEX_HOME: "codex",
-  GEMINI_HOME: "gemini",
-  COPILOT_HOME: "copilot",
-  PI_CODING_AGENT_DIR: "pi",
   npm_config_prefix: "npm-prefix",
+  ...Object.fromEntries(Object.entries(AGENT_HOME_DIRS).map(([k, sub]) => [k, join("home", ...sub)])),
 };
 
-/** Variables that point a child at settings or a store of the person running the gate. */
-const SCRUBBED = ["CODING_SH_STORE_URL", "CODING_SH_BLOB_URL", "CODING_SH_URL", "CODING_SH_FORWARD_URL", "CODING_SH_DEV_REAL_STORE"];
+/**
+ * Variables that point a child at settings or a store of the person running the gate, and the
+ * agent variables that name one file or db, a project, or a layout root (OPENCODE_DB,
+ * PI_CODING_AGENT_SESSION_DIR, GOOSE_PATH_ROOT, DEVIN_*): unset, their defaults fall under the temp HOME.
+ */
+const SCRUBBED = [
+  "CODING_SH_STORE_URL",
+  "CODING_SH_BLOB_URL",
+  "CODING_SH_URL",
+  "CODING_SH_FORWARD_URL",
+  "CODING_SH_DEV_REAL_STORE",
+  ...AGENT_HOME_KEYS.filter((k) => !(k in AGENT_HOME_DIRS)),
+];
 
 /** A child environment with every home variable pointing into a new temp directory. Returns it with the directory to remove. */
 export function isolatedEnv(base = process.env, make = () => mkdtempSync(join(tmpdir(), "coding-sh-gate-"))) {

@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { hashParts, sha256Hex } from "../../src/core/ids.ts";
 import type { NormalizeContext, SpoolLine } from "../../src/core/types.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
+import { AGENT_HOME_KEYS } from "../_agent-env.ts";
 import { printBin } from "../_bin.ts";
 
 export const PKG_ROOT = realpathSync(join(import.meta.dirname, "..", ".."));
@@ -84,34 +85,6 @@ export interface TmpEnv {
   restore(): void;
 }
 
-/**
- * Every variable an adapter reads to find an agent's config or sessions. tmpEnv() unsets them all,
- * so a developer's shell (say, CURSOR_DATA_DIR, which Cursor reads before CURSOR_CONFIG_DIR) can
- * neither fail a test nor point one at real sessions. %APPDATA% is where Goose keeps its data on
- * Windows.
- */
-const AGENT_KEYS = [
-  "CLAUDE_CONFIG_DIR",
-  "CODEX_HOME",
-  "CURSOR_CONFIG_DIR",
-  "CURSOR_DATA_DIR",
-  "OPENCODE_CONFIG_DIR",
-  "OPENCODE_DB",
-  "GEMINI_CLI_HOME",
-  "COPILOT_HOME",
-  "PI_CODING_AGENT_DIR",
-  "PI_CODING_AGENT_SESSION_DIR",
-  "GOOSE_PATH_ROOT",
-  "T3CODE_HOME",
-  "DEVIN_CONFIG_HOME",
-  "DEVIN_SESSIONS_DIR",
-  "DEVIN_PROJECT_DIR",
-  "XDG_CONFIG_HOME",
-  "XDG_DATA_HOME",
-  "XDG_STATE_HOME",
-  "XDG_CACHE_HOME",
-  "APPDATA",
-];
 
 /** Point HOME / CODING_SH_HOME at a fresh temp dir, with every agent config variable unset. */
 export function tmpEnv(): TmpEnv {
@@ -119,7 +92,7 @@ export function tmpEnv(): TmpEnv {
   const home = join(root, "home");
   const dataHome = join(root, "coding.sh");
   mkdirSync(home, { recursive: true });
-  const keys = ["HOME", "USERPROFILE", "CODING_SH_HOME", ...AGENT_KEYS, "PATH"];
+  const keys = ["HOME", "USERPROFILE", "CODING_SH_HOME", ...AGENT_HOME_KEYS, "PATH"];
   const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   for (const k of keys) if (k !== "PATH") delete process.env[k];
   process.env.HOME = home;
