@@ -89,12 +89,28 @@ describe("Work page in a browser", { skip: chrome ? false : "no Chrome/Chromium 
     assert.deepEqual(p.errors, []);
   });
 
-  test("fits a phone with no sideways scroll, and the six tabs keep their whole names", async () => {
+  test("fits a phone with no sideways scroll, and the six tabs keep their whole names", async (t) => {
     const p = await open("#/work", true);
     assert.equal(await p.eval("document.documentElement.scrollWidth <= innerWidth"), true);
-    // A sixth tab (Work) cut every name to an ellipsis ("W…") at 390px until the phone tabs tightened.
-    const cut = await p.eval("[...document.querySelectorAll('.nav a > span')].filter((s) => s.scrollWidth > s.clientWidth).map((s) => s.textContent)");
-    assert.deepEqual(cut, [], "no tab name ends in an ellipsis");
+    // A sixth tab (Work) cut every name to an ellipsis ("W…") at 390px until the phone tabs
+    // tightened, and then still at 341-437px in Arial. The steps are tuned to Arial's widths,
+    // so the tabs are set in Arial here (Liberation Sans on Linux has the same widths): the
+    // default font differs from machine to machine.
+    const arial = `Arial, "Liberation Sans"`;
+    const sessions: number = await p.eval(`(() => { const c = document.createElement('canvas').getContext('2d'); c.font = ${JSON.stringify(`12px ${arial}`)}; return c.measureText('Sessions').width; })()`);
+    if (Math.abs(sessions - 48.69) > 0.1) {
+      assert.ok(!process.env.GITHUB_ACTIONS, `"Sessions" is ${sessions}px wide in 12px Arial, not 48.69px: CI needs Arial or Liberation Sans`);
+      t.skip("no Arial or Liberation Sans on this machine");
+      return;
+    }
+    await p.eval(`document.querySelectorAll('.nav a').forEach((a) => a.style.fontFamily = ${JSON.stringify(arial)})`);
+    // Phone widths, and both sides of each step in the top bar's CSS.
+    for (const w of [320, 340, 341, 360, 367, 368, 375, 390, 393, 398, 399, 402, 412, 414, 430, 442, 443, 480, 640]) {
+      await p.viewport(w, 844, true);
+      const m = await p.eval("({ sw: document.documentElement.scrollWidth, cut: [...document.querySelectorAll('.nav a > span')].filter((s) => s.scrollWidth > s.clientWidth).map((s) => s.textContent) })");
+      assert.ok(m.sw <= w, `at ${w}px the page is ${m.sw}px wide`);
+      assert.deepEqual(m.cut, [], `at ${w}px no tab name ends in an ellipsis`);
+    }
     assert.deepEqual(p.errors, []);
   });
 
