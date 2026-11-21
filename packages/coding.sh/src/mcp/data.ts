@@ -93,6 +93,8 @@ export function sessionSummary(s: Session, now: number = Date.now()): SessionSum
     title: clip(s.title, 120),
     model: s.model,
     repo: s.repo?.root,
+    // A linked worktree's session: the main checkout's root (RepoState.main), as show --json has it.
+    repoMain: s.repo?.main,
     branch: s.repo?.branch,
     cwd: s.cwd && s.cwd !== s.repo?.root ? s.cwd : undefined,
     startedAt: iso(s.startedAt),
