@@ -108,7 +108,7 @@
     "sessionId": "gem-sess-1",
     "ts": 1789984805000,
     "payload": {
-      "runner": "node",
+      "runner": "node:test",
       "passed": 4,
       "failed": 0
     },

@@ -69,7 +69,7 @@ day). Turn the check off with `NO_UPDATE_NOTIFIER=1`, `CODING_SH_NO_UPDATE_CHECK
 |---|---|
 | Verified on real sessions | Claude Code, Codex CLI (approve the hooks once with `/hooks`), Antigravity CLI (formerly Gemini CLI) |
 | Verified on a real install (current release against a local stub model) | OpenCode, GitHub Copilot CLI, Factory Droid, Goose, Pi, T3 Code, Aider |
-| Not run live (both need an account login) | Cursor CLI, Amp |
+| Not run live (each needs an account login) | Cursor CLI, Amp, Devin CLI |
 | Any other command | `coding.sh run -- <cmd>` takes shadow-git snapshots before and after |
 
 Agent frameworks and apps can also send OpenTelemetry to `coding.sh collector`. The per-agent

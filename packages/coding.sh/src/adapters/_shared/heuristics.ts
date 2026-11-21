@@ -8,8 +8,10 @@ export interface TestSummary {
   skipped?: number;
 }
 
+// CSI codes (colors, cursor moves), and OSC strings (titles, links) ended by BEL or
+// ESC \. An OSC string stops at the next ESC, so it can't run on to a later BEL.
 // eslint-disable-next-line no-control-regex
-const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007]*\u0007/g;
+const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g;
 export const stripAnsi = (s: string): string => s.replace(ANSI, "");
 
 /** Commands that (probably) run a test suite. */
@@ -22,9 +24,39 @@ export function isTestCommand(cmd: string | undefined): boolean {
 
 const n = (s: string | undefined) => (s ? Number.parseInt(s, 10) : 0);
 
+/** The count in the first match of `re`, for a field within one summary line. */
 function pick(text: string, re: RegExp): number | undefined {
   const m = re.exec(text);
   return m ? n(m[1]) : undefined;
+}
+
+/**
+ * The last match of a global `re`: a rerun or a watch mode prints a summary per
+ * run, and the last one is the outcome. The line patterns use [ \t], not \s, so a
+ * match can't run past its line: \s after ^ makes a long run of blank lines quadratic.
+ */
+function lastMatch(text: string, re: RegExp): RegExpExecArray | undefined {
+  let last: RegExpExecArray | undefined;
+  for (const m of text.matchAll(re)) last = m;
+  return last;
+}
+
+const lastCount = (text: string, re: RegExp): number | undefined => {
+  const m = lastMatch(text, re);
+  return m ? n(m[1]) : undefined;
+};
+
+/**
+ * Whether a line holds a pytest summary: a count ("2 passed", "1 error"), then
+ * "in 0.12s" with no line break between them. It looks for the time after the first
+ * count: one regex with .* between the two retries from every count, which is
+ * quadratic on a long line of counts.
+ */
+function isPytestSummary(line: string): boolean {
+  return line.split(/[\r\u2028\u2029]/).some((part) => {
+    const m = /\b\d+ (?:passed|failed|error|errors)\b/.exec(part);
+    return !!m && /\bin [\d.]+s\b/.test(part.slice(m.index + m[0].length));
+  });
 }
 
 type Parser = (t: string) => TestSummary | undefined;
@@ -46,21 +78,21 @@ const PARSERS: Parser[] = [
   },
   // jest: "Tests:       1 failed, 2 skipped, 10 passed, 13 total"
   (t) => {
-    const m = /^\s*Tests:\s+(.*\d+ total)\s*$/m.exec(t);
+    const m = lastMatch(t, /^[ \t]*Tests:[ \t]+(.*\d+ total)[ \t]*$/gm);
     if (!m) return undefined;
     const l = m[1]!;
     return { runner: "jest", passed: pick(l, /(\d+) passed/) ?? 0, failed: pick(l, /(\d+) failed/) ?? 0, skipped: (pick(l, /(\d+) skipped/) ?? 0) + (pick(l, /(\d+) todo/) ?? 0) };
   },
   // vitest: " Tests  3 failed | 12 passed | 1 skipped (16)"
   (t) => {
-    const m = /^\s*Tests\s{2,}(.*\(\d+\))\s*$/m.exec(t);
+    const m = lastMatch(t, /^[ \t]*Tests[ \t]{2,}(.*\(\d+\))[ \t]*$/gm);
     if (!m) return undefined;
     const l = m[1]!;
     return { runner: "vitest", passed: pick(l, /(\d+) passed/) ?? 0, failed: pick(l, /(\d+) failed/) ?? 0, skipped: (pick(l, /(\d+) skipped/) ?? 0) + (pick(l, /(\d+) todo/) ?? 0) };
   },
   // pytest: "==== 2 failed, 10 passed, 1 skipped, 1 error in 0.12s ====" or "10 passed in 0.50s"
   (t) => {
-    const lines = t.split("\n").filter((l) => /\b\d+ (?:passed|failed|error|errors)\b.*\bin [\d.]+s\b/.test(l));
+    const lines = t.split("\n").filter(isPytestSummary);
     const l = lines[lines.length - 1];
     if (!l) return undefined;
     return {
@@ -70,43 +102,50 @@ const PARSERS: Parser[] = [
       skipped: (pick(l, /(\d+) skipped/) ?? 0) + (pick(l, /(\d+) xfailed/) ?? 0),
     };
   },
-  // node:test: TAP "# pass 10 / # fail 0 / # skipped 1" or spec "ℹ pass 10"
+  // node:test: TAP "# pass 10 / # fail 0 / # skipped 1" or spec "ℹ pass 10", read from the last pass line on
   (t) => {
-    const pass = pick(t, /^[#ℹ]\s*pass (\d+)\s*$/m);
-    const fail = pick(t, /^[#ℹ]\s*fail (\d+)\s*$/m);
-    if (pass === undefined && fail === undefined) return undefined;
-    return { runner: "node:test", passed: pass ?? 0, failed: fail ?? 0, skipped: (pick(t, /^[#ℹ]\s*skipped (\d+)\s*$/m) ?? 0) + (pick(t, /^[#ℹ]\s*todo (\d+)\s*$/m) ?? 0) };
+    const pass = lastMatch(t, /^[#ℹ][ \t]*pass (\d+)[ \t]*$/gm);
+    const rest = pass ? t.slice(pass.index) : t;
+    const fail = lastCount(rest, /^[#ℹ][ \t]*fail (\d+)[ \t]*$/gm);
+    if (!pass && fail === undefined) return undefined;
+    return { runner: "node:test", passed: pass ? n(pass[1]) : 0, failed: fail ?? 0, skipped: (lastCount(rest, /^[#ℹ][ \t]*skipped (\d+)[ \t]*$/gm) ?? 0) + (lastCount(rest, /^[#ℹ][ \t]*todo (\d+)[ \t]*$/gm) ?? 0) };
   },
-  // mocha: "10 passing (20ms)", "2 failing", "1 pending"
+  // mocha: "10 passing (20ms)", then "1 pending" and "2 failing" when there are any, read from the last passing line on
   (t) => {
-    const pass = pick(t, /^\s*(\d+) passing\b/m);
-    if (pass === undefined) return undefined;
-    return { runner: "mocha", passed: pass, failed: pick(t, /^\s*(\d+) failing\b/m) ?? 0, skipped: pick(t, /^\s*(\d+) pending\b/m) ?? 0 };
+    const pass = lastMatch(t, /^[ \t]*(\d+) passing\b/gm);
+    if (!pass) return undefined;
+    const rest = t.slice(pass.index);
+    return { runner: "mocha", passed: n(pass[1]), failed: pick(rest, /^[ \t]*(\d+) failing\b/m) ?? 0, skipped: pick(rest, /^[ \t]*(\d+) pending\b/m) ?? 0 };
   },
   // go test -v: "--- PASS: TestX", "--- FAIL: TestY", "--- SKIP:"; else package lines "ok  pkg" / "FAIL pkg"
   (t) => {
-    const pass = (t.match(/^\s*--- PASS: /gm) ?? []).length;
-    const fail = (t.match(/^\s*--- FAIL: /gm) ?? []).length;
-    const skip = (t.match(/^\s*--- SKIP: /gm) ?? []).length;
+    const pass = (t.match(/^[ \t]*--- PASS: /gm) ?? []).length;
+    const fail = (t.match(/^[ \t]*--- FAIL: /gm) ?? []).length;
+    const skip = (t.match(/^[ \t]*--- SKIP: /gm) ?? []).length;
     if (pass + fail + skip > 0) return { runner: "go", passed: pass, failed: fail, skipped: skip };
-    const okPk = (t.match(/^ok\s+\S+\s+(?:[\d.]+s|\(cached\))/gm) ?? []).length;
-    const failPk = (t.match(/^FAIL\s+\S+\s+[\d.]+s/gm) ?? []).length;
+    const okPk = (t.match(/^ok[ \t]+\S+[ \t]+(?:[\d.]+s|\(cached\))/gm) ?? []).length;
+    const failPk = (t.match(/^FAIL[ \t]+\S+[ \t]+[\d.]+s/gm) ?? []).length;
     if (okPk + failPk > 0) return { runner: "go", passed: okPk, failed: failPk };
     return undefined;
   },
 ];
 
 /**
- * Test summary from a shell command's output. Requires either a test-looking
- * command or one of the runners' unambiguous summary lines.
+ * Test summary from a shell command's output: the one parser every adapter uses.
+ * The first runner whose summary appears wins, in the order above. Within a runner
+ * the last summary counts, except cargo (sums its per-target lines) and go
+ * (counts its per-test or per-package lines). Mocha and go summaries are weaker
+ * signals: they count only when `testRun` says the output comes from a test run,
+ * which by default is when `command` looks like one. A summary with nothing in
+ * it is no summary, and skipped is absent when it is 0.
  */
-export function parseTestOutput(output: string | undefined, command?: string): TestSummary | undefined {
+export function parseTestOutput(output: string | undefined, command?: string, testRun = isTestCommand(command)): TestSummary | undefined {
   if (!output) return undefined;
   const t = stripAnsi(output.length > 200_000 ? output.slice(-200_000) : output);
   for (const p of PARSERS) {
     const s = p(t);
     if (!s) continue;
-    if (!isTestCommand(command) && (s.runner === "mocha" || s.runner === "go")) continue; // weaker signals
+    if (!testRun && (s.runner === "mocha" || s.runner === "go")) continue; // weaker signals
     if (s.passed + s.failed + (s.skipped ?? 0) === 0) continue;
     if (s.skipped === 0) delete s.skipped;
     return s;

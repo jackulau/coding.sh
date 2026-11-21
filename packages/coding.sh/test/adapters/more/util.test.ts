@@ -4,9 +4,9 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { envVar, fileTouches, findBinary, isOurCommand, openSqliteCopy, parseJsonc, parseTestSummary, spawnAgent, toMs, usageFrom } from "../../../src/adapters/more/_util.ts";
+import { emitToolEnd, Emitter, envVar, fileTouches, findBinary, isOurCommand, openSqliteCopy, parseJsonc, spawnAgent, testResultFor, toMs, usageFrom } from "../../../src/adapters/more/_util.ts";
 import type { TmpEnv } from "../_helpers.ts";
-import { fakeBinary, moreEnv } from "./_helpers.ts";
+import { fakeBinary, moreEnv, testCtx } from "./_helpers.ts";
 import { nodeBin } from "../../_bin.ts";
 import { reapSqliteCopies, SQLITE_COPY_OWNER, SQLITE_COPY_PREFIX, UNOWNED_COPY_AGE_MS } from "../../../src/adapters/_shared/sqlite-copies.ts";
 
@@ -188,23 +188,51 @@ describe("openSqliteCopy temp copies", () => {
   });
 });
 
-describe("parseTestSummary", () => {
-  const cases: [string, string, unknown][] = [
-    ["cargo", "test result: FAILED. 5 passed; 1 failed; 2 ignored; 0 measured", { runner: "cargo", passed: 5, failed: 1, skipped: 2 }],
-    ["jest", "Tests:       1 failed, 2 skipped, 5 passed, 8 total", { runner: "jest", passed: 5, failed: 1, skipped: 2 }],
-    ["vitest", "      Tests  2 failed | 10 passed | 1 skipped (13)", { runner: "vitest", passed: 10, failed: 2, skipped: 1 }],
-    ["node:test", "# tests 6\n# pass 5\n# fail 1\n# skipped 0", { runner: "node", passed: 5, failed: 1, skipped: 0 }],
-    ["node spec", "ℹ pass 3\nℹ fail 0", { runner: "node", passed: 3, failed: 0 }],
-    ["pytest", "===== 3 failed, 10 passed, 1 skipped, 2 errors in 0.52s =====", { runner: "pytest", passed: 10, failed: 5, skipped: 1 }],
-    ["mocha", "  5 passing (20ms)\n  2 pending\n  1 failing", { runner: "mocha", passed: 5, failed: 1, skipped: 2 }],
-    ["go", "--- PASS: TestA (0.00s)\n--- FAIL: TestB (0.00s)\n--- PASS: TestC (0.00s)", { runner: "go", passed: 2, failed: 1 }],
-    ["go pkgs", "ok  \texample.com/a\t0.01s\nFAIL\texample.com/b\t0.02s", { runner: "go", passed: 1, failed: 1 }],
+describe("testResultFor", () => {
+  // The shared parser (parseTestOutput) behind a test or check command. Before it, the more/
+  // adapters had a parser of their own: it named node:test "node" and kept skipped: 0.
+  const cases: [string, string, string, unknown][] = [
+    ["cargo", "cargo test", "test result: FAILED. 5 passed; 1 failed; 2 ignored; 0 measured", { runner: "cargo", passed: 5, failed: 1, skipped: 2 }],
+    ["jest", "npx jest", "Tests:       1 failed, 2 skipped, 5 passed, 8 total", { runner: "jest", passed: 5, failed: 1, skipped: 2 }],
+    ["vitest", "npx vitest run", "      Tests  2 failed | 10 passed | 1 skipped (13)", { runner: "vitest", passed: 10, failed: 2, skipped: 1 }],
+    ["node:test", "node --test", "# tests 6\n# pass 5\n# fail 1\n# skipped 0", { runner: "node:test", passed: 5, failed: 1 }],
+    ["node spec", "node --test", "ℹ pass 3\nℹ fail 0", { runner: "node:test", passed: 3, failed: 0 }],
+    ["pytest", "pytest", "===== 3 failed, 10 passed, 1 skipped, 2 errors in 0.52s =====", { runner: "pytest", passed: 10, failed: 5, skipped: 1 }],
+    ["mocha", "npm test", "  5 passing (20ms)\n  2 pending\n  1 failing", { runner: "mocha", passed: 5, failed: 1, skipped: 2 }],
+    ["go", "go test -v ./...", "--- PASS: TestA (0.00s)\n--- FAIL: TestB (0.00s)\n--- PASS: TestC (0.00s)", { runner: "go", passed: 2, failed: 1 }],
+    ["go pkgs", "go test ./...", "ok  \texample.com/a\t0.01s\nFAIL\texample.com/b\t0.02s", { runner: "go", passed: 1, failed: 1 }],
   ];
-  for (const [name, text, want] of cases) it(name, () => assert.deepEqual(parseTestSummary(text), want));
-  it("takes the last summary and ignores ANSI colour", () => {
-    assert.deepEqual(parseTestSummary("Tests:  1 failed, 1 total\n\x1b[1mTests:\x1b[22m  2 passed, 2 total"), { runner: "jest", passed: 2, failed: 0, skipped: 0 });
+  for (const [name, cmd, text, want] of cases) it(name, () => assert.deepEqual(testResultFor({ command: cmd }, text), want));
+  it("reads pytest -q's bare summary line, and not prose", () => {
+    const bare: [string, number, number][] = [
+      ["2 passed in 0.01s", 2, 0],
+      ["1 failed, 2 passed in 0.12s", 2, 1],
+      ["2 passed, 1 warning in 0.01s", 2, 0],
+      ["5 passed in 62.03s (0:01:02)", 5, 0],
+    ];
+    for (const [line, passed, failed] of bare) assert.deepEqual(testResultFor({ command: "pytest -q" }, `..\n${line}\n`), { runner: "pytest", passed, failed }, line);
+    assert.equal(testResultFor({ command: "pytest -q" }, "the value was passed in 3s\n"), undefined);
   });
-  it("returns undefined for non-test output", () => assert.equal(parseTestSummary("compiled successfully"), undefined));
+  it("takes the last summary and ignores ANSI colour", () => {
+    assert.deepEqual(testResultFor({ command: "npx jest" }, "Tests:  1 failed, 1 total\n\x1b[1mTests:\x1b[22m  2 passed, 2 total"), { runner: "jest", passed: 2, failed: 0 });
+  });
+  it("counts mocha and go after a check command, as a test command", () => {
+    assert.deepEqual(testResultFor({ command: "npm run check" }, "  5 passing (20ms)\n"), { runner: "mocha", passed: 5, failed: 0 });
+    assert.deepEqual(testResultFor({ command: "make verify" }, "ok  \texample.com/a\t0.01s\n"), { runner: "go", passed: 1, failed: 0 });
+  });
+  it("reads only test and check commands, and only their summaries", () => {
+    assert.equal(testResultFor({ command: "cat results.log" }, "2 passed in 0.01s\n"), undefined);
+    assert.equal(testResultFor({ command: "npm run build" }, "compiled successfully"), undefined);
+  });
+});
+
+describe("emitToolEnd", () => {
+  it("records a test.result for a pytest -q shell call", async () => {
+    const { ctx } = testCtx();
+    const em = new Emitter(ctx, { agent: "droid", sessionId: "s1", ts: 1 }, ["s1"]);
+    await emitToolEnd(em, ctx, { tool: "Bash", toolUseId: "t1", input: { command: "pytest -q" }, output: "..\n2 passed in 0.01s\n", ok: true }, "/work/demo");
+    assert.deepEqual(em.events.find((e) => e.kind === "test.result")?.payload, { runner: "pytest", passed: 2, failed: 0, toolUseId: "t1" });
+  });
 });
 
 describe("envVar / findBinary on Windows env copies", () => {

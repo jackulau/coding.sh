@@ -15,7 +15,8 @@
 // under `coding.sh run --agent <id>`) can delegate these lines here.
 import type { Adapter, AgentRunOutput, DetectResult, FileChange, NormalizeContext, RunSpec, SpoolLine } from "../../core/types.ts";
 import type { AgentEvent, RepoState, Usage } from "../../schema/index.ts";
-import { Emitter, attachRaw, clip, isObj, num, parseTestSummary, rawBlob, runEnv, spawnAgent, spoolIdParts, str, toRunOutput } from "./_util.ts";
+import { Emitter, attachRaw, clip, isObj, num, rawBlob, runEnv, spawnAgent, spoolIdParts, str, toRunOutput } from "./_util.ts";
+import { parseTestOutput } from "../_shared/heuristics.ts";
 import type { Json } from "./_util.ts";
 import { redactArgv } from "../../core/redact.ts";
 
@@ -111,7 +112,8 @@ export async function normalizeWrapperLine(line: SpoolLine, ctx: NormalizeContex
       const stream = ev.includes("stderr") || raw.stream === "stderr" ? "stderr" : "stdout";
       const c = await clip(ctx, text, 2048);
       em.push("notification", { kind: "output", stream, text: c.value }, c.blob ? { blobs: [c.blob] } : {});
-      const tr = parseTestSummary(text);
+      // No command vouches for a chunk, so mocha and go summaries don't count here.
+      const tr = parseTestOutput(text);
       if (tr) em.push("test.result", { ...tr, source: "output" });
     }
   } else {
@@ -134,7 +136,9 @@ export const wrapperAdapter: Adapter = {
   displayName: "Any command (coding.sh run --)",
   tier: "C",
   // 2 (0.1.2): secret-named argv flags redacted. 3: llm.usage lines become llm.calls.
-  parseVersion: 3,
+  // 4 (0.1.8): an output chunk's test.result comes from the shared parser: pytest -q's bare summary line counts,
+  //    skipped is absent when 0, and a mocha or go summary no longer counts (no command vouches for a chunk).
+  parseVersion: 4,
   async detect(): Promise<DetectResult> {
     return { installed: true, hooked: false, notes: ["Built in: capture any agent with `coding.sh run -- <cmd>`. Nothing to install."] };
   },

@@ -971,9 +971,11 @@ export const t3code: Adapter = {
   // 9 (0.1.8): that also holds when the run sits under a later provider thread's transcript, and for Workflow-tool run
   //    threads and agents T3 records in projection_subagents; a store-built llm.call names the turn's model.
   // 10 (0.1.8): the host-link notification names the thread in its message, and T3's "New thread" placeholder is no title.
-  // 11 (0.1.8): T3's requests to the user (pending approvals and questions) are host-request notifications, resolved
-  //    when T3 resolves them, so a thread waiting on one is blocked on you (core/waiting.ts).
-  parseVersion: 11,
+  // 11 (0.1.8): a shell call's test.result reads the last jest, vitest, node:test or mocha summary in its output, not the first.
+  // 12 (0.1.8): T3's requests to the user (pending approvals and questions) are host-request notifications, resolved
+  //    when T3 resolves them, so a thread waiting on one is blocked on you (core/waiting.ts). A thread with activity
+  //    inside the --since window is imported whole, with its host link.
+  parseVersion: 12,
 
   async detect() {
     const env = process.env;

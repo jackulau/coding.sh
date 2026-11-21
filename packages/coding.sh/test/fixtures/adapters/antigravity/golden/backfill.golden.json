@@ -127,7 +127,7 @@
     "sessionId": "agy-conv-1",
     "ts": 1789984805000,
     "payload": {
-      "runner": "node",
+      "runner": "node:test",
       "passed": 2,
       "failed": 1,
       "toolUseId": "step-4"

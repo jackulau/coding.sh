@@ -226,7 +226,8 @@ export const devinAdapter: Adapter = {
   id: ID,
   displayName: "Devin CLI",
   tier: "A",
-  parseVersion: 1,
+  // 2 (0.1.8): test.result comes from the shared parser: pytest -q's bare summary line counts, the node runner is "node:test", and skipped is absent when 0.
+  parseVersion: 2,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["devin"]);
     const dir = devinConfigDir();

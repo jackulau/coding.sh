@@ -61,6 +61,22 @@ over and the transcripts are not re-read on every read (an explicit `ingest --ba
 Imports key on the session id, so running `init` later never doubles a session. Codex does the same,
 but only for the narrow window after `init` while its hooks are untrusted or disabled (see below).
 
+## Test results
+
+A shell call whose output holds a test runner's summary also becomes a `test.result`: the runner,
+its passed and failed counts, and skipped when there are any. One parser reads the output for every
+agent (`parseTestOutput` in `src/adapters/_shared/heuristics.ts`). It reads cargo test, Jest,
+Vitest, pytest (the framed summary, or the bare `2 passed in 0.01s` that `pytest -q` prints),
+node:test, Mocha and Go. When an output holds several summaries, such as a rerun or a watch mode,
+the last one counts. Cargo adds up its per-target lines, and Go counts its per-test or per-package
+lines. Escape codes for colors, titles and links are stripped first, and only the last 200,000
+characters of an output are read.
+
+Claude Code, Codex, OpenCode, Cursor and T3 Code read every shell call, and count a Mocha or Go
+summary only when the command runs tests. Gemini CLI, Antigravity, Copilot CLI, Amp, Pi, Droid,
+Goose and Devin CLI read only a command that verifies work (tests, type checks, linters, builds),
+such as `npm test`, `pytest`, `npm run check` or `make verify`.
+
 ## Subagents
 
 How each agent marks a subagent, and where coding.sh pairs it with its parent:

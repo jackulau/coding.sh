@@ -19,7 +19,7 @@ describe("gemini-cli normalize", () => {
     for (const k of ["session.start", "user.message", "tool.start", "tool.end", "file.change", "test.result", "llm.call", "assistant.message", "turn.end", "context.compact", "notification", "session.end"]) assert.ok(kinds.has(k as never), `missing ${k}`);
     assert.deepEqual(events.find((e) => e.kind === "file.change")!.payload, { path: "src/math.ts", op: "modify", tool: "replace" });
     const tr = events.find((e) => e.kind === "test.result")!;
-    assert.equal(tr.payload.runner, "node");
+    assert.equal(tr.payload.runner, "node:test");
     assert.equal(tr.payload.passed, 4);
     const failed = events.filter((e) => e.kind === "tool.end" && e.payload.ok === false);
     assert.equal(failed.length, 1);
@@ -157,11 +157,13 @@ describe("gemini-cli overlay", () => {
   it("isolates GEMINI_CLI_HOME and carries over only auth", async () => {
     writeFile(join(env.home, ".gemini", "oauth_creds.json"), '{"token":"t"}');
     writeFile(join(env.home, ".gemini", "settings.json"), JSON.stringify({ security: { auth: { selectedType: "oauth-personal" } }, hooks: { X: [] }, mcpServers: { a: {} } }));
-    const runDir = join(env.root, "run1");
+    const runDir = join(env.root, "run1", "work");
+    const home = join(env.root, "run1", "home");
     const o = await geminiCliAdapter.overlay!({ files: {}, flags: [] } as never, runDir);
-    assert.equal(o.env.GEMINI_CLI_HOME, join(runDir, "home"));
-    assert.equal(readFileSync(join(runDir, "home", ".gemini", "oauth_creds.json"), "utf8"), '{"token":"t"}');
-    assert.deepEqual(JSON.parse(readFileSync(join(runDir, "home", ".gemini", "settings.json"), "utf8")), { security: { auth: { selectedType: "oauth-personal" } } });
+    assert.equal(o.env.GEMINI_CLI_HOME, home);
+    assert.equal(readFileSync(join(home, ".gemini", "oauth_creds.json"), "utf8"), '{"token":"t"}');
+    assert.deepEqual(JSON.parse(readFileSync(join(home, ".gemini", "settings.json"), "utf8")), { security: { auth: { selectedType: "oauth-personal" } } });
+    assert.equal(existsSync(runDir), false, "nothing is written into the work tree");
   });
 });
 
