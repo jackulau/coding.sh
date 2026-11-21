@@ -9,7 +9,7 @@ import Layout from "../layouts/Layout.astro";
 import Nav from "../components/Nav.astro";
 import Mark from "../components/Mark.astro";
 import Wordmark from "../components/Wordmark.astro";
-import { SITE, REPO_URL, LICENSE_URL, RELEASE } from "../data/site";
+import { SITE, REPO_URL, LICENSE_URL, RELEASE, INSTALL_CMD, INSTALL_SH } from "../data/site";
 import { releasePath, slug } from "../lib/changelog";
 import { STATS } from "../data/compare";
 import { SETUP_PROMPT } from "../data/prompts";
@@ -80,6 +80,8 @@ const QA = FAQ.map(({ q, a }) => ({ q: t(q), a: t(a) }));
 const faq = QA.map(({ q, a }) => `<details>\n<summary>${esc(q)}</summary>\n<p>${esc(a)}</p>\n</details>`).join("\n");
 
 const tiles = WORKS_WITH.map(({ id, name }) => `<li class="f-tile" title="${name}">${mark(id)}</li>`).join("\n");
+// The glyph at the end of each install button: a copy icon that turns into a check once copied.
+const COPY_ICON = `<span class="f-copy" aria-hidden="true"><svg class="f-copy__copy" width="16" height="16" viewBox="0 0 16 16" focusable="false"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"></rect><path d="M10.5 3.5v-.5A1.5 1.5 0 0 0 9 1.5H4A1.5 1.5 0 0 0 2.5 3v5A1.5 1.5 0 0 0 4 9.5h.5" fill="none" stroke="currentColor" stroke-width="1.3"></path></svg><svg class="f-copy__ok" width="16" height="16" viewBox="0 0 16 16" focusable="false"><path d="M3 8.5 6.5 12 13 4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>`;
 const intent = `<script>\n(() => {\n${intentCore}\n${intentWire}})();\n</scr` + `ipt>`;
 // FLOW goes first: it carries a placeholder of its own. Each value goes in through a function,
 // so a "$" in it is kept as written.
@@ -88,7 +90,7 @@ const intent = `<script>\n(() => {\n${intentCore}\n${intentWire}})();\n</scr` + 
 // padding), and the phone crop is drawn at half its pixel width.
 const desk = await getImage({ src: shot, widths: [777, shot.width], format: "webp", quality: 82 });
 const phone = await getImage({ src: shotM, widths: [shotM.width / 2, shotM.width], format: "webp", quality: 82 });
-const fill: Record<string, string> = { FLOW: tr(flow), INTENT: intent, AGENT_TILES: tiles, SCENE: tr(scene), WORKS: works, FAQ: faq, USAGE, SHOT: desk.src, SHOT_SET: desk.srcSet.attribute, SHOT_M_SET: phone.srcSet.attribute, SETUP_PROMPT: attr(SETUP_PROMPT), SETUP_LINE: "Set up coding.sh on this machine…", RELEASE, RELEASE_HREF: releasePath(slug(RELEASE)), BASE_RATE: String(STATS.baseRate), CAND_RATE: String(STATS.candRate), TASKS: String(STATS.tasks), RUNS: String(STATS.runsPerTask) };
+const fill: Record<string, string> = { FLOW: tr(flow), INTENT: intent, AGENT_TILES: tiles, SCENE: tr(scene), WORKS: works, FAQ: faq, USAGE, SHOT: desk.src, SHOT_SET: desk.srcSet.attribute, SHOT_M_SET: phone.srcSet.attribute, SETUP_PROMPT: attr(SETUP_PROMPT), SETUP_LINE: "Set up coding.sh on this machine…", NPX: attr(INSTALL_CMD), INSTALL: attr(INSTALL_SH), COPY_ICON, RELEASE, RELEASE_HREF: releasePath(slug(RELEASE)), BASE_RATE: String(STATS.baseRate), CAND_RATE: String(STATS.candRate), TASKS: String(STATS.tasks), RUNS: String(STATS.runsPerTask) };
 // The footer's links, in columns. Every one is a page that exists.
 const FOOT: [string, [string, string][]][] = [
   ["Start", [["Quickstart", "/docs/quickstart"], ["Install", "/docs/install"], ["Agents", "/docs/agents"], ["All docs", "/docs"]]],

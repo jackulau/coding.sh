@@ -119,29 +119,107 @@
     font-size: 0.875rem;
     color: var(--text-2);
   }
+  /* The install box: three ways to install as a radio group on top, the command of the picked
+     one, and a note under it. The commands share one grid cell, as do the notes, and only the
+     picked one is visible, so the box keeps the size of the longest and nothing moves. --in is
+     the box's inner padding; the tabs and the note line up with its text. */
   .f-actions {
-    display: flex;
-    flex-wrap: wrap;
+    --in: 1.1rem;
+    display: grid;
+    grid-template-columns: auto auto;
     justify-content: center;
-    gap: 12px;
+    align-items: center;
+    column-gap: 12px;
     margin-top: 0.75rem;
+    text-align: left;
+  }
+  /* Picking needs :has(), so a browser without it keeps the first one, the prompt, and no tabs. */
+  .f-pick {
+    grid-area: 1 / 1;
+    display: none;
+    margin: 0 0 0.25rem calc(var(--in) - 0.6rem);
+  }
+  @supports selector(:has(a)) {
+    .f-pick {
+      display: flex;
+    }
+  }
+  .f-pick span {
+    position: relative;
+    display: block;
+    padding: 0.4rem 0.6rem 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .f-pick :checked + span {
+    color: var(--text);
+  }
+  .f-pick :checked + span::after {
+    content: "";
+    position: absolute;
+    inset: auto 0.6rem 0;
+    height: 2px;
+    background: var(--text);
+  }
+  .f-pick :focus-visible + span {
+    outline: 2px solid var(--text);
+    outline-offset: -2px;
+    border-radius: 6px;
+  }
+  .f-opts,
+  .f-note {
+    display: grid;
+  }
+  .f-opts {
+    grid-area: 2 / 1;
+  }
+  .f-opts > *,
+  .f-note > * {
+    grid-area: 1 / 1;
+  }
+  .f-opts > * + *,
+  .f-note > * + * {
+    visibility: hidden;
+  }
+  .f-actions:has([value="npx"]:checked, [value="script"]:checked) :is(.f-opts, .f-note) > :first-child {
+    visibility: hidden;
+  }
+  .f-actions:has([value="npx"]:checked) :is(.f-opts, .f-note) > :nth-child(2),
+  .f-actions:has([value="script"]:checked) :is(.f-opts, .f-note) > :nth-child(3) {
+    visibility: visible;
+  }
+  /* The note wraps at the box's width instead of widening it. */
+  .f-note {
+    grid-area: 3 / 1;
+    contain: inline-size;
+    margin-top: 0.6rem;
+    padding: 0 var(--in);
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    color: var(--text-muted);
   }
   .f-install {
     display: inline-flex;
     align-items: center;
     gap: 0.8rem;
     min-height: 2.875rem;
-    padding: 0 1.1rem;
+    padding: 0 var(--in);
     border: 0;
     border-radius: 10px;
     font-family: var(--font-mono);
     font-size: 0.875rem;
+    white-space: nowrap;
     color: var(--text);
     background: #0d0d0f;
     box-shadow: inset 0 0 0 1px var(--line-strong);
     cursor: pointer;
   }
   .f-install code {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     font: inherit;
     font-weight: 600;
   }
@@ -154,6 +232,7 @@
     position: relative;
     display: inline-grid;
     flex: none;
+    margin-left: auto;
     width: 16px;
     height: 16px;
     color: var(--text-muted);
@@ -175,6 +254,7 @@
     color: var(--pass, #3ccf7a);
   }
   .f-btn {
+    grid-area: 2 / 2;
     display: inline-flex;
     align-items: center;
     min-height: 2.875rem;
@@ -211,6 +291,9 @@
     .f-install:hover {
       background: #151518;
       box-shadow: inset 0 0 0 1px #4a4a52;
+    }
+    .f-pick span:hover {
+      color: var(--text);
     }
   }
   .f-install:active,
@@ -860,17 +943,19 @@
     }
   }
   @media (max-width: 640px) {
-    .f-actions,
-    .f-install,
-    .f-btn {
+    .f-actions {
+      --in: 0.75rem;
+      grid-template-columns: minmax(0, 1fr);
       width: 100%;
+    }
+    .f-btn {
+      grid-area: 4 / 1;
       justify-content: center;
+      margin-top: 0.75rem;
     }
     .f-install {
       gap: 0.5rem;
-      padding: 0 0.75rem;
       font-size: 0.75rem;
-      white-space: nowrap;
     }
     .f-shot img {
       aspect-ratio: 780 / 770;
@@ -887,14 +972,33 @@
         <p class="f-sub">Record, measure, compare and benchmark every agent&nbsp;run.</p>
         <p class="sr-only" aria-live="polite" data-copy-status></p>
         <div class="f-actions">
-          <button type="button" class="f-install" data-copy="{{SETUP_PROMPT}}" aria-label="Copy the setup prompt for your coding agent">
-            <span class="f-install__p" aria-hidden="true">›</span>
-            <code>{{SETUP_LINE}}</code>
-            <span class="f-copy" aria-hidden="true">
-            <svg class="f-copy__copy" width="16" height="16" viewBox="0 0 16 16" focusable="false"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"></rect><path d="M10.5 3.5v-.5A1.5 1.5 0 0 0 9 1.5H4A1.5 1.5 0 0 0 2.5 3v5A1.5 1.5 0 0 0 4 9.5h.5" fill="none" stroke="currentColor" stroke-width="1.3"></path></svg>
-            <svg class="f-copy__ok" width="16" height="16" viewBox="0 0 16 16" focusable="false"><path d="M3 8.5 6.5 12 13 4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-          </span>
-          </button>
+          <div class="f-pick" role="radiogroup" aria-label="Install with">
+            <label><input class="sr-only" type="radio" name="f-how" value="prompt" checked /><span>Agent prompt</span></label>
+            <label><input class="sr-only" type="radio" name="f-how" value="npx" /><span>npx</span></label>
+            <label><input class="sr-only" type="radio" name="f-how" value="script" /><span>Script</span></label>
+          </div>
+          <div class="f-opts">
+            <button type="button" class="f-install" data-copy="{{SETUP_PROMPT}}" aria-label="Copy the setup prompt for your coding agent" aria-describedby="f-n1">
+              <span class="f-install__p" aria-hidden="true">›</span>
+              <code>{{SETUP_LINE}}</code>
+              {{COPY_ICON}}
+            </button>
+            <button type="button" class="f-install" data-copy="{{NPX}}" aria-label="Copy the npx command: {{NPX}}" aria-describedby="f-n2">
+              <span class="f-install__p" aria-hidden="true">$</span>
+              <code>{{NPX}}</code>
+              {{COPY_ICON}}
+            </button>
+            <button type="button" class="f-install" data-copy="{{INSTALL}}" aria-label="Copy the install command: {{INSTALL}}" aria-describedby="f-n3">
+              <span class="f-install__p" aria-hidden="true">$</span>
+              <code>{{INSTALL}}</code>
+              {{COPY_ICON}}
+            </button>
+          </div>
+          <p class="f-note">
+            <span id="f-n1">Paste it into your coding agent.</span>
+            <span id="f-n2">Needs Node.js 22.16 or newer. It does not work on Windows.</span>
+            <span id="f-n3">On Windows, run it in Git Bash. It does not work in PowerShell or cmd.</span>
+          </p>
           <a class="f-btn" href="/docs/quickstart">Get started</a>
         </div>
         <p class="f-fine">Free and open source. <a href="{{RELEASE_HREF}}">What's new in coding.sh <code>v{{RELEASE}}</code></a></p>
@@ -991,14 +1095,33 @@
       <div class="f-bg" aria-hidden="true"></div>
       <h2 id="f-start">Try it on your next session</h2>
       <div class="f-actions">
-        <button type="button" class="f-install" data-copy="{{SETUP_PROMPT}}" aria-label="Copy the setup prompt for your coding agent">
-          <span class="f-install__p" aria-hidden="true">›</span>
-          <code>{{SETUP_LINE}}</code>
-          <span class="f-copy" aria-hidden="true">
-            <svg class="f-copy__copy" width="16" height="16" viewBox="0 0 16 16" focusable="false"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"></rect><path d="M10.5 3.5v-.5A1.5 1.5 0 0 0 9 1.5H4A1.5 1.5 0 0 0 2.5 3v5A1.5 1.5 0 0 0 4 9.5h.5" fill="none" stroke="currentColor" stroke-width="1.3"></path></svg>
-            <svg class="f-copy__ok" width="16" height="16" viewBox="0 0 16 16" focusable="false"><path d="M3 8.5 6.5 12 13 4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-          </span>
-        </button>
+        <div class="f-pick" role="radiogroup" aria-label="Install with">
+          <label><input class="sr-only" type="radio" name="f-how2" value="prompt" checked /><span>Agent prompt</span></label>
+          <label><input class="sr-only" type="radio" name="f-how2" value="npx" /><span>npx</span></label>
+          <label><input class="sr-only" type="radio" name="f-how2" value="script" /><span>Script</span></label>
+        </div>
+        <div class="f-opts">
+          <button type="button" class="f-install" data-copy="{{SETUP_PROMPT}}" aria-label="Copy the setup prompt for your coding agent" aria-describedby="f-c1">
+            <span class="f-install__p" aria-hidden="true">›</span>
+            <code>{{SETUP_LINE}}</code>
+            {{COPY_ICON}}
+          </button>
+          <button type="button" class="f-install" data-copy="{{NPX}}" aria-label="Copy the npx command: {{NPX}}" aria-describedby="f-c2">
+            <span class="f-install__p" aria-hidden="true">$</span>
+            <code>{{NPX}}</code>
+            {{COPY_ICON}}
+          </button>
+          <button type="button" class="f-install" data-copy="{{INSTALL}}" aria-label="Copy the install command: {{INSTALL}}" aria-describedby="f-c3">
+            <span class="f-install__p" aria-hidden="true">$</span>
+            <code>{{INSTALL}}</code>
+            {{COPY_ICON}}
+          </button>
+        </div>
+        <p class="f-note">
+          <span id="f-c1">Paste it into your coding agent.</span>
+          <span id="f-c2">Needs Node.js 22.16 or newer. It does not work on Windows.</span>
+          <span id="f-c3">On Windows, run it in Git Bash. It does not work in PowerShell or cmd.</span>
+        </p>
         <a class="f-btn" href="/docs/quickstart">Get started</a>
       </div>
     </section>
