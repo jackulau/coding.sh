@@ -6,7 +6,10 @@ import { cpSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import type { AgentEvent, Session } from "../../src/schema/index.ts";
+import { attributedUsage } from "../../src/cli/commands/usage.ts";
 import { mcpCallsOf } from "../../src/core/mcp-usage.ts";
+import { pricesFor } from "../../src/core/pricing.ts";
+import { TOTALS_SCAN_CAP } from "../../src/mcp/data.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { FIXTURES, tmpEnv, type TmpEnv } from "../adapters/_helpers.ts";
 import { cli, ok, seed, session } from "../query/_seed.ts";
@@ -225,7 +228,7 @@ describe("usage --by mcp reads the store narrowly", () => {
     }
   });
 
-  test("over 100,000 events it answers in under 2 s", async (t) => {
+  test("over 100,000 events it reads the MCP rows, not each session's events", async (t) => {
     const SESSIONS = 1000;
     const t0Day = Date.now() - 86_400_000;
     const sessions: Session[] = [];
@@ -244,16 +247,40 @@ describe("usage --by mcp reads the store narrowly", () => {
       }
     }
     assert.equal(events.length, 100_000);
-    await seed(env.dataHome, { sessions, events });
-    ok(["usage", "--by", "mcp", "--json", "--since", "30d"]); // warm the file cache
-    const t0 = performance.now();
-    const r = JSON.parse(ok(["usage", "--by", "mcp", "--json", "--since", "30d"]).stdout) as { groups: Row[]; window: { truncated?: boolean } };
-    const ms = performance.now() - t0;
+    const path = await seed(env.dataHome, { sessions, events });
+    // The CLI's answer, not timed: on busy CI runners this run took 2.2 to 2.4 s, against 0.6 to
+    // 0.8 s when the file ran alone.
+    const r = JSON.parse(ok(["usage", "--by", "mcp", "--json", "--since", "30d"]).stdout) as { groups: Row[]; total: Row; window: { truncated?: boolean } };
     const srv = r.groups.filter((g) => g.key.startsWith("srv"));
     assert.equal(srv.length, 8);
     assert.equal(srv.reduce((n, g) => n + (g.calls as number), 0), SESSIONS * 40);
     assert.equal(r.window.truncated, undefined);
-    t.diagnostic(`usage --by mcp over 100,000 events: ${Math.round(ms)} ms`);
-    assert.ok(ms < 2000, `usage --by mcp over 100,000 events took ${Math.round(ms)} ms`);
+    // The same query in this process, on a store that throws if usage reads each session's events,
+    // as it does on a store without mcpCalls. Reading each session's events took 1.7 times as long
+    // on a developer machine: too close for a time budget to tell the two apart.
+    const store = await SqliteIndexStore.open(path);
+    try {
+      let narrow = 0;
+      const index = new Proxy(store, {
+        get(target, k) {
+          if (k === "listEvents") throw new Error("usage --by mcp read each session's events, not the MCP rows");
+          if (k === "mcpCalls") narrow++;
+          const v = Reflect.get(target, k, target);
+          return typeof v === "function" ? v.bind(target) : v;
+        },
+      });
+      const t0 = performance.now();
+      const got = await attributedUsage(index, { since: Date.now() - 30 * 86_400_000, topLevel: false }, "mcp", 20, TOTALS_SCAN_CAP, pricesFor(undefined));
+      const ms = performance.now() - t0;
+      assert.ok(narrow > 0, "usage --by mcp did not call the store's mcpCalls");
+      assert.deepEqual(JSON.parse(JSON.stringify(got.groups)), r.groups);
+      assert.deepEqual(JSON.parse(JSON.stringify(got.total)), r.total);
+      t.diagnostic(`usage --by mcp over 100,000 events, in this process: ${Math.round(ms)} ms`);
+      // A coarse budget: the query takes about 0.5 s on a developer machine, so only a large
+      // slowdown fails it.
+      assert.ok(ms < 5000, `usage --by mcp over 100,000 events took ${Math.round(ms)} ms`);
+    } finally {
+      await store.close();
+    }
   });
 });
