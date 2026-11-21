@@ -472,6 +472,8 @@ function toolDefs(): ToolDef<ToolCtx>[] {
       annotations: READ,
       async run(a, c) {
         const ctx = await c.store();
+        // Turns are 1-based; 0 names no turn, so it is refused rather than read as "the whole session".
+        if (a.turn === 0) throw new ToolError("turn must be 1..N (1-based) or negative from the end (-1 = last turn); turn 0 does not exist. Omit turn for the whole session.");
         const s = await resolveSession(ctx, strArg(a, "sessionId")!);
         try {
           const digest = await sessionDigest(ctx.index, s, { turn: typeof a.turn === "number" ? a.turn : undefined, limit: numArg(a, "limit", 40), offset: cursorArg(a), from: a.tail === true ? "tail" : "head", now: c.now() });
