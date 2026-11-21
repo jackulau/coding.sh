@@ -18,7 +18,7 @@ import { paths } from "../../src/core/paths.ts";
 import { SIGNATURE_HEADER, signBody } from "../../src/alerts/notify.ts";
 import type { ChatProvider } from "../../src/judge/providers.ts";
 import { monitorVersion, NO_PROVIDER, parseOutput, runMonitors, sampleKey } from "../../src/monitor/run.ts";
-import { readMonitors } from "../../src/monitor/state.ts";
+import { readMonitors, shownUrl } from "../../src/monitor/state.ts";
 import { startMonitorTimer } from "../../src/monitor/timer.ts";
 import { mkSession, runCmd, sandbox, type Sandbox } from "../cli/_cmd.ts";
 
@@ -456,6 +456,25 @@ describe("monitor --http", () => {
     } finally {
       await ctx.close();
     }
+  });
+
+  it("add and list never show the URL's query string, and each POST still goes to the URL with it", async () => {
+    const sb = box();
+    await sb.seed([mkSession("query-1", Date.now() - 10_000)]);
+    const ev = await evaluator([answer(200, '{"value":1}')]);
+    const url = `${ev.url}?code=s3cret-token#part`;
+    const added = await add(sb, "q", { http: url });
+    assert.equal(added.json.monitor.url, ev.url);
+    const listed = await runCmd(monitorCmd, sb, { action: "list", json: true });
+    assert.equal(listed.json.monitors[0].url, ev.url);
+    const human = await runCmd(monitorCmd, sb, { action: "list" });
+    assert.ok(human.stdout.includes(`http: ${ev.url}`), human.stdout);
+    assert.ok(!human.stdout.includes("s3cret"), human.stdout);
+    assert.equal(readMonitors(paths(sb.env).monitors).monitors[0]!.url, url, "monitors.json keeps the whole URL");
+    const ran = await runCmd(monitorCmd, sb, { action: "run", positionals: ["q"], json: true });
+    assert.equal(ran.json.monitors[0].scored, 1);
+    assert.deepEqual(ev.posts.map((p) => p.path), ["/score?code=s3cret-token"]);
+    assert.equal(shownUrl("not a url?code=s3cret"), "not a url", "a URL that does not parse loses its query too");
   });
 
   it("add takes exactly one of --judge, --run or --http, and an http(s) URL without credentials", async () => {

@@ -21,7 +21,7 @@ import { paths } from "../../core/paths.ts";
 import { sleepUnless } from "../../jobs/retry.ts";
 import { parseWhere } from "../../query/where.ts";
 import { judgeProviderKind, KEY_ENV, NO_PROVIDER, runMonitors, type MonitorResult, type RunMonitorsResult } from "../../monitor/run.ts";
-import { MONITOR_PROVIDERS, NAME_RE, publicMonitor, readMonitors, spentToday, updateMonitors, type MonitorDef, type MonitorProvider } from "../../monitor/state.ts";
+import { MONITOR_PROVIDERS, NAME_RE, publicMonitor, readMonitors, shownUrl, spentToday, updateMonitors, type MonitorDef, type MonitorProvider } from "../../monitor/state.ts";
 
 export async function run(c: CommandContext): Promise<number> {
   switch (c.action) {
@@ -129,7 +129,7 @@ function checkUrl(raw: string): void {
 }
 
 function describe(m: MonitorDef): string {
-  return m.kind === "run" ? `run: ${m.command}` : m.kind === "http" ? `http: ${m.url}` : `judge: ${m.rubric}`;
+  return m.kind === "run" ? `run: ${m.command}` : m.kind === "http" ? `http: ${shownUrl(m.url!)}` : `judge: ${m.rubric}`;
 }
 
 async function list(c: CommandContext): Promise<number> {

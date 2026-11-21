@@ -18,7 +18,7 @@ import type { ChatProvider } from "../judge/providers.ts";
 import { findSessions } from "../query/run.ts";
 import { parseWhere, scopesSubagents, type Query } from "../query/where.ts";
 import { addScore, ScoreError } from "../scores/scores.ts";
-import { localDay, readMonitors, runLockPath, spentToday, updateMonitors, type MonitorDef, type MonitorError } from "./state.ts";
+import { localDay, readMonitors, runLockPath, shownUrl, spentToday, updateMonitors, type MonitorDef, type MonitorError } from "./state.ts";
 
 const DAY = 86_400_000;
 /** How long a --run command may take for one session. */
@@ -403,18 +403,6 @@ const HTTP_BACKOFF_MS = 1000;
 /** The most of an evaluator's answer that is read. */
 export const MAX_HTTP_ANSWER = 256 * 1024;
 const RETRY_STATUS = new Set([408, 425, 429]);
-
-/** The URL as errors show it: no query string. */
-function shownUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    u.search = "";
-    u.hash = "";
-    return u.toString();
-  } catch {
-    return url;
-  }
-}
 
 /** Reads at most `max` bytes of a body; undefined when there was more. */
 async function readCapped(res: Response, max: number): Promise<string | undefined> {

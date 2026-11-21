@@ -1185,8 +1185,9 @@ coding.sh monitor add review --http https://evals.example.com/score
 first of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `AI_GATEWAY_API_KEY` and `GEMINI_API_KEY` that is
 set, and stops for the day at `--max-usd-day`.
 
-`--http` takes an http or https URL with no user name or password in it. `monitor add` prints a
-signing secret once: 32 random bytes in hex. `monitor list` never shows it; it is kept in
+`--http` takes an http or https URL with no user name or password in it. A query string in it is
+kept and sent with each POST, but `monitor add --json`, `monitor list` and the monitor's errors
+show the URL without it. `monitor add` prints a signing secret once: 32 random bytes in hex. `monitor list` never shows it; it is kept in
 `monitors.json`, which is written with mode 600 where the OS has file modes. For each session the
 monitor sends one POST:
 
