@@ -789,7 +789,7 @@ export function renderSdkReference(): string {
   out.push(
     "## Differences between the SDKs",
     "",
-    `- \`flush()\` waits at most \`${tsFlush}\` ms by default in TypeScript. In Python, \`flush()\` with \`timeout=${pyFlush}\` waits until the queue is sent or the sender gives up on it.`,
+    `- \`flush()\` waits at most \`${tsFlush}\` ms by default in TypeScript and \`${pyFlush}\` s in Python. In Python, \`flush(timeout=None)\` waits until the queue is sent or the sender gives up on it.`,
     `- \`shutdown()\` waits at most \`${tsShutdown}\` ms in TypeScript and \`${pyShutdown}\` s in Python. Without a call, Python flushes at exit for at most \`${pyExit}\` s, and TypeScript flushes on \`beforeExit\` for at most \`${tsExit}\` ms.`,
     "- TypeScript times are in milliseconds (`timeoutMs`, `flushIntervalMs`). Python timeouts are in seconds; only `flush_interval_ms` is in milliseconds.",
     "- In TypeScript, `trace()`, `span()` and `withSession()` take the function to run. In Python, they are context managers and decorators.",

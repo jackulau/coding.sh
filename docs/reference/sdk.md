@@ -681,13 +681,15 @@ def current_session_id() -> Optional[str]
 
 Send everything queued so far. Returns True when the queue drained in time.
 
+Waits at most `timeout` seconds. With `None` it waits until the queue is sent or the sender gives up on it: a minute or more when the server never answers.
+
 ```python
-def flush(timeout: Optional[float] = None) -> bool
+def flush(timeout: Optional[float] = 5.0) -> bool
 ```
 
 | Parameter | Type | Default |
 |---|---|---|
-| `timeout` | `Optional[float]` | `None` |
+| `timeout` | `Optional[float]` | `5.0` |
 
 ### `coding_sh.shutdown(...)`
 
@@ -858,7 +860,7 @@ A constant: `"gen_ai.conversation.id"`.
 
 ## Differences between the SDKs
 
-- `flush()` waits at most `5000` ms by default in TypeScript. In Python, `flush()` with `timeout=None` waits until the queue is sent or the sender gives up on it.
+- `flush()` waits at most `5000` ms by default in TypeScript and `5.0` s in Python. In Python, `flush(timeout=None)` waits until the queue is sent or the sender gives up on it.
 - `shutdown()` waits at most `5000` ms in TypeScript and `2.0` s in Python. Without a call, Python flushes at exit for at most `2.0` s, and TypeScript flushes on `beforeExit` for at most `5000` ms.
 - TypeScript times are in milliseconds (`timeoutMs`, `flushIntervalMs`). Python timeouts are in seconds; only `flush_interval_ms` is in milliseconds.
 - In TypeScript, `trace()`, `span()` and `withSession()` take the function to run. In Python, they are context managers and decorators.

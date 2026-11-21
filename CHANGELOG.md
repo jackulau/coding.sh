@@ -67,6 +67,7 @@ grouped by area, with links to the docs for the details.
 - **Checks.** `npm run gate`'s site step builds the site with the star count CI uses, then runs the site's perf budget and checks each page's HTML against Site perf's budgets. Before, a page over either budget passed the gate and failed only in CI. Site perf now builds with the same star count. [Performance](https://github.com/jackulau/coding.sh/blob/main/docs/perf.md)
 - **Site.** coding.sh is served by Vercel instead of a Cloudflare Worker, which had hit its daily request limit and answered 429. Moved pages, `www`, the headers and the installer behave as before. [Release](https://github.com/jackulau/coding.sh/blob/main/docs/RELEASE.md#deploying-the-site)
 - **Dogfood.** A perf or site budget missed by a little gets partial credit: the target divided by the reading for a ceiling, and the reverse for a floor. One reading near a budget moved the headline by 4 points before. `compare` scores the previous scorecard again with the current scorer and keeps its stored headline as `prevStored`. [Dogfood design](https://github.com/jackulau/coding.sh/blob/main/docs/design/dogfood.md)
+- **SDK.** In Python, `coding_sh.flush()` waits at most 5 s by default, as `flush()` does in TypeScript; `flush(timeout=None)` still waits until the queue is sent or given up. Before, a script that ended with `coding_sh.flush()`, as the quick start shows, could hang for over a minute when the server did not answer. [SDK](https://coding.sh/docs/sdk)
 
 ### Fixed
 
