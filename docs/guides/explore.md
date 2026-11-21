@@ -156,8 +156,7 @@ token for this run of `ui`; the viewer needs it.
 - **Keys.** <kbd>?</kbd> lists every shortcut. <kbd>j</kbd> and <kbd>k</kbd> move through the
   list outside a text field. A focused button keeps Enter and Space, a focused link keeps Enter,
   and the arrow keys scroll the focused step detail.
-- **Theme.** The viewer follows your system's light or dark setting; the top bar's theme button
-  overrides it, and the browser remembers that.
+- **Theme.** The top bar's theme button overrides the system's light or dark setting.
 - **Copied commands.** Each value is single-quoted for sh and PowerShell. A value with a quote, a
   control character or `& | < >` is shown but not copied: no quoting is safe for it in every
   shell.

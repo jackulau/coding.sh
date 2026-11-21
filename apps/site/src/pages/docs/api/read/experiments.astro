@@ -1,0 +1,10 @@
+---
+// Body: docs/reference/api.md from its `GET /api/experiments` route on (search, labels and scores before it are /docs/api/read/search). Edit that file.
+import DocsLayout from "../../../../components/docs/DocsLayout.astro";
+import MdDoc from "../../../../components/docs/MdDoc.astro";
+---
+
+<DocsLayout>
+  <p>These routes take the same read key, errors and time rules as the rest of the <a href="/docs/api/read#read-api">Read API</a>.</p>
+  <MdDoc file="reference/api.md" />
+</DocsLayout>
