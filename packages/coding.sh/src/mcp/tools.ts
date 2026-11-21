@@ -25,6 +25,7 @@ import {
   latency,
   pageSessions,
   parsePlace,
+  pathPlace,
   placeNode,
   round2,
   scanFilter,
@@ -1082,7 +1083,12 @@ function toolDefs(): PagedTool[] {
         const repo = strArg(a, "repo");
         const root = (await repoRoot(c.cwd)) ?? c.cwd;
         const now = c.now();
-        const pool = await recentSessions({ root, since, ...(repo ? { sessionsRepo: repo === "all" ? "all" : resolve(c.cwd, repo) } : {}) }, ctx.index, now, a.flagged === true);
+        // At a checkout's root or in a linked worktree (the default from a worktree): every worktree of the repo, as `repo:<main root>`.
+        const dir = repo === "all" ? undefined : repo ? resolve(c.cwd, repo) : root;
+        const group = dir ? pathPlace(dir).repo : undefined;
+        const pool = group
+          ? await recentSessions({ root, since, sessionsRepo: "all" }, ctx.index, now, a.flagged === true, { root: placeNode({ path: group, repo: group }) })
+          : await recentSessions({ root, since, ...(repo ? { sessionsRepo: repo === "all" ? "all" : resolve(c.cwd, repo) } : {}) }, ctx.index, now, a.flagged === true);
         const ranked = await rankSessions(ctx.index, pool, { now });
         const eligible = ranked.filter((x) => x.eligible);
         const limit = numArg(a, "limit", 10);

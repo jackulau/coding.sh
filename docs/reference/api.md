@@ -542,6 +542,11 @@ curl -sS "$CSH/api/sessions?project=team&limit=1" -H "Authorization: Bearer $REA
 }
 ```
 
+A session that ran in a git repo has `repo`: `root` (the checkout it ran in), `head`, `branch`,
+and `main` when `root` is a linked worktree, the main checkout's root. The `repo` parameter
+matches `repo.root` exactly. `repo:` in `where` also matches a worktree's sessions by its main
+repo's path or name.
+
 `childCount` is the number of subagent sessions under each row. `nextCursor` is present only when
 `hasMore` is true; pass it back as `cursor` for the next page:
 

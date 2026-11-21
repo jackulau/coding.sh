@@ -52,7 +52,7 @@ test each hit.
 | `agent` | session | Agent id, or the service name of an SDK or OpenTelemetry app | `agent:codex` |
 | `model` | session | Main model | `model:claude-sonnet-*` |
 | `provider` | session | Model provider | `provider:anthropic` |
-| `repo` | session | Repo root path, or its name (else the working directory's name) | `repo:coding-sh` |
+| `repo` | session | Repo root path, or its name (else the working directory's name). A session in a worktree also matches its main repo's path and name | `repo:coding-sh` |
 | `launch` | session | `headless` (`claude -p`, an SDK, `codex exec`) or `interactive` | `launch:headless` |
 | `branch` | session | Git branch | `branch:main` |
 | `dir` | session | Working directory | `dir:/work/*` |
@@ -376,7 +376,7 @@ JSON are text: read them with `json_extract(col, '$.path')` or `json_each(col)`.
 | `agent_version` | Agent version, when known |
 | `model` | Main model |
 | `cwd` | Working directory |
-| `repo` | Repo JSON: `root`, `branch`, `commit`, `remote` |
+| `repo` | Repo JSON: `root`, `branch`, `commit`, `remote`, and `main` for a worktree |
 | `repo_root` | The repo root, for filtering |
 | `title` | First prompt or the agent's title |
 | `started_at` | Start time |

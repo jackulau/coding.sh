@@ -8,7 +8,7 @@ import { repoRoot } from "../core/git.ts";
 import { parseSince } from "../cli/args.ts";
 import type { ChangeEffect, GroupStats } from "../improve/changes.ts";
 import { findChanges, findIssues, isHeadless, modelProvider, removalStep, scopeSessions, stepsFor, targetFile, testCommandOf } from "../improve/report.ts";
-import { clip, iso } from "./data.ts";
+import { clip, iso, matchesPlace, pathPlace } from "./data.ts";
 import { ToolError } from "./protocol.ts";
 
 type Obj = Record<string, unknown>;
@@ -103,7 +103,12 @@ export async function improveReport(ctx: Context, a: ImproveArgs, c: { cwd: stri
   const p = await place(ctx, a.repo, c.cwd, c.env);
   const from = since(a.since, "14d", c.now);
   const agents = a.agent ? [a.agent] : [];
-  const all = await scopeSessions(ctx.index, { since: from, ...(p.dir ? { repo: p.dir } : {}), ...(agents.length ? { agents } : {}), headless: true });
+  // At a checkout's root or in a linked worktree: the whole repo, every worktree's sessions included.
+  const whole = p.dir ? pathPlace(p.dir) : undefined;
+  const scope = { since: from, ...(agents.length ? { agents } : {}), headless: true };
+  const all = whole?.repo
+    ? (await scopeSessions(ctx.index, scope)).filter((s) => matchesPlace(s, whole))
+    : await scopeSessions(ctx.index, { ...scope, ...(p.dir ? { repo: p.dir } : {}) });
   const sessions = a.headless ? all : all.filter((s) => !isHeadless(s));
   const testCommand = await testCommandOf(p.root);
   const issues = await findIssues(ctx.index, sessions, { ...(p.root ? { repoRoot: p.root } : {}), ...(testCommand ? { testCommand } : {}) });
@@ -112,7 +117,7 @@ export async function improveReport(ctx: Context, a: ImproveArgs, c: { cwd: stri
   const limit = a.limit ?? 5;
   const top = issues.slice(0, limit);
   return {
-    scope: { repo: p.dir ?? null, since: iso(from), sessions: sessions.length, ...(all.length > sessions.length ? { headlessLeftOut: all.length - sessions.length } : {}) },
+    scope: { repo: whole?.repo ?? p.dir ?? null, since: iso(from), sessions: sessions.length, ...(all.length > sessions.length ? { headlessLeftOut: all.length - sessions.length } : {}) },
     issues: top.map((i, k) => {
       const ex = i.examples[0];
       const agentsOf = sessions.filter((s) => i.examples.some((x) => x.sessionId === s.id)).map((s) => s.agent);

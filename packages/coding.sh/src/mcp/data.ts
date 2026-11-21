@@ -1,7 +1,7 @@
 // Read-side queries behind the MCP tools: small, model-sized summaries over
 // the index (never raw event dumps). Pure functions of an IndexStore so they
 // test against the memory store.
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import type { AgentEvent, IndexStore, Session, SessionFilter } from "../core/types.ts";
 import type { CacheBreakCause, CostByTokenType } from "../schema/index.ts";
@@ -13,7 +13,7 @@ import { failureFlags, isBackfillEvent, percentile } from "../core/sessions.ts";
 import { weightsEventText } from "../core/weights.ts";
 import { waitKind } from "../core/wait-tools.ts";
 import { sessionMatcher } from "../query/run.ts";
-import type { Node, Query } from "../query/where.ts";
+import { repoGroup, type Node, type Query } from "../query/where.ts";
 
 type Obj = Record<string, unknown>;
 
@@ -124,16 +124,51 @@ export function sessionSummary(s: Session, now: number = Date.now()): SessionSum
 export interface Place {
   /** Absolute path: matches a repo root or cwd at or under it. */
   path?: string;
-  /** Bare name: matches the basename of the repo root or cwd. */
+  /** Bare name: matches the basename of the repo root or cwd, or the name of the repo a worktree belongs to. */
   name?: string;
+  /**
+   * Set when `path` is a checkout's root or inside a linked worktree: the root of the repo's
+   * main worktree. Sessions in any worktree of that repo match (repoGroup).
+   */
+  repo?: string;
 }
 
-/** "~/x", "./x", "/abs" → a path; "coding-sh" → a repo name. */
+/** "~/x", "./x", "/abs" → a path; "coding-sh" → a repo name. A path inside a worktree stands for its whole repo. */
 export function parsePlace(v: string, cwd: string, home: string): Place {
   const t = v.trim();
-  if (t === "~" || t.startsWith("~/")) return { path: driveUpper(resolve(home, t.slice(2))) };
-  if (isAbsolute(t) || t.startsWith(".") || t.includes("/") || t.includes(sep)) return { path: driveUpper(resolve(cwd, t)) };
+  if (t === "~" || t.startsWith("~/")) return pathPlace(resolve(home, t.slice(2)));
+  if (isAbsolute(t) || t.startsWith(".") || t.includes("/") || t.includes(sep)) return pathPlace(resolve(cwd, t));
   return { name: t };
+}
+
+/** A folder as a place: the folder, and its repo when it is a checkout's root or inside a linked worktree. */
+export function pathPlace(dir: string): Place {
+  const path = driveUpper(resolve(dir));
+  const repo = checkoutRepo(path);
+  return repo ? { path, repo: driveUpper(repo) } : { path };
+}
+
+/**
+ * The repo `dir` stands for as a whole, read from the .git files (no git run): the main
+ * worktree's root when dir is in a linked worktree (its .git file names a git dir whose
+ * commondir is <main>/.git), dir itself when it is a main checkout's root, else undefined
+ * (a folder inside a main checkout stays a folder; a submodule and a bare repo's worktree
+ * have no main checkout).
+ */
+export function checkoutRepo(dir: string): string | undefined {
+  const root = gitRoot(dir);
+  if (!root) return undefined;
+  const dotGit = join(root, ".git");
+  try {
+    if (!statSync(dotGit).isFile()) return pathKey(root) === pathKey(resolve(dir)) ? root : undefined;
+    const gitDir = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync(dotGit, "utf8"))?.[1];
+    if (!gitDir) return undefined;
+    const own = resolve(root, gitDir);
+    const common = resolve(own, readFileSync(join(own, "commondir"), "utf8").trim());
+    return basename(common) === ".git" && pathKey(common) !== pathKey(own) ? dirname(common) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** On Windows, an upper-case drive letter: the form stored paths have, which facets (a query, not pathKey) match exactly. */
@@ -159,9 +194,19 @@ const under = (x: string | undefined, p: string | undefined) => pathUnder(x, p);
 const sameName = (path: string, name: string) => pathKey(basename(path)) === pathKey(name);
 
 export function matchesPlace(s: Session, p: Place): boolean {
-  if (p.path) return under(s.repo?.root, p.path) || under(s.cwd, p.path);
-  if (p.name) return (!!s.repo?.root && sameName(s.repo.root, p.name)) || (!!s.cwd && sameName(s.cwd, p.name));
+  if (p.path) return under(s.repo?.root, p.path) || under(s.cwd, p.path) || (!!p.repo && inRepo(s, p.repo));
+  if (p.name) return (!!s.repo?.root && sameName(s.repo.root, p.name)) || (!!s.cwd && sameName(s.cwd, p.name)) || pathKey(repoGroup(s).name ?? "") === pathKey(p.name);
   return true;
+}
+
+/**
+ * Whether a session ran in the repo whose main worktree is at `root`, or in a worktree of it:
+ * its repoGroup path is root, or (a T3 Code or Codex worktree git no longer knows) its repo name is root's.
+ */
+export function inRepo(s: Session, root: string): boolean {
+  const g = repoGroup(s);
+  if (g.path !== undefined) return pathKey(g.path) === pathKey(root);
+  return g.name !== undefined && sameName(root, g.name);
 }
 
 export interface ScanQuery {
@@ -198,7 +243,10 @@ export function placeNode(p: Place): Node | undefined {
   if (p.name) return { t: "or", items: [cmp("repo", p.name, false), cmp("dir", `*${sep}${p.name}`, true)] };
   if (p.path) {
     const under = p.path.endsWith(sep) ? p.path : p.path + sep;
-    return { t: "or", items: [cmp("repo", p.path, false), cmp("repo", `${under}*`, true), cmp("dir", p.path, false), cmp("dir", `${under}*`, true)] };
+    // repo:<main root> matches a worktree's sessions too (RepoState.main, or a Claude Code worktree's path);
+    // a T3 Code or Codex worktree git no longer knows has only a name, which matchesPlace compares and this cannot.
+    const repo = p.repo ? [cmp("repo", p.repo, false)] : [];
+    return { t: "or", items: [cmp("repo", p.path, false), cmp("repo", `${under}*`, true), cmp("dir", p.path, false), cmp("dir", `${under}*`, true), ...repo] };
   }
   return undefined;
 }
@@ -822,6 +870,12 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
   const unpricedModels = new Map<string, number>();
   const total = zero();
   const groups = new Map<string, Acc>();
+  // By repo, a worktree's sessions count under its main repo's root (repoGroup).
+  const byNameOnly: Session[] = [];
+  const repoKey = (s: Session): string | undefined => {
+    const g = repoGroup(s);
+    return g.path ?? (g.name === undefined ? "unknown" : undefined);
+  };
   // The five sessions to name, under both rankings: which one applies is known only at the end.
   const cost = (s: Session) => s.stats.usage?.costUsd ?? 0;
   const out = (s: Session) => s.stats.usage?.outputTokens ?? 0;
@@ -848,7 +902,21 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
       : groupBy === "agent" ? s.agent
       : groupBy === "model" ? (s.model ?? "unknown")
       : groupBy === "agent-model" ? `${s.agent} ${s.model ?? "unknown"}`
-      : (s.repo?.root ?? s.cwd ?? "unknown");
+      : repoKey(s);
+    if (key === undefined) {
+      byNameOnly.push(s);
+      continue;
+    }
+    const g = groups.get(key) ?? zero();
+    add(g, s);
+    groups.set(key, g);
+  }
+  // A session in a worktree git no longer knows (T3 Code, Codex) has only its repo's name:
+  // it joins the one repo row of that name, else a row keyed by the name.
+  for (const s of byNameOnly) {
+    const name = repoGroup(s).name!;
+    const paths = [...groups.keys()].filter((k) => k !== name && (isAbsolute(k) || k.includes("/")) && pathKey(basename(k)) === pathKey(name));
+    const key = paths.length === 1 ? paths[0]! : name;
     const g = groups.get(key) ?? zero();
     add(g, s);
     groups.set(key, g);

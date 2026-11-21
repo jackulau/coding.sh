@@ -836,6 +836,10 @@
         },
         "branch": {
           "type": "string"
+        },
+        "main": {
+          "description": "Root of the repo's main worktree, when `root` is a linked worktree (`git worktree add`,\nor a worktree an agent made for a task). Absent in a main checkout. Repo filters and\ngroups count a worktree's sessions under this repo; `root` stays where the agent ran.",
+          "type": "string"
         }
       },
       "required": [

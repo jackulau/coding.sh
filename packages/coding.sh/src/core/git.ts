@@ -9,7 +9,7 @@
 //   user's index behind their back.
 import { spawn } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { killTree } from "./spawn.ts";
 
 export const DEFAULT_GIT_TIMEOUT_MS = 30_000;
@@ -219,6 +219,30 @@ export function nativeRoot(cwd: string, gitRoot: string, prefix: string | undefi
   } catch {
     return root;
   }
+}
+
+/**
+ * The work tree containing `cwd` and, when it is a linked worktree, the root of the
+ * repo's main worktree (one git call). `main` is absent in a main checkout, a
+ * submodule, and a worktree of a bare repo (which has no main worktree).
+ */
+export async function worktreeRoots(cwd: string): Promise<{ root: string; main?: string } | undefined> {
+  if (!existsSync(cwd)) return undefined;
+  const r = await run(["rev-parse", "--show-toplevel", "--git-dir", "--git-common-dir", "--show-prefix"], { cwd, allowFail: true });
+  if (r.code !== 0) return undefined;
+  const [root, gitDir, commonDir, prefix] = r.stdout.split("\n").map((l) => l.trim());
+  if (!root) return undefined;
+  const out: { root: string; main?: string } = { root: nativeRoot(cwd, root, prefix) };
+  const main = gitDir && commonDir ? mainWorktree(resolve(cwd, gitDir), resolve(cwd, commonDir)) : undefined;
+  if (main) out.main = main;
+  return out;
+}
+
+/** The main worktree's root from a worktree's git dirs: undefined unless the git dir is a linked worktree's of a repo with a work tree. */
+export function mainWorktree(gitDir: string, commonDir: string): string | undefined {
+  const key = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p);
+  if (key(gitDir) === key(commonDir) || basename(commonDir) !== ".git") return undefined;
+  return dirname(commonDir);
 }
 
 export async function isRepo(cwd: string): Promise<boolean> {
