@@ -219,6 +219,11 @@ export class PgIndexStore implements IndexStore {
     return (await this.pool.query<T>(sql, params)).rows;
   }
 
+  /** The pg_advisory_xact_lock key for one session's writes (rebuildSession, setEventCosts). */
+  private sessionLock(sessionId: string): string {
+    return `coding.sh:session:${this.schema}:${sessionId}`;
+  }
+
   async migrate(): Promise<void> {
     await migrateSchema(this.entry, this.schema);
   }
@@ -305,6 +310,55 @@ export class PgIndexStore implements IndexStore {
     return inserted;
   }
 
+  /**
+   * Sets an estimated cost on stored events in place (IndexStore.setEventCosts): usage.costUsd,
+   * payload.costEstimated, and pricedAs, priceTier and costByTokenType, each set when given and
+   * removed when not. Other payload fields, message text and search text stay as they were.
+   * payload and usage are text and are edited in JS, as in the ClickHouse store: a jsonb cast
+   * would reject the escaped U+0000 a stored payload may hold. One transaction holds each
+   * touched session's rebuildSession lock, so a concurrent rebuild sees all the new costs or none.
+   */
+  async setEventCosts(
+    costs: { id: string; costUsd: number; pricedAs?: string; priceTier?: string; costByTokenType?: { input: number; output: number; cacheRead: number; cacheWrite: number } }[],
+  ): Promise<number> {
+    if (!costs.length) return 0;
+    const byId = new Map(costs.map((c) => [c.id, c]));
+    const ids = [...byId.keys()].sort();
+    return withTx(this.pool, async (c) => {
+      const { rows: found } = await c.query<{ session_id: string }>(`SELECT DISTINCT session_id FROM ${this.t("events")} WHERE id = ANY($1::text[])`, [ids]);
+      if (!found.length) return 0;
+      // Sorted, so two of these locking several sessions never wait on each other in a cycle.
+      const sessions = found.map((r) => r.session_id).sort();
+      for (const s of sessions) await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [this.sessionLock(s)]);
+      let updated = 0;
+      for (let i = 0; i < ids.length; i += INSERT_CHUNK) {
+        const { rows } = await c.query<{ id: string; payload: string; usage: string | null }>(
+          `SELECT id, payload, usage FROM ${this.t("events")} WHERE id = ANY($1::text[]) AND session_id = ANY($2::text[]) ORDER BY id FOR UPDATE`,
+          [ids.slice(i, i + INSERT_CHUNK), sessions],
+        );
+        if (!rows.length) continue;
+        const payloads: string[] = [];
+        const usages: string[] = [];
+        for (const r of rows) {
+          const cost = byId.get(r.id)!;
+          const { pricedAs: _was, priceTier: _tier, costByTokenType: _parts, ...rest } = parse<Record<string, unknown>>(r.payload) ?? {};
+          const payload: Record<string, unknown> = { ...rest, costEstimated: true };
+          if (cost.pricedAs) payload.pricedAs = cost.pricedAs;
+          if (cost.priceTier) payload.priceTier = cost.priceTier;
+          if (cost.costByTokenType) payload.costByTokenType = { ...cost.costByTokenType };
+          payloads.push(JSON.stringify(payload));
+          usages.push(JSON.stringify({ ...parse<Record<string, unknown>>(r.usage), costUsd: cost.costUsd }));
+        }
+        const r = await c.query(
+          `UPDATE ${this.t("events")} AS e SET payload = v.p, usage = v.u FROM unnest($1::text[], $2::text[], $3::text[]) AS v(id, p, u) WHERE e.id = v.id`,
+          [rows.map((r) => r.id), payloads, usages],
+        );
+        updated += r.rowCount ?? 0;
+      }
+      return updated;
+    });
+  }
+
   async listEvents(sessionId: string, opts: { kinds?: string[]; limit?: number; offset?: number } = {}): Promise<AgentEvent[]> {
     const w = new Where().add("session_id = ?", sessionId);
     if (opts.kinds?.length) w.add("kind = ANY(?::text[])", opts.kinds);
@@ -349,7 +403,7 @@ export class PgIndexStore implements IndexStore {
    */
   async rebuildSession(id: string, build: (prev: Session | undefined, events: AgentEvent[]) => Session | undefined): Promise<Session | undefined> {
     return withTx(this.pool, async (c) => {
-      await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`coding.sh:session:${this.schema}:${id}`]);
+      await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [this.sessionLock(id)]);
       const [row] = (await c.query(`SELECT * FROM ${this.t("sessions")} WHERE id = $1`, [id])).rows;
       const events = (await c.query(`SELECT ${EVENT_COLS} FROM ${this.t("events")} WHERE session_id = $1 ORDER BY ts, seq`, [id])).rows.map(rowToEvent);
       const next = build(row ? rowToSession(row) : undefined, events);
