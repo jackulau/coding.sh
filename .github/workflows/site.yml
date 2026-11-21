@@ -106,13 +106,39 @@ jobs:
           VERCEL_PROJECT_ID: prj_hYh07lIzxy9qY7336K1XjFBsIlKW
         run: npx --yes vercel@66 deploy --cwd dist --prod --yes --token "$VERCEL_TOKEN"
 
+      # Right after a good deploy, the desk runner has failed to look up coding.sh. A request curl
+      # cannot finish (a failed lookup, connection or timeout), a 429 or a 5xx can clear in
+      # seconds, so each is retried 5 s apart until a two-minute window ends. The four paths share
+      # the window, so an outage still fails the run, in under three minutes. Any other status
+      # fails at once: a retry would get the same answer.
       - name: Smoke test
         if: steps.creds.outputs.ok == 'true'
+        env:
+          SITE: https://coding.sh
+          WINDOW: 120
         run: |
+          end=$((SECONDS + WINDOW)); failed=0
           for p in / /docs/quickstart /install /llms.txt; do
-            code=$(curl -s -o /dev/null -w "%{http_code}" "https://coding.sh$p")
-            echo "$p $code"; [ "$code" = 200 ] || exit 1
+            tries=0
+            while :; do
+              tries=$((tries + 1)); rc=0
+              code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 10 "$SITE$p") || rc=$?
+              case $rc:$code in
+                0:429 | 0:5??) why=$code ;;
+                0:*) why=$code; break ;;
+                6:*) why="lookup failed" ;;
+                7:*) why="connection failed" ;;
+                28:*) why="timed out" ;;
+                *) why="curl exit $rc" ;;
+              esac
+              [ "$SECONDS" -lt "$end" ] || break
+              echo "$p $why on try $tries, retrying"; sleep 5
+            done
+            after=""; [ "$tries" = 1 ] || after=" after $tries tries"
+            echo "$p $why$after"
+            [ "$why" = 200 ] || { echo "::error title=Smoke test failed::$SITE$p: $why$after"; failed=1; }
           done
+          exit "$failed"
 
       # Ping IndexNow (Bing, Yandex and others) with every URL in the live sitemap.
       - name: IndexNow

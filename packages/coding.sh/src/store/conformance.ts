@@ -513,6 +513,43 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
       assert.deepEqual(await s.fillCallTiming([copy(untimed, { durationMs: undefined })]), [], "a copy without timing changes nothing");
     }));
 
+    it("optional setEventCosts sets an estimated cost in place: price tags replaced, the rest of the event kept", withStore(async (s) => {
+      if (!s.setEventCosts) return;
+      const call = fixtureEvent({
+        sessionId: "pc",
+        kind: "llm.call",
+        model: "claude-sonnet-4-5",
+        durationMs: 1200,
+        usage: { inputTokens: 1000, outputTokens: 50, cacheReadTokens: 200 },
+        payload: { ok: false, error: "pangolin upstream overloaded", messageId: "m1", nested: { a: [1, "two", null] }, costEstimated: false, pricedAs: "stale-model", priceTier: "batch", costByTokenType: { input: 9, output: 9, cacheRead: 9, cacheWrite: 9 } },
+      });
+      const msg = fixtureEvent({ sessionId: "pc", kind: "user.message", payload: { text: "reprice the pangolin ledger" } });
+      const reported = fixtureEvent({ sessionId: "pc", kind: "llm.call", usage: { inputTokens: 5, outputTokens: 5, costUsd: 0.25 }, payload: { ok: true } });
+      await s.putEvents([call, msg, reported]);
+      const { pricedAs: _was, priceTier: _tier, costByTokenType: _parts, costEstimated: _est, ...rest } = call.payload;
+      const parts = { input: 0.003, output: 0.00075, cacheRead: 0.00006, cacheWrite: 0 };
+      const stored = async () => new Map((await s.listEvents("pc")).map((e) => [e.id, e]));
+
+      const found = await s.setEventCosts([
+        { id: call.id, costUsd: 0.00381, pricedAs: "claude-sonnet-4-5", priceTier: "priority", costByTokenType: parts },
+        { id: "not-stored", costUsd: 1 },
+        { id: msg.id, costUsd: 0.5 },
+      ]);
+      assert.equal(found, 2, "counts the events found; an unknown id is skipped");
+      let got = await stored();
+      assert.deepEqual(got.get(call.id), { ...call, usage: { ...call.usage, costUsd: 0.00381 }, payload: { ...rest, costEstimated: true, pricedAs: "claude-sonnet-4-5", priceTier: "priority", costByTokenType: parts } });
+      assert.deepEqual(got.get(msg.id), { ...msg, usage: { costUsd: 0.5 }, payload: { text: "reprice the pangolin ledger", costEstimated: true } }, "an event without usage gets one");
+      assert.deepEqual(got.get(reported.id), reported, "an event not named stays as it was");
+      assert.deepEqual((await s.search("pangolin")).map((h) => h.event.id).sort(), [call.id, msg.id].sort(), "search text stays");
+      assert.equal((await s.search("ledger")).map((h) => h.event.payload.text)[0], "reprice the pangolin ledger");
+
+      assert.equal(await s.setEventCosts([{ id: call.id, costUsd: 0.004 }]), 1);
+      got = await stored();
+      assert.deepEqual(got.get(call.id), { ...call, usage: { ...call.usage, costUsd: 0.004 }, payload: { ...rest, costEstimated: true } }, "a cost without price tags removes the old ones");
+      assert.equal(await s.setEventCosts([]), 0);
+      assert.equal(await s.setEventCosts([{ id: "not-stored", costUsd: 1 }]), 0);
+    }));
+
     it("optional session folds: events since a seq or a time, and a fold dropped when stored events change in place", withStore(async (s) => {
       if (!s.listEventsSince || !s.getSessionFold || !s.putSessionFold) return;
       const a1 = fixtureEvent({ sessionId: "fa", ts: 1000 });

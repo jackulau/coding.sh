@@ -194,6 +194,7 @@ TypeScript SDK and the store plugins are on npm, and the Python SDK is on PyPI. 
 | Amp | plugin | Not run live |
 | T3 Code | its local store | Verified on a real install |
 | Aider | `coding.sh run -- aider …` | Verified on a real install |
+| Devin CLI | hooks, or OpenTelemetry logs | Not run live |
 | Any other command | `coding.sh run -- <cmd>` | Tested |
 | Your own agent or app (Vercel AI SDK, Claude Agent SDK, OpenAI Agents SDK, LangGraph and more) | OpenTelemetry into `coding.sh collector`, or the TypeScript and Python SDKs | Tested |
 
@@ -209,8 +210,8 @@ TypeScript SDK and the store plugins are on npm, and the Python SDK is on PyPI. 
   the captured payloads are now CI fixtures. For OpenCode, Pi, Goose, Factory Droid, GitHub
   Copilot CLI and Aider, CI repeats that run on Linux and Windows on every change.
 - **Not run live.** CI checks the adapter against the agent's documented formats, but nobody has
-  run it against a live install yet. Cursor CLI and Amp are in that state because both need an
-  account login.
+  run it against a live install yet. Cursor CLI, Amp and Devin CLI are in that state because each
+  needs an account login.
 - **Tested.** Covered by CI tests. There is no third-party agent to check against.
 
 </details>
@@ -246,10 +247,11 @@ coding.sh is pre-1.0 (latest: 0.1.7), so expect rough edges. What isn't done yet
 
 - **Windows.** CI runs on Linux and Windows. On Windows, CI runs the test suite, the installer (from
   Git Bash) and real OpenCode, Pi, Goose, Factory Droid, GitHub Copilot CLI and Aider sessions
-  against a stub model. Capture from Claude Code, Codex CLI, Antigravity CLI, Cursor CLI, Amp and
-  T3 Code has not been checked on Windows yet.
-- **Not run live.** Two adapters, Cursor CLI and Amp, have not been run on a live install yet. Both need an account
-  login (see [Supported agents](#supported-agents)).
+  against a stub model. Capture from Claude Code (hooks and transcripts) and T3 Code has been
+  checked on a Windows 11 install. Capture from Codex CLI, Antigravity CLI, Cursor CLI and Amp has
+  not been checked on Windows yet.
+- **Not run live.** Three adapters, Cursor CLI, Amp and Devin CLI, have not been run on a live install yet. Each
+  needs an account login (see [Supported agents](#supported-agents)).
 
 Changes are listed in [CHANGELOG.md](CHANGELOG.md) and on the
 [releases page](https://github.com/jackulau/coding.sh/releases).
