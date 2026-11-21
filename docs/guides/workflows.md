@@ -42,13 +42,22 @@ args = '{"seeded":"seeded-1"}'   # passed to the workflow
 threshold = 0.5                  # a score at or above this counts as a pass
 [truth]
 kind = "seeded-bugs"
-file = "hidden/seeded-1.json"    # kept outside the workflow's working tree
+file = "/tmp/review-truth/seeded-1.json"   # outside repoRoot and snapshot
 [start]
-repoRoot = "../../../.."
+repoRoot = "../../../.."         # the repo root
 snapshot = "/tmp/seeded-1"       # the clean tree with the bugs applied
 ```
 
-The truth file must not sit inside `repoRoot` or `snapshot`, where the agents could read it.
+Relative paths start from the case file's folder, so `../../../..` is the repo root. The truth file
+must not sit inside `repoRoot` or `snapshot`, where the agents could read it, so here it is outside
+the repo. It lists the planted bugs:
+
+```json title=/tmp/review-truth/seeded-1.json
+{"bugs": [
+  {"id": "b1", "file": "src/a.ts", "lines": [10, 12], "test": "node check.mjs", "patch": "b1.patch"},
+  {"id": "b2", "file": "src/b.ts", "lines": [40, 40]}
+]}
+```
 
 | Truth `kind` | For | Score |
 |---|---|---|
@@ -56,9 +65,9 @@ The truth file must not sit inside `repoRoot` or `snapshot`, where the agents co
 | `verifier` | A fix workflow | 1 when `command` exits 0, or the share of named `[[truth.tests]]` that pass. A `before = "pass"` test that fails after the run is a regression. |
 | `judge` | A research or synthesis workflow | An LLM judge's grade on a `rubric`. Marked uncalibrated until `coding.sh judge calibrate` has run for that judge. |
 
-When a planted bug has a `test`, `workflows run` checks it first: the test must fail on the snapshot
-and pass with the bug reverted. `coding.sh workflows score <run> --case seeded-1` scores one run by
-hand.
+When a planted bug has a `test` and the `patch` that planted it (a path relative to the truth file),
+`workflows run` checks it first: the test must fail on the snapshot and pass with the patch
+reverted. `coding.sh workflows score <run> --case seeded-1` scores one run by hand.
 
 ## Run two versions
 
@@ -66,8 +75,9 @@ hand.
 coding.sh workflows run coding-sh-review --variant base=wf/review.js --variant cand=wf/review-v2.js -k 3 --split dev
 ```
 
-Attempts alternate between variants, so a slow afternoon hits both alike. It prints the estimated
-cost and asks before it spends more than the confirm threshold.
+Attempts alternate between variants, so a slow afternoon hits both alike. It estimates the cost from
+past runs of the workflow and asks before it spends more than the confirm threshold ($1, set with
+`CODING_SH_CONFIRM_ABOVE_USD`). With no past runs to estimate from, it asks too.
 
 | Flag | Default | What it does |
 |---|---|---|
@@ -91,8 +101,10 @@ Runs pair by case, so each case is compared with itself. The first line is the v
 | Verdict | When |
 |---|---|
 | `candidate better` or `candidate worse` | The bootstrap interval for the score change excludes zero, and McNemar's test on pass or fail agrees. |
-| `inconclusive` | Otherwise. |
-| `underpowered` | Not significant with fewer than 10 paired cases. |
+| `no significant difference` | Neither test finds a change. |
+| `inconclusive` | One test finds a change and the other does not, or no scored case ran in both variants. |
+
+`underpowered` after a verdict means fewer than 10 cases were paired, too few to rule out a change.
 
 The report also gives the paired change in cost, wall time and critical path, where cost and time
 moved phase by phase, and each variant's P(front): the share of bootstrap draws where no other
@@ -102,12 +114,13 @@ network are left out, and `--resume` runs them again.
 | Flag | Default | What it does |
 |---|---|---|
 | `--threshold` | the case's, else 0.5 | The score that counts as a pass. |
-| `--seed` | random | Fixes the bootstrap, so the same runs give the same report. |
+| `--seed` | fixed | Seeds the bootstrap. The default seed is fixed too, so the same runs give the same report. |
 | `--select` | none | Picks a variant to deploy: `min-cost`, `weighted` or `pareto`. |
-| `--q-min`, `--q-drop` | `--q-drop 10` | With `min-cost`: the cheapest variant whose quality lower bound clears this floor. |
+| `--q-min`, `--q-drop` | `--q-drop 10` | With `min-cost`: the quality floor. `--q-min` sets it; `--q-drop` sets it that many points below the baseline's mean. The pick is the cheapest variant whose quality lower bound clears it. |
 | `--lambda` | none | With `weighted`: the quality given up per USD. `0` picks the best quality. |
 
-The pick prints as a `deploy:` line. If no variant clears the floor, nothing is picked.
+The pick prints as a `deploy:` line. If no variant clears the floor, nothing is picked. When no run
+records cost, P(front) and the picks use wall time instead, and `--lambda` is per second.
 
 ## Replay from a recorded run
 
@@ -153,8 +166,9 @@ coding.sh workflows run graph --driver command \
   --variant '{"name":"cand","command":["node","app-v2.mjs"],"fromCheckpoint":"<checkpoint>"}'
 ```
 
-A replay keeps the upstream outputs fixed, so it understates how much results vary. Replay three or
-more recorded runs per case.
+`workflows compare` has no recorded run to check these forks against, so it prints no replay noise
+floor for them. A replay keeps the upstream outputs fixed, so it understates how much results vary.
+Replay three or more recorded runs per case.
 :::
 
 ## Next steps

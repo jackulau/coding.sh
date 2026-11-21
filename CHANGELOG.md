@@ -207,6 +207,7 @@ grouped by area, with links to the docs for the details.
 - **Docs.** Benchmarks gives the three scripts its first run calls, so the example runs as written, and sets the case count with `bench new --cases 30`. Its samples match what `bench new` and `bench run` print. [Benchmarks](https://coding.sh/docs/benchmarks)
 - **Docs.** Compare two agents adds `--permission-mode acceptEdits` to the `claude -p` that records a task, since without it Claude Code can't write the fix. It also says that `--by` needs `--gate`. [Compare two agents](https://coding.sh/docs/how-to/compare-agents)
 - **Docs.** Replay recorded model calls says to set `excludeTools` or `excludeModel` when you record, since a replay matches the keys the recording stored. It also says that the noise floor counts pass verdicts, not outputs, and that `exp show` prints a replay's call counts. [Replay recorded model calls](https://coding.sh/docs/how-to/replay-llm-calls)
+- **Docs.** Workflow experiments puts the example case's truth file outside the repo, since its `repoRoot` is the repo root and a truth file inside fails to load. It shows the truth file's format, says a planted bug needs its `patch` to be checked, and lists the `no significant difference` verdict. [Workflow experiments](https://coding.sh/docs/workflows)
 
 ## [0.1.7] - 2026-11-16
 
