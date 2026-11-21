@@ -236,6 +236,25 @@ describe("proxy calls: metadata mode", () => {
   });
 });
 
+describe("proxy calls: calls read from transcripts", () => {
+  const ev = (id: string, ts: number, source: string, read: number, write: number, payload: Record<string, unknown> = {}): AgentEvent =>
+    ({ id, v: 0, sessionId: SESSION, ts, kind: "llm.call", source, agent: "claude-code", model: "claude-opus-4-5", usage: { inputTokens: 2, cacheReadTokens: read, cacheWriteTokens: write }, payload });
+
+  it("a miss between transcript calls says to log the calls with the proxy, not to switch on capture mode full", () => {
+    const d = diffCalls({ event: ev("a1", 1_000, "transcript", 150_000, 500) }, { event: ev("b1", 61_000, "transcript", 30_000, 60_000) });
+    assert.equal(d.content, "metadata");
+    assert.equal(d.cache.reused, false);
+    assert.match(d.cache.cause ?? "", /coding\.sh proxy/);
+    assert.doesNotMatch(d.cache.cause ?? "", /capture mode full/);
+  });
+
+  it("a miss between proxy calls stored without content still points at capture mode full", () => {
+    const p = { toolsHash: "t", systemHash: "s", messageCount: 3 };
+    const d = diffCalls({ event: ev("a2", 1_000, "proxy", 150_000, 500, p) }, { event: ev("b2", 61_000, "proxy", 30_000, 60_000, { ...p, messageCount: 5 }) });
+    assert.match(d.cache.cause ?? "", /capture mode full/);
+  });
+});
+
 describe("lineDiff", () => {
   it("keeps changes with two lines of context and marks gaps", () => {
     const a = Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n");
