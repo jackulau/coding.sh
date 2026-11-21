@@ -21,9 +21,10 @@ The script checks for Node 22.16 or newer and installs coding.sh from npm. If np
 release (or can't be reached), it takes the tarball from the GitHub release instead. Then it runs
 `coding.sh init` and opens the viewer.
 
-`npx coding.sh init` also works. The hook is copied to a stable path, but the MCP entry points at
-the npx cache copy of the CLI. Install globally if you want the MCP server to survive
-`npm cache clean`.
+`npx coding.sh init` also works. On Windows, npx runs the command through cmd, where `coding.sh`
+fails (see [Windows](#windows)): run `npx -p coding.sh codingsh init`. The hook is copied to a
+stable path, but the MCP entry points at the npx cache copy of the CLI. Install globally if you want
+the MCP server to survive `npm cache clean`.
 
 ## Script options
 

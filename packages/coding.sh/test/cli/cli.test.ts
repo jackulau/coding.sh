@@ -604,9 +604,11 @@ describe("cli zero setup", () => {
     assert.equal(readFileSync(join(h.data, "bin", "cli-path"), "utf8"), `${CLI}\n`, "hook knows the CLI for background ingests");
 
     // Started with npx (npm sets npm_command=exec), `coding.sh` is not on PATH: the next steps say npx.
+    // npx on Windows runs the command through cmd, where only the codingsh bin runs.
+    const npxBin = process.platform === "win32" ? "npx -p coding\\.sh codingsh" : "npx coding\\.sh";
     const npx = cli(h, ["init", "--yes", ...agentArgs], { npm_command: "exec" }).stderr;
-    assert.match(npx, /Open the viewer: npx coding\.sh ui$/m);
-    assert.match(npx, /see what to fix first: npx coding\.sh improve$/m);
+    assert.match(npx, new RegExp(`Open the viewer: ${npxBin} ui$`, "m"));
+    assert.match(npx, new RegExp(`see what to fix first: ${npxBin} improve$`, "m"));
 
     const again = cli(h, ["init", "--yes", "--json", ...agentArgs]);
     assert.equal((parseJson(again.stdout, "init again") as { outcome: string }).outcome, "unchanged", again.stderr);

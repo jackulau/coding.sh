@@ -73,6 +73,11 @@ describe("nextStepBin", () => {
     assert.equal(nextStepBin({ SHELL: "/usr/bin/bash" }, "win32"), "coding.sh");
     assert.equal(nextStepBin({}, "linux"), "coding.sh");
     assert.equal(nextStepBin({}, "darwin"), "coding.sh");
-    assert.equal(nextStepBin({ npm_command: "exec" }, "win32"), "npx coding.sh");
+    assert.equal(nextStepBin({ npm_command: "exec" }, "linux"), "npx coding.sh");
+  });
+
+  it("under npx on Windows names the codingsh bin: npx runs the command through cmd in every shell", () => {
+    assert.equal(nextStepBin({ npm_command: "exec" }, "win32"), "npx -p coding.sh codingsh");
+    assert.equal(nextStepBin({ npm_command: "exec", MSYSTEM: "MINGW64" }, "win32"), "npx -p coding.sh codingsh");
   });
 });
