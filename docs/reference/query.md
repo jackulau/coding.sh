@@ -265,6 +265,7 @@ tags out.
 | `skill:<name>` | Used a skill, through the Skill tool or a file in the skill's folder. |
 | `hook:<source>` | Got text in its context from another hook, such as `hook:plugin:terse`. |
 | `gateway:<id>` | Sent model calls through an LLM gateway, such as `gateway:vercel`. |
+| `tag:<name>` | Came from a trace its app tagged, such as `langfuse.trace.tags` sent to the OTel receiver. |
 | `secret:exposed` | Had a vendor token replaced by redaction. The agent and its provider saw it, so rotate it. |
 | `model:switch` | Changed model mid-session. |
 | `model:fallback` | Recorded a fallback to another model, such as Claude Code's `--fallback-model`. |

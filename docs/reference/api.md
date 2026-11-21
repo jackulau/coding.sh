@@ -329,7 +329,8 @@ ingest key.
 
 Spans with `langfuse.session.id` join one session, and `langfuse.user.id`,
 `langfuse.environment` and `langfuse.release` become the `user`, `env` and `release` keys of
-[`--where`](query.md#tool-and-event-keys). There is no `/api/public/otel/v1/logs`. See
+[`--where`](query.md#tool-and-event-keys). Each of `langfuse.trace.tags` becomes a `tag:<name>`
+flag. There is no `/api/public/otel/v1/logs`. See
 [Langfuse SDKs](../integrations/langfuse.md).
 
 ## Model API proxy

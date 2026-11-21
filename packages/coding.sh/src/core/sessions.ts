@@ -171,6 +171,21 @@ function titleText(text: string): string {
   return text;
 }
 
+/** A trace tag's flag prefix (tag:prod), and the most tags one session keeps. */
+const TAG_FLAG = "tag:";
+const TAGS_MAX = 20;
+
+/** Joins a session.start's payload.tags (strings) into the session's tags, keeping the first TAGS_MAX. */
+function foldTags(s: SessionState, tags: unknown): void {
+  if (!Array.isArray(tags)) return;
+  for (const t of tags) {
+    if (typeof t !== "string" || !t.trim()) continue;
+    const list = (s.tags ??= []);
+    if (list.length >= TAGS_MAX) return;
+    if (!list.includes(t)) list.push(t);
+  }
+}
+
 function makeTitle(text: string): string {
   const t = titleText(text).replace(/\s+/g, " ").trim();
   return t.length <= TITLE_MAX ? t : `${t.slice(0, TITLE_MAX - 1).trimEnd()}…`;
@@ -611,6 +626,8 @@ export interface SessionState {
   startName?: string;
   /** The thread title a host (T3 Code) names in its host-link notification: the title, before the first prompt. */
   hostTitle?: string;
+  /** Trace tags the session.start events name (payload.tags, Langfuse's langfuse.trace.tags), in order, at most TAGS_MAX: the tag:<name> flags. */
+  tags?: string[];
   usage: UsageState;
   latency: LatencyState;
   flags: FlagState;
@@ -893,6 +910,7 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
     case "session.start":
       s.launch ??= launchOf(e.payload);
       if (typeof e.payload.name === "string" && e.payload.name.trim()) s.startName ??= makeTitle(e.payload.name);
+      foldTags(s, e.payload.tags);
       // A subagent's task description (the Agent tool's `description`) titles it, before its prompt.
       if (e.payload.source === "subagent" && typeof e.payload.description === "string" && e.payload.description.trim()) s.title = makeTitle(e.payload.description);
       break;
@@ -1027,6 +1045,7 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
   if (cacheBreaks) session.stats.cacheBreaks = cacheBreaks;
   if (cacheUnderused(usage, session.stats.turns)) session.flags.push(FLAGS.cacheLow);
   session.flags.push(...skillFlags(skillUseOf(s.skills, s.cwd ?? prev?.cwd)));
+  for (const t of s.tags ?? []) session.flags.push(`${TAG_FLAG}${t}`);
   const hookContext = hookContextOf(s.hookContext);
   if (hookContext) session.stats.hookContext = hookContext;
   if (s.launch) session.stats.launch = s.launch;
