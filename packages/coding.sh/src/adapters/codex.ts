@@ -1128,7 +1128,8 @@ export const codex: Adapter = {
   // 9 (0.1.5): a task_complete with an error keeps it as an error event (source api, errorType, errorClass).
   // 10 (0.1.8): a shell call's test.result reads the last jest, vitest, node:test or mocha summary in its output, not the first.
   // 11 (0.1.8): a rollout written inside the --since window is imported whole, not cut at since.
-  parseVersion: 11,
+  // 12 (0.1.8): a line holding a raw U+2028 or U+2029 inside a string is read whole, not split and dropped.
+  parseVersion: 12,
 
   detect() {
     const home = codexHome();

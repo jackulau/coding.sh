@@ -12,7 +12,10 @@ import type {
   HarnessBundle,
   IndexStore,
   Label,
+  ReviewItem,
+  ReviewQueue,
   RunResult,
+  SavedView,
   Score,
   ScoreConfig,
   ScoreFilter,
@@ -58,6 +61,10 @@ export class MemoryIndexStore implements IndexStore {
   private readonly scores = new Map<string, Score>();
   private readonly scoreConfigs = new Map<string, ScoreConfig>();
   private readonly kv = new Map<string, string>();
+  private readonly views = new Map<string, SavedView>();
+  private readonly reviewQueues = new Map<string, ReviewQueue>();
+  /** queue name → item id → item. */
+  private readonly reviewItems = new Map<string, Map<number, ReviewItem>>();
   /** dataset id → version → { doc, info } (insertion order = history order). */
   private readonly datasets = new Map<string, Map<string, { doc: Dataset; info: DatasetVersionInfo }>>();
   private readonly datasetLatest = new Map<string, string>();
@@ -116,6 +123,7 @@ export class MemoryIndexStore implements IndexStore {
       }
     }
     for (const [id, s] of this.scores) if (s.sessionId !== undefined && doomed.has(s.sessionId)) this.scores.delete(id);
+    for (const items of this.reviewItems.values()) for (const [id, it] of items) if (it.sessionId !== undefined && doomed.has(it.sessionId)) items.delete(id);
     let sessions = 0;
     for (const id of doomed) if (this.sessions.delete(id)) sessions++;
     return { sessions, events };
@@ -386,6 +394,38 @@ export class MemoryIndexStore implements IndexStore {
 
   async listScoreConfigs(): Promise<ScoreConfig[]> {
     return [...this.scoreConfigs.values()].sort((a, b) => cmp(a.name, b.name) || cmp(a.id, b.id)).map(clone);
+  }
+
+  async putView(v: SavedView): Promise<void> {
+    this.views.set(v.name, clone(v));
+  }
+
+  async listViews(): Promise<SavedView[]> {
+    return [...this.views.values()].sort((a, b) => cmp(a.name, b.name)).map(clone);
+  }
+
+  async deleteView(name: string): Promise<boolean> {
+    return this.views.delete(name);
+  }
+
+  async createReviewQueue(q: ReviewQueue, items: ReviewItem[]): Promise<boolean> {
+    if (this.reviewQueues.has(q.name)) return false;
+    this.reviewQueues.set(q.name, clone(q));
+    this.reviewItems.set(q.name, new Map(items.map((it) => [it.id, clone({ ...it, queue: q.name })])));
+    return true;
+  }
+
+  async listReviewQueues(): Promise<ReviewQueue[]> {
+    return [...this.reviewQueues.values()].sort((a, b) => cmp(a.name, b.name)).map(clone);
+  }
+
+  async listReviewItems(queue: string): Promise<ReviewItem[]> {
+    return [...(this.reviewItems.get(queue)?.values() ?? [])].sort((a, b) => a.id - b.id).map(clone);
+  }
+
+  async putReviewItem(item: ReviewItem): Promise<void> {
+    const items = this.reviewItems.get(item.queue);
+    if (items?.has(item.id)) items.set(item.id, clone(item));
   }
 
   async kvGet(key: string): Promise<string | undefined> {

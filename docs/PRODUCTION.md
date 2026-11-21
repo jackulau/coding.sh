@@ -632,6 +632,12 @@ export OTEL_SERVICE_NAME=checkout-api                              # becomes the
 - Group turns with `gen_ai.conversation.id` (or `session.id`).
 - Spans need `gen_ai.operation.name=chat`, `gen_ai.request.model`, `gen_ai.usage.input_tokens` and
   `gen_ai.usage.output_tokens`.
+- An `invoke_agent` or `invoke_workflow` span is a subagent, named by `gen_ai.agent.name` (or
+  `gen_ai.workflow.name`, its older name on a workflow span).
+- `gen_ai.request.reasoning.level` on a model call is stored as `reasoningEffort`.
+- The provider `mistral_ai` is stored as `mistral`.
+- An `execute_tool` span with an `rpc.status_code` (or `rpc.response.status_code`) other than `OK`
+  or `0`, as an MCP tool call sends on an error, is a failed tool call; its error names the code.
 - The per-framework recipes in the `src/otel/receiver.ts` header apply unchanged; only the URL and
   the header are different.
 

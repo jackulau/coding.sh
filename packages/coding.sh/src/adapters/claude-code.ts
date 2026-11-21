@@ -5,7 +5,6 @@ import { randomUUID } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
-import { createInterface } from "node:readline";
 import { paths, userHome } from "../core/paths.ts";
 import type { Adapter, AgentRunOutput, BackfillOpts, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../core/types.ts";
 import type { AgentEvent, Usage } from "../schema/index.ts";
@@ -41,6 +40,7 @@ import {
   readHeadText,
   readJsonl,
   readJsonlTail,
+  splitLines,
   runEnv,
   runHeadless,
   str,
@@ -207,6 +207,16 @@ async function subagentFromResult(ctx: NormalizeContext, em: Emitter, raw: Recor
   return w.events;
 }
 
+/** The tool_use_id of the tool call started last, by agent and session, in this process. Bounded, oldest out first. */
+const lastToolStarts = new Map<string, string>();
+const LAST_TOOL_STARTS_KEPT = 4096;
+
+function lastToolStart(at: string, toolUseId: string): void {
+  lastToolStarts.delete(at);
+  lastToolStarts.set(at, toolUseId);
+  if (lastToolStarts.size > LAST_TOOL_STARTS_KEPT) lastToolStarts.delete(lastToolStarts.keys().next().value!);
+}
+
 export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext, agent = CLAUDE_AGENT): Promise<AgentEvent[]> {
   // `coding.sh run --agent <id> -- …` spools its session.start/file.change/session.end under this agent id.
   if (isWrapperLine(line)) return normalizeWrapperLine(line, ctx);
@@ -220,7 +230,15 @@ export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext
   const inChild = subagentId !== undefined && event !== "SubagentStart" && event !== "SubagentStop";
   const sessionId = inChild ? childSessionId(parentSid, subagentId) : parentSid;
   // Hooks in two settings files whose commands differ both run: ids come from the firing, not the spool line.
-  const firing = firingKey(line, ctx, payload, agent, sessionId, event);
+  // A Notification's payload names no tool: the same permission prompt for two tool calls in a row (parallel
+  // calls, approved one after the other) is one payload, often under 2 s apart. The tool call started last
+  // in the session tells the two firings apart; both copies of one firing follow the same tool call.
+  const at = `${agent}\0${sessionId}`;
+  if (event === "PreToolUse" && str(raw.tool_use_id)) lastToolStart(at, str(raw.tool_use_id)!);
+  const after = event === "Notification" ? lastToolStarts.get(at) : undefined;
+  const scope: string[] = [agent, sessionId, event];
+  if (after) scope.push("after", after);
+  const firing = firingKey(line, ctx, payload, ...scope);
   const em = new Emitter(
     ctx,
     {
@@ -514,11 +532,11 @@ async function readWorkflowJournal(path: string): Promise<Map<string, { label?: 
 }
 
 async function* readLines(path: string): AsyncGenerator<string> {
-  const rl = createInterface({ input: createReadStream(path, { encoding: "utf8" }), crlfDelay: Infinity });
+  const input = createReadStream(path, { encoding: "utf8" });
   try {
-    for await (const line of rl) yield line;
+    yield* splitLines(input);
   } finally {
-    rl.close();
+    input.destroy();
   }
 }
 
@@ -687,7 +705,10 @@ export const claudeCode: Adapter = {
   //    first line is left for the next call; a prompt command's call is one llm.call, in its own turn.
   // 16 (0.1.8): a shell call's test.result reads the last jest, vitest, node:test or mocha summary in its
   //    output, not the first.
-  parseVersion: 16,
+  // 17 (0.1.8): a line holding a raw U+2028 or U+2029 inside a string is read whole, not split and dropped.
+  // 18 (0.1.8): a Notification after a new tool call is another firing even when its payload repeats one under
+  //    2 s old (the same permission prompt for two tool calls in a row).
+  parseVersion: 18,
 
   detect() {
     const dir = claudeConfigDir();

@@ -92,6 +92,8 @@ const SUBAGENT_LINES = 40;
 /** A markdown digest stays under the server's 25,000-character answer limit; the timeline gives way first. */
 const MARKDOWN_TEXT_LIMIT = 24_000;
 
+const plural = (n: number, one: string): string => `${n} ${one}${n === 1 ? "" : "s"}`;
+
 /** Markdown digest of a session: header, turns, the first `maxEntries` timeline lines, subagents. */
 export async function sessionMarkdown(index: IndexStore, s: Session, maxEntries = 120, now = Date.now()): Promise<string> {
   const events = await index.listEvents(s.id, { limit: DIGEST_EVENT_CAP });
@@ -112,7 +114,7 @@ export async function sessionMarkdown(index: IndexStore, s: Session, maxEntries 
   row("Started", iso(s.startedAt));
   const last = lastActivity(s);
   row("Duration", s.endedAt !== undefined ? fmtMs(s.endedAt - s.startedAt) : isRunning(s, now) ? `running (no end seen; last activity ${iso(last)})` : `${fmtMs(last - s.startedAt)} (no end seen; idle since ${iso(last)})`);
-  row("Activity", `${s.stats.turns} turns, ${s.stats.toolCalls} tool calls${s.stats.toolErrors ? ` (${s.stats.toolErrors} failed)` : ""}, ${s.stats.filesChanged} files changed`);
+  row("Activity", `${plural(s.stats.turns, "turn")}, ${plural(s.stats.toolCalls, "tool call")}${s.stats.toolErrors ? ` (${s.stats.toolErrors} failed)` : ""}, ${plural(s.stats.filesChanged, "file")} changed`);
   if (s.stats.testsPassed !== undefined || s.stats.testsFailed !== undefined) row("Tests", `${s.stats.testsPassed ?? 0} passed, ${s.stats.testsFailed ?? 0} failed`);
   if (u) row("Tokens", `in ${u.inputTokens ?? 0}, out ${u.outputTokens ?? 0}, cache read ${u.cacheReadTokens ?? 0}, cache write ${u.cacheWriteTokens ?? 0}${u.costUsd !== undefined ? `, $${u.costUsd.toFixed(4)}${costNote(u)}` : ""}`);
   const le = s.stats.llmErrors;

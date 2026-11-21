@@ -6,6 +6,7 @@ import { createServer, request as httpRequest, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
+import { isDeepStrictEqual } from "node:util";
 import * as work from "../../src/cli/commands/work.ts";
 import type { FlagValue } from "../../src/cli/args.ts";
 import { workItemId } from "../../src/core/work.ts";
@@ -59,6 +60,20 @@ describe("viewer /api/work", () => {
   };
   const query = (flags: Record<string, FlagValue>) =>
     new URLSearchParams(Object.entries(flags).map(([k, val]) => [k, val === true ? "1" : String(val)])).toString();
+  /**
+   * `work --json` and the API's answer for the same query, read so that the clock cannot split them.
+   * Each side reads the time itself, and a reason such as "for 2m" goes up each time a whole minute
+   * since `now` ends, so on a loaded machine one can end between the two reads. The CLI is read
+   * before and after the API: when its two answers match, no minute ended in between, and the
+   * API's answer must match them. Up to 3 tries; the last one is returned as it is.
+   */
+  const cliAndApi = async (flags: Record<string, FlagValue>, path: string) => {
+    for (let i = 0; ; i++) {
+      const want = pick(await cli(flags));
+      const res = await get(path);
+      if (isDeepStrictEqual(pick(await cli(flags)), want) || i === 2) return { want, res };
+    }
+  };
 
   before(async () => {
     sb = sandbox();
@@ -85,8 +100,8 @@ describe("viewer /api/work", () => {
     test(`gives the items work --json gives (${JSON.stringify(flags)})`, async () => {
       const cliFlags = typeof flags.agent === "string" ? { ...flags, agent: flags.agent.split(",") } : flags;
       // An agent no session ran is an error in the CLI (a likely typo); the page shows the empty queue.
-      const want = flags.agent === "nobody-ran-this" ? undefined : pick(await cli(cliFlags));
-      const r = await get(`/api/work?${query(flags)}`);
+      const path = `/api/work?${query(flags)}`;
+      const { want, res: r } = flags.agent === "nobody-ran-this" ? { want: undefined, res: await get(path) } : await cliAndApi(cliFlags, path);
       assert.equal(r.status, 200, r.body);
       const got = r.json();
       if (want) {
@@ -126,10 +141,10 @@ describe("viewer /api/work", () => {
     const until = Date.parse(snooze.json().snoozedUntil);
     assert.ok(until > Date.now() + 59 * 60e3 && until <= Date.now() + 3600e3, snooze.body);
 
-    const after = await cli();
+    const { want: after, res } = await cliAndApi({}, "/api/work");
     assert.equal((after.counts as Record<string, number>).blocked, 0, "the CLI sees the viewer's ack");
     assert.equal((after.counts as Record<string, number>).review, 0, "the CLI sees the viewer's snooze");
-    assert.deepEqual(pick((await get("/api/work")).json()), pick(after));
+    assert.deepEqual(pick(res.json()), after);
     const all = (await get("/api/work?all=1")).json();
     const hidden = Object.fromEntries(all.items.map((i: { id: string; hidden?: string }) => [i.id, i.hidden]));
     assert.equal(hidden[review], "snoozed");

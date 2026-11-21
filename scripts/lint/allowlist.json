@@ -1287,7 +1287,7 @@
     {
       "rule": "conditional-empty-spread",
       "path": "packages/coding.sh/src/core/memory-files.ts",
-      "max": 9,
+      "max": 8,
       "reason": "baseline 2026-11-09: existing code, do not add more"
     },
     {

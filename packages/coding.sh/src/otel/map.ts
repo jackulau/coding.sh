@@ -363,6 +363,15 @@ const CLAUDE_CODE_SPANS: Record<string, SpanClass> = {
   "claude_code.interaction": "other",
 };
 
+/** A provider name as stored: semconv-genai v0.1.0 renamed mistral_ai to mistral. */
+const providerName = (p: string | undefined): string | undefined => (p === "mistral_ai" ? "mistral" : p);
+
+/** An MCP tool call's failure (semconv-genai v0.1.0: rpc.status_code, older rpc.response.status_code): any code but OK or 0. */
+function rpcError(a: Attrs): string | undefined {
+  const code = str(a, "rpc.status_code", "rpc.response.status_code");
+  return code && code !== "OK" && code !== "0" ? `rpc status ${code}` : undefined;
+}
+
 export function classifySpan(span: OtelSpan): SpanClass {
   const a = span.attributes;
   const cc = CLAUDE_CODE_SPANS[str(a, "span.type") ?? span.name];
@@ -373,8 +382,9 @@ export function classifySpan(span: OtelSpan): SpanClass {
     if (op === "chat" || op === "text_completion" || op === "generate_content" || op === "completion") return "llm";
     if (op === "embeddings" || op === "embedding") return "embedding";
     if (op === "execute_tool") return "tool";
-    if (op === "invoke_agent" || op === "create_agent") return "agent";
-    return "other"; // invoke_workflow, agent_step, plan, retrieval, memory ops, …
+    // semconv-genai v0.1.0 merged invoke_workflow into invoke_agent (an internal agent span); the operation name stays.
+    if (op === "invoke_agent" || op === "create_agent" || op === "invoke_workflow") return "agent";
+    return "other"; // agent_step, plan, retrieval, memory ops, …
   }
   const oi = str(a, "openinference.span.kind")?.toUpperCase();
   if (oi) {
@@ -1028,7 +1038,8 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
   const draft = () => new Draft(store, max, raw);
   // A span named weights.edit or weights.checkpoint is that event, whatever else its attributes say.
   const weights = weightsDraft(span.name);
-  const agentName = str(a, "gen_ai.agent.name", "agent.name") ?? (/^invoke_agent\s+(.+)$/.exec(span.name)?.[1] || undefined);
+  // gen_ai.workflow.name is the pre-v0.1.0 name of a workflow span's gen_ai.agent.name.
+  const agentName = str(a, "gen_ai.agent.name", "agent.name", "gen_ai.workflow.name") ?? (/^invoke_(?:agent|workflow)\s+(.+)$/.exec(span.name)?.[1] || undefined);
 
   // ---- model call
   const llm = async (slot: number) => {
@@ -1037,7 +1048,7 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
     const usage = usageOf(a);
     const hints = priceHints(a);
     const d = draft()
-      .set("provider", str(a, "gen_ai.provider.name", "gen_ai.system", "llm.provider", "llm.system", "ai.model.provider"))
+      .set("provider", providerName(str(a, "gen_ai.provider.name", "gen_ai.system", "llm.provider", "llm.system", "ai.model.provider")))
       .set("requestModel", req)
       .set("responseModel", res)
       .set("serviceTier", serviceTier(a))
@@ -1048,6 +1059,7 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
       .set("ttftMs", ttftMs(span))
       .set("stopReason", finishReason(a))
       .set("reasoningTokens", reasoningTokens(a))
+      .set("reasoningEffort", str(a, "gen_ai.request.reasoning.level"))
       .set("compacted", compacted(a))
       .set("ok", !failed)
       .set("error", error)
@@ -1092,7 +1104,14 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
       .set("subagentType", cc ? str(a, "subagent_type") : undefined);
     await s.content("input", toolInput(input));
     emit(startSlot, "tool.start", startMs, s, {}, ids[0]);
-    const e = draft().set("tool", name).set("toolUseId", toolUseId).set("ok", !failed).set("durationMs", durationMs).set("exitCode", exitCode(a)).set("error", error);
+    const rpc = rpcError(a);
+    const e = draft()
+      .set("tool", name)
+      .set("toolUseId", toolUseId)
+      .set("ok", !failed && !rpc)
+      .set("durationMs", durationMs)
+      .set("exitCode", exitCode(a))
+      .set("error", error ?? rpc);
     await e.content("output", maybeJson(output));
     emit(endSlot, "tool.end", endMs, e, { durationMs }, ids[1]);
   };
@@ -1517,7 +1536,7 @@ async function mapLog(rec: OtelLogRecord, resource: Attrs, scope: OtelScope, ctx
     // tokens and fall through to notification, so each call is counted once.
     const hints = priceHints(a);
     const d = draft()
-      .set("provider", cc ? "anthropic" : str(a, "gen_ai.provider.name", "gen_ai.system", "provider"))
+      .set("provider", cc ? "anthropic" : providerName(str(a, "gen_ai.provider.name", "gen_ai.system", "provider")))
       .set("requestModel", model)
       .set("ok", true)
       .set("statusCode", num(a, "status_code"))

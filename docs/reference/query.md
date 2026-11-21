@@ -172,6 +172,38 @@ Any other store plugin answers session keys by reading at most the newest 20,000
 keys and bare words fail there with `unsupported_store`.
 :::
 
+## Saved views
+
+A view is a `--where` query saved under a name, so you don't type it again.
+
+```sh
+coding.sh views save codex-flagged --where 'is:flagged agent:codex'
+coding.sh sessions --view codex-flagged
+coding.sh sessions --view codex-flagged --where 'since:7d'
+coding.sh views list
+coding.sh views rm codex-flagged
+```
+
+- A name is 1 to 64 letters, digits, `-`, `_` and `.`. Saving a name that exists replaces its
+  query.
+- `views save` parses the query first. A query that does not parse is refused with the parser's
+  message and exit code 2, and nothing is saved.
+- A view keeps the query as typed and parses it again each time, so `since:7d` means the 7 days
+  before that run.
+- `sessions --view <name>` lists the same sessions as `sessions --where '<the view's query>'`.
+  With `--where` too, both must hold.
+- Each side is grouped on its own, so an `OR` or a `-` in either keeps its meaning: a view
+  `agent:codex OR agent:gemini` with `--where -flag:compaction` is
+  `(agent:codex OR agent:gemini) -flag:compaction`.
+- A `sort:` or `limit:` in `--where` wins over the view's.
+- An unknown name exits 1 and names the views that exist.
+- The MCP tool `sessions_list` takes `view`, and the viewer reads and writes views at
+  [`/api/views`](api.md#get-apiviews-post-apiviews-delete-apiviewsname): Save view on the session
+  list saves its filter, and Views lists, applies and deletes them.
+- Views live in the index: SQLite or the memory store. The Postgres and ClickHouse store plugins
+  have none, and the commands exit 1 with `saved views need the local index (this store has no
+  views)`.
+
 ## Flags and derails
 
 coding.sh checks each session for failure patterns at every ingest and keeps them as flags.

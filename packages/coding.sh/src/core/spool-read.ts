@@ -177,7 +177,8 @@ export async function* readSpoolFile(spoolDir: string, file: string, from = 0, o
       }
       const offset = pos;
       const nextOffset = pos + nl + 1;
-      const text = buf.toString("utf8", 0, nl).replace(/\r$/, "");
+      // A CRLF line ends without its "\r": the byte is dropped before decoding.
+      const text = buf.toString("utf8", 0, nl > 0 && buf[nl - 1] === 0x0d ? nl - 1 : nl);
       buf = buf.subarray(nl + 1);
       pos = nextOffset;
       if (!text.trim()) continue;

@@ -68,7 +68,8 @@ import { acquireLock, LockBusyError, wakeMarker, type Lock, type LockOptions } f
 import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { deserialize, serialize } from "node:v8";
 import { dirname, join } from "node:path";
-import { hashParts, sha256Hex } from "./ids.ts";
+import { sha256Hex } from "./ids.ts";
+import { hash } from "node:crypto";
 import { paths } from "./paths.ts";
 import { createRedactor, noteBlobHits, redactBlobValue, redactEventCounted, redactionTally, sessionToMetadata, toMetadata, type RedactionTally, type Redactor } from "./redact.ts";
 import { buildSession, byTime, FLAGS, foldSession, foldStamp, isBackfillEvent, isFoldState, isRealPrompt, isVerifyToolStart, sessionOf, sessionState, type SessionState } from "./sessions.ts";
@@ -955,6 +956,14 @@ async function putBlob(blobs: Pick<BlobStore, "put">, data: string | Uint8Array)
 }
 
 /**
+ * hashParts (ids.ts), the same id, with node:crypto's one-shot hash instead of a Hash
+ * object per call: adapters ask for a few ids per event (event ids, firing keys).
+ */
+export function partsId(...parts: (string | number)[]): string {
+  return hash("sha256", parts.map(String).join("\u001f"));
+}
+
+/**
  * `redacted`: called after each blobValue with the value and whether redaction found
  * anything in it, so spool ingest knows which lines' payloads the scrub would leave
  * as they are (scrubPastDays).
@@ -962,7 +971,7 @@ async function putBlob(blobs: Pick<BlobStore, "put">, data: string | Uint8Array)
 export function normalizeContext(profile: CaptureProfile, blobs: Pick<BlobStore, "put">, metadata: boolean, source?: { file: string; offset: number }, redacted?: (value: unknown, hits: boolean) => void): NormalizeContext {
   const ctx: NormalizeContext = {
     maxInlineBytes: profile.config.capture.maxInlineBytes,
-    id: (...parts) => hashParts(...parts),
+    id: partsId,
     blob: async (data) => {
       const tally = redactionTally();
       const clean = redactBlob(data, profile.redactor, tally);

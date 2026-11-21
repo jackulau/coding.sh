@@ -54,6 +54,23 @@ describe("spool-read", () => {
     assert.deepEqual(recs.map((r) => r.line.event), ["Second"]);
   });
 
+  it("reads CRLF lines without their \\r, at every chunk size", async () => {
+    const dir = spool();
+    const file = join(dir, "codex", "a.jsonl");
+    const l1 = line({ raw: { text: "ends in é" } }).replace("\n", "\r\n");
+    const l2 = line({ event: "Second" }).replace("\n", "\r\r\n");
+    writeFileSync(file, l1 + "\r\n" + "\n" + l2);
+    for (const chunk of [undefined, 1, 5]) {
+      const { recs, errs } = await readAll(dir, file, 0, chunk);
+      assert.deepEqual(errs, []);
+      assert.deepEqual(recs.map((r) => r.line.event), ["Stop", "Second"]);
+      assert.deepEqual(recs[0]!.line.raw, { text: "ends in é" });
+      assert.equal(recs[0]!.nextOffset, Buffer.byteLength(l1));
+      assert.equal(recs[1]!.offset, Buffer.byteLength(l1 + "\r\n\n"));
+      assert.equal(recs[1]!.nextOffset, Buffer.byteLength(l1 + "\r\n\n" + l2));
+    }
+  });
+
   it("does not consume a partially written last line", async () => {
     const dir = spool();
     const file = join(dir, "codex", "a.jsonl");

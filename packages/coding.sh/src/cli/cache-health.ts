@@ -32,12 +32,12 @@ export type CacheCause =
   | "tools-changed"
   | "system-volatile-line"
   | "system-changed"
-  | "history-rewritten"
+  | "compaction"
   | "idle"
   | "other";
 
 /** Cache order: what the provider reads first comes first; a volatile line outranks a generic system change. */
-export const CACHE_CAUSES: readonly CacheCause[] = ["model-switch", "tools-added", "tools-removed", "tools-reordered", "tools-changed", "system-volatile-line", "system-changed", "history-rewritten", "idle", "other"];
+export const CACHE_CAUSES: readonly CacheCause[] = ["model-switch", "tools-added", "tools-removed", "tools-reordered", "tools-changed", "system-volatile-line", "system-changed", "compaction", "idle", "other"];
 
 /** Causes the setup can remove. An idle gap and an unexplained miss are not. */
 export const AVOIDABLE: ReadonlySet<CacheCause> = new Set(CACHE_CAUSES.filter((c) => c !== "idle" && c !== "other"));
@@ -51,7 +51,7 @@ export const CACHE_CAUSE_FIX: Record<CacheCause, string> = {
   "tools-changed": "keep tool descriptions and schemas byte-for-byte stable within a session",
   "system-volatile-line": "keep changing values (dates, times, counters) out of the static system prompt; pass them in the next user or tool message",
   "system-changed": "keep the system prompt byte-for-byte stable within a session; put per-turn context in messages",
-  "history-rewritten": "compact less often, and let the compaction call reuse the parent prefix (same system prompt, tools and messages)",
+  compaction: "compact less often, and let the compaction call reuse the parent prefix (same system prompt, tools and messages)",
   idle: CACHE_BREAK_FIX.idle,
   other: "same prefix within the cache lifetime: the entry may have been evicted, or the cache breakpoints moved",
 };
@@ -133,7 +133,7 @@ export async function sessionBreaks(blobs: BlobStore, events: readonly AgentEven
     else if (t.reordered) structural = "tools-reordered";
     else if (!t.same) structural = "tools-changed";
     else if (!d.system.same) structural = volatileLine(d.system.lines) ? "system-volatile-line" : "system-changed";
-    else if (d.messages.rewritten || shrank || b.cause === "compaction") structural = "history-rewritten";
+    else if (d.messages.rewritten || shrank || b.cause === "compaction") structural = "compaction";
     else structural = b.cause === "idle" ? "idle" : "other";
     const notRead = unread && hasStoredRequest(a) && hasStoredRequest(c);
     const row: ClassifiedBreak = { ...b, sessionId, structural, degraded: d.content !== "full" && !notRead };
@@ -144,7 +144,7 @@ export async function sessionBreaks(blobs: BlobStore, events: readonly AgentEven
 }
 
 /** The structural cause a stored cause stands for when the two requests cannot be compared. */
-const structuralOf = (c: CacheBreakCause): CacheCause => (c === "compaction" ? "history-rewritten" : c === "model-switch" ? "model-switch" : c === "idle" ? "idle" : "other");
+const structuralOf = (c: CacheBreakCause): CacheCause => (c === "compaction" || c === "model-switch" || c === "idle" ? c : "other");
 const fallback = (b: Pick<CacheBreak, "cause">): CacheCause => structuralOf(b.cause);
 
 /** Breaks, tokens and USD over every session in the window, from their stored stats. */

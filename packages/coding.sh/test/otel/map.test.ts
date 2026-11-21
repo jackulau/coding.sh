@@ -963,3 +963,61 @@ describe("Langfuse and OTel trace attributes on the session start", () => {
     for (const k of ["user", "environment", "release"]) assert.equal(k in start.payload, false, k);
   });
 });
+
+describe("GenAI semconv v0.1.0", () => {
+  const T = "7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b";
+  const ROOT = "f000000000000001";
+  const root = () => otlpSpan(T, ROOT, undefined, "invoke_agent main", [sAttr("gen_ai.operation.name", "invoke_agent"), sAttr("gen_ai.agent.name", "main")], 0, 9000);
+  const run = async (spans: ReturnType<typeof otlpSpan>[]) => (await mapTraces(decodeTraceJson(otlpTraces("app", [...spans, root()])), ctx())).events;
+  const chat = (id: string, extra: ReturnType<typeof sAttr>[]) =>
+    otlpSpan(T, id, ROOT, "chat m", [sAttr("gen_ai.operation.name", "chat"), sAttr("gen_ai.request.model", "m"), iAttr("gen_ai.usage.input_tokens", 10), iAttr("gen_ai.usage.output_tokens", 2), ...extra], 100, 900);
+
+  it("an invoke_workflow span is a subagent named by gen_ai.agent.name, else gen_ai.workflow.name", async () => {
+    const W1 = "f000000000000002";
+    const W2 = "f000000000000003";
+    const events = await run([
+      otlpSpan(T, W1, ROOT, "invoke_workflow planner", [sAttr("gen_ai.operation.name", "invoke_workflow"), sAttr("gen_ai.agent.name", "planner")], 100, 2000),
+      otlpSpan(T, W2, ROOT, "invoke_workflow", [sAttr("gen_ai.operation.name", "invoke_workflow"), sAttr("gen_ai.workflow.name", "legacy")], 2100, 3000),
+      otlpSpan(T, "f000000000000004", ROOT, "plan", [sAttr("gen_ai.operation.name", "plan")], 3100, 3200),
+    ]);
+    const starts = ofKind(events, "subagent.start");
+    assert.equal(starts.find((e) => e.subagentId === W1)?.payload.type, "planner");
+    assert.equal(starts.find((e) => e.subagentId === W2)?.payload.type, "legacy");
+    assert.equal(starts.length, 2, "a plan span stays a plain span");
+    assert.equal(classifySpan({ name: "plan", attributes: { "gen_ai.operation.name": "plan" } } as never), "other");
+  });
+
+  it("gen_ai.request.reasoning.level is the model call's reasoningEffort, absent when not sent", async () => {
+    const events = await run([chat("f000000000000011", [sAttr("gen_ai.request.reasoning.level", "low")]), chat("f000000000000012", [])]);
+    const calls = ofKind(events, "llm.call");
+    assert.equal(calls.find((e) => e.spanId === "f000000000000011")?.payload.reasoningEffort, "low");
+    assert.equal("reasoningEffort" in calls.find((e) => e.spanId === "f000000000000012")!.payload, false);
+  });
+
+  it("the mistral_ai and mistral provider names store as mistral", async () => {
+    const events = await run([chat("f000000000000021", [sAttr("gen_ai.provider.name", "mistral")]), chat("f000000000000022", [sAttr("gen_ai.system", "mistral_ai")])]);
+    assert.deepEqual(
+      ofKind(events, "llm.call").map((e) => e.payload.provider),
+      ["mistral", "mistral"],
+    );
+  });
+
+  it("an MCP execute_tool span with an rpc status code other than OK is a failed tool call naming the code", async () => {
+    const tool = (id: string, extra: ReturnType<typeof sAttr>[]) =>
+      otlpSpan(T, id, ROOT, "execute_tool search", [sAttr("gen_ai.operation.name", "execute_tool"), sAttr("gen_ai.tool.name", "search"), ...extra], 100, 900);
+    const events = await run([
+      tool("f000000000000031", [sAttr("rpc.status_code", "-32602")]),
+      tool("f000000000000032", [sAttr("rpc.response.status_code", "OK")]),
+      tool("f000000000000033", [sAttr("rpc.status_code", "0")]),
+    ]);
+    const ends = ofKind(events, "tool.end");
+    const failed = ends.find((e) => e.spanId === "f000000000000031")!;
+    assert.equal(failed.payload.ok, false);
+    assert.match(String(failed.payload.error), /-32602/);
+    for (const id of ["f000000000000032", "f000000000000033"]) {
+      const e = ends.find((x) => x.spanId === id)!;
+      assert.equal(e.payload.ok, true, id);
+      assert.equal("error" in e.payload, false, id);
+    }
+  });
+});

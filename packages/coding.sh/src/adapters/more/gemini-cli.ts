@@ -350,7 +350,7 @@ export async function* geminiChatEvents(file: string, ctx: NormalizeContext, opt
         const extra = { ts: tts, ...(sub ? { subagentId: sub } : {}) };
         await emitToolStart(em, ctx, name, id, tc.args, extra);
         const status = str(tc.status) ?? "success";
-        await emitToolEnd(em, ctx, { tool: name, toolUseId: id, input: tc.args, output: toolResultText(tc.result) ?? tc.resultDisplay, ok: status === "success", error: status === "success" ? undefined : status, extra }, cwd);
+        await emitToolEnd(em, ctx, { tool: name, toolUseId: id, input: tc.args, output: toolResultText(tc.result) ?? tc.resultDisplay, ok: status === "success", error: status === "success" ? undefined : status, interrupted: status === "cancelled" || status === "canceled", extra }, cwd);
       }
     } else if (m.type === "error") {
       em.push("error", { message: text || "error" });
@@ -407,7 +407,8 @@ export const geminiCliAdapter: Adapter = {
   // 2 (0.1.2): hooks find call ids and turns in the chat file.
   // 3 (0.1.5): a tool call that loads a skill names it (payload.skill).
   // 4 (0.1.8): test.result comes from the shared parser: pytest -q's bare summary line counts, the node runner is "node:test", and skipped is absent when 0.
-  parseVersion: 4,
+  // 5 (0.1.8): a tool call the user cancelled (status cancelled) is an interruption (payload.interrupted), not a tool error.
+  parseVersion: 5,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["gemini"]);
     const dir = geminiDir();

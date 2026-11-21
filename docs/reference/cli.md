@@ -46,6 +46,7 @@ Every command accepts these.
 | [`serve`](#codingsh-serve) | Capture | Production server: OTLP + native ingest, viewer, health and metrics on one port |
 | [`uninstall`](#codingsh-uninstall) | Capture | Remove coding.sh hooks and MCP entries from every agent |
 | [`sessions`](#codingsh-sessions) | Explore | List captured sessions |
+| [`views`](#codingsh-views) | Explore | Save a --where query under a name, for sessions --view, the MCP server and the viewer |
 | [`show`](#codingsh-show) | Explore | Show a session timeline with subagents and latency |
 | [`tree`](#codingsh-tree) | Explore | Show a whole multi-agent run as one tree, with rolled-up totals |
 | [`replay`](#codingsh-replay) | Explore | Step through a session and see what it did to each file it touched |
@@ -67,6 +68,7 @@ Every command accepts these.
 | [`dataset`](#codingsh-dataset) | Evaluate | Manage versioned datasets of cases |
 | [`exp`](#codingsh-exp) | Evaluate | Run a task over a dataset, compare experiments and sweep configs |
 | [`score`](#codingsh-score) | Evaluate | Add and list typed scores on sessions, events, cases and runs |
+| [`review`](#codingsh-review) | Evaluate | Queues of sessions to score by hand, one at a time, with one score config |
 | [`monitor`](#codingsh-monitor) | Evaluate | Score new sessions automatically with an LLM judge rubric or a command |
 | [`judge`](#codingsh-judge) | Evaluate | Grade one output or the slop in captured diffs, or check an LLM judge or a test verifier against human labels |
 | [`toolevals`](#codingsh-toolevals) | Evaluate | Measure how well agents use a CLI, MCP server or API |
@@ -545,6 +547,7 @@ coding.sh sessions [options]
 | `--project <ID>` |  | Only sessions in this serve project (default: all) |
 | `--flag <NAME>` |  | Only sessions with this flag: looping, failure-streak, churn, no-progress, stalled, context-thrash, premature-completion, duplicate-fetch, …, or a tag such as skill:&lt;name&gt;. |
 | `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
+| `--view <NAME>` |  | Only sessions matching this saved view's query (coding.sh views list); with --where, both must hold. |
 | `--fields <PATHS>` |  | With --json: print only these fields, as a comma list of dotted paths (id,title,stats.usage.costUsd). A path through a list picks from each item. Repeatable. |
 | `--facets [<KEYS>]` |  | Count sessions per value instead of listing them: agent, model, provider, repo, launch, branch, flag, skill, hook, kind, tool, mcp (default: agent, model, repo, flag, skill, tool) |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
@@ -552,6 +555,7 @@ coding.sh sessions [options]
 ```sh
 coding.sh sessions --where 'agent:codex cost>0.5 since:7d'
 coding.sh sessions --where 'tool:Bash ok:false -flag:compaction'
+coding.sh sessions --view codex-flagged --since 7d
 coding.sh sessions --facets model,tool --where 'repo:coding-sh'
 coding.sh sessions --agent codex --since 7d
 ```
@@ -561,6 +565,80 @@ coding.sh sessions --agent codex --since 7d
 - --facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).
 - With --json each session is a digest: its stats without stats.phases, and each derail without the event it started at (eventId, index). show &lt;id&gt; --json has both, and --fields stats.phases or --fields stats.derails prints them here.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
+
+## `coding.sh views`
+
+Save a --where query under a name, for sessions --view, the MCP server and the viewer.
+
+```text
+coding.sh views <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`save`](#codingsh-views-save) | Save a query as a view; saving a name that exists replaces its query |
+| [`list`](#codingsh-views-list) | List the saved views, by name |
+| [`rm`](#codingsh-views-rm) | Remove a view |
+
+```sh
+coding.sh views save codex-flagged --where 'is:flagged agent:codex'
+coding.sh sessions --view codex-flagged
+coding.sh views list
+```
+
+- A view keeps the query as typed and parses it again each time it is used, so since:7d means the 7 days before that run.
+- sessions --view &lt;name&gt; lists the same sessions as sessions --where '&lt;the view's query&gt;'. With --where too, both must hold: each side is grouped on its own, so an OR or a negation in either keeps its meaning. --where's sort: and limit: win over the view's.
+- Views live in the local index (SQLite or memory). The MCP sessions_list tool takes a view argument, and the viewer reads and writes them at /api/views. A store plugin without views (postgres, clickhouse) exits 1.
+
+### `coding.sh views save`
+
+Save a query as a view; saving a name that exists replaces its query.
+
+```text
+coding.sh views save <NAME> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | 1 to 64 letters, digits, '-', '_' and '.'. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--where <QUERY>` |  | The query to save, in the --where language (keys: coding.sh sessions --help). A query that does not parse is refused (exit 2) |
+
+```sh
+coding.sh views save codex-flagged --where 'is:flagged agent:codex'
+coding.sh views save slow --where 'duration>30m since:7d'
+```
+
+### `coding.sh views list`
+
+List the saved views, by name.
+
+```text
+coding.sh views list
+```
+
+```sh
+coding.sh views list
+coding.sh views list --json
+```
+
+### `coding.sh views rm`
+
+Remove a view.
+
+```text
+coding.sh views rm <NAME>
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | The view's name (views list) |
+
+```sh
+coding.sh views rm codex-flagged
+```
 
 ## `coding.sh show`
 
@@ -1064,7 +1142,7 @@ coding.sh cache <action>
 | [`doctor`](#codingsh-cache-doctor) | Hit rate, a grade, and the cache breaks ranked by cost: cause, sessions, tokens re-billed, extra USD, the fix, and two calls to diff |
 
 - Hit rate is cache reads / all prompt tokens, the CACHE READ column of coding.sh usage, over the same sessions. The breaks are the ones coding.sh show and usage count, so tokens and USD match theirs.
-- Each break gets the first change between its two calls, in the order the cache reads a request: model-switch; tools-added, tools-removed, tools-reordered, tools-changed; system-volatile-line (a line that differs only in its numbers, such as a timestamp), system-changed; history-rewritten (compaction); then idle (a wait past the cache lifetime) or other. Idle and other are not counted as avoidable.
+- Each break gets the first change between its two calls, in the order the cache reads a request: model-switch; tools-added, tools-removed, tools-reordered, tools-changed; system-volatile-line (a line that differs only in its numbers, such as a timestamp), system-changed; compaction (the history was compacted or rewritten, the name usage --cache and improve use); then idle (a wait past the cache lifetime) or other. Idle and other are not counted as avoidable.
 - Grade: 60% the hit rate against 90%, 40% the share of prompt tokens re-billed for avoidable causes (a quarter or more scores 0). A 90+, B 80+, C 70+, D 60+, else F.
 - Tool and system prompt causes need the requests: calls logged by coding.sh proxy in capture mode full. Without them a break is classified from hashes, message counts, the model and timing, and the report says how many were.
 - --limit bounds only the sessions whose stored requests are read. The hit rate, breaks, tokens, USD and grade cover every session in the window, and the grade is the same at any --limit wherever the hashes and counts show the change. A session with stored requests past the limit is classified as one without them is, from hashes, message counts, the model and timing: a tools or system prompt change is named without its detail (tools-changed, system-changed), and a history edit that keeps the message count reads as other. --json has sessionsNotRead and breaksNotRead. A session with no stored requests reads the same at any --limit.
@@ -2275,6 +2353,141 @@ List score configs.
 
 ```text
 coding.sh score configs
+```
+
+## `coding.sh review`
+
+Queues of sessions to score by hand, one at a time, with one score config.
+
+```text
+coding.sh review <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`create`](#codingsh-review-create) | Make a queue of the sessions a query matches |
+| [`list`](#codingsh-review-list) | List the queues with their done, skipped and total counts |
+| [`status`](#codingsh-review-status) | A queue's counts: done, skipped and total |
+| [`next`](#codingsh-review-next) | The next pending item: its session, title, agent and flags, and the command that scores it |
+| [`done`](#codingsh-review-done) | Score an item with the queue's config and mark it done (doing it again replaces the score) |
+| [`skip`](#codingsh-review-skip) | Skip an item; it is counted as skipped and never comes up again |
+
+```sh
+coding.sh review create codex-flagged --where 'is:flagged agent:codex' --config correct --sample 20
+coding.sh review next codex-flagged
+coding.sh review done codex-flagged 1 true
+```
+
+- The items are the sessions the query matched when the queue was made, as sessions --where lists them: root sessions unless the query names subagents, empty sessions left out, at most 5000.
+- done writes a human score with the queue's config name on the item's session, as score add does: a value the config does not allow is refused (exit 2), and judge calibrate reads the boolean ones as labels.
+- Queues live in the local index (SQLite or memory); a store plugin without them (postgres, clickhouse) exits 1. The viewer and serve take the same queues at /api/review.
+
+### `coding.sh review create`
+
+Make a queue of the sessions a query matches.
+
+```text
+coding.sh review create <QUEUE> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `queue` | yes | The queue's name: 1 to 64 letters, digits, '-', '_' and '.'. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--where <QUERY>` |  | The sessions to review, in the --where language (keys: coding.sh sessions --help). A query that does not parse is refused (exit 2) |
+| `--config <NAME>` |  | The score config every item is scored with (coding.sh score configs); it must exist. |
+| `--sample <N>` |  | Pick N of the matching sessions at random (default: all of them) |
+| `--assign <NAME>` |  | Every item is for this person or serve read key name: on serve, only that key and keys with no item of their own see it. |
+
+```sh
+coding.sh review create codex-flagged --where 'is:flagged agent:codex' --config correct --sample 20
+coding.sh review create week --where 'since:7d' --config helpfulness --assign alice
+```
+
+### `coding.sh review list`
+
+List the queues with their done, skipped and total counts.
+
+```text
+coding.sh review list
+```
+
+```sh
+coding.sh review list
+coding.sh review list --json
+```
+
+### `coding.sh review status`
+
+A queue's counts: done, skipped and total.
+
+```text
+coding.sh review status <QUEUE>
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `queue` | yes | The queue's name (review list) |
+
+```sh
+coding.sh review status codex-flagged --json
+```
+
+### `coding.sh review next`
+
+The next pending item: its session, title, agent and flags, and the command that scores it.
+
+```text
+coding.sh review next <QUEUE>
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `queue` | yes | The queue's name (review list) |
+
+```sh
+coding.sh review next codex-flagged
+```
+
+### `coding.sh review done`
+
+Score an item with the queue's config and mark it done (doing it again replaces the score).
+
+```text
+coding.sh review done <QUEUE> <ITEM> <VALUE> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `queue` | yes | The queue's name. |
+| `item` | yes | The item's number (review next), or its session id. |
+| `value` | yes | The score: true or false, a number or a category, as the config allows. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--comment <TEXT>` |  | Why this score. |
+
+```sh
+coding.sh review done codex-flagged 1 false --comment 'claimed tests passed; they did not run'
+```
+
+### `coding.sh review skip`
+
+Skip an item; it is counted as skipped and never comes up again.
+
+```text
+coding.sh review skip <QUEUE> <ITEM>
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `queue` | yes | The queue's name. |
+| `item` | yes | The item's number (review next), or its session id. |
+
+```sh
+coding.sh review skip codex-flagged 2
 ```
 
 ## `coding.sh monitor`

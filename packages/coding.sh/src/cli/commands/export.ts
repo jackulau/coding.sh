@@ -11,7 +11,7 @@ import { createRedactor } from "../../core/redact.ts";
 import type { Session } from "../../schema/index.ts";
 import { EXPORT_FORMATS, EXPORT_KINDS, exportRows, sessionsOf, type ExportFormat, type ExportKind } from "../../query/export.ts";
 import { scopesSubagents } from "../../query/where.ts";
-import { parseSince, positiveInt, UsageError } from "../args.ts";
+import { parseSince, positiveInt, suggest, UsageError } from "../args.ts";
 import { agentScope, agentsFlag, autoIngest, queryCliError, readIngest, shellQuote, str, whereFlag, withContext } from "../common.ts";
 import { CliError, forTerminal, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -57,7 +57,10 @@ export async function run(c: CommandContext): Promise<number> {
   if (c.flags.evidence !== undefined && !evidence) throw new UsageError("--evidence needs a directory, e.g. --evidence traces/", { reason: "missing_argument" });
   const kind = (c.positionals[0] ?? (evidence ? "sessions" : undefined)) as ExportKind;
   if (kind === undefined) throw new UsageError(`export what? one of ${EXPORT_KINDS.join(", ")}, or --evidence <dir>`, { reason: "missing_argument" });
-  if (!(EXPORT_KINDS as readonly string[]).includes(kind)) throw new UsageError(`export what? one of ${EXPORT_KINDS.join(", ")}`, { reason: "bad_arg" });
+  if (!(EXPORT_KINDS as readonly string[]).includes(kind)) {
+    const s = suggest(kind, EXPORT_KINDS);
+    throw new UsageError(`export what? one of ${EXPORT_KINDS.join(", ")}`, { reason: "bad_arg", suggestion: s ? `coding.sh export ${s}` : undefined });
+  }
   if (evidence && kind !== "sessions") throw new UsageError(`--evidence writes whole sessions; drop "${kind}"`, { reason: "bad_arg" });
   const format = (str(c.flags.format) ?? "jsonl") as ExportFormat;
   if (!(EXPORT_FORMATS as readonly string[]).includes(format)) throw new UsageError(`--format must be one of ${EXPORT_FORMATS.join(", ")}`, { reason: "bad_flag" });

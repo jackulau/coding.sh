@@ -43,6 +43,10 @@
     "title": "Read API: sessions and calls",
     "template": "v1:docs:coding.sh docs"
   },
+  "og/docs-api-read-experiments": {
+    "title": "Read API: experiments and runs",
+    "template": "v1:docs:coding.sh docs"
+  },
   "og/docs-api-read-search": {
     "title": "Read API: search, labels and evals",
     "template": "v1:docs:coding.sh docs"

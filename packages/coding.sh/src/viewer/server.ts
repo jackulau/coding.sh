@@ -18,7 +18,7 @@ import { buildReport } from "../bench/report.ts";
 import { historyRuns, listRuns } from "../bench/store.ts";
 import type { BenchRun } from "../bench/types.ts";
 import type { IngestStatus } from "../cli/ingest-worker.ts";
-import type { BlobStore, IndexStore, Label, Session, SessionFilter } from "../core/types.ts";
+import type { BlobStore, IndexStore, Label, Score, Session, SessionFilter } from "../core/types.ts";
 import { phaseLabel, sessionOutline, storedOutline } from "../core/outline.ts";
 import { loadReplay, type Baseline, type Replay } from "../core/replay.ts";
 import { buildSessionTree, worstFirst, worstNode, type TreeNode } from "../core/tree.ts";
@@ -44,6 +44,8 @@ import { getScoreConfigs, getScores, postScore, postScoreConfig, type ApiReply, 
 import { paths } from "../core/paths.ts";
 import { WorkApiError, workAck, workList, workSnooze, type WorkSource } from "./work.ts";
 import { ScoreError } from "../scores/scores.ts";
+import { checkViewName, removeView, saveView, viewStore, ViewError } from "../query/views.ts";
+import { completeItem, getItem, getQueue, listQueues, nextItem, queueStatus, ReviewError, skipItem } from "../scores/review.ts";
 
 /** Where /api/star keeps its state: this machine's coding.sh home. `now` is for tests. */
 export interface StarSource {
@@ -280,6 +282,7 @@ export async function createViewerHandler(opts: ViewerHandlerOptions): Promise<V
     index: opts.index,
     blobs: opts.blobs,
     labeller: access.by ?? labeller,
+    reader: access.by,
     checkHost: opts.checkHost,
     updateStatus: opts.updateStatus,
     project: access.project,
@@ -514,6 +517,8 @@ interface ApiCtx {
   index: IndexStore;
   blobs: BlobStore;
   labeller: string;
+  /** The read key's name (or basic-auth user) of a signed-in caller; undefined on the local ui and an open serve. */
+  reader?: string;
   checkHost: (host: string) => boolean;
   updateStatus: () => Promise<UpdateStatus>;
   /** Scoped caller: only this project is visible. */
@@ -1123,6 +1128,93 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       throw new HttpError(405, "method not allowed");
     }
 
+    case "views": {
+      // GET /api/views, POST /api/views {name, where}, DELETE /api/views/<name>: saved --where queries (src/query/views.ts).
+      if (sub !== undefined) throw notFound();
+      // Views are shared by every project, as score configs are: a project-scoped key reads them but changes none.
+      const write = () => {
+        checkOrigin(req, ctx.checkHost);
+        if (ctx.project !== undefined) throw new HttpError(403, "saved views are shared by every project: changing one needs a read key for every project (\"*\") or basic auth");
+      };
+      try {
+        // One view: DELETE only. The collection: GET and POST.
+        if (id !== undefined && id !== "") {
+          if (method === "DELETE") {
+            write();
+            await removeView(ctx.index, id);
+            return sendJson(res, 200, { ok: true });
+          }
+          throw new HttpError(405, "method not allowed");
+        }
+        if (method === "GET") return sendJson(res, 200, { items: await viewStore(ctx.index).listViews() });
+        if (method === "POST") {
+          write();
+          const body = await readJson(req, res, 16 * 1024);
+          if (!body || typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "body must be a JSON object");
+          const b = body as Record<string, unknown>;
+          if (typeof b.where !== "string") throw new HttpError(400, "where must be a string");
+          const r = await saveView(ctx.index, checkViewName(b.name), b.where);
+          return sendJson(res, r.replaced ? 200 : 201, r.view);
+        }
+        throw new HttpError(405, "method not allowed");
+      } catch (e) {
+        if (e instanceof ViewError) throw new HttpError(e.status, e.message, { reason: e.reason });
+        throw queryHttpError(e);
+      }
+    }
+
+    case "review": {
+      // GET /api/review, GET /api/review/<queue>, GET /api/review/<queue>/next,
+      // POST /api/review/<queue>/<item> {value, comment?} | {skip: true}: review queues (src/scores/review.ts).
+      // A signed-in caller (a serve read key) gets the items assigned to its name or to no one, and scores as that name.
+      const assignee = ctx.reader;
+      const visible = (sid: string) => scoresCtx(ctx).sessionVisible(sid);
+      const nextFor = (queue: string) => nextItem(ctx.index, queue, { assignee, visible });
+      try {
+        if (id === undefined || id === "") {
+          get();
+          return sendJson(res, 200, { items: await listQueues(ctx.index) });
+        }
+        if (sub === undefined) {
+          get();
+          return sendJson(res, 200, await queueStatus(ctx.index, id));
+        }
+        if (sub === "next") {
+          get();
+          const it = await nextFor(id);
+          if (!it) {
+            res.writeHead(204);
+            res.end();
+            return;
+          }
+          return sendJson(res, 200, it);
+        }
+        // One item: /api/review/<queue>/<item>, its number or its session id.
+        checkId(sub, "item");
+        if (method !== "POST") throw new HttpError(405, "method not allowed");
+        checkOrigin(req, ctx.checkHost);
+        const body = await readJson(req, res, 16 * 1024);
+        if (!body || typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "body must be a JSON object");
+        const b = body as Record<string, unknown>;
+        const taker = assignee !== undefined ? { assignee } : {};
+        if (b.skip === true) {
+          const { queue: _q, ...item } = await skipItem(ctx.index, id, await visibleItem(ctx, id, sub), taker);
+          return sendJson(res, 200, { item, next: (await nextFor(id)) ?? null });
+        }
+        if (b.value === undefined) throw new HttpError(400, "body needs value (the score) or skip: true");
+        if (b.comment !== undefined && typeof b.comment !== "string") throw new HttpError(400, "comment must be a string");
+        // The score goes through POST /api/scores' own path: checked against the config, by this caller.
+        const write = async (scoreBody: Record<string, unknown>) => (await postScore(scoresCtx(ctx), scoreBody)).body as Score;
+        const r = await completeItem(ctx.index, id, await visibleItem(ctx, id, sub), b.value, write, { ...taker, comment: typeof b.comment === "string" ? b.comment : undefined });
+        const { queue: _q, ...item } = r.item;
+        return sendJson(res, 200, { item, score: r.score, next: (await nextFor(id)) ?? null });
+      } catch (e) {
+        if (e instanceof ReviewError) throw new HttpError(e.status, e.message, { reason: e.reason });
+        if (e instanceof ScoreError) throw new HttpError(e.status, e.message);
+        throw queryHttpError(e);
+      }
+    }
+
     case "update": {
       get();
       if (id !== undefined) throw new HttpError(404, "not found");
@@ -1656,6 +1748,14 @@ function scoresCtx(ctx: ApiCtx): ScoresApiCtx {
     project: ctx.project,
     sessionVisible: (sid) => visibleSession(ctx, checkId(sid, "sessionId")).then(() => true, (e) => (e instanceof HttpError && e.status === 404 ? false : Promise.reject(e))),
   };
+}
+
+/** The id of the queue's item `raw` (a number or a session id) when the caller may see its session; else the missing item's 404. */
+async function visibleItem(ctx: ApiCtx, queue: string, raw: string): Promise<number> {
+  const q = await getQueue(ctx.index, queue);
+  const it = await getItem(ctx.index, q, raw);
+  if (it.sessionId !== undefined && !(await scoresCtx(ctx).sessionVisible(it.sessionId))) throw new ReviewError("unknown_item", `Review queue ${q.name} has no item ${raw}`);
+  return it.id;
 }
 
 /** Sends a scores API reply; its ScoreErrors become HTTP errors. */

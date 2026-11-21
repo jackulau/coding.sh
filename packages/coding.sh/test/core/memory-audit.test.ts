@@ -356,6 +356,29 @@ describe("harness audit over a store and a temp HOME", () => {
     assert.equal(a.files.find((f) => f.path === "~/app/CLAUDE.md")!.loaded, 1, "root and child are one session");
   });
 
+  it("--agent counts the agent's subagents as their root, as the plain audit does, and keeps the AGENTS.md they read", async () => {
+    const app = join(home, "t3app");
+    mkdirSync(app, { recursive: true });
+    writeFileSync(join(app, "AGENTS.md"), "# t3app\n");
+    const index = new MemoryIndexStore();
+    const s = (id: string, agent: string, parent?: string): Session => {
+      const session = { id, agent, cwd: app, startedAt: 3000, stats: { events: 0, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 } } as Session;
+      if (parent) session.parent = { sessionId: parent };
+      return session;
+    };
+    await index.upsertSession(s("t3root", "t3code"));
+    await index.upsertSession(s("cc1", "claude-code", "t3root"));
+    await index.upsertSession(s("cc2", "claude-code", "t3root"));
+    await index.putEvents([{ id: "cc1-1", sessionId: "cc1", agent: "claude-code", kind: "tool.start", ts: 3001, payload: { tool: "Read", input: { file_path: join(app, "AGENTS.md") } }, schemaVersion: 1, source: "test" } as unknown as AgentEvent]); // slop-allow chained-as: a Read event with only the fields the audit reads
+    const plain = await memoryAudit(index, { since: 2500, env });
+    const cc = await memoryAudit(index, { since: 2500, env, agent: "claude-code" });
+    assert.equal(plain.sessions, 1);
+    assert.equal(cc.sessions, 1, "two subagents of one root are one session");
+    const agents = cc.files.find((f) => f.path === "~/t3app/AGENTS.md");
+    assert.ok(agents, cc.files.map((f) => f.path).join(", "));
+    assert.equal(agents.read, 1);
+  });
+
   it("a skill committed after a session started was not loaded at that session's start", async () => {
     const repo = join(home, "repo");
     mkdirSync(join(repo, ".claude", "skills", "demo"), { recursive: true });

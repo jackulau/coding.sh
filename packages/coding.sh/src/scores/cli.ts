@@ -14,7 +14,7 @@ import type { Score, ScoreConfig, ScoreDataType, ScoreFilter, ScoreTarget } from
 import { addScore, addScoreConfig, listScoreConfigs, listScores, SCORE_DATA_TYPES, SCORE_TARGETS, ScoreError, whoami } from "./scores.ts";
 
 /** ScoreError → the CLI's errors: bad input exits 2, the rest 1. */
-function cliError(e: unknown): unknown {
+export function cliError(e: unknown): unknown {
   if (!(e instanceof ScoreError)) return e;
   if (e.status === 400) return new UsageError(e.message, { reason: "invalid_score" });
   if (e.status === 404) return new CliError(e.message, { reason: "not_found", next: ["List sessions:", "coding.sh sessions"] });

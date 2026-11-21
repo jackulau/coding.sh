@@ -7,7 +7,7 @@
 // record and the installed plugin, so its hooks are named after it.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -18,6 +18,7 @@ import { toMetadata } from "../../src/core/redact.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { assertWellFormed, collect, FIXTURES, testCtx, tmpEnv, type TmpEnv } from "./_helpers.ts";
 import { CLI } from "../_cli.ts";
+import { removeTestDir } from "../_rm.ts";
 
 const CONFIG = join(FIXTURES, "claude-code", "hooks-real", "config");
 const PLAIN = "fd08f71c-fbd8-4bb1-a1aa-114160e07141";
@@ -107,7 +108,7 @@ describe("hook context without the plugin installed", () => {
   });
   after(() => {
     env.restore();
-    rmSync(root, { recursive: true, force: true });
+    removeTestDir(root);
   });
 
   it("a plugin hook whose plugin is not installed is source 'plugin'", async () => {
@@ -179,7 +180,7 @@ describe("hook context in the CLI", () => {
     };
     cli("ingest", "--backfill", "--agent", "claude-code");
   });
-  after(() => rmSync(root, { recursive: true, force: true }));
+  after(() => removeTestDir(root));
 
   it("sessions --where hook:plugin:terse splits the sessions the plugin added context to", () => {
     const ids = (where: string) => (JSON.parse(cli("sessions", "--where", where, "--json")) as { sessions: { id: string }[] }).sessions.map((s) => s.id).sort();

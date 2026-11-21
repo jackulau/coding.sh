@@ -2,7 +2,6 @@
 import { createReadStream } from "node:fs";
 import { open, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import type { Transform } from "node:stream";
 import * as zlib from "node:zlib";
 
@@ -50,14 +49,39 @@ async function* readLines(path: string): AsyncGenerator<string> {
   } else {
     input = createReadStream(path, { encoding: "utf8" });
   }
-  const rl = createInterface({ input, crlfDelay: Infinity });
   try {
-    for await (const line of rl) yield line;
+    yield* splitLines(input as AsyncIterable<string>);
   } catch (e) {
     if (!isZst(path)) throw e;
   } finally {
-    rl.close();
     (input as { destroy?: () => void }).destroy?.();
+  }
+}
+
+/**
+ * Lines of a text stream, split on LF only (a CR before it is dropped). Not node:readline: it also
+ * splits on U+2028 and U+2029, which JSON allows raw inside a string, so a transcript line holding one
+ * came out as two halves that neither parse, and the line was lost.
+ */
+export async function* splitLines(input: AsyncIterable<string>): AsyncGenerator<string> {
+  let parts: string[] = []; // the current line's text so far, from earlier chunks
+  for await (const raw of input) {
+    const chunk = String(raw);
+    let start = 0;
+    for (let i = chunk.indexOf("\n"); i >= 0; i = chunk.indexOf("\n", start)) {
+      let line = chunk.slice(start, i);
+      if (parts.length) {
+        line = parts.join("") + line;
+        parts = [];
+      }
+      yield line.endsWith("\r") ? line.slice(0, -1) : line;
+      start = i + 1;
+    }
+    if (start < chunk.length) parts.push(chunk.slice(start));
+  }
+  if (parts.length) {
+    const line = parts.join("");
+    yield line.endsWith("\r") ? line.slice(0, -1) : line;
   }
 }
 
