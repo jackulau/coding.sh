@@ -355,8 +355,18 @@ can be kept. Otherwise it is the weighted sum of normalized components:
 | 10 | `cli.guidelines` | value |
 | 15 | `replay.success` (held-out part) | value |
 | 15 | `conformance` | mean of fixtures, smoke and capture health |
-| 10 | `perf` | fraction of perf budgets met |
-| 10 | `site` | 0.6 × fraction of Lighthouse, vitals and JS budgets met + 0.4 × clamp((council relative + 2) / 4) |
+| 10 | `perf` | mean credit of the perf budgets |
+| 10 | `site` | 0.6 × mean credit of the Lighthouse, vitals and JS budgets + 0.4 × clamp((council relative + 2) / 4) |
+
+A budget met gets credit 1. A budget missed gets how close its reading came: target ÷ reading for a
+ceiling (milliseconds, bytes) and reading ÷ target for a floor (events per second, Lighthouse
+scores). A budget judged on several readings takes the lowest: the median, p95 and 1 MB readings
+for `perf.hook`, each Lighthouse category, and LCP, CLS and TBT. A reading 1% past its budget then
+costs about 1% of that budget, not all of it, so noise around a budget barely moves the headline.
+
+`compare` scores the previous scorecard again with the current scorer before it compares the
+headlines, so a change to the scorer is not read as a change in the code. When the two differ,
+`compare.headline.prevStored` keeps the headline the card was stored with.
 
 Dev-split scores, cost and latency are reported without weight. The headline uses held-out splits
 only. Cost is not in the headline, so "raise the budget" cannot raise the score. Instead,

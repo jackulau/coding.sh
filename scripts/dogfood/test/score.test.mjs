@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { agentVersions, compare, gateTestEnv, guidelinesNotes, headline, healthNotes, normalized, passedAlone, testsGate, WEIGHTS } from "../score.mjs";
+import { agentVersions, budgetCredit, compare, credit, gateTestEnv, guidelinesNotes, headline, healthNotes, normalized, passedAlone, testsGate, WEIGHTS } from "../score.mjs";
 import { meets } from "../bench.mjs";
 import { parseTapSummary } from "../conformance.mjs";
 import { bootstrapMedianDiff, nearestRank, quantile, wilson } from "../lib/util.mjs";
@@ -67,6 +67,50 @@ test("compare reads lower-is-better from every perf ceiling, LCP and the dev - h
   assert.equal(r["perf.collectorP95"].direction, "better");
   assert.equal(r["perf.ingest"].direction, "better");
   assert.equal(r["perf.collectorSpans"].direction, "worse");
+});
+
+test("a budget missed by a little gets partial credit: target / reading under a ceiling, reading / target over a floor", () => {
+  assert.equal(credit(9, 10, "max"), 1);
+  assert.equal(credit(10, 10, "max"), 1);
+  assert.equal(credit(20, 10, "max"), 0.5);
+  assert.equal(credit(4900, 5000, "min"), 0.98);
+  assert.equal(credit(0, 5000, "min"), 0);
+  assert.equal(credit(0, 0.02, "max"), 1, "a CLS of 0 meets its ceiling");
+  assert.equal(credit(null, 10, "max"), null);
+  assert.equal(credit(5, undefined, "max"), null);
+  // perf.hook is as good as its reading furthest from budget: p95 50 ms against 25.
+  assert.equal(budgetCredit("perf.hook", { value: 9, p95: 50, mb1: 17, met: false }), 0.5);
+  assert.equal(budgetCredit("perf.ingest", { value: 4900, target: 5000, met: false }), 0.98);
+  assert.equal(budgetCredit("perf.ingest", { value: 4000, target: 8000, met: false }), 0.5, "the target stored with the reading wins");
+  // A scorecard that stored only met, and one that measured nothing.
+  assert.equal(budgetCredit("perf.help", { met: false }), 0);
+  assert.equal(budgetCredit("perf.help", { met: true }), 1);
+  assert.equal(budgetCredit("perf.help", { value: null }), null);
+  const categories = { mobile: { performance: 0.9, accessibility: 1, "best-practices": 1, seo: 1 }, desktop: { accessibility: 1, "best-practices": 0.95, seo: 1 } };
+  assert.equal(budgetCredit("site.lighthouse", { categories, met: false }), 0.9 / 0.95);
+  assert.equal(budgetCredit("site.vitals", { lcpMs: 4000, cls: 0, tbtMs: 50, met: false }), 0.5);
+  assert.equal(budgetCredit("site.js", { value: 2 * 61440, target: 61440, met: false }), 0.5);
+});
+
+test("perf is the mean credit of its budgets, so one reading near a budget moves the headline little", () => {
+  const met = (value) => ({ value, met: true });
+  const c = { "perf.hook": { value: 9.6, p95: 9, mb1: 17, met: true }, "perf.storeSize": met(1.5), "perf.viewerTti": met(283), "perf.help": met(120) };
+  const missed = normalized({ ...c, "perf.ingest": { value: 4985, target: 5000, met: false } }).perf;
+  const made = normalized({ ...c, "perf.ingest": { value: 5655, target: 5000, met: true } }).perf;
+  assert.equal(made, 1);
+  assert.ok(made - missed < 0.001, String(missed));
+  assert.equal(normalized({ ...c, "perf.ingest": { value: 2500, target: 5000, met: false } }).perf, 0.9);
+});
+
+test("compare scores the previous card again with this scorer and keeps the headline it stored", () => {
+  const comps = (ingest) => ({ "cli.guidelines": { value: 1 }, "perf.ingest": { value: ingest, target: 5000, met: ingest >= 5000 } });
+  // Stored when a missed budget counted 0: guidelines 1 and perf 0, over 20 of the weight.
+  const prev = { headline: 50, gates: gatesOk, components: comps(4900) };
+  const cur = { headline: 100, gates: gatesOk, components: comps(5655) };
+  assert.deepEqual(compare(cur, prev).headline, { prev: 99, cur: 100, prevStored: 50 });
+  assert.deepEqual(compare(cur, { ...prev, headline: 99 }).headline, { prev: 99, cur: 100 }, "same scorer, nothing extra");
+  assert.deepEqual(compare(cur, { ...prev, gates: { ...gatesOk, tests: false }, headline: null }).headline, { prev: null, cur: 100 });
+  assert.deepEqual(compare(cur, { headline: 80 }).headline, { prev: 80, cur: 100 }, "a card with no components keeps its headline");
 });
 
 test("perf budgets", () => {
