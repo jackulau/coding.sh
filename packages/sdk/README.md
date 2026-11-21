@@ -128,7 +128,7 @@ const openai = observe(new OpenAI({ baseURL: "https://openrouter.ai/api/v1", api
 Streams come back unchanged. For an OpenAI chat stream without `stream_options`, the SDK asks for
 `include_usage` so tokens get counted, then hides the extra usage-only chunk, so your loop sees
 exactly what it would without the SDK. Usage is recorded when the stream ends, or when you stop
-reading it.
+reading it. Without `CODING_SH_URL` the request goes out exactly as you wrote it.
 
 ## Delivery
 
