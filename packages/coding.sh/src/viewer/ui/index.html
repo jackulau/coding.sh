@@ -805,6 +805,25 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .section { display: grid; gap: 0.4rem; min-width: 0; align-content: start; }
 .section-label { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; min-height: 24px; }
 .section-label .meta { text-transform: none; }
+/* Comments: text scores named comment, on the session or on a step. */
+.cmt { display: grid; gap: 0.45rem; min-width: 0; }
+.cmt[hidden], .cmt-box[hidden], .cmt-toggle[hidden] { display: none; }
+.cmt p { margin: 0; }
+.cmt-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.55rem; }
+.cmt-list > li { display: grid; gap: 0.1rem; min-width: 0; }
+.cmt-text { font-size: 13px; line-height: 1.5; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.cmt-box { display: grid; gap: 0.4rem; }
+.cmt-input { display: block; width: 100%; min-height: 4.5rem; padding: 0.5rem 0.65rem; resize: vertical; font: inherit; font-size: 13px; line-height: 1.5; color: var(--text); background: var(--surface); border: 0; border-radius: var(--radius-sm); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.cmt-input::placeholder { color: var(--text-muted); }
+.cmt-input:focus { outline: none; box-shadow: inset 0 0 0 1px var(--text-muted), 0 0 0 3px var(--select); }
+.cmt-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem; }
+.cmt-err { font-size: 12.5px; color: var(--fail-ink); overflow-wrap: anywhere; }
+.cmt-err:empty { display: none; }
+.cmt-toggle .count { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+.cmt-session { flex: none; max-height: 14rem; overflow-y: auto; padding: 0.6rem var(--gutter); box-shadow: inset 0 -1px 0 var(--line); }
+.st .cmt-flag { flex: none; display: inline-flex; align-items: center; gap: 0.2rem; margin-left: 0.5rem; font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+.cmt-flag svg { width: 12px; height: 12px; }
+@media (max-width: 640px) { .cmt-input { font-size: 16px; } .cmt-actions .meta { display: none; } }
 .code, .text-block {
   margin: 0; padding: 0.7rem 0.85rem; border-radius: var(--radius-sm); background: var(--surface);
   box-shadow: inset 0 0 0 1px var(--line);
@@ -1388,6 +1407,23 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .qbar-err { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 0.2rem 0.6rem; align-items: baseline; font-size: 12.5px; color: var(--fail-ink); }
 .qbar-err .next { color: var(--text-2); }
 .qbar-err code { font-size: 12px; }
+/* Saved views: the menu opens under the title row, so a phone keeps it on screen. */
+.title-row { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; }
+.views { display: inline-flex; gap: 0.35rem; }
+.views[hidden], .views-pop[hidden] { display: none; }
+.views-pop { position: absolute; left: 0; top: calc(100% + 4px); z-index: 20; width: min(24rem, calc(100vw - 2rem)); max-height: min(22rem, 60vh); overflow: hidden auto; padding: 0.3rem; border-radius: var(--radius); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong), var(--shadow); }
+.views-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+.views-list li { display: flex; align-items: center; gap: 0.25rem; min-width: 0; }
+.views-opt { flex: 1; min-width: 0; display: grid; gap: 0.1rem; padding: 0.35rem 0.55rem; border-radius: var(--radius-sm); text-align: left; font-size: 12.5px; color: var(--text); }
+.views-opt[aria-current="true"] { background: var(--select); }
+.views-list :focus-visible { outline-offset: -2px; }
+.views-opt .d { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.views-del svg { width: 12px; height: 12px; }
+.views-note { margin: 0; padding: 0.4rem 0.55rem; }
+.views-form { display: grid; gap: 0.45rem; padding: 0.45rem 0.55rem; }
+.views-form label { display: grid; gap: 0.25rem; font-size: 12px; color: var(--text-2); }
+.views-form .field { padding-right: 0.75rem; }
+.views-form p { margin: 0; overflow-wrap: anywhere; }
 .view-tabs { display: flex; align-items: center; gap: 2px; box-shadow: inset 0 -1px 0 var(--line); }
 .view-tabs a {
   position: relative; display: inline-flex; align-items: center; gap: 0.45rem; height: 34px; padding: 0 0.7rem; font-size: 13px; color: var(--text-muted);
@@ -1528,6 +1564,7 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
   .check:hover:not([aria-checked="true"]) { box-shadow: inset 0 0 0 1.5px var(--text-muted); }
   .palette-item:hover { background: var(--hover); }
   .qbar-opt:hover:not([aria-selected="true"]) { background: var(--hover); color: var(--text); }
+  .views-opt:hover:not([aria-current="true"]) { background: var(--hover); }
   .view-tabs a:hover:not([aria-current="page"]) { color: var(--text); transition-duration: var(--dur-hover-in); }
   .clause button:hover { color: var(--text); background: var(--hover); transition-duration: var(--dur-hover-in); }
   .clauses .clear-all:hover { color: var(--text); }
@@ -2943,6 +2980,98 @@ function setWhere(view, where, focusSel) {
   return filtersChanged(view, focusSel);
 }
 
+// ---- saved views: a name for a --where query (GET and POST /api/views, DELETE /api/views/<name>).
+// A server or store without views answers 404 or 501: the controls stay hidden.
+const VIEW_NAME = /^[A-Za-z0-9._-]{1,64}$/;
+const views = { state: "idle", items: [], error: null, ctl: null };
+async function loadViews() {
+  views.state = views.state === "idle" ? "first" : "loading";
+  if (views.ctl) views.ctl.draw();
+  try {
+    views.items = ((await api("/api/views", null, true)).items || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+    views.state = "ok";
+  } catch (e) {
+    views.state = e.status === 404 || e.status === 501 ? "off" : "error";
+    views.error = e;
+  }
+  if (views.ctl) views.ctl.draw();
+}
+function viewsControl(view) {
+  if (views.ctl && views.ctl.view === view) { views.ctl.draw(); return views.ctl.el; }
+  let mode = "";
+  const listBtn = h("button", { class: "btn btn-sm", type: "button", "aria-expanded": "false", "aria-controls": "views-pop", onclick: () => (mode === "list" ? close(listBtn) : show("list")) }, "Views");
+  const saveBtn = h("button", { class: "btn btn-sm", type: "button", "aria-expanded": "false", "aria-controls": "views-pop", onclick: () => (mode === "save" ? close(saveBtn) : show("save")) }, "Save view");
+  const pop = h("div", { class: "views-pop", id: "views-pop", hidden: true });
+  const el = h("div", { class: "views", hidden: true }, listBtn, saveBtn, pop);
+  const ctl = views.ctl = { view, el, draw, close: () => close(null) };
+  el.addEventListener("keydown", (e) => { if (e.key === "Escape" && mode) { e.preventDefault(); e.stopPropagation(); close(mode === "list" ? listBtn : saveBtn); } });
+  function show(m) {
+    mode = m;
+    draw();
+    if (m === "list" && views.state !== "loading") loadViews();
+    const first = pop.querySelector("input, .views-opt, button");
+    if (first) first.focus();
+  }
+  function close(to) {
+    mode = "";
+    draw();
+    if (to) to.focus();
+  }
+  function draw() {
+    const where = list.where.trim();
+    el.hidden = views.state === "idle" || views.state === "first" || views.state === "off";
+    saveBtn.disabled = !where && mode !== "save";
+    saveBtn.title = where ? "Save this filter under a name" : "Filter the list first";
+    listBtn.setAttribute("aria-expanded", String(mode === "list"));
+    saveBtn.setAttribute("aria-expanded", String(mode === "save"));
+    pop.hidden = !mode || el.hidden;
+    if (pop.hidden) { swap(pop); return; }
+    if (mode === "save") {
+      if (pop.querySelector("form")) return;
+      const name = h("input", { class: "field", name: "name", autocomplete: "off", spellcheck: "false", maxlength: "64", "aria-describedby": "views-name-hint" });
+      const err = h("p", { class: "cmt-err", role: "alert" });
+      const form = h("form", { class: "views-form", onsubmit: async (e) => {
+        e.preventDefault();
+        const n = name.value.trim();
+        if (!VIEW_NAME.test(n)) { err.textContent = "Use 1 to 64 letters, digits, - _ or ."; name.focus(); return; }
+        try {
+          const v = await api("/api/views", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: n, where }) });
+          views.items = views.items.filter((x) => x.name !== v.name).concat(v).sort((a, b) => a.name.localeCompare(b.name));
+          close(saveBtn);
+          toast("Saved view " + v.name);
+        } catch (x) { err.textContent = "Could not save the view: " + x.message; }
+      } },
+      h("label", null, "Name", name), h("p", { class: "meta", id: "views-name-hint" }, "Saves ", h("code", null, where)),
+      h("div", { class: "cmt-actions" }, h("button", { class: "btn btn-sm btn-primary", type: "submit" }, "Save"), h("button", { class: "btn btn-sm btn-ghost", type: "button", onclick: () => close(saveBtn) }, "Cancel")), err);
+      swap(pop, form);
+      return;
+    }
+    const body = [];
+    if (views.state === "loading" && !views.items.length) body.push(h("p", { class: "meta views-note" }, "Loading views…"));
+    else if (views.state === "error") body.push(h("p", { class: "cmt-err views-note" }, "Could not load views: " + views.error.message + " ", h("button", { class: "btn btn-sm", type: "button", onclick: () => loadViews() }, "Retry")));
+    else if (!views.items.length) body.push(h("p", { class: "meta views-note" }, "No saved views yet. Filter the list, then Save view."));
+    if (views.items.length) body.push(h("ul", { class: "views-list", "aria-label": "Saved views" }, views.items.map((v) => h("li", null,
+      h("button", { class: "views-opt", type: "button", "aria-current": v.where === list.where ? "true" : null, onclick: () => { close(null); setWhere(view, v.where, "#q"); announce("View " + v.name + " applied"); } },
+        h("span", null, v.name), h("span", { class: "d" }, v.where)),
+      h("button", { class: "btn btn-sm btn-ghost views-del", type: "button", "aria-label": "Delete view " + v.name, title: "Delete view " + v.name, onclick: async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        try {
+          await api("/api/views/" + encodeURIComponent(v.name), { method: "DELETE" });
+          views.items = views.items.filter((x) => x.name !== v.name);
+          draw();
+          (pop.querySelector(".views-opt") || listBtn).focus();
+          announce("Deleted view " + v.name);
+        } catch (x) { btn.disabled = false; toast("Could not delete the view: " + x.message); }
+      } }, xIcon())))));
+    swap(pop, body);
+  }
+  draw();
+  if (views.state === "idle") loadViews();
+  return el;
+}
+document.addEventListener("pointerdown", (e) => { if (views.ctl && !views.ctl.el.contains(e.target) && !views.ctl.el.querySelector(".views-pop").hidden) views.ctl.close(); });
+
 function renderSessions(view) {
   const bar = queryBar(view);
   const input = qbar.input;
@@ -2953,9 +3082,12 @@ function renderSessions(view) {
   if (!focused && input.value !== list.where) input.value = list.where;
   const stats = list.stats;
   const nothingCaptured = list.loaded && stats && stats.sessions === 0 && !stats.subagents && !hasFilters();
+  // The views control moves into the new head like the bar does; focus inside it stays where it was.
+  const viewsEl = viewsControl(view);
+  const viewsFocus = viewsEl.contains(document.activeElement) ? document.activeElement : null;
   const head = h("div", { class: "page-head" },
     h("div", null,
-      h("h1", { id: "sessions-h" }, "Sessions"),
+      h("div", { class: "title-row" }, h("h1", { id: "sessions-h" }, "Sessions"), nothingCaptured ? null : viewsEl),
       h("p", { class: "meta fact-line" }, ...(stats ? summaryLine(stats) : [list.loaded ? "" : "Loading…"]).filter(Boolean).map((t) => typeof t === "string" ? h("span", null, t) : h("span", { class: "sum-cost", title: t.title }, t.text)),
         // The clause row has its own Clear all; the scope filter alone has no chip.
         hasFilters() && !whereTerms(list.where).length && !list.filters.since && !list.filters.until ? h("span", null, h("button", { type: "button", onclick: () => clearFilters(view) }, "Clear filters")) : null)),
@@ -2991,6 +3123,7 @@ function renderSessions(view) {
     input.focus({ preventScroll: true });
     input.setSelectionRange(sel[0], sel[1]);
   }
+  if (viewsFocus && viewsFocus.isConnected && document.activeElement !== viewsFocus) viewsFocus.focus({ preventScroll: true });
   qbar.rendering = false;
 }
 /** Sessions | Events: the same query as session rows or as event rows. */
@@ -4319,6 +4452,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     backToSteps: () => { tl.focus({ preventScroll: true }); timeline.scrollIntoView({ block: "start", behavior: smoothScroll() }); },
     raw: false,
     openFold: (key) => { openFold(key); rebuildRows(); },
+    comments: commentStore(session.id),
   };
 
   // ---- model: items (every step), rows (what the list shows after folding and find)
@@ -4656,12 +4790,17 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     const el = h("div", { class: cls, role: "option", id: "st-" + r, "aria-selected": String(r === activeRow), "aria-expanded": canFold ? "true" : null, "aria-setsize": String(rows.length), "aria-posinset": String(r + 1),
       onclick: () => selectRow(r, true) },
       h("span", { class: "t", title: new Date(it.ts).toLocaleTimeString() }, m.isTurn ? "Prompt " + m.prompt : fmtClock(it.ts - session.startedAt)),
-      h("span", { class: "lbl" }, chip, caret, h("span", { class: "dot tone-" + v.tone, "aria-hidden": "true" }), m.isTurn ? null : h("span", { class: "name" }, v.name), m.isTurn ? h("span", { class: "arg" }, promptLine(it) || "Prompt") : argNode(v.arg), v.cost ? h("span", { class: "cost", title: v.cost.title }, v.cost.text) : null, flag),
+      h("span", { class: "lbl" }, chip, caret, h("span", { class: "dot tone-" + v.tone, "aria-hidden": "true" }), m.isTurn ? null : h("span", { class: "name" }, v.name), m.isTurn ? h("span", { class: "arg" }, promptLine(it) || "Prompt") : argNode(v.arg), v.cost ? h("span", { class: "cost", title: v.cost.title }, v.cost.text) : null, cmtFlag(it), flag),
       h("span", { class: "d" }, m.isTurn ? h("time", { datetime: new Date(it.ts).toISOString() }, fmtClock(it.ts - session.startedAt)) : v.adds !== undefined || v.dels !== undefined
         ? [v.adds !== undefined ? h("span", { class: "add" }, "+" + v.adds) : null, v.adds !== undefined && v.dels !== undefined ? " " : null, v.dels !== undefined ? h("span", { class: "del" }, "−" + v.dels) : null]
         : v.meta || ""), wf);
     el.style.transform = "translateY(" + top + "px)";
     return el;
+  }
+  // A step with comments shows their count; the comments themselves are in its pane.
+  function cmtFlag(it) {
+    const n = ctx.comments.of(stepIds(it)).length;
+    return n ? h("span", { class: "cmt-flag", title: plural(n, "comment") }, bubbleIcon(), String(n)) : null;
   }
   function renderWindow(force) {
     const vh = tl.clientHeight || 600;
@@ -5547,8 +5686,13 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     const i = items.findIndex((it) => ((it.ev || it.start || it.end || {}).spanId) === spanId);
     if (i >= 0) { selectItem(i, true); tl.focus({ preventScroll: true }); }
   };
-  view.lastChild.replaceWith(...[durableStrip(session, pickSpan)].filter(Boolean), tools, rpBar, more, grid, chat, hint);
+  const sessCmt = commentThread(ctx.comments, "session", session.id, [session.id], "Comments on this session");
+  sessCmt.el.classList.add("cmt-session");
+  tools.insertBefore(sessCmt.toggle, rpBtn);
+  ctx.comments.subs.add({ alive: () => tl.isConnected, draw: () => renderWindow(true) });
+  view.lastChild.replaceWith(...[durableStrip(session, pickSpan)].filter(Boolean), tools, sessCmt.el, rpBar, more, grid, chat, hint);
   rebuildRows();
+  ctx.comments.load();
   // A link to a step opens its turn; a session with a failure opens on its first failure; a clean
   // one opens on its first prompt (a folded turn stays folded), not on "Session starts".
   const linked = eventId && byEvent.has(eventId);
@@ -5857,6 +6001,127 @@ async function postLabel(sessionId, value, group) {
   } finally {
     btns.forEach((b) => { b.disabled = false; });
   }
+}
+
+// ------------------------------------------------------------ comments
+// A comment is a text score named "comment" on the session or on one of its events, by a person.
+// Each gets its own id: the default score id keeps one score per target, name and author.
+function commentId() {
+  return "comment-" + Date.now().toString(36) + "-" + Array.from(crypto.getRandomValues(new Uint8Array(9)), (x) => x.toString(16).padStart(2, "0")).join("");
+}
+/** The POST /api/scores body for a comment, or null when the text is empty. */
+function commentBody(target, targetId, text, id) {
+  const value = String(text || "").trim();
+  return value ? { id: id || commentId(), target, targetId, name: "comment", dataType: "text", value, source: "human" } : null;
+}
+/** The ids a step's comments can target: its start, end or only event, and its copy. */
+function stepIds(it) {
+  return [it.id, it.start && it.start.id, it.end && it.end.id, it.ev && it.ev.id, it.copyId].filter(Boolean);
+}
+/** One session's comments, loaded once and shared by its thread and its steps' threads. state: loading, ok, error, off (no scores). */
+function commentStore(sessionId) {
+  const st = { state: "loading", items: [], error: null, by: new Map(), subs: new Set() };
+  const index = () => {
+    st.items.sort((a, b) => a.ts - b.ts);
+    st.by = new Map();
+    for (const c of st.items) { if (!st.by.has(c.targetId)) st.by.set(c.targetId, []); st.by.get(c.targetId).push(c); }
+    for (const s of st.subs) if (s.alive()) s.draw(); else st.subs.delete(s);
+  };
+  st.of = (ids) => [...new Set(ids)].flatMap((id) => st.by.get(id) || []).sort((a, b) => a.ts - b.ts);
+  st.load = async () => {
+    st.state = "loading";
+    index();
+    try {
+      const body = await api("/api/scores" + qs({ sessionId, name: "comment", limit: 1000 }), null, true);
+      st.items = (body.items || []).filter((s) => s.name === "comment" && typeof s.value === "string");
+      st.state = "ok";
+    } catch (e) {
+      // A store or server that keeps no scores: no comments and no box.
+      st.state = e.status === 404 || e.status === 501 ? "off" : "error";
+      st.error = e;
+    }
+    index();
+  };
+  st.post = async (body) => {
+    const s = await api("/api/scores", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    st.items = st.items.filter((c) => c.id !== s.id).concat(s);
+    index();
+    return s;
+  };
+  return st;
+}
+let commentSeq = 0;
+/**
+ * A comment thread: the comments on `ids`, oldest first, and a box to add one, opened by `toggle`.
+ * Text goes in as text, never as markup.
+ */
+function commentThread(store, target, targetId, ids, label) {
+  const n = ++commentSeq;
+  const list = h("ol", { class: "cmt-list" });
+  const err = h("p", { class: "cmt-err", role: "alert" });
+  const ta = h("textarea", { class: "field cmt-input", id: "cmt-in-" + n, rows: "3", maxlength: "4000", placeholder: "Add a comment", "aria-label": label });
+  const postBtn = h("button", { class: "btn btn-sm btn-primary", type: "button", onclick: () => send() }, "Post");
+  const box = h("div", { class: "cmt-box", id: "cmt-box-" + n, hidden: true }, ta,
+    h("div", { class: "cmt-actions" }, postBtn, h("button", { class: "btn btn-sm btn-ghost", type: "button", onclick: () => close(true) }, "Cancel"),
+      h("span", { class: "meta" }, (IS_MAC ? "⌘" : "Ctrl+") + "Enter to post · Esc to close")), err);
+  const count = h("span", { class: "count" });
+  const toggle = h("button", { class: "btn btn-sm btn-ghost cmt-toggle", type: "button", "aria-expanded": "false", "aria-controls": "cmt-box-" + n, title: label,
+    onclick: () => (box.hidden ? open() : close(true)) }, "Comment", count);
+  const el = h("section", { class: "cmt", "aria-label": label }, h("p", { class: "meta cmt-head" }, label), list, box);
+  box.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(true); }
+  });
+  function draw() {
+    const mine = store.of(ids);
+    toggle.hidden = store.state === "off";
+    count.textContent = mine.length ? String(mine.length) : "";
+    const rows = mine.map((c) => h("li", null,
+      h("p", { class: "meta" }, String(c.by || "someone"), " · ", h("time", { datetime: new Date(c.ts).toISOString(), title: new Date(c.ts).toLocaleString() }, fmtRel(c.ts))),
+      h("p", { class: "cmt-text", text: c.value })));
+    if (store.state === "loading" && !box.hidden) rows.push(h("li", { class: "meta" }, "Loading comments…"));
+    if (store.state === "error") rows.push(h("li", { class: "cmt-err" }, "Could not load comments: " + store.error.message + " ", h("button", { class: "btn btn-sm", type: "button", onclick: () => store.load() }, "Retry")));
+    if (store.state === "ok" && !mine.length && !box.hidden) rows.push(h("li", { class: "meta" }, "No comments yet."));
+    swap(list, rows);
+    el.hidden = store.state === "off" || (!rows.length && box.hidden);
+  }
+  function open() {
+    box.hidden = false;
+    toggle.setAttribute("aria-expanded", "true");
+    draw();
+    el.scrollIntoView({ block: "nearest" });
+    ta.focus({ preventScroll: true });
+  }
+  function close(refocus) {
+    box.hidden = true;
+    err.textContent = "";
+    toggle.setAttribute("aria-expanded", "false");
+    draw();
+    if (refocus && toggle.isConnected) toggle.focus({ preventScroll: true });
+  }
+  async function send() {
+    const body = commentBody(target, targetId, ta.value);
+    if (!body) { err.textContent = "Write something to post."; ta.focus(); return; }
+    postBtn.disabled = true;
+    err.textContent = "";
+    try {
+      await store.post(body);
+      ta.value = "";
+      close(true);
+      announce("Comment posted");
+    } catch (e) {
+      err.textContent = "Could not post the comment: " + e.message;
+    } finally {
+      postBtn.disabled = false;
+    }
+  }
+  for (const s of store.subs) if (!s.alive()) store.subs.delete(s);
+  store.subs.add({ alive: () => el.isConnected || toggle.isConnected, draw });
+  draw();
+  return { el, toggle, open };
+}
+function bubbleIcon() {
+  return svg("svg", { viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", "stroke-width": "1.5", "stroke-linejoin": "round", "aria-hidden": "true" }, svg("path", { d: "M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" }));
 }
 
 // ------------------------------------------------------------ inspector
@@ -6539,18 +6804,22 @@ function renderPane(pane, item, session, ctx) {
   const nodes = [];
   const ts = item.ts;
   const rawEvents = [item.start, item.end, item.ev].filter(Boolean);
+  // A step's comments target its last event: the tool's result, or the step's only event.
+  const cmt = ctx.comments && rawEvents.length ? commentThread(ctx.comments, "event", rawEvents[rawEvents.length - 1].id, stepIds(item), "Comments on this step") : null;
   const rawBtn = h("button", { class: "btn btn-sm btn-ghost", type: "button", "aria-pressed": String(!!ctx.raw), "aria-keyshortcuts": "r", title: "Raw event JSON (r)",
     onclick: () => { ctx.raw = !ctx.raw; renderPane(pane, item, session, ctx); } }, "Raw");
   nodes.push(h("div", { class: "pane-top" },
     h("p", { class: "meta truncate", title: v.kindText }, fmtClock(ts - session.startedAt), h("span", { class: "wide-only" }, " into the session · " + new Date(ts).toLocaleTimeString())),
     h("div", { class: "pane-tools" },
       h("button", { class: "btn btn-sm to-steps", type: "button", onclick: ctx.backToSteps }, h("span", { "aria-hidden": "true" }, "↑"), "Steps"),
+      cmt ? cmt.toggle : null,
       rawBtn,
       copyBtn(() => JSON.stringify(rawEvents.length === 1 ? rawEvents[0] : rawEvents, null, 2), "Copy step as JSON", "step JSON"))));
 
   if (ctx.raw) {
     nodes.push(h("h2", { class: "pane-title" }, v.label));
     for (const ev of rawEvents) nodes.push(section(ev.kind + " · " + short(ev.id, 16), jsonTree(ev, true)));
+    if (cmt) nodes.push(cmt.el);
     swap(pane, ...nodes);
     if (!sameStep) pane.scrollTop = 0;
     return;
@@ -6664,6 +6933,7 @@ function renderPane(pane, item, session, ctx) {
     const refs = blobRefs([ev]);
     if (refs.length) nodes.push(section("stored content", h("div", { class: "stack" }, refs.map((r, i) => blobView(r, item.type === "file.change" && typeof p.diff !== "string" && i === 0)))));
   }
+  if (cmt) nodes.push(cmt.el);
   swap(pane, ...nodes);
   if (!sameStep) pane.scrollTop = 0;
 }

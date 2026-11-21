@@ -1504,6 +1504,9 @@ Body (JSON, up to 1 MB):
 - The caller is the read key's name (`reader:<hash>` for an unnamed key), so a renamed or rotated key is a new caller.
 - A stored score with no session can be replaced only by a key not limited to one project.
 - A given `id` of 64 hex characters, the form of a default id, must be this score's own default id. Any other gets 400.
+- The viewer's Comment button stores a `text` score named `comment` on the session or the step's
+  event, with an id starting `comment-`. `coding.sh show` prints these under their step, and
+  `show --json` lists them as `comments`.
 - Monitors (`coding.sh monitor`) store their scores with source `monitor`, `by` `monitor`, the monitor's name as `name`, the rationale as `comment`, and a hash of the rubric or command as `judgeVersion`. See [Concepts](../concepts.md#monitor).
 - The MCP tool `score_add_batch` takes `{"scores": [...]}`: 1 to 100 bodies in the `score_add` shape, each checked as here.
 - A body has `targetId`, `name` and `value`, and optionally `target`, `dataType`, `comment`, `source`, `sessionId` and `id`; `"latest"` names the newest session.

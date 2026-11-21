@@ -35,6 +35,7 @@ grouped by area, with links to the docs for the details.
 - **Capture.** Serve and the collector also take OTel traces at `/api/public/otel/v1/traces`, where Basic auth with an ingest key as username or password works, so an SDK that sends there changes only its host. `--where user:`, `env:` and `release:` filter by the user, environment and release a trace names. [OTel](https://coding.sh/docs/otel#public-path)
 - **Work.** A T3 Code thread that waits on an approval or a question is blocked on you in `coding.sh work`, with the prompt or question, whichever agent the thread runs. The wait comes from T3's store and clears when T3 resolves the request. [Work](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#waiting-state)
 - **Sessions.** `coding.sh views save <name> --where <query>` keeps a query under a name, and `views list` and `views rm` manage them. `sessions --view <name>` lists its sessions, ANDed with `--where` when both are given; the MCP `sessions_list` tool takes `view`, and the viewer API serves `/api/views`. [Query](https://coding.sh/docs/query#saved-views)
+- **Viewer.** Comment on a session or one step in `coding.sh ui`: each comment is a text score named `comment`, shown as text with its author and time, and `coding.sh show` prints them under their step (`comments` in `--json`). The session list's Views menu applies and deletes saved views, and Save view keeps the current filter. [Explore](https://coding.sh/docs/explore#open-the-viewer)
 
 ### Changed
 

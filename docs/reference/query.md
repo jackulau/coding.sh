@@ -197,8 +197,9 @@ coding.sh views rm codex-flagged
   `(agent:codex OR agent:gemini) -flag:compaction`.
 - A `sort:` or `limit:` in `--where` wins over the view's.
 - An unknown name exits 1 and names the views that exist.
-- The MCP tool `sessions_list` takes `view`, and the viewer API reads and writes views at
-  [`/api/views`](api.md#get-apiviews-post-apiviews-delete-apiviewsname).
+- The MCP tool `sessions_list` takes `view`, and the viewer reads and writes views at
+  [`/api/views`](api.md#get-apiviews-post-apiviews-delete-apiviewsname): Save view on the session
+  list saves its filter, and Views lists, applies and deletes them.
 - Views live in the index: SQLite or the memory store. The Postgres and ClickHouse store plugins
   have none, and the commands exit 1 with `saved views need the local index (this store has no
   views)`.

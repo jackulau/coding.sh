@@ -453,8 +453,9 @@ events API still pages by offset (viewer/server.ts:682–689), and MCP still nam
   full-width divider with tokens before and after.
 - Context-fill track per turn. Not built.
 - Whole-session find. Find covers loaded steps only; nothing searches the server.
-- Notes and judge scores on a step. Not shown. The pass and fail labels (`p`, `f`) are on the session.
-- Saved views and a column chooser in the session list. Not built.
+- Judge scores on a step. Not shown. The pass and fail labels (`p`, `f`) are on the session. Comments (text scores
+  named `comment`) show on the session and under each step.
+- Column chooser in the session list. Not built. Saved views are: Views and Save view beside the list's title.
 - Pane resizer. The two columns have fixed proportions (index.html:698–701).
 - Trajectory compare (V-13). Not built. The experiments compare page compares two experiments, not two sessions.
 - Files tab (V-9). Not built. Replay shows the files a step changed.
