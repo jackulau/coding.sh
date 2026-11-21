@@ -34,11 +34,22 @@ The session part shows only for a session coding.sh has stored. For a session id
 stored yet, `--json` has `sessionCostUsd: null`. A stored session that cost nothing still shows
 `$0.0000 session`.
 
-A session with a failure flag adds it at the end (`  ·  ! no-verification`). The flag part is
+A session with a failure flag adds it after the costs (`  ·  ! no-verification`). The flag part is
 dropped when there is nothing to report. Only real failures show. A tag with a
 colon (`gateway:vercel`, `skill:pdf`) and context-only flags (`compaction`, `model:switch`) are
 not failures. Among the rest, a defect outranks a risk, which outranks an inefficiency, so the one
 most worth your attention is the one you see.
+
+When the ingest the hook starts has been failing, the line adds `! ingest stopped 4h ago` next: the
+costs are then as old as that. Then come the [work items](https://coding.sh/docs/cli/work) blocked
+on you or failed, over the last 7 days, as `2 need you`; at 0 the part is left out. `--json` has
+the count as `needYou`, absent at 0. With every part, the line reads:
+
+```text
+Opus 5.5  ·  ctx 62%  ·  $0.0011 session  ·  $0.2867 today  ·  ! no-verification  ·  2 need you
+```
+
+The plan windows, the gateway spend and the budget below come after these.
 
 On a Pro, Max or Ultra plan, Claude Code also sends how much of the plan's 5-hour and weekly
 windows you have used, and the line ends with them (`  ·  5h 62% 7d 41%`, only the windows Claude
@@ -71,8 +82,12 @@ coding.sh statusline install --force
 
 Claude Code runs the command every turn with a small JSON object on stdin: the session id, the
 model, and more. coding.sh reads it, looks up the session in your local store by that id, and
-prints one line. It does no network or git work, and if the store is missing or the input is
-unexpected it prints nothing and exits 0, so the status line never disrupts the agent.
+prints one line. It does no network or git work, and always exits 0, so the status line never
+disrupts the agent. Input that is empty or not a JSON object still prints the line from the store
+alone: today's cost and the `need you` count. If the store can't be opened it prints nothing, or
+only a stopped ingest. Before the first capture, with no store yet, it prints the model, plan usage
+and $0 today, and creates no store.
+
 Claude Code closes stdin once it has written the object. If the writer keeps stdin open, coding.sh
 stops reading after 1 s and prints from what arrived. In `--json`, costs and percents have at most
 4 decimals.

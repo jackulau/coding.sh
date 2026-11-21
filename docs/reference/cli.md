@@ -120,7 +120,7 @@ coding.sh init --remote https://obs.example.com --key csh_ik_…
 
 - Copies the hook to ~/.coding.sh/bin (hook.sh, and hook.mjs for what it hands on) and points each agent at it: /bin/sh hook.sh outside Windows, node hook.mjs on Windows. Run init again to move hooks from an older version to hook.sh.
 - Then imports the sessions each agent already keeps on this machine, for up to 8 seconds (CODING_SH_INIT_IMPORT_BUDGET_MS changes it). The rest imports in the background and shows up in the viewer as it lands. Running init again reads only new or changed transcripts.
-- --remote checks that the server takes the key before writing anything, then adds the sink to ~/.coding.sh/config.toml (mode 600). Run it again to change the URL, key or mode.
+- --remote checks that the server takes the key before writing anything, then adds the sink to ~/.coding.sh/config.toml (mode 600 where the OS has file modes). Run it again to change the URL, key or mode.
 - Registers the MCP server with Claude Code, Codex, Cursor, OpenCode, Gemini CLI and Devin CLI (user scope only).
 - --proxy sets ANTHROPIC_BASE_URL in Claude Code's settings.json and a coding-sh model provider in Codex's config.toml. A base URL the agent already used (a gateway, CLIProxyAPI, your own Codex provider) becomes the proxy's upstream instead of being replaced. The hook restarts a stopped proxy when a session starts.
 - Every edited file is backed up to ~/.coding.sh/backups first; uninstall reverts it.
@@ -908,7 +908,7 @@ coding.sh alert list
 - A webhook gets a POST with the JSON body {alert, state, previous, value, threshold, direction, window, by, at} (direction: "under" only with --under, by only with --by agent) and the header X-Coding-Sh-Signature: sha256=&lt;HMAC-SHA256 of the body, keyed with the alert's secret&gt;. A command gets the same JSON on stdin and succeeds by exiting 0.
 - Each notification is tried 3 times, 1 s and then 2 s apart. After 5 failed deliveries in a row the target is turned off; alert list says so, and a successful alert test turns it back on.
 - alert check exits 0 unless the usage is wrong; with --json it lists each alert's state, value and groups. Run it from cron or Task Scheduler. coding.sh serve runs the same check every minute. The hook and the read commands never run alerts.
-- Alerts, their states and their secrets are kept in ~/.coding.sh/alerts.json, mode 600.
+- Alerts, their states and their secrets are kept in ~/.coding.sh/alerts.json, mode 600 where the OS has file modes.
 
 ### `coding.sh alert add`
 
@@ -3991,7 +3991,7 @@ coding.sh refine diagnose [options]
 | `--session <ID>` |  | Exactly these sessions: an id, a prefix or latest (repeatable; ignores --since, --repo and --agent) Takes a comma list too (a,b). |
 | `--max-sessions <N>` | `50` | Most sessions diagnosed, newest first. |
 | `--budget-tokens <N>` |  | Stop starting uncached sessions past this many estimated input tokens; the next run picks up the rest. |
-| `--provider <PROVIDER>` |  | anthropic, openai, claude-code or codex (default: the API whose key is set; with none, a $0 plan) |
+| `--provider <PROVIDER>` |  | anthropic, openai, gemini, claude-code or codex (default: anthropic or openai, whichever has its key set; with neither, a $0 plan) |
 | `--model <MODEL>` |  | The diagnosing model (default: the provider's current one) |
 | `--concurrency <N>` | `4` | Sessions diagnosed at once. |
 | `--no-split` |  | One Signal per component and type, with no grouping call. |
