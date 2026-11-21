@@ -59,6 +59,22 @@ describe("memory audit: helpers", () => {
     assert.equal(claudeProjectSlug("/Users/ann/my.app"), "-Users-ann-my-app");
   });
 
+  it("keys a Git Bash drive path as the Windows path it names, so one file is one row", () => {
+    assert.equal(homeKey("/c/Users/ann/.claude/CLAUDE.md"), "~/.claude/CLAUDE.md");
+    assert.equal(homeKey("/c/Users/ann/.claude/CLAUDE.md", "C:\\Users\\ann"), "~/.claude/CLAUDE.md");
+    assert.equal(homeKey("/d/work/AGENTS.md"), "D:/work/AGENTS.md");
+    const mem = "~/.claude/projects/C--work-app/memory/MEMORY.md";
+    const a = auditMemory(
+      [
+        session("w1", [edit("/c/Users/ann/.claude/projects/C--work-app/memory/MEMORY.md")], { cwd: "C:/work/app" }),
+        session("w2", [read("C:\\Users\\ann\\.claude\\projects\\C--work-app\\memory\\MEMORY.md"), edit("C:/Users/ann/.claude/projects/C--work-app/memory/MEMORY.md")], { cwd: "C:/work/app" }),
+      ],
+      [file(mem, 800)],
+      { home: "C:\\Users\\ann" },
+    );
+    assert.deepEqual(a.files.filter((f) => f.path.endsWith("memory/MEMORY.md")).map((f) => [f.path, f.read, f.wrote]), [[mem, 1, 2]]);
+  });
+
   it("shell reads and writes", () => {
     assert.deepEqual(shellPaths("cat a.md && head -n 5 b.md | grep x"), { reads: ["a.md", "b.md"], writes: [] });
     assert.deepEqual(shellPaths("sed -i 's/a/b/' m.md"), { reads: [], writes: ["m.md"] });

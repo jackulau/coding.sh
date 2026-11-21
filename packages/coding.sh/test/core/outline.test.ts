@@ -112,6 +112,30 @@ describe("session outline", () => {
     const resumed = [...late, ev("llm.call", {}, { gap: 2000 })];
     assert.deepEqual(sessionOutline(resumed).phases.map((p) => [p.kind, p.from]), [["start", 0], ["resume", 5]]);
   });
+
+  it("a host's notification before session.start is part of the start phase, not a phase of its own", () => {
+    n = 0;
+    clock = T0 - 10 * 3600_000;
+    // T3 Code writes its host-link notice a fraction of a second before the session.start.
+    const events = [
+      ev("notification", { type: "host-link", via: "t3code" }),
+      ev("session.start", { source: "rollout", via: "t3code" }, { gap: 216 }),
+      ev("user.message", { text: "check the homework" }),
+      ev("tool.start", { tool: "exec_command", toolUseId: "a" }),
+      ev("tool.end", { tool: "exec_command", toolUseId: "a", ok: true }),
+    ];
+    const o = sessionOutline(events);
+    assert.deepEqual(o.phases.map((p) => [p.kind, p.events, p.prompts, p.toolCalls]), [["start", 5, 1, 1]]);
+    // A later session.start is still a resume.
+    const resumed = sessionOutline([...events, ev("session.start", { source: "resume" }, { gap: 1711 })]);
+    assert.deepEqual(resumed.phases.map((p) => [p.kind, phaseLabel(p)]), [["start", "start"], ["resume", "resumed after 2 s"]]);
+  });
+
+  it("labels a gap under a minute in seconds", () => {
+    assert.equal(phaseLabel({ kind: "resume", gapMs: 216 }), "resumed after 1 s");
+    assert.equal(phaseLabel({ kind: "resume", gapMs: 42_000 }), "resumed after 42 s");
+    assert.equal(phaseLabel({ kind: "resume", gapMs: 90_000 }), "resumed after 2 min");
+  });
 });
 
 describe("claude --resume capture", () => {

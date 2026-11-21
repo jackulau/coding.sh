@@ -241,8 +241,19 @@ export function failureRecords(events: readonly AgentEvent[], repoRoot?: string)
     const l = firstErrorLine(text);
     return l ? { sample: l } : {};
   };
+  // A wrapper call (a Codex code-mode `exec` cell) only runs other calls: its input is a script, not a
+  // command, and it fails when a call it ran failed. The calls it ran are the ones counted.
+  const wrappers = new Set<string>();
   for (const e of [...events].sort((a, b) => a.ts - b.ts)) {
     const p = e.payload as Record<string, unknown>;
+    if (e.kind === "tool.start" || e.kind === "tool.end") {
+      const id = typeof p.toolUseId === "string" ? p.toolUseId : undefined;
+      if (p.wrapper === true) {
+        if (id) wrappers.add(id);
+        continue;
+      }
+      if (id && wrappers.has(id)) continue;
+    }
     if (e.kind === "file.change") {
       edited = true;
       continue;

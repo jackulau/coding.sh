@@ -67,6 +67,12 @@ export interface OutlineState {
   lastMainTs?: number;
   /** ts of the last session.end, until activity past REOPEN_SLACK_MS reopens the session. */
   endedAt?: number;
+  /**
+   * A main-agent event other than a notification was folded. A host's notice
+   * before the session.start (T3 Code's host-link) is not a run of the session,
+   * so the session.start after it opens no resume.
+   */
+  begun?: true;
   /** Day marks, when asked for (they depend on the local time zone, so ingest leaves them out). */
   days?: DayMark[];
   day: string;
@@ -113,7 +119,7 @@ export function foldOutline(s: OutlineState, e: AgentEvent, i: number, failure?:
     const gap = s.lastMainTs !== undefined ? e.ts - s.lastMainTs : 0;
     const reopens = s.endedAt !== undefined && e.kind !== "session.end" && e.ts > s.endedAt + REOPEN_SLACK_MS;
     if (!cur) open("start");
-    else if (e.kind === "session.start" && e.payload.source !== "compact" && cur.events > 0) open("resume", { gapMs: gap });
+    else if (e.kind === "session.start" && e.payload.source !== "compact" && cur.events > 0 && s.begun) open("resume", { gapMs: gap });
     else if (reopens) open("resume", { gapMs: gap });
     else if (e.kind === "context.compact") open("compaction", { trigger: e.payload.trigger === "manual" ? "manual" : "auto" });
     else if (gap >= s.idleMs && e.kind !== "session.end") open("idle", { gapMs: gap });
@@ -121,6 +127,7 @@ export function foldOutline(s: OutlineState, e: AgentEvent, i: number, failure?:
     if (e.kind === "session.end") s.endedAt = e.ts;
     else if (reopens) s.endedAt = undefined;
     s.lastMainTs = e.ts;
+    if (e.kind !== "notification") s.begun = true;
   } else if (!s.phases.length) open("start");
   const p = s.phases.at(-1)!;
   p.events++;
@@ -185,5 +192,7 @@ export function phaseLabel(p: Pick<Phase, "kind" | "trigger" | "gapMs">): string
 
 function gapText(ms: number): string {
   if (ms >= 3600_000) return `${(ms / 3600_000).toFixed(1)} h`;
+  // Under a minute reads in seconds: "after 1 min" for a 0.2 s gap misleads.
+  if (ms < 59_500) return `${Math.max(1, Math.round(ms / 1000))} s`;
   return `${Math.max(1, Math.round(ms / 60_000))} min`;
 }

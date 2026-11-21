@@ -63,6 +63,9 @@ one in 5% needs 32. Until then it stays in its place with its fix.
   watched. The first line counts them, and `--headless` includes them.
 - In a compound line such as `cat Cargo.toml && cargo build`, the part that failed is the one
   counted. When nothing singles out a part, the issue says "A compound command".
+- A command run as `powershell.exe -Command <cmd>` or `pwsh -c <cmd>` is counted under `<cmd>`.
+- A Codex code-mode `exec` call only runs other tool calls, so its failures count once, under
+  the calls it ran.
 :::
 
 ## Add the line

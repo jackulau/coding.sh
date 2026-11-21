@@ -118,9 +118,15 @@ export function memoryKind(path: string): MemoryKind | undefined {
   return item?.kind === "rule" ? "rule" : item?.kind === "skill" ? "skill" : undefined;
 }
 
-/** `~/…` for a path under `home` or under any recorded home dir; else the path, with forward slashes. */
+/** A Git Bash (MSYS) drive path names a Windows drive: `/c/Users/x` is `C:/Users/x`. */
+const MSYS_DRIVE = /^\/([A-Za-z])(?=\/|$)/;
+
+/**
+ * `~/…` for a path under `home` or under any recorded home dir; else the path, with forward
+ * slashes. A Git Bash drive path (`/c/…`) is keyed as the Windows path it names (`C:/…`).
+ */
 export function homeKey(path: string, home?: string): string {
-  const p = slash(path).replace(/\/+$/, "");
+  const p = slash(path).replace(/\/+$/, "").replace(MSYS_DRIVE, (_, d: string) => `${d.toUpperCase()}:`);
   if (p === "~" || p.startsWith("~/")) return p;
   const h = home ? slash(home).replace(/\/+$/, "") : undefined;
   if (h && (p === h || p.startsWith(`${h}/`))) return `~${p.slice(h.length)}`;
