@@ -1,6 +1,7 @@
 // The MCP improve and harness_changes tools: the `coding.sh improve` report
 // and `coding.sh improve check`, compact enough to read in one turn. Read-only;
 // the agent edits CLAUDE.md or AGENTS.md with its own tools.
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, resolve } from "node:path";
 import type { Context } from "../core/context.ts";
@@ -36,24 +37,25 @@ function since(text: string | undefined, dflt: string, now: number): number {
 /**
  * The repo to read: `repo` as a path (its git root, or the path), as a bare folder
  * name (the newest captured session's repo with that name), "all" for every repo,
- * else the git repo the server runs in, else every repo.
+ * else the git repo the server runs in, else every repo. `git` says `root` is a git repo's root.
  */
-async function place(ctx: Context, repo: string | undefined, cwd: string, env: NodeJS.ProcessEnv): Promise<{ dir?: string; root?: string }> {
+async function place(ctx: Context, repo: string | undefined, cwd: string, env: NodeJS.ProcessEnv): Promise<{ dir?: string; root?: string; git?: boolean }> {
   const r = repo?.trim();
   if (r === "all") return {};
   if (!r) {
     const root = await repoRoot(cwd).catch(() => undefined);
-    return root ? { dir: root, root } : {};
+    return root ? { dir: root, root, git: true } : {};
   }
   if (r === "~" || r.startsWith("~/") || isAbsolute(r) || r.startsWith(".") || /[\\/]/.test(r)) {
     const dir = r === "~" || r.startsWith("~/") ? resolve(env.HOME ?? homedir(), r.slice(2)) : resolve(cwd, r);
-    return { dir, root: (await repoRoot(dir).catch(() => undefined)) ?? dir };
+    const root = await repoRoot(dir).catch(() => undefined);
+    return root ? { dir, root, git: true } : { dir, root: dir };
   }
   const recent = await ctx.index.listSessions({ parentSessionId: null, limit: 500 });
   const hit = recent.find((s) => (s.repo?.root && basename(s.repo.root) === r) || (s.cwd && basename(s.cwd) === r));
   const dir = hit?.repo?.root ?? hit?.cwd;
   if (!dir) throw new ToolError(`No captured session in a repo named ${JSON.stringify(r)}. Pass an absolute path, or call sessions_list to see the repos.`);
-  return { dir, root: dir };
+  return { dir, root: dir, git: !!(await repoRoot(dir).catch(() => undefined)) };
 }
 
 /** Sessions still flagged after a change, listed per change by harness_changes: a few when listing changes, more for one commit. */
@@ -147,6 +149,11 @@ export async function improveReport(ctx: Context, a: ImproveArgs, c: { cwd: stri
 export async function harnessChangesReport(ctx: Context, a: ImproveArgs & { commit?: string | undefined }, c: { cwd: string; env: NodeJS.ProcessEnv; now: number }): Promise<Obj> {
   const p = await place(ctx, a.repo, c.cwd, c.env);
   if (!p.root) throw new ToolError("harness_changes reads a repo's git history: pass repo (a path or a captured repo's folder name), or run the server inside the repo.");
+  // A path with no git history has no changes to report: say so, not "no commits changed AGENTS.md".
+  if (!p.git) {
+    const why = existsSync(p.root) ? "is not in a git repo" : "does not exist";
+    throw new ToolError(`repo ${p.root} ${why}: harness_changes reads a repo's git history. Pass a git repo's path or a captured repo's folder name (sessions_list shows them).`);
+  }
   const from = since(a.since, a.commit ? "365d" : "30d", c.now);
   const all = await findChanges(ctx.index, p.root, { since: from, limit: a.commit ? 50 : (a.limit ?? 5), ...(a.agent ? { agents: [a.agent] } : {}) });
   const commit = a.commit?.trim().toLowerCase();

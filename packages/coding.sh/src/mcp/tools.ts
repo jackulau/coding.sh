@@ -921,9 +921,10 @@ function toolDefs(): PagedTool[] {
       ),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       async run(a, c) {
-        if (a.confirm !== true) throw new ToolError("Not created: this writes an eval task to the user's coding.sh store. Ask the user, then call again with confirm: true.");
+        // The session is looked up first: the user is not asked to approve an eval from a session that does not exist.
         const ctx = await c.store();
         const s = await resolveSession(ctx, strArg(a, "sessionId")!);
+        if (a.confirm !== true) throw new ToolError("Not created: this writes an eval task to the user's coding.sh store. Ask the user, then call again with confirm: true.");
         const { draftTaskFromSession } = await import("../eval/task.ts");
         const strs = (k: string) => (Array.isArray(a[k]) ? (a[k] as unknown[]).filter((x): x is string => typeof x === "string" && x.trim() !== "") : undefined);
         let task;
@@ -1261,7 +1262,14 @@ function toolDefs(): PagedTool[] {
       annotations: READ,
       async run(a, c) {
         const { session, root } = await expSession(a, c);
-        const { readTimeline } = await import("../experiments/session.ts");
+        const { findSession, readTimeline, timelinePath } = await import("../experiments/session.ts");
+        // A session named by id has a timeline once anything was added to it; the project's own one may still be empty.
+        if (strArg(a, "session") !== undefined && !existsSync(timelinePath(root, session.id)) && findSession({ cwd: c.cwd, env: c.env })?.id !== session.id) {
+          throw new ToolError(`No experiment session with id ${JSON.stringify(session.id)}. Omit session for the project's session (.coding-sh/session.json), or ask the user to start one: coding.sh exp session new --name <topic>`, {
+            reason: "not_found",
+            next: "coding.sh exp session new --name <topic>",
+          });
+        }
         const all = await readTimeline(root, session.id);
         const offset = cursorArg(a);
         const limit = numArg(a, "limit", 50);
