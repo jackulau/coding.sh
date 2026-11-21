@@ -14,7 +14,7 @@ import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, 
 import { createReadStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { createInterface } from "node:readline";
+import { splitLines } from "../_shared/jsonl.ts";
 import type { AgentRunOutput, FileChange, NormalizeContext, SpoolLine } from "../../core/types.ts";
 import type { AgentEvent, AgentId, EventKind, Usage } from "../../schema/index.ts";
 import { paths, userHome } from "../../core/paths.ts";
@@ -943,10 +943,9 @@ export async function* readJsonl(file: string): AsyncGenerator<JsonlRecord> {
   } catch {
     return;
   }
-  const rl = createInterface({ input: stream, crlfDelay: Infinity });
   let lineNo = 0;
   try {
-    for await (const line of rl) {
+    for await (const line of splitLines(stream)) {
       lineNo++;
       const t = line.trim();
       if (!t) continue;
@@ -960,7 +959,6 @@ export async function* readJsonl(file: string): AsyncGenerator<JsonlRecord> {
   } catch {
     // unreadable file
   } finally {
-    rl.close();
     stream.destroy();
   }
 }

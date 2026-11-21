@@ -5,7 +5,6 @@ import { randomUUID } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
-import { createInterface } from "node:readline";
 import { paths, userHome } from "../core/paths.ts";
 import type { Adapter, AgentRunOutput, BackfillOpts, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../core/types.ts";
 import type { AgentEvent, Usage } from "../schema/index.ts";
@@ -41,6 +40,7 @@ import {
   readHeadText,
   readJsonl,
   readJsonlTail,
+  splitLines,
   runEnv,
   runHeadless,
   str,
@@ -514,11 +514,11 @@ async function readWorkflowJournal(path: string): Promise<Map<string, { label?: 
 }
 
 async function* readLines(path: string): AsyncGenerator<string> {
-  const rl = createInterface({ input: createReadStream(path, { encoding: "utf8" }), crlfDelay: Infinity });
+  const input = createReadStream(path, { encoding: "utf8" });
   try {
-    for await (const line of rl) yield line;
+    yield* splitLines(input);
   } finally {
-    rl.close();
+    input.destroy();
   }
 }
 
@@ -687,7 +687,8 @@ export const claudeCode: Adapter = {
   //    first line is left for the next call; a prompt command's call is one llm.call, in its own turn.
   // 16 (0.1.8): a shell call's test.result reads the last jest, vitest, node:test or mocha summary in its
   //    output, not the first.
-  parseVersion: 16,
+  // 17 (0.1.8): a line holding a raw U+2028 or U+2029 inside a string is read whole, not split and dropped.
+  parseVersion: 17,
 
   detect() {
     const dir = claudeConfigDir();
