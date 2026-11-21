@@ -241,7 +241,7 @@ coding.sh quota wait --window 5h
 - With no subcommand it prints one row per agent and window: the percent used, when the window resets and how old the reading is.
 - Claude Code's reading is the one the coding.sh status line saved from the rate_limits Claude Code sends it (Pro, Max and Ultra plans; install it with coding.sh statusline install). Codex's is the last token_count event in its newest rollout under CODEX_HOME/sessions (only the last 256 KB is read).
 - Behind a Claude apps gateway, Claude Code also sends a spend limit: the row's window is spend, its use may pass 100%, and --json adds usedUsd, limitUsd and period when the gateway sent them.
-- wait reads again at most once a minute and prints what it waits for on stderr. With several windows it waits until each has room. It exits 0 when there is room, 1 when there is no reading, 2 on a usage error and 130 on Ctrl-C.
+- wait reads again at most once a minute and prints what it waits for on stderr; when there is room already, it says so on stderr and returns at once. With several windows it waits until each has room. It exits 0 when there is room, 1 when there is no reading, 2 on a usage error and 130 on Ctrl-C.
 
 ### `coding.sh quota wait`
 
@@ -565,6 +565,7 @@ coding.sh sessions --agent codex --since 7d
 - Session keys: agent, model, provider, repo, launch, branch, dir, title, id, run, parent, flag, skill, hook, hook.tokens, weights.edits, weights.changed, weights.checkpoint, since, until, duration, turns, tools, tool.errors, llm.errors, files, events, tests.passed, tests.failed, tokens, tokens.in, tokens.out, cost, cache.breaks, cache.lost, cache.cost, unapproved, has, is. Event keys (the session has a matching event; event keys in one group match the same event): kind, tool, ok, mcp, error, event.duration, user, env, release (user, env and release read the session's start event and match on their own). Also sort:-cost and limit:N. Full list with examples: https://coding.sh/docs/query.
 - --facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).
 - With --json each session is a digest: its stats without stats.phases, and each derail without the event it started at (eventId, index). show &lt;id&gt; --json has both, and --fields stats.phases or --fields stats.derails prints them here.
+- In --json, repo is the root of the checkout the session ran in. A session in a linked worktree also has repoMain, the main checkout's root.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
 ## `coding.sh views`
@@ -1859,7 +1860,7 @@ coding.sh exp ab [spec] [options]
 | `--agent <AGENT>` |  | Only sessions of this agent (repeatable, or a comma list) |
 | `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
 | `-n, --limit <N>` | `40` | Maximum decision points. |
-| `--provider <NAME>` |  | Who answers the next turn and judges it: an API, or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `claude-code`, `codex`. |
+| `--provider <NAME>` |  | Who answers the next turn and judges it: an API (gemini reads GEMINI_API_KEY), or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `gemini`, `claude-code`, `codex`. |
 | `--model <MODEL>` |  | Model for the next turn (default: the one the decision points were recorded with, else claude-sonnet-5-5 or gpt-6-sol) |
 | `--judge-model <MODEL>` |  | Model for the judge (default: --model) |
 | `--base-url <URL>` |  | API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's) |
@@ -3668,7 +3669,7 @@ coding.sh refine propose [options]
 | `--since <DURATION|DATE>` | `14d` | Sessions started since. |
 | `--agent <AGENT>` |  | Only sessions of this agent (repeatable, or a comma list) |
 | `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
-| `--provider <NAME>` |  | Who proposes, answers the next turn and judges it: an API, or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `claude-code`, `codex`. |
+| `--provider <NAME>` |  | Who proposes, answers the next turn and judges it: an API (gemini reads GEMINI_API_KEY), or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `gemini`, `claude-code`, `codex`. |
 | `--base-url <URL>` |  | API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's) |
 | `--proposer-model <MODEL>` |  | Model that writes the edit (default: --judge-model, else --model, else claude-sonnet-5-5 or gpt-6-sol) |
 | `--proposer-command <CMD>` |  | Shell command that writes the edit instead of the proposer model: the prompt on stdin, the JSON reply on stdout (e.g. 'claude -p') |
@@ -3700,7 +3701,7 @@ coding.sh refine test <CANDIDATE>... [options]
 | `--since <DURATION|DATE>` | `14d` | Sessions started since. |
 | `--agent <AGENT>` |  | Only sessions of this agent (repeatable, or a comma list) |
 | `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
-| `--provider <NAME>` |  | Who proposes, answers the next turn and judges it: an API, or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `claude-code`, `codex`. |
+| `--provider <NAME>` |  | Who proposes, answers the next turn and judges it: an API (gemini reads GEMINI_API_KEY), or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `gemini`, `claude-code`, `codex`. |
 | `--base-url <URL>` |  | API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's) |
 | `--judge-model <MODEL>` |  | Model for the judge (default: --model) |
 | `-n, --limit <N>` | `40` | Maximum decision points. |
@@ -3816,7 +3817,7 @@ coding.sh refine run [options]
 | `--since <DURATION|DATE>` | `14d` | Sessions started since. |
 | `--agent <AGENT>` |  | Only sessions of this agent (repeatable, or a comma list) |
 | `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
-| `--provider <NAME>` |  | Who proposes, answers the next turn and judges it: an API, or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `claude-code`, `codex`. |
+| `--provider <NAME>` |  | Who proposes, answers the next turn and judges it: an API (gemini reads GEMINI_API_KEY), or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `gemini`, `claude-code`, `codex`. |
 | `--base-url <URL>` |  | API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's) |
 | `--judge-model <MODEL>` |  | Model for the judge (default: --model) |
 | `-n, --limit <N>` | `40` | Maximum decision points. |

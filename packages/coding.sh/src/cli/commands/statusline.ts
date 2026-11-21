@@ -3,7 +3,7 @@
 // session's cost, today's cost, the worst flag, a stopped ingest, plan usage) and exit 0
 // even on error, so a missing store or bad input never disrupts the agent. `install`/`uninstall`
 // wire settings.statusLine, backed up and restored byte-for-byte.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { CLAUDE_AGENT, claudeConfigDir } from "../../adapters/claude-code.ts";
@@ -17,7 +17,9 @@ import {
 } from "../../adapters/_shared/files.ts";
 import { forgetInstall, installRecord, recordInstall, sha256 } from "../../adapters/_shared/installs.ts";
 import { ingestStoppedField, ingestStoppedJson, readIngestStopped } from "../../core/ingest-health.ts";
+import { loadConfig } from "../../core/config.ts";
 import { paths } from "../../core/paths.ts";
+import { fileUrlPath, parseStoreUrl } from "../../store/factory.ts";
 import { budgetPart, highest, readBudgets, statuslineStatuses, type BudgetStatus } from "../../budget/index.ts";
 import type { Context } from "../../core/context.ts";
 import type { IndexStore, Session } from "../../core/types.ts";
@@ -152,6 +154,14 @@ async function print(c: CommandContext): Promise<number> {
     // a reading not saved is only a stale `coding.sh quota`
   }
   try {
+    // Rendering the line never makes a store: with no SQLite file and nothing spooled for one,
+    // the line has the model and plan usage from stdin and no costs yet.
+    if (sqliteStoreMissing(c)) {
+      const stopped = readIngestStopped(paths(c.env).ingestStopped);
+      if (c.out.json) c.out.data({ model: model ?? null, ...contextField, sessionCostUsd: null, todayCostUsd: 0, worstFlag: null, ...ingestStoppedField(stopped), ...quotaField });
+      else c.out.print(statuslineLine({ model, contextPercent, todayCostUsd: 0, ingestStoppedSince: stopped?.since }) + quotaSuffix);
+      return 0;
+    }
     return await withContext(c, async (ctx) => {
       // The hook spools events; without reading them the "need you" count lags until some other
       // command ingests (a new permission prompt missed, an answered one still counted).
@@ -203,6 +213,20 @@ async function print(c: CommandContext): Promise<number> {
       // nothing to print
     }
     return 0;
+  }
+}
+
+/**
+ * Whether the configured index is a SQLite file that does not exist yet (opening it would create
+ * it) and the hook has spooled nothing to ingest into one.
+ */
+function sqliteStoreMissing(c: CommandContext): boolean {
+  if (existsSync(paths(c.env).spool)) return false;
+  try {
+    const { scheme, rest } = parseStoreUrl(loadConfig({ env: c.env, cwd: c.cwd }).store.index);
+    return scheme === "sqlite" && rest !== ":memory:" && !existsSync(fileUrlPath(rest, { env: c.env }));
+  } catch {
+    return false; // a config problem is withContext's to report (and the catch below swallows it)
   }
 }
 

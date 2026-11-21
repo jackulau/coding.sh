@@ -72,6 +72,12 @@ function waitingFor(w: QuotaReading, below: number, now: number): string {
   return `${w.agent} ${w.window} at ${pct(w.usedPercent)} to drop below ${below}%${reset}`;
 }
 
+/** Why a window needs no wait: `claude-code spend at 63%, under 90%`, or that it has reset. */
+function roomFor(w: QuotaReading, below: number, now: number): string {
+  if (w.usedPercent < below) return `${w.agent} ${w.window} at ${pct(w.usedPercent)}, under ${below}%`;
+  return `${w.agent} ${w.window} at ${pct(w.usedPercent)}, reset at ${localTime(w.resetsAt ?? now, now)}`;
+}
+
 async function wait(c: CommandContext): Promise<number> {
   const f = waitFlags(c);
   let lastRead = Date.now();
@@ -87,6 +93,8 @@ async function wait(c: CommandContext): Promise<number> {
     const now = Date.now();
     const pending = windows.filter((w) => !hasRoom(w, f.below, now));
     if (!pending.length) {
+      // Returning at once: say what was checked, so a person or script sees why there was no wait.
+      if (!announced) c.out.note(windows.map((w) => roomFor(w, f.below, now)).join("; "));
       c.out.data({ ok: true, ...quotaJson({ windows, missing: [] }, now) });
       return 0;
     }

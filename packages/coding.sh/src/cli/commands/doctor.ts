@@ -20,8 +20,7 @@ import { paths, userHome } from "../../core/paths.ts";
 import { spoolFile } from "../../spool/write.ts";
 import { maskStoreUrl, maskUrlsIn } from "../../core/store-url.ts";
 import { allGatewayConfigs, detectGatewaySetups, gatewaySettings } from "../../integrations/gateway/config.ts";
-import { GATEWAYS } from "../../integrations/gateway/providers.ts";
-import { GATEWAY_FLAG } from "../../integrations/gateway/ids.ts";
+import { gatewayFlag, GATEWAYS, type GatewayId } from "../../integrations/gateway/providers.ts";
 import { UsageError } from "../args.ts";
 import { list, port as portFlag } from "../common.ts";
 import { ago, LABEL_WIDTH, plural } from "../output.ts";
@@ -413,6 +412,12 @@ export async function run(c: CommandContext): Promise<number> {
   const lastByAgent: Record<string, number> = {};
   // Where the agent's recent sessions ran: project-level hooks are looked for there.
   const cwdsByAgent: Record<string, string[]> = {};
+  // LLM gateways: read-only config scan; keys are reported as set or not, never shown.
+  const gatewaySetups = detectGatewaySetups(env, c.cwd);
+  const gatewayConfigs = allGatewayConfigs(env);
+  // Tagged sessions are counted for Vercel and every gateway an agent routes through or has a key,
+  // so "routes claude-code via cliproxyapi" sits next to the sessions tagged gateway:cliproxyapi.
+  const countedGateways = [...new Set<GatewayId>(["vercel", ...gatewaySetups.map((f) => f.gateway), ...gatewayConfigs.filter((g) => g.apiKey).map((g) => g.id)])];
   let gatewaySessions = 0;
   try {
     const ctx = await openContext({ env, cwd: c.cwd });
@@ -425,7 +430,9 @@ export async function run(c: CommandContext): Promise<number> {
         if (s) lastByAgent[adapter.id] = s.endedAt ?? s.startedAt;
         cwdsByAgent[adapter.id] = recent.map((r) => r.cwd).filter((d): d is string => !!d);
       }
-      gatewaySessions = (await ctx.index.listSessions({ flag: GATEWAY_FLAG, limit: 1000 })).length;
+      const tagged = new Set<string>();
+      for (const id of countedGateways) for (const s of await ctx.index.listSessions({ flag: gatewayFlag(id), limit: 1000 })) tagged.add(s.id);
+      gatewaySessions = tagged.size;
       const missing = await ctx.index.sessionsWithoutRow?.();
       if (missing) {
         const byAgent: Record<string, number> = {};
@@ -508,13 +515,13 @@ export async function run(c: CommandContext): Promise<number> {
     routes: proxyRoutes(env).map((r) => ({ agent: r.agent, file: r.file, url: r.url ?? null, ok: r.url === r.expected, chained: r.chained ?? null })),
   };
   const problems = (spool.ok ? 0 : 1) + (store.ok ? 0 : 1);
-  // LLM gateways: read-only config scan; keys are reported as set or not, never shown.
-  // `key` and `sessions` are Vercel AI Gateway's; `others` lists other gateways with a key set.
+  // `key` is Vercel AI Gateway's; `sessions` counts the sessions tagged by Vercel or a gateway that is
+  // configured or has a key (`counted` names them); `others` lists other gateways with a key set.
   const gs = gatewaySettings(env);
-  const others = allGatewayConfigs(env)
+  const others = gatewayConfigs
     .filter((g) => g.id !== "vercel" && g.apiKey)
     .map((g) => ({ id: g.id, key: { set: true, source: g.keySource } }));
-  const gateway = { configured: detectGatewaySetups(env, c.cwd), key: gs.apiKey ? { set: true, source: gs.keySource } : { set: false, env: gs.apiKeyEnv }, sessions: gatewaySessions, others };
+  const gateway = { configured: gatewaySetups, counted: countedGateways, key: gs.apiKey ? { set: true, source: gs.keySource } : { set: false, env: gs.apiKeyEnv }, sessions: gatewaySessions, others };
 
   // The rows below print nothing with --json (the document is the answer); every "!" row is also a warning in it.
   const warnings: DoctorWarning[] = [];
