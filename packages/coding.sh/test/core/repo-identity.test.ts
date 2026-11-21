@@ -3,13 +3,14 @@
 // usage --by repo. cwd and repo.root stay where the agent ran.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, posix, win32 } from "node:path";
 import { after, before, describe, it } from "node:test";
 import type { Adapter, IndexStore } from "../../src/core/types.ts";
 import { defaultConfig } from "../../src/core/config.ts";
 import { ingest } from "../../src/core/ingest.ts";
+import { mainWorktree } from "../../src/core/git.ts";
 import { currentByCwd, matchesPlace, parsePlace, pathKey, scanSessions } from "../../src/mcp/data.ts";
 import { parseWhere, repoGroup, worktreeRepo } from "../../src/query/where.ts";
 import { facetCounts, findSessions } from "../../src/query/run.ts";
@@ -49,6 +50,24 @@ describe("worktreeRepo: the repo an agent's worktree belongs to, from its path",
     assert.deepEqual(repoGroup({ repo: { root: "/w/demo" }, cwd: "/w/demo/sub" }), { name: "demo", path: "/w/demo" });
     assert.deepEqual(repoGroup({ cwd: "/w/notes" }), { name: "notes", path: "/w/notes" });
     assert.deepEqual(repoGroup({}), {});
+  });
+});
+
+describe("mainWorktree: one git dir spelled two ways is a main checkout, not a worktree", () => {
+  let dir: string;
+  before(() => {
+    dir = mkdtempSync(join(tmpdir(), "csh-mainwt-"));
+  });
+  after(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("compares real paths, as git's long names and a cwd's 8.3 short names (RUNNER~1 on CI) need", () => {
+    const repo = join(dir, "demo");
+    mkdirSync(join(repo, ".git", "worktrees", "wt"), { recursive: true });
+    const link = join(dir, "demo-link");
+    symlinkSync(repo, link, process.platform === "win32" ? "junction" : "dir");
+    assert.equal(mainWorktree(join(repo, ".git"), join(link, ".git")), undefined, "the main checkout's .git through a link");
+    assert.equal(mainWorktree(join(link, ".git", "worktrees", "wt"), join(repo, ".git")), repo, "a linked worktree still names its main checkout");
+    assert.equal(mainWorktree(join(dir, "gone", ".git"), join(dir, "gone2", ".git")), join(dir, "gone2"), "paths that do not exist compare as written");
   });
 });
 
