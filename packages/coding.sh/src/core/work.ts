@@ -404,8 +404,43 @@ function describe(item: WorkItem, cause: WorkCause, members: readonly Session[],
   }
 }
 
-/** Builds one item from its sessions. */
-export function workItem(raw: RawItem, now: number, overlay?: WorkOverlay): WorkItem {
+/** A path for comparing: forward slashes, no trailing slash, lower case on Windows. */
+const pathKey = (p: string): string => {
+  const k = p.replace(/\\/g, "/").replace(/\/+$/, "");
+  return /^[A-Za-z]:/.test(k) ? k.toLowerCase() : k;
+};
+
+/** The branches recorded by sessions that ran at a repo root itself, keyed by pathKey(root): the main checkout's. */
+export type Checkouts = ReadonlyMap<string, readonly { at: number; branch: string }[]>;
+
+/** The branch of each repo root's own checkout, from the sessions whose cwd is that root. */
+export function rootCheckouts(sessions: readonly Session[]): Checkouts {
+  const out = new Map<string, { at: number; branch: string }[]>();
+  for (const s of sessions) {
+    if (!s.cwd || !s.repo?.root || !s.repo.branch || pathKey(s.cwd) !== pathKey(s.repo.root)) continue;
+    const k = pathKey(s.repo.root);
+    out.set(k, [...(out.get(k) ?? []), { at: s.startedAt, branch: s.repo.branch }]);
+  }
+  return out;
+}
+
+/**
+ * True when `s` ran in a folder under its repo root on a branch other than the
+ * one the root's own checkout had nearest in time: a worktree nested in the repo
+ * (one since removed resolves to the enclosing repo). Its diff is in the cwd.
+ */
+export function ownCheckout(s: Session, checkouts: Checkouts | undefined): boolean {
+  const root = s.repo?.root;
+  if (!checkouts || !s.cwd || !root || !s.repo?.branch) return false;
+  if (!pathKey(s.cwd).startsWith(`${pathKey(root)}/`)) return false;
+  const seen = checkouts.get(pathKey(root));
+  if (!seen?.length) return false;
+  const nearest = seen.reduce((a, b) => (Math.abs(b.at - s.startedAt) < Math.abs(a.at - s.startedAt) ? b : a));
+  return nearest.branch !== s.repo.branch;
+}
+
+/** Builds one item from its sessions. `checkouts` (rootCheckouts) tells a worktree nested in its repo from a subfolder. */
+export function workItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?: Checkouts): WorkItem {
   const members = [...raw.members].sort((a, b) => a.startedAt - b.startedAt);
   const root = members.find((s) => s.id === raw.rootId);
   const primary = root ?? members[0]!;
@@ -430,7 +465,8 @@ export function workItem(raw: RawItem, now: number, overlay?: WorkOverlay): Work
   };
   if (primary.provider) item.provider = primary.provider;
   if (primary.cwd) item.cwd = primary.cwd;
-  if (primary.repo?.root) item.repo = primary.repo.root;
+  // A checkout of its own is where the agent worked: Where names it and the review diffs it.
+  if (primary.repo?.root) item.repo = ownCheckout(primary, checkouts) ? primary.cwd : primary.repo.root;
   if (primary.repo?.branch) item.branch = primary.repo.branch;
   if (cost > 0) item.costUsd = Math.round(cost * 1e4) / 1e4;
   if (raw.startedByRoot) item.startedBy = workItemId(raw.startedByRoot);
@@ -494,7 +530,8 @@ export function buildWorkQueue(sessions: readonly Session[], opts: WorkOptions =
     const primary = raw.members.find((s) => s.id === raw.rootId) ?? raw.members.reduce((a, b) => (b.startedAt < a.startedAt ? b : a));
     return matchesPlace(primary, place);
   });
-  const all = raws.map((raw) => workItem(raw, now, opts.overlay));
+  const checkouts = rootCheckouts(sessions);
+  const all = raws.map((raw) => workItem(raw, now, opts.overlay, checkouts));
   all.sort(compare);
   const stages = Object.fromEntries(STAGES.map((st) => [st, 0])) as Record<Stage, number>;
   for (const i of all) stages[i.stage]++;
@@ -608,13 +645,19 @@ export const WORK_FILE_SESSIONS = 200;
  */
 export async function workFiles(index: Pick<IndexStore, "listEvents">, item: WorkItem, sessions: readonly Session[], now = Date.now()): Promise<string[]> {
   const byId = new Map(sessions.map((s) => [s.id, s]));
-  const files = new Set<string>();
+  // Each path with the cwd it is relative to (absolute paths need none).
+  const found: [string, string | undefined][] = [];
   // A session that counted no changed file has none to list.
   const changers = item.sessionIds.filter((id) => (byId.get(id)?.stats.filesChanged ?? 1) > 0);
   const ids = changers.slice(0, WORK_FILE_SESSIONS);
   for (const id of ids) {
-    for (const f of changedPaths(await index.listEvents(id, { kinds: CHANGE_EVENT_KINDS }), byId.get(id)?.cwd)) files.add(f);
+    const cwd = byId.get(id)?.cwd;
+    for (const f of changedPaths(await index.listEvents(id, { kinds: CHANGE_EVENT_KINDS }), cwd)) found.push([f, cwd]);
   }
+  // One path base: when some paths are absolute (written outside the cwd), every path is.
+  const absolute = (p: string) => /^(?:[A-Za-z]:)?[\\/]/.test(p);
+  const mixed = found.some(([f]) => absolute(f)) && found.some(([f, cwd]) => !absolute(f) && cwd);
+  const files = new Set(found.map(([f, cwd]) => (mixed && cwd && !absolute(f) ? `${cwd.replace(/\\/g, "/").replace(/\/+$/, "")}/${f}` : f)));
   if (ids.length === changers.length && files.size) {
     item.filesChanged = files.size;
     if (item.cause?.bucket === "review") item.reason = reviewReason(short(now - item.cause.at), files.size);

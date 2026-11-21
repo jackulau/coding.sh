@@ -42,7 +42,7 @@ Each issue has a count, a severity, the newest example and the commands for the 
 | Kind | Example |
 |---|---|
 | A failure flag | The agent says it is done without running anything, or ends its turn while tests fail. [Concepts](../concepts.md) lists the flags. |
-| A command that fails the same way in two or more sessions | A broken `npm test` or a missing script. When the test command failed before the agent changed any file, the issue says to fix the command first. |
+| A command that fails in two or more sessions | A broken `npm test` or a missing script. When the test command failed before the agent changed any file, the issue says to fix the command first. |
 | Prompt cache paid for again | Model calls that found the cache gone, so the prompt was billed again. Listed from $1 in two or more sessions, with a fix for each cause. |
 
 Issues seen in two or more sessions come first, then by severity. Example prompts, error lines and
@@ -63,6 +63,11 @@ one in 5% needs 32. Until then it stays in its place with its fix.
   watched. The first line counts them, and `--headless` includes them.
 - In a compound line such as `cat Cargo.toml && cargo build`, the part that failed is the one
   counted. When nothing singles out a part, the issue says "A compound command".
+- The error line under a command comes from that command's own output: the line that names it,
+  or all of the output when the other parts are setup steps such as `cd`.
+- When no line can be tied to the command, the issue shows no error line. The title says "fails
+  the same way" only when every failure shows the same error, and "fails in several sessions"
+  otherwise.
 - A command run as `powershell.exe -Command <cmd>` or `pwsh -c <cmd>` is counted under `<cmd>`.
 - A Codex code-mode `exec` call only runs other tool calls, so its failures count once, under
   the calls it ran.

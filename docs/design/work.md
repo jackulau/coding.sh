@@ -178,6 +178,10 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
   redacted prompt text), for how long, its cost, the files it changed, its child sessions, and the
   next step: the agent and folder to answer in while it runs, or the resume command once it ended.
   It also prints the stage, the kind and the evidence for the stage.
+  A session that ran in a folder under its repo, on a branch other than the one the sessions at the
+  repo root had nearest in time, ran in a worktree nested in the repo: the item's repo is that
+  folder, so Where names it and the review step runs `git -C <folder> diff`. When an item wrote
+  files both inside and outside its folder, every path in the list is absolute.
   The id is an item id or the id of any session in the item. A session outside the window is
   still found by its id. An unknown id exits 1.
 - `coding.sh work ack <id>` and `coding.sh work snooze <id> <duration>`. A bad duration exits 2.

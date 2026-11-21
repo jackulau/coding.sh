@@ -78,6 +78,8 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Improve.** The error line under a failing command comes from that command's own output, not from another part of the same shell line, and the title says "fails the same way" only when the errors match. [Improve](https://github.com/jackulau/coding.sh/blob/main/docs/guides/improve.md)
+- **Work.** For a session in a worktree nested inside its repo, `work show` names the worktree, its review step diffs the worktree, and its file list uses one path base. [Work tracking](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#surfaces)
 - **CLI.** `show --json` and `sessions --json` add `repoMain` for a session in a linked worktree. `doctor` counts the sessions tagged by the gateway an agent routes through. `exp ab`, `refine` and `refine diagnose` take `--provider gemini`. `quota wait` says why it did not wait, and the status line creates no store. [CLI reference](https://coding.sh/docs/cli/sessions)
 - **Sessions.** A session in a git worktree counts under its main repo: `repo:`, `--repo .`, `usage --by repo`, the viewer's repo group, `improve` and the MCP tools include it. `repo.main` names the main checkout; `cwd` and `repo.root` stay the same. [Query](https://coding.sh/docs/query#session-keys)
 - **MCP.** `session_get` with `tail` pages back to the first entry with `nextCursor`. A `since` after `until` is an error naming both times. A 2024-11-05 client gets 2024-11-05 and results without `structuredContent`. Error results carry no `structuredContent`; details are in `_meta`. `status` lists the top 5 work items, not 10. [MCP](https://coding.sh/docs/mcp#protocol)

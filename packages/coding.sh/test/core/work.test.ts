@@ -451,3 +451,31 @@ describe("stages and kinds", () => {
 test("BUCKETS is the documented order", () => {
   assert.deepEqual([...BUCKETS], ["blocked", "failed", "stalled", "turn", "review"]);
 });
+
+describe("a worktree nested in its repo", () => {
+  const repo = (root: string, branch: string) => ({ root, head: "", branch }) as never;
+  const fc = (sessionId: string, path: string) => ({ id: `${sessionId}${path}`, v: 0, sessionId, ts: ago(4 * MIN), agent: "claude-code", kind: "file.change", payload: { path } }) as AgentEvent;
+
+  test("names the worktree and diffs it when its branch is not the main checkout's", async () => {
+    const wt = "C:/work/demo/data/worktrees/fix-ui";
+    const main = sess("main", 30 * MIN, { cwd: "C:/work/demo", repo: repo("C:/work/demo", "main") });
+    const agent = sess("wt", 5 * MIN, { cwd: wt, repo: repo("C:/work/demo", "improve/fix-ui"), stats: { filesChanged: 2 } });
+    const item = queue([main, agent]).items.find((i) => i.primaryId === "wt")!;
+    assert.equal(item.repo, wt);
+    assert.equal(item.next, "review: `git -C C:/work/demo/data/worktrees/fix-ui diff`, then `coding.sh work ack " + item.id + "`");
+    // One path base: a path written outside the worktree makes every path absolute.
+    const events: Record<string, AgentEvent[]> = { wt: [fc("wt", "src/ui.ts"), fc("wt", "C:/work/demo/notes/ui.md")] };
+    const files = await workFiles({ listEvents: async (id: string) => events[id] ?? [] }, item, [main, agent], NOW);
+    assert.deepEqual(files.sort(), ["C:/work/demo/data/worktrees/fix-ui/src/ui.ts", "C:/work/demo/notes/ui.md"]);
+  });
+
+  test("a subfolder on the main checkout's branch keeps the repo root", () => {
+    const main = sess("main", 30 * MIN, { cwd: "/work/demo", repo: repo("/work/demo", "main") });
+    const sub = sess("sub", 5 * MIN, { cwd: "/work/demo/packages/app", repo: repo("/work/demo", "main"), stats: { filesChanged: 1 } });
+    const alone = sess("alone", 5 * MIN, { cwd: "/work/other/data/wt", repo: repo("/work/other", "feature"), stats: { filesChanged: 1 } });
+    const items = queue([main, sub, alone]).items;
+    assert.equal(items.find((i) => i.primaryId === "sub")!.repo, "/work/demo");
+    // With no session at the root to compare branches with, the root stays.
+    assert.equal(items.find((i) => i.primaryId === "alone")!.repo, "/work/other");
+  });
+});

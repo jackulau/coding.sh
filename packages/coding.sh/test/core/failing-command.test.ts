@@ -2,7 +2,7 @@
 // like the ones agents run (Claude Code's "Exit code N" first line included).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { failingPart, launchedCommand, shellParts } from "../../src/core/failing-command.ts";
+import { failingPart, launchedCommand, partOutput, shellParts } from "../../src/core/failing-command.ts";
 import { COMPOUND, failureRecords, rankIssues } from "../../src/improve/issues.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import { sessionEvents } from "../helpers-decision.ts";
@@ -139,5 +139,46 @@ describe("failureRecords on compound commands", () => {
     const issues = rankIssues(sessions, new Map(sessions.map((s) => [s.id, failureRecords(sessionEvents(s.id, { cwd: CWD, startedAt: T0 }, steps(s.id)))])));
     const titles = issues.filter((i) => i.kind === "failure").map((i) => i.title);
     assert.deepEqual(titles, ["`pytest -q` already fails before the agent changes anything"]);
+  });
+});
+
+describe("the sample under a failing part's heading", () => {
+  const CWD = "/work/demo";
+  const T0 = 1_790_000_000_000;
+  const which = (id: string, k: number, command: string, output: string) =>
+    sessionEvents(id, { cwd: CWD, startedAt: T0 + k }, [
+      ["tool.start", { tool: "Bash", toolUseId: `${id}-1`, input: { command } }],
+      ["tool.end", { tool: "Bash", toolUseId: `${id}-1`, ok: false, output }],
+    ]);
+
+  it("partOutput keeps the part's own line, the whole output for a lone command, and nothing it can't tie", () => {
+    const cmd = "curl -sS https://example.test/; ls site; which vercel wrangler";
+    const out = "Exit code 2\ncurl: (6) Could not resolve host: example.test\nsite.ts\nwhich: no vercel in (/usr/local/bin:/usr/bin:/bin)\n/usr/bin/wrangler";
+    const part = failingPart(cmd, { output: out })!;
+    assert.equal(part.prog, "which");
+    assert.equal(partOutput(cmd, part, out), "which: no vercel in PATH");
+    // A clipped PATH (no closing parenthesis) is still not the error.
+    assert.equal(partOutput(cmd, part, "which: no vercel in (/usr/bin:/home/user/.loc…"), "which: no vercel in PATH");
+    const lone = failingPart("cd /work/demo && mkdir -p out && node -e 'x()'", { output: "Exit code 1\nReferenceError: x is not defined" })!;
+    assert.equal(partOutput("cd /work/demo && mkdir -p out && node -e 'x()'", lone, "Exit code 1\nReferenceError: x is not defined"), "Exit code 1\nReferenceError: x is not defined");
+    // `which` printed nothing (a POSIX which is silent) and curl's error is curl's.
+    const silent = "curl -sS https://example.test/; which vercel";
+    assert.equal(partOutput(silent, failingPart(silent, { output: "curl: (6) Could not resolve host", exitCode: 1 })!, "curl: (6) Could not resolve host"), "curl: (6) Could not resolve host");
+    assert.equal(partOutput(silent, { argv: ["which", "vercel"], prog: "which", last: true, timed: false }, "curl: (6) Could not resolve host"), undefined);
+  });
+
+  it("takes the failing part's line, not another part's error, and says 'the same way' only when the errors match", () => {
+    const a = which("a", 0, "curl -sS https://example.test/; ls site; which vercel wrangler", "Exit code 2\ncurl: (6) Could not resolve host: example.test\nsite.ts\nwhich: no vercel in (/usr/bin:/bin)");
+    const b = which("b", 1, "which actionlint; grep -n fetch site.mjs", "Exit code 1\nsite.mjs:25:  const res = await fetch(url);\nwhich: no actionlint in (/usr/bin:/bin)");
+    const recs = [a, b].map((ev) => failureRecords(ev));
+    assert.deepEqual(recs.map((r) => r.map((x) => [x.key, x.sample])), [[["cmd:which", "which: no vercel in PATH"]], [["cmd:which", "which: no actionlint in PATH"]]]);
+    const sessions = [a, b].map((ev) => buildSession(ev));
+    const issue = rankIssues(sessions, new Map(sessions.map((s, k) => [s.id, recs[k]!]))).find((i) => i.id === "fails:cmd:which")!;
+    assert.equal(issue.title, "`which` fails in several sessions");
+    assert.equal(issue.sample, "which: no vercel in PATH");
+    const c = which("c", 2, "ls site; which vercel", "Exit code 1\nsite.ts\nwhich: no vercel in (/usr/bin)");
+    const same = [a, c].map((ev) => buildSession(ev));
+    const both = rankIssues(same, new Map([[same[0]!.id, recs[0]!], [same[1]!.id, failureRecords(c)]])).find((i) => i.id === "fails:cmd:which")!;
+    assert.equal(both.title, "`which` fails the same way in several sessions");
   });
 });
