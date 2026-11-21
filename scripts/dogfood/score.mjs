@@ -81,7 +81,11 @@ export function headline(gates, components) {
   return { headline: w ? round((s / w) * 100, 1) : null, headlineFullWeight: round(s, 1), coverage, missing, normalized: norm };
 }
 
-const LOWER_IS_BETTER = new Set(["cli.invalidRate", "cli.dev.invalidRate", "perf.hook", "perf.hookP95", "perf.hook1mb", "perf.storeSize", "perf.viewerTti", "perf.replayIndex", "perf.replayStep", "perf.help", "site.js", "cli.costPerSuccess", "cli.wallMs"]);
+// Every perf budget that is a ceiling, from bench.mjs, plus the rest: LCP in ms, the dev − heldout gap.
+const LOWER_IS_BETTER = new Set([
+  ...Object.entries(PERF_TARGETS).filter(([, t]) => t.dir === "max").map(([k]) => k),
+  ...["cli.invalidRate", "cli.dev.invalidRate", "cli.costPerSuccess", "cli.wallMs", "cli.gap", "site.js", "site.vitals"],
+]);
 
 export function compare(cur, prev) {
   const out = {};
