@@ -110,6 +110,7 @@ const ON_SITE: Record<string, string> = {
   "production/serverless.md": "/docs/deploy",
   "integrations/ai-gateway.md": "/docs/ai-gateway",
   "integrations/eve.md": "/docs/otel",
+  "integrations/langfuse.md": "/docs/otel",
   "how-to/tee-agent-runs.md": "/docs/otel",
   "use-cases/claude-code-cost.md": "/docs/cost",
   "how-to/expensive-sessions.md": "/docs/cost",

@@ -84,7 +84,8 @@ export function notStarted(r) {
 }
 
 function runCase(cli, env, argv, mode) {
-  const args = [...argv, ...(mode.json ? ["--json"] : [])];
+  const args = [...argv];
+  if (mode.json) args.push("--json");
   const e = { ...env, ...mode.env };
   if (mode.tty) {
     // `script` gives the child a pseudo-terminal on stdout/stderr.

@@ -392,6 +392,18 @@ for question in ["Viewer search misses tool output", "Which labels fit?"]:
   <Code title="python" code={grouping} />
   <p>Tag eval runs with <code>OTEL_RESOURCE_ATTRIBUTES=coding_sh.run_id=&lt;id&gt;</code>.</p>
 
+  <details class="more" id="public-path">
+    <summary>Send from a Langfuse SDK</summary>
+    <p>
+      <code>coding.sh serve</code> and <code>coding.sh collector</code> also take traces at <code>/api/public/otel/v1/traces</code>, the path a
+      Langfuse SDK sends to. Point the SDK's host at the server and set its public or secret key to an ingest key: Basic auth works on that path.
+    </p>
+    <p>
+      <code>langfuse.session.id</code> groups spans into one session. <code>langfuse.user.id</code>, <code>langfuse.environment</code> and
+      <code>langfuse.release</code> become the <code>user:</code>, <code>env:</code> and <code>release:</code> keys of <code>--where</code>.
+    </p>
+  </details>
+
   <details class="more" id="sessions">
     <summary>How spans become sessions</summary>
     <p>
