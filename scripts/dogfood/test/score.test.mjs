@@ -56,6 +56,19 @@ test("compare is direction-aware", () => {
   assert.equal(r.components["cli.guidelines"].direction, "worse");
 });
 
+test("compare reads lower-is-better from every perf ceiling, LCP and the dev - heldout gap", () => {
+  const prev = { "site.vitals": 1200, "cli.gap": 5, "perf.hookSh": 3, "perf.collectorP95": 90, "perf.ingest": 5000, "perf.collectorSpans": 5000 };
+  const cur = { "site.vitals": 1500, "cli.gap": 12, "perf.hookSh": 4, "perf.collectorP95": 70, "perf.ingest": 5200, "perf.collectorSpans": 4800 };
+  const wrap = (o) => ({ headline: 1, components: Object.fromEntries(Object.entries(o).map(([k, value]) => [k, { value }])) });
+  const r = compare(wrap(cur), wrap(prev)).components;
+  assert.equal(r["site.vitals"].direction, "worse");
+  assert.equal(r["cli.gap"].direction, "worse");
+  assert.equal(r["perf.hookSh"].direction, "worse");
+  assert.equal(r["perf.collectorP95"].direction, "better");
+  assert.equal(r["perf.ingest"].direction, "better");
+  assert.equal(r["perf.collectorSpans"].direction, "worse");
+});
+
 test("perf budgets", () => {
   assert.equal(meets("perf.hook", 10), true);
   assert.equal(meets("perf.hook", 10.1), false);
