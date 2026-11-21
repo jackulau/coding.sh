@@ -104,7 +104,6 @@
       "runner": "pytest",
       "passed": 2,
       "failed": 1,
-      "skipped": 0,
       "toolUseId": "toolu_d2"
     },
     "id": "654ce4a3374777739ddf63df59e1963806274cc27bc3bdd95f7a31a8e2ad2656",

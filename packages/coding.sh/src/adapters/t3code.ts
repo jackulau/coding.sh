@@ -869,7 +869,8 @@ export const t3code: Adapter = {
   // 9 (0.1.8): that also holds when the run sits under a later provider thread's transcript, and for Workflow-tool run
   //    threads and agents T3 records in projection_subagents; a store-built llm.call names the turn's model.
   // 10 (0.1.8): the host-link notification names the thread in its message, and T3's "New thread" placeholder is no title.
-  parseVersion: 10,
+  // 11 (0.1.8): a shell call's test.result reads the last jest, vitest, node:test or mocha summary in its output, not the first.
+  parseVersion: 11,
 
   async detect() {
     const env = process.env;

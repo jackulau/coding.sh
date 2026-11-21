@@ -122,7 +122,6 @@
       "runner": "vitest",
       "passed": 4,
       "failed": 1,
-      "skipped": 0,
       "toolUseId": "hook-c63b183405d1ff78"
     },
     "id": "b5d4c900ba5617cd9bed86d47578865beb5ffea84bee9e64de1fd42c7fa921bf",

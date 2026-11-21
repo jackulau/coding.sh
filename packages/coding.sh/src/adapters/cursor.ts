@@ -353,7 +353,8 @@ export const cursor: Adapter = {
   tier: "B",
   // 2 (0.1.2): prompts and replies paired without timestamps; one session start/end across hooks and backfill.
   // 3 (0.1.5): a tool call that loads a skill names it (payload.skill).
-  parseVersion: 3,
+  // 4 (0.1.8): a shell call's test.result reads the last jest, vitest, node:test or mocha summary in its output, not the first.
+  parseVersion: 4,
 
   async detect() {
     const dir = cursorConfigDir();

@@ -156,7 +156,6 @@
       "runner": "cargo",
       "passed": 6,
       "failed": 1,
-      "skipped": 0,
       "toolUseId": "call_2"
     },
     "id": "0a76732bbf3a89d870b33d71e9d257db442b4c663fdf755e8246fc93c389a0c4",

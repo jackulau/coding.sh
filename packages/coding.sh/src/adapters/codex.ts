@@ -1122,7 +1122,8 @@ export const codex: Adapter = {
   //    durationMs, ttftMs or tokensPerSec.
   // 8 (0.1.5): backfill reads rollout-*.jsonl.zst, the compressed rollouts Codex writes after a week.
   // 9 (0.1.5): a task_complete with an error keeps it as an error event (source api, errorType, errorClass).
-  parseVersion: 9,
+  // 10 (0.1.8): a shell call's test.result reads the last jest, vitest, node:test or mocha summary in its output, not the first.
+  parseVersion: 10,
 
   detect() {
     const home = codexHome();

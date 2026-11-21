@@ -42,7 +42,6 @@
       "runner": "pytest",
       "passed": 4,
       "failed": 1,
-      "skipped": 0,
       "source": "output"
     },
     "id": "c3d584f3d4adc311cd71ec674d16ad8d635a02c9c9a0a36fa9ccca80998cd248",
