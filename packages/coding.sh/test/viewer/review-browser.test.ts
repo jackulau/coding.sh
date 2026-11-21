@@ -53,7 +53,10 @@ function stub(o: Stub): string {
       }
       if (url === "/api/score-configs" && o.configs) return json({ items: o.configs });
       if (url.startsWith("/api/sessions/sess-")) {
-        const id = decodeURIComponent(url.slice("/api/sessions/".length));
+        // The record, its events (none) and a 404 for the other session routes (the outline).
+        const [id, sub] = url.split("?")[0].slice("/api/sessions/".length).split("/").map(decodeURIComponent);
+        if (sub === "events") return json({ items: [], hasMore: false });
+        if (sub) return json({ error: "not found" }, 404);
         return json({ id, title: "Title from the session", agent: "codex", model: "gpt-5", startedAt: Date.UTC(2026, 9, 7, 9, 30), repo: { root: "/work/demo" }, cwd: "/work/demo", flags: ["slow"], stats: { usage: { costUsd: 0.42 } } });
       }
       if (url.startsWith("/api/work?") && o.work) return json(o.work);
@@ -219,6 +222,8 @@ describe("Review page in a browser", { skip: chrome ? false : "no Chrome/Chromiu
     assert.equal(await p.eval("document.querySelector('.page-head .meta').textContent"), "0 done · 1 skipped · 2 in all · score config correct");
     await p.press("o");
     await p.waitFor("location.hash === '#/s/sess-2'", "the session");
+    // The session page has loaded (its loading panel is gone), so an error it throws is caught here on every OS.
+    await p.waitFor("document.querySelector('.session-view') && !document.querySelector('.session-view [aria-busy=true]')", "the session page");
     assert.deepEqual(p.errors, []);
   });
 
