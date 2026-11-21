@@ -31,8 +31,8 @@ What the statuses mean:
   session against a local stub model, its hooks fired and the recorded session was checked, and
   the captured payloads are now CI fixtures. For OpenCode, Pi, Goose, Factory Droid, GitHub
   Copilot CLI and Aider, CI repeats that run on Linux and Windows on every change
-  ([`scripts/e2e/real-capture.mjs`](../../scripts/e2e/real-capture.mjs)). The other agents have
-  not been checked on Windows yet.
+  ([`scripts/e2e/real-capture.mjs`](../../scripts/e2e/real-capture.mjs)). T3 Code has been
+  checked on a Windows 11 install.
 - **Not run live**: CI tests the adapter against hook payloads, transcripts or session stores
   that follow the agent's documented format, plus its install and uninstall. It has not yet been
   checked against a live install of that agent. Reports are welcome.
