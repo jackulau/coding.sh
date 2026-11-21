@@ -84,6 +84,7 @@ same `CODING_SH_HOME` as the server.
 | POST | [`/v1/traces`](#post-v1traces-post-v1logs-post-v1metrics) | ingest key | serve, collector |
 | POST | [`/v1/logs`](#post-v1traces-post-v1logs-post-v1metrics) | ingest key | serve, collector |
 | POST | [`/v1/metrics`](#post-v1traces-post-v1logs-post-v1metrics) | ingest key | serve, collector |
+| POST | [`/api/public/otel/v1/traces`](#post-apipublicotelv1traces) | ingest key, as Bearer or in Basic auth | serve, collector |
 | POST | [`/proxy/{path}`](#post-proxypath) | ingest key in `x-coding-sh-key` | serve |
 | GET | [`/healthz`](#get-healthz) | none | serve |
 | GET | [`/readyz`](#get-readyz) | none | serve |
@@ -250,7 +251,7 @@ OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer%20csh_ik_…
 
 Bodies are `application/json` or `application/x-protobuf`, optionally compressed. Traces and logs
 become events and sessions: one session per trace, or per conversation when spans carry
-`gen_ai.conversation.id` or `session.id`. Metrics are accepted and dropped. Event ids come from
+`gen_ai.conversation.id`, `session.id` or `langfuse.session.id`. Metrics are accepted and dropped. Event ids come from
 traceId and spanId, so re-exports insert nothing. `OPTIONS` answers CORS preflight; browser origins
 are refused unless listed in `serve.cors_origins`.
 
@@ -309,6 +310,18 @@ rest are kept and the 200 body says so (`rejectedLogRecords` for logs):
 | 415 | other `Content-Type`, or an unknown `Content-Encoding` | `{"code":3,"message":"unsupported Content-Type \"text/plain\"; use application/x-protobuf or application/json"}` |
 | 429 | ingest queue full; `Retry-After` set | `{"code":8,"message":"ingest queue is full; retry after 1s"}` |
 | 503 | store error, shutting down, or a standby replica; `Retry-After` set | `{"code":14,"message":"server is shutting down; retry"}` |
+
+### `POST /api/public/otel/v1/traces`
+
+`POST /api/public/otel/v1/traces` is `/v1/traces` at the path a Langfuse SDK sends to. On this path
+only, Basic auth also works: when the username or the password is an ingest key, the request is
+that key's. A Langfuse SDK sends its public key and secret key that way, so set one of them to an
+ingest key.
+
+Spans with `langfuse.session.id` join one session, and `langfuse.user.id`,
+`langfuse.environment` and `langfuse.release` become the `user`, `env` and `release` keys of
+[`--where`](query.md#tool-and-event-keys). There is no `/api/public/otel/v1/logs`. See
+[Langfuse SDKs](../integrations/langfuse.md).
 
 ## Model API proxy
 
@@ -1360,7 +1373,7 @@ Events that match `where` across sessions, newest first.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `where` | | Event keys (`kind`, `tool`, `ok`, `mcp`, `error`, `event.duration`, text) test each event; session keys (`agent`, `repo`, `flag`, …) test its session |
+| `where` | | Event keys (`kind`, `tool`, `ok`, `mcp`, `error`, `event.duration`, `user`, `env`, `release`, text) test each event; session keys (`agent`, `repo`, `flag`, …) test its session |
 | `limit` | 50 | 1 to 200 |
 | `cursor` | | `next` from the previous page |
 | `since`, `until` | | On the session's start, as on the list |

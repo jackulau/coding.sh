@@ -33,6 +33,7 @@ One Node process with one port (default **4318**, so an `OTEL_EXPORTER_OTLP_ENDP
 |---|---|---|
 | `POST /v1/traces`, `/v1/logs` | ingest key | OTLP/HTTP, JSON or protobuf, gzip/deflate/br. Reuses `src/otel` decode + map + enrichers (eve, gateway). |
 | `POST /v1/metrics` | ingest key | Accepted and dropped, as today. |
+| `POST /api/public/otel/v1/traces` | ingest key, as Bearer or in Basic auth | `/v1/traces` at a second path. Basic auth whose username or password is an ingest key counts as that key, so an SDK that sends there keeps its keys and changes its host ([OTel SDKs](https://coding.sh/docs/otel#public-path)). |
 | `POST /v1/ingest` | ingest key | Native batched `AgentEvent` JSON (§2). |
 | `POST /v1/evals/eve` | ingest key | One `eve eval` run from `codingShReporter`, stored as a dataset version and an experiment ([eve](integrations/eve.md#send-eve-eval-runs-to-codingsh)). Requests with an `Origin` header get 403. |
 | `GET /`, `/api/*` | read key or basic auth | The existing viewer and its API. Adds `GET /api/projects` and a `?project=` filter on list/search/stats. |

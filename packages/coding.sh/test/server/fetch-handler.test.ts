@@ -203,6 +203,26 @@ for (const kind of ["memory", "sqlite"] as const) {
       }
     });
 
+    it("takes a Langfuse SDK's traces at /api/public/otel/v1/traces, keyed by Basic auth", async () => {
+      const ik = generateKey("ingest");
+      const env = tmpEnv({ CODING_SH_INGEST_KEYS: `demo:${ik}` });
+      const { h, index } = make(kind, env);
+      const span = otlpSpan("0af7651916cd43dd8448eb211c80319d", "b7ad6b7169203332", undefined, "chat gpt-4o", [sAttr("gen_ai.operation.name", "chat"), sAttr("gen_ai.request.model", "gpt-4o"), sAttr("langfuse.session.id", "lf-9"), sAttr("langfuse.user.id", "u1")], 0, 1200);
+      const basic = (pass: string) => ({ authorization: `Basic ${Buffer.from(`pk-lf:${pass}`).toString("base64")}` });
+      assert.equal((await call(h, "/api/public/otel/v1/traces", { body: otlpTraces("lf-app", [span]), headers: basic("nope") })).status, 401);
+      assert.equal((await call(h, "/v1/traces", { body: otlpTraces("lf-app", [span]), headers: basic(ik) })).status, 401);
+      const r = await call(h, "/api/public/otel/v1/traces", { body: otlpTraces("lf-app", [span]), headers: basic(ik) });
+      assert.equal(r.status, 200, r.text);
+      await h.close();
+      const s = await stored(kind, env, index);
+      try {
+        assert.deepEqual(s.sessions.map((x) => x.id), ["demo/lf-9"]);
+        assert.equal((await s.events("demo/lf-9")).find((e) => e.kind === "session.start")?.payload?.user, "u1");
+      } finally {
+        await s.close();
+      }
+    });
+
     it("applies serve.cors_origins to /v1/ingest, with an OPTIONS preflight", async () => {
       const env = tmpEnv({ CODING_SH_INSECURE: "1" });
       mkdirSync(env.CODING_SH_HOME!, { recursive: true });

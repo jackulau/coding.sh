@@ -27,6 +27,7 @@ has the terms, and [troubleshooting.md](troubleshooting.md) helps when something
 | [how-to/trace-durable-workflow.md](how-to/trace-durable-workflow.md) | trace a Vercel Workflow or Temporal run as one session, with attempts, waits and resumes |
 | [how-to/tee-agent-runs.md](how-to/tee-agent-runs.md) | send an eve or durable-harness agent's Agent Runs spans to coding.sh too |
 | [integrations/eve.md](integrations/eve.md) | eve agents: live spans, imports and evals |
+| [integrations/langfuse.md](integrations/langfuse.md) | apps that use a Langfuse SDK: send their traces to coding.sh, filter by user, environment and release |
 
 ## Look at runs
 

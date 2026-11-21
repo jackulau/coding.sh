@@ -4,8 +4,9 @@
  *
  *   OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
  *
- * Routes: POST /v1/traces, /v1/logs (mapped to events), /v1/metrics (accepted,
- * dropped). Bodies: application/x-protobuf or application/json, optionally
+ * Routes: POST /v1/traces (also at /api/public/otel/v1/traces, Langfuse's path),
+ * /v1/logs (mapped to events), /v1/metrics (accepted, dropped). Bodies:
+ * application/x-protobuf or application/json, optionally
  * Content-Encoding gzip/deflate/br. Binds to loopback only unless allowRemote.
  *
  * Sessions: one per trace, or one per conversation when spans carry
@@ -204,7 +205,9 @@ export interface Receiver {
 // gRPC status codes, used in google.rpc.Status error bodies.
 export const RPC = { INVALID_ARGUMENT: 3, NOT_FOUND: 5, PERMISSION_DENIED: 7, RESOURCE_EXHAUSTED: 8, UNIMPLEMENTED: 12, INTERNAL: 13, UNAVAILABLE: 14, UNAUTHENTICATED: 16 } as const;
 
-const ROUTES: Record<string, Signal> = { "/v1/traces": "traces", "/v1/logs": "logs", "/v1/metrics": "metrics" };
+/** Langfuse's OTLP traces endpoint: a Langfuse SDK or exporter pointed at coding.sh keeps its path. */
+export const LANGFUSE_TRACES_PATH = "/api/public/otel/v1/traces";
+const ROUTES: Record<string, Signal> = { "/v1/traces": "traces", [LANGFUSE_TRACES_PATH]: "traces", "/v1/logs": "logs", "/v1/metrics": "metrics" };
 const REJECTED_FIELD: Record<Signal, string> = { traces: "rejectedSpans", logs: "rejectedLogRecords", metrics: "rejectedDataPoints" };
 
 const LOCAL_ORIGIN = /^https?:\/\/(localhost|127(?:\.\d{1,3}){3}|\[::1\])(:\d{1,5})?$/i;

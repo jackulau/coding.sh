@@ -31,8 +31,8 @@ retention and `/metrics` still need `coding.sh serve` somewhere.
 ## Ingest as a Function
 
 `createFetchHandler()` turns serve's ingest routes into one WHATWG `Request` → `Response` function:
-`/v1/traces`, `/v1/logs`, `/v1/metrics` (OTLP/HTTP), `/v1/ingest` (the SDKs), `/healthz` and
-`/readyz`. It runs the same code as serve: auth, body limits, validation, project scoping,
+`/v1/traces`, `/v1/logs`, `/v1/metrics` (OTLP/HTTP), `/api/public/otel/v1/traces` (`/v1/traces`
+with Basic auth), `/v1/ingest` (the SDKs), `/healthz` and `/readyz`. It runs the same code as serve: auth, body limits, validation, project scoping,
 redaction, the cost estimate, the write and the session rebuild, then the answer. A 200 still means
 the batch is committed.
 

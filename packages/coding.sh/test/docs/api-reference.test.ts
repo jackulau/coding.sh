@@ -25,11 +25,19 @@ const src = (p: string) => readFileSync(join(pkg, "src", p), "utf8");
 /** "METHOD /path" with every `{param}` written as `{}`. */
 const key = (method: string, path: string) => `${method} ${path.replace(/\{[^}]*\}/g, "{}")}`;
 
-/** Keys of an object literal like `const NAME: Record<string, Signal> = { "/v1/traces": "traces", … }`. */
-function literalKeys(text: string, name: string): string[] {
+/**
+ * Keys of an object literal like `const NAME: Record<string, Signal> = { "/v1/traces": "traces", … }`.
+ * A computed key (`[LANGFUSE_TRACES_PATH]: "traces"`) is read from its `export const` in `consts`.
+ */
+function literalKeys(text: string, name: string, consts = text): string[] {
   const m = new RegExp(`const ${name}\\b[^=]*=\\s*\\{([^}]*)\\}`).exec(text);
   assert.ok(m, `found ${name}`);
-  return [...m[1]!.matchAll(/"(\/[^"]+)"\s*:/g)].map((x) => x[1]!);
+  const computed = [...m[1]!.matchAll(/\[([A-Z_]+)\]\s*:/g)].map((x) => {
+    const path = new RegExp(`export const ${x[1]} = "(/[^"]+)"`).exec(consts)?.[1];
+    assert.ok(path, `found the path ${x[1]} names`);
+    return path;
+  });
+  return [...m[1]!.matchAll(/"(\/[^"]+)"\s*:/g)].map((x) => x[1]!).concat(computed);
 }
 
 /** Every route the server source dispatches, mapped to the processes that serve it. */
@@ -47,8 +55,8 @@ function serverRoutes(): Map<string, string> {
   assert.match(serve, /return viewer\(req, res\)/, "serve falls through to the viewer handler");
   const collector = new Set(literalKeys(receiver, "ROUTES"));
   const servePaths = [...serve.matchAll(/path === "(\/[^"]*)"/g)].map((m) => m[1]!);
-  for (const path of new Set([...servePaths, ...literalKeys(serve, "SIGNALS")])) {
-    routes.set(key(path.startsWith("/v1/") ? "POST" : "GET", path), collector.has(path) ? "serve, collector" : "serve");
+  for (const path of new Set([...servePaths, ...literalKeys(serve, "SIGNALS", receiver)])) {
+    routes.set(key(path.startsWith("/v1/") || collector.has(path) ? "POST" : "GET", path), collector.has(path) ? "serve, collector" : "serve");
   }
 
   // The model API proxy's mount: every path under PROXY_PREFIX (documented as POST, what agents send).

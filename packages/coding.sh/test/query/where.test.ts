@@ -199,6 +199,25 @@ describe("SQL and the scan fallback agree", () => {
     assert.ok(all <= 8, `${all} queries match everything`);
   });
 
+  test("user:, env: and release: read the session's start event, beside other event keys", async () => {
+    const want: [string, string[]][] = [
+      ["user:u1", ["s1"]],
+      ["-user:u1", ["s5", "s4", "s3", "s2"]],
+      // The start event and the Bash call are two events of s1: both match.
+      ["user:u1 tool:Bash", ["s1"]],
+      ["user:u1 tool:Bash ok:false", ["s1"]],
+      ["user:u2 tool:Bash", []],
+      ["-(user:u1 tool:Edit)", ["s5", "s4", "s3", "s2"]],
+      ["env:staging kind:error", ["s2"]],
+      ["release:1.4.0", ["s1"]],
+      ["release:*", ["s1"]],
+    ];
+    for (const [q, expected] of want) {
+      assert.deepEqual(await ids(sqlite, q), expected, `sqlite ${q}`);
+      assert.deepEqual(await ids(memory, q), expected, `scan ${q}`);
+    }
+  });
+
   test("spot checks", async () => {
     assert.deepEqual(await ids(sqlite, "tool:Bash ok:false"), ["s4", "s1"]);
     assert.deepEqual(await ids(sqlite, "-tool:Bash"), ["s5", "s2"]);

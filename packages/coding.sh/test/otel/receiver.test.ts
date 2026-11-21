@@ -4,7 +4,8 @@ import { Agent, request } from "node:http";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { deflateSync, gzipSync } from "node:zlib";
 import type { Session } from "../../src/schema/index.ts";
-import { type BatchInfo, createOtlpPipeline, type Receiver, startReceiver } from "../../src/otel/receiver.ts";
+import { type BatchInfo, createOtlpPipeline, LANGFUSE_TRACES_PATH, type Receiver, startReceiver } from "../../src/otel/receiver.ts";
+import { LANGFUSE_INGEST_PATH } from "../../src/server/auth.ts";
 import { ProtoReader } from "../../src/otel/proto.ts";
 import { decodeLogsJson, decodeTraceJson } from "../../src/otel/json.ts";
 import { encodeLogs, encodeTraces, fixture, gzip, iAttr, otlpSpan, otlpTraces, sAttr, secretRequests, splitSpans } from "./_encode.ts";
@@ -120,6 +121,26 @@ describe("OTLP receiver over HTTP", () => {
     await start();
     await send(rx.url, json("/v1/traces", fixture("genai-semconv.json")));
     assert.deepEqual(store.all().map((e) => e.id).sort(), protoIds);
+  });
+
+  it("takes traces at Langfuse's path too, with the Langfuse session, user, environment and release", async () => {
+    assert.equal(LANGFUSE_TRACES_PATH, "/api/public/otel/v1/traces");
+    assert.equal(LANGFUSE_INGEST_PATH, LANGFUSE_TRACES_PATH, "serve's auth names the same path");
+    const span = otlpSpan("0af7651916cd43dd8448eb211c80319c", "b7ad6b7169203331", undefined, "chat gpt-4o", [
+      sAttr("gen_ai.operation.name", "chat"),
+      sAttr("gen_ai.request.model", "gpt-4o"),
+      sAttr("langfuse.session.id", "lf-1"),
+      sAttr("langfuse.user.id", "u1"),
+      sAttr("langfuse.environment", "staging"),
+      sAttr("langfuse.release", "v2"),
+    ], 0, 500);
+    const res = await send(rx.url, proto(LANGFUSE_TRACES_PATH, encodeTraces(otlpTraces("lf-app", [span]))));
+    assert.equal(res.status, 200, res.body.toString());
+    assert.ok(await store.getSession("lf-1"));
+    const start = store.all().find((e) => e.kind === "session.start" && e.sessionId === "lf-1")!;
+    assert.deepEqual([start.payload.user, start.payload.environment, start.payload.release], ["u1", "staging", "v2"]);
+    // Only the traces path has the alias.
+    assert.equal((await send(rx.url, json("/api/public/otel/v1/logs", {}))).status, 404);
   });
 
   it("accepts gzip and deflate bodies (Claude Code logs, protobuf and JSON)", async () => {

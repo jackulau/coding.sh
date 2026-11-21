@@ -112,6 +112,12 @@ export function parseBasicAuth(value: string | undefined): BasicCredential | und
   return { user: value.slice(0, i), passwordSha256: sha256(value.slice(i + 1)) };
 }
 
+/**
+ * Langfuse's OTLP traces path (LANGFUSE_TRACES_PATH in otel/receiver.ts, which this file does not
+ * load). A Langfuse SDK sends Basic auth there: public key as the user, secret key as the password.
+ */
+export const LANGFUSE_INGEST_PATH = "/api/public/otel/v1/traces";
+
 const bearer = (req: IncomingMessage): string | undefined => {
   const h = req.headers.authorization;
   if (typeof h !== "string") return undefined;
@@ -184,12 +190,23 @@ export function createAuthenticator(creds: Credentials, o: { openIngest: boolean
     if (key) return creds.ingest.get(sha256(key));
     return !hasIngestKeys && o.openIngest && openTo(req) ? DEFAULT_PROJECT : undefined;
   };
+  // On Langfuse's path only: the Basic user or password that is an ingest key, so a Langfuse SDK keeps
+  // its two keys and one of them is the ingest key. Neither: no key (401 unless the server runs open).
+  const langfuseKey = (req: IncomingMessage): string | undefined => {
+    if ((req.url ?? "").split("?")[0] !== LANGFUSE_INGEST_PATH) return undefined;
+    const m = /^Basic\s+(\S+)\s*$/i.exec(typeof req.headers.authorization === "string" ? req.headers.authorization : "");
+    if (!m) return undefined;
+    const decoded = Buffer.from(m[1]!, "base64").toString("utf8");
+    const i = decoded.indexOf(":");
+    const parts = i < 0 ? [decoded] : [decoded.slice(0, i), decoded.slice(i + 1)];
+    return parts.find((p) => p !== "" && creds.ingest.has(sha256(p)));
+  };
 
   return {
     hasIngestKeys,
     hasReadCredentials,
     readScope,
-    ingest: (req) => ingestKey(bearer(req), req),
+    ingest: (req) => ingestKey(bearer(req) ?? langfuseKey(req), req),
     ingestKey,
     read(req) {
       const key = bearer(req);

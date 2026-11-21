@@ -22,7 +22,7 @@ export interface FindResult {
 
 function unsupported(index: IndexStore, what: string): QueryUnsupported {
   return new QueryUnsupported(
-    `${what} need the event index: this ${index.kind} store answers --where with session keys only (agent, model, repo, flag, cost, duration, …), since it has no query compiler. Drop the event keys (tool, kind, ok, mcp, error, event.duration) and free text, upgrade the store's plugin, or use the SQLite store.`,
+    `${what} need the event index: this ${index.kind} store answers --where with session keys only (agent, model, repo, flag, cost, duration, …), since it has no query compiler. Drop the event keys (tool, kind, ok, mcp, error, event.duration, user, env, release) and free text, upgrade the store's plugin, or use the SQLite store.`,
   );
 }
 
