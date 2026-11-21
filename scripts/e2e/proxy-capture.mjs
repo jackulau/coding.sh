@@ -20,6 +20,7 @@
 // Needs network for npm. Never touches the real HOME. Exit 0 when every check passed.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
@@ -361,7 +362,7 @@ try {
     if (existsSync(errLog)) log(`hook errors:\n${readFileSync(errLog, "utf8").slice(-4000)}`);
     log(`${failures.length} check(s) failed: ${failures.join("; ")}`);
   } else log("all checks passed");
-  if (!opts.keep && !failures.length) rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+  if (!opts.keep && !failures.length) await rm(root, { recursive: true, force: true, maxRetries: 5 });
   else log(`kept ${root}`);
 }
 process.exit(exitCode);

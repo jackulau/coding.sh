@@ -6,10 +6,11 @@
 // removes it: a read's tail import runs in a child that the read kills at its deadline,
 // and on Windows a kill runs no cleanup at all. So whoever opens the next copy, and the
 // read that killed the child, removes the copies whose owner is no longer running.
-// Only node: built-ins here: the read's process imports this without the adapters.
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+// Only node: built-ins and core/remove.ts here: the read's process imports this without the adapters.
+import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeSync } from "../../core/remove.ts";
 
 export const SQLITE_COPY_PREFIX = "csh-sqlite-";
 /** The file in a copy's dir that names its owner's pid. */
@@ -32,7 +33,7 @@ function pidAlive(pid: number): boolean {
 
 function remove(dir: string, retries = 3): boolean {
   // Retries, with a linear backoff (6 wait 1 s in all): on Windows a just-killed owner's handles outlive it a moment.
-  const opts = { recursive: true, force: true, maxRetries: retries, retryDelay: 50 };
+  const opts = { maxRetries: retries, retryDelay: 50 };
   try {
     let names: string[];
     try {
@@ -45,8 +46,8 @@ function remove(dir: string, retries = 3): boolean {
     // next reap knows the copy is a dead process's and removes the rest. Cut short: a read's tail child stops by
     // itself just before its deadline and is still removing its copy (a 1.7 GB file) when the read kills it, or a
     // file is still held open. Without the owner file the rest looked like a copy being made and stayed an hour.
-    for (const n of names) if (n !== SQLITE_COPY_OWNER) rmSync(join(dir, n), opts);
-    rmSync(dir, opts);
+    for (const n of names) if (n !== SQLITE_COPY_OWNER) removeSync(join(dir, n), opts);
+    removeSync(dir, opts);
     return true;
   } catch {
     return false; // still in use: the next reap tries again

@@ -3,7 +3,8 @@
 // or Chromium is installed; set CODING_SH_TEST_CHROME to pick a binary (CI does,
 // and then a missing binary fails the run instead of skipping the tests).
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -299,7 +300,7 @@ async function abandonStart(child: ChildProcess | undefined, dir: string): Promi
   child?.stderr?.destroy();
   child?.unref();
   try {
-    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   } catch {}
 }
 
@@ -420,10 +421,11 @@ export async function launchBrowser(chrome: string): Promise<Browser> {
       // open. Let go of the pipe and the child, or this test file's process never exits.
       child.stderr?.destroy();
       child.unref();
-      // On Windows, Chrome's helpers can hold the profile for a moment after it exits.
+      // On Windows, Chrome's helpers can hold the profile for a moment after it exits. The async
+      // rm waits between tries; on Node 24 on Windows, rmSync gave up at once with EPERM.
       let profileLeft = false;
       try {
-        rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+        await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
       } catch {
         profileLeft = true;
       }

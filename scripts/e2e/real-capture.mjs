@@ -16,6 +16,7 @@
 // Exit codes: 0 all checks passed, 1 a check failed.
 import { execFileSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -483,7 +484,7 @@ try {
   if (!opts.keep && !failures.length) {
     // Best effort: on Windows a process an agent leaves behind can still hold a file open.
     try {
-      rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+      await rm(root, { recursive: true, force: true, maxRetries: 5 });
     } catch (e) {
       log(`could not remove ${root}: ${e instanceof Error ? e.message : e}`);
       if (isWin) {

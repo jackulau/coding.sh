@@ -167,7 +167,8 @@ order.
 - **When imports run:** the T3 store is re-imported on every lazy ingest (`Adapter.tail`). Threads that
   haven't changed are skipped.
 - **Store copies:** the T3 store is read from a copy in the temp directory, which needs room for it; a
-  failed copy is a backfill error. The next read removes copies a killed read left.
+  failed copy is a backfill error. The next read removes copies a killed read left. A read that kills its
+  import child at its deadline waits up to a second for the child to let go of its copy, then removes it.
 
 ## Known breakage to design around
 
