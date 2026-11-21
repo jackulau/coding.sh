@@ -93,6 +93,27 @@ function serverRoutes(): Map<string, string> {
       });
       return;
     }
+    // A case with items inside items (`if (sub === undefined) {` … `checkId(sub, "item")`): the bare
+    // path, `/{}` up to the first `if (sub === "name") {`, each name at `/{}/<name>`, and `/{}/{}`
+    // from the checkId on. Each part answers `get();` as GET and the methods it compares.
+    const nested = /if \(sub === undefined\) \{/.exec(block);
+    const leaf = /checkId\(sub, "item"\)/.exec(block);
+    if (nested && leaf) {
+      const top = /if \(id === undefined \|\| id === ""\) \{/.exec(block);
+      assert.ok(top && top.index < nested.index && nested.index < leaf.index, `the parts of ${base} are in order`);
+      const ms = (text: string) => {
+        const s = new Set([...text.matchAll(/method [!=]== "([A-Z]+)"/g)].map((m) => m[1]!));
+        if (/\bget\(\);/.test(text)) s.add("GET");
+        return s;
+      };
+      const parts: [string, number, number][] = [[base, top.index, nested.index]];
+      const names = [...block.slice(nested.index, leaf.index).matchAll(/if \(sub === "([a-z-]+)"\) \{/g)];
+      parts.push([`${base}/{}`, nested.index, nested.index + (names[0]?.index ?? leaf.index - nested.index)]);
+      names.forEach((n, j) => parts.push([`${base}/{}/${n[1]}`, nested.index + n.index!, nested.index + (names[j + 1]?.index ?? leaf.index - nested.index)]));
+      parts.push([`${base}/{}/{}`, leaf.index, block.length]);
+      for (const [path, from, to] of parts) for (const m of ms(block.slice(from, to))) routes.set(key(m, path), "serve, ui");
+      return;
+    }
     // A case with an item branch (`if (id !== undefined && id !== "") {`, up to its 405): the methods
     // inside it answer at `/{}`, the others at the bare path.
     const item = /if \(id !== undefined && id !== ""\) \{/.exec(block);

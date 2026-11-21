@@ -68,6 +68,7 @@ Every command accepts these.
 | [`dataset`](#codingsh-dataset) | Evaluate | Manage versioned datasets of cases |
 | [`exp`](#codingsh-exp) | Evaluate | Run a task over a dataset, compare experiments and sweep configs |
 | [`score`](#codingsh-score) | Evaluate | Add and list typed scores on sessions, events, cases and runs |
+| [`review`](#codingsh-review) | Evaluate | Queues of sessions to score by hand, one at a time, with one score config |
 | [`monitor`](#codingsh-monitor) | Evaluate | Score new sessions automatically with an LLM judge rubric or a command |
 | [`judge`](#codingsh-judge) | Evaluate | Grade one output or the slop in captured diffs, or check an LLM judge or a test verifier against human labels |
 | [`toolevals`](#codingsh-toolevals) | Evaluate | Measure how well agents use a CLI, MCP server or API |
@@ -2352,6 +2353,141 @@ List score configs.
 
 ```text
 coding.sh score configs
+```
+
+## `coding.sh review`
+
+Queues of sessions to score by hand, one at a time, with one score config.
+
+```text
+coding.sh review <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`create`](#codingsh-review-create) | Make a queue of the sessions a query matches |
+| [`list`](#codingsh-review-list) | List the queues with their done, skipped and total counts |
+| [`status`](#codingsh-review-status) | A queue's counts: done, skipped and total |
+| [`next`](#codingsh-review-next) | The next pending item: its session, title, agent and flags, and the command that scores it |
+| [`done`](#codingsh-review-done) | Score an item with the queue's config and mark it done (doing it again replaces the score) |
+| [`skip`](#codingsh-review-skip) | Skip an item; it is counted as skipped and never comes up again |
+
+```sh
+coding.sh review create codex-flagged --where 'is:flagged agent:codex' --config correct --sample 20
+coding.sh review next codex-flagged
+coding.sh review done codex-flagged 1 true
+```
+
+- The items are the sessions the query matched when the queue was made, as sessions --where lists them: root sessions unless the query names subagents, empty sessions left out, at most 5000.
+- done writes a human score with the queue's config name on the item's session, as score add does: a value the config does not allow is refused (exit 2), and judge calibrate reads the boolean ones as labels.
+- Queues live in the local index (SQLite or memory); a store plugin without them (postgres, clickhouse) exits 1. The viewer and serve take the same queues at /api/review.
+
+### `coding.sh review create`
+
+Make a queue of the sessions a query matches.
+
+```text
+coding.sh review create <QUEUE> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `queue` | yes | The queue's name: 1 to 64 letters, digits, '-', '_' and '.'. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--where <QUERY>` |  | The sessions to review, in the --where language (keys: coding.sh sessions --help). A query that does not parse is refused (exit 2) |
+| `--config <NAME>` |  | The score config every item is scored with (coding.sh score configs); it must exist. |
+| `--sample <N>` |  | Pick N of the matching sessions at random (default: all of them) |
+| `--assign <NAME>` |  | Every item is for this person or serve read key name: on serve, only that key and keys with no item of their own see it. |
+
+```sh
+coding.sh review create codex-flagged --where 'is:flagged agent:codex' --config correct --sample 20
+coding.sh review create week --where 'since:7d' --config helpfulness --assign alice
+```
+
+### `coding.sh review list`
+
+List the queues with their done, skipped and total counts.
+
+```text
+coding.sh review list
+```
+
+```sh
+coding.sh review list
+coding.sh review list --json
+```
+
+### `coding.sh review status`
+
+A queue's counts: done, skipped and total.
+
+```text
+coding.sh review status <QUEUE>
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `queue` | yes | The queue's name (review list) |
+
+```sh
+coding.sh review status codex-flagged --json
+```
+
+### `coding.sh review next`
+
+The next pending item: its session, title, agent and flags, and the command that scores it.
+
+```text
+coding.sh review next <QUEUE>
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `queue` | yes | The queue's name (review list) |
+
+```sh
+coding.sh review next codex-flagged
+```
+
+### `coding.sh review done`
+
+Score an item with the queue's config and mark it done (doing it again replaces the score).
+
+```text
+coding.sh review done <QUEUE> <ITEM> <VALUE> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `queue` | yes | The queue's name. |
+| `item` | yes | The item's number (review next), or its session id. |
+| `value` | yes | The score: true or false, a number or a category, as the config allows. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--comment <TEXT>` |  | Why this score. |
+
+```sh
+coding.sh review done codex-flagged 1 false --comment 'claimed tests passed; they did not run'
+```
+
+### `coding.sh review skip`
+
+Skip an item; it is counted as skipped and never comes up again.
+
+```text
+coding.sh review skip <QUEUE> <ITEM>
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `queue` | yes | The queue's name. |
+| `item` | yes | The item's number (review next), or its session id. |
+
+```sh
+coding.sh review skip codex-flagged 2
 ```
 
 ## `coding.sh monitor`

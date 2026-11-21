@@ -36,7 +36,7 @@ or a proxy in front of it.
 - A read key scoped to one project sees only that project. Lists are filtered, other sessions answer 404, and eval data (tasks, runs, bundles, experiments) comes back empty.
 - A `*` read key sees every project and can filter with `?project=`.
 
-**Content types.** Requests: `application/json` for `/v1/ingest`, `POST /api/labels`, `POST /api/scores`, `POST /api/score-configs` and `POST /api/views`;
+**Content types.** Requests: `application/json` for `/v1/ingest`, `POST /api/labels`, `POST /api/scores`, `POST /api/score-configs`, `POST /api/views` and `POST /api/review/{queue}/{item}`;
 `application/json` or `application/x-protobuf` for OTLP. Ingest bodies may use `Content-Encoding`
 `gzip`, `deflate` or `br`. Responses are JSON, except the viewer page (HTML), `/metrics` (Prometheus
 text), blobs (`text/plain`) and OTLP protobuf requests (answered in protobuf).
@@ -50,6 +50,7 @@ text), blobs (`text/plain`) and OTLP protobuf requests (answered in protobuf).
 | Ingest queue | 50,000 events or 128 MiB (`CODING_SH_QUEUE_MAX_EVENTS`, `CODING_SH_QUEUE_MAX_BYTES`) |
 | `POST /api/labels`, `/api/scores`, `/api/score-configs` body | 1 MB |
 | `POST /api/views` body | 16 KiB |
+| `POST /api/review/{queue}/{item}` body | 16 KiB |
 | Blob response | 2 MiB unless `?full=1` |
 | Request headers / whole request | 20 s / 120 s |
 
@@ -125,6 +126,10 @@ same `CODING_SH_HOME` as the server.
 | GET | [`/api/views`](#get-apiviews-post-apiviews-delete-apiviewsname) | read key or basic auth | serve, ui |
 | POST | [`/api/views`](#get-apiviews-post-apiviews-delete-apiviewsname) | read key or basic auth | serve, ui |
 | DELETE | [`/api/views/{name}`](#get-apiviews-post-apiviews-delete-apiviewsname) | read key or basic auth | serve, ui |
+| GET | [`/api/review`](#get-apireview-get-apireviewqueue-get-apireviewqueuenext-post-apireviewqueueitem) | read key or basic auth | serve, ui |
+| GET | [`/api/review/{queue}`](#get-apireview-get-apireviewqueue-get-apireviewqueuenext-post-apireviewqueueitem) | read key or basic auth | serve, ui |
+| GET | [`/api/review/{queue}/next`](#get-apireview-get-apireviewqueue-get-apireviewqueuenext-post-apireviewqueueitem) | read key or basic auth | serve, ui |
+| POST | [`/api/review/{queue}/{item}`](#get-apireview-get-apireviewqueue-get-apireviewqueuenext-post-apireviewqueueitem) | read key or basic auth | serve, ui |
 | GET | [`/api/experiments`](#get-apiexperiments) | read key or basic auth | serve, ui |
 | GET | [`/api/experiments/{id}`](#get-apiexperimentsid) | read key or basic auth | serve, ui |
 | GET | [`/api/compare`](#get-apicompare) | read key or basic auth | serve, ui |
@@ -1601,6 +1606,33 @@ curl -sS -X POST "$CSH/api/views" \
 
 ```json
 {"name":"codex-flagged","where":"is:flagged agent:codex","createdAt":1794197173384,"updatedAt":1794197173384}
+```
+
+### `GET /api/review`, `GET /api/review/{queue}`, `GET /api/review/{queue}/next`, `POST /api/review/{queue}/{item}`
+
+Review queues: the sessions a query matched, scored by hand one at a time with one score config.
+`coding.sh review create` makes a queue; these routes read it and work through it
+([evals guide](../guides/evals.md#review-queues)).
+
+- `GET /api/review` answers `{"items": [{queue, config, done, skipped, total, where, createdAt}]}`.
+- `GET /api/review/{queue}` answers `{queue, config, done, skipped, total}`.
+- `GET /api/review/{queue}/next` answers the next pending item, or 204 when none is left:
+  `{queue, item, target, targetId, sessionId, assignee, title, agent, flags, config, values, command, pending}`.
+- In an item, `values` describes what the config takes and `command` is the `coding.sh review done`
+  line that scores it.
+- `POST /api/review/{queue}/{item}` takes `{"value": …, "comment": "…"}`. It writes the score
+  through the path `POST /api/scores` takes, with the queue's config name and source `human`, then
+  marks the item done with that score's id.
+- A value that does not fit the config is a 400. `{"skip": true}` skips the item instead.
+- Both answer `{item, score, next}`, where `next` is the next pending item or `null` (a skip has
+  no `score`). `{item}` is the item's number or its session id.
+- On `coding.sh serve` the caller is the read key's name: it is the score's `by`, `next` returns
+  only items assigned to that name or to no one, and an item assigned to another name is a 403.
+- A project-scoped key gets only its project's items; others answer 404. An unknown queue or
+  item is a 404, and a store without review queues (the Postgres and ClickHouse plugins) answers 501.
+
+```sh
+curl -sS -X POST "$CSH/api/review/flagged/1"   -H "Authorization: Bearer $READ_KEY"   -H "Content-Type: application/json"   -d '{"value":true,"comment":"fixed the test"}'
 ```
 
 ### `GET /api/experiments`

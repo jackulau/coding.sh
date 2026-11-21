@@ -1484,6 +1484,65 @@ export const COMMANDS: CommandSpec[] = [
     load: () => import("../scores/cli.ts"),
   },
   {
+    name: "review",
+    group: "Evaluate",
+    summary: "Queues of sessions to score by hand, one at a time, with one score config",
+    actions: [
+      {
+        name: "create",
+        summary: "Make a queue of the sessions a query matches",
+        args: [{ name: "queue", desc: "The queue's name: 1 to 64 letters, digits, '-', '_' and '.'", required: true }],
+        flags: [
+          { name: "where", type: "string", dashValue: true, value: "<QUERY>", desc: "The sessions to review, in the --where language (keys: coding.sh sessions --help). A query that does not parse is refused (exit 2)" },
+          { name: "config", type: "string", value: "<NAME>", desc: "The score config every item is scored with (coding.sh score configs); it must exist" },
+          { name: "sample", type: "number", value: "<N>", desc: "Pick N of the matching sessions at random (default: all of them)" },
+          { name: "assign", type: "string", value: "<NAME>", desc: "Every item is for this person or serve read key name: on serve, only that key and keys with no item of their own see it" },
+        ],
+        examples: ["coding.sh review create codex-flagged --where 'is:flagged agent:codex' --config correct --sample 20", "coding.sh review create week --where 'since:7d' --config helpfulness --assign alice"],
+      },
+      { name: "list", summary: "List the queues with their done, skipped and total counts", examples: ["coding.sh review list", "coding.sh review list --json"] },
+      {
+        name: "status",
+        summary: "A queue's counts: done, skipped and total",
+        args: [{ name: "queue", desc: "The queue's name (review list)", required: true }],
+        examples: ["coding.sh review status codex-flagged --json"],
+      },
+      {
+        name: "next",
+        summary: "The next pending item: its session, title, agent and flags, and the command that scores it",
+        args: [{ name: "queue", desc: "The queue's name (review list)", required: true }],
+        examples: ["coding.sh review next codex-flagged"],
+      },
+      {
+        name: "done",
+        summary: "Score an item with the queue's config and mark it done (doing it again replaces the score)",
+        args: [
+          { name: "queue", desc: "The queue's name", required: true },
+          { name: "item", desc: "The item's number (review next), or its session id", required: true },
+          { name: "value", desc: "The score: true or false, a number or a category, as the config allows", required: true },
+        ],
+        flags: [{ name: "comment", type: "string", value: "<TEXT>", desc: "Why this score" }],
+        examples: ["coding.sh review done codex-flagged 1 false --comment 'claimed tests passed; they did not run'"],
+      },
+      {
+        name: "skip",
+        summary: "Skip an item; it is counted as skipped and never comes up again",
+        args: [
+          { name: "queue", desc: "The queue's name", required: true },
+          { name: "item", desc: "The item's number (review next), or its session id", required: true },
+        ],
+        examples: ["coding.sh review skip codex-flagged 2"],
+      },
+    ],
+    examples: ["coding.sh review create codex-flagged --where 'is:flagged agent:codex' --config correct --sample 20", "coding.sh review next codex-flagged", "coding.sh review done codex-flagged 1 true"],
+    notes: [
+      "The items are the sessions the query matched when the queue was made, as sessions --where lists them: root sessions unless the query names subagents, empty sessions left out, at most 5000.",
+      "done writes a human score with the queue's config name on the item's session, as score add does: a value the config does not allow is refused (exit 2), and judge calibrate reads the boolean ones as labels.",
+      "Queues live in the local index (SQLite or memory); a store plugin without them (postgres, clickhouse) exits 1. The viewer and serve take the same queues at /api/review.",
+    ],
+    load: () => import("./commands/review.ts"),
+  },
+  {
     name: "monitor",
     group: "Evaluate",
     summary: "Score new sessions automatically with an LLM judge rubric or a command",

@@ -191,6 +191,40 @@ export interface SavedView {
   updatedAt: number;
 }
 
+/**
+ * A review queue (src/scores/review.ts): the sessions a --where query matched when it was
+ * made, to be scored by hand one at a time with the score config named `config`.
+ * Name: 1 to 64 letters, digits, - _ and .
+ */
+export interface ReviewQueue {
+  name: string;
+  /** The query as typed when the queue was made. */
+  where: string;
+  /** The score config's name: every item is scored with it. */
+  config: string;
+  /** Epoch ms. */
+  createdAt: number;
+}
+
+export type ReviewStatus = "pending" | "done" | "skipped";
+
+/** One item of a review queue: a target to score. */
+export interface ReviewItem {
+  queue: string;
+  /** 1, 2, 3, ... in the queue's order. */
+  id: number;
+  target: ScoreTarget;
+  targetId: string;
+  sessionId?: string;
+  status: ReviewStatus;
+  /** The person or API key name the item is for; absent: anyone. */
+  assignee?: string;
+  /** Epoch ms, when it was done or skipped. */
+  completedAt?: number;
+  /** The score `done` wrote. */
+  scoreId?: string;
+}
+
 /** The type and allowed values of one score name (src/scores). */
 export interface ScoreConfig {
   id: string;
@@ -497,6 +531,17 @@ export interface IndexStore {
   putView?(view: SavedView): Promise<void>;
   listViews?(): Promise<SavedView[]>;
   deleteView?(name: string): Promise<boolean>;
+
+  /**
+   * Review queues (src/scores/review.ts). createReviewQueue writes a queue and its items
+   * together, or nothing and false when a queue has that name. listReviewQueues is sorted
+   * by name; listReviewItems by id. putReviewItem replaces the stored item with its queue
+   * and id, and writes nothing when there is none.
+   */
+  createReviewQueue?(queue: ReviewQueue, items: ReviewItem[]): Promise<boolean>;
+  listReviewQueues?(): Promise<ReviewQueue[]>;
+  listReviewItems?(queue: string): Promise<ReviewItem[]>;
+  putReviewItem?(item: ReviewItem): Promise<void>;
 
   putJudge?(v: JudgeVersion): Promise<void>;
   getJudge?(id: string): Promise<JudgeVersion | undefined>;

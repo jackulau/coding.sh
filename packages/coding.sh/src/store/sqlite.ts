@@ -15,6 +15,8 @@ import type {
   IndexStore,
   Label,
   MetricRow,
+  ReviewItem,
+  ReviewQueue,
   RunResult,
   Score,
   SavedView,
@@ -552,6 +554,31 @@ CREATE TABLE views (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
+`,
+  },
+  {
+    // Review queues (src/scores/review.ts): sessions a query matched, scored by hand one at a time.
+    version: 15,
+    sql: `
+CREATE TABLE review_queues (
+  name TEXT PRIMARY KEY,
+  where_q TEXT NOT NULL,
+  config TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE review_items (
+  queue TEXT NOT NULL,
+  item_id INTEGER NOT NULL,
+  target TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  session_id TEXT,
+  status TEXT NOT NULL,
+  assignee TEXT,
+  completed_at INTEGER,
+  score_id TEXT,
+  PRIMARY KEY (queue, item_id)
+);
+CREATE INDEX review_items_session ON review_items(session_id);
 `,
   },
 ];
@@ -1743,6 +1770,44 @@ export class SqliteIndexStore implements IndexStore {
     return Number(this.stmt("DELETE FROM views WHERE name = ?").run(name).changes) > 0;
   }
 
+  // ------------------------------------------------------------ review queues
+
+  async createReviewQueue(q: ReviewQueue, items: ReviewItem[]): Promise<boolean> {
+    return this.tx(() => {
+      if (Number(this.stmt("INSERT OR IGNORE INTO review_queues (name, where_q, config, created_at) VALUES (?, ?, ?, ?)").run(q.name, q.where, q.config, q.createdAt).changes) === 0) return false;
+      const ins = this.stmt(`INSERT INTO review_items (queue, item_id, target, target_id, session_id, status, assignee, completed_at, score_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      for (const it of items) ins.run(q.name, it.id, it.target, it.targetId, it.sessionId ?? null, it.status, it.assignee ?? null, it.completedAt ?? null, it.scoreId ?? null);
+      return true;
+    });
+  }
+
+  async listReviewQueues(): Promise<ReviewQueue[]> {
+    return (this.stmt("SELECT name, where_q, config, created_at FROM review_queues ORDER BY name").all() as Row[]).map((r) => ({
+      name: String(r.name),
+      where: String(r.where_q),
+      config: String(r.config),
+      createdAt: Number(r.created_at),
+    }));
+  }
+
+  async listReviewItems(queue: string): Promise<ReviewItem[]> {
+    const rows = this.stmt("SELECT * FROM review_items WHERE queue = ? ORDER BY item_id").all(queue) as Row[];
+    return rows.map((r) => {
+      const it: ReviewItem = { queue: String(r.queue), id: Number(r.item_id), target: r.target as ReviewItem["target"], targetId: String(r.target_id), status: r.status as ReviewItem["status"] };
+      if (r.session_id != null) it.sessionId = String(r.session_id);
+      if (r.assignee != null) it.assignee = String(r.assignee);
+      if (r.completed_at != null) it.completedAt = Number(r.completed_at);
+      if (r.score_id != null) it.scoreId = String(r.score_id);
+      return it;
+    });
+  }
+
+  async putReviewItem(it: ReviewItem): Promise<void> {
+    this.stmt(`UPDATE review_items SET target = ?, target_id = ?, session_id = ?, status = ?, assignee = ?, completed_at = ?, score_id = ?
+      WHERE queue = ? AND item_id = ?`).run(it.target, it.targetId, it.sessionId ?? null, it.status, it.assignee ?? null, it.completedAt ?? null, it.scoreId ?? null, it.queue, it.id);
+  }
+
   // ------------------------------------------------------------ kv
 
   async kvGet(key: string): Promise<string | undefined> {
@@ -2006,6 +2071,7 @@ export class SqliteIndexStore implements IndexStore {
     const ftsDelete = this.stmt(`DELETE FROM events_fts WHERE rowid IN (SELECT rowid FROM events WHERE session_id = ? AND ${searchableRows("events")})`);
     const delEvents = this.stmt("DELETE FROM events WHERE session_id = ?");
     const delScores = this.stmt("DELETE FROM scores WHERE session_id = ?");
+    const delReview = this.stmt("DELETE FROM review_items WHERE session_id = ?");
     const delSession = this.stmt("DELETE FROM sessions WHERE id = ?");
     const delFold = this.stmt("DELETE FROM kv WHERE key = ?");
     const delFacets = this.stmt("DELETE FROM session_facets WHERE session_id = ?");
@@ -2013,6 +2079,7 @@ export class SqliteIndexStore implements IndexStore {
       ftsDelete.run(id);
       events += Number(delEvents.run(id).changes);
       delScores.run(id);
+      delReview.run(id);
       sessions += Number(delSession.run(id).changes);
       delFold.run(foldKey(id));
       delFacets.run(id);
