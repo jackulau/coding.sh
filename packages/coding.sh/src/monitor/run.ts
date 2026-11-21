@@ -197,8 +197,11 @@ async function runOne(deps: MonitorDeps, def: MonitorDef, state: MonitorState, r
   const scorer = def.kind === "run" ? runScorer(deps, def, redactor, o) : def.kind === "http" ? httpScorer(deps, def, redactor, o) : await judgeScorer(deps, def, state, o);
   if (!scorer) {
     // Nothing is judged and the cursor stays: the sessions wait for a provider.
-    state.lastError = { message: NO_PROVIDER, at: now() };
-    return { ...r, error: NO_PROVIDER, stopped: "no-provider" };
+    // A monitor that names its provider says which key is missing, as `monitor add` does.
+    const key = def.provider ? KEY_ENV[def.provider] : undefined;
+    const message = key ? `${NO_PROVIDER}: ${def.provider}: set ${key}` : NO_PROVIDER;
+    state.lastError = { message, at: now() };
+    return { ...r, error: message, stopped: "no-provider" };
   }
   const advance = (s: Session) => {
     if (state.cursor === undefined || s.endedAt! > state.cursor) state.cursor = s.endedAt!;

@@ -40,6 +40,7 @@ import { commandGrader, moduleGrader, type CommandGraderSpec, type ModuleGraderS
 import { mockProvider, type MockAnswer } from "./mock.ts";
 import { DEFAULT_KEY_ENV } from "../integrations/gateway/config.ts";
 import { GATEWAY_API_BASE } from "../integrations/gateway/ids.ts";
+import { suggest } from "../cli/args.ts";
 import { DEFAULT_MODELS } from "../core/pricing.ts";
 
 /** Google's OpenAI-compatible endpoint for Gemini models. */
@@ -170,7 +171,10 @@ const PROVIDERS = ["anthropic", "openai", "gateway", "gemini", "claude-code", "c
 export function providerFromSpec(spec: LlmProviderSpec, deps: GraderDeps = {}): ChatProvider {
   if (deps.provider) return deps.provider;
   const kind = spec.provider ?? "anthropic";
-  if (!PROVIDERS.includes(kind)) throw new Error(`unknown provider ${JSON.stringify(kind)} (expected ${PROVIDERS.map((p) => JSON.stringify(p)).join(", ")})`);
+  if (!PROVIDERS.includes(kind)) {
+    const close = typeof kind === "string" ? suggest(kind, PROVIDERS) : undefined;
+    throw new Error(`unknown provider ${JSON.stringify(kind)} (expected ${PROVIDERS.map((p) => JSON.stringify(p)).join(", ")})${close ? `. Did you mean ${JSON.stringify(close)}?` : ""}`);
+  }
   if (kind === "mock") return mockProvider(spec.mockAnswer ? { answer: spec.mockAnswer } : {});
   if (kind === "claude-code" || kind === "codex") {
     const o = { ...(spec.model ? { model: spec.model } : {}), ...(deps.env ? { env: deps.env } : {}) };
