@@ -79,9 +79,12 @@ for what needs reading:
 ```
 
 ```sh title=grader/verify.sh
-python3 check.py grader/checks.json || exit 1
+python3 "$(dirname "$0")/check.py" grader/checks.json || exit 1
 exec coding.sh judge grade --grader grader/checklist.json
 ```
+
+In the work tree, `grader/` holds the task's hidden `tests/grader/` files. `check.py` stays next to
+`verify.sh`, outside the work tree, so the script finds it by its own path.
 
 Run the judge only after the checks pass, so a run that broke a hard rule costs no judge call.
 Grade against the scenario's pass rules, not the skill's wording, or the skill arm wins by echoing
@@ -139,8 +142,8 @@ item gate k=1 τ=.34 m=2: KEEP · G=8.00 net +8 runs D=0 fired 12/12 · S=12 tas
 | `Hold` | Not enough evidence. With no losses, the gate needs 8 wins. |
 | `Don't ship` | The skill broke tasks the agent solved without it; they are listed. |
 | Runs that errored | They have no outcome and are left out. Rerun them with `--experiment <id> --retry-errors`. |
-| `item gate … fired 12/12` | Counts only runs where the skill reached the agent's context. It loaded every time. |
-| `KILL` with `never fired` | The skill never loads. Fix its description, not its body. |
+| `item gate … fired 12/12` | The gate scores only the tasks where the skill reached the agent's context. It loaded in all 12 runs that had it. |
+| `RERUN` with `fired 0/12` | The skill never loaded, so no task measures it. Fix its description, not its body. |
 
 With 12 tasks and one attempt each, only a change of about 40 points shows. Aim for at least 8
 tasks per suite before you read per-suite verdicts.
@@ -166,34 +169,42 @@ prompt = "Write a docx memo"
 expect_skill = "docx"
 ```
 
-`--draft` writes this file from the first prompts of captured sessions in this repo that loaded the
-skill or a sibling, and a model fills each side to 8. Then run it, and A/B a new description:
+Or let `--draft` write it: it takes the first prompts of captured sessions in this repo that loaded
+the skill or a sibling, and a model fills each side to 8. `--dry-run` prints the draft without
+writing it, and `--force` replaces a file you have. Read and fix the prompts, then run them, and A/B
+a new description:
 
 ```sh
-coding.sh eval trigger .claude/skills/pdf --draft --dry-run
+coding.sh eval trigger .claude/skills/pdf --draft    # skip if you wrote triggers.toml
 coding.sh eval trigger .claude/skills/pdf --yes
 coding.sh eval trigger .claude/skills/pdf --description "Use when the user mentions pdf, invoice, scanned." --yes
 ```
 
-Real Claude Code against a stub model:
+The end of the last command's output, with 8 prompts at `k = 1`, from real Claude Code against a
+stub model:
 
 ```text
 B (--description): pdf on claude-code, k=1
   precision 80%  recall 100%  F1 0.89  accuracy 88%
+  TP 4 FP 1 TN 3 FN 0
+  recall 100% [51%–100%] · false triggers 25% [5%–70%] (Wilson 95%, over 8 runs)
   missed:
     should_not false trigger 1/1  "Explain in one line what a pdf is"
   expected routes: docx 1/1
+  agent spend $0.02
 
 B vs A over 8 prompts: recall 2/4→4/4 · false triggers 1/4→1/4 · Δacc +25 pp (95% CI +0 to +63)
+  McNemar (k=1): B right where A wrong 2, the reverse 0, p = 0.500
   flip better should     skipped → loaded  "Make the invoice searchable"
   flip better should     skipped → loaded  "OCR this scanned invoice"
+  sign-flip test (exact up to 20 changed prompts): p = 0.500 over 8 prompts
   note: 4 should and 4 should_not prompts: only a large change can show; aim for 10+ per side
 No clear difference
 ```
 
 Precision is the share of loads that were wanted; recall is the share of `should` prompts that
-loaded the skill. B is better or worse only when the interval clears 0 and p is below 0.05, so 8
-prompts end in No clear difference. Flags and defaults are in
+loaded the skill. B is better or worse only when the Δacc interval clears 0 and the sign-flip p is
+below 0.05, so 8 prompts end in No clear difference. Flags and defaults are in
 [Check that a skill loads](https://coding.sh/docs/harness-evals#triggers).
 
 ## If something goes wrong
@@ -204,6 +215,7 @@ prompts end in No clear difference. Flags and defaults are in
 | A live run looks worse than the dry run | After a refusal, Claude Code retries on an older model. Each `llm.call` event's `responseModel` shows which one answered. |
 | Every run fails the judge | Run the deterministic checks alone first, then `coding.sh judge grade` by hand on one run. |
 | The skill never loads | Run `eval trigger` and fix the description. |
+| `No trigger spec at …` | Write `triggers.toml` next to SKILL.md, or draft one with `eval trigger <skill> --draft`. |
 
 ## Next steps
 

@@ -209,6 +209,7 @@ grouped by area, with links to the docs for the details.
 - **Docs.** Replay recorded model calls says to set `excludeTools` or `excludeModel` when you record, since a replay matches the keys the recording stored. It also says that the noise floor counts pass verdicts, not outputs, and that `exp show` prints a replay's call counts. [Replay recorded model calls](https://coding.sh/docs/how-to/replay-llm-calls)
 - **Docs.** Workflow experiments puts the example case's truth file outside the repo, since its `repoRoot` is the repo root and a truth file inside fails to load. It shows the truth file's format, says a planted bug needs its `patch` to be checked, and lists the `no significant difference` verdict. [Workflow experiments](https://coding.sh/docs/workflows)
 - **Docs.** Test an AGENTS.md change says that Claude Code reads its own instructions file, not AGENTS.md, so for its sessions you edit that file or import AGENTS.md from it. Its `--b` example passes a draft from outside the repo, since a file inside the repo keeps its own path and is added next to AGENTS.md. [Test an AGENTS.md change](https://coding.sh/docs/how-to/test-agents-md-change)
+- **Docs.** Evaluate an Agent Skill's `verify.sh` finds `check.py` by its own path, since the verifier runs in the work tree. The page says the item gate reads `RERUN` when the skill never loads, and drafts the trigger spec with `--draft`, since `--dry-run` only prints it. [Evaluate an Agent Skill](https://coding.sh/docs/how-to/evaluate-a-skill)
 
 ## [0.1.7] - 2026-11-16
 
