@@ -1,8 +1,8 @@
 // Binary discovery and version probing. PATH is scanned directly (no shell),
 // so shell functions/aliases named like the agent never confuse detection.
 import { execFile, resolveWindowsCommand } from "../../core/spawn.ts";
-import { accessSync, constants, existsSync, statSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { delimiter, dirname, join } from "node:path";
 import type { DetectResult } from "../../core/types.ts";
 
 /** Absolute path of the first executable `bin` on PATH, else undefined. */
@@ -26,6 +26,32 @@ export function which(bin: string, env: NodeJS.ProcessEnv = process.env): string
 export function parseVersion(text: string): string | undefined {
   const m = /\b(\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?)\b/.exec(text);
   return m?.[1];
+}
+
+/**
+ * The version in the package.json of the npm package `pkg` that installed `binary`, read
+ * without launching it. Some CLIs write to their home on every launch (Gemini CLI leaves
+ * ~/.gemini/projects.json.<uuid>.tmp files, OpenCode makes ~/.cache/opencode), so detect reads
+ * the file where it can. Looks next to an npm shim (<prefix>/node_modules/<pkg>, Windows),
+ * under <prefix>/lib/node_modules/<pkg>, and up from the binary's real path (a symlinked bin).
+ */
+export function packageVersion(binary: string, pkg: string): string | undefined {
+  const dirs = [join(dirname(binary), "node_modules", pkg), join(dirname(binary), "..", "lib", "node_modules", pkg)];
+  try {
+    let d = dirname(realpathSync(binary));
+    for (let i = 0; i < 6; i++, d = dirname(d)) dirs.push(d);
+  } catch {
+    // not a real path: the shim locations only
+  }
+  for (const d of dirs) {
+    try {
+      const j = JSON.parse(readFileSync(join(d, "package.json"), "utf8")) as { name?: unknown; version?: unknown };
+      if (j.name === pkg && typeof j.version === "string" && parseVersion(j.version)) return parseVersion(j.version);
+    } catch {
+      // no package.json here
+    }
+  }
+  return undefined;
 }
 
 /** Runs `<binary> --version` (no shell) with a short timeout. Never throws. */
@@ -57,6 +83,8 @@ export interface DetectSpec {
   configDir: string;
   hooked: () => boolean | Promise<boolean>;
   versionArgs?: string[];
+  /** The npm package that ships the binary: its package.json gives the version without a launch (packageVersion). */
+  npmPackage?: string;
   /**
    * Accept a binary only when its version output matches (guards generic names
    * like "agent"). Gets the bin name too: a specific name should survive a
@@ -75,7 +103,7 @@ export async function detectAgent(spec: DetectSpec): Promise<DetectResult> {
   for (const b of spec.bins) {
     const p = which(b, env);
     if (!p) continue;
-    const v = await probeVersion(p, spec.versionArgs, PROBE_TIMEOUT_MS, env);
+    const v = (spec.npmPackage ? packageVersion(p, spec.npmPackage) : undefined) ?? (await probeVersion(p, spec.versionArgs, PROBE_TIMEOUT_MS, env));
     if (spec.versionCheck && !spec.versionCheck(v, b)) continue;
     binary = p;
     version = v;

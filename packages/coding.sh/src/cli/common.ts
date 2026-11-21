@@ -418,7 +418,7 @@ export async function resolveSession(ctx: Context, id: string): Promise<Session>
     if (!s) throw new CliError("No sessions captured yet", { reason: "not_found", next: noSessionsNextLines(ctx.env) });
     return s;
   }
-  const s = (await ctx.index.getSession(id)) ?? (await sessionByPrefix(ctx, id)) ?? (await sdkSession(ctx, id)) ?? (await subagentById(ctx, id));
+  const s = (await ctx.index.getSession(id)) ?? (await sessionByPrefix(ctx, id)) ?? (await sdkSession(ctx, id)) ?? (await subagentById(ctx, id)) ?? (await subagentByShortId(ctx, id));
   if (!s) {
     const short = id.length < MIN_ID_PREFIX ? ` (an id prefix needs at least ${MIN_ID_PREFIX} characters)` : "";
     throw new CliError(`Can't find session ${JSON.stringify(id)}${short}`, { reason: "not_found", next: ["List sessions:", "coding.sh sessions"] });
@@ -486,6 +486,30 @@ async function subagentById(ctx: Context, id: string): Promise<Session | undefin
   if (id.length < MIN_ID_PREFIX || id.includes(":")) return undefined;
   const marker = `:sub:${id}`;
   const ids = (await ctx.index.listSessions()).map((s) => s.id).filter((x) => x.includes(marker)).sort().slice(0, MAX_CANDIDATES + 1);
+  return pickSession(ctx, id, ids);
+}
+
+/**
+ * A session id short enough for a table: its first 8 characters, and for a subagent
+ * (`<parent>:sub:<agentId>`) 8 of each part (`a03d2f6b:sub:a7d49789`), so it does not read as
+ * its parent. resolveSession takes it back.
+ */
+export function shortSessionId(id: string): string {
+  return id.split(":sub:").map((part) => part.slice(0, 8)).join(":sub:");
+}
+
+/** A subagent by its short id (shortSessionId): each `:sub:` part a prefix of the same part of the stored id. */
+async function subagentByShortId(ctx: Context, id: string): Promise<Session | undefined> {
+  const parts = id.split(":sub:");
+  if (parts.length < 2 || parts[0]!.length < MIN_ID_PREFIX || parts.some((p) => !p)) return undefined;
+  const ids = (await ctx.index.listSessions())
+    .map((s) => s.id)
+    .filter((x) => {
+      const xs = x.split(":sub:");
+      return xs.length === parts.length && xs.every((p, i) => p.startsWith(parts[i]!));
+    })
+    .sort()
+    .slice(0, MAX_CANDIDATES + 1);
   return pickSession(ctx, id, ids);
 }
 

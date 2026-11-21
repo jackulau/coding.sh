@@ -43,6 +43,10 @@ export interface SpoolLine {
   /** When raw was too large to inline, the path of the side file holding it
    *  (read with "try JSON.parse, else the string" — see spool/write.ts resolveRaw). */
   rawFile?: string;
+  /** What the writer's redaction replaced in the payload, by rule kind (counts, never values); absent when
+   *  nothing was. The payload on disk holds markers already, so ingest adds these counts to the
+   *  `payload.redactions` of the line's first event (spool/redact.ts). hook.sh lines never have it. */
+  redactions?: Record<string, number>;
 }
 
 export interface SpoolCursor {

@@ -129,6 +129,14 @@ session that never ends has one ([Forward and sinks](https://coding.sh/docs/prod
 Local ingest sends it again when a transcript import adds events to a session without ending it,
 so the span has the session's totals.
 
+With `mode = "full"`, each `execute_tool` span carries the call's input in
+`gen_ai.tool.call.arguments` and its output in `gen_ai.tool.call.result`, as stored (redacted). In
+`metadata` mode neither attribute is sent.
+
+An object or array of 8192 characters or less as JSON goes out as a structured value (`kvlistValue`
+or `arrayValue`). A string, a larger value, or one with a `null` inside a list or nesting past eight
+levels goes out as text, cut at 8192 characters.
+
 ## `[prices]`
 
 One `[prices."<model>"]` table per model, with prices in USD per million tokens. Ingest and
@@ -291,7 +299,7 @@ Read only by `coding.sh serve`. Every key has an environment variable, which win
 | `CODING_SH_WORKFLOWS_BACKGROUND_IMPORT`, `CODING_SH_TAIL_CHILD` | Set by coding.sh on the import processes it starts. Not for you to set. |
 | `CODING_SH_NO_PROXY_AUTOSTART=1` | The hook does not restart a stopped `coding.sh proxy` when a session starts (it does only after `init --proxy`). |
 | `CODING_SH_ECHO_CONTINUE=1` | The hook prints `{"continue":true}`, for agents that need a JSON reply. `init` sets this up where needed. |
-| `CODING_SH_HOOK_SOURCE` | Path of the `hook.mjs` that `init` copies into `~/.coding.sh/bin`. |
+| `CODING_SH_HOOK_SOURCE` | Path of the `hook.mjs` that `init` copies into `~/.coding.sh/bin`, with the `hook-redact.mjs` beside it when there is one. |
 | `CODING_SH_INIT_IMPORT_BUDGET_MS` | How long `init` imports past sessions before it hands the rest to a background import. Default 8000. |
 | `CODING_SH_CAPTURE_MODE` | `coding.sh serve` and the SDKs: `full` or `metadata`. |
 

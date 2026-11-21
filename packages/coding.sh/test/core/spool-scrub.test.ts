@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import fsp from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { defaultConfig } from "../../src/core/config.ts";
-import { ingest } from "../../src/core/ingest.ts";
+import { ingest, spoolScrubKey } from "../../src/core/ingest.ts";
 import { createRedactor } from "../../src/core/redact.ts";
 import { reparse } from "../../src/core/reparse.ts";
 import { scrubRawFile } from "../../src/core/spool-scrub.ts";
@@ -101,5 +103,45 @@ describe("a spool side file after ingest", () => {
     assert.ok(!readFileSync(f, "utf8").includes(SECRET));
     assert.equal(await scrubRawFile(f, r), false);
     assert.equal(await scrubRawFile(join(t.raw, "missing.json"), r), false);
+  });
+});
+
+describe("a past day's spool file after ingest", () => {
+  /** Runs fn while counting opens of path for writing (the in-place scrub opens it "r+"). */
+  async function writeOpens(path: string, fn: () => Promise<unknown>): Promise<number> {
+    const real = fsp.open;
+    let n = 0;
+    fsp.open = function (file: Parameters<typeof real>[0], flags?: Parameters<typeof real>[1], ...rest: unknown[]) {
+      if (String(file) === path && flags === "r+") n++;
+      return (real as (...a: unknown[]) => ReturnType<typeof real>)(file, flags, ...rest);
+    } as typeof real;
+    syncBuiltinESMExports();
+    try {
+      await fn();
+    } finally {
+      fsp.open = real;
+      syncBuiltinESMExports();
+    }
+    return n;
+  }
+  const line = (t: ReturnType<typeof setup>, n: number, stdout: string) => JSON.stringify({ v: 0, agent: "claude-code", event: "PostToolUse", ts: 1_700_000_000_000 + n, pid: n, cwd: join(t.root, "work"), raw: { ...JSON.parse(t.payload(stdout)), tool_use_id: `t${n}` } }) + "\n";
+
+  it("is not opened for the scrub when ingest found nothing to redact in its lines, and its scrub cursor still moves", async () => {
+    const t = setup();
+    writeFileSync(t.spool, line(t, 1, "hello") + line(t, 2, "world"));
+    const before = readFileSync(t.spool, "utf8");
+    const index = new MemoryIndexStore();
+    const opens = await writeOpens(t.spool, () => ingest({ config: defaultConfig(t.env), index, blobs: new MemoryBlobStore(), adapters: new Map([[claudeCode.id, claudeCode]]), env: t.env, lock: false }));
+    assert.equal(opens, 0);
+    assert.equal(readFileSync(t.spool, "utf8"), before);
+    assert.equal(await index.getCursor(spoolScrubKey("claude-code/2026-11-06.1.jsonl")), Buffer.byteLength(before));
+  });
+
+  it("is still scrubbed when one of its lines holds a secret", async () => {
+    const t = setup();
+    writeFileSync(t.spool, line(t, 1, "hello") + line(t, 2, `AWS_SECRET_ACCESS_KEY=${SECRET}`));
+    const opens = await writeOpens(t.spool, t.run);
+    assert.equal(opens, 1);
+    assert.ok(!readFileSync(t.spool, "utf8").includes(SECRET));
   });
 });

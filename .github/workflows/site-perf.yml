@@ -80,6 +80,9 @@ jobs:
         page: ${{ fromJSON(github.event_name == 'pull_request' && '["home", "quickstart", "evals", "changelog", "cli"]' || '["all"]') }}
     env:
       PAIRS: ${{ inputs.pairs || '9' }}
+      # The star count of CI's site job (ci.yml): the deployed nav shows one, so its bytes count
+      # toward each page's budget, and npm run gate measures the same build.
+      SITE_GITHUB_STARS: "1234"
     defaults:
       run:
         shell: bash

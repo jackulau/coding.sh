@@ -132,7 +132,7 @@ export async function run(c: CommandContext): Promise<number> {
   }
   const bin = cli ? await ownBin(env, cli) : "not_installed";
   if (out.json) {
-    out.data({ status: "migrated", ...doc, bin, cliPath: readTrimmed(p.cliPointer) ?? null, backup: backup ?? null });
+    out.data({ status: from < to ? "migrated" : "owned", ...doc, bin, cliPath: readTrimmed(p.cliPointer) ?? null, backup: backup ?? null });
     return 0;
   }
   if (from < to) out.ok(`Migrated ${file} to index schema v${to}`);

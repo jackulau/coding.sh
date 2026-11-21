@@ -162,11 +162,16 @@ page has its own blocking-time budget on the slow phone. The rules are in
 [scripts/perf/gate.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/gate.mjs), with tests in `scripts/perf/test`
 (`npm run perf:test`, which `npm run gate` runs).
 
+Site perf builds both versions with a star count in the nav, as the deployed site shows one. After
+its site build, `npm run gate` checks each page's HTML against these budgets with no browser
+(`scripts/perf/html-budget.mjs`). It compresses each page as the perf server does, so its counts
+match Site perf's, and a page over its HTML budget fails before the pull request.
+
 | Where | What runs |
 |---|---|
 | Pull requests | GitHub's hosted runners, one job per page. Load-time budgets are skipped: they only hold on our own machine. |
 | Pushes to main | The one desk runner labelled `perf`, so two perf runs never overlap. Deploys run beside it. |
-| Pull requests and deploys | `npm run perf:budget` in apps/site checks page weight, inline CSS and script, fonts, scripts and images in the build. CI runs it on every pull request, and the Site workflow runs it again before a deploy. |
+| Pull requests and deploys | `npm run perf:budget` in apps/site checks page weight, inline CSS and script, fonts, scripts and images in the build. CI runs it on every pull request, `npm run gate` runs it in its site step, and the Site workflow runs it again before a deploy. |
 
 The desk runs other jobs, so each sample records `cpu_busy`, the share of CPU in use while the
 page loaded. A load-time budget counts only samples at 0.5 or less (`--quiet-cpu`). When fewer
@@ -345,6 +350,42 @@ gives a pipe.
 `bench.mjs hook` on the same machine: `perf.hookShP95` 2.78 ms for a 600-byte payload and
 `perf.hookSh2kbP95` 2.75 ms for 2 KB (8.47 ms before). The node hook, `hook.mjs`, still costs
 about 8.5 ms more than `node -e ""`; Windows and the cases `hook.sh` hands on pay that.
+
+### Redaction in the node hook
+
+`hook.mjs` redacts a payload before it writes it ([privacy](guides/privacy.md#the-raw-spool)). The
+rules live in their own file, `hook-redact.mjs`. A call that uses them costs about 4.8 ms more:
+2.2 ms to import them, 0.6 ms to set them up, and 2.0 ms to redact a 2 KB payload, most of it spent
+compiling each regex on its first use.
+
+Most payloads hold nothing the default rules replace. `src/spool/gate.ts` reads the payload's text
+first and loads the rules only when it may hold a secret, or when `config.toml` sets other rules.
+`test/spool/gate.test.ts` runs the rules on payloads written by hand and generated, and fails when
+they change one the check let through.
+
+Two small changes pay for the check: `paths()` builds its paths without `path.join`, and the hook
+names the day's spool file without `toISOString()`.
+
+Desk, Windows 11, Node 24.20, Nov 20, 2026. Each cell is `hook.mjs` over `node -e ""`, the median
+of interleaved calls (200 at 2 KB, 120 with a secret, 40 at 1 MB). In brackets is the paired
+median difference from origin/main, which does not redact in the hook, with its 95% bootstrap
+interval.
+
+| Payload | origin/main | Rules on every payload | Rules only when needed |
+| --- | --- | --- | --- |
+| 2 KB, no secret | +10.2 ms | +15.5 ms (+5.3 [5.1, 5.7]) | +9.0 ms (-1.2 [-1.4, -0.9]) |
+| 2 KB, one secret | +9.6 ms | +15.8 ms (+6.5 [6.1, 6.8]) | +13.6 ms (+3.8 [3.4, 4.3]) |
+| 1 MB, no secret | +14.4 ms | +29.4 ms (+15.3 [14.5, 15.6]) | +17.7 ms (+3.1 [2.5, 3.9]) |
+
+`bench.mjs hook --baseline` on the same machine puts `perf.hook` 1.41 ms [0.82, 2.09] under
+origin/main. A run against the 0.1.7 hook puts the 2 KB call 0.67 ms [0.08, 0.91] under it.
+
+At 1 MB, the extra 3.1 ms is the check reading the whole text. Bundling the rules into `hook.mjs`
+added about 1.2 ms to every call, and a CommonJS bundle and node's compile cache were no faster.
+
+The check finds a possible secret in 28% of this repo's source files, 67% of its docs pages, 12% of
+its site files and 17% of its adapter fixtures. A session that reads many files pays the slower
+cost often.
 
 ## Long sessions
 

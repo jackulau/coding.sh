@@ -39,6 +39,7 @@ import type { RepoState } from "../schema/index.ts";
 import { redactArgv } from "../core/redact.ts";
 import { diffSnapshots, snapshot } from "../core/snapshot.ts";
 import type { DiffResult, SnapshotOptions } from "../core/snapshot.ts";
+import { spoolLineRedactor } from "../spool/redact.ts";
 import { appendSpool, isDisabled, logSpoolError } from "../spool/write.ts";
 import { aiderUsageTap } from "./aider.ts";
 import type { AiderUsageRecord, AiderUsageTap } from "./aider.ts";
@@ -99,7 +100,7 @@ export async function wrapRunDetailed(opts: WrapRunOptions): Promise<WrapRunResu
       const line: SpoolLine = { v: 0, agent, event, ts, pid: process.pid, cwd, raw: { sessionId, ...raw } };
       if (runId) line.runId = runId;
       if (gateway) line.gateway = gateway;
-      appendSpool(line, env);
+      appendSpool(line, env, { redact: spoolLineRedactor(env) });
     } catch (e) {
       logSpoolError(e, { agent, event, where: "wrapper" }, env);
     }

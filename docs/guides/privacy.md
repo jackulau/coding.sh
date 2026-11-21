@@ -34,7 +34,7 @@ A made-up key, like the ones in docs and test fixtures, is redacted too, but cou
 | --- | --- |
 | `index.db` | The SQLite index of sessions and events. |
 | `blobs/` | Large prompts and tool output, compressed and stored by hash. |
-| `spool/` | What the hook received from the agent. Unredacted until ingest; see below. |
+| `spool/` | What the hook received from the agent, redacted by the node hook; see below. |
 | `repos/` | Snapshots of the working tree before and after a session. Your repo's own refs are never touched. |
 | `backups/` | A copy of every agent config file before coding.sh edited it. |
 | `config.toml` | Your settings. |
@@ -136,14 +136,27 @@ timing. It listens on 127.0.0.1 unless you pass `--host`.
 
 ## The raw spool
 
-The hook writes what the agent sends to `~/.coding.sh/spool` (mode 600) without redacting it, to
-stay fast. Ingest then stores a redacted copy.
+The hook writes what the agent sends to `~/.coding.sh/spool` (mode 600). The node hook (`hook.mjs`,
+what agents run on Windows) redacts the payload first, with `capture.redact` and
+`capture.redactPatterns` from your `config.toml`, so a secret those rules match never reaches the
+spool.
+
+To stay fast, the node hook loads those rules only for a payload whose text may hold a secret, or
+when your `config.toml` sets other rules; the rules would leave any other payload as it is. If it
+can't load them, it writes no line for that payload and logs the error to `spool/errors.log`.
+
+The line records how many values the node hook replaced, by rule, and ingest adds those counts to the
+stored event. A repo's `.coding.sh/config.toml` can add rules; ingest applies them. The POSIX sh hook
+(`hook.sh`, what agents run elsewhere) writes the payload without redacting it, to stay fast.
+Ingest stores a redacted copy either way, and redacts what is left on disk:
 
 - Both hooks give a payload its own file under `spool/<agent>/raw/`, unless its spool line fits in
   about 1 KB. Once ingested, that file is rewritten with secrets redacted, in every capture mode.
 - A short payload inside the day's spool file stays as written until its UTC day has passed and
-  ingest has read the whole file. Then ingest redacts it in place. The line keeps its length, so
+  ingest has read the whole file. Then ingest redacts it in place, keeping the line's length so
   ingest cursors still hold.
+- Ingest does not open a spool file again when it read the file in one pass and found nothing to
+  redact.
 - With `CODING_SH_DISABLE=1` the hooks write no payload, only the session id, to
   `spool/disabled-sessions`, so ingest and `ingest --backfill` leave that session out.
 - `coding.sh gc` deletes ingested spool files older than 7 days (`[retention] keepSpoolDays`),

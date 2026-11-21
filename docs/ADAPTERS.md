@@ -116,15 +116,24 @@ order.
   The sources are the T3 adapter's `host-link` notification, the hook's env marker, or a Codex
   `session_meta.originator` of "T3 Code". The session then gets `agent: "t3code"`, and `provider` names the
   agent T3 ran.
+- **Title:** the `host-link` notification carries T3's thread title, and the session takes that title, not its
+  first prompt. T3's placeholder for a thread it has not named yet ("New thread") is skipped, so such a session
+  keeps its prompt as the title. In `show`, the notification reads `T3 Code thread: <title>`.
 - **Content by provider:**
   - Codex and Claude: content comes from their own transcripts.
   - OpenCode, Cursor and Pi: linked only. Their adapters import the content.
-  - Other providers: content is built from T3's store, with per-turn usage from `turnTokenUsage`. T3
-    counts cache reads and writes inside `inputTokens`, and coding.sh separates them.
+  - Other providers: content is built from T3's store. Each finished provider turn is one `llm.call` on
+    the turn's model (the thread's model when the turn names none), timed from the turn's start to its end,
+    with usage from `turnTokenUsage` when T3 has it. T3 counts cache reads and writes inside `inputTokens`,
+    and coding.sh separates them.
 - **Session tree:** a thread's first provider thread is the top-level session. A provider switch or a T3
-  subagent thread becomes a child session. A Claude subagent thread whose run is in a transcript of
-  any Claude session of its parent thread (`subagents/agent-<id>.jsonl`) is not stored again: the
-  claude-code child session `<session>:sub:<id>` is the one copy.
+  subagent thread becomes a child session.
+- **Claude subagents:** a subagent thread of a Claude thread is not stored when a Claude transcript of the
+  parent thread (any of its provider threads) holds its run, since the claude-code adapter stores that run as
+  `<session>:sub:<agentId>`. That covers an `agent-<id>.jsonl` subagent file, a Workflow-tool run thread
+  whose `subagents/workflows/<runId>` directory exists (the run id comes from T3's
+  `orchestration_v2_projection_subagents` rows), and each agent thread of that run. A re-parse removes the
+  t3code copies an older parse stored.
 - **Cost:** T3's running cost (`contextUsage.cost`) is kept as `reportedUsage` and never summed.
 - **When imports run:** the T3 store is re-imported on every lazy ingest (`Adapter.tail`). Threads that
   haven't changed are skipped.
@@ -239,6 +248,15 @@ node "<~/.coding.sh/bin/hook.mjs>" <agent-id> <EventName> [flags]
   fails. It waits for `hook.mjs` and exits 0 whatever node does. When node is not on the agent's
   `PATH` or cannot run `hook.mjs`, that event is not captured, and `--echo-continue` and
   `--reply={}` still get their reply. A reader of the reply that has gone away does not fail the call.
+- `hook.mjs` redacts the payload before it writes it, inline or to a side file, with the redaction
+  settings in your user `config.toml` ([privacy](guides/privacy.md#the-raw-spool)). The line
+  records the counts in `redactions`, and ingest adds them to the event. `hook.sh` writes the payload
+  as it came; ingest redacts it.
+- `hook.mjs` loads the rules from `hook-redact.mjs` beside it only when the payload's text may hold a
+  secret or `config.toml` sets other rules. Other payloads are written as they came, since the rules
+  would not change them. If `hook-redact.mjs` is missing, such a payload gets no line and the error
+  goes to `spool/errors.log`. `coding.sh doctor` then reports the hook as stale, and
+  `coding.sh update --refresh-bin` writes the file again.
 - With `CODING_SH_DISABLE=1` both hooks read the payload and write no line. They add the payload's
   session id (`session_id`, `conversation_id`, `sessionId` or `conversationId`) to
   `spool/disabled-sessions`. Ingest and `ingest --backfill` store no event of a session listed there.

@@ -673,6 +673,65 @@ describe("GenAI semconv nested invoke_agent", () => {
   });
 });
 
+describe("GenAI semconv chat content under an invoke_agent root", () => {
+  const T = "7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c";
+  const ROOT = "f000000000000001";
+  const msgs = (role: string, text: string) => JSON.stringify([{ role, parts: [{ type: "text", content: text }] }]);
+  const root = (extra: ReturnType<typeof sAttr>[] = []) =>
+    otlpSpan(T, ROOT, undefined, "invoke_agent helper", [sAttr("gen_ai.operation.name", "invoke_agent"), sAttr("gen_ai.agent.name", "helper"), ...extra], 0, 2000);
+  const chat = (id: string, question: string, answer: string, s: number, e: number) =>
+    otlpSpan(
+      T,
+      id,
+      ROOT,
+      "chat gpt-5-mini",
+      [sAttr("gen_ai.operation.name", "chat"), sAttr("gen_ai.request.model", "gpt-5-mini"), sAttr("gen_ai.input.messages", msgs("user", question)), sAttr("gen_ai.output.messages", msgs("assistant", answer))],
+      s,
+      e,
+    );
+  const run = async (spans: ReturnType<typeof otlpSpan>[]) => (await mapTraces(decodeTraceJson(otlpTraces("qa", spans)), ctx())).events;
+
+  it("takes the turn's prompt and title from the chat span when the root carries no input", async () => {
+    const events = await run([chat("f000000000000002", "NESTED question", "NESTED answer", 100, 1100), root()]);
+    const users = ofKind(events, "user.message");
+    assert.equal(users.length, 1);
+    assert.equal(users[0]!.payload.text, "NESTED question");
+    assert.equal(users[0]!.sessionId, T);
+    assert.equal(users[0]!.id, spanEventId(T, ROOT, 2));
+    assert.equal(ofKind(events, "assistant.message")[0]!.payload.text, "NESTED answer");
+    assert.equal(buildSession(events).title, "NESTED question");
+  });
+
+  it("keeps the root's own input over a chat span's, in either order", async () => {
+    for (const order of [0, 1]) {
+      const spans = [chat("f000000000000002", "chat copy", "a", 100, 1100), root([sAttr("gen_ai.input.messages", msgs("user", "root question"))])];
+      if (order) spans.reverse();
+      const users = ofKind(await run(spans), "user.message");
+      assert.deepEqual(users.map((u) => u.payload.text), ["root question"], `order ${order}`);
+    }
+  });
+
+  it("gives one prompt per turn, the earliest model call's", async () => {
+    const events = await run([chat("f000000000000003", "later", "b", 1200, 1900), chat("f000000000000002", "first", "a", 100, 1100), root()]);
+    assert.deepEqual(ofKind(events, "user.message").map((u) => u.payload.text), ["first"]);
+  });
+
+  it("reads messages from the gen_ai.client.inference.operation.details event", async () => {
+    const span = otlpSpan(T, ROOT, undefined, "chat gpt-5-mini", [sAttr("gen_ai.operation.name", "chat"), sAttr("gen_ai.request.model", "gpt-5-mini")], 0, 1000);
+    span.events = [
+      {
+        timeUnixNano: "1000000",
+        name: "gen_ai.client.inference.operation.details",
+        attributes: [sAttr("gen_ai.input.messages", msgs("user", "EVENT question")), sAttr("gen_ai.output.messages", msgs("assistant", "EVENT answer"))],
+      },
+    ];
+    const events = await run([span]);
+    assert.deepEqual(ofKind(events, "user.message").map((u) => u.payload.text), ["EVENT question"]);
+    assert.deepEqual(ofKind(events, "assistant.message").map((u) => u.payload.text), ["EVENT answer"]);
+    assert.equal(buildSession(events).title, "EVENT question");
+  });
+});
+
 describe("agent attributes: reasoning, skills, compaction, main agent and subagents", () => {
   it("GenAI semconv: reasoning tokens, skills, compaction and the main agent's name", async () => {
     const events = await traces("genai-semconv-agents.json");

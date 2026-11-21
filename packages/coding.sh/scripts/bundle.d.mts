@@ -4,6 +4,10 @@ export interface BundleResult {
   /** Source files (package-relative, e.g. "src/cli/main.ts") esbuild put in cli.mjs itself, not in a chunk. */
   cliInputs: string[];
   hook: string;
+  /** Source files (package-relative) esbuild put in hook.mjs. */
+  hookInputs: string[];
+  /** The redaction rules hook.mjs imports for a payload that may hold a secret. */
+  hookRedact: string;
   hookSh: string;
   schema: string;
   store: string;

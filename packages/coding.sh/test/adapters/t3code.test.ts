@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { after, before, describe, it } from "node:test";
+import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { codex } from "../../src/adapters/codex.ts";
 import { SQLITE_COPY_OWNER, SQLITE_COPY_PREFIX } from "../../src/adapters/_shared/sqlite-copies.ts";
@@ -189,7 +189,11 @@ describe("t3code adapter", () => {
     assert.ok(by[CLAUDE_ID]!.stats.toolCalls > 0);
     // Store-built Grok session: messages, tools, file change, per-turn usage.
     const g = by["grok-session-1"]!;
-    assert.equal(g.title, "List files and run the tests");
+    // T3's thread title titles the session, not its first prompt.
+    assert.equal(g.title, "List files");
+    assert.equal(by[CLAUDE_ID]!.title, "Add sum", "a transcript session takes the title of the T3 thread that ran it");
+    const link = (await index.listEvents(CLAUDE_ID)).find((e) => e.payload.type === "host-link");
+    assert.equal(link?.payload.message, "T3 Code thread: Add sum", "show names the thread");
     assert.equal(g.cwd, "/work/demo");
     assert.equal(g.model, "grok-model");
     assert.deepEqual(g.stats.usage, { inputTokens: 300, outputTokens: 50, cacheReadTokens: 600, cacheWriteTokens: 100 });
@@ -206,7 +210,7 @@ describe("t3code adapter", () => {
     assert.deepEqual(report?.payload.reportedUsage, { costUsd: 0.42 });
     // v1-only thread: store messages, tool activity, totals from the last context snapshot.
     const old = by["v1-codex-thread-not-on-disk"]!;
-    assert.equal(old.title, "Old prompt");
+    assert.equal(old.title, "Old thread");
     assert.equal(old.stats.toolCalls, 1);
     const { costUsd, estimatedCostUsd, ...tokens } = old.stats.usage!;
     assert.deepEqual(tokens, { inputTokens: 300, cacheReadTokens: 500, outputTokens: 100 });
@@ -311,6 +315,14 @@ describe("host attribution", () => {
     const plain = buildSession([ev({ kind: "session.start" })]);
     assert.equal(plain.agent, "codex");
     assert.equal(plain.provider, undefined);
+  });
+
+  it("titles the session with the host's thread title, before its prompt", () => {
+    const prompt = ev({ kind: "user.message", ts: 3, payload: { text: "Context handoff (full_thread_summary): Provider context handoff." } });
+    const s = buildSession([ev({ kind: "session.start", ts: 1 }), prompt, ev({ agent: "t3code", ts: 2, payload: { type: "host-link", via: "t3code", title: "Coding.sh 100-Star Milestone Graphic" } })]);
+    assert.equal(s.title, "Coding.sh 100-Star Milestone Graphic");
+    const untitled = buildSession([ev({ kind: "session.start", ts: 1 }), prompt, ev({ agent: "t3code", ts: 2, payload: { type: "host-link", via: "t3code" } })]);
+    assert.equal(untitled.title, "Context handoff (full_thread_summary): Provider context handoff.");
   });
 
   it("persists provider in sqlite", async () => {
@@ -547,6 +559,157 @@ describe("T3 Claude subagent threads", () => {
     assert.deepEqual(r.errors, []);
     return { index };
   };
+});
+
+// orchestration_v2_projection_subagents, with the columns of a real store.
+const SUBAGENTS_SCHEMA = `CREATE TABLE orchestration_v2_projection_subagents (subagent_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT, parent_node_id TEXT, provider TEXT NOT NULL, provider_thread_id TEXT, child_thread_id TEXT, origin TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT, completed_at TEXT, updated_at TEXT NOT NULL, payload_json TEXT NOT NULL, driver TEXT, provider_instance_id TEXT, completion_delivery_state TEXT);`;
+
+describe("T3 Claude subagent runs under resumed transcripts and workflows", () => {
+  let env: TmpEnv;
+  const saved: Record<string, string | undefined> = {};
+  const RESUMED_ID = "22222222-3333-4444-8555-666666666666";
+  beforeEach(() => {
+    env = tmpEnv();
+    for (const k of t3Env) (saved[k] = process.env[k]), delete process.env[k];
+  });
+  afterEach(() => {
+    for (const k of t3Env) if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+    env.restore();
+  });
+
+  /** A v2 store with a Claude root thread; returns the open db. */
+  const store = () => {
+    const dir = join(env.home, ".t3", "userdata");
+    mkdirSync(dir, { recursive: true });
+    const db = new DatabaseSync(join(dir, "statev2.sqlite"));
+    db.exec(V2_SCHEMA + SUBAGENTS_SCHEMA);
+    db.prepare("INSERT INTO projection_projects VALUES ('proj-1', 'demo', '/work/demo', '[]', ?, ?, NULL, NULL)").run(T(0), T(0));
+    thread(db, "mcp:launch:root", { provider: "claudeAgent", title: "Root", created: T(0) });
+    providerThread(db, "pt-root", "mcp:launch:root", "claudeAgent", CLAUDE_ID, 1);
+    return db;
+  };
+  const sub = (db: DatabaseSync, id: string, parent: string) =>
+    thread(db, id, { provider: "claudeAgent", title: "sub", created: T(1), payload: { lineage: { parentThreadId: parent, relationshipToParent: "subagent", rootThreadId: "mcp:launch:root" } } });
+  const copiesOf = async () => {
+    const copied: [string, string][] = [];
+    const events = await collect(backfillT3(testCtx().ctx, { copied: (s, o) => copied.push([s, o]) }));
+    return { copied: copied.sort(), sessions: [...new Set(events.map((e) => e.sessionId))] };
+  };
+
+  it("a subagent whose run sits under the resumed conversation's transcript is stored once, and re-parse removes the old copy", async () => {
+    const { claude } = nativeTranscripts(env.home);
+    const resumed = join(dirname(claude), `${RESUMED_ID}.jsonl`);
+    writeFile(resumed, "{}\n");
+    const db = store();
+    providerThread(db, "pt-root-2", "mcp:launch:root", "claudeAgent", RESUMED_ID, 2);
+    const child = "thread:native-thread:pending%3Aroot2%3Ab333";
+    sub(db, child, "mcp:launch:root");
+    db.close();
+    const cenv = { ...process.env };
+    const index = new MemoryIndexStore();
+    const o = { config: defaultConfig(cenv), index, blobs: new MemoryBlobStore(), env: cenv };
+    // Before the agent file is written, the thread is a t3code session (as an older parse stored it).
+    await backfill({ ...o, adapters: [{ ...t3code, parseVersion: 8 }] });
+    const copy = `t3code-${child}`;
+    assert.ok(await index.getSession(copy));
+    writeFile(join(resumed.slice(0, -".jsonl".length), "subagents", "agent-b333.jsonl"), "{}\n");
+    const owner = `${RESUMED_ID}:sub:b333`;
+    assert.deepEqual((await copiesOf()).copied, [[copy, owner]], "the run is the resumed transcript's subagent, not the first one's");
+    await index.putEvents([{ id: "own-1", v: 0, sessionId: owner, ts: Date.parse(T(1)), agent: "claude-code", kind: "session.start", source: "transcript", payload: {} }]);
+    await recomputeSession(index, owner, { linker: childLinker(index), repo: repoResolver() });
+
+    const r = await reparse({ ...o, adapters: new Map([["t3code", t3code]]) });
+    assert.deepEqual(r.errors, []);
+    assert.equal(r.copiesRemoved, 1);
+    assert.equal(await index.getSession(copy), undefined);
+    assert.ok(await index.getSession(RESUMED_ID));
+  });
+
+  it("a workflow run and its agents are the claude-code workflow transcripts, named by T3's subagent rows", async () => {
+    const { claude } = nativeTranscripts(env.home);
+    const wfDir = join(claude.slice(0, -".jsonl".length), "subagents", "workflows");
+    writeFile(join(wfDir, "wf_7", "agent-ac33.jsonl"), "{}\n");
+    const db = store();
+    const run = "thread:native-thread:pending%3Aroot%3Awfrun";
+    const other = "thread:native-thread:pending%3Aroot%3Awfother";
+    const a1 = `${run}%3Aagent%3A1`;
+    const a2 = `${run}%3Aagent%3A2`;
+    sub(db, run, "mcp:launch:root");
+    sub(db, other, "mcp:launch:root");
+    sub(db, a1, run);
+    sub(db, a2, run);
+    const row = db.prepare("INSERT INTO orchestration_v2_projection_subagents VALUES (?, 'mcp:launch:root', NULL, NULL, 'claudeAgent', 'pt-root', ?, 'provider_native', 'completed', ?, ?, ?, ?, 'claudeAgent', NULL, NULL)");
+    const agents = [{ index: 1, label: "one", agentId: "ac33", childThreadId: a1, state: "done" }, { index: 2, label: "two", agentId: "ad44", childThreadId: a2, state: "done" }];
+    row.run("sa-1", run, T(1), T(2), T(2), J({ workflow: { name: "review", runHandles: { runId: "wf_7" }, agents } }));
+    row.run("sa-2", other, T(1), T(2), T(2), J({ workflow: { name: "review", runHandles: { runId: "wf_8" }, agents: [] } }));
+    row.run("sa-3", "x", T(1), T(2), T(2), `{"workflow": {not json`);
+    db.close();
+
+    const { copied, sessions } = await copiesOf();
+    assert.deepEqual(copied, [
+      [`t3code-${a1}`, `${CLAUDE_ID}:sub:ac33`],
+      [`t3code-${a2}`, CLAUDE_ID],
+      [`t3code-${run}`, CLAUDE_ID],
+    ].sort(), "the run belongs to the root, an agent with a transcript is that subagent, one without falls back to the root");
+    assert.deepEqual(sessions.sort(), [CLAUDE_ID, `t3code-${other}`].sort(), "a run whose directory is not on disk keeps its t3code session");
+  });
+});
+
+describe("T3 store-built model calls", () => {
+  let env: TmpEnv;
+  const saved: Record<string, string | undefined> = {};
+  before(() => {
+    env = tmpEnv();
+    for (const k of t3Env) (saved[k] = process.env[k]), delete process.env[k];
+  });
+  after(() => {
+    for (const k of t3Env) if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+    env.restore();
+  });
+
+  it("one llm.call per finished turn, on the turn's model, with usage only when T3 has it", async () => {
+    const dir = join(env.home, ".t3", "userdata");
+    mkdirSync(dir, { recursive: true });
+    const db = new DatabaseSync(join(dir, "statev2.sqlite"));
+    db.exec(V2_SCHEMA);
+    db.prepare("INSERT INTO projection_projects VALUES ('proj-1', 'demo', '/work/demo', '[]', ?, ?, NULL, NULL)").run(T(0), T(0));
+    thread(db, "thr-g", { provider: "grok", title: "List files", created: T(0) });
+    // T3 leaves the provider thread's model empty; the thread's default is gpt-5.5.
+    providerThread(db, "pt-g", "thr-g", "grok", "grok-session-9", 1, { nativeMetadata: { modelSelection: { model: null } } });
+    const turn = db.prepare("INSERT INTO orchestration_v2_projection_provider_turns VALUES (?, 'thr-g', 'pt-g', 'node-1', NULL, ?, ?, ?, ?, ?)");
+    turn.run("tu-1", 1, "completed", T(1), T(2), J({ status: "completed", model: "grok-4-fast", turnTokenUsage: { usageStatus: "complete", inputTokens: 100, outputTokens: 10 } }));
+    turn.run("tu-2", 2, "completed", T(3), T(4), J({ status: "completed", model: "grok-4", turnTokenUsage: { usageStatus: "unavailable" } }));
+    turn.run("tu-3", 3, "completed", T(5), T(6), J({ status: "completed" }));
+    turn.run("tu-4", 4, "running", T(7), null, J({ status: "running", model: "grok-4" }));
+    db.close();
+    const calls = (await collect(backfillT3(testCtx().ctx))).filter((e) => e.kind === "llm.call");
+    assert.deepEqual(
+      calls.map((e) => [e.payload.providerTurnId, e.payload.responseModel, e.model, e.durationMs, e.usage === undefined]),
+      [
+        ["tu-1", "grok-4-fast", "grok-4-fast", 60_000, false],
+        ["tu-2", "grok-4", "grok-4", 60_000, true],
+        ["tu-3", "gpt-5.5", "gpt-5.5", 60_000, true],
+      ],
+    );
+  });
+
+  it("names no thread title for T3's unnamed-thread placeholder", async () => {
+    const dir = join(env.home, ".t3", "userdata");
+    mkdirSync(dir, { recursive: true });
+    rmSync(join(dir, "statev2.sqlite"), { force: true });
+    const db = new DatabaseSync(join(dir, "statev2.sqlite"));
+    db.exec(V2_SCHEMA);
+    db.prepare("INSERT INTO projection_projects VALUES ('proj-1', 'demo', '/work/demo', '[]', ?, ?, NULL, NULL)").run(T(0), T(0));
+    thread(db, "thr-new", { provider: "grok", title: "New thread", created: T(0) });
+    providerThread(db, "pt-new", "thr-new", "grok", "grok-session-new", 1);
+    db.close();
+    const link = (await collect(backfillT3(testCtx().ctx))).find((e) => e.sessionId === "grok-session-new" && e.payload.type === "host-link");
+    assert.ok(link);
+    assert.equal(link.payload.title, undefined);
+    assert.equal(link.payload.message, "T3 Code thread");
+  });
 });
 
 describe("T3 store copies", () => {

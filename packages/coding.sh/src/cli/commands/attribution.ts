@@ -8,7 +8,7 @@ import { agentTraceRecords, AGENT_TRACE_VERSION } from "../../attribution/export
 import type { Context } from "../../core/context.ts";
 import { version } from "../meta.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
-import { autoIngest, oneLine, readIngest, str, withContext } from "../common.ts";
+import { autoIngest, oneLine, readIngest, shortSessionId, str, withContext } from "../common.ts";
 import { CliError, localTime, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -86,7 +86,7 @@ async function list(c: CommandContext, ctx: Context): Promise<number> {
       short(x.commit),
       localTime(x.committedAt),
       `${x.attributed}/${x.added}`,
-      [...new Set(x.attributions.map((a) => `${a.sessionId.slice(0, 8)} ${a.agent}`))].join(", ") || "-",
+      [...new Set(x.attributions.map((a) => `${shortSessionId(a.sessionId)} ${a.agent}`))].join(", ") || "-",
       oneLine(x.subject, 60),
     ]),
   );

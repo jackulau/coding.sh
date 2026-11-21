@@ -80,8 +80,18 @@ describe("rankEvalCandidates", () => {
     ];
     const s = session(id, { flags: ["premature-completion", "repeated-tool-failure", "no-verification", "looping"], stats: { events: 9, turns: 4, toolCalls: 400, toolErrors: 3, filesChanged: 2, testsFailed: 2 } });
     const [c] = rankEvalCandidates([{ session: s, events: evs }], { now: NOW + 30 * DAY });
-    assert.deepEqual(c!.reasons, ["+2 premature-completion", "+2 repeated-tool-failure", "+1 no-verification", "+1 tests still failing", "+6 pushback ×3", "+2 verifier guessable", "+1 test edited after a failing run", "+1 multi-turn", "-1 compaction", "-1 over 300 tool calls"]);
+    assert.deepEqual(c!.reasons, ["+2 premature-completion", "+2 repeated-tool-failure", "+1 no-verification", "+1 tests still failing", "+6 pushback ×3", "+2 verifier guessable", "+1 test edited after a failing run", "+1 multi-turn", "-1 compacted context (harder to replay)", "-1 over 300 tool calls"]);
     assert.equal(c!.score, 14);
+  });
+
+  it("labels the compaction failure flag apart from the compacted-context penalty", () => {
+    const id = "cmp";
+    const s = session(id, { flags: ["compaction"] });
+    const [c] = rankEvalCandidates([{ session: s, events: [...events(id), ev(id, "context.compact", { trigger: "auto" })] }], { now: NOW });
+    const labels = c!.reasons.map((r) => r.replace(/^[+-]\d+ /, ""));
+    assert.ok(c!.reasons.includes("+1 compaction"), c!.reasons.join(", "));
+    assert.ok(c!.reasons.includes("-1 compacted context (harder to replay)"), c!.reasons.join(", "));
+    assert.equal(new Set(labels).size, labels.length, `a label repeats: ${c!.reasons.join(", ")}`);
   });
 
   it("is pure, filters and truncates", () => {

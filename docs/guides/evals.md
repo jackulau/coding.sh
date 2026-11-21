@@ -1572,7 +1572,9 @@ labels, so every labelled case counts and there is no held-out split. The comman
 The audit is stored per grader version. After that, `exp show` puts the precision in the trust
 column, and `exp show` and `exp compare` add a verifier-corrected pass rate: pass rate × precision
 + fail rate × P(human pass | verifier fail). Without labelled fails, the second term is taken as
-0, and the line says it assumes no false rejects. Precision is measured on one experiment's
+0, and the line says it assumes no false rejects. Its 95% interval combines the Wilson intervals
+of the pass rate, the precision and the false-reject rate, so it stays open at a 0% or 100% rate.
+Precision is measured on one experiment's
 passes, so it carries over only roughly to configs that pass different cases. `--json` returns
 the audit as `verifier` (`checked`, `agree`, `falseAccepts`, `falseRejects`, `precision`, …).
 These are the same counts a blind-solver cross-check stores at `task.meta.crossCheck`.
@@ -1745,6 +1747,14 @@ a second line compares how often a run with green own tests passed the verifier 
 run (`own-green runs passed the verifier 71% [..] vs 40% [..] otherwise`); in BOBA (arXiv
 2611.02207) a green local run barely changed the hidden-test pass rate. `--json` has the counts and
 both rates under `baseline.selfCheck` and `candidate.selfCheck`.
+
+Compare also reads each run's final answer against the verifier. A run claims success when its
+final answer says the work is done, fixed or passing and does not report a failing check. Per arm,
+`claim rate` is claims over runs, `claim precision` is the share of claims the verifier passed, and
+`silent failures` is claims the verifier failed, over runs. An arm with no claim shows `—` for
+precision. Runs lost to infrastructure are left out. The three rows, and `claims` in `--json`, appear
+only when some arm has a claim. Under a measure-before-claim rule (arXiv 2611.10063), claim precision
+rose from 64% to 96% and silent failures fell from 14.1% to 3.2%.
 
 Every replay run gets a tamper check on its diff: edits, deletes and skip markers in tests, the
 verifier's files, test-runner configs, CI files and `package.json` test scripts. Tampered runs that

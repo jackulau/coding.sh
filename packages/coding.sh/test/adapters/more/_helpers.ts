@@ -1,6 +1,6 @@
-// Helpers for the second-wave adapter tests. Builds on ../_helpers.ts and also
-// isolates every agent-specific config variable these adapters read, so no test
-// ever reads or writes the real ~.
+// Helpers for the second-wave adapter tests. Builds on ../_helpers.ts, whose
+// tmpEnv() unsets every agent-specific config variable these adapters read, so no
+// test ever reads or writes the real ~.
 import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
@@ -11,34 +11,9 @@ import { nodeBin, pathOf } from "../../_bin.ts";
 
 export { assertGolden, assertWellFormed, collect, FIXTURES, loadSpool, summarize, testCtx, writeFile } from "../_helpers.ts";
 
-const EXTRA_KEYS = [
-  "GEMINI_CLI_HOME",
-  "COPILOT_HOME",
-  "PI_CODING_AGENT_DIR",
-  "PI_CODING_AGENT_SESSION_DIR",
-  "GOOSE_PATH_ROOT",
-  "XDG_CONFIG_HOME",
-  "XDG_DATA_HOME",
-  "XDG_STATE_HOME",
-  "XDG_CACHE_HOME",
-  "APPDATA",
-];
-
-/** tmpEnv() plus every agent config variable unset. */
+/** tmpEnv(), which unsets every agent config variable these adapters read too. */
 export function moreEnv(): TmpEnv {
-  const saved = Object.fromEntries(EXTRA_KEYS.map((k) => [k, process.env[k]]));
-  for (const k of EXTRA_KEYS) delete process.env[k];
-  const env = tmpEnv();
-  return {
-    ...env,
-    restore() {
-      env.restore();
-      for (const k of EXTRA_KEYS) {
-        if (saved[k] === undefined) delete process.env[k];
-        else process.env[k] = saved[k];
-      }
-    },
-  };
+  return tmpEnv();
 }
 
 /** Normalize every line of a spool fixture. */

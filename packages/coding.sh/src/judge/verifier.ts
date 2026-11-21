@@ -147,22 +147,34 @@ export interface VerifierCorrection {
 
 /**
  * Pass rate corrected for the verifier's measured precision (and false-reject rate when
- * failing cases were labelled). The interval is a delta-method 95% band over the observed
- * rate (nTest cases) and the two audited proportions; undefined without a precision.
+ * failing cases were labelled). The 95% interval combines the Wilson intervals of the observed
+ * rate (nTest cases) and the audited proportions by MOVER over the linearised estimate: each
+ * input's distance to its own Wilson bound, scaled by its weight, adds in quadrature. Unlike a
+ * Wald band it keeps width at a 0% or 100% rate or precision. Undefined without a precision.
  */
 export function verifierCorrected(rate: number, nTest: number, audit: VerifierAudit, z = 1.959963984540054): VerifierCorrection | undefined {
   if (audit.precision === undefined || !(audit.passes > 0) || !(rate >= 0 && rate <= 1)) return undefined;
   const ppv = audit.precision;
   const fpr = audit.failPassRate ?? 0;
   const p = rate * ppv + (1 - rate) * fpr;
-  const varRate = nTest > 0 ? (rate * (1 - rate)) / nTest : 0;
-  const varPpv = (ppv * (1 - ppv)) / audit.passes;
-  const varFor = audit.fails > 0 ? (fpr * (1 - fpr)) / audit.fails : 0;
-  const se = Math.sqrt(rate ** 2 * varPpv + (1 - rate) ** 2 * varFor + (ppv - fpr) ** 2 * varRate);
+  // [estimate, Wilson interval, weight ∂p/∂input]; an input without data has no uncertainty.
+  const parts: [number, { lo: number; hi: number }, number][] = [
+    [ppv, wilson(Math.round(ppv * audit.passes), audit.passes, z), rate],
+    [rate, nTest > 0 ? wilson(Math.min(nTest, Math.round(rate * nTest)), nTest, z) : { lo: rate, hi: rate }, ppv - fpr],
+  ];
+  if (audit.fails > 0) parts.push([fpr, wilson(Math.round(fpr * audit.fails), audit.fails, z), 1 - rate]);
+  let down = 0;
+  let up = 0;
+  for (const [est, w, d] of parts) {
+    const below = d * (est - (d >= 0 ? w.lo : w.hi));
+    const above = d * ((d >= 0 ? w.hi : w.lo) - est);
+    down += below * below;
+    up += above * above;
+  }
   return {
     p,
-    lo: Math.max(0, p - z * se),
-    hi: Math.min(1, p + z * se),
+    lo: Math.max(0, p - Math.sqrt(down)),
+    hi: Math.min(1, p + Math.sqrt(up)),
     raw: rate,
     precision: ppv,
     n: audit.passes,

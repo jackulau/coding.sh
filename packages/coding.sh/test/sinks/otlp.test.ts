@@ -306,3 +306,55 @@ describe("otlp sink: structured message content (semconv #634)", () => {
     assert.ok(c.endsWith("…"));
   });
 });
+
+describe("otlp sink: structured tool arguments and results (semconv #634)", () => {
+  const toolEvents = (input: unknown, output: unknown): AgentEvent[] => [
+    { id: "t1", v: 0, sessionId: "otlp-sink-s1", ts: T0, agent: "claude-code", kind: "tool.start", payload: { tool: "Bash", toolUseId: "tu1", input } } as AgentEvent,
+    { id: "t2", v: 0, sessionId: "otlp-sink-s1", ts: T0 + 200, agent: "claude-code", kind: "tool.end", payload: { tool: "Bash", toolUseId: "tu1", ok: true, output } } as AgentEvent,
+  ];
+  const toolSpan = (input: unknown, output: unknown, mode: "full" | "metadata" = "full") => toOtlpSpans(toolEvents(input, output), [], mode).find((s) => s.name === "execute_tool Bash")!;
+  const get = (list: KeyValue[], key: string) => list.find((kv) => kv.key === key)?.value as any;
+
+  it("an object input goes out as kvlistValue with typed fields", () => {
+    const span = toolSpan({ command: "ls", cwd: "/work/demo" }, { stdout: "a.txt", exitCode: 0 });
+    const args = get(span.attributes, "gen_ai.tool.call.arguments");
+    assert.ok(args.kvlistValue, JSON.stringify(args));
+    const fields = args.kvlistValue.values as KeyValue[];
+    assert.deepEqual(fields.find((kv) => kv.key === "command")!.value, { stringValue: "ls" });
+    assert.deepEqual(fields.find((kv) => kv.key === "cwd")!.value, { stringValue: "/work/demo" });
+    const result = get(span.attributes, "gen_ai.tool.call.result").kvlistValue.values as KeyValue[];
+    assert.deepEqual(result.find((kv) => kv.key === "exitCode")!.value, { intValue: "0" });
+  });
+
+  it("an input over 8192 chars of JSON stays a truncated string; a string result stays a string", () => {
+    const span = toolSpan({ command: "x".repeat(9_000) }, "plain output");
+    const args = get(span.attributes, "gen_ai.tool.call.arguments");
+    assert.equal(typeof args.stringValue, "string");
+    assert.equal(args.stringValue.length, 8193);
+    assert.ok(args.stringValue.startsWith('{"command":"xxx'));
+    assert.ok(args.stringValue.endsWith("…"));
+    assert.deepEqual(get(span.attributes, "gen_ai.tool.call.result"), { stringValue: "plain output" });
+  });
+
+  it("a value anyValue() would lose parts of (a null array item) stays a JSON string", () => {
+    const args = get(toolSpan({ list: [1, null, 3] }, undefined).attributes, "gen_ai.tool.call.arguments");
+    assert.deepEqual(args, { stringValue: '{"list":[1,null,3]}' });
+  });
+
+  it("metadata mode sends neither attribute", () => {
+    const span = toolSpan({ command: "ls" }, { stdout: "a" }, "metadata");
+    assert.equal(get(span.attributes, "gen_ai.tool.call.arguments"), undefined);
+    assert.equal(get(span.attributes, "gen_ai.tool.call.result"), undefined);
+  });
+
+  it("round trips through the receiver: the stored input and output equal the originals", async () => {
+    const input = { command: "ls -la", cwd: "/work/demo", timeout: 1.5, background: false, env: { CI: "1" }, args: ["-l", "-a"] };
+    const output = { stdout: "a.txt\nb.txt", exitCode: 0, lines: [{ n: 1 }, { n: 2 }] };
+    const req = JSON.parse(JSON.stringify(toOtlpRequest(toolEvents(input, output), [], "full")));
+    const { events } = await mapTraces(decodeTraceJson(req), { maxInlineBytes: 4096, blob: (d) => new MemBlobs().put(d), traceSessions: new TraceSessionMap() });
+    const start = events.find((e) => e.kind === "tool.start");
+    const end = events.find((e) => e.kind === "tool.end");
+    assert.deepEqual(start?.payload.input, input);
+    assert.deepEqual(end?.payload.output, output);
+  });
+});

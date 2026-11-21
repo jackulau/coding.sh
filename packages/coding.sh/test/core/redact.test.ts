@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { AgentEvent, Session } from "../../src/schema/index.ts";
-import { createRedactor, redactArgv, sessionToMetadata, toMetadata } from "../../src/core/redact.ts";
+import { createRedactor, isSecretAttrKey, redactArgv, SECRET_NEEDLES, secretRules, sessionToMetadata, toMetadata } from "../../src/core/redact.ts";
 import { originalSecretRedact } from "../fixtures/redact/original-secret-rules.ts";
 import { median, timeMs } from "../helpers-timing.ts";
 
@@ -181,6 +181,14 @@ describe("redact: secrets", () => {
     assert.equal(er.string("cd /Users/x/old-proj && ls /etc/auth-config /private/tmp/launch-abc/Listeners"), "cd /Users/x/old-proj && ls /etc/auth-config /private/tmp/launch-abc/Listeners");
     assert.equal(er.string(`ls ${dir}/a`), `ls ${dir}/a`, "a value that is an existing directory");
     assert.equal(er.string(`OPENAI=${key} at /Users/x/proj/src/a.ts`), "OPENAI=[redacted:env] at /Users/x/proj/src/a.ts");
+  });
+
+  it("names a secret attribute key whatever its case, and nothing else", () => {
+    for (const key of ["db.password", "app.API.key", "http.request.header.Authorization", "X-API-KEY", "Set-Cookie", "PROXY-AUTHORIZATION", "client_secret", "GITHUB_TOKEN"]) {
+      assert.equal(isSecretAttrKey(key), true, key);
+    }
+    // "to\u212Aen" has the Kelvin sign, which lower-cases to k but which an `i` regex without `u` does not match with k.
+    for (const key of ["session_id", "max_tokens", "tokenizer", "keyboard", "to\u212Aen", "path", ""]) assert.equal(isSecretAttrKey(key), false, key);
   });
 
   it("redacts secret flag values in argv arrays", () => {
@@ -409,6 +417,9 @@ describe("redact: same output as the original secret rules", () => {
     fields: ['"api_key": "', "'client_secret': '", 'x-api-key: "', "token:'", 'password : "', "secret_key", "access-token", "my_", "x-", "Xtoken", '"', "'", ": ", ":"],
     prose: ["token", "TOKEN", "PAT", "pat", "personal access token", "password", "passwd", "passcode", "pass phrase", "passphrase", "api key", "api_key", "API-KEY", "apikey", "secret", "is", " is ", "IS", "iS ", "is-", "here ya go", ": ", "="],
     pem: ["-----BEGIN PRIVATE KEY-----", "-----BEGIN RSA PRIVATE KEY-----\n", "-----END PRIVATE KEY-----", "-----END RSA PRIVATE KEY-----", "-----END ", "-----BEGIN ", "PRIVATE KEY", " BLOCK", "-----", "RSA ", "EC ", "MIIEow\n"],
+    // Upper- and mixed-case text for the rules that ignore case, "BEARER " for one that does not, and
+    // words with \u017F (long s) and \u212A (Kelvin sign), which only a `u` regex matches with s and k.
+    case: ["AUTHORIZATION: BASIC ", "Authorization:basic ", "BEARER ", "?PASSWORD=", "&Api_Key=", "?ACCESS-TOKEN=", "&X_SECRET=", '"API_KEY": "', "'Client_Secret': '", '"PassWord" : "', "TOKEN: ", "Token is ", "PASSPHRASE: ", "Personal Access Token: ", "API KEY = ", "SECRET IS ", "Pat: ", "pa\u017F\u017Fword: ", "to\u212Aen: ", "\u212Aey="],
   };
   const all = Object.values(families).flat();
 
@@ -435,5 +446,25 @@ describe("redact: same output as the original secret rules", () => {
   }
   it("on a generated corpus mixing every rule", () => {
     check(corpus(7, all, 20_000));
+  });
+
+  it("runs each rule on every string it can match: each match holds one of the rule's needles", () => {
+    const npm = ["npm_", "0123456789abcdefghijklmnopqrstuvwxyz"].join("");
+    const webhook = ["https://hooks.slack.com/services/", "abcdefghijklmnopqrstuvwxyz"].join("");
+    const inputs = [...handWritten, npm, webhook, ...corpus(11, all, 20_000)];
+    for (const rule of secretRules()) {
+      const need = SECRET_NEEDLES[rule.kind];
+      assert.ok(need, `${rule.kind} has needles`);
+      const re = new RegExp(rule.pattern.source, rule.pattern.flags);
+      let matches = 0;
+      for (const s of inputs) {
+        for (const m of s.matchAll(re)) {
+          const text = need.fold ? m[0].toLowerCase() : m[0];
+          assert.ok(need.any.some((n) => text.includes(n)), `${rule.kind} matched ${JSON.stringify(m[0])}, which holds none of ${JSON.stringify(need.any)}`);
+          matches++;
+        }
+      }
+      assert.ok(matches > 0, `${rule.kind} matched none of the inputs`);
+    }
   });
 });

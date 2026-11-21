@@ -38,7 +38,7 @@ import {
 } from "./data.ts";
 import { sessionDigest } from "./digest.ts";
 import { facetCounts, searchWhere } from "../query/run.ts";
-import { andQuery, FACET_KEYS, parseWhere, QueryError, QueryUnsupported, scopesSubagents, type Query } from "../query/where.ts";
+import { andQuery, FACET_KEYS, parseWhere, QueryError, QueryUnsupported, scopesSubagents, type Node, type Query } from "../query/where.ts";
 import { fitAnswer, pageIndex, pageRange, pageStep } from "./replay-page.ts";
 import { toolText, ToolError, type ToolDef } from "./protocol.ts";
 import { scoreTools } from "../scores/mcp.ts";
@@ -243,6 +243,15 @@ function whereArg(a: Obj, now: number): Query | undefined {
   } catch (e) {
     throw queryToolError(e);
   }
+}
+
+/**
+ * The where query with an `agent:` clause on the session's agent. Wrapped in a group, as the CLI's
+ * --agent is, so it filters like SessionFilter.agent and a facet does not drop it.
+ */
+function agentWhere(agent: string, where: Query | undefined): Query {
+  const cmp: Node = { t: "cmp", key: "agent", op: ":", values: [{ raw: agent, quoted: true, kind: "eq" }], at: 0 };
+  return andQuery(where ?? {}, { t: "or", items: [cmp] });
 }
 
 function queryToolError(e: unknown): unknown {
@@ -574,15 +583,25 @@ function toolDefs(): ToolDef<ToolCtx>[] {
         const limit = numArg(a, "limit", 10);
         const agent = strArg(a, "agent");
         const project = strArg(a, "project");
-        const where = whereArg(a, c.now());
-        const opts = { limit: offset + limit + 1, ...(agent ? { agent } : {}), ...(project ? { project } : {}) };
+        // agent picks sessions by the session's agent, as sessions_list and `coding.sh search --agent` do:
+        // a Claude Code session hosted by T3 Code is t3code, though its events carry claude-code.
+        const userWhere = whereArg(a, c.now());
+        const where = agent ? agentWhere(agent, userWhere) : userWhere;
+        const opts = { limit: offset + limit + 1, ...(project ? { project } : {}) };
         const text = strArg(a, "query") ?? "";
         const raw = where ? await searchWhere(ctx.index, text, where, opts).catch((e) => Promise.reject(queryToolError(e))) : await ctx.index.search(text, opts);
         const page = raw.slice(offset, offset + limit);
-        const titles = new Map<string, string | undefined>();
-        for (const h of page) if (!titles.has(h.event.sessionId)) titles.set(h.event.sessionId, clip((await ctx.index.getSession(h.event.sessionId))?.title, 80));
+        const sessions = new Map<string, { title?: string; agent?: string }>();
+        for (const h of page) {
+          if (sessions.has(h.event.sessionId)) continue;
+          const s = await ctx.index.getSession(h.event.sessionId);
+          sessions.set(h.event.sessionId, { title: clip(s?.title, 80), agent: s?.agent });
+        }
         return {
-          hits: page.map((h) => ({ sessionId: h.event.sessionId, eventId: h.event.id, agent: h.event.agent, kind: h.event.kind, at: iso(h.event.ts), snippet: clip(h.snippet, 240) ?? "", sessionTitle: titles.get(h.event.sessionId) })),
+          hits: page.map((h) => {
+            const s = sessions.get(h.event.sessionId);
+            return { sessionId: h.event.sessionId, eventId: h.event.id, agent: s?.agent ?? h.event.agent, kind: h.event.kind, at: iso(h.event.ts), snippet: clip(h.snippet, 240) ?? "", sessionTitle: s?.title };
+          }),
           ...(raw.length > offset + limit ? { nextCursor: String(offset + limit) } : {}),
         };
       },

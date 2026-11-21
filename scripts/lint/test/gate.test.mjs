@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, test } from "node:test";
@@ -125,11 +125,11 @@ test("the plan has the steps in order, and --static keeps the ones that need no 
   const steps = buildSteps(REPO);
   assert.deepEqual(
     steps.map((s) => s.name),
-    ["repo-hygiene", "branch-fresh", "lint", "lint-test", "perf-test", "actionlint", "generated-fresh", "coding.sh-check", "coding.sh-build", "store-plugins", "python-sdk", "site", "secret-scan", "adapter-versions"],
+    ["repo-hygiene", "branch-fresh", "lint", "lint-test", "perf-test", "dogfood-test", "actionlint", "generated-fresh", "coding.sh-check", "coding.sh-build", "store-plugins", "python-sdk", "site", "secret-scan", "adapter-versions"],
   );
   assert.deepEqual(
     selectSteps(steps, { only: [], static: true }).map((s) => s.name),
-    ["repo-hygiene", "branch-fresh", "lint", "lint-test", "perf-test", "actionlint", "generated-fresh", "secret-scan"],
+    ["repo-hygiene", "branch-fresh", "lint", "lint-test", "perf-test", "dogfood-test", "actionlint", "generated-fresh", "secret-scan"],
   );
   assert.deepEqual(selectSteps(steps, { only: [], from: "site" }).map((s) => s.name), ["site", "secret-scan", "adapter-versions"]);
   assert.deepEqual(selectSteps(steps, { only: ["lint", "site"] }).map((s) => s.name), ["lint", "site"]);
@@ -145,7 +145,7 @@ test("--list --json prints every step", async () => {
   const code = await main(["--list", "--json"], { stdout: { write: (s) => (text += s) } });
   assert.equal(code, 0);
   const rows = JSON.parse(text);
-  assert.equal(rows.length, 14);
+  assert.equal(rows.length, 15);
   assert.equal(rows.find((r) => r.name === "lint").static, true);
   assert.equal(rows.find((r) => r.name === "site").static, false);
 });
@@ -156,6 +156,23 @@ test("the lint step runs the allowlist check and the site step requires the dist
   // Source-level proof: the gate names the flag and the variable it relies on.
   const text = spawnSync("grep", ["-c", "strict-allowlist\\|CODING_SH_REQUIRE_DIST", join(REPO, "scripts/gate.mjs")], { encoding: "utf8" }).stdout.trim();
   assert.ok(Number(text) >= 2);
+});
+
+test("the site step builds, checks and budgets the site with the star count CI uses", () => {
+  const site = buildSteps(REPO).find((s) => s.name === "site");
+  const list = site.list({});
+  assert.deepEqual(list.map((c) => `${c.cwd ?? "."} ${c.args.join(" ")}`), [
+    "apps/site run build",
+    "apps/site run check",
+    "apps/site run perf:budget",
+    ". --no-warnings scripts/perf/html-budget.mjs",
+  ]);
+  // ci.yml's site job and Site perf build with the same count, so one build here stands for both.
+  const stars = list[0].env.SITE_GITHUB_STARS;
+  for (const c of list.filter((c) => c.cwd === "apps/site")) assert.equal(c.env.SITE_GITHUB_STARS, stars, `${c.args.join(" ")} uses the build's star count`);
+  for (const wf of ["ci.yml", "site-perf.yml"]) {
+    assert.ok(readFileSync(join(REPO, ".github/workflows", wf), "utf8").includes(`SITE_GITHUB_STARS: "${stars}"`), `${wf} builds with the gate's star count`);
+  }
 });
 
 // ---------------------------------------------------------------- store plugins

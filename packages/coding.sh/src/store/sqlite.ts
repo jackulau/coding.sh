@@ -755,6 +755,12 @@ const BUSY_TIMEOUT_MS = 5000;
 export const WAL_SIZE_LIMIT = 64 * 1024 * 1024;
 /** How long a checkpoint after a bulk write waits for readers. */
 const CHECKPOINT_WAIT_MS = 2000;
+
+/** PRAGMA wal_autocheckpoint for a writer: the pages that fill WAL_SIZE_LIMIT at the database's page size. */
+function walAutocheckpointPages(db: DatabaseSync): number {
+  const pageSize = Number((db.prepare("PRAGMA page_size").get() as { page_size?: number } | undefined)?.page_size) || 4096;
+  return Math.max(1000, Math.floor(WAL_SIZE_LIMIT / pageSize));
+}
 /** close() barely waits: it runs at the end of every command, and a later close or bulk write finishes what it can't. */
 const CLOSE_CHECKPOINT_WAIT_MS = 50;
 
@@ -833,6 +839,11 @@ export class SqliteIndexStore implements IndexStore {
       db.exec("PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;");
       // A WAL that a checkpoint has reset is cut back to this size instead of keeping its high-water mark.
       if (!opts.readOnly) db.exec(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT}`);
+      // SQLite's own checkpoint runs once the WAL holds that many bytes, not at its default
+      // 1000 pages: ingest commits thousands of events at a time, and a checkpoint after every
+      // commit copies the same index pages back into the database again and again. close()
+      // and the checkpoint after a bulk write still empty the WAL.
+      if (!opts.readOnly) db.exec(`PRAGMA wal_autocheckpoint = ${walAutocheckpointPages(db)}`);
       // RAM-only cache tuning: a larger page cache (bounded, freed on close) and
       // in-memory temp b-trees (sorts, FTS merges). The default cache is ~2 MB; a
       // few thousand events spill it, so ingest and the reads that fold a session

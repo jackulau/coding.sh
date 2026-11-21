@@ -85,6 +85,7 @@ import { traceKvKey } from "../otel/map.ts";
 import { InsertedEvents } from "../otel/receiver.ts";
 import { linkSpawned } from "../spool/spawned.ts";
 import { readDisabledSessions } from "../spool/write.ts";
+import { withSpoolRedactions } from "../spool/redact.ts";
 import { matchSpawnedParent, openAt } from "../spool/spawned-match.ts";
 
 export const PUT_BATCH = 500;
@@ -350,7 +351,12 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   const durations = toolDurationFiller(index);
 
   const linker = childLinker(index);
-  const normalize = spoolNormalizer({ adapters, blobs: blobStore, env, profileFor, error, excluded: () => result.excluded++, spawned: (child, link) => linker.offer(child, link) });
+  // Lines whose inline payload redaction already went over and found nothing in, with the
+  // redactor it ran under: scrubSpoolFile would leave them as they are.
+  const rawClean = new WeakMap<SpoolLine, Redactor>();
+  /** Spool files read from their start to this offset in this run, with no line scrubSpoolFile would rewrite (scrubPastDays). */
+  const scrubFree = new Map<string, number>();
+  const normalize = spoolNormalizer({ adapters, blobs: blobStore, env, profileFor, error, excluded: () => result.excluded++, spawned: (child, link) => linker.offer(child, link), rawClean: (line, redactor) => rawClean.set(line, redactor) });
   // Sessions a hook call saw with CODING_SH_DISABLE set: none of their events are stored.
   const paused = readDisabledSessions(spoolDir);
   const unpaused = (events: AgentEvent[]): AgentEvent[] => {
@@ -501,6 +507,8 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     window: LineEvents[];
     /** Side files of the lines read, scrubbed once the local cursor is past their line. */
     raws: { path: string; nextOffset: number; cwd: string | undefined }[];
+    /** A line read may need scrubSpoolFile: a reader error, or an inline payload not known clean (rawClean). */
+    scrub: boolean;
   }
   let open: FileRun[] = [];
   let pending: AgentEvent[] = [];
@@ -648,11 +656,12 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     if (start >= file.size) continue;
 
     readAny = true;
-    const fr: FileRun = { file, local, readPos: start, active, window: [], raws: [] };
+    const fr: FileRun = { file, local, readPos: start, active, window: [], raws: [], scrub: false };
     open.push(fr);
     const keepWindow = active.length > 0;
     const reader = readSpoolFile(spoolDir, file.path, start, {
       onError: (e) => {
+        fr.scrub = true;
         if (e.offset >= fr.local) error({ source: e.source, offset: e.offset, message: e.message });
         fr.readPos = Math.max(fr.readPos, e.nextOffset);
       },
@@ -670,6 +679,8 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
         break;
       }
       fr.readPos = rec.nextOffset;
+      // The scrub redacts line.raw with the redactor of the line's cwd: clean only if that same redactor found nothing in it here.
+      if (rec.line.raw !== undefined && rawClean.get(rec.line) !== profileFor(rec.line.cwd).redactor) fr.scrub = true;
       if (rec.line.rawFile) {
         try {
           fr.raws.push({ path: resolveRawFile(spoolDir, file.path, rec.line.rawFile), nextOffset: rec.nextOffset, cwd: rec.line.cwd });
@@ -712,13 +723,14 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     }
     if (stopped) result.pendingFiles = (fr.readPos < file.size ? 1 : 0) + (await unread(fi + 1));
     else if (local < file.size) left--;
+    if (!stopped && start === 0 && !fr.scrub) scrubFree.set(file.source, fr.readPos);
     filesRead++;
   }
   if (!(await checkpoint())) stopped = true;
   // A window the blob store refused left its cursors where they were: every file short of its end waits.
   if (result.storeWriteFailed !== undefined) result.pendingFiles = await unread(0);
   opts.onProgress?.({ filesPending: result.pendingFiles });
-  await scrubPastDays(index, spoolDir, files, now(), (cwd) => profileFor(cwd).redactor, () => !stopped && !outOfTime(), fence);
+  await scrubPastDays(index, spoolDir, files, now(), (cwd) => profileFor(cwd).redactor, () => !stopped && !outOfTime(), fence, scrubFree);
 
   if (opts.repair && !opts.signal?.aborted) {
     fence();
@@ -747,8 +759,12 @@ export const spoolScrubKey = (source: string): string => `scrub:${source}`;
  * Spool files of a past UTC day that the index has read to their end get their
  * inline payloads redacted in place, once per size: secrets in short lines then
  * stay in the spool until the day's first ingest after it, not until gc.
+ *
+ * `clean`: files this run read whole (source → the size it read), where redaction
+ * of every line's payload found nothing and no line was bad. The scrub would leave
+ * them byte for byte as they are, so only their scrub cursor moves.
  */
-async function scrubPastDays(index: IndexStore, spoolDir: string, files: SpoolFile[], now: number, redactorFor: (cwd: string | undefined) => Redactor, more: () => boolean, fence: () => void): Promise<void> {
+async function scrubPastDays(index: IndexStore, spoolDir: string, files: SpoolFile[], now: number, redactorFor: (cwd: string | undefined) => Redactor, more: () => boolean, fence: () => void, clean?: ReadonlyMap<string, number>): Promise<void> {
   const today = new Date(now).toISOString().slice(0, 10);
   for (const file of files) {
     const day = spoolFileDay(file.source.slice(file.source.lastIndexOf("/") + 1));
@@ -757,7 +773,7 @@ async function scrubPastDays(index: IndexStore, spoolDir: string, files: SpoolFi
     const size = statSync(file.path, { throwIfNoEntry: false })?.size;
     if (size === undefined || (await index.getCursor(spoolScrubKey(file.source))) === size || (await index.getCursor(file.source)) !== size) continue;
     fence();
-    await scrubSpoolFile(spoolDir, file.path, redactorFor);
+    if (clean?.get(file.source) !== size) await scrubSpoolFile(spoolDir, file.path, redactorFor);
     await index.setCursor(spoolScrubKey(file.source), size);
   }
 }
@@ -827,6 +843,8 @@ export interface SpoolNormalizerOptions {
   spawned?: (childSessionId: string, link: NonNullable<Session["parent"]>) => Promise<void>;
   /** A file a line reads a session's events from is gone or out of reach (NormalizeContext.missing). */
   missing?: (path: string, sessionId: string) => void;
+  /** A line whose inline payload (line.raw) went to a blob and redaction found nothing in it, with the redactor that ran. */
+  rawClean?: (line: SpoolLine, redactor: Redactor) => void;
 }
 
 /**
@@ -857,7 +875,9 @@ export function spoolNormalizer(o: SpoolNormalizerOptions): (line: SpoolLine, so
       return [];
     }
     const metadata = capture.mode === "metadata";
-    const ctx = normalizeContext(profile, blobs, metadata, { file: source, offset });
+    const rawClean = o.rawClean;
+    const redacted = rawClean && line.raw !== undefined ? (value: unknown, hits: boolean) => void (!hits && value === line.raw && rawClean(line, profile.redactor)) : undefined;
+    const ctx = normalizeContext(profile, blobs, metadata, { file: source, offset }, redacted);
     if (o.missing) ctx.missing = o.missing;
     let raw: AgentEvent[];
     try {
@@ -899,7 +919,9 @@ export function spoolNormalizer(o: SpoolNormalizerOptions): (line: SpoolLine, so
         if (line.git.branch) git.branch = line.git.branch;
         if (git.commit || git.branch) ev = { ...ev, payload: { ...ev.payload, git } };
       }
-      out.push(finishEvent(ev, profile, metadata));
+      const done = finishEvent(ev, profile, metadata);
+      // The hook redacted the payload before writing it (spool/redact.ts): its counts go on the line's first event.
+      out.push(out.length === 0 && line.redactions ? withSpoolRedactions(done, line.redactions) : done);
     }
     return out;
   };
@@ -925,7 +947,12 @@ async function putBlob(blobs: Pick<BlobStore, "put">, data: string | Uint8Array)
   }
 }
 
-export function normalizeContext(profile: CaptureProfile, blobs: Pick<BlobStore, "put">, metadata: boolean, source?: { file: string; offset: number }): NormalizeContext {
+/**
+ * `redacted`: called after each blobValue with the value and whether redaction found
+ * anything in it, so spool ingest knows which lines' payloads the scrub would leave
+ * as they are (scrubPastDays).
+ */
+export function normalizeContext(profile: CaptureProfile, blobs: Pick<BlobStore, "put">, metadata: boolean, source?: { file: string; offset: number }, redacted?: (value: unknown, hits: boolean) => void): NormalizeContext {
   const ctx: NormalizeContext = {
     maxInlineBytes: profile.config.capture.maxInlineBytes,
     id: (...parts) => hashParts(...parts),
@@ -940,6 +967,7 @@ export function normalizeContext(profile: CaptureProfile, blobs: Pick<BlobStore,
     blobValue: async (value) => {
       const tally = redactionTally();
       const clean = redactBlobValue(profile.redactor, value, tally);
+      redacted?.(value, Object.keys(tally.kinds).length > 0);
       const ref = metadata ? sha256Hex(clean) : await putBlob(blobs, clean);
       noteBlobHits(ref, tally.kinds);
       return ref;

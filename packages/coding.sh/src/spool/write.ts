@@ -4,6 +4,12 @@
 // This file is on the hook's hot path. It may only import node:fs, node:path
 // (and node:os via ../core/paths.ts) and type-only imports.
 //
+// Redaction: the caller says how to redact a line (AppendOptions.redact), and
+// appendSpool does it before any byte of the payload is written, inline or to a
+// side file. spoolLineRedactor() in ./redact.ts applies the rules of the user's
+// config and counts what they replaced in the line's `redactions`. The hook
+// loads it only for a payload ./gate.ts says may hold a secret.
+//
 // On-disk layout (all under dataHome()/spool):
 //   <agent>/<yyyy-mm-dd>.jsonl         one SpoolLine per line, every writer that UTC day
 //   <agent>/<yyyy-mm-dd>.<n>.jsonl     the same day continued (n = 1, 2, ...) once the
@@ -31,9 +37,11 @@ import { paths } from "../core/paths.ts";
 
 /**
  * A serialized line above this many bytes (1024 with its newline, hook.sh's
- * limit) moves `raw` to a side file. Ingest rewrites side files with their
- * secrets redacted once it has stored their line (core/spool-scrub.ts); a day
- * file's short inline lines are redacted in place once the day has passed.
+ * limit) moves `raw` to a side file. Both are redacted before they are written.
+ * Ingest also rewrites side files with their secrets redacted once it has stored
+ * their line (core/spool-scrub.ts), and a day file's short inline lines in place
+ * once the day has passed: hook.sh writes without redacting, and a repo config
+ * can add rules.
  */
 export const MAX_INLINE_LINE_BYTES = 1023;
 
@@ -47,8 +55,19 @@ export function spoolDir(agent: string, env: NodeJS.ProcessEnv = process.env): s
   return join(paths(env).spool, safeAgentId(agent));
 }
 
-function utcDay(ts: number): string {
-  return new Date(ts).toISOString().slice(0, 10);
+/**
+ * The UTC day of `ts` as toISOString() writes it (YYYY-MM-DD). The hook names a spool
+ * file on every event, and the first toISOString() call in its process took about 0.8 ms
+ * on Windows; the getters take a hundredth of that.
+ */
+export function utcDay(ts: number): string {
+  const d = new Date(ts);
+  const y = d.getUTCFullYear();
+  // toISOString() writes these years with a sign and six digits, and throws for an invalid date.
+  if (!(y >= 0 && y <= 9999)) return d.toISOString().slice(0, 10);
+  const m = d.getUTCMonth() + 1;
+  const day = d.getUTCDate();
+  return `${String(y).padStart(4, "0")}-${m < 10 ? "0" : ""}${m}-${day < 10 ? "0" : ""}${day}`;
 }
 
 /** A day's spool file at this size is full: the day continues in the next numbered file. */
@@ -181,12 +200,21 @@ export function readDisabledSessions(spoolDir: string): Set<string> {
   return new Set(text.split("\n").map((l) => l.trim()).filter((l) => SESSION_ID_RE.test(l)));
 }
 
+/**
+ * Redacts a line before appendSpool writes it. Returns the line with its payload
+ * redacted, and the text a side file stores in place of `rawText`.
+ * spoolLineRedactor() in ./redact.ts makes one from the user's config.
+ */
+export type RedactLine = (line: SpoolLine, rawText: string | undefined) => { line: SpoolLine; rawText: string | undefined };
+
 export interface AppendOptions {
   /**
    * The payload exactly as received (e.g. stdin text). When given, a side file
    * stores these bytes verbatim instead of re-serializing `line.raw`.
    */
   rawText?: string;
+  /** Redacts the line before any of it is written. */
+  redact: RedactLine;
 }
 
 /**
@@ -197,18 +225,21 @@ export interface AppendOptions {
  * When the serialized line exceeds MAX_INLINE_LINE_BYTES, `raw` is written to
  * `<agent>/raw/<ts>-<pid>-<rand>.json`, removed from the line, and the absolute
  * side-file path is set as `rawFile`. Side-file contents: `rawText` verbatim
- * when provided, else JSON.stringify(raw). Readers recover `raw` with
+ * when provided and nothing in it was redacted, else JSON.stringify(raw). Readers recover `raw` with
  * resolveRaw(): JSON.parse the file, falling back to the plain string — the
  * same rule the hook applies to stdin.
  */
-export function appendSpool(line: SpoolLine, env: NodeJS.ProcessEnv = process.env, opts: AppendOptions = {}): string | undefined {
+export function appendSpool(line: SpoolLine, env: NodeJS.ProcessEnv, opts: AppendOptions): string | undefined {
   if (isDisabled(env)) return undefined;
   const agent = safeAgentId(line.agent);
   const dir = spoolDir(agent, env);
   const file = spoolFile(agent, line.ts, env, line.pid);
+  const redacted = opts.redact(line, opts.rawText);
+  line = redacted.line;
+  const rawText = redacted.rawText;
 
   let out: string | undefined;
-  const rawTooBig = opts.rawText !== undefined && Buffer.byteLength(opts.rawText) > MAX_INLINE_LINE_BYTES;
+  const rawTooBig = rawText !== undefined && Buffer.byteLength(rawText) > MAX_INLINE_LINE_BYTES;
   if (!rawTooBig) {
     out = JSON.stringify(line);
     if (Buffer.byteLength(out) > MAX_INLINE_LINE_BYTES) out = undefined;
@@ -217,7 +248,7 @@ export function appendSpool(line: SpoolLine, env: NodeJS.ProcessEnv = process.en
     const rawDir = join(dir, "raw");
     const rand = Math.random().toString(36).slice(2, 10);
     const rawFile = join(rawDir, `${line.ts}-${line.pid}-${rand}.json`);
-    const body = opts.rawText ?? JSON.stringify(line.raw ?? null);
+    const body = rawText ?? JSON.stringify(line.raw ?? null);
     try {
       writeFileSync(rawFile, body, { mode: 0o600, flag: "wx" });
     } catch (e) {

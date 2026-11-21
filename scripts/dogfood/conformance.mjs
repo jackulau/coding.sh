@@ -16,7 +16,7 @@
 //   node scripts/dogfood/conformance.mjs [fixtures|health]... [--home <dir>] [--repo <dir>] [--json]
 import { copyFileSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { join, resolve } from "node:path";
 import { CLI, log, parseArgs, PKG, REPO, sh, shAsync, tempDir } from "./lib/util.mjs";
 import { isMain } from "./lib/main.mjs";
 
@@ -128,12 +128,27 @@ export function removeTemp(root, rm = rmSync) {
   }
 }
 
+/** True when `cwd` is `repo` or a folder under it. On Windows, case and slash direction do not matter. */
+export function underRepo(cwd, repo, platform = process.platform) {
+  if (!cwd || !repo) return false;
+  const win = platform === "win32";
+  const norm = (p) => (win ? p.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase() : p.replace(/\/+$/, ""));
+  const c = norm(cwd);
+  const r = norm(repo);
+  return c === r || c.startsWith(r + (win ? "\\" : "/"));
+}
+
+/** The checkout whose sessions capture.health scores: CODING_SH_HEALTH_REPO when set, else this one. */
+export function healthRepo(env = process.env) {
+  return env.CODING_SH_HEALTH_REPO ? resolve(env.CODING_SH_HEALTH_REPO) : REPO;
+}
+
 /**
  * capture.health over a copy of `home`'s index (index.db and its -wal/-shm only; cloned on macOS).
  * Scores the sessions under `repo` that started in the last `sinceHours`, subagents included.
  * Live sessions are left out of the score and listed in `excluded`.
  */
-export function captureHealth({ home = process.env.CODING_SH_LIVE_HOME ?? join(homedir(), ".coding.sh"), repo = REPO, cli = CLI, sinceHours = 24, now = Date.now } = {}) {
+export function captureHealth({ home = process.env.CODING_SH_LIVE_HOME ?? join(homedir(), ".coding.sh"), repo = healthRepo(), cli = CLI, sinceHours = 24, now = Date.now } = {}) {
   if (!hasData(home)) return { value: null, reason: `no index.db in ${home}` };
   const root = tempDir("cs-health-");
   let result;
@@ -147,8 +162,7 @@ export function captureHealth({ home = process.env.CODING_SH_LIVE_HOME ?? join(h
       if (r.code !== 0) throw new Error(`coding.sh ${args.join(" ")} exited ${r.code}: ${r.stderr.slice(0, 300)}`);
       return JSON.parse(r.stdout);
     };
-    const inRepo = (cwd) => !!cwd && (cwd === repo || cwd.startsWith(repo + sep));
-    const sessions = cs(["sessions", "--since", `${sinceHours}h`, "--limit", "10000", "--subagents"]).sessions.filter((s) => inRepo(s.cwd));
+    const sessions = cs(["sessions", "--since", `${sinceHours}h`, "--limit", "10000", "--subagents"]).sessions.filter((s) => underRepo(s.cwd, repo));
     if (!sessions.length) result = { value: null, reason: `no sessions under ${repo} in the last ${sinceHours} h`, copiedBytes };
     else {
       const rows = [];

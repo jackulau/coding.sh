@@ -28,7 +28,7 @@ export async function bundle(outdir = "dist") {
     outdir: out,
     // node: builtins stay external automatically on platform=node.
   };
-  const [cliBuild] = await Promise.all([
+  const [cliBuild, hookBuild] = await Promise.all([
     build({
       ...common,
       entryPoints: { cli: "src/cli/main.ts" },
@@ -44,7 +44,9 @@ export async function bundle(outdir = "dist") {
       // .md: the skills the MCP server serves (src/mcp/skills.ts).
       loader: { ".html": "text", ".css": "text", ".md": "text" },
     }),
-    build({ ...common, entryPoints: { hook: "src/spool/hook.ts" }, banner: { js: "#!/usr/bin/env node" }, minify: true }),
+    build({ ...common, entryPoints: { hook: "src/spool/hook.ts" }, metafile: true, banner: { js: "#!/usr/bin/env node" }, minify: true }),
+    // The redaction rules hook.mjs imports only for a payload that may hold a secret (src/spool/gate.ts).
+    build({ ...common, entryPoints: { "hook-redact": "src/spool/redact.ts" }, minify: true }),
     build({ ...common, entryPoints: { schema: "src/schema/index.ts" } }),
     // Store plugin API (`coding.sh/store`, `coding.sh/store/conformance`):
     // plugins bundle these helpers in, so they load next to any install.
@@ -66,5 +68,7 @@ export async function bundle(outdir = "dist") {
   // The source files esbuild put in cli.mjs itself (not in a chunk), so tests can check what `--help` loads.
   const entry = Object.entries(cliBuild.metafile.outputs).find(([file]) => file.endsWith("/cli.mjs") || file === "cli.mjs");
   const cliInputs = entry ? Object.keys(entry[1].inputs) : [];
-  return { cli: join(out, "cli.mjs"), cliInputs, hook: join(out, "hook.mjs"), hookSh: join(out, "hook.sh"), schema: join(out, "schema.mjs"), store: join(out, "store.mjs") };
+  // The source files in hook.mjs, so tests can check that the redaction rules stay out of it.
+  const hookInputs = Object.values(hookBuild.metafile.outputs).flatMap((o) => Object.keys(o.inputs));
+  return { cli: join(out, "cli.mjs"), cliInputs, hook: join(out, "hook.mjs"), hookInputs, hookRedact: join(out, "hook-redact.mjs"), hookSh: join(out, "hook.sh"), schema: join(out, "schema.mjs"), store: join(out, "store.mjs") };
 }

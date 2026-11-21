@@ -64,6 +64,20 @@ function walk(dir, out = []) {
 
 const BROTLI_QUALITY = 4;
 
+/** Whether a file goes out compressed: text over 512 bytes. */
+export const compresses = (ext, body) => COMPRESSIBLE.has(ext) && body.length > 512;
+
+/** The brotli body sent to a browser that accepts it. scripts/perf/html-budget.mjs counts the same bytes. */
+export const brotli = (body) => brotliCompressSync(body, { params: { [zc.BROTLI_PARAM_QUALITY]: BROTLI_QUALITY, [zc.BROTLI_PARAM_SIZE_HINT]: body.length } });
+
+/** The files that answer `path`, first match wins: /docs/cli is /docs/cli.html, else /docs/cli/index.html. */
+export function candidates(path) {
+  if (path === "/") return ["/index.html"];
+  const out = [`${path}.html`, `${path}/index.html`];
+  if (extname(path)) out.push(path);
+  return out;
+}
+
 /** {br, gzip} for one file, from the on-disk cache when the same bytes were compressed before. */
 function compressed(body) {
   const key = createHash("sha256").update(body).digest("hex");
@@ -71,10 +85,7 @@ function compressed(body) {
   const br = join(CACHE, `${key}.q${BROTLI_QUALITY}.br`);
   const gz = join(CACHE, `${key}.gz`);
   if (existsSync(br) && existsSync(gz)) return { br: readFileSync(br), gzip: readFileSync(gz) };
-  const out = {
-    br: brotliCompressSync(body, { params: { [zc.BROTLI_PARAM_QUALITY]: BROTLI_QUALITY, [zc.BROTLI_PARAM_SIZE_HINT]: body.length } }),
-    gzip: gzipSync(body, { level: 9 }),
-  };
+  const out = { br: brotli(body), gzip: gzipSync(body, { level: 9 }) };
   writeFileSync(br, out.br);
   writeFileSync(gz, out.gzip);
   return out;
@@ -101,7 +112,7 @@ function load(dir) {
     const ext = extname(p).toLowerCase();
     const body = readFileSync(p);
     const f = { body, type: TYPES[ext] ?? "application/octet-stream" };
-    if (COMPRESSIBLE.has(ext) && body.length > 512) Object.assign(f, compressed(body));
+    if (compresses(ext, body)) Object.assign(f, compressed(body));
     files.set(rel, f);
   }
   return files;
@@ -112,10 +123,7 @@ export async function serve(dirArg, opts = {}) {
   if (!existsSync(join(dir, "index.html"))) throw new Error(`${dir} has no index.html; build the site first`);
   const files = load(dir);
   const notFound = files.get("/404.html");
-  const lookup = (path) => {
-    if (path === "/") return files.get("/index.html");
-    return files.get(`${path}.html`) ?? files.get(`${path}/index.html`) ?? (extname(path) ? files.get(path) : undefined);
-  };
+  const lookup = (path) => candidates(path).map((c) => files.get(c)).find(Boolean);
   const server = http2.createSecureServer({ ...cert(), allowHTTP1: true });
   const sessions = new Set();
   /** path → body bytes of each response, in order. */

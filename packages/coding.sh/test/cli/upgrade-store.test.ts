@@ -194,6 +194,8 @@ describe("upgrade-store always leaves bin/cli-path naming the running CLI", () =
     const r = run(CLI, ["upgrade-store", "--json"], h);
     assert.equal(r.status, 0, r.stderr);
     assert.equal(readFileSync(join(h.data, "bin", "cli-path"), "utf8").trim(), CLI);
+    const doc = JSON.parse(r.stdout) as { status: string; from: number; to: number; backup: string | null };
+    assert.deepEqual([doc.status, doc.from, doc.to, doc.backup], ["owned", SQLITE_SCHEMA_VERSION, SQLITE_SCHEMA_VERSION, null], "taking ownership is not a migration");
     assert.deepEqual(files(h.data), ["bin", "index.db"], "nothing to migrate: no copy");
   });
 });

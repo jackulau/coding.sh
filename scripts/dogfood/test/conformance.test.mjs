@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { captureHealth, copyIndex, healthEnv, LIVE_MS, removeTemp, scoreSession } from "../conformance.mjs";
-import { PKG, tempDir } from "../lib/util.mjs";
+import { captureHealth, copyIndex, healthEnv, healthRepo, LIVE_MS, removeTemp, scoreSession, underRepo } from "../conformance.mjs";
+import { PKG, REPO, tempDir } from "../lib/util.mjs";
 import { loadConfig } from "../../../packages/coding.sh/src/core/config.ts";
 import { buildSession } from "../../../packages/coding.sh/src/core/sessions.ts";
 import { openStores } from "../../../packages/coding.sh/src/store/factory.ts";
@@ -57,6 +57,22 @@ test("healthEnv puts every home under the temp dir and turns auto-ingest off", (
   for (const k of ["HOME", "USERPROFILE", "CODING_SH_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME"]) assert.ok(env[k].startsWith(root), `${k}=${env[k]}`);
   assert.equal(env.CODING_SH_NO_AUTO_INGEST, "1");
   assert.equal(env.NO_COLOR, "1");
+});
+
+test("underRepo: on Windows case and slash direction do not matter; elsewhere they do", () => {
+  assert.equal(underRepo("C:\\Projects\\coding.sh", "C:/Projects/coding.sh", "win32"), true);
+  assert.equal(underRepo("c:\\projects\\Coding.sh\\packages\\x", "C:/Projects/coding.sh/", "win32"), true);
+  assert.equal(underRepo("C:\\Projects\\coding.sh-other", "C:/Projects/coding.sh", "win32"), false);
+  assert.equal(underRepo("/work/demo/sub", "/work/demo", "linux"), true);
+  assert.equal(underRepo("/work/demo", "/work/demo/", "linux"), true);
+  assert.equal(underRepo("/work/Demo", "/work/demo", "linux"), false);
+  assert.equal(underRepo("/work/demo2", "/work/demo", "linux"), false);
+  assert.equal(underRepo(undefined, "/work/demo", "linux"), false);
+});
+
+test("healthRepo: CODING_SH_HEALTH_REPO picks the checkout to score, else this one", () => {
+  assert.equal(healthRepo({}), REPO);
+  assert.equal(healthRepo({ CODING_SH_HEALTH_REPO: join(REPO, "x", "..") }), REPO);
 });
 
 test("copyIndex copies index.db and its sidecars only", () => {

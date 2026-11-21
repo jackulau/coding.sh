@@ -108,6 +108,8 @@ interface Thread {
   parentThreadId?: string;
   relation?: string;
   providerThreads: ProviderThread[];
+  /** A Workflow-tool run (projection_subagents): the run thread has its runId; each agent thread also has its agentId. */
+  workflow?: { runId: string; agentId?: string };
 }
 
 interface StoreMessage {
@@ -127,6 +129,8 @@ interface StoreTurn {
   done: boolean;
   ok: boolean;
   usage?: Usage;
+  /** The model the turn ran on (provider_turns payload.model). */
+  model?: string;
 }
 
 interface StoreItem {
@@ -155,6 +159,12 @@ interface StoreRows {
   /** v1 only: thread totals (no per-turn usage in v1). */
   totals?: Usage;
 }
+
+/** A thread's title, unless it is T3's placeholder for a thread it has not named yet. */
+const threadTitle = (v: unknown): string | undefined => {
+  const t = str(v)?.trim();
+  return t && !/^new thread$/i.test(t) ? t : undefined;
+};
 
 /** Session id for a provider thread (native id when T3 knows it). */
 const ptSessionId = (pt: ProviderThread): string => (pt.nativeId ? unscope(pt.nativeId) : `t3code-${pt.id}`);
@@ -283,46 +293,69 @@ async function convertNative(ctx: NormalizeContext, agent: string, path: string,
 /** Last segment of a T3 thread id: the Claude agent id of a subagent thread (ids are percent-encoded, so ":" may be "%3A"). */
 const threadTail = (id: string): string => id.split(/%3A|:/i).pop() ?? id;
 
+/** An id that is safe as one path segment (a workflow run id, a Claude agent id), else undefined. */
+const safeId = (v: unknown): string | undefined => (typeof v === "string" && /^[\w.-]+$/.test(v) && !/^\.+$/.test(v) ? v : undefined);
+
+/** A covered thread: the claude-code session that is its run (when it has one), and the session a stale copy of it belongs to. */
+interface Coverage {
+  sessionId?: string;
+  owner: string;
+}
+
 /**
  * Subagent threads of a Claude session whose run the claude-code adapter already stores as
- * `<root>:sub:<agentId>` (from <root>/subagents/agent-<id>.jsonl). Storing them again as t3code
- * sessions doubles the tree. A thread is covered when the parent transcript has the agent file, or
- * when it is a workflow agent (a numbered child of a workflow thread) and the transcript has a
- * subagents/workflows directory. Every Claude session of the parent thread counts: after a provider
- * switch the subagent runs in a later one. Maps thread id to the claude-code session that holds a direct subagent's run.
+ * `<root>:sub:<agentId>` (from <root>/subagents/agent-<id>.jsonl, or
+ * <root>/subagents/workflows/<runId>/agent-<id>.jsonl for a Workflow-tool agent). Storing them again
+ * as t3code sessions doubles the tree. A root is any Claude provider thread of the parent (of the
+ * run's parent, for a workflow agent): a resumed conversation gets a new provider thread, and the
+ * subagent's file sits under the transcript that ran it. Covered:
+ *   - a direct subagent whose agent file is under a root;
+ *   - a workflow run thread whose run directory is under a root;
+ *   - a workflow agent whose agent file is in that run directory (its run is that file's session) or,
+ *     failing that, a numbered child of a subagent thread whose root has a workflows directory.
  */
-async function coveredThreads(all: Thread[], native: NativeIndex, owners?: Map<string, string>): Promise<Map<string, string | undefined>> {
+async function coveredThreads(all: Thread[], native: NativeIndex): Promise<Map<string, Coverage>> {
   const byId = new Map(all.map((t) => [t.id, t]));
-  const out = new Map<string, string | undefined>();
-  /** The first Claude session of the thread whose transcript dir has `sub` under its subagents dir. */
-  const rootDir = async (t: Thread, sub: string): Promise<{ dir: string; sid: string } | undefined> => {
+  const out = new Map<string, Coverage>();
+  const roots = new Map<string, { dir: string; sid: string }[]>();
+  const rootDirs = async (t: Thread): Promise<{ dir: string; sid: string }[]> => {
+    let list = roots.get(t.id);
+    if (list) return list;
+    list = [];
     for (const pt of t.providerThreads) {
       if (!pt.nativeId || providerAgent(pt.driver) !== CLAUDE_AGENT) continue;
       const sid = unscope(pt.nativeId);
       const path = await native.find(CLAUDE_AGENT, sid, t.cwd);
-      const dir = path ? join(dirname(path), sid, "subagents") : undefined;
-      if (dir && existsSync(join(dir, sub))) return { dir, sid };
+      if (path) list.push({ dir: join(dirname(path), sid, "subagents"), sid });
     }
-    return undefined;
+    roots.set(t.id, list);
+    return list;
   };
+  const under = async (t: Thread, ...rel: string[]) => (await rootDirs(t)).find((r) => existsSync(join(r.dir, ...rel)));
+  const child = (sid: string, agentId: string): Coverage => ({ sessionId: childSessionId(sid, agentId), owner: childSessionId(sid, agentId) });
   for (const t of all) {
     if (t.relation !== "subagent" || !t.parentThreadId || t.providerThreads.length) continue;
     const parent = byId.get(t.parentThreadId);
     if (!parent) continue;
-    const tail = threadTail(t.id);
+    const tail = safeId(threadTail(t.id));
     if (parent.relation !== "subagent") {
-      const root = await rootDir(parent, `agent-${tail}.jsonl`);
-      if (root) {
-        out.set(t.id, childSessionId(root.sid, tail));
-        owners?.set(t.id, childSessionId(root.sid, tail));
+      if (t.workflow && !t.workflow.agentId) {
+        const r = await under(parent, "workflows", t.workflow.runId);
+        if (r) out.set(t.id, { owner: r.sid });
+      } else if (tail) {
+        const r = await under(parent, `agent-${tail}.jsonl`);
+        if (r) out.set(t.id, child(r.sid, tail));
       }
-    } else {
-      const grand = parent.parentThreadId ? byId.get(parent.parentThreadId) : undefined;
-      const root = grand && grand.relation !== "subagent" && /^\d+$/.test(tail) ? await rootDir(grand, "workflows") : undefined;
-      if (root) {
-        out.set(t.id, undefined);
-        owners?.set(t.id, root.sid);
-      }
+      continue;
+    }
+    const grand = parent.parentThreadId ? byId.get(parent.parentThreadId) : undefined;
+    if (!grand || grand.relation === "subagent") continue;
+    const wf = t.workflow;
+    const file = wf?.agentId ? await under(grand, "workflows", wf.runId, `agent-${wf.agentId}.jsonl`) : undefined;
+    if (file) out.set(t.id, child(file.sid, wf!.agentId!));
+    else if (tail && /^\d+$/.test(tail)) {
+      const r = await under(grand, "workflows");
+      if (r) out.set(t.id, { owner: r.sid });
     }
   }
   return out;
@@ -359,7 +392,9 @@ async function storeEvents(ctx: NormalizeContext, p: SessionPlan, rows: StoreRow
   }
   for (const tu of rows.turns) {
     if (tu.done || tu.usage) {
-      em.emit("llm.call", { provider: p.provider, responseModel: model, ok: tu.ok, providerTurnId: tu.id }, { key: [tu.id], ts: tu.start, durationMs: tu.end !== undefined ? Math.max(0, tu.end - tu.start) : undefined, usage: tu.usage });
+      // T3 leaves the provider thread's model empty for many runs; each turn names the model it ran on.
+      const m = tu.model ?? model;
+      em.emit("llm.call", { provider: p.provider, responseModel: m, ok: tu.ok, providerTurnId: tu.id }, { key: [tu.id], ts: tu.start, model: m, durationMs: tu.end !== undefined ? Math.max(0, tu.end - tu.start) : undefined, usage: tu.usage });
     }
     if (tu.done) em.emit("turn.end", { ok: tu.ok }, { key: [tu.id], ts: tu.end ?? tu.start });
     last = Math.max(last, tu.end ?? tu.start);
@@ -402,7 +437,10 @@ async function storeEvents(ctx: NormalizeContext, p: SessionPlan, rows: StoreRow
 function linkEvents(ctx: NormalizeContext, p: SessionPlan): AgentEvent[] {
   const t = p.thread;
   const em = new Emitter(ctx, { agent: T3_AGENT, sessionId: p.sessionId, ts: p.start, cwd: t.cwd, model: p.pt?.model ?? t.model }, ["t3", p.sessionId, "link"]);
-  em.emit("notification", { type: "host-link", via: T3_AGENT, provider: p.provider, t3ThreadId: t.id, t3ProviderThreadId: p.pt?.id, title: t.title?.slice(0, 280), project: t.project }, { key: ["host-link"] });
+  // The thread title titles the session (core/sessions.ts) and names the thread in show.
+  const title = t.title?.slice(0, 280);
+  const message = title ? `T3 Code thread: ${title}` : "T3 Code thread";
+  em.emit("notification", { type: "host-link", via: T3_AGENT, provider: p.provider, t3ThreadId: t.id, t3ProviderThreadId: p.pt?.id, title, project: t.project, message }, { key: ["host-link"] });
   // T3's cost is a running total: reported, never summed into usage.
   if (p.pt?.costUsd !== undefined) em.emit("notification", { type: "usage-report", via: T3_AGENT, reportedUsage: { costUsd: p.pt.costUsd } }, { key: ["usage-report", p.pt.updated], ts: Math.max(p.start, p.pt.updated) });
   if (p.parent) em.emit("subagent.start", { subagentId: p.sessionId, type: p.parent.type, childSessionId: p.sessionId }, { sessionId: p.parent.sessionId, key: [p.sessionId], model: undefined });
@@ -488,7 +526,7 @@ function readV2Threads(db: DatabaseSync): Thread[] {
     const created = ms(r.created_at) ?? ms(pl.createdAt) ?? 0;
     out.push({
       id: String(r.thread_id),
-      title: str(r.title) ?? str(pl.title),
+      title: threadTitle(r.title) ?? threadTitle(pl.title),
       project: str(project?.title),
       cwd: str(pl.worktreePath) ?? str(project?.workspace_root),
       model: str(obj(pl.modelSelection).model),
@@ -499,6 +537,33 @@ function readV2Threads(db: DatabaseSync): Thread[] {
       relation: str(lineage.relationshipToParent),
       providerThreads: pts.get(String(r.thread_id)) ?? [],
     });
+  }
+  const workflows = readV2Workflows(db);
+  for (const t of out) t.workflow = workflows.get(t.id);
+  return out;
+}
+
+/** Workflow-tool runs from projection_subagents: run thread id to {runId}, agent thread id to {runId, agentId}. */
+function readV2Workflows(db: DatabaseSync): Map<string, { runId: string; agentId?: string }> {
+  const out = new Map<string, { runId: string; agentId?: string }>();
+  if (!hasTable(db, "orchestration_v2_projection_subagents")) return out;
+  try {
+    // Parsed here rather than with json_extract: one malformed payload fails a JSON query.
+    for (const r of db.prepare(`SELECT child_thread_id, payload_json FROM orchestration_v2_projection_subagents WHERE child_thread_id IS NOT NULL AND payload_json LIKE '%"workflow"%'`).all() as Row[]) {
+      const wf = obj(parse(r.payload_json).workflow);
+      const handles = obj(wf.runHandles);
+      const runId = safeId(handles.runId) ?? safeId(str(handles.transcriptDir)?.split(/[\\/]/).filter(Boolean).pop());
+      if (!runId) continue;
+      out.set(String(r.child_thread_id), { runId });
+      for (const a of Array.isArray(wf.agents) ? wf.agents : []) {
+        const agent = obj(a);
+        const thread = str(agent.childThreadId);
+        const agentId = safeId(agent.agentId);
+        if (thread && agentId) out.set(thread, { runId, agentId });
+      }
+    }
+  } catch {
+    // columns differ in this store version
   }
   return out;
 }
@@ -518,7 +583,7 @@ function readV2Rows(db: DatabaseSync, threadId: string, runPt: Map<string, strin
       const status = str(r.status) ?? str(pl.status) ?? "";
       const start = ms(r.started_at) ?? ms(pl.startedAt) ?? 0;
       const done = ITEM_DONE.has(status);
-      turns.push({ id: String(r.provider_turn_id), pt: str(r.provider_thread_id), start, end: ms(r.completed_at) ?? ms(pl.completedAt), done, ok: status === "completed", usage: done ? turnUsage(pl.turnTokenUsage) : undefined });
+      turns.push({ id: String(r.provider_turn_id), pt: str(r.provider_thread_id), start, end: ms(r.completed_at) ?? ms(pl.completedAt), done, ok: status === "completed", usage: done ? turnUsage(pl.turnTokenUsage) : undefined, model: str(pl.model) });
     }
   }
   const items: StoreItem[] = [];
@@ -590,7 +655,7 @@ function readV1Threads(db: DatabaseSync, skip: Set<string>): { thread: Thread; v
     const project = projects.get(String(r.project_id));
     const created = ms(r.created_at) ?? 0;
     const updated = ms(r.updated_at) ?? created;
-    const thread: Thread = { id, title: str(r.title), project: str(project?.title), cwd: str(r.worktree_path) ?? str(project?.workspace_root), model: str(sel.model), driver, created, updated, providerThreads: [] };
+    const thread: Thread = { id, title: threadTitle(r.title), project: str(project?.title), cwd: str(r.worktree_path) ?? str(project?.workspace_root), model: str(sel.model), driver, created, updated, providerThreads: [] };
     if (driver && nativeId) thread.providerThreads.push({ id: `v1:${id}`, driver, nativeId, model: str(sel.model), updated });
     out.push({ thread, v1: true });
   }
@@ -749,14 +814,13 @@ export async function* backfillT3(ctx: NormalizeContext, opts: BackfillOpts = {}
         activity(v1.db, "SELECT thread_id, COUNT(*) n, MAX(created_at) t FROM projection_thread_activities GROUP BY thread_id"),
       );
     }
-    const owners = new Map<string, string>();
-    const covered = await coveredThreads(all.map((x) => x.thread), native, owners);
-    const primary = new Map(all.map((x) => [x.thread.id, covered.get(x.thread.id) ?? primaryOf(x.thread)]));
+    const covered = await coveredThreads(all.map((x) => x.thread), native);
+    const primary = new Map(all.map((x) => [x.thread.id, covered.get(x.thread.id)?.sessionId ?? primaryOf(x.thread)]));
     for (const { thread, db, path, v1: old } of all) {
-      if (covered.has(thread.id)) {
-        // A store parsed before parseVersion 9 holds this thread as a session: re-parse deletes it, its owner has the run.
-        const owner = owners.get(thread.id);
-        if (owner) opts.copied?.(primaryOf(thread), owner);
+      const cover = covered.get(thread.id);
+      if (cover) {
+        // A store parsed before parseVersion 9 may hold this thread as a session: re-parse deletes it, its owner has the run.
+        opts.copied?.(primaryOf(thread), cover.owner);
         continue;
       }
       if (opts.changed) {
@@ -801,9 +865,11 @@ export const t3code: Adapter = {
   // 5 (0.1.2): tool.end records a tool output the agent cut before the model saw it (cut).
   // 6 (0.1.3): Claude transcripts' model fallbacks (system/model_fallback, model_refusal_fallback) are model.fallback notifications.
   // 7 (0.1.5): a tool call that loads a skill names it (payload.skill).
-  // 8 (0.1.5): a subagent thread of a Claude session whose transcript holds its run is not stored again as a t3code session.
-  // 9 (0.1.8): that holds for a subagent run in any Claude session of the parent thread, not only its first.
-  parseVersion: 9,
+  // 8 (0.1.8): a subagent thread of a Claude session whose transcript holds its run is not stored again as a t3code session.
+  // 9 (0.1.8): that also holds when the run sits under a later provider thread's transcript, and for Workflow-tool run
+  //    threads and agents T3 records in projection_subagents; a store-built llm.call names the turn's model.
+  // 10 (0.1.8): the host-link notification names the thread in its message, and T3's "New thread" placeholder is no title.
+  parseVersion: 10,
 
   async detect() {
     const env = process.env;

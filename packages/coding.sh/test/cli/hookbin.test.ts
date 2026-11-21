@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import { refreshAfterUpdate, runUpdate } from "../../src/cli/commands/update.ts";
 import { checkMcpEntries } from "../../src/cli/commands/doctor.ts";
-import { ensureHookBin, hookBinHealth, writeHookBin } from "../../src/cli/hookbin.ts";
+import { ensureHookBin, hookBinHealth, planHookBin, refreshHookBin, writeHookBin } from "../../src/cli/hookbin.ts";
 import { Output } from "../../src/cli/output.ts";
 import type { CommandContext } from "../../src/cli/types.ts";
 import { mcpLaunchSpec, runningCli } from "../../src/mcp/launch.ts";
@@ -148,5 +148,62 @@ describe("the sh fast path in the bin (TE-12)", () => {
     assert.ok(existsSync(join(bin, "hook.sh")));
     assert.equal(readFileSync(join(bin, "hook.mjs"), "utf8"), "// hook v1\n", "the installed hook.mjs is left as it is");
     assert.equal(await ensureHookBin(e), "present");
+  });
+});
+
+describe("the redaction rules in the bin", () => {
+  test("init writes hook-redact.mjs beside hook.mjs; stale or missing rules are a stale hook; update rewrites them", async () => {
+    const e = env();
+    const bin = join(e.CODING_SH_HOME!, "bin");
+    writeFileSync(join(e.root, "new", "hook-redact.mjs"), "// rules v2\n");
+    await writeHookBin(e, undefined);
+    assert.equal(readFileSync(join(bin, "hook-redact.mjs"), "utf8"), "// rules v2\n");
+    assert.equal(hookBinHealth(e).hookCurrent, true);
+    assert.equal(planHookBin(e, undefined), undefined);
+
+    writeFileSync(join(bin, "hook-redact.mjs"), "// rules v1\n");
+    assert.equal(hookBinHealth(e).hookCurrent, false, "stale rules are a stale hook");
+    assert.ok(planHookBin(e, undefined), "the plan rewrites stale rules");
+    rmSync(join(bin, "hook-redact.mjs"));
+    assert.equal(hookBinHealth(e).hookCurrent, false, "missing rules are a stale hook");
+    assert.equal(await refreshHookBin(e, undefined), "refreshed");
+    assert.equal(readFileSync(join(bin, "hook-redact.mjs"), "utf8"), "// rules v2\n");
+    assert.equal(hookBinHealth(e).hookCurrent, true);
+  });
+
+  test("a hook shipped with no rules beside it (a stand-in) writes none and is current without them", async () => {
+    const e = env();
+    await writeHookBin(e, undefined);
+    assert.equal(existsSync(join(e.CODING_SH_HOME!, "bin", "hook-redact.mjs")), false);
+    assert.equal(hookBinHealth(e).hookCurrent, true);
+    assert.equal(planHookBin(e, undefined), undefined);
+  });
+
+  test("an isolated run puts back the rules a hook.mjs imports, and adds none for a hook from before them", async () => {
+    const e = env();
+    const bin = join(e.CODING_SH_HOME!, "bin");
+    const rules = join(bin, "hook-redact.mjs");
+    writeFileSync(join(e.root, "new", "hook-redact.mjs"), "// rules v2\n");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "hook.sh"), "# sh\n");
+
+    // A hook from before the rules: nothing to add.
+    writeFileSync(join(bin, "hook.mjs"), "// hook v1\n");
+    assert.equal(await ensureHookBin(e), "present");
+    assert.equal(existsSync(rules), false);
+
+    // A hook that imports them, with the rules gone.
+    const hook = '// hook v2\nawait import(new URL("./hook-redact.mjs", import.meta.url).href);\n';
+    writeFileSync(join(bin, "hook.mjs"), hook);
+    assert.equal(await ensureHookBin(e), "written");
+    assert.equal(readFileSync(rules, "utf8"), "// rules v2\n");
+    assert.equal(readFileSync(join(bin, "hook.mjs"), "utf8"), hook, "the installed hook.mjs is left as it is");
+    assert.equal(readFileSync(join(bin, "hook.sh"), "utf8"), "# sh\n");
+    assert.equal(await ensureHookBin(e), "present");
+
+    // This CLI ships no rules to put back.
+    rmSync(rules);
+    rmSync(join(e.root, "new", "hook-redact.mjs"));
+    assert.equal(await ensureHookBin(e), "unavailable");
   });
 });

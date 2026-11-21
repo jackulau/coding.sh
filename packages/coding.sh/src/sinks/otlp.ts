@@ -121,6 +121,32 @@ function content(v: unknown): string | undefined {
   return s.length > MAX_CONTENT ? `${s.slice(0, MAX_CONTENT)}…` : s;
 }
 
+/** True when anyValue() keeps every part of v: no level past MAX_DEPTH and no null inside an array (it would shift the items). */
+function encodable(v: unknown, depth = 0): boolean {
+  if (v === null || typeof v !== "object") return true;
+  if (depth >= MAX_DEPTH) return false;
+  if (Array.isArray(v)) return v.every((x) => x !== null && x !== undefined && encodable(x, depth + 1));
+  return Object.values(v).every((x) => encodable(x, depth + 1));
+}
+
+/**
+ * Tool arguments or a result as semconv structured content (#634): a plain object or array that
+ * fits in MAX_CONTENT as JSON goes out as is, and anyValue() encodes it as kvlistValue/arrayValue.
+ * Anything else (a primitive, a larger value, one anyValue() would lose parts of) is content()'s
+ * truncated string. Event content is already redacted in the store.
+ */
+function structured(v: unknown): unknown {
+  if (v !== null && typeof v === "object") {
+    const proto = Object.getPrototypeOf(v);
+    const plain = Array.isArray(v) || proto === Object.prototype || proto === null;
+    if (plain && encodable(v)) {
+      const s = JSON.stringify(v);
+      if (s !== undefined && s.length <= MAX_CONTENT) return v;
+    }
+  }
+  return content(v);
+}
+
 /**
  * A chat message as semconv structured content: {role, parts:[{type:"text", content}]}.
  * The text goes through the redactor and is cut at MAX_CONTENT inside its part.
@@ -191,7 +217,7 @@ export function toOtlpSpans(batch: AgentEvent[], sessions: Session[], mode: "ful
           "gen_ai.tool.call.id": toolUseId,
           "gen_ai.agent.name": e.agent,
           "coding_sh.event.id": e.id,
-          ...(full ? { "gen_ai.tool.call.arguments": content(start?.payload.input), "gen_ai.tool.call.result": content(e.payload.output) } : {}),
+          ...(full ? { "gen_ai.tool.call.arguments": structured(start?.payload.input), "gen_ai.tool.call.result": structured(e.payload.output) } : {}),
         }),
         status: ok === false ? { code: STATUS_ERROR, message: "tool call failed" } : ok === true ? { code: STATUS_OK } : undefined,
       });

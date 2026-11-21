@@ -39,6 +39,7 @@ import {
   outputText,
   parentLink,
   planEdit,
+  packageVersion,
   probeVersion,
   readTextIfExists,
   runEnv,
@@ -609,9 +610,12 @@ async function* backfillOpencode(ctx: NormalizeContext, opts: { since?: number }
 
 // ---------------------------------------------------------------- install
 
+/** The npm package that ships `opencode`: its package.json names the version without launching it (a launch makes ~/.cache/opencode). */
+const OPENCODE_NPM = "opencode-ai";
+
 async function installedApi(): Promise<PluginApi> {
   const bin = which("opencode");
-  return apiForVersion(bin ? await probeVersion(bin) : undefined);
+  return apiForVersion(bin ? (packageVersion(bin, OPENCODE_NPM) ?? (await probeVersion(bin))) : undefined);
 }
 
 function planPlugin(path: string, hookPath: string, api: PluginApi): FileChange | undefined {
@@ -696,6 +700,7 @@ export const opencode: Adapter = {
   async detect() {
     const r = await detectAgent({
       bins: ["opencode"],
+      npmPackage: OPENCODE_NPM,
       configDir: opencodeConfigDir(),
       hooked: () => ([1, 2] as const).some((api) => isOurPlugin(readTextIfExists(pluginPath({ scope: "user" }, api)))),
     });

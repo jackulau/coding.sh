@@ -10,6 +10,7 @@ import { cacheBaseline, CACHE_BASELINE_NOTE } from "../core/cache-baselines.ts";
 import { mergeCallCopies } from "../core/call-copies.ts";
 import { failureFlags, isBackfillEvent, percentile } from "../core/sessions.ts";
 import { weightsEventText } from "../core/weights.ts";
+import { waitKind } from "../core/wait-tools.ts";
 import { sessionMatcher } from "../query/run.ts";
 import type { Node, Query } from "../query/where.ts";
 
@@ -533,33 +534,7 @@ function dist(values: number[]): Dist {
   return { n: values.length, p50Ms: percentile(values, 50), p95Ms: percentile(values, 95), maxMs: Math.max(...values) };
 }
 
-export type WaitKind = "human" | "subagent" | "wait";
-
-// Tools whose duration is someone else's time: the user answering, a subagent
-// working, or an explicit wait. Keyed by lowercase name (MCP prefix stripped).
-const WAIT_TOOLS: Record<string, WaitKind> = {
-  askuserquestion: "human",
-  ask_user_question: "human",
-  ask_user: "human",
-  ask_followup_question: "human",
-  request_user_input: "human",
-  request_user_input_async: "human",
-  exitplanmode: "human",
-  exit_plan_mode: "human",
-  task: "subagent",
-  agent: "subagent",
-  wait_agent: "subagent",
-  wait: "wait",
-  sleep: "wait",
-  monitor: "wait",
-  taskoutput: "wait",
-};
-
-/** Whether a tool's duration is waiting (on the user, a subagent, a timer) rather than tool latency. */
-export function waitKind(tool: string): WaitKind | undefined {
-  const t = tool.toLowerCase();
-  return WAIT_TOOLS[t] ?? WAIT_TOOLS[t.replace(/^mcp__.*__/, "")];
-}
+export { waitKind, type WaitKind } from "../core/wait-tools.ts";
 
 /** Events of one kind set latency reads per session; a session with more is read in part and counted in `window.eventsTruncated`. */
 export const LATENCY_SESSION_EVENTS = 50_000;

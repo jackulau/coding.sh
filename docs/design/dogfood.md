@@ -142,6 +142,17 @@ This is the tool-eval suite (docs/TOOL-EVALS.md) with target `codingsh` (CLI,
 - Drivers are `agent:claude-code:<sonnet-class model>` and `agent:codex:<default>`, with k = 3.
   The model driver is added when an API key is set.
 
+`npm run dogfood:validate` checks every task before trials count: the no-op fails, the reference
+passes, and nothing leaks. The scorecard lists the tasks that fail in `cli.tasks.invalidTasks`,
+and `cli.tasks.invalidReasons` gives each one's reason: the check that failed (for example
+`setup`, `reference`, `state` or `no-op`), the command, its exit code and
+the first error line of its stderr.
+
+On Windows the suite runs every setup, reference and check command as a script file under Git
+Bash, so the command line does not lose backslashes. Templated paths have their backslashes
+doubled, output checks read backslashes as slashes, and trial commands keep this process's PATH
+(with `;` as the separator) ahead of the fixture's.
+
 Dev split (20 tasks, committed):
 
 | id | Instruction (abridged) | Check |
@@ -230,7 +241,7 @@ Claude Code in an isolated config dir needs a long-lived token. A human creates 
 
 | Score | How | Target |
 |---|---|---|
-| `site.lighthouse` | `npx -y lighthouse@12 <url> --preset=desktop` and mobile defaults, against `astro preview` on `127.0.0.1:4329`; min over the performance, accessibility, best-practices and SEO categories | mobile perf ≥ 0.95; a11y = 1.0; BP ≥ 0.95; SEO = 1.0 |
+| `site.lighthouse` | `lighthouse <url> --preset=desktop` and mobile defaults, against `astro preview` on `127.0.0.1:4329`; min over the performance, accessibility, best-practices and SEO categories | mobile perf ≥ 0.95; a11y = 1.0; BP ≥ 0.95; SEO = 1.0 |
 | `site.vitals` | From the same reports: LCP, CLS, TBT (mobile, simulated) | LCP ≤ 2.0 s; CLS ≤ 0.02; TBT ≤ 100 ms |
 | `site.js` | gzip bytes of JS shipped on `/` (from `apps/site/dist`) | ≤ 60 KB |
 | `site.council` | Council score relative to competitors (below) | ≥ +1.0 over the competitor mean |
@@ -265,8 +276,23 @@ tick, so machine noise is paired.
 | `perf.hook` | `scripts/dogfood/bench-hook.mjs`: 5 warmups, then 50 spawns of `node dist/hook.mjs claude-code PostToolUse` with a 2 KB payload, compared with 50 spawns of `node -e ""` | median(hook) − median(node) ≤ 10 ms; p95 ≤ +25 ms; with a 1 MB payload ≤ +40 ms |
 | `perf.ingest` | `bench-ingest.mjs`: 100k synthetic claude-code spool lines → fresh SQLite home | ≥ 5,000 events/s |
 | `perf.storeSize` | `bench-store.mjs`: (index.db + blobs on disk) / (events / 1000), over the synthetic corpus plus a redacted copy of our last 7 days | ≤ 2.0 MB per 1k events |
-| `perf.viewerTti` | Lighthouse `interactive` on `coding.sh ui` serving a 5,000-event session | ≤ 1,000 ms |
+| `perf.viewerTti` | Lighthouse `interactive` (desktop preset, no throttling) on `coding.sh ui` serving a 5,000-event session; without Lighthouse, or when it fails, max(DCL, last long task) read over CDP | ≤ 1,000 ms |
 | `perf.help` | `coding.sh --help`, median of 20 runs | ≤ 200 ms |
+
+Lighthouse comes from `node_modules` first (`apps/site` has it as a devDependency, so `npm ci` at
+the repo root installs it) and runs with this Node. Otherwise it is the `lighthouse` on `PATH`;
+on Windows that is a `.cmd` shim, started through a shell. With neither, `site.lighthouse` and
+`site.vitals` are skipped with that install hint, not errors. A run that finds no Chrome is
+skipped too and names `CHROME_PATH`.
+
+The viewer bench looks for Chrome in `CHROME_PATH`, the usual Linux and macOS paths, and on
+Windows under `Program Files`, `Program Files (x86)` and `LOCALAPPDATA`. It starts Chrome itself
+and points Lighthouse at it with `--port`; the result's `method` says which measurement ran, and
+`lighthouseError` says why Lighthouse failed when the CDP reading replaced it. With no Chrome and
+no Lighthouse, `perf.viewerTti` is skipped with a reason naming both. On Windows, Chrome refuses
+remote debugging when `USERPROFILE` has no `AppData/Local` folder, as in the benches' temp
+homes, so the benches create it there. `bench.mjs --dist <dir>` measures that build in every
+bench, the viewer included.
 
 The initial targets come from the design constraints: the hook must stay invisible, and the help
 time is Vercel's limit. After 10 runs, each throughput or size target tightens to
@@ -284,6 +310,18 @@ time is Vercel's limit. After 10 runs, each throughput or size target tightens t
 
 In `quick` mode, components that were not run keep their last `full` value and are marked
 `stale: true` with their age.
+
+`agents` holds the version each agent CLI prints for `--version`. To keep the scorer from starting
+a CLI, list its agent id in `CODING_SH_DOGFOOD_SKIP_AGENTS` (for example `codex`); its version is
+then `null`. The tests gate runs with `HOME`, `USERPROFILE` and the agent homes in a temp dir.
+It runs the tests as CI does, with `packages/coding.sh/scripts/test-ci.mjs`: when five or fewer test
+files fail, each is run again alone. A file that passes then does not fail the gate, and `notes`
+names it.
+
+`capture.health` copies the index from `CODING_SH_LIVE_HOME` (default `~/.coding.sh`) and scores the
+sessions whose folder is this checkout or under it. When the scorer runs in a worktree but the
+sessions ran in another checkout, set `CODING_SH_HEALTH_REPO` to that checkout. On Windows the
+match ignores case and slash direction.
 
 ```jsonc
 // tasks/dogfood/scorecard.json

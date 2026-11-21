@@ -21,16 +21,17 @@
 // - Headless: `gemini -p … -o stream-json -m M --approval-mode yolo --skip-trust`; stream
 //   events init{session_id,model}, message, tool_use, tool_result, error, result{stats}.
 // - Isolation: GEMINI_CLI_HOME replaces ~ (config, tmp, creds, extensions move with it).
-import { existsSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import type { Adapter, AgentRunOutput, BackfillFile, BackfillOpts, DetectResult, FileChange, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../../core/types.ts";
+import { packageVersion, probeVersion } from "../_shared/detect.ts";
 import type { AgentEvent, Usage } from "../../schema/index.ts";
 import {
   Emitter,
   applyWrites,
   jsonEdit,
   attachRaw,
-  binVersion,
   copyAuth,
   emitText,
   emitToolEnd,
@@ -374,6 +375,30 @@ export async function* geminiChatEvents(file: string, ctx: NormalizeContext, opt
 
 // ---------------------------------------------------------------- adapter
 
+/**
+ * The installed Gemini CLI's version. Every launch writes ~/.gemini/projects.json and, when two
+ * processes race (it relaunches itself), leaves projects.json.<uuid>.tmp files behind, so the
+ * npm package.json is read instead. Without one, `gemini --version` runs with GEMINI_CLI_HOME
+ * on a temp dir that is removed after.
+ */
+async function installedVersion(binary: string): Promise<string | undefined> {
+  const fromPackage = packageVersion(binary, "@google/gemini-cli");
+  if (fromPackage) return fromPackage;
+  let h: string | undefined;
+  try {
+    h = mkdtempSync(join(tmpdir(), "csh-gemini-version-"));
+    return await probeVersion(binary, ["--version"], 5000, { ...process.env, NO_COLOR: "1", CI: "1", GEMINI_CLI_HOME: h });
+  } catch {
+    return undefined;
+  } finally {
+    try {
+      if (h) rmSync(h, { recursive: true, force: true, maxRetries: 3 });
+    } catch {
+      // a temp dir left behind, never the user's home
+    }
+  }
+}
+
 export const geminiCliAdapter: Adapter = {
   id: ID,
   displayName: "Gemini CLI",
@@ -394,7 +419,7 @@ export const geminiCliAdapter: Adapter = {
     const r: DetectResult = { installed: !!binary || existsSync(geminiSettingsPath({ scope: "user" })), hooked };
     if (binary) {
       r.binary = binary;
-      const v = await binVersion(binary);
+      const v = await installedVersion(binary);
       if (v) r.version = v;
     }
     if (existsSync(dir)) r.configDir = dir;

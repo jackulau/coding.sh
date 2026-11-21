@@ -18,6 +18,8 @@ let distDir = "";
 let CLI = "";
 let HOOK = "";
 let CLI_INPUTS: string[] = [];
+let HOOK_INPUTS: string[] = [];
+let HOOK_REDACT = "";
 
 before(async () => {
   distDir = realpathSync(mkdtempSync(join(tmpdir(), "csh-cli-dist-")));
@@ -25,6 +27,8 @@ before(async () => {
   CLI = b.cli;
   HOOK = b.hook;
   CLI_INPUTS = b.cliInputs;
+  HOOK_INPUTS = b.hookInputs;
+  HOOK_REDACT = b.hookRedact;
 });
 after(() => rmSync(distDir, { recursive: true, force: true }));
 
@@ -126,6 +130,15 @@ describe("cli help", () => {
     assert.ok(size < 300_000, `cli.mjs is ${size} bytes; command modules leaked into the entry`);
     assert.ok(readdirSync(dirname(CLI)).some((f) => /^chunk-.*\.mjs$/.test(f)), "command chunks sit next to cli.mjs");
     assert.doesNotMatch(readFileSync(CLI, "utf8"), /node:sqlite/, "the store is not loaded for help");
+  });
+
+  it("keeps the redaction rules out of hook.mjs, in hook-redact.mjs beside it", () => {
+    // Loading them cost every hook run ~3.5 ms; the hook imports hook-redact.mjs only for a
+    // payload that may hold a secret (src/spool/gate.ts).
+    assert.ok(HOOK_INPUTS.includes("src/spool/hook.ts"), "the bundle reports hook.mjs's inputs");
+    for (const lazy of ["src/core/redact.ts", "src/core/toml.ts", "src/spool/redact.ts"]) assert.ok(!HOOK_INPUTS.includes(lazy), `${lazy} is in hook.mjs`);
+    assert.equal(dirname(HOOK_REDACT), dirname(HOOK));
+    assert.match(readFileSync(HOOK_REDACT, "utf8"), /spoolLineRedactor/, "hook-redact.mjs exports the rules the hook imports");
   });
 
   it("keeps the source-checkout guard out of what --help loads", () => {

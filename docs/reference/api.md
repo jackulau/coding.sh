@@ -1804,6 +1804,13 @@ A run carries these fields when they apply:
 | `traceId` | The trace id the agent got in `TRACEPARENT` with `compare --otel` |
 | `sequence` | The run's place (`stream`, `step`) with `compare --sequential` |
 
+`coding.sh compare --json` adds `claims` with `baseline` and `candidate` when the final answer
+(`agent.finalText`) of at least one run in either arm claims success. Each arm has `runs`,
+`claims`, `failureReports`, `claimRate` (claims / runs), `claimPrecision` (verifier passes among
+claims, absent when the arm made no claim), `silentFailures` (claims the verifier failed) and
+`silentFailureRate` (silent failures / runs). Cancelled, superseded and infrastructure-lost runs
+are left out.
+
 ```sh
 curl -sS "$CSH/api/tasks?status=validated" -H "Authorization: Bearer $READ_KEY"
 ```

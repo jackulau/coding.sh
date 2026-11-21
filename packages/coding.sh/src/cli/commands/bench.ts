@@ -62,8 +62,10 @@ function benchName(c: CommandContext, ref: string): string {
   }
 }
 
-async function runsOrFail(c: CommandContext, name: string): Promise<BenchRun[]> {
+async function runsOrFail(c: CommandContext, name: string, ref: string = name): Promise<BenchRun[]> {
   const runs = await listRuns(name, c.env);
+  // No runs and no definition: the benchmark doesn't exist, and `bench run` would fail too.
+  if (!runs.length && !findDefinition(ref, { cwd: c.cwd, env: c.env })) definitionFor(c, ref);
   if (!runs.length) throw new CliError(`${name} has no runs yet`, { reason: "not_found", next: ["Run it:", `coding.sh bench run ${name}`] });
   return runs;
 }
@@ -426,7 +428,7 @@ async function dispatch(c: CommandContext): Promise<number> {
     }
     case "show": {
       const name = benchName(c, c.positionals[0]!);
-      const all = await runsOrFail(c, name);
+      const all = await runsOrFail(c, name, c.positionals[0]!);
       const ref = str(c.flags.run) ?? "latest";
       const r = await getRun(name, ref, env);
       if (!r) throw new CliError(`${name} has no run ${JSON.stringify(ref)}`, { reason: "not_found", next: ["List runs:", `coding.sh bench history ${name}`] });
@@ -439,7 +441,7 @@ async function dispatch(c: CommandContext): Promise<number> {
       const name = benchName(c, c.positionals[0]!);
       const metric = (str(c.flags.metric) ?? "pass") as Metric;
       const limit = positiveInt(c.flags.limit, "limit") ?? 30;
-      const all = await runsOrFail(c, name);
+      const all = await runsOrFail(c, name, c.positionals[0]!);
       const counted = historyRuns(all);
       const anchor = c.flags.anchor === true;
       const runs = (anchor ? counted.filter((r) => r.anchor) : counted).slice(-limit);
@@ -499,7 +501,7 @@ async function dispatch(c: CommandContext): Promise<number> {
     }
     case "report": {
       const name = benchName(c, c.positionals[0]!);
-      const runs = await runsOrFail(c, name);
+      const runs = await runsOrFail(c, name, c.positionals[0]!);
       const outDir = resolve(c.cwd, str(c.flags.out) ?? join(benchHome(env), name, "report"));
       const days = positiveInt(c.flags.days, "days") ?? 90;
       const ref = str(c.flags.reference) ?? (() => {
@@ -526,7 +528,7 @@ async function dispatch(c: CommandContext): Promise<number> {
     }
     case "regrade": {
       const def = definitionFor(c, c.positionals[0]!);
-      const all = await runsOrFail(c, def.name);
+      const all = await runsOrFail(c, def.name, c.positionals[0]!);
       const targets = c.flags.all === true ? historyRuns(all) : [await getRun(def.name, str(c.flags.run) ?? "latest", env)].filter((x): x is BenchRun => !!x);
       if (!targets.length) throw new CliError(`${def.name} has no run ${JSON.stringify(str(c.flags.run) ?? "latest")}`, { reason: "not_found" });
       const done: BenchRun[] = [];

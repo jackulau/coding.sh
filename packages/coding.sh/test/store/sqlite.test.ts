@@ -93,6 +93,19 @@ describe("SqliteIndexStore write-ahead log (RT-5)", () => {
     await pin.close();
   });
 
+  it("SQLite checkpoints on its own only once the WAL nears WAL_SIZE_LIMIT, not after every few MB", async () => {
+    const db = join(root, "wal-auto.db");
+    const s = tracked(await SqliteIndexStore.open(db));
+    const before = statSync(db).size;
+    for (let i = 0; i < 8; i++) await s.putEvents(events(5_000, `auto-${i}`));
+    // Past SQLite's default auto-checkpoint of 1000 pages (about 4 MB), which would have copied pages into the database.
+    assert.ok(walSize(db) > 5 << 20 && walSize(db) < WAL_SIZE_LIMIT, `WAL ${walSize(db)} bytes`);
+    assert.equal(statSync(db).size, before, "no checkpoint ran yet");
+    await s.close();
+    assert.ok(statSync(db).size > before, "close() copies the WAL in");
+    assert.equal(walSize(db), 0);
+  });
+
   it("a cursor set back to 0 is not kept as a row", async () => {
     const db = join(root, "cursors.db");
     const s = tracked(await SqliteIndexStore.open(db));

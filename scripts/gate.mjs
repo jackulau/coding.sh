@@ -151,11 +151,15 @@ const which = async (cmd, probe = ["--version"]) => (await exec(cmd, probe, { wr
 const quote = (a) => (/^[\w./:=@%+-]+$/.test(a) ? a : JSON.stringify(a));
 const show = (cmd, args) => [cmd, ...args].map(quote).join(" ");
 
+/** The star count CI's site job builds with (ci.yml, SITE_GITHUB_STARS): the nav's bytes count toward each page's budget. */
+const SITE_ENV = { SITE_GITHUB_STARS: "1234" };
+
 /** A step that runs commands in sequence in a fresh isolated environment and fails on the first non-zero exit. */
 function commands(name, list, { rerun, after } = {}) {
   return {
     name,
     rerun,
+    list,
     async run(ctx) {
       const { env, dir } = ctx.isolated();
       try {
@@ -392,6 +396,7 @@ export function buildSteps(root = ROOT, opts = {}) {
     { ...commands("lint", () => [{ cmd: node, args: ["scripts/lint/slop.mjs", "--strict-allowlist"] }]), static: true, description: "the anti-slop lint" },
     { ...commands("lint-test", () => [{ cmd: "npm", args: ["run", "lint:test"] }]), static: true, description: "tests of the lint, the hooks and the gate" },
     { ...commands("perf-test", () => [{ cmd: "npm", args: ["run", "perf:test"] }]), static: true, description: "tests of the Site perf gate and budgets" },
+    { ...commands("dogfood-test", () => [{ cmd: "npm", args: ["run", "dogfood:test"] }]), static: true, description: "tests of the dogfood scorecard" },
     {
       name: "actionlint",
       static: true,
@@ -434,9 +439,14 @@ export function buildSteps(root = ROOT, opts = {}) {
     {
       ...commands(
         "site",
+        // As CI runs them: the site built with the star count of ci.yml's site job, which Site perf
+        // builds with too, then the site's perf budget and Site perf's HTML budgets, so a page over
+        // either budget fails here before it fails the pull request.
         () => [
-          { cmd: "npm", args: ["run", "build"], cwd: "apps/site" },
-          { cmd: "npm", args: ["run", "check"], cwd: "apps/site", env: { CODING_SH_REQUIRE_DIST: "1" } },
+          { cmd: "npm", args: ["run", "build"], cwd: "apps/site", env: SITE_ENV },
+          { cmd: "npm", args: ["run", "check"], cwd: "apps/site", env: { ...SITE_ENV, CODING_SH_REQUIRE_DIST: "1" } },
+          { cmd: "npm", args: ["run", "perf:budget"], cwd: "apps/site", env: SITE_ENV },
+          { cmd: node, args: ["--no-warnings", "scripts/perf/html-budget.mjs"] },
         ],
         {
           // The dist tests skip without a build; a skip here means a check did not run.
@@ -446,7 +456,7 @@ export function buildSteps(root = ROOT, opts = {}) {
           },
         },
       ),
-      description: "site build, astro check and its tests (none may skip)",
+      description: "site build, astro check and its tests (none may skip), the perf budget and Site perf's HTML budgets",
     },
     { name: "secret-scan", static: true, description: "vendor-shaped secrets in built output", run: async (ctx) => secretScan(root, { static: ctx.static }) },
     { name: "adapter-versions", description: "parseVersion and SESSION_FOLD_VERSION bumps (warns)", run: async () => adapterVersions(root, { env }) },

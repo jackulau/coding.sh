@@ -75,7 +75,8 @@ describe("OTLP mapping", () => {
     assert.equal(tool.startTimeUnixNano, "1700000001000000000", "start from matching tool.start");
     assert.equal(tool.status?.code, 2);
     assert.deepEqual(attr("execute_tool Bash", "gen_ai.tool.name"), { stringValue: "Bash" });
-    assert.match((attr("execute_tool Bash", "gen_ai.tool.call.arguments") as { stringValue: string }).stringValue, /cat secrets/);
+    // Full mode sends an object argument as a structured kvlistValue (sinks/otlp.ts structured()).
+    assert.deepEqual(attr("execute_tool Bash", "gen_ai.tool.call.arguments"), { kvlistValue: { values: [{ key: "command", value: { stringValue: "cat secrets.txt" } }] } });
     const chat = byName.get("chat claude-x")!;
     assert.equal(BigInt(chat.endTimeUnixNano) - BigInt(chat.startTimeUnixNano), 800_000_000n);
     assert.deepEqual(attr("chat claude-x", "gen_ai.usage.output_tokens"), { intValue: "50" });
