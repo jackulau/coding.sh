@@ -379,7 +379,7 @@ JSON are text: read them with `json_extract(col, '$.path')` or `json_each(col)`.
 | `cwd` | Working directory |
 | `repo` | Repo JSON: `root`, `branch`, `commit`, `remote`, and `main` for a worktree |
 | `repo_root` | The repo root, for filtering |
-| `title` | First prompt or the agent's title |
+| `title` | First prompt or the agent's title. It skips a workflow harness's frame line, a `Project:` line and pasted blocks; a prompt that is only a paste gives its first line |
 | `started_at` | Start time |
 | `ended_at` | End time (NULL while running or unknown) |
 | `stats` | Stats JSON: `events`, `turns`, `toolCalls`, `toolErrors`, `usage`, `latency`, … |
