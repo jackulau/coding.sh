@@ -247,8 +247,9 @@ coding.sh is pre-1.0 (latest: 0.1.7), so expect rough edges. What isn't done yet
 
 - **Windows.** CI runs on Linux and Windows. On Windows, CI runs the test suite, the installer (from
   Git Bash) and real OpenCode, Pi, Goose, Factory Droid, GitHub Copilot CLI and Aider sessions
-  against a stub model. Capture from Claude Code, Codex CLI, Antigravity CLI, Cursor CLI, Amp and
-  T3 Code has not been checked on Windows yet.
+  against a stub model. Capture from Claude Code (hooks and transcripts) and T3 Code has been
+  checked on a Windows 11 install. Capture from Codex CLI, Antigravity CLI, Cursor CLI and Amp has
+  not been checked on Windows yet.
 - **Not run live.** Three adapters, Cursor CLI, Amp and Devin CLI, have not been run on a live install yet. Each
   needs an account login (see [Supported agents](#supported-agents)).
 
