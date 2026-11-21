@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { captureHealth, copyIndex, healthEnv, healthRepo, LIVE_MS, removeTemp, scoreSession, underRepo } from "../conformance.mjs";
+import { DatabaseSync } from "node:sqlite";
+import { captureHealth, copyIndex, healthEnv, healthRepo, incompleteCounts, indexWriter, LIVE_MS, removeTemp, scoreSession, underRepo } from "../conformance.mjs";
 import { PKG, REPO, tempDir } from "../lib/util.mjs";
 import { loadConfig } from "../../../packages/coding.sh/src/core/config.ts";
 import { buildSession } from "../../../packages/coding.sh/src/core/sessions.ts";
 import { openStores } from "../../../packages/coding.sh/src/store/factory.ts";
+import { version } from "../../../packages/coding.sh/src/cli/meta.ts";
 
 const SOURCE_CLI = join(PKG, "src", "cli", "main.ts");
 const dirs = [];
@@ -128,6 +130,44 @@ test("captureHealth: a wrapper and a complete session score 1, n=2; the live ses
   assert.equal(r.n, 2);
   assert.deepEqual(r.excluded, [{ id: "live-1", agent: "claude-code", reason: "live" }]);
   assert.deepEqual(r.incomplete, []);
+  assert.deepEqual(r.incompleteCounts, { byAgent: {}, byMissing: {} });
+  assert.equal(r.writer?.version, version(), "the coding.sh that wrote the index, read from the copy before the scorer's CLI opens it");
+  assert.equal(typeof r.writer?.schema, "number");
   assert.equal(r.warning, undefined);
   assert.ok(existsSync(join(home, "marker-not-copied")));
+});
+
+test("incompleteCounts counts every incomplete row by agent and by what it misses", () => {
+  const rows = [
+    ...Array.from({ length: 70 }, (_, i) => ({ id: `t${i}`, agent: "t3code", missing: ["llm.call"] })),
+    { id: "c1", agent: "claude-code", missing: ["session.end", "llm.call"] },
+    { id: "c2", agent: "claude-code", missing: ["session.end"] },
+    { id: "c3", agent: "claude-code", missing: [] },
+    { id: "x1", agent: "codex", missing: [] },
+  ];
+  assert.deepEqual(incompleteCounts(rows), {
+    byAgent: { t3code: 70, "claude-code": 2 },
+    byMissing: { t3code: { "llm.call": 70 }, "claude-code": { "session.end": 2, "llm.call": 1 } },
+  });
+  assert.deepEqual(incompleteCounts([]), { byAgent: {}, byMissing: {} });
+});
+
+test("indexWriter reads the writer stamp and schema from a copy, read-only; nothing when there is no stamp", () => {
+  const dir = tmp("cs-writer-test-");
+  const file = join(dir, "index.db");
+  const db = new DatabaseSync(file);
+  db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL); CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)");
+  db.prepare("INSERT INTO migrations VALUES (?, ?)").run(1, 1);
+  db.prepare("INSERT INTO migrations VALUES (?, ?)").run(7, 2);
+  db.prepare("INSERT INTO kv VALUES (?, ?, ?)").run("store:writer", JSON.stringify({ version: "0.9.1", schema: 7, at: 1700000000000 }), 1);
+  db.close();
+  const before = readFileSync(file);
+  assert.deepEqual(indexWriter(dir), { version: "0.9.1", schema: 7, at: 1700000000000 });
+  assert.deepEqual(readFileSync(file), before, "the copy is not written");
+  const bare = tmp("cs-writer-bare-");
+  const db2 = new DatabaseSync(join(bare, "index.db"));
+  db2.exec("CREATE TABLE events (id TEXT)");
+  db2.close();
+  assert.equal(indexWriter(bare), undefined);
+  assert.equal(indexWriter(tmp("cs-writer-none-")), undefined);
 });

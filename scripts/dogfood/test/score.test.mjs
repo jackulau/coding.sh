@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { agentVersions, compare, gateTestEnv, headline, normalized, passedAlone, testsGate, WEIGHTS } from "../score.mjs";
+import { agentVersions, compare, gateTestEnv, guidelinesNotes, headline, healthNotes, normalized, passedAlone, testsGate, WEIGHTS } from "../score.mjs";
 import { meets } from "../bench.mjs";
 import { parseTapSummary } from "../conformance.mjs";
 import { bootstrapMedianDiff, nearestRank, quantile, wilson } from "../lib/util.mjs";
@@ -146,4 +146,17 @@ test("passedAlone reads test-ci.mjs's warning once per file, and nothing from a 
   const warn = "::warning title=Passed when run alone::test/cli/usage.test.ts failed in the full run and passed alone (a timing test under load?)";
   assert.deepEqual(passedAlone(`Rerunning test/cli/usage.test.ts alone\n${warn}\n${warn}\n`), ["test/cli/usage.test.ts"]);
   assert.deepEqual(passedAlone("✖ over 100,000 events it answers in under 2 s (17231.74ms)\n✖ failing tests:\n"), []);
+});
+
+test("guidelinesNotes names the skipped modes with the reason and the cases the scorer could not start", () => {
+  assert.deepEqual(guidelinesNotes({ scorerErrors: [] }), []);
+  const n = guidelinesNotes({ skipped: { modes: ["tty", "noColorTty"], reason: "no script(1) on this machine to give the child a terminal" }, scorerErrors: [{ id: "help", mode: "piped", error: "process did not start: ENOENT" }] });
+  assert.equal(n[0], "cli.guidelines: modes tty, noColorTty skipped, not scored: no script(1) on this machine to give the child a terminal");
+  assert.equal(n[1], "cli.guidelines: 1 case(s) not scored, the scorer could not start them: help/piped (process did not start: ENOENT)");
+});
+
+test("healthNotes names the index's writer and the incomplete sessions by agent and what they miss", () => {
+  assert.deepEqual(healthNotes({ value: null, reason: "no index.db" }), []);
+  const n = healthNotes({ value: 0.5, n: 173, writer: { version: "0.9.1", schema: 7 }, incompleteCounts: { byAgent: { "claude-code": 2, t3code: 70 }, byMissing: { t3code: { "llm.call": 70 }, "claude-code": { "session.end": 2, "llm.call": 1 } } } });
+  assert.deepEqual(n, ["capture.health: the index was last written by coding.sh 0.9.1 (schema v7)", "capture.health incomplete of 173: t3code 70 (llm.call 70); claude-code 2 (session.end 2, llm.call 1)"]);
 });

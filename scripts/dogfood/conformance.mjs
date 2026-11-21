@@ -15,6 +15,7 @@
 //
 //   node scripts/dogfood/conformance.mjs [fixtures|health]... [--home <dir>] [--repo <dir>] [--json]
 import { copyFileSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { CLI, log, parseArgs, PKG, REPO, sh, shAsync, tempDir } from "./lib/util.mjs";
@@ -96,6 +97,59 @@ export function copyIndex(home, dest) {
 }
 
 /**
+ * Counts over every scored row that misses something: by agent, and by agent and what it misses.
+ * A row missing two things counts once in byAgent and once under each thing.
+ */
+export function incompleteCounts(rows) {
+  const byAgent = {};
+  const byMissing = {};
+  for (const r of rows) {
+    if (!r.missing?.length) continue;
+    const agent = r.agent ?? "unknown";
+    byAgent[agent] = (byAgent[agent] ?? 0) + 1;
+    const m = (byMissing[agent] ??= {});
+    for (const k of r.missing) m[k] = (m[k] ?? 0) + 1;
+  }
+  return { byAgent, byMissing };
+}
+
+/**
+ * The coding.sh that last wrote or migrated the copied index, from its kv row "store:writer"
+ * (store/upgrade.ts), and the schema from its migrations table: { version, schema, at } or
+ * undefined. Read-only, on the copy, before any CLI run opens it (a CLI run stamps itself).
+ */
+export function indexWriter(dir) {
+  const file = join(dir, "index.db");
+  if (!existsSync(file)) return undefined;
+  let db;
+  try {
+    // Loaded here, not at the top: node:sqlite warns on load on Node 22, and only this reads it.
+    const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite");
+    db = new DatabaseSync(file, { readOnly: true });
+    let w;
+    try {
+      w = JSON.parse(db.prepare("SELECT value FROM kv WHERE key = ?").get("store:writer")?.value ?? "null");
+    } catch {}
+    let schema;
+    try {
+      schema = db.prepare("SELECT MAX(version) AS v FROM migrations").get()?.v ?? undefined;
+    } catch {}
+    const out = {};
+    if (typeof w?.version === "string") out.version = w.version;
+    const sch = schema ?? w?.schema;
+    if (typeof sch === "number") out.schema = sch;
+    if (typeof w?.at === "number" && w.at) out.at = w.at;
+    return Object.keys(out).length ? out : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    try {
+      db?.close();
+    } catch {}
+  }
+}
+
+/**
  * Env for the scorer's CLI runs: every home the CLI or an adapter could read is under `root`, so
  * nothing reads the real profile, and no background ingest starts.
  */
@@ -155,6 +209,8 @@ export function captureHealth({ home = process.env.CODING_SH_LIVE_HOME ?? join(h
   try {
     const copy = join(root, "data");
     const copiedBytes = copyIndex(home, copy);
+    const writer = indexWriter(copy);
+    const stamp = writer ? { writer } : {};
     mkdirSync(join(root, "home"), { recursive: true });
     const env = healthEnv(root, copy);
     const cs = (args) => {
@@ -163,7 +219,7 @@ export function captureHealth({ home = process.env.CODING_SH_LIVE_HOME ?? join(h
       return JSON.parse(r.stdout);
     };
     const sessions = cs(["sessions", "--since", `${sinceHours}h`, "--limit", "10000", "--subagents"]).sessions.filter((s) => underRepo(s.cwd, repo));
-    if (!sessions.length) result = { value: null, reason: `no sessions under ${repo} in the last ${sinceHours} h`, copiedBytes };
+    if (!sessions.length) result = { value: null, reason: `no sessions under ${repo} in the last ${sinceHours} h`, copiedBytes, ...stamp };
     else {
       const rows = [];
       const excluded = [];
@@ -175,8 +231,8 @@ export function captureHealth({ home = process.env.CODING_SH_LIVE_HOME ?? join(h
       }
       const ok = rows.filter((r) => !r.missing.length).length;
       result = rows.length
-        ? { value: ok / rows.length, n: rows.length, incomplete: rows.filter((r) => r.missing.length).slice(0, 20), excluded, copiedBytes }
-        : { value: null, reason: `every session under ${repo} in the last ${sinceHours} h is still running`, n: 0, excluded, copiedBytes };
+        ? { value: ok / rows.length, n: rows.length, ...stamp, incomplete: rows.filter((r) => r.missing.length).slice(0, 20), incompleteCounts: incompleteCounts(rows), excluded, copiedBytes }
+        : { value: null, reason: `every session under ${repo} in the last ${sinceHours} h is still running`, n: 0, ...stamp, excluded, copiedBytes };
     }
   } catch (e) {
     result = { value: null, error: String(e?.message ?? e) };
