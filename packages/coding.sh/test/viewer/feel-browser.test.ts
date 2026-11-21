@@ -178,22 +178,26 @@ describe("viewer feel in a browser", { skip: chrome ? false : "no Chrome/Chromiu
   test("the Raw toggle keeps the pane's scroll position; a new step starts at the top", async () => {
     await open("#/s/long-1", 1280, 360);
     try {
-      // The ten-turn session opens on its first turn, folded; } opens the next turn on its prompt, a step.
+      // The session opens on its first failure, a step; } opens the next turn on its prompt. A step
+      // paints at most once per 80 ms, so the failure can still be in the pane after }. Wait for the
+      // prompt itself: otherwise the wait after j can pass on the prompt, and the scroll lands there.
       await page.eval("document.getElementById('steps').focus()");
       await key("}");
-      await page.waitFor("document.querySelector('.pane').dataset.item", "a step's pane");
+      await page.waitFor("document.querySelector('.pane .pane-title').textContent === 'Prompt'", "the next turn's prompt");
       await page.eval("window.__item = document.querySelector('.pane').dataset.item");
       await key("j");
       // The new step's paint resets the pane to the top: scroll only once it has landed, however slow the machine.
       await page.waitFor("document.querySelector('.pane').dataset.item !== window.__item", "the next step's pane");
       await page.eval("document.querySelector('.pane').scrollTop = 40");
+      assert.equal(await page.eval("document.querySelector('.pane').scrollTop"), 40, "the step's pane scrolls");
       await key("r");
       await page.waitFor("document.querySelector('.pane .json')", "raw JSON");
       const top = await page.eval("document.querySelector('.pane').scrollTop");
       const max = await page.eval("document.querySelector('.pane').scrollHeight - document.querySelector('.pane').clientHeight");
       assert.equal(top, Math.min(40, max), `scrollTop ${top} of ${max}`);
+      await page.eval("window.__item = document.querySelector('.pane').dataset.item");
       await key("j");
-      await sleep(150);
+      await page.waitFor("document.querySelector('.pane').dataset.item !== window.__item", "the step after it");
       assert.equal(await page.eval("document.querySelector('.pane').scrollTop"), 0);
     } finally {
       await page.close();
