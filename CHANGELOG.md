@@ -73,6 +73,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **MCP.** `session_get` with `tail` pages back to the first entry with `nextCursor`. A `since` after `until` is an error naming both times. A 2024-11-05 client gets 2024-11-05 and results without `structuredContent`. Error results carry no `structuredContent`; details are in `_meta`. `status` lists the top 5 work items, not 10. [MCP](https://coding.sh/docs/mcp#protocol)
 - **Capture.** The status line prints from what arrived when stdin stays open for 1 s, instead of waiting forever. It leaves out `$0.0000 session` for a session it has not stored, and `statusline --json` and `quota --json` round amounts and percents to 4 decimals. [Agents](https://coding.sh/docs/agents#status-line)
 - **CLI.** `init --dry-run` and `doctor` no longer run another tool's `agent` command (Grok's made `~/.grok`). `uninstall` warns and exits 1 when an OpenCode install sits under another `OPENCODE_CONFIG_DIR`. Blame and attribution credit edits made in a removed worktree, and `diff-calls` says "not recorded" instead of "same" without stored requests. [CLI reference](https://coding.sh/docs/cli/uninstall)
 - **Viewer.** The command menu lists a session whose title holds the typed word first, even when newer sessions on a branch named for it fill the results. A t3code subagent's badge reads "subagent", not "subagent · subagent", whole-minute axis ticks read "1m", and a phase chip no longer pushes a step into its duration. [Open the viewer](https://coding.sh/docs/explore#open-the-viewer)

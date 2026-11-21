@@ -195,8 +195,9 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
   `/api/work/snooze`, which write `work.json` by the command's rules. Only `coding.sh ui` serves
   it; `coding.sh serve` answers 404.
 - The MCP `status` tool gets a `work` field, so an agent can read the queue without a new tool:
-  the counts, `needYou`, and the first 10 items as `work --json` gives them, over the same 7-day
-  window, with acks and snoozes applied. `more` counts the items left out. The tool stays
+  the counts, `needYou`, and the first 5 items as `work --json` gives them, over the same 7-day
+  window, with acks and snoozes applied. `more` counts the items left out, and `rest` names
+  `coding.sh work --json`, which lists them. The tool stays
   read-only: ack and snooze stay with the user.
 
 The new stats and fields are optional. One existing field changed: a session whose events stop on a
