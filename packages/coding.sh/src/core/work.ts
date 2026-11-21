@@ -33,7 +33,7 @@ export const PROBABLY_CLOSED_MS = 12 * 3600e3;
 /** Quiet this long mid-turn is a stall: the derail stall threshold (core/derail.ts). */
 export const STALL_MS = DERAIL_THRESHOLDS.stallMs;
 /** Agents whose hooks report permission prompts. Waits in the others show up as stalls. */
-export const PROMPT_SIGNAL_AGENTS: ReadonlySet<string> = new Set(["claude-code", "gemini-cli"]);
+export const PROMPT_SIGNAL_AGENTS: ReadonlySet<string> = new Set(["claude-code", "gemini-cli", "devin"]);
 /** A session whose end is only its last activity seen (stats.endInferred) is running when it was active this recently. */
 export const INFERRED_RUNNING_MS = 15 * 60e3;
 /** Parent links that start a separate item: a harness child (`codex exec` from an orchestrator). */

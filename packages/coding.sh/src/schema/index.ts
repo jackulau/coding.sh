@@ -41,6 +41,7 @@ export const KNOWN_AGENTS = [
   "droid",
   "goose",
   "aider",
+  "devin",
   "t3code",
   "wrapper",
 ] as const;

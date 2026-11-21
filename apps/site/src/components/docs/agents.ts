@@ -153,6 +153,15 @@ export const ADAPTER_ROWS: AdapterRow[] = [
     subagents: "None",
   },
   {
+    name: "Devin CLI",
+    id: "devin",
+    status: "not-live",
+    note: "it needs a Devin login; without one, 3000.14 recorded only a session's start, prompt and end",
+    live: "config.json hooks, or .devin/config.local.json for one project",
+    headless: "devin -p --permission-mode dangerous",
+    subagents: "run_subagent tool call spans the subagent; its internals are not exposed",
+  },
+  {
     name: "Any other command",
     id: "wrapper",
     status: "tested",

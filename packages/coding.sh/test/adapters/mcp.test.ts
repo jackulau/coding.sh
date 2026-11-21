@@ -6,10 +6,12 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { claudeCode, codex, cursor, opencode } from "../../src/adapters/index.ts";
+import { devinAdapter } from "../../src/adapters/more/devin.ts";
 import { geminiCliAdapter as geminiCli } from "../../src/adapters/more/gemini-cli.ts";
 import { tomlBody } from "../../src/adapters/_shared/mcp.ts";
 import { paths } from "../../src/core/paths.ts";
 import { parseToml } from "../../src/core/toml.ts";
+import { devinConfigDir } from "../../src/spool/devin.ts";
 import type { Adapter, McpServerSpec } from "../../src/core/types.ts";
 import { tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
 
@@ -68,6 +70,13 @@ const CASES: Case[] = [
     adapter: geminiCli,
     file: () => join(t.home, ".gemini", "settings.json"),
     original: '{\n    "theme": "GitHub",\n    "mcpServers": {}\n}',
+    entry: (s) => json(s).mcpServers?.["coding-sh"],
+  },
+  {
+    adapter: devinAdapter,
+    // %APPDATA%\devin on Windows, ~/.config/devin elsewhere (tmpEnv clears APPDATA and DEVIN_CONFIG_HOME).
+    file: () => join(devinConfigDir(), "mcp_config.json"),
+    original: '{\n  "mcpServers": {\n    "docs": {"command": "docs-mcp", "args": []}\n  }\n}\n',
     entry: (s) => json(s).mcpServers?.["coding-sh"],
   },
 ];

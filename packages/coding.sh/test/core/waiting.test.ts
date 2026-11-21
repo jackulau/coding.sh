@@ -171,3 +171,37 @@ describe("Gemini CLI", () => {
     assert.equal(buildSession(events).stats.waiting, undefined);
   });
 });
+
+describe("Devin CLI: calls with no ids", () => {
+  // Devin's hooks name no call id: the wait remembers the tool of the call it is about.
+  const devin = { agent: "devin" } as const;
+  const call = (tool: string) => ev("tool.start", { tool, input: {} }, devin);
+  const done = (tool: string) => ev("tool.end", { tool, ok: true }, devin);
+  const ask = (tool: string) => ev("notification", { kind: "permission_prompt", tool, message: `Devin needs your permission to use ${tool}` }, devin);
+
+  test("a prompt on an exec stays when a read that ran beside it ends, and ends with the exec", () => {
+    const base = [call("read"), call("exec"), ask("exec")];
+    assert.deepEqual(fold(base), { kind: "permission", at: base[2]!.ts, text: "Devin needs your permission to use exec" });
+    assert.equal(fold([...base, done("read")])?.kind, "permission");
+    assert.equal(fold([...base, done("read"), done("exec")]), undefined);
+  });
+
+  test("a prompt waits on the call of the tool it names, not on a newer call of another tool", () => {
+    const base = [call("exec"), call("read"), ask("exec")];
+    assert.equal(fold([...base, done("read")])?.kind, "permission", "the read's end is not the exec's");
+    assert.equal(fold([...base, done("exec")]), undefined);
+    assert.equal(fold([...base, done("read"), done("exec")]), undefined);
+  });
+
+  test("an open run_subagent is never the call a prompt is about", () => {
+    const base = [call("exec"), call("run_subagent"), ask("exec")];
+    assert.equal(fold([...base, done("run_subagent")])?.kind, "permission", "the subagent's end is not the exec's");
+    assert.equal(fold([...base, done("exec")]), undefined);
+  });
+
+  test("with only the subagent's call open, its end ends the prompt", () => {
+    const base = [call("run_subagent"), ask("exec")];
+    assert.equal(fold(base)?.kind, "permission");
+    assert.equal(fold([...base, done("run_subagent")]), undefined);
+  });
+});

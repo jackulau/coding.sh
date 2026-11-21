@@ -5,7 +5,7 @@
 // Reads, deletes and paths behind a variable, a glob or a git branch name do not
 // count. Pure: rules over strings, no I/O.
 import { posix } from "node:path";
-import { isShellTool, shellCommandOf } from "../adapters/_shared/tools.ts";
+import { isShellCall, shellCommandOf } from "../adapters/_shared/tools.ts";
 import { normalizeTracePath, shellWrites, simpleCommands } from "./shell-diff.ts";
 
 const ABSOLUTE = /^(?:\/|[A-Za-z]:\/|~)/;
@@ -99,7 +99,7 @@ export function writtenFileKey(path: string, cwd?: string, workdir?: string): st
  * then writtenFileKey), or none for a call that is not a shell command.
  */
 export function shellCallFiles(tool: unknown, input: unknown, cwd?: string): string[] {
-  if (typeof tool !== "string" || !isShellTool(tool)) return [];
+  if (typeof tool !== "string" || !isShellCall(tool, input)) return [];
   const command = shellCommandOf(tool, input);
   if (!command) return [];
   const i = input && typeof input === "object" ? (input as Record<string, unknown>) : {};

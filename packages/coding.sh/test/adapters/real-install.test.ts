@@ -14,6 +14,7 @@ import { cursor } from "../../src/adapters/cursor.ts";
 import { aiderAdapter } from "../../src/adapters/more/aider.ts";
 import { antigravityAdapter } from "../../src/adapters/more/antigravity.ts";
 import { copilotCliAdapter, copilotSessionEvents } from "../../src/adapters/more/copilot-cli.ts";
+import { devinAdapter } from "../../src/adapters/more/devin.ts";
 import { droidAdapter, droidSessionEvents } from "../../src/adapters/more/droid.ts";
 import { geminiCliAdapter } from "../../src/adapters/more/gemini-cli.ts";
 import { gooseAdapter, gooseDbEvents } from "../../src/adapters/more/goose.ts";
@@ -207,6 +208,28 @@ describe("real install: Factory Droid 1.6.0", () => {
     // Same call id as the hooks: a session seen both ways counts the call once.
     const live = await normalize(droidAdapter, "droid/real/hooks.spool.jsonl");
     assert.equal(buildSession([...live, ...events]).stats.toolCalls, 1);
+  });
+});
+
+describe("real install: Devin CLI 3000.14.30821", () => {
+  // scripts/e2e/devin-capture.mjs with no login: Devin runs the session and prompt hooks, then ends
+  // the session before any model call.
+  const RUNS = [
+    ["free-sole", "write hello.txt", "cfcee560-be98-4612-bba0-5b1508281584"],
+    ["succinct-keeper", "list the files here", "09c3bbec-a9c9-44de-9953-994b5ea41a7a"],
+  ] as const;
+
+  it("hooks: a session per run, titled by its prompt, the turn keyed on the prompt_id", async () => {
+    const events = await normalize(devinAdapter, "devin/real/hooks.spool.jsonl");
+    const { ctx } = testCtx();
+    assert.deepEqual([...new Set(events.map((e) => e.sessionId))], RUNS.map((r) => r[0]));
+    for (const [sid, prompt, promptId] of RUNS) {
+      const mine = events.filter((e) => e.sessionId === sid);
+      assert.deepEqual(mine.map((e) => e.kind), ["session.start", "user.message", "session.end"], sid);
+      assert.equal(mine[1]!.turnId, ctx.id("devin", sid, "turn", promptId));
+      const s = buildSession(mine);
+      assert.deepEqual([s.agent, s.title, s.stats.turns, s.stats.waiting], ["devin", prompt, 1, undefined]);
+    }
   });
 });
 

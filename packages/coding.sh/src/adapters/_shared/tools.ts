@@ -18,9 +18,17 @@ export function isShellTool(tool: string): boolean {
   return SHELL_TOOLS.has(lc(tool));
 }
 
+/**
+ * A shell call: a shell tool, or an `exec` call with a command line (Devin's shell tool,
+ * `{command, shell_id}`). The name `exec` alone is too generic to count.
+ */
+export function isShellCall(tool: string, input: unknown): boolean {
+  return isShellTool(tool) || (lc(tool) === "exec" && isObj(input) && typeof input.command === "string");
+}
+
 /** The command line of a shell tool call (string, argv array, or bash -lc wrapper). */
 export function shellCommandOf(tool: string, input: unknown): string | undefined {
-  if (!isShellTool(tool) && !(isObj(input) && (typeof input.command === "string" || Array.isArray(input.command)) && lc(tool).includes("shell"))) return undefined;
+  if (!isShellCall(tool, input) && !(isObj(input) && (typeof input.command === "string" || Array.isArray(input.command)) && lc(tool).includes("shell"))) return undefined;
   if (typeof input === "string") return input;
   const i = obj(input);
   const c = i.command ?? i.cmd ?? i.commandLine ?? i.script;

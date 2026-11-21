@@ -56,6 +56,7 @@ describe("isReadOnlyToolStart", () => {
     ["Bash", { command: "grep -r foo . 2>/dev/null" }],
     ["shell", { command: ["cat", "a.txt"] }],
     ["exec_command", { cmd: "wc -l a.ts" }],
+    ["exec", { command: "cat a.ts", shell_id: "default" }],
   ];
   const no: [string, unknown][] = [
     ["Edit", { file_path: "a.ts" }],
@@ -74,6 +75,8 @@ describe("isReadOnlyToolStart", () => {
     ["Bash", { command: "cat `ls`" }],
     ["Bash", { command: "git commit -m x" }],
     ["Bash", { command: "" }],
+    ["exec", { command: "echo x > a.ts", shell_id: "default" }],
+    ["exec", { code: "cat a.ts" }],
   ];
   for (const [tool, input] of yes) it(`${tool} ${JSON.stringify(input)} only reads`, () => assert.equal(isReadOnlyToolStart(start(tool, input)), true));
   for (const [tool, input] of no) it(`${tool} ${JSON.stringify(input)} can write`, () => assert.equal(isReadOnlyToolStart(start(tool, input)), false));
@@ -101,6 +104,10 @@ describe("duplicate fetches", () => {
     assert.equal(dups([...call("Grep", { pattern: "foo" }), ...bash("touch x"), ...call("Grep", { pattern: "foo" })]), 0);
     assert.equal(dups([...bash("ls src"), ...bash("touch src/x"), ...bash("ls src")]), 0);
     assert.equal(dups([...call("Grep", { pattern: "foo" }), ...bash("cat a"), ...call("Grep", { pattern: "foo" })]), 1, "a read-only command keeps it");
+    // Devin CLI's shell tool, `exec` {command, shell_id}: the same rules.
+    const exec = (command: string, output?: string) => call("exec", { command, shell_id: "default" }, output === undefined ? {} : { output });
+    assert.equal(dups([...exec("cat a.ts", "A"), ...exec("cat  a.ts", "A")]), 1);
+    assert.equal(dups([...call("Grep", { pattern: "foo" }), ...exec("touch x"), ...call("Grep", { pattern: "foo" })]), 0);
   });
 
   it("a subagent's read is not a repeat of its parent's; a compaction clears the context", () => {

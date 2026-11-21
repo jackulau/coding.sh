@@ -28,6 +28,7 @@ export const AGENT_CLI: Readonly<Record<string, readonly string[]>> = {
   aider: ["aider"],
   amp: ["amp"],
   pi: ["pi"],
+  devin: ["devin"],
 };
 
 /** How long a shell call with no end yet can still be the parent of a session it started. */

@@ -19,6 +19,7 @@
 // after 64 more calls in its scope (or 1,024 in all) can count as unfinished.
 import { createHash } from "node:crypto";
 import type { AgentEvent, CompactionRefetchStats, WasteStats } from "../schema/index.ts";
+import { isShellCall } from "../adapters/_shared/tools.ts";
 import { commandOf, FLAGS } from "./sessions.ts";
 
 /** A repeated read-only call (`eventId`, its tool.start) and the call it repeats. */
@@ -50,7 +51,6 @@ const READ_TOOLS = new Set([
   "search_file_content",
 ]);
 const SEARCH_TOOLS = new Set(["grep", "glob", "ls", "list_dir", "list_directory", "grep_search", "file_search", "search_file_content"]);
-const SHELL_TOOLS = new Set(["bash", "shell", "shell_command", "exec_command", "local_shell", "local_shell_call", "run_terminal_cmd", "terminal", "command_execution", "run_shell_command", "execute_command", "powershell"]);
 const EDIT_TOOLS = /^(?:write|edit|multiedit|multi_edit|notebookedit|notebook_edit|edit_notebook|str_replace|str_replace_editor|str_replace_based_edit_tool|search_replace|replace|edit_file|write_file|create_file|write_to_file|replace_in_file|delete_file|delete)$/;
 const MCP_READ = /^mcp__.+?__(?:read|get|list)/i;
 
@@ -88,7 +88,7 @@ const searchSegment = (argv: string[]): boolean => {
 };
 
 const toolOf = (e: AgentEvent): string => (typeof e.payload.tool === "string" ? e.payload.tool : "");
-const isShell = (tool: string): boolean => SHELL_TOOLS.has(tool.toLowerCase());
+const isShell = (e: AgentEvent): boolean => isShellCall(toolOf(e), e.payload.input);
 
 /** A shell command that only reads: every segment is a known reader, with no redirect, `tee`, `sed -i` or `find -delete`/`-exec`. */
 export function isReadOnlyCommand(cmd: string | undefined): boolean {
@@ -102,7 +102,7 @@ export function isReadOnlyToolStart(e: AgentEvent): boolean {
   if (e.kind !== "tool.start" || e.payload.wrapper === true) return false;
   const tool = toolOf(e);
   if (READ_TOOLS.has(tool.toLowerCase()) || MCP_READ.test(tool)) return true;
-  return isShell(tool) && isReadOnlyCommand(commandOf(e.payload.input));
+  return isShell(e) && isReadOnlyCommand(commandOf(e.payload.input));
 }
 
 /** JSON with sorted keys, so two equal inputs give one string. */
@@ -122,7 +122,7 @@ function canonical(v: unknown): string {
 /** What makes two calls the same fetch: the tool plus its input (a shell call: its command, whitespace collapsed). */
 function fetchKey(e: AgentEvent): string {
   const tool = toolOf(e);
-  if (isShell(tool)) return `shell\u0000${(commandOf(e.payload.input) ?? "").replace(/\s+/g, " ").trim()}`;
+  if (isShell(e)) return `shell\u0000${(commandOf(e.payload.input) ?? "").replace(/\s+/g, " ").trim()}`;
   return `${tool.toLowerCase()}\u0000${canonical(e.payload.input)}`;
 }
 
@@ -212,7 +212,7 @@ function scanFetches(sorted: readonly AgentEvent[], opts: DuplicateFetchOpts): {
     if (!isReadOnlyToolStart(e)) {
       const path = EDIT_TOOLS.test(tool.toLowerCase()) ? pathOf(e.payload.input) : undefined;
       if (path) dropPath(path);
-      if (isShell(tool)) {
+      if (isShell(e)) {
         for (const m of [scopeOf(e), preOf(e)]) for (const k of [...m.keys()]) if (isSearchKey(k)) m.delete(k);
       }
       continue;
@@ -409,7 +409,7 @@ export function foldWaste(s: WasteState, e: AgentEvent): void {
       }
     } else {
       const path = EDIT_TOOLS.test(tool.toLowerCase()) ? pathOf(e.payload.input) : undefined;
-      const shell = isShell(tool);
+      const shell = isShell(e);
       if (path || shell) s.queue.push({ t: "write", scope, ...(path ? { path } : {}), shell });
     }
   }

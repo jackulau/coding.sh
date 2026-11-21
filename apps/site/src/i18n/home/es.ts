@@ -3,8 +3,8 @@
 export default {
   // <title> and meta description (pages/index.astro)
   "coding.sh: open-source observability and evals for AI agents": "coding.sh: observabilidad y evaluaciones para agentes de IA",
-  "Record what Claude Code, Codex, Cursor and 9 other AI agents did and what it cost, then test changes with evals. Local-first and open source.":
-    "Registra qué hicieron Claude Code, Codex, Cursor y otros 9 agentes de IA y cuánto costó. Prueba cambios con evaluaciones. Local-first y de código abierto.",
+  "Record what Claude Code, Codex, Cursor and 10 other AI agents did and what it cost, then test changes with evals. Local-first and open source.":
+    "Registra qué hicieron Claude Code, Codex, Cursor y otros 10 agentes de IA y cuánto costó. Prueba cambios con evaluaciones. Local-first y de código abierto.",
 
   // Hero (landing/body.html)
   "The Observability Layer for&nbsp;Agents.": "La capa de observabilidad para&nbsp;agentes.",
