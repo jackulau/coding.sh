@@ -18,6 +18,7 @@ import * as views from "../../src/cli/commands/views.ts";
 import { CliError, Output } from "../../src/cli/output.ts";
 import type { CallDiff } from "../../src/proxy/calls.ts";
 import type { AgentEvent, CacheBreakCause } from "../../src/schema/index.ts";
+import { writeFile } from "../adapters/_helpers.ts";
 import { nodeBin, pathOf } from "../_bin.ts";
 import { CLI } from "../_cli.ts";
 import { runCmd, sandbox, type Sandbox } from "./_cmd.ts";
@@ -30,8 +31,15 @@ function box(): Sandbox {
   return sb;
 }
 
+/** A stand-in for dist/hook.mjs, which init installs: a run from source without a build has none (CI's Node 22 and Windows legs). */
+function standInHook(sb: Sandbox): string {
+  const hook = join(sb.root, "dist", "hook.mjs");
+  if (!existsSync(hook)) writeFile(hook, "// hook\n");
+  return hook;
+}
+
 const cli = (sb: Sandbox, args: string[], env: NodeJS.ProcessEnv = {}) =>
-  spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { cwd: sb.env.HOME, env: { ...sb.env, XDG_CONFIG_HOME: join(sb.root, "xdg"), APPDATA: join(sb.root, "appdata"), NO_UPDATE_NOTIFIER: "1", ...env }, encoding: "utf8", timeout: 120_000 });
+  spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { cwd: sb.env.HOME, env: { ...sb.env, XDG_CONFIG_HOME: join(sb.root, "xdg"), APPDATA: join(sb.root, "appdata"), NO_UPDATE_NOTIFIER: "1", CODING_SH_HOOK_SOURCE: standInHook(sb), ...env }, encoding: "utf8", timeout: 120_000 });
 
 describe("agent detection", () => {
   test("init --dry-run and doctor never launch a generic `agent` that is not Cursor's", () => {
