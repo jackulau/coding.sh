@@ -103,8 +103,11 @@ export function foldWaiting(s: WaitingState, e: AgentEvent, backfill: boolean): 
       // Live hook notifications only: a transcript's notifications (task results, usage) never set or clear it.
       if (backfill || !isPermissionNotification(e)) break;
       // The call it asks about: the last open one on this thread, else the last anywhere (a hook
-      // notification may not name the subagent). A subagent's own call stays open while it runs.
-      const calls = s.open.filter((c) => !SPAWN_TOOL.test(c.tool));
+      // notification may not name the subagent), of the tool the prompt names when one of that
+      // tool's calls is open (Devin CLI's prompts name it). A subagent's own call stays open while it runs.
+      const named = str(e.payload.tool);
+      const open = s.open.filter((c) => !SPAWN_TOOL.test(c.tool));
+      const calls = named && open.some((c) => c.tool === named) ? open.filter((c) => c.tool === named) : open;
       const call = calls.findLast((c) => c.thread === thread) ?? calls.at(-1);
       s.wait = wait("permission", e, call?.thread ?? thread, call?.id, str(e.payload.text) ?? str(e.payload.message));
       if (call && !call.id) s.wait.tool = call.tool;

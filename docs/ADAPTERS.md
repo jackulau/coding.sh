@@ -213,7 +213,7 @@ order.
 - **Devin CLI:** payloads carry no cwd. A hook from the user config runs in the session's folder and
   a project's hook in the project root, so a project-scope install records a session started in a
   subfolder with the root as its cwd. Tool events carry no call id: a call's start and end pair by
-  tool name, and a `PermissionRequest` waits on the newest open call of its tool.
+  tool name, and a `PermissionRequest` waits on the newest open call of its tool when one is open.
 - **Devin CLI:** it also runs the hooks coding.sh installed for Claude Code. Each such call carries
   `DEVIN_PROJECT_DIR` and no Claude Code transcript path, so the hook labels it `devin`, or drops it
   when a coding.sh hook for Devin fires for the same event where the session reads hooks

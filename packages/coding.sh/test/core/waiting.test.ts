@@ -186,6 +186,13 @@ describe("Devin CLI: calls with no ids", () => {
     assert.equal(fold([...base, done("read"), done("exec")]), undefined);
   });
 
+  test("a prompt waits on the call of the tool it names, not on a newer call of another tool", () => {
+    const base = [call("exec"), call("read"), ask("exec")];
+    assert.equal(fold([...base, done("read")])?.kind, "permission", "the read's end is not the exec's");
+    assert.equal(fold([...base, done("exec")]), undefined);
+    assert.equal(fold([...base, done("read"), done("exec")]), undefined);
+  });
+
   test("an open run_subagent is never the call a prompt is about", () => {
     const base = [call("exec"), call("run_subagent"), ask("exec")];
     assert.equal(fold([...base, done("run_subagent")])?.kind, "permission", "the subagent's end is not the exec's");

@@ -48,11 +48,12 @@ waiting?: { kind: "permission" | "question" | "plan" | "turn"; at: number; toolU
   `PermissionRequest` hook) or `ToolPermission` (Gemini CLI), or one whose text matches
   `PERMISSION_TEXT` (`src/core/unapproved.ts`). An `idle_prompt` notification never counts. The
   wait names the last open call on the notification's thread, or else the last open call anywhere,
-  since a hook notification may not name the subagent. A call that starts a subagent (`Agent`,
-  `Task`, `run_subagent`) is never the call a prompt is about. With no open call (Gemini CLI sends
-  its notification before the call starts) the wait has no `toolUseId`. Devin's calls have no ids,
-  so the wait keeps the tool of the call it names, and only a call of that tool ending clears it.
-  Transcript notifications never set it.
+  since a hook notification may not name the subagent. When the prompt names its tool (Devin CLI's
+  prompts do) and a call of that tool is open, the wait names that tool's last open call. A call
+  that starts a subagent (`Agent`, `Task`, `run_subagent`) is never the call a prompt is about.
+  With no open call (Gemini CLI sends its notification before the call starts) the wait has no
+  `toolUseId`. Devin's calls have no ids, so the wait keeps the tool of the call it names, and
+  only a call of that tool ending clears it. Transcript notifications never set it.
 - `question`: an open call of a question tool (`QUESTION_TOOL` in the same file).
 - `plan`: an open plan-approval call (`ExitPlanMode`).
 - `turn`: the main thread's turn ended. The fold keeps it for every session, and the stat shows it
