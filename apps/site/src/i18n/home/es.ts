@@ -11,6 +11,15 @@ export default {
   "Record, measure, compare and benchmark every agent&nbsp;run.": "Registra, mide, compara y evalúa cada ejecución de&nbsp;agente.",
   "Copy the install command: {{INSTALL}}": "Copiar el comando de instalación: {{INSTALL}}",
   "Copy the setup prompt for your coding agent": "Copiar el prompt de instalación para tu agente de código",
+  "Install with": "Instalar con",
+  "Agent prompt": "Prompt para el agente",
+  npx: "npx",
+  Script: "Script",
+  "Copy the npx command: {{NPX}}": "Copiar el comando npx: {{NPX}}",
+  "Paste it into your coding agent.": "Pégalo en tu agente de código.",
+  "Needs Node.js 22.16 or newer. It does not work on Windows.": "Necesita Node.js 22.16 o posterior. No funciona en Windows.",
+  "On Windows, run it in Git Bash. It does not work in PowerShell or cmd.":
+    "En Windows, ejecútalo en Git Bash. No funciona en PowerShell ni en cmd.",
   "Free and open source. <a href=\"{{RELEASE_HREF}}\">What's new in coding.sh <code>v{{RELEASE}}</code></a>":
     "Gratis y de código abierto. <a href=\"{{RELEASE_HREF}}\">Novedades de coding.sh <code>v{{RELEASE}}</code></a>",
   "Get started": "Primeros pasos",

@@ -11,6 +11,15 @@ export default {
   "Record, measure, compare and benchmark every agent&nbsp;run.": "모든 에이전트 실행을 기록하고, 측정하고, 비교하고, 벤치마크합니다.",
   "Copy the install command: {{INSTALL}}": "설치 명령어 복사: {{INSTALL}}",
   "Copy the setup prompt for your coding agent": "코딩 에이전트용 설정 프롬프트 복사",
+  "Install with": "설치 방법",
+  "Agent prompt": "에이전트 프롬프트",
+  npx: "npx",
+  Script: "스크립트",
+  "Copy the npx command: {{NPX}}": "npx 명령어 복사: {{NPX}}",
+  "Paste it into your coding agent.": "코딩 에이전트에 붙여 넣으세요.",
+  "Needs Node.js 22.16 or newer. It does not work on Windows.": "Node.js 22.16 이상이 필요합니다. Windows에서는 동작하지 않습니다.",
+  "On Windows, run it in Git Bash. It does not work in PowerShell or cmd.":
+    "Windows에서는 Git Bash에서 실행하세요. PowerShell이나 cmd에서는 동작하지 않습니다.",
   "Free and open source. <a href=\"{{RELEASE_HREF}}\">What's new in coding.sh <code>v{{RELEASE}}</code></a>":
     "무료 오픈 소스입니다. <a href=\"{{RELEASE_HREF}}\">coding.sh <code>v{{RELEASE}}</code>의 새로운 기능</a>",
   "Get started": "빠른 시작 가이드",
