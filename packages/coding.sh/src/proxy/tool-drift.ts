@@ -3,9 +3,9 @@
 // description and input schema. A tool whose description changes between
 // sessions (an MCP server that rewrites its own description, a tampered
 // package) shows more than one variant, or a hash that differs from the one
-// pinned in <CODING_SH_HOME>/tool-pins.json. After a pin, a tool first seen
-// since is "new" and a pinned tool the sessions since no longer offer is
-// "removed".
+// pinned in <CODING_SH_HOME>/tool-pins.json. A tool first offered at or after
+// the last pin (an MCP server that added it) has no pin and shows as "new",
+// and a pinned tool the sessions since no longer offer shows as "removed".
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -35,9 +35,9 @@ export interface ToolRow {
   /**
    * Why --changed keeps it: "pin" (a definition since the pin, or the latest,
    * differs from it), "variants" (no pin, more than one variant), "new" (no
-   * pin, first seen after the newest pin), "removed" (pinned, and the latest
-   * tools array of every session that called the model since the pin leaves it
-   * out). Absent when none.
+   * pin, first seen at or after the newest pin: a tool an agent gained),
+   * "removed" (pinned, and the latest tools array of every session that called
+   * the model since the pin leaves it out). Absent when none applies.
    */
   changed?: ToolChange;
   /**
@@ -216,7 +216,8 @@ export async function toolDrift(index: IndexStore, blobs: BlobStore, o: { since:
     }
   }
   const pins = o.pins ?? {};
-  const newestPin = Math.max(-Infinity, ...Object.values(pins).map((p) => p.at));
+  // The last `harness tools pin`: a tool with no pin first seen since then is new. With no pins, nothing is.
+  const newestPin = Object.values(pins).reduce((m, p) => Math.max(m, p.at), -Infinity);
   // A pinned tool is gone when sessions called the model at or after its pin,
   // each of their latest tools arrays was read, and none offers it. A session
   // whose latest array was not read (capped, gc) leaves it undecided.
@@ -250,7 +251,7 @@ export async function toolDrift(index: IndexStore, blobs: BlobStore, o: { since:
         row.changed = "pin";
         row.sessionIds = sessionIds([...t.variants].filter(([vk]) => vk !== pinKey).map(([, v]) => v));
       }
-    } else if (newestPin !== -Infinity && all.firstSeen > newestPin) {
+    } else if (newestPin > -Infinity && all.firstSeen >= newestPin) {
       row.changed = "new";
       row.sessionIds = sessionIds(t.variants.values());
     } else if (t.variants.size > 1) {
