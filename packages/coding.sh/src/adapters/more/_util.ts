@@ -594,6 +594,8 @@ export interface ToolEndArgs {
   error?: string | undefined;
   /** A command's exit status, when the result states it. */
   exitCode?: number | undefined;
+  /** The user stopped the call (Esc, cancel): the fold counts it in interruptedToolCalls, not toolErrors. */
+  interrupted?: boolean | undefined;
   extra?: EventExtra;
 }
 
@@ -605,6 +607,7 @@ export async function emitToolEnd(em: Emitter, ctx: NormalizeContext, a: ToolEnd
   const text = textOf(a.output);
   const out = await clip(ctx, text ?? a.output);
   const payload: Json = { tool: a.tool, toolUseId: a.toolUseId, ok: a.ok, durationMs: a.durationMs, output: out.value, error: a.error, exitCode: a.exitCode };
+  if (a.interrupted === true) payload.interrupted = true;
   em.push("tool.end", payload, { ...(a.durationMs !== undefined ? { durationMs: a.durationMs } : {}), ...a.extra, blobs: [...(a.extra?.blobs ?? []), ...(out.blob ? [out.blob] : [])], ...toolKey(em, a.toolUseId) });
   // Keyed by the path as the call gave it: the two capture paths may know different cwds.
   if (a.ok) for (const f of fileTouches(a.tool, a.input)) emitFileChange(em, { path: relPath(f.path, cwd), op: f.op, tool: a.tool, toolUseId: a.toolUseId }, a.extra, f.path);

@@ -156,6 +156,15 @@ function contentText(c: unknown): string {
     .join("\n");
 }
 
+/** What Pi writes for a call the user stopped with Esc (v1.6.0 writes "Operation aborted" for each call it skips); other text naming "aborted" is a real error. */
+const ABORTED_TEXT = /^(?:Operation aborted|Aborted)\.?\s*$/;
+
+/** A failed Pi tool result that is the user's interruption, not the tool's error. */
+function piInterrupted(isError: unknown, content: unknown, stopReason: unknown): boolean {
+  if (isError !== true) return false;
+  return stopReason === "aborted" || ABORTED_TEXT.test(contentText(content).trim());
+}
+
 function piUsage(u: unknown): Usage | undefined {
   if (!isObj(u)) return undefined;
   return usageFrom({ input: u.input, output: u.output, cacheRead: u.cacheRead, cacheWrite: num(u.cacheWrite) !== undefined || num(u.cacheWrite1h) !== undefined ? (num(u.cacheWrite) ?? 0) + (num(u.cacheWrite1h) ?? 0) : undefined, costUsd: get(u, "cost", "total") });
@@ -239,7 +248,8 @@ export async function normalizePi(line: SpoolLine, ctx: NormalizeContext): Promi
       const tool = str(raw.toolName) ?? "unknown";
       const ok = raw.isError !== true;
       const output = get(raw, "result", "content") ?? raw.result;
-      await emitToolEnd(em, ctx, { tool, toolUseId: str(raw.toolCallId), input: raw.args, output, ok, durationMs: num(raw.durationMs), error: ok ? undefined : "tool error" }, cwd);
+      const interrupted = piInterrupted(raw.isError, output, raw.stopReason ?? get(raw, "result", "stopReason"));
+      await emitToolEnd(em, ctx, { tool, toolUseId: str(raw.toolCallId), input: raw.args, output, ok, durationMs: num(raw.durationMs), error: ok ? undefined : "tool error", interrupted }, cwd);
       break;
     }
     case "session_compact":
@@ -307,7 +317,7 @@ export async function* piSessionEvents(file: string, ctx: NormalizeContext, sinc
         const call = id ? calls.get(id) : undefined;
         const tool = str(msg.toolName) ?? call?.tool ?? "unknown";
         const ok = msg.isError !== true;
-        await emitToolEnd(em, ctx, { tool, toolUseId: id, input: call?.input, output: msg.content, ok, durationMs: call ? Math.max(0, ts - call.ts) || undefined : undefined }, cwd);
+        await emitToolEnd(em, ctx, { tool, toolUseId: id, input: call?.input, output: msg.content, ok, durationMs: call ? Math.max(0, ts - call.ts) || undefined : undefined, interrupted: piInterrupted(msg.isError, msg.content, msg.stopReason) }, cwd);
       } else if (msg.role === "bashExecution") {
         const command = str(msg.command);
         const id = `bash-${str(e.id) ?? lineNo}`;
@@ -326,7 +336,8 @@ export const piAdapter: Adapter = {
   // 2 (0.1.2): hook and transcript copies share ids; tokens counted once.
   // 3 (0.1.5): a tool call that loads a skill names it (payload.skill).
   // 4 (0.1.8): test.result comes from the shared parser: pytest -q's bare summary line counts, the node runner is "node:test", and skipped is absent when 0.
-  parseVersion: 4,
+  // 5 (0.1.8): a call the user stopped (isError "Operation aborted", or stopReason aborted) is an interruption (payload.interrupted), not a tool error.
+  parseVersion: 5,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["pi"]);
     const dir = piAgentDir();
