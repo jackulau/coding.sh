@@ -79,10 +79,22 @@ describe("checkCalls", () => {
 
 describe("cliArgs", () => {
   it("subcommand words are the tool; flags are args, strings as given; argv is kept", () => {
-    assert.deepEqual(cliArgs(["sessions", "list", "--limit", "5", "--json", "--agent=codex"]), { tool: "sessions list", args: { argv: ["sessions", "list", "--limit", "5", "--json", "--agent=codex"], limit: "5", json: true, agent: "codex" } });
+    assert.deepEqual(cliArgs(["sessions", "list", "--limit", "5", "--json", "--agent=codex"]), { tool: "sessions list", args: { argv: ["sessions", "list", "--limit", "5", "--json", "--agent=codex"], limit: "5", json: true, agent: "codex" }, cli: true });
     const c = cliArgs(["usage", "--since", "7d"]);
     assert.equal(checkCalls({ must: [{ tool: "usage", args: { since: "~d", argv: "~--since 7d" } }] }, [c]).pass, true);
     assert.equal(checkCalls({ must: [{ tool: "sessions list", args: { limit: 5 } }] }, [cliArgs(["sessions", "list", "--limit", "5"])]).pass, true, "a number matches the flag's string");
+  });
+
+  it("a CLI match names the leading words, so positionals after the subcommand still match", () => {
+    const calls = [cliArgs(["dataset", "add", "smoke", "--case", "{}"]), cliArgs(["dataset", "list"]), cliArgs(["show", "ses_1"])];
+    assert.deepEqual(checkCalls({ must: [{ tool: "dataset add", args: { case: "{}" } }, { tool: "show" }] }, calls), { pass: true });
+    assert.deepEqual(checkCalls({ order: ["dataset add", "dataset list", "show"] }, calls), { pass: true });
+    assert.deepEqual(checkCalls({ order: ["dataset list", "dataset add"] }, calls), { pass: false, detail: "order: no call to dataset add after dataset list" });
+    assert.equal(checkCalls({ mustNot: [{ tool: "dataset" }] }, calls).pass, false, "a shorter match covers every subcommand under it");
+    assert.equal(checkCalls({ must: [{ tool: "data" }] }, calls).pass, false, "words match whole, not as a prefix of a word");
+    assert.equal(checkCalls({ must: [{ tool: "dataset add smoke extra" }] }, calls).pass, false);
+    // Only CLI calls: an HTTP or MCP name is matched whole.
+    assert.equal(checkCalls({ must: [{ tool: "GET" }] }, [{ tool: "GET /x" }]).pass, false);
   });
 });
 

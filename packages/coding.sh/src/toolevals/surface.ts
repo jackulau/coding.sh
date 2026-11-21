@@ -4,7 +4,8 @@
 //         are every `description` string in the tools and their inputSchema.
 //   CLI:  `<bin> --help` crawled to depth 3 (`--help --json` preferred when it parses;
 //         a command's own page is skipped when the root JSON already holds its
-//         options and subcommands). An empty crawl throws.
+//         options and subcommands). A page on stdout counts whatever the exit
+//         code (npm's --help exits 1). An empty crawl throws.
 //   HTTP: the OpenAPI document's bytes when one is given to the agent.
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
@@ -81,7 +82,9 @@ async function crawlCli(t: CliTarget, v: Variant, env: Record<string, string>, c
     const r = await execFileTail(file, [...pre, ...path, "--help", ...(json ? ["--json"] : [])], { cwd, env: { ...process.env, ...env, NO_COLOR: "1" }, timeoutMs: 15_000, tailBytes: 1 << 20 });
     // execFileTail reports a spawn failure (no such binary) as exit 127 plus node's ENOENT message.
     if (!path.length) rootExit = { code: r.exitCode, notFound: r.exitCode === 127 && /\bENOENT\b/.test(r.stderrTail) };
-    return r.exitCode === 0 ? r.stdoutTail || r.stderrTail : "";
+    // Help on stdout counts whatever the exit code: `npm --help` prints its page and exits 1.
+    // stderr counts only on exit 0, where a failing call's stderr is its error.
+    return r.stdoutTail.trim() ? r.stdoutTail : r.exitCode === 0 ? r.stderrTail : "";
   };
   const items: SurfaceReport["items"] = [];
   const pages: string[] = [];

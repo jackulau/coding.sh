@@ -30,6 +30,11 @@ export interface ToolCall {
   alias?: string;
   /** Undefined when the source records no arguments (HTTP taps). */
   args?: Record<string, unknown>;
+  /**
+   * A CLI call: `tool` is every word before the first flag, positionals too
+   * (`dataset add smoke`), so a match names leading words of it (see `named`).
+   */
+  cli?: true;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -103,7 +108,12 @@ export function argsMatch(want: Record<string, unknown>, got: Record<string, unk
   return Object.entries(want).every(([k, w]) => valueMatches(w, at(got, k)));
 }
 
-const named = (m: CallMatch, c: ToolCall) => m.tool === c.tool || (c.alias !== undefined && m.tool === c.alias);
+/**
+ * A match names a call by its tool name. A CLI call cannot tell a subcommand
+ * from a positional, so a match names its leading words: `dataset add` matches
+ * `dataset add smoke`, and `show` matches `show ses_1`.
+ */
+const named = (m: CallMatch, c: ToolCall) => m.tool === c.tool || (c.alias !== undefined && m.tool === c.alias) || (c.cli === true && c.tool.startsWith(`${m.tool.trim()} `));
 export const callMatches = (m: CallMatch, c: ToolCall): boolean => named(m, c) && (!m.args || argsMatch(m.args, c.args));
 
 const describe = (m: CallMatch) => (m.args && Object.keys(m.args).length ? `${m.tool} with ${JSON.stringify(m.args)}` : m.tool);
@@ -138,7 +148,7 @@ export function checkCalls(spec: CallsSpec, calls: readonly ToolCall[]): { pass:
  * subcommand words; `argv` keeps the whole list. A flag given twice keeps its
  * last value.
  */
-export function cliArgs(argv: readonly string[]): { tool: string; args: Record<string, unknown> } {
+export function cliArgs(argv: readonly string[]): { tool: string; args: Record<string, unknown>; cli: true } {
   let i = 0;
   const lead: string[] = [];
   for (; i < argv.length && !argv[i]!.startsWith("-"); i++) lead.push(argv[i]!);
@@ -151,7 +161,7 @@ export function cliArgs(argv: readonly string[]): { tool: string; args: Record<s
     else if (i + 1 < argv.length && !argv[i + 1]!.startsWith("-")) args[m[1]!] = argv[++i];
     else args[m[1]!] = true;
   }
-  return { tool: lead.join(" "), args };
+  return { tool: lead.join(" "), args, cli: true };
 }
 
 /**
