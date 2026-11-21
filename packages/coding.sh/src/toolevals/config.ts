@@ -131,6 +131,9 @@ function parseBudget(v: unknown): Budget {
   return b;
 }
 
+const FILE_ASSERT_KEYS = ["file", "exists", "contains", "regex", "jsonPath", "equals"];
+const COMMAND_ASSERT_KEYS = ["command", "stdoutContains", "contains", "jsonPath", "equals"];
+
 function parseCheck(c: unknown, where: string): Check {
   if (!isTable(c)) throw new ToolEvalsConfigError(`${where}: check must be a table`);
   switch (c.kind) {
@@ -141,6 +144,16 @@ function parseCheck(c: unknown, where: string): Check {
       if (!Array.isArray(c.assert)) throw new ToolEvalsConfigError(`${where}: state check needs assert = [...]`);
       const assert = c.assert.map((a): StateAssertion => {
         if (!isTable(a)) throw new ToolEvalsConfigError(`${where}: state assertion must be a table`);
+        if (typeof a.file === "string" && typeof a.command === "string") throw new ToolEvalsConfigError(`${where}: state assertion has both file and command; use one`);
+        const form = typeof a.file === "string" ? "file" : typeof a.command === "string" ? "command" : undefined;
+        if (form) {
+          // A key the assertion does not read would leave it passing on exists or exit 0 alone.
+          const allowed = form === "file" ? FILE_ASSERT_KEYS : COMMAND_ASSERT_KEYS;
+          const unknown = Object.keys(a).filter((k) => !allowed.includes(k));
+          if (unknown.length) throw new ToolEvalsConfigError(`${where}: ${form} state assertion has unknown key${unknown.length > 1 ? "s" : ""} ${unknown.map((k) => JSON.stringify(k)).join(", ")} (use ${allowed.filter((k) => k !== form).join(", ")})`);
+          for (const k of ["contains", "stdoutContains", "regex", "jsonPath"]) if (k in a && typeof a[k] !== "string") throw new ToolEvalsConfigError(`${where}: state assertion ${k} must be a string`);
+          if ("exists" in a && typeof a.exists !== "boolean") throw new ToolEvalsConfigError(`${where}: state assertion exists must be true or false`);
+        }
         if (typeof a.file === "string") {
           return {
             file: a.file,
@@ -152,9 +165,12 @@ function parseCheck(c: unknown, where: string): Check {
           };
         }
         if (typeof a.command === "string") {
+          // `contains` reads as stdoutContains on a command, as it reads file text on a file.
+          if (typeof a.contains === "string" && typeof a.stdoutContains === "string" && a.contains !== a.stdoutContains) throw new ToolEvalsConfigError(`${where}: command state assertion has both contains and stdoutContains; use one`);
+          const stdoutContains = typeof a.stdoutContains === "string" ? a.stdoutContains : typeof a.contains === "string" ? a.contains : undefined;
           return {
             command: a.command,
-            ...(typeof a.stdoutContains === "string" ? { stdoutContains: a.stdoutContains } : {}),
+            ...(stdoutContains !== undefined ? { stdoutContains } : {}),
             ...(typeof a.jsonPath === "string" ? { jsonPath: a.jsonPath } : {}),
             ...("equals" in a ? { equals: a.equals } : {}),
           };
