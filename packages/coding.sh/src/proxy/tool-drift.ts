@@ -3,7 +3,8 @@
 // description and input schema. A tool whose description changes between
 // sessions (an MCP server that rewrites its own description, a tampered
 // package) shows more than one variant, or a hash that differs from the one
-// pinned in <CODING_SH_HOME>/tool-pins.json.
+// pinned in <CODING_SH_HOME>/tool-pins.json. A tool first offered after the
+// last pin (an MCP server that added it) has no pin and shows as new.
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -30,8 +31,12 @@ export interface ToolRow {
   variants: number;
   /** The pinned hashes, when the tool has a pin. */
   pinned?: { descSha: string; schemaSha: string; at: number };
-  /** Why --changed keeps it: "pin" (a definition since the pin, or the latest, differs from it), "variants" (no pin, more than one variant). Absent when neither. */
-  changed?: "pin" | "variants";
+  /**
+   * Why --changed keeps it: "pin" (a definition since the pin, or the latest, differs from it), "new" (no pin,
+   * first seen at or after the newest pin: a tool an agent gained), "variants" (no pin, more than one variant).
+   * Absent when none applies.
+   */
+  changed?: "pin" | "new" | "variants";
 }
 
 export interface ToolDrift {
@@ -171,6 +176,8 @@ export async function toolDrift(index: IndexStore, blobs: BlobStore, o: { since:
       merge(v, where);
     }
   }
+  // The last `harness tools pin`: a tool with no pin first seen since then is new. With no pins, nothing is.
+  const newestPin = Object.values(o.pins ?? {}).reduce((m, p) => Math.max(m, p.at), -Infinity);
   const rows: ToolRow[] = [];
   for (const [key, t] of tools) {
     const all = seen();
@@ -187,7 +194,8 @@ export async function toolDrift(index: IndexStore, blobs: BlobStore, o: { since:
       const pinKey = `${pin.descSha}:${pin.schemaSha}`;
       const differs = latest![0] !== pinKey || [...t.variants].some(([vk, v]) => vk !== pinKey && v.lastSeen >= pin.at);
       if (differs) row.changed = "pin";
-    } else if (t.variants.size > 1) row.changed = "variants";
+    } else if (newestPin > -Infinity && all.firstSeen >= newestPin) row.changed = "new";
+    else if (t.variants.size > 1) row.changed = "variants";
     rows.push(row);
   }
   rows.sort((a, b) => Number(!!b.changed) - Number(!!a.changed) || a.server.localeCompare(b.server) || a.tool.localeCompare(b.tool));
