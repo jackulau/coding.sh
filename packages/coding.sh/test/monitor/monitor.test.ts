@@ -3,6 +3,7 @@
 // and the last error kept in <CODING_SH_HOME>/monitors.json.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { getEventListeners } from "node:events";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -420,6 +421,23 @@ describe("monitor --http", () => {
     assert.deepEqual((await monitorScores(sb)).map((s) => [s.targetId, s.value]).sort(), [["tie-a", 1], ["tie-b", 2]]);
   });
 
+  it("the waits between tries leave no listener on the signal the pass was given", async () => {
+    const sb = box();
+    await sb.seed([mkSession("wait-1", Date.now() - 10_000)]);
+    const ev = await evaluator([answer(503, "busy")]);
+    await addHttp(sb, "wait", ev.url);
+    const ac = new AbortController();
+    const ctx = await openContext({ env: sb.env, cwd: sb.root });
+    try {
+      const r = (await runMonitors(ctx, { force: true, signal: ac.signal })).monitors[0]!;
+      assert.equal(r.failed, 1);
+      assert.equal(ev.posts.length, 3, "two waits, between three tries");
+      assert.equal(getEventListeners(ac.signal, "abort").length, 0);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   it("add takes exactly one of --judge, --run or --http, and an http(s) URL without credentials", async () => {
     const sb = box();
     const bad = async (flags: Record<string, string | boolean | number>, re: RegExp) => {
@@ -433,6 +451,34 @@ describe("monitor --http", () => {
     await bad({ http: "not a url" }, /http or https/);
     await bad({ http: "https://user:pw@example.test/x" }, /credentials/);
     await bad({ http: "https://example.test/x", provider: "mock" }, /--provider and --model go with --judge/);
+  });
+});
+
+describe("monitor run --watch", () => {
+  it("leaves no listener on Ctrl-C's signal once a 10 s wait is over", async () => {
+    const sb = box();
+    await add(sb, "ok", { run: `${NODE} -e "console.log(JSON.stringify({value:1}))"` });
+    const file = paths(sb.env).monitors;
+    const lastRun = () => readMonitors(file).monitors[0]!.lastRunAt;
+    const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const ac = new AbortController();
+    const run = runCmd(monitorCmd, sb, { action: "run", flags: { watch: true }, json: true, signal: ac.signal });
+    try {
+      const deadline = Date.now() + 40_000;
+      while (lastRun() === undefined && Date.now() < deadline) await pause(50);
+      await pause(500);
+      const inFirstWait = getEventListeners(ac.signal, "abort").length;
+      const first = lastRun();
+      while (lastRun() === first && Date.now() < deadline) await pause(50);
+      assert.notEqual(lastRun(), first, "a second pass ran after the wait");
+      await pause(500);
+      assert.equal(getEventListeners(ac.signal, "abort").length, inFirstWait, "the first wait's listener is gone");
+    } finally {
+      ac.abort();
+      const r = await run;
+      assert.equal(r.error, undefined, String(r.error));
+      assert.equal(r.code, 0);
+    }
   });
 });
 

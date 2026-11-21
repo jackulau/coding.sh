@@ -18,6 +18,7 @@ import { ago, CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { SIGNATURE_HEADER } from "../../alerts/notify.ts";
 import { paths } from "../../core/paths.ts";
+import { sleepUnless } from "../../jobs/retry.ts";
 import { parseWhere } from "../../query/where.ts";
 import { judgeProviderKind, KEY_ENV, NO_PROVIDER, runMonitors, type MonitorResult, type RunMonitorsResult } from "../../monitor/run.ts";
 import { MONITOR_PROVIDERS, NAME_RE, publicMonitor, readMonitors, spentToday, updateMonitors, type MonitorDef, type MonitorProvider } from "../../monitor/state.ts";
@@ -190,11 +191,7 @@ async function runNow(c: CommandContext): Promise<number> {
     let failed = false;
     for (let first = true; first || (watch && !c.signal.aborted); first = false) {
       if (!first) {
-        await new Promise<void>((done) => {
-          const t = setTimeout(done, 10_000);
-          c.signal.addEventListener("abort", () => (clearTimeout(t), done()), { once: true });
-        });
-        if (c.signal.aborted) break;
+        if (await sleepUnless(10_000, [c.signal])) break;
         // Pick up what agents wrote since the last pass, then score it.
         await ctx.ingest({ lock: { waitMs: 0 }, signal: c.signal }).catch(() => undefined);
       }

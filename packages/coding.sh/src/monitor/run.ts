@@ -13,6 +13,7 @@ import type { AgentEvent, Config, IndexStore, Session, SessionFilter } from "../
 import { supervise } from "../core/children.ts";
 import { acquireLock, LockBusyError } from "../core/lock.ts";
 import { createRedactor, type Redactor } from "../core/redact.ts";
+import { sleepUnless } from "../jobs/retry.ts";
 import type { ChatProvider } from "../judge/providers.ts";
 import { findSessions } from "../query/run.ts";
 import { parseWhere, scopesSubagents, type Query } from "../query/where.ts";
@@ -429,14 +430,6 @@ async function readCapped(res: Response, max: number): Promise<string | undefine
   return Buffer.concat(parts).toString("utf8");
 }
 
-function wait(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((done) => {
-    if (signal?.aborted) return done();
-    const t = setTimeout(done, ms);
-    signal?.addEventListener("abort", () => (clearTimeout(t), done()), { once: true });
-  });
-}
-
 function httpScorer(deps: MonitorDeps, def: MonitorDef, redactor: Redactor, o: RunMonitorsOptions): Scorer {
   const url = def.url!;
   const shown = shownUrl(url);
@@ -446,7 +439,7 @@ function httpScorer(deps: MonitorDeps, def: MonitorDef, redactor: Redactor, o: R
     const headers = { "content-type": "application/json", [SIGNATURE_HEADER]: signBody(def.secret!, body) };
     let failure = "";
     for (let attempt = 1; attempt <= HTTP_TRIES; attempt++) {
-      if (attempt > 1) await wait(HTTP_BACKOFF_MS * 2 ** (attempt - 2), o.signal);
+      if (attempt > 1) await sleepUnless(HTTP_BACKOFF_MS * 2 ** (attempt - 2), [o.signal]);
       if (o.signal?.aborted) throw new Failed(`${s.id}: stopped`);
       const timeout = AbortSignal.timeout(HTTP_ATTEMPT_MS);
       const signal = o.signal ? AbortSignal.any([timeout, o.signal]) : timeout;
