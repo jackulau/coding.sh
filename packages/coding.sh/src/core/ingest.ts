@@ -91,7 +91,14 @@ import { matchSpawnedParent, openAt } from "../spool/spawned-match.ts";
 export const PUT_BATCH = 500;
 /** Backfill file cursors set per transaction (three rows each). */
 const CURSOR_BATCH = 2000;
-const DEFAULT_CHECKPOINT_EVENTS = 5000;
+/**
+ * Events per checkpoint (one transaction: events, folded sessions, cursors; one pack commit and its fsync).
+ * Each commit rewrites the index's hot pages and flushes a search segment, so a bulk drain commits in
+ * large windows; a crash redoes at most one. With sinks the window stays small: it is also what they
+ * are sent in, and kept in memory until then.
+ */
+export const DEFAULT_CHECKPOINT_EVENTS = 20_000;
+const SINK_CHECKPOINT_EVENTS = 5000;
 /** A run that stored more events than this folds the store's write-ahead log back in before it returns. */
 export const BULK_WRITE_EVENTS = 10_000;
 const DEFAULT_SINK_BATCH = 500;
@@ -327,7 +334,7 @@ function mergeResults(a: IngestResult, b: IngestResult): IngestResult {
 async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDir: string, fence: () => void): Promise<IngestResult> {
   const { config, index, blobs, adapters } = opts;
   const now = opts.now ?? Date.now;
-  const checkpointEvents = opts.checkpointEvents ?? DEFAULT_CHECKPOINT_EVENTS;
+  const checkpointEvents = opts.checkpointEvents ?? (opts.sinks?.length ? SINK_CHECKPOINT_EVENTS : DEFAULT_CHECKPOINT_EVENTS);
   const result: IngestResult = { lines: 0, events: 0, sessions: 0, excluded: 0, errors: [], sinks: [], pendingFiles: 0 };
   await markFreshStore(index);
   let droppedErrors = 0;
@@ -1704,7 +1711,7 @@ export const sinkBackfillKey = (sink: string, agent: string, path?: string): str
 export const SINK_BEHIND = 1;
 export const SINK_CURRENT = 2;
 /** Events waiting for the sinks before an import folds its sessions and sends them, mid-run. */
-const SINK_QUEUE_EVENTS = DEFAULT_CHECKPOINT_EVENTS;
+const SINK_QUEUE_EVENTS = SINK_CHECKPOINT_EVENTS;
 
 /** One transcript source being read, for the sinks. */
 interface SinkSource {

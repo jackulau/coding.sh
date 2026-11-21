@@ -156,11 +156,14 @@ interface Sink {                                          // write-only mirror (
   with a small JSON `payload`. Anything over 4 KB becomes a blob ref. This keeps the index small
   enough to scan.
 - Blobs are content-addressed, so a file read 50 times, or the same AGENTS.md in 1,000 sessions, is
-  stored once. They are compressed with zstd (`node:zlib`) at level 3.
+  stored once. They are compressed with zstd (`node:zlib`) at level 3. An ingest that writes more
+  than 256 small blobs has one worker thread compress the rest, so it goes on reading while they
+  compress; the frames are the same bytes.
 - A blob whose compressed form is under 4 KiB, such as a hook line's raw payload, is a row of
   `blobs/pack.db` (SQLite, WAL, `synchronous=FULL`); a larger one is a file of its own. A file costs
   a whole disk block, a temp file, a rename and two fsyncs, and most blobs are a few hundred bytes.
-  An ingest checkpoint writes its pack rows in one transaction. SQLite folds the pack's WAL in
+  An ingest checkpoint writes its pack rows in one transaction. A checkpoint holds up to 20,000
+  events, or 5,000 when sinks are configured, since the sinks are sent each window. SQLite folds the pack's WAL in
   (and fsyncs the pack) on its own once the WAL holds 16 MB, not every 4 MB. One process writes the pack at a
   time: a write that waits 500 ms for the lock (other processes putting in a loop) writes its blobs
   as files instead, so contention never fails a put. Reads look in the pack and then for a file, so

@@ -28,19 +28,22 @@
 // root covers the batch: the temp files' data is already on the drive, and an
 // APFS/HFS+ fsync commits the volume's metadata (the renames) with it; this is
 // git's core.fsyncMethod=batch, which git documents as safe there. A batch
-// abandoned before flush() leaves temp files that sweepTmp removes.
+// abandoned before flush() leaves temp files that sweepTmp removes. Past its
+// first POOL_AFTER small blobs, a batch has a worker thread compress them
+// (zstd-pool.ts): the same frames, off the writer's thread.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { link, mkdir, readdir, rmdir, stat, unlink, utimes } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
-import { constants, zstdCompressSync, zstdDecompressSync } from "node:zlib";
+import { zstdDecompressSync } from "node:zlib";
 import type { BlobRef } from "../schema/index.ts";
 import type { BlobBatch, BlobMeta, BlobStore } from "../core/types.ts";
 import { sha256Hex } from "../core/ids.ts";
 import { assertBlobRef, blobPath, toBytes } from "./common.ts";
 import { renameOver, syncDir, writeFileDurable, writeTemp } from "./durable.ts";
 import { loadSqlite, ownerOnly, switchToWal } from "./sqlite-open.ts";
+import { ZstdPool, zstdFrame } from "./zstd-pool.ts";
 
 /** Temp files put and recompress write before the rename: `<sha>.zst.<pid>.<hex>.tmp`. */
 const TMP_NAME = /^[0-9a-f]{64}\.zst\.\d+\.[0-9a-f]+\.tmp$/;
@@ -54,6 +57,8 @@ export const PACK_MAX_BYTES = 4096;
 export const PACK_FILE = "pack.db";
 /** Raw sizes at or under this always compress to under PACK_MAX_BYTES (zstd adds a few dozen bytes at most). */
 const SURELY_PACKED_BYTES = PACK_MAX_BYTES - 128;
+/** Small blobs a batch compresses on its own thread before it hands the rest to the worker (zstd-pool.ts). */
+export const POOL_AFTER = 256;
 
 /** A blob compressed for the pack, not yet written. */
 interface Packed {
@@ -85,6 +90,7 @@ export class FsBlobStore implements BlobStore {
   private readonly level: number;
   private readonly packMaxBytes: number;
   private readonly pack: BlobPack;
+  private pool: ZstdPool | undefined;
 
   constructor(root: string, opts: FsBlobStoreOptions = {}) {
     this.root = root;
@@ -93,9 +99,12 @@ export class FsBlobStore implements BlobStore {
     this.pack = new BlobPack(join(root, PACK_FILE));
   }
 
-  /** Closes the pack (the next use opens it again). */
+  /** Closes the pack (the next use opens it again) and stops the compression worker. */
   async close(): Promise<void> {
     this.pack.close();
+    const pool = this.pool;
+    this.pool = undefined;
+    await pool?.close();
   }
 
   /** Folds the pack's WAL in and empties it, waiting briefly for readers. Ingest calls it after a bulk write. Never throws. */
@@ -127,10 +136,19 @@ export class FsBlobStore implements BlobStore {
    * (torn by a power loss) is rewritten: the compressed bytes go to a flushed
    * temp file beside the blob's path.
    */
+  private surelyPacked(bytes: Uint8Array): boolean {
+    return bytes.byteLength <= SURELY_PACKED_BYTES && this.packMaxBytes === PACK_MAX_BYTES;
+  }
+
+  /** The worker that compresses a batch's small blobs (zstd-pool.ts), started on first use. */
+  private compressor(): ZstdPool {
+    return (this.pool ??= new ZstdPool(this.level));
+  }
+
   private async stage(ref: BlobRef, bytes: Uint8Array): Promise<Staged | Packed | undefined> {
-    const compress = () => zstdCompressSync(bytes, { params: { [constants.ZSTD_c_compressionLevel]: this.level } });
+    const compress = () => zstdFrame(bytes, this.level);
     // Packed whatever it compresses to: no file to look for.
-    if (bytes.byteLength <= SURELY_PACKED_BYTES && this.packMaxBytes === PACK_MAX_BYTES) return { ref, data: compress() };
+    if (this.surelyPacked(bytes)) return { ref, data: compress() };
     const file = this.pathFor(ref);
     // existsSync first: a miss (the usual case on ingest) costs no thrown ENOENT.
     if (existsSync(file) && (await this.read(ref, file)) !== undefined && (await touch(file))) return undefined;
@@ -190,12 +208,20 @@ export class FsBlobStore implements BlobStore {
       const w = await writes.get(ref);
       return w && !("error" in w) ? w : undefined;
     };
+    // Small blobs past the first POOL_AFTER are compressed on the worker (zstd-pool.ts): a hook's
+    // few lines start no thread, a bulk drain stops compressing on its own thread.
+    let small = 0;
     return {
       kind: store.kind,
       async put(data) {
         const bytes = toBytes(data);
         const ref = sha256Hex(bytes);
         if (writes.has(ref)) return ref;
+        if (store.surelyPacked(bytes) && ++small > POOL_AFTER) {
+          // Not counted in inFlight: that bounds temp-file writes, and a pack row has none until flush.
+          writes.set(ref, store.compressor().compress(bytes).then((compressed): Packed => ({ ref, data: compressed })));
+          return ref;
+        }
         while (inFlight.size >= BATCH_PARALLEL) await Promise.race(inFlight);
         const w = store.stage(ref, bytes).catch((error: unknown) => ({ error }));
         writes.set(ref, w);
@@ -221,6 +247,7 @@ export class FsBlobStore implements BlobStore {
       size: () => store.size(),
       stat: (ref) => store.stat(ref),
       async flush() {
+        store.pool?.flush();
         const settled = await Promise.all(writes.values());
         writes.clear();
         const failed = settled.find((w): w is { error: unknown } => !!w && "error" in w);
@@ -458,7 +485,7 @@ export class FsBlobStore implements BlobStore {
     const before = await this.stat(ref);
     const data = await this.get(ref);
     if (!before || !data) return 0;
-    const compressed = zstdCompressSync(data, { params: { [constants.ZSTD_c_compressionLevel]: level } });
+    const compressed = zstdFrame(data, level);
     if (compressed.byteLength >= before.size) return 0;
     if (await this.pack.stat(ref)) {
       if (!(await this.pack.write([{ ref, data: compressed }]))) return 0;

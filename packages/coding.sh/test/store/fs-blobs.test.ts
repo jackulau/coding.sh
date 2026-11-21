@@ -6,10 +6,10 @@ import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { zstdCompressSync, zstdDecompressSync } from "node:zlib";
+import { constants as zlibConstants, zstdCompressSync, zstdDecompressSync } from "node:zlib";
 import { after, describe, it } from "node:test";
 import { sha256Hex } from "../../src/core/ids.ts";
-import { FsBlobStore, PACK_FILE, PACK_MAX_BYTES, type FsBlobStoreOptions } from "../../src/store/fs-blobs.ts";
+import { FsBlobStore, PACK_FILE, PACK_MAX_BYTES, POOL_AFTER, type FsBlobStoreOptions } from "../../src/store/fs-blobs.ts";
 import { blobPath } from "../../src/store/common.ts";
 import { ageBlob } from "./_blobs.ts";
 import { tsNodeArgs } from "../capture/_helpers.ts";
@@ -306,6 +306,34 @@ describe("FsBlobStore pack", () => {
     assert.deepEqual(await s.has([refs[3]!]), [false], "nothing in the store before the flush");
     await b.flush();
     for (const [i, r] of refs.entries()) assert.equal(await s.getText(r), texts[i]);
+    assert.deepEqual(walk(s.root).filter((f) => f.endsWith(".zst") || f.endsWith(".tmp")), [], "no blob files");
+  });
+
+  it("batch: past POOL_AFTER small blobs, a worker compresses them to the frames this thread would write", async () => {
+    const s = make();
+    const b = s.batch();
+    const texts = Array.from({ length: POOL_AFTER + 700 }, (_, i) => `{"n":${i},"tool":"Bash","out":"${"line ".repeat(i % 50)}"}`);
+    const refs: string[] = [];
+    for (const t of texts) refs.push(await b.put(t));
+    assert.ok(Reflect.get(s, "pool"), "the batch started its worker");
+    const last = refs.length - 1;
+    assert.equal(await b.getText(refs[last]!), texts[last], "readable through the batch before the flush");
+    assert.deepEqual(await s.has([refs[last]!]), [false], "nothing in the store before the flush");
+    await b.flush();
+    const { loadSqlite } = await import("../../src/store/sqlite-open.ts");
+    const { DatabaseSync } = await loadSqlite();
+    const db = new DatabaseSync(join(s.root, PACK_FILE), { readOnly: true });
+    try {
+      const rows = db.prepare("SELECT data FROM blobs WHERE ref = ?");
+      for (const [i, r] of refs.entries()) {
+        const row = rows.get(Buffer.from(r, "hex")) as { data: Uint8Array } | undefined;
+        assert.ok(row, `row ${i}`);
+        assert.deepEqual(Buffer.from(row.data), zstdCompressSync(texts[i]!, { params: { [zlibConstants.ZSTD_c_compressionLevel]: 3 } }), `frame ${i}`);
+        assert.equal(await s.getText(r), texts[i]);
+      }
+    } finally {
+      db.close();
+    }
     assert.deepEqual(walk(s.root).filter((f) => f.endsWith(".zst") || f.endsWith(".tmp")), [], "no blob files");
   });
 
