@@ -85,6 +85,8 @@ export async function workList(index: IndexStore, src: WorkSource, q: URLSearchP
   for (const i of every.items) if (i.hidden) hiddenBy[i.hidden] = (hiddenBy[i.hidden] ?? 0) + 1;
   return {
     ...workJson(queue, { since: f.since, limit, truncated }),
+    // The moment the reasons' ages ("ended 2h ago") were worked out, so the page's own ages count from it too.
+    now: new Date(now).toISOString(),
     members: Object.fromEntries(queue.items.slice(0, limit).map((i) => [i.id, i.sessionIds.slice(0, MEMBERS_MAX)])),
     hiddenBy,
   };

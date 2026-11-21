@@ -2262,8 +2262,8 @@ const KEYMAP = [
   { scope: "session", id: "next-fail", keys: ["]"], label: "Next failure", hint: true },
   { scope: "session", id: "prev-fail", keys: ["["], label: "Previous failure" },
   { scope: "session", id: "first-fail", keys: ["F"], label: "First failure" },
-  { scope: "session", id: "next-turn", keys: ["}"], label: "Next turn", hint: true },
-  { scope: "session", id: "prev-turn", keys: ["{"], label: "Previous turn" },
+  { scope: "session", id: "next-turn", keys: ["}"], label: "Next prompt", hint: true },
+  { scope: "session", id: "prev-turn", keys: ["{"], label: "Previous prompt" },
   { scope: "session", id: "find", keys: ["/"], label: "Find in steps", hint: true },
   { scope: "session", id: "chat", keys: ["v"], label: "Chat or steps view", hint: true },
   { scope: "session", id: "next-match", keys: ["n"], label: "Next match (find, or the query you came from)" },
@@ -3573,6 +3573,7 @@ function sessionList(view) {
         if (e.button || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) { syncActive(lb); return; }
         e.preventDefault();
         fromList = s.id;
+        listOrigin = { id: s.id, mode: "sessions" };
         location.hash = sessionHref(s.id);
       },
     },
@@ -3604,7 +3605,7 @@ function sessionList(view) {
       e.preventDefault();
       e.stopPropagation();
       const r = list.rows[list.active];
-      if (r) { fromList = r.s.id; location.hash = sessionHref(r.s.id); }
+      if (r) { fromList = r.s.id; listOrigin = { id: r.s.id, mode: "sessions" }; location.hash = sessionHref(r.s.id); }
     }
   });
   // One repo in the whole index (or one picked): the column would repeat it on every row.
@@ -3681,8 +3682,15 @@ async function toggleSubagents(view, id) {
 let fromHit = "";
 // A session opened from the list's row opens on its first failure; a link opens where it points.
 let fromList = "";
+// The last session opened from the Sessions or Events list, and which. Its back link returns to that list
+// as it was; a session reached another way (the command menu, a link) goes back to the plain Sessions list.
+let listOrigin = { id: "", mode: "sessions" };
+function sessionBack(id) {
+  return listOrigin.id === id ? { href: listHref(listOrigin.mode), label: listOrigin.mode === "events" ? "Events" : "Sessions" } : { href: "#/", label: "Sessions" };
+}
 function openHit(ev) {
   fromHit = ev.sessionId;
+  listOrigin = { id: ev.sessionId, mode: "events" };
   location.hash = sessionHref(ev.sessionId, ev.id, list.where.trim());
 }
 
@@ -3925,7 +3933,7 @@ const KIND_LABEL = {
 const SHOWN_KEYS = {
   "user.message": ["text"],
   "assistant.message": ["text"],
-  "file.change": ["path", "op", "additions", "deletions", "diff"],
+  "file.change": ["path", "op", "additions", "deletions", "diff", "diffTruncated"],
   "test.result": ["passed", "failed", "skipped", "runner"],
   "llm.call": ["ok", "ttftMs", "tokensPerSec", "stopReason", "statusCode", "error", "requestModel", "responseModel", "provider"],
 };
@@ -4207,7 +4215,8 @@ const prefs = {
 async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView = "") {
   const view = h("section", { class: "session-view", "aria-label": "Session" });
   const keys = { scope: "session", actions: {}, palette: [] };
-  view.append(h("div", { class: "detail-head" }, h("div", { class: "crumbs" }, h("a", { class: "back", href: listHref() }, h("span", { class: "nudge", "aria-hidden": "true" }, "←"), list.mode === "events" ? "Events" : "Sessions"))));
+  const back = sessionBack(id);
+  view.append(h("div", { class: "detail-head" }, h("div", { class: "crumbs" }, h("a", { class: "back", href: back.href }, h("span", { class: "nudge", "aria-hidden": "true" }, "←"), back.label))));
   const loading = h("div", { class: "wrap" }, h("div", { class: "panel empty", "aria-busy": "true" }, h("p", { class: "meta", text: "Loading session…" })));
   view.append(loading);
   setView(view, true, keys);
@@ -4596,7 +4605,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     const it = items[x.from], t = turnInfo[x.turn], w = turnWords(x.from, x.to);
     const el = h("div", { class: "st turn fold" + (x.from === 0 ? " first" : "") + (t.fails ? " is-fail" : ""), role: "option", id: "st-" + r, "aria-selected": String(r === activeRow), "aria-expanded": "false", "aria-setsize": String(rows.length), "aria-posinset": String(r + 1),
       onclick: () => { activeItem = x.from; ctx.openFold(x.key); selectRow(rowOf[x.from]); } },
-      h("span", { class: "t", title: new Date(it.ts).toLocaleTimeString() }, h("span", { class: "tw" }, "Turn "), String(meta[x.from].prompt)),
+      h("span", { class: "t", title: new Date(it.ts).toLocaleTimeString() }, h("span", { class: "tw" }, "Prompt "), String(meta[x.from].prompt)),
       // Length, tool calls and errors first, so a narrow row cuts the words, not the counts.
       h("span", { class: "lbl" }, h("span", { class: "caret", "aria-hidden": "true" }, "▸"), h("span", { class: "dot tone-" + meta[x.from].v.tone, "aria-hidden": "true" }), h("span", { class: "arg" }, promptLine(it) || "Prompt"),
         h("span", { class: "sum" }, (t.dur > 0 ? fmtDuration(t.dur) + " · " : "") + plural(w.tools, "tool call") + " · ", t.fails ? [h("span", { class: "err" }, plural(t.fails, "error")), " · "] : null, w.words)),
@@ -4644,7 +4653,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     const caret = m.isTurn ? h("span", { class: "caret open", "aria-hidden": "true", title: canFold ? "Fold this turn" : null, onclick: canFold ? (e) => { e.stopPropagation(); foldTurn(m.turn); } : null }, canFold ? "▸" : "") : null;
     const el = h("div", { class: cls, role: "option", id: "st-" + r, "aria-selected": String(r === activeRow), "aria-expanded": canFold ? "true" : null, "aria-setsize": String(rows.length), "aria-posinset": String(r + 1),
       onclick: () => selectRow(r, true) },
-      h("span", { class: "t", title: new Date(it.ts).toLocaleTimeString() }, m.isTurn ? "Turn " + m.prompt : fmtClock(it.ts - session.startedAt)),
+      h("span", { class: "t", title: new Date(it.ts).toLocaleTimeString() }, m.isTurn ? "Prompt " + m.prompt : fmtClock(it.ts - session.startedAt)),
       h("span", { class: "lbl" }, chip, caret, h("span", { class: "dot tone-" + v.tone, "aria-hidden": "true" }), m.isTurn ? null : h("span", { class: "name" }, v.name), m.isTurn ? h("span", { class: "arg" }, promptLine(it) || "Prompt") : argNode(v.arg), v.cost ? h("span", { class: "cost", title: v.cost.title }, v.cost.text) : null, flag),
       h("span", { class: "d" }, m.isTurn ? h("time", { datetime: new Date(it.ts).toISOString() }, fmtClock(it.ts - session.startedAt)) : v.adds !== undefined || v.dels !== undefined
         ? [v.adds !== undefined ? h("span", { class: "add" }, "+" + v.adds) : null, v.adds !== undefined && v.dels !== undefined ? " " : null, v.dels !== undefined ? h("span", { class: "del" }, "−" + v.dels) : null]
@@ -4789,7 +4798,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     rebuildRows();
     selectRow(rowOf[activeItem]);
     tl.focus({ preventScroll: true });
-    announce("Turn " + meta[activeItem].prompt + " folded");
+    announce("Prompt " + meta[activeItem].prompt + " folded");
   }
   function foldPane(x) {
     delete pane.dataset.item;
@@ -4797,7 +4806,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
       const it = items[x.from], t = turnInfo[x.turn], w = turnWords(x.from, x.to);
       swap(pane,
         h("div", { class: "pane-top" }, h("p", { class: "meta" }, "Folded turn")),
-        h("h2", { class: "pane-title" }, "Turn " + meta[x.from].prompt + ": " + (promptLine(it) || "Prompt")),
+        h("h2", { class: "pane-title" }, "Prompt " + meta[x.from].prompt + ": " + (promptLine(it) || "(no text)")),
         h("p", { class: "note" }, [w.words, plural(w.tools, "tool call"), plural(t.fails, "error"), t.dur > 0 ? fmtDuration(t.dur) : ""].filter(Boolean).join(", ") + ". Press Enter or click to expand."),
         h("ul", { class: "fold-list" }, Array.from({ length: Math.min(60, x.to - x.from) }, (_, k) => {
           const m = meta[x.from + k];
@@ -4827,7 +4836,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     const it = items[i], user = it.type === "user.message";
     const text = String(((it.ev || {}).payload || {}).text ?? "");
     return h("div", { class: "chat-msg " + (user ? "is-user" : "is-agent") },
-      h("div", { class: "chat-who" }, h("span", null, user ? "Turn " + meta[i].prompt + " · Prompt" : "Assistant"), h("time", { datetime: new Date(it.ts).toISOString() }, fmtClock(it.ts - session.startedAt))),
+      h("div", { class: "chat-who" }, h("span", null, user ? "Prompt " + meta[i].prompt : "Assistant"), h("time", { datetime: new Date(it.ts).toISOString() }, fmtClock(it.ts - session.startedAt))),
       text.trim() ? clipped(text, (x) => mdView(x, "chat-text"), { lines: 400 }) : h("p", { class: "note" }, "No inline text."));
   }
   // A turn: its prompt, one line for the steps between prompt and replies, then the replies in order.
@@ -4849,7 +4858,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
         "aria-label": text + (t.fails ? plural(t.fails, "error") : "") + ". Show this turn in Steps", onclick: () => toSteps(t.from) },
         h("span", { class: "caret", "aria-hidden": "true" }, "▸"), h("span", null, text, t.fails ? h("span", { class: "err" }, plural(t.fails, "error")) : null));
     }
-    return h("section", { class: "chat-turn", "aria-label": t.prompt ? "Turn " + meta[t.from].prompt : "Before the first prompt" },
+    return h("section", { class: "chat-turn", "aria-label": t.prompt ? "Prompt " + meta[t.from].prompt : "Before the first prompt" },
       t.prompt ? chatMsg(t.from) : null, line, replies);
   }
   function renderChat() {
@@ -4920,7 +4929,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     if (next === undefined) { announce(turnIdx.length ? (dir > 0 ? "No later turn" : "No earlier turn") : "No user turns"); return; }
     selectItem(next, true);
     tl.focus({ preventScroll: true });
-    announce("Turn " + meta[next].prompt + " of " + turnIdx.length + ": " + meta[next].v.label);
+    announce("Prompt " + meta[next].prompt + " of " + turnIdx.length + ": " + meta[next].v.label);
   }
   function jumpDerail(dir) {
     if (!derailIdx.length) return;
@@ -5452,7 +5461,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   function renderHint() {
     const scope = rp.on ? "replay" : "session";
     swap(hint,
-      h("div", { class: "hints" }, KEYMAP.filter((k) => k.scope === scope && k.hint && (!chatOn || CHAT_KEYS.has(k.id) || k.id === "down" || k.id === "next-turn")).map((k) => h("span", null, keyCaps(k.id === "down" ? ["j", "k"] : k.id === "next-turn" ? ["{", "}"] : k.keys), k.id === "down" ? "move" : k.id === "next-turn" ? "turns" : k.label.replace(/^Show or hide |^Expand or fold /, "").toLowerCase()))),
+      h("div", { class: "hints" }, KEYMAP.filter((k) => k.scope === scope && k.hint && (!chatOn || CHAT_KEYS.has(k.id) || k.id === "down" || k.id === "next-turn")).map((k) => h("span", null, keyCaps(k.id === "down" ? ["j", "k"] : k.id === "next-turn" ? ["{", "}"] : k.keys), k.id === "down" ? "move" : k.id === "next-turn" ? "prompts" : k.label.replace(/^Show or hide |^Expand or fold /, "").toLowerCase()))),
       h("span", { class: "all-keys" }, keyCaps(["?"]), "all shortcuts"));
   }
 
@@ -5485,7 +5494,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     "copy-step": () => { const x = rows[activeRow]; if (typeof x !== "number") return false; const it = items[x]; copy(JSON.stringify([it.start, it.end, it.ev].filter(Boolean), null, 2), "step JSON"); },
     "label-pass": () => { const b = $(".btn-label.is-pass", view); if (b) b.click(); },
     "label-fail": () => { const b = $(".btn-label.is-fail", view); if (b) b.click(); },
-    back: () => { location.hash = listHref(); },
+    back: () => { location.hash = sessionBack(session.id).href; },
     replay: () => { enterReplay(); },
     "rp-play": () => rpToggle(),
     "rp-next": () => rpGo(rp.n + 1),
@@ -5498,8 +5507,8 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   keys.palette = [
     { group: "Session", label: "Next failure", hint: "]", run: () => jumpFail(1) },
     { group: "Session", label: "First failure", hint: "F", run: () => { if (chatOn) setChat(false); firstFail(); } },
-    { group: "Session", label: "Next turn", hint: "}", run: () => jumpTurn(1) },
-    { group: "Session", label: "Previous turn", hint: "{", run: () => jumpTurn(-1) },
+    { group: "Session", label: "Next prompt", hint: "}", run: () => jumpTurn(1) },
+    { group: "Session", label: "Previous prompt", hint: "{", run: () => jumpTurn(-1) },
     { group: "Session", label: "Find in steps", hint: "/", run: () => setTimeout(() => findInput.focus(), 0) },
     { group: "Session", label: "Chat or steps view", hint: "v", run: () => { setChat(!chatOn); setTimeout(() => (chatOn ? chat : tl).focus({ preventScroll: true }), 0); } },
     { group: "Session", label: "Copy session id", run: () => copy(session.id, "session id") },
@@ -5631,7 +5640,7 @@ function sessionHeader(s, labels, rel) {
   let factsList;
   return h("header", { class: "detail-head" },
     h("div", { class: "crumbs" },
-      h("a", { class: "back", href: listHref() }, h("span", { class: "nudge", "aria-hidden": "true" }, "←"), list.mode === "events" ? "Events" : "Sessions"),
+      h("a", { class: "back", href: sessionBack(s.id).href }, h("span", { class: "nudge", "aria-hidden": "true" }, "←"), sessionBack(s.id).label),
       h("span", { class: "sep", "aria-hidden": "true" }, "/"),
       s.parent ? [h("a", { class: "parent-link", href: sessionHref(s.parent.sessionId, s.parent.eventId), title: s.parent.sessionId },
         h("span", { "aria-hidden": "true" }, "↑"), "parent:",
@@ -5668,7 +5677,7 @@ function sessionHeader(s, labels, rel) {
         // The experiments that ran a file this session saved (checkpointExperiments, as coding.sh show --json).
         (Array.isArray(s.checkpointExperiments) ? s.checkpointExperiments : []).map((c) => (c.experiments || []).slice(0, 3).map((e) =>
           h("span", { class: "badge", title: "This experiment ran the weights file " + c.sha256 + " (exp run --weights)" }, "ran in ", h("a", { href: expHref(e.id), title: e.id }, e.name || e.id)))),
-        st.turns && !api_ ? h("span", { class: "badge" }, plural(st.turns, "turn")) : null,
+        st.turns && !api_ ? h("span", { class: "badge", title: "Times the agent finished and handed back. A background task's notice can start a turn with no prompt, so Steps and Chat number prompts, not turns." }, plural(st.turns, "turn")) : null,
         kids.length ? h("span", { class: "badge" }, plural(kids.length, "subagent")) : null,
         s.parent && s.parent.type ? h("span", { class: "badge" }, "subagent · " + s.parent.type) : null,
         s.runId ? h("span", { class: "badge", title: s.runId }, "eval run") : null,
@@ -6140,10 +6149,13 @@ function diffGrid(rows, max) {
   pre.append(...out);
   return pre;
 }
-function diffBlock(text) {
+/** A unified diff's rows for diffGrid. The newline that ends the last line starts no line of its own. */
+function diffRows(text) {
   const rows = [];
   let a = 0, b = 0;
-  for (const line of String(text).split("\n")) {
+  const lines = String(text).split("\n");
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+  for (const line of lines) {
     const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
     if (m) { a = Number(m[1]); b = Number(m[2]); rows.push({ t: "hunk", text: line }); continue; }
     if (/^(diff --git|index |--- |\+\+\+ )/.test(line)) { rows.push({ t: "file", text: relPath(line) }); continue; }
@@ -6152,7 +6164,54 @@ function diffBlock(text) {
     else if (line.startsWith("\\")) rows.push({ t: "hunk", text: line });
     else if (a || b || line) rows.push({ t: "ctx", a: a++, b: b++, text: line.startsWith(" ") ? line.slice(1) : line });
   }
-  return diffGrid(rows);
+  return rows;
+}
+function diffBlock(text) {
+  return diffGrid(diffRows(text));
+}
+/** Changed lines a cut diff leaves out: the change's +/− counts less the added and removed rows it shows. Null when the change has no counts. */
+function diffLeftOut(p) {
+  if (typeof p.additions !== "number" && typeof p.deletions !== "number") return null;
+  const rows = diffRows(p.diff || "");
+  const shown = rows.filter((r) => r.t === "add" || r.t === "del").length;
+  return Math.max(0, (p.additions || 0) + (p.deletions || 0) - shown);
+}
+/**
+ * A file.change's diff. One the adapter cut short says so where it stops, with how many changed
+ * lines it left out and a button that loads the whole diff from the blob the adapter kept.
+ */
+function changeDiff(ev) {
+  const p = ev.payload || {};
+  const block = diffBlock(p.diff);
+  if (p.diffTruncated !== true) return block;
+  const wrap = h("div", { class: "diff-cut" }, block);
+  const n = diffLeftOut(p);
+  const shas = (ev.blobs || []).filter((s) => typeof s === "string" && SHA_RE.test(s)).reverse();
+  const btn = shas.length ? h("button", { class: "btn btn-sm", type: "button" }, "Load full diff") : null;
+  const note = h("p", { class: "note diff-cut-note" }, "Diff cut short" + (n ? ": " + plural(n, "more changed line") + " not shown." : ".") + " ", btn);
+  wrap.append(note);
+  if (btn) btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    btn.textContent = "Loading…";
+    try {
+      // The adapter keeps the whole diff in one of the event's blobs (the last, as it adds it last); the right one starts with the cut.
+      for (const sha of shas) {
+        const res = await request("/api/blobs/" + sha);
+        if (!res.ok) continue;
+        const text = await res.text();
+        if (!text.startsWith(p.diff)) continue;
+        const cut = res.headers.get("X-Truncated") === "1";
+        swap(wrap, diffBlock(text), cut ? h("p", { class: "note" }, "Showing the first 2 MB of " + fmtBytes(Number(res.headers.get("X-Blob-Size") || 0)) + ".") : null);
+        return;
+      }
+      throw new Error("The full diff is not in the local store.");
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = "Retry";
+      swap(note, h("span", { class: "err" }, e.message + " "), btn);
+    }
+  });
+  return wrap;
 }
 /** Line diff of two strings (LCS), for Edit tool calls that carry old and new text. */
 function lineDiff(oldText, newText) {
@@ -6526,7 +6585,7 @@ function renderPane(pane, item, session, ctx) {
         nodes.push(h("div", { class: "badges" },
           p.additions !== undefined ? h("span", { class: "badge pass" }, "+" + fmtNum(p.additions)) : null,
           p.deletions !== undefined ? h("span", { class: "badge fail" }, "−" + fmtNum(p.deletions)) : null));
-        if (typeof p.diff === "string") nodes.push(section("diff", diffBlock(p.diff)));
+        if (typeof p.diff === "string") nodes.push(section("diff", changeDiff(ev)));
         break;
       }
       case "test.result": {
