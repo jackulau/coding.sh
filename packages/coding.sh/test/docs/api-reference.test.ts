@@ -93,7 +93,18 @@ function serverRoutes(): Map<string, string> {
       });
       return;
     }
-    const collectionOnly = /if \(id !== undefined\) throw new HttpError\(404/.test(block);
+    // A case with an item branch (`if (id !== undefined && id !== "") {`, up to its 405): the methods
+    // inside it answer at `/{}`, the others at the bare path.
+    const item = /if \(id !== undefined && id !== ""\) \{/.exec(block);
+    if (item) {
+      const end = block.indexOf("throw new HttpError(405", item.index);
+      assert.ok(end > item.index, `the item branch of ${base} ends in a 405`);
+      const ms = (text: string) => new Set([...text.matchAll(/method === "([A-Z]+)"/g)].map((m) => m[1]!));
+      for (const m of ms(block.slice(item.index, end))) routes.set(key(m, `${base}/{}`), "serve, ui");
+      for (const m of ms(block.slice(0, item.index) + block.slice(end))) routes.set(key(m, base), "serve, ui");
+      return;
+    }
+    const collectionOnly =/if \(id !== undefined\) throw new HttpError\(404/.test(block);
     const itemOnly = /if \(id === undefined \|\| sub !== undefined\) throw new HttpError\(404/.test(block) || /if \(id === undefined \|\| id === "" \|\| \(sub !== undefined && !\w+\)\) throw notFound\(\)/.test(block);
     const paths: string[] = [];
     if (!itemOnly) paths.push(base);

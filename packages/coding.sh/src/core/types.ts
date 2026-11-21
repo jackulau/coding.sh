@@ -178,6 +178,19 @@ export interface Score {
   ts: number;
 }
 
+/**
+ * A saved --where query (src/query/views.ts): `sessions --view <name>`, MCP sessions_list
+ * view, and /api/views read it back. Name: 1 to 64 letters, digits, - _ and .
+ */
+export interface SavedView {
+  name: string;
+  /** The query as typed; parsed again each time it is used, so since:7d stays relative. */
+  where: string;
+  /** Epoch ms. */
+  createdAt: number;
+  updatedAt: number;
+}
+
 /** The type and allowed values of one score name (src/scores). */
 export interface ScoreConfig {
   id: string;
@@ -476,6 +489,14 @@ export interface IndexStore {
   /** Upsert by id. Sorted by name, then id. */
   putScoreConfig?(config: ScoreConfig): Promise<void>;
   listScoreConfigs?(): Promise<ScoreConfig[]>;
+
+  /**
+   * Saved views (src/query/views.ts). putView upserts by name and writes the view as given;
+   * listViews is sorted by name; deleteView says whether a view was there.
+   */
+  putView?(view: SavedView): Promise<void>;
+  listViews?(): Promise<SavedView[]>;
+  deleteView?(name: string): Promise<boolean>;
 
   putJudge?(v: JudgeVersion): Promise<void>;
   getJudge?(id: string): Promise<JudgeVersion | undefined>;

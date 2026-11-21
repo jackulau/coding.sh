@@ -36,7 +36,7 @@ or a proxy in front of it.
 - A read key scoped to one project sees only that project. Lists are filtered, other sessions answer 404, and eval data (tasks, runs, bundles, experiments) comes back empty.
 - A `*` read key sees every project and can filter with `?project=`.
 
-**Content types.** Requests: `application/json` for `/v1/ingest`, `POST /api/labels`, `POST /api/scores` and `POST /api/score-configs`;
+**Content types.** Requests: `application/json` for `/v1/ingest`, `POST /api/labels`, `POST /api/scores`, `POST /api/score-configs` and `POST /api/views`;
 `application/json` or `application/x-protobuf` for OTLP. Ingest bodies may use `Content-Encoding`
 `gzip`, `deflate` or `br`. Responses are JSON, except the viewer page (HTML), `/metrics` (Prometheus
 text), blobs (`text/plain`) and OTLP protobuf requests (answered in protobuf).
@@ -49,6 +49,7 @@ text), blobs (`text/plain`) and OTLP protobuf requests (answered in protobuf).
 | Events per `/v1/ingest` request | 10,000 |
 | Ingest queue | 50,000 events or 128 MiB (`CODING_SH_QUEUE_MAX_EVENTS`, `CODING_SH_QUEUE_MAX_BYTES`) |
 | `POST /api/labels`, `/api/scores`, `/api/score-configs` body | 1 MB |
+| `POST /api/views` body | 16 KiB |
 | Blob response | 2 MiB unless `?full=1` |
 | Request headers / whole request | 20 s / 120 s |
 
@@ -121,6 +122,9 @@ same `CODING_SH_HOME` as the server.
 | POST | [`/api/scores`](#post-apiscores) | read key or basic auth | serve, ui |
 | GET | [`/api/score-configs`](#get-apiscore-configs-post-apiscore-configs) | read key or basic auth | serve, ui |
 | POST | [`/api/score-configs`](#get-apiscore-configs-post-apiscore-configs) | read key or basic auth | serve, ui |
+| GET | [`/api/views`](#get-apiviews-post-apiviews-delete-apiviewsname) | read key or basic auth | serve, ui |
+| POST | [`/api/views`](#get-apiviews-post-apiviews-delete-apiviewsname) | read key or basic auth | serve, ui |
+| DELETE | [`/api/views/{name}`](#get-apiviews-post-apiviews-delete-apiviewsname) | read key or basic auth | serve, ui |
 | GET | [`/api/experiments`](#get-apiexperiments) | read key or basic auth | serve, ui |
 | GET | [`/api/experiments/{id}`](#get-apiexperimentsid) | read key or basic auth | serve, ui |
 | GET | [`/api/compare`](#get-apicompare) | read key or basic auth | serve, ui |
@@ -1567,6 +1571,33 @@ curl -sS -X POST "$CSH/api/score-configs" \
 
 ```json
 {"id":"helpfulness","name":"helpfulness","dataType":"numeric","min":0,"max":5,"description":"How much the answer helped","ts":1794197173384}
+```
+
+### `GET /api/views`, `POST /api/views`, `DELETE /api/views/{name}`
+
+Saved views: `--where` queries kept under a name, the ones `coding.sh views` saves and
+`sessions --view` reads ([query language](query.md#saved-views)).
+
+- `GET` answers `{"items": [{name, where, createdAt, updatedAt}]}`, sorted by name. Times are
+  epoch milliseconds.
+- `POST` takes `{"name": "…", "where": "…"}` and answers the view: 201 when new, 200 when it
+  replaced the query of a view with that name (`createdAt` is kept).
+- A name is 1 to 64 letters, digits, `-`, `_` and `.`.
+- A bad name, or a query that does not parse, is a 400. A bad query's error is the parser's, with
+  `reason`, `offset` and `next`.
+- `DELETE /api/views/{name}` answers `{"ok": true}`, or 404 naming the views that exist.
+- Views are shared by every project, so a project-scoped key can read them but gets 403 on a
+  `POST` or `DELETE`. A store without views (the Postgres and ClickHouse plugins) answers 501.
+
+```sh
+curl -sS -X POST "$CSH/api/views" \
+  -H "Authorization: Bearer $READ_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"codex-flagged","where":"is:flagged agent:codex"}'
+```
+
+```json
+{"name":"codex-flagged","where":"is:flagged agent:codex","createdAt":1794197173384,"updatedAt":1794197173384}
 ```
 
 ### `GET /api/experiments`

@@ -13,6 +13,7 @@ import type {
   IndexStore,
   Label,
   RunResult,
+  SavedView,
   Score,
   ScoreConfig,
   ScoreFilter,
@@ -58,6 +59,7 @@ export class MemoryIndexStore implements IndexStore {
   private readonly scores = new Map<string, Score>();
   private readonly scoreConfigs = new Map<string, ScoreConfig>();
   private readonly kv = new Map<string, string>();
+  private readonly views = new Map<string, SavedView>();
   /** dataset id → version → { doc, info } (insertion order = history order). */
   private readonly datasets = new Map<string, Map<string, { doc: Dataset; info: DatasetVersionInfo }>>();
   private readonly datasetLatest = new Map<string, string>();
@@ -386,6 +388,18 @@ export class MemoryIndexStore implements IndexStore {
 
   async listScoreConfigs(): Promise<ScoreConfig[]> {
     return [...this.scoreConfigs.values()].sort((a, b) => cmp(a.name, b.name) || cmp(a.id, b.id)).map(clone);
+  }
+
+  async putView(v: SavedView): Promise<void> {
+    this.views.set(v.name, clone(v));
+  }
+
+  async listViews(): Promise<SavedView[]> {
+    return [...this.views.values()].sort((a, b) => cmp(a.name, b.name)).map(clone);
+  }
+
+  async deleteView(name: string): Promise<boolean> {
+    return this.views.delete(name);
   }
 
   async kvGet(key: string): Promise<string | undefined> {

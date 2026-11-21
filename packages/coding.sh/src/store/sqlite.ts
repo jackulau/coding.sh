@@ -17,6 +17,7 @@ import type {
   MetricRow,
   RunResult,
   Score,
+  SavedView,
   ScoreConfig,
   ScoreFilter,
   SearchHit,
@@ -540,6 +541,18 @@ ALTER TABLE events ADD COLUMN error TEXT;
         SELECT rowid, coding_sh_search_text(kind, payload) AS t FROM events WHERE error IS NOT NULL AND kind IN ('subagent.end', 'session.end')
       ) WHERE t IS NOT NULL`);
     },
+  },
+  {
+    // Saved views (src/query/views.ts): a --where query kept under a name.
+    version: 14,
+    sql: `
+CREATE TABLE views (
+  name TEXT PRIMARY KEY,
+  where_q TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+`,
   },
 ];
 
@@ -1708,6 +1721,26 @@ export class SqliteIndexStore implements IndexStore {
 
   async listScoreConfigs(): Promise<ScoreConfig[]> {
     return (this.stmt("SELECT doc FROM score_configs ORDER BY name, id").all() as Row[]).map((r) => parse<ScoreConfig>(r.doc)!);
+  }
+
+  // ------------------------------------------------------------ views
+
+  async putView(v: SavedView): Promise<void> {
+    this.stmt(`INSERT INTO views (name, where_q, created_at, updated_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(name) DO UPDATE SET where_q = excluded.where_q, created_at = excluded.created_at, updated_at = excluded.updated_at`).run(v.name, v.where, v.createdAt, v.updatedAt);
+  }
+
+  async listViews(): Promise<SavedView[]> {
+    return (this.stmt("SELECT name, where_q, created_at, updated_at FROM views ORDER BY name").all() as Row[]).map((r) => ({
+      name: String(r.name),
+      where: String(r.where_q),
+      createdAt: Number(r.created_at),
+      updatedAt: Number(r.updated_at),
+    }));
+  }
+
+  async deleteView(name: string): Promise<boolean> {
+    return Number(this.stmt("DELETE FROM views WHERE name = ?").run(name).changes) > 0;
   }
 
   // ------------------------------------------------------------ kv

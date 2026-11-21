@@ -34,6 +34,7 @@ grouped by area, with links to the docs for the details.
 - **Harness.** `coding.sh harness tools` lists every MCP and built-in tool the proxy saw across sessions, with a hash of its description and schema. `--changed` exits 1 when a tool had more than one description or schema, or differs from the hashes `harness tools pin` saved. Needs the proxy with request capture. [Proxy](https://coding.sh/docs/how-to/capture-with-proxy#catch-a-tool-description-that-changed)
 - **Capture.** Serve and the collector also take OTel traces at `/api/public/otel/v1/traces`, where Basic auth with an ingest key as username or password works, so an SDK that sends there changes only its host. `--where user:`, `env:` and `release:` filter by the user, environment and release a trace names. [OTel](https://coding.sh/docs/otel#public-path)
 - **Work.** A T3 Code thread that waits on an approval or a question is blocked on you in `coding.sh work`, with the prompt or question, whichever agent the thread runs. The wait comes from T3's store and clears when T3 resolves the request. [Work](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#waiting-state)
+- **Sessions.** `coding.sh views save <name> --where <query>` keeps a query under a name, and `views list` and `views rm` manage them. `sessions --view <name>` lists its sessions, ANDed with `--where` when both are given; the MCP `sessions_list` tool takes `view`, and the viewer API serves `/api/views`. [Query](https://coding.sh/docs/query#saved-views)
 
 ### Changed
 

@@ -46,6 +46,7 @@ Every command accepts these.
 | [`serve`](#codingsh-serve) | Capture | Production server: OTLP + native ingest, viewer, health and metrics on one port |
 | [`uninstall`](#codingsh-uninstall) | Capture | Remove coding.sh hooks and MCP entries from every agent |
 | [`sessions`](#codingsh-sessions) | Explore | List captured sessions |
+| [`views`](#codingsh-views) | Explore | Save a --where query under a name, for sessions --view, the MCP server and the viewer |
 | [`show`](#codingsh-show) | Explore | Show a session timeline with subagents and latency |
 | [`tree`](#codingsh-tree) | Explore | Show a whole multi-agent run as one tree, with rolled-up totals |
 | [`replay`](#codingsh-replay) | Explore | Step through a session and see what it did to each file it touched |
@@ -545,6 +546,7 @@ coding.sh sessions [options]
 | `--project <ID>` |  | Only sessions in this serve project (default: all) |
 | `--flag <NAME>` |  | Only sessions with this flag: looping, failure-streak, churn, no-progress, stalled, context-thrash, premature-completion, duplicate-fetch, …, or a tag such as skill:&lt;name&gt;. |
 | `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
+| `--view <NAME>` |  | Only sessions matching this saved view's query (coding.sh views list); with --where, both must hold. |
 | `--fields <PATHS>` |  | With --json: print only these fields, as a comma list of dotted paths (id,title,stats.usage.costUsd). A path through a list picks from each item. Repeatable. |
 | `--facets [<KEYS>]` |  | Count sessions per value instead of listing them: agent, model, provider, repo, launch, branch, flag, skill, hook, kind, tool, mcp (default: agent, model, repo, flag, skill, tool) |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
@@ -552,6 +554,7 @@ coding.sh sessions [options]
 ```sh
 coding.sh sessions --where 'agent:codex cost>0.5 since:7d'
 coding.sh sessions --where 'tool:Bash ok:false -flag:compaction'
+coding.sh sessions --view codex-flagged --since 7d
 coding.sh sessions --facets model,tool --where 'repo:coding-sh'
 coding.sh sessions --agent codex --since 7d
 ```
@@ -561,6 +564,80 @@ coding.sh sessions --agent codex --since 7d
 - --facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).
 - With --json each session is a digest: its stats without stats.phases, and each derail without the event it started at (eventId, index). show &lt;id&gt; --json has both, and --fields stats.phases or --fields stats.derails prints them here.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
+
+## `coding.sh views`
+
+Save a --where query under a name, for sessions --view, the MCP server and the viewer.
+
+```text
+coding.sh views <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`save`](#codingsh-views-save) | Save a query as a view; saving a name that exists replaces its query |
+| [`list`](#codingsh-views-list) | List the saved views, by name |
+| [`rm`](#codingsh-views-rm) | Remove a view |
+
+```sh
+coding.sh views save codex-flagged --where 'is:flagged agent:codex'
+coding.sh sessions --view codex-flagged
+coding.sh views list
+```
+
+- A view keeps the query as typed and parses it again each time it is used, so since:7d means the 7 days before that run.
+- sessions --view &lt;name&gt; lists the same sessions as sessions --where '&lt;the view's query&gt;'. With --where too, both must hold: each side is grouped on its own, so an OR or a negation in either keeps its meaning. --where's sort: and limit: win over the view's.
+- Views live in the local index (SQLite or memory). The MCP sessions_list tool takes a view argument, and the viewer reads and writes them at /api/views. A store plugin without views (postgres, clickhouse) exits 1.
+
+### `coding.sh views save`
+
+Save a query as a view; saving a name that exists replaces its query.
+
+```text
+coding.sh views save <NAME> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | 1 to 64 letters, digits, '-', '_' and '.'. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--where <QUERY>` |  | The query to save, in the --where language (keys: coding.sh sessions --help). A query that does not parse is refused (exit 2) |
+
+```sh
+coding.sh views save codex-flagged --where 'is:flagged agent:codex'
+coding.sh views save slow --where 'duration>30m since:7d'
+```
+
+### `coding.sh views list`
+
+List the saved views, by name.
+
+```text
+coding.sh views list
+```
+
+```sh
+coding.sh views list
+coding.sh views list --json
+```
+
+### `coding.sh views rm`
+
+Remove a view.
+
+```text
+coding.sh views rm <NAME>
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | The view's name (views list) |
+
+```sh
+coding.sh views rm codex-flagged
+```
 
 ## `coding.sh show`
 
