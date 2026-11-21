@@ -165,8 +165,7 @@
     "payload": {
       "runner": "pytest",
       "passed": 2,
-      "failed": 0,
-      "skipped": 0
+      "failed": 0
     },
     "id": "9e9e1a996a3447da6b2977a7d5c203c675b6aa603e2f7b9fcc03618e13a54714",
     "turnId": "35948f7566d3f68f196daf313304834b2805900edf3004be0476961eff8e1517",

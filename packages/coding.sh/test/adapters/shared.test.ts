@@ -24,6 +24,7 @@ import {
   removeTomlBlock,
   revertTomlKey,
   shellCommandOf,
+  stripAnsi,
   stripNestedHooks,
   upsertTomlBlock,
   walkFiles,
@@ -49,8 +50,46 @@ describe("test-output heuristics", () => {
     });
   }
 
-  it("strips ANSI colors", () => {
+  it("reads pytest -q's bare summary line, and not prose", () => {
+    const bare: [string, number, number][] = [
+      ["2 passed in 0.01s", 2, 0],
+      ["1 failed, 2 passed in 0.12s", 2, 1],
+      ["2 passed, 1 warning in 0.01s", 2, 0],
+      ["5 passed in 62.03s (0:01:02)", 5, 0],
+    ];
+    for (const [line, passed, failed] of bare) assert.deepEqual(parseTestOutput(`..\n${line}\n`, "pytest -q"), { runner: "pytest", passed, failed }, line);
+    assert.equal(parseTestOutput("the value was passed in 3s\n", "pytest -q"), undefined);
+  });
+
+  it("takes the last summary when an output prints several", () => {
+    // A rerun in one call (`npm test || npm test`, a watch mode): the last summary is the outcome.
+    assert.deepEqual(parseTestOutput("Tests:       1 failed, 1 passed, 2 total\nTests:       2 passed, 2 total\n", "npm test"), { runner: "jest", passed: 2, failed: 0 });
+    assert.deepEqual(parseTestOutput("      Tests  1 failed | 1 passed (2)\n      Tests  2 passed (2)\n", "npx vitest run"), { runner: "vitest", passed: 2, failed: 0 });
+    assert.deepEqual(parseTestOutput("# pass 1\n# fail 1\n# pass 2\n# fail 0\n", "node --test"), { runner: "node:test", passed: 2, failed: 0 });
+    // Mocha prints "failing" only when a test failed: an earlier run's line is not the last run's.
+    assert.deepEqual(parseTestOutput("  1 passing (5ms)\n  1 failing\n  2 passing (4ms)\n", "npx mocha"), { runner: "mocha", passed: 2, failed: 0 });
+  });
+
+  it("reads long outputs in linear time", () => {
+    const outputs: [string, string][] = [
+      ["blank lines", "\n".repeat(10_000) + "\r\n".repeat(5_000) + " \n".repeat(5_000)],
+      ["one line of counts", "1 passed ".repeat(20_000)],
+      ["OSC starts with no end", "\u001b]".repeat(50_000)],
+    ];
+    for (const [name, out] of outputs) {
+      const t0 = performance.now();
+      assert.equal(parseTestOutput(out, "pytest -q"), undefined, name);
+      const ms = performance.now() - t0;
+      assert.ok(ms < 500, `${name} took ${Math.round(ms)} ms`);
+    }
+  });
+
+  it("strips ANSI colors, titles and links", () => {
     assert.equal(parseTestOutput("\u001b[32m      Tests  \u001b[1m3 passed\u001b[22m (3)\u001b[39m\n", "vitest")?.passed, 3);
+    // An OSC 8 link ends with ESC \ and a title with BEL: both go, and the summary between them stays.
+    const link = "\u001b]8;;file:///work/demo/a.test.ts\u001b\\a.test.ts\u001b]8;;\u001b\\";
+    assert.equal(stripAnsi(`${link} ok\u001b]0;vitest\u0007`), "a.test.ts ok");
+    assert.equal(parseTestOutput(`${link}\n      Tests  3 passed (3)\n\u001b]0;vitest\u0007\n`, "vitest")?.passed, 3);
   });
 
   it("weak signals (mocha/go) need a test command; noise is ignored", () => {

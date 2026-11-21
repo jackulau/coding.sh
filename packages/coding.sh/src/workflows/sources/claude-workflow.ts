@@ -599,8 +599,9 @@ export async function findClaudeWorkflowDirs(root: string, opts: FindOpts = {}):
 /**
  * Bump when the same run dir builds a different run, so `workflows import` reads stored runs again.
  * 2: a running run is named by its persisted script's meta.name, not its id.
+ * 3: an agent's shell call reads the last jest, vitest, node:test or mocha summary in its output, not the first.
  */
-const IMPORT_VERSION = 2;
+const IMPORT_VERSION = 3;
 
 /** Cheap change detector: journal + record sizes and mtimes, and IMPORT_VERSION. */
 export async function runDirSignature(d: ClaudeWorkflowDir): Promise<string> {

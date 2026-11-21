@@ -39,6 +39,12 @@ describe("wrapper normalize", () => {
     assert.match(anon[0]!.sessionId, /^wrapper-[0-9a-f]{24}$/, "stable fallback session id without a sessionId");
   });
 
+  it("reads pytest -q's bare summary line from an output chunk", async () => {
+    const { ctx } = testCtx();
+    const events = await wrapperAdapter.normalize({ v: 0, agent: "wrapper", event: "stdout", ts: 1790000001000, pid: 2801, cwd: "/work/demo", raw: { sessionId: "wrap-sess-2", text: "..\n2 passed in 0.01s\n" } }, ctx);
+    assert.deepEqual(events.find((e) => e.kind === "test.result")?.payload, { runner: "pytest", passed: 2, failed: 0, source: "output" });
+  });
+
   it("aider normalizes through the wrapper, plus the prompt from its argv", async () => {
     const line = loadSpool("wrapper/wrapper.spool.jsonl").find((l) => l.agent === "aider")!;
     const { ctx } = testCtx();
