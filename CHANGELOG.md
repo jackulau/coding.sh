@@ -180,6 +180,7 @@ grouped by area, with links to the docs for the details.
 - **Evals.** Copilot CLI, Droid, Gemini CLI, Goose and Pi eval runs keep the agent's home next to the work dir, not inside it, so they read the bundle's `~/` files and the `--carry` state, and logins and the agent's files stay out of the start commit and the diff. Aider and Amp read the bundle's config files too. [Harness A/B](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#harness-ab)
 - **Capture.** On Windows with Node 24, a read that kills its import child at its deadline waits up to a second for the child to let go of its SQLite store copy, then removes it. Before, `rmSync` gave up at once, so the copy (T3 Code's is 1.7 GB) stayed in the temp folder until the next read. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#host-apps-t3-code)
 - **SDK.** Without `CODING_SH_URL`, the TypeScript SDK's `observe()` and `observeFetch()` pass each call through untouched, as the docs say. Before, `observe()` still added `stream_options` to OpenAI chat streams, and `observeFetch()` still read every request and response body, so `flush()` waited on open streams. [SDK](https://coding.sh/docs/sdk)
+- **SDK.** In an Anthropic tool loop, the TypeScript SDK's `observe()` records the user's prompt as each call's `user.message` and session title, as the Python SDK does. Before, it took the text of the last `tool_result` block, so the sessions were titled with a tool's output. [SDK](https://coding.sh/docs/sdk)
 
 ## [0.1.7] - 2026-11-16
 
