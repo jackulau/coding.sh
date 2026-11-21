@@ -121,17 +121,23 @@ describe("buckets", () => {
     assert.match(closed.next, /^probably closed: resume with `claude --resume tr`/);
   });
 
-  test("a T3 Code thread running Claude Code that reports a permission prompt is not named as having no prompt signal", () => {
+  test("T3 Code reports its threads' prompts (its store's requests), whatever agent a thread runs", () => {
     const t3cc = open("t3cc", 2 * MIN, { agent: "t3code", provider: "claude-code", stats: { waiting: wait("permission", ago(2 * MIN), "t1") } });
     const q = queue([t3cc]);
     assert.equal(q.items[0]!.bucket, "blocked");
     assert.deepEqual(q.noPromptSignal, []);
+    // A quiet T3 thread running Codex is stalled with no hint: T3's store would have shown a pending approval.
     const t3cx = open("t3cx", STALL_MS + MIN, { agent: "t3code", provider: "codex" });
     const q2 = queue([t3cx]);
-    assert.deepEqual(q2.noPromptSignal, ["codex"]);
-    assert.match(q2.items[0]!.hint ?? "", /^codex reports no prompts/);
+    assert.equal(q2.items[0]!.bucket, "stalled");
+    assert.deepEqual(q2.noPromptSignal, []);
+    assert.equal(q2.items[0]!.hint, undefined);
     const lone = open("t3x", STALL_MS + MIN, { agent: "t3code" });
-    assert.deepEqual(queue([lone]).noPromptSignal, ["t3code"]);
+    assert.deepEqual(queue([lone]).noPromptSignal, []);
+    // A Codex session T3 did not run still has no prompt signal, beside a T3 thread running Codex.
+    const q3 = queue([t3cx, open("cx", STALL_MS + MIN, { agent: "codex" })]);
+    assert.deepEqual(q3.noPromptSignal, ["codex"]);
+    assert.match(q3.items.find((i) => i.primaryId === "cx")!.hint ?? "", /^codex reports no prompts/);
   });
 
   test("a wait older than 12 hours is probably closed, and says how to resume or ack", () => {

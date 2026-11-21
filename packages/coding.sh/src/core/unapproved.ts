@@ -395,8 +395,10 @@ export const PERMISSION_TEXT = /needs your (?:permission|approval)|permission to
 const PERMISSION_TYPE = /^(?:permission_prompt|ToolPermission)$/i;
 /** The tool a permission prompt names: "Claude needs your permission to use Bash". */
 const PERMISSION_TOOL = /permission to use [`'"]?([\w.:-]*\w)/i;
-/** Calls that start a subagent: they stay open while it runs, so a prompt is never about them. */
-const SPAWN_TOOL = /^(?:Agent|Task|spawn_agent|invoke_agent|run_subagent)$/;
+/** Calls that start a subagent: they stay open while it runs, so a prompt is never about them (core/waiting.ts too). */
+export const SPAWN_TOOL = /^(?:Agent|Task|spawn_agent|invoke_agent|run_subagent)$/;
+/** A question a host app's store reports (T3 Code's user-input request): asked of the user, not a permission prompt. */
+export const HOST_QUESTION = "question_prompt";
 
 const nonEmpty = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
 
@@ -405,7 +407,7 @@ export function isPermissionNotification(e: AgentEvent): boolean {
   if (e.kind !== "notification") return false;
   const type = nonEmpty(e.payload.type) ?? nonEmpty(e.payload.kind);
   if (type && PERMISSION_TYPE.test(type)) return true;
-  if (type === "idle_prompt") return false;
+  if (type === "idle_prompt" || type === HOST_QUESTION) return false;
   const text = nonEmpty(e.payload.text) ?? nonEmpty(e.payload.message);
   return text !== undefined && PERMISSION_TEXT.test(text);
 }

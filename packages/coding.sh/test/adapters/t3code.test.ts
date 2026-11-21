@@ -20,6 +20,7 @@ import type { Adapter } from "../../src/core/types.ts";
 import { usage } from "../../src/mcp/data.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { hostOf } from "../../src/spool/host.ts";
+import { CLI } from "../_cli.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { FIXTURES, assertWellFormed, collect, testCtx, tmpEnv, type TmpEnv, writeFile } from "./_helpers.ts";
@@ -36,6 +37,7 @@ CREATE TABLE orchestration_v2_projection_provider_threads (provider_thread_id TE
 CREATE TABLE orchestration_v2_projection_provider_turns (provider_turn_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, provider_thread_id TEXT NOT NULL, node_id TEXT NOT NULL, run_attempt_id TEXT, ordinal INTEGER NOT NULL, status TEXT NOT NULL, started_at TEXT, completed_at TEXT, payload_json TEXT NOT NULL);
 CREATE TABLE orchestration_v2_projection_messages (message_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT, node_id TEXT, role TEXT NOT NULL, streaming INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, payload_json TEXT NOT NULL);
 CREATE TABLE orchestration_v2_projection_turn_items (turn_item_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT, node_id TEXT, provider_thread_id TEXT, provider_turn_id TEXT, parent_item_id TEXT, ordinal INTEGER NOT NULL, type TEXT NOT NULL, status TEXT NOT NULL, updated_at TEXT NOT NULL, payload_json TEXT NOT NULL);
+CREATE TABLE orchestration_v2_projection_runtime_requests (runtime_request_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, node_id TEXT NOT NULL, provider_turn_id TEXT, kind TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, resolved_at TEXT, payload_json TEXT NOT NULL);
 `;
 
 const V1_SCHEMA = `
@@ -710,6 +712,114 @@ describe("T3 store-built model calls", () => {
     assert.ok(link);
     assert.equal(link.payload.title, undefined);
     assert.equal(link.payload.message, "T3 Code thread");
+  });
+});
+
+describe("T3 requests to the user", () => {
+  // T3 records a request to the user twice: a runtime request (status pending until resolved,
+  // expired or cancelled) and a turn item that carries the prompt or question (status waiting).
+  let env: TmpEnv;
+  const saved: Record<string, string | undefined> = {};
+  before(() => {
+    env = tmpEnv();
+    for (const k of t3Env) (saved[k] = process.env[k]), delete process.env[k];
+  });
+  after(() => {
+    for (const k of t3Env) if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+    env.restore();
+  });
+
+  const ago = (min: number) => new Date(Date.now() - min * 60e3).toISOString();
+  const storePath = () => join(env.home, ".t3", "userdata", "statev2.sqlite");
+
+  /** A thread running Codex that waits on a command approval, and one running Grok that asked a question. */
+  function requestStore() {
+    mkdirSync(dirname(storePath()), { recursive: true });
+    rmSync(storePath(), { force: true });
+    const db = new DatabaseSync(storePath());
+    db.exec(V2_SCHEMA);
+    db.prepare("INSERT INTO projection_projects VALUES ('proj-1', 'demo', '/work/demo', '[]', ?, ?, NULL, NULL)").run(ago(30), ago(30));
+    const msg = db.prepare("INSERT INTO orchestration_v2_projection_messages VALUES (?, ?, NULL, 'node-1', 'user', 0, ?, ?, ?)");
+    const turn = db.prepare("INSERT INTO orchestration_v2_projection_provider_turns VALUES (?, ?, ?, 'node-1', NULL, 1, 'running', ?, NULL, ?)");
+    const item = db.prepare("INSERT INTO orchestration_v2_projection_turn_items VALUES (?, ?, NULL, 'node-1', ?, ?, NULL, 1, ?, 'waiting', ?, ?)");
+    const request = db.prepare("INSERT INTO orchestration_v2_projection_runtime_requests VALUES (?, ?, 'node-1', ?, ?, 'pending', ?, NULL, ?)");
+    // The Codex thread's rollout is not on disk: its session is built from T3's store.
+    thread(db, "thr-ask", { provider: "codex", title: "Publish the package", created: ago(10) });
+    providerThread(db, "pt-ask", "thr-ask", "codex", "codex-ask-not-on-disk", 1);
+    msg.run("m-ask", "thr-ask", ago(9), ago(9), J({ text: "Publish the package" }));
+    turn.run("tu-ask", "thr-ask", "pt-ask", ago(9), J({ status: "running" }));
+    item.run("it-ask", "thr-ask", "pt-ask", "tu-ask", "approval_request", ago(2), J({ id: "it-ask", status: "waiting", type: "approval_request", requestId: "req-ask", requestKind: "command", reason: "Run npm publish", startedAt: ago(2) }));
+    request.run("req-ask", "thr-ask", "tu-ask", "command", ago(2), J({ id: "req-ask", kind: "command", status: "pending", createdAt: ago(2) }));
+    thread(db, "thr-q", { provider: "grok", title: "Pick a database", created: ago(10) });
+    providerThread(db, "pt-q", "thr-q", "grok", "grok-q", 1);
+    msg.run("m-q", "thr-q", ago(9), ago(9), J({ text: "Set up storage" }));
+    turn.run("tu-q", "thr-q", "pt-q", ago(9), J({ status: "running" }));
+    const questions = [{ id: "q1", header: "Database", question: "Which database should I use?", options: [{ label: "SQLite" }, { label: "Postgres" }], multiSelect: false }];
+    item.run("it-q", "thr-q", "pt-q", "tu-q", "user_input_request", ago(3), J({ id: "it-q", status: "waiting", type: "user_input_request", requestId: "req-q", questions, startedAt: ago(3) }));
+    request.run("req-q", "thr-q", "tu-q", "user_input", ago(3), J({ id: "req-q", kind: "user_input", status: "pending", createdAt: ago(3) }));
+    // A provider's own tool call is a runtime request too, but not one put to the user.
+    request.run("req-tool", "thr-q", "tu-q", "dynamic_tool_call", ago(3), J({ id: "req-tool", kind: "dynamic_tool_call", status: "pending" }));
+    db.close();
+  }
+
+  const waitOf = (events: AgentEvent[], id: string) => buildSession(events.filter((e) => e.sessionId === id)).stats.waiting;
+
+  it("an open approval is a permission wait and an open question a question, with their text", async () => {
+    requestStore();
+    const events = await collect(backfillT3(testCtx().ctx));
+    assertWellFormed(events);
+    const ask = waitOf(events, "codex-ask-not-on-disk");
+    assert.equal(ask?.kind, "permission");
+    assert.equal(ask?.text, "Run npm publish");
+    const q = waitOf(events, "grok-q");
+    assert.equal(q?.kind, "question");
+    assert.equal(q?.text, "Which database should I use?");
+    const note = events.find((e) => e.payload.requestId === "req-ask")!;
+    assert.deepEqual([note.payload.type, note.payload.requestKind, note.payload.tool], ["permission_prompt", "command", "shell"]);
+    assert.equal(events.some((e) => e.payload.requestId === "req-tool"), false, "a provider's tool call is not a request to the user");
+  });
+
+  it("a request T3 resolved leaves no wait, whichever record says so first", async () => {
+    requestStore();
+    const db = new DatabaseSync(storePath());
+    // The approval: its runtime request resolved, its item not yet updated.
+    db.prepare("UPDATE orchestration_v2_projection_runtime_requests SET status = 'resolved', resolved_at = ? WHERE runtime_request_id = 'req-ask'").run(ago(1));
+    // The question: its item answered, its runtime request still pending.
+    db.prepare("UPDATE orchestration_v2_projection_turn_items SET status = 'completed', updated_at = ? WHERE turn_item_id = 'it-q'").run(ago(1));
+    db.close();
+    const events = await collect(backfillT3(testCtx().ctx));
+    assert.equal(waitOf(events, "codex-ask-not-on-disk"), undefined);
+    assert.equal(waitOf(events, "grok-q"), undefined);
+    assert.equal(events.filter((e) => e.payload.type === "request_resolved").length, 2);
+  });
+
+  it("work --json shows the thread blocked on you, and not once T3 resolves the request", () => {
+    requestStore();
+    const cliEnv = { ...process.env, USERPROFILE: env.home, T3CODE_HOME: join(env.home, ".t3"), CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1", NO_COLOR: "1" };
+    const work = () => {
+      const r = spawnSync(process.execPath, ["--no-warnings", CLI, "work", "--json", "--fresh", "--all"], { env: cliEnv, encoding: "utf8", timeout: 120_000 });
+      assert.equal(r.status, 0, r.stderr);
+      return JSON.parse(r.stdout) as { counts: Record<string, number>; noPromptSignal?: string[]; items: { sessionId: string; bucket?: string; waiting?: { kind: string; text?: string } }[] };
+    };
+    const first = work();
+    const item = (id: string, q = first) => q.items.find((i) => i.sessionId === id);
+    assert.equal(first.counts.blocked, 2);
+    assert.equal(item("codex-ask-not-on-disk")?.bucket, "blocked");
+    const ask = item("codex-ask-not-on-disk")?.waiting;
+    assert.deepEqual([ask?.kind, ask?.text], ["permission", "Run npm publish"]);
+    assert.equal(item("grok-q")?.waiting?.kind, "question");
+    assert.deepEqual(first.noPromptSignal ?? [], [], "T3 Code reports its prompts");
+    // T3 resolves the approval: only its runtime request row changes (status and resolved_at).
+    const db = new DatabaseSync(storePath());
+    db.prepare("UPDATE orchestration_v2_projection_runtime_requests SET status = 'resolved', resolved_at = ? WHERE runtime_request_id = 'req-ask'").run(ago(0));
+    db.close();
+    const later = new Date(Date.now() + 2000);
+    utimesSync(storePath(), later, later);
+    const second = work();
+    assert.equal(second.counts.blocked, 1);
+    assert.notEqual(item("codex-ask-not-on-disk", second)?.bucket, "blocked");
+    assert.equal(item("grok-q", second)?.bucket, "blocked");
   });
 });
 

@@ -1,18 +1,24 @@
 // What a session waits on from the user, folded into Session.stats.waiting:
-// a permission prompt, an open question or plan-approval call, or (in a session
-// launched interactively) the next prompt after the main thread's turn ended.
+// a permission prompt, an open question or plan-approval call, a request a host app's
+// store reports open (T3 Code's approvals and questions), or (in a session launched
+// interactively) the next prompt after the main thread's turn ended.
 // core/work.ts reads it to put a work item in "blocked on you" or "your turn".
 // Age rules (a wait left for hours) apply on read, not here.
 import type { AgentEvent, Waiting } from "../schema/index.ts";
 import { redactShown } from "./redact.ts";
-import { isPermissionNotification, QUESTION_TOOL } from "./unapproved.ts";
+import { HOST_QUESTION, isPermissionNotification, QUESTION_TOOL, SPAWN_TOOL } from "./unapproved.ts";
 
-export { isPermissionNotification };
+export { HOST_QUESTION, isPermissionNotification };
 
 /** A plan the agent asks the user to approve before it starts (Claude Code's plan mode). */
 export const PLAN_TOOL = /^(?:ExitPlanMode|exit_plan_mode)$/i;
-/** A call that starts a subagent: it stays open while the subagent runs, so a prompt is never about it. */
-const SPAWN_TOOL = /^(?:Agent|Task|spawn_agent|run_subagent)$/;
+/**
+ * A host app's store (T3 Code) reports a request to the user as a notification with a
+ * `requestId`: type `permission_prompt` (an approval) or HOST_QUESTION (a question), and this
+ * type once the request is answered, refused or dropped. The store holds current state, not a
+ * replay, so these count in a backfill too.
+ */
+export const HOST_RESOLVED = "request_resolved";
 /** Open calls kept per session; the oldest go first. */
 const MAX_OPEN = 64;
 const TEXT_MAX = 300;
@@ -27,10 +33,10 @@ interface OpenCall {
 /** What the fold keeps. Serializable (node:v8): plain objects and arrays. */
 export interface WaitingState {
   open: OpenCall[];
-  /** Ids of calls that ended, newest last: a copy of a call's start that arrives after its end opens nothing. */
+  /** Ids of calls that ended and of host requests resolved, newest last: a copy of a start that arrives after its end opens nothing. */
   ended: string[];
-  /** `tool`: the open call the wait is on, when that call has no id (Devin CLI's hooks name none). */
-  wait?: Waiting & { thread: string; tool?: string };
+  /** `tool`: the open call the wait is on, when that call has no id (Devin CLI's hooks name none). `request`: the host request it is. */
+  wait?: Waiting & { thread: string; tool?: string; request?: string };
 }
 
 export const waitingState = (): WaitingState => ({ open: [], ended: [] });
@@ -65,6 +71,10 @@ const SYNTHETIC = /^\s*<(?:task-notification|local-command-(?:stdout|stderr|cave
 export function foldWaiting(s: WaitingState, e: AgentEvent, backfill: boolean): void {
   const thread = e.subagentId ?? "";
   const w = s.wait;
+  if (e.kind === "notification" && str(e.payload.requestId)) {
+    hostRequest(s, e, thread);
+    return;
+  }
   switch (e.kind) {
     case "tool.start": {
       const tool = str(e.payload.tool) ?? "";
@@ -133,6 +143,27 @@ export function foldWaiting(s: WaitingState, e: AgentEvent, backfill: boolean): 
   }
 }
 
+/** A request from a host app's store: it waits until a resolved notification names its id. */
+function hostRequest(s: WaitingState, e: AgentEvent, thread: string): void {
+  const id = str(e.payload.requestId)!;
+  const type = str(e.payload.type);
+  if (type === HOST_RESOLVED) {
+    if (s.wait?.request === id) s.wait = undefined;
+    if (!s.ended.includes(id)) {
+      s.ended.push(id);
+      if (s.ended.length > MAX_OPEN) s.ended.splice(0, s.ended.length - MAX_OPEN);
+    }
+    return;
+  }
+  // Resolved at the same time it was asked: the resolution may sort first.
+  if (s.ended.includes(id)) return;
+  const kind = type === HOST_QUESTION ? "question" : isPermissionNotification(e) ? "permission" : undefined;
+  if (!kind) return;
+  // The host names the request, not a tool call: its resolution ends it, or the thread moving on.
+  s.wait = wait(kind, e, thread, undefined, str(e.payload.text) ?? str(e.payload.message));
+  s.wait.request = id;
+}
+
 function wait(kind: Waiting["kind"], e: AgentEvent, thread: string, toolUseId: string | undefined, text: string | undefined): NonNullable<WaitingState["wait"]> {
   const out: NonNullable<WaitingState["wait"]> = { kind, at: e.ts, thread };
   if (toolUseId) out.toolUseId = toolUseId;
@@ -145,6 +176,6 @@ function wait(kind: Waiting["kind"], e: AgentEvent, thread: string, toolUseId: s
 export function waitingOf(s: WaitingState | undefined, launch: "headless" | "interactive" | undefined): Waiting | undefined {
   const w = s?.wait;
   if (!w || (w.kind === "turn" && launch !== "interactive")) return undefined;
-  const { thread: _thread, tool: _tool, ...out } = w;
+  const { thread: _thread, tool: _tool, request: _request, ...out } = w;
   return out;
 }

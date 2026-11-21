@@ -32,8 +32,8 @@ export type HiddenReason = "running" | "done" | "acked" | "snoozed";
 export const PROBABLY_CLOSED_MS = 12 * 3600e3;
 /** Quiet this long mid-turn is a stall: the derail stall threshold (core/derail.ts). */
 export const STALL_MS = DERAIL_THRESHOLDS.stallMs;
-/** Agents whose hooks report permission prompts. Waits in the others show up as stalls. */
-export const PROMPT_SIGNAL_AGENTS: ReadonlySet<string> = new Set(["claude-code", "gemini-cli", "devin"]);
+/** Agents whose hooks (or, for T3 Code, its store) report permission prompts. Waits in the others show up as stalls. */
+export const PROMPT_SIGNAL_AGENTS: ReadonlySet<string> = new Set(["claude-code", "gemini-cli", "devin", "t3code"]);
 /** A session whose end is only its last activity seen (stats.endInferred) is running when it was active this recently. */
 export const INFERRED_RUNNING_MS = 15 * 60e3;
 /** Parent links that start a separate item: a harness child (`codex exec` from an orchestrator). */
@@ -132,8 +132,8 @@ export function workRunning(s: Session, now: number): boolean {
   return s.stats.endInferred === true && now - lastActivity(s) < INFERRED_RUNNING_MS;
 }
 
-/** The agent whose hooks would report a prompt: the agent a host app ran, else the session's own. */
-const promptAgent = (s: Session): string => (HOST_AGENTS.has(s.agent) && s.provider ? s.provider : s.agent);
+/** The agent that would report a prompt: a host app that reports its own (T3 Code's store), else the agent it ran, else the session's own. */
+const promptAgent = (s: Session): string => (HOST_AGENTS.has(s.agent) && s.provider && !PROMPT_SIGNAL_AGENTS.has(s.agent) ? s.provider : s.agent);
 
 /** True when the session's prompts reach coding.sh: its agent reports them, or a permission prompt was seen. */
 const reportsPrompts = (s: Session): boolean => PROMPT_SIGNAL_AGENTS.has(promptAgent(s)) || s.stats.waiting?.kind === "permission";
