@@ -32,6 +32,48 @@ export const WEIGHTS = {
   site: 10,
 };
 
+/**
+ * Credit in [0, 1] for one reading against its budget: 1 when the reading meets it, else how close it
+ * came: target / reading under a ceiling (`dir` "max"), reading / target over a floor ("min").
+ * null when there is no reading.
+ */
+export function credit(value, target, dir) {
+  if (typeof value !== "number" || !Number.isFinite(value) || typeof target !== "number") return null;
+  if (dir === "max" ? value <= target : value >= target) return 1;
+  const [num, den] = dir === "max" ? [target, value] : [value, target];
+  return den > 0 ? Math.max(0, Math.min(1, num / den)) : 0;
+}
+
+/**
+ * The readings a budget is judged on, as [reading, target, dir]. perf.hook is met when its median,
+ * p95 and 1 MB readings all are; the Lighthouse budget covers mobile performance and the other
+ * categories on mobile and desktop; the vitals budget covers LCP, CLS and TBT. Targets stored in
+ * the component come first, so an old scorecard is judged on the targets it was scored against.
+ */
+function readings(k, c) {
+  const num = (x, fallback) => (typeof x === "number" ? x : fallback);
+  if (k === "perf.hook") return [[c.value, num(c.target, PERF_TARGETS["perf.hook"].target), "max"], [c.p95, PERF_TARGETS["perf.hookP95"].target, "max"], [c.mb1, PERF_TARGETS["perf.hook1mb"].target, "max"]];
+  if (PERF_TARGETS[k]) return [[c.value, num(c.target, PERF_TARGETS[k].target), PERF_TARGETS[k].dir]];
+  if (k === "site.js") return [[c.value, num(c.target, SITE_TARGETS.jsKb * 1024), "max"]];
+  if (k === "site.lighthouse") {
+    const t = (cat) => num(c.target?.[cat], SITE_TARGETS.lighthouse[cat]);
+    const cats = c.categories ?? {};
+    return [[cats.mobile?.performance, t("performance"), "min"], ...["accessibility", "best-practices", "seo"].flatMap((cat) => [[cats.mobile?.[cat], t(cat), "min"], [cats.desktop?.[cat], t(cat), "min"]])];
+  }
+  if (k === "site.vitals") return ["lcpMs", "cls", "tbtMs"].map((v) => [c[v], num(c.target?.[v], SITE_TARGETS.vitals[v]), "max"]);
+  return [];
+}
+
+/**
+ * A budget's credit in [0, 1]: the lowest credit among its readings, so a budget missed by 1% scores
+ * 0.99, not 0. A component that stores only `met` scores 1 or 0. null when it was not measured.
+ */
+export function budgetCredit(k, c) {
+  if (typeof c?.met !== "boolean") return null;
+  const xs = readings(k, c).map(([v, t, dir]) => credit(v, t, dir)).filter((x) => x !== null);
+  return xs.length ? Math.min(...xs) : c.met ? 1 : 0;
+}
+
 /** Normalize each weighted component to [0, 1] (doc §4 table). null = not measured. */
 export function normalized(c) {
   const v = (k) => (c[k]?.value === undefined || c[k]?.value === null ? null : c[k].value);
@@ -41,17 +83,17 @@ export function normalized(c) {
   };
   const inv = v("cli.invalidRate");
   const perfKeys = ["perf.hook", "perf.ingest", "perf.storeSize", "perf.viewerTti", "perf.help"];
-  const perfMet = perfKeys.map((k) => (c[k]?.met === undefined ? null : c[k].met ? 1 : 0));
-  const siteMet = ["site.lighthouse", "site.vitals", "site.js"].map((k) => (c[k]?.met === undefined ? null : c[k].met ? 1 : 0));
+  const perfCredit = perfKeys.map((k) => budgetCredit(k, c[k]));
+  const siteCredit = ["site.lighthouse", "site.vitals", "site.js"].map((k) => budgetCredit(k, c[k]));
   const council = v("site.council");
-  const siteFrac = mean(siteMet);
+  const siteFrac = mean(siteCredit);
   return {
     "cli.heldout.success": v("cli.heldout.success"),
     "cli.invalidRate": inv === null ? null : 1 - Math.min(1, inv / 0.2),
     "cli.guidelines": v("cli.guidelines"),
     "replay.success": v("replay.success"),
     conformance: mean([v("conformance.fixtures"), v("conformance.smoke"), v("capture.health")]),
-    perf: mean(perfMet),
+    perf: mean(perfCredit),
     // Council missing: the site component is the budget fraction alone (reported in notes).
     site: siteFrac === null ? null : council === null ? siteFrac : 0.6 * siteFrac + 0.4 * Math.max(0, Math.min(1, (council + 2) / 4)),
   };
@@ -96,7 +138,12 @@ export function compare(cur, prev) {
     const better = LOWER_IS_BETTER.has(k) ? d < 0 : d > 0;
     out[k] = { prev: p.value, cur: c.value, delta: round(d, 4), direction: d === 0 ? "same" : better ? "better" : "worse" };
   }
-  return { headline: { prev: prev.headline, cur: cur.headline }, components: out };
+  // The previous card is scored again with this scorer, so a change to the scorer does not read as a
+  // change in the code. Its stored headline is kept when the two differ.
+  const again = prev.gates && prev.components ? headline(prev.gates, prev.components).headline : prev.headline;
+  const head = { prev: again, cur: cur.headline };
+  if (again !== prev.headline) head.prevStored = prev.headline;
+  return { headline: head, components: out };
 }
 
 /**
