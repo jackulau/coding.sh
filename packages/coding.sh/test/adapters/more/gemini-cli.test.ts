@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { geminiCliAdapter, GEMINI_HOOK_EVENTS, replayGeminiChat } from "../../../src/adapters/more/gemini-cli.ts";
+import { geminiChatEvents, geminiCliAdapter, GEMINI_HOOK_EVENTS, replayGeminiChat } from "../../../src/adapters/more/gemini-cli.ts";
 import type { TmpEnv } from "../_helpers.ts";
 import { assertGolden, assertInstallRoundTrip, assertWellFormed, collect, FIXTURES, HOOK, moreEnv, normalizeFixture, summarize, testCtx, writeFile } from "./_helpers.ts";
 import { buildHookCommand } from "../../../src/adapters/_shared/hooks.ts";
@@ -98,6 +99,36 @@ describe("gemini-cli chats", () => {
     const again = await run();
     assert.deepEqual(again.errors, []);
     assert.deepEqual([again.events, again.sessions], [0, 0]);
+  });
+});
+
+describe("gemini-cli cancelled tool calls", () => {
+  it("a cancelled call is an interruption; an error still counts", async () => {
+    const { buildSession } = await import("../../../src/core/sessions.ts");
+    const dir = mkdtempSync(join(tmpdir(), "gem-cancel-"));
+    try {
+      const real = readFileSync(join(FIXTURES, "gemini-cli", "paired", "home", ".gemini", "tmp", "demo", "chats", "session-2026-11-07T08-00-b7e2c4a1.jsonl"), "utf8");
+      const lines = real.split("\n").map((l) => {
+        if (l.includes('"id":"replace-2"')) return l.replace('"status":"success"', '"status":"cancelled"');
+        if (l.includes('"id":"run_shell_command-3"')) return l.replace('"status":"success"', '"status":"error"');
+        return l;
+      });
+      const file = join(dir, "chats", "session-cancel.jsonl");
+      writeFile(file, lines.join("\n"));
+      const { ctx } = testCtx();
+      const events = await collect(geminiChatEvents(file, ctx, { cwd: "/work/demo" }));
+      assertWellFormed(events);
+      const ends = events.filter((e) => e.kind === "tool.end");
+      const by = (id: string) => ends.find((e) => e.payload.toolUseId === id)!.payload;
+      assert.deepEqual([by("replace-2").ok, by("replace-2").error, by("replace-2").interrupted], [false, "cancelled", true]);
+      assert.deepEqual([by("run_shell_command-3").ok, by("run_shell_command-3").interrupted], [false, undefined]);
+      assert.equal(by("run_shell_command-1").interrupted, undefined);
+      const s = buildSession(events);
+      assert.equal(s.stats.interruptedToolCalls, 1);
+      assert.equal(s.stats.toolErrors, 1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

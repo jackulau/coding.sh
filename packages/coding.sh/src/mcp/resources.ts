@@ -1,5 +1,6 @@
 // MCP resources: codingsh://latest and codingsh://session/<id>, each a
 // markdown digest of one session.
+import { noSessionsHint } from "../cli/first-session.ts";
 import type { Context } from "../core/context.ts";
 import type { IndexStore } from "../core/types.ts";
 import type { Session } from "../schema/index.ts";
@@ -85,6 +86,11 @@ export function buildResources(store: () => Promise<Context>): ResourceProvider 
         }
         if (id) s = await ctx.index.getSession(id);
       }
+      // codingsh://latest is always listed, so an empty store answers with what to do next, not "not found".
+      if (!s && uri === LATEST_URI) return { uri, mimeType: "text/markdown", text: `# Latest session
+
+${noSessionsHint(ctx.env ?? process.env)}
+` };
       if (!s) return undefined;
       return { uri, mimeType: "text/markdown", text: await sessionMarkdown(ctx.index, s) };
     },

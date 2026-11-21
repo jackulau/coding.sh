@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { piAdapter, piExtensionSource } from "../../../src/adapters/more/pi.ts";
+import { normalizePi, piAdapter, piExtensionSource, piSessionEvents } from "../../../src/adapters/more/pi.ts";
+import { buildSession } from "../../../src/core/sessions.ts";
+import type { SpoolLine } from "../../../src/core/types.ts";
 import type { TmpEnv } from "../_helpers.ts";
 import { fakeHook, fire, hookCalls, loadPlugin, waitFor } from "./_plugin-host.ts";
 import { assertGolden, assertInstallRoundTrip, assertRunOk, assertWellFormed, collect, fakeBinary, FIXTURES, HOOK, moreEnv, normalizeFixture, readArgv, runSpec, summarize, testCtx, writeFile } from "./_helpers.ts";
@@ -51,6 +54,88 @@ describe("pi backfill", () => {
     assert.deepEqual([tr.payload.passed, tr.payload.failed], [6, 1]);
     assert.deepEqual(events.filter((e) => e.kind === "llm.call").map((e) => e.durationMs), [800, 700]);
     assert.equal(events.filter((e) => e.kind === "turn.end").length, 1, "toolUse stops don't end the turn");
+  });
+});
+
+describe("pi aborted calls", () => {
+  let dir: string;
+  before(() => {
+    dir = mkdtempSync(join(tmpdir(), "pi-abort-"));
+  });
+  after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const result = (id: string, callId: string, tool: string, text: string, isError: boolean, sec: number) => ({
+    type: "message",
+    id,
+    timestamp: `2026-09-21T10:00:0${sec}.000Z`,
+    message: { role: "toolResult", toolCallId: callId, toolName: tool, content: [{ type: "text", text }], isError, timestamp: Date.parse(`2026-09-21T10:00:0${sec}.000Z`) },
+  });
+  const transcript = (name: string, results: object[]): string => {
+    const lines = [
+      { type: "session", version: 3, id: `pi-${name}`, timestamp: "2026-09-21T10:00:00.000Z", cwd: "/work/demo" },
+      { type: "message", id: "b1", timestamp: "2026-09-21T10:00:01.000Z", message: { role: "user", content: [{ type: "text", text: "Check the build" }], timestamp: 1789984801000 } },
+      {
+        type: "message",
+        id: "b2",
+        timestamp: "2026-09-21T10:00:02.000Z",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "toolCall", id: "c1", name: "read", arguments: { path: "README.md" } },
+            { type: "toolCall", id: "c2", name: "bash", arguments: { command: "npm run build" } },
+            { type: "toolCall", id: "c3", name: "bash", arguments: { command: "npm test" } },
+          ],
+          provider: "anthropic",
+          model: "claude-sonnet-4-5",
+          stopReason: "toolUse",
+          timestamp: 1789984801500,
+        },
+      },
+      ...results,
+    ];
+    const file = join(dir, `${name}.jsonl`);
+    writeFileSync(file, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+    return file;
+  };
+
+  it("a call Esc skipped (isError \"Operation aborted\") is an interruption, not a tool error", async () => {
+    const file = transcript("esc", [result("b3", "c1", "read", "# demo", false, 3), result("b4", "c2", "bash", "Operation aborted", true, 4), result("b5", "c3", "bash", "Operation aborted", true, 5)]);
+    const { ctx } = testCtx();
+    const events = await collect(piSessionEvents(file, ctx));
+    assertWellFormed(events);
+    const ends = events.filter((e) => e.kind === "tool.end");
+    assert.deepEqual(
+      ends.map((e) => [e.payload.toolUseId, e.payload.ok, e.payload.interrupted]),
+      [["c1", true, undefined], ["c2", false, true], ["c3", false, true]],
+    );
+    const s = buildSession(events);
+    assert.equal(s.stats.interruptedToolCalls, 2);
+    assert.ok(!s.stats.toolErrors, "no tool errors");
+    assert.ok(!s.flags.includes("repeated-tool-failure"));
+  });
+
+  it("other text naming \"aborted\" stays a tool error", async () => {
+    const file = transcript("server", [result("b3", "c1", "read", "# demo", false, 3), result("b4", "c2", "bash", "Request aborted by server: 500", true, 4), result("b5", "c3", "bash", "Aborted.", false, 5)]);
+    const { ctx } = testCtx();
+    const events = await collect(piSessionEvents(file, ctx));
+    const ends = events.filter((e) => e.kind === "tool.end");
+    assert.deepEqual(
+      ends.map((e) => [e.payload.toolUseId, e.payload.ok, e.payload.interrupted]),
+      [["c1", true, undefined], ["c2", false, undefined], ["c3", true, undefined]],
+    );
+    const s = buildSession(events);
+    assert.equal(s.stats.toolErrors, 1);
+    assert.ok(!s.stats.interruptedToolCalls);
+  });
+
+  it("the extension's tool_execution_end marks an aborted call interrupted", async () => {
+    const line = (callId: string, text: string): SpoolLine =>
+      ({ v: 0, agent: "pi", event: "tool_execution_end", ts: 1790000001000, pid: 7401, cwd: "/work/demo", raw: { sessionId: "pi-hook-1", cwd: "/work/demo", toolCallId: callId, toolName: "bash", args: { command: "npm test" }, result: { content: [{ type: "text", text }] }, isError: true } }) as SpoolLine;
+    const { ctx } = testCtx();
+    const [aborted] = (await normalizePi(line("h1", "Aborted"), ctx)).filter((e) => e.kind === "tool.end");
+    const [real] = (await normalizePi(line("h2", "Request aborted by server: 500"), ctx)).filter((e) => e.kind === "tool.end");
+    assert.deepEqual([aborted!.payload.ok, aborted!.payload.interrupted], [false, true]);
+    assert.deepEqual([real!.payload.ok, real!.payload.interrupted], [false, undefined]);
   });
 });
 

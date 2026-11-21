@@ -135,12 +135,14 @@ token for this run of `ui`; the viewer needs it.
 
 ![The coding.sh viewer's session list: Claude Code, Codex and OpenCode sessions on the coding.sh repo, each with its agent, title, cost and flags.](shot:docs/sessions-list "The session list in coding.sh ui.")
 
-- **The list.** The bar above it takes the same query as `--where`, and it lives in the URL, so a
-  filtered list can be shared.
+- **The list.** The bar above it takes the same query as `--where` and keeps it in the URL to share.
+  Save view saves it as a [saved view](https://coding.sh/docs/query#saved-views); Views applies or
+  deletes one.
 - **The sidebar.** Counts per agent, model, repo, flag and tool. Click a value to add it to the
   query, Alt-click to exclude it.
-- **A session.** The timeline shows every event, with a ⚑ on each step where the run went off the
-  rails. A running session gets new events every 4 seconds.
+- **A session.** The timeline shows every event, with a ⚑ where the run went off the rails.
+  [Comment](https://coding.sh/docs/api/read/search#post-apiscores) adds a note to it or one step. A running
+  session gets new events every 4 seconds.
 - **Work** (<kbd>g</kbd> <kbd>w</kbd>). The [`coding.sh work`](https://coding.sh/docs/cli/work) queue,
   with sessions linked. Ack and Snooze write the CLI's `work.json`.
 - **Explore** (<kbd>g</kbd> <kbd>x</kbd>). Six charts per day or week: sessions, failure rate,
@@ -154,8 +156,7 @@ token for this run of `ui`; the viewer needs it.
 - **Keys.** <kbd>?</kbd> lists every shortcut. <kbd>j</kbd> and <kbd>k</kbd> move through the
   list outside a text field. A focused button keeps Enter and Space, a focused link keeps Enter,
   and the arrow keys scroll the focused step detail.
-- **Theme.** The viewer follows your system's light or dark setting; the top bar's theme button
-  overrides it, and the browser remembers that.
+- **Theme.** The top bar's theme button overrides the system's light or dark setting.
 - **Copied commands.** Each value is single-quoted for sh and PowerShell. A value with a quote, a
   control character or `& | < >` is shown but not copied: no quoting is safe for it in every
   shell.

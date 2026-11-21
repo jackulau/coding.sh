@@ -313,7 +313,8 @@ export const DOC_GROUPS: DocGroup[] = [
         summary: "Every route coding.sh serve answers, with auth and examples: ingest, OTLP, the model API proxy, health and metrics.",
         children: [
           { path: "/docs/api/read", label: "Read API", title: "Read API: sessions and calls", summary: "The /api routes the viewer and your scripts read, their auth and errors: projects, sessions, events, outlines, replays, blobs and model calls." },
-          { path: "/docs/api/read/search", label: "Search and evals API", title: "Read API: search, labels and evals", summary: "The /api routes for search, stats, facets, events, labels, experiments, compare, benchmarks, tasks, runs and bundles, update and ingest status." },
+          { path: "/docs/api/read/search", label: "Search and evals API", title: "Read API: search, labels and evals", summary: "The /api routes for search, stats, metrics, facets, events, labels, scores, score configs, saved views and review queues." },
+          { path: "/docs/api/read/experiments", label: "Experiments API", title: "Read API: experiments and runs", summary: "The /api routes for experiments, compare, benchmarks, workflows, tasks, runs and bundles, update, work and ingest status." },
         ],
       },
       {

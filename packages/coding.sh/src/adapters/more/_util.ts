@@ -14,7 +14,7 @@ import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, 
 import { createReadStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { createInterface } from "node:readline";
+import { splitLines } from "../_shared/jsonl.ts";
 import type { AgentRunOutput, FileChange, NormalizeContext, SpoolLine } from "../../core/types.ts";
 import type { AgentEvent, AgentId, EventKind, Usage } from "../../schema/index.ts";
 import { paths, userHome } from "../../core/paths.ts";
@@ -594,6 +594,8 @@ export interface ToolEndArgs {
   error?: string | undefined;
   /** A command's exit status, when the result states it. */
   exitCode?: number | undefined;
+  /** The user stopped the call (Esc, cancel): the fold counts it in interruptedToolCalls, not toolErrors. */
+  interrupted?: boolean | undefined;
   extra?: EventExtra;
 }
 
@@ -605,6 +607,7 @@ export async function emitToolEnd(em: Emitter, ctx: NormalizeContext, a: ToolEnd
   const text = textOf(a.output);
   const out = await clip(ctx, text ?? a.output);
   const payload: Json = { tool: a.tool, toolUseId: a.toolUseId, ok: a.ok, durationMs: a.durationMs, output: out.value, error: a.error, exitCode: a.exitCode };
+  if (a.interrupted === true) payload.interrupted = true;
   em.push("tool.end", payload, { ...(a.durationMs !== undefined ? { durationMs: a.durationMs } : {}), ...a.extra, blobs: [...(a.extra?.blobs ?? []), ...(out.blob ? [out.blob] : [])], ...toolKey(em, a.toolUseId) });
   // Keyed by the path as the call gave it: the two capture paths may know different cwds.
   if (a.ok) for (const f of fileTouches(a.tool, a.input)) emitFileChange(em, { path: relPath(f.path, cwd), op: f.op, tool: a.tool, toolUseId: a.toolUseId }, a.extra, f.path);
@@ -940,10 +943,9 @@ export async function* readJsonl(file: string): AsyncGenerator<JsonlRecord> {
   } catch {
     return;
   }
-  const rl = createInterface({ input: stream, crlfDelay: Infinity });
   let lineNo = 0;
   try {
-    for await (const line of rl) {
+    for await (const line of splitLines(stream)) {
       lineNo++;
       const t = line.trim();
       if (!t) continue;
@@ -957,7 +959,6 @@ export async function* readJsonl(file: string): AsyncGenerator<JsonlRecord> {
   } catch {
     // unreadable file
   } finally {
-    rl.close();
     stream.destroy();
   }
 }

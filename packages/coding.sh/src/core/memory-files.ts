@@ -335,8 +335,11 @@ async function addSince(files: MemoryFileInfo[], sessions: readonly MemorySessio
 /** The harness audit over a store: sessions since `since` (subagents folded into their root), files on disk. */
 export async function memoryAudit(index: IndexStore, o: MemoryAuditOptions = {}): Promise<MemoryAudit & { since?: number; agent?: string }> {
   const dirs = memoryDirs(o.env);
-  const all = await index.listSessions({ ...(o.agent ? { agent: o.agent } : {}), ...(o.since !== undefined ? { since: o.since } : {}) });
-  const byId = new Map(all.map((s) => [s.id, s]));
+  // Every agent's sessions, so a subagent folds into its root even when the root is another
+  // agent's (Claude Code under T3 Code): --agent then counts the roots the plain audit counts.
+  const window = await index.listSessions({ ...(o.since !== undefined ? { since: o.since } : {}) });
+  const byId = new Map(window.map((s) => [s.id, s]));
+  const all = o.agent ? window.filter((s) => s.agent === o.agent) : window;
   const rootOf = (id: string): string => {
     let cur = id;
     for (let i = 0; i < 16; i++) {
@@ -356,14 +359,20 @@ export async function memoryAudit(index: IndexStore, o: MemoryAuditOptions = {})
     list.push(m);
   }
   const cwds = [...new Set(list.map((s) => s.cwd).filter((c): c is string => !!c))].map((c) => localPath(homeKey(c, dirs.home), dirs.home));
-  const keep = (f: MemoryFileInfo) => !o.agent || forAgent(f.key, o.agent);
-  const files = (await listMemoryFilesAsync(dirs, cwds, { signal: o.signal })).filter(keep);
+  let files = await listMemoryFilesAsync(dirs, cwds, { signal: o.signal });
   const opts = { home: dirs.home, claudeDir: homeKey(dirs.claudeDir, dirs.home), codexDir: homeKey(dirs.codexDir, dirs.home) };
   await addSince(files, list, dirs.home, o.signal);
   o.signal?.throwIfAborted();
   let report = auditMemory(list, files, opts);
   // Files the sessions touched that the listing missed (outside the dirs it walks): stat them here.
   const extra = report.files.filter((r) => !r.exists).flatMap((r) => fileInfo(localPath(r.path, dirs.home), dirs.home) ?? []);
-  if (extra.length) report = auditMemory(list, [...files, ...extra], opts);
+  if (extra.length) report = auditMemory(list, (files = [...files, ...extra]), opts);
+  if (o.agent) {
+    // The agent's own files, and any file its sessions loaded, read or wrote (an AGENTS.md that a
+    // CLAUDE.md imports): --agent keeps a subset of the plain audit's rows, with the same counts.
+    const used = new Set(report.files.filter((r) => r.loaded || r.read || r.wrote).map((r) => r.path));
+    const agent = o.agent;
+    report = auditMemory(list, files.filter((f) => forAgent(f.key, agent) || used.has(f.key)), opts);
+  }
   return { ...report, ...(o.since !== undefined ? { since: o.since } : {}), ...(o.agent ? { agent: o.agent } : {}) };
 }

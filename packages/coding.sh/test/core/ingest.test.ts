@@ -1358,3 +1358,18 @@ describe("recomputeSessions: sessions folded ahead while git runs", () => {
     assert.deepEqual((await index.listSessions()).map((s) => s.id).sort(), ["child", "parent"]);
   });
 });
+
+describe("normalizeContext ids", () => {
+  it("gives adapters the same ids as hashParts", async () => {
+    const { hashParts } = await import("../../src/core/ids.ts");
+    const { normalizeContext, partsId } = await import("../../src/core/ingest.ts");
+    const { createRedactor } = await import("../../src/core/redact.ts");
+    const config = defaultConfig();
+    const ctx = normalizeContext({ config, redactor: createRedactor() }, new MemoryBlobStore(), false);
+    const cases: (string | number)[][] = [[], [""], ["a"], ["ab", "c"], ["a", "bc"], ["a", 1], ["s1", "tool", 42, "é 😀"], ["x\u001fy"]];
+    for (const parts of cases) {
+      assert.equal(partsId(...parts), hashParts(...parts));
+      assert.equal(ctx.id(...parts), hashParts(...parts));
+    }
+  });
+});

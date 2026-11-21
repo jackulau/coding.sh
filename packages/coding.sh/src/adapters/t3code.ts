@@ -975,7 +975,8 @@ export const t3code: Adapter = {
   // 12 (0.1.8): T3's requests to the user (pending approvals and questions) are host-request notifications, resolved
   //    when T3 resolves them, so a thread waiting on one is blocked on you (core/waiting.ts). A thread with activity
   //    inside the --since window is imported whole, with its host link.
-  parseVersion: 12,
+  // 13 (0.1.8): a transcript line holding a raw U+2028 or U+2029 inside a string is read whole, not split and dropped.
+  parseVersion: 13,
 
   async detect() {
     const env = process.env;

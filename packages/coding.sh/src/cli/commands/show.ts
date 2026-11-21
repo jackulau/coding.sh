@@ -392,7 +392,7 @@ export function startedText(ts: number, now = Date.now()): string {
 }
 
 /** The top-level fields of `show --json` (a session, or a model call), for --fields. */
-const SHOW_FIELDS = ["session", "snapshot", "eventCount", "events", "phases", "days", "subagentCount", "subagents", "subagentsTruncated", "subagentsRest", "skills", "pending", "call", "request", "response"];
+const SHOW_FIELDS = ["session", "snapshot", "eventCount", "events", "phases", "days", "subagentCount", "subagents", "subagentsTruncated", "subagentsRest", "skills", "comments", "pending", "call", "request", "response"];
 
 /** Sessions with more events than this show as phases unless --all or --limit is given. */
 const DEFAULT_LIMIT = 200;
@@ -450,6 +450,7 @@ export async function run(c: CommandContext): Promise<number> {
     const skills = await sessionSkills(ctx.index, s);
     // The experiments that ran each weights file the session recorded as a checkpoint (exp run --weights with the same hash).
     const runs = await ranIn(ctx.index, s, c.env);
+    const comments = await sessionComments(ctx.index, s);
     if (out.json) {
       // A phased session answers with its phases, as the text does; --all or --limit lists the events.
       const listed = phased ? [] : ((all ? full : events) ?? []);
@@ -467,6 +468,7 @@ export async function run(c: CommandContext): Promise<number> {
       // The count alone does not say where the rest are.
       if (subagents.next !== undefined) Object.assign(doc, { subagentsTruncated: true, subagentsRest: `coding.sh tree ${s.id} --json` });
       doc.skills = skills?.used ?? [];
+      doc.comments = comments;
       if (runs.length) doc.checkpointExperiments = runs;
       Object.assign(doc, pendingField(backlog));
       out.data(fields ? pickFields(doc, fields) : doc);
@@ -521,6 +523,14 @@ export async function run(c: CommandContext): Promise<number> {
     if (derails.length) rows.push(["Derails", derails.slice(0, 4).map((d) => `${d.flag} at +${duration(Math.max(0, d.ts - s.startedAt))}`).join(", ") + (derails.length > 4 ? ` +${derails.length - 4} more` : "")]);
     for (const [k, v] of rows) out.print(`  ${k.padEnd(14)}${v}`);
     out.print();
+    const onSession = comments.filter((x) => x.target === "session");
+    if (onSession.length) {
+      out.print(out.style("Comments", "bold"));
+      for (const x of onSession) printComment(out, x, 2);
+      out.print();
+    }
+    const onSteps = comments.filter((x) => x.target !== "session");
+    let unplaced = onSteps;
     if (d?.steps.length) {
       out.print(out.style("Steps", "bold"));
       for (const l of durableSteps(d, s.startedAt)) out.print(`  ${l}`);
@@ -530,8 +540,17 @@ export async function run(c: CommandContext): Promise<number> {
       printPhases(out, s, outline!);
       out.note(`${s.stats.events.toLocaleString("en-US")} events in ${outline!.phases.length} ${outline!.phases.length === 1 ? "phase" : "phases"}; --all lists every event, --limit N the first N`);
     } else {
-      printEvents(out, s, await withFullFailedOutputs(events, ctx.blobs), all ? outline : undefined, derails);
+      unplaced = printEvents(out, s, await withFullFailedOutputs(events, ctx.blobs), all ? outline : undefined, derails, onSteps);
       if (!all && events.length >= limit && s.stats.events > limit) out.note(`Showing the first ${limit} events; pass --limit for more or --all for every event`);
+    }
+    if (unplaced.length) {
+      // On steps not listed above (a phased session, or past --limit): each names its step.
+      out.print();
+      out.print(out.style("Comments on steps", "bold"));
+      for (const x of unplaced) {
+        out.print(`  ${out.style(`on ${x.target} ${x.targetId}`, "faint")}`);
+        printComment(out, x, 4);
+      }
     }
     if (tree.length) {
       out.print();
@@ -579,8 +598,39 @@ function printPhases(out: Output, s: Session, o: Outline): void {
   }
 }
 
-/** The event list; with an outline (--all), phase and day lines between events and derail markers at their onset. */
-function printEvents(out: Output, s: Session, events: AgentEvent[], o: Outline | undefined, derails: readonly SessionDerail[]): void {
+/** A comment on a session or a step: a text score named "comment" (the viewer's comment box writes them). */
+export interface ShowComment {
+  id: string;
+  target: string;
+  targetId: string;
+  text: string;
+  by: string;
+  ts: number;
+}
+
+/** The session's comments, oldest first; none from a store that keeps no scores. */
+export async function sessionComments(index: IndexStore, s: Session): Promise<ShowComment[]> {
+  if (!index.listScores) return [];
+  const scores = await index.listScores({ sessionId: s.id, name: "comment" });
+  return scores
+    .filter((x) => typeof x.value === "string" && (x.target !== "session" || x.targetId === s.id))
+    .map((x) => ({ id: x.id, target: x.target, targetId: x.targetId, text: x.value as string, by: x.by, ts: x.ts }))
+    .sort((a, b) => a.ts - b.ts);
+}
+
+/** "jack, 5m ago: text", the text's later lines indented under its first. */
+function printComment(out: Output, x: ShowComment, indent: number): void {
+  const pad = " ".repeat(indent);
+  const [first = "", ...rest] = clean(x.text).split(/\r?\n/);
+  out.print(`${pad}${out.style(`${clean(x.by)}, ${ago(x.ts)}:`, "faint")} ${first}`);
+  for (const l of rest) out.print(`${pad}  ${l}`);
+}
+
+/**
+ * The event list; with an outline (--all), phase and day lines between events and derail markers at their onset.
+ * Comments print under the line of the step they target; the ones whose step has no line here are returned.
+ */
+function printEvents(out: Output, s: Session, events: AgentEvent[], o: Outline | undefined, derails: readonly SessionDerail[], comments: readonly ShowComment[] = []): ShowComment[] {
   const starts = new Map<string, AgentEvent>();
   const phaseAt = new Map((o?.phases ?? []).filter((p) => p.n > 1).map((p) => [p.from, p]));
   const dayAt = new Map((o?.days ?? []).map((d) => [d.index, d]));
@@ -588,6 +638,20 @@ function printEvents(out: Output, s: Session, events: AgentEvent[], o: Outline |
   for (const d of derails) derailAt.set(d.eventId, [...(derailAt.get(d.eventId) ?? []), d]);
   // A model call the proxy and the agent's own capture both logged: one line, at the proxy's copy.
   const copies = callCopies(events);
+  // A comment on a tool call's start shows at its end line, one on a folded copy at the proxy's line.
+  const ends = new Map<string, string>();
+  for (const e of events) if (e.kind === "tool.end" && typeof e.payload.toolUseId === "string") ends.set(e.payload.toolUseId, e.id);
+  const lineOf = new Map<string, string>();
+  for (const e of events) {
+    const use = e.kind === "tool.start" ? str(e.payload.toolUseId) : undefined;
+    lineOf.set(e.id, copies.folded.get(e.id) ?? (use ? ends.get(use) ?? e.id : e.id));
+  }
+  const notes = new Map<string, ShowComment[]>();
+  for (const x of comments) {
+    const at = lineOf.get(x.targetId);
+    if (at !== undefined) notes.set(at, [...(notes.get(at) ?? []), x]);
+  }
+  const placed = new Set<ShowComment>();
   events.forEach((e, i) => {
     const day = dayAt.get(i);
     if (day) out.print(out.style(dayLine(day.ts), "faint"));
@@ -600,7 +664,12 @@ function printEvents(out: Output, s: Session, events: AgentEvent[], o: Outline |
     if (line === undefined) return;
     const rel = `+${duration(Math.max(0, e.ts - s.startedAt))}`.padStart(8);
     out.print(`${rel}  ${line}`);
+    for (const x of notes.get(e.id) ?? []) {
+      printComment(out, x, 10);
+      placed.add(x);
+    }
   });
+  return comments.filter((x) => !placed.has(x));
 }
 
 /** How often --follow polls for new events. */

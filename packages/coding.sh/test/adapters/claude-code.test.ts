@@ -176,6 +176,40 @@ describe("claude-code normalize", () => {
       t.restore();
     }
   });
+
+  // qa:r6-work-second-prompt: two tool calls in a row each ask for permission with the same message, under 2 s apart.
+  it("the same permission prompt for the next tool call is another notification; a firing spooled twice is still one", async () => {
+    const { ctx } = testCtx();
+    const sid = "dddd1010-2222-4333-8444-000000000011";
+    const T = 1_800_000_100_000;
+    const body = (event: string, extra: string) => ({ session_id: sid, transcript_path: `/nonexistent/${sid}.jsonl`, cwd: "/work/demo", permission_mode: "default", hook_event_name: event, ...JSON.parse(`{${extra.slice(1)}}`) });
+    let offset = 0;
+    // Each firing is spooled by two hook commands, 30 ms apart.
+    const fire = async (ts: number, event: string, extra: string): Promise<AgentEvent[]> => {
+      const out: AgentEvent[] = [];
+      for (const [dt, pid] of [[0, 6000], [30, 7000]] as const) {
+        const line = { v: 0, agent: "claude-code", event, ts: ts + dt, pid: pid + offset, ppid: 3999, cwd: "/work/demo", raw: body(event, extra) } as SpoolLine;
+        out.push(...(await claudeCode.normalize(line, { ...ctx, source: { file: "claude-code/2027-01-15.jsonl", offset } })));
+        offset += 200;
+      }
+      return out;
+    };
+    const tool = (id: string, n: number) => `,"tool_name":"Bash","tool_use_id":"${id}","tool_input":{"command":"echo ${n}"}`;
+    const ask = ',"message":"Claude needs your permission to use Bash","notification_type":"permission_prompt"';
+    const all = [
+      ...(await fire(T, "SessionStart", ',"source":"startup"')),
+      ...(await fire(T + 100, "UserPromptSubmit", ',"prompt":"x"')),
+      ...(await fire(T + 200, "PreToolUse", tool("t1", 1))),
+      ...(await fire(T + 300, "Notification", ask)),
+      ...(await fire(T + 900, "PostToolUse", `${tool("t1", 1)},"tool_response":{}`)),
+      ...(await fire(T + 1000, "PreToolUse", tool("t2", 2))),
+      // 0.9 s after the first prompt, in the same 2 s slot.
+      ...(await fire(T + 1200, "Notification", ask)),
+    ];
+    const stored = [...new Map(all.map((e) => [e.id, e])).values()];
+    assert.deepEqual(stored.map((e) => e.kind), ["session.start", "user.message", "tool.start", "notification", "tool.end", "tool.start", "notification"]);
+    assert.equal(all.length, 2 * stored.length, "both lines of a firing give the same events");
+  });
 });
 
 // qa:upgrade-reparse-drops-events: a Stop line's model calls, replies and turn come from the transcript it

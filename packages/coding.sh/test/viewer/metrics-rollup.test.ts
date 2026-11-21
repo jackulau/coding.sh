@@ -119,3 +119,40 @@ describe("metrics roll subagents up into their top-level session", () => {
     }
   });
 });
+
+describe("top-level latency covers the subagents' model calls", () => {
+  // An OpenInference or Agents SDK run: the root makes no model call, its subagent makes them all.
+  const lat = (id: string, hour: number, latency: NonNullable<Session["stats"]["latency"]>, over: Partial<Session> = {}): Session =>
+    session(id, { agent: "oi-app", startedAt: T0 + hour * H, endedAt: T0 + hour * H + 60_000, stats: { events: 2, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0, latency }, ...over });
+  const ROWS = [
+    lat("root", 1, {}),
+    lat("child", 1.5, { llmCalls: 1, llmP50Ms: 3000, llmP95Ms: 3000, ttftP50Ms: 1000 }, { parent: { sessionId: "root", type: "researcher" } }),
+    lat("root2", 2, { llmCalls: 1, llmP50Ms: 5000, llmP95Ms: 5000, ttftP50Ms: 500 }),
+    lat("child2", 2.5, { llmCalls: 4, llmP50Ms: 2000, llmP95Ms: 2000, ttftP50Ms: 300 }, { parent: { sessionId: "root2", type: "researcher" } }),
+    lat("child3", 2.6, { llmCalls: 4, llmP50Ms: 2000, llmP95Ms: 2000, ttftP50Ms: 300 }, { parent: { sessionId: "root2", type: "researcher" } }),
+  ];
+
+  test("a root with no model calls of its own shows its subagent's p95 and TTFT", async () => {
+    const store = new MemoryIndexStore();
+    for (const x of ROWS.slice(0, 2)) await store.upsertSession(x);
+    const m = await computeMetrics(store, { ...TOP, by: "agent" });
+    assert.equal(m.totals.sessions, 1);
+    assert.equal(m.totals.llmCalls, 1);
+    assert.equal(m.totals.llmP95Ms, 3000);
+    assert.equal(m.totals.ttftP50Ms, 1000);
+    assert.equal(m.series[0]!.totals.llmP95Ms, 3000);
+    assert.deepEqual(m.all.llmP95Ms, [3000, null, null]);
+  });
+
+  test("top-level latency equals the per-session view's", async () => {
+    const store = new MemoryIndexStore();
+    for (const x of ROWS) await store.upsertSession(x);
+    const top = await computeMetrics(store, TOP);
+    const all = await computeMetrics(store, { ...TOP, filter: {} });
+    assert.equal(top.totals.sessions, 2);
+    assert.equal(top.totals.llmP95Ms, all.totals.llmP95Ms);
+    assert.equal(top.totals.ttftP50Ms, all.totals.ttftP50Ms);
+    // The subagents' 300 ms TTFTs count, not only root2's own 500 ms.
+    assert.equal(top.totals.ttftP50Ms, 300);
+  });
+});

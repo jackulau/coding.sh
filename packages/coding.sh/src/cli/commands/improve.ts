@@ -47,7 +47,9 @@ async function options(c: CommandContext, defaultSince: string, defaultLimit: nu
   return { root: repoFlag && repoFlag !== "all" ? ((await repoRoot(repo!).catch(() => undefined)) ?? repo) : root, repo, sinceText, since, agents, limit: positiveInt(c.flags.limit, "limit") ?? defaultLimit, headless: c.flags.headless === true };
 }
 
-const where = (o: Opts, cwd: string) => (o.repo ? relative(cwd, o.repo) || o.repo.split(/[\\/]/).pop() || o.repo : "every repo");
+// The repo's own name from any folder inside it, never a path relative to the cwd ("..\..").
+const repoName = (repo: string) => repo.split(/[\\/]/).filter(Boolean).pop() || repo;
+const where = (o: Opts) => (o.repo ? repoName(o.repo) : "every repo");
 
 export async function run(c: CommandContext): Promise<number> {
   if (c.action === "check") return check(c);
@@ -154,7 +156,7 @@ async function report(c: CommandContext): Promise<number> {
     }
     const leftOut = headlessLeftOut ? `; ${plural(headlessLeftOut, "headless session")} left out (--headless)` : "";
     if (!sessions.length) {
-      out.note(`No sessions in ${where(o, c.cwd)} since ${o.sinceText}${leftOut}`);
+      out.note(`No sessions in ${where(o)} since ${o.sinceText}${leftOut}`);
       if (o.repo) out.next("Look in every repo", `coding.sh improve --repo all --since ${o.sinceText}`);
       else if (captureSetUp(c.env)) out.next(`${START_NEW_SESSION}. Then check capture`, "coding.sh doctor");
       else out.next("Capture your agents' sessions first", "coding.sh init");
@@ -162,7 +164,7 @@ async function report(c: CommandContext): Promise<number> {
     }
     const byAgent = new Map<string, number>();
     for (const s of sessions) byAgent.set(s.agent, (byAgent.get(s.agent) ?? 0) + 1);
-    out.print(`${plural(sessions.length, "session")} in ${where(o, c.cwd)} since ${o.sinceText} (${[...byAgent].map(([a, n]) => `${a} ${n}`).join(", ")})${leftOut}`);
+    out.print(`${plural(sessions.length, "session")} in ${where(o)} since ${o.sinceText} (${[...byAgent].map(([a, n]) => `${a} ${n}`).join(", ")})${leftOut}`);
     out.print("");
     if (!top.length) out.print("Nothing to fix: no failure flags, no command failing the same way in two sessions, and no costly cache breaks.");
     else out.print(out.style("Fix first", "bold"));
@@ -300,7 +302,7 @@ async function check(c: CommandContext): Promise<number> {
       return regressed.length ? 1 : 0;
     }
     if (!first.changes.length) {
-      out.note(`No commits changed AGENTS.md or another instructions file, a rule or a skill in ${relative(c.cwd, root) || "this repo"} since ${o.sinceText}`);
+      out.note(`No commits changed AGENTS.md or another instructions file, a rule or a skill in ${repoName(root)} since ${o.sinceText}`);
       out.next("Find something worth changing", "coding.sh improve");
       if (!watch) return 0;
     }

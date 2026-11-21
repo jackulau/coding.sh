@@ -39,6 +39,7 @@ import {
 import { sessionDigest } from "./digest.ts";
 import { facetCounts, searchWhere } from "../query/run.ts";
 import { andQuery, FACET_KEYS, parseWhere, QueryError, QueryUnsupported, scopesSubagents, type Node, type Query } from "../query/where.ts";
+import { viewQuery, ViewError } from "../query/views.ts";
 import { fitAnswer, pageIndex, pageRange, pageStep } from "./replay-page.ts";
 import { toolText, ToolError, type ToolDef } from "./protocol.ts";
 import { scoreTools } from "../scores/mcp.ts";
@@ -260,6 +261,11 @@ function queryToolError(e: unknown): unknown {
   return e;
 }
 
+function viewToolError(e: unknown): unknown {
+  if (e instanceof ViewError) return new ToolError(e.reason === "unknown_view" ? `${e.message} Save one with coding.sh views save <name> --where <query>.` : e.message, { reason: e.reason });
+  return queryToolError(e);
+}
+
 function when(a: Obj, k: string, now: number, dflt?: string): number | undefined {
   const v = strArg(a, k) ?? dflt;
   if (v === undefined) return undefined;
@@ -414,8 +420,9 @@ function toolDefs(): ToolDef<ToolCtx>[] {
         flag: { type: "string", description: "Only sessions with this flag (premature-completion, no-verification, looping, …) or tag (skill:<name>)." },
         flagged: { type: "boolean", description: "Only sessions with any failure flag." },
         where: WHERE,
+        view: { type: "string", description: "A saved view (views list); ANDed with where." },
         facets: { type: "array", items: { type: "string", enum: [...FACET_KEYS] }, description: "Also count matching sessions per value of these keys." },
-        includeSubagents: { type: "boolean", default: false, description: "Also list subagent (child) sessions. Default false; a where naming id:, parent: or is:child picks them itself." },
+        includeSubagents: { type: "boolean", default: false, description: "Also list subagent sessions. A where naming id:, parent: or is:child picks them itself." },
         project: PROJECT,
         limit: LIMIT(20, 100),
         cursor: CURSOR,
@@ -424,7 +431,9 @@ function toolDefs(): ToolDef<ToolCtx>[] {
       annotations: READ,
       async run(a, c) {
         const ctx = await c.store();
-        const where = whereArg(a, c.now());
+        const typed = whereArg(a, c.now());
+        const viewName = strArg(a, "view");
+        const where = viewName === undefined ? typed : await viewQuery(ctx.index, viewName, typed, { now: c.now() }).then((r) => r.query, (e) => Promise.reject(viewToolError(e)));
         // A where that names id:, parent:, is:root or is:child picks subagents itself, as the CLI's --where does.
         const q = query(a, c, { topLevel: a.includeSubagents !== true && !scopesSubagents(where?.root) });
         const flag = strArg(a, "flag");
@@ -463,6 +472,8 @@ function toolDefs(): ToolDef<ToolCtx>[] {
       annotations: READ,
       async run(a, c) {
         const ctx = await c.store();
+        // Turns are 1-based; 0 names no turn, so it is refused rather than read as "the whole session".
+        if (a.turn === 0) throw new ToolError("turn must be 1..N (1-based) or negative from the end (-1 = last turn); turn 0 does not exist. Omit turn for the whole session.");
         const s = await resolveSession(ctx, strArg(a, "sessionId")!);
         try {
           const digest = await sessionDigest(ctx.index, s, { turn: typeof a.turn === "number" ? a.turn : undefined, limit: numArg(a, "limit", 40), offset: cursorArg(a), from: a.tail === true ? "tail" : "head", now: c.now() });

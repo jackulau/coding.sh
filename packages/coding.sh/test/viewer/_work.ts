@@ -1,6 +1,6 @@
 // A small work queue for the viewer's Work page tests: one item in each bucket, a hidden
 // done item and one outside the 7-day window. Times are whole minutes before `now`, so
-// the "for 2m" in a reason only changes when a run takes 30 seconds between reads.
+// the "for 2m" in a reason goes up each time a whole minute since `now` ends.
 import type { Session } from "../../src/core/types.ts";
 import { mkSession } from "../cli/_cmd.ts";
 

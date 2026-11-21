@@ -131,6 +131,7 @@ const SPLITS: Record<string, { heading: string; path: string }[]> = {
   "reference/api.md": [
     { heading: "## Read API", path: "/docs/api/read" },
     { heading: "### `GET /api/search`", path: "/docs/api/read/search" },
+    { heading: "### `GET /api/experiments`", path: "/docs/api/read/experiments" },
   ],
 };
 

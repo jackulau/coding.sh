@@ -1,9 +1,11 @@
-// coding.sh sessions [--agent --repo --since --flag --limit --empty] [--where <query>] [--facets [keys]]
+// coding.sh sessions [--agent --repo --since --flag --limit --empty] [--where <query>] [--view <name>] [--facets [keys]]
 import { resolve } from "node:path";
 import type { IndexStore, SessionFilter } from "../../core/types.ts";
 import { failureFlags, isEmptySession } from "../../core/sessions.ts";
 import { facetCounts, findSessions } from "../../query/run.ts";
 import { FACET_KEYS, scopesSubagents, type Query } from "../../query/where.ts";
+import { viewQuery } from "../../query/views.ts";
+import { viewCliError } from "./views.ts";
 import type { Session } from "../../schema/index.ts";
 import { parseSinceWhen, positiveInt, UsageError } from "../args.ts";
 import { agentScope, agentsFlag, autoIngest, rejectAgentTypos, fieldsFlag, pendingField, pickFields, queryCliError, readIngest, num, oneLine, SESSION_FIELDS, sessionJson, str, timeWindow, whereFlag, windowJson, windowNote, withContext, type IngestBacklog } from "../common.ts";
@@ -36,13 +38,16 @@ export async function run(c: CommandContext): Promise<number> {
   const sinceWhen = str(c.flags.since) !== undefined ? parseSinceWhen(str(c.flags.since)!) : undefined;
   const since = sinceWhen?.ms;
   const repo = str(c.flags.repo);
-  const where = whereFlag(c);
-  const window = timeWindow({ since: sinceWhen }, where);
+  const typed = whereFlag(c);
+  const viewName = str(c.flags.view);
   const fields = fieldsFlag(c, SESSION_FIELDS);
   const agents = agentsFlag(c);
-  // Several agents: an `agent:a,b` clause on the query (facets, --where), or one listing per agent.
-  const scope = agentScope(agents, where);
   return withContext(c, async (ctx) => {
+    // --view: the saved query, AND --where when both are given (each side keeps its OR and negations).
+    const where = viewName === undefined ? typed : (await viewQuery(ctx.index, viewName, typed).catch((e) => Promise.reject(viewCliError(e)))).query;
+    const window = timeWindow({ since: sinceWhen }, where);
+    // Several agents: an `agent:a,b` clause on the query (facets, --where), or one listing per agent.
+    const scope = agentScope(agents, where);
     const backlog = await autoIngest(ctx, readIngest(c));
     const filter: SessionFilter = {
       ...(scope.agent ? { agent: scope.agent } : {}),

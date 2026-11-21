@@ -2,12 +2,15 @@
 // slash commands, multi-agent Codex TTFT, clipped tool inputs, diffs on
 // file.change, session ends on backfill, and `coding.sh run --agent claude-code`.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { SpoolLine } from "../../src/core/types.ts";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { convertRollout } from "../../src/adapters/codex.ts";
+import { splitLines } from "../../src/adapters/_shared/jsonl.ts";
+import { readJsonl as readMoreJsonl } from "../../src/adapters/more/_util.ts";
 import { clipValue } from "../../src/adapters/_shared/normalize.ts";
 import { fileChangesOf } from "../../src/adapters/_shared/tools.ts";
 import { assertWellFormed, collect, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
@@ -253,5 +256,55 @@ describe("claude-code normalize: `coding.sh run --agent claude-code` wrapper lin
     assert.equal(s.endedAt, T0 + 3000);
     assert.equal(s.repo?.snapshot, repo.snapshot);
     assert.equal(s.stats.filesChanged, 1);
+  });
+});
+
+describe("claude-code backfill: raw U+2028 and U+2029 inside a line", () => {
+  // JSON allows both raw inside a string, and JSON.stringify writes them raw. node:readline split
+  // the line at them, so the halves failed to parse and the line was dropped without an error.
+  it("keeps the tool call, its result and its file.change, and the session ends", async () => {
+    const text = "line one\u2028line two\u2029end";
+    writeFile(
+      join(project(), `${SID}.jsonl`),
+      jsonl([
+        user("u1", 0, "write notes.txt", { promptId: "p1" }),
+        asst("a1", 1000, "msg_1", [{ type: "tool_use", id: "toolu_w", name: "Write", input: { file_path: "/work/demo/notes.txt", content: text } }]),
+        user("u2", 1500, [{ type: "tool_result", tool_use_id: "toolu_w", content: `wrote ${text}` }]),
+        asst("a2", 4000, "msg_2", [{ type: "text", text: "done" }]),
+      ]),
+    );
+    const raw = readFileSync(join(project(), `${SID}.jsonl`), "utf8");
+    assert.ok(raw.includes("\u2028") && raw.includes("\u2029"), "the fixture holds the raw characters");
+    const events = await collect(claudeCode.backfill!(testCtx().ctx));
+    assertWellFormed(events);
+    const start = events.find((e) => e.kind === "tool.start" && e.payload.toolUseId === "toolu_w");
+    assert.equal((start?.payload.input as { content?: string } | undefined)?.content, text);
+    const end = events.find((e) => e.kind === "tool.end" && e.payload.toolUseId === "toolu_w");
+    assert.ok(end, "the result line is kept");
+    assert.equal(end.payload.output, `wrote ${text}`);
+    assert.ok(events.some((e) => e.kind === "file.change" && e.payload.path === "notes.txt"));
+    assert.equal(buildSession(events).endedAt, T0 + 4000);
+  });
+});
+
+describe("splitLines", () => {
+  it("splits on LF only, drops a CR before it, and joins a line cut across chunks", async () => {
+    const lines = async (chunks: string[]) => {
+      const out: string[] = [];
+      for await (const l of splitLines((async function* () { yield* chunks; })())) out.push(l);
+      return out;
+    };
+    assert.deepEqual(await lines(["a\u2028b\u2029c\nd\r\n"]), ["a\u2028b\u2029c", "d"]);
+    assert.deepEqual(await lines(["ab", "c\r", "\nde", "f"]), ["abc", "def"]);
+    assert.deepEqual(await lines(["\n", "\r\n", "x"]), ["", "", "x"]);
+    assert.deepEqual(await lines([]), []);
+  });
+
+  it("more/_util readJsonl reads a line holding U+2028 whole", async () => {
+    const file = join(env.root, "u2028.jsonl");
+    writeFile(file, jsonl([{ a: "x\u2028y" }, { b: 1 }]));
+    const got: unknown[] = [];
+    for await (const r of readMoreJsonl(file)) got.push(r.value);
+    assert.deepEqual(got, [{ a: "x\u2028y" }, { b: 1 }]);
   });
 });

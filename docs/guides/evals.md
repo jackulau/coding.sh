@@ -1165,6 +1165,31 @@ runs (`run:<id>`) or cases instead.
 tools. The `scores` table is in [Query](../reference/query.md#scores). Scores are kept in the
 SQLite store; the Postgres and ClickHouse stores answer 501 for now.
 
+### Review queues
+
+A review queue is a list of sessions to score by hand, one at a time, with one config. `review
+create` keeps the sessions a [query](../reference/query.md) matches when you run it. It checks the
+query first (exit 2 with the parser's message), then the config (exit 1 naming the configs that
+exist), and refuses a name that is taken. `--sample 20` keeps 20 of the matches, picked at random.
+`--assign alice` gives every item to one person.
+
+```sh
+coding.sh score config correct --type boolean
+coding.sh review create flagged --where 'is:flagged agent:codex' --config correct --sample 20
+coding.sh review next flagged       # the session, its title, agent and flags, and the command that scores it
+coding.sh review done flagged 1 true --comment "fixed the test"
+coding.sh review skip flagged 2
+coding.sh review status flagged     # flagged: 1 done, 1 skipped, 18 pending of 20 (config correct)
+coding.sh review list
+```
+
+`review done` writes a human score with the queue's config name, through the same checks as
+`score add`, so it shows in `score list` and a value the config refuses exits 2. It then marks the
+item done with that score's id. An item is its number or its session id. `coding.sh ui` and
+`coding.sh serve` take the same steps at `/api/review` ([API](../reference/api.md#get-apireview-get-apireviewqueue-get-apireviewqueuenext-post-apireviewqueueitem)).
+On `serve` the person is the read key's name, and `next` shows only the items assigned to that
+name or to no one. Review queues are kept in the SQLite store; the other stores exit 1.
+
 ## Judges
 
 Judges call Anthropic with `ANTHROPIC_API_KEY` or OpenAI with `OPENAI_API_KEY`. Like the vendors'

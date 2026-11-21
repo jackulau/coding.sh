@@ -200,7 +200,8 @@ export async function run(c: CommandContext): Promise<number> {
       }
       if (value === undefined) {
         if (out.json) out.data({ key, value: null });
-        else out.print(`${key} is not set`);
+        // stdout carries only the value, so `v=$(coding.sh config get k)` is empty for an unset key.
+        else out.note(`${key} is not set`);
         return 0;
       }
       // A gateway key is never printed (docs/reference/config.md): say only that it is set.
@@ -280,7 +281,14 @@ export async function run(c: CommandContext): Promise<number> {
       });
     }
   } catch (e) {
-    if (e instanceof ConfigError) throw new UsageError(`Invalid value for ${key}: ${e.message.replace(/^.*?: /, "")}`, { reason: "invalid_value" });
+    if (e instanceof ConfigError) {
+      // An enum key ("must be one of "full", "metadata", got "ful""): name the close choice, as a bad --by does.
+      const m = /must be one of (.+), got "([^"]*)"/.exec(e.message);
+      const choices = m ? [...m[1]!.matchAll(/"([^"]+)"/g)].map((x) => x[1]!) : [];
+      const { suggest } = await import("../args.ts");
+      const s = m && choices.length ? suggest(m[2]!, choices) : undefined;
+      throw new UsageError(`Invalid value for ${key}: ${e.message.replace(/^.*?: /, "")}`, { reason: "invalid_value", suggestion: s ? `coding.sh config set ${key} ${s}` : undefined });
+    }
     throw e;
   } finally {
     await rm(dir, { recursive: true, force: true });
