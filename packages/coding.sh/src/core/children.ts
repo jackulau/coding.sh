@@ -16,7 +16,7 @@
 //   the code that would have removed them.
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ChildProcess } from "node:child_process";
-import { rmSync } from "node:fs";
+import { removeSync } from "./remove.ts";
 import { killTree } from "./spawn.ts";
 
 const ambient = new AsyncLocalStorage<AbortSignal>();
@@ -42,7 +42,7 @@ function onExit(): void {
   killLiveChildren();
   for (const dir of scratch) {
     try {
-      rmSync(dir, { recursive: true, force: true, maxRetries: 2 });
+      removeSync(dir, { maxRetries: 2 });
     } catch {
       // best effort while exiting
     }
@@ -53,7 +53,7 @@ function onExit(): void {
 function installExitHook(): void {
   if (exitHook) return;
   exitHook = true;
-  // 'exit' handlers must be synchronous; process.kill and rmSync are.
+  // 'exit' handlers must be synchronous; process.kill and removeSync are.
   process.on("exit", onExit);
 }
 
