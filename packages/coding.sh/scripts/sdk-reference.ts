@@ -626,7 +626,7 @@ const PY_INTRO = (requires: string, extras: string[]) => [
   "coding_sh.flush(timeout=5)  # end of a script, a job or a serverless handler",
   "```",
   "",
-  "`trace` and `span` work as context managers (`with` and `async with`) and as decorators. A decorated tool span records the call's arguments as input and the return value as output. Context follows `contextvars`, so it crosses `await` and asyncio tasks. Work handed to a thread pool starts untraced unless you run it with `contextvars.copy_context().run`.",
+  "`trace` and `span` work as context managers (`with` and `async with`) and as decorators. A decorated tool span records the call's arguments as input and the return value as output. Context follows `contextvars`, so it crosses `await` and asyncio tasks. Work handed to a thread pool starts untraced unless you run it in a copy of the context, one per task: `pool.submit(contextvars.copy_context().run, fn, *args)`.",
   "",
 ];
 
