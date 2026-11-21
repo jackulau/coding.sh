@@ -134,6 +134,9 @@ same `CODING_SH_HOME` as the server.
 | GET | [`/api/ingest`](#get-apiingest) | read key or basic auth | serve, ui |
 | GET | [`/api/star`](#get-apistar-post-apistar) | ui token | ui |
 | POST | [`/api/star`](#get-apistar-post-apistar) | ui token | ui |
+| GET | [`/api/work`](#get-apiwork-post-apiworkack-post-apiworksnooze) | ui token | ui |
+| POST | [`/api/work/ack`](#get-apiwork-post-apiworkack-post-apiworksnooze) | ui token | ui |
+| POST | [`/api/work/snooze`](#get-apiwork-post-apiworkack-post-apiworksnooze) | ui token | ui |
 
 Any other path answers 404 `{"error":"not found","status":404}`.
 
@@ -1844,6 +1847,28 @@ The viewer's "star on GitHub" card. Only `coding.sh ui` answers; `coding.sh serv
 - `POST` takes `{"action": "dismiss"}` or `{"action": "starred"}` as JSON and records `dismissedAt` or `starredAt`. Any other action answers 400. The body is capped at 1 KB and the `Origin` must match the host.
 
 Either one ends the card and the one line `coding.sh` prints in a terminal.
+
+### `GET /api/work`, `POST /api/work/ack`, `POST /api/work/snooze`
+
+The viewer's Work page (`#/work`): the queue [`coding.sh work`](cli.md#codingsh-work) prints. Only `coding.sh ui` answers; `coding.sh serve` and every other host answer 404, because acks and snoozes live in `work.json` in this machine's coding.sh home.
+
+`GET` takes the `work` command's filters as query parameters:
+
+| Parameter | Meaning |
+|---|---|
+| `since` | the window, default `7d` |
+| `agent` | a name, or several separated by commas |
+| `repo` | one repo |
+| `all=1` | show hidden items, like `--all` |
+| `limit` | default 20, at most 500 |
+
+It returns what `coding.sh work --json` returns for the same store and filters, built by the same code, plus two fields for the page: `members` maps each listed item's id to its member session ids (the main session first, at most 50), and `hiddenBy` counts the hidden items by reason (`running`, `done`, `acked` or `snoozed`). A bad `since` or `limit` answers 400.
+
+- `POST /api/work/ack` takes `{"id": "w1a2b3c"}` and acknowledges the item's current cause, as `coding.sh work ack` does. It returns `id`, `acked: true`, the `bucket` and its `label`, and `now`, the item after the ack.
+- An item with no cause to acknowledge returns `id`, `acked: false` and `hidden`, and writes nothing.
+- `POST /api/work/snooze` takes `{"id": "w1a2b3c", "duration": "1h"}` and hides the item until then, as `coding.sh work snooze` does. It returns `id`, `snoozedUntil` (an ISO time) and the `bucket` the snooze holds.
+- Both writes look the item up in the last 7 days, or the window in `?since=`. An item not in the window answers 404.
+- An id that is not an item id, or a duration that does not parse, answers 400. The body must be JSON, is capped at 1 KB, and the `Origin` must match the host.
 
 ### `GET /api/ingest`
 

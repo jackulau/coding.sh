@@ -41,6 +41,8 @@ import { parseRequest as parsePlaygroundRequest, PlaygroundError, rebuildCall, t
 import { computeMetrics, DAY_MS, MAX_GROUPS, METRIC_BUCKETS, METRIC_GROUPS, MetricsError, type MetricBucket, type MetricGroup, type MetricsSpec } from "./metrics.ts";
 import { parseTime } from "../query/where.ts";
 import { getScoreConfigs, getScores, postScore, postScoreConfig, type ApiReply, type ScoresApiCtx } from "../scores/api.ts";
+import { paths } from "../core/paths.ts";
+import { WorkApiError, workAck, workList, workSnooze, type WorkSource } from "./work.ts";
 import { ScoreError } from "../scores/scores.ts";
 
 /** Where /api/star keeps its state: this machine's coding.sh home. `now` is for tests. */
@@ -76,6 +78,8 @@ export interface ViewerOptions {
   ingestStatus?: () => IngestStatus | undefined;
   /** The one-time star prompt behind /api/star (`coding.sh ui` passes its env; it writes <root>/star.json). Without it the route is 404. */
   star?: StarSource;
+  /** The work queue behind /api/work (the Work page). Default: work.json in the coding.sh home of the star env, else env. */
+  work?: WorkSource;
   /** Start-snapshot content for replays (`coding.sh ui`, which can read this machine's shadow repos). */
   replayBaseline?: (s: Session) => Baseline | undefined;
   /** Forking a replay at a step (`coding.sh ui` only: it calls the model with this machine's key). Without it /fork is 404. */
@@ -251,6 +255,8 @@ export interface ViewerHandlerOptions {
   ingestStatus?: () => IngestStatus | undefined;
   /** The star prompt behind /api/star. Default: none (404). */
   star?: StarSource;
+  /** The work queue behind /api/work, with its acks and snoozes. Default: none (404). */
+  work?: WorkSource;
   /** Start-snapshot content for replays. Default: none (replays start from what the session showed). */
   replayBaseline?: (s: Session) => Baseline | undefined;
   /** Forks from a replay step. Default: none (404). */
@@ -283,6 +289,7 @@ export async function createViewerHandler(opts: ViewerHandlerOptions): Promise<V
     workflows: opts.workflows,
     ingestStatus: opts.ingestStatus,
     star: opts.star,
+    work: opts.work,
     replayBaseline: opts.replayBaseline,
     fork: opts.fork,
     playground: opts.playground,
@@ -404,6 +411,8 @@ export async function startViewer(opts: ViewerOptions): Promise<Viewer> {
     workflows: opts.workflows ?? WorkflowStore.forEnv(opts.env ?? process.env),
     ...(opts.ingestStatus ? { ingestStatus: opts.ingestStatus } : {}),
     star: opts.star,
+    // The local viewer reads this machine's queue: the overlay `coding.sh work` writes.
+    work: opts.work ?? { overlay: paths(opts.star?.env ?? opts.env ?? process.env).work },
     ...(opts.replayBaseline ? { replayBaseline: opts.replayBaseline } : {}),
     ...(opts.fork ? { fork: opts.fork } : {}),
     ...(opts.playground ? { playground: opts.playground } : {}),
@@ -515,6 +524,7 @@ interface ApiCtx {
   workflows?: WorkflowViewSource;
   ingestStatus?: () => IngestStatus | undefined;
   star?: StarSource;
+  work?: WorkSource;
   replayBaseline?: (s: Session) => Baseline | undefined;
   fork?: ForkSource;
   playground?: PlaygroundSource;
@@ -1141,6 +1151,36 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         return sendJson(res, 200, { ok: true });
       }
       throw new HttpError(405, "method not allowed");
+    }
+
+    case "work": {
+      // GET: the queue. POST ack and POST snooze take {"id": "w…"} and write the same work.json the CLI writes.
+      // Only `coding.sh ui` passes a work source: acks and snoozes live in this machine's coding.sh home.
+      if (!ctx.work) throw new HttpError(404, "not found: the work queue is only in the local viewer (coding.sh ui)");
+      if (ctx.project !== undefined) throw new HttpError(404, "not found: the work queue is only in the local viewer (coding.sh ui)");
+      const src = ctx.work;
+      try {
+        if (id === undefined || id === "") {
+          get();
+          return sendJson(res, 200, await workList(ctx.index, src, q));
+        }
+        if (id === "ack") {
+          if (sub !== undefined) throw notFound();
+          if (method !== "POST") throw new HttpError(405, "method not allowed");
+          checkOrigin(req, ctx.checkHost);
+          return sendJson(res, 200, await workAck(ctx.index, src, q, await readJson(req, res, 1024)));
+        }
+        if (id === "snooze") {
+          if (sub !== undefined) throw notFound();
+          if (method !== "POST") throw new HttpError(405, "method not allowed");
+          checkOrigin(req, ctx.checkHost);
+          return sendJson(res, 200, await workSnooze(ctx.index, src, q, await readJson(req, res, 1024)));
+        }
+        throw notFound();
+      } catch (e) {
+        if (e instanceof WorkApiError) throw new HttpError(e.status, e.message);
+        throw e;
+      }
     }
 
     case "ingest": {

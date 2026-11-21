@@ -201,7 +201,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
    pushing the page past the screen. The label clips, not the link, so its hit area stays. */
 .nav a, .nav a > span { min-width: 0; }
 .nav a > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Five tabs fit a phone only with short names. */
+/* Six tabs fit a phone only with short names. */
 .nav-short { display: none; }
 @media (max-width: 640px) { .nav-long { display: none; } .nav-short { display: inline; } }
 .nav a {
@@ -247,7 +247,8 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .topbar { gap: 0.5rem; }
   /* Three tabs fit a phone: the cube stays, the word goes. */
   .brand span { display: none; }
-  .nav a { padding: 0 0.45rem; font-size: 12.5px; }
+  .nav { gap: 0; }
+  .nav a { padding: 0 0.4rem; font-size: 12.5px; }
   #help, .topbar > .update-pill { display: none; }
 }
 @media (max-width: 380px) { .brand span { display: none; } }
@@ -1502,6 +1503,7 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 
 @media (hover: hover) and (pointer: fine) {
   .bench-card:hover .chev { color: var(--text); }
+  .work-title:hover { text-decoration-color: var(--line-strong); }
   .chat-work:hover { color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
   .nav a:hover:not([aria-current="page"]) { color: var(--text); transition-duration: var(--dur-hover-in); }
   .cmdk:hover { box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--text-2); transition-duration: var(--dur-hover-in); }
@@ -1542,6 +1544,34 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
   .fail-row .open-sess:hover { text-decoration-color: var(--text-2); transition-duration: var(--dur-hover-in); }
 }
 
+/* ---------- work ---------- */
+.work-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+.work-filters .field { width: 11rem; }
+.work-notes { display: grid; gap: 0.2rem; margin: -0.5rem 0 1rem; }
+.work-notes:empty { display: none; }
+.work-body { display: grid; gap: 1.5rem; }
+.work-group h2 { display: flex; align-items: baseline; gap: 0.5rem; margin-bottom: 0.6rem; font-size: 14px; }
+.work-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+.work-item { display: grid; gap: 0.35rem; min-width: 0; padding: 0.8rem 1rem; }
+.work-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.6rem; min-width: 0; }
+.work-head h3 { min-width: 0; font-size: 14px; font-weight: 520; overflow-wrap: anywhere; }
+.work-title, .work-link { text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; }
+.work-link { text-decoration-color: var(--line-strong); }
+.work-link { color: var(--text-2); overflow-wrap: anywhere; }
+.work-reason { display: flex; align-items: baseline; gap: 0.5rem; color: var(--text); overflow-wrap: anywhere; }
+.work-facts { display: flex; flex-wrap: wrap; gap: 0.15rem 0.9rem; min-width: 0; }
+.work-where { max-width: 28rem; }
+.work-next { color: var(--text-2); overflow-wrap: anywhere; }
+.work-sessions summary { cursor: pointer; width: fit-content; }
+.work-sessions ul { margin: 0.35rem 0 0; padding-left: 1.1rem; display: grid; gap: 0.2rem; font-size: 12px; }
+.work-actions, .work-more { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+@media (max-width: 640px) {
+  .work-filters { flex: 1 1 100%; }
+  .work-filters .field { flex: 1 1 8rem; width: auto; min-width: 0; }
+  .work-item { padding: 0.75rem 0.85rem; }
+  .work-sessions li a { display: inline-block; padding: 0.5rem 0; }
+}
+
 /* ---------- phones: touch targets, filter sheet, safe areas ---------- */
 /* Notched phones: content stays inside the safe area (needs viewport-fit=cover). */
 .topbar { padding-left: max(var(--gutter), env(safe-area-inset-left)); padding-right: max(var(--gutter), env(safe-area-inset-right)); }
@@ -1560,12 +1590,12 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
     left: min(0px, calc((100% - 44px) / 2)); right: min(0px, calc((100% - 44px) / 2));
   }
   .cmdk, .icon-btn, .brand { flex: none; }
-  @media (max-width: 400px) { .topbar { gap: 0.25rem; } .nav a { padding: 0 0.35rem; } }
-  /* 360px phones: the three tabs, search and theme still fit inside the gutters. */
-  @media (max-width: 370px) { .topbar { gap: 0.2rem; } .nav a { padding: 0 0.25rem; font-size: 12px; } }
+  @media (max-width: 400px) { .topbar { gap: 0.25rem; } .nav a { padding: 0 0.3rem; font-size: 12px; } }
+  /* 360px phones: the six tabs, search and theme still fit inside the gutters. */
+  @media (max-width: 370px) { .topbar { gap: 0.2rem; } .nav a { padding: 0 0.2rem; font-size: 11.5px; } }
   /* 320px: the gutters narrow so theme still ends inside the screen, and the tabs tighten
      enough that a wide fallback font (Verdana, DejaVu Sans) fits whole too. */
-  @media (max-width: 340px) { .topbar { gap: 0; padding-left: max(0.6rem, env(safe-area-inset-left)); padding-right: max(0.6rem, env(safe-area-inset-right)); } .nav a { padding: 0 0.15rem; letter-spacing: -0.01em; } }
+  @media (max-width: 340px) { .topbar { gap: 0; padding-left: max(0.6rem, env(safe-area-inset-left)); padding-right: max(0.6rem, env(safe-area-inset-right)); } .nav a { padding: 0 0.1rem; letter-spacing: -0.01em; } }
   @media (hover: none) { .key-hint { display: none; } }
   .facets-toggle { height: 44px; }
   /* 16px text stops iOS zooming the page when a field takes focus. */
@@ -1630,6 +1660,7 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
   </a>
   <nav class="nav" aria-label="Primary">
     <a href="#/" data-nav="sessions"><span>Sessions</span></a>
+    <a href="#/work" data-nav="work"><span>Work</span></a>
     <a href="#/explore" data-nav="explore"><span>Explore</span></a>
     <a href="#/experiments" data-nav="experiments"><span><span class="nav-long">Experiments</span><span class="nav-short">Exps</span></span></a>
     <a href="#/benchmarks" data-nav="benchmarks"><span><span class="nav-long">Benchmarks</span><span class="nav-short">Bench</span></span></a>
@@ -2175,7 +2206,7 @@ function route() {
   const seq = ++navSeq;
   clearAnnouncement();
   const { parts, query, hasQuery } = parseHash();
-  const section = parts[0] === "experiments" || parts[0] === "benchmarks" || parts[0] === "workflows" ? parts[0] : parts[0] === "explore" || parts[0] === "metrics" ? "explore" : "sessions";
+  const section = parts[0] === "experiments" || parts[0] === "benchmarks" || parts[0] === "workflows" || parts[0] === "work" ? parts[0] : parts[0] === "explore" || parts[0] === "metrics" ? "explore" : "sessions";
   for (const a of document.querySelectorAll("[data-nav]")) {
     if (a.dataset.nav === section) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }
@@ -2189,6 +2220,7 @@ function route() {
   if (parts[0] === "workflows" && parts[1]) return showWorkflow(seq, parts[1]);
   if (parts[0] === "workflows") return showWorkflows(seq);
   if (parts[0] === "explore" || parts[0] === "metrics") return showExplore(seq, query);
+  if (parts[0] === "work") return showWork(seq, query);
   if (parts[0] === "playground" && parts[1]) return showPlayground(seq, parts[1], (query.get("session") || "").slice(0, 200));
   return showSessions(seq, hasQuery ? query : null, parts[0] === "events" ? "events" : "sessions");
 }
@@ -2210,6 +2242,7 @@ const KEYMAP = [
   { scope: "global", id: "go-experiments", keys: ["g", "e"], label: "Go to experiments", chord: true },
   { scope: "global", id: "go-benchmarks", keys: ["g", "b"], label: "Go to benchmarks", chord: true },
   { scope: "global", id: "go-explore", keys: ["g", "x"], label: "Go to explore", chord: true },
+  { scope: "global", id: "go-work", keys: ["g", "w"], label: "Go to work", chord: true },
   { scope: "sessions", id: "search", keys: ["/"], label: "Filter or search" },
   { scope: "sessions", id: "down", keys: ["j"], alt: ["ArrowDown"], label: "Next session" },
   { scope: "sessions", id: "up", keys: ["k"], alt: ["ArrowUp"], label: "Previous session" },
@@ -2270,8 +2303,14 @@ const KEYMAP = [
   { scope: "benchmark", id: "open", keys: ["Enter"], label: "Show or hide case detail" },
   { scope: "benchmark", id: "session", keys: ["o"], label: "Open the case's session" },
   { scope: "benchmark", id: "back", keys: ["Esc"], alt: ["Escape"], label: "Back to benchmarks" },
+  { scope: "work", id: "search", keys: ["/"], label: "Filter by agent" },
+  { scope: "work", id: "down", keys: ["j"], alt: ["ArrowDown"], label: "Next item" },
+  { scope: "work", id: "up", keys: ["k"], alt: ["ArrowUp"], label: "Previous item" },
+  { scope: "work", id: "open", keys: ["Enter"], label: "Open the item's session" },
+  { scope: "work", id: "ack", keys: ["a"], label: "Acknowledge the item" },
+  { scope: "work", id: "snooze", keys: ["z"], label: "Snooze the item for an hour" },
 ];
-const SCOPE_NAMES = { global: "Anywhere", sessions: "Sessions list", events: "Events list", session: "Session", replay: "Replay", explore: "Explore", experiments: "Experiments", experiment: "Experiment and compare", benchmarks: "Benchmarks", benchmark: "Benchmark" };
+const SCOPE_NAMES = { global: "Anywhere", sessions: "Sessions list", events: "Events list", session: "Session", replay: "Replay", explore: "Explore", experiments: "Experiments", experiment: "Experiment and compare", benchmarks: "Benchmarks", benchmark: "Benchmark", work: "Work" };
 let chordAt = 0;
 document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); openPalette(); return; }
@@ -2285,6 +2324,7 @@ document.addEventListener("keydown", (e) => {
     if (e.key === "e") { e.preventDefault(); location.hash = "#/experiments"; return; }
     if (e.key === "b") { e.preventDefault(); location.hash = "#/benchmarks"; return; }
     if (e.key === "x") { e.preventDefault(); location.hash = "#/explore"; return; }
+    if (e.key === "w") { e.preventDefault(); location.hash = "#/work"; return; }
   }
   chordAt = 0;
   if (e.key === "?") { e.preventDefault(); openHelp(); return; }
@@ -2356,6 +2396,7 @@ function openPalette() {
     // Touch screens get no key hints and no shortcuts sheet: there is no keyboard to use them with.
     { group: "Go to", label: "Sessions", hint: KEYBOARD.matches ? "g s" : "", run: () => { location.hash = listHref("sessions"); } },
     { group: "Go to", label: "Events", run: () => { location.hash = listHref("events"); } },
+    { group: "Go to", label: "Work", hint: KEYBOARD.matches ? "g w" : "", run: () => { location.hash = "#/work"; } },
     { group: "Go to", label: "Experiments", hint: KEYBOARD.matches ? "g e" : "", run: () => { location.hash = "#/experiments"; } },
     { group: "Go to", label: "Benchmarks", hint: KEYBOARD.matches ? "g b" : "", run: () => { location.hash = "#/benchmarks"; } },
     { group: "Go to", label: "Explore", hint: KEYBOARD.matches ? "g x" : "", run: () => { location.hash = "#/explore"; } },
@@ -7370,6 +7411,247 @@ function exploreTable(st, m, color) {
     h("caption", { class: "sr-only" }, "Totals by " + st.by),
     h("thead", null, h("tr", null, h("th", { scope: "col" }, EXPLORE_BY.find(([k]) => k === st.by)[1]), cols.map((c) => h("th", { scope: "col" }, c)))),
     h("tbody", null, m.series.map((s) => row(s.key, s.totals, s.key, exploreSessionsHref(st, m, s.key))), row("total", m.totals, "total"))));
+}
+
+// ------------------------------------------------------------ work
+
+// What needs you (docs/design/work.md): the queue `coding.sh work` prints, from /api/work, which
+// builds it with the CLI's own functions. The page renders the items it gets; it computes no
+// buckets. Ack and snooze write the same work.json the CLI writes.
+const WORK_BUCKETS = [["blocked", "Blocked on you"], ["failed", "Failed"], ["stalled", "Stalled"], ["turn", "Your turn"], ["review", "Ready for review"]];
+const WORK_HIDDEN = { running: "running", done: "done", acked: "acknowledged", snoozed: "snoozed" };
+const WORK_SINCE = ["1d", "7d", "30d"];
+const WORK_LIMIT = 200;
+const WORK_POLL_MS = 10_000;
+function workState(q) {
+  const clip = (v, n) => (v || "").trim().slice(0, n);
+  return { agent: clip(q.get("agent"), 200), repo: clip(q.get("repo"), 500), since: clip(q.get("since"), 40) || "7d", all: q.get("all") === "1" };
+}
+function workHref(st) {
+  return "#/work" + qs({ agent: st.agent, repo: st.repo, since: st.since === "7d" ? "" : st.since, all: st.all ? "1" : "" });
+}
+/** "2 blocked on you · 1 failed", as the CLI's header line says it. */
+function workCounts(counts) {
+  const parts = WORK_BUCKETS.filter(([b]) => counts[b]).map(([b, label]) => counts[b] + " " + label.toLowerCase());
+  return parts.length ? parts.join(" · ") : "nothing needs you";
+}
+/** A snooze end comes as ISO, as `work --json` keeps it; people read it in local time, as the CLI prints it. */
+function workNext(next) {
+  const m = /^snoozed until (\d{4}-\d{2}-\d{2}T[\d:.]+Z)$/.exec(next || "");
+  return m ? "snoozed until " + new Date(Date.parse(m[1])).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) : workNextParts(next).map(([code, text]) => code ? h("code", null, text) : text);
+}
+/** The CLI marks commands in a next step with backticks; the page shows them as code: [[false, "review: "], [true, "git diff"], …]. */
+function workNextParts(next) {
+  const parts = String(next || "").split("`");
+  // An odd backtick leaves its text plain.
+  if (parts.length % 2 === 0) return [[false, String(next)]];
+  return parts.map((text, i) => [i % 2 === 1, text]).filter(([, text]) => text);
+}
+/** An age as the item's reason gives it (core/work.ts short, floored): 27s, 4m, 1h, 30h, 3d. The card's "since" fact uses it so both read the same. */
+function workAge(ms) {
+  const s = Math.max(0, Math.floor(ms / 1e3));
+  if (s < 60) return s + "s";
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + "m";
+  const hr = Math.floor(m / 60);
+  return hr < 48 ? hr + "h" : Math.floor(hr / 24) + "d";
+}
+function workHiddenReasons(by) {
+  const parts = Object.keys(WORK_HIDDEN).filter((k) => by && by[k]).map((k) => fmtNum(by[k]) + " " + WORK_HIDDEN[k]);
+  return parts.length ? parts.join(", ") : "running, done, acknowledged or snoozed";
+}
+
+async function showWork(seq, query) {
+  const st = workState(query);
+  const go = (patch) => { location.hash = workHref({ ...st, ...patch }); };
+  const view = h("section", { class: "wrap view work", "aria-labelledby": "work-h" });
+  const keys = { scope: "work", actions: {}, palette: [] };
+  const meta = h("p", { class: "meta" }, "Loading…");
+  const field = (name, label, placeholder) => h("input", { class: "field", type: "search", name, value: st[name], placeholder, "aria-label": label, autocomplete: "off", spellcheck: "false" });
+  const agentIn = field("agent", "Agent", "Agent");
+  const repoIn = field("repo", "Repo or folder", "Repo");
+  const form = h("form", { class: "work-filters", role: "search", "aria-label": "Filter work items", onsubmit: (e) => {
+    e.preventDefault();
+    go({ agent: agentIn.value.trim(), repo: repoIn.value.trim() });
+  } }, agentIn, repoIn, h("button", { class: "btn btn-sm", type: "submit" }, "Filter"));
+  for (const el of [agentIn, repoIn]) el.addEventListener("keydown", (e) => { if (e.key === "Escape" && el.value) { e.preventDefault(); e.stopPropagation(); el.value = ""; form.requestSubmit(); } });
+  const sinceOpts = WORK_SINCE.includes(st.since) ? WORK_SINCE : WORK_SINCE.concat(st.since);
+  const hiddenBtn = h("button", { class: "btn btn-sm", type: "button", "aria-pressed": String(st.all), onclick: () => go({ all: !st.all }) }, "Show hidden");
+  const controls = h("div", { class: "mx-controls" },
+    h("div", { class: "seg", role: "group", "aria-label": "Sessions started in the last" },
+      sinceOpts.map((v) => h("button", { type: "button", "aria-pressed": String(st.since === v), onclick: () => go({ since: v }) }, v))),
+    hiddenBtn, form);
+  const notes = h("div", { class: "work-notes" });
+  append(view, [h("div", { class: "page-head" }, h("div", null, h("h1", { id: "work-h" }, "Work"), meta)), controls, notes]);
+  const slot = h("div", { class: "work-body" });
+  view.append(slot);
+  setView(view, false, keys);
+  keys.actions.search = () => { agentIn.focus(); agentIn.select(); };
+  const skel = setTimeout(() => swap(slot, h("div", { class: "panel work-item", "aria-busy": "true", "aria-label": "Loading work items" }, [46, 70, 32].map((w) => {
+    const row = h("div", { class: "skeleton" }, h("span", { class: "dot tone-muted" }), h("i"));
+    row.lastChild.style.width = w + "%";
+    return row;
+  }))), 250);
+
+  const path = "/api/work" + qs({ agent: st.agent, repo: st.repo, since: st.since, all: st.all ? "1" : "", limit: WORK_LIMIT });
+  let d;
+  try { d = await api(path); } catch (e) {
+    clearTimeout(skel);
+    if (!current(seq)) return;
+    meta.textContent = "";
+    swap(slot, workError(e, go));
+    announce("Work did not load");
+    return;
+  } finally { clearTimeout(skel); }
+  if (!current(seq)) return;
+
+  let last = JSON.stringify(d);
+  let acting = false;
+  const draw = (doc, quiet) => {
+    const hidden = doc.hidden ? plural(doc.hidden, "hidden item") + ": " + workHiddenReasons(doc.hiddenBy) : "";
+    meta.textContent = workCounts(doc.counts) + " · since " + st.since;
+    hiddenBtn.textContent = doc.hidden ? "Show hidden (" + fmtNum(doc.hidden) + ")" : "Show hidden";
+    const lines = [];
+    if (hidden && !st.all && doc.items.length) lines.push(h("p", { class: "meta" }, hidden + "."));
+    if (doc.noPromptSignal && doc.noPromptSignal.length) lines.push(h("p", { class: "meta" }, "No prompt signal from " + doc.noPromptSignal.join(", ") + ": their waits show as stalled."));
+    if (doc.truncated) lines.push(h("p", { class: "meta" }, "Read the newest sessions only: pick a shorter window."));
+    swap(notes, lines);
+    swap(slot, workBody(doc, st, go, act));
+    if (!quiet) announce(doc.items.length ? workCounts(doc.counts) + (doc.hidden ? ", " + plural(doc.hidden, "hidden item") : "") : "Nothing needs you");
+  };
+  const reload = async () => {
+    let next;
+    try { next = await api(path, undefined, true); } catch { return; }
+    if (!current(seq)) return;
+    const s = JSON.stringify(next);
+    if (s === last) return;
+    last = s;
+    draw(next, true);
+  };
+  async function act(item, kind, button) {
+    if (acting) return;
+    acting = true;
+    if (button) button.disabled = true;
+    try {
+      const r = await fetchJson("/api/work/" + kind + qs({ since: st.since }), {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(kind === "snooze" ? { id: item.id, duration: "1h" } : { id: item.id }),
+      });
+      const msg = kind === "ack"
+        ? (r.acked ? "Acknowledged " + item.id : item.id + " has nothing to acknowledge")
+        : "Snoozed " + item.id + " until " + new Date(Date.parse(r.snoozedUntil)).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+      toast(msg);
+      announce(msg);
+      await reload();
+    } catch (e) {
+      toast(e.message || "That did not work");
+      if (button && button.isConnected) button.disabled = false;
+    } finally { acting = false; }
+  }
+  draw(d, false);
+
+  // Each item's title is a link: j and k move between them, Enter opens one, a and z act on the one in focus.
+  const focused = () => { const a = document.activeElement; const el = a && a.closest ? a.closest(".work-item") : null; return el && slot.contains(el) ? el : null; };
+  const move = (step) => {
+    const list = [...slot.querySelectorAll(".work-title")];
+    if (!list.length) return;
+    const at = focused();
+    const i = at ? list.indexOf(at.querySelector(".work-title")) : -1;
+    const n = i < 0 ? (step > 0 ? 0 : list.length - 1) : Math.max(0, Math.min(list.length - 1, i + step));
+    list[n].focus();
+    list[n].scrollIntoView({ block: "nearest" });
+  };
+  const press = (sel) => { const it = focused() || slot.querySelector(".work-item"); const b = it && it.querySelector(sel); if (b && !b.disabled) b.click(); };
+  keys.actions.down = () => move(1);
+  keys.actions.up = () => move(-1);
+  keys.actions.open = () => { const t = (focused() || slot).querySelector(".work-title"); if (t) location.hash = t.getAttribute("href"); };
+  keys.actions.ack = () => press("[data-act=ack]");
+  keys.actions.snooze = () => press("[data-act=snooze]");
+
+  // The viewer's refresh: poll while the tab is in view, and redraw only when the queue changed.
+  const timer = setInterval(() => { if (!document.hidden) void reload(); }, WORK_POLL_MS);
+  cleanup = () => clearInterval(timer);
+}
+function workError(e, go) {
+  if (e.status === 404) {
+    return h("div", { class: "panel empty" },
+      h("h2", { text: "The work queue is in the local viewer only" }),
+      h("p", { text: "Acks and snoozes live in this machine's coding.sh home, so a shared server has no queue. Open coding.sh ui on the machine your agents run on, or ask the CLI there." }),
+      cmdBlock("coding.sh work", "Copy work command"));
+  }
+  if (e.status === 400) {
+    return h("div", { class: "panel empty", role: "alert" },
+      h("h2", { text: "That window does not parse" }), h("p", { text: e.message }),
+      h("button", { class: "btn", type: "button", onclick: () => go({ since: "7d" }) }, "Use the last 7 days"));
+  }
+  return errorPanel(e, () => route());
+}
+function workBody(doc, st, go, act) {
+  const items = doc.items || [];
+  if (!items.length) {
+    const filtered = !!(st.agent || st.repo);
+    if (doc.hidden && !st.all) {
+      return h("div", { class: "panel empty" },
+        h("h2", { text: "Nothing needs you" }),
+        h("p", { text: plural(doc.hidden, "item") + " hidden: " + workHiddenReasons(doc.hiddenBy) + "." }),
+        h("button", { class: "btn", type: "button", onclick: () => go({ all: true }) }, "Show hidden items"));
+    }
+    return h("div", { class: "panel empty" },
+      h("h2", { text: filtered ? "No work items match these filters" : "No agent sessions since " + st.since }),
+      h("p", { text: filtered ? "Clear the agent or repo filter, or widen the window." : "Items come from the sessions coding.sh captured in the window. Widen it, or run an agent and come back." }),
+      h("div", { class: "work-actions" },
+        filtered ? h("button", { class: "btn", type: "button", onclick: () => go({ agent: "", repo: "" }) }, "Clear the filters") : null,
+        st.since !== "30d" ? h("button", { class: "btn", type: "button", onclick: () => go({ since: "30d" }) }, "Widen to 30 days") : null));
+  }
+  const members = doc.members || {};
+  // The moment the server wrote the reasons ("ended 2h ago"); ages on the cards count from it too.
+  const now = Number.isFinite(Date.parse(doc.now)) ? Date.parse(doc.now) : Date.now();
+  const groups = WORK_BUCKETS.map(([b, label]) => [label, items.filter((i) => i.bucket === b)]).concat([["Hidden", items.filter((i) => !i.bucket)]]);
+  const out = groups.filter(([, list]) => list.length).map(([label, list], g) => h("section", { class: "work-group", "aria-labelledby": "work-g" + g },
+    h("h2", { id: "work-g" + g }, label, " ", h("span", { class: "meta" }, fmtNum(list.length))),
+    h("ul", { class: "work-list" }, list.map((i) => workItemEl(i, members[i.id] || [i.sessionId], act, now)))));
+  if (doc.groups && doc.groups.length) out.push(h("p", { class: "meta" }, doc.groups.map((gr) => gr.cause + " x" + gr.count + ": " + gr.items.join(", ")).join(" · ")));
+  if (doc.more) {
+    out.push(h("div", { class: "work-more" },
+      h("p", { class: "meta" }, plural(doc.more, "more item") + " than this page shows. The CLI lists them all:"),
+      cmdBlock(shCmd("coding.sh work --limit", items.length + doc.more, ...(st.all ? ["--all"] : [])), "Copy work command")));
+  }
+  return out;
+}
+function workItemEl(i, ids, act, now = Date.now()) {
+  const tone = i.bucket === "blocked" || i.bucket === "failed" ? "tone-fail" : i.bucket === "stalled" ? "tone-warn" : "tone-muted";
+  const at = Date.parse(i.since || i.lastActivity);
+  const where = i.repo || i.cwd;
+  const facts = [
+    h("span", { class: "mono" }, i.id),
+    h("span", null, i.agents && i.agents.length > 1 ? i.agent + " +" + (i.agents.length - 1) : i.agent),
+    // The reason's age and this one are worked out at the same moment, by the same rule, so they never disagree (neither ticks).
+    at ? h("span", { title: new Date(at).toLocaleString() }, i.bucket ? "since " : "last active ", h("span", { class: "work-age" }, workAge(now - at) + " ago")) : null,
+    i.costUsd !== undefined ? h("span", null, fmtCost(i.costUsd)) : null,
+    h("span", null, plural(i.sessions, "session")),
+    where ? h("span", { class: "truncate work-where", title: where }, where + (i.branch ? " (" + i.branch + ")" : "")) : null,
+    i.startedBy ? h("span", null, "started by " + i.startedBy) : null,
+  ];
+  const cause = i.causeSessionId && i.causeSessionId !== i.sessionId ? i.causeSessionId : "";
+  const others = ids.filter((id) => id !== i.sessionId);
+  const ackCmd = shCmd("coding.sh work ack", i.id);
+  const snoozeCmd = shCmd("coding.sh work snooze", i.id, "1h");
+  return h("li", { class: "panel work-item", "data-item": i.id, "data-bucket": i.bucket || "hidden" },
+    h("div", { class: "work-head" },
+      h("h3", null, h("a", { class: "work-title", href: sessionHref(i.sessionId) }, oneLine(i.title) || "(untitled)")),
+      i.probablyClosed ? h("span", { class: "badge warn" }, "probably closed") : null,
+      i.hidden ? h("span", { class: "badge" }, WORK_HIDDEN[i.hidden] || i.hidden) : null),
+    h("p", { class: "work-reason" }, h("span", { class: "dot " + tone, "aria-hidden": "true" }), h("span", null, i.reason)),
+    h("p", { class: "meta work-facts" }, facts),
+    h("p", { class: "work-next" }, h("span", { class: "meta" }, "Next "), workNext(i.next)),
+    cause ? h("p", { class: "meta" }, "Cause in ", h("a", { class: "work-link", href: sessionHref(cause) }, cause)) : null,
+    others.length ? h("details", { class: "work-sessions" },
+      h("summary", { class: "meta" }, plural(others.length, "more session") + " in this item"),
+      h("ul", null, others.map((id) => h("li", null, h("a", { class: "work-link mono", href: sessionHref(id) }, id)))),
+      i.sessions > ids.length ? h("p", { class: "meta" }, fmtNum(i.sessions - ids.length) + " more: coding.sh work show " + i.id) : null) : null,
+    h("div", { class: "work-actions" },
+      i.bucket ? h("button", { class: "btn btn-sm", type: "button", "data-act": "ack", "aria-label": "Acknowledge " + i.id, title: ackCmd, onclick: (e) => act(i, "ack", e.currentTarget) }, "Ack") : null,
+      h("button", { class: "btn btn-sm", type: "button", "data-act": "snooze", "aria-label": "Snooze " + i.id + " for an hour", title: snoozeCmd, onclick: (e) => act(i, "snooze", e.currentTarget) }, "Snooze 1h"),
+      copyBtn(i.bucket ? ackCmd : snoozeCmd, "Copy the CLI command for " + i.id, "command", "Copy CLI")));
 }
 
 // ------------------------------------------------------------ workflows

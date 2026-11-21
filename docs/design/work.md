@@ -6,7 +6,8 @@ Design for the first version of `coding.sh work`. It answers one question for a 
 Status: built, except the items under "Later". The code is `packages/coding.sh/src/core/waiting.ts`
 (the fold stat), `src/core/work.ts` (items and the queue), `src/core/work-overlay.ts` (acks and
 snoozes) and `src/cli/commands/work.ts` (the command). The user docs are
-the CLI reference ([`coding.sh work`](../reference/cli.md#codingsh-work)) and the API reference (`stats.waiting`).
+the CLI reference ([`coding.sh work`](../reference/cli.md#codingsh-work)), the API reference (`stats.waiting`, `GET /api/work`)
+and the viewer guide ([Open the viewer](../guides/explore.md#open-the-viewer)).
 
 ## Why sessions are the right base
 
@@ -135,6 +136,12 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
 - The statusline adds "N need you" when items are blocked on you or failed, and its JSON a
   `needYou` field. On every render it first reads new hook events, for at most 400 ms and not while
   another ingest holds the lock, then the 7-day window.
+- The local viewer's Work page (`#/work`, `src/viewer/work.ts`, the tab after Sessions) reads the
+  queue through `GET /api/work`, which builds it with `readWorkQueue` and `workJson` like the
+  command, so its items equal `work --json` for the same store and filters. The agent, repo, since
+  and `all` filters live in the URL. Ack and snooze buttons post to `/api/work/ack` and
+  `/api/work/snooze`, which write `work.json` by the command's rules. Only `coding.sh ui` serves
+  it; `coding.sh serve` answers 404.
 - The MCP `status` tool gets a `work` field, so an agent can read the queue without a new tool:
   the counts, `needYou`, and the first 10 items as `work --json` gives them, over the same 7-day
   window, with acks and snoozes applied. `more` counts the items left out. The tool stays
@@ -153,8 +160,8 @@ queue, plus up to 400 ms when new hook events wait to be read.
 
 ## Later
 
-A viewer page; T3 Code's pending approvals, from the provider thread status the adapter already
-reads; a reply path for hook protocols that accept one; branch grouping with merge, split and name;
+T3 Code's secret and link requests (`secret_request` and `link_request` items),
+which are not read yet; a reply path for hook protocols that accept one; branch grouping with merge, split and name;
 done by a check command; budgets; cloud agents; dependencies between items; notifications.
 
 ## Tests
@@ -172,5 +179,8 @@ done by a check command; budgets; cloud agents; dependencies between items; noti
   the queue. An agent with no prompt signal falls to stalled with the approval hint, and Devin CLI
   does not. It also covers
   bucket order, API groups, harness and host children, snoozes, and a corrupt overlay.
+- `test/viewer/work.test.ts`: `GET /api/work` returns the items `work --json` returns for the same
+  seeded store and filters, and an ack or snooze posted to the viewer is one the command sees.
+  `test/viewer/work-browser.test.ts` drives the page in headless Chrome.
 - The permission prompts in these tests are synthetic. The `scripts/e2e` captures run with
   permissions bypassed, so no real prompt has been recorded yet.

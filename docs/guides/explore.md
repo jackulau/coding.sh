@@ -141,6 +141,8 @@ token for this run of `ui`; the viewer needs it.
   query, Alt-click to exclude it.
 - **A session.** The timeline shows every event, with a ⚑ on each step where the run went off the
   rails. A running session gets new events every 4 seconds.
+- **Work** (<kbd>g</kbd> <kbd>w</kbd>). The [`coding.sh work`](https://coding.sh/docs/cli/work) queue,
+  with sessions linked. Ack and Snooze write the CLI's `work.json`.
 - **Explore** (<kbd>g</kbd> <kbd>x</kbd>). Six charts per day or week: sessions, failure rate,
   cost, tokens, tool error rate and p95 model-call time, split by agent, model, repo or flag.
 - **Events** (<kbd>e</kbd>). The same query as event rows, newest first. Enter opens the event's
