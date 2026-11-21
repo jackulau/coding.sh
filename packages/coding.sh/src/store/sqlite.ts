@@ -1213,9 +1213,16 @@ export class SqliteIndexStore implements IndexStore {
     // and session_facets' PRIMARY KEY (key, value, session_id) makes every repeat an
     // INSERT OR IGNORE no-op that still probes the b-tree. Skipping tuples already
     // issued in this batch leaves the table identical and cuts most of those probes.
-    const facetSeen = new Set<string>();
+    // A batch holds runs of one session's events, so the seen set is kept per run of
+    // one session id: a session that comes back later in the batch only repeats a no-op.
+    let facetSid = "";
+    let facetSeen = new Set<string>();
     const addFacet = (key: string, value: string, sid: string) => {
-      const k = `${key}\0${value}\0${sid}`;
+      if (sid !== facetSid) {
+        facetSid = sid;
+        facetSeen = new Set<string>();
+      }
+      const k = key + "\0" + value;
       if (facetSeen.has(k)) return;
       facetSeen.add(k);
       facet.run(key, value, sid);
