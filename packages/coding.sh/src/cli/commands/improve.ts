@@ -20,10 +20,14 @@ import { autoIngest, list, oneLine, pendingField, readIngest, shellQuote, str, w
 import { ago, CliError, localTime, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { captureSetUp, START_NEW_SESSION } from "../first-session.ts";
+import { matchesPlace, pathPlace, type Place } from "../../mcp/data.ts";
+import type { Session } from "../../schema/index.ts";
 
 interface Opts {
   root: string | undefined;
   repo: string | undefined;
+  /** Set when repo is a checkout's root or inside a linked worktree: the whole repo, every worktree of it included. */
+  place: Place | undefined;
   sinceText: string;
   since: number;
   agents: string[];
@@ -44,12 +48,21 @@ async function options(c: CommandContext, defaultSince: string, defaultLimit: nu
     throw new UsageError(`--since must be a duration like 7d or 12h, or a date: got ${JSON.stringify(sinceText)}`, { reason: "invalid_argument" });
   }
   const agents = list(c.flags.agent).flatMap((x) => x.split(",")).map((x) => x.trim()).filter(Boolean);
-  return { root: repoFlag && repoFlag !== "all" ? ((await repoRoot(repo!).catch(() => undefined)) ?? repo) : root, repo, sinceText, since, agents, limit: positiveInt(c.flags.limit, "limit") ?? defaultLimit, headless: c.flags.headless === true };
+  const place = repo ? pathPlace(repo) : undefined;
+  return { root: repoFlag && repoFlag !== "all" ? ((await repoRoot(repo!).catch(() => undefined)) ?? repo) : root, repo, place: place?.repo ? place : undefined, sinceText, since, agents, limit: positiveInt(c.flags.limit, "limit") ?? defaultLimit, headless: c.flags.headless === true };
 }
 
 // The repo's own name from any folder inside it, never a path relative to the cwd ("..\..").
 const repoName = (repo: string) => repo.split(/[\\/]/).filter(Boolean).pop() || repo;
-const where = (o: Opts) => (o.repo ? repoName(o.repo) : "every repo");
+// From a worktree, the repo it belongs to.
+const where = (o: Opts) => (o.repo ? repoName(o.place?.repo ?? o.repo) : "every repo");
+
+/** scopeSessions, where a repo with worktrees counts the sessions of all of them (matchesPlace). */
+async function sessionsOf(index: Context["index"], o: Opts, scope: ImproveScope): Promise<Session[]> {
+  if (!o.place) return scopeSessions(index, scope);
+  const { repo: _repo, ...wide } = scope;
+  return (await scopeSessions(index, wide)).filter((s) => matchesPlace(s, o.place!));
+}
 
 export async function run(c: CommandContext): Promise<number> {
   if (c.action === "check") return check(c);
@@ -136,7 +149,7 @@ async function report(c: CommandContext): Promise<number> {
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
     const scope: ImproveScope = { since: o.since, ...(o.repo ? { repo: o.repo } : {}), ...(o.agents.length ? { agents: o.agents } : {}), headless: true };
-    const all = await scopeSessions(ctx.index, scope);
+    const all = await sessionsOf(ctx.index, o, scope);
     const sessions = o.headless ? all : all.filter((s) => !isHeadless(s));
     const headlessLeftOut = all.length - sessions.length;
     const testCommand = await testCommandOf(o.root);
@@ -146,7 +159,7 @@ async function report(c: CommandContext): Promise<number> {
     const top = issues.slice(0, o.limit);
     if (out.json) {
       out.data({
-        scope: { repo: o.repo ?? null, since: new Date(o.since).toISOString(), agents: o.agents, sessions: sessions.length, ...(headlessLeftOut ? { headlessLeftOut } : {}) },
+        scope: { repo: o.place?.repo ?? o.repo ?? null, since: new Date(o.since).toISOString(), agents: o.agents, sessions: sessions.length, ...(headlessLeftOut ? { headlessLeftOut } : {}) },
         issues: top.map((i, k) => issueJson(i, k + 1, provider)),
         more: Math.max(0, issues.length - top.length),
         changes: changes.map(changeJson),
@@ -212,7 +225,7 @@ async function fix(c: CommandContext): Promise<number> {
   const root = o.root;
   return withContext(c, async (ctx: Context) => {
     await autoIngest(ctx, readIngest(c));
-    const sessions = await scopeSessions(ctx.index, { since: o.since, repo: o.repo ?? root, ...(o.agents.length ? { agents: o.agents } : {}), ...(o.headless ? { headless: true } : {}) });
+    const sessions = await sessionsOf(ctx.index, o, { since: o.since, repo: o.repo ?? root, ...(o.agents.length ? { agents: o.agents } : {}), ...(o.headless ? { headless: true } : {}) });
     const testCommand = await testCommandOf(root);
     const issues = await findIssues(ctx.index, sessions, { repoRoot: root, ...(testCommand ? { testCommand } : {}) });
     const n = /^\d+$/.test(ref) ? Number(ref) : issues.findIndex((i) => i.id === ref) + 1;

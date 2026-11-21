@@ -5,9 +5,12 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } fr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
-import { budgetPart, budgetStatus, periodEnd, periodStart, readBudgets, spendOf, statuslineBudget, statuslineStatuses, statusOf, upsertBudget, writeBudgets, type Budget } from "../../src/budget/index.ts";
+import { budgetPart, budgetStatus, periodEnd, periodStart, readBudgets, rolledSpend, spendOf, statuslineBudget, statuslineStatuses, statusOf, upsertBudget, writeBudgets, type Budget } from "../../src/budget/index.ts";
+import * as budgetCmd from "../../src/cli/commands/budget.ts";
+import type { AgentEvent, IndexStore } from "../../src/core/types.ts";
+import { budgetGuard } from "../../src/proxy/budget.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
-import { mkSession } from "../cli/_cmd.ts";
+import { mkSession, runCmd, sandbox } from "../cli/_cmd.ts";
 import { removeTestDir } from "../_rm.ts";
 
 const roots: string[] = [];
@@ -153,5 +156,98 @@ describe("status line part", () => {
     const r = await statuslineBudget(index, env, periodStart("day"));
     assert.equal(r?.part, "budget 90%");
     assert.equal(r?.status.budget.id, "day");
+  });
+});
+
+describe("--where budgets", () => {
+  /** The session.start event an OTel trace's user and environment attributes land on. */
+  const start = (sessionId: string, ts: number, payload: Record<string, unknown>): AgentEvent => ({ id: `${sessionId}-start`, v: 0, sessionId, ts, agent: "otel", kind: "session.start", payload }) as AgentEvent;
+
+  test("budget set --where gives one user a budget of their own; status says which is over", async () => {
+    const sb = sandbox();
+    try {
+      const t = Math.max(periodStart("day"), Date.now() - 60_000);
+      await sb.seed(
+        [
+          priced("o-u1", t, 0.9, { agent: "otel" as never }),
+          // A subagent of u1's session: it has no user of its own and counts with its parent.
+          priced("o-u1:sub", t, 0.3, { agent: "otel" as never, parent: { sessionId: "o-u1" } } as never),
+          priced("o-u2", t, 0.4, { agent: "otel" as never }),
+        ],
+        [start("o-u1", t, { user: "u1" }), start("o-u2", t, { user: "u2" })],
+      );
+      for (const where of ["user:u1", "user:u2"]) {
+        const r = await runCmd(budgetCmd, sb, { action: "set", positionals: ["day", "1"], flags: { where }, json: true });
+        assert.equal(r.error, undefined, String(r.error));
+        assert.match((r.json as { budget: Budget }).budget.id, /^day-w[0-9a-f]{6}$/);
+      }
+      // The same query again changes the limit in place.
+      const again = await runCmd(budgetCmd, sb, { action: "set", positionals: ["day", "1"], flags: { where: "user:u1" }, json: true });
+      assert.equal((again.json as { outcome: string }).outcome, "updated");
+      await runCmd(budgetCmd, sb, { action: "set", positionals: ["day", "5"], json: true });
+      const st = await runCmd(budgetCmd, sb, { action: "status", json: true });
+      assert.equal(st.error, undefined, String(st.error));
+      const rows = (st.json as { budgets: { id: string; where?: string; spendUsd: number; over: boolean; sessions: number }[] }).budgets;
+      assert.deepEqual(rows.map((b) => [b.where, b.spendUsd, b.over, b.sessions]), [["user:u1", 1.2, true, 1], ["user:u2", 0.4, false, 1], [undefined, 1.6, false, 3]]);
+      assert.equal("where" in rows[2]!, false, "status --json names where only when set");
+      const list = await runCmd(budgetCmd, sb, { action: "list" });
+      assert.match(list.stdout, /user:u1/);
+      const human = await runCmd(budgetCmd, sb, { action: "status" });
+      assert.match(human.stdout, /where user:u2/);
+    } finally {
+      sb.cleanup();
+    }
+  });
+
+  test("a --where query that does not parse exits 2 and sets nothing", async () => {
+    const sb = sandbox();
+    try {
+      const r = await runCmd(budgetCmd, sb, { action: "set", positionals: ["day", "1"], flags: { where: "cost>>" } });
+      assert.equal((r.error as { exitCode?: number } | undefined)?.exitCode, 2, String(r.error));
+      assert.deepEqual(readBudgets(sb.env), []);
+    } finally {
+      sb.cleanup();
+    }
+  });
+
+  test("the status line matches a session-key --where day budget on today's sessions, with no store read", async () => {
+    const env = home();
+    const now = new Date(2026, 10, 18, 15, 30).getTime();
+    const t = new Date(2026, 10, 18, 9).getTime();
+    const today = [
+      priced("opus", t, 0.6, { model: "claude-opus-4-1" }),
+      priced("opus:sub", t + 1, 0.3, { model: "claude-haiku-4-5", parent: { sessionId: "opus" } } as never),
+      priced("sonnet", t, 5, { model: "claude-sonnet-4-5" }),
+    ];
+    const index = new Proxy({} as IndexStore, {
+      get: (_, k) => (k === "then" ? undefined : () => assert.fail(`the status line read the store (${String(k)})`)),
+    });
+    const opus = budget({ id: "day-opus", where: "model:claude-opus-*" });
+    const statuses = await statuslineStatuses(index, [opus, budget({ id: "day-user", where: "user:u1" }), budget({ id: "week-opus", period: "week", where: "model:claude-opus-*" })], today, env, now);
+    assert.deepEqual(statuses.map((s) => [s.budget.id, s.spendUsd, s.sessions]), [["day-opus", 0.9, 1]]);
+    assert.equal(budgetPart(statuses), "budget 90%");
+  });
+
+  test("rolledSpend adds a match's subagents and survives a loop of parents", () => {
+    const rows = [
+      { id: "a", costUsd: 1 },
+      { id: "a1", parent: "a", costUsd: 2 },
+      { id: "a2", parent: "a1", costUsd: 4 },
+      { id: "b", costUsd: 8 },
+      { id: "x", parent: "y", costUsd: 16 },
+      { id: "y", parent: "x", costUsd: 32 },
+    ];
+    assert.deepEqual(rolledSpend(rows, (id) => id === "a"), { spendUsd: 7, sessions: 1 });
+    assert.deepEqual(rolledSpend(rows, (id) => id === "a1" || id === "b"), { spendUsd: 14, sessions: 2 });
+    assert.deepEqual(rolledSpend(rows, (id) => id === "x"), { spendUsd: 48, sessions: 1 });
+  });
+
+  test("proxy --enforce-budget skips a --where budget over its limit", async () => {
+    const now = new Date(2026, 10, 18, 15, 30).getTime();
+    const route = { provider: "anthropic", api: "messages" } as const;
+    const where = budgetGuard({ load: async () => [statusOf(budget({ id: "day-u1", where: "user:u1" }), 5, 1, now)], now: () => now });
+    assert.equal(await where.check(route, {}), undefined);
+    const plain = budgetGuard({ load: async () => [statusOf(budget(), 5, 1, now)], now: () => now });
+    assert.equal((await plain.check(route, {}))?.status.budget.id, "day");
   });
 });

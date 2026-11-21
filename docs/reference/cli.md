@@ -54,8 +54,8 @@ Every command accepts these.
 | [`blame`](#codingsh-blame) | Explore | git blame with the agent session that wrote each line |
 | [`diff-calls`](#codingsh-diff-calls) | Explore | Show what changed between two model calls, and why the second missed the prompt cache |
 | [`search`](#codingsh-search) | Explore | Full-text search over prompts, replies, tool calls and errors |
-| [`alert`](#codingsh-alert) | Explore | Notify a webhook or a command when failures, cost, sessions or a flag cross a threshold |
-| [`budget`](#codingsh-budget) | Explore | Spend budgets per day, week or month, for every session or one agent or repo |
+| [`alert`](#codingsh-alert) | Explore | Notify a webhook or a command when failures, cost, sessions, a flag or a score cross a threshold |
+| [`budget`](#codingsh-budget) | Explore | Spend budgets per day, week or month, for every session, one agent or repo, or the sessions a query matches |
 | [`usage`](#codingsh-usage) | Explore | Tokens, cost, turns and cache hits by agent, model or day; cost by MCP server, skill or subagent type |
 | [`cache`](#codingsh-cache) | Explore | Score prompt-cache health and name what breaks the cached prefix |
 | [`stats`](#codingsh-stats) | Explore | Sessions, failures, cost, tokens and latency per day or week, split by agent, model, repo or flag |
@@ -69,7 +69,7 @@ Every command accepts these.
 | [`exp`](#codingsh-exp) | Evaluate | Run a task over a dataset, compare experiments and sweep configs |
 | [`score`](#codingsh-score) | Evaluate | Add and list typed scores on sessions, events, cases and runs |
 | [`review`](#codingsh-review) | Evaluate | Queues of sessions to score by hand, one at a time, with one score config |
-| [`monitor`](#codingsh-monitor) | Evaluate | Score new sessions automatically with an LLM judge rubric or a command |
+| [`monitor`](#codingsh-monitor) | Evaluate | Score new sessions automatically with an LLM judge rubric, a command or an HTTP evaluator |
 | [`judge`](#codingsh-judge) | Evaluate | Grade one output or the slop in captured diffs, or check an LLM judge or a test verifier against human labels |
 | [`toolevals`](#codingsh-toolevals) | Evaluate | Measure how well agents use a CLI, MCP server or API |
 | [`workflows`](#codingsh-workflows) | Evaluate | Capture, measure and A/B-test multi-agent workflow runs |
@@ -120,7 +120,7 @@ coding.sh init --remote https://obs.example.com --key csh_ik_…
 
 - Copies the hook to ~/.coding.sh/bin (hook.sh, and hook.mjs for what it hands on) and points each agent at it: /bin/sh hook.sh outside Windows, node hook.mjs on Windows. Run init again to move hooks from an older version to hook.sh.
 - Then imports the sessions each agent already keeps on this machine, for up to 8 seconds (CODING_SH_INIT_IMPORT_BUDGET_MS changes it). The rest imports in the background and shows up in the viewer as it lands. Running init again reads only new or changed transcripts.
-- --remote checks that the server takes the key before writing anything, then adds the sink to ~/.coding.sh/config.toml (mode 600). Run it again to change the URL, key or mode.
+- --remote checks that the server takes the key before writing anything, then adds the sink to ~/.coding.sh/config.toml (mode 600 where the OS has file modes). Run it again to change the URL, key or mode.
 - Registers the MCP server with Claude Code, Codex, Cursor, OpenCode, Gemini CLI and Devin CLI (user scope only).
 - --proxy sets ANTHROPIC_BASE_URL in Claude Code's settings.json and a coding-sh model provider in Codex's config.toml. A base URL the agent already used (a gateway, CLIProxyAPI, your own Codex provider) becomes the proxy's upstream instead of being replaced. The hook restarts a stopped proxy when a session starts.
 - Every edited file is backed up to ~/.coding.sh/backups first; uninstall reverts it.
@@ -240,7 +240,8 @@ coding.sh quota wait --window 5h
 
 - With no subcommand it prints one row per agent and window: the percent used, when the window resets and how old the reading is.
 - Claude Code's reading is the one the coding.sh status line saved from the rate_limits Claude Code sends it (Pro, Max and Ultra plans; install it with coding.sh statusline install). Codex's is the last token_count event in its newest rollout under CODEX_HOME/sessions (only the last 256 KB is read).
-- wait reads again at most once a minute and prints what it waits for on stderr. With several windows it waits until each has room. It exits 0 when there is room, 1 when there is no reading, 2 on a usage error and 130 on Ctrl-C.
+- Behind a Claude apps gateway, Claude Code also sends a spend limit: the row's window is spend, its use may pass 100%, and --json adds usedUsd, limitUsd and period when the gateway sent them.
+- wait reads again at most once a minute and prints what it waits for on stderr; when there is room already, it says so on stderr and returns at once. With several windows it waits until each has room. It exits 0 when there is room, 1 when there is no reading, 2 on a usage error and 130 on Ctrl-C.
 
 ### `coding.sh quota wait`
 
@@ -253,7 +254,7 @@ coding.sh quota wait [options]
 | Option | Default | Description |
 |---|---|---|
 | `--agent <AGENT>` |  | Only this agent's windows. One of: `claude-code`, `codex`. |
-| `--window <WINDOW>` |  | Only this window. One of: `5h`, `7d`. |
+| `--window <WINDOW>` |  | Only this window (spend: Claude Code's spend limit behind a Claude apps gateway) One of: `5h`, `7d`, `spend`. |
 | `--below <PERCENT>` | `90` | Room is back when use is under this percent. |
 
 ```sh
@@ -564,6 +565,7 @@ coding.sh sessions --agent codex --since 7d
 - Session keys: agent, model, provider, repo, launch, branch, dir, title, id, run, parent, flag, skill, hook, hook.tokens, weights.edits, weights.changed, weights.checkpoint, since, until, duration, turns, tools, tool.errors, llm.errors, files, events, tests.passed, tests.failed, tokens, tokens.in, tokens.out, cost, cache.breaks, cache.lost, cache.cost, unapproved, has, is. Event keys (the session has a matching event; event keys in one group match the same event): kind, tool, ok, mcp, error, event.duration, user, env, release (user, env and release read the session's start event and match on their own). Also sort:-cost and limit:N. Full list with examples: https://coding.sh/docs/query.
 - --facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).
 - With --json each session is a digest: its stats without stats.phases, and each derail without the event it started at (eventId, index). show &lt;id&gt; --json has both, and --fields stats.phases or --fields stats.derails prints them here.
+- In --json, repo is the root of the checkout the session ran in. A session in a linked worktree also has repoMain, the main checkout's root.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
 ## `coding.sh views`
@@ -882,7 +884,7 @@ coding.sh search migration --where 'agent:codex kind:tool.start'
 
 ## `coding.sh alert`
 
-Notify a webhook or a command when failures, cost, sessions or a flag cross a threshold.
+Notify a webhook or a command when failures, cost, sessions, a flag or a score cross a threshold.
 
 ```text
 coding.sh alert <action>
@@ -902,11 +904,11 @@ coding.sh alert check
 coding.sh alert list
 ```
 
-- States are OK, WARNING, ALERT and NO_DATA. An alert starts at OK, and only a change of state notifies. The measures are the ones coding.sh stats computes, over top-level sessions with their subagents' cost added.
-- A webhook gets a POST with the JSON body {alert, state, previous, value, threshold, window, by, at} (by only with --by agent) and the header X-Coding-Sh-Signature: sha256=&lt;HMAC-SHA256 of the body, keyed with the alert's secret&gt;. A command gets the same JSON on stdin and succeeds by exiting 0.
+- States are OK, WARNING, ALERT and NO_DATA. An alert starts at OK, and only a change of state notifies. The measures are the ones coding.sh stats computes, over top-level sessions with their subagents' cost added; score:&lt;NAME&gt; averages the scores of that name given to those sessions (coding.sh score, a judge, a review).
+- A webhook gets a POST with the JSON body {alert, state, previous, value, threshold, direction, window, by, at} (direction: "under" only with --under, by only with --by agent) and the header X-Coding-Sh-Signature: sha256=&lt;HMAC-SHA256 of the body, keyed with the alert's secret&gt;. A command gets the same JSON on stdin and succeeds by exiting 0.
 - Each notification is tried 3 times, 1 s and then 2 s apart. After 5 failed deliveries in a row the target is turned off; alert list says so, and a successful alert test turns it back on.
 - alert check exits 0 unless the usage is wrong; with --json it lists each alert's state, value and groups. Run it from cron or Task Scheduler. coding.sh serve runs the same check every minute. The hook and the read commands never run alerts.
-- Alerts, their states and their secrets are kept in ~/.coding.sh/alerts.json, mode 600.
+- Alerts, their states and their secrets are kept in ~/.coding.sh/alerts.json, mode 600 where the OS has file modes.
 
 ### `coding.sh alert add`
 
@@ -922,19 +924,22 @@ coding.sh alert add <NAME> [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `--measure <MEASURE>` |  | failure-rate (a share from 0 to 1), cost (USD), sessions, or flag:&lt;FLAG&gt; (sessions with that flag or tag) |
+| `--measure <MEASURE>` |  | failure-rate (a share from 0 to 1), cost (USD), sessions, flag:&lt;FLAG&gt; (sessions with that flag or tag), or score:&lt;NAME&gt; (the mean of that numeric or boolean session score, true as 1; categorical and text scores are skipped) |
 | `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
 | `--by <GROUP>` |  | One state per agent, each notified on its own (default: one state for all sessions) One of: `agent`. |
 | `--over <N>` |  | ALERT when the measure is above N. |
 | `--warn <N>` |  | WARNING when the measure is above N and not above --over. |
+| `--under <N>` |  | ALERT when the measure is below N instead (a falling score); not with --over or --warn. |
+| `--warn-under <N>` |  | WARNING when the measure is below N and not below --under. |
 | `--window <WINDOW>` |  | The sessions that started in this much time before the check. One of: `1h`, `1d`, `7d`. |
 | `--notify <TARGET>` |  | webhook:&lt;URL&gt; (a signed JSON POST) or command:"&lt;CMD&gt;" (the same JSON on stdin) |
-| `--no-data <STATE>` |  | State when the window has no sessions (or, for cost, no priced session): ok, alert, or keep the last state (default: NO_DATA) One of: `ok`, `alert`, `keep`. |
+| `--no-data <STATE>` |  | State when the window has no sessions (or, for cost, no priced session; for score:&lt;NAME&gt;, no such score): ok, alert, or keep the last state (default: NO_DATA) One of: `ok`, `alert`, `keep`. |
 
 ```sh
 coding.sh alert add failures --measure failure-rate --over 0.5 --window 1d --notify webhook:https://example.com/hook
 coding.sh alert add spend --measure cost --warn 20 --over 50 --window 1d --by agent --notify command:"notify-send coding.sh"
 coding.sh alert add loops --measure flag:repeated-tool-failure --over 3 --window 1h --where 'agent:codex' --notify webhook:https://example.com/hook
+coding.sh alert add helpful --measure score:helpful --under 0.5 --window 1d --notify webhook:https://example.com/hook
 ```
 
 ### `coding.sh alert list`
@@ -1001,7 +1006,7 @@ coding.sh alert test failures
 
 ## `coding.sh budget`
 
-Spend budgets per day, week or month, for every session or one agent or repo.
+Spend budgets per day, week or month, for every session, one agent or repo, or the sessions a query matches.
 
 ```text
 coding.sh budget <action>
@@ -1009,7 +1014,7 @@ coding.sh budget <action>
 
 | Action | What it does |
 |---|---|
-| [`set`](#codingsh-budget-set) | Add a budget, or change the limit of the one with the same period, agent and repo |
+| [`set`](#codingsh-budget-set) | Add a budget, or change the limit of the one with the same period, agent, repo and --where |
 | [`list`](#codingsh-budget-list) | List the budgets |
 | [`rm`](#codingsh-budget-rm) | Remove a budget |
 | [`status`](#codingsh-budget-status) | Spend against each budget: spend, limit, percent used, over or not, and when the period resets |
@@ -1023,11 +1028,12 @@ coding.sh proxy --enforce-budget
 - Spend is estimated: the cost of the sessions that started in the current period (subagents too), the same total coding.sh usage gives for that window. A session with no reported cost is priced from its tokens.
 - A budget is over once its spend reaches the limit. Budgets are kept in ~/.coding.sh/budgets.json.
 - The status line shows the highest budget once it passes 80% (budget 82%). coding.sh proxy --enforce-budget answers 429 to calls a budget over its limit applies to.
-- With --json, status gives each budget's spendUsd, limitUsd, percent, over, since and resetsAt (ISO times).
+- A --where budget counts the sessions its query matches and their subagents. The status line counts it only for a day budget whose query uses session keys (agent, model, repo, flag, cost, ...), matched on the day's sessions it already read; a week or month --where budget, or one with an event key such as user:, env: or release:, is left out of the line. coding.sh proxy --enforce-budget never applies a --where budget.
+- With --json, status gives each budget's spendUsd, limitUsd, percent, over, since and resetsAt (ISO times), and where when the budget has one.
 
 ### `coding.sh budget set`
 
-Add a budget, or change the limit of the one with the same period, agent and repo.
+Add a budget, or change the limit of the one with the same period, agent, repo and --where.
 
 ```text
 coding.sh budget set <PERIOD> <USD> [options]
@@ -1042,11 +1048,13 @@ coding.sh budget set <PERIOD> <USD> [options]
 |---|---|---|
 | `-a, --agent <AGENT>` |  | Only this agent's sessions. |
 | `--repo <PATH|NAME>` |  | Only sessions in this repo: a path (stored absolute; matches at or under it) or a repo name. |
+| `--where <QUERY>` |  | Only the sessions this query matches, with their subagents, e.g. 'user:u1', 'model:claude-opus-\*' or 'env:production' (keys: coding.sh sessions --help). The id ends in -w and 6 hex characters of the query's SHA-256. |
 
 ```sh
 coding.sh budget set day 20
 coding.sh budget set week 50 --agent codex
 coding.sh budget set month 200 --repo .
+coding.sh budget set day 5 --where 'user:alice'
 ```
 
 ### `coding.sh budget list`
@@ -1327,6 +1335,7 @@ coding.sh work [action] [options]
 | Option | Default | Description |
 |---|---|---|
 | `--all` |  | Also list hidden items: running, done, acknowledged or snoozed. |
+| `--stage <STAGES>` |  | Only items in these stages, hidden ones too (repeatable, or a comma list: review,approval) One of: `planning`, `executing`, `review`, `approval`, `done`. |
 | `-r, --repo <PATH>` |  | Only items whose root session ran under this directory, or in a repo with this name (default: every repo) |
 | `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
 | `--since <WHEN>` | `7d` | Only items with a session started at or after this time: 7d, 12h, 30m, today, yesterday or a date. |
@@ -1337,6 +1346,7 @@ coding.sh work [action] [options]
 coding.sh work
 coding.sh work --agent claude-code --since 24h
 coding.sh work --repo . --json
+coding.sh work --stage approval
 coding.sh work show w3f9a1c
 coding.sh work ack w3f9a1c
 ```
@@ -1344,6 +1354,7 @@ coding.sh work ack w3f9a1c
 - A work item is a root session plus every session linked to it by parent (subagents, forks, workflow agents). A session a harness or a host such as T3 Code starts is its own item, and its row names the item that started it. An item's id is w plus 6 hex characters of a hash of its root session id, so it stays the same between reads.
 - Items go in this order: blocked on you (a permission prompt, a question or a plan waits), failed (ended on API errors or failing tests), stalled (no end and quiet for 15 minutes or more), your turn (an interactive session whose turn ended), ready for review (ended with file changes). A wait or stall older than 12 hours is marked probably closed. Items with nothing to act on (running, done, acknowledged or snoozed) are hidden; --all lists them. A session whose end is only its last event (one read from its transcript, or an OpenTelemetry or SDK conversation) counts as running for 15 minutes after that event.
 - Claude Code, Gemini CLI and Devin CLI hooks report permission prompts, and T3 Code reports its threads' approvals and questions from its store. Waits in other agents show as stalled, and the header names those agents. Your turn needs the launch mode, which Claude Code and Codex record.
+- Each item also has a stage, where the work is: approval (a prompt, question or plan waits, acked or not), planning or executing (running or stalled; executing once a file changed or tests ran), review (stopped with a failure, your turn or changed files not acknowledged), or done. Its kind is change once a file changed, and research when it stopped without changing one. --stage lists the items in those stages, hidden ones too.
 - ack hides the item's current cause only: a new prompt, failure or change brings it back. Acks and snoozes are kept in work.json in the coding.sh home. coding.sh status counts the items per bucket, and the statusline shows N need you for items blocked on you or failed.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
@@ -1623,7 +1634,7 @@ coding.sh eval crosscheck <TASK> [options]
 |---|---|---|
 | `--experiment <ID>` |  | Only runs from this experiment (default: every stored run of the task) |
 | `--max <N>` | `5` | Runs to review (one model call each) |
-| `--judge <JSON|FILE>` | `{"provider":"anthropic"}` | Reviewer model: {"provider":"anthropic"\|"openai"\|"gateway"\|"claude-code"\|"codex"\|"mock","model":…}. |
+| `--judge <JSON|FILE>` | `{"provider":"anthropic"}` | Reviewer model: {"provider":"anthropic"\|"openai"\|"gateway"\|"gemini"\|"claude-code"\|"codex"\|"mock","model":…}. |
 | `--solver <BUNDLE>` |  | First solve the task once with this harness bundle and review that attempt too. |
 
 ```sh
@@ -1849,7 +1860,7 @@ coding.sh exp ab [spec] [options]
 | `--agent <AGENT>` |  | Only sessions of this agent (repeatable, or a comma list) |
 | `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
 | `-n, --limit <N>` | `40` | Maximum decision points. |
-| `--provider <NAME>` |  | Who answers the next turn and judges it: an API, or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `claude-code`, `codex`. |
+| `--provider <NAME>` |  | Who answers the next turn and judges it: an API (gemini reads GEMINI_API_KEY), or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `gemini`, `claude-code`, `codex`. |
 | `--model <MODEL>` |  | Model for the next turn (default: the one the decision points were recorded with, else claude-sonnet-5-5 or gpt-6-sol) |
 | `--judge-model <MODEL>` |  | Model for the judge (default: --model) |
 | `--base-url <URL>` |  | API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's) |
@@ -2492,7 +2503,7 @@ coding.sh review skip codex-flagged 2
 
 ## `coding.sh monitor`
 
-Score new sessions automatically with an LLM judge rubric or a command.
+Score new sessions automatically with an LLM judge rubric, a command or an HTTP evaluator.
 
 ```text
 coding.sh monitor <action>
@@ -2509,7 +2520,8 @@ coding.sh monitor <action>
 - Each monitor scores sessions that ended after its cursor (the past day on its first run), one score per session; a session it already scored is skipped.
 - A monitor's failure never fails the ingest: it is recorded as the monitor's last error, which monitor list shows. A command that exits non-zero or prints no value scores nothing.
 - --judge with no provider records 'no judge provider' and scores nothing until one is set.
-- Definitions, cursors, spend and errors are in monitors.json, next to the config file (coding.sh config path shows it).
+- Pass one of --judge, --run or --http. --http prints a signing secret once (64 hex characters); each POST carries X-Coding-Sh-Signature: sha256=&lt;HMAC-SHA256 of the body&gt;. Redirects are not followed, each try has 10 s, and a 5xx, 408, 425, 429 or network error is tried 3 times, 1 s then 2 s apart. An answer over 256 KB or any other status scores nothing and is recorded as the monitor's last error.
+- Definitions, cursors, spend, errors and --http secrets are in monitors.json (mode 600 where the OS has file modes), next to the config file (coding.sh config path shows it).
 
 ### `coding.sh monitor add`
 
@@ -2527,10 +2539,11 @@ coding.sh monitor add <NAME> [options]
 |---|---|---|
 | `--judge <RUBRIC.md>` |  | Score with the LLM judge against this rubric file (a score from 0 to 1, the reason as its comment) |
 | `--run <COMMAND>` |  | Score with a shell command: it gets the session JSON (as show --json, redacted) on stdin and prints {"value": ..., "comment"?: ...}; stopped after 60 s. |
+| `--http <URL>` |  | Score with an HTTP service: a signed POST of {"apiVersion": "v1", "monitor", "session"} (session as --run gets it); a 2xx answer {"value": ..., "comment"?: ...} is the score. |
 | `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
 | `--sample <0..1>` |  | Score this fraction of sessions, picked by a hash of the session id (default: all) |
 | `--max-usd-day <USD>` | `1` | --judge: stop for the day once the estimated judge spend reaches this. |
-| `--provider <PROVIDER>` |  | --judge: the model provider (default: the first of ANTHROPIC_API_KEY, OPENAI_API_KEY, AI_GATEWAY_API_KEY that is set) One of: `anthropic`, `openai`, `gateway`, `mock`. |
+| `--provider <PROVIDER>` |  | --judge: the model provider (default: the first of ANTHROPIC_API_KEY, OPENAI_API_KEY, AI_GATEWAY_API_KEY, GEMINI_API_KEY that is set) One of: `anthropic`, `openai`, `gateway`, `gemini`, `mock`. |
 | `--model <MODEL>` |  | --judge: the judge model (default: the provider's) |
 | `--force` |  | Replace a monitor with the same name (its cursor starts again; its scores stay) |
 
@@ -2538,6 +2551,8 @@ coding.sh monitor add <NAME> [options]
 coding.sh monitor add tests-pass --run "node check.mjs"
 coding.sh monitor add helpful --judge rubric.md --where 'agent:claude-code' --sample 0.2
 coding.sh monitor add helpful --judge rubric.md --max-usd-day 5
+coding.sh monitor add helpful --judge rubric.md --provider gemini
+coding.sh monitor add review --http https://evals.example.com/score
 ```
 
 ### `coding.sh monitor list`
@@ -3435,7 +3450,7 @@ coding.sh harness <action>
 - A harness TOML can carry Claude Code plugins too: plugins = ["terse", "./plugins/mine"], with a directory relative to the TOML file.
 - A plugin is looked up read-only in plugins/installed_plugins.json under $CLAUDE_CONFIG_DIR (default ~/.claude), or read from a directory with .claude-plugin/plugin.json. Its whole directory is stored in the bundle. A run writes it under the run's own home and starts Claude Code with --plugin-dir; your Claude config is not touched.
 - harness tools reads the tools arrays coding.sh proxy stored with each model call, so it needs the proxy with request capture (capture mode full). Each distinct tools array is read once, the 2,000 most recently used at most. A tool named mcp__&lt;server&gt;__&lt;tool&gt; belongs to that MCP server; every other tool is builtin. descSha and schemaSha are the first 12 hex characters of the sha256 of the description and of the input schema as JSON.
-- With a pin, harness tools --changed keeps a tool when its latest description or schema differs from the pin, or when one seen since the pin does. A tool with no pin first seen at or after the last pin, such as one an MCP server added, is kept as new since pin. Pins live in tool-pins.json in the coding.sh data directory; pin keeps the pins of tools not seen in the window.
+- With a pin, harness tools --changed keeps a tool when its latest description or schema differs from the pin, or when one seen since the pin does (differs from pin). It also keeps a tool with no pin first seen at or after the last pin, such as one an MCP server added (new since pin), and a pinned tool the latest tools array of every session since its pin leaves out (removed since pin). --json names up to 20 sessionIds per changed row other than removed. Pins live in tool-pins.json in the coding.sh data directory; pin keeps the pins of tools not seen in the window and drops the pins of removed tools.
 
 ### `coding.sh harness snapshot`
 
@@ -3505,7 +3520,7 @@ coding.sh harness tools [pin] [options]
 | Option | Default | Description |
 |---|---|---|
 | `--since <WHEN>` | `30d` | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
-| `--changed` |  | Only tools whose description or schema differs from its pin, or, with no pin, were first seen since the last pin or had more than one in the window; exit 1 when any remain. |
+| `--changed` |  | Only tools whose description or schema differs from its pin, that are new or removed since the last pin, or, with no pin, had more than one in the window; exit 1 when any remain. |
 
 ```sh
 coding.sh harness tools
@@ -3654,7 +3669,7 @@ coding.sh refine propose [options]
 | `--since <DURATION|DATE>` | `14d` | Sessions started since. |
 | `--agent <AGENT>` |  | Only sessions of this agent (repeatable, or a comma list) |
 | `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
-| `--provider <NAME>` |  | Who proposes, answers the next turn and judges it: an API, or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `claude-code`, `codex`. |
+| `--provider <NAME>` |  | Who proposes, answers the next turn and judges it: an API (gemini reads GEMINI_API_KEY), or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `gemini`, `claude-code`, `codex`. |
 | `--base-url <URL>` |  | API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's) |
 | `--proposer-model <MODEL>` |  | Model that writes the edit (default: --judge-model, else --model, else claude-sonnet-5-5 or gpt-6-sol) |
 | `--proposer-command <CMD>` |  | Shell command that writes the edit instead of the proposer model: the prompt on stdin, the JSON reply on stdout (e.g. 'claude -p') |
@@ -3686,7 +3701,7 @@ coding.sh refine test <CANDIDATE>... [options]
 | `--since <DURATION|DATE>` | `14d` | Sessions started since. |
 | `--agent <AGENT>` |  | Only sessions of this agent (repeatable, or a comma list) |
 | `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
-| `--provider <NAME>` |  | Who proposes, answers the next turn and judges it: an API, or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `claude-code`, `codex`. |
+| `--provider <NAME>` |  | Who proposes, answers the next turn and judges it: an API (gemini reads GEMINI_API_KEY), or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `gemini`, `claude-code`, `codex`. |
 | `--base-url <URL>` |  | API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's) |
 | `--judge-model <MODEL>` |  | Model for the judge (default: --model) |
 | `-n, --limit <N>` | `40` | Maximum decision points. |
@@ -3802,7 +3817,7 @@ coding.sh refine run [options]
 | `--since <DURATION|DATE>` | `14d` | Sessions started since. |
 | `--agent <AGENT>` |  | Only sessions of this agent (repeatable, or a comma list) |
 | `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
-| `--provider <NAME>` |  | Who proposes, answers the next turn and judges it: an API, or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `claude-code`, `codex`. |
+| `--provider <NAME>` |  | Who proposes, answers the next turn and judges it: an API (gemini reads GEMINI_API_KEY), or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `gemini`, `claude-code`, `codex`. |
 | `--base-url <URL>` |  | API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's) |
 | `--judge-model <MODEL>` |  | Model for the judge (default: --model) |
 | `-n, --limit <N>` | `40` | Maximum decision points. |
@@ -3976,7 +3991,7 @@ coding.sh refine diagnose [options]
 | `--session <ID>` |  | Exactly these sessions: an id, a prefix or latest (repeatable; ignores --since, --repo and --agent) Takes a comma list too (a,b). |
 | `--max-sessions <N>` | `50` | Most sessions diagnosed, newest first. |
 | `--budget-tokens <N>` |  | Stop starting uncached sessions past this many estimated input tokens; the next run picks up the rest. |
-| `--provider <PROVIDER>` |  | anthropic, openai, claude-code or codex (default: the API whose key is set; with none, a $0 plan) |
+| `--provider <PROVIDER>` |  | anthropic, openai, gemini, claude-code or codex (default: anthropic or openai, whichever has its key set; with neither, a $0 plan) |
 | `--model <MODEL>` |  | The diagnosing model (default: the provider's current one) |
 | `--concurrency <N>` | `4` | Sessions diagnosed at once. |
 | `--no-split` |  | One Signal per component and type, with no grouping call. |

@@ -40,14 +40,22 @@ import { commandGrader, moduleGrader, type CommandGraderSpec, type ModuleGraderS
 import { mockProvider, type MockAnswer } from "./mock.ts";
 import { DEFAULT_KEY_ENV } from "../integrations/gateway/config.ts";
 import { GATEWAY_API_BASE } from "../integrations/gateway/ids.ts";
+import { suggest } from "../cli/args.ts";
+import { DEFAULT_MODELS } from "../core/pricing.ts";
+
+/** Google's OpenAI-compatible endpoint for Gemini models. */
+export const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/openai";
+/** The judge model for provider "gemini" when the spec names none. */
+export const DEFAULT_GEMINI_MODEL = DEFAULT_MODELS.google;
 
 /** Which model answers an LLM grader. Shared by "llm" and "llm-checklist" specs. */
 export interface LlmProviderSpec {
   /** "mock": deterministic offline verdicts, no network, no key, no cache (dry runs).
    *  "gateway": Vercel AI Gateway's OpenAI-compatible API (any `<creator>/<model>`, key in AI_GATEWAY_API_KEY).
+   *  "gemini": Google's OpenAI-compatible Gemini API (key in GEMINI_API_KEY, default model DEFAULT_GEMINI_MODEL).
    *  "claude-code": the Claude Code CLI (`claude -p`), on a Claude subscription or whatever auth the CLI has.
    *  "codex": the Codex CLI (`codex exec`), on a ChatGPT subscription. */
-  provider?: "anthropic" | "openai" | "gateway" | "claude-code" | "codex" | "mock";
+  provider?: "anthropic" | "openai" | "gateway" | "gemini" | "claude-code" | "codex" | "mock";
   model?: string;
   baseURL?: string;
   apiKeyEnv?: string;
@@ -158,12 +166,15 @@ export interface GraderDeps {
   provider?: ChatProvider;
 }
 
-const PROVIDERS = ["anthropic", "openai", "gateway", "claude-code", "codex", "mock"];
+const PROVIDERS = ["anthropic", "openai", "gateway", "gemini", "claude-code", "codex", "mock"];
 
 export function providerFromSpec(spec: LlmProviderSpec, deps: GraderDeps = {}): ChatProvider {
   if (deps.provider) return deps.provider;
   const kind = spec.provider ?? "anthropic";
-  if (!PROVIDERS.includes(kind)) throw new Error(`unknown provider ${JSON.stringify(kind)} (expected ${PROVIDERS.map((p) => JSON.stringify(p)).join(", ")})`);
+  if (!PROVIDERS.includes(kind)) {
+    const close = typeof kind === "string" ? suggest(kind, PROVIDERS) : undefined;
+    throw new Error(`unknown provider ${JSON.stringify(kind)} (expected ${PROVIDERS.map((p) => JSON.stringify(p)).join(", ")})${close ? `. Did you mean ${JSON.stringify(close)}?` : ""}`);
+  }
   if (kind === "mock") return mockProvider(spec.mockAnswer ? { answer: spec.mockAnswer } : {});
   if (kind === "claude-code" || kind === "codex") {
     const o = { ...(spec.model ? { model: spec.model } : {}), ...(deps.env ? { env: deps.env } : {}) };
@@ -179,10 +190,15 @@ export function providerFromSpec(spec: LlmProviderSpec, deps: GraderDeps = {}): 
     ...(deps.retry ? { retry: deps.retry } : {}),
   };
   if (kind === "anthropic") return anthropicProvider({ ...common, ...(spec.effort ? { effort: spec.effort } : {}) });
-  const gateway = kind === "gateway" ? { name: "gateway", baseURL: spec.baseURL ?? GATEWAY_API_BASE, apiKeyEnv: spec.apiKeyEnv ?? DEFAULT_KEY_ENV } : {};
+  const named =
+    kind === "gateway"
+      ? { name: "gateway", baseURL: spec.baseURL ?? GATEWAY_API_BASE, apiKeyEnv: spec.apiKeyEnv ?? DEFAULT_KEY_ENV }
+      : kind === "gemini"
+        ? { name: "gemini", baseURL: spec.baseURL ?? GEMINI_API_BASE, apiKeyEnv: spec.apiKeyEnv ?? "GEMINI_API_KEY", model: spec.model ?? DEFAULT_GEMINI_MODEL }
+        : {};
   return openAICompatibleProvider({
     ...common,
-    ...gateway,
+    ...named,
     ...(spec.temperature !== undefined ? { temperature: spec.temperature } : {}),
     ...(spec.requireKey !== undefined ? { requireKey: spec.requireKey } : {}),
   });

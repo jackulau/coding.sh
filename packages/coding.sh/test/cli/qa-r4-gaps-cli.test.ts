@@ -49,7 +49,7 @@ describe("monitor messages", () => {
   test("monitor add with --run and --judge says they cannot go together", async () => {
     const r = await runCmd(monitor, box(), { action: "add", positionals: ["x"], flags: { run: "a", judge: "b" } });
     assert.equal(r.error?.exitCode ?? r.error?.code ?? 2, 2);
-    assert.match(r.error?.message, /not both/);
+    assert.match(r.error?.message, /takes one of --judge, --run or --http/);
     assert.doesNotMatch(r.error?.message, /needs one of/);
     const none = await runCmd(monitor, box(), { action: "add", positionals: ["x"] });
     assert.match(none.error?.message, /needs one of/);

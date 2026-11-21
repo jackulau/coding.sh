@@ -35,13 +35,17 @@ export interface GroupState {
 
 export interface AlertDef {
   name: string;
-  /** failure-rate, cost, sessions or flag:<flag>. */
+  /** failure-rate, cost, sessions, flag:<flag> or score:<name>. */
   measure: string;
   /** A --where query the sessions must match too. */
   where?: string;
   by?: "agent";
+  /** The ALERT threshold: the measure above it fires, or below it with direction "under" (--under). */
   over: number;
+  /** The WARNING threshold, on the same side as `over` (--warn, --warn-under). */
   warn?: number;
+  /** "under": the alert fires below its thresholds. Absent: above them. */
+  direction?: "under";
   window: AlertWindow;
   notify: AlertTarget;
   noData?: NoDataPolicy;

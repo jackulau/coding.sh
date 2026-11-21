@@ -60,6 +60,12 @@ export interface RepoState {
   /** True when the snapshot fell back to tracked-files-only. */
   partial?: boolean;
   branch?: string;
+  /**
+   * Root of the repo's main worktree, when `root` is a linked worktree (`git worktree add`,
+   * or a worktree an agent made for a task). Absent in a main checkout. Repo filters and
+   * groups count a worktree's sessions under this repo; `root` stays where the agent ran.
+   */
+  main?: string;
 }
 
 export interface Usage {

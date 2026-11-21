@@ -401,6 +401,7 @@ for question in ["Viewer search misses tool output", "Which labels fit?"]:
     <p>
       <code>langfuse.session.id</code> groups spans into one session. <code>langfuse.user.id</code>, <code>langfuse.environment</code> and
       <code>langfuse.release</code> become the <code>user:</code>, <code>env:</code> and <code>release:</code> keys of <code>--where</code>.
+      Each tag in <code>langfuse.trace.tags</code> becomes a <code>tag:&lt;name&gt;</code> flag, so <code>--where 'flag:tag:prod'</code> finds it.
     </p>
   </details>
 

@@ -50,6 +50,17 @@ const jstr = (col: string, keys: string) => `if(JSONType(${col}, ${path(keys)}) 
 const stat = (keys: string) => jnum("stats", keys);
 /** A repo's name as coding.sh's repoName: the text after the last / or \ (empty after a trailing slash), "tmp" for the macOS temp dir. */
 const base = (x: string) => `if(match(replaceAll(${x}, '\\\\', '/'), '(?s)/var/folders/.*/T$'), 'tmp', replaceRegexpOne(replaceAll(${x}, '\\\\', '/'), '(?s)^.*/', ''))`;
+/**
+ * The repo a session's worktree belongs to, as coding.sh's repoGroup: RepoState.main (`main` of
+ * the stored repo JSON), else a worktree path an agent makes (Claude Code `<repo>/.claude/worktrees/<name>`,
+ * T3 Code `.t3/worktrees/<repo>/<name>`, Codex `.codex/worktrees/<id>/<repo>`), else the repo root or cwd.
+ */
+const DIR = "coalesce(repo_root, cwd)";
+const MAIN = jstr("ifNull(repo, '{}')", "main");
+const slashed = (x: string) => `replaceAll(${x}, '\\\\', '/')`;
+const claudeRepo = (x: string) => `if(match(${slashed(x)}, '(?s).+/[.]claude/worktrees/.'), substring(${x}, 1, position(${slashed(x)}, '/.claude/worktrees/') - 1), NULL)`;
+const groupPath = `coalesce(${MAIN}, ${claudeRepo(DIR)})`;
+const groupName = `multiIf(isNotNull(${MAIN}), ${base(MAIN)}, isNotNull(${claudeRepo(DIR)}), ${base(claudeRepo(DIR))}, match(${slashed(DIR)}, '(?s)/[.]t3/worktrees/.+/.'), extract(${slashed(DIR)}, '/[.]t3/worktrees/([^/]*)/'), match(${slashed(DIR)}, '(?s)/[.]codex/worktrees/.+/.'), extract(${slashed(DIR)}, '/[.]codex/worktrees/[^/]*/([^/]*)'), ${base(DIR)})`;
 const tokens = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"].map((k) => `ifNull(${stat(`usage.${k}`)}, 0)`).join(" + ");
 
 /**
@@ -61,7 +72,8 @@ export const KEY_SQL: Record<string, string[]> = {
   model: ["model"],
   provider: [jstr("stats", "provider")],
   launch: [jstr("stats", "launch")],
-  repo: ["repo_root", base("coalesce(repo_root, cwd)")],
+  // A worktree's sessions match its main repo's path and name too.
+  repo: ["repo_root", groupPath, base(DIR), groupName],
   branch: [jstr("ifNull(repo, '{}')", "branch")],
   dir: ["cwd"],
   title: ["title"],
@@ -107,7 +119,7 @@ export const KEY_SQL: Record<string, string[]> = {
   release: [`if(kind = 'session.start', ${jstr("payload", "release")}, NULL)`],
 };
 /** Facet value when it differs from the key's first expression. */
-const FACET_SQL: Record<string, string> = { repo: base("coalesce(repo_root, cwd)") };
+const FACET_SQL: Record<string, string> = { repo: groupName };
 
 /** has:/is: over the sessions row; never NULL. */
 export const HAS_SQL: Record<string, string> = {

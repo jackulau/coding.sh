@@ -104,7 +104,7 @@ describe("git work in a budgeted ingest (QA: a 1.5 s read ran for minutes)", () 
     assert.equal(snaps.size, 1, "sessions that ended in one repo share one snapshot");
     // One root lookup per cwd, one HEAD-at-time and branch per root, one snapshot: not one of each per session.
     const count = (re: RegExp) => full.commands.filter((l) => re.test(l)).length;
-    assert.equal(count(/rev-parse --show-toplevel --show-prefix/), 1, full.commands.join("\n"));
+    assert.equal(count(/rev-parse --show-toplevel (?:--git-dir --git-common-dir )?--show-prefix/), 1, full.commands.join("\n"));
     assert.equal(count(/rev-parse --verify 'HEAD@\{/), 1, full.commands.join("\n"));
     assert.equal(count(/commit-tree/), 1, full.commands.join("\n"));
     assert.deepEqual(await readDeferred(index), { snapshots: {}, repos: [] }, "the work is settled");

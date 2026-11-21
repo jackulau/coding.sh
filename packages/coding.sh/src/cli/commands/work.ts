@@ -1,13 +1,13 @@
-// coding.sh work [--all] [--repo <path>] [--agent <name>] [--since 7d] [--limit 20]
+// coding.sh work [--all] [--stage <list>] [--repo <path>] [--agent <name>] [--since 7d] [--limit 20]
 // coding.sh work show|ack|snooze <id>: what needs you across every agent's sessions
 // (core/work.ts), with acks and snoozes in work.json (core/work-overlay.ts).
 import { parsePlace } from "../../mcp/data.ts";
 import type { Session } from "../../schema/index.ts";
 import type { Context } from "../../core/context.ts";
 import { addAck, addSnooze, readOverlay, writeOverlay, type WorkOverlay } from "../../core/work-overlay.ts";
-import { BUCKET_LABELS, buildWorkQueue, countsLine, loadWorkSessions, workFiles, workItemJson, workJson, type WorkItem, type WorkQueue } from "../../core/work.ts";
-import { parseAge, parseSinceWhen, positiveInt, UsageError } from "../args.ts";
-import { agentsFlag, autoIngest, num, oneLine, pendingField, readIngest, rejectAgentTypos, str, withContext, type IngestBacklog } from "../common.ts";
+import { BUCKET_LABELS, buildWorkQueue, countsLine, loadWorkSessions, STAGES, stagesLine, workFiles, workItemJson, workJson, type Stage, type WorkItem, type WorkQueue } from "../../core/work.ts";
+import { parseAge, parseSinceWhen, positiveInt, suggest, UsageError } from "../args.ts";
+import { agentsFlag, autoIngest, list as listFlag, num, oneLine, pendingField, readIngest, rejectAgentTypos, str, withContext, type IngestBacklog } from "../common.ts";
 import { ago, CliError, localTime, plural, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -31,6 +31,21 @@ function windowOf(c: CommandContext): Window {
   return { since: parseSinceWhen(sinceText).ms, sinceText };
 }
 
+/** `--stage`: the stages named, repeated or as a comma list, each once. An unknown one is a usage error (exit 2). */
+export function stagesFlag(c: Pick<CommandContext, "flags">): Stage[] {
+  const out: Stage[] = [];
+  for (const raw of listFlag(c.flags.stage).flatMap((v) => v.split(","))) {
+    const v = raw.trim().toLowerCase();
+    if (!v) continue;
+    if (!(STAGES as readonly string[]).includes(v)) {
+      const near = suggest(v, STAGES);
+      throw new UsageError(`--stage must be one of ${STAGES.join(", ")}, got ${JSON.stringify(raw.trim())}`, { reason: "invalid_argument", suggestion: near ? `--stage ${near}` : undefined });
+    }
+    if (!out.includes(v as Stage)) out.push(v as Stage);
+  }
+  return out;
+}
+
 async function list(c: CommandContext): Promise<number> {
   const { out } = c;
   const limit = positiveInt(c.flags.limit, "limit") ?? num(c.flags.limit) ?? 20;
@@ -38,19 +53,21 @@ async function list(c: CommandContext): Promise<number> {
   const agents = agentsFlag(c);
   const repo = str(c.flags.repo);
   const place = repo ? parsePlace(repo, c.cwd, c.env.HOME || c.env.USERPROFILE || "/") : undefined;
-  const all = c.flags.all === true;
+  const stages = stagesFlag(c);
+  // A stage filter lists hidden items too: --stage done lists what the queue hides.
+  const all = c.flags.all === true || stages.length > 0;
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
     const overlay = readOverlay(ctx.paths.work);
     const { sessions, truncated } = await loadWorkSessions(ctx.index, { since: w.since });
-    const q = buildWorkQueue(sessions, { all, overlay, agents, place });
+    const q = buildWorkQueue(sessions, { all, overlay, agents, place, stages });
     if (!q.items.length && agents.length) await rejectAgentTypos(ctx.index, agents);
     await distinctFiles(ctx, q.items.slice(0, limit), sessions);
     if (out.json) {
       out.data({ ...workJson(q, { since: w.since, limit, truncated }), ...pendingField(backlog) });
       return 0;
     }
-    printQueue(c, q, { limit, all, window: w, truncated, backlog });
+    printQueue(c, q, { limit, all, stages, window: w, truncated, backlog });
     return 0;
   });
 }
@@ -67,9 +84,10 @@ async function distinctFiles(ctx: Context, items: readonly WorkItem[], sessions:
   }
 }
 
-function printQueue(c: CommandContext, q: WorkQueue, o: { limit: number; all: boolean; window: Window; truncated: boolean; backlog: IngestBacklog }): void {
+function printQueue(c: CommandContext, q: WorkQueue, o: { limit: number; all: boolean; stages: readonly Stage[]; window: Window; truncated: boolean; backlog: IngestBacklog }): void {
   const { out } = c;
   out.print(`${out.style("Work", "bold")}  ${countsLine(q.counts)}  ${out.style(`(since ${o.window.sinceText})`, "faint")}`);
+  out.print(`${out.style("Stages", "faint")}  ${stagesLine(q.stages)}`);
   if (q.noPromptSignal.length) out.print(out.style(`No prompt signal from ${q.noPromptSignal.join(", ")}: their waits show as stalled.`, "faint"));
   if (o.truncated) out.note(`Read the newest sessions only: narrow --since.`);
   if (o.backlog.pendingFiles) out.note(`${plural(o.backlog.pendingFiles, "capture")} not yet ingested; --fresh waits for them.`);
@@ -86,6 +104,11 @@ function printQueue(c: CommandContext, q: WorkQueue, o: { limit: number; all: bo
   }
   for (const g of q.groups) out.print(out.style(`  ${g.cause} x${g.count}: ${g.items.join(", ")}`, "faint"));
   if (q.items.length > o.limit) out.note(`${q.items.length - o.limit} more: --limit ${q.items.length}`);
+  if (!shown.length && o.stages.length) {
+    out.print("");
+    out.print(`No items in ${o.stages.join(" or ")} since ${o.window.sinceText}.`);
+    return;
+  }
   if (!shown.length) {
     out.print("");
     out.print(q.hidden ? `Nothing needs you. ${plural(q.hidden, "item")} running, done, acknowledged or snoozed.` : `No agent sessions since ${o.window.sinceText}.`);
@@ -103,7 +126,7 @@ function printRow(c: CommandContext, i: WorkItem): void {
   const agents = i.agents.length > 1 ? `${i.agent} +${i.agents.length - 1}` : i.agent;
   const where = i.repo ?? i.cwd;
   const meta = [agents, where ? short(where) : undefined, i.sessionIds.length > 1 ? plural(i.sessionIds.length, "session") : undefined, i.startedBy ? `started by ${i.startedBy}` : undefined].filter(Boolean).join("  ");
-  out.print(`  ${out.style(i.id, "cyan")}  ${oneLine(i.title ?? "(untitled)", 60)}  ${out.style(meta, "faint")}`);
+  out.print(`  ${out.style(i.id, "cyan")}  ${oneLine(i.title ?? "(untitled)", 60)}  ${stageTag(i)}  ${out.style(meta, "faint")}`);
   out.print(`          ${badge}${i.reason}`);
   out.print(`          ${out.style("next:", "faint")} ${nextText(i.next)}`);
 }
@@ -116,6 +139,9 @@ export function nextText(next: string, now = Date.now()): string {
   const m = /^snoozed until (\d{4}-\d{2}-\d{2}T[\d:.]+Z)$/.exec(next);
   return m ? `snoozed until ${localTime(Date.parse(m[1]!), now)}` : next;
 }
+
+/** "review · change", or the stage alone while the kind is not known. */
+const stageTag = (i: Pick<WorkItem, "stage" | "kind">): string => (i.kind ? `${i.stage} · ${i.kind}` : i.stage);
 
 const short = (p: string): string => (p.length > 40 ? `…${p.slice(-39)}` : p);
 
@@ -185,6 +211,7 @@ async function show(c: CommandContext): Promise<number> {
     out.print(`${out.style(item.id, "cyan")}  ${oneLine(item.title ?? "(untitled)", 80)}`);
     out.row("State", item.bucket ? BUCKET_LABELS[item.bucket] : `hidden (${item.hidden})`, item.bucket === "blocked" || item.bucket === "failed" ? "warn" : "none", true);
     out.row("Why", `${item.probablyClosed ? "probably closed: " : ""}${item.reason}`, "none", true);
+    out.row("Stage", `${stageTag(item)}: ${item.stageWhy}`, "none", true);
     const w = item.cause?.waiting;
     if (w?.text) out.row("Prompt", oneLine(w.text, 200), "none", true);
     if (w) out.row("Waiting", `${w.kind} since ${ago(w.at)}`, "none", true);

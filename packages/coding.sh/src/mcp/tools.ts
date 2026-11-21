@@ -25,6 +25,7 @@ import {
   latency,
   pageSessions,
   parsePlace,
+  pathPlace,
   placeNode,
   round2,
   scanFilter,
@@ -198,8 +199,14 @@ export function initErrorArgs(msg: string): string {
 /** The rows a tool with a `limit` returns when none is passed, where the schema's default does not say. */
 const LIMIT_DEFAULTS: Record<string, (a: Obj) => number> = { benchmarks: (a) => (a.metric ? 30 : 5) };
 
+/**
+ * A tool whose costly part (reading a long session) does not depend on `limit`: `pages` does it once
+ * and returns the page for any row count, so fitting a page to PAGE_LIMIT does not read it again.
+ */
+type PagedTool = ToolDef<ToolCtx> & { pages?(a: Obj, c: ToolCtx): Promise<(n: number) => Obj> };
+
 /** A read-only tool with a `limit` argument, run again with a smaller limit when its answer is too long. */
-function withCharacterLimit(t: ToolDef<ToolCtx>): ToolDef<ToolCtx> {
+function withCharacterLimit(t: PagedTool): ToolDef<ToolCtx> {
   const limit = (t.inputSchema.properties as Record<string, { default?: unknown }> | undefined)?.limit;
   if (!limit || t.annotations.readOnlyHint !== true || t.annotations.idempotentHint !== true) return t;
   const outProps = (t.outputSchema.properties ?? {}) as Obj;
@@ -208,7 +215,9 @@ function withCharacterLimit(t: ToolDef<ToolCtx>): ToolDef<ToolCtx> {
     outputSchema: { ...t.outputSchema, properties: { ...outProps, limitUsed: I } },
     run(a, c) {
       const asked = typeof a.limit === "number" ? a.limit : typeof limit.default === "number" ? limit.default : LIMIT_DEFAULTS[t.name]?.(a);
-      return asked === undefined ? t.run(a, c) : fitPage(asked, (n) => t.run(n === a.limit ? a : { ...a, limit: n }, c));
+      if (asked === undefined) return t.run(a, c);
+      if (t.pages) return t.pages(a, c).then((page) => fitPage(asked, page));
+      return fitPage(asked, (n) => t.run(n === a.limit ? a : { ...a, limit: n }, c));
     },
   };
 }
@@ -281,6 +290,13 @@ function query(a: Obj, c: ToolCtx, o: { sinceDefault?: string; topLevel: boolean
   const repo = strArg(a, "repo");
   const since = when(a, "since", now, o.sinceDefault);
   const until = when(a, "until", now);
+  // An empty window is a mistake, not an empty answer: the CLI says "--since must be before --until".
+  if (since !== undefined && until !== undefined && !(since < until)) {
+    const at = (k: string, ms: number) => `${k} ${strArg(a, k) ?? o.sinceDefault} is ${iso(ms)}`;
+    // Equal times make an empty window, which swapping does not change.
+    const fix = since === until ? "The window is empty: make until later than since" : "Swap them";
+    throw new ToolError(`since must be before until: ${at("since", since)}, ${at("until", until)}. ${fix}, or omit until for a window that ends now.`, { reason: "invalid_argument" });
+  }
   const q: ScanQuery = { topLevel: o.topLevel };
   const agent = strArg(a, "agent");
   if (agent) q.agent = agent;
@@ -323,6 +339,58 @@ async function resolveSession(ctx: Context, id: string): Promise<Session> {
   return s;
 }
 
+/**
+ * A tail page of a digest: the `limit` entries before entry `before` (default: the end), oldest
+ * first, and a nextCursor naming the first of them while older ones are left. The cursor is an index
+ * from the start, so the entries a running session appends after the first page never shift it, and
+ * a page cut short to fit (limitUsed) still hands on the first entry it left out.
+ */
+function tailPage(d: Obj & { timeline: unknown[] }, before: number | undefined, limit: number): void {
+  const end = Math.min(before ?? d.timeline.length, d.timeline.length);
+  const start = Math.max(0, end - limit);
+  d.timeline = d.timeline.slice(start, end);
+  if (start > 0) d.nextCursor = String(start);
+  else delete d.nextCursor;
+}
+
+/** session_get: the session is read and its timeline built once; each page is a slice of it. */
+async function sessionGetPages(a: Obj, c: ToolCtx): Promise<(limit: number) => Obj> {
+  const ctx = await c.store();
+  // Turns are 1-based; 0 names no turn, so it is refused rather than read as "the whole session".
+  if (a.turn === 0) throw new ToolError("turn must be 1..N (1-based) or negative from the end (-1 = last turn); turn 0 does not exist. Omit turn for the whole session.");
+  const s = await resolveSession(ctx, strArg(a, "sessionId")!);
+  const tail = a.tail === true;
+  const offset = tail ? 0 : cursorArg(a);
+  const before = tail && strArg(a, "cursor") !== undefined ? cursorArg(a) : undefined;
+  try {
+    // The whole timeline from the cursor on (with tail, all of it) comes back and is paged here.
+    const digest = await sessionDigest(ctx.index, s, { turn: typeof a.turn === "number" ? a.turn : undefined, limit: Number.MAX_SAFE_INTEGER, offset, from: tail ? "tail" : "head", now: c.now() });
+    // The experiments that ran each weights file the session recorded as a checkpoint, as `coding.sh show --json` has them.
+    const hashes = s.stats.weightEdits?.checkpoints;
+    if (hashes?.length) {
+      const [{ FileEvalStore }, { checkpointRuns }] = await Promise.all([import("../datasets/store.ts"), import("../experiments/checkpoints.ts")]);
+      const runs = await checkpointRuns(new FileEvalStore({ env: c.env, index: ctx.index }), hashes);
+      if (runs.length) digest.checkpointExperiments = runs;
+    }
+    const rows = digest.timeline;
+    const total = typeof digest.timelineTotal === "number" ? digest.timelineTotal : rows.length;
+    return (limit: number): Obj => {
+      const page: Obj & { timeline: unknown[] } = { ...digest, timeline: rows };
+      // With tail, from the end toward the start; otherwise from the cursor on.
+      if (tail) tailPage(page, before, limit);
+      else {
+        page.timeline = rows.slice(0, limit);
+        delete page.nextCursor;
+        if (offset + limit < total) page.nextCursor = String(offset + limit);
+      }
+      return page;
+    };
+  } catch (e) {
+    if (e instanceof RangeError) throw new ToolError(e.message);
+    throw e;
+  }
+}
+
 /** session_replay's fork: step N's stored model call sent once more with the given context files (`""` drops one). Loaded on use. */
 async function forkTool(ctx: Context, env: NodeJS.ProcessEnv, s: Session, replay: Replay, step: number, files: unknown): Promise<Obj> {
   if (typeof files !== "object" || files === null || Array.isArray(files) || !Object.values(files).every((v) => typeof v === "string")) {
@@ -347,8 +415,8 @@ function readUpdateCache(file: string): Obj | undefined {
   }
 }
 
-/** The status tool lists this many work items at most; `coding.sh work` lists the rest. */
-const STATUS_WORK_ROWS = 10;
+/** The status tool lists this many work items at most; `coding.sh work --json` lists the rest. */
+export const STATUS_WORK_ROWS = 5;
 
 /** Update availability from the cache the update checker keeps (no network here). */
 export function updateInfo(home: string, current = version()): Obj {
@@ -405,7 +473,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
   return toolDefs().map(withCharacterLimit);
 }
 
-function toolDefs(): ToolDef<ToolCtx>[] {
+function toolDefs(): PagedTool[] {
   return [
     {
       name: "sessions_list",
@@ -457,39 +525,24 @@ function toolDefs(): ToolDef<ToolCtx>[] {
       name: "session_get",
       title: "Get a session",
       description:
-        "A session digest: summary (with waste: repeated reads and prompt-cache breaks), skills used, per-turn index, and a timeline of prompts, replies, tool calls (with failures and durations), model calls, file changes, tests and weight edits. Pass turn to zoom in; page with cursor.",
+        "A session digest: summary (with waste: repeated reads and prompt-cache breaks), skills used, per-turn index, and a timeline of prompts, replies, tool calls (with failures and durations), model calls, file changes, tests and weight edits. Pass turn to zoom in; page with cursor (with tail, backward).",
       inputSchema: input(
         {
           sessionId: SESSION_ID,
           turn: { type: "integer", description: "Only this turn (1-based; -1 = last turn)." },
           limit: LIMIT(40, 200),
           cursor: CURSOR,
-          tail: { type: "boolean", default: false, description: "Show the last entries instead of the first. Default false." },
+          tail: { type: "boolean", default: false, description: "Show the last entries; nextCursor pages back. Default false." },
         },
         ["sessionId"],
       ),
-      outputSchema: DIGEST_OUT,
+      // With tail, nextCursor pages back (session_current's digest does not page).
+      outputSchema: { ...DIGEST_OUT, properties: { ...(DIGEST_OUT.properties as Obj), nextCursor: { type: "string", description: "With tail: older entries." } } },
       annotations: READ,
       async run(a, c) {
-        const ctx = await c.store();
-        // Turns are 1-based; 0 names no turn, so it is refused rather than read as "the whole session".
-        if (a.turn === 0) throw new ToolError("turn must be 1..N (1-based) or negative from the end (-1 = last turn); turn 0 does not exist. Omit turn for the whole session.");
-        const s = await resolveSession(ctx, strArg(a, "sessionId")!);
-        try {
-          const digest = await sessionDigest(ctx.index, s, { turn: typeof a.turn === "number" ? a.turn : undefined, limit: numArg(a, "limit", 40), offset: cursorArg(a), from: a.tail === true ? "tail" : "head", now: c.now() });
-          // The experiments that ran each weights file the session recorded as a checkpoint, as `coding.sh show --json` has them.
-          const hashes = s.stats.weightEdits?.checkpoints;
-          if (hashes?.length) {
-            const [{ FileEvalStore }, { checkpointRuns }] = await Promise.all([import("../datasets/store.ts"), import("../experiments/checkpoints.ts")]);
-            const runs = await checkpointRuns(new FileEvalStore({ env: c.env, index: ctx.index }), hashes);
-            if (runs.length) digest.checkpointExperiments = runs;
-          }
-          return digest;
-        } catch (e) {
-          if (e instanceof RangeError) throw new ToolError(e.message);
-          throw e;
-        }
+        return (await sessionGetPages(a, c))(numArg(a, "limit", 40));
       },
+      pages: sessionGetPages,
     },
     {
       name: "session_current",
@@ -868,9 +921,10 @@ function toolDefs(): ToolDef<ToolCtx>[] {
       ),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
       async run(a, c) {
-        if (a.confirm !== true) throw new ToolError("Not created: this writes an eval task to the user's coding.sh store. Ask the user, then call again with confirm: true.");
+        // The session is looked up first: the user is not asked to approve an eval from a session that does not exist.
         const ctx = await c.store();
         const s = await resolveSession(ctx, strArg(a, "sessionId")!);
+        if (a.confirm !== true) throw new ToolError("Not created: this writes an eval task to the user's coding.sh store. Ask the user, then call again with confirm: true.");
         const { draftTaskFromSession } = await import("../eval/task.ts");
         const strs = (k: string) => (Array.isArray(a[k]) ? (a[k] as unknown[]).filter((x): x is string => typeof x === "string" && x.trim() !== "") : undefined);
         let task;
@@ -1030,7 +1084,12 @@ function toolDefs(): ToolDef<ToolCtx>[] {
         const repo = strArg(a, "repo");
         const root = (await repoRoot(c.cwd)) ?? c.cwd;
         const now = c.now();
-        const pool = await recentSessions({ root, since, ...(repo ? { sessionsRepo: repo === "all" ? "all" : resolve(c.cwd, repo) } : {}) }, ctx.index, now, a.flagged === true);
+        // At a checkout's root or in a linked worktree (the default from a worktree): every worktree of the repo, as `repo:<main root>`.
+        const dir = repo === "all" ? undefined : repo ? resolve(c.cwd, repo) : root;
+        const group = dir ? pathPlace(dir).repo : undefined;
+        const pool = group
+          ? await recentSessions({ root, since, sessionsRepo: "all" }, ctx.index, now, a.flagged === true, { root: placeNode({ path: group, repo: group }) })
+          : await recentSessions({ root, since, ...(repo ? { sessionsRepo: repo === "all" ? "all" : resolve(c.cwd, repo) } : {}) }, ctx.index, now, a.flagged === true);
         const ranked = await rankSessions(ctx.index, pool, { now });
         const eligible = ranked.filter((x) => x.eligible);
         const limit = numArg(a, "limit", 10);
@@ -1199,11 +1258,18 @@ function toolDefs(): ToolDef<ToolCtx>[] {
       description:
         "Experiment session timeline, oldest first: notes, commands, and runs with their delta vs the previous run (pass rates, CI, McNemar p, fixed/broke). Read it after a context reset.",
       inputSchema: input({ session: EXP_SESSION, limit: LIMIT(50, 200), cursor: CURSOR }),
-      outputSchema: out({ session: out({ id: S }), blocks: arr(out({ kind: S })), total: I, nextCursor: S, error: out({ reason: S }) }),
+      outputSchema: out({ session: out({ id: S }), blocks: arr(out({ kind: S })), total: I, nextCursor: S }),
       annotations: READ,
       async run(a, c) {
         const { session, root } = await expSession(a, c);
-        const { readTimeline } = await import("../experiments/session.ts");
+        const { findSession, readTimeline, timelinePath } = await import("../experiments/session.ts");
+        // A session named by id has a timeline once anything was added to it; the project's own one may still be empty.
+        if (strArg(a, "session") !== undefined && !existsSync(timelinePath(root, session.id)) && findSession({ cwd: c.cwd, env: c.env })?.id !== session.id) {
+          throw new ToolError(`No experiment session with id ${JSON.stringify(session.id)}. Omit session for the project's session (.coding-sh/session.json), or ask the user to start one: coding.sh exp session new --name <topic>`, {
+            reason: "not_found",
+            next: "coding.sh exp session new --name <topic>",
+          });
+        }
         const all = await readTimeline(root, session.id);
         const offset = cursorArg(a);
         const limit = numArg(a, "limit", 50);
@@ -1221,7 +1287,7 @@ function toolDefs(): ToolDef<ToolCtx>[] {
       description:
         "Note in the experiment session: the hypothesis before each run, the reading after it. Secrets are redacted.",
       inputSchema: input({ text: { type: "string", minLength: 1, maxLength: 4000, description: "The note." }, session: EXP_SESSION }, ["text"]),
-      outputSchema: out({ session: out({ id: S }), block: out({ text: S }), error: out({ reason: S }) }),
+      outputSchema: out({ session: out({ id: S }), block: out({ text: S }) }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       async run(a, c) {
         const [{ appendBlock, NOTE_MAX }, { createRedactor }] = await Promise.all([import("../experiments/session.ts"), import("../core/redact.ts")]);
@@ -1397,7 +1463,7 @@ function toolDefs(): ToolDef<ToolCtx>[] {
       name: "status",
       title: "coding.sh status",
       description:
-        "Health of coding.sh: version and update, data dir, sessions in the last 24h and last capture per agent, pending spool, last capture error, 5h and weekly plan usage. Use when data looks missing or stale. work: what needs the user (7d), as bucket counts and the top 10 items with reason and next step.",
+        "Health of coding.sh: version and update, data dir, 24h sessions and last capture per agent, pending spool, last error, 5h and weekly plan usage. Use when data looks missing or stale. work: what needs the user (7d): bucket counts and top 5 items (reason, next step); coding.sh work --json has all.",
       inputSchema: input({}),
       outputSchema: out(
         {
@@ -1408,7 +1474,7 @@ function toolDefs(): ToolDef<ToolCtx>[] {
           lastCapture: arr(out({ agent: S, at: S }, ["agent"])),
           latest: SESSION_OUT,
           lastError: out({ error: S }),
-          work: out({ needYou: I, items: arr(out({ id: S, bucket: S, reason: S, next: S, rootId: S })) }),
+          work: out({ needYou: I, items: arr(out({ id: S, bucket: S, reason: S, next: S, rootId: S })), more: I, rest: S }),
           hints: arr(S),
           // Plan usage, as `coding.sh quota --json` prints it (resetsAt, readAt, ageSeconds and missing too).
           quota: out({ windows: arr(out({ agent: S, window: S, usedPercent: N })) }),
@@ -1453,6 +1519,7 @@ function toolDefs(): ToolDef<ToolCtx>[] {
             needYou: needYou(queue),
             items: queue.items.slice(0, STATUS_WORK_ROWS).map(workItemJson),
             more: queue.items.length > STATUS_WORK_ROWS ? queue.items.length - STATUS_WORK_ROWS : undefined,
+            rest: queue.items.length > STATUS_WORK_ROWS ? "coding.sh work --json" : undefined,
             truncated: truncated || undefined,
           },
           hints,

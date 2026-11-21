@@ -3,7 +3,8 @@ import { resolve } from "node:path";
 import type { IndexStore, SessionFilter } from "../../core/types.ts";
 import { failureFlags, isEmptySession } from "../../core/sessions.ts";
 import { facetCounts, findSessions } from "../../query/run.ts";
-import { FACET_KEYS, scopesSubagents, type Query } from "../../query/where.ts";
+import { andQuery, FACET_KEYS, scopesSubagents, type Query } from "../../query/where.ts";
+import { checkoutRepo } from "../../mcp/data.ts";
 import { viewQuery } from "../../query/views.ts";
 import { viewCliError } from "./views.ts";
 import type { Session } from "../../schema/index.ts";
@@ -48,10 +49,15 @@ export async function run(c: CommandContext): Promise<number> {
     const window = timeWindow({ since: sinceWhen }, where);
     // Several agents: an `agent:a,b` clause on the query (facets, --where), or one listing per agent.
     const scope = agentScope(agents, where);
+    // --repo at a checkout's root or inside a linked worktree means the whole repo: the main
+    // checkout's sessions and every worktree's (`repo:<main root>`). Another folder keeps the exact match.
+    const group = repo ? checkoutRepo(resolve(c.cwd, repo)) : undefined;
+    // Wrapped in a group, as --agent is, so a repo facet keeps it.
+    const scoped: Query | undefined = group ? andQuery(scope.where ?? {}, { t: "or", items: [{ t: "cmp", key: "repo", op: ":", values: [{ raw: group, quoted: true, kind: "eq" }], at: 0 }] }) : scope.where;
     const backlog = await autoIngest(ctx, readIngest(c));
     const filter: SessionFilter = {
       ...(scope.agent ? { agent: scope.agent } : {}),
-      ...(repo ? { repoRoot: resolve(c.cwd, repo) } : {}),
+      ...(repo && !group ? { repoRoot: resolve(c.cwd, repo) } : {}),
       ...(since !== undefined ? { since } : {}),
       ...(c.flags.subagents === true || scopesSubagents(where?.root) ? {} : { parentSessionId: null }),
       ...(str(c.flags.project) ? { project: str(c.flags.project)! } : {}),
@@ -60,10 +66,10 @@ export async function run(c: CommandContext): Promise<number> {
     windowNote(out, window);
     const facets = facetKeys(c.flags.facets, ctx.index.queryFacets !== undefined || ctx.index.kind === "memory");
     if (facets && fields) throw new UsageError("--fields picks from the session rows: drop --facets", { reason: "invalid_argument" });
-    if (facets) return printFacets(c, await counts(ctx.index, scope.where ?? {}, facets, filter, positiveInt(c.flags.limit, "limit") ?? 10), backlog);
+    if (facets) return printFacets(c, await counts(ctx.index, scoped ?? {}, facets, filter, positiveInt(c.flags.limit, "limit") ?? 10), backlog);
     const empty = c.flags.empty === true;
     let listing: Listing;
-    if (where) listing = await query(ctx.index, scope.where!, filter, positiveInt(c.flags.limit, "limit") ?? where.limit ?? 20, empty);
+    if (where || group) listing = await query(ctx.index, scoped!, filter, positiveInt(c.flags.limit, "limit") ?? where?.limit ?? 20, empty);
     else if (agents.length > 1) {
       const each = await Promise.all(agents.map((agent) => listPlain(ctx.index, { ...filter, agent }, limit, empty)));
       listing = {

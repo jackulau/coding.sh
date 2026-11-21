@@ -84,8 +84,8 @@ export async function run(c: CommandContext): Promise<number> {
         if (cr) out.row("Credits", `balance ${usd(cr.balanceUsd ?? 0)}, used ${usd(cr.totalUsedUsd ?? 0)}`, "ok");
       }
       if (!configured.length) out.row("Agents", only ? `no agent config routes through ${GATEWAYS[only as GatewayId].name}` : "no agent config routes through a known gateway", "none");
-      for (const f of configured) out.row(f.agent, `${GATEWAYS[f.gateway].name}: ${f.detail}${f.active ? "" : " (configured, not selected)"}`, f.active ? "ok" : "warn");
-      for (const f of configured) out.note(f.where);
+      // Where the route is set goes on its row, as in doctor's AI Gateway check: "… → 127.0.0.1 (env)".
+      for (const f of configured) out.row(f.agent, `${GATEWAYS[f.gateway].name}: ${f.detail} (${f.where}${f.active ? "" : ", configured, not selected"})`, f.active ? "ok" : "warn");
       if (counts.drained) out.row("Drains", `${plural(counts.drained, "day")} of drained Vercel AI Gateway traces`, "ok");
       if (!only) {
         const rest = configs.filter((g) => !shown.includes(g)).map((g) => g.id);

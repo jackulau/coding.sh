@@ -1,14 +1,14 @@
-// coding.sh quota [--json]: plan usage for the 5-hour and weekly windows, one row per agent and
-// window. Claude Code's reading is the one `coding.sh statusline` saved to quota.json; Codex's is
+// coding.sh quota [--json]: plan usage for the 5-hour and weekly windows (and Claude Code's spend
+// limit behind a Claude apps gateway), one row per agent and window. Claude Code's reading is the one `coding.sh statusline` saved to quota.json; Codex's is
 // the last token_count in the tail of its newest rollouts.
-// coding.sh quota wait [--agent A] [--window 5h|7d] [--below 90]: blocks until the window resets or
+// coding.sh quota wait [--agent A] [--window 5h|7d|spend] [--below 90]: blocks until the window resets or
 // its use drops under the threshold. Exit 0 when there is room, 1 with no reading, 130 on Ctrl-C.
 import { setTimeout as sleep } from "node:timers/promises";
 import { codexHome } from "../../adapters/codex.ts";
 import { paths } from "../../core/paths.ts";
 import { hasRoom, quotaJson, quotaReport, type QuotaReading, type QuotaReport } from "../../quota/index.ts";
 import { UsageError } from "../args.ts";
-import { CliError, ago, duration, localTime } from "../output.ts";
+import { CliError, ago, duration, localTime, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
 /** `quota wait` reads the files again at most this often. */
@@ -32,6 +32,12 @@ function resets(w: QuotaReading, now: number): string {
 
 const pct = (n: number): string => `${Math.round(n)}%`;
 
+/** `63%`, and for the spend limit `63% ($31.50 of $50.00)` when the gateway sent the amounts. */
+function used(w: QuotaReading): string {
+  if (w.usedUsd === undefined || w.limitUsd === undefined) return pct(w.usedPercent);
+  return `${pct(w.usedPercent)} (${usd(w.usedUsd)} of ${usd(w.limitUsd)})`;
+}
+
 function show(c: CommandContext): number {
   const now = Date.now();
   const r = report(c);
@@ -42,7 +48,7 @@ function show(c: CommandContext): number {
   if (r.windows.length) {
     c.out.table(
       ["AGENT", "WINDOW", "USED", "RESETS", "READ"],
-      r.windows.map((w) => [w.agent, w.window, pct(w.usedPercent), resets(w, now), ago(w.readAt, { now })]),
+      r.windows.map((w) => [w.agent, w.window, used(w), resets(w, now), ago(w.readAt, { now })]),
     );
   }
   for (const m of r.missing) c.out.note(`${m.agent}: no reading. ${m.how}`);
@@ -66,6 +72,12 @@ function waitingFor(w: QuotaReading, below: number, now: number): string {
   return `${w.agent} ${w.window} at ${pct(w.usedPercent)} to drop below ${below}%${reset}`;
 }
 
+/** Why a window needs no wait: `claude-code spend at 63%, under 90%`, or that it has reset. */
+function roomFor(w: QuotaReading, below: number, now: number): string {
+  if (w.usedPercent < below) return `${w.agent} ${w.window} at ${pct(w.usedPercent)}, under ${below}%`;
+  return `${w.agent} ${w.window} at ${pct(w.usedPercent)}, reset at ${localTime(w.resetsAt ?? now, now)}`;
+}
+
 async function wait(c: CommandContext): Promise<number> {
   const f = waitFlags(c);
   let lastRead = Date.now();
@@ -81,6 +93,8 @@ async function wait(c: CommandContext): Promise<number> {
     const now = Date.now();
     const pending = windows.filter((w) => !hasRoom(w, f.below, now));
     if (!pending.length) {
+      // Returning at once: say what was checked, so a person or script sees why there was no wait.
+      if (!announced) c.out.note(windows.map((w) => roomFor(w, f.below, now)).join("; "));
       c.out.data({ ok: true, ...quotaJson({ windows, missing: [] }, now) });
       return 0;
     }

@@ -375,18 +375,19 @@ export const piAdapter: Adapter = {
   },
   async run(spec: RunSpec): Promise<AgentRunOutput> {
     const bin = findBinary(["pi"], { ...process.env, ...spec.env }) ?? "pi";
-    const args = ["--mode", "json"];
+    // The instruction goes on stdin: as an argument, one that starts with "-" was read as an option.
+    const args = hasFlag(spec.flags, "--print", "-p") ? ["--mode", "json"] : ["--print", "--mode", "json"];
     if (spec.model && !hasFlag(spec.flags, "--model")) args.push("--model", spec.model);
     // Trust project resources (AGENTS.md is always read; .pi/settings, skills and extensions need trust).
     if (!hasFlag(spec.flags, "--approve", "-a", "--no-approve", "-na")) args.push("--approve");
-    args.push(...spec.flags, spec.instruction);
+    args.push(...spec.flags);
     let sessionId: string | undefined;
     let usage: Usage | undefined;
     const onLine = jsonLines((o) => {
       if (o.type === "session") sessionId ??= str(o.id);
       if (o.type === "message_end" && get(o, "message", "role") === "assistant") usage = addUsage(usage, piUsage(get(o, "message", "usage")));
     });
-    const r = await spawnAgent({ bin, args, cwd: spec.cwd, stdoutFile: spec.stdoutFile, env: runEnv(spec, { PI_SKIP_VERSION_CHECK: "1" }), timeoutMs: spec.timeoutMs, onLine });
+    const r = await spawnAgent({ bin, args, cwd: spec.cwd, stdoutFile: spec.stdoutFile, env: runEnv(spec, { PI_SKIP_VERSION_CHECK: "1" }), timeoutMs: spec.timeoutMs, onLine, stdin: spec.instruction });
     return toRunOutput(r, sessionId, usage);
   },
   harnessFiles() {

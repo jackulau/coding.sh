@@ -3,7 +3,9 @@
 // and the last error kept in <CODING_SH_HOME>/monitors.json.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -12,6 +14,7 @@ import * as monitorCmd from "../../src/cli/commands/monitor.ts";
 import * as scoreCmd from "../../src/scores/cli.ts";
 import { openContext } from "../../src/core/context.ts";
 import { paths } from "../../src/core/paths.ts";
+import { SIGNATURE_HEADER, signBody } from "../../src/alerts/notify.ts";
 import type { ChatProvider } from "../../src/judge/providers.ts";
 import { monitorVersion, NO_PROVIDER, parseOutput, runMonitors, sampleKey } from "../../src/monitor/run.ts";
 import { readMonitors } from "../../src/monitor/state.ts";
@@ -24,7 +27,7 @@ const boxes: Sandbox[] = [];
 after(() => boxes.forEach((b) => b.cleanup()));
 
 function box(): Sandbox {
-  const sb = sandbox({ T3CODE_HOME: undefined, ANTHROPIC_API_KEY: undefined, OPENAI_API_KEY: undefined, AI_GATEWAY_API_KEY: undefined });
+  const sb = sandbox({ T3CODE_HOME: undefined, ANTHROPIC_API_KEY: undefined, OPENAI_API_KEY: undefined, AI_GATEWAY_API_KEY: undefined, GEMINI_API_KEY: undefined });
   sb.env.T3CODE_HOME = join(sb.root, "t3");
   boxes.push(sb);
   return sb;
@@ -174,8 +177,8 @@ describe("monitor --run", () => {
       const r = await runCmd(monitorCmd, sb, { action: "add", positionals: [name], flags });
       assert.match(String(r.error?.message), re);
     };
-    await bad({}, /--judge .* or --run/);
-    await bad({ run: "x", judge: "r.md" }, /--judge .* or --run/);
+    await bad({}, /--judge .*--run .*--http/);
+    await bad({ run: "x", judge: "r.md" }, /--judge, --run or --http/);
     await bad({ run: "x", sample: 2 }, /--sample/);
     await bad({ run: "x", where: "((" }, /--where/);
     await bad({ judge: join(sb.root, "missing.md") }, /no rubric file/);
@@ -260,6 +263,125 @@ describe("monitor --judge", () => {
     assert.equal(def.spend!.usd, 6);
     assert.match(def.lastError!.message, /max-usd-day/);
     assert.equal((await monitorScores(sb)).length, 2);
+  });
+});
+
+describe("monitor --judge --provider gemini", () => {
+  it("adds with exit 0, and with no GEMINI_API_KEY the warning names it", async () => {
+    const sb = box();
+    const rubric = join(sb.root, "rubric.md");
+    writeFileSync(rubric, "Was the answer correct?\n");
+    const r = await runCmd(monitorCmd, sb, { action: "add", positionals: ["g"], flags: { judge: rubric, provider: "gemini" } });
+    assert.equal(r.error, undefined, String(r.error));
+    assert.equal(r.code, 0);
+    assert.match(r.stdout + r.stderr, /set GEMINI_API_KEY/);
+    assert.equal(readMonitors(paths(sb.env).monitors).monitors[0]!.provider, "gemini");
+  });
+});
+
+/** A local evaluator: answers each POST with the next queued reply and records what it got. */
+async function evaluator(replies: ((res: ServerResponse) => void)[]) {
+  const posts: { path: string; body: string; signature: string | undefined }[] = [];
+  const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (d: Buffer) => chunks.push(d));
+    req.on("end", () => {
+      posts.push({ path: req.url ?? "", body: Buffer.concat(chunks).toString("utf8"), signature: req.headers[SIGNATURE_HEADER.toLowerCase()] as string | undefined });
+      const next = replies.length > 1 ? replies.shift()! : replies[0]!;
+      next(res);
+    });
+  });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/score`;
+  servers.push(server);
+  return { url, posts };
+}
+const servers: ReturnType<typeof createServer>[] = [];
+after(() => Promise.all(servers.map((s) => new Promise<void>((done) => (s.closeAllConnections(), s.close(() => done()))))));
+
+const answer = (status: number, body: string, headers: Record<string, string> = {}) => (res: ServerResponse) => {
+  res.writeHead(status, { "content-type": "application/json", ...headers });
+  res.end(body);
+};
+
+async function addHttp(sb: Sandbox, name: string, url: string): Promise<string> {
+  const r = await add(sb, name, { http: url });
+  assert.match(r.json.secret, /^[0-9a-f]{64}$/, "32 random bytes in hex");
+  assert.equal(r.json.monitor.secret, undefined, "the secret is printed once, apart from the definition");
+  return r.json.secret as string;
+}
+
+describe("monitor --http", () => {
+  it("retries a 503, scores the 200 answer, and signs each POST with the printed secret", async () => {
+    const sb = box();
+    const ev = await evaluator([answer(503, "busy"), answer(200, '{"value":1,"comment":"looks right"}')]);
+    capture(sb, "mon-http-1", "add a retry");
+    await ingest(sb);
+    const secret = await addHttp(sb, "h", ev.url);
+    const r = await runCmd(monitorCmd, sb, { action: "run", positionals: ["h"], flags: { since: "7d" }, json: true });
+    assert.equal(r.error, undefined, String(r.error));
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.monitors[0].scored, 1);
+    const rows = await monitorScores(sb);
+    assert.equal(rows.length, 1);
+    assert.deepEqual([rows[0]!.targetId, rows[0]!.value, rows[0]!.comment, rows[0]!.judgeVersion], ["mon-http-1", 1, "looks right", monitorVersion(ev.url)]);
+    assert.equal(ev.posts.length, 2, "one retry after the 503");
+    for (const p of ev.posts) assert.equal(p.signature, signBody(secret, p.body));
+    const doc = JSON.parse(ev.posts[1]!.body);
+    assert.equal(doc.apiVersion, "v1");
+    assert.equal(doc.monitor, "h");
+    assert.equal(doc.session.session.id, "mon-http-1");
+    assert.ok(doc.session.events.some((e: { kind: string; payload: { text?: string } }) => e.kind === "user.message" && e.payload.text === "add a retry"));
+
+    const file = paths(sb.env).monitors;
+    if (process.platform !== "win32") assert.equal(statSync(file).mode & 0o777, 0o600);
+    const listed = await runCmd(monitorCmd, sb, { action: "list", json: true });
+    assert.equal(listed.json.monitors[0].secret, undefined, "list never shows the secret");
+    assert.equal(listed.json.monitors[0].url, ev.url);
+    const human = await runCmd(monitorCmd, sb, { action: "list" });
+    assert.ok(!human.stdout.includes(secret));
+    assert.match(human.stdout, /h\thttp: http:\/\/127\.0\.0\.1/);
+  });
+
+  it("a 4xx, a redirect, a 5xx three times, an answer without a value or one over 256 KB writes no score and records the status", async () => {
+    const cases: [string, (res: ServerResponse) => void, RegExp, number][] = [
+      ["bad", answer(400, "no such rubric"), /→ 400: no such rubric/, 1],
+      ["moved", answer(302, "", { location: "/elsewhere" }), /→ 302/, 1],
+      ["novalue", answer(200, '{"score":1}'), /not \{"value"/, 1],
+      ["huge", answer(200, `{"value":1,"comment":"${"x".repeat(300 * 1024)}"}`), /256 KB/, 1],
+      ["down", answer(500, "oops"), /→ 500: oops/, 3],
+    ];
+    for (const [name, reply, re, posts] of cases) {
+      const sb = box();
+      // A one-shot failure is followed by a good answer, so a retry would score; "down" always fails.
+      const ev = await evaluator(posts === 1 ? [reply, answer(200, '{"value":1}')] : [reply]);
+      capture(sb, `mon-http-${name}`);
+      await ingest(sb);
+      await addHttp(sb, name, ev.url);
+      const r = await runCmd(monitorCmd, sb, { action: "run", positionals: [name], flags: { since: "7d" }, json: true });
+      assert.equal(r.code, 1, `${name}: a failed monitor exits 1`);
+      assert.equal(r.json.monitors[0].failed, 1, name);
+      assert.equal((await monitorScores(sb)).length, 0, name);
+      assert.equal(ev.posts.length, posts, `${name}: ${posts} attempt(s)`);
+      const def = readMonitors(paths(sb.env).monitors).monitors[0]!;
+      assert.match(def.lastError!.message, re, name);
+      assert.equal(def.lastError!.sessionId, `mon-http-${name}`);
+    }
+  });
+
+  it("add takes exactly one of --judge, --run or --http, and an http(s) URL without credentials", async () => {
+    const sb = box();
+    const bad = async (flags: Record<string, string | boolean | number>, re: RegExp) => {
+      const r = await runCmd(monitorCmd, sb, { action: "add", positionals: ["m"], flags });
+      assert.match(String(r.error?.message), re);
+      assert.equal(r.error?.name, "UsageError", "exit 2");
+    };
+    await bad({ http: "http://127.0.0.1:1/x", run: "x" }, /--judge, --run or --http/);
+    await bad({ http: "http://127.0.0.1:1/x", judge: "r.md" }, /--judge, --run or --http/);
+    await bad({ http: "ftp://example.test/x" }, /http or https/);
+    await bad({ http: "not a url" }, /http or https/);
+    await bad({ http: "https://user:pw@example.test/x" }, /credentials/);
+    await bad({ http: "https://example.test/x", provider: "mock" }, /--provider and --model go with --judge/);
   });
 });
 

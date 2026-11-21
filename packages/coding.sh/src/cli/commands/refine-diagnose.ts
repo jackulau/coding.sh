@@ -12,19 +12,21 @@ import { diagnoseRun, hintPrecision, signalsFile, type DiagnoseRunResult } from 
 import { refineDir } from "../../refine/ledger.ts";
 import { readSignals, type Signal, type SignalsDoc } from "../../refine/signals.ts";
 import { catalogHash } from "../../refine/taxonomy.ts";
-import { parseSince, positiveInt, UsageError } from "../args.ts";
+import { parseSince, positiveInt, suggest, UsageError } from "../args.ts";
 import { list, resolveSession, str, withContext } from "../common.ts";
 import { plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { gitRoot, providerDefaultModel } from "./exp-ab.ts";
 
-const PROVIDERS = ["anthropic", "openai", "claude-code", "codex"] as const;
+const PROVIDERS = ["anthropic", "openai", "gemini", "claude-code", "codex"] as const;
 type Provider = (typeof PROVIDERS)[number];
 
 /** The provider to call, or undefined for a $0 plan: an explicit --provider, else the API whose key is set. */
 export function diagnoseProvider(flags: { provider?: string; dryRun?: boolean }, env: NodeJS.ProcessEnv): Provider | undefined {
   if (flags.provider !== undefined && !(PROVIDERS as readonly string[]).includes(flags.provider)) {
-    throw new UsageError(`--provider must be one of ${PROVIDERS.join(", ")}`, { reason: "invalid_argument", suggestion: "coding.sh refine diagnose --provider anthropic" });
+    const near = suggest(flags.provider, PROVIDERS);
+    // UsageError keeps a suggestion only when it is non-empty.
+    throw new UsageError(`--provider must be one of ${PROVIDERS.join(", ")}`, { reason: "invalid_argument", suggestion: near && `coding.sh refine diagnose --provider ${near}` });
   }
   if (flags.dryRun) return undefined;
   if (flags.provider) return flags.provider as Provider;
@@ -64,7 +66,8 @@ export async function refineDiagnose(c: CommandContext): Promise<number> {
   const kind = diagnoseProvider({ ...(str(c.flags.provider) ? { provider: str(c.flags.provider)! } : {}), dryRun: c.flags["dry-run"] === true }, c.env);
   let provider: ChatProvider | undefined;
   if (kind) {
-    const model = str(c.flags.model) ?? providerDefaultModel(kind);
+    // gemini: providerFromSpec picks Google's current model.
+    const model = str(c.flags.model) ?? (kind === "gemini" ? undefined : providerDefaultModel(kind));
     const spec: LlmProviderSpec = { provider: kind, ...(model ? { model } : {}), maxTokens: 4000 };
     provider = providerFromSpec(spec, { env: c.env });
   }

@@ -8,7 +8,7 @@
 // sums happen here, so the two paths agree to the last digit.
 import type { IndexStore, MetricRow, SessionFilter } from "../core/types.ts";
 import { sessionMatcher } from "../query/run.ts";
-import { repoName, type Query } from "../query/where.ts";
+import { repoGroup, type Query } from "../query/where.ts";
 import type { Session } from "../schema/index.ts";
 
 export const METRIC_GROUPS = ["agent", "model", "repo", "flag"] as const;
@@ -156,7 +156,7 @@ export function metricRow(s: Session): MetricRow {
   const m: MetricRow = { id: s.id, startedAt: s.startedAt, agent: s.agent, flags: s.flags ?? [], toolCalls: s.stats.toolCalls ?? 0, toolErrors: s.stats.toolErrors ?? 0 };
   if (s.parent?.sessionId) m.parentSessionId = s.parent.sessionId;
   if (s.model !== undefined) m.model = s.model;
-  const dir = s.repo?.root ?? s.cwd;
+  const dir = s.repo?.main ?? s.repo?.root ?? s.cwd;
   if (dir !== undefined) m.dir = dir;
   const u = s.stats.usage;
   const put = (k: keyof MetricRow, v: unknown) => {
@@ -333,7 +333,8 @@ function lineOf(key: string, rows: readonly MetricRow[], buckets: readonly numbe
 export function groupKeys(r: MetricRow, by: MetricGroup): string[] {
   if (by === "agent") return [r.agent];
   if (by === "model") return [r.model || NONE];
-  if (by === "repo") return [repoName(r.dir) || NONE];
+  // A worktree's dir is its main repo's root (RepoState.main), or a path repoGroup reads the repo from.
+  if (by === "repo") return [repoGroup({ cwd: r.dir }).name || NONE];
   return r.flags.length ? [...new Set(r.flags)] : [NONE];
 }
 

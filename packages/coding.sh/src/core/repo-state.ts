@@ -4,6 +4,8 @@
 // - root:   `git rev-parse --show-toplevel` of the cwd (cached per cwd per run;
 //           the current HEAD and branch are cached per root, HEAD at a time per
 //           root and second).
+// - main:   the main worktree's root when root is a linked worktree, read by the
+//           same git call from its common git dir (cached with the root).
 // - head:   the commit the agent reported at session start (Codex session_meta
 //           git.commit_hash → session.start payload.gitCommit, or the HEAD a
 //           0.1.3 hook read from .git → payload.git.commit), else HEAD at
@@ -16,7 +18,7 @@
 // No snapshot: the working tree at session start is gone by the time ingest
 // runs, so this is a HEAD-only start state (eval drafting marks it partial).
 import type { RepoState, Session } from "../schema/index.ts";
-import { branch as currentBranch, head as currentHead, headAt, repoRoot } from "./git.ts";
+import { branch as currentBranch, head as currentHead, headAt, worktreeRoots } from "./git.ts";
 
 /** What a session's events say about its repo: the first session.start's payload (its git facts), and whether any event was captured live. */
 export interface RepoFacts {
@@ -57,7 +59,7 @@ export interface RepoResolverOptions {
 export function repoResolver(o: RepoResolverOptions = {}): RepoResolver {
   // One git call per cwd, root, or root and second for the whole run: an import of a few hundred
   // sessions in one big repo otherwise ran the same git commands hundreds of times.
-  const roots = new Map<string, Promise<string | undefined>>();
+  const roots = new Map<string, Promise<{ root: string; main?: string } | undefined>>();
   const heads = new Map<string, Promise<string | undefined>>();
   const branches = new Map<string, Promise<string | undefined>>();
   const headsAt = new Map<string, Promise<string | undefined>>();
@@ -75,8 +77,9 @@ export function repoResolver(o: RepoResolverOptions = {}): RepoResolver {
         o.skipped?.(session.id);
         return undefined;
       }
-      const root = await once(roots, cwd, () => repoRoot(cwd));
-      if (!root) return undefined;
+      const where = await once(roots, cwd, () => worktreeRoots(cwd));
+      if (!where) return undefined;
+      const root = where.root;
       const meta = startMeta(facts.start);
       const live = facts.live;
       const needsGit = meta.commit === undefined || (meta.branch === undefined && live);
@@ -89,6 +92,7 @@ export function repoResolver(o: RepoResolverOptions = {}): RepoResolver {
       const state: RepoState = { root, head: head ?? "" };
       const branch = meta.branch ?? (live ? await once(branches, root, () => currentBranch(root)) : undefined);
       if (branch) state.branch = branch;
+      if (where.main) state.main = where.main;
       return state;
     },
   };

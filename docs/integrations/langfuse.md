@@ -37,10 +37,15 @@ The local `coding.sh collector` takes the same path with no key.
 | `langfuse.user.id`, `user.id` or `enduser.id` | `user` on the session's start event |
 | `langfuse.environment`, `deployment.environment.name` or `deployment.environment` | `environment` on the session's start event |
 | `langfuse.release` or `service.version` | `release` on the session's start event |
+| `langfuse.trace.tags` | `tags` on the session's start event, and a `tag:<name>` flag for each |
 
 When several names are set, the first one in the table wins. A span's attribute wins over the
 same attribute on the resource, so set them on the root span or on the resource. Each value is
 trimmed, cut at 200 characters and redacted like the rest of the event.
+
+`langfuse.trace.tags` is an array of strings, or a string that holds a JSON array of strings; any
+other string is one tag. Each tag is trimmed and cut at 64 characters, and empty tags and repeats
+are dropped. A span keeps at most 20 tags, and a session keeps at most 20 across its traces.
 
 Model calls, tools and tokens come from the `gen_ai.*` attributes the SDK writes, as for any
 OpenTelemetry app ([agents guide](../guides/agents.md)).
@@ -57,9 +62,17 @@ coding.sh sessions --where 'release:v1.4.* ok:false' --json
 They read the session's start event, so beside other event keys they match on their own:
 `user:alice tool:Bash` is a session of alice's that ran Bash.
 
+## Filter by tag
+
+Each trace tag is a session flag, `tag:<name>`, so `flag:` finds it:
+
+```sh
+coding.sh sessions --where 'flag:tag:checkout'
+coding.sh sessions --flag tag:prod
+```
+
 ## Limits
 
 - Traces only. There is no `/api/public/otel/v1/logs`, and Langfuse's own ingestion API
   (`/api/public/ingestion`) is not served.
-- `langfuse.trace.tags` are not read yet.
 - Basic auth works on `/api/public/otel/v1/traces` only. The other ingest routes take a Bearer key.

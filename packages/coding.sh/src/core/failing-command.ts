@@ -54,6 +54,9 @@ const SELF_NAMING = new Set([
 /** Self-naming tools that exit 1 without a word: no match, files differ. */
 const SILENT_ON_1 = new Set(["grep", "egrep", "fgrep", "rg", "diff", "cmp"]);
 
+/** Self-naming tools that print nothing when they work. */
+const QUIET = new Set(["cp", "mv", "rm", "mkdir", "rmdir", "touch", "chmod", "chown", "ln"]);
+
 /** Error signatures and the programs that print them. */
 const SIGNATURES: readonly [RegExp, RegExp][] = [
   [/^error(?:\[E\d{4}\])?: |^\s*--> \S+\.rs:\d+|could not compile `|^warning: unused /m, /^(?:cargo|rustc|cargo-\w+|rustup)$/],
@@ -311,4 +314,38 @@ export function failingPart(cmd: string, o: { output?: string; exitCode?: number
   const finals = real.filter((p) => p.last && failable(p));
   if (finals.length) return pick(only(finals));
   return pick(only(real.filter(failable)));
+}
+
+/**
+ * The output of `cmd` that belongs to `part`, the part that failed: all of it
+ * when every other part is a setup step (`cd x && npm test`), else the line
+ * that names the part (`ls: cannot access …`, `which: no vercel in …`), else
+ * the first line of a known tool's error signature that the part runs. When
+ * no line can be tied to the part, undefined: another part's error (a curl
+ * line before a failing `which`) is not this part's.
+ */
+export function partOutput(cmd: string, part: ShellPart, output: string | undefined): string | undefined {
+  if (!output?.trim()) return undefined;
+  const parts = shellParts(cmd);
+  const text = output.replace(/^\s*(?:Error: )?Exit code \d+[^\n]*\n?/, "");
+  // A part that prints nothing when it works, and that the output doesn't name, printed nothing.
+  const quiet = (p: ShellPart) => SETUP.has(p.prog ?? "") || (QUIET.has(p.prog ?? "") && namedAt(p.prog!, text) < 0);
+  if (parts.length <= 1 || parts.every((p) => p === part || p.argv.join(" ") === part.argv.join(" ") || quiet(p))) return output;
+  if (!part.prog) return undefined;
+  const at = namedAt(part.prog, text);
+  if (at >= 0) {
+    const from = text[at] === "\n" ? at + 1 : at;
+    const start = text.lastIndexOf("\n", from - 1) + 1;
+    const end = text.indexOf("\n", from);
+    const line = text.slice(start, end < 0 ? text.length : end).trim();
+    // `which` names the whole PATH it searched: the PATH is not the error.
+    return line.replace(/^(which: no \S+ in )\(.*$/, "$1PATH");
+  }
+  for (const [sig, progs] of SIGNATURES) {
+    if (!progs.test(part.prog)) continue;
+    const lines = text.split("\n").filter((l) => sig.test(l));
+    const line = lines.find((l) => /error|exception/i.test(l)) ?? lines[0];
+    if (line?.trim()) return line.trim();
+  }
+  return undefined;
 }
