@@ -40,6 +40,7 @@ grouped by area, with links to the docs for the details.
 
 ### Changed
 
+- **OTel.** The receiver reads GenAI semconv v0.1.0: an `invoke_workflow` span is a subagent named by `gen_ai.agent.name`, `gen_ai.request.reasoning.level` is a model call's `reasoningEffort`, `mistral_ai` is stored as `mistral`, and an MCP tool span whose `rpc.status_code` is not `OK` is a failed call. Older names still work. [Production](https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md#43-plain-opentelemetry-no-sdk)
 - **OTel.** With `mode = "full"`, the `otlp` sink sends a tool call's arguments and result as structured OTLP values (`kvlistValue`, `arrayValue`) when they are an object or array of 8192 characters or less as JSON, so OTLP backends show their fields. Larger values and plain strings are still sent as text cut at 8192 characters. [Config](https://coding.sh/docs/config#sinks)
 - **Sessions.** A session whose events stop on a tool call with no result, and with no session end, has no `endedAt`: it did not finish. Before, its last event counted as its end, and for a transcript so did the marker written after 30 quiet minutes. [API reference](https://coding.sh/docs/api)
 - **Viewer.** A code block's language label sits in the block's top-right corner instead of on a loose line above it, and Chat no longer opens with a "1 step" line when the only step before the first prompt is the session starting. [Concepts](https://coding.sh/docs/concepts#turn)
