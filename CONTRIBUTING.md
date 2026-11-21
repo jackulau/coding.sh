@@ -192,6 +192,9 @@ tests run with `npm run lint:test`.
   the first viewer page on a runner does work no later page does (it reads Chrome's number and
   date data from disk, for one) and can take longer than the 5 s a test gives a page. A page
   load that runs out of time says how long `Page.navigate` took, how long the page took to
-  answer, and the state it was in.
+  answer, and the state it was in. A start that fails stops Chrome and removes its profile.
+  On Windows, a test home that moves `USERPROFILE` needs an `AppData\Local` folder in it:
+  without one Chrome refuses remote debugging ("requires a non-default data directory"), and
+  the tests fail at once and say so. `npm run gate` makes the folder.
 
 By contributing you agree that your contributions are licensed under the MIT license.

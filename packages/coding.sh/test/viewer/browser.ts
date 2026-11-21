@@ -236,26 +236,93 @@ export function chromeArgs(dir: string): string[] {
   ];
 }
 
-export async function launchBrowser(chrome: string): Promise<Browser> {
-  const dir = mkdtempSync(join(tmpdir(), "csh-chrome-"));
-  const child: ChildProcess = spawn(chrome, chromeArgs(dir), { stdio: ["ignore", "ignore", "pipe"] });
-  const wsUrl = await new Promise<string>((resolve, reject) => {
+/** Chrome prints this when it will not open DevTools, and then never says where they listen. */
+const DEBUGGING_REFUSED = "requires a non-default data directory";
+
+/**
+ * The error of a start that failed, with the end of Chrome's stderr. On Windows, Chrome refuses
+ * remote debugging, --user-data-dir or not, when USERPROFILE names a folder with no AppData\Local
+ * in it, as a test home can; the error says so.
+ */
+export function startFailureMessage(what: string, stderr: string, platform: NodeJS.Platform = process.platform): string {
+  const message = `${what}: ${stderr.slice(-500)}`;
+  if (platform !== "win32" || !stderr.includes(DEBUGGING_REFUSED)) return message;
+  return `${message}\nChrome says this when USERPROFILE names a folder with no AppData\\Local in it, as a test home can. Make that folder (scripts/gate.mjs does).`;
+}
+
+/** Where Chrome's DevTools listen, from its stderr. Fails on an exit, a refusal, or no answer in 20 s. */
+function devToolsUrl(child: ChildProcess): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
     let buf = "";
-    const timer = setTimeout(() => reject(new Error("Chrome did not start: " + buf.slice(-500))), 20_000);
+    let settled = false;
+    const settle = () => {
+      settled = true;
+      clearTimeout(timer);
+    };
+    const fail = (what: string) => {
+      if (settled) return;
+      settle();
+      reject(new Error(startFailureMessage(what, buf)));
+    };
+    const timer = setTimeout(() => fail("Chrome did not start in 20 s"), 20_000);
     child.stderr!.on("data", (d: Buffer) => {
+      if (settled) return;
       buf += d.toString();
       const m = /DevTools listening on (ws:\/\/\S+)/.exec(buf);
       if (m) {
-        clearTimeout(timer);
+        settle();
         resolve(m[1]!);
-      }
+      } else if (buf.includes(DEBUGGING_REFUSED)) fail("Chrome refused remote debugging");
     });
-    child.once("exit", (code) => {
-      clearTimeout(timer);
-      reject(new Error(`Chrome exited (${code}): ${buf.slice(-500)}`));
+    child.once("exit", (code, signal) => fail(`Chrome exited (${code ?? signal})`));
+    // A binary that cannot be run. Unheard, the error event would end the test file.
+    child.on("error", (e) => {
+      settle();
+      reject(e);
     });
   });
-  const cdp = await Cdp.connect(wsUrl);
+}
+
+/** Stops a Chrome whose start failed, if it still runs, and removes its profile. */
+async function abandonStart(child: ChildProcess | undefined, dir: string): Promise<void> {
+  if (child && child.exitCode === null && child.signalCode === null) {
+    const exited = new Promise<void>((resolve) => {
+      const t = setTimeout(resolve, 3000);
+      child.once("exit", () => {
+        clearTimeout(t);
+        resolve();
+      });
+    });
+    child.kill("SIGKILL");
+    await exited;
+  }
+  child?.stderr?.destroy();
+  child?.unref();
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  } catch {}
+}
+
+/**
+ * Starts Chrome on a new profile and connects to it. A start that fails (an exit, a refusal, the
+ * 20 s limit, a binary that cannot run, a socket that will not open) stops Chrome and removes the
+ * profile before it throws, so a test run that cannot start Chrome leaves neither behind.
+ */
+async function startChrome(chrome: string): Promise<{ child: ChildProcess; cdp: Cdp; dir: string }> {
+  const dir = mkdtempSync(join(tmpdir(), "csh-chrome-"));
+  let child: ChildProcess | undefined;
+  try {
+    child = spawn(chrome, chromeArgs(dir), { stdio: ["ignore", "ignore", "pipe"] });
+    const cdp = await Cdp.connect(await devToolsUrl(child));
+    return { child, cdp, dir };
+  } catch (e) {
+    await abandonStart(child, dir);
+    throw e;
+  }
+}
+
+export async function launchBrowser(chrome: string): Promise<Browser> {
+  const { child, cdp, dir } = await startChrome(chrome);
 
   return {
     async newPage() {

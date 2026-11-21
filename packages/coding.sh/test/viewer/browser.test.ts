@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, test } from "node:test";
-import { chromeArgs, describeClose, findChrome, launchBrowser, loadTimeoutMessage } from "./browser.ts";
+import { chromeArgs, describeClose, findChrome, launchBrowser, loadTimeoutMessage, startFailureMessage } from "./browser.ts";
 
 const root = mkdtempSync(join(tmpdir(), "find-chrome-"));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -47,6 +47,65 @@ test("CODING_SH_TEST_CHROME wins, and a wrong one fails instead of skipping", ()
   const pick = exe("custom");
   assert.equal(findChrome({ CODING_SH_TEST_CHROME: pick, PROGRAMFILES: dir("Program Files") }, "win32"), pick);
   assert.throws(() => findChrome({ CODING_SH_TEST_CHROME: join(root, "missing.exe") }, "win32"), /does not exist/);
+});
+
+/** Runs `run` with the temp folder at a new empty one, where launchBrowser makes its profile. */
+async function inTemp(run: (tmp: string) => Promise<void>): Promise<void> {
+  const tmp = mkdtempSync(join(root, "tmp-"));
+  const saved = ["TMPDIR", "TMP", "TEMP"].map((k) => [k, process.env[k]] as const);
+  for (const [k] of saved) process.env[k] = tmp;
+  try {
+    assert.equal(tmpdir(), tmp);
+    await run(tmp);
+  } finally {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+test("a Chrome that exits at start fails the start and leaves no profile behind", async () => {
+  // Node stands in for a Chrome that will not run with these flags: it exits at once on --headless=new.
+  await inTemp(async (tmp) => {
+    await assert.rejects(launchBrowser(process.execPath), /^Error: Chrome exited \(\d+\): /);
+    assert.deepEqual(readdirSync(tmp), []);
+  });
+});
+
+test("a Chrome that cannot be run fails the start instead of the test file, and leaves no profile behind", async () => {
+  await inTemp(async (tmp) => {
+    await assert.rejects(launchBrowser(join(root, "no-such-chrome")), { code: "ENOENT" });
+    assert.deepEqual(readdirSync(tmp), []);
+  });
+});
+
+test("a Chrome that refuses remote debugging fails at once, is stopped, and leaves no profile behind", { skip: process.platform === "win32" && "the stand-in for Chrome is a shell script" }, async () => {
+  // Chrome's line when it will not open DevTools; it then runs on and never says where they listen.
+  const pidFile = join(root, "refusing-chrome.pid");
+  const standIn = join(root, "refusing-chrome");
+  writeFileSync(standIn, `#!/bin/sh\necho $$ > '${pidFile}'\necho 'DevTools remote debugging requires a non-default data directory. Specify this using --user-data-dir.' >&2\nexec sleep 60\n`);
+  chmodSync(standIn, 0o755);
+  await inTemp(async (tmp) => {
+    const t0 = performance.now();
+    await assert.rejects(launchBrowser(standIn), /^Error: Chrome refused remote debugging: DevTools remote debugging requires a non-default data directory\./);
+    // Not the 20 s a start may take: the refusal is final.
+    assert.ok(performance.now() - t0 < 10_000, `failed after ${Math.round(performance.now() - t0)} ms`);
+    assert.deepEqual(readdirSync(tmp), []);
+  });
+  const pid = Number(readFileSync(pidFile, "utf8"));
+  assert.ok(pid > 0);
+  assert.throws(() => process.kill(pid, 0), { code: "ESRCH" }, "the stand-in for Chrome still runs");
+});
+
+test("a refusal on Windows says which folder a test home is missing", () => {
+  const stderr = "DevTools remote debugging requires a non-default data directory. Specify this using --user-data-dir.\n";
+  assert.equal(
+    startFailureMessage("Chrome refused remote debugging", stderr, "win32"),
+    `Chrome refused remote debugging: ${stderr}\nChrome says this when USERPROFILE names a folder with no AppData\\Local in it, as a test home can. Make that folder (scripts/gate.mjs does).`,
+  );
+  assert.equal(startFailureMessage("Chrome refused remote debugging", stderr, "linux"), `Chrome refused remote debugging: ${stderr}`);
+  assert.equal(startFailureMessage("Chrome exited (1)", "x".repeat(600) + "the end", "win32"), `Chrome exited (1): ${"x".repeat(493)}the end`);
 });
 
 const chrome = findChrome();
