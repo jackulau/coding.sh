@@ -206,6 +206,7 @@ grouped by area, with links to the docs for the details.
 - **Docs.** Turn failed runs into evals says that every trial runs the setup `eval init` guessed (such as `npm ci`), that `eval run` asks first (`--yes` skips it), and that `eval new` takes a session id: after a run, `latest` is a trial. Its samples match the output and its validate table lists every check. [Turn failed runs into evals](https://coding.sh/docs/how-to/session-to-eval)
 - **Docs.** Benchmarks gives the three scripts its first run calls, so the example runs as written, and sets the case count with `bench new --cases 30`. Its samples match what `bench new` and `bench run` print. [Benchmarks](https://coding.sh/docs/benchmarks)
 - **Docs.** Compare two agents adds `--permission-mode acceptEdits` to the `claude -p` that records a task, since without it Claude Code can't write the fix. It also says that `--by` needs `--gate`. [Compare two agents](https://coding.sh/docs/how-to/compare-agents)
+- **Docs.** Replay recorded model calls says to set `excludeTools` or `excludeModel` when you record, since a replay matches the keys the recording stored. It also says that the noise floor counts pass verdicts, not outputs, and that `exp show` prints a replay's call counts. [Replay recorded model calls](https://coding.sh/docs/how-to/replay-llm-calls)
 
 ## [0.1.7] - 2026-11-16
 
