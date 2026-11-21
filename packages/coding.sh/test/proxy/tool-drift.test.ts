@@ -2,7 +2,7 @@
 // stored tools arrays, and --changed against the variants and the pins.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -177,6 +177,22 @@ describe("toolDrift after a pin", () => {
       assert.equal(r.status, 1, r.stderr);
       const doc = JSON.parse(r.stdout) as { tools: { tool: string; changed: string; sessionIds?: string[] }[] };
       assert.deepEqual(doc.tools.map((t) => [t.tool, t.changed, t.sessionIds]).sort(), [["exfil", "new", ["s1", "s2"]], ["search", "removed", undefined]]);
+
+      // The table says so, and pin counts the removed tool apart: its pin is dropped, not saved.
+      const run = (args: string[]) => spawnSync(process.execPath, ["--no-warnings", CLI, "harness", "tools", ...args], { env, cwd: root, encoding: "utf8", timeout: 120_000 });
+      const table = run(["--changed"]);
+      assert.equal(table.status, 1, table.stderr);
+      assert.match(table.stdout, /docs\s+search\s.*removed since pin/);
+      const pinsFile = join(root, "data", "tool-pins.json");
+      const pinsBefore = readFileSync(pinsFile, "utf8");
+      const json = run(["pin", "--json"]);
+      assert.equal(json.status, 0, json.stderr);
+      const p = JSON.parse(json.stdout) as { pinned: number; dropped?: number; pins: number };
+      assert.deepEqual([p.pinned, p.dropped, p.pins], [1, 1, 1]);
+      writeFileSync(pinsFile, pinsBefore);
+      const text = run(["pin"]);
+      assert.equal(text.status, 0, text.stderr);
+      assert.match(text.stderr, /Pinned 1 tool; dropped the pins of 1 removed tool/);
 
       // Pinning again accepts both: the removed tool's pin is dropped.
       writeToolPins(d.tools, env, t0 + 3000);
