@@ -499,8 +499,11 @@ A grader is a JSON object with a `kind`. Every kind takes `name`, the grader's i
 `stripPunctuation` and `unicode` (NFKC).
 
 The provider fields of `llm` and `llm-checklist`: `provider` (`anthropic` by default, `openai`,
-`gateway`, `claude-code`, `codex` or `mock`; `claude-code` and `codex` judge through `claude -p` or
-`codex exec` on a subscription, see [Replaying on a subscription](#replaying-on-a-subscription)), `model` (default `claude-sonnet-5-5` for Anthropic), `baseURL`, `apiKeyEnv`,
+`gateway`, `gemini`, `claude-code`, `codex` or `mock`; `claude-code` and `codex` judge through `claude -p` or
+`codex exec` on a subscription, see [Replaying on a subscription](#replaying-on-a-subscription);
+`gemini` calls Google's OpenAI-compatible endpoint at
+`https://generativelanguage.googleapis.com/v1beta/openai` with `GEMINI_API_KEY`), `model` (default
+`claude-sonnet-5-5` for Anthropic, `gemini-4-argon` for Gemini), `baseURL`, `apiKeyEnv`,
 `maxTokens`, `effort` (Anthropic), `temperature` and `requireKey` (OpenAI-compatible; `requireKey:
 false` for a local server with no key), and `mockAnswer` (`mock` only). A judge reads
 `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL` when `baseURL` is not set. A `pairwise` judge takes the
@@ -1165,6 +1168,40 @@ runs (`run:<id>`) or cases instead.
 tools. The `scores` table is in [Query](../reference/query.md#scores). Scores are kept in the
 SQLite store; the Postgres and ClickHouse stores answer 501 for now.
 
+### Monitors
+
+A monitor scores each new session once, after `coding.sh ingest`, in the viewer and in `coding.sh
+serve`. It scores with exactly one of a judge rubric (`--judge`), a command (`--run`) or an HTTP
+service (`--http`); two of them, or none, is refused (exit 2). Its scores have source `monitor` and
+the monitor's name. All flags are in the [CLI reference](../reference/cli.md#codingsh-monitor-add).
+
+```sh
+coding.sh monitor add helpful --judge rubric.md --provider gemini
+coding.sh monitor add tests-pass --run "node check.mjs"
+coding.sh monitor add review --http https://evals.example.com/score
+```
+
+`--judge` uses `--provider` (`anthropic`, `openai`, `gateway`, `gemini` or `mock`), or else the
+first of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `AI_GATEWAY_API_KEY` and `GEMINI_API_KEY` that is
+set, and stops for the day at `--max-usd-day`.
+
+`--http` takes an http or https URL with no user name or password in it. `monitor add` prints a
+signing secret once: 32 random bytes in hex. `monitor list` never shows it; it is kept in
+`monitors.json`, which is written with mode 600 where the OS has file modes. For each session the
+monitor sends one POST:
+
+```json
+{"apiVersion": "v1", "monitor": "review", "session": {"session": {...}, "eventCount": 12, "events": [...]}}
+```
+
+`session` is the redacted document a `--run` command gets on stdin. The request carries
+`X-Coding-Sh-Signature: sha256=<hex>`, the HMAC-SHA256 of the body keyed with the secret, as
+[alert](../reference/cli.md#codingsh-alert-add) webhooks do. Redirects are not followed. Each try has 10 s. A 5xx,
+408, 425 or 429 answer or a network error is tried again, up to 3 tries, 1 s and then 2 s apart. At
+most 256 KB of the answer is read. A 2xx answer `{"value": ..., "comment"?: ...}` writes the score;
+any other answer writes none and becomes the monitor's last error, with the status, which `monitor
+list` shows.
+
 ### Review queues
 
 A review queue is a list of sessions to score by hand, one at a time, with one config. `review
@@ -1200,8 +1237,8 @@ server has no review queues.
 
 ## Judges
 
-Judges call Anthropic with `ANTHROPIC_API_KEY` or OpenAI with `OPENAI_API_KEY`. Like the vendors'
-SDKs, they send to `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL` when set, so a proxy or gateway works
+Judges call Anthropic with `ANTHROPIC_API_KEY` or OpenAI with `OPENAI_API_KEY`, and
+`"provider":"gemini"` calls Gemini with `GEMINI_API_KEY`. Like the vendors' SDKs, they send to `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL` when set, so a proxy or gateway works
 without `--base-url`. `"provider":"claude-code"` and `"provider":"codex"` judge on a Claude or
 ChatGPT subscription instead, through the agent's CLI.
 

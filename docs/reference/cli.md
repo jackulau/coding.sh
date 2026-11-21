@@ -69,7 +69,7 @@ Every command accepts these.
 | [`exp`](#codingsh-exp) | Evaluate | Run a task over a dataset, compare experiments and sweep configs |
 | [`score`](#codingsh-score) | Evaluate | Add and list typed scores on sessions, events, cases and runs |
 | [`review`](#codingsh-review) | Evaluate | Queues of sessions to score by hand, one at a time, with one score config |
-| [`monitor`](#codingsh-monitor) | Evaluate | Score new sessions automatically with an LLM judge rubric or a command |
+| [`monitor`](#codingsh-monitor) | Evaluate | Score new sessions automatically with an LLM judge rubric, a command or an HTTP evaluator |
 | [`judge`](#codingsh-judge) | Evaluate | Grade one output or the slop in captured diffs, or check an LLM judge or a test verifier against human labels |
 | [`toolevals`](#codingsh-toolevals) | Evaluate | Measure how well agents use a CLI, MCP server or API |
 | [`workflows`](#codingsh-workflows) | Evaluate | Capture, measure and A/B-test multi-agent workflow runs |
@@ -1627,7 +1627,7 @@ coding.sh eval crosscheck <TASK> [options]
 |---|---|---|
 | `--experiment <ID>` |  | Only runs from this experiment (default: every stored run of the task) |
 | `--max <N>` | `5` | Runs to review (one model call each) |
-| `--judge <JSON|FILE>` | `{"provider":"anthropic"}` | Reviewer model: {"provider":"anthropic"\|"openai"\|"gateway"\|"claude-code"\|"codex"\|"mock","model":…}. |
+| `--judge <JSON|FILE>` | `{"provider":"anthropic"}` | Reviewer model: {"provider":"anthropic"\|"openai"\|"gateway"\|"gemini"\|"claude-code"\|"codex"\|"mock","model":…}. |
 | `--solver <BUNDLE>` |  | First solve the task once with this harness bundle and review that attempt too. |
 
 ```sh
@@ -2496,7 +2496,7 @@ coding.sh review skip codex-flagged 2
 
 ## `coding.sh monitor`
 
-Score new sessions automatically with an LLM judge rubric or a command.
+Score new sessions automatically with an LLM judge rubric, a command or an HTTP evaluator.
 
 ```text
 coding.sh monitor <action>
@@ -2513,7 +2513,8 @@ coding.sh monitor <action>
 - Each monitor scores sessions that ended after its cursor (the past day on its first run), one score per session; a session it already scored is skipped.
 - A monitor's failure never fails the ingest: it is recorded as the monitor's last error, which monitor list shows. A command that exits non-zero or prints no value scores nothing.
 - --judge with no provider records 'no judge provider' and scores nothing until one is set.
-- Definitions, cursors, spend and errors are in monitors.json, next to the config file (coding.sh config path shows it).
+- Pass one of --judge, --run or --http. --http prints a signing secret once (64 hex characters); each POST carries X-Coding-Sh-Signature: sha256=&lt;HMAC-SHA256 of the body&gt;. Redirects are not followed, each try has 10 s, and a 5xx, 408, 425, 429 or network error is tried 3 times, 1 s then 2 s apart. An answer over 256 KB or any other status scores nothing and is recorded as the monitor's last error.
+- Definitions, cursors, spend, errors and --http secrets are in monitors.json (mode 600 where the OS has file modes), next to the config file (coding.sh config path shows it).
 
 ### `coding.sh monitor add`
 
@@ -2531,10 +2532,11 @@ coding.sh monitor add <NAME> [options]
 |---|---|---|
 | `--judge <RUBRIC.md>` |  | Score with the LLM judge against this rubric file (a score from 0 to 1, the reason as its comment) |
 | `--run <COMMAND>` |  | Score with a shell command: it gets the session JSON (as show --json, redacted) on stdin and prints {"value": ..., "comment"?: ...}; stopped after 60 s. |
+| `--http <URL>` |  | Score with an HTTP service: a signed POST of {"apiVersion": "v1", "monitor", "session"} (session as --run gets it); a 2xx answer {"value": ..., "comment"?: ...} is the score. |
 | `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
 | `--sample <0..1>` |  | Score this fraction of sessions, picked by a hash of the session id (default: all) |
 | `--max-usd-day <USD>` | `1` | --judge: stop for the day once the estimated judge spend reaches this. |
-| `--provider <PROVIDER>` |  | --judge: the model provider (default: the first of ANTHROPIC_API_KEY, OPENAI_API_KEY, AI_GATEWAY_API_KEY that is set) One of: `anthropic`, `openai`, `gateway`, `mock`. |
+| `--provider <PROVIDER>` |  | --judge: the model provider (default: the first of ANTHROPIC_API_KEY, OPENAI_API_KEY, AI_GATEWAY_API_KEY, GEMINI_API_KEY that is set) One of: `anthropic`, `openai`, `gateway`, `gemini`, `mock`. |
 | `--model <MODEL>` |  | --judge: the judge model (default: the provider's) |
 | `--force` |  | Replace a monitor with the same name (its cursor starts again; its scores stay) |
 
@@ -2542,6 +2544,8 @@ coding.sh monitor add <NAME> [options]
 coding.sh monitor add tests-pass --run "node check.mjs"
 coding.sh monitor add helpful --judge rubric.md --where 'agent:claude-code' --sample 0.2
 coding.sh monitor add helpful --judge rubric.md --max-usd-day 5
+coding.sh monitor add helpful --judge rubric.md --provider gemini
+coding.sh monitor add review --http https://evals.example.com/score
 ```
 
 ### `coding.sh monitor list`

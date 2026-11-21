@@ -2,22 +2,25 @@
 //
 //   coding.sh monitor add tests-pass --run "node check.mjs"
 //   coding.sh monitor add helpful --judge rubric.md --where 'agent:claude-code' --sample 0.2
+//   coding.sh monitor add review --http https://evals.example.com/score
 //   coding.sh monitor list --json
 //   coding.sh monitor run helpful --since 7d
 //
 // Monitors run after each `coding.sh ingest`, in the viewer's ingest loop and
 // in serve's writer (src/monitor/run.ts). Their definitions and state are in
 // <CODING_SH_HOME>/monitors.json.
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseSince, UsageError } from "../args.ts";
 import { num, str, withContext } from "../common.ts";
 import { ago, CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
+import { SIGNATURE_HEADER } from "../../alerts/notify.ts";
 import { paths } from "../../core/paths.ts";
 import { parseWhere } from "../../query/where.ts";
-import { judgeProviderKind, NO_PROVIDER, runMonitors, type MonitorResult, type RunMonitorsResult } from "../../monitor/run.ts";
-import { MONITOR_PROVIDERS, NAME_RE, readMonitors, spentToday, updateMonitors, type MonitorDef, type MonitorProvider } from "../../monitor/state.ts";
+import { judgeProviderKind, KEY_ENV, NO_PROVIDER, runMonitors, type MonitorResult, type RunMonitorsResult } from "../../monitor/run.ts";
+import { MONITOR_PROVIDERS, NAME_RE, publicMonitor, readMonitors, spentToday, updateMonitors, type MonitorDef, type MonitorProvider } from "../../monitor/state.ts";
 
 export async function run(c: CommandContext): Promise<number> {
   switch (c.action) {
@@ -44,8 +47,11 @@ async function add(c: CommandContext): Promise<number> {
   const name = checkName(c.positionals[0]);
   const judge = str(c.flags.judge);
   const command = str(c.flags.run);
-  if (judge && command) throw new UsageError("monitor add takes --judge <rubric.md> or --run \"<command>\", not both: a monitor scores with a rubric or with a command", { reason: "bad_arg" });
-  if (!judge && !command) throw new UsageError("monitor add needs one of --judge <rubric.md> or --run \"<command>\"", { reason: "bad_arg" });
+  const url = str(c.flags.http);
+  const kinds = [judge, command, url].filter((x) => x !== undefined).length;
+  if (kinds > 1) throw new UsageError("monitor add takes one of --judge, --run or --http: a monitor scores with a rubric, a command or an evaluator service", { reason: "bad_arg" });
+  if (!kinds) throw new UsageError("monitor add needs one of --judge <rubric.md>, --run \"<command>\" or --http <URL>", { reason: "bad_arg" });
+  if (url !== undefined) checkUrl(url);
   const where = str(c.flags.where);
   if (where !== undefined) {
     try {
@@ -61,8 +67,8 @@ async function add(c: CommandContext): Promise<number> {
   const provider = str(c.flags.provider) as MonitorProvider | undefined;
   if (provider !== undefined && !(MONITOR_PROVIDERS as readonly string[]).includes(provider)) throw new UsageError(`--provider: one of ${MONITOR_PROVIDERS.join(", ")}`, { reason: "bad_arg" });
   const model = str(c.flags.model);
-  if (command && (provider || model)) throw new UsageError("--provider and --model go with --judge", { reason: "bad_arg" });
-  const def: MonitorDef = { name, kind: judge ? "judge" : "run", cwd: c.cwd, maxUsdDay, createdAt: Date.now() };
+  if (!judge && (provider || model)) throw new UsageError("--provider and --model go with --judge", { reason: "bad_arg" });
+  const def: MonitorDef = { name, kind: judge ? "judge" : url !== undefined ? "http" : "run", cwd: c.cwd, maxUsdDay, createdAt: Date.now() };
   if (judge) {
     const file = resolve(c.cwd, judge);
     if (!existsSync(file) || !statSync(file).isFile()) throw new UsageError(`--judge: no rubric file at ${judge}`, { reason: "not_found" });
@@ -70,6 +76,9 @@ async function add(c: CommandContext): Promise<number> {
     def.rubric = file;
     if (provider) def.provider = provider;
     if (model) def.model = model;
+  } else if (url !== undefined) {
+    def.url = url;
+    def.secret = randomBytes(32).toString("hex");
   } else def.command = command!;
   if (where !== undefined) def.where = where;
   if (sample !== undefined) def.sample = sample;
@@ -86,27 +95,47 @@ async function add(c: CommandContext): Promise<number> {
   }
   const noProvider = def.kind === "judge" && !judgeProviderKind(def, c.env);
   if (c.out.json) {
-    const data: Record<string, unknown> = { monitor: def, replaced };
+    const data: Record<string, unknown> = { monitor: publicMonitor(def), replaced };
+    if (def.secret) data.secret = def.secret;
     if (noProvider) data.warning = NO_PROVIDER;
     c.out.data(data);
     return 0;
   }
   c.out.ok(`${replaced ? "Replaced" : "Added"} monitor ${name}`);
-  if (noProvider) c.out.warn("No judge provider: set ANTHROPIC_API_KEY, OPENAI_API_KEY or AI_GATEWAY_API_KEY, or pass --provider");
+  if (def.secret) {
+    c.out.print(`Signing secret (shown once): ${def.secret}`);
+    c.out.note(`Each POST carries ${SIGNATURE_HEADER}: sha256=<HMAC-SHA256 of the body, keyed with this secret>.`);
+  }
+  if (noProvider) {
+    const keys = Object.values(KEY_ENV);
+    c.out.warn(def.provider ? `No judge provider: set ${KEY_ENV[def.provider]} for --provider ${def.provider}` : `No judge provider: set ${keys.slice(0, -1).join(", ")} or ${keys[keys.length - 1]}, or pass --provider`);
+  }
   c.out.note("It scores sessions that end from now on, after each coding.sh ingest, in the viewer and in serve (sessions from the past day on its first run).");
   c.out.next("Score the past week now", `coding.sh monitor run ${name} --since 7d`);
   return 0;
 }
 
+/** --http: an http or https URL, with no user name or password in it (the secret signs the request instead). */
+function checkUrl(raw: string): void {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new UsageError(`--http takes an http or https URL, got ${JSON.stringify(raw)}`, { reason: "bad_arg" });
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") throw new UsageError(`--http takes an http or https URL, got ${JSON.stringify(u.protocol)}`, { reason: "bad_arg" });
+  if (u.username || u.password) throw new UsageError("--http: put no credentials in the URL; check the signature header the monitor sends instead", { reason: "bad_arg" });
+}
+
 function describe(m: MonitorDef): string {
-  return m.kind === "run" ? `run: ${m.command}` : `judge: ${m.rubric}`;
+  return m.kind === "run" ? `run: ${m.command}` : m.kind === "http" ? `http: ${m.url}` : `judge: ${m.rubric}`;
 }
 
 async function list(c: CommandContext): Promise<number> {
   const doc = readMonitors(paths(c.env).monitors);
   const now = Date.now();
   if (c.out.json) {
-    c.out.data({ monitors: doc.monitors.map((m) => ({ ...m, spentToday: spentToday(m, now) })) });
+    c.out.data({ monitors: doc.monitors.map((m) => ({ ...publicMonitor(m), spentToday: spentToday(m, now) })) });
     return 0;
   }
   if (!doc.monitors.length) {
