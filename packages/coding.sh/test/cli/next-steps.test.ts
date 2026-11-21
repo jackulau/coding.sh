@@ -8,6 +8,7 @@ import { UsageError } from "../../src/cli/args.ts";
 import * as init from "../../src/cli/commands/init.ts";
 import * as uninstall from "../../src/cli/commands/uninstall.ts";
 import { checkFailed, reinstallCommand, runUpdate, type UpdateDeps } from "../../src/cli/commands/update.ts";
+import { nextStepBin } from "../../src/cli/next-steps.ts";
 import { CliError } from "../../src/cli/output.ts";
 import type { CommandModule } from "../../src/cli/types.ts";
 import type { UpdateCache } from "../../src/update/index.ts";
@@ -67,6 +68,24 @@ describe("started with npx", () => {
     const refresh = await runCmd(update({}), sb, { flags: { "refresh-bin": true } });
     assert.equal(refresh.code, 0, String(refresh.error));
     assert.match(refresh.stderr, new RegExp(`Nothing to refresh: run ${esc(NPX)} init to set up capture`));
+  });
+});
+
+describe("the rerun a consent prompt names", () => {
+  test("is the command as given, with --yes: init keeps --agent, --no-mcp and --no-import", async () => {
+    const sb = box();
+    const r = await runCmd(init, sb, { flags: setup, argv: ["init", "--agent", "claude-code", "--no-mcp", "--no-import"] });
+    assert.ok(r.error instanceof UsageError, String(r.error));
+    assert.equal(r.error.suggestion, `${nextStepBin(sb.env)} init --agent claude-code --no-mcp --no-import --yes`);
+  });
+
+  test("started with npx, uninstall names the npx command with the flags given", async () => {
+    const sb = npxBox();
+    const set = await runCmd(init, sb, { flags: { ...setup, yes: true } });
+    assert.equal(set.code, 0, String(set.error ?? set.stderr));
+    const r = await runCmd(uninstall, sb, { flags: { agent: ["claude-code"] }, argv: ["uninstall", "--agent", "claude-code"] });
+    assert.ok(r.error instanceof UsageError, String(r.error));
+    assert.equal(r.error.suggestion, `${NPX} uninstall --agent claude-code --yes`);
   });
 });
 

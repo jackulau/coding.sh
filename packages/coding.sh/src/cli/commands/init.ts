@@ -25,7 +25,7 @@ import { suggest, UsageError } from "../args.ts";
 import { changeJson, printChanges, shortPath } from "../changes.ts";
 import { ingestCli, list, requireConsent, str, underImportLock, withContext } from "../common.ts";
 import { hookRedactSource, hookShSource, hookSource, planHookBin, writeHookBin } from "../hookbin.ts";
-import { nextStepBin } from "../next-steps.ts";
+import { nextStepBin, rerunWithYes } from "../next-steps.ts";
 import { parseRemote, probeRemote, REMOTE_SINK, validateConfigText, withRemoteSink } from "../remote.ts";
 import { CliError, plural, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -461,7 +461,7 @@ export async function run(c: CommandContext): Promise<number> {
   renderPlan(out, plans, own, scope, env, c.cwd, (l) => out.note(l.replace(/^  /, "")), "err", importFrom);
 
   if (total) {
-    await requireConsent(c, `Set up coding.sh for ${plural(pending.length, "agent")} (${plural(total, "config file")}, backed up first)${importFrom.length ? " and import past sessions" : ""}?`, `${bin} init${scope === "project" ? " --scope project" : ""} --yes`, {
+    await requireConsent(c, `Set up coding.sh for ${plural(pending.length, "agent")} (${plural(total, "config file")}, backed up first)${importFrom.length ? " and import past sessions" : ""}?`, rerunWithYes(c, scope === "project" ? ["init", "--scope", "project"] : ["init"]), {
       defaultYes: true,
     });
   }

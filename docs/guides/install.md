@@ -86,6 +86,9 @@ coding.sh MCP server with the agents that support MCP. Every config file it edit
 `~/.coding.sh/backups` first. `coding.sh init --dry-run` prints the plan (each agent, the files it
 would change, anything that blocks capture) and writes nothing; `--diff` adds the exact edits.
 
+Without a terminal, such as an agent's shell, `init` writes nothing and prints the command to run
+once you approve: the one you ran, flags included, with `--yes` added. `uninstall` does the same.
+
 Then `init` imports the sessions each agent already keeps on this machine (Claude Code transcripts,
 Codex rollouts and the others listed in [ADAPTERS.md](../ADAPTERS.md)), so the viewer opens on your
 own history. It shows progress and stops after 8 seconds; the rest imports in the background and

@@ -12,7 +12,7 @@ import { MCP_CONFIG_NAME } from "../../mcp/launch.ts";
 import { applyProxyUninstall, isProxyAgent, planProxyUninstall, readProxyInstalls } from "../../proxy/install.ts";
 import { changeJson, printChanges } from "../changes.ts";
 import { list, requireConsent, shellQuote, str } from "../common.ts";
-import { nextStepBin, windowsShell } from "../next-steps.ts";
+import { nextStepBin, rerunWithYes, windowsShell } from "../next-steps.ts";
 import { plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { pickAdapters } from "./init.ts";
@@ -130,10 +130,13 @@ export async function run(c: CommandContext): Promise<number> {
     else out.ok(what);
     return failed || left.length ? 1 : 0;
   }
+  // The command line, for a run in-process without one.
+  const asRun = scope === "project" ? ["uninstall", "--scope", "project"] : ["uninstall"];
+  if (proxyOnly) asRun.push("--proxy");
   await requireConsent(
     c,
     proxyOnly ? `Stop routing ${plural(pending.length, "agent")} through the proxy (${plural(total, "file")})?` : `Remove coding.sh from ${plural(pending.length, "agent")} (${plural(total, "file")})?`,
-    `${bin} uninstall${scope === "project" ? " --scope project" : ""}${proxyOnly ? " --proxy" : ""} --yes`,
+    rerunWithYes(c, asRun),
   );
 
   const done: { id: string; changes: FileChange[]; error?: string }[] = [];
