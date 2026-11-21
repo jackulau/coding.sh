@@ -11,6 +11,15 @@ export default {
   "Record, measure, compare and benchmark every agent&nbsp;run.": "记录、度量、比较并基准测试每一次智能体运行。",
   "Copy the install command: {{INSTALL}}": "复制安装命令：{{INSTALL}}",
   "Copy the setup prompt for your coding agent": "复制给编码智能体的安装提示词",
+  "Install with": "安装方式",
+  "Agent prompt": "智能体提示词",
+  npx: "npx",
+  Script: "脚本",
+  "Copy the npx command: {{NPX}}": "复制 npx 命令：{{NPX}}",
+  "Paste it into your coding agent.": "粘贴到你的编码智能体中。",
+  "Needs Node.js 22.16 or newer. It does not work on Windows.": "需要 Node.js 22.16 或更高版本。不能在 Windows 上运行。",
+  "On Windows, run it in Git Bash. It does not work in PowerShell or cmd.":
+    "在 Windows 上请在 Git Bash 中运行。它不能在 PowerShell 或 cmd 中运行。",
   "Free and open source. <a href=\"{{RELEASE_HREF}}\">What's new in coding.sh <code>v{{RELEASE}}</code></a>":
     "免费且开源。<a href=\"{{RELEASE_HREF}}\">coding.sh <code>v{{RELEASE}}</code> 的新功能</a>",
   "Get started": "开始使用",

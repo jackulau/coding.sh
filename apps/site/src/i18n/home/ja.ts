@@ -11,6 +11,15 @@ export default {
   "Record, measure, compare and benchmark every agent&nbsp;run.": "エージェントの実行をすべて記録し、測定し、比較し、ベンチマークする。",
   "Copy the install command: {{INSTALL}}": "インストールコマンドをコピー：{{INSTALL}}",
   "Copy the setup prompt for your coding agent": "コーディングエージェント用のセットアッププロンプトをコピー",
+  "Install with": "インストール方法",
+  "Agent prompt": "エージェント用プロンプト",
+  npx: "npx",
+  Script: "スクリプト",
+  "Copy the npx command: {{NPX}}": "npx コマンドをコピー：{{NPX}}",
+  "Paste it into your coding agent.": "コーディングエージェントに貼り付けてください。",
+  "Needs Node.js 22.16 or newer. It does not work on Windows.": "Node.js 22.16 以降が必要です。Windows では動きません。",
+  "On Windows, run it in Git Bash. It does not work in PowerShell or cmd.":
+    "Windows では Git Bash で実行してください。PowerShell や cmd では動きません。",
   "Free and open source. <a href=\"{{RELEASE_HREF}}\">What's new in coding.sh <code>v{{RELEASE}}</code></a>":
     "無料のオープンソース。<a href=\"{{RELEASE_HREF}}\">coding.sh <code>v{{RELEASE}}</code> の新機能</a>",
   "Get started": "はじめる",
