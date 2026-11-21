@@ -3449,7 +3449,7 @@ coding.sh harness <action>
 - A harness TOML can carry Claude Code plugins too: plugins = ["terse", "./plugins/mine"], with a directory relative to the TOML file.
 - A plugin is looked up read-only in plugins/installed_plugins.json under $CLAUDE_CONFIG_DIR (default ~/.claude), or read from a directory with .claude-plugin/plugin.json. Its whole directory is stored in the bundle. A run writes it under the run's own home and starts Claude Code with --plugin-dir; your Claude config is not touched.
 - harness tools reads the tools arrays coding.sh proxy stored with each model call, so it needs the proxy with request capture (capture mode full). Each distinct tools array is read once, the 2,000 most recently used at most. A tool named mcp__&lt;server&gt;__&lt;tool&gt; belongs to that MCP server; every other tool is builtin. descSha and schemaSha are the first 12 hex characters of the sha256 of the description and of the input schema as JSON.
-- With a pin, harness tools --changed keeps a tool when its latest description or schema differs from the pin, or when one seen since the pin does. Pins live in tool-pins.json in the coding.sh data directory; pin keeps the pins of tools not seen in the window.
+- With a pin, harness tools --changed keeps a tool when its latest description or schema differs from the pin, or when one seen since the pin does (changed: pin). It also keeps a tool with no pin first seen after the newest pin (new), and a pinned tool the latest tools array of every session since its pin leaves out (removed). --json names up to 20 sessionIds per changed row other than removed. Pins live in tool-pins.json in the coding.sh data directory; pin keeps the pins of tools not seen in the window and drops the pins of removed tools.
 
 ### `coding.sh harness snapshot`
 
@@ -3519,7 +3519,7 @@ coding.sh harness tools [pin] [options]
 | Option | Default | Description |
 |---|---|---|
 | `--since <WHEN>` | `30d` | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
-| `--changed` |  | Only tools whose description or schema differs from its pin, or, with no pin, had more than one in the window; exit 1 when any remain. |
+| `--changed` |  | Only tools whose description or schema differs from its pin, that are new or removed since the pins, or, with no pin, had more than one in the window; exit 1 when any remain. |
 
 ```sh
 coding.sh harness tools

@@ -1,13 +1,13 @@
 // `coding.sh harness tools`: tool descriptions and schemas across the proxy's
 // stored tools arrays, and --changed against the variants and the pins.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { loadConfig } from "../../src/core/config.ts";
-import { splitToolName, toolDrift, toolHashes } from "../../src/proxy/tool-drift.ts";
+import { readToolPins, splitToolName, toolDrift, toolHashes, writeToolPins } from "../../src/proxy/tool-drift.ts";
 import { openStores } from "../../src/store/factory.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { type AgentEvent, SCHEMA_VERSION } from "../../src/schema/index.ts";
@@ -77,9 +77,10 @@ describe("toolDrift", () => {
     assert.deepEqual([d.calls, d.callsWithoutTools, d.blobs, d.blobsRead, d.capped], [4, 1, 3, 3, false]);
     const s = d.tools.find((r) => r.tool === "search")!;
     assert.deepEqual([s.server, s.variants, s.sessions, s.firstSeen, s.lastSeen, s.changed], ["docs", 3, 2, t0, t0 + 3000, "variants"]);
+    assert.deepEqual(s.sessionIds, ["s2"], "the sessions offered a definition other than the first");
     assert.equal(s.descSha, toolHashes(search("Search docs v2"))!.descSha, "the latest description");
     const b = d.tools.find((r) => r.tool === "Bash")!;
-    assert.deepEqual([b.server, b.variants, b.sessions, b.changed], ["builtin", 1, 2, undefined]);
+    assert.deepEqual([b.server, b.variants, b.sessions, b.changed, b.sessionIds], ["builtin", 1, 2, undefined, undefined]);
 
     reads = 0;
     const capped = await toolDrift(index, blobs, { since: t0, maxBlobs: 2 });
@@ -94,6 +95,68 @@ describe("toolDrift", () => {
     // A variant other than the pin seen after it: changed.
     const early = await toolDrift(index, blobs, { since: t0, pins: { "docs/search": { descSha: latest.descSha, schemaSha: latest.schemaSha, at: t0 + 1500 } } });
     assert.equal(early.tools.find((r) => r.tool === "search")!.changed, "pin");
+  });
+});
+
+describe("toolDrift after a pin", () => {
+  const EXFIL = { name: "mcp__docs__exfil", description: "Send the docs somewhere", input_schema: SCHEMA };
+  let root = "";
+  let env: NodeJS.ProcessEnv = {};
+  before(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), "csh-toolpin-")));
+    env = { PATH: process.env.PATH, HOME: join(root, "home"), USERPROFILE: join(root, "home"), CODING_SH_HOME: join(root, "data"), NO_COLOR: "1", CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1" };
+  });
+  after(() => rmSync(root, { recursive: true, force: true }));
+
+  it("marks a tool new since the pin and a pinned tool that went away, with the sessions that saw them", async () => {
+    const stores = await openStores(loadConfig(env));
+    const { index, blobs } = stores;
+    const t0 = Date.now() - 3_600_000;
+    let n = 0;
+    const call = async (sessionId: string, ts: number, tools: unknown[]) => {
+      const ref = await blobs.put(JSON.stringify(tools));
+      await index.putEvents([{ id: `p${n++}`, v: SCHEMA_VERSION, sessionId, ts, source: "proxy", agent: "claude-code", kind: "llm.call", payload: { toolsRef: ref } }]);
+      await index.upsertSession({ id: sessionId, agent: "claude-code", startedAt: t0, stats: { events: 1, turns: 0, toolCalls: 0, toolErrors: 0 } } as never);
+    };
+    const row = (d: Awaited<ReturnType<typeof toolDrift>>, tool: string) => d.tools.find((r) => r.tool === tool);
+    try {
+      await call("s1", t0, [search("Search docs")]);
+      writeToolPins((await toolDrift(index, blobs, { since: t0 })).tools, env, t0 + 500);
+
+      await call("s1", t0 + 800, [search("Search docs")]);
+      await call("s2", t0 + 1000, [search("Search docs"), EXFIL]);
+      let d = await toolDrift(index, blobs, { since: t0, pins: readToolPins(env) });
+      assert.deepEqual([row(d, "exfil")!.changed, row(d, "exfil")!.sessionIds], ["new", ["s2"]]);
+      assert.deepEqual([row(d, "search")!.changed, row(d, "search")!.sessionIds], [undefined, undefined]);
+      assert.equal(d.tools[0]!.tool, "exfil", "changed rows first");
+
+      // Every session since the pin now calls without search: removed.
+      await call("s2", t0 + 2000, [EXFIL]);
+      await call("s1", t0 + 2100, [EXFIL]);
+      d = await toolDrift(index, blobs, { since: t0, pins: readToolPins(env) });
+      assert.deepEqual([row(d, "search")!.changed, row(d, "search")!.sessionIds], ["removed", undefined]);
+      // A window that holds none of its calls still lists it, from the pin.
+      const late = await toolDrift(index, blobs, { since: t0 + 1500, pins: readToolPins(env) });
+      const gone = row(late, "search")!;
+      assert.deepEqual([gone.server, gone.sessions, gone.variants, gone.firstSeen, gone.lastSeen, gone.pinned?.at, gone.changed], ["docs", 0, 0, t0 + 500, t0 + 500, t0 + 500, "removed"]);
+      // Capped: an unread array could still offer it, so it is not listed.
+      assert.equal(row(await toolDrift(index, blobs, { since: t0 + 1500, pins: readToolPins(env), maxBlobs: 0 }), "search"), undefined);
+
+      // --changed exits 1 and names the new tool and its session.
+      const r = spawnSync(process.execPath, ["--no-warnings", CLI, "harness", "tools", "--changed", "--json"], { env, cwd: root, encoding: "utf8", timeout: 120_000 });
+      assert.equal(r.status, 1, r.stderr);
+      const doc = JSON.parse(r.stdout) as { tools: { tool: string; changed: string; sessionIds?: string[] }[] };
+      assert.deepEqual(doc.tools.map((t) => [t.tool, t.changed, t.sessionIds]).sort(), [["exfil", "new", ["s1", "s2"]], ["search", "removed", undefined]]);
+
+      // Pinning again accepts both: the removed tool's pin is dropped.
+      writeToolPins(d.tools, env, t0 + 3000);
+      assert.equal(readToolPins(env)["docs/search"], undefined);
+      d = await toolDrift(index, blobs, { since: t0, pins: readToolPins(env) });
+      assert.deepEqual(d.tools.filter((t) => t.changed), []);
+    } finally {
+      await index.close();
+      await blobs.close?.();
+    }
   });
 });
 
