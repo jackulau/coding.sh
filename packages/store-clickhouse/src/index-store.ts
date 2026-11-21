@@ -357,9 +357,11 @@ export class ChIndexStore implements IndexStore {
   /**
    * Sets an estimated cost on stored events: each changed event gets a new row
    * version (same id, seq and search text), which FINAL reads in place of the old.
-   * `pricedAs` and `priceTier` are replaced: set when given, else removed.
+   * `pricedAs`, `priceTier` and `costByTokenType` are replaced: set when given, else removed.
    */
-  async setEventCosts(costs: { id: string; costUsd: number; pricedAs?: string; priceTier?: string }[]): Promise<number> {
+  async setEventCosts(
+    costs: { id: string; costUsd: number; pricedAs?: string; priceTier?: string; costByTokenType?: { input: number; output: number; cacheRead: number; cacheWrite: number } }[],
+  ): Promise<number> {
     if (!costs.length) return 0;
     const byId = new Map(costs.map((c) => [c.id, c]));
     return this.serial(async () => {
@@ -369,14 +371,11 @@ export class ChIndexStore implements IndexStore {
         const rows = await this.q(`SELECT * FROM ${this.t("events")} FINAL WHERE id IN ${p.bind("Array(String)", part)}`, p);
         const out = rows.map((r) => {
           const c = byId.get(r.id as string)!;
-          const { pricedAs: _was, priceTier: _tier, ...payload } = parse<Record<string, unknown>>(r.payload) ?? {};
+          const { pricedAs: _was, priceTier: _tier, costByTokenType: _parts, ...rest } = parse<Record<string, unknown>>(r.payload) ?? {};
           const usage = { ...parse<Record<string, unknown>>(r.usage), costUsd: c.costUsd };
-          return {
-            ...r,
-            ver: nextVer(),
-            usage: JSON.stringify(usage),
-            payload: JSON.stringify({ ...payload, costEstimated: true, ...(c.pricedAs ? { pricedAs: c.pricedAs } : {}), ...(c.priceTier ? { priceTier: c.priceTier } : {}) }),
-          };
+          const payload: Record<string, unknown> = { ...rest, costEstimated: true, ...(c.pricedAs ? { pricedAs: c.pricedAs } : {}), ...(c.priceTier ? { priceTier: c.priceTier } : {}) };
+          if (c.costByTokenType) payload.costByTokenType = c.costByTokenType;
+          return { ...r, ver: nextVer(), usage: JSON.stringify(usage), payload: JSON.stringify(payload) };
         });
         await this.client.insert(this.t("events"), out);
         found += out.length;

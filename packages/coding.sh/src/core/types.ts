@@ -1,7 +1,7 @@
 // Core contracts shared by every module. Changing anything here is a
 // cross-module change: owners of store/, adapters/, eval/, runner/, viewer/
 // and cli/ all build against these types.
-import type { AgentEvent, AgentId, BlobRef, RepoState, Session, Usage } from "../schema/index.ts";
+import type { AgentEvent, AgentId, BlobRef, CostByTokenType, RepoState, Session, Usage } from "../schema/index.ts";
 import type { Dataset, DatasetVersionInfo, ExperimentResult, JudgeVersion } from "../datasets/types.ts";
 import type { McpCall } from "./mcp-usage.ts";
 import type { MemoryEvent } from "./memory-events.ts";
@@ -215,6 +215,8 @@ export interface EventCost {
   pricedAs?: string;
   /** Non-standard rates the call was priced at (`batch`, `long-context`, `priority+long-context`, ...). */
   priceTier?: string;
+  /** The estimate split by token type (`payload.costByTokenType`). */
+  costByTokenType?: CostByTokenType;
 }
 
 /** One session as metrics read it (IndexStore.metricRows): fields absent when the session has no value. */
@@ -371,8 +373,8 @@ export interface IndexStore {
 
   /**
    * Sets an estimated cost on stored events in place (`usage.costUsd`,
-   * `payload.costEstimated = true`, and `payload.pricedAs` and `payload.priceTier`
-   * when given, removed when not); ids and everything else stay. Used by the reprice pass over events
+   * `payload.costEstimated = true`, and `payload.pricedAs`, `payload.priceTier` and
+   * `payload.costByTokenType` when given, removed when not); ids and everything else stay. Used by the reprice pass over events
    * stored before local pricing or under older prices. Returns how many it found.
    */
   setEventCosts?(costs: EventCost[]): Promise<number>;

@@ -11,7 +11,7 @@
 // `--by mcp`, `--by skill` and `--by subagent` attribute cost to what a session used
 // instead (attributedUsage below): every row carries basis "attributed".
 import { CACHE_BREAK_FIX, CACHE_IDLE_FIX, CACHE_IDLE_LABEL } from "../../core/cache-breaks.ts";
-import type { CacheBreakCause, CacheIdleKind } from "../../schema/index.ts";
+import type { CacheBreakCause, CacheIdleKind, CostByTokenType } from "../../schema/index.ts";
 import { repriceStored } from "../../core/reprice.ts";
 import { CACHE_BASELINE_NOTE } from "../../core/cache-baselines.ts";
 import { parseSinceWhen, positiveInt, UsageError } from "../args.ts";
@@ -21,8 +21,8 @@ import type { CommandContext } from "../types.ts";
 import type { IndexStore } from "../../core/types.ts";
 import type { Session } from "../../schema/index.ts";
 import { mcpCallsOf, type McpCall } from "../../core/mcp-usage.ts";
-import { lookupPrice, pricesFor, type Prices } from "../../core/pricing.ts";
-import type { ScanQuery } from "../../mcp/data.ts";
+import { apportion, lookupPrice, pricesFor, TOKEN_TYPES, type Prices } from "../../core/pricing.ts";
+import { SPLIT_LABEL, type ScanQuery } from "../../mcp/data.ts";
 
 const fmt = (n: number | undefined): string => (n === undefined ? "-" : n >= 1e9 ? `${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${(n / 1e3).toFixed(1)}k` : String(n));
 const pct = (n: number | undefined): string => (n === undefined ? "-" : `${Math.round(n * 100)}%`);
@@ -40,6 +40,8 @@ function renderCache(out: Output, by: string, r: { groups: Row[]; total: Row }):
   );
   out.note("CACHED = cache reads / all prompt tokens (higher is better). R:W = cache-read tokens per cache-write token; below 1:1 you wrote more cache than you read back. WASTE = extra USD the breaks cost over reading from cache (estimated).");
   const t = r.total;
+  const split = costSplitNote(t);
+  if (split) out.note(split);
   if (!t.cacheReadTokens && !t.cacheWriteTokens) {
     out.note("No prompt-cache tokens recorded in this window: these agents did not report cache use (or caching is off).");
     return;
@@ -63,6 +65,21 @@ function renderCache(out: Output, by: string, r: { groups: Row[]; total: Row }):
   }
 }
 
+/**
+ * `usage --cache`: what the estimate paid for, by token type, cache reads first, and
+ * what has no split (reported or billed costs, estimates priced without one).
+ */
+function costSplitNote(t: Row): string | undefined {
+  const by = t.estimatedCostByTokenType;
+  const share = t.estimatedCostShareByTokenType;
+  if (!by || !share) return undefined;
+  const pctOf = apportion(share, 100);
+  const parts = TOKEN_TYPES.map((k) => `${SPLIT_LABEL[k]} ~${usd(by[k])} (${pctOf[k]}%)`).join(", ");
+  const reported = r4((t.costUsd ?? 0) - (t.estimatedCostUsd ?? 0));
+  const rest = [t.estimatedCostUnsplitUsd ? `~${usd(t.estimatedCostUnsplitUsd)} of the estimate` : "", reported > 0 ? `${usd(reported)} reported or billed` : ""].filter(Boolean);
+  return `Estimated cost by token type: ${parts}; ~${usd(r4(TOKEN_TYPES.reduce((n, k) => n + by[k], 0)))} in all.${rest.length ? ` Not split by token type: ${rest.join(" and ")}.` : ""}`;
+}
+
 interface Row {
   key: string;
   sessions: number;
@@ -77,6 +94,11 @@ interface Row {
   costUsd?: number;
   estimatedCostUsd?: number;
   estimatedCostByTier?: Record<string, number>;
+  /** The estimate by token type (USD, 4 decimals) and each part's share of it. */
+  estimatedCostByTokenType?: CostByTokenType;
+  estimatedCostShareByTokenType?: CostByTokenType;
+  /** Part of the estimate with no split by token type. */
+  estimatedCostUnsplitUsd?: number;
   costPartial?: boolean;
   duplicateFetches?: number;
   duplicateFetchTokens?: number;

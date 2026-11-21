@@ -332,6 +332,31 @@
       ],
       "additionalProperties": false
     },
+    "CostByTokenType": {
+      "description": "USD by token type: cache reads, cache writes (1-hour writes included), uncached input and output.",
+      "type": "object",
+      "properties": {
+        "cacheRead": {
+          "type": "number"
+        },
+        "cacheWrite": {
+          "type": "number"
+        },
+        "input": {
+          "type": "number"
+        },
+        "output": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "cacheRead",
+        "cacheWrite",
+        "input",
+        "output"
+      ],
+      "additionalProperties": false
+    },
     "DuplicateUsage": {
       "description": "Usage a session did not count because another model call already covered it (a nested span, a repeated response id).",
       "type": "object",
@@ -1317,6 +1342,10 @@
           "additionalProperties": {
             "type": "number"
           }
+        },
+        "estimatedCostByTokenType": {
+          "description": "Session totals only: `estimatedCostUsd` split by token type, the sum of the\ncalls' `payload.costByTokenType`. Absent when an estimated call has no split.",
+          "$ref": "#/$defs/CostByTokenType"
         }
       },
       "additionalProperties": false

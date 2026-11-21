@@ -709,7 +709,7 @@ export const COMMANDS: CommandSpec[] = [
     summary: "Tokens, cost, turns and cache hits by agent, model or day; cost by MCP server, skill or subagent type",
     flags: [
       { name: "by", type: "string", value: "<GROUP>", choices: ["agent", "model", "agent-model", "day", "repo", "mcp", "skill", "subagent"], desc: "Group rows by", default: "agent" },
-      { name: "cache", type: "boolean", desc: "Prompt-cache economics instead: hit rate, read vs write tokens, read:write ratio, breaks and their cost, with what to change. Not with --by mcp, skill or subagent" },
+      { name: "cache", type: "boolean", desc: "Prompt-cache economics instead: hit rate, read vs write tokens, read:write ratio, breaks and their cost, with what to change, and the estimate by token type. Not with --by mcp, skill or subagent" },
       AGENT_ONE,
       { ...SINCE, default: "30d" },
       LIMIT(20),
@@ -722,6 +722,7 @@ export const COMMANDS: CommandSpec[] = [
     notes: [
       "Totals cover every session in the window. A scan that stops at 100,000 sessions says so under the table (Stopped after 100,000 sessions) and sets window.truncated in --json; cache doctor does the same.",
       "--by mcp, skill and subagent attribute cost to what sessions used, and every row in --json has basis: \"attributed\". mcp: one row per MCP server, with calls, failed calls, the bytes the results returned and their tokens (the stored count, else bytes / 4, marked ~), priced at the input rate of the session's model. skill: the whole sessions tagged skill:<name>; a session with two skills counts in both rows, so the rows do not add up to the total (rowsOverlap in --json). subagent: child sessions by subagent type (unnamed when there is none), with count, tokens, cost and median duration; their parents' own cost is left out.",
+      "--cache adds a line that splits the estimate into cache reads, cache writes, uncached input and output, each with its share. Reported and billed costs have no split; the line names them apart. --json has the split in each row and the total (estimatedCostByTokenType in USD, estimatedCostShareByTokenType, estimatedCostUnsplitUsd), except with --by mcp, skill or subagent.",
     ],
     load: () => import("./commands/usage.ts"),
   },

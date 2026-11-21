@@ -143,9 +143,39 @@ for (const [name, open] of [["memory", async () => new MemoryIndexStore()], ["sq
       await store.close();
     });
 
+    it("splits stored estimates by token type once, and leaves reported costs unsplit", async () => {
+      const store = await open();
+      const evs = [
+        // Estimated before splits: the cost is current, the split is missing.
+        ev("old", { model: "claude-opus-4-5", usage: { inputTokens: M, cacheReadTokens: M, costUsd: 5.5 }, payload: { costEstimated: true } }), // 5 + 0.5
+        ev("new", { model: "claude-opus-4-5", usage: { outputTokens: M, cacheWriteTokens: M } }), // 25 + 6.25
+        // Parts that are not round in binary still read back exactly.
+        ev("odd", { model: "claude-opus-4-5", usage: { inputTokens: 333_333, outputTokens: 123_457, cacheReadTokens: 777_777, cacheWriteTokens: 98_765 } }),
+        ev("reported", { model: "claude-opus-4-5", usage: { inputTokens: M, costUsd: 9 } }),
+      ];
+      await store.putEvents(evs);
+      const before = buildSession(evs);
+      await store.upsertSession(before);
+      assert.equal(before.stats.usage?.estimatedCostByTokenType, undefined, "an estimate without a split leaves the session unsplit");
+      assert.deepEqual(await repriceStored(store), { ran: true, events: 3, sessions: 1 });
+      const e = Object.fromEntries((await store.listEvents("s1")).map((x) => [x.id, x]));
+      assert.deepEqual([e.old!.usage?.costUsd, e.old!.payload.costByTokenType], [5.5, { cacheRead: 0.5, cacheWrite: 0, input: 5, output: 0 }]);
+      assert.deepEqual(e.new!.payload.costByTokenType, { cacheRead: 0, cacheWrite: 6.25, input: 0, output: 25 });
+      const odd = e.odd!.payload.costByTokenType as Record<string, number>;
+      assert.ok(Math.abs(Object.values(odd).reduce((a, b) => a + b, 0) - e.odd!.usage!.costUsd!) < 1e-12);
+      assert.equal(e.reported!.payload.costByTokenType, undefined);
+      const u = (await store.getSession("s1"))!.stats.usage!;
+      const split = u.estimatedCostByTokenType!;
+      assert.ok(Math.abs(split.cacheRead + split.cacheWrite + split.input + split.output - u.estimatedCostUsd!) < 1e-9);
+      assert.ok(Math.abs(u.costUsd! - u.estimatedCostUsd! - 9) < 1e-9, "the reported $9 is not in the split");
+      // A forced pass finds every stored split equal to a fresh one.
+      assert.deepEqual(await repriceStored(store, undefined, { force: true }), { ran: true, events: 0, sessions: 0 });
+      await store.close();
+    });
+
     it("refolds a session stored before session totals marked estimates, without touching its events", async () => {
       const store = await open();
-      const evs = [ev("old", { model: "claude-opus-4-5", usage: { inputTokens: M, costUsd: 5 }, payload: { costEstimated: true } })];
+      const evs = [ev("old", { model: "claude-opus-4-5", usage: { inputTokens: M, costUsd: 5 }, payload: { costEstimated: true, costByTokenType: { cacheRead: 0, cacheWrite: 0, input: 5, output: 0 } } })];
       await store.putEvents(evs);
       const s = buildSession(evs);
       await store.upsertSession({ ...s, stats: { ...s.stats, usage: { inputTokens: M, costUsd: 5 } } });

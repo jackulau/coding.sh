@@ -563,11 +563,14 @@ unapproved actions, and tool errors and fold errors.
 | `stats.usage.costUsd` | The reported or gateway-billed cost where there is one, else token counts times list price |
 | `stats.usage.estimatedCostUsd` | The part of `costUsd` that was estimated (in the example, all of it) |
 | `stats.usage.estimatedCostByTier` | The estimate totalled by `priceTier`. Left out when every call was standard |
+| `stats.usage.estimatedCostByTokenType` | The estimate in USD by token type: `cacheRead`, `cacheWrite` (1-hour writes included), `input` (uncached) and `output`. The parts add up to `estimatedCostUsd`. Left out when there is no estimate, or when an estimated call has no split |
 | `stats.duplicateUsage` (`calls`, `tokens`, `costUsd`) | Model-call usage left out because an enclosing call or an earlier copy of the same response already counted it |
 
 Each estimated `llm.call` has `payload.costEstimated: true`. It adds `payload.pricedAs` when a
 sibling model's price was used, and `payload.priceTier` when it was priced at batch, flex, priority,
-fast, long-context or US-only rates (`batch+long-context` for both).
+fast, long-context or US-only rates (`batch+long-context` for both). `payload.costByTokenType` splits
+its estimate by token type at the same rates, so the parts add up to `usage.costUsd`. A reported or
+gateway-billed cost has no split.
 
 **Parent and model.**
 

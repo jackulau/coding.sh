@@ -8,7 +8,7 @@
 // over the model's threshold, long-context rates (`callRates`); its 1-hour cache
 // writes (`payload.cacheWrite1hTokens`) at their own rate; and the model's
 // data-residency multiplier for `payload.inferenceGeo` (Claude 4.6+ US-only, 1.1x).
-import type { AgentEvent, Usage } from "../schema/index.ts";
+import type { AgentEvent, CostByTokenType, Usage } from "../schema/index.ts";
 
 /** Per-million-token rates. */
 export interface Rates {
@@ -75,6 +75,65 @@ export function costFrom(u: Usage, p: Rates, cacheWrite1h = 0): number {
   return ((u.inputTokens ?? 0) * p.input + (u.outputTokens ?? 0) * p.output + (u.cacheReadTokens ?? 0) * (p.cacheRead ?? p.input) + (write - long) * writeRate + long * (p.cacheWrite1h ?? writeRate)) / 1e6;
 }
 
+/**
+ * costFrom's terms as four parts, in USD: cache reads, cache writes (1-hour writes
+ * included), uncached input and output. They add up to costFrom(u, p, cacheWrite1h),
+ * give or take floating-point rounding.
+ */
+export function costParts(u: Usage, p: Rates, cacheWrite1h = 0): CostByTokenType {
+  const write = u.cacheWriteTokens ?? 0;
+  const long = Math.min(Math.max(cacheWrite1h, 0), write);
+  const writeRate = p.cacheWrite ?? p.input;
+  return {
+    cacheRead: ((u.cacheReadTokens ?? 0) * (p.cacheRead ?? p.input)) / 1e6,
+    cacheWrite: ((write - long) * writeRate + long * (p.cacheWrite1h ?? writeRate)) / 1e6,
+    input: ((u.inputTokens ?? 0) * p.input) / 1e6,
+    output: ((u.outputTokens ?? 0) * p.output) / 1e6,
+  };
+}
+
+/** The four keys of CostByTokenType, in the order data and outputs list them. */
+export const TOKEN_TYPES = ["cacheRead", "cacheWrite", "input", "output"] as const;
+
+/**
+ * `parts` as whole numbers in proportion that add up to `units`, largest remainders
+ * first: percentages that add up to 100, or ten-thousandths of a dollar that add up
+ * to the rounded total. All zero when the parts add up to nothing.
+ */
+export function apportion(parts: CostByTokenType, units: number): CostByTokenType {
+  const out: CostByTokenType = { cacheRead: 0, cacheWrite: 0, input: 0, output: 0 };
+  const sum = TOKEN_TYPES.reduce((s, k) => s + parts[k], 0);
+  if (!(sum > 0) || !(units > 0)) return out;
+  const quota = TOKEN_TYPES.map((k) => ({ k, q: (parts[k] / sum) * units }));
+  let left = units;
+  for (const x of quota) {
+    out[x.k] = Math.floor(x.q);
+    left -= out[x.k];
+  }
+  // Stable: equal remainders go in TOKEN_TYPES order.
+  quota.sort((a, b) => b.q - Math.floor(b.q) - (a.q - Math.floor(a.q)));
+  for (let i = 0; left > 0 && i < quota.length; i++, left--) out[quota[i]!.k]++;
+  return out;
+}
+
+/**
+ * `v` as a CostByTokenType when it is one (four finite numbers, none negative) whose
+ * parts add up to `total`, else undefined. Session totals use only splits that match
+ * the cost they explain.
+ */
+export function splitOf(v: unknown, total: number | undefined): CostByTokenType | undefined {
+  if (!v || typeof v !== "object" || typeof total !== "number" || !Number.isFinite(total)) return undefined;
+  const o = v as Record<string, unknown>;
+  let sum = 0;
+  for (const k of TOKEN_TYPES) {
+    const n = o[k];
+    if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return undefined;
+    sum += n;
+  }
+  if (Math.abs(sum - total) > 1e-9 * Math.max(1, Math.abs(total))) return undefined;
+  return { cacheRead: o.cacheRead as number, cacheWrite: o.cacheWrite as number, input: o.input as number, output: o.output as number };
+}
+
 /** Where each group of rows comes from and when it was last checked against that page. */
 export const PRICE_SOURCES: Record<string, { url: string; updated: string }> = {
   openai: { url: "https://developers.openai.com/api/docs/pricing", updated: "2026-11-07" },
@@ -90,8 +149,9 @@ export const PRICE_SOURCES: Record<string, { url: string; updated: string }> = {
  * recomputed once: reprice.ts hashes it into its stamp with the table.
  * 3: per-call long-context and service-tier rates (`payload.priceTier`).
  * 4: 1-hour cache writes at their own rate, and the US-only data-residency multiplier.
+ * 5: each estimate split by token type (`payload.costByTokenType`).
  */
-export const PRICING_RULES_VERSION = 4;
+export const PRICING_RULES_VERSION = 5;
 
 /** `r` times `k`, field by field. */
 const scale = (r: Rates, k: number): Rates => ({
@@ -524,8 +584,9 @@ export function eventPrice(e: AgentEvent, prices: Prices): ResolvedPrice | undef
  * Fills `usage.costUsd` on a model call (or usage snapshot) that carries tokens
  * but no cost, from its model's price, and marks it `payload.costEstimated = true`
  * (plus `payload.pricedAs = <key>` when a sibling model's price was used, and
- * `payload.priceTier` when tier, long-context or data-residency rates were). A
- * model call is priced on its own: its tier, its own prompt size, its 1-hour cache
+ * `payload.priceTier` when tier, long-context or data-residency rates were), and
+ * keeps the estimate's parts by token type in `payload.costByTokenType` (costParts).
+ * A model call is priced on its own: its tier, its own prompt size, its 1-hour cache
  * writes and its inference geography. A usage snapshot holds running session
  * totals, so it is priced at standard short-context rates.
  * A cost the agent or gateway reported always wins. Returns `e` itself when unchanged, else a copy.
@@ -537,12 +598,14 @@ export function priceEvent(e: AgentEvent, prices: Prices): AgentEvent {
   if (!r) return e;
   const call = e.kind === "llm.call";
   const { rates, tier } = call ? callRates(r.price, callTier(pl), promptTokens(e.usage), geoValue(pl.inferenceGeo)) : { rates: r.price, tier: undefined };
+  const long = call ? cacheWrite1h(pl) : 0;
   const payload: Record<string, unknown> = { ...e.payload, costEstimated: true };
   if (r.fallback) payload.pricedAs = r.key;
   else delete payload.pricedAs;
   if (tier) payload.priceTier = tier;
   else delete payload.priceTier;
-  return { ...e, usage: { ...e.usage, costUsd: costFrom(e.usage, rates, call ? cacheWrite1h(pl) : 0) }, payload };
+  payload.costByTokenType = costParts(e.usage, rates, long);
+  return { ...e, usage: { ...e.usage, costUsd: costFrom(e.usage, rates, long) }, payload };
 }
 
 /**

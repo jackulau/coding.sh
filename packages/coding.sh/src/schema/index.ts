@@ -79,10 +79,23 @@ export interface Usage {
    * rates, keyed by the calls' `payload.priceTier` (`batch`, `long-context`, ...).
    */
   estimatedCostByTier?: Record<string, number>;
+  /**
+   * Session totals only: `estimatedCostUsd` split by token type, the sum of the
+   * calls' `payload.costByTokenType`. Absent when an estimated call has no split.
+   */
+  estimatedCostByTokenType?: CostByTokenType;
+}
+
+/** USD by token type: cache reads, cache writes (1-hour writes included), uncached input and output. */
+export interface CostByTokenType {
+  cacheRead: number;
+  cacheWrite: number;
+  input: number;
+  output: number;
 }
 
 /** The Usage fields that are plain numbers (token counts and costs). */
-export type UsageNumberKey = Exclude<keyof Usage, "estimatedCostByTier">;
+export type UsageNumberKey = Exclude<keyof Usage, "estimatedCostByTier" | "estimatedCostByTokenType">;
 
 /** Usage a session did not count because another model call already covered it (a nested span, a repeated response id). */
 export interface DuplicateUsage {

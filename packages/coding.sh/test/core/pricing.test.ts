@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { loadConfig } from "../../src/core/config.ts";
-import { applyPricing, BUILTIN_PRICES, DEFAULT_MODELS, callRates, callTier, costFrom, costNote, geoValue, lookupPrice, priceEvent, pricesFor, promptTokens, resolvePrice, tierValue } from "../../src/core/pricing.ts";
-import type { AgentEvent } from "../../src/schema/index.ts";
+import { applyPricing, apportion, BUILTIN_PRICES, DEFAULT_MODELS, callRates, callTier, costFrom, costNote, costParts, geoValue, lookupPrice, priceEvent, pricesFor, promptTokens, resolvePrice, splitOf, tierValue } from "../../src/core/pricing.ts";
+import type { AgentEvent, CostByTokenType } from "../../src/schema/index.ts";
 
 const M = 1_000_000;
 const table = pricesFor();
@@ -368,6 +368,82 @@ describe("Claude 1-hour cache writes and US-only inference", () => {
     check(priced("claude-opus-4-6", { inputTokens: M }, { inferenceGeo: "global" }), 5, undefined);
     check(priced("gpt-5.5", { inputTokens: 100_000 }, { inferenceGeo: "us" }), 0.5, undefined);
     assert.deepEqual(["us", "US", "global", "not_available", "", undefined, 3].map(geoValue), ["us", "us", undefined, undefined, undefined, undefined, undefined]);
+  });
+});
+
+describe("the estimate by token type (payload.costByTokenType)", () => {
+  const parts = (e: AgentEvent) => e.payload.costByTokenType as CostByTokenType;
+  /** Four parts, in the order outputs list them, that add up to the call's cost. */
+  const addsUp = (e: AgentEvent) => {
+    assert.deepEqual(Object.keys(parts(e)), ["cacheRead", "cacheWrite", "input", "output"]);
+    close(Object.values(parts(e)).reduce((a, b) => a + b, 0), e.usage!.costUsd!);
+  };
+
+  it("splits an estimate into cache reads, cache writes, uncached input and output", () => {
+    // Opus 4.5: $5 in, $25 out, $0.50 cache read, $6.25 cache write.
+    const e = priceEvent(call({ model: "claude-opus-4-5", usage: { inputTokens: M, outputTokens: M, cacheReadTokens: M, cacheWriteTokens: M } }), table);
+    assert.deepEqual(parts(e), { cacheRead: 0.5, cacheWrite: 6.25, input: 5, output: 25 });
+    addsUp(e);
+    // A model with no cache rates bills cache tokens at its input rate, as costFrom does.
+    assert.deepEqual(costParts({ cacheReadTokens: M, cacheWriteTokens: M }, { input: 2, output: 8 }), { cacheRead: 2, cacheWrite: 2, input: 0, output: 0 });
+  });
+
+  it("uses the rates the call was priced at: tier, long context, 1-hour writes and US-only", () => {
+    const cases: [string, AgentEvent["usage"], Record<string, unknown>][] = [
+      ["claude-opus-4-5", { inputTokens: M, outputTokens: M, cacheReadTokens: M, cacheWriteTokens: M }, { serviceTier: "batch" }],
+      ["gpt-6.1-sol", { inputTokens: 72_000, cacheReadTokens: 200_000, cacheWriteTokens: 1, outputTokens: M }, {}],
+      ["claude-opus-4-5", { cacheWriteTokens: M, inputTokens: 3 }, { cacheWrite1hTokens: 400_000 }],
+      ["claude-opus-4-6", { inputTokens: M, outputTokens: M, cacheReadTokens: M, cacheWriteTokens: M }, { inferenceGeo: "us" }],
+      ["claude-haiku-5-5", { inputTokens: 200_000, cacheWriteTokens: 50_000, outputTokens: 7 }, { inferenceGeo: "us", serviceTier: "batch", cacheWrite1hTokens: 20_000 }],
+      ["gpt-5.5", { inputTokens: 123_457, cacheReadTokens: 98_765, outputTokens: 4321 }, { serviceTier: "flex" }],
+    ];
+    for (const [model, usage, payload] of cases) addsUp(priceEvent(call({ model, usage, payload }), table));
+    // Batch halves every part; long context bills every part at its long rate.
+    assert.deepEqual(parts(priceEvent(call({ model: "claude-opus-4-5", usage: { inputTokens: M, outputTokens: M, cacheReadTokens: M, cacheWriteTokens: M }, payload: { serviceTier: "batch" } }), table)), { cacheRead: 0.25, cacheWrite: 3.125, input: 2.5, output: 12.5 });
+    const long = parts(priceEvent(call({ model: "gpt-6.1-sol", usage: { inputTokens: 72_000, cacheReadTokens: 200_000, cacheWriteTokens: 1, outputTokens: M } }), table));
+    close(long.input, (72_000 * 4) / M);
+    close(long.cacheRead, (200_000 * 0.2) / M);
+    close(long.output, 15);
+    // 1-hour writes are cache writes, at their own rate.
+    close(parts(priceEvent(call({ model: "claude-opus-4-5", usage: { cacheWriteTokens: M }, payload: { cacheWrite1hTokens: 400_000 } }), table)).cacheWrite, 0.6 * 6.25 + 0.4 * 10);
+  });
+
+  it("splits a usage snapshot at standard rates, and adds no split where it adds no cost", () => {
+    // gpt-5.5: $5 in short, $10 long; running totals stay standard.
+    const snap = priceEvent(call({ kind: "notification", model: "gpt-5.5", payload: { type: "usage-summary" }, usage: { inputTokens: 300_000 } }), table);
+    assert.deepEqual([snap.usage?.costUsd, parts(snap)], [1.5, { cacheRead: 0, cacheWrite: 0, input: 1.5, output: 0 }]);
+    for (const e of [call({ model: "gpt-6.1-sol", usage: { inputTokens: M, costUsd: 9 } }), call({ model: "zz-unpriced-model", usage: { inputTokens: M } })]) assert.equal(priceEvent(e, table).payload.costByTokenType, undefined);
+  });
+
+  it("apportion: whole numbers in proportion that add up to the units, largest remainders first", () => {
+    const p = (cacheRead: number, cacheWrite: number, input: number, output: number): CostByTokenType => ({ cacheRead, cacheWrite, input, output });
+    assert.deepEqual(apportion(p(1, 1, 1, 0), 100), p(34, 33, 33, 0), "a tie goes in key order");
+    assert.deepEqual(apportion(p(0.6152, 0.2311, 0.0409, 0.1128), 100), p(62, 23, 4, 11));
+    assert.deepEqual(apportion(p(0.7, 0.1, 0.1, 0.1), 3), p(2, 1, 0, 0), "2.1 rounds down; the largest remainder, 0.3, takes the last unit");
+    assert.deepEqual(apportion(p(0, 0, 0, 0), 100), p(0, 0, 0, 0));
+    assert.deepEqual(apportion(p(1, 2, 3, 4), 0), p(0, 0, 0, 0));
+    for (const units of [7, 100, 1000, 12_345]) {
+      const out = apportion(p(0.123456, 0.0000001, 2.5, 0.333), units);
+      assert.equal(out.cacheRead + out.cacheWrite + out.input + out.output, units);
+    }
+  });
+
+  it("splitOf takes a split only when it is four non-negative numbers that add up to the cost", () => {
+    const ok = { cacheRead: 0.1, cacheWrite: 0.2, input: 0.3, output: 0.4 };
+    assert.deepEqual(splitOf({ output: 0.4, input: 0.3, cacheWrite: 0.2, cacheRead: 0.1, extra: 1 }, 1), ok);
+    assert.deepEqual(Object.keys(splitOf(ok, 1)!), ["cacheRead", "cacheWrite", "input", "output"]);
+    for (const [v, total] of [
+      [ok, 1.01],
+      [ok, undefined],
+      [ok, Number.NaN],
+      [{ ...ok, output: -0.4 }, 0.2],
+      [{ ...ok, output: "0.4" }, 1],
+      [{ cacheRead: 0.1, cacheWrite: 0.2, input: 0.7 }, 1],
+      [{ ...ok, input: Number.POSITIVE_INFINITY }, 1],
+      [null, 1],
+      [[0.1, 0.2, 0.3, 0.4], 1],
+    ] as [unknown, number | undefined][])
+      assert.equal(splitOf(v, total), undefined, JSON.stringify(v));
   });
 });
 
