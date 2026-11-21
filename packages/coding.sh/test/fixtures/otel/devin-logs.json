@@ -1,0 +1,468 @@
+{
+  "resourceLogs": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "devin-local"
+            }
+          },
+          {
+            "key": "service.version",
+            "value": {
+              "stringValue": "3000.14.30821"
+            }
+          },
+          {
+            "key": "host.timezone",
+            "value": {
+              "stringValue": "scrubbed"
+            }
+          },
+          {
+            "key": "os.type",
+            "value": {
+              "stringValue": "windows"
+            }
+          },
+          {
+            "key": "os.version",
+            "value": {
+              "stringValue": "scrubbed"
+            }
+          },
+          {
+            "key": "host.arch",
+            "value": {
+              "stringValue": "x86_64"
+            }
+          }
+        ],
+        "droppedAttributesCount": 0,
+        "entityRefs": []
+      },
+      "scopeLogs": [
+        {
+          "scope": {
+            "name": "ai.devin.local.events",
+            "version": "",
+            "attributes": [],
+            "droppedAttributesCount": 0
+          },
+          "logRecords": [
+            {
+              "timeUnixNano": "1795246437024721500",
+              "observedTimeUnixNano": "1795246437024721500",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "body": {
+                "stringValue": "session_start"
+              },
+              "attributes": [
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "session_start"
+                  }
+                },
+                {
+                  "key": "event.timestamp",
+                  "value": {
+                    "stringValue": "2026-11-21T07:33:57.024Z"
+                  }
+                },
+                {
+                  "key": "event.sequence",
+                  "value": {
+                    "intValue": "0"
+                  }
+                },
+                {
+                  "key": "session.id",
+                  "value": {
+                    "stringValue": "free-sole"
+                  }
+                },
+                {
+                  "key": "terminal.type",
+                  "value": {
+                    "stringValue": "coding-sh-capture"
+                  }
+                },
+                {
+                  "key": "start_type",
+                  "value": {
+                    "stringValue": "startup"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "flags": 0,
+              "traceId": "",
+              "spanId": "",
+              "eventName": "session_start"
+            },
+            {
+              "timeUnixNano": "1795246437113411000",
+              "observedTimeUnixNano": "1795246437113411000",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "body": {
+                "stringValue": "user_prompt"
+              },
+              "attributes": [
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "user_prompt"
+                  }
+                },
+                {
+                  "key": "event.timestamp",
+                  "value": {
+                    "stringValue": "2026-11-21T07:33:57.113Z"
+                  }
+                },
+                {
+                  "key": "event.sequence",
+                  "value": {
+                    "intValue": "1"
+                  }
+                },
+                {
+                  "key": "session.id",
+                  "value": {
+                    "stringValue": "free-sole"
+                  }
+                },
+                {
+                  "key": "terminal.type",
+                  "value": {
+                    "stringValue": "coding-sh-capture"
+                  }
+                },
+                {
+                  "key": "prompt.id",
+                  "value": {
+                    "stringValue": "8836e3c8-c3fe-42bd-aa7e-4dec497229df"
+                  }
+                },
+                {
+                  "key": "message.uuid",
+                  "value": {
+                    "stringValue": "340f41b3-177d-4c07-83b0-2bb973dcf8df"
+                  }
+                },
+                {
+                  "key": "prompt_length",
+                  "value": {
+                    "stringValue": "15"
+                  }
+                },
+                {
+                  "key": "prompt",
+                  "value": {
+                    "stringValue": "write hello.txt"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "flags": 0,
+              "traceId": "",
+              "spanId": "",
+              "eventName": "user_prompt"
+            },
+            {
+              "timeUnixNano": "1795246437215853900",
+              "observedTimeUnixNano": "1795246437215853900",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "body": {
+                "stringValue": "session_end"
+              },
+              "attributes": [
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "session_end"
+                  }
+                },
+                {
+                  "key": "event.timestamp",
+                  "value": {
+                    "stringValue": "2026-11-21T07:33:57.215Z"
+                  }
+                },
+                {
+                  "key": "event.sequence",
+                  "value": {
+                    "intValue": "2"
+                  }
+                },
+                {
+                  "key": "session.id",
+                  "value": {
+                    "stringValue": "free-sole"
+                  }
+                },
+                {
+                  "key": "terminal.type",
+                  "value": {
+                    "stringValue": "coding-sh-capture"
+                  }
+                },
+                {
+                  "key": "reason",
+                  "value": {
+                    "stringValue": "other"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "flags": 0,
+              "traceId": "",
+              "spanId": "",
+              "eventName": "session_end"
+            }
+          ],
+          "schemaUrl": ""
+        }
+      ],
+      "schemaUrl": ""
+    },
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.version",
+            "value": {
+              "stringValue": "3000.14.30821"
+            }
+          },
+          {
+            "key": "os.version",
+            "value": {
+              "stringValue": "scrubbed"
+            }
+          },
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "devin-local"
+            }
+          },
+          {
+            "key": "os.type",
+            "value": {
+              "stringValue": "windows"
+            }
+          },
+          {
+            "key": "host.timezone",
+            "value": {
+              "stringValue": "scrubbed"
+            }
+          },
+          {
+            "key": "host.arch",
+            "value": {
+              "stringValue": "x86_64"
+            }
+          }
+        ],
+        "droppedAttributesCount": 0,
+        "entityRefs": []
+      },
+      "scopeLogs": [
+        {
+          "scope": {
+            "name": "ai.devin.local.events",
+            "version": "",
+            "attributes": [],
+            "droppedAttributesCount": 0
+          },
+          "logRecords": [
+            {
+              "timeUnixNano": "1795246438283891700",
+              "observedTimeUnixNano": "1795246438283891700",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "body": {
+                "stringValue": "session_start"
+              },
+              "attributes": [
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "session_start"
+                  }
+                },
+                {
+                  "key": "event.timestamp",
+                  "value": {
+                    "stringValue": "2026-11-21T07:33:58.283Z"
+                  }
+                },
+                {
+                  "key": "event.sequence",
+                  "value": {
+                    "intValue": "0"
+                  }
+                },
+                {
+                  "key": "session.id",
+                  "value": {
+                    "stringValue": "succinct-keeper"
+                  }
+                },
+                {
+                  "key": "terminal.type",
+                  "value": {
+                    "stringValue": "coding-sh-capture"
+                  }
+                },
+                {
+                  "key": "start_type",
+                  "value": {
+                    "stringValue": "startup"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "flags": 0,
+              "traceId": "",
+              "spanId": "",
+              "eventName": "session_start"
+            },
+            {
+              "timeUnixNano": "1795246438376142000",
+              "observedTimeUnixNano": "1795246438376142000",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "body": {
+                "stringValue": "user_prompt"
+              },
+              "attributes": [
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "user_prompt"
+                  }
+                },
+                {
+                  "key": "event.timestamp",
+                  "value": {
+                    "stringValue": "2026-11-21T07:33:58.376Z"
+                  }
+                },
+                {
+                  "key": "event.sequence",
+                  "value": {
+                    "intValue": "1"
+                  }
+                },
+                {
+                  "key": "session.id",
+                  "value": {
+                    "stringValue": "succinct-keeper"
+                  }
+                },
+                {
+                  "key": "terminal.type",
+                  "value": {
+                    "stringValue": "coding-sh-capture"
+                  }
+                },
+                {
+                  "key": "prompt.id",
+                  "value": {
+                    "stringValue": "c399f386-5d87-4ab5-b6b4-5a6930056ecd"
+                  }
+                },
+                {
+                  "key": "message.uuid",
+                  "value": {
+                    "stringValue": "937cc233-07c4-4d54-a2dc-19cc3f729571"
+                  }
+                },
+                {
+                  "key": "prompt_length",
+                  "value": {
+                    "stringValue": "19"
+                  }
+                },
+                {
+                  "key": "prompt",
+                  "value": {
+                    "stringValue": "list the files here"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "flags": 0,
+              "traceId": "",
+              "spanId": "",
+              "eventName": "user_prompt"
+            },
+            {
+              "timeUnixNano": "1795246438474597300",
+              "observedTimeUnixNano": "1795246438474597300",
+              "severityNumber": 9,
+              "severityText": "INFO",
+              "body": {
+                "stringValue": "session_end"
+              },
+              "attributes": [
+                {
+                  "key": "event.name",
+                  "value": {
+                    "stringValue": "session_end"
+                  }
+                },
+                {
+                  "key": "event.timestamp",
+                  "value": {
+                    "stringValue": "2026-11-21T07:33:58.474Z"
+                  }
+                },
+                {
+                  "key": "event.sequence",
+                  "value": {
+                    "intValue": "2"
+                  }
+                },
+                {
+                  "key": "session.id",
+                  "value": {
+                    "stringValue": "succinct-keeper"
+                  }
+                },
+                {
+                  "key": "terminal.type",
+                  "value": {
+                    "stringValue": "coding-sh-capture"
+                  }
+                },
+                {
+                  "key": "reason",
+                  "value": {
+                    "stringValue": "other"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "flags": 0,
+              "traceId": "",
+              "spanId": "",
+              "eventName": "session_end"
+            }
+          ],
+          "schemaUrl": ""
+        }
+      ],
+      "schemaUrl": ""
+    }
+  ]
+}

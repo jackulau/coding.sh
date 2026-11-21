@@ -93,7 +93,7 @@ Until then the error's \`next\` says what to do: \`coding.sh init\` before setup
 \`coding.sh mcp\` is an MCP server over stdio that lets the agent query its own history: \`session_current\`,
 \`sessions_list\`, \`session_get\`, \`search\`, \`failures\`, \`latency\`, \`usage\`, \`status\`, \`improve\` and
 \`eval_from_session\`, among others (\`tools/list\` has them all). \`init\` registers it
-automatically with Claude Code, Codex, Cursor, OpenCode and older Gemini CLI installs. Manual: run \`coding.sh mcp\` over stdio.
+automatically with Claude Code, Codex, Cursor, OpenCode, Devin CLI and older Gemini CLI installs. Manual: run \`coding.sh mcp\` over stdio.
 
 ## 4. Where sessions land
 

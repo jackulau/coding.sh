@@ -3,8 +3,8 @@
 export default {
   // <title> and meta description (pages/index.astro)
   "coding.sh: open-source observability and evals for AI agents": "coding.sh：开源的 AI 智能体可观测性与评测工具",
-  "Record what Claude Code, Codex, Cursor and 9 other AI agents did and what it cost, then test changes with evals. Local-first and open source.":
-    "记录 Claude Code、Codex、Cursor 等 12 种 AI 智能体做了什么、花了多少钱，再用评测检验改动。本地优先，开源。",
+  "Record what Claude Code, Codex, Cursor and 10 other AI agents did and what it cost, then test changes with evals. Local-first and open source.":
+    "记录 Claude Code、Codex、Cursor 等 13 种 AI 智能体做了什么、花了多少钱，再用评测检验改动。本地优先，开源。",
 
   // Hero (landing/body.html)
   "The Observability Layer for&nbsp;Agents.": "面向智能体的可观测性层。",

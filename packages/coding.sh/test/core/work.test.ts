@@ -74,11 +74,13 @@ describe("buckets", () => {
   });
 
   test("a no-prompt agent's quiet session is stalled with a hint, and the header names it", () => {
-    const q = queue([open("cx", STALL_MS + MIN, { agent: "codex" }), open("cc", STALL_MS + MIN)]);
+    const q = queue([open("cx", STALL_MS + MIN, { agent: "codex" }), open("cc", STALL_MS + MIN), open("dv", STALL_MS + MIN, { agent: "devin" })]);
     const cx = q.items.find((i) => i.primaryId === "cx")!;
     assert.equal(cx.bucket, "stalled");
     assert.match(cx.hint ?? "", /codex reports no prompts/);
     assert.equal(q.items.find((i) => i.primaryId === "cc")!.hint, undefined);
+    // Devin CLI's PermissionRequest hook reports its prompts.
+    assert.equal(q.items.find((i) => i.primaryId === "dv")!.hint, undefined);
     assert.deepEqual(q.noPromptSignal, ["codex"]);
   });
 

@@ -44,13 +44,15 @@ waiting?: { kind: "permission" | "question" | "plan" | "turn"; at: number; toolU
 
 - `at` is the event time in ms, like other stats. `work --json` and the MCP `status` tool give it
   as an ISO string.
-- `permission`: a live hook notification of type `permission_prompt` (Claude Code) or
-  `ToolPermission` (Gemini CLI), or one whose text matches `PERMISSION_TEXT`
-  (`src/core/unapproved.ts`). An `idle_prompt` notification never counts. The wait names the last
-  open call on the notification's thread, or else the last open call anywhere, since a hook
-  notification may not name the subagent. A call that starts a subagent (`Agent`, `Task`) is never
-  the call a prompt is about. With no open call (Gemini CLI sends its notification before the
-  call starts) the wait has no `toolUseId`. Transcript notifications never set it.
+- `permission`: a live hook notification of type `permission_prompt` (Claude Code, and Devin CLI's
+  `PermissionRequest` hook) or `ToolPermission` (Gemini CLI), or one whose text matches
+  `PERMISSION_TEXT` (`src/core/unapproved.ts`). An `idle_prompt` notification never counts. The
+  wait names the last open call on the notification's thread, or else the last open call anywhere,
+  since a hook notification may not name the subagent. A call that starts a subagent (`Agent`,
+  `Task`, `run_subagent`) is never the call a prompt is about. With no open call (Gemini CLI sends
+  its notification before the call starts) the wait has no `toolUseId`. Devin's calls have no ids,
+  so the wait keeps the tool of the call it names, and only a call of that tool ending clears it.
+  Transcript notifications never set it.
 - `question`: an open call of a question tool (`QUESTION_TOOL` in the same file).
 - `plan`: an open plan-approval call (`ExitPlanMode`).
 - `turn`: the main thread's turn ended. The fold keeps it for every session, and the stat shows it
@@ -97,7 +99,7 @@ An item shows the most urgent cause it has that is not acknowledged. A wait or a
 12 hours gets a "probably closed" badge, and its next step offers the resume command or an ack,
 since a closed terminal may send no session end.
 
-The agents that report prompts are Claude Code and Gemini CLI. The header names the other agents
+The agents that report prompts are Claude Code, Gemini CLI and Devin CLI. The header names the other agents
 in view. Items with nothing to act on are hidden, with a reason: running, done, acknowledged or
 snoozed. `--all` shows them. Every row carries a reason and a next step.
 
@@ -162,9 +164,12 @@ done by a check command; budgets; cloud agents; dependencies between items; noti
 - `test/core/waiting.test.ts`: the Claude Code subagents fixture with a permission prompt spliced
   in mid-run stays blocked across the subagent's `subagent.end`, and clears on the open call's
   `tool.end`. The Gemini CLI hook fixture's `ToolPermission` notification blocks. `idle_prompt`
-  never sets a wait, a turn wait needs an interactive launch, and the text is redacted.
+  never sets a wait, a turn wait needs an interactive launch, and the text is redacted. For Devin
+  CLI, whose calls have no ids, a prompt stays while another tool's call or an open `run_subagent`
+  ends, and clears when its own call ends.
 - `test/core/work.test.ts`: with two prompts in a row, acknowledging the first leaves the second in
-  the queue. An agent with no prompt signal falls to stalled with the approval hint. It also covers
+  the queue. An agent with no prompt signal falls to stalled with the approval hint, and Devin CLI
+  does not. It also covers
   bucket order, API groups, harness and host children, snoozes, and a corrupt overlay.
 - The permission prompts in these tests are synthetic. The `scripts/e2e` captures run with
   permissions bypassed, so no real prompt has been recorded yet.

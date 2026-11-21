@@ -20,6 +20,7 @@ agent's hook config, payload ids and known breakage, see [ADAPTERS.md](../ADAPTE
 | Amp | plugin | no | no | Not run live: it needs an ampcode.com login. |
 | T3 Code | reads its local store on every ingest | yes | no | Verified on a real install (0.1.7, driving Pi) |
 | Aider | wrapper (`coding.sh run -- aider …`), with each reply's tokens and cost read from Aider's analytics log while it runs; eval runs parse its token and cost lines | no | no | Verified on a real install (0.86.2) |
+| Devin CLI | hooks, or OpenTelemetry logs | no | yes | Not run live: it needs a Devin login. Without one, 3000.14 recorded a session's start, prompt and end. Devin also runs Claude Code's hooks; coding.sh records those calls as Devin's, once. |
 | Anything else | `coding.sh run -- <cmd>`: shadow-git snapshots before and after | no | no | Tested: covered by CI; there is no third-party agent to check against. |
 
 What the statuses mean:
@@ -75,12 +76,16 @@ coding.sh collector
 
 It accepts `POST /v1/traces` and `/v1/logs` as protobuf or JSON. `/v1/metrics` is accepted and
 ignored. It understands OTel GenAI semantic conventions, OpenInference, Vercel AI SDK spans and the
-Claude Code, Codex and older Gemini CLI log events. Every model call becomes an `llm.call` event with
-model, token usage, duration and time to first token.
+Claude Code, Codex, Devin CLI and older Gemini CLI log events. Every model call becomes an `llm.call` event with
+model, token usage, duration and time to first token. Devin CLI's logs were checked with
+`logs_endpoint` set to `http://127.0.0.1:4318/v1/logs` in the `otel` block of its `config.json`,
+and `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`.
 
 A session that also has a transcript (Claude Code logs sent here and the transcript read by
 `coding.sh ingest`) counts the transcript's model calls. The log copies stay stored but add no
-tokens or calls to the session's stats, whichever source arrived first.
+tokens or calls to the session's stats, whichever source arrived first. Prompts are not matched
+this way: where an agent's hooks also record to this store, each prompt is stored twice. Send logs
+here from agents whose hooks don't.
 
 Point any SDK at the base URL, or set a signal-specific endpoint such as
 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces`.

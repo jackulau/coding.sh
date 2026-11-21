@@ -29,6 +29,7 @@ sessions; `gemini-cli` stays for older Gemini CLI history. Aider is stale (last 
 | Antigravity CLI (`agy`) | `~/.gemini/config/hooks.json` (shared by the agy CLI, App and IDE) or `.agents/hooks.json`. **A hook must print a JSON object on stdout**, so ours run with `--reply={}`. | SessionStart, PreToolUse, PostToolUse, PreInvocation, PostInvocation, Stop | camelCase: `conversationId`, `workspacePaths`, `transcriptPath`, `modelName` (often `"auto"`, which we drop), `lastUserInput` (wrapped in `<USER_REQUEST>`, which we strip), `toolCall{name,args}`, `stepIdx`, `error`, `invocationNum`, `terminationReason`. No tool output, tokens or cost; backfill fills those in. |
 | Aider | None | — | — |
 | T3 Code | None of its own. Its Codex and Claude runs fire the codex/claude-code hooks. | Those agents' events | The hook records T3's env marker as `host`: `T3CODE_THREAD_ID` (Claude Agent SDK) or `CODEX_INTERNAL_ORIGINATOR_OVERRIDE="T3 Code"` (`codex app-server`). |
+| Devin CLI | `config.json` `hooks` in Devin's config folder (`$DEVIN_CONFIG_HOME/devin`, else `%APPDATA%\devin` on Windows and `~/.config/devin` elsewhere), or `.devin/config.local.json` for one project. Devin also reads `.devin/hooks.v1.json` and `.devin/config.json` from the session's folder up to the project root, and runs Claude Code's hooks (`read_config_from.claude`, on by default). | SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PermissionRequest, Stop, PostCompaction, SessionEnd | `session_id` (a slug such as `brave-otter`), `prompt_id`. No cwd, model, transcript path or tool call id. Every hook gets `DEVIN_PROJECT_DIR`, the project root: the repository root, or the session's folder outside a repository. Seen on 3000.14.30821 without a login. |
 
 ## Transcripts, headless runs, isolation
 
@@ -51,6 +52,7 @@ sessions; `gemini-cli` stays for older Gemini CLI history. Aider is stale (last 
 | Crush | SQLite `./.crush/crush.db` | `crush run -q -y -m prov/model -c cwd -D datadir` (text output only) | `CRUSH_GLOBAL_CONFIG`, `CRUSH_GLOBAL_DATA` | B |
 | Aider | `.aider.chat.history.md` (markdown, no session id). Usage from its `Tokens: … sent, … received` and `Cost: $… message, $… session` lines. Live (`coding.sh run -- aider`): one `llm.call` per reply, with exact tokens and cost from Aider's analytics log (a temp file passed as `AIDER_ANALYTICS_LOG`, or the log you named with `--analytics-log`, the env var or `.aider.conf.yml`; a named log that two Aider sessions write at once counts both in each) and the cache split from the chat history's usage lines. `inputTokens` is the uncached part: Aider's "sent" counts cache reads once and cache writes twice. A cost of 0 (no price for the model) is stored as unknown. | `aider -m "…" --yes-always --no-auto-commits --model M --no-stream --no-pretty` | `-c file`, `--read CONVENTIONS.md` | C |
 | T3 Code | SQLite `$T3CODE_HOME/userdata/statev2.sqlite` (default `~/.t3`; `orchestration_v2_projection_*`), v1 `state.sqlite`. Read as copies. | None (desktop GUI) | — | B |
+| Devin CLI | SQLite `cli/sessions.db` in its sessions folder (`DEVIN_SESSIONS_DIR` moves it). Not read, so there is no backfill. | `devin -p --permission-mode dangerous --respect-workspace-trust false --model M --export f -- "…"`; usage from the `--export` file (ATIF). Without a login it waits at a login picker, so the run stops and says so. (U: not run with a login) | `DEVIN_CONFIG_HOME`, `DEVIN_SESSIONS_DIR`. Eval runs turn every `read_config_from` import off, set `process_model` to `in-process` and copy the login file (`credentials.toml`). | A |
 
 **History on read.** Before `coding.sh init` installs its hooks, a read (`usage`, `sessions`,
 `show`, `ui`) imports Claude Code's transcripts already on disk, so `coding.sh usage` works with no
@@ -75,6 +77,7 @@ How each agent marks a subagent, and where coding.sh pairs it with its parent:
 | Antigravity | `invoke_subagent`, `define_subagent`, `send_message`, `manage_subagents` tools | From the brain transcript. |
 | Cursor CLI | Subagent tool | `subagentStop` only (`duration_ms`). |
 | Pi | None | — |
+| Devin CLI | `run_subagent` (`read_subagent` reads its report) | No payload carries a subagent field (U: not run with a login). |
 
 Harness surfaces:
 - `AGENTS.md` is read by nearly every agent.
@@ -207,6 +210,14 @@ order.
   tool: `Tool Confirm Shell Command requires execution` (0.20 through 0.70).
 - **Copilot:** bash-only hooks fail on Windows, so provide `powershell` too. Token totals are written after hooks return, so read them at backfill.
 - **Amp:** no session id in tool payloads. Correlate by `thread.id` from `session.start`.
+- **Devin CLI:** payloads carry no cwd. A hook from the user config runs in the session's folder and
+  a project's hook in the project root, so a project-scope install records a session started in a
+  subfolder with the root as its cwd. Tool events carry no call id: a call's start and end pair by
+  tool name, and a `PermissionRequest` waits on the newest open call of its tool.
+- **Devin CLI:** it also runs the hooks coding.sh installed for Claude Code. Each such call carries
+  `DEVIN_PROJECT_DIR` and no Claude Code transcript path, so the hook labels it `devin`, or drops it
+  when a coding.sh hook for Devin fires for the same event where the session reads hooks
+  (`src/spool/devin.ts`). The check reads only Devin's hook files, never git.
 - **Cross-cutting:**
   - Per-agent hook timeouts: never assume 30s, and keep the hook under 50 ms.
   - Windows path quoting.
@@ -288,8 +299,12 @@ Apps in production don't use an adapter. They send data over the network to `cod
 | `@codingdotsh/sdk` (TS) and `coding-sh` (Python): `observe(client)` for OpenAI and Anthropic, `observeFetch()`, AI SDK tracer | `POST /v1/ingest` (native `AgentEvent` batches) or `POST /v1/traces` | `src/server/native.ts`. The `service` name becomes `agent`, ids are namespaced by project. | `sdk` |
 | Any OpenTelemetry SDK: gen_ai semconv, OpenInference, AI SDK `experimental_telemetry` | `POST /v1/traces` | `src/otel/map.ts`, the same mapper as `coding.sh collector` | `otel…` |
 | Vercel AI Gateway trace drain | `POST /v1/traces` | `src/otel/map.ts` plus the gateway enricher | `otel…` |
-| Claude Code, Codex and Gemini CLI running remotely with OTel logs on | `POST /v1/logs` | `src/otel/map.ts` log events | `otel…` |
+| Claude Code, Codex, Gemini CLI and Devin CLI running remotely with OTel logs on | `POST /v1/logs` | `src/otel/map.ts` log events | `otel…` |
 
+- OTel logs are for an agent whose hooks don't record to this store. Where both do, each prompt is
+  stored twice, once from the hook and once from the log, because the two carry different prompt
+  ids. Devin CLI's logs (scope `ai.devin.local.events`) add a session's start and end as
+  notifications.
 - A span or a log record named `weights.edit` with `coding_sh.weights.*` attributes is stored as
   the weight edit event the SDKs send (`notification`, `payload.kind: "weights.edit"`); the
   attributes are listed in [reference/api.md](reference/api.md).

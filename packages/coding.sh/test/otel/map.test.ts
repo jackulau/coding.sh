@@ -370,6 +370,35 @@ describe("Claude Code", () => {
   });
 });
 
+describe("Devin CLI", () => {
+  it("maps its log events: a session per session.id, each prompt a user message keyed on its prompt.id", async () => {
+    // scripts/e2e/devin-capture.mjs with no login: two sessions, each a start, one prompt and an end.
+    const events = (await mapLogs(decodeLogsJson(fixture("devin-logs.json")), ctx())).events;
+    assert.equal(events.length, 6);
+    assert.ok(events.every((e) => e.agent === "devin" && e.agentVersion === "3000.14.30821" && e.source === "otel-log"));
+    assert.deepEqual([...new Set(events.map((e) => e.sessionId))], ["free-sole", "succinct-keeper"]);
+    assert.deepEqual(
+      ofKind(events, "user.message").map((e) => [e.sessionId, e.turnId, e.payload.text, e.payload.promptLength]),
+      [
+        ["free-sole", "8836e3c8-c3fe-42bd-aa7e-4dec497229df", "write hello.txt", 15],
+        ["succinct-keeper", "c399f386-5d87-4ab5-b6b4-5a6930056ecd", "list the files here", 19],
+      ],
+    );
+    // session_start and session_end have no kind of their own: notifications that name the event.
+    assert.deepEqual(
+      ofKind(events, "notification").map((e) => [e.sessionId, e.payload.event]),
+      [
+        ["free-sole", "session_start"],
+        ["free-sole", "session_end"],
+        ["succinct-keeper", "session_start"],
+        ["succinct-keeper", "session_end"],
+      ],
+    );
+    const s = buildSession(events.filter((e) => e.sessionId === "free-sole"));
+    assert.deepEqual([s.agent, s.title, s.stats.turns], ["devin", "write hello.txt", 1]);
+  });
+});
+
 describe("ids, blobs and agent detection", () => {
   it("event ids are deterministic across runs and encodings", async () => {
     const a = await traces("genai-semconv.json");

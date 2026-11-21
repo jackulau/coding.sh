@@ -740,9 +740,9 @@ skills). It is what `coding.sh harness audit` counts.
 | Field | Meaning |
 |---|---|
 | `stats.waiting` (`kind`, `at`, `toolUseId`, `text`) | What the session waits on from the user when its events end. `coding.sh work` puts the session's item in "blocked on you" or "your turn" from it ([`coding.sh work`](cli.md#codingsh-work)). Absent when nothing waits |
-| `stats.waiting.kind` | `permission` (a live hook notification asked to approve a tool call: Claude Code's `permission_prompt` or Gemini CLI's `ToolPermission`), `question` (an open question tool call), `plan` (an open plan-approval call) or `turn` (the main thread's turn ended in a session launched interactively, so it waits for the next prompt) |
+| `stats.waiting.kind` | `permission` (a live hook notification asked to approve a tool call: Claude Code's `permission_prompt`, Devin CLI's `PermissionRequest` or Gemini CLI's `ToolPermission`), `question` (an open question tool call), `plan` (an open plan-approval call) or `turn` (the main thread's turn ended in a session launched interactively, so it waits for the next prompt) |
 | `stats.waiting.at` | When the wait started (ms) |
-| `stats.waiting.toolUseId` | The open call it waits on. Absent for a turn wait, and for a permission prompt that came before its call started |
+| `stats.waiting.toolUseId` | The open call it waits on. Absent for a turn wait, for a permission prompt that came before its call started, and for an agent whose calls have no ids (Devin CLI) |
 | `stats.waiting.text` | The prompt, question or plan, redacted, whitespace collapsed, at most 300 characters |
 | `stats.endInferred` | `true` when `endedAt` is the last event seen, not a session end: a session known only from a transcript with no end marker, or a conversation-keyed OpenTelemetry or SDK session. It may still be running. Absent when the end is real or there is no end |
 

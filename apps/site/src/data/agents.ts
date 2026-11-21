@@ -26,6 +26,7 @@ export const AGENTS: Agent[] = [
   { name: "Goose", capture: "hooks, session db", status: "supported" },
   { name: "T3 Code", capture: "its Codex and Claude Code hooks, local state db", status: "supported" },
   { name: "Aider", capture: "wrapper, analytics log", status: "supported" },
+  { name: "Devin CLI", capture: "hooks, OTel logs", status: "supported" },
   // No adapter yet (R2-A1 in tasks/research-queue.md); `coding.sh run --` records
   // it meanwhile (docs/agents, "Kiro CLI"). AGENTS is not rendered on the site.
   // slop-allow site-placeholder: Kiro has no adapter yet; test/status-claims.test.mjs checks this row.

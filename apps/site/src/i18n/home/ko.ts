@@ -3,8 +3,8 @@
 export default {
   // <title> and meta description (pages/index.astro)
   "coding.sh: open-source observability and evals for AI agents": "coding.sh: AI 에이전트를 위한 오픈소스 관측성과 평가",
-  "Record what Claude Code, Codex, Cursor and 9 other AI agents did and what it cost, then test changes with evals. Local-first and open source.":
-    "Claude Code, Codex, Cursor 외 9개 AI 에이전트가 한 일과 든 비용을 기록하고, 평가로 변경 사항을 테스트합니다. 로컬 우선, 오픈소스입니다.",
+  "Record what Claude Code, Codex, Cursor and 10 other AI agents did and what it cost, then test changes with evals. Local-first and open source.":
+    "Claude Code, Codex, Cursor 외 10개 AI 에이전트가 한 일과 든 비용을 기록하고, 평가로 변경 사항을 테스트합니다. 로컬 우선, 오픈소스입니다.",
 
   // Hero (landing/body.html)
   "The Observability Layer for&nbsp;Agents.": "에이전트를 위한 관측성&nbsp;레이어.",

@@ -319,6 +319,8 @@ const KNOWN: [RegExp, AgentId][] = [
   [/^(factory[-_ ]?)?droid$/i, "droid"],
   [/^amp$/i, "amp"],
   [/^aider/i, "aider"],
+  // Devin CLI: service.name "devin-local", log scope "ai.devin.local.events".
+  [/^devin(?:[-_ ]?(?:local|cli))?$|^ai\.devin\./i, "devin"],
 ];
 
 /** Log event-name prefixes that identify an agent (claude_code.api_request → claude-code). */

@@ -12,7 +12,7 @@ export { isPermissionNotification };
 /** A plan the agent asks the user to approve before it starts (Claude Code's plan mode). */
 export const PLAN_TOOL = /^(?:ExitPlanMode|exit_plan_mode)$/i;
 /** A call that starts a subagent: it stays open while the subagent runs, so a prompt is never about it. */
-const SPAWN_TOOL = /^(?:Agent|Task|spawn_agent)$/;
+const SPAWN_TOOL = /^(?:Agent|Task|spawn_agent|run_subagent)$/;
 /** Open calls kept per session; the oldest go first. */
 const MAX_OPEN = 64;
 const TEXT_MAX = 300;
@@ -29,7 +29,8 @@ export interface WaitingState {
   open: OpenCall[];
   /** Ids of calls that ended, newest last: a copy of a call's start that arrives after its end opens nothing. */
   ended: string[];
-  wait?: Waiting & { thread: string };
+  /** `tool`: the open call the wait is on, when that call has no id (Devin CLI's hooks name none). */
+  wait?: Waiting & { thread: string; tool?: string };
 }
 
 export const waitingState = (): WaitingState => ({ open: [], ended: [] });
@@ -82,14 +83,15 @@ export function foldWaiting(s: WaitingState, e: AgentEvent, backfill: boolean): 
       const tool = str(e.payload.tool);
       let at = id ? s.open.findIndex((c) => c.id === id) : -1;
       if (at < 0 && !id) at = s.open.findLastIndex((c) => c.thread === thread && (tool === undefined || c.tool === tool));
-      if (at >= 0) s.open.splice(at, 1);
+      const closed = at >= 0 ? s.open.splice(at, 1)[0] : undefined;
       if (id && !s.ended.includes(id)) {
         s.ended.push(id);
         if (s.ended.length > MAX_OPEN) s.ended.splice(0, s.ended.length - MAX_OPEN);
       }
       if (!w || w.kind === "turn") break;
-      // The open call the wait is on ended (answered, approved or refused).
-      if (w.toolUseId !== undefined ? w.toolUseId === id : w.thread === thread && at >= 0) s.wait = undefined;
+      // The open call the wait is on ended (answered, approved or refused). With no ids, another
+      // tool's call ending on the thread (one that ran beside it) leaves the wait.
+      if (w.toolUseId !== undefined ? w.toolUseId === id : w.thread === thread && closed !== undefined && (w.tool === undefined || w.tool === closed.tool)) s.wait = undefined;
       break;
     }
     case "user.message": {
@@ -105,6 +107,7 @@ export function foldWaiting(s: WaitingState, e: AgentEvent, backfill: boolean): 
       const calls = s.open.filter((c) => !SPAWN_TOOL.test(c.tool));
       const call = calls.findLast((c) => c.thread === thread) ?? calls.at(-1);
       s.wait = wait("permission", e, call?.thread ?? thread, call?.id, str(e.payload.text) ?? str(e.payload.message));
+      if (call && !call.id) s.wait.tool = call.tool;
       break;
     }
     case "turn.end":
@@ -127,8 +130,8 @@ export function foldWaiting(s: WaitingState, e: AgentEvent, backfill: boolean): 
   }
 }
 
-function wait(kind: Waiting["kind"], e: AgentEvent, thread: string, toolUseId: string | undefined, text: string | undefined): WaitingState["wait"] {
-  const out: WaitingState["wait"] = { kind, at: e.ts, thread };
+function wait(kind: Waiting["kind"], e: AgentEvent, thread: string, toolUseId: string | undefined, text: string | undefined): NonNullable<WaitingState["wait"]> {
+  const out: NonNullable<WaitingState["wait"]> = { kind, at: e.ts, thread };
   if (toolUseId) out.toolUseId = toolUseId;
   const t = clip(text);
   if (t) out.text = t;
@@ -139,6 +142,6 @@ function wait(kind: Waiting["kind"], e: AgentEvent, thread: string, toolUseId: s
 export function waitingOf(s: WaitingState | undefined, launch: "headless" | "interactive" | undefined): Waiting | undefined {
   const w = s?.wait;
   if (!w || (w.kind === "turn" && launch !== "interactive")) return undefined;
-  const { thread: _thread, ...out } = w;
+  const { thread: _thread, tool: _tool, ...out } = w;
   return out;
 }

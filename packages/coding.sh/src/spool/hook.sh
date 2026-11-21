@@ -16,6 +16,7 @@
 #   agent's transcripts leave that session out (hook.mjs does the same).
 # - Anything it does not handle goes to hook.mjs with the same arguments and
 #   stdin: any other --reply, an eval run (CODING_SH_RUN_ID), a host app (T3 Code), a
+#   Claude Code hook that Devin CLI may have run (DEVIN_PROJECT_DIR), a
 #   model base URL that may be a gateway's (gateway detection), a session start while
 #   `init --proxy` is installed (proxy restart), a relative CODING_SH_HOME, a
 #   value it cannot put in JSON as is, and any write that fails (hook.mjs then
@@ -125,6 +126,8 @@ case $event in "" | *[!A-Za-z0-9._:-]*) to_node "$@" ;; esac
 
 [ -n "${CODING_SH_RUN_ID-}${T3CODE_THREAD_ID-}" ] && to_node "$@"
 case ${CODEX_INTERNAL_ORIGINATOR_OVERRIDE-} in [Tt]3*) to_node "$@" ;; esac
+# Devin CLI runs Claude Code's hooks too: hook.mjs works out whose call it is (spool/devin.ts).
+[ "$agent" = claude-code ] && [ -n "${DEVIN_PROJECT_DIR-}" ] && to_node "$@"
 # A model base URL: hook.mjs works out which gateway it is (integrations/gateway),
 # except for a loopback URL (the coding.sh proxy of `init --proxy`) on a port no
 # gateway uses by default, with no gateway's own URL variable set. The ports and
