@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -154,6 +154,40 @@ describe("openSqliteCopy temp copies", () => {
       }
       assert.equal(reapSqliteCopies(), 1);
       assert.deepEqual(copies(t.dir), []);
+    } finally {
+      t.restore();
+    }
+  });
+
+  // On Windows a child killed a moment ago can still hold its copy open, and the reap waits up to a second for it. On
+  // Node 24 rmSync's own retries did not wait, so the copy (T3 Code's is 1.7 GB) stayed until the next read.
+  it("waits for a child it just killed to let go of its copy, then removes it", { skip: process.platform !== "win32" && "a file held open blocks removal only on Windows", timeout: 30_000 }, async () => {
+    const t = ownTmpdir();
+    try {
+      const dir = join(t.dir, `${SQLITE_COPY_PREFIX}held01`);
+      mkdirSync(dir);
+      const file = join(dir, "statev2.sqlite");
+      writeFileSync(file, "x");
+      // The killed child, still exiting: it holds the database with no sharing for a moment more.
+      const script = `$f = [System.IO.File]::Open('${file}', 'Open', 'ReadWrite', 'None'); Write-Output locked; Start-Sleep -Milliseconds 400; $f.Close()`;
+      const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { stdio: ["ignore", "pipe", "ignore"] });
+      const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+      try {
+        writeFileSync(join(dir, SQLITE_COPY_OWNER), String(child.pid));
+        await new Promise<void>((resolve, reject) => {
+          let out = "";
+          child.stdout!.on("data", (d) => {
+            out += d;
+            if (out.includes("locked")) resolve();
+          });
+          child.once("exit", (code) => reject(new Error(`the child exited (${code}) before it held the copy`)));
+        });
+        assert.equal(reapSqliteCopies({ killed: child.pid }), 1);
+        assert.deepEqual(copies(t.dir), []);
+      } finally {
+        child.kill();
+        await exited;
+      }
     } finally {
       t.restore();
     }

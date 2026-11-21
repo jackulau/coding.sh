@@ -22,10 +22,11 @@
 //
 //   node scripts/warm-chrome.ts
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { removeSync } from "../src/core/remove.ts";
 import { MemoryIndexStore } from "../src/store/memory.ts";
 import { startViewer } from "../src/viewer/server.ts";
 import { chromeArgs, findChrome, launchBrowser, type Browser } from "../test/viewer/browser.ts";
@@ -204,7 +205,7 @@ export function firstStart(chrome: string, limitMs = FIRST_START_LIMIT_MS, print
       child.stderr?.destroy();
       // On Windows, Chrome's helpers can hold the profile for a moment after it exits.
       try {
-        rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+        removeSync(dir, { maxRetries: 10, retryDelay: 200 });
       } catch {}
       if (late) reject(new Error(`Chrome's first start took longer than ${limitMs} ms and was stopped. ${stoppedState(out, err, processes)}`));
       else if (code !== 0 && !watchdog) reject(new Error(`Chrome exited (${code}) on its first start: ${err.slice(-500)}`));

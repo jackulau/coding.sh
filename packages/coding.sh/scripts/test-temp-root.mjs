@@ -12,10 +12,11 @@
 // CODING_SH_TEST_TEMP_ROOT marks a process that already has a folder: a process a test launches
 // with this file's --import (src/cli/commands/proxy.ts passes execArgv on) keeps its parent's
 // folder and removes nothing.
-import { appendFileSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { isMainThread } from "node:worker_threads";
+import { removeSync } from "../src/core/remove.ts";
 
 if (isMainThread && process.env.NODE_TEST_CONTEXT && !process.env.CODING_SH_TEST_TEMP_ROOT) {
   const base = process.env.CODING_SH_TEST_TEMP;
@@ -37,8 +38,9 @@ if (isMainThread && process.env.NODE_TEST_CONTEXT && !process.env.CODING_SH_TEST
       error = String(err?.message ?? err);
     }
     try {
-      // A browser that is still exiting can hold a file for a moment on Windows.
-      rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      // A browser that is still exiting can hold a file for a moment on Windows. removeSync waits
+      // between tries; on Node 24 on Windows, rmSync's own retries did not.
+      removeSync(root, { maxRetries: 3, retryDelay: 100 });
     } catch (err) {
       error = String(err?.message ?? err);
     }

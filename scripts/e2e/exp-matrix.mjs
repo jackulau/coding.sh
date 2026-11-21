@@ -25,7 +25,8 @@
 // Runs coding.sh from source (Node 24 strips the types). No network. Never
 // touches the real HOME. Exit 0 when every check passed.
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -210,7 +211,7 @@ try {
     exitCode = 1;
     log(`${failures.length} check(s) failed: ${failures.join("; ")}`);
   } else log("all checks passed");
-  if (!keep && !failures.length) rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+  if (!keep && !failures.length) await rm(root, { recursive: true, force: true, maxRetries: 5 });
   else log(`kept ${root}`);
 }
 process.exit(exitCode);

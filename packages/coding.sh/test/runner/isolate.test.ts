@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -34,7 +35,7 @@ describe("changedPaths", () => {
         while (Math.floor(Date.now() / 1000) <= sec) await new Promise((r) => setTimeout(r, 50));
         assert.deepEqual(await changedPaths(dir), [{ path: "sum.js", kind: "modify" }], `round ${i}`);
       } finally {
-        rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+        await rm(dir, { recursive: true, force: true, maxRetries: 5 });
       }
     }
   });
@@ -57,7 +58,7 @@ describe("changedPaths", () => {
         ],
       );
     } finally {
-      rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+      await rm(dir, { recursive: true, force: true, maxRetries: 5 });
     }
   });
 });

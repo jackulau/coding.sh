@@ -19,7 +19,8 @@
 // Needs network for npm. Never touches the real HOME. Exit 0 when every check passed.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -306,7 +307,7 @@ try {
     if (existsSync(errLog)) log(`hook errors:\n${readFileSync(errLog, "utf8").slice(-4000)}`);
     log(`${failures.length} check(s) failed: ${failures.join("; ")}`);
   } else log("all checks passed");
-  if (!opts.keep) rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+  if (!opts.keep) await rm(root, { recursive: true, force: true, maxRetries: 5 });
   else log(`kept ${root}`);
 }
 process.exit(exitCode);
