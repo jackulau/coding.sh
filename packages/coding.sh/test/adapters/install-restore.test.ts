@@ -46,6 +46,14 @@ describe("hook uninstall restores the user's file byte-for-byte", () => {
   it("claude-code: a pre-existing '{}' is restored, not deleted", () => roundTrip(claudeCode, join(env.home, ".claude", "settings.json"), "{}"));
   it("claude-code: a file coding.sh created is deleted", () => roundTrip(claudeCode, join(env.home, ".claude", "settings.json"), undefined));
   it("codex: hooks.json", () => roundTrip(codex, join(env.home, ".codex", "hooks.json"), '{"hooks":{}}'));
+  it("codex: a CODEX_HOME init created (hooks.json + config.toml) is removed once empty, one with a user's file kept", async () => {
+    const dir = join(env.home, ".codex");
+    await roundTrip(codex, join(dir, "hooks.json"), undefined, true);
+    assert.ok(!existsSync(dir), "the empty folder init made is gone");
+    writeFile(join(dir, "AGENTS.md"), "mine");
+    await roundTrip(codex, join(dir, "hooks.json"), undefined, true);
+    assert.deepEqual(readdirSync(dir), ["AGENTS.md"]);
+  });
   it("cursor: hooks.json with only {version:1}", () => roundTrip(cursor, join(env.home, ".cursor", "hooks.json"), '{"version":1}'));
   it("gemini-cli: settings.json shared by hooks and the MCP server", () =>
     roundTrip(geminiCliAdapter, join(env.home, ".gemini", "settings.json"), '// mine\n{"theme":"dark",\n "mcpServers":{}}', true));

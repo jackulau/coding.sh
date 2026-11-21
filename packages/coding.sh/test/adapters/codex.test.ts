@@ -183,9 +183,17 @@ describe("codex backfill (rollouts)", () => {
     }
   });
 
-  it("honors since", async () => {
-    const events = await collect(codex.backfill!(testCtx().ctx, { since: T0 + 5000 }));
-    assert.ok(events.length > 0 && events.every((e) => e.ts >= T0 + 5000));
+  // QA: --since cut a long rollout at the cutoff (no session.start, a mid-session prompt as title, one turn of many)
+  // while Claude Code kept a transcript whole. A rollout written inside the window is now imported whole too.
+  it("honors since by file, and imports a rollout written inside the window whole", async () => {
+    const all = await collect(codex.backfill!(testCtx().ctx));
+    const some = await collect(codex.backfill!(testCtx().ctx, { since: T0 + 5000 }));
+    assert.ok(all.some((e) => e.ts < T0 + 5000));
+    assert.deepEqual(some.map((e) => e.id).sort(), all.map((e) => e.id).sort());
+    assert.ok(some.some((e) => e.kind === "session.start" && e.sessionId === SID));
+    assert.equal(buildSession(some.filter((e) => e.sessionId === SID)).title, buildSession(all.filter((e) => e.sessionId === SID)).title);
+    // A window that opens after the file was last written leaves the file out.
+    assert.equal((await collect(codex.backfill!(testCtx().ctx, { since: Date.now() + 86_400_000 }))).length, 0);
   });
 });
 

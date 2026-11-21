@@ -21,7 +21,7 @@
 import { execFile } from "../core/spawn.ts";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import { paths, userHome } from "../core/paths.ts";
 import { parseToml } from "../core/toml.ts";
 import { T3_AGENT, T3_ORIGINATOR } from "../spool/host.ts";
@@ -75,6 +75,7 @@ import {
   type HookEventSpec,
   mcpInstaller,
 } from "./_shared/index.ts";
+import { removeEmptyDirs } from "./more/_util.ts";
 import { isWrapperLine, normalizeWrapperLine } from "./more/wrapper.ts";
 
 export const CODEX_AGENT = "codex";
@@ -1025,7 +1026,10 @@ async function* backfillCodex(ctx: NormalizeContext, opts: BackfillOpts = {}): A
     for await (const f of walkFiles(join(home, dir), { match: (n) => /^rollout-.*\.jsonl(\.zst)?$/.test(n), maxDepth: 4, since: opts.since })) {
       if (f.path.endsWith(".zst") && existsSync(f.path.slice(0, -4))) continue; // the plain file wins when both exist
       if (opts.changed && !(await opts.changed(cursorView(f, ROLLOUT_IDLE_MS)))) continue; // unchanged since the last backfill (or since it went idle)
-      for (const e of await convertRollout(ctx, f.path, { mode: "full", endIfIdleMs: ROLLOUT_IDLE_MS })) if (opts.since === undefined || e.ts >= opts.since) yield e;
+      // A rollout written inside the window is imported whole, as Claude Code's transcripts are: cutting it at
+      // `since` left a session without session.start, its first prompt as title, or its earlier turns.
+      // (walkFiles already left out rollouts last written before `since`.)
+      yield* await convertRollout(ctx, f.path, { mode: "full", endIfIdleMs: ROLLOUT_IDLE_MS });
     }
   }
 }
@@ -1149,7 +1153,12 @@ export const codex: Adapter = {
   },
 
   async uninstall(opts) {
-    return applyHookUninstall([planNestedUninstall(CODEX_AGENT, hooksFile(opts))], { agent: CODEX_AGENT, dryRun: opts.dryRun });
+    const file = hooksFile(opts);
+    const changes = await applyHookUninstall([planNestedUninstall(CODEX_AGENT, file)], { agent: CODEX_AGENT, dryRun: opts.dryRun });
+    // Init made $CODEX_HOME (or .codex/) to hold hooks.json; `uninstall` drops the MCP block in config.toml first.
+    // Drop the folder when nothing else is in it, so a bare one does not read as a Codex install.
+    if (!opts.dryRun && changes.some((c) => c.action === "delete")) removeEmptyDirs(dirname(file), dirname(file));
+    return changes;
   },
 
   // [mcp_servers.coding-sh] in $CODEX_HOME/config.toml, as a marked block (comments and formatting kept).

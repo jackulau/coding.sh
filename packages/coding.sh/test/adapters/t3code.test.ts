@@ -261,6 +261,23 @@ describe("t3code adapter", () => {
     const again = await run([t3code], index);
     assert.equal(again.r.events, 0);
   });
+
+  // QA: `ingest --backfill --since` dropped the host-link of a T3-run Claude session that started before the
+  // cutoff (it is stamped at the thread's start), so the session showed as claude-code with its raw prompt as title.
+  it("a session with activity inside the --since window is imported whole, its T3 link included", async () => {
+    const mine = (events: AgentEvent[]) => events.filter((e) => e.sessionId === CLAUDE_ID);
+    const all = mine(await collect(backfillT3(testCtx().ctx)));
+    const since = Math.max(...all.map((e) => e.ts));
+    const link = all.find((e) => e.payload.type === "host-link");
+    assert.ok(link && link.ts < since);
+    const some = mine(await collect(backfillT3(testCtx().ctx, { since })));
+    assert.deepEqual(some.map((e) => e.id).sort(), all.map((e) => e.id).sort());
+    const s = buildSession(some);
+    assert.equal(s.agent, "t3code");
+    assert.equal(s.title, "Add sum");
+    // A session with nothing inside the window stays out.
+    assert.deepEqual(await collect(backfillT3(testCtx().ctx, { since: Date.now() + 86_400_000 })), []);
+  });
 });
 
 describe("T3 live capture", () => {

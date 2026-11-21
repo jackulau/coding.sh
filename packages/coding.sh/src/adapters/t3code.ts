@@ -522,7 +522,10 @@ async function* threadEvents(ctx: NormalizeContext, t: Thread, rows: StoreRows, 
       events = await storeEvents(ctx, p, { messages: rows.messages.filter(mine), turns: rows.turns.filter(mine), items: rows.items.filter(mine), totals: p === plans[0] ? rows.totals : undefined }, primary);
     }
     events.push(...linkEvents(ctx, p), ...requestEvents(ctx, p, rows.requests?.filter(mine) ?? []));
-    for (const e of events) if (since === undefined || e.ts >= since) yield e;
+    // A session with activity inside the window is imported whole, as the codex and claude-code backfills do:
+    // cutting it at `since` dropped the host-link (stamped at the thread's start), so a session begun before the
+    // cutoff lost its T3 attribution and thread title.
+    if (since === undefined || events.some((e) => e.ts >= since)) yield* events;
   }
 }
 
