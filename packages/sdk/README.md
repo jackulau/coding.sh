@@ -137,8 +137,9 @@ reading it. Without `CODING_SH_URL` the request goes out exactly as you wrote it
 - On 429, 5xx and network errors the SDK retries with `Retry-After` or backoff (1, 2, 4… s, capped at
   30 s), up to 5 attempts, reusing the same event ids so the server deduplicates.
 - A 400/401/403 drops the batch and warns once. A full queue drops new events and counts them.
-- The SDK flushes on `beforeExit`. If you call `process.exit`, `await shutdown()` first. On
-  serverless, `waitUntil(flush())` (or `await flush()`) before returning.
+- The SDK flushes on `beforeExit`, for at most 5 s, and warns when it drops events. If you call
+  `process.exit`, `await shutdown()` first. On serverless, `waitUntil(flush())` (or
+  `await flush()`) before returning.
 
 ## Examples
 

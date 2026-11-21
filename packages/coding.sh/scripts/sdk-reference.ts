@@ -507,7 +507,7 @@ const TS_FALLBACK: Record<string, string> = {
   "TraceHandle.traceId": "Id of this trace.",
   "TraceHandle.spanId": "Id of the trace's root span.",
   "TraceHandle.sessionId": "Session the trace records into: `sessionId` when given, else the trace id.",
-  "TransportStats.queued": "Events waiting to be sent.",
+  "TransportStats.queued": "Events not sent yet, including the batch in flight or waiting for its retry.",
   "TransportStats.sent": "Events the server accepted.",
   "TransportStats.dropped": "Events dropped before sending: the queue was full, or the event was too large or not serializable.",
   "TransportStats.failed": "Events the server rejected, or that were still unsent when retries or `shutdown()` gave up.",

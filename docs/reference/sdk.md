@@ -496,7 +496,7 @@ interface TransportStats {
 
 | Field | Type | Description |
 |---|---|---|
-| `queued` | `number` | Events waiting to be sent. |
+| `queued` | `number` | Events not sent yet, including the batch in flight or waiting for its retry. |
 | `sent` | `number` | Events the server accepted. |
 | `dropped` | `number` | Events dropped before sending: the queue was full, or the event was too large or not serializable. |
 | `failed` | `number` | Events the server rejected, or that were still unsent when retries or `shutdown()` gave up. |
