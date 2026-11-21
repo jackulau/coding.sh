@@ -1,4 +1,4 @@
-// coding.sh harness snapshot|list|audit
+// coding.sh harness snapshot|list|audit|tools
 import { statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -138,9 +138,84 @@ async function audit(c: CommandContext): Promise<number> {
   });
 }
 
+/** coding.sh harness tools [pin]: each tool's description and schema hashes across proxy calls; --changed exits 1 on drift. */
+async function tools(c: CommandContext): Promise<number> {
+  const { out } = c;
+  const sub = c.positionals[0];
+  if (sub !== undefined && sub !== "pin") throw new UsageError(`Unknown harness tools command ${JSON.stringify(sub)}`, { suggestion: "harness tools pin", reason: "invalid_argument" });
+  const sinceFlag = str(c.flags.since) ?? "30d";
+  const since = parseSince(sinceFlag);
+  const changedOnly = c.flags.changed === true;
+  const { readToolPins, toolDrift, writeToolPins, MAX_TOOL_BLOBS } = await import("../../proxy/tool-drift.ts");
+  let pins;
+  try {
+    pins = readToolPins(c.env);
+  } catch (e) {
+    throw new CliError(`Couldn't read the tool pins: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_file", next: ["Pin the tools again:", "coding.sh harness tools pin"] });
+  }
+  return withContext(c, async (ctx) => {
+    const backlog = await autoIngest(ctx, readIngest(c));
+    const d = await toolDrift(ctx.index, ctx.blobs, { since, pins, signal: c.signal });
+    const notes: string[] = [];
+    if (d.capped) notes.push(`Read the ${MAX_TOOL_BLOBS} most recently used of ${d.blobs} tools arrays; older ones were left out`);
+    if (d.blobsMissing) notes.push(`${plural(d.blobsMissing, "tools array")} no longer stored (removed by gc)`);
+    if (d.callsWithoutTools) notes.push(`${plural(d.callsWithoutTools, "proxy call")} sent tools without storing them (capture mode metadata), so ${d.callsWithoutTools === 1 ? "it is" : "they are"} not counted`);
+    if (sub === "pin") {
+      const written = d.tools.length ? writeToolPins(d.tools, c.env) : pins;
+      if (out.json) {
+        const doc: Record<string, unknown> = { outcome: d.tools.length ? "pinned" : "unchanged", pinned: d.tools.length, pins: Object.keys(written).length, since: new Date(since).toISOString() };
+        if (notes.length) doc.notes = notes;
+        out.data({ ...doc, ...pendingField(backlog) });
+        return 0;
+      }
+      for (const n of notes) out.note(n);
+      if (!d.tools.length) {
+        out.note(`No tools in proxy calls since ${sinceFlag}; nothing pinned`);
+        return 0;
+      }
+      out.ok(`Pinned ${plural(d.tools.length, "tool")}`);
+      return 0;
+    }
+    const rows = changedOnly ? d.tools.filter((t) => t.changed) : d.tools;
+    const code = changedOnly && rows.length ? 1 : 0;
+    if (out.json) {
+      const iso = (ms: number) => new Date(ms).toISOString();
+      const toolRows = rows.map((t) => {
+        const row: Record<string, unknown> = { ...t, firstSeen: iso(t.firstSeen), lastSeen: iso(t.lastSeen) };
+        if (t.pinned) row.pinned = { ...t.pinned, at: iso(t.pinned.at) };
+        return row;
+      });
+      const doc: Record<string, unknown> = { since: iso(since), calls: d.calls, callsWithoutTools: d.callsWithoutTools, blobs: d.blobs, capped: d.capped, tools: toolRows };
+      if (notes.length) doc.notes = notes;
+      out.data({ ...doc, ...pendingField(backlog) });
+      return code;
+    }
+    out.note(`${plural(d.calls, "proxy call")} with stored tools since ${sinceFlag} · ${plural(d.tools.length, "tool")}`);
+    for (const n of notes) out.note(n);
+    if (!d.calls) {
+      out.note("harness tools reads the tools the proxy stores with each call");
+      if (!d.callsWithoutTools) out.next("Log model calls with their requests", "coding.sh proxy");
+      return 0;
+    }
+    if (!rows.length) {
+      out.ok(changedOnly ? "No tool changed" : "No tools");
+      return 0;
+    }
+    const why = (t: (typeof rows)[number]) => (t.changed === "pin" ? "differs from pin" : t.changed === "variants" ? "changed" : t.pinned ? "pinned" : "");
+    out.table(
+      ["SERVER", "TOOL", "DESC", "SCHEMA", "VARIANTS", "SESSIONS", "LAST SEEN", "STATUS"],
+      rows.map((t) => [t.server, t.tool, t.descSha, t.schemaSha, String(t.variants), String(t.sessions), ago(t.lastSeen), why(t)]),
+    );
+    if (!changedOnly && rows.some((t) => t.changed)) out.next("List only the changed tools", "coding.sh harness tools --changed");
+    if (rows.some((t) => t.changed)) out.next("Accept the current definitions", "coding.sh harness tools pin");
+    return code;
+  });
+}
+
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
   if (c.action === "audit") return audit(c);
+  if (c.action === "tools") return tools(c);
   return withContext(c, async (ctx) => {
     if (c.action === "list") {
       const all = await ctx.index.listBundles();

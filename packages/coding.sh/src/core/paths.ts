@@ -80,5 +80,7 @@ export function paths(env: NodeJS.ProcessEnv = process.env) {
     budgetSpend: r + "budget-spend.json",
     /** Acks and snoozes of `coding.sh work` items (core/work-overlay.ts). */
     work: r + "work.json",
+    /** Pinned hashes of each tool's description and schema (`coding.sh harness tools pin`, proxy/tool-drift.ts). */
+    toolPins: r + "tool-pins.json",
   };
 }
