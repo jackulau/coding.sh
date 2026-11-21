@@ -1,8 +1,8 @@
 # Round 5 ecosystem notes
 
 Scout: ecosystem. Window: 2026-11-20 to 2026-11-21. Baseline: [round-4-ecosystem.md](round-4-ecosystem.md),
-which covered releases up to 2026-11-20. Gaps CG-1 to CG-13 in `D:/cs/research/competitors.md` are
-left to the other scout and get no candidate here.
+which covered releases up to 2026-11-20. Competitor gaps CG-1 to CG-13, listed in the round 4 notes,
+are left to the other scout and get no candidate here.
 
 ## Method
 
