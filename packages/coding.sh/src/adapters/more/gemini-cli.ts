@@ -21,7 +21,8 @@
 // - Headless: `gemini -p … -o stream-json -m M --approval-mode yolo --skip-trust`; stream
 //   events init{session_id,model}, message, tool_use, tool_result, error, result{stats}.
 // - Isolation: GEMINI_CLI_HOME replaces ~ (config, tmp, creds, extensions move with it).
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import type { Adapter, AgentRunOutput, BackfillFile, BackfillOpts, DetectResult, FileChange, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../../core/types.ts";
@@ -392,7 +393,7 @@ async function installedVersion(binary: string): Promise<string | undefined> {
     return undefined;
   } finally {
     try {
-      if (h) rmSync(h, { recursive: true, force: true, maxRetries: 3 });
+      if (h) await rm(h, { recursive: true, force: true, maxRetries: 3 });
     } catch {
       // a temp dir left behind, never the user's home
     }

@@ -15,6 +15,7 @@
 // (`bench-where.mjs gen <index.db> --memory`); without it the store is written to the
 // temp dir first, which takes minutes.
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { spawn, spawnSync } from "node:child_process";
 import http from "node:http";
 import net from "node:net";
@@ -449,7 +450,7 @@ export async function benchProxy({ cli = CLI, n = 60, warmup = 5, chunks = 20, g
     upstream.closeAllConnections();
     await new Promise((r) => upstream.close(() => r()));
     await sleep(300);
-    rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+    await rm(root, { recursive: true, force: true, maxRetries: 3 });
   }
 }
 
@@ -588,7 +589,7 @@ export async function benchProxySession({ cli = CLI, baseline, calls = 1000, com
     upstream.closeAllConnections();
     await new Promise((r) => upstream.close(() => r()));
     await sleep(300);
-    rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+    await rm(root, { recursive: true, force: true, maxRetries: 3 });
   }
 }
 
@@ -762,7 +763,7 @@ export async function benchViewer({ cli = CLI, events = 5000, runs = 3, chrome =
     if (browser?.pid && process.platform === "win32") spawnSync("taskkill", ["/PID", String(browser.pid), "/T", "/F"], { stdio: "ignore" });
     else browser?.kill("SIGTERM");
     await sleep(300);
-    rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+    await rm(root, { recursive: true, force: true, maxRetries: 3 });
   }
 }
 
@@ -886,7 +887,7 @@ export async function benchReplay({ cli = CLI, events = 12_000, runs = 3 } = {})
   } finally {
     for (const s of servers) s.kill("SIGINT");
     await sleep(300);
-    rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+    await rm(root, { recursive: true, force: true, maxRetries: 3 });
   }
 }
 

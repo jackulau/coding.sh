@@ -171,7 +171,8 @@ order.
   The re-parse reads T3's store and adds the T3 rows such a session lacks. It runs once after the T3
   adapter's parse version changes, once on a store an older coding.sh kept, and on `ingest --rebuild`.
 - **Store copies:** the T3 store is read from a copy in the temp directory, which needs room for it; a
-  failed copy is a backfill error. The next read removes copies a killed read left.
+  failed copy is a backfill error. The next read removes copies a killed read left. A read that kills its
+  import child at its deadline waits up to a second for the child to let go of its copy, then removes it.
 
 ## Known breakage to design around
 

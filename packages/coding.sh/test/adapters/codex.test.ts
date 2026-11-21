@@ -696,7 +696,7 @@ describe("codex turns that fail with an error", () => {
   const rec = (type: string, payload: Record<string, unknown>, ms = 0) => JSON.stringify({ timestamp: new Date(1793527200000 + ms).toISOString(), type, payload });
   const LIMIT = "You\u2019ve hit your usage limit. Upgrade to Pro or try again at Nov 17th, 2026 4:35 PM.";
   const rollout = (lines: string[]) => {
-    const path = join(mkdtempSync(join(tmpdir(), "codex-err-")), `rollout-2026-11-01T10-00-00-${EID}.jsonl`);
+    const path = join(rolloutDir("codex-err-"), `rollout-2026-11-01T10-00-00-${EID}.jsonl`);
     writeFileSync(path, lines.join("\n") + "\n");
     return path;
   };

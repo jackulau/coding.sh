@@ -25,6 +25,7 @@ import { join, relative } from "node:path";
 import { fileKey, reportProblems } from "./report-complete.mjs";
 import { describeLoad } from "./runner-load.mjs";
 import { readDurations, shardFiles, testFiles } from "./test-shards.ts";
+import { removeSync } from "../src/core/remove.ts";
 
 const MAX_RERUN = 5;
 const shard = process.env.SHARD;
@@ -84,7 +85,7 @@ function tempLeft() {
 function end(code) {
   console.log(`\n${tempLeft().join("\n")}`);
   try {
-    rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    removeSync(dir, { maxRetries: 3, retryDelay: 100 });
   } catch (err) {
     console.log(`  this run's folder was not removed: ${err?.message ?? err}`);
   }

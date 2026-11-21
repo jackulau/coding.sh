@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { DatabaseSync } from "node:sqlite";
@@ -12,8 +13,8 @@ import { version } from "../../../packages/coding.sh/src/cli/meta.ts";
 
 const SOURCE_CLI = join(PKG, "src", "cli", "main.ts");
 const dirs = [];
-after(() => {
-  for (const d of dirs) rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+after(async () => {
+  for (const d of dirs) await rm(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 });
 const tmp = (p) => {
   const d = tempDir(p);

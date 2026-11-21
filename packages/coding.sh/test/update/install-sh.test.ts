@@ -13,8 +13,8 @@ const RELEASE = "https://github.com/jackulau/coding.sh/releases/download";
 
 const stubDirs: string[] = [];
 /** A new folder for the stub programs, which is also the run's HOME. Removed when the file's tests are done. */
-function stubDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "csh-install-"));
+function stubDir(prefix = "csh-install-"): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
   stubDirs.push(dir);
   return dir;
 }
@@ -138,7 +138,7 @@ describe("install.sh without a terminal", () => {
 describe("install.sh on Windows shells", () => {
   /** npm prefix holds the shim directly (Windows layout); a stale coding.sh sits first on PATH. */
   function windows(bin: boolean) {
-    const root = mkdtempSync(join(tmpdir(), "csh-win-"));
+    const root = stubDir("csh-win-");
     const prefix = join(root, "prefix");
     const stale = join(root, "stale");
     const stubs = join(root, "stubs");
@@ -174,7 +174,7 @@ describe("install.sh on Windows shells", () => {
   });
 
   test("a binary missing from PATH names the prefix without /bin", () => {
-    const root = mkdtempSync(join(tmpdir(), "csh-win-"));
+    const root = stubDir("csh-win-");
     const stubs = join(root, "stubs");
     mkdirSync(stubs);
     writeFileSync(join(stubs, "npm"), `#!/bin/sh\ncase "$1" in install) exit 0 ;; prefix) echo /nonexistent/prefix ;; esac\n`);

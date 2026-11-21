@@ -6,7 +6,8 @@
 // A run that stops part-way says how far it got, and the same command reads the rest.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -62,7 +63,7 @@ describe("coding.sh collector import", () => {
   });
   after(async () => {
     await ch.close();
-    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   });
 
   it("--dry-run counts the spans and writes nothing", async () => {
@@ -156,7 +157,7 @@ describe("coding.sh collector import: the cursor", () => {
   });
   after(async () => {
     await ch.close();
-    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   });
 
   it("a run without --where imports the rows a filtered run skipped, then resumes", async () => {
@@ -203,7 +204,7 @@ describe("coding.sh collector import: a run that stops part-way", () => {
   });
   after(async () => {
     await ch.close();
-    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   });
 
   it("says how far it got and names the rerun, and the rerun finishes the job", async () => {

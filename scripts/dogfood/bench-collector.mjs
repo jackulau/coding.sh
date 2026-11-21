@@ -12,7 +12,8 @@
 //
 //   node scripts/dogfood/bench.mjs collector [--clients 8] [--seconds 15] [--sessions request|client] [--dist <dir>]
 import { spawn } from "node:child_process";
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 import { join } from "node:path";
@@ -157,6 +158,6 @@ export async function benchCollector({ dist = DIST, clients = 8, seconds = 15, w
   } finally {
     proc.kill("SIGINT");
     await new Promise((r) => (proc.exitCode !== null ? r() : proc.once("exit", r)));
-    rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+    await rm(root, { recursive: true, force: true, maxRetries: 3 });
   }
 }
