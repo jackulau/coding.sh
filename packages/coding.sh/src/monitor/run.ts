@@ -427,13 +427,14 @@ function httpScorer(deps: MonitorDeps, def: MonitorDef, redactor: Redactor, o: R
   const url = def.url!;
   const shown = shownUrl(url);
   const score = async (s: Session) => {
-    const [{ signBody, SIGNATURE_HEADER }, doc] = await Promise.all([import("../alerts/notify.ts"), sessionDoc(deps, s, redactor)]);
+    const [{ signatureHeaders }, doc] = await Promise.all([import("../alerts/notify.ts"), sessionDoc(deps, s, redactor)]);
     const body = JSON.stringify({ apiVersion: "v1", monitor: def.name, session: doc });
-    const headers = { "content-type": "application/json", [SIGNATURE_HEADER]: signBody(def.secret!, body) };
     let failure = "";
     for (let attempt = 1; attempt <= HTTP_TRIES; attempt++) {
       if (attempt > 1) await sleepUnless(HTTP_BACKOFF_MS * 2 ** (attempt - 2), [o.signal]);
       if (o.signal?.aborted) throw new Failed(`${s.id}: stopped`);
+      // Signed per try: each carries the time it was sent.
+      const headers = { "content-type": "application/json", ...signatureHeaders(def.secret!, body) };
       const timeout = AbortSignal.timeout(HTTP_ATTEMPT_MS);
       const signal = o.signal ? AbortSignal.any([timeout, o.signal]) : timeout;
       let res: Response;

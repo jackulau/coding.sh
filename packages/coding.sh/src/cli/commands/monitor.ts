@@ -16,7 +16,7 @@ import { parseSince, UsageError } from "../args.ts";
 import { num, str, withContext } from "../common.ts";
 import { ago, CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
-import { SIGNATURE_HEADER } from "../../alerts/notify.ts";
+import { SIGNING_NOTES } from "../../alerts/notify.ts";
 import { paths } from "../../core/paths.ts";
 import { sleepUnless } from "../../jobs/retry.ts";
 import { parseWhere } from "../../query/where.ts";
@@ -105,7 +105,7 @@ async function add(c: CommandContext): Promise<number> {
   c.out.ok(`${replaced ? "Replaced" : "Added"} monitor ${name}`);
   if (def.secret) {
     c.out.print(`Signing secret (shown once): ${def.secret}`);
-    c.out.note(`Each POST carries ${SIGNATURE_HEADER}: sha256=<HMAC-SHA256 of the body, keyed with this secret>.`);
+    for (const n of SIGNING_NOTES) c.out.note(n);
   }
   if (noProvider) {
     const keys = Object.values(KEY_ENV);

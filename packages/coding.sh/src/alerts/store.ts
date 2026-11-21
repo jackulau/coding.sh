@@ -49,7 +49,7 @@ export interface AlertDef {
   window: AlertWindow;
   notify: AlertTarget;
   noData?: NoDataPolicy;
-  /** HMAC-SHA256 key for X-Coding-Sh-Signature (webhooks). Printed once, by `alert add`. */
+  /** HMAC-SHA256 key for the X-Coding-Sh-Signature headers (webhooks). Printed once, by `alert add`. */
   secret?: string;
   createdAt: number;
   /** By group: "" for the whole window, else the agent (with by: agent). A group with no entry is OK. */

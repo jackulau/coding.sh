@@ -3,6 +3,7 @@
 // and the last error kept in <CODING_SH_HOME>/monitors.json.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHmac } from "node:crypto";
 import { getEventListeners } from "node:events";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -15,7 +16,7 @@ import * as monitorCmd from "../../src/cli/commands/monitor.ts";
 import * as scoreCmd from "../../src/scores/cli.ts";
 import { openContext } from "../../src/core/context.ts";
 import { paths } from "../../src/core/paths.ts";
-import { SIGNATURE_HEADER, signBody } from "../../src/alerts/notify.ts";
+import { SIGNATURE_HEADER, SIGNATURE_V2_HEADER, signBody, TIMESTAMP_HEADER } from "../../src/alerts/notify.ts";
 import type { ChatProvider } from "../../src/judge/providers.ts";
 import { monitorVersion, NO_PROVIDER, parseOutput, runMonitors, sampleKey } from "../../src/monitor/run.ts";
 import { readMonitors, shownUrl } from "../../src/monitor/state.ts";
@@ -282,12 +283,13 @@ describe("monitor --judge --provider gemini", () => {
 
 /** A local evaluator: answers each POST with the next queued reply and records what it got. */
 async function evaluator(replies: ((res: ServerResponse) => void)[]) {
-  const posts: { path: string; body: string; signature: string | undefined }[] = [];
+  const posts: { path: string; body: string; signature: string | undefined; timestamp: string | undefined; signatureV2: string | undefined }[] = [];
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const chunks: Buffer[] = [];
     req.on("data", (d: Buffer) => chunks.push(d));
     req.on("end", () => {
-      posts.push({ path: req.url ?? "", body: Buffer.concat(chunks).toString("utf8"), signature: req.headers[SIGNATURE_HEADER.toLowerCase()] as string | undefined });
+      const h = (name: string) => req.headers[name.toLowerCase()] as string | undefined;
+      posts.push({ path: req.url ?? "", body: Buffer.concat(chunks).toString("utf8"), signature: h(SIGNATURE_HEADER), timestamp: h(TIMESTAMP_HEADER), signatureV2: h(SIGNATURE_V2_HEADER) });
       const next = replies.length > 1 ? replies.shift()! : replies[0]!;
       next(res);
     });
@@ -327,7 +329,12 @@ describe("monitor --http", () => {
     assert.equal(rows.length, 1);
     assert.deepEqual([rows[0]!.targetId, rows[0]!.value, rows[0]!.comment, rows[0]!.judgeVersion], ["mon-http-1", 1, "looks right", monitorVersion(ev.url)]);
     assert.equal(ev.posts.length, 2, "one retry after the 503");
-    for (const p of ev.posts) assert.equal(p.signature, signBody(secret, p.body));
+    for (const p of ev.posts) {
+      assert.equal(p.signature, signBody(secret, p.body), "X-Coding-Sh-Signature signs the body alone, as before");
+      assert.match(p.timestamp ?? "", /^\d+$/, "unix seconds");
+      assert.ok(Math.abs(Number(p.timestamp) - Date.now() / 1000) < 60, `timestamp ${p.timestamp} is now`);
+      assert.equal(p.signatureV2, `sha256=${createHmac("sha256", secret).update(`${p.timestamp}.${p.body}`).digest("hex")}`);
+    }
     const doc = JSON.parse(ev.posts[1]!.body);
     assert.equal(doc.apiVersion, "v1");
     assert.equal(doc.monitor, "h");
@@ -475,6 +482,17 @@ describe("monitor --http", () => {
     assert.equal(ran.json.monitors[0].scored, 1);
     assert.deepEqual(ev.posts.map((p) => p.path), ["/score?code=s3cret-token"]);
     assert.equal(shownUrl("not a url?code=s3cret"), "not a url", "a URL that does not parse loses its query too");
+  });
+
+  it("add tells how to check the timestamped signature, and that the old one alone does not stop a replay", async () => {
+    const sb = box();
+    const r = await runCmd(monitorCmd, sb, { action: "add", positionals: ["signed"], flags: { http: "http://127.0.0.1:9/score" } });
+    assert.equal(r.code, 0, r.stderr);
+    const text = r.stdout + r.stderr;
+    assert.match(text, /X-Coding-Sh-Signature-V2: sha256=<HMAC-SHA256 of "<timestamp>\.<body>"/);
+    assert.match(text, /X-Coding-Sh-Timestamp \(unix seconds\)/);
+    assert.match(text, /more than 5 minutes/);
+    assert.match(text, /X-Coding-Sh-Signature signs the body alone and does not stop a replay/);
   });
 
   it("add takes exactly one of --judge, --run or --http, and an http(s) URL without credentials", async () => {

@@ -205,6 +205,7 @@ grouped by area, with links to the docs for the details.
 - **Evals.** An `--http` monitor whose evaluator can't be reached (a network error, a timeout, or a 5xx, 408, 425 or 429 on every try) keeps its place: the session gets no score, and the next pass starts at it again. A pass stops after 2 such sessions in a row. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#monitors))
 - **Evals.** Ctrl-C in `monitor run`, or `coding.sh serve` stopping, while a monitor scores a session no longer counts that session as failed or moves past it: the next pass scores it. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#monitors))
 - **Evals.** `monitor list`, `monitor list --json` and `monitor add --json` show an `--http` URL without its query string, as the monitor's errors do, so a token in the query stays out of the output. Each POST still goes to the whole URL. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#monitors))
+- **Alerts.** Alert webhooks and `monitor add --http` evaluators get `X-Coding-Sh-Timestamp` and `X-Coding-Sh-Signature-V2`, which signs the timestamp and the body, so a receiver can refuse a request more than 5 minutes old. `X-Coding-Sh-Signature` still signs the body alone; a copy of a request still passes it. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#monitors))
 
 ## [0.1.7] - 2026-11-16
 
