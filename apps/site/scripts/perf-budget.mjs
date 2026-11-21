@@ -33,6 +33,11 @@ const BUDGET = {
     "/docs/api/read/": 36 * KB,
     "/docs/api/read/search/": 30 * KB,
     "/docs/troubleshooting/": 33 * KB,
+    // The config reference gains rows with each setting, like the CLI and API references. It
+    // is 26.0KB in the 2026-11-21 build, right at the 26KB other pages get. A pull request's
+    // check builds from a shallow checkout, which dates the page at the merge commit, and those
+    // digits alone moved it a few bytes over. About 10% over.
+    "/docs/config/": 28.6 * KB,
     // The front page in another language (/de, /ja, ...) is 24.5-24.8KB in the 2026-11-14
     // build: the same page as /, with longer words or wider characters. About 10% over.
     translated: 27.3 * KB,

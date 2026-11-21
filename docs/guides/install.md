@@ -73,8 +73,9 @@ Bash, `coding.sh` works. `init` names `codingsh` in its next steps when it runs 
 
 CI runs the test suite and this installer on Windows. It also installs the current releases of
 OpenCode, Pi, Goose, Factory Droid, GitHub Copilot CLI and Aider, runs one session of each against
-a stub model and checks what coding.sh recorded. Capture from Claude Code, Codex CLI, Antigravity
-CLI, Cursor CLI, Amp and T3 Code has not been checked on Windows yet.
+a stub model and checks what coding.sh recorded. Capture from Claude Code and T3 Code has been
+checked on a Windows 11 install. Capture from Codex CLI, Antigravity CLI, Cursor CLI and Amp has
+not been checked on Windows yet.
 
 ## What `init` changes
 
