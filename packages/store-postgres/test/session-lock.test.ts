@@ -1,4 +1,4 @@
-// The per-session lock (rebuildSession: pg_advisory_xact_lock on the session id)
+// The per-session lock (rebuildSession, setEventCosts: pg_advisory_xact_lock on the session id)
 // that lets several function instances behind coding.sh/server's
 // createFetchHandler write one session at once. Live Postgres only.
 import assert from "node:assert/strict";
@@ -87,6 +87,29 @@ describe("postgres per-session lock", { skip: SKIP }, () => {
     // Another session's rebuild never waits on this one's lock.
     await a.putEvents([ev("e9", "other", 1)]);
     assert.equal((await a.rebuildSession("other", build("other")))!.stats.events, 1);
+  });
+
+  it("setEventCosts takes the same lock: it waits for a rebuild of the session, not for another session's", async () => {
+    const a = await store(schemaUrl());
+    await a.putEvents([ev("e1", "s", 1), ev("e2", "other", 1)]);
+    const order: string[] = [];
+    const pg = (await import("pg")).default;
+    const c = new pg.Client({ connectionString: new URL(PG_URL!).toString() });
+    await c.connect();
+    try {
+      await c.query("BEGIN");
+      await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`coding.sh:session:${a.schema}:s`]);
+      assert.equal(await a.setEventCosts([{ id: "e2", costUsd: 1 }]), 1, "another session's event is priced at once");
+      const waiting = a.setEventCosts([{ id: "e1", costUsd: 2 }]).then((n) => order.push(`priced ${n}`));
+      await new Promise((r) => setTimeout(r, 300));
+      order.push("release");
+      await c.query("COMMIT");
+      await waiting;
+    } finally {
+      await c.end();
+    }
+    assert.deepEqual(order, ["release", "priced 1"]);
+    assert.equal((await a.listEvents("s"))[0]!.usage?.costUsd, 2);
   });
 
   it("many concurrent writers to one session end with every event counted", async () => {

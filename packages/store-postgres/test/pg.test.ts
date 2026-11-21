@@ -110,6 +110,23 @@ describe("postgres store", { skip: SKIP }, () => {
     }
   });
 
+  it("setEventCosts keeps an escaped U+0000 in a payload and prices more events than one chunk holds", async () => {
+    const s = await open();
+    try {
+      // A jsonb cast rejects \u0000, so the payload is edited as text.
+      const nul = ev({ id: "nul-cost", kind: "user.message", usage: { inputTokens: 3 }, payload: { text: "nul\u0000inside", note: "a\u0000b" } });
+      const calls = Array.from({ length: 1201 }, (_, i) => ev({ id: `c${i}`, kind: "llm.call", usage: { inputTokens: i }, payload: { ok: true } }));
+      await s.putEvents([nul, ...calls]);
+      assert.equal(await s.setEventCosts([{ id: nul.id, costUsd: 0.1 }, ...calls.map((e, i) => ({ id: e.id, costUsd: i / 1000 }))]), 1202);
+      const got = new Map((await s.listEvents("s1")).map((e) => [e.id, e]));
+      assert.deepEqual(got.get(nul.id), { ...nul, usage: { inputTokens: 3, costUsd: 0.1 }, payload: { ...nul.payload, costEstimated: true } });
+      assert.deepEqual(calls.filter((e, i) => got.get(e.id)?.usage?.costUsd !== i / 1000 || got.get(e.id)?.payload.costEstimated !== true), []);
+      assert.deepEqual((await s.search("inside")).map((h) => h.event.id), [nul.id]);
+    } finally {
+      await s.close();
+    }
+  });
+
   it("keeps batch order for equal timestamps", async () => {
     const s = await open();
     try {

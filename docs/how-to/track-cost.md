@@ -233,8 +233,8 @@ names both apart, so the split never claims more than the estimate. In `show`, t
 A session keeps its split in `stats.usage.estimatedCostByTokenType`, and each model call in
 `payload.costByTokenType` ([API reference](https://coding.sh/docs/api)). Estimates stored by an
 older coding.sh get their split when estimates refresh on their own, or now with
-`coding.sh usage --reprice`. A Postgres store has no reprice, so its older estimates stay unsplit.
-A row with no estimate has no split, never $0.
+`coding.sh usage --reprice`, on a Postgres or ClickHouse store too. A row with no estimate has no
+split, never $0.
 
 ## Set a budget
 
