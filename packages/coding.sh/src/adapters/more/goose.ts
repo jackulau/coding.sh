@@ -472,7 +472,7 @@ export const gooseAdapter: Adapter = {
   },
   async overlay(bundle: HarnessBundle, runDir: string) {
     const h = overlayHome(runDir);
-    const root = join(runDir, "goose");
+    const root = join(h, "goose");
     // Provider choice lives in config.yaml; keep the user's unless the bundle brings one.
     // Secrets move to <root>/config/secrets.yaml (keyring off), so API keys come from env.
     if (!bundle.files["~/.config/goose/config.yaml"]) copyPrivate(join(gooseConfigDir(), "config.yaml"), join(root, "config", "config.yaml"));

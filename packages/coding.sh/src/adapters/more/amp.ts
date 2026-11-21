@@ -33,6 +33,7 @@ import {
   isObj,
   jsonLines,
   num,
+  overlayHome,
   rawBlob,
   readText,
   resolveNodePath,
@@ -294,11 +295,11 @@ export const ampAdapter: Adapter = {
   },
   async overlay(bundle: HarnessBundle, runDir: string) {
     // Amp keeps auth outside the settings file, so we only swap the settings file
-    // (bundle-provided, materialized under <runDir>/home) and leave XDG alone.
+    // (bundle-provided, materialized in the run's home) and leave XDG alone.
     const flags: string[] = [];
     for (const key of ["~/.config/amp/settings.json", "~/.config/amp/settings.jsonc"]) {
       if (bundle.files[key]) {
-        flags.push("--settings-file", join(runDir, "home", key.slice(2)));
+        flags.push("--settings-file", join(overlayHome(runDir), key.slice(2)));
         break;
       }
     }

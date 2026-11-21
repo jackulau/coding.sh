@@ -182,13 +182,16 @@ describe("goose run + overlay", () => {
     assert.equal(a.env.GOOSE_MODE, "auto");
   });
 
-  it("overlay roots goose in the run dir and carries config.yaml over", async () => {
+  it("overlay roots goose in the run's home and carries config.yaml over", async () => {
     // ~/.config/goose, or %APPDATA%/Block/goose/config on Windows (moreEnv clears APPDATA: under the temp home).
     writeFile(join(gooseConfigDir(), "config.yaml"), "GOOSE_PROVIDER: anthropic\n");
-    const runDir = join(env.root, "run");
+    const runDir = join(env.root, "run", "work");
+    const home = join(env.root, "run", "home");
     const o = await gooseAdapter.overlay!({ files: {}, flags: [] } as never, runDir);
-    assert.equal(o.env.GOOSE_PATH_ROOT, join(runDir, "goose"));
+    assert.equal(o.env.GOOSE_PATH_ROOT, join(home, "goose"));
+    assert.equal(o.env.HOME, home);
     assert.equal(o.env.GOOSE_DISABLE_KEYRING, "1");
-    assert.equal(readFileSync(join(runDir, "goose", "config", "config.yaml"), "utf8"), "GOOSE_PROVIDER: anthropic\n");
+    assert.equal(readFileSync(join(home, "goose", "config", "config.yaml"), "utf8"), "GOOSE_PROVIDER: anthropic\n");
+    assert.equal(existsSync(runDir), false, "nothing is written into the work tree");
   });
 });

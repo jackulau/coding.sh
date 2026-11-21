@@ -401,7 +401,7 @@ export const piAdapter: Adapter = {
     // Keep the user's provider logins working inside the isolated agent dir.
     copyPrivate(join(piAgentDir(), "auth.json"), join(agentDir, "auth.json"));
     return {
-      env: { PI_CODING_AGENT_DIR: agentDir, PI_CODING_AGENT_SESSION_DIR: join(runDir, "pi-sessions"), PI_SKIP_VERSION_CHECK: "1" },
+      env: { PI_CODING_AGENT_DIR: agentDir, PI_CODING_AGENT_SESSION_DIR: join(h, "pi-sessions"), PI_SKIP_VERSION_CHECK: "1" },
       flags: [],
     };
   },
