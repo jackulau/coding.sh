@@ -717,7 +717,8 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 }
 .tl.wf-on { --wf: clamp(7rem, 28%, 18rem); }
 .st .t { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); text-align: right; white-space: nowrap; }
-.st .lbl { display: flex; align-items: center; gap: 0.5rem; min-width: 0; padding-left: var(--indent, 0.9rem); }
+/* Clipped, so a row whose parts do not fit never runs into the duration beside it. */
+.st .lbl { display: flex; align-items: center; gap: 0.5rem; min-width: 0; overflow: hidden; padding-left: var(--indent, 0.9rem); }
 .st .lbl .dot { width: 6px; height: 6px; }
 .st .name { color: var(--text); font-weight: 500; flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .st .arg { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-family: var(--font-mono); font-size: 12px; }
@@ -784,7 +785,8 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .st .derail-flag { flex: none; margin-left: 0.5rem; padding: 0 6px; border-radius: 4px; font-family: var(--font-mono); font-size: 11px; line-height: 18px; color: var(--warn-ink); background: var(--warn-wash); }
 .st.phase-start { box-shadow: inset 0 2px 0 var(--line-strong, var(--line)); }
 .st.phase-start.is-derail { box-shadow: inset 0 2px 0 var(--line-strong, var(--line)), inset 2px 0 0 var(--warn); }
-.st .phase-chip { flex: none; margin-right: 0.5rem; padding: 0 6px; border-radius: 4px; font-family: var(--font-mono); font-size: 11px; line-height: 18px; color: var(--text-muted); background: color-mix(in srgb, var(--text-faint) 14%, transparent); }
+/* A phase chip gives way first on a narrow row (its title keeps the whole label). */
+.st .phase-chip { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 0.5rem; padding: 0 6px; border-radius: 4px; font-family: var(--font-mono); font-size: 11px; line-height: 18px; color: var(--text-muted); background: color-mix(in srgb, var(--text-faint) 14%, transparent); }
 .tl-map i.e { background: var(--text-muted); }
 .tl-map i.p { background: var(--pass); }
 /* Centred with auto margins, not a transform, so the pill's own :active scale cannot replace it. */
@@ -1872,6 +1874,15 @@ function fmtDuration(ms) {
   if (hr >= 24) return Math.floor(hr / 24) + "d " + (hr % 24) + "h";
   return hr + "h " + (m % 60) + "m";
 }
+/** An axis tick: a round duration without its zero tail, so a minute reads "1m", not "1m 0s". */
+function fmtDurationTick(ms) {
+  return fmtDuration(ms).replace(/ 0[smh]$/, "");
+}
+/** A subagent's header badge: "subagent", then its type when that says more (t3code's type is "subagent"). */
+function subagentBadge(type) {
+  const t = String(type || "").trim();
+  return !t || t.toLowerCase() === "subagent" ? "subagent" : "subagent · " + t;
+}
 function fmtClock(ms) {
   if (!isFinite(ms) || ms < 0) ms = 0;
   const s = Math.floor(ms / 1000);
@@ -2447,7 +2458,9 @@ function openPalette() {
   if (!expCache) api("/api/experiments", null, true).then((b) => { expCache = b.items; if (overlayOpen() && d.isConnected) render(); }, () => { expCache = []; });
   if (!benchCache) api("/api/benchmarks", null, true).then((b) => { benchCache = b.items; if (overlayOpen() && d.isConnected) render(); }, () => { benchCache = []; });
   // Stored sessions that match the typed text, from the server: the loaded list may be filtered or empty.
-  // Two asks: sessions whose title or id holds the text (q), and sessions whose events do (where).
+  // Three asks: sessions whose title holds the text (title:), whose title, id, repo, branch or model
+  // does (q), and whose events do (where). The title ask goes first: a branch named for the word
+  // (site/vercel) can fill q's 8 slots with newer sessions and push the one titled with it out.
   let found = [];
   let findSeq = 0;
   let findTimer = 0;
@@ -2459,9 +2472,9 @@ function openPalette() {
     if (!text) { if (found.length) { found = []; render(); } return; }
     findTimer = setTimeout(() => {
       const ask = (p) => api("/api/sessions" + qs(p), null, true).then((b) => (b && b.items) || [], () => []);
-      Promise.all([ask({ q: text.slice(0, 200), limit: 8 }), ask({ where: findWhere(text), limit: 8 })]).then(([byTitle, byContent]) => {
+      Promise.all([ask({ where: "title:" + quoteValue(text.slice(0, 200)), limit: 8 }), ask({ q: text.slice(0, 200), limit: 8 }), ask({ where: findWhere(text), limit: 8 })]).then(([byTitle, byMeta, byContent]) => {
         if (mine !== findSeq || !d.isConnected) return;
-        found = byTitle.concat(byContent);
+        found = byTitle.concat(byMeta, byContent);
         render();
       });
     }, 120);
@@ -5825,7 +5838,7 @@ function sessionHeader(s, labels, rel) {
           h("span", { class: "badge", title: "This experiment ran the weights file " + c.sha256 + " (exp run --weights)" }, "ran in ", h("a", { href: expHref(e.id), title: e.id }, e.name || e.id)))),
         st.turns && !api_ ? h("span", { class: "badge", title: "Times the agent finished and handed back. A background task's notice can start a turn with no prompt, so Steps and Chat number prompts, not turns." }, plural(st.turns, "turn")) : null,
         kids.length ? h("span", { class: "badge" }, plural(kids.length, "subagent")) : null,
-        s.parent && s.parent.type ? h("span", { class: "badge" }, "subagent · " + s.parent.type) : null,
+        s.parent && s.parent.type ? h("span", { class: "badge" }, subagentBadge(s.parent.type)) : null,
         s.runId ? h("span", { class: "badge", title: s.runId }, "eval run") : null,
         flagBadges(s.flags)),
       h("div", { class: "actions", id: "head-actions" },
@@ -7608,7 +7621,7 @@ const EXPLORE_PANELS = [
   { id: "cost", title: "Cost", value: (l, i) => l.costUsd[i], total: (t) => (t.pricedSessions ? t.costUsd : null), fmt: (v) => fmtCost(v) || "$0", tick: (v) => "$" + fmtCompact(Math.round(v * 100) / 100), hint: "Sessions with a price" },
   { id: "tokens", title: "Tokens", value: (l, i) => l.tokens[i], total: (t) => t.tokens, fmt: fmtCompact, tick: fmtCompact, hint: "Input, output and cache" },
   { id: "tool-error-rate", title: "Tool error rate", rate: true, value: (l, i) => (l.toolCalls[i] ? l.toolErrors[i] / l.toolCalls[i] : null), total: (t) => t.toolErrorRate, fmt: pctFine, tick: pct, hint: "Failed tool calls / tool calls" },
-  { id: "llm-p95", title: "p95 model call", value: (l, i) => l.llmP95Ms[i], total: (t) => t.llmP95Ms, fmt: fmtDuration, tick: fmtDuration, hint: "Over each session's own p95" },
+  { id: "llm-p95", title: "p95 model call", value: (l, i) => l.llmP95Ms[i], total: (t) => t.llmP95Ms, fmt: fmtDuration, tick: fmtDurationTick, hint: "Over each session's own p95" },
 ];
 function pctFine(x) { return x > 0 && x < 0.1 ? (x * 100).toFixed(1) + "%" : pct(x); }
 /** Parses #/explore's query into the API's params, dropping anything malformed. */
