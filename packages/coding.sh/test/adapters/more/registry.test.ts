@@ -15,7 +15,7 @@ describe("MORE_ADAPTERS", () => {
   it("has unique ids and the expected agents", () => {
     const ids = MORE_ADAPTERS.map((a) => a.id);
     assert.equal(new Set(ids).size, ids.length);
-    for (const id of ["gemini-cli", "antigravity", "copilot-cli", "amp", "pi", "droid", "goose", "aider", "wrapper"]) assert.ok(ids.includes(id), id);
+    for (const id of ["gemini-cli", "antigravity", "copilot-cli", "amp", "pi", "droid", "goose", "devin", "aider", "wrapper"]) assert.ok(ids.includes(id), id);
   });
 
   for (const a of MORE_ADAPTERS) {

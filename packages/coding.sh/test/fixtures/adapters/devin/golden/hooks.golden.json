@@ -1,0 +1,354 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "brave-otter",
+    "ts": 1790000000000,
+    "payload": {
+      "source": "startup"
+    },
+    "id": "51577a6341ddc44987c403874f422cdd1b841f9ca6c6b996250ee8da681cbc68",
+    "blobs": [
+      "b7a5836e8467480ba84d614f8f8113d6d7a48b8dd3379962865b36b64673913a"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "brave-otter",
+    "ts": 1790000001000,
+    "payload": {
+      "text": "Create hello.py, then run the tests"
+    },
+    "id": "7e20be781724fe2235f86b7340c7c9e359146e304e29ea6dad84cb4d08e47b91",
+    "turnId": "35948f7566d3f68f196daf313304834b2805900edf3004be0476961eff8e1517",
+    "blobs": [
+      "565c56faaf22ca0e9c4a0f4fb5148a3123b4d76e2a75b2cd6df9cae8cd721cf8"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "brave-otter",
+    "ts": 1790000002000,
+    "payload": {
+      "tool": "write",
+      "input": {
+        "file_path": "/work/demo/hello.py",
+        "content": "print('hi')\n"
+      }
+    },
+    "id": "8b792d1d8cc2864d931bb40af338f0e540c12c4d2db13b03485f06c5c9464763",
+    "turnId": "35948f7566d3f68f196daf313304834b2805900edf3004be0476961eff8e1517",
+    "blobs": [
+      "fb0d77f6b1956e5c05f41d833beb98dfcae2518d9853340ebacaf55b4ea40a98"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "brave-otter",
+    "ts": 1790000002100,
+    "payload": {
+      "tool": "write",
+      "ok": true,
+      "output": "Created /work/demo/hello.py"
+    },
+    "id": "81e6dd4fddaadba59a5415c84c78592fbd17a9d4b33c89b132ded144f333a210",
+    "turnId": "35948f7566d3f68f196daf313304834b2805900edf3004be0476961eff8e1517",
+    "blobs": [
+      "03f59935a7650764f198813a5500d9271e73d4af3fde067963a359053af75227"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "brave-otter",
+    "ts": 1790000002100,
+    "payload": {
+      "path": "hello.py",
+      "op": "modify",
+      "tool": "write"
+    },
+    "id": "e9c0c7a7527140ae3f993914269e1efe1ef91985e1897d49be27d06374689620",
+    "turnId": "35948f7566d3f68f196daf313304834b2805900edf3004be0476961eff8e1517",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "brave-otter",
+    "ts": 1790000003000,
+    "payload": {
+      "tool": "read",
+      "input": {
+        "file_path": "/work/demo/missing.py"
+      }
+    },
+    "id": "c1634d57fd50397903141499619e92f0400d9280f7d8c95fe1c8ee2cc543bae2",
+    "turnId": "35948f7566d3f68f196daf313304834b2805900edf3004be0476961eff8e1517",
+    "blobs": [
+      "119d3693086c39216d67711f8909487a4d6d7260d43a87dc391558b793c40e50"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "brave-otter",
+    "ts": 1790000003050,
+    "payload": {
+      "tool": "read",
+      "ok": false,
+      "output": "",
+      "error": "File not found: /work/demo/missing.py"
+    },
+    "id": "21f8294bdf5f0987ab1dd822ebba85cdb503cafdef7c77506438bbc76c7dd9f5",
+    "turnId": "35948f7566d3f68f196daf313304834b2805900edf3004be0476961eff8e1517",
+    "blobs": [
+      "f5c3a9573398749c307913f3bcac4f33309c5bf3529954a9b6c1850edac262d9"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "brave-otter",
+    "ts": 1790000004000,
+    "payload": {
+      "tool": "exec",
+      "input": {
+        "command": "echo ok > notes.txt && python -m pytest",
+        "shell_id": "default"
+      },
+      "verify": true
+    },
+    "id": "870fd5175cb6a050e845891f07b36eaa78511ad1cc63a8dd3eb9c86f3269aed4",
+    "turnId": "35948f7566d3f68f196daf313304834b2805900edf3004be0476961eff8e1517",
+    "blobs": [
+      "864592f645e337c905e8cccea4e1546fe8a19ab3e0de3b8b8f60d876d77d1bf8"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "notification",
+    "sessionId": "brave-otter",
+    "ts": 1790000004100,
+    "payload": {
+      "kind": "permission_prompt",
+      "tool": "exec",
+      "message": "Devin needs your permission to use exec: echo ok > notes.txt && python -m pytest"
+    },
+    "id": "91a731a1623d0c339d52fa435974c5617b005bfe8c0fd724fbc455080bc24728",
+    "turnId": "35948f7566d3f68f196daf313304834b2805900edf3004be0476961eff8e1517",
+    "blobs": [
+      "464aa865b4ab2cdb435d7502d1719aab0bf7be3f73a1a42bb548d920893a6f38"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "brave-otter",
+    "ts": 1790000008000,
+    "payload": {
+      "tool": "exec",
+      "ok": true,
+      "output": "============================= test session starts ==============================\nplatform linux -- Python 3.12.3, pytest-8.3.2, pluggy-1.5.0\nrootdir: /work/demo\ncollected 2 items\n\ntest_hello.py ..                                                         [100%]\n\n============================== 2 passed in 0.01s ===============================\n"
+    },
+    "id": "7971fcd0566a154cfaa4ee35c01315b754ce239d64ad7f2efd5e056ad7615096",
+    "turnId": "35948f7566d3f68f196daf313304834b2805900edf3004be0476961eff8e1517",
+    "blobs": [
+      "51d51e8becfa05d7e3a7b1fb37e6ff9a8686fbd71c310c0a4fe361c31a2dab8b"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "test.result",
+    "sessionId": "brave-otter",
+    "ts": 1790000008000,
+    "payload": {
+      "runner": "pytest",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0
+    },
+    "id": "9e9e1a996a3447da6b2977a7d5c203c675b6aa603e2f7b9fcc03618e13a54714",
+    "turnId": "35948f7566d3f68f196daf313304834b2805900edf3004be0476961eff8e1517",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "brave-otter",
+    "ts": 1790000009000,
+    "payload": {
+      "tool": "run_subagent",
+      "input": {
+        "task": "Review hello.py",
+        "profile": "reviewer"
+      }
+    },
+    "id": "e624ef21f273072f7d2537f1cf6344467fc067d75334daa7e640c260894fcd4b",
+    "turnId": "35948f7566d3f68f196daf313304834b2805900edf3004be0476961eff8e1517",
+    "blobs": [
+      "777ff6692fe7dc686f5a68f5d4dd25eedbbae53d0cbaaaa4e11dc35c7891ba1c"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "brave-otter",
+    "ts": 1790000015000,
+    "payload": {
+      "tool": "run_subagent",
+      "ok": true,
+      "output": "Looks good."
+    },
+    "id": "107394cce8bc20c3920a3f5c3ca840401b98a6d5de6aaf6638e8f5cfa65e0406",
+    "turnId": "35948f7566d3f68f196daf313304834b2805900edf3004be0476961eff8e1517",
+    "blobs": [
+      "0a7db850440f5bbe0e8ce3c3467672c2f55b0eb7dbb8bcf95ec20a4b2e6cfcc2"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "brave-otter",
+    "ts": 1790000016000,
+    "payload": {
+      "text": "Created hello.py; the tests pass."
+    },
+    "id": "12d1e1eb5a2d49789bc661eb5851d5531a867f6450adbc1469b936e84caecd4a",
+    "turnId": "35948f7566d3f68f196daf313304834b2805900edf3004be0476961eff8e1517",
+    "blobs": [
+      "4a2a1eb9263b12c136d3379ca0928b9175fe7f99266ae8a40b65e8a19cb2f3d0"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "brave-otter",
+    "ts": 1790000016000,
+    "payload": {},
+    "id": "70f512fc565f1243fc704f05d4fe0fa0292276a4352aa25c8f29b15ebad1ffcc",
+    "turnId": "35948f7566d3f68f196daf313304834b2805900edf3004be0476961eff8e1517",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "context.compact",
+    "sessionId": "brave-otter",
+    "ts": 1790000017000,
+    "payload": {},
+    "id": "e5f890118d4eb7737ddcc2dc8b2d6a5d87c17d5359875a0aa3b1773e8c01f7fb",
+    "turnId": "35948f7566d3f68f196daf313304834b2805900edf3004be0476961eff8e1517",
+    "blobs": [
+      "dc701f47f060b4dad1761b940e9768bbf577135f5cd191b4ec2141524ff326fe"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "brave-otter",
+    "ts": 1790000018000,
+    "payload": {
+      "text": "now delete notes.txt"
+    },
+    "id": "b347e43c959cf95323f760e833d3d9f653596ffa01afa0b844a62cd6ad12bfc0",
+    "turnId": "a5ccea51ffa53ec196889ed2c48f55253fe554a783a841f30a4fad96fa5327e5",
+    "blobs": [
+      "e2b48e1a2ba1d90db8db61e509a8864cb65e28e1f1bd4018393ec3123e64b3c5"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "brave-otter",
+    "ts": 1790000018500,
+    "payload": {
+      "tool": "exec",
+      "input": {
+        "command": "rm notes.txt",
+        "shell_id": "default"
+      }
+    },
+    "id": "f226148b31469e75beb73675ea8cbadbc248963587e0d025ed9554f7ba5efd9e",
+    "turnId": "a5ccea51ffa53ec196889ed2c48f55253fe554a783a841f30a4fad96fa5327e5",
+    "blobs": [
+      "84d5c558146560eb1ae63a1184a49cc35eb3286a6f6eb66c2b12874ebbe79be7"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "brave-otter",
+    "ts": 1790000018700,
+    "payload": {
+      "tool": "exec",
+      "ok": true,
+      "output": ""
+    },
+    "id": "e829f479f8c4acd521604a924936542a0610c7f3aa0a6cff3eb0bfbaf1b78cb2",
+    "turnId": "a5ccea51ffa53ec196889ed2c48f55253fe554a783a841f30a4fad96fa5327e5",
+    "blobs": [
+      "74550b5316fb97fa2ab6c407f2782cb98bac88fdee582f484731e802f78bb02c"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "brave-otter",
+    "ts": 1790000019000,
+    "payload": {
+      "text": "Deleting notes.txt."
+    },
+    "id": "1b49e0a1621286d266ad3ca3e705f9eb1f018ed15e0870342cf754f0a0580ded",
+    "turnId": "a5ccea51ffa53ec196889ed2c48f55253fe554a783a841f30a4fad96fa5327e5",
+    "blobs": [
+      "f92fe12dd175e4b4ab682f442a8d18a7ba9450bf9bd55bd69bf62873bec34836"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "brave-otter",
+    "ts": 1790000019000,
+    "payload": {
+      "stopHookActive": true
+    },
+    "id": "da6c82434ab9b165531d12795b65f2108dafb50947d4c042fde1efe1fdeb2372",
+    "turnId": "a5ccea51ffa53ec196889ed2c48f55253fe554a783a841f30a4fad96fa5327e5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "brave-otter",
+    "ts": 1790000020000,
+    "payload": {
+      "text": "Deleted notes.txt."
+    },
+    "id": "cbabaf5fb25833ee8ff2b6370cd1028155635e652102874e47fcd4b5bef76568",
+    "turnId": "a5ccea51ffa53ec196889ed2c48f55253fe554a783a841f30a4fad96fa5327e5",
+    "blobs": [
+      "e3b33011f2f6ccc4608906822fa53741b7014def73b1b0ff37b5f885f1192116"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "brave-otter",
+    "ts": 1790000020000,
+    "payload": {},
+    "id": "0f1b4872c953014e9ca5e0a784a6af2cfc1fccf8b9f8088425e9abfe22e1e6ad",
+    "turnId": "a5ccea51ffa53ec196889ed2c48f55253fe554a783a841f30a4fad96fa5327e5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "session.end",
+    "sessionId": "brave-otter",
+    "ts": 1790000021000,
+    "payload": {
+      "reason": "exit"
+    },
+    "id": "ed4d73cc662d4e6e7a2c4f23c5b5aac04811b1c49bc202f19803e576d0b89c2c",
+    "turnId": "a5ccea51ffa53ec196889ed2c48f55253fe554a783a841f30a4fad96fa5327e5",
+    "blobs": [
+      "9b0ce9362d3bc3ef535c6562adb25b759a4053408a6ac5e945393bb52913031a"
+    ],
+    "cwd": "/work/demo"
+  }
+]

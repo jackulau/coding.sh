@@ -20,6 +20,7 @@ import {
   parseHookCommand,
   parsePatch,
   parseTestOutput,
+  isShellCall,
   removeTomlBlock,
   revertTomlKey,
   shellCommandOf,
@@ -114,6 +115,12 @@ describe("file-change derivation", () => {
     assert.equal(shellCommandOf("Bash", { command: "ls -la" }), "ls -la");
     assert.equal(shellCommandOf("exec_command", { cmd: "pytest" }), "pytest");
     assert.equal(shellCommandOf("Read", { command: "x" }), undefined);
+    // Devin CLI's shell tool is `exec` {command, shell_id}; an `exec` with no command line is another tool.
+    assert.equal(shellCommandOf("exec", { command: "npm test", shell_id: "default" }), "npm test");
+    assert.equal(shellCommandOf("exec", { code: "print(1)" }), undefined);
+    assert.equal(isShellCall("exec", { command: "ls" }), true);
+    assert.equal(isShellCall("exec", { code: "ls" }), false);
+    assert.equal(isShellCall("Bash", undefined), true);
   });
 });
 

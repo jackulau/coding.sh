@@ -7,6 +7,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, test } from "node:test";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
+import { devinAdapter } from "../../src/adapters/more/devin.ts";
 import { geminiCliAdapter } from "../../src/adapters/more/gemini-cli.ts";
 import { normalizeFixture } from "../adapters/more/_helpers.ts";
 import { approves, detectUnapproved, riskyAction } from "../../src/core/unapproved.ts";
@@ -229,6 +230,30 @@ describe("unapproved-action flag", () => {
       assert.equal(detectUnapproved([prompt("tidy up the repo"), idle, start, end])?.count, 1);
       const geminiIdle = gem("notification", { kind: "idle_prompt", message: "Gemini CLI needs your permission to use run_shell_command" });
       assert.equal(detectUnapproved([prompt(ask), geminiIdle, ...shell("git push --force")])?.count, 1);
+    });
+
+    test("Devin CLI: a PermissionRequest while the exec is open approves it, with no call id", async () => {
+      // The hook fixture's PermissionRequest, `{ kind, tool, message }`, as the adapter stores it.
+      const note = (await normalizeFixture(devinAdapter, "devin/hooks.spool.jsonl")).find((e) => e.kind === "notification")!;
+      assert.equal(note.payload.message, "Devin needs your permission to use exec: echo ok > notes.txt && python -m pytest");
+      const turn = prompt("tidy up the repo");
+      const start = ev("tool.start", { tool: "exec", input: { command: "git push --force", shell_id: "default" } }, { agent: "devin" });
+      const asked = { ...note, sessionId: "s1", ts: 1_000 + ++n };
+      const end = ev("tool.end", { tool: "exec", ok: true, output: "" }, { agent: "devin" });
+      assert.equal(detectUnapproved([turn, start, asked, end]), undefined);
+      assert.equal(detectUnapproved([turn, start, end])?.first.kind, "git-push-force");
+    });
+
+    test("Devin CLI: an open run_subagent is not the call a prompt is about", () => {
+      const dv = { agent: "devin" } as const;
+      const turn = prompt("tidy up the repo");
+      const sub = ev("tool.start", { tool: "run_subagent", input: { task: "Review the branch" } }, dv);
+      const asked = ev("notification", { kind: "permission_prompt", tool: "exec", message: "Devin needs your permission to use exec: git push --force" }, dv);
+      const start = ev("tool.start", { tool: "exec", input: { command: "git push --force" } }, dv);
+      const end = ev("tool.end", { tool: "exec", ok: true, output: "" }, dv);
+      // The prompt waits for the exec it names, which starts after it.
+      assert.equal(detectUnapproved([turn, sub, asked, start, end]), undefined);
+      assert.equal(detectUnapproved([turn, sub, start, end])?.first.kind, "git-push-force");
     });
   });
 

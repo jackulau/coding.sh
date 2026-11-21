@@ -8,6 +8,7 @@ import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, readdir
 import { dirname, join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { pathToFileURL } from "node:url";
+import { buildHookCommand } from "../../src/adapters/_shared/hooks.ts";
 import type { SpoolLine } from "../../src/core/types.ts";
 import { spoolLineRedactor } from "../../src/spool/redact.ts";
 import { MAX_INLINE_LINE_BYTES, SPOOL_FILE_CAP, appendSpool, resolveRaw, safeAgentId, spoolFile } from "../../src/spool/write.ts";
@@ -140,6 +141,34 @@ for (const impl of IMPLS) describe(`hook contract (${impl === "node" ? "hook.mjs
     const h2 = freshHome();
     assert.equal(runHook_(["claude-code", "SessionStart"], payload, { CODING_SH_HOME: h2, CLAUDE_CODE_ENTRYPOINT: "" }).code, 0);
     assert.equal(readLines(h2, "claude-code")[0]!.entrypoint, undefined);
+  });
+
+  test("Devin CLI runs Claude Code's hooks: its calls are recorded as devin, or not at all when a coding.sh hook for Devin writes the event", () => {
+    const h = freshHome();
+    // A Devin session in project/sub. Devin sets DEVIN_PROJECT_DIR, the project root, for every hook it runs,
+    // sends no cwd, and runs a hook from the user's settings in the session's folder. Claude Code's own calls
+    // name their transcript.
+    const project = tmp("csh-devinproj-");
+    const sub = join(project, "sub");
+    mkdirSync(sub);
+    const env = { CODING_SH_HOME: h, DEVIN_PROJECT_DIR: project, DEVIN_CONFIG_HOME: tmp("csh-devincfg-"), CLAUDE_CODE_ENTRYPOINT: "cli" };
+    const payload = (event: string, extra: Record<string, unknown> = {}) => JSON.stringify({ session_id: "brave-otter", hook_event_name: event, ...extra });
+    const run = (event: string, extra?: Record<string, unknown>) => {
+      const r = runHook_(["claude-code", event], payload(event, extra), env, sub);
+      assert.equal(r.code, 0, r.stderr);
+      assert.equal(r.stdout, "");
+    };
+    run("UserPromptSubmit", { prompt: "hi" });
+    run("Stop", { cwd: sub, transcript_path: join(project, "claude", "projects", "-work-demo", "0c3f5e1a-2b4d-4c6e-8f00-112233445566.jsonl") });
+    // `coding.sh init devin --scope project` in the project root installed a hook for Stop: Devin's Stop is that hook's line.
+    const bin = tmp("csh-devinbin-");
+    for (const f of ["hook.mjs", "hook.sh"]) writeFileSync(join(bin, f), "");
+    mkdirSync(join(project, ".devin"));
+    writeFileSync(join(project, ".devin", "config.local.json"), JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: buildHookCommand(join(bin, "hook.mjs"), "devin", "Stop") }] }] } }));
+    run("Stop");
+    run("PostToolUse", { tool_name: "exec", tool_input: { command: "ls" } });
+    assert.deepEqual(readLines(h, "devin").map((l) => [l.agent, l.event, l.cwd, l.entrypoint]), [["devin", "UserPromptSubmit", sub, undefined], ["devin", "PostToolUse", sub, undefined]]);
+    assert.deepEqual(readLines(h, "claude-code").map((l) => [l.event, l.entrypoint]), [["Stop", "cli"]]);
   });
 
   test("non-JSON stdin is kept as a string; no stdin is an empty string; cwd falls back to process cwd", () => {
@@ -292,6 +321,20 @@ describeSh("hook.sh", () => {
     assert.equal(byEvent.get("e2")!.cwd, "/w", "the payload cwd, read without a parse");
     assert.equal(statSync(join(h, "spool", "claude-code")).mode & 0o777, 0o700);
     for (const f of readdirSync(join(h, "spool", "claude-code"))) if (f.endsWith(".jsonl")) assert.equal(statSync(join(h, "spool", "claude-code", f)).mode & 0o777, 0o600);
+  });
+
+  test("hands a Claude Code hook call to hook.mjs when Devin CLI may have run it; Devin's own hook stays on the fast path", () => {
+    const h = freshHome();
+    const project = tmp("csh-devinproj-");
+    const env = { CODING_SH_HOME: h, DEVIN_PROJECT_DIR: project, DEVIN_CONFIG_HOME: tmp("csh-devincfg-") };
+    nodeStarts();
+    assert.equal(runHook_sh(["claude-code", "Stop"], "{}", env, project).code, 0);
+    assert.equal(nodeStarts(), 1);
+    assert.equal(runHook_sh(["devin", "Stop"], "{}", env, project).code, 0);
+    assert.equal(runHook_sh(["claude-code", "Stop"], "{}", { CODING_SH_HOME: h }, project).code, 0);
+    assert.equal(nodeStarts(), 0);
+    assert.equal(readLines(h, "devin").length, 2, "the call handed to hook.mjs and Devin's own");
+    assert.equal(readLines(h, "claude-code").length, 1);
   });
 
   test("a cwd it cannot copy into JSON as is falls back to the process cwd", () => {
@@ -721,19 +764,23 @@ const write = fs.appendFileSync;
 process.on("exit", () => write(${JSON.stringify(log)}, touched.map((t) => t + "\\n").join("")));
 `,
     );
-    for (const event of ["SessionStart", "UserPromptSubmit", "beforeSubmitPrompt", "PostToolUse"]) {
-      const r = spawnSync(process.execPath, [...tsNodeArgs(), "--import", pathToFileURL(tracer).href, HOOK_TS, "claude-code", event], {
-        input: JSON.stringify({ session_id: "s1", hook_event_name: event, cwd: join(repo, "sub") }),
-        env: { ...process.env, CODING_SH_HOME: h, CODING_SH_NO_AUTO_INGEST: "1", CODING_SH_NO_PROXY_AUTOSTART: "1" },
-        encoding: "utf8",
-      });
-      assert.equal(r.status, 0, r.stderr);
-      assert.equal(r.stdout, "");
+    // Devin CLI runs these hooks too: the hook then reads Devin's hook files up to DEVIN_PROJECT_DIR.
+    const devin = { DEVIN_PROJECT_DIR: repo, DEVIN_CONFIG_HOME: join(dir, "devin-config") };
+    for (const extra of [{}, devin]) {
+      for (const event of ["SessionStart", "UserPromptSubmit", "beforeSubmitPrompt", "PostToolUse"]) {
+        const r = spawnSync(process.execPath, [...tsNodeArgs(), "--import", pathToFileURL(tracer).href, HOOK_TS, "claude-code", event], {
+          input: JSON.stringify({ session_id: "s1", hook_event_name: event, cwd: join(repo, "sub") }),
+          env: { ...process.env, CODING_SH_HOME: h, CODING_SH_NO_AUTO_INGEST: "1", CODING_SH_NO_PROXY_AUTOSTART: "1", ...extra },
+          encoding: "utf8",
+        });
+        assert.equal(r.status, 0, r.stderr);
+        assert.equal(r.stdout, "");
+      }
     }
     assert.ok(existsSync(log), "the fs tracer ran");
     assert.equal(readFileSync(log, "utf8"), "", "the hook touched .git");
-    const lines = readLines(h, "claude-code");
-    assert.equal(lines.length, 4);
+    const lines = [...readLines(h, "claude-code"), ...readLines(h, "devin")];
+    assert.deepEqual(lines.map((l) => l.agent), [...Array(4).fill("claude-code"), ...Array(4).fill("devin")]);
     assert.deepEqual(lines.filter((l) => "git" in l), []);
   });
 

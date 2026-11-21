@@ -39,7 +39,7 @@ coding.sh          # opens the viewer
 ```
 
 `init` points each detected agent's hooks at `~/.coding.sh/bin/hook.sh` (`hook.mjs` on Windows)
-and registers the coding.sh MCP server with Claude Code, Codex, Cursor, OpenCode and Gemini CLI.
+and registers the coding.sh MCP server with Claude Code, Codex, Cursor, OpenCode, Gemini CLI and Devin CLI.
 Every config file it edits is backed up first. After that, use your agents as usual. New sessions
 appear without an ingest step.
 

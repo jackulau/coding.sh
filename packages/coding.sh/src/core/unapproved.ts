@@ -396,7 +396,7 @@ const PERMISSION_TYPE = /^(?:permission_prompt|ToolPermission)$/i;
 /** The tool a permission prompt names: "Claude needs your permission to use Bash". */
 const PERMISSION_TOOL = /permission to use [`'"]?([\w.:-]*\w)/i;
 /** Calls that start a subagent: they stay open while it runs, so a prompt is never about them. */
-const SPAWN_TOOL = /^(?:Agent|Task|spawn_agent|invoke_agent)$/;
+const SPAWN_TOOL = /^(?:Agent|Task|spawn_agent|invoke_agent|run_subagent)$/;
 
 const nonEmpty = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
 

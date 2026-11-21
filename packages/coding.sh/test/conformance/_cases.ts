@@ -109,6 +109,8 @@ export const SPOOL_CASES: SpoolCase[] = [
   { rel: "copilot-cli/real/hooks.spool.jsonl", real: true },
   { rel: "droid/hooks.spool.jsonl", real: false },
   { rel: "droid/real/hooks.spool.jsonl", real: true },
+  { rel: "devin/hooks.spool.jsonl", real: false },
+  { rel: "devin/real/hooks.spool.jsonl", real: true },
   { rel: "goose/hooks.spool.jsonl", real: false },
   { rel: "goose/real/hooks.spool.jsonl", real: true },
   { rel: "pi/extension.spool.jsonl", real: false },

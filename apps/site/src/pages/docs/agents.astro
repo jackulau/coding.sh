@@ -202,6 +202,7 @@ node "C:/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>      # on Win
     <li><strong>Amp</strong> keeps threads on its servers, so there are no past sessions to import.</li>
     <li><strong>Goose</strong> hooks carry no model or tool output. Importing past sessions adds them.</li>
     <li><strong>Aider</strong> has no hooks. Run it as <code>coding.sh run -- aider …</code>, which reads each reply's tokens and cost from Aider's analytics log.</li>
+    <li><strong>Devin CLI</strong> also runs Claude Code's hooks. coding.sh records those calls as Devin's, and skips one when its Devin hook records the same event, so each event is stored once. Past sessions are not imported.</li>
   </ul>
 
   <h2 id="run">Record any other command</h2>

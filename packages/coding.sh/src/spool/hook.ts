@@ -35,6 +35,10 @@
 // - Parent agents' session ids in the env (CLAUDE_CODE_SESSION_ID,
 //   CODEX_THREAD_ID: this agent was started from their shell tool) are recorded
 //   as spawnedBy (./spawned.ts).
+// - Devin CLI runs Claude Code's hooks too. A `claude-code` call that Devin
+//   made (DEVIN_PROJECT_DIR is set and the payload names no Claude transcript)
+//   is recorded as `devin`, or writes nothing when a coding.sh hook for Devin
+//   writes that event's line as well (./devin.ts).
 //
 // Work done: read stdin (synchronously, capped at 64 MB; a TTY counts as empty),
 // JSON.parse it when possible, redact it when ./gate.ts finds it may hold a
@@ -46,13 +50,15 @@
 // --background` and does not wait for it (./kick.ts).
 //
 // Imports: node:fs, node:path, node:os only (via ./write.ts, ./kick.ts,
-// ./gate.ts and ../core/paths.ts, plus the pure ../integrations/gateway/ids.ts).
+// ./gate.ts, ./devin.ts and ../core/paths.ts, plus the pure
+// ../integrations/gateway/ids.ts).
 // The redaction rules (./redact.ts with ../core/redact.ts and ../core/toml.ts,
 // bundled to dist/hook-redact.mjs) are imported only for a payload ./gate.ts
 // says may hold a secret; node:child_process only when an ingest starts.
 import { fstatSync, readSync, writeSync } from "node:fs";
 import type { SpoolLine } from "../core/types.ts";
 import { gatewayFromEnv } from "../integrations/gateway/ids.ts";
+import { devinHookAgent } from "./devin.ts";
 import { needsRedaction } from "./gate.ts";
 import { hostOf } from "./host.ts";
 import { kickIngest, kickProxy } from "./kick.ts";
@@ -195,20 +201,25 @@ async function main(): Promise<void> {
         cwd: typeof payloadCwd === "string" && payloadCwd ? payloadCwd : process.cwd(),
         raw: inlineable ? raw : undefined,
       };
-      if (env.CODING_SH_RUN_ID) line.runId = env.CODING_SH_RUN_ID;
-      const host = hostOf(env);
-      if (host) line.host = host;
-      // Hooks inherit the agent's env (Claude Code settings env included).
-      const gateway = gatewayFromEnv(env);
-      if (gateway) line.gateway = gateway;
-      // Claude Code says how it was launched: `sdk-cli` for `claude -p`, `cli` in a terminal.
-      if (agent === "claude-code" && env.CLAUDE_CODE_ENTRYPOINT) line.entrypoint = env.CLAUDE_CODE_ENTRYPOINT.slice(0, 64);
-      // Started from another agent's shell tool: that agent's session id is in the env (./spawned.ts).
-      const spawnedBy = spawnedByFromEnv(env);
-      if (spawnedBy) line.spawnedBy = spawnedBy;
-      appendSpool(line, env, { rawText: text, redact: await lineRedactor(text, env) });
-      if (truncated) logSpoolError(new Error(`stdin truncated at ${MAX_STDIN_BYTES} bytes`), { agent, event }, env);
-      captured = true;
+      // Devin runs Claude Code's hooks too: the call is Devin's, or a copy of a line Devin's own hook writes.
+      const devin = agent === "claude-code" && env.DEVIN_PROJECT_DIR ? devinHookAgent(event, raw, text, env, line.cwd) : undefined;
+      if (devin === "devin") line.agent = "devin";
+      if (devin !== "drop") {
+        if (env.CODING_SH_RUN_ID) line.runId = env.CODING_SH_RUN_ID;
+        const host = hostOf(env);
+        if (host) line.host = host;
+        // Hooks inherit the agent's env (Claude Code settings env included).
+        const gateway = gatewayFromEnv(env);
+        if (gateway) line.gateway = gateway;
+        // Claude Code says how it was launched: `sdk-cli` for `claude -p`, `cli` in a terminal.
+        if (line.agent === "claude-code" && env.CLAUDE_CODE_ENTRYPOINT) line.entrypoint = env.CLAUDE_CODE_ENTRYPOINT.slice(0, 64);
+        // Started from another agent's shell tool: that agent's session id is in the env (./spawned.ts).
+        const spawnedBy = spawnedByFromEnv(env);
+        if (spawnedBy) line.spawnedBy = spawnedBy;
+        appendSpool(line, env, { rawText: text, redact: await lineRedactor(text, env) });
+        if (truncated) logSpoolError(new Error(`stdin truncated at ${MAX_STDIN_BYTES} bytes`), { agent: line.agent, event }, env);
+        captured = true;
+      }
     }
   } catch (e) {
     logSpoolError(e, { agent, event }, env);

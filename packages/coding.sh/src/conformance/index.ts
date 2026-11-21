@@ -277,8 +277,8 @@ export class Checker {
       this.subEndKeys.push(`${sid}\0${subId}`);
     }
 
-    // Turns.
-    if (kind === "turn.end" && e.turnId) {
+    // Turns. A Stop that fired because a Stop hook blocked the last one closes nothing (as in buildSession).
+    if (kind === "turn.end" && e.turnId && p.stopHookActive !== true) {
       const k = `${sid}\0${e.turnId}`;
       const first = this.turnEnds.get(k);
       if (first) this.flag("turn-end-repeated", { ...at, detail: `turn ${short(e.turnId)} closed by ${short(first)} and ${short(id)}` });

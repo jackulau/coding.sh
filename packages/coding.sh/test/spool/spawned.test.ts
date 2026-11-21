@@ -64,6 +64,7 @@ describe("runsAgentCli", () => {
       ["npx @google/gemini-cli -p hi", "gemini-cli"],
       ["OPENAI_API_KEY=x timeout 600 codex exec hi", "codex"],
       ["echo $(codex exec hi)", "codex"],
+      ["devin -p -- 'fix the test'", "devin"],
     ])
       assert.ok(runsAgentCli(cmd!, agent!), cmd);
     for (const [cmd, agent] of [
@@ -73,6 +74,7 @@ describe("runsAgentCli", () => {
       ["codexify", "codex"],
       ["echo claude", "claude-code"],
       ["codex exec hi", "unknown-agent"],
+      ["cat devin.md", "devin"],
     ])
       assert.ok(!runsAgentCli(cmd!, agent!), cmd);
   });
