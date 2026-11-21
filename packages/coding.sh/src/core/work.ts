@@ -251,11 +251,14 @@ export function resumeCommand(s: Pick<Session, "id" | "agent" | "provider">): st
   return undefined;
 }
 
+/** An age as the CLI's `ago` gives it, floored, so one instant reads the same in a reason and a "Started" row: 27s, 4m, 1h, 3d. */
 function short(ms: number): string {
-  const m = Math.max(0, Math.round(ms / 60e3));
+  const s = Math.max(0, Math.floor(ms / 1e3));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
   if (m < 60) return `${m}m`;
-  const h = Math.round(m / 60);
-  return h < 48 ? `${h}h` : `${Math.round(h / 24)}d`;
+  const h = Math.floor(m / 60);
+  return h < 48 ? `${h}h` : `${Math.floor(h / 24)}d`;
 }
 
 const WAIT_WORDS: Record<Waiting["kind"], string> = {

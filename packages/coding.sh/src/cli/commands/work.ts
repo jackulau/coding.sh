@@ -45,6 +45,7 @@ async function list(c: CommandContext): Promise<number> {
     const { sessions, truncated } = await loadWorkSessions(ctx.index, { since: w.since });
     const q = buildWorkQueue(sessions, { all, overlay, agents, place });
     if (!q.items.length && agents.length) await rejectAgentTypos(ctx.index, agents);
+    await distinctFiles(ctx, q.items.slice(0, limit), sessions);
     if (out.json) {
       out.data({ ...workJson(q, { since: w.since, limit, truncated }), ...pendingField(backlog) });
       return 0;
@@ -52,6 +53,18 @@ async function list(c: CommandContext): Promise<number> {
     printQueue(c, q, { limit, all, window: w, truncated, backlog });
     return 0;
   });
+}
+
+/**
+ * An item whose files several sessions changed counts each path once, as `work show` does: a
+ * sum of the sessions' own counts would count a path two sessions touched twice.
+ */
+async function distinctFiles(ctx: Context, items: readonly WorkItem[], sessions: readonly Session[]): Promise<void> {
+  const byId = new Map(sessions.map((s) => [s.id, s]));
+  for (const i of items) {
+    const changers = i.sessionIds.filter((id) => (byId.get(id)?.stats.filesChanged ?? 0) > 0).length;
+    if (changers > 1) await workFiles(ctx.index, i, sessions);
+  }
 }
 
 function printQueue(c: CommandContext, q: WorkQueue, o: { limit: number; all: boolean; window: Window; truncated: boolean; backlog: IngestBacklog }): void {

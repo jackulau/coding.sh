@@ -113,6 +113,41 @@ describe("work against a seeded store", () => {
   });
 });
 
+describe("work and work show agree on one item", () => {
+  let sb: Sandbox;
+  before(async () => {
+    sb = sandbox();
+    // Two sessions of one item changed a.ts: the list counts it once, as show does.
+    const root = sess("multi", 115 * MIN, { title: "two agents", stats: { filesChanged: 2, testsFailed: 2 } });
+    const sub = sess("multi:sub:a1", 114 * MIN, { parent: { sessionId: "multi", subagentId: "a1" }, stats: { filesChanged: 2 } });
+    const ev = (id: string, sessionId: string, path: string) => ({ id, sessionId, agent: "claude-code", ts: now - 113 * MIN, kind: "file.change", payload: { path } }) as unknown as AgentEvent; // slop-allow chained-as: an event with only the fields the queue reads
+    const wait = sess("waits", 2 * MIN, { endedAt: undefined, stats: { latency: { wallMs: MIN }, waiting: { kind: "permission", at: now - 27e3, toolUseId: "t1" } } as Extra["stats"] });
+    await sb.seed([root, sub, wait], [ev("e1", "multi", "a.ts"), ev("e2", "multi", "b.ts"), ev("e3", "multi:sub:a1", "a.ts"), ev("e4", "multi:sub:a1", "c.ts")]);
+  });
+  after(() => sb.cleanup());
+
+  test("a path two sessions changed counts once in the list, as in work show", async () => {
+    const list = await runCmd(work, sb, { json: true, flags: { all: true } });
+    assert.equal(list.error, undefined, list.error?.stack);
+    const row = list.json.items.find((i: { id: string }) => i.id === workItemId("multi"));
+    const show = await runCmd(work, sb, { action: "show", positionals: ["multi"], json: true });
+    assert.equal(show.json.filesChanged, 3);
+    assert.equal(row.filesChanged, show.json.filesChanged);
+  });
+
+  test("one instant reads the same in Why and Started, and a wait under a minute reads in seconds", async () => {
+    const r = await runCmd(work, sb, { action: "show", positionals: ["multi"] });
+    assert.equal(r.error, undefined, r.error?.stack);
+    const why = /Why +ended (\S+) ago/.exec(r.stdout)?.[1];
+    const last = /last active (\S+) ago/.exec(r.stdout)?.[1];
+    assert.ok(why && last, r.stdout);
+    assert.equal(why, last);
+    const w = await runCmd(work, sb, { action: "show", positionals: ["waits"] });
+    assert.match(w.stdout, /waiting on a permission prompt for \d+s/);
+    assert.doesNotMatch(w.stdout, /for 0m/);
+  });
+});
+
 describe("the CLI on an imported workflow run", () => {
   const PROJECTS = fileURLToPath(new URL("../fixtures/workflows/claude-code-running/projects", import.meta.url));
   const ROOT = "5a1d7c3e-0b2f-4c6d-9e8f-1a2b3c4d5e6f";

@@ -130,3 +130,11 @@ test("config get <section> prints a file-only section ([refine]) like the others
     writeFileSync(file, "");
   }
 });
+
+test("config get suggests a close key, as config set does", async () => {
+  const g = await runCmd(config, sb, { action: "get", positionals: ["capture.mod"] });
+  assert.equal(g.error?.reason, "unknown_key");
+  assert.equal(g.error?.suggestion, "coding.sh config get capture.mode");
+  const s = await runCmd(config, sb, { action: "set", positionals: ["capture.mod", "full"] });
+  assert.equal(s.error?.suggestion, "coding.sh config set capture.mode full");
+});
