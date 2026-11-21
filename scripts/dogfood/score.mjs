@@ -197,6 +197,27 @@ export function invalidSummary(tasks) {
   return { invalidTasks: bad.map((t) => t.id), invalidReasons: Object.fromEntries(bad.map((t) => [t.id, t.reason ?? { check: "unknown", why: [...(t.errors ?? []), ...(t.referenceFailures ?? [])].join(" | ").slice(0, 300) || "no reason recorded" }])) };
 }
 
+/** Notes for cli.guidelines: the modes it skipped and why, and the cases whose process did not start. */
+export function guidelinesNotes(g) {
+  const out = [];
+  if (g.skipped) out.push(`cli.guidelines: modes ${g.skipped.modes.join(", ")} skipped, not scored: ${g.skipped.reason}`);
+  if (g.scorerErrors?.length) out.push(`cli.guidelines: ${g.scorerErrors.length} case(s) not scored, the scorer could not start them: ${g.scorerErrors.slice(0, 5).map((e) => `${e.id}/${e.mode} (${e.error})`).join(", ")}`);
+  return out;
+}
+
+/** Notes for capture.health: the coding.sh that wrote the copied index, and the incomplete sessions by agent and what they miss. */
+export function healthNotes(h) {
+  const out = [];
+  if (h.writer?.version) out.push(`capture.health: the index was last written by coding.sh ${h.writer.version}${h.writer.schema === undefined ? "" : ` (schema v${h.writer.schema})`}`);
+  const by = h.incompleteCounts?.byAgent ?? {};
+  const agents = Object.keys(by).sort((a, b) => by[b] - by[a] || a.localeCompare(b));
+  if (agents.length) {
+    const what = (a) => Object.entries(h.incompleteCounts.byMissing?.[a] ?? {}).sort((x, y) => y[1] - x[1]).map(([k, n]) => `${k} ${n}`).join(", ");
+    out.push(`capture.health incomplete of ${h.n}: ${agents.map((a) => `${a} ${by[a]} (${what(a)})`).join("; ")}`);
+  }
+  return out;
+}
+
 function lastFull(history) {
   for (let i = history.length - 1; i >= 0; i--) if (history[i].mode === "full") return history[i];
   return undefined;
@@ -236,7 +257,8 @@ export async function score(opts = {}) {
   if (built) {
     try {
       const g = runGuidelines();
-      put("cli.guidelines", comp(g.value, { n: g.n, passed: g.passed, target: 1, weight: WEIGHTS["cli.guidelines"], unit: "rate", failures: g.failures.slice(0, 20).map((f) => `${f.id}/${f.mode}: ${f.fails.join("; ")}`), source: "scripts/dogfood/cli-guidelines.mjs (scorer-owned; test/cli/guidelines.test.ts does not exist yet)" }));
+      put("cli.guidelines", comp(g.value, { n: g.n, passed: g.passed, skippedModes: g.skipped, scorerErrors: g.scorerErrors?.length ? g.scorerErrors.map((e) => `${e.id}/${e.mode}: ${e.error}`) : undefined, target: 1, weight: WEIGHTS["cli.guidelines"], unit: "rate", failures: g.failures.slice(0, 20).map((f) => `${f.id}/${f.mode}: ${f.fails.join("; ")}`), source: "scripts/dogfood/cli-guidelines.mjs (scorer-owned; test/cli/guidelines.test.ts does not exist yet)" }));
+      notes.push(...guidelinesNotes(g));
     } catch (e) {
       put("cli.guidelines", comp(null, { error: e.message }));
     }
@@ -251,8 +273,9 @@ export async function score(opts = {}) {
   } catch (e) {
     health = { value: null, error: e.message };
   }
-  put("capture.health", comp(health.value, { n: health.n, reason: health.reason, error: health.error, incomplete: health.incomplete, excluded: health.excluded, warning: health.warning, group: "conformance", unit: "rate", target: 1 }));
+  put("capture.health", comp(health.value, { n: health.n, reason: health.reason, error: health.error, writer: health.writer, incomplete: health.incomplete, incompleteCounts: health.incompleteCounts, excluded: health.excluded, warning: health.warning, group: "conformance", unit: "rate", target: 1 }));
   if (health.warning) notes.push(`capture.health: ${health.warning}`);
+  notes.push(...healthNotes(health));
   if (health.value === null) notes.push(`capture.health not measured: ${health.reason ?? health.error}`);
 
   // ---- perf

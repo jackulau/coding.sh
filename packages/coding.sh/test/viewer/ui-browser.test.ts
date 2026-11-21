@@ -1242,8 +1242,8 @@ describe("viewer UI: failed requests and the top bar", { skip: chrome ? false : 
     const page = await open(1280);
     try {
       const tabs = "[...document.querySelectorAll('.topbar nav a')].map((a) => [a.getAttribute('href'), a.getAttribute('aria-current')])";
-      assert.deepEqual((await page.eval(tabs)).map(([href]: string[]) => href), ["#/", "#/explore", "#/experiments", "#/benchmarks", "#/workflows"]);
-      for (const hash of ["#/workflows", "#/experiments", "#/benchmarks", "#/explore", "#/events", "#/"]) {
+      assert.deepEqual((await page.eval(tabs)).map(([href]: string[]) => href), ["#/", "#/work", "#/explore", "#/experiments", "#/benchmarks", "#/workflows"]);
+      for (const hash of ["#/work", "#/workflows", "#/experiments", "#/benchmarks", "#/explore", "#/events", "#/"]) {
         await page.eval(`location.hash = ${JSON.stringify(hash)}`);
         const want = hash === "#/events" ? "#/" : hash;
         await page.waitFor(`${tabs}.filter(([, c]) => c === 'page').map(([h]) => h).join() === ${JSON.stringify(want)}`, `${hash} marks ${want}`);

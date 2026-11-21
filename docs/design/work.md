@@ -6,7 +6,8 @@ Design for the first version of `coding.sh work`. It answers one question for a 
 Status: built, except the items under "Later". The code is `packages/coding.sh/src/core/waiting.ts`
 (the fold stat), `src/core/work.ts` (items and the queue), `src/core/work-overlay.ts` (acks and
 snoozes) and `src/cli/commands/work.ts` (the command). The user docs are
-the CLI reference ([`coding.sh work`](../reference/cli.md#codingsh-work)) and the API reference (`stats.waiting`).
+the CLI reference ([`coding.sh work`](../reference/cli.md#codingsh-work)), the API reference (`stats.waiting`, `GET /api/work`)
+and the viewer guide ([Open the viewer](../guides/explore.md#open-the-viewer)).
 
 ## Why sessions are the right base
 
@@ -50,11 +51,21 @@ waiting?: { kind: "permission" | "question" | "plan" | "turn"; at: number; toolU
   wait names the last open call on the notification's thread, or else the last open call anywhere,
   since a hook notification may not name the subagent. When the prompt names its tool (Devin CLI's
   prompts do) and a call of that tool is open, the wait names that tool's last open call. A call
-  that starts a subagent (`Agent`, `Task`, `run_subagent`) is never the call a prompt is about.
+  that starts a subagent (`Agent`, `Task`, `spawn_agent`, `invoke_agent`, `run_subagent`) is
+  never the call a prompt is about. `waiting.ts` and `unapproved.ts` share that list (`SPAWN_TOOL`).
   With no open call (Gemini CLI sends its notification before the call starts) the wait has no
   `toolUseId`. Devin's calls have no ids, so the wait keeps the tool of the call it names, and
   only a call of that tool ending clears it. Transcript notifications never set it.
 - `question`: an open call of a question tool (`QUESTION_TOOL` in the same file).
+- A request a host app's store reports open: T3 Code's pending approvals (`permission`) and
+  questions (`question`). The adapter reads them from T3's runtime requests and their
+  `approval_request` and `user_input_request` items, and emits a notification with a `requestId`,
+  its kind, its tool when it has one, and its prompt or first question as `text`. A request kind
+  T3 does not put to the user (a provider's own tool call, a sign-in refresh) is skipped. The
+  notification counts in a backfill too, since the store holds current state. The wait names no
+  call. It clears when the store reports the request resolved, expired or cancelled (a
+  `request_resolved` notification with the same `requestId`), or on the thread's next
+  `tool.start` or prompt.
 - `plan`: an open plan-approval call (`ExitPlanMode`).
 - `turn`: the main thread's turn ended. The fold keeps it for every session, and the stat shows it
   only for a session launched interactively (`stats.launch`). Today only Claude Code and Codex
@@ -72,8 +83,9 @@ waiting?: { kind: "permission" | "question" | "plan" | "turn"; at: number; toolU
   stored. Age rules apply on read, not in the fold.
 - It bumps `SESSION_FOLD_VERSION`, so stored sessions are folded again.
 
-Agents whose hooks send no permission signal (Codex, Cursor, OpenCode, T3 Code today) never set
-`permission`. Their waits show up as stalls, and the queue says so.
+Agents whose hooks send no permission signal (Codex, Cursor, OpenCode) never set `permission`.
+Their waits show up as stalls, and the queue says so. A thread T3 Code runs reports its prompts
+through T3's store, whichever agent it runs.
 
 ## The queue
 
@@ -100,7 +112,7 @@ An item shows the most urgent cause it has that is not acknowledged. A wait or a
 12 hours gets a "probably closed" badge, and its next step offers the resume command or an ack,
 since a closed terminal may send no session end.
 
-The agents that report prompts are Claude Code, Gemini CLI and Devin CLI. The header names the other agents
+The agents that report prompts are Claude Code, Gemini CLI, Devin CLI and T3 Code. The header names the other agents
 in view. Items with nothing to act on are hidden, with a reason: running, done, acknowledged or
 snoozed. `--all` shows them. Every row carries a reason and a next step.
 
@@ -135,6 +147,12 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
 - The statusline adds "N need you" when items are blocked on you or failed, and its JSON a
   `needYou` field. On every render it first reads new hook events, for at most 400 ms and not while
   another ingest holds the lock, then the 7-day window.
+- The local viewer's Work page (`#/work`, `src/viewer/work.ts`, the tab after Sessions) reads the
+  queue through `GET /api/work`, which builds it with `readWorkQueue` and `workJson` like the
+  command, so its items equal `work --json` for the same store and filters. The agent, repo, since
+  and `all` filters live in the URL. Ack and snooze buttons post to `/api/work/ack` and
+  `/api/work/snooze`, which write `work.json` by the command's rules. Only `coding.sh ui` serves
+  it; `coding.sh serve` answers 404.
 - The MCP `status` tool gets a `work` field, so an agent can read the queue without a new tool:
   the counts, `needYou`, and the first 10 items as `work --json` gives them, over the same 7-day
   window, with acks and snoozes applied. `more` counts the items left out. The tool stays
@@ -153,8 +171,8 @@ queue, plus up to 400 ms when new hook events wait to be read.
 
 ## Later
 
-A viewer page; T3 Code's pending approvals, from the provider thread status the adapter already
-reads; a reply path for hook protocols that accept one; branch grouping with merge, split and name;
+T3 Code's secret and link requests (`secret_request` and `link_request` items),
+which are not read yet; a reply path for hook protocols that accept one; branch grouping with merge, split and name;
 done by a check command; budgets; cloud agents; dependencies between items; notifications.
 
 ## Tests
@@ -167,10 +185,19 @@ done by a check command; budgets; cloud agents; dependencies between items; noti
   `tool.end`. The Gemini CLI hook fixture's `ToolPermission` notification blocks. `idle_prompt`
   never sets a wait, a turn wait needs an interactive launch, and the text is redacted. For Devin
   CLI, whose calls have no ids, a prompt stays while another tool's call or an open `run_subagent`
-  ends, and clears when its own call ends.
+  ends, and clears when its own call ends. An open `invoke_agent` (or any other spawn tool) is
+  never the call a prompt names. A host request blocks in a backfill and clears on its own
+  resolution only, even when the resolution sorts first.
+- `test/adapters/t3code.test.ts`: a T3 store with an approval and a question still pending gives
+  a `permission` and a `question` wait with their text. `work --json` shows both threads blocked
+  on you, and once T3 resolves the approval (its runtime request row alone changes) the thread is
+  no longer blocked.
 - `test/core/work.test.ts`: with two prompts in a row, acknowledging the first leaves the second in
   the queue. An agent with no prompt signal falls to stalled with the approval hint, and Devin CLI
-  does not. It also covers
+  and a T3 Code thread do not. It also covers
   bucket order, API groups, harness and host children, snoozes, and a corrupt overlay.
-- The permission prompts in these tests are synthetic. The `scripts/e2e` captures run with
+- `test/viewer/work.test.ts`: `GET /api/work` returns the items `work --json` returns for the same
+  seeded store and filters, and an ack or snooze posted to the viewer is one the command sees.
+  `test/viewer/work-browser.test.ts` drives the page in headless Chrome.
+- The permission prompts in these tests, and the T3 store rows, are synthetic. The `scripts/e2e` captures run with
   permissions bypassed, so no real prompt has been recorded yet.

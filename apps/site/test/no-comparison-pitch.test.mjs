@@ -42,6 +42,10 @@ const ALLOW = [
   [/^docs\/how-to\/trace-durable-workflow\.md$/, "LangSmith's OTel-only mode is a way to send traces in"],
   [/^docs\/integrations\/eve\.md$/, "eve's Braintrust reporter names its scores"],
   [/^docs\/troubleshooting\.md$/, "an existing ccusage status line the installer keeps"],
+  [/^docs\/integrations\/langfuse\.md$/, "Langfuse SDKs are a way to send traces in"],
+  [/^docs\/README\.md$/, "the docs index lists integrations/langfuse.md by its file name"],
+  [/^apps\/site\/src\/components\/docs\/markdown\.ts$/, "SITE_PAGES maps integrations/langfuse.md to its page by file name"],
+  [/^docs\/reference\/(?:api|query)\.md$/, "the langfuse.* span attributes the OTel receiver reads"],
   [/^apps\/site\/public\/og\/manifest\.json$/, "generated card titles, the compare pages' among them (og-fresh.test.mjs checks them against the pages)"],
 ];
 // A line that only links or labels a compare page.

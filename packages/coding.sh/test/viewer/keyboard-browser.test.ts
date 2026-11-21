@@ -214,7 +214,7 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     const selected = "document.querySelector('#steps .st[aria-selected=true]')";
     await p.waitFor(`${selected} && /prompt number 1/.test(${selected}.textContent)`, "the session, on its first prompt");
     // The header row: turn number, the prompt's first line only, and the time into the session.
-    const turn2 = "[...document.querySelectorAll('#steps .st.turn')].find((r) => /Turn 2/.test(r.textContent))";
+    const turn2 = "[...document.querySelectorAll('#steps .st.turn')].find((r) => /Prompt 2/.test(r.textContent))";
     assert.equal(await p.eval(`${turn2}.querySelector('.arg').textContent`), "second prompt, first line");
     assert.equal(await p.eval(`${turn2}.querySelector('.d time').textContent`), "0:12");
     // Two presses from open reach the third turn.
@@ -235,15 +235,15 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     await p.press("{");
     await p.waitFor(`/prompt number 3/.test(${selected}.textContent)`, "{ back to the turn's start");
     await p.press("{");
-    await p.waitFor(`/Turn 2/.test(${selected}.textContent)`, "{ again to turn 2");
+    await p.waitFor(`/Prompt 2/.test(${selected}.textContent)`, "{ again to turn 2");
     // Past the last turn, } stays put.
     for (let i = 0; i < 3; i++) await p.press("}");
     await p.waitFor(`/prompt number 4/.test(${selected}.textContent)`, "the last turn");
     // The minimap marks each turn start; the help sheet and the hint bar list the keys from KEYMAP.
     assert.equal(await p.eval("document.querySelectorAll('.tl-map:not([hidden]) i.t').length"), 4);
-    assert.match(await p.eval("document.querySelector('.hintbar')?.textContent || ''"), /\{\}turns/);
+    assert.match(await p.eval("document.querySelector('.hintbar')?.textContent || ''"), /\{\}prompts/);
     await p.press("?");
-    await p.waitFor("/Next turn/.test(document.body.textContent) && /Previous turn/.test(document.body.textContent)", "the help sheet lists the turn keys");
+    await p.waitFor("/Next prompt/.test(document.body.textContent) && /Previous prompt/.test(document.body.textContent)", "the help sheet lists the turn keys");
     assert.deepEqual(p.errors, []);
   });
 
@@ -258,7 +258,7 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     assert.equal(await p.eval("document.querySelectorAll('#steps .st').length"), 8, "17 steps in 8 rows");
     // The folded row: the prompt, its length and tool calls, what it did in words, and its time.
     const row1 = `${folded}[0]`;
-    assert.equal(await p.eval(`${row1}.querySelector('.t').textContent`), "Turn 1");
+    assert.equal(await p.eval(`${row1}.querySelector('.t').textContent`), "Prompt 1");
     assert.equal(await p.eval(`${row1}.querySelector('.arg').textContent`), "fix the parser");
     assert.equal(await p.eval(`${row1}.querySelector('.sum').textContent`), "9.0s · 4 tool calls · read 2 files, 1 edit +1 −1, 1 command");
     assert.equal(await p.eval(`${row1}.getAttribute('aria-expanded')`), "false");
@@ -311,7 +311,7 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     await p.waitFor(`${folded}.length === 3 && /npm run build/.test(${selected}?.textContent || '')`, "the session, on its failure");
     const row1 = `${folded}[0]`;
     const width = (sel: string) => p.eval(`${row1}.querySelector('${sel}').getBoundingClientRect().width`) as Promise<number>;
-    assert.equal(await p.eval(`${row1}.querySelector('.t').textContent`), "Turn 1", "the word stays for screen readers");
+    assert.equal(await p.eval(`${row1}.querySelector('.t').textContent`), "Prompt 1", "the word stays for screen readers");
     assert.ok((await width(".t")) < 30, "the number column is narrow");
     assert.equal(await width(".sum"), 0, "no length or tool count");
     assert.equal(await p.eval(`(() => { const a = ${row1}.querySelector('.arg'); return a.scrollWidth <= a.clientWidth; })()`), true, "the prompt is not cut");
@@ -444,24 +444,24 @@ describe("viewer keyboard and focus in a browser", { skip: chrome ? false : "no 
     await p.waitFor(`document.querySelectorAll('#chat .chat-text').length === 20 && ${pressed} === 'Chat'`, "the link opens the chat");
     // In Chat, } and { move between prompts and j and k between messages; the hint bar lists them.
     const atTop = "(() => { const c = document.querySelector('#chat'), t = c.getBoundingClientRect().top; const m = [...c.querySelectorAll('.chat-msg')].find((e) => Math.abs(e.getBoundingClientRect().top - t) < 3); return m ? m.querySelector('.chat-who span').textContent + '|' + m.textContent : ''; })()";
-    assert.match(await p.eval("document.querySelector('.hintbar').textContent"), /jkmove.*\{\}turns/);
+    assert.match(await p.eval("document.querySelector('.hintbar').textContent"), /jkmove.*\{\}prompts/);
     await p.eval("document.querySelector('#chat').scrollTop = 0; document.querySelector('#chat').focus()");
     await p.press("}");
-    await p.waitFor(`${atTop}.startsWith('Turn 1 · Prompt|')`, "} brings turn 1's prompt to the top");
+    await p.waitFor(`${atTop}.startsWith('Prompt 1|')`, "} brings turn 1's prompt to the top");
     await p.press("}");
-    await p.waitFor(`${atTop}.startsWith('Turn 2 · Prompt|')`, "} again, turn 2");
+    await p.waitFor(`${atTop}.startsWith('Prompt 2|')`, "} again, turn 2");
     await p.press("j");
     await p.waitFor(`${atTop}.startsWith('Assistant|') && /answer 2/.test(${atTop})`, "j, turn 2's reply");
     await p.press("k");
-    await p.waitFor(`${atTop}.startsWith('Turn 2 · Prompt|')`, "k, back to the prompt");
+    await p.waitFor(`${atTop}.startsWith('Prompt 2|')`, "k, back to the prompt");
     await p.press("{");
-    await p.waitFor(`${atTop}.startsWith('Turn 1 · Prompt|')`, "{, turn 1");
+    await p.waitFor(`${atTop}.startsWith('Prompt 1|')`, "{, turn 1");
     assert.equal(await p.eval("document.querySelector('#chat').hidden"), false, "still in Chat");
     // A session that only starts before its first prompt has no step line ahead of the prompt.
     p = await open("#/s/" + START + "?view=chat");
     await p.waitFor("document.querySelectorAll('#chat .chat-text').length === 4", "the chat");
     assert.equal(await p.eval("[...document.querySelectorAll('#chat .chat-work')].filter((e) => e.checkVisibility()).length"), 0, "no step line for Session starts");
-    assert.equal(await p.eval("[...document.querySelectorAll('#chat .chat-turn')].find((e) => e.checkVisibility()).querySelector('.chat-who span').textContent"), "Turn 1 · Prompt");
+    assert.equal(await p.eval("[...document.querySelectorAll('#chat .chat-turn')].find((e) => e.checkVisibility()).querySelector('.chat-who span').textContent"), "Prompt 1");
     p = await open("#/s/" + CHAT);
     await p.waitFor(`${selected} && ${pressed} === 'Steps'`, "no link, nothing remembered: Steps");
     await p.press("?");

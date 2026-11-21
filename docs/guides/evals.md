@@ -220,7 +220,9 @@ MCP tool `eval_candidates` returns the same list.
 
 `coding.sh eval validate <task>` checks that the verifier is fair: a do-nothing attempt fails, the
 reference fix passes k of k, near-misses fail, an impossible variant fails, and no future history
-leaks. When a check goes the wrong way (the reference fails, the no-op or a near-miss passes, or
+leaks. The impossible variant flips one asserted literal in a hidden test file, or in a file the
+verifier command runs or names as a test (`node check.js`, `pytest tests/`), but not a file it only reads
+(`grep`, `cat`, `diff`). When a check goes the wrong way (the reference fails, the no-op or a near-miss passes, or
 setup fails), it prints the last 12 lines of that command's output under the summary, once per
 kind of check. `--json` has each step's output in `steps[].outputTail`.
 
@@ -282,6 +284,10 @@ tree, so the verifier runs `node check.js`. To have it at `tests/check.js`, put 
 `tests/tests/check.js`. `eval import` warns when the verifier names a `tests/` path that only a
 hidden file at the root would match, since such a command finds no file, and a test runner given a
 glob that matches nothing can run zero tests and pass.
+
+Every file under `tests/` is imported as a hidden file. A `hiddenFiles` list in `task.json`, which
+`eval export` writes, only names files that must be there, so a test added to an exported task dir is
+kept.
 
 A task can start from a commit of a git repo instead of `repo/`: `"start": {"commit": "af23a50"}`
 starts from that commit of the repo the task directory is in, and `"start": {"commit": "HEAD~1",

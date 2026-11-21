@@ -119,8 +119,8 @@ SESSION                                              KIND      WHEN     MATCH
 9887c95d-2739-4dae-8222-4471386def67                 tool.end  40m ago  …re-ingested (5.3ms) ✔ applies each «migration» once (41.2ms) ▶ SqliteIndexStore…
 ```
 
-Search covers prompts, replies, tool input and tool output, and errors: error events (the
-message, a type such as `rate_limit_error`, the status code), failed model calls, tool errors, and
+Search covers prompts, replies, tool input and tool output, and errors: error events (their
+message, type such as `rate_limit_error` and status code), failed model calls, tool errors, and
 the error a subagent or a session ended with.
 Every word must match within one event. Open a hit with `coding.sh show <session>`.
 
@@ -141,6 +141,8 @@ token for this run of `ui`; the viewer needs it.
   query, Alt-click to exclude it.
 - **A session.** The timeline shows every event, with a ⚑ on each step where the run went off the
   rails. A running session gets new events every 4 seconds.
+- **Work** (<kbd>g</kbd> <kbd>w</kbd>). The [`coding.sh work`](https://coding.sh/docs/cli/work) queue,
+  with sessions linked. Ack and Snooze write the CLI's `work.json`.
 - **Explore** (<kbd>g</kbd> <kbd>x</kbd>). Six charts per day or week: sessions, failure rate,
   cost, tokens, tool error rate and p95 model-call time, split by agent, model, repo or flag.
 - **Events** (<kbd>e</kbd>). The same query as event rows, newest first. Enter opens the event's
@@ -152,11 +154,11 @@ token for this run of `ui`; the viewer needs it.
 - **Keys.** <kbd>?</kbd> lists every shortcut. <kbd>j</kbd> and <kbd>k</kbd> move through the
   list outside a text field. A focused button keeps Enter and Space, a focused link keeps Enter,
   and the arrow keys scroll the focused step detail.
-- **Theme.** The viewer follows your system's light or dark setting. The theme button in the top
-  bar picks one instead, and the browser remembers that choice.
+- **Theme.** The viewer follows your system's light or dark setting; the top bar's theme button
+  overrides it, and the browser remembers that.
 - **Copied commands.** Each value is single-quoted for sh and PowerShell. A value with a quote, a
-  control character or `& | < >` is shown but not copied, since no one quoting is safe for it in
-  every shell.
+  control character or `& | < >` is shown but not copied: no quoting is safe for it in every
+  shell.
 
 ## Follow a running session
 

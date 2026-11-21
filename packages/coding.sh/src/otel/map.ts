@@ -28,7 +28,7 @@
 //   A root span that is itself a model/tool call keeps its own events in slots 4/5 (and 3).
 //
 // Session = trace, unless a span (or its trace, or its resource) carries a
-// conversation id (gen_ai.conversation.id, session.id, ai.telemetry.metadata.sessionId);
+// conversation id (gen_ai.conversation.id, session.id, langfuse.session.id, ai.telemetry.metadata.sessionId);
 // then every trace of that conversation is a turn of one session. Spans under a
 // nested agent span go to that subagent's child session instead (childSessionId).
 //
@@ -669,6 +669,7 @@ const PREVIEW_BYTES = 512;
 const SESSION_KEYS = [
   "gen_ai.conversation.id",
   "session.id",
+  "langfuse.session.id",
   "ai.telemetry.metadata.sessionId",
   "ai.telemetry.metadata.session_id",
   "langsmith.metadata.thread_id",
@@ -897,6 +898,34 @@ export function mergeCallCopies(stored: AgentEvent, incoming: AgentEvent): Agent
 
 const conversationOf = (a: Attrs): string | undefined => str(a, ...SESSION_KEYS);
 
+/**
+ * Who and where a session ran, as Langfuse's trace attributes and the OTel semconv name them:
+ * payload.user, payload.environment and payload.release on its session.start (the --where keys
+ * user:, env: and release:). A span attribute wins over a resource attribute.
+ */
+const START_META: readonly (readonly [key: string, attrs: readonly string[]])[] = [
+  ["user", ["langfuse.user.id", "user.id", "enduser.id"]],
+  ["environment", ["langfuse.environment", "deployment.environment.name", "deployment.environment"]],
+  ["release", ["langfuse.release", "service.version"]],
+];
+/** Longest user, environment or release kept, in UTF-16 code units. */
+export const START_META_CHARS = 200;
+
+function startMeta(d: Draft, a: Attrs, resource: Attrs): Draft {
+  // The Restate server's version is not the app's (as for agentVersion).
+  const restate = str(resource, "service.namespace") === "Restate";
+  for (const [key, names] of START_META) {
+    const fromResource = restate && key === "release" ? names.filter((n) => n !== "service.version") : names;
+    const v = (str(a, ...names) ?? str(resource, ...fromResource))?.trim();
+    if (!v) continue;
+    let cut = v.slice(0, START_META_CHARS);
+    // Don't leave a lone high surrogate at the cut.
+    if (cut.length < v.length && /[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
+    d.set(key, cut);
+  }
+  return d;
+}
+
 function toolInput(v: unknown): unknown {
   const parsed = maybeJson(v as OtelValue);
   if (isObj(parsed) && parsed.command === undefined) {
@@ -1072,7 +1101,7 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
   // plumbing of a longer run, not a turn: it stays a plain span in the run's session.
   if (isRoot && !(c.durable && klass === "other")) {
     const s = draft().set("name", span.name).set("agentName", agentName).set("traceId", traceId).set("scope", c.scope.name || undefined);
-    emit(0, "session.start", startMs, s);
+    emit(0, "session.start", startMs, startMeta(s, a, c.resource));
     const resumed = c.durable?.recovered || c.durable?.waitEdge === "end";
     const prompt = resumed ? undefined : (content(str(a, "user_prompt")) ?? userText(inputMessages(a, klass === "llm" ? span : undefined)));
     const promptId = cc ? str(a, "prompt.id") : undefined;
@@ -1118,7 +1147,7 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
       .set("subagentType", agentName)
       .set("name", span.name)
       .set("traceId", traceId);
-    emit(7, "session.start", startMs, cs, inChild);
+    emit(7, "session.start", startMs, startMeta(cs, a, c.resource), inChild);
     if (prompt) emit(8, "user.message", startMs, await draft().content("text", prompt), inChild);
     if (result) emit(9, "assistant.message", endMs, await draft().content("text", result), inChild);
     emit(10, "session.end", endMs, draft().set("reason", failed ? "error" : "completed").set("error", error), { ...inChild, durationMs });

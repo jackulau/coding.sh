@@ -282,6 +282,26 @@ describe("ingest", () => {
     await index.close();
   });
 
+  it("commits a bulk drain in windows of 20,000 events, and keeps 5,000 when sinks are sent the windows", async () => {
+    const t = setup();
+    const lines: string[] = [];
+    for (let i = 0; i < 120; i++) lines.push(t.line({ session: `s${i % 3}`, kind: "notification", events: 100 }));
+    t.write(...lines);
+    let progress = 0;
+    const r = await ingest({ config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env, onProgress: () => progress++ });
+    assert.equal(r.events, 12_000);
+    assert.equal(progress, 2, "one call before the read and one after it: no checkpoint mid-drain");
+
+    const s = setup();
+    s.write(...lines);
+    const sink = new RecordingSink("rec", "full");
+    let sinkProgress = 0;
+    const rs = await ingest({ config: s.config, index: s.index, blobs: s.blobs, adapters, env: s.env, sinks: [sink], onProgress: () => sinkProgress++ });
+    assert.equal(rs.events, 12_000);
+    assert.equal(sinkProgress, 4, "checkpoints at 5,000 and 10,000 events");
+    assert.equal(sink.events.length, 12_000);
+  });
+
   it("stops at a deadline or abort with cursors on what was stored; the next run finishes with nothing lost", async () => {
     const t = setup();
     const dir = join(t.env.CODING_SH_HOME, "spool", "fake");

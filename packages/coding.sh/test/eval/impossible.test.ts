@@ -78,8 +78,11 @@ describe("verifierReferencedFiles", () => {
     await writeFile(join(dir, "hidden.test.js"), "x\n");
     await writeFile(join(dir, "node_modules", "x", "a.test.js"), "x\n");
     const got = await verifierReferencedFiles(dir, "bash ./check.sh && grep -q 'a + b' src/add.js && python -m pytest tests/ -q && go test verify_test.go && node hidden.test.js --flag=1 missing.js", new Set(["hidden.test.js"]));
-    assert.deepEqual(got, ["tests/unit/test_a.py", "verify_test.go"], "source files and plain scripts are not test files");
+    // A script the verifier runs counts whatever its name (the tamper check counts it too); a file it only greps does not.
+    assert.deepEqual(got, ["check.sh", "tests/unit/test_a.py", "verify_test.go"]);
     assert.deepEqual(await verifierReferencedFiles(dir, "cat ../../etc/passwd /etc/passwd", new Set()), []);
+    assert.deepEqual(await verifierReferencedFiles(dir, "cat check.sh && diff src/add.js check.sh", new Set()), [], "operands of read-only commands are data");
+    assert.deepEqual(await verifierReferencedFiles(dir, "node src/add.js", new Set()), ["src/add.js"]);
     const texts = await readTextFiles(dir, [...got, "nope.txt"]);
     assert.deepEqual(
       texts.map((t) => t.path),

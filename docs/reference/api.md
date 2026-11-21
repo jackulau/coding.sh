@@ -84,6 +84,7 @@ same `CODING_SH_HOME` as the server.
 | POST | [`/v1/traces`](#post-v1traces-post-v1logs-post-v1metrics) | ingest key | serve, collector |
 | POST | [`/v1/logs`](#post-v1traces-post-v1logs-post-v1metrics) | ingest key | serve, collector |
 | POST | [`/v1/metrics`](#post-v1traces-post-v1logs-post-v1metrics) | ingest key | serve, collector |
+| POST | [`/api/public/otel/v1/traces`](#post-apipublicotelv1traces) | ingest key, as Bearer or in Basic auth | serve, collector |
 | POST | [`/proxy/{path}`](#post-proxypath) | ingest key in `x-coding-sh-key` | serve |
 | GET | [`/healthz`](#get-healthz) | none | serve |
 | GET | [`/readyz`](#get-readyz) | none | serve |
@@ -134,6 +135,9 @@ same `CODING_SH_HOME` as the server.
 | GET | [`/api/ingest`](#get-apiingest) | read key or basic auth | serve, ui |
 | GET | [`/api/star`](#get-apistar-post-apistar) | ui token | ui |
 | POST | [`/api/star`](#get-apistar-post-apistar) | ui token | ui |
+| GET | [`/api/work`](#get-apiwork-post-apiworkack-post-apiworksnooze) | ui token | ui |
+| POST | [`/api/work/ack`](#get-apiwork-post-apiworkack-post-apiworksnooze) | ui token | ui |
+| POST | [`/api/work/snooze`](#get-apiwork-post-apiworkack-post-apiworksnooze) | ui token | ui |
 
 Any other path answers 404 `{"error":"not found","status":404}`.
 
@@ -247,7 +251,7 @@ OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer%20csh_ik_…
 
 Bodies are `application/json` or `application/x-protobuf`, optionally compressed. Traces and logs
 become events and sessions: one session per trace, or per conversation when spans carry
-`gen_ai.conversation.id` or `session.id`. Metrics are accepted and dropped. Event ids come from
+`gen_ai.conversation.id`, `session.id` or `langfuse.session.id`. Metrics are accepted and dropped. Event ids come from
 traceId and spanId, so re-exports insert nothing. `OPTIONS` answers CORS preflight; browser origins
 are refused unless listed in `serve.cors_origins`.
 
@@ -306,6 +310,18 @@ rest are kept and the 200 body says so (`rejectedLogRecords` for logs):
 | 415 | other `Content-Type`, or an unknown `Content-Encoding` | `{"code":3,"message":"unsupported Content-Type \"text/plain\"; use application/x-protobuf or application/json"}` |
 | 429 | ingest queue full; `Retry-After` set | `{"code":8,"message":"ingest queue is full; retry after 1s"}` |
 | 503 | store error, shutting down, or a standby replica; `Retry-After` set | `{"code":14,"message":"server is shutting down; retry"}` |
+
+### `POST /api/public/otel/v1/traces`
+
+`POST /api/public/otel/v1/traces` is `/v1/traces` at the path a Langfuse SDK sends to. On this path
+only, Basic auth also works: when the username or the password is an ingest key, the request is
+that key's. A Langfuse SDK sends its public key and secret key that way, so set one of them to an
+ingest key.
+
+Spans with `langfuse.session.id` join one session, and `langfuse.user.id`,
+`langfuse.environment` and `langfuse.release` become the `user`, `env` and `release` keys of
+[`--where`](query.md#tool-and-event-keys). There is no `/api/public/otel/v1/logs`. See
+[Langfuse SDKs](../integrations/langfuse.md).
 
 ## Model API proxy
 
@@ -743,9 +759,9 @@ skills). It is what `coding.sh harness audit` counts.
 | Field | Meaning |
 |---|---|
 | `stats.waiting` (`kind`, `at`, `toolUseId`, `text`) | What the session waits on from the user when its events end. `coding.sh work` puts the session's item in "blocked on you" or "your turn" from it ([`coding.sh work`](cli.md#codingsh-work)). Absent when nothing waits |
-| `stats.waiting.kind` | `permission` (a live hook notification asked to approve a tool call: Claude Code's `permission_prompt`, Devin CLI's `PermissionRequest` or Gemini CLI's `ToolPermission`), `question` (an open question tool call), `plan` (an open plan-approval call) or `turn` (the main thread's turn ended in a session launched interactively, so it waits for the next prompt) |
+| `stats.waiting.kind` | `permission` (a live hook notification asked to approve a tool call: Claude Code's `permission_prompt`, Devin CLI's `PermissionRequest` or Gemini CLI's `ToolPermission`; or T3 Code's store has an approval pending), `question` (an open question tool call, or a question T3 Code's store has pending), `plan` (an open plan-approval call) or `turn` (the main thread's turn ended in a session launched interactively, so it waits for the next prompt) |
 | `stats.waiting.at` | When the wait started (ms) |
-| `stats.waiting.toolUseId` | The open call it waits on. Absent for a turn wait, for a permission prompt that came before its call started, and for an agent whose calls have no ids (Devin CLI) |
+| `stats.waiting.toolUseId` | The open call it waits on. Absent for a turn wait, for a permission prompt that came before its call started, for an agent whose calls have no ids (Devin CLI), and for a T3 Code request |
 | `stats.waiting.text` | The prompt, question or plan, redacted, whitespace collapsed, at most 300 characters |
 | `stats.endInferred` | `true` when `endedAt` is the last event seen, not a session end: a session known only from a transcript with no end marker, or a conversation-keyed OpenTelemetry or SDK session. It may still be running. Absent when the end is real or there is no end |
 
@@ -1357,7 +1373,7 @@ Events that match `where` across sessions, newest first.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `where` | | Event keys (`kind`, `tool`, `ok`, `mcp`, `error`, `event.duration`, text) test each event; session keys (`agent`, `repo`, `flag`, …) test its session |
+| `where` | | Event keys (`kind`, `tool`, `ok`, `mcp`, `error`, `event.duration`, `user`, `env`, `release`, text) test each event; session keys (`agent`, `repo`, `flag`, …) test its session |
 | `limit` | 50 | 1 to 200 |
 | `cursor` | | `next` from the previous page |
 | `since`, `until` | | On the session's start, as on the list |
@@ -1844,6 +1860,28 @@ The viewer's "star on GitHub" card. Only `coding.sh ui` answers; `coding.sh serv
 - `POST` takes `{"action": "dismiss"}` or `{"action": "starred"}` as JSON and records `dismissedAt` or `starredAt`. Any other action answers 400. The body is capped at 1 KB and the `Origin` must match the host.
 
 Either one ends the card and the one line `coding.sh` prints in a terminal.
+
+### `GET /api/work`, `POST /api/work/ack`, `POST /api/work/snooze`
+
+The viewer's Work page (`#/work`): the queue [`coding.sh work`](cli.md#codingsh-work) prints. Only `coding.sh ui` answers; `coding.sh serve` and every other host answer 404, because acks and snoozes live in `work.json` in this machine's coding.sh home.
+
+`GET` takes the `work` command's filters as query parameters:
+
+| Parameter | Meaning |
+|---|---|
+| `since` | the window, default `7d` |
+| `agent` | a name, or several separated by commas |
+| `repo` | one repo |
+| `all=1` | show hidden items, like `--all` |
+| `limit` | default 20, at most 500 |
+
+It returns what `coding.sh work --json` returns for the same store and filters, built by the same code, plus two fields for the page: `members` maps each listed item's id to its member session ids (the main session first, at most 50), and `hiddenBy` counts the hidden items by reason (`running`, `done`, `acked` or `snoozed`). A bad `since` or `limit` answers 400.
+
+- `POST /api/work/ack` takes `{"id": "w1a2b3c"}` and acknowledges the item's current cause, as `coding.sh work ack` does. It returns `id`, `acked: true`, the `bucket` and its `label`, and `now`, the item after the ack.
+- An item with no cause to acknowledge returns `id`, `acked: false` and `hidden`, and writes nothing.
+- `POST /api/work/snooze` takes `{"id": "w1a2b3c", "duration": "1h"}` and hides the item until then, as `coding.sh work snooze` does. It returns `id`, `snoozedUntil` (an ISO time) and the `bucket` the snooze holds.
+- Both writes look the item up in the last 7 days, or the window in `?since=`. An item not in the window answers 404.
+- An id that is not an item id, or a duration that does not parse, answers 400. The body must be JSON, is capped at 1 KB, and the `Origin` must match the host.
 
 ### `GET /api/ingest`
 

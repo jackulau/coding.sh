@@ -93,6 +93,10 @@ export const KEY_SQL: Record<string, string[]> = {
   // payload.error of a failed call, or the message of an error event.
   error: [jstr("e.payload", "error"), `(CASE WHEN e.kind = 'error' THEN ${jstr("e.payload", "message")} END)`],
   "event.duration": ["e.duration_ms"],
+  // Read from the session's start event.
+  user: [`(CASE WHEN e.kind = 'session.start' THEN ${jstr("e.payload", "user")} END)`],
+  env: [`(CASE WHEN e.kind = 'session.start' THEN ${jstr("e.payload", "environment")} END)`],
+  release: [`(CASE WHEN e.kind = 'session.start' THEN ${jstr("e.payload", "release")} END)`],
 };
 /** Facet value when it differs from the key's first expression. */
 const FACET_SQL: Record<string, string> = { repo: base("coalesce(s.repo_root, s.cwd)") };

@@ -341,6 +341,23 @@ describe("task dir import/export", () => {
     assert.deepEqual(referenceRun(back), ref);
     assert.deepEqual(nearMissRuns(back), nearMissRuns(t));
   });
+  it("imports every file under tests/, also ones an exported hiddenFiles list leaves out", async () => {
+    // eval export writes "hiddenFiles": [] for a task with no hidden tests; a test added to that dir is still hidden.
+    const dir = await tempDir();
+    dirs.push(dir);
+    await mkdir(join(dir, "tests", "sub"), { recursive: true });
+    await writeFile(join(dir, "tests", "check.js"), "process.exit(0)\n");
+    await writeFile(join(dir, "tests", "sub", "b.test.js"), "process.exit(0)\n");
+    await writeFile(join(dir, "instruction.md"), "Do x.\n");
+    const start = { start: { repoRoot: ROOT, snapshot: "s" } as never };
+    await writeFile(join(dir, "task.json"), JSON.stringify({ name: "rt", verifier: { command: "node check.js", hiddenFiles: [] } }));
+    assert.deepEqual(Object.keys((await importTaskDir(dir, undefined, start)).verifier.hiddenFiles).sort(), ["check.js", "sub/b.test.js"]);
+    await writeFile(join(dir, "task.json"), JSON.stringify({ name: "rt", verifier: { command: "node check.js", hiddenFiles: ["check.js"] } }));
+    assert.deepEqual(Object.keys((await importTaskDir(dir, undefined, start)).verifier.hiddenFiles).sort(), ["check.js", "sub/b.test.js"]);
+    // A listed file still has to be there.
+    await writeFile(join(dir, "task.json"), JSON.stringify({ name: "rt", verifier: { command: "node check.js", hiddenFiles: ["gone.js"] } }));
+    await assert.rejects(importTaskDir(dir, undefined, start), /lists hidden file gone\.js but tests\/gone\.js is missing/);
+  });
   it("rejects unknown formats", async () => {
     const dir = await tempDir();
     dirs.push(dir);

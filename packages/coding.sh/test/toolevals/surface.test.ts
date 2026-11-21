@@ -56,6 +56,25 @@ describe("CLI surface", () => {
     });
   });
 
+  it("reads a help page printed on stdout when --help exits 1, as npm's does", async () => {
+    const file = join(tmp("csh-te-surf-"), "npmish.mjs");
+    writeFileSync(
+      file,
+      `const argv = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+process.exitCode = 1;
+if (argv[0] === "nope") process.stderr.write("unknown command\\n");
+else process.stdout.write(argv.length ? "Usage: npmish " + argv[0] + " <pkg>\\n" : "Usage: npmish <command>\\n\\nCommands:\\n  install   Install a package\\n  nope      Not really there\\n");
+`,
+    );
+    const t = cliTarget({ bin: "npmish", command: [process.execPath, file] });
+    const s = await measureSurface(t, { name: "base" });
+    assert.deepEqual(
+      s.items.map((i) => i.name),
+      ["npmish", "npmish install"],
+      "stdout counts on exit 1; a failing call's stderr does not",
+    );
+  });
+
   it("rejects a CLI whose --help prints nothing", async () => {
     const file = join(tmp("csh-te-surf-"), "mute.mjs");
     writeFileSync(file, "process.exit(3);\n");

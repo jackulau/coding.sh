@@ -216,9 +216,29 @@ function partOf(text: string, last: boolean): ShellPart | undefined {
   return { argv, prog, last, timed };
 }
 
+/** A PowerShell launcher: `powershell.exe`, `pwsh`, by path or not, quoted or not. */
+const PS_LAUNCHER = /^(?:powershell|pwsh)(?:\.exe)?$/i;
+const PS_LAUNCH = /^\s*("[^"]+"|'[^']+'|\S+)\s+((?:\S+\s+)*?)-c(?:ommand)?\s+([\s\S]*\S)\s*$/i;
+
+/**
+ * The command a PowerShell launcher runs: `powershell.exe -NoProfile -Command <cmd>` → `<cmd>`.
+ * Codex on Windows records every shell call this way, so the shell is never the failing program.
+ * Any other line comes back as it is.
+ */
+export function launchedCommand(cmd: string): string {
+  const m = PS_LAUNCH.exec(cmd);
+  if (!m) return cmd;
+  const prog = unquote(m[1]!);
+  if (!PS_LAUNCHER.test(prog.split(/[\\/]/).filter(Boolean).pop() ?? prog)) return cmd;
+  // Between the launcher and -Command: flags and the values they take (-ExecutionPolicy Bypass).
+  const flags = m[2]!.split(/\s+/).filter(Boolean);
+  if (flags.some((f, i) => !f.startsWith("-") && !flags[i - 1]?.startsWith("-"))) return cmd;
+  return unquote(m[3]!);
+}
+
 /** Every part of `cmd` that runs a program (headers, keywords and empty parts dropped), in order. */
 export function shellParts(cmd: string): ShellPart[] {
-  return splitParts(cmd)
+  return splitParts(launchedCommand(cmd))
     .map((p) => partOf(p.text, p.last))
     .filter((p): p is ShellPart => p !== undefined);
 }

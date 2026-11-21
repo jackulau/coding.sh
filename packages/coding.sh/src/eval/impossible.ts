@@ -8,6 +8,7 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { safeJoin, toPosix } from "../runner/fsutil.ts";
+import { verifierDataPaths } from "../runner/tamper.ts";
 
 export interface TestFileText {
   /** Path relative to the task dir. */
@@ -132,11 +133,14 @@ async function walkTests(root: string, dir: string, out: string[], cap: number):
 }
 
 /**
- * Test files the verifier command names, or test files under directories it
- * names, excluding hidden files. These are the visible tests a verifier runs.
+ * Files the verifier command runs or names as tests, or test files under directories it
+ * names, excluding hidden files. These are the visible tests a verifier runs. A file the
+ * command names directly counts whatever its name (`node check.js`), as in the tamper
+ * check, unless it is only an operand of a read-only command (`grep x src/app.js`).
  */
 export async function verifierReferencedFiles(dir: string, command: string, exclude: Set<string>, cap = 50): Promise<string[]> {
   const out: string[] = [];
+  const dataOnly = verifierDataPaths(command);
   const tokens = command.split(/[\s;&|()<>`'"]+/).filter((t) => t && !t.startsWith("-") && !t.includes("$") && !t.includes("="));
   for (const raw of tokens) {
     const rel = raw.replace(/^\.\//, "").replace(/\/+$/, "");
@@ -150,7 +154,7 @@ export async function verifierReferencedFiles(dir: string, command: string, excl
     if (!existsSync(abs)) continue;
     const st = await stat(abs);
     if (st.isFile()) {
-      if (isTestPath(rel)) out.push(rel);
+      if (isTestPath(rel) || !dataOnly.has(rel)) out.push(rel);
     }
     else if (st.isDirectory()) {
       const found: string[] = [];

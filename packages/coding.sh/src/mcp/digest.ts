@@ -4,7 +4,7 @@ import { costNote } from "../core/pricing.ts";
 import { SKILL_EVENT_KINDS, SKILL_TAG_PREFIX, skillUse } from "../core/skills-use.ts";
 import type { IndexStore, Session } from "../core/types.ts";
 import { weightsSummaryText } from "../core/weights.ts";
-import { clip, countNodes, fmtMs, isRunning, iso, lastActivity, sessionSummary, splitTurns, subagentTree, timeline, turnIndex, type SubagentNode, type TimelineEntry, type TurnInfo } from "./data.ts";
+import { clip, countNodes, fmtMs, isRunning, iso, lastActivity, lastTurnOpen, sessionSummary, splitTurns, subagentTree, timeline, turnIndex, type SubagentNode, type TimelineEntry, type TurnInfo } from "./data.ts";
 
 type Obj = Record<string, unknown>;
 
@@ -36,15 +36,19 @@ export async function sessionDigest(index: IndexStore, s: Session, o: DigestOpts
   const events = await index.listEvents(s.id, { limit: DIGEST_EVENT_CAP, ...(fromEnd ? { offset: s.stats.events - DIGEST_EVENT_CAP } : {}) });
   const turns = splitTurns(events);
   const idx = turnIndex(turns, s.startedAt);
+  // A turn still under way is listed and opens, but is not counted, as stats.turns does not count it.
+  const open = lastTurnOpen(turns);
+  if (open) idx[idx.length - 1]!.open = true;
+  const closed = turns.length - (open ? 1 : 0);
   // Number the window's turns as in the whole session.
-  const shift = fromEnd ? Math.max(0, s.stats.turns - turns.length) : 0;
+  const shift = fromEnd ? Math.max(0, s.stats.turns - closed) : 0;
   for (const t of idx) t.turn += shift;
   let scope = events;
   let turnNo: number | undefined;
   if (o.turn !== undefined && o.turn !== 0) {
     turnNo = o.turn < 0 ? turns.length + 1 + o.turn : o.turn;
     const t = turns[turnNo - 1];
-    if (!t) throw new RangeError(`session ${s.id} has ${turns.length} turn(s); turn ${o.turn} does not exist`);
+    if (!t) throw new RangeError(`session ${s.id} has ${closed + shift} turn(s)${open ? ` and turn ${closed + shift + 1} under way` : ""}; turn ${o.turn} does not exist`);
     scope = t;
   }
   const all = timeline(scope, s.startedAt);
@@ -59,7 +63,7 @@ export async function sessionDigest(index: IndexStore, s: Session, o: DigestOpts
   return {
     session: sessionSummary(s, o.now ?? Date.now()),
     ...(turnNo !== undefined ? { turn: turnNo + shift } : {}),
-    turnCount: turns.length + shift,
+    turnCount: closed + shift,
     turns: turnNo !== undefined ? idx.slice(turnNo - 1, turnNo) : idx.length > TURN_CAP ? [...idx.slice(0, 10), ...idx.slice(-(TURN_CAP - 10))] : idx,
     ...(turnNo === undefined && idx.length > TURN_CAP ? { turnsOmitted: idx.length - TURN_CAP } : {}),
     timeline: page,
@@ -91,7 +95,9 @@ const MARKDOWN_TEXT_LIMIT = 24_000;
 /** Markdown digest of a session: header, turns, the first `maxEntries` timeline lines, subagents. */
 export async function sessionMarkdown(index: IndexStore, s: Session, maxEntries = 120, now = Date.now()): Promise<string> {
   const events = await index.listEvents(s.id, { limit: DIGEST_EVENT_CAP });
-  const turns = turnIndex(splitTurns(events), s.startedAt);
+  const split = splitTurns(events);
+  const turns = turnIndex(split, s.startedAt);
+  if (lastTurnOpen(split)) turns[turns.length - 1]!.open = true;
   const tl = timeline(events, s.startedAt);
   const u = s.stats.usage;
   const lat = s.stats.latency;
@@ -125,7 +131,7 @@ export async function sessionMarkdown(index: IndexStore, s: Session, maxEntries 
   if (s.parent) row("Parent", `\`${s.parent.sessionId}\``);
   if (turns.length > 1) {
     lines.push("", "## Turns", "");
-    for (const t of turns.slice(0, 50)) lines.push(`${t.turn}. +${fmtMs(t.at)} ${t.prompt ? `"${esc(t.prompt)}"` : "(no prompt)"} · ${t.toolCalls} tools${t.toolErrors ? ` (${t.toolErrors} failed)` : ""}`);
+    for (const t of turns.slice(0, 50)) lines.push(`${t.turn}. +${fmtMs(t.at)} ${t.prompt ? `"${esc(t.prompt)}"` : "(no prompt)"} · ${t.toolCalls} tools${t.toolErrors ? ` (${t.toolErrors} failed)` : ""}${t.open ? " · under way" : ""}`);
     if (turns.length > 50) lines.push(`… ${turns.length - 50} more turns`);
   }
   // The subagent list is built first, so the timeline takes what the answer limit leaves.

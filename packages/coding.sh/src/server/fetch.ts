@@ -1,7 +1,8 @@
 // createFetchHandler(): serve's ingest routes as one WHATWG Request → Response
 // function, for platforms that run a function per request (Vercel Functions,
-// Deno, Bun, Cloudflare Workers with nodejs_compat). Routes: /v1/traces,
-// /v1/logs, /v1/metrics (OTLP/HTTP), /v1/ingest (the SDKs), /healthz, /readyz.
+// Deno, Bun, Cloudflare Workers with nodejs_compat). Routes: /v1/traces (and
+// Langfuse's /api/public/otel/v1/traces), /v1/logs, /v1/metrics (OTLP/HTTP),
+// /v1/ingest (the SDKs), /healthz, /readyz.
 // The viewer, /metrics and the proxy stay on `coding.sh serve`.
 //
 // It runs the same handlers as serve (routes.ts) through a small Node
@@ -21,6 +22,7 @@ import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import type { BlobStore, IndexStore, Sink } from "../core/types.ts";
 import type { SpanEnricher } from "../otel/map.ts";
+import { LANGFUSE_TRACES_PATH } from "../otel/receiver.ts";
 import { canonicalScheme, openBlobStore, openIndexStore, openSink, parseStoreUrl } from "../store/factory.ts";
 import { createAuthenticator } from "./auth.ts";
 import { MAX_BODY_BYTES, resolveServeConfig, type ServeConfig } from "./config.ts";
@@ -71,7 +73,7 @@ interface Core {
   native: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
 }
 
-const OTLP_PATHS = new Set(["/v1/traces", "/v1/logs", "/v1/metrics"]);
+const OTLP_PATHS = new Set(["/v1/traces", LANGFUSE_TRACES_PATH, "/v1/logs", "/v1/metrics"]);
 const OPS_PATHS = new Set(["/healthz", "/readyz"]);
 
 const json = (status: number, body: unknown, headers: Record<string, string> = {}): Response =>
@@ -190,7 +192,7 @@ export function createFetchHandler(opts: FetchHandlerOptions = {}): FetchHandler
       return count(json(r.status, r.body));
     }
     if (!OTLP_PATHS.has(path) && path !== "/v1/ingest") {
-      return count(json(404, { error: `no route for ${path}; this handler takes /v1/traces, /v1/logs, /v1/metrics, /v1/ingest, /healthz and /readyz`, status: 404 }));
+      return count(json(404, { error: `no route for ${path}; this handler takes /v1/traces, ${LANGFUSE_TRACES_PATH}, /v1/logs, /v1/metrics, /v1/ingest, /healthz and /readyz`, status: 404 }));
     }
     if (closed) return count(json(503, { error: "server is shutting down; retry", status: 503 }, { "retry-after": "2" }));
     let c: Core;

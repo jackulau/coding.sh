@@ -2,7 +2,7 @@
 // like the ones agents run (Claude Code's "Exit code N" first line included).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { failingPart, shellParts } from "../../src/core/failing-command.ts";
+import { failingPart, launchedCommand, shellParts } from "../../src/core/failing-command.ts";
 import { COMPOUND, failureRecords, rankIssues } from "../../src/improve/issues.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import { sessionEvents } from "../helpers-decision.ts";
@@ -32,6 +32,16 @@ describe("shellParts", () => {
     assert.deepEqual(progs("grep -E 'a|b; c && d' file.txt"), ["grep"]);
     assert.deepEqual(progs('echo "$(date; whoami)" && make test'), ["echo", "make"]);
     assert.deepEqual(progs("cat > notes.md <<'EOF'\n--session x\nexport FOO=1 && rm -rf /\nEOF\ngit add notes.md"), ["cat", "git"]);
+  });
+});
+
+describe("launchedCommand", () => {
+  it("reads the command a PowerShell launcher runs, and leaves any other line alone", () => {
+    assert.equal(launchedCommand("C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -Command rg -n x | Select-Object -First 5"), "rg -n x | Select-Object -First 5");
+    assert.equal(launchedCommand('"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoProfile -ExecutionPolicy Bypass -c "npm test"'), "npm test");
+    assert.equal(launchedCommand("pwsh -NoLogo -Command Get-ChildItem"), "Get-ChildItem");
+    for (const cmd of ["npm test -- -c x", "grep -c foo a.txt", "powershell.exe script.ps1 -Command x", "bash -c 'ls'"]) assert.equal(launchedCommand(cmd), cmd);
+    assert.deepEqual(shellParts("powershell.exe -Command .\\tool.exe run; git status").map((p) => p.prog), ["tool.exe", "git"]);
   });
 });
 
@@ -87,6 +97,31 @@ describe("failureRecords on compound commands", () => {
       ["cmd:cargo build", "cargo build"],
       ["compound:something went wrong", COMPOUND],
     ]);
+  });
+
+  it("files a Codex code-mode failure once, under the inner command, never under the exec wrapper's script", () => {
+    // The `exec` cell runs JavaScript that calls exec_command; it fails because the call inside failed.
+    const recs = failureRecords(
+      session("a", [
+        ["tool.start", { tool: "exec", toolUseId: "w", wrapper: true, input: "text(await tools.exec_command({cmd: 'cargo build'}))" }],
+        ["tool.start", { tool: "exec_command", toolUseId: "c", input: { cmd: "cargo build" } }],
+        ["tool.end", { tool: "exec_command", toolUseId: "c", ok: false, exitCode: 101, output: "error[E0425]: cannot find value `x`" }],
+        ["tool.end", { tool: "exec", toolUseId: "w", wrapper: true, ok: false, output: "Script completed\nWall time 0.6 seconds" }],
+        ["tool.start", { tool: "exec", toolUseId: "w2", wrapper: true, input: "text(ALL_TOOLS.filter((x) => x))" }],
+        ["tool.end", { tool: "exec", toolUseId: "w2", ok: false, output: "" }],
+      ]),
+    );
+    assert.deepEqual(recs.map((r) => [r.key, r.label]), [["cmd:cargo build", "cargo build"]]);
+  });
+
+  it("names the program a PowerShell launcher ran, not powershell.exe", () => {
+    const recs = failureRecords(
+      session("a", [
+        ["tool.start", { tool: "Bash", toolUseId: "1", input: { command: "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -Command .\\lockedbotctl.exe files list" } }],
+        ["tool.end", { tool: "Bash", toolUseId: "1", ok: false, exitCode: 1, output: "lockedbotctl: API returned 403 Forbidden" }],
+      ]),
+    );
+    assert.deepEqual(recs.map((r) => r.key), ["cmd:lockedbotctl.exe"]);
   });
 
   it("a test summary that cat printed is not a failing test run, so cat never gets the broken-setup verdict", () => {

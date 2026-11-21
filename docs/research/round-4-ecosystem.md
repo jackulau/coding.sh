@@ -1,7 +1,7 @@
 # Round 4: ecosystem changes (2026-11-17 to 2026-11-20)
 
 Scout: ecosystem. Baseline: [round-3-ecosystem.md](round-3-ecosystem.md), dated 2026-11-17.
-Competitor gaps already filed in `D:/cs/research/competitors.md` (CG-1 to CG-13: plan quota,
+Competitor gaps already listed as CG-1 to CG-13 (plan quota,
 online evaluators, spend budgets, alerts, cost by MCP, skill or subagent, live board, review
 queue, MCP tool description drift, Langfuse-compatible OTel, `/metrics` cost, saved views,
 viewer comments, batch scores) are not repeated here.

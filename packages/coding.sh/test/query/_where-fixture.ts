@@ -35,6 +35,10 @@ export function fixture(): { sessions: Session[]; events: AgentEvent[] } {
     { ...event("s4", 3, { agent: "codex", kind: "llm.call", payload: { ok: false, statusCode: 429 } }) },
     // An error event carries its text in payload.message, not payload.error.
     event("s2", 9, { agent: "claude-code", kind: "error", payload: { message: "Quota exceeded for this model" } }),
+    // user:, env: and release: read the session's start event (OTel and Langfuse trace attributes).
+    event("s1", 0, { agent: "codex", kind: "session.start", payload: { user: "u1", environment: "production", release: "1.4.0" } }),
+    event("s2", 0, { kind: "session.start", payload: { user: "u2", environment: "staging" } }),
+    event("s3", 0, { kind: "session.start", payload: {} }),
   ];
   return { sessions, events };
 }
@@ -163,6 +167,17 @@ export const QUERIES = [
   'title:"done\\*now"',
   "event.duration>30s",
   "event.duration:1s..2s",
+  "user:u1",
+  "user:u1,u2",
+  "-user:u1",
+  "user:u1 tool:Bash",
+  "user:u1 tool:Bash ok:false",
+  "-(user:u1 tool:Read)",
+  "user:u2 OR tool:Grep",
+  "env:prod*",
+  "env:staging kind:error",
+  "release:1.4.*",
+  "-release:*",
   "migration",
   "migration flaky",
   "-migration",

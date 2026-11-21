@@ -191,7 +191,8 @@ export { handler as GET, handler as POST, handler as OPTIONS };
 ```
 
 Senders then use `https://app.example.com/api/coding-sh` as their endpoint. The function takes
-`/v1/traces`, `/v1/logs`, `/v1/metrics`, `/v1/ingest`, `/healthz` and `/readyz`. It runs the same
+`/v1/traces` (also at `/api/public/otel/v1/traces`, with Basic auth), `/v1/logs`, `/v1/metrics`,
+`/v1/ingest`, `/healthz` and `/readyz`. It runs the same
 code as serve: auth, limits, redaction, the cost estimate and the write. The viewer, the read API,
 `/metrics` and retention still need a `coding.sh serve --role viewer` on the same database.
 

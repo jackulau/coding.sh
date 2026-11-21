@@ -9,7 +9,7 @@ import { paths } from "../core/paths.ts";
 import type { BlobStore, IndexStore, Sink, WriterLock } from "../core/types.ts";
 import { canonicalScheme, openBlobStore, openIndexStore, openSink, parseStoreUrl } from "../store/factory.ts";
 import type { SpanEnricher } from "../otel/map.ts";
-import { hostOf, isLoopbackHost, type Signal } from "../otel/receiver.ts";
+import { hostOf, isLoopbackHost, LANGFUSE_TRACES_PATH, type Signal } from "../otel/receiver.ts";
 import { createViewerHandler } from "../viewer/server.ts";
 import { createRedactor } from "../core/redact.ts";
 import { FileEvalStore } from "../datasets/store.ts";
@@ -82,14 +82,14 @@ export interface ReadyBody {
   reason?: string;
 }
 
-const ROUTE_LABELS = new Set(["/v1/traces", "/v1/logs", "/v1/metrics", "/v1/ingest", "/healthz", "/readyz", "/metrics", "/"]);
+const ROUTE_LABELS = new Set(["/v1/traces", LANGFUSE_TRACES_PATH, "/v1/logs", "/v1/metrics", "/v1/ingest", "/healthz", "/readyz", "/metrics", "/"]);
 const routeLabel = (path: string) => (ROUTE_LABELS.has(path) ? path : path.startsWith("/api/") ? "/api" : path.startsWith(PROXY_PREFIX) ? "/proxy" : "other");
 
 /** The model API proxy's mount: `<server>/proxy/v1/messages` is the Anthropic API, and so on. */
 export const PROXY_PREFIX = "/proxy/";
 /** The ingest key for the proxy routes (Authorization carries the client's own API key, forwarded upstream). */
 export const PROXY_KEY_HEADER = "x-coding-sh-key";
-const SIGNALS: Record<string, Signal> = { "/v1/traces": "traces", "/v1/logs": "logs", "/v1/metrics": "metrics" };
+const SIGNALS: Record<string, Signal> = { "/v1/traces": "traces", [LANGFUSE_TRACES_PATH]: "traces", "/v1/logs": "logs", "/v1/metrics": "metrics" };
 /** Health and metrics: GET or HEAD only. */
 const OPS_PATHS = new Set(["/healthz", "/readyz", "/metrics"]);
 

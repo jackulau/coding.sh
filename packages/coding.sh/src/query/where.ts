@@ -139,6 +139,11 @@ export interface KeyDef {
   get(row: Session & AgentEvent): unknown[];
   /** Counted by facets: which value expression (default sql[0]). */
   facet?: { sql?: string; get?(row: Session & AgentEvent): unknown[] };
+  /**
+   * An event key that says something about the whole session (user:, read from its session.start):
+   * in a group with other event keys it matches its own event, not the same one (levelOf: "mixed").
+   */
+  alone?: true;
 }
 
 /**
@@ -164,6 +169,16 @@ const tokensTotal = (s: Session): number | undefined => {
   if (!u) return undefined;
   return (u.inputTokens ?? 0) + (u.outputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0);
 };
+
+/** A text key read from a session.start payload field (`alone`: it matches the start event, whatever else the group asks). */
+function startKey(name: string, field: string, doc: string, example: string): KeyDef {
+  return {
+    name, level: "event", type: "text", doc, example, alone: true,
+    sql: [`(CASE WHEN e.kind = 'session.start' AND json_type(e.payload, '$.${field}') = 'text' THEN json_extract(e.payload, '$.${field}') END)`],
+    present: "e.kind = 'session.start'",
+    get: (e) => [e.kind === "session.start" && typeof e.payload?.[field] === "string" ? e.payload[field] : undefined],
+  };
+}
 
 const KEY_LIST: KeyDef[] = [
   // ---- session keys
@@ -255,6 +270,10 @@ const KEY_LIST: KeyDef[] = [
     get: (e) => [typeof e.payload?.error === "string" ? e.payload.error : undefined, e.kind === "error" && typeof e.payload?.message === "string" ? e.payload.message : undefined],
   },
   { name: "event.duration", level: "event", type: "number", unit: "ms", doc: "Event duration (30s, 2m)", example: "event.duration>30s", sql: ["e.duration_ms"], get: (e) => [num(e.durationMs)] },
+  // Read from the session's start event (payload.user, .environment, .release: OTel and Langfuse trace attributes).
+  startKey("user", "user", "User the app named (langfuse.user.id, user.id or enduser.id)", "user:alice"),
+  startKey("env", "environment", "Deployment environment (langfuse.environment or deployment.environment.name)", "env:production"),
+  startKey("release", "release", "Release or app version (langfuse.release or service.version)", "release:v1.4.*"),
 ];
 
 export const KEYS: ReadonlyMap<string, KeyDef> = new Map(KEY_LIST.map((k) => [k.name, k]));
@@ -724,8 +743,10 @@ export function printWhere(q: Query): string {
 /** Which level a node needs: session columns, events (EXISTS at session level), or the full-text index. */
 export function levelOf(n: Node): "session" | "event" | "text" | "mixed" {
   switch (n.t) {
-    case "cmp":
-      return KEYS.get(n.key)!.level;
+    case "cmp": {
+      const def = KEYS.get(n.key)!;
+      return def.alone ? "mixed" : def.level;
+    }
     case "has":
     case "is":
       return "session";

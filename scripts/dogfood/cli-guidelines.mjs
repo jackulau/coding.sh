@@ -55,13 +55,41 @@ export const MODES = {
   noColorTty: { env: { NO_COLOR: "1" }, tty: true },
 };
 
+/** The argv for script(1) that runs `argv` on a pseudo-terminal (BSD syntax on macOS, util-linux elsewhere). */
+export function scriptArgs(argv, platform = process.platform) {
+  return platform === "darwin" ? ["-q", "/dev/null", ...argv] : ["-qec", argv.map((a) => `'${a.replaceAll("'", "'\\''")}'`).join(" "), "/dev/null"];
+}
+
+export const NO_SCRIPT = "no script(1) on this machine to give the child a terminal";
+
+/**
+ * Whether script(1) can start here: one trivial run through it. A spawn error (ENOENT on Windows,
+ * where Git Bash has no script) means the TTY modes cannot be measured, so they are skipped.
+ */
+export function findScript(run = sh) {
+  const r = run("script", scriptArgs([process.execPath, "-e", ""]), { stdio: ["ignore", "pipe", "pipe"], timeout: 15_000 });
+  return r.error ? { ok: false, reason: `${NO_SCRIPT} (${r.error.code ?? r.error.message})` } : { ok: true };
+}
+
+/**
+ * Why the process for a case did not start, or undefined when it ran. A spawn error, or a missing
+ * exit code with no signal, is the scorer's failure, not the CLI's exit code. A timeout kills the
+ * CLI with a signal: that is the CLI's.
+ */
+export function notStarted(r) {
+  if (r.signal) return undefined;
+  if (r.error) return `process did not start: ${r.error.code ?? r.error.message}`;
+  if (r.status === null) return "process did not start: no exit code and no signal";
+  return undefined;
+}
+
 function runCase(cli, env, argv, mode) {
-  const args = [...argv, ...(mode.json ? ["--json"] : [])];
+  const args = [...argv];
+  if (mode.json) args.push("--json");
   const e = { ...env, ...mode.env };
   if (mode.tty) {
-    // `script` gives the child a pseudo-terminal on stdout/stderr (BSD syntax on macOS, util-linux elsewhere).
-    const cmd = process.platform === "darwin" ? ["-q", "/dev/null", process.execPath, cli, ...args] : ["-qec", [process.execPath, cli, ...args].map((a) => `'${a.replaceAll("'", "'\\''")}'`).join(" "), "/dev/null"];
-    const r = sh("script", cmd, { env: e, stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 });
+    // `script` gives the child a pseudo-terminal on stdout/stderr.
+    const r = sh("script", scriptArgs([process.execPath, cli, ...args]), { env: e, stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 });
     return { ...r, stdout: r.stdout.replace(/^\^D\x08\x08/, "").replaceAll("\r\n", "\n") };
   }
   return sh(process.execPath, [cli, ...args], { env: e, stdio: [mode.input === undefined ? "ignore" : "pipe", "pipe", "pipe"], input: mode.input, timeout: 60_000 });
@@ -102,8 +130,42 @@ export function judge(r, spec, mode) {
   return fails;
 }
 
-/** Build the fixture home once and run every (command, mode) case. */
-export function runGuidelines({ cli = CLI } = {}) {
+/**
+ * Run every (command, mode) case through `run(argv, mode)` and score it. Without script(1)
+ * (`script.ok` false) the TTY modes are left out of the score and reported in `skipped`. A case
+ * whose process did not start is a scorer error, listed in `scorerErrors` and left out of `n`.
+ */
+export function scoreCases({ run, script = { ok: true }, commands = COMMANDS, modes = MODES }) {
+  const cases = [];
+  const scorerErrors = [];
+  const skippedModes = script.ok ? [] : Object.entries(modes).filter(([, m]) => m.tty).map(([k]) => k);
+  for (const [id, argv, spec0] of commands) {
+    const spec = { ...spec0, id, helpFast: argv.includes("--help") };
+    for (const [m, mode] of Object.entries(modes)) {
+      if (mode.tty && (spec.noTty || !script.ok)) continue;
+      const r = run(argv, mode);
+      const error = notStarted(r);
+      if (error) {
+        scorerErrors.push({ id, mode: m, argv, error });
+        continue;
+      }
+      const fails = judge(r, spec, mode);
+      cases.push({ id, mode: m, argv, exit: r.code, ms: Math.round(r.ms), pass: !fails.length, fails });
+    }
+  }
+  const passed = cases.filter((c) => c.pass).length;
+  return {
+    value: cases.length ? passed / cases.length : null,
+    passed,
+    n: cases.length,
+    failures: cases.filter((c) => !c.pass),
+    scorerErrors,
+    ...(skippedModes.length ? { skipped: { modes: skippedModes, reason: script.reason ?? NO_SCRIPT } } : {}),
+  };
+}
+
+/** Build the fixture home once and run every (command, mode) case. `script` overrides the script(1) lookup. */
+export function runGuidelines({ cli = CLI, script = findScript() } = {}) {
   const root = tempDir("cs-guidelines-");
   try {
     const trial = join(root, "trial");
@@ -113,18 +175,7 @@ export function runGuidelines({ cli = CLI } = {}) {
     if (mk.code !== 0) throw new Error(`fixture build failed: ${mk.stderr.slice(-400)}`);
     const env = { ...readJson(answersFile).env };
     for (const k of ["CI", "CLAUDECODE", "NO_COLOR", "FORCE_COLOR"]) delete env[k];
-    const cases = [];
-    for (const [id, argv, spec0] of COMMANDS) {
-      const spec = { ...spec0, id, helpFast: argv.includes("--help") };
-      for (const [m, mode] of Object.entries(MODES)) {
-        if (mode.tty && spec.noTty) continue;
-        const r = runCase(cli, { ...process.env, ...env, PATH: `${env.PATH}` }, argv, mode);
-        const fails = judge(r, spec, mode);
-        cases.push({ id, mode: m, argv, exit: r.code, ms: Math.round(r.ms), pass: !fails.length, fails });
-      }
-    }
-    const passed = cases.filter((c) => c.pass).length;
-    return { value: passed / cases.length, passed, n: cases.length, failures: cases.filter((c) => !c.pass) };
+    return scoreCases({ run: (argv, mode) => runCase(cli, { ...process.env, ...env, PATH: `${env.PATH}` }, argv, mode), script });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

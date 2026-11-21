@@ -7,7 +7,7 @@
 import { budgetStatuses, ESTIMATED_NOTE, isPeriod, PERIODS, readBudgets, repoPlace, statusJson, upsertBudget, writeBudgets, type Budget, type BudgetStatus } from "../../budget/index.ts";
 import { userHome } from "../../core/paths.ts";
 import { parsePlace } from "../../mcp/data.ts";
-import { UsageError } from "../args.ts";
+import { suggest, UsageError } from "../args.ts";
 import { autoIngest, pendingField, readIngest, str, withContext } from "../common.ts";
 import { CliError, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -41,7 +41,14 @@ export function until(at: number, now = Date.now()): string {
 function set(c: CommandContext): number {
   const { out } = c;
   const [period, raw] = c.positionals;
-  if (!isPeriod(period)) throw new UsageError(`The period must be one of ${PERIODS.join(", ")}, got ${JSON.stringify(period ?? "")}`, { reason: "invalid_argument" });
+  if (!isPeriod(period)) {
+    const near = period ? suggest(period, PERIODS) : undefined;
+    const scope = (["agent", "repo"] as const).flatMap((f) => (str(c.flags[f]) ? [`--${f} ${str(c.flags[f])}`] : []));
+    throw new UsageError(`The period must be one of ${PERIODS.join(", ")}, got ${JSON.stringify(period ?? "")}`, {
+      reason: "invalid_argument",
+      suggestion: near ? ["coding.sh budget set", near, raw ?? "<USD>", ...scope].join(" ") : undefined,
+    });
+  }
   const amount = /^\$?(\d+(?:\.\d+)?)$/.exec((raw ?? "").trim());
   const usdLimit = amount ? Number(amount[1]) : Number.NaN;
   if (!(usdLimit > 0)) throw new UsageError(`The limit must be a USD amount above 0, like 25 or 2.50, got ${JSON.stringify(raw ?? "")}`, { reason: "invalid_argument" });

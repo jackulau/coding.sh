@@ -216,6 +216,27 @@ for (const kind of ["memory", "sqlite"] as const) {
       await h.shutdown();
     });
 
+    it("takes a Langfuse SDK's traces at /api/public/otel/v1/traces with the ingest key in Basic auth", async () => {
+      const k = generateKey("ingest");
+      const rk = generateKey("read");
+      const { h } = await serve(kind, tmpEnv({ CODING_SH_INGEST_KEYS: k, CODING_SH_READ_KEYS: rk }));
+      const path = "/api/public/otel/v1/traces";
+      const span = (spanId: string) => otlpSpan("1f0000000000000000000000000000bb", spanId, undefined, "chat gpt-4o", [sAttr("gen_ai.operation.name", "chat"), sAttr("gen_ai.request.model", "gpt-4o"), sAttr("langfuse.session.id", "s1"), sAttr("user.id", "u1")], 0, 500);
+      const basic = (user: string, pass: string) => ({ authorization: `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}` });
+      // The Langfuse SDK sends public key:secret key; either one may be the ingest key.
+      const r = await call(h, path, { body: otlpTraces("lf-app", [span("1f00000000000001")]), headers: basic("pk", k) });
+      assert.equal(r.status, 200, r.text);
+      assert.equal((await call(h, path, { body: otlpTraces("lf-app", [span("1f00000000000002")]), headers: basic(k, "sk") })).status, 200);
+      assert.equal((await call(h, path, { body: otlpTraces("lf-app", [span("1f00000000000003")]), headers: basic("pk", "sk-wrong-but-long-enough") })).status, 401);
+      assert.equal((await call(h, path, { body: otlpTraces("lf-app", [span("1f00000000000003")]) })).status, 401);
+      assert.equal((await call(h, path, { body: otlpTraces("lf-app", [span("1f00000000000003")]), key: k })).status, 200, "a Bearer key works there too");
+      // Basic auth carries an ingest key on Langfuse's path only.
+      assert.equal((await call(h, "/v1/traces", { body: otlpTraces("lf-app", [span("1f00000000000004")]), headers: basic("pk", k) })).status, 401);
+      assert.deepEqual(sessionIds(await call(h, `/api/sessions?where=${encodeURIComponent("user:u1")}`, { key: rk })), ["s1"]);
+      assert.deepEqual(sessionIds(await call(h, `/api/sessions?where=${encodeURIComponent("user:u2")}`, { key: rk })), []);
+      await h.shutdown();
+    });
+
     // Regression: the source span and log record blobs kept secrets their events showed as redacted.
     it("serves no secret from /api/blobs after OTLP traces and logs", async () => {
       const ik = generateKey("ingest");

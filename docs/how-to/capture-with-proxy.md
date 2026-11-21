@@ -195,6 +195,29 @@ Only `/v1/messages`, `/v1/chat/completions` and `/v1/responses` calls are blocke
 read, the call goes through. Without the flag nothing is blocked. A proxy the hook restarts (step
 5) runs without the flag.
 
+## Catch a tool description that changed
+
+```sh
+coding.sh harness tools --changed
+coding.sh harness tools pin
+```
+
+`harness tools` lists every tool the proxy saw in the last 30 days (`--since`), one row per MCP
+server and tool, with a short hash of its description and of its input schema, the sessions that
+were offered it and how many versions it had. A name `mcp__<server>__<tool>` belongs to that MCP
+server; every other tool is `builtin`.
+
+It reads the tools the proxy stores with each call, so it needs capture mode `full`. Calls logged
+in mode `metadata` are counted in a note and left out.
+
+`--changed` keeps a tool that had more than one description or schema in the window, and exits 1
+when any remain. `harness tools pin` saves the latest hashes of every tool to `tool-pins.json`
+in the coding.sh data directory.
+
+After a pin, `--changed` keeps a pinned tool only when its latest version, or one seen since the
+pin, differs from the pin. Only hashes are printed, never the descriptions. Every flag:
+[coding.sh harness](https://coding.sh/docs/cli/harness).
+
 ## Read the result
 
 | `Why` says | Do |

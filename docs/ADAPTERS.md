@@ -154,6 +154,16 @@ order.
   `orchestration_v2_projection_subagents` rows), and each agent thread of that run. A re-parse removes the
   t3code copies an older parse stored.
 - **Cost:** T3's running cost (`contextUsage.cost`) is kept as `reportedUsage` and never summed.
+- **Approvals and questions:** a request T3 puts to the user is a notification with a `requestId` in the
+  session of the provider thread it belongs to, whichever provider runs it. The sources are T3's runtime
+  requests (`orchestration_v2_projection_runtime_requests`, status `pending` while open) and their
+  `approval_request` and `user_input_request` turn items, which carry the prompt and the questions. A
+  command, file change, file read or permission request is a `permission_prompt`. A user-input or MCP
+  elicitation request is a question. The notification names the request's kind, its tool (`shell` for a
+  command, `edit` for a file change) and its prompt or first question. When the runtime request or its
+  item ends, a `request_resolved` notification follows. `stats.waiting` reads both, so a thread
+  waiting on one is blocked on you in `coding.sh work` until T3 resolves it. T3's secret and link requests
+  are not read. The v1 store has no requests.
 - **When imports run:** the T3 store is re-imported on every lazy ingest (`Adapter.tail`). Threads that
   haven't changed are skipped.
 - **Store copies:** the T3 store is read from a copy in the temp directory, which needs room for it; a

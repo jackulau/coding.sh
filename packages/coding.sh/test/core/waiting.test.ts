@@ -8,7 +8,7 @@ import { after, before, describe, test } from "node:test";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { geminiCliAdapter } from "../../src/adapters/more/gemini-cli.ts";
 import { buildSession } from "../../src/core/sessions.ts";
-import { foldWaiting, isPermissionNotification, waitingOf, waitingState } from "../../src/core/waiting.ts";
+import { foldWaiting, HOST_QUESTION, HOST_RESOLVED, isPermissionNotification, waitingOf, waitingState } from "../../src/core/waiting.ts";
 import type { AgentEvent, EventKind } from "../../src/schema/index.ts";
 import { collect, FIXTURES, testCtx, tmpEnv, type TmpEnv } from "../adapters/_helpers.ts";
 import { normalizeFixture } from "../adapters/more/_helpers.ts";
@@ -203,5 +203,64 @@ describe("Devin CLI: calls with no ids", () => {
     const base = [call("run_subagent"), ask("exec")];
     assert.equal(fold(base)?.kind, "permission");
     assert.equal(fold([...base, done("run_subagent")]), undefined);
+  });
+});
+
+describe("subagent calls", () => {
+  test("an open invoke_agent (or any spawn tool) is never the call a prompt names", () => {
+    for (const spawn of ["Agent", "Task", "spawn_agent", "invoke_agent", "run_subagent"]) {
+      const w = fold([start("Bash", "t1"), start(spawn, "sp"), permission()]);
+      assert.equal(w?.toolUseId, "t1", spawn);
+      assert.equal(fold([start(spawn, "sp"), permission()])?.toolUseId, undefined, spawn);
+    }
+  });
+});
+
+describe("host app requests (T3 Code)", () => {
+  // T3 Code's store reports each request to the user as a notification with a requestId; the adapter
+  // imports them in a backfill (source "store"), and they count there: the store is current state.
+  const store = { agent: "t3code", source: "store" } as const;
+  const asked = (id: string, type = "permission_prompt", text = "approve a command") => ev("notification", { type, via: "t3code", requestId: id, requestKind: type === HOST_QUESTION ? "user_input" : "command", tool: "shell", text }, store);
+  const resolved = (id: string, over: Partial<AgentEvent> = {}) => ev("notification", { type: HOST_RESOLVED, via: "t3code", requestId: id }, { ...store, ...over });
+  const foldStore = (events: AgentEvent[]) => {
+    const s = waitingState();
+    for (const e of events) foldWaiting(s, e, true);
+    return waitingOf(s, undefined);
+  };
+
+  test("an open approval blocks in a backfill, and its resolution clears it", () => {
+    const a = asked("r1");
+    assert.deepEqual(foldStore([a]), { kind: "permission", at: a.ts, text: "approve a command" });
+    assert.equal(foldStore([a, resolved("r1")]), undefined);
+    // Another request's resolution leaves it open.
+    assert.equal(foldStore([a, resolved("r2")])?.kind, "permission");
+  });
+
+  test("an open question is a question; its text is redacted", () => {
+    const q = asked("r1", HOST_QUESTION, "Send the report to dev@example.com?");
+    const w = foldStore([q]);
+    assert.equal(w?.kind, "question");
+    assert.match(w!.text!, /^Send the report to /);
+    assert.doesNotMatch(w!.text!, /dev@example\.com/);
+    assert.equal(isPermissionNotification(q), false);
+  });
+
+  test("a resolution that sorts before its request opens nothing", () => {
+    assert.equal(foldStore([resolved("r1"), asked("r1")]), undefined);
+  });
+
+  test("the thread moving on (a later prompt) ends it", () => {
+    assert.equal(foldStore([asked("r1"), ev("user.message", { text: "go on" }, store)]), undefined);
+  });
+
+  test("a resolution never ends a hook's permission wait", () => {
+    const events = [start("Bash", "t1"), permission(), resolved("r1", { source: undefined })];
+    assert.equal(fold(events)?.toolUseId, "t1");
+  });
+
+  test("buildSession reads store requests from a backfill", () => {
+    const events = [ev("session.start", { source: "store" }, store), asked("r9")];
+    assert.equal(buildSession(events).stats.waiting?.kind, "permission");
+    assert.equal(buildSession([...events, resolved("r9")]).stats.waiting, undefined);
   });
 });

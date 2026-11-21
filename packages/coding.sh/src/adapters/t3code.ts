@@ -19,6 +19,9 @@
 //     event ids match whichever adapter imports it first.
 //   - OpenCode/Cursor/Pi session in that agent's store: link only (its adapter imports it).
 //   - otherwise: built from T3's store (messages, tool items, per-turn usage).
+// T3's requests to the user (approvals and questions: runtime requests and their
+// approval_request/user_input_request items) are notifications with a requestId in
+// every session, open until T3 resolves them (core/waiting.ts host requests).
 // Every session also gets a "host-link" notification with payload.via =
 // "t3code"; buildSession then sets agent "t3code" and provider = the agent T3 ran.
 // A thread's first provider thread is top level; later ones (provider switch)
@@ -34,6 +37,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { userHome } from "../core/paths.ts";
 import type { Adapter, BackfillFile, BackfillOpts, NormalizeContext } from "../core/types.ts";
 import type { AgentEvent, Usage } from "../schema/index.ts";
+import { HOST_QUESTION, HOST_RESOLVED } from "../core/waiting.ts";
 import { T3_AGENT } from "../spool/host.ts";
 import { ClaudeTranscriptConverter, Emitter, blobList, childSessionId, clipText, clipValue, emitDerived, hasOurHooks, num, obj, parentLink, readJsonl, str, toMs, usageSnapshotKey, walkFiles } from "./_shared/index.ts";
 import { CLAUDE_AGENT, TRANSCRIPT_IDLE_MS, claudeConfigDir } from "./claude-code.ts";
@@ -152,10 +156,27 @@ interface StoreItem {
   childThreadId?: string;
 }
 
+/** A request T3 put to the user: an approval (command, file change, permission) or a question. */
+interface StoreRequest {
+  id: string;
+  pt?: string;
+  kind: "permission" | "question";
+  /** T3's kind: command, file-change, file-read, permission, mcp-elicitation or user_input. */
+  requestKind: string;
+  tool?: string;
+  text?: string;
+  start: number;
+  /** When it was answered, refused or dropped. */
+  end?: number;
+  open: boolean;
+}
+
 interface StoreRows {
   messages: StoreMessage[];
   turns: StoreTurn[];
   items: StoreItem[];
+  /** v2 only: requests to the user. */
+  requests?: StoreRequest[];
   /** v1 only: thread totals (no per-turn usage in v1). */
   totals?: Usage;
 }
@@ -433,6 +454,32 @@ async function storeEvents(ctx: NormalizeContext, p: SessionPlan, rows: StoreRow
   return out;
 }
 
+/** What a request with no prompt of its own asks for, by T3's request kind. */
+const REQUEST_WORDS: Record<string, string> = {
+  command: "approve a command",
+  "file-change": "approve a file change",
+  "file-read": "approve a file read",
+  permission: "grant a permission",
+  "mcp-elicitation": "answer an MCP server's request",
+  user_input: "answer a question",
+};
+
+/**
+ * T3's requests to the user as host-request notifications (core/waiting.ts): one when it was put,
+ * and one when it was resolved. A request still open blocks the session on the user.
+ */
+function requestEvents(ctx: NormalizeContext, p: SessionPlan, requests: StoreRequest[]): AgentEvent[] {
+  if (!requests.length) return [];
+  const t = p.thread;
+  const em = new Emitter(ctx, { agent: T3_AGENT, sessionId: p.sessionId, ts: p.start, cwd: t.cwd, model: p.pt?.model ?? t.model }, ["t3", p.sessionId, "request"]);
+  for (const r of requests) {
+    const text = (r.text ?? REQUEST_WORDS[r.requestKind] ?? `answer a ${r.requestKind} request`).slice(0, 2000);
+    em.emit("notification", { type: r.kind === "question" ? HOST_QUESTION : "permission_prompt", via: T3_AGENT, requestId: r.id, requestKind: r.requestKind, tool: r.tool, text }, { key: [r.id], ts: r.start });
+    if (!r.open) em.emit("notification", { type: HOST_RESOLVED, via: T3_AGENT, requestId: r.id, requestKind: r.requestKind }, { key: [r.id, "resolved"], ts: Math.max(r.start, r.end ?? r.start) });
+  }
+  return em.events;
+}
+
 /** The notification that attributes a session to T3 Code, plus the edge to its parent. */
 function linkEvents(ctx: NormalizeContext, p: SessionPlan): AgentEvent[] {
   const t = p.thread;
@@ -469,13 +516,16 @@ async function* threadEvents(ctx: NormalizeContext, t: Thread, rows: StoreRows, 
     let events: AgentEvent[] = [];
     const agent = p.pt ? providerAgent(p.pt.driver) : undefined;
     const path = agent && p.pt?.nativeId ? await native.find(agent, unscope(p.pt.nativeId), t.cwd) : undefined;
+    const mine = (x: { pt?: string }) => (p.pt ? x.pt === p.pt.id || (x.pt === undefined && p === plans[0]) : true);
     if (path && (agent === "codex" || agent === CLAUDE_AGENT)) events = await convertNative(ctx, agent, path, p.sessionId);
     else if (!path) {
-      const mine = (x: { pt?: string }) => (p.pt ? x.pt === p.pt.id || (x.pt === undefined && p === plans[0]) : true);
       events = await storeEvents(ctx, p, { messages: rows.messages.filter(mine), turns: rows.turns.filter(mine), items: rows.items.filter(mine), totals: p === plans[0] ? rows.totals : undefined }, primary);
     }
-    events.push(...linkEvents(ctx, p));
-    for (const e of events) if (since === undefined || e.ts >= since) yield e;
+    events.push(...linkEvents(ctx, p), ...requestEvents(ctx, p, rows.requests?.filter(mine) ?? []));
+    // A session with activity inside the window is imported whole, as the codex and claude-code backfills do:
+    // cutting it at `since` dropped the host-link (stamped at the thread's start), so a session begun before the
+    // cutoff lost its T3 attribution and thread title.
+    if (since === undefined || events.some((e) => e.ts >= since)) yield* events;
   }
 }
 
@@ -626,7 +676,57 @@ function readV2Rows(db: DatabaseSync, threadId: string, runPt: Map<string, strin
       }
     }
   }
-  return { messages, turns, items };
+  return { messages, turns, items, requests: readV2Requests(db, threadId, turns) };
+}
+
+/** T3 request kinds that ask a question; the others ask for approval. */
+const QUESTION_KINDS = new Set(["user_input", "mcp-elicitation"]);
+/** Request kinds that are not put to the user: a provider's own tool call, a sign-in refresh. */
+const NOT_ASKED = new Set(["dynamic_tool_call", "auth_refresh"]);
+const REQUEST_TOOL: Record<string, string> = { command: "shell", "file-change": "edit" };
+/** A request item's status while it waits on the user. */
+const ITEM_WAITING = new Set(["waiting", "pending", "running"]);
+
+/**
+ * A thread's requests to the user: runtime requests (status pending until resolved, expired or
+ * cancelled) merged with their approval_request and user_input_request items, which carry the
+ * prompt or the question. Either one ending ends the request.
+ */
+function readV2Requests(db: DatabaseSync, threadId: string, turns: StoreTurn[]): StoreRequest[] {
+  const byId = new Map<string, StoreRequest>();
+  const turnPt = new Map(turns.map((t) => [t.id, t.pt]));
+  const make = (id: string, requestKind: string, start: number, open: boolean, end: number | undefined, pt: string | undefined): StoreRequest => ({ id, pt, kind: QUESTION_KINDS.has(requestKind) ? "question" : "permission", requestKind, tool: REQUEST_TOOL[requestKind], start, end: open ? undefined : Math.max(start, end ?? start), open });
+  if (hasTable(db, "orchestration_v2_projection_runtime_requests")) {
+    for (const r of db.prepare("SELECT runtime_request_id, provider_turn_id, kind, status, created_at, resolved_at FROM orchestration_v2_projection_runtime_requests WHERE thread_id = ? ORDER BY created_at").all(threadId) as Row[]) {
+      const kind = str(r.kind) ?? "permission";
+      if (NOT_ASKED.has(kind)) continue;
+      const id = String(r.runtime_request_id);
+      byId.set(id, make(id, kind, ms(r.created_at) ?? 0, r.status === "pending", ms(r.resolved_at), r.provider_turn_id ? turnPt.get(String(r.provider_turn_id)) : undefined));
+    }
+  }
+  if (hasTable(db, "orchestration_v2_projection_turn_items")) {
+    for (const r of db.prepare("SELECT * FROM orchestration_v2_projection_turn_items WHERE thread_id = ? AND type IN ('approval_request','user_input_request') ORDER BY ordinal").all(threadId) as Row[]) {
+      const pl = parse(r.payload_json);
+      const id = str(pl.requestId);
+      if (!id) continue;
+      const question = r.type === "user_input_request";
+      const kind = question ? "user_input" : (str(pl.requestKind) ?? "permission");
+      if (NOT_ASKED.has(kind)) continue;
+      const q = Array.isArray(pl.questions) ? obj(pl.questions[0]) : {};
+      const text = question ? (str(q.question) ?? str(q.header)) : (str(pl.prompt) ?? str(pl.reason));
+      const open = ITEM_WAITING.has(str(r.status) ?? str(pl.status) ?? "");
+      const end = ms(pl.completedAt) ?? ms(r.updated_at);
+      const known = byId.get(id);
+      if (!known) {
+        byId.set(id, { ...make(id, kind, ms(pl.startedAt) ?? ms(r.updated_at) ?? 0, open, end, str(r.provider_thread_id)), text });
+        continue;
+      }
+      known.text ??= text;
+      known.pt ??= str(r.provider_thread_id);
+      if (known.open && !open) Object.assign(known, { open: false, end: Math.max(known.start, end ?? known.start) });
+    }
+  }
+  return [...byId.values()];
 }
 
 // ---------------------------------------------------------------- v1 store
@@ -804,6 +904,8 @@ export async function* backfillT3(ctx: NormalizeContext, opts: BackfillOpts = {}
         activity(v2.db, "SELECT thread_id, COUNT(*) n, MAX(updated_at) t FROM orchestration_v2_projection_messages GROUP BY thread_id"),
         activity(v2.db, "SELECT thread_id, COUNT(*) n, MAX(updated_at) t FROM orchestration_v2_projection_turn_items GROUP BY thread_id"),
         activity(v2.db, "SELECT thread_id, COUNT(*) n, MAX(COALESCE(completed_at, started_at)) t FROM orchestration_v2_projection_provider_turns GROUP BY thread_id"),
+        // A request that resolves changes its row, not the row count: it counts twice once it is no longer pending.
+        activity(v2.db, "SELECT thread_id, COUNT(*) + SUM(status <> 'pending') n, MAX(COALESCE(resolved_at, created_at)) t FROM orchestration_v2_projection_runtime_requests GROUP BY thread_id"),
       );
     }
     if (v1) {
@@ -870,7 +972,10 @@ export const t3code: Adapter = {
   //    threads and agents T3 records in projection_subagents; a store-built llm.call names the turn's model.
   // 10 (0.1.8): the host-link notification names the thread in its message, and T3's "New thread" placeholder is no title.
   // 11 (0.1.8): a shell call's test.result reads the last jest, vitest, node:test or mocha summary in its output, not the first.
-  parseVersion: 11,
+  // 12 (0.1.8): T3's requests to the user (pending approvals and questions) are host-request notifications, resolved
+  //    when T3 resolves them, so a thread waiting on one is blocked on you (core/waiting.ts). A thread with activity
+  //    inside the --since window is imported whole, with its host link.
+  parseVersion: 12,
 
   async detect() {
     const env = process.env;

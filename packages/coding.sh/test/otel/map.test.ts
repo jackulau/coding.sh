@@ -909,3 +909,57 @@ describe("agent attributes: reasoning, skills, compaction, main agent and subage
     assert.equal(priced!.usage?.costUsd, explicit!.usage?.costUsd);
   });
 });
+
+describe("Langfuse and OTel trace attributes on the session start", () => {
+  const T = "1f0000000000000000000000000000aa";
+  const map = async (spanAttrs: ReturnType<typeof sAttr>[], resourceAttrs: ReturnType<typeof sAttr>[] = [], child = false) => {
+    const root = otlpSpan(T, "1f00000000000001", undefined, "invoke_agent planner", [sAttr("gen_ai.operation.name", "invoke_agent"), ...spanAttrs], 0, 1000);
+    const spans = [root];
+    if (child) spans.push(otlpSpan(T, "1f00000000000002", "1f00000000000001", "invoke_agent helper", [sAttr("gen_ai.operation.name", "invoke_agent"), ...spanAttrs], 100, 900));
+    const req = { resourceSpans: [{ resource: { attributes: [sAttr("service.name", "lf-app"), ...resourceAttrs] }, scopeSpans: [{ scope: { name: "test" }, spans }] }] };
+    return (await mapTraces(decodeTraceJson(req), ctx())).events;
+  };
+  const meta = (e: AgentEvent) => ({ user: e.payload.user, environment: e.payload.environment, release: e.payload.release });
+
+  it("keys the session by langfuse.session.id", async () => {
+    const events = await map([sAttr("langfuse.session.id", "s1")]);
+    assert.ok(events.every((e) => e.sessionId === "s1"));
+  });
+
+  it("reads the user from langfuse.user.id, user.id or enduser.id, in that order", async () => {
+    for (const [attrs, want] of [
+      [[sAttr("langfuse.user.id", "lf"), sAttr("user.id", "u"), sAttr("enduser.id", "e")], "lf"],
+      [[sAttr("user.id", "u"), sAttr("enduser.id", "e")], "u"],
+      [[sAttr("enduser.id", "e")], "e"],
+    ] as const) {
+      const start = ofKind(await map([...attrs]), "session.start")[0]!;
+      assert.equal(start.payload.user, want);
+    }
+  });
+
+  it("takes environment and release from the span before the resource", async () => {
+    const resource = [sAttr("deployment.environment.name", "production"), sAttr("service.version", "1.0.0")];
+    const fromResource = ofKind(await map([], resource), "session.start")[0]!;
+    assert.deepEqual(meta(fromResource), { user: undefined, environment: "production", release: "1.0.0" });
+    const fromSpan = ofKind(await map([sAttr("langfuse.environment", "staging"), sAttr("langfuse.release", "v2")], resource), "session.start")[0]!;
+    assert.deepEqual(meta(fromSpan), { user: undefined, environment: "staging", release: "v2" });
+    // A span's semconv name beats the resource's Langfuse name.
+    const semconv = ofKind(await map([sAttr("deployment.environment", "dev"), sAttr("service.version", "3")], [sAttr("langfuse.environment", "prod"), sAttr("langfuse.release", "r9")]), "session.start")[0]!;
+    assert.deepEqual(meta(semconv), { user: undefined, environment: "dev", release: "3" });
+  });
+
+  it("puts them on a subagent's own session start too, cut to 200 characters", async () => {
+    const long = `${"x".repeat(199)}😀tail`;
+    const starts = ofKind(await map([sAttr("user.id", long), sAttr("deployment.environment.name", " qa ")], [], true), "session.start");
+    assert.equal(starts.length, 2);
+    for (const s of starts) {
+      assert.equal(s.payload.user, "x".repeat(199), "no half of a surrogate pair at the cut");
+      assert.equal(s.payload.environment, "qa");
+    }
+  });
+
+  it("adds no payload keys when no attribute names them", async () => {
+    const start = ofKind(await map([sAttr("user.email", "nobody")]), "session.start")[0]!;
+    for (const k of ["user", "environment", "release"]) assert.equal(k in start.payload, false, k);
+  });
+});

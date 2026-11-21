@@ -210,7 +210,12 @@ export async function run(c: CommandContext): Promise<number> {
         return 0;
       }
     }
-    if (value === undefined) throw new UsageError(`Unknown config key ${JSON.stringify(key)}`, { reason: "unknown_key", suggestion: SETTABLE.find((k) => k.endsWith(key.split(".").pop() ?? "")) });
+    if (value === undefined) {
+      // A close key, as a command to run, like `config set` and an unknown command.
+      const { suggest } = await import("../args.ts");
+      const s = suggest(key, [...new Set<string>([...SETTABLE, ...FILE_KEYS])]) ?? SETTABLE.find((k) => k.endsWith(`.${key.split(".").pop() ?? ""}`));
+      throw new UsageError(`Unknown config key ${JSON.stringify(key)}`, { reason: "unknown_key", suggestion: s ? `coding.sh config get ${s}` : undefined });
+    }
     if (out.json) out.data({ key, value });
     else out.print(typeof value === "string" ? value : JSON.stringify(value));
     return 0;

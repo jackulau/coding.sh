@@ -346,7 +346,7 @@ export function diffCalls(a: LoadedCall, b: LoadedCall): CallDiff {
   const aCached = (a.event.usage?.cacheReadTokens ?? 0) + (a.event.usage?.cacheWriteTokens ?? 0);
   d.cache.expected = aCached;
   d.cache.reused = d.cache.read > 0 && d.cache.read >= aCached * 0.9;
-  if (aCached > 0 && !d.cache.reused) d.cache.cause = cacheCause(d);
+  if (aCached > 0 && !d.cache.reused) d.cache.cause = cacheCause(d, a.event.source === "proxy" && b.event.source === "proxy");
   return d;
 }
 
@@ -354,7 +354,7 @@ export function diffCalls(a: LoadedCall, b: LoadedCall): CallDiff {
 export const WASTED_PREFIX_HINT = 0.2;
 
 /** The first change in cache order (tools, system, messages), or the lifetime. */
-function cacheCause(d: CallDiff): string {
+function cacheCause(d: CallDiff, proxied: boolean): string {
   if (d.model) return `the model changed (${d.model.a ?? "?"} → ${d.model.b ?? "?"}); each model has its own cache`;
   const t = d.tools;
   if (!t.same) {
@@ -372,6 +372,8 @@ function cacheCause(d: CallDiff): string {
   }
   if (d.messages.rewritten) return `the history was rewritten from message ${d.messages.shared + 1} (compaction or an edit)`;
   if (d.cache.gapMs > CACHE_TTL_MS) return `${Math.round(d.cache.gapMs / 60_000)} min passed between the calls; the default cache lasts 5 min`;
+  // A transcript or OTel call never has its request stored, whatever the capture mode: only the proxy logs requests.
+  if (d.content === "metadata" && !proxied) return "these calls came from the agent's records, which keep no requests, so tools, system prompt and messages can't be compared; run the agent through coding.sh proxy to log its requests";
   if (d.content === "metadata") return "the prefix looks the same by hash; the stored content would say more (capture mode full)";
   return "same prefix and within 5 min: the cache entry may have been evicted, or the cache breakpoints moved";
 }

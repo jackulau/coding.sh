@@ -193,7 +193,7 @@ Scores from this suite:
 | `cli.helpPerTask` | Held-out mean `helpLookups` |
 | `cli.recoveryRate` | Held-out mean `recoveryRate` |
 | `cli.costPerSuccess` | Held-out cost / successes |
-| `cli.guidelines` | Static conformance: the fraction of `test/cli/guidelines.test.ts` cases passing. Every command runs in 7 modes (TTY via `script`, redirected, piped stdin, `--json`, `--non-interactive`, `CI=1`, agent env). Asserts: one JSON document; nothing but the result on stdout; exit codes 0/1/2/130; `--help` under 200 ms offline; no color under `NO_COLOR` or a pipe; at most one "did you mean"; `action_required` instead of a prompt when non-interactive; no "successfully", "just" or "simply" in output |
+| `cli.guidelines` | Static conformance: the fraction of `test/cli/guidelines.test.ts` cases passing. Every command runs in 7 modes (TTY via `script`, redirected, piped stdin, `--json`, `--non-interactive`, `CI=1`, agent env). Asserts: one JSON document; nothing but the result on stdout; exit codes 0/1/2/130; `--help` under 200 ms offline; no color under `NO_COLOR` or a pipe; at most one "did you mean"; `action_required` instead of a prompt when non-interactive; no "successfully", "just" or "simply" in output. Without `script` on PATH (Git Bash on Windows has none), the two TTY modes are left out of the score and the scorecard says they were skipped and why. A case whose process did not start is a scorer error, listed in `scorerErrors` and left out of `n`, never judged as an exit code |
 
 ### 3.2 Session-derived evals from our builder sessions
 
@@ -322,6 +322,12 @@ names it.
 sessions whose folder is this checkout or under it. When the scorer runs in a worktree but the
 sessions ran in another checkout, set `CODING_SH_HEALTH_REPO` to that checkout. On Windows the
 match ignores case and slash direction.
+
+The result lists the first 20 incomplete sessions in `incomplete`, and counts every one of them in
+`incompleteCounts`: `byAgent` (for example `{"t3code": 70}`) and `byMissing`, by agent and what the
+session misses (for example `{"t3code": {"llm.call": 70}}`). `writer` is the coding.sh that last wrote
+or migrated the copied index (`version`, `schema`, `at`), read from the copy before the scorer's CLI
+opens it, so a reader knows which release stored the sessions. The notes repeat both.
 
 ```jsonc
 // tasks/dogfood/scorecard.json

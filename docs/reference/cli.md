@@ -557,7 +557,7 @@ coding.sh sessions --agent codex --since 7d
 ```
 
 - --where: key:value clauses, AND by default; OR between clauses; ( ) to group; - to negate; a,b for either value; \* as a wildcard in text; &gt; &gt;= &lt; &lt;= and a..b on numbers. Bare words search prompts, replies, tool calls and errors (every word in one event).
-- Session keys: agent, model, provider, repo, launch, branch, dir, title, id, run, parent, flag, skill, hook, hook.tokens, weights.edits, weights.changed, weights.checkpoint, since, until, duration, turns, tools, tool.errors, llm.errors, files, events, tests.passed, tests.failed, tokens, tokens.in, tokens.out, cost, cache.breaks, cache.lost, cache.cost, unapproved, has, is. Event keys (the session has a matching event; event keys in one group match the same event): kind, tool, ok, mcp, error, event.duration. Also sort:-cost and limit:N. Full list with examples: https://coding.sh/docs/query.
+- Session keys: agent, model, provider, repo, launch, branch, dir, title, id, run, parent, flag, skill, hook, hook.tokens, weights.edits, weights.changed, weights.checkpoint, since, until, duration, turns, tools, tool.errors, llm.errors, files, events, tests.passed, tests.failed, tokens, tokens.in, tokens.out, cost, cache.breaks, cache.lost, cache.cost, unapproved, has, is. Event keys (the session has a matching event; event keys in one group match the same event): kind, tool, ok, mcp, error, event.duration, user, env, release (user, env and release read the session's start event and match on their own). Also sort:-cost and limit:N. Full list with examples: https://coding.sh/docs/query.
 - --facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).
 - With --json each session is a digest: its stats without stats.phases, and each derail without the event it started at (eventId, index). show &lt;id&gt; --json has both, and --fields stats.phases or --fields stats.derails prints them here.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
@@ -1265,7 +1265,7 @@ coding.sh work ack w3f9a1c
 
 - A work item is a root session plus every session linked to it by parent (subagents, forks, workflow agents). A session a harness or a host such as T3 Code starts is its own item, and its row names the item that started it. An item's id is w plus 6 hex characters of a hash of its root session id, so it stays the same between reads.
 - Items go in this order: blocked on you (a permission prompt, a question or a plan waits), failed (ended on API errors or failing tests), stalled (no end and quiet for 15 minutes or more), your turn (an interactive session whose turn ended), ready for review (ended with file changes). A wait or stall older than 12 hours is marked probably closed. Items with nothing to act on (running, done, acknowledged or snoozed) are hidden; --all lists them. A session whose end is only its last event (one read from its transcript, or an OpenTelemetry or SDK conversation) counts as running for 15 minutes after that event.
-- Only Claude Code, Gemini CLI and Devin CLI hooks report permission prompts. Waits in other agents show as stalled, and the header names those agents; in a T3 Code thread the agent the thread runs counts. Your turn needs the launch mode, which Claude Code and Codex record.
+- Claude Code, Gemini CLI and Devin CLI hooks report permission prompts, and T3 Code reports its threads' approvals and questions from its store. Waits in other agents show as stalled, and the header names those agents. Your turn needs the launch mode, which Claude Code and Codex record.
 - ack hides the item's current cause only: a new prompt, failure or change brings it back. Acks and snoozes are kept in work.json in the coding.sh home. coding.sh status counts the items per bucket, and the statusline shows N need you for items blocked on you or failed.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
@@ -3217,9 +3217,12 @@ coding.sh harness <action>
 | [`snapshot`](#codingsh-harness-snapshot) | Snapshot an agent's harness files into a bundle |
 | [`list`](#codingsh-harness-list) | List harness bundles |
 | [`audit`](#codingsh-harness-audit) | Count the sessions that loaded, read and wrote each memory, AGENTS.md, rule and skill file; warn about subagent files Claude Code misreads |
+| [`tools`](#codingsh-harness-tools) | List the MCP and built-in tools agents were offered, with a hash of each description and schema; flag the ones that changed |
 
 - A harness TOML can carry Claude Code plugins too: plugins = ["terse", "./plugins/mine"], with a directory relative to the TOML file.
 - A plugin is looked up read-only in plugins/installed_plugins.json under $CLAUDE_CONFIG_DIR (default ~/.claude), or read from a directory with .claude-plugin/plugin.json. Its whole directory is stored in the bundle. A run writes it under the run's own home and starts Claude Code with --plugin-dir; your Claude config is not touched.
+- harness tools reads the tools arrays coding.sh proxy stored with each model call, so it needs the proxy with request capture (capture mode full). Each distinct tools array is read once, the 2,000 most recently used at most. A tool named mcp__&lt;server&gt;__&lt;tool&gt; belongs to that MCP server; every other tool is builtin. descSha and schemaSha are the first 12 hex characters of the sha256 of the description and of the input schema as JSON.
+- With a pin, harness tools --changed keeps a tool when its latest description or schema differs from the pin, or when one seen since the pin does. Pins live in tool-pins.json in the coding.sh data directory; pin keeps the pins of tools not seen in the window.
 
 ### `coding.sh harness snapshot`
 
@@ -3272,6 +3275,29 @@ coding.sh harness audit [options]
 coding.sh harness audit
 coding.sh harness audit --agent claude-code --since 90d
 coding.sh harness audit --json
+```
+
+### `coding.sh harness tools`
+
+List the MCP and built-in tools agents were offered, with a hash of each description and schema; flag the ones that changed.
+
+```text
+coding.sh harness tools [pin] [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `pin` | no | pin: save the latest hashes of every tool in the window to tool-pins.json, so --changed compares with them. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--since <WHEN>` | `30d` | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
+| `--changed` |  | Only tools whose description or schema differs from its pin, or, with no pin, had more than one in the window; exit 1 when any remain. |
+
+```sh
+coding.sh harness tools
+coding.sh harness tools --changed
+coding.sh harness tools pin
 ```
 
 ## `coding.sh compare`

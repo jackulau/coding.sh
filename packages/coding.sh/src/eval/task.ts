@@ -724,9 +724,10 @@ export async function importTaskDir(dir: string, blobs?: BlobStore, opts: Import
   const hiddenFiles: Record<string, BlobRef> = {};
   const testsDir = join(dir, "tests");
   const testFiles = existsSync(testsDir) ? await walkFiles(testsDir) : [];
-  const listed = new Set(json.verifier.hiddenFiles ?? testFiles);
+  // Every file under tests/ is hidden; task.json's hiddenFiles only names files that must be there.
+  // eval export writes that list, so a test added to an exported dir is not dropped for missing from it.
+  const listed = new Set(json.verifier.hiddenFiles ?? []);
   for (const rel of testFiles) {
-    if (!listed.has(rel)) continue;
     safeJoin(dir, rel); // validates the path shape
     hiddenFiles[toPosix(rel)] = await store(await readFile(join(testsDir, rel)));
   }
