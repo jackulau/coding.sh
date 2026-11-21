@@ -27,6 +27,14 @@ export const BUCKET_LABELS: Record<Bucket, string> = {
 };
 /** Why an item with nothing to act on is hidden (`work --all` shows it). */
 export type HiddenReason = "running" | "done" | "acked" | "snoozed";
+/**
+ * Where an item is in its life, whatever needs the person now (docs/design/work.md#stages-and-kinds).
+ * A bucket is what a person must do; a stage is where the work is.
+ */
+export const STAGES = ["planning", "executing", "review", "approval", "done"] as const;
+export type Stage = (typeof STAGES)[number];
+/** A change touched files; research stopped without changing one. */
+export type WorkKind = "research" | "change";
 
 /** A wait or a stall older than this may be a closed terminal that sent no session end. */
 export const PROBABLY_CLOSED_MS = 12 * 3600e3;
@@ -87,6 +95,11 @@ export interface WorkItem {
   hint?: string;
   reason: string;
   next: string;
+  stage: Stage;
+  /** Unset while an item that changed no file still plans or executes: not known yet. */
+  kind?: WorkKind;
+  /** The evidence for the stage, one short line: "changed 3 files, stopped 12m ago". */
+  stageWhy: string;
 }
 
 /** Failed items that share one API cause ("api 529 x4"). */
@@ -102,6 +115,8 @@ export interface WorkQueue {
   /** Items in queue order: visible ones, then (with all) hidden ones. */
   items: WorkItem[];
   counts: Record<Bucket, number>;
+  /** Items per stage over every item in the window, hidden ones included, before the stage filter. */
+  stages: Record<Stage, number>;
   /** Items hidden (running, done, acknowledged or snoozed). */
   hidden: number;
   groups: WorkGroup[];
@@ -118,6 +133,8 @@ export interface WorkOptions {
   agents?: readonly string[];
   /** Only items whose root (or first session) ran under this place. */
   place?: Place;
+  /** Only items in these stages, hidden ones included. */
+  stages?: readonly Stage[];
 }
 
 export const workItemId = (rootId: string): string => `w${createHash("sha256").update(rootId).digest("hex").slice(0, 6)}`;
@@ -243,6 +260,79 @@ export function workCauses(members: readonly Session[], primary: Session, now: n
 
 const rank = (b: Bucket): number => BUCKETS.indexOf(b);
 
+export interface WorkStage {
+  stage: Stage;
+  kind?: WorkKind;
+  /** The evidence, at most STAGE_WHY_MAX characters. */
+  why: string;
+}
+
+/** The longest stageWhy. */
+export const STAGE_WHY_MAX = 80;
+const clip = (text: string, n = STAGE_WHY_MAX): string => (text.length > n ? `${text.slice(0, n - 1)}…` : text);
+const changedText = (n: number): string => `changed ${n} ${n === 1 ? "file" : "files"}`;
+const WAIT_FOR: Record<Waiting["kind"], string> = { permission: "permission", question: "an answer", plan: "plan approval", turn: "your turn" };
+/** The buckets a person settles by looking at the result: an ack of each moves the item to done. */
+const REVIEW_BUCKETS: ReadonlySet<Bucket> = new Set(["failed", "turn", "review"]);
+
+/** "tests: 3 passed, 2 failed", or undefined when no count is set. */
+function testsText(passed: number | undefined, failed: number | undefined): string | undefined {
+  if (passed === undefined && failed === undefined) return undefined;
+  const parts = [passed ? `${passed} passed` : "", failed ? `${failed} failed` : ""].filter(Boolean);
+  return `tests: ${parts.length ? parts.join(", ") : "none run"}`;
+}
+
+/** The sum of a stat over the sessions that set it, or undefined when none does. */
+function sumSet(members: readonly Session[], pick: (s: Session) => number | undefined): number | undefined {
+  let out: number | undefined;
+  for (const s of members) {
+    const v = pick(s);
+    if (v !== undefined) out = (out ?? 0) + v;
+  }
+  return out;
+}
+
+/**
+ * The item's stage and kind from its sessions and causes, with no store read. First match wins:
+ * approval (a member waits on a permission, a question or a plan, acked or not); executing or
+ * planning while a member runs or is stalled (executing once a file changed or tests ran);
+ * review while a failed, turn or review cause is not acknowledged; done otherwise. A snooze does
+ * not change it. `causes` are workCauses' (every one, acked or not); `acked` says which the person acked.
+ */
+export function workStage(members: readonly Session[], primary: Session, now: number, causes: readonly WorkCause[] = workCauses(members, primary, now), acked: (c: WorkCause) => boolean = () => false): WorkStage {
+  const files = members.reduce((n, s) => n + (s.stats.filesChanged ?? 0), 0);
+  const changed = files > 0 ? changedText(files) : undefined;
+  const kind: WorkKind | undefined = files > 0 ? "change" : undefined;
+  const blocked = members.filter((s) => s.stats.waiting && BLOCKING.has(s.stats.waiting.kind)).sort((a, b) => a.stats.waiting!.at - b.stats.waiting!.at);
+  if (blocked.length) {
+    const w = blocked[0]!.stats.waiting!;
+    return { stage: "approval", kind, why: clip(`waits ${short(now - w.at)} for ${WAIT_FOR[w.kind]}${w.text ? `: ${w.text}` : ""}`) };
+  }
+  // Running or stalled: no end (or a recent inferred one) and nothing waited on.
+  const working = members.filter((s) => !s.stats.waiting && (s.endedAt === undefined || workRunning(s, now)));
+  if (working.length) {
+    const tests = testsText(sumSet(members, (s) => s.stats.testsPassed), sumSet(members, (s) => s.stats.testsFailed));
+    // Active inside the stall threshold reads as running; else every working member is stalled.
+    const active = working.some((s) => now - lastActivity(s) < STALL_MS);
+    const lead = active ? `running ${short(now - Math.min(...members.map((s) => s.startedAt)))}` : `quiet ${short(now - Math.max(...working.map(lastActivity)))}`;
+    const evidence = [changed, tests].filter(Boolean);
+    return { stage: evidence.length ? "executing" : "planning", kind, why: clip(`${lead}, ${evidence.length ? evidence.join(", ") : "no file changed yet"}`) };
+  }
+  const end = Math.max(...members.map(lastActivity));
+  const own = causes.filter((c) => REVIEW_BUCKETS.has(c.bucket));
+  if (own.length) {
+    const open = own.filter((c) => !acked(c));
+    const turn = own.find((c) => c.bucket === "turn");
+    const failure = apiFailure(primary) ?? ((primary.stats.testsFailed ?? 0) > 0 ? `tests: ${primary.stats.testsFailed} failed` : undefined);
+    const tail = turn ? `your turn for ${short(now - turn.at)}` : `stopped ${short(now - end)} ago`;
+    const why = [failure, changed, tail].filter(Boolean).join(", ");
+    return { stage: open.length ? "review" : "done", kind: kind ?? "research", why: clip(open.length ? why : `acknowledged: ${why}`) };
+  }
+  const tests = testsText(primary.stats.testsPassed, primary.stats.testsFailed);
+  const why = [tests, changed, `stopped ${short(now - end)} ago`].filter(Boolean).join(", ");
+  return { stage: "done", kind: kind ?? "research", why: clip(tests || changed ? why : `${why}, no file changed`) };
+}
+
 /** The command that resumes a session, when the agent has one. */
 export function resumeCommand(s: Pick<Session, "id" | "agent" | "provider">): string | undefined {
   const agent = s.agent === "t3code" ? undefined : s.agent;
@@ -335,6 +425,8 @@ export function workItem(raw: RawItem, now: number, overlay?: WorkOverlay): Work
     filesChanged: members.reduce((n, s) => n + (s.stats.filesChanged ?? 0), 0),
     reason: "",
     next: "",
+    stage: "done",
+    stageWhy: "",
   };
   if (primary.provider) item.provider = primary.provider;
   if (primary.cwd) item.cwd = primary.cwd;
@@ -344,8 +436,13 @@ export function workItem(raw: RawItem, now: number, overlay?: WorkOverlay): Work
   if (raw.startedByRoot) item.startedBy = workItemId(raw.startedByRoot);
   const ids = item.sessionIds;
   const causes = workCauses(members, primary, now);
-  const open = causes.filter((c) => !overlay || !ackedFingerprint(overlay, c.sessionId, c.fingerprint));
+  const isAcked = (c: WorkCause): boolean => !!overlay && ackedFingerprint(overlay, c.sessionId, c.fingerprint);
+  const open = causes.filter((c) => !isAcked(c));
   const cause = open[0];
+  const st = workStage(members, primary, now, causes, isAcked);
+  item.stage = st.stage;
+  if (st.kind) item.kind = st.kind;
+  item.stageWhy = st.why;
   const snooze = overlay ? snoozeOf(overlay, ids, now) : undefined;
   if (cause && snooze && rank(cause.bucket) >= rank(snooze.bucket)) item.hidden = "snoozed";
   else if (cause) item.bucket = cause.bucket;
@@ -399,6 +496,8 @@ export function buildWorkQueue(sessions: readonly Session[], opts: WorkOptions =
   });
   const all = raws.map((raw) => workItem(raw, now, opts.overlay));
   all.sort(compare);
+  const stages = Object.fromEntries(STAGES.map((st) => [st, 0])) as Record<Stage, number>;
+  for (const i of all) stages[i.stage]++;
   const visible = all.filter((i) => i.bucket);
   const counts = Object.fromEntries(BUCKETS.map((b) => [b, 0])) as Record<Bucket, number>;
   for (const i of visible) counts[i.bucket!]++;
@@ -408,18 +507,25 @@ export function buildWorkQueue(sessions: readonly Session[], opts: WorkOptions =
     if (f?.startsWith("api ")) byCause.set(f, [...(byCause.get(f) ?? []), i.id]);
   }
   const groups: WorkGroup[] = [...byCause].filter(([, ids]) => ids.length > 1).map(([cause, items]) => ({ bucket: "failed", cause, count: items.length, items }));
-  const shown = opts.all ? all : visible;
+  const only = opts.stages?.length ? new Set(opts.stages) : undefined;
+  const shown = only ? all.filter((i) => only.has(i.stage)) : opts.all ? all : visible;
   const shownIds = new Set(shown.flatMap((i) => i.sessionIds));
   const inView = sessions.filter((s) => shownIds.has(s.id));
   const signaled = new Set(inView.filter(reportsPrompts).map(promptAgent));
   const noPromptSignal = [...new Set(inView.map(promptAgent))].filter((a) => !signaled.has(a)).sort();
-  return { now, items: shown, counts, hidden: all.length - visible.length, groups, noPromptSignal };
+  return { now, items: shown, counts, stages, hidden: all.length - visible.length, groups, noPromptSignal };
 }
 
 /** "2 blocked on you · 1 failed · 3 ready for review", or "nothing needs you". */
 export function countsLine(counts: Readonly<Record<Bucket, number>>): string {
   const parts = BUCKETS.filter((b) => counts[b]).map((b) => `${counts[b]} ${BUCKET_LABELS[b].toLowerCase()}`);
   return parts.length ? parts.join(" · ") : "nothing needs you";
+}
+
+/** "1 approval · 2 executing · 4 done", or "no items". */
+export function stagesLine(stages: Readonly<Record<Stage, number>>): string {
+  const parts = STAGES.filter((st) => stages[st]).map((st) => `${stages[st]} ${st}`);
+  return parts.length ? parts.join(" · ") : "no items";
 }
 
 /** Items blocked on the user or failed: the statusline's "N need you". */
@@ -512,6 +618,7 @@ export async function workFiles(index: Pick<IndexStore, "listEvents">, item: Wor
   if (ids.length === changers.length && files.size) {
     item.filesChanged = files.size;
     if (item.cause?.bucket === "review") item.reason = reviewReason(short(now - item.cause.at), files.size);
+    item.stageWhy = clip(item.stageWhy.replace(/\bchanged \d+ files?\b/, changedText(files.size)));
   }
   return [...files];
 }
@@ -545,6 +652,9 @@ export function workItemJson(i: WorkItem): Record<string, unknown> {
     lastActivity: iso(i.lastActivity),
     running: i.running,
     filesChanged: i.filesChanged,
+    stage: i.stage,
+    kind: i.kind,
+    stageWhy: i.stageWhy,
   });
   if (c) {
     out.since = iso(c.at);
@@ -564,6 +674,7 @@ export function workJson(q: WorkQueue, opts: { since: number; limit: number; tru
   return defined({
     since: iso(opts.since),
     counts: q.counts,
+    stages: q.stages,
     needYou: needYou(q),
     hidden: q.hidden,
     noPromptSignal: q.noPromptSignal,
@@ -579,6 +690,7 @@ export interface WorkRead {
   all?: boolean;
   agents?: readonly string[];
   place?: Place;
+  stages?: readonly Stage[];
   now?: number;
   overlay: WorkOverlay;
 }
@@ -586,6 +698,6 @@ export interface WorkRead {
 /** Loads the window's sessions and builds the queue. */
 export async function readWorkQueue(index: IndexStore, r: WorkRead): Promise<{ queue: WorkQueue; sessions: Session[]; truncated: boolean }> {
   const { sessions, truncated } = await loadWorkSessions(index, { since: r.since });
-  const queue = buildWorkQueue(sessions, { now: r.now, all: r.all, overlay: r.overlay, agents: r.agents, place: r.place });
+  const queue = buildWorkQueue(sessions, { now: r.now, all: r.all, overlay: r.overlay, agents: r.agents, place: r.place, stages: r.stages });
   return { queue, sessions, truncated };
 }

@@ -11,6 +11,7 @@ grouped by area, with links to the docs for the details.
 
 ### Added
 
+- **Work.** Each `coding.sh work` item has a stage (planning, executing, review, approval or done), a kind (research or change) and a line of evidence. The header counts items per stage, and `--stage approval` lists every item in that stage, hidden ones too. [Work](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#stages-and-kinds)
 - **Evals.** `coding.sh compare` prints claim rate, claim precision and silent failures per arm: how often the final answer says the work is done, how often the verifier agrees, and how often it claimed success on a failed run. The rows and `claims` in `--json` appear only when some arm claims. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#harness-ab)
 - **Cost.** Plan usage for the 5-hour and weekly windows: the Claude Code status line ends with `5h 62% 7d 41%` when Claude Code sends it, `coding.sh quota` prints each agent's windows with the reset time, `quota wait` blocks until a window has room, and the MCP `status` tool includes the same rows. [CLI reference](https://coding.sh/docs/cli/quota)
 - **Cost.** `coding.sh usage --by mcp`, `--by skill` and `--by subagent` show what each MCP server, skill tag and subagent type costs; an MCP server's cost is its result tokens at the session model's input price. Every `--json` row has `"basis": "attributed"`. [Track cost](https://coding.sh/docs/cost#cost-by-mcp-server-skill-or-subagent)

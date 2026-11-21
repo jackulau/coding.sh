@@ -121,6 +121,39 @@ parents of those whose parent started earlier, up to 500 lookups. It reads at mo
 and says so when it left older ones out. `--agent` keeps items with a session from that agent.
 `--repo` keeps items whose main session ran under that path, or in a repo or folder with that name.
 
+## Stages and kinds
+
+Each item also has a stage: planning, executing, review, approval or done. A bucket is what a
+person must do now, and an item with nothing to do has none. A stage is where the work is, and
+every item has one, hidden items too. So a person can see the shape of all the work at once, or
+list every item that waits for approval, while the buckets stay a to-do list.
+
+The stage comes from the item's sessions and the causes the queue already found, with no extra
+store read (`workStage` in `src/core/work.ts`). The first rule that matches wins:
+
+1. **approval**: a session in the item waits on a permission, a question or a plan. An ack does
+   not change it, since the agent still waits.
+2. **executing** or **planning**: a session in the item is running or stalled and waits on
+   nothing. It is executing once a session changed a file or ran tests (`testsPassed` or
+   `testsFailed` is set), and planning before that.
+3. **review**: nothing runs, and the item has a failed, your-turn or ready-for-review cause the
+   person has not acknowledged. Those causes are the queue's own: the main session ended on API
+   errors or failing tests, waits for the next prompt, or the item changed files.
+4. **done**: everything else, including an item whose failed, your-turn and review causes were
+   all acknowledged.
+
+A snooze does not change the stage. A session that waits for the next prompt counts as stopped
+here, though the queue may still count it as running.
+
+The kind is `change` once a session in the item changed a file, and `research` when the item is
+in review or done without a changed file. An item that still plans or executes with no changed file
+has no kind yet.
+
+`stageWhy` gives the evidence in one line of at most 80 characters: "waits 2m for permission: …",
+"running 8m, no file changed yet", "quiet 20m, changed 1 file", "tests: 2 failed, stopped 4m ago",
+"changed 3 files, stopped 12m ago", or "acknowledged: changed 3 files, stopped 12m ago". The
+running time counts from the item's first session; a stalled item says how long it has been quiet.
+
 ## Acknowledging and snoozing
 
 `<CODING_SH_HOME>/work.json` (`src/core/work-overlay.ts`) holds acks and snoozes, keyed by member
@@ -134,11 +167,17 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
 
 ## Surfaces
 
-- `coding.sh work [--all] [--repo <path>] [--agent <name>] [--since 7d] [--limit 20] [--json]`.
-  It runs the same automatic ingest as other reads first, so a fresh prompt shows up.
+- `coding.sh work [--all] [--stage <list>] [--repo <path>] [--agent <name>] [--since 7d] [--limit 20] [--json]`.
+  It runs the same automatic ingest as other reads first, so a fresh prompt shows up. The header
+  gives the count of items per stage, and each row its stage and kind. `--json` gives each item's
+  `stage`, `kind` (when known) and `stageWhy`, and `stages`, the count per stage over every item in
+  the window, hidden ones included. `--stage review,approval` lists only the items in those stages,
+  hidden ones too, so `--stage done` lists the done items the queue hides. An unknown stage exits 2
+  and names the stage it is closest to.
 - `coding.sh work show <id>`: the decision packet. What the item is doing, what it waits on (the
   redacted prompt text), for how long, its cost, the files it changed, its child sessions, and the
   next step: the agent and folder to answer in while it runs, or the resume command once it ended.
+  It also prints the stage, the kind and the evidence for the stage.
   The id is an item id or the id of any session in the item. A session outside the window is
   still found by its id. An unknown id exits 1.
 - `coding.sh work ack <id>` and `coding.sh work snooze <id> <duration>`. A bad duration exits 2.
@@ -195,7 +234,13 @@ done by a check command; budgets; cloud agents; dependencies between items; noti
 - `test/core/work.test.ts`: with two prompts in a row, acknowledging the first leaves the second in
   the queue. An agent with no prompt signal falls to stalled with the approval hint, and Devin CLI
   and a T3 Code thread do not. It also covers
-  bucket order, API groups, harness and host children, snoozes, and a corrupt overlay.
+  bucket order, API groups, harness and host children, snoozes, and a corrupt overlay. For stages
+  it has one test per rule, and checks that an acked blocked item stays approval, an acked review
+  item becomes done, a snoozed review item stays review, a failed item with no change is review
+  with kind research, and the stage counts include hidden items.
+- `test/cli/work.test.ts` also checks that `work --stage executing --json` lists only the running
+  item that changed a file, that `--stage done` lists hidden items, and that `--stage reveiw` exits
+  2 and suggests `review`.
 - `test/viewer/work.test.ts`: `GET /api/work` returns the items `work --json` returns for the same
   seeded store and filters, and an ack or snooze posted to the viewer is one the command sees.
   `test/viewer/work-browser.test.ts` drives the page in headless Chrome.

@@ -1327,6 +1327,7 @@ coding.sh work [action] [options]
 | Option | Default | Description |
 |---|---|---|
 | `--all` |  | Also list hidden items: running, done, acknowledged or snoozed. |
+| `--stage <STAGES>` |  | Only items in these stages, hidden ones too (repeatable, or a comma list: review,approval) One of: `planning`, `executing`, `review`, `approval`, `done`. |
 | `-r, --repo <PATH>` |  | Only items whose root session ran under this directory, or in a repo with this name (default: every repo) |
 | `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
 | `--since <WHEN>` | `7d` | Only items with a session started at or after this time: 7d, 12h, 30m, today, yesterday or a date. |
@@ -1337,6 +1338,7 @@ coding.sh work [action] [options]
 coding.sh work
 coding.sh work --agent claude-code --since 24h
 coding.sh work --repo . --json
+coding.sh work --stage approval
 coding.sh work show w3f9a1c
 coding.sh work ack w3f9a1c
 ```
@@ -1344,6 +1346,7 @@ coding.sh work ack w3f9a1c
 - A work item is a root session plus every session linked to it by parent (subagents, forks, workflow agents). A session a harness or a host such as T3 Code starts is its own item, and its row names the item that started it. An item's id is w plus 6 hex characters of a hash of its root session id, so it stays the same between reads.
 - Items go in this order: blocked on you (a permission prompt, a question or a plan waits), failed (ended on API errors or failing tests), stalled (no end and quiet for 15 minutes or more), your turn (an interactive session whose turn ended), ready for review (ended with file changes). A wait or stall older than 12 hours is marked probably closed. Items with nothing to act on (running, done, acknowledged or snoozed) are hidden; --all lists them. A session whose end is only its last event (one read from its transcript, or an OpenTelemetry or SDK conversation) counts as running for 15 minutes after that event.
 - Claude Code, Gemini CLI and Devin CLI hooks report permission prompts, and T3 Code reports its threads' approvals and questions from its store. Waits in other agents show as stalled, and the header names those agents. Your turn needs the launch mode, which Claude Code and Codex record.
+- Each item also has a stage, where the work is: approval (a prompt, question or plan waits, acked or not), planning or executing (running or stalled; executing once a file changed or tests ran), review (stopped with a failure, your turn or changed files not acknowledged), or done. Its kind is change once a file changed, and research when it stopped without changing one. --stage lists the items in those stages, hidden ones too.
 - ack hides the item's current cause only: a new prompt, failure or change brings it back. Acks and snoozes are kept in work.json in the coding.sh home. coding.sh status counts the items per bucket, and the statusline shows N need you for items blocked on you or failed.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
