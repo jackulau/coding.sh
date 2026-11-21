@@ -51,6 +51,16 @@
 // versions is kept under the cursor REPARSE_CURSOR. `ingest --rebuild` does
 // every session (optionally of some agents) now.
 //
+// Host links: a host adapter (T3 Code) links another agent's session to the
+// host's thread by rows of its own (a host-link notification) in a session the
+// other agent's adapter may have stored first. A session stored before those
+// rows (an older import cut them off, and the host's file was then recorded as
+// read) is the other agent's, so no host parse bump makes it stale. When a
+// host's parse version differs from the one under relinkCursor (once on a store
+// an older build stamped, never on a new one), and on `ingest --rebuild`, the
+// re-parse reads the host's store and adds its rows to every stored session it
+// links that is not the host's yet ("relinked"), as a fresh import would.
+//
 // Refold: when the fold stamp changes (core/sessions.ts foldStamp: the
 // SESSION_FOLD_VERSION of how stats and flags are derived from stored events,
 // and the shape of the fold state), an automatic run then folds every other
@@ -70,6 +80,7 @@ import { COPY_SLACK_MS, copyFilter, messageKey } from "./message-copies.ts";
 import { listSpoolFiles, readSpoolFile } from "./spool-read.ts";
 import { repoResolver } from "./repo-state.ts";
 import { isWrapperLine } from "../adapters/more/wrapper.ts";
+import { T3_AGENT } from "../spool/host.ts";
 export { REFOLD_CURSOR } from "./ingest.ts";
 import {
   backfillEvent,
@@ -91,6 +102,8 @@ import {
 export const REPARSE_CURSOR = "reparse:stamp";
 /** kv: why a session was kept at its old parse version. */
 export const reparseKeptKey = (sessionId: string): string => `reparse:kept:${sessionId}`;
+/** Cursor holding the parse version of a host adapter whose store the last re-parse linked stored sessions from. */
+export const relinkCursor = (host: string): string => `reparse:relink:${host}`;
 /** kv: JSON summary of the last re-parse (when, counts, first errors). */
 export const REPARSE_LAST = "reparse:last";
 /** kv: `{ v, id }` of an unfinished refold: sessions up to id (in id order) are done. */
@@ -105,6 +118,8 @@ const LOCK_HOLD_MS = 1_000;
 /** Slack when checking that spool lines span the stored hook rows. */
 const SPAN_SLACK_MS = 60_000;
 const MAX_ERRORS = 100;
+/** Host adapters: their rows in another agent's session give it to the host (spool/host.ts). */
+const HOSTS = [T3_AGENT];
 /**
  * Adapters whose source files are named by the session they hold (Claude Code: `<id>.jsonl` or
  * `<id>/subagents/...`; Codex: `rollout-<time>-<id>.jsonl`). A re-parse reads only the files whose
@@ -188,6 +203,8 @@ export interface ReparseResult {
   keptSessions: KeptSession[];
   /** Deleted: the adapter now reports them as copies of another stored session. */
   copiesRemoved: number;
+  /** Sessions of another agent that a host's store links, given the host's rows they lacked (its link). */
+  relinked: number;
   /** Rows deleted and inserted. */
   removed: number;
   inserted: number;
@@ -207,11 +224,22 @@ async function staleSessions(index: IndexStore, adapters: ReadonlyMap<string, Ad
   });
 }
 
+/** Host adapters whose parse version is not the one the last re-parse linked stored sessions with. */
+async function hostsBehind(index: IndexStore, adapters: ReadonlyMap<string, Adapter>): Promise<Adapter[]> {
+  const out: Adapter[] = [];
+  for (const id of HOSTS) {
+    const a = adapters.get(id);
+    if (a?.backfill && (await index.getCursor(relinkCursor(id))) !== (a.parseVersion ?? 1)) out.push(a);
+  }
+  return out;
+}
+
 /**
- * True when stale sessions wait for an automatic re-parse, or stored sessions
- * for a refold. Two cursor reads while the adapter versions match the last
- * run's stamp and the fold version its refold; otherwise a scan of the
- * session rows, and the stamp is set right away when none is stale.
+ * True when stale sessions wait for an automatic re-parse, stored sessions for
+ * a refold, or a host's changed parse for a pass over its links. A few cursor
+ * reads while the adapter versions match the last run's stamp and the fold
+ * version its refold; otherwise a scan of the session rows, and the stamp is
+ * set right away when none is stale.
  */
 export async function reparseDue(index: IndexStore, adapters: ReadonlyMap<string, Adapter>): Promise<boolean> {
   if (!index.replaceSessionEvents) return false;
@@ -220,7 +248,14 @@ export async function reparseDue(index: IndexStore, adapters: ReadonlyMap<string
     await index.setCursor(REFOLD_CURSOR, foldStamp());
   }
   const stamp = parseStamp(adapters);
-  if ((await index.getCursor(REPARSE_CURSOR)) === stamp) return false;
+  const last = await index.getCursor(REPARSE_CURSOR);
+  const behind = await hostsBehind(index, adapters);
+  if (behind.length) {
+    // A store no re-parse has stamped yet was imported by these hosts' parse: nothing in it predates their links.
+    if (last !== 0 && (await index.listSessions({ limit: 1 })).length) return true;
+    for (const a of behind) await index.setCursor(relinkCursor(a.id), a.parseVersion ?? 1);
+  }
+  if (last === stamp) return false;
   if ((await staleSessions(index, adapters)).length) return true;
   await index.setCursor(REPARSE_CURSOR, stamp);
   return false;
@@ -333,7 +368,7 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
   const env = opts.env ?? process.env;
   const now = opts.now ?? Date.now;
   const spoolDir = opts.spoolDir ?? paths(env).spool;
-  const result: ReparseResult = { sessions: 0, reparsed: 0, kept: 0, keptSessions: [], copiesRemoved: 0, removed: 0, inserted: 0, refolded: 0, errors: [] };
+  const result: ReparseResult = { sessions: 0, reparsed: 0, kept: 0, keptSessions: [], copiesRemoved: 0, relinked: 0, removed: 0, inserted: 0, refolded: 0, errors: [] };
   const error = (e: IngestError) => {
     if (result.errors.length < MAX_ERRORS) result.errors.push(e);
   };
@@ -413,6 +448,28 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
       }
     }
 
+    // Hosts whose store is read to link other agents' sessions: a changed parse, a rebuild, or read anyway.
+    const relinkHosts = new Set<string>();
+    const behind = new Set((await hostsBehind(index, adapters)).map((a) => a.id));
+    for (const h of HOSTS) {
+      if (!adapters.get(h)?.backfill || !(opts.all || behind.has(h) || transcriptAdapters.has(h))) continue;
+      relinkHosts.add(h);
+      transcriptAdapters.add(h);
+    }
+    /** Stored sessions, not targets, that a host's rows are added to: another agent's, not the host's yet. */
+    const unlinked = new Map<string, boolean>();
+    const isUnlinked = async (sid: string, host: string): Promise<boolean> => {
+      let v = unlinked.get(sid);
+      if (v === undefined) {
+        const s = agents.has(sid) ? undefined : await index.getSession(sid);
+        v = !!s && s.agent !== host && (!wanted || wanted.has(host) || wanted.has(s.agent));
+        unlinked.set(sid, v);
+      }
+      return v;
+    };
+    const relinked = new Set<string>();
+    const hostFailed = new Set<string>();
+
     const linker = childLinker(index);
     const repo = repoResolver();
     /** Targets the adapters' backfills skipped as copies: session id -> the owner's session id. */
@@ -420,21 +477,31 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
     // A fold that throws leaves the session a row tagged fold:error (recomputeSession); reported here.
     const onFoldError = (f: FoldFailure) => error({ message: foldFailureMessage(f) });
 
+    /** Adds the transcript rows a stored session lacks (deduped as at ingest) and folds it again; the rows added. */
+    const topUp = async (id: string, stored: AgentEvent[], transcript: AgentEvent[]): Promise<number> => {
+      const add = await dedupe(stored.filter((e) => !isBackfillEvent(e)), [...stored.filter(isBackfillEvent), ...transcript]);
+      const have = new Set(stored.map((e) => e.id));
+      const fresh = add.filter((e) => !have.has(e.id));
+      if (!fresh.length) return 0;
+      const r = await index.replaceSessionEvents!(id, [], await toolDurationFiller(viewOf([...stored, ...fresh]))(fresh));
+      result.inserted += r.inserted;
+      await recomputeSession(index, id, { linker, repo, onFoldError });
+      return r.inserted;
+    };
+
     /** Rebuilds one session: transcript events read for it (undefined = none found) and its re-normalized spool events. */
     const rebuild = async (id: string, transcript: AgentEvent[] | undefined): Promise<void> => {
-      const agent = agents.get(id)!;
-      const version = versionOf(adapters, agent)!;
+      const agent = agents.get(id);
       const stored = await index.listEvents(id);
+      // Not a target: a session a host links, given the host's rows it lacks.
+      if (agent === undefined) {
+        if (await topUp(id, stored, transcript ?? [])) relinked.add(id);
+        return;
+      }
+      const version = versionOf(adapters, agent)!;
+      // More of a transcript flushed apart: top the rebuilt session up.
       if (done.has(id)) {
-        // More of a transcript flushed apart: top the rebuilt session up.
-        const add = await dedupe(stored.filter((e) => !isBackfillEvent(e)), [...stored.filter(isBackfillEvent), ...(transcript ?? [])]);
-        const have = new Set(stored.map((e) => e.id));
-        const fresh = add.filter((e) => !have.has(e.id));
-        if (fresh.length) {
-          const r = await index.replaceSessionEvents!(id, [], await toolDurationFiller(viewOf([...stored, ...fresh]))(fresh));
-          result.inserted += r.inserted;
-          await recomputeSession(index, id, { linker, repo, onFoldError });
-        }
+        await topUp(id, stored, transcript ?? []);
         return;
       }
       done.add(id);
@@ -569,12 +636,13 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
         // A file that names no session to rebuild is not parsed.
         return !PATH_KEYED.has(id) || namesTarget(f.path);
       };
+      const relinking = relinkHosts.has(id);
       try {
         const copied = (sid: string, ownerId: string) => {
           if (fromTranscript.has(sid)) copies.set(sid, ownerId);
         };
         for await (const raw of adapter.backfill!(ctx, { changed, copied })) {
-          if (!fromTranscript.has(raw.sessionId)) continue;
+          if (!fromTranscript.has(raw.sessionId) && !(relinking && (await isUnlinked(raw.sessionId, id)))) continue;
           const ev = backfillEvent(raw, profileFor, metadata, env);
           if (typeof ev === "string") {
             if (ev !== "excluded") error({ message: `${id}: ${ev}` });
@@ -587,6 +655,7 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
         // The file being read is incomplete: its sessions keep their rows.
         for (const e of current) failed.add(e.sessionId);
         current = [];
+        hostFailed.add(id);
         error({ message: `${id}.backfill failed: ${(err as Error).message}` });
       }
       await flush();
@@ -628,8 +697,12 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
       await index.kvSet?.(REFOLD_AFTER, undefined);
     }
     await linker.apply();
+    result.relinked = relinked.size;
 
     if (!wanted) await index.setCursor(REPARSE_CURSOR, stamp);
-    await index.kvSet?.(REPARSE_LAST, JSON.stringify({ at: now(), all: !!opts.all, sessions: result.sessions, reparsed: result.reparsed, kept: result.kept, copiesRemoved: result.copiesRemoved, refolded: result.refolded, errors: result.errors.slice(0, 5) }));
+    // A host pass that read the whole store links nothing more until the host's parse changes; one cut short runs again.
+    const relinkFailed = [...failed].some((sid) => !agents.has(sid));
+    for (const h of relinkHosts) if (!wanted && !hostFailed.has(h) && !relinkFailed) await index.setCursor(relinkCursor(h), adapters.get(h)!.parseVersion ?? 1);
+    await index.kvSet?.(REPARSE_LAST, JSON.stringify({ at: now(), all: !!opts.all, sessions: result.sessions, reparsed: result.reparsed, kept: result.kept, copiesRemoved: result.copiesRemoved, relinked: result.relinked, refolded: result.refolded, errors: result.errors.slice(0, 5) }));
   }
 }

@@ -166,6 +166,10 @@ order.
   are not read. The v1 store has no requests.
 - **When imports run:** the T3 store is re-imported on every lazy ingest (`Adapter.tail`). Threads that
   haven't changed are skipped.
+- **Links lost by an older import:** a session another agent's adapter stored without its T3 link (an older
+  `--since` import cut the link off, then skipped the unchanged thread) gets the link back from a re-parse.
+  The re-parse reads T3's store and adds the T3 rows such a session lacks. It runs once after the T3
+  adapter's parse version changes, once on a store an older coding.sh kept, and on `ingest --rebuild`.
 - **Store copies:** the T3 store is read from a copy in the temp directory, which needs room for it; a
   failed copy is a backfill error. The next read removes copies a killed read left.
 
