@@ -3,12 +3,15 @@
 // otherwise only the coding.sh entry goes. Captured data and the hook bin in
 // ~/.coding.sh are kept (other scopes may still use the bin). Proxy routing
 // from `init --proxy` goes first; --proxy removes only that.
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { ADAPTERS } from "../../adapters/index.ts";
+import { paths } from "../../core/paths.ts";
 import type { Adapter, FileChange } from "../../core/types.ts";
 import { MCP_CONFIG_NAME } from "../../mcp/launch.ts";
 import { applyProxyUninstall, isProxyAgent, planProxyUninstall, readProxyInstalls } from "../../proxy/install.ts";
 import { changeJson, printChanges } from "../changes.ts";
-import { list, requireConsent, str } from "../common.ts";
+import { list, requireConsent, shellQuote, str } from "../common.ts";
 import { plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { pickAdapters } from "./init.ts";
@@ -19,6 +22,37 @@ interface RemoveOpts {
   dryRun: boolean;
   env: NodeJS.ProcessEnv;
   proxyOnly: boolean;
+}
+
+/** The variable that names an agent's config dir, where the recorded file sits right in it. */
+const DIR_VAR: Record<string, string> = { opencode: "OPENCODE_CONFIG_DIR" };
+
+/** A path as installs.json keys it, compared case-blind on Windows. */
+const pathKey = (p: string) => (process.platform === "win32" ? resolve(p).toLowerCase() : resolve(p));
+
+/**
+ * MCP registrations installs.json records for these agents whose files still exist and that no
+ * planned change touches: an install made under another config dir (OPENCODE_CONFIG_DIR set at
+ * init, unset now), which the adapters' uninstall cannot see. Uninstall names them instead of
+ * reporting full success. Only MCP records: those are user scope, as a plain uninstall is, while
+ * a hook file may belong to a project's own install.
+ */
+export function leftInPlace(agents: readonly Adapter[], touched: readonly string[], env: NodeJS.ProcessEnv): { agent: string; name: string; path: string }[] {
+  let files: Record<string, { agent?: unknown; mcp?: unknown }> = {};
+  try {
+    const v = JSON.parse(readFileSync(paths(env).installs, "utf8")) as { files?: unknown };
+    if (v.files && typeof v.files === "object" && !Array.isArray(v.files)) files = v.files as typeof files;
+  } catch {
+    return [];
+  }
+  const seen = new Set(touched.map(pathKey));
+  const out: { agent: string; name: string; path: string }[] = [];
+  for (const [path, rec] of Object.entries(files)) {
+    const a = agents.find((x) => x.id === rec?.agent);
+    if (!a || !rec.mcp || seen.has(pathKey(path)) || !existsSync(path)) continue;
+    out.push({ agent: a.id, name: a.displayName, path });
+  }
+  return out;
 }
 
 /**
@@ -62,21 +96,34 @@ export async function run(c: CommandContext): Promise<number> {
     else if (p.changes.length) out.row(p.name, `${plural(p.changes.length, "file")} to change`);
   }
   const failed = plans.some((p) => p.error);
+  // Proxy-only runs leave hooks and MCP entries by design.
+  const left = proxyOnly || scope !== "user" ? [] : leftInPlace(adapters, plans.flatMap((p) => p.changes.map((ch) => ch.path)), c.env);
+  const warnLeft = () => {
+    for (const l of left) out.warn(`${l.name}: ${l.path} holds a coding.sh install outside the config dir uninstall looked in; it is left in place`);
+    for (const l of left.filter((x, i) => left.findIndex((y) => y.agent === x.agent && dirname(y.path) === dirname(x.path)) === i)) {
+      const v = DIR_VAR[l.agent];
+      if (v) out.next("Remove it with the config dir it had at init", `${v}=${shellQuote(dirname(l.path))} coding.sh uninstall --agent ${l.agent}`);
+      else out.next(`Remove it: set ${l.name}'s config dir to ${dirname(l.path)} as at init, then run`, `coding.sh uninstall --agent ${l.agent}`);
+    }
+  };
+  const leftJson = () => (left.length ? { leftInPlace: left.map((l) => ({ id: l.agent, path: l.path })) } : {});
 
   if (dryRun) {
-    if (out.json) out.data({ outcome: "planned", scope, agents: plans.map((p) => ({ id: p.id, error: p.error ?? null, changes: p.changes.map(changeJson) })) });
+    if (out.json) out.data({ outcome: "planned", scope, agents: plans.map((p) => ({ id: p.id, error: p.error ?? null, changes: p.changes.map(changeJson) })), ...leftJson() });
     else {
       for (const p of pending) printChanges(out, p.changes, p.id);
-      if (!total) out.ok(what);
+      if (!total && !left.length) out.ok(what);
+      warnLeft();
     }
     return failed ? 1 : 0;
   }
   if (!total) {
     // A routing record whose entry is already gone (edited by hand): forget it, so the hook stops restarting the proxy.
     if (scope === "user") for (const a of adapters) if (isProxyAgent(a.id) && readProxyInstalls(c.env)[a.id]) await applyProxyUninstall(a.id, undefined, c.env);
-    if (out.json) out.data({ outcome: "unchanged", scope, agents: [] });
+    if (out.json) out.data({ outcome: left.length ? "partial" : "unchanged", scope, agents: [], ...leftJson() });
+    else if (left.length) warnLeft();
     else out.ok(what);
-    return failed ? 1 : 0;
+    return failed || left.length ? 1 : 0;
   }
   await requireConsent(
     c,
@@ -98,7 +145,10 @@ export async function run(c: CommandContext): Promise<number> {
     }
   }
   const errors = done.some((d) => d.error);
-  if (out.json) out.data({ outcome: errors ? "partial" : "removed", scope, agents: done.map((d) => ({ id: d.id, error: d.error ?? null, changes: d.changes.map((ch) => ({ path: ch.path, action: ch.action, summary: ch.summary })) })) });
-  else for (const d of done) for (const ch of d.changes) out.print(ch.path);
-  return errors || failed ? 1 : 0;
+  if (out.json) out.data({ outcome: errors || left.length ? "partial" : "removed", scope, agents: done.map((d) => ({ id: d.id, error: d.error ?? null, changes: d.changes.map((ch) => ({ path: ch.path, action: ch.action, summary: ch.summary })) })), ...leftJson() });
+  else {
+    for (const d of done) for (const ch of d.changes) out.print(ch.path);
+    warnLeft();
+  }
+  return errors || failed || left.length ? 1 : 0;
 }

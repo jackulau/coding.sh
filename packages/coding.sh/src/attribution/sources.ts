@@ -20,8 +20,8 @@
 //
 // Only hashes are kept, never line text. A session's source is cached in the
 // index key/value store (when it has one), keyed by what it was built from.
-import { realpathSync } from "node:fs";
-import { isAbsolute, relative, sep } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { loadReplay, type Replay } from "../core/replay.ts";
 import { shellCommand, simpleCommands } from "../core/shell-diff.ts";
 import type { BlobStore, IndexStore, Session } from "../core/types.ts";
@@ -36,7 +36,7 @@ export interface SourceContext {
 }
 
 /** Bump when a stored source would be built differently. */
-const SOURCE_VERSION = 5;
+const SOURCE_VERSION = 6;
 const kvKey = (id: string) => `attribution:source:${id}`;
 
 function real(p: string): string {
@@ -55,10 +55,24 @@ function repoPath(p: string, base: string | undefined, root: string): string | u
   if (!rel || rel.startsWith("..") || isAbsolute(rel)) {
     // realpath fails for a deleted file: compare the paths as written.
     const r2 = relative(root, abs);
-    if (!r2 || r2.startsWith("..") || isAbsolute(r2)) return undefined;
+    if (!r2 || r2.startsWith("..") || isAbsolute(r2)) return otherWorktreePath(abs, root);
     return r2.split(sep).join("/");
   }
   return rel.split(sep).join("/");
+}
+
+/**
+ * A path in another worktree of the same repo, one since removed too (git forgets those): the
+ * longest tail of at least two segments that names a file in `root`. A session's sessions are
+ * listed by its repo, so a path outside its root is almost always a sibling worktree's.
+ */
+function otherWorktreePath(abs: string, root: string): string | undefined {
+  const parts = abs.replace(/\\/g, "/").split("/").filter(Boolean);
+  for (let i = 1; i <= parts.length - 2; i++) {
+    const rel = parts.slice(i).join("/");
+    if (existsSync(join(root, rel))) return rel;
+  }
+  return undefined;
 }
 
 /** Keys of the "+" and "-" lines of a unified diff. */

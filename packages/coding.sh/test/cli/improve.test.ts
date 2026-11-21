@@ -46,6 +46,16 @@ describe("cli improve", () => {
     assert.match(text.stderr, /Start with the first one:\n\s+coding\.sh improve fix 1/);
   });
 
+  it("names the repo, not a relative path, when run from a subdirectory", async () => {
+    const w = await world("subdir", { afterFlagged: 2 });
+    const sub = join(w.repo, "pkg", "src");
+    mkdirSync(sub, { recursive: true });
+    const r = spawnSync(process.execPath, ["--no-warnings", CLI, "improve"], { cwd: sub, env: w.env, encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^12 sessions in repo since 14d \(claude-code 12\)$/m);
+    assert.doesNotMatch(r.stdout, /\.\./);
+  });
+
   it("leaves headless sessions out and says how many; --headless counts them", async () => {
     const w = await world("headless", { afterFlagged: 0, headless: 3 });
     const j = (args: string[]) => {

@@ -116,7 +116,8 @@ test("config get <section> prints a file-only section ([refine]) like the others
   try {
     const none = await runCmd(config, sb, { action: "get", positionals: ["refine"] });
     assert.equal(none.error, undefined, none.error?.message);
-    assert.match(none.stdout, /refine is not set/);
+    assert.equal(none.stdout, "", "stdout carries only the value, empty when unset");
+    assert.match(none.stderr, /refine is not set/);
     await runCmd(config, sb, { action: "set", positionals: ["refine.maxCostRise", "0.2"] });
     const r = await runCmd(config, sb, { action: "get", positionals: ["refine"] });
     assert.equal(r.error, undefined, r.error?.message);

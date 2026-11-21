@@ -140,7 +140,7 @@ describe("cache-health: classification", () => {
       ["u-ord", [miss(), miss({ tools: [TOOLS[1], TOOLS[0]] })], "tools-reordered", "tools-changed"],
       ["u-add", [miss(), miss({ tools: [...TOOLS, { name: "Grep", input_schema: {} }] })], "tools-added", "tools-added"],
       ["u-sw", [miss({ model: "claude-opus-4-5" }), miss({ model: "claude-haiku-4-5" })], "model-switch", "model-switch"],
-      ["u-edit", [miss(), hit(), hit(), miss({ reset: true })], "history-rewritten", "history-rewritten"],
+      ["u-edit", [miss(), hit(), hit(), miss({ reset: true })], "compaction", "compaction"],
       // The same prefix inside the cache lifetime, and after it: neither is avoidable, read or not.
       ["u-same", [miss(), miss()], "other", "other"],
       ["u-idle", [miss(), miss({ at: 20 })], "idle", "idle"],
@@ -167,7 +167,7 @@ describe("cache-health: classification", () => {
       const ev = await calls(blobs, `u-${mode}`, [miss({ mode }), miss({ mode }), miss({ mode, at: 30 }), hit({ mode, at: 31 }), miss({ mode, at: 32, reset: true })]);
       const r = await sessionBreaks(blobs, ev);
       assert.deepEqual(await sessionBreaks(blobs, ev, { requests: false }), r, mode);
-      assert.deepEqual(r.map((x) => [x.structural, x.degraded, x.notRead]), [["other", true, undefined], ["idle", true, undefined], [mode === "metadata" ? "history-rewritten" : "other", true, undefined]], mode);
+      assert.deepEqual(r.map((x) => [x.structural, x.degraded, x.notRead]), [["other", true, undefined], ["idle", true, undefined], [mode === "metadata" ? "compaction" : "other", true, undefined]], mode);
     }
   });
   test("the headline is the stored totals, as usage adds them up", () => {
@@ -300,7 +300,7 @@ describe("cache doctor (CLI)", () => {
   test("a break that is not avoidable stays so past --limit: the same prefix, a wait", () => {
     const full = doctor("--agent", "opencode");
     // The same prefix inside the cache lifetime and the idle gap are not avoidable; the timestamp and the edit are.
-    assert.deepEqual(causes(full), [["system-volatile-line", 2], ["history-rewritten", 1], ["idle", 1], ["other", 1]]);
+    assert.deepEqual(causes(full), [["system-volatile-line", 2], ["compaction", 1], ["idle", 1], ["other", 1]]);
     assert.ok(full.avoidableTokens > 0 && full.avoidableTokens < full.lostTokens);
     for (const n of ["1", "2", "3"]) {
       const some = doctor("--agent", "opencode", "--limit", n);

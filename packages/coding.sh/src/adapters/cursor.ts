@@ -24,6 +24,7 @@
 //   marker: our entries are recognized by their command.
 // - In -p mode beforeSubmitPrompt, afterAgentResponse and stop do not fire.
 import { execFile } from "../core/spawn.ts";
+import { realpathSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { paths, userHome } from "../core/paths.ts";
@@ -298,9 +299,29 @@ function helpText(bin: string): Promise<string> {
   return p;
 }
 
+/**
+ * Whether a generic `agent` on PATH is Cursor's: it, or the file it links to, sits under a
+ * cursor folder (Cursor's installer puts it in cursor-agent/). Detect checks this before it
+ * launches the file: other tools ship an `agent` too, and Grok's makes ~/.grok when it runs.
+ */
+export function isCursorAgentPath(p: string): boolean {
+  if (/cursor/i.test(p)) return true;
+  try {
+    return /cursor/i.test(realpathSync(p));
+  } catch {
+    return false;
+  }
+}
+
+/** The `agent` on PATH when it is Cursor's, else undefined. */
+function cursorAgentAlias(env: NodeJS.ProcessEnv): string | undefined {
+  const p = which("agent", env);
+  return p && isCursorAgentPath(p) ? p : undefined;
+}
+
 export function cursorBinary(env: NodeJS.ProcessEnv = process.env): string | undefined {
   // `agent` is a generic name (other tools install it too); prefer cursor-agent.
-  return which("cursor-agent", env) ?? which("agent", env);
+  return which("cursor-agent", env) ?? cursorAgentAlias(env);
 }
 
 export async function runCursor(spec: RunSpec): Promise<AgentRunOutput> {
@@ -359,7 +380,8 @@ export const cursor: Adapter = {
   async detect() {
     const dir = cursorConfigDir();
     const r = await detectAgent({
-      bins: ["cursor-agent", "agent"],
+      // A generic `agent` outside a cursor folder is never launched (isCursorAgentPath).
+      bins: cursorAgentAlias(process.env) ? ["cursor-agent", "agent"] : ["cursor-agent"],
       configDir: dir,
       // "agent" is generic: require Cursor's date-style version. "cursor-agent"
       // is unambiguous, so a probe that timed out still counts.

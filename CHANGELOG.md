@@ -69,6 +69,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **CLI.** `init --dry-run` and `doctor` no longer run another tool's `agent` command (Grok's made `~/.grok`). `uninstall` warns and exits 1 when an OpenCode install sits under another `OPENCODE_CONFIG_DIR`. Blame and attribution credit edits made in a removed worktree, and `diff-calls` says "not recorded" instead of "same" without stored requests. [CLI reference](https://coding.sh/docs/cli/uninstall)
 - **Capture.** A Claude Code or Codex session T3 Code ran, stored by an older `--since` import without its T3 link, gets the link and thread title back from the next re-parse, which reads T3's store once after an upgrade. `ingest --rebuild` does it too. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#host-apps-t3-code)
 - **Capture.** A Pi tool call stopped with Esc (`Operation aborted`) and a Gemini CLI tool call the user cancelled count as interrupted calls, not tool errors, so they no longer raise `toolErrors` or `repeated-tool-failure`. Stored sessions are parsed again while their sources are on disk. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#known-breakage-to-design-around)
 - **Viewer.** A diff the agent's log cut short says so where it stops, with how many changed lines it leaves out and a button that loads the whole diff, and no longer ends on a blank line that was not in the file. [Open the viewer](https://coding.sh/docs/explore#open-the-viewer)

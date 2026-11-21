@@ -37,7 +37,25 @@ function cacheText(u: AgentEvent["usage"]): string {
   return `cache read ${tokens(r)} write ${tokens(w)}${total ? ` (${Math.round((r / total) * 100)}% hit)` : ""}`;
 }
 
-export function printDiff(out: Output, d: CallDiff): void {
+/** What both calls' events recorded, in metadata mode: the hashes and counts the diff compares. */
+export interface Recorded {
+  tools: boolean;
+  system: boolean;
+  messages: boolean;
+}
+
+/** Which of the tools hash, system prompt hash and message count both events keep. */
+export function recordedOf(a: AgentEvent, b: AgentEvent): Recorded {
+  const both = (k: string) => a.payload[k] !== undefined && b.payload[k] !== undefined;
+  return { tools: both("toolsHash") || both("toolNames"), system: both("systemHash"), messages: both("messageCount") };
+}
+
+/**
+ * The diff as text. In metadata mode a piece neither event recorded reads "not recorded":
+ * two missing hashes are equal, but that says nothing about the requests.
+ */
+export function printDiff(out: Output, d: CallDiff, rec?: Recorded): void {
+  const unknown = (k: keyof Recorded) => d.content === "metadata" && rec !== undefined && !rec[k];
   for (const [k, s] of [["a", d.a], ["b", d.b]] as const) {
     out.print(`${out.style(k, "bold")}  ${short(s.id)}  ${s.model ?? "?"}  ${clock(s.ts)}  in ${tokens(s.usage.inputTokens)} out ${tokens(s.usage.outputTokens)}  ${cacheText(s.usage)}${s.usage.costUsd !== undefined ? `  ${usd(s.usage.costUsd)}` : ""}`);
   }
@@ -46,8 +64,10 @@ export function printDiff(out: Output, d: CallDiff): void {
   row("Model", d.model ? `${d.model.a ?? "?"} → ${d.model.b ?? "?"}` : "same");
   if (d.content === "full") row("Settings", d.params.length ? d.params.map((p) => `${p.key} ${val(p.a)} → ${val(p.b)}`).join(", ") : "same");
   const t = d.tools;
-  row("Tools", t.same ? "same" : [t.added.length ? `+ ${t.added.join(", ")}` : "", t.removed.length ? `- ${t.removed.join(", ")}` : "", t.changed.length ? `~ ${t.changed.join(", ")}` : "", t.reordered ? "reordered" : "", d.content === "metadata" && !t.added.length && !t.removed.length ? "changed (by hash)" : ""].filter(Boolean).join("  "));
-  if (d.system.same) row("System", "same");
+  if (unknown("tools")) row("Tools", "not recorded");
+  else row("Tools", t.same ? "same" : [t.added.length ? `+ ${t.added.join(", ")}` : "", t.removed.length ? `- ${t.removed.join(", ")}` : "", t.changed.length ? `~ ${t.changed.join(", ")}` : "", t.reordered ? "reordered" : "", d.content === "metadata" && !t.added.length && !t.removed.length ? "changed (by hash)" : ""].filter(Boolean).join("  "));
+  if (unknown("system")) row("System", "not recorded");
+  else if (d.system.same) row("System", "same");
   else if (d.content === "metadata") row("System", `changed (hash ${d.system.a ?? "-"} → ${d.system.b ?? "-"})`);
   else {
     const w = d.system.wastedPrefixFrac;
@@ -59,7 +79,8 @@ export function printDiff(out: Output, d: CallDiff): void {
     if (!d.system.lines) out.print("          (too long to diff line by line)");
   }
   const m = d.messages;
-  row("Messages", d.content === "metadata" ? `${m.a} → ${m.b}` : m.rewritten ? `${m.a} → ${m.b}, rewritten from message ${m.shared + 1}` : `${m.a} → ${m.b}, b extends a (${m.shared} shared)`);
+  if (unknown("messages")) row("Messages", "not recorded");
+  else row("Messages", d.content === "metadata" ? `${m.a} → ${m.b}` : m.rewritten ? `${m.a} → ${m.b}, rewritten from message ${m.shared + 1}` : `${m.a} → ${m.b}, b extends a (${m.shared} shared)`);
   const c = d.cache;
   if (c.expected === 0) row("Cache", "a cached nothing");
   else if (c.reused) row("Cache", out.style(`hit: b read ${tokens(c.read)} of the ${tokens(c.expected)} a cached`, "green"));
@@ -110,8 +131,11 @@ export async function run(c: CommandContext): Promise<number> {
       if (!a) throw new CliError(`Call ${short(b.id)} is the first model call of its session; name two calls`, { reason: "not_found", next: ["Compare two calls:", "coding.sh diff-calls <a> <b>"] });
     }
     const d = diffCalls(await loadCall(ctx.blobs, a), await loadCall(ctx.blobs, b));
-    if (out.json) out.data(d);
-    else printDiff(out, d);
+    const rec = recordedOf(a, b);
+    // --json: the pieces neither event recorded, so `tools.same: true` is not read as a comparison.
+    const notRecorded = d.content === "metadata" ? (Object.keys(rec) as (keyof Recorded)[]).filter((k) => !rec[k]) : [];
+    if (out.json) out.data(notRecorded.length ? { ...d, notRecorded } : d);
+    else printDiff(out, d, rec);
     return 0;
   }, { create: false });
 }
