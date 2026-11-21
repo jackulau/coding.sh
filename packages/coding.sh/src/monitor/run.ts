@@ -253,6 +253,11 @@ async function runOne(deps: MonitorDeps, def: MonitorDef, state: MonitorState, r
       r.scored++;
       state.scored++;
     } catch (e) {
+      // Ctrl-C or serve stopping is not the session's failure: the next pass scores it.
+      if (o.signal?.aborted) {
+        hold(s);
+        break;
+      }
       if (e instanceof Stop) {
         hold(s);
         r.stopped = e.why;

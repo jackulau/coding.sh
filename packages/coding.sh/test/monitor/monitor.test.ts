@@ -421,6 +421,26 @@ describe("monitor --http", () => {
     assert.deepEqual((await monitorScores(sb)).map((s) => [s.targetId, s.value]).sort(), [["tie-a", 1], ["tie-b", 2]]);
   });
 
+  it("Ctrl-C while a session is being scored records no failure, and the next pass starts at that session", async () => {
+    const sb = box();
+    await sb.seed([mkSession("abort-1", Date.now() - 10_000)]);
+    const ac = new AbortController();
+    // The evaluator never answers: Ctrl-C comes while the POST is open.
+    const ev = await evaluator([() => ac.abort()]);
+    await addHttp(sb, "abort", ev.url);
+    const ctx = await openContext({ env: sb.env, cwd: sb.root });
+    try {
+      const r = (await runMonitors(ctx, { force: true, signal: ac.signal })).monitors[0]!;
+      assert.deepEqual([r.scored, r.failed, r.error], [0, 0, undefined]);
+      assert.equal(ev.posts.length, 1);
+      const def = readMonitors(paths(sb.env).monitors).monitors[0]!;
+      assert.equal(def.cursor, undefined);
+      assert.equal(def.lastError, undefined);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   it("the waits between tries leave no listener on the signal the pass was given", async () => {
     const sb = box();
     await sb.seed([mkSession("wait-1", Date.now() - 10_000)]);

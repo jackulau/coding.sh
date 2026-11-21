@@ -203,6 +203,7 @@ grouped by area, with links to the docs for the details.
 - **Evals.** Copilot CLI, Droid, Gemini CLI, Goose and Pi eval runs keep the agent's home next to the work dir, not inside it, so they read the bundle's `~/` files and the `--carry` state, and logins and the agent's files stay out of the start commit and the diff. Aider and Amp read the bundle's config files too. [Harness A/B](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#harness-ab)
 - **Capture.** On Windows with Node 24, a read that kills its import child at its deadline waits up to a second for the child to let go of its SQLite store copy, then removes it. Before, `rmSync` gave up at once, so the copy (T3 Code's is 1.7 GB) stayed in the temp folder until the next read. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#host-apps-t3-code)
 - **Evals.** An `--http` monitor whose evaluator can't be reached (a network error, a timeout, or a 5xx, 408, 425 or 429 on every try) keeps its place: the session gets no score, and the next pass starts at it again. A pass stops after 2 such sessions in a row. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#monitors))
+- **Evals.** Ctrl-C in `monitor run`, or `coding.sh serve` stopping, while a monitor scores a session no longer counts that session as failed or moves past it: the next pass scores it. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#monitors))
 
 ## [0.1.7] - 2026-11-16
 
