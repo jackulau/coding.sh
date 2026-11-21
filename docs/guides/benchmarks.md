@@ -14,31 +14,72 @@ Two contenders add two numbers: `large` always gets it right, and `small` gets s
 source, `gen.mjs`, prints one JSON case per line, like `{"input": "977 + 903", "expected": "1880"}`,
 and reads the day's seed from `CODING_SH_BENCH_SEED`.
 
+:::more The three scripts
+```js title=gen.mjs
+// 200 sums, the same ones for the same seed
+let s = [...process.env.CODING_SH_BENCH_SEED].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7);
+const rnd = () => (s = (s * 1103515245 + 12345) >>> 0) / 2 ** 32;
+for (let i = 0; i < 200; i++) {
+  const a = 100 + Math.floor(rnd() * 900), b = 100 + Math.floor(rnd() * 900);
+  console.log(JSON.stringify({ input: `${a} + ${b}`, expected: String(a + b) }));
+}
+```
+
+```js title=large.mjs
+let input = "";
+process.stdin.on("data", (c) => (input += c)).on("end", () => {
+  const [a, b] = JSON.parse(input).split("+").map(Number);
+  console.log(a + b);
+});
+```
+
+```js title=small.mjs
+let input = "";
+process.stdin.on("data", (c) => (input += c)).on("end", () => {
+  const [a, b] = JSON.parse(input).split("+").map(Number);
+  console.log(a + b > 1400 ? a + b - 100 : a + b); // drops a carry on big sums
+});
+```
+:::
+
 ```sh
-coding.sh bench new sums --command 'node gen.mjs' \
+coding.sh bench new sums --cases 30 --command 'node gen.mjs' \
   -c small='node small.mjs' -c large='node large.mjs' -g '{"kind":"exact"}'
 ```
 
 ```text title=output
 ✓ Wrote bench/sums.toml
-  With 50 cases and 1 pair, the smallest pass-rate gap this run can reliably detect is about 22 points (80% power, α 0.05).
+  With 30 cases and 1 pair, the smallest pass-rate gap this run can reliably detect is about 28 points (80% power, α 0.05).
   To detect a 10-point gap you need about 234 cases; 5 points, about 940 (assuming 30% of cases split the contenders, a guess until the first run).
+
+  Run it:
+    coding.sh bench run sums
+/home/user/sums/bench/sums.toml
 ```
 
-`bench/sums.toml` holds the definition: sampling, limits, contenders and graders. This run sets
-`cases = 30` in it. `coding.sh bench run sums --dry-run` prints today's sample without calling anyone.
+`bench/sums.toml` holds the definition: sampling, limits, contenders and graders. Without
+`--cases`, a run takes 50 cases. `coding.sh bench run sums --dry-run` prints today's sample without
+calling anyone.
 
 ```sh
 coding.sh bench run sums
 ```
 
 ```text title=output
-sums · 2026-11-11 · 30 cases · seed sums:2026-11-11 · sha256 e5b5ab1c98af
-#	CONTENDER	PASS	95% CI	P50	P95	COST/RUN	ERRORS
-1	large	100.0% (30/30)	88.6%-100.0%	1.49s	2.27s	-	0
-1	small	83.3% (25/30)	66.4%-92.7%	1.56s	2.10s	-	0
+sums · 2026-11-21 · 30 cases · seed sums:2026-11-21 · sha256 e1f38d600f2a
+#  CONTENDER  PASS            95% CI        P50   P95   COST/RUN  ERRORS
+1  large      100.0% (30/30)  88.6%-100.0%  74ms  84ms  -         0
+1  small      83.3% (25/30)   66.4%-92.7%   73ms  84ms  -         0
 large vs small: +16.7 pp (95% CI +3.3 to +30.0, unadjusted), McNemar p=0.063 (Holm) → no significant difference
 Cost source: large 30 unknown; small 30 unknown
+
+Routing headroom: any contender 100.0% vs best single (large) 100.0%: gap 0.0 pp; with no specialization expect 0.0-0.0 pp (p 1.00).
+Upsets 0.0% of 5 split cells (expected 0.0%-0.0%, p 1.00).
+No evidence of specialization: per-case routing is unlikely to beat running large alone.
+
+  See it over time:
+    coding.sh bench history sums
+bench_01M804YKT329HQAN1VRQRM7WZ3
 ```
 
 Both share first place: 30 cases are not enough to tell a 17-point gap from luck, as `bench new`

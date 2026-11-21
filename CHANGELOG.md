@@ -204,6 +204,7 @@ grouped by area, with links to the docs for the details.
 - **Capture.** On Windows with Node 24, a read that kills its import child at its deadline waits up to a second for the child to let go of its SQLite store copy, then removes it. Before, `rmSync` gave up at once, so the copy (T3 Code's is 1.7 GB) stayed in the temp folder until the next read. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#host-apps-t3-code)
 - **Docs.** Troubleshooting lists the fix for doctor's MCP, Sessions and Proxy warnings and explains the Any command row, and its doctor sample matches the output. `bad_flag` moved to the usage errors (exit 2), and the example messages match what the CLI prints. [Troubleshooting](https://coding.sh/docs/troubleshooting)
 - **Docs.** Turn failed runs into evals says that every trial runs the setup `eval init` guessed (such as `npm ci`), that `eval run` asks first (`--yes` skips it), and that `eval new` takes a session id: after a run, `latest` is a trial. Its samples match the output and its validate table lists every check. [Turn failed runs into evals](https://coding.sh/docs/how-to/session-to-eval)
+- **Docs.** Benchmarks gives the three scripts its first run calls, so the example runs as written, and sets the case count with `bench new --cases 30`. Its samples match what `bench new` and `bench run` print. [Benchmarks](https://coding.sh/docs/benchmarks)
 
 ## [0.1.7] - 2026-11-16
 
