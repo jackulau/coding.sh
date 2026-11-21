@@ -702,7 +702,12 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       if (id === undefined || (id === "" && sub === undefined)) return sendJson(res, 200, await listSessions(ctx.index, q, projectParam(ctx, q)));
       const sessionId = checkId(id, "session id");
       if (sub === undefined) {
-        const s = await visibleSession(ctx, sessionId);
+        // ?missing=null: a session that is not there (or not the caller's) is a 200 with null, not a 404,
+        // so the viewer can ask about an id it got from a link without the browser logging an error.
+        const s = q.get("missing") === "null"
+          ? await visibleSession(ctx, sessionId).catch((e) => (e instanceof HttpError && e.status === 404 ? null : Promise.reject(e)))
+          : await visibleSession(ctx, sessionId);
+        if (!s) return sendJson(res, 200, null);
         // The experiments that ran each weights file the session recorded as a checkpoint, as `coding.sh show --json`
         // has them. Eval assets belong to no project: a project-scoped key sees none.
         const hashes = s.stats.weightEdits?.checkpoints;

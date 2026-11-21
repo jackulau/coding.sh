@@ -575,6 +575,9 @@ One session, the same shape as a list row without `childCount`. Percent-encode t
 whose weights checkpoint an experiment ran also has `checkpointExperiments`: a list of
 `{sha256, experiments: [{id, name}]}`. A key scoped to a project does not get it.
 
+A missing session is a 404; with `?missing=null` it is a 200 with the body `null`, which the viewer uses so
+the browser logs no error for an id it cannot find.
+
 ```sh
 curl -sS "$CSH/api/sessions/team%2Fchat-1" -H "Authorization: Bearer $READ_KEY"
 ```

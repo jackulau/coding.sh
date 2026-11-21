@@ -195,15 +195,16 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .brand { display: inline-flex; align-items: center; gap: 0.5rem; font-family: var(--font-mono); font-size: 13px; font-weight: 560; letter-spacing: -0.01em; }
 .brand svg { width: 18px; height: 18px; flex: none; }
 .brand .p1 { fill: var(--text); } .brand .p2 { fill: var(--text-muted); } .brand .p3 { fill: var(--text-2); }
-.nav { display: flex; gap: 2px; min-width: 0; }
-/* The tabs are the one part of the bar that can give: in a font wider than the ones the
-   widths were tuned for (no Geist on Linux), a label ends in an ellipsis instead of the bar
-   pushing the page past the screen. The label clips, not the link, so its hit area stays. */
-.nav a, .nav a > span { min-width: 0; }
-.nav a > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Six tabs fit a phone only with short names. */
+/* The tabs are the one part of the bar that can give: where they do not all fit (a phone, or a
+   font wider than the ones the widths were tuned for), the row of tabs scrolls sideways and
+   every name stays whole. The row is as tall as the bar, so each tab's 44px hit area fits in it. */
+.nav { display: flex; align-items: center; align-self: stretch; gap: 2px; min-width: 0; padding: 0 3px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none; }
+.nav::-webkit-scrollbar { display: none; }
+.nav a { flex: none; }
+.nav a > span { white-space: nowrap; }
+/* Seven tabs with their full names need about 1080px; below that they take short names. */
 .nav-short { display: none; }
-@media (max-width: 640px) { .nav-long { display: none; } .nav-short { display: inline; } }
+@media (max-width: 1080px) { .nav-long { display: none; } .nav-short { display: inline; } }
 .nav a {
   display: inline-flex; align-items: center; height: 28px; padding: 0 0.65rem;
   border-radius: var(--radius-sm); font-size: 13px; color: var(--text-muted);
@@ -239,20 +240,26 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .topbar:has(> .update-pill:not([hidden])) :is(.cmdk span, .cmdk kbd) { display: none; }
 }
 @media (max-width: 980px) { #update .long, #indexing > :not(.dot) { display: none; } }
-@media (max-width: 820px) {
-  .topbar { gap: 0.75rem; }
+/* Seven tabs with short names fit beside the folded search box down to 821px, and down to
+   641px once the brand word goes too. */
+@media (max-width: 960px) {
   .cmdk { min-width: 0; width: 32px; padding: 0; justify-content: center; }
   .cmdk span, .cmdk kbd { display: none; }
-  .topbar:has(> .update-pill:not([hidden])) .brand span { display: none; }
+}
+@media (max-width: 820px) {
+  .topbar { gap: 0.75rem; }
+  .brand span { display: none; }
 }
 @media (max-width: 640px) {
   .topbar { gap: 0.5rem; }
-  /* Six tabs fit a phone: the cube stays, the word goes. */
+  /* On a phone the tabs scroll sideways: the cube stays, the word goes. */
   .brand span { display: none; }
   .nav { gap: 0; }
   .nav a { padding: 0 0.4rem; font-size: 12.5px; }
   #help, .topbar > .update-pill { display: none; }
 }
+/* One column (phones, narrow windows): the step list scrolls under the bar, so the bar is opaque. */
+@media (max-width: 860px) { .topbar { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; } }
 @media (max-width: 380px) { .brand span { display: none; } }
 .cmdk:active { transform: scale(var(--press-scale)); }
 .icon-btn {
@@ -500,6 +507,10 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   /* One height for every row, badges or not, so the list reads as an even grid. */
   .list > .row { min-height: 52px; contain-intrinsic-size: auto 52px; }
   .row-title { min-width: 0; }
+  /* Tool calls over failures, as agent over model, so "5,050 tools · 45 failed" is not cut short. */
+  .act-cell:has(> .err) { display: grid; line-height: 1.3; }
+  .act-cell > .err { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .act-cell .sep { display: none; }
   .row-badges { height: 18px; flex: none; }
   .row-badges .badge, .row-badges .sub-toggle { height: 18px; font-size: 10.5px; padding: 0 0.4rem; }
   .table.one-repo { --c-repo: ; }
@@ -596,11 +607,14 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .rt-worst { font-size: 12px; color: var(--text-2); }
 .rt-worst a { color: var(--fail-ink); }
 .rt-nodes { display: grid; gap: 1px; }
-.rt-node { display: flex; align-items: baseline; gap: 0.5rem; padding: 0.25rem 0.4rem; border-radius: 4px; font-size: 12px; min-width: 0; }
+/* Name first: where the numbers do not fit beside a name of 8rem, they wrap under it (a phone). */
+.rt-node { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.1rem 0.5rem; padding: 0.25rem 0.4rem; border-radius: 4px; font-size: 12px; min-width: 0; }
+.rt-node .rt-name { flex: 1 1 8rem; }
 .rt-node.current { background: var(--raised); box-shadow: inset 2px 0 0 var(--text); }
 .rt-node .rt-name { font-family: var(--font-mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .rt-node .rt-role { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); flex: none; }
-.rt-node .rt-nums { margin-left: auto; display: flex; gap: 0.8rem; color: var(--text-2); flex: none; font-variant-numeric: tabular-nums; }
+.rt-node .rt-nums { margin-left: auto; display: flex; flex-wrap: wrap; gap: 0 0.8rem; color: var(--text-2); flex: 0 1 auto; min-width: 0; max-width: 100%; font-variant-numeric: tabular-nums; }
+.rt-node .rt-nums > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rt-node .rt-nums .fail { color: var(--fail-ink); }
 /* Durable workflow run: one lane per step, a bar per attempt, waits hatched, resumes ticked. */
 .wf-run { flex: none; display: grid; gap: 0.45rem; padding: 0.6rem var(--gutter) 0.7rem; box-shadow: inset 0 -1px 0 var(--line); }
@@ -1631,6 +1645,13 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .review-note { max-width: 46rem; margin-bottom: 0.6rem; font-size: 12.5px; color: var(--text-2); }
 .review-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 @media (max-width: 640px) { .review-item { padding: 0.85rem; } }
+/* On a phone or a touch screen every Review control is a full 44px target, with a gap between
+   neighbours, so a tap does not land on the one beside it. */
+@media (max-width: 640px), (pointer: coarse) {
+  .review .review-opts { gap: 0.5rem; }
+  .review :is(.review-opts, .review-actions) :is(.btn, .chip) { height: 44px; padding: 0 1rem; font-size: 14px; }
+  .review .page-head .back, .review-row .btn { min-height: 44px; }
+}
 @media (max-width: 640px) {
   .work-filters { flex: 1 1 100%; }
   .work-filters .field { flex: 1 1 8rem; width: auto; min-width: 0; }
@@ -1656,9 +1677,8 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
     left: min(0px, calc((100% - 44px) / 2)); right: min(0px, calc((100% - 44px) / 2));
   }
   .cmdk, .icon-btn, .brand { flex: none; }
-  /* The six tabs tighten in steps as the screen narrows. In Arial every step leaves at
-     least 3.5px to spare, so in Arial, Segoe UI or Tahoma every name stays whole from 320
-     to 640px. A wider font (DejaVu Sans, Verdana) still ends some names in an ellipsis. */
+  /* The tabs tighten in steps as the screen narrows, so more of them show at once; the
+     ones that do not fit are a sideways scroll away, each name whole. */
   @media (max-width: 442px) { .topbar { gap: 0.25rem; } .nav a { padding: 0 0.3rem; font-size: 12px; } }
   @media (max-width: 398px) { .topbar { gap: 0.2rem; } .nav a { padding: 0 0.2rem; font-size: 11.5px; } }
   @media (max-width: 367px) { .topbar { gap: 0; } .nav a { padding: 0 0.15rem; letter-spacing: -0.01em; } }
@@ -2131,11 +2151,17 @@ function preload(path) {
 }
 /** A session record by id; ?missing=null makes a missing one a null body, not a 404 the console reports. */
 function sessionRecordPath(id) { return "/api/sessions/" + encodeURIComponent(id) + "?missing=null"; }
+/** The session record, or a 404 ApiError when the id is not in the index. */
+async function sessionRecord(path) {
+  const s = await api(path);
+  if (!s) throw new ApiError(404, "session not found");
+  return s;
+}
 /** Everything opening a session reads first (see showSession), so the click needs no request. */
 function preloadSession(id) {
   if (navigator.connection && navigator.connection.saveData) return;
   const base = "/api/sessions/" + encodeURIComponent(id);
-  preload(base).then((s) => { if (s && s.parent && s.parent.sessionId) preload("/api/sessions/" + encodeURIComponent(s.parent.sessionId)); }, () => {});
+  preload(sessionRecordPath(id)).then((s) => { if (s && s.parent && s.parent.sessionId) preload(sessionRecordPath(s.parent.sessionId)); }, () => {});
   preload(base + "/events" + qs({ limit: EVENTS_PAGE }));
   preload("/api/labels" + qs({ sessionId: id }));
   preload("/api/sessions" + qs({ parent: id, limit: 500 }));
@@ -2284,6 +2310,15 @@ function parseHash() {
   const parts = path.split("/").map((p) => { try { return decodeURIComponent(p); } catch { return ""; } });
   return { parts, query, hasQuery: qi >= 0 };
 }
+/** Where the tabs scroll sideways (a phone), the current one is scrolled into the row. */
+function showCurrentTab() {
+  const nav = document.querySelector(".topbar .nav");
+  const a = nav && nav.querySelector("[aria-current=page]");
+  if (!a || nav.scrollWidth <= nav.clientWidth) return;
+  const n = nav.getBoundingClientRect(), r = a.getBoundingClientRect();
+  if (r.left < n.left) nav.scrollLeft -= n.left - r.left + 8;
+  else if (r.right > n.right) nav.scrollLeft += r.right - n.right + 8;
+}
 function route() {
   const seq = ++navSeq;
   clearAnnouncement();
@@ -2292,6 +2327,7 @@ function route() {
   for (const a of document.querySelectorAll("[data-nav]")) {
     if (a.dataset.nav === section) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }
+  showCurrentTab();
   if (parts[0] === "s" && parts[1]) return showSession(seq, parts[1], parts[2] || "", (query.get("where") || "").trim().slice(0, WHERE_MAX),
     /^\d{1,9}$/.test(query.get("step") || "") ? Number(query.get("step")) : 0, query.get("view") || "");
   if (parts[0] === "experiments" && parts[1] && parts[2] === "vs" && parts[3]) return showCompare(seq, parts[1], parts[3]);
@@ -3777,7 +3813,7 @@ function sessionList(view) {
       h("div", { class: "row-cells" },
         h("span", { class: "cell agent-cell", title: [s.agent, s.model].filter(Boolean).join(" · ") }, h("span", null, s.parent && s.parent.type ? s.parent.type : s.agent), s.model ? h("span", { class: "sub" }, " " + midClip(s.model, 22)) : null),
         h("span", { class: "cell muted repo-cell" + (repoLabel(s) ? "" : " is-none"), title: repoDir(s) }, repoLabel(s) || "—"),
-        h("span", { class: "cell act-cell" }, act, actErr ? h("span", { class: "err" }, " · " + actErr) : null),
+        h("span", { class: "cell act-cell" }, act, actErr ? h("span", { class: "err" }, h("span", { class: "sep" }, " · "), actErr) : null),
         h("span", { class: "cell num muted tok-cell" }, rowTokens(st.usage).replace(" tokens", " tok")),
         h("span", { class: "cell num cost-cell" + (cost.none ? " muted opt" : ""), title: cost.title }, cost.text),
         h("span", { class: "cell num muted dur-cell" }, dur),
@@ -4424,14 +4460,14 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   fromList = "";
   const replaceBody = (node) => keepFocus(view, () => { view.lastChild.replaceWith(h("div", { class: "wrap" }, node)); });
   let session, events, labels, children, parent = null;
-  const sessionPath = "/api/sessions/" + encodeURIComponent(id);
-  // The session record is asked for once and first: an id that is not in the index is a 404 here and
-  // costs no other request, and a record the hit check already read is not read again.
+  const sessionPath = sessionRecordPath(id);
+  // The session record is asked for once and first: an id that is not in the index is a null body here
+  // (not a 404 the console reports), costs no other request, and a record the hit check read is not read again.
   let first = null, firstError = null;
   if (viaHit) {
     // A hit's session can still be importing: wait out one ingest pass before giving up.
     for (let attempt = 0; attempt < 2; attempt++) {
-      try { first = await api(sessionPath); firstError = null; break; } catch (e) {
+      try { first = await sessionRecord(sessionPath); firstError = null; break; } catch (e) {
         firstError = e;
         if (e.status !== 404 || attempt === 1 || !current(seq)) break;
         replaceBody(h("div", { class: "panel empty", "aria-busy": "true" },
@@ -4446,14 +4482,14 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   }
   try {
     if (firstError) throw firstError;
-    session = first || await api(sessionPath);
+    session = first || await sessionRecord(sessionPath);
     [events, labels, children] = await Promise.all([
       api(eventsPath + qs({ limit: EVENTS_PAGE })),
       api("/api/labels" + qs({ sessionId: id })),
       api("/api/sessions" + qs({ parent: id, limit: 500 })).catch((e) => { if (e.status === 401) throw e; return { items: [] }; }),
     ]);
     if (session.parent && session.parent.sessionId) {
-      parent = await api("/api/sessions/" + encodeURIComponent(session.parent.sessionId)).catch((e) => { if (e.status === 401) throw e; return null; });
+      parent = await api(sessionRecordPath(session.parent.sessionId)).catch((e) => { if (e.status === 401) throw e; return null; });
     }
   } catch (e) {
     if (!current(seq)) return;
@@ -8181,6 +8217,17 @@ async function showReviewQueue(seq, name) {
       try {
         await fetchJson(path + "/" + encodeURIComponent(String(it.item)), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       } catch (e) {
+        // Refused because the item was done elsewhere (the CLI, another tab): the queue has moved on,
+        // so the page does too, says so in plain words, and leaves no button to send it again.
+        if (e.status >= 400 && e.status < 500 && e.status !== 401) {
+          const now = await api(path + "/next").catch(() => undefined);
+          if (!current(seq)) return;
+          if (now !== undefined && (!now || now.item !== it.item)) {
+            await load("Item " + it.item + " was already reviewed somewhere else, so it is off this page. " + (now ? "This is the next open item." : "No open items are left."));
+            if (!slot.contains(document.activeElement) || document.activeElement === doneBtn || document.activeElement === skipBtn) main.focus({ preventScroll: true });
+            return;
+          }
+        }
         // What the person typed stays where it is.
         sending = false;
         doneBtn.disabled = skipBtn.disabled = false;
