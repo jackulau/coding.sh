@@ -41,7 +41,7 @@ import { HOST_QUESTION, HOST_RESOLVED } from "../core/waiting.ts";
 import { T3_AGENT } from "../spool/host.ts";
 import { ClaudeTranscriptConverter, Emitter, blobList, childSessionId, clipText, clipValue, emitDerived, hasOurHooks, num, obj, parentLink, readJsonl, str, toMs, usageSnapshotKey, walkFiles } from "./_shared/index.ts";
 import { CLAUDE_AGENT, TRANSCRIPT_IDLE_MS, claudeConfigDir } from "./claude-code.ts";
-import { ROLLOUT_IDLE_MS, codexHome, convertRollout } from "./codex.ts";
+import { ROLLOUT_IDLE_MS, codeModeCellOk, codexHome, convertRollout } from "./codex.ts";
 import { cursorConfigDir } from "./cursor.ts";
 import { openSqliteCopy } from "./more/_util.ts";
 import { reapSqliteCopies } from "./_shared/sqlite-copies.ts";
@@ -393,6 +393,11 @@ interface SessionPlan {
   start: number;
 }
 
+/** Codex's Code Mode cell tool, alone or under a namespace. */
+const CODEX_EXEC = /^(?:.+\.)?exec$/;
+/** A tool request that reached its provider after the turn it belonged to had ended: stopped, not failed. */
+const STALE_REQUEST = /has no active turn for this tool request/;
+
 /** Events for one session built from T3's own store. */
 async function storeEvents(ctx: NormalizeContext, p: SessionPlan, rows: StoreRows, primary: Map<string, string>): Promise<AgentEvent[]> {
   const t = p.thread;
@@ -436,13 +441,16 @@ async function storeEvents(ctx: NormalizeContext, p: SessionPlan, rows: StoreRow
       const inp = await clipValue(ctx, input);
       em.emit("tool.start", { tool, toolUseId: it.id, input: inp.value }, { key: [it.id], ts: it.start, blobs: blobList(inp.blob) });
       if (!it.done) continue;
+      // A Codex exec cell is judged as the codex adapter judges it, not by T3's status; a stale tool request was stopped.
+      const interrupted = it.kind === "tool" && STALE_REQUEST.test(it.output ?? "");
+      const ok = interrupted ? false : it.kind === "tool" && p.provider === "codex" && CODEX_EXEC.test(it.tool ?? "") ? (codeModeCellOk(it.output) ?? it.ok) : it.ok;
       const o = await clipText(ctx, it.output ?? "");
-      em.emit("tool.end", { tool, toolUseId: it.id, ok: it.ok, durationMs: it.end - it.start, output: o.value || undefined }, { key: [it.id], ts: it.end, durationMs: it.end - it.start, blobs: blobList(o.blob) });
+      em.emit("tool.end", { tool, toolUseId: it.id, ok, durationMs: it.end - it.start, output: o.value || undefined, interrupted: interrupted || undefined }, { key: [it.id], ts: it.end, durationMs: it.end - it.start, blobs: blobList(o.blob) });
       if (it.kind === "file" && it.path && it.ok) {
         const d = it.diff ? await clipText(ctx, it.diff, 2560) : undefined;
         em.emit("file.change", { path: it.path, op: "modify", additions: it.additions, deletions: it.deletions, tool, toolUseId: it.id, diff: d?.value, diffTruncated: d?.truncated || undefined }, { key: [it.id, it.path], ts: it.end, blobs: blobList(d?.blob) });
       } else if (it.kind === "tool") {
-        await emitDerived(em, { tool, toolUseId: it.id, input: it.input, output: it.output, ok: it.ok, cwd: t.cwd, extra: { ts: it.end } });
+        await emitDerived(em, { tool, toolUseId: it.id, input: it.input, output: it.output, ok, cwd: t.cwd, extra: { ts: it.end } });
       }
     }
   }
@@ -976,7 +984,9 @@ export const t3code: Adapter = {
   //    when T3 resolves them, so a thread waiting on one is blocked on you (core/waiting.ts). A thread with activity
   //    inside the --since window is imported whole, with its host link.
   // 13 (0.1.8): a transcript line holding a raw U+2028 or U+2029 inside a string is read whole, not split and dropped.
-  parseVersion: 13,
+  // 14: a Codex exec cell built from the store is ok by the codex adapter's rule (codeModeCellOk), and a tool
+  //    request with "no active turn" ends interrupted, not failed.
+  parseVersion: 14,
 
   async detect() {
     const env = process.env;
