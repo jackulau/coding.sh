@@ -25,6 +25,7 @@ import { suggest, UsageError } from "../args.ts";
 import { changeJson, printChanges, shortPath } from "../changes.ts";
 import { ingestCli, list, requireConsent, str, underImportLock, withContext } from "../common.ts";
 import { hookRedactSource, hookShSource, hookSource, planHookBin, writeHookBin } from "../hookbin.ts";
+import { nextStepBin } from "../next-steps.ts";
 import { parseRemote, probeRemote, REMOTE_SINK, validateConfigText, withRemoteSink } from "../remote.ts";
 import { CliError, plural, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -166,10 +167,10 @@ function planBlockers(pl: AgentPlan, env: NodeJS.ProcessEnv, cwd: string): Block
   if (pl.hooks.error) out.push({ text: `can't install hooks: ${pl.hooks.error}`, fatal: true });
   if (pl.mcp?.error) out.push({ text: `can't register the MCP server: ${pl.mcp.error}`, fatal: true });
   if (pl.proxy?.error) out.push({ text: `can't route through the proxy: ${pl.proxy.error}`, fatal: true });
-  if (pl.proxyUnsupported) out.push({ text: "init --proxy can't route this agent; point it at the variables from coding.sh proxy env", fatal: false });
+  if (pl.proxyUnsupported) out.push({ text: `init --proxy can't route this agent; point it at the variables from ${nextStepBin(env)} proxy env`, fatal: false });
   if (!pl.installed) {
     // A wrapper-only agent (tier C) or a store-read one has no hooks to fire.
-    const later = pl.adapter.tail ? "its sessions are imported once it is" : pl.adapter.tier === "C" ? `capture it with coding.sh run -- ${pl.adapter.id} once it is` : "its hooks fire once it is";
+    const later = pl.adapter.tail ? "its sessions are imported once it is" : pl.adapter.tier === "C" ? `capture it with ${nextStepBin(env)} run -- ${pl.adapter.id} once it is` : "its hooks fire once it is";
     out.push({ text: `${pl.adapter.displayName} is not installed on this machine; ${later}`, fatal: false });
   }
   if (pl.otherScope) {
@@ -202,7 +203,7 @@ function renderPlan(out: Output, plans: AgentPlan[], own: FileChange[], scope: s
     emit(`  ${out.style(pl.adapter.displayName, "bold", stream)} (${scope} scope)`);
     const rows = rowsOf(pl);
     for (const r of rows) emit(file(r));
-    if (!rows.length && !pl.hooks.error && !pl.mcp?.error && !pl.proxy?.error && !pl.skipped) emit(pl.adapter.tail ? "    no hooks needed; imports from its store" : pl.adapter.tier === "C" ? `    no hooks needed; capture with coding.sh run -- ${pl.adapter.id}` : "    already set up");
+    if (!rows.length && !pl.hooks.error && !pl.mcp?.error && !pl.proxy?.error && !pl.skipped) emit(pl.adapter.tail ? "    no hooks needed; imports from its store" : pl.adapter.tier === "C" ? `    no hooks needed; capture with ${nextStepBin(env)} run -- ${pl.adapter.id}` : "    already set up");
     for (const b of planBlockers(pl, env, cwd)) emit(`    ${b.fatal ? out.style("✗", "red", stream) : out.style("!", "yellow", stream)} ${b.text}`);
   }
   if (own.length) {
@@ -321,14 +322,14 @@ async function importHistory(c: CommandContext, agents: Adapter[]): Promise<Impo
   });
 }
 
-function reportImport(out: Output, r: ImportOutcome): void {
+function reportImport(out: Output, r: ImportOutcome, bin: string): void {
   const from = joinNames(r.agents.map((id) => ADAPTERS.find((a) => a.id === id)?.displayName ?? id));
   const secs = `${(r.ms / 1000).toFixed(1)} s`;
   if (r.background && !r.pendingFiles) out.ok("Past sessions: an import is already running in the background");
   else if (r.pendingFiles) {
     const rest = `${plural(r.pendingFiles, "transcript")} left`;
     if (r.background) out.ok(`Imported ${plural(r.sessions, "past session")} from ${from} in ${secs}; importing the rest (${rest}) in the background`);
-    else out.warn(`Imported ${plural(r.sessions, "past session")} from ${from}; ${rest}. Import them: coding.sh ingest --backfill`);
+    else out.warn(`Imported ${plural(r.sessions, "past session")} from ${from}; ${rest}. Import them: ${bin} ingest --backfill`);
   } else if (r.sessions) out.ok(`Imported ${plural(r.sessions, "past session")} from ${from} in ${secs}`);
   // Nothing found or nothing new: say nothing, so init still ends in its three lines.
   for (const e of r.errors.slice(0, 3)) out.note(e);
@@ -336,6 +337,8 @@ function reportImport(out: Output, r: ImportOutcome): void {
 
 export async function run(c: CommandContext): Promise<number> {
   const { out, env } = c;
+  // How the user's shell runs this CLI, for every command init names.
+  const bin = nextStepBin(env);
   const named = list(c.flags.agent);
   const scope = (str(c.flags.scope) ?? "user") as "user" | "project";
   const dryRun = c.flags["dry-run"] === true;
@@ -403,7 +406,7 @@ export async function run(c: CommandContext): Promise<number> {
   if (plans.length === 0 && !remote) {
     throw new CliError(named.length ? "None of the named agents can be installed" : "No supported agents found on this machine", {
       reason: "no_agents",
-      next: ["Wrap any agent: coding.sh run -- <agent command>", "Trace an agent you built: https://coding.sh/docs/how-to/trace-your-agent"],
+      next: [`Wrap any agent: ${bin} run -- <agent command>`, "Trace an agent you built: https://coding.sh/docs/how-to/trace-your-agent"],
     });
   }
 
@@ -458,7 +461,7 @@ export async function run(c: CommandContext): Promise<number> {
   renderPlan(out, plans, own, scope, env, c.cwd, (l) => out.note(l.replace(/^  /, "")), "err", importFrom);
 
   if (total) {
-    await requireConsent(c, `Set up coding.sh for ${plural(pending.length, "agent")} (${plural(total, "config file")}, backed up first)${importFrom.length ? " and import past sessions" : ""}?`, `coding.sh init${scope === "project" ? " --scope project" : ""} --yes`, {
+    await requireConsent(c, `Set up coding.sh for ${plural(pending.length, "agent")} (${plural(total, "config file")}, backed up first)${importFrom.length ? " and import past sessions" : ""}?`, `${bin} init${scope === "project" ? " --scope project" : ""} --yes`, {
       defaultYes: true,
     });
   }
@@ -542,7 +545,7 @@ export async function run(c: CommandContext): Promise<number> {
   // Store-read agents (T3 Code) and wrapper-only agents (tier C: Aider) get no hooks: listed by their plan row, not here.
   const summary = setupSummary(ready.filter((x) => (!x.pl.adapter.tail && x.pl.adapter.tier !== "C") || x.mcp).map((x) => ({ name: x.pl.adapter.displayName, mcp: x.mcp !== undefined && !x.mcp.error })));
   if (allFailed) {
-    out.warn(`No agent was set up: fix the file, then run coding.sh init again`);
+    out.warn(`No agent was set up: fix the file, then run ${bin} init again`);
     return 1;
   }
   if (summary) out.ok(`${outcome === "unchanged" ? "Already set up:" : "Set up"} ${summary}`);
@@ -550,13 +553,13 @@ export async function run(c: CommandContext): Promise<number> {
   const hookedNow = ready.filter((x) => x.hooks.changes.length).map((x) => x.pl.adapter.displayName);
   if (hookedNow.length) out.note(firstSessionNote(hookedNow));
   if (remote) {
-    if (!plans.length) out.warn("No supported agents found on this machine; apps and `coding.sh run -- <cmd>` still send");
+    if (!plans.length) out.warn(`No supported agents found on this machine; apps and \`${bin} run -- <cmd>\` still send`);
     out.ok(`Sending new sessions to ${remote.url} (${remote.mode === "full" ? "full content" : "metadata only"}). Sessions from before stay on this machine`);
     out.note(`Team viewer: ${out.style(remote.url, "cyan", "err")}`);
   }
   if (routed.length) {
     const names = joinNames(routed.map((x) => x.pl.adapter.displayName));
-    if (proxyStart?.error) out.warn(`${names} now call ${proxyUrl}, but the proxy did not start (${proxyStart.error}). Start it: coding.sh proxy --background`);
+    if (proxyStart?.error) out.warn(`${names} now call ${proxyUrl}, but the proxy did not start (${proxyStart.error}). Start it: ${bin} proxy --background`);
     else out.ok(`${names} → proxy at ${proxyUrl}${proxyStart?.started ? ` (${proxyStart.restarted ? "restarted" : "started"}, pid ${proxyStart.pid})` : ""}; restart running sessions to pick it up`);
     const recs = readProxyInstalls(env);
     for (const x of routed) {
@@ -564,23 +567,9 @@ export async function run(c: CommandContext): Promise<number> {
       if (chained) out.note(`${x.pl.adapter.displayName} calls go on to ${chained}, the base URL it used before`);
     }
   }
-  if (imported) reportImport(out, imported);
-  const bin = nextStepBin(env);
+  if (imported) reportImport(out, imported, bin);
   out.note(`Open the viewer: ${out.style(`${bin} ui`, "cyan", "err")}`);
   out.note(`After a few sessions, see what to fix first: ${out.style(`${bin} improve`, "cyan", "err")}`);
   out.note(`Docs: ${DOCS_URL}`);
   return errors ? 1 : 0;
-}
-
-/**
- * How to name the CLI in the next-step lines. Started with npx, `coding.sh` is
- * not on PATH: npx it. In PowerShell or cmd on Windows (no MSYSTEM or SHELL,
- * which Git Bash, MSYS2 and Cygwin set), `coding.sh` resolves to npm's
- * extensionless sh shim and fails, so name the dotless `codingsh` bin. npx on
- * Windows runs the command through cmd whatever the shell, so it names that bin too.
- */
-export function nextStepBin(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string {
-  if (env.npm_command === "exec") return platform === "win32" ? "npx -p coding.sh codingsh" : "npx coding.sh";
-  if (platform === "win32" && !env.MSYSTEM && !env.SHELL) return "codingsh";
-  return "coding.sh";
 }

@@ -1,8 +1,9 @@
 // Unit tests for CLI formatting and message helpers.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { blockingNotes, nextStepBin, setupSummary } from "../../src/cli/commands/init.ts";
+import { blockingNotes, setupSummary } from "../../src/cli/commands/init.ts";
 import { checkFailed } from "../../src/cli/commands/update.ts";
+import { nextStepBin } from "../../src/cli/next-steps.ts";
 import { duration, formatLabel, LABEL_WIDTH } from "../../src/cli/output.ts";
 import type { UpdateCache } from "../../src/update/index.ts";
 

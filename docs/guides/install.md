@@ -58,13 +58,14 @@ script that starts no node for a plain hook call. On Windows they run `hook.mjs`
 ## Windows
 
 Run the installer from Git Bash, which comes with [Git for Windows](https://gitforwindows.org).
-The source install below works from PowerShell too. Under WSL, coding.sh behaves as it does on
-Linux and records the agents you run inside WSL.
+In PowerShell or cmd, install with npm: `npm install -g coding.sh`, then `codingsh init`. Under
+WSL, coding.sh behaves as it does on Linux and records the agents you run inside WSL.
 
 In PowerShell and cmd, type `codingsh` instead of `coding.sh` (for example `codingsh init` and
 `codingsh ui`). npm also installs an extensionless sh script named `coding.sh`, and PowerShell and
 cmd pick it over `coding.sh.cmd`, so `coding.sh` fails there. `codingsh` is the same CLI. In Git
-Bash, `coding.sh` works. `init` names `codingsh` in its next steps when it runs in PowerShell or cmd.
+Bash, `coding.sh` works. Run in PowerShell or cmd, `init`, `uninstall` and `update` name `codingsh`
+in the commands they print, and `update` names `npm install -g coding.sh` to reinstall.
 
 - Hooks run `node "C:/Users/you/.coding.sh/bin/hook.mjs" <agent> <event>`. The forward slashes
   and quotes work in cmd.exe, PowerShell and Git Bash, and with spaces in the path.
@@ -130,6 +131,9 @@ coding.sh uninstall --yes       # remove hooks and MCP entries from every agent
 npm uninstall -g coding.sh
 rm -rf ~/.coding.sh             # optional: delete captured data
 ```
+
+In PowerShell, type `codingsh` for `coding.sh`, and delete the data with
+`Remove-Item -Recurse -Force ~\.coding.sh`.
 
 `uninstall` restores each agent config file byte for byte if nothing else has edited it since
 `init`. Otherwise it removes only the coding.sh entries.

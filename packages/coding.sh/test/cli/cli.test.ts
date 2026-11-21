@@ -261,7 +261,7 @@ describe("cli exit codes", () => {
     assert.equal(e.reason, "confirmation_required");
     // An agent reading this must ask the user before it re-runs with --yes.
     assert.equal(e.askUser, true);
-    assert.deepEqual(e.next, ["With their approval:", "coding.sh init --yes"]);
+    assert.deepEqual(e.next, ["With their approval:", `${process.platform === "win32" ? "codingsh" : "coding.sh"} init --yes`]);
     assert.equal(existsSync(join(h.home, ".claude", "settings.json")), false);
   });
 

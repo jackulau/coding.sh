@@ -12,6 +12,7 @@ import { MCP_CONFIG_NAME } from "../../mcp/launch.ts";
 import { applyProxyUninstall, isProxyAgent, planProxyUninstall, readProxyInstalls } from "../../proxy/install.ts";
 import { changeJson, printChanges } from "../changes.ts";
 import { list, requireConsent, shellQuote, str } from "../common.ts";
+import { nextStepBin, windowsShell } from "../next-steps.ts";
 import { plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { pickAdapters } from "./init.ts";
@@ -73,6 +74,8 @@ async function removeAll(a: Adapter, opts: RemoveOpts): Promise<FileChange[]> {
 
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
+  // How the user's shell runs this CLI, for the commands uninstall names.
+  const bin = nextStepBin(c.env);
   const named = list(c.flags.agent);
   const scope = (str(c.flags.scope) ?? "user") as "user" | "project";
   const dryRun = c.flags["dry-run"] === true;
@@ -102,8 +105,10 @@ export async function run(c: CommandContext): Promise<number> {
     for (const l of left) out.warn(`${l.name}: ${l.path} holds a coding.sh install outside the config dir uninstall looked in; it is left in place`);
     for (const l of left.filter((x, i) => left.findIndex((y) => y.agent === x.agent && dirname(y.path) === dirname(x.path)) === i)) {
       const v = DIR_VAR[l.agent];
-      if (v) out.next("Remove it with the config dir it had at init", `${v}=${shellQuote(dirname(l.path))} coding.sh uninstall --agent ${l.agent}`);
-      else out.next(`Remove it: set ${l.name}'s config dir to ${dirname(l.path)} as at init, then run`, `coding.sh uninstall --agent ${l.agent}`);
+      const cmd = `${bin} uninstall --agent ${l.agent}`;
+      // `VAR=value cmd` is sh syntax: PowerShell and cmd get the variable to set instead.
+      if (v && !windowsShell(c.env)) out.next("Remove it with the config dir it had at init", `${v}=${shellQuote(dirname(l.path))} ${cmd}`);
+      else out.next(`Remove it: set ${v ?? `${l.name}'s config dir`} to ${dirname(l.path)} as at init, then run`, cmd);
     }
   };
   const leftJson = () => (left.length ? { leftInPlace: left.map((l) => ({ id: l.agent, path: l.path })) } : {});
@@ -128,7 +133,7 @@ export async function run(c: CommandContext): Promise<number> {
   await requireConsent(
     c,
     proxyOnly ? `Stop routing ${plural(pending.length, "agent")} through the proxy (${plural(total, "file")})?` : `Remove coding.sh from ${plural(pending.length, "agent")} (${plural(total, "file")})?`,
-    `coding.sh uninstall${scope === "project" ? " --scope project" : ""}${proxyOnly ? " --proxy" : ""} --yes`,
+    `${bin} uninstall${scope === "project" ? " --scope project" : ""}${proxyOnly ? " --proxy" : ""} --yes`,
   );
 
   const done: { id: string; changes: FileChange[]; error?: string }[] = [];
