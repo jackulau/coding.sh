@@ -115,6 +115,11 @@ describe("conformance invariants", () => {
     assert.deepEqual(rules(r), ["turn-end-repeated"]);
   });
 
+  it("turn-end-repeated: a Stop a Stop hook blocked closes nothing, so the turn's real end is not a repeat", () => {
+    const r = checkEvents([...session(), ev("turn.end", { turnId: "t1" }, { stopHookActive: true }), ev("turn.end", { turnId: "t1" })]);
+    assert.deepEqual(rules(r), []);
+  });
+
   it("dangling-parent, parent-other-session and a self parent (F2)", () => {
     const a = session("a");
     const b = session("b");
