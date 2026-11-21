@@ -68,11 +68,13 @@ coding.sh show e2ac1139
 
 ```text
 Tokens       in 47 out 5.2k cache 547k $0.3823 (estimated)
+Cost split   cache read 43% $0.1641  cache write 37% $0.1401  in 0% $0.0001  out 20% $0.0780
 Cache breaks 1: 2.9k prompt tokens billed again, $0.0100 extra (other 1)
 ```
 
-The `Tokens` line holds input, output, cache reads and cost. Each model call below it shows its
-own cost, with `est` when it is an estimate. Long sessions usually spend their tokens re-reading
+The `Tokens` line holds input, output, cache reads and cost. `Cost split` divides the estimate by
+token type ([Cost by token type](https://coding.sh/docs/cost#cost-by-token-type)). Each model call
+below it shows its own cost, with `est` when it is an estimate. Long sessions usually spend their tokens re-reading
 context: look for a high cache-read share, a `compaction` flag and repeated tool calls.
 `coding.sh ui` opens the same session as a timeline.
 
@@ -202,6 +204,37 @@ opencode     5         89%     979.4k  0       -        1       ~$0.0128
 
 A break is a model call whose cached prompt prefix was gone, so the prompt was billed again. To
 find the worst sessions: `coding.sh sessions --where 'cache.breaks>0 sort:-cache.cost'`.
+
+## Cost by token type
+
+`usage --cache` splits the estimate into cache reads, cache writes, uncached input and output, on a
+line under the table:
+
+```text
+Estimated cost by token type: cache reads ~$4.21 (58%), cache writes ~$1.73 (24%), uncached input ~$0.2400 (3%), output ~$1.08 (15%); ~$7.26 in all. Not split by token type: $0.5000 reported or billed.
+```
+
+Each model call's estimate is split when it is priced, at the rates of the estimate: tiers, long
+context and 1-hour cache writes included. A call's parts add up to its estimate.
+
+Reported and billed costs have no split, and neither has an estimate stored without one. The line
+names both apart, so the split never claims more than the estimate. In `show`, the row is
+`Est. split` when part of the session's cost was reported or billed.
+
+`usage --json` and the MCP `usage` tool carry the split in each row and in the total (not with
+`--by mcp`, `skill` or `subagent`):
+
+| Field | Meaning |
+|---|---|
+| `estimatedCostByTokenType` | USD per part (`cacheRead`, `cacheWrite`, `input`, `output`), to 4 decimals, adding up to the estimate less its unsplit part |
+| `estimatedCostShareByTokenType` | Each part's share of the split, to 3 decimals, adding up to 1 |
+| `estimatedCostUnsplitUsd` | The part of the estimate stored without a split |
+
+A session keeps its split in `stats.usage.estimatedCostByTokenType`, and each model call in
+`payload.costByTokenType` ([API reference](https://coding.sh/docs/api)). Estimates stored by an
+older coding.sh get their split when estimates refresh on their own, or now with
+`coding.sh usage --reprice`. A Postgres store has no reprice, so its older estimates stay unsplit.
+A row with no estimate has no split, never $0.
 
 ## Set a budget
 

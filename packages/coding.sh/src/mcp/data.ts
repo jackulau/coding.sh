@@ -4,10 +4,11 @@
 import { existsSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import type { AgentEvent, IndexStore, Session, SessionFilter } from "../core/types.ts";
-import type { CacheBreakCause } from "../schema/index.ts";
+import type { CacheBreakCause, CostByTokenType } from "../schema/index.ts";
 import { CACHE_BREAK_FIX, CACHE_IDLE_FIX } from "../core/cache-breaks.ts";
 import { cacheBaseline, CACHE_BASELINE_NOTE } from "../core/cache-baselines.ts";
 import { mergeCallCopies } from "../core/call-copies.ts";
+import { apportion, splitOf, TOKEN_TYPES } from "../core/pricing.ts";
 import { failureFlags, isBackfillEvent, percentile } from "../core/sessions.ts";
 import { weightsEventText } from "../core/weights.ts";
 import { waitKind } from "../core/wait-tools.ts";
@@ -681,6 +682,52 @@ function topN<T>(n: number, cmp: (a: T, b: T) => number): { items: T[]; add(x: T
   };
 }
 
+/**
+ * A usage row's estimate by token type: dollars to 4 decimals that add up to the
+ * estimate less its unsplit part, each part's share of them (3 decimals, adding
+ * up to 1), and the unsplit part. Only the fields that have a value.
+ */
+function byTokenType(parts: CostByTokenType, estimated: number, unsplit: number): SplitFields {
+  const out: SplitFields = {};
+  const units = Math.round(estimated * 10_000) - Math.round(unsplit * 10_000);
+  if (units > 0 && TOKEN_TYPES.some((k) => parts[k] > 0)) {
+    const usd = apportion(parts, units);
+    const share = apportion(parts, 1000);
+    for (const k of TOKEN_TYPES) {
+      usd[k] /= 10_000;
+      share[k] /= 1000;
+    }
+    out.estimatedCostByTokenType = usd;
+    out.estimatedCostShareByTokenType = share;
+  }
+  if (unsplit > 0) out.estimatedCostUnsplitUsd = unsplit;
+  return out;
+}
+
+/** How notes name each token type, in TOKEN_TYPES order. */
+export const SPLIT_LABEL: Record<keyof CostByTokenType, string> = { cacheRead: "cache reads", cacheWrite: "cache writes", input: "uncached input", output: "output" };
+
+/** The cost fields of a usage row that a split note reads. */
+export interface SplitFields {
+  costUsd?: number;
+  estimatedCostUsd?: number;
+  estimatedCostByTokenType?: CostByTokenType;
+  estimatedCostShareByTokenType?: CostByTokenType;
+  estimatedCostUnsplitUsd?: number;
+}
+
+/** The usage note on what the estimate paid for, by token type, and what has no split. */
+function splitNote(t: SplitFields): string | undefined {
+  const usd = t.estimatedCostByTokenType;
+  const share = t.estimatedCostShareByTokenType;
+  if (!usd || !share) return undefined;
+  const pct = apportion(share, 100);
+  const parts = TOKEN_TYPES.map((k) => `${SPLIT_LABEL[k]} $${usd[k]} (${pct[k]}%)`).join(", ");
+  const reported = round4((t.costUsd ?? 0) - (t.estimatedCostUsd ?? 0));
+  const rest = [t.estimatedCostUnsplitUsd ? `$${t.estimatedCostUnsplitUsd} of the estimate (estimatedCostUnsplitUsd)` : "", reported > 0 ? `$${reported} reported or billed` : ""].filter(Boolean);
+  return `The estimate by token type: ${parts} (estimatedCostByTokenType; shares in estimatedCostShareByTokenType).${rest.length ? ` Not split by token type: ${rest.join(" and ")}.` : ""}`;
+}
+
 export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup, limit: number, opts: UsageOpts = {}): Promise<Obj> {
   interface Acc {
     sessions: number;
@@ -697,6 +744,10 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
     estimatedCostUsd: number;
     /** Part of estimatedCostUsd at tier or long-context rates, by `payload.priceTier`. */
     estimatedCostByTier: Record<string, number>;
+    /** Part of estimatedCostUsd split by token type: the sum of the sessions' `estimatedCostByTokenType`. */
+    estimatedCostByTokenType: CostByTokenType;
+    /** Part of estimatedCostUsd in sessions with no split by token type. */
+    estimatedCostUnsplitUsd: number;
     /** Sessions that have a cost (reported or estimated). */
     priced: number;
     /** Sessions with tokens but no reported cost. */
@@ -715,7 +766,7 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
     /** Sessions tagged cache:low: paid to write a prompt cache they barely read back. */
     cacheLowSessions: number;
   }
-  const zero = (): Acc => ({ sessions: 0, turns: 0, turnTokens: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, estimatedCostUsd: 0, estimatedCostByTier: {}, priced: 0, unpriced: 0, duplicateFetches: 0, duplicateFetchTokens: 0, cacheBreaks: 0, cacheBreakTokens: 0, cacheBreakUsd: 0, cacheBreakCauses: {}, cacheBreakIdle: {}, cacheLowSessions: 0 });
+  const zero = (): Acc => ({ sessions: 0, turns: 0, turnTokens: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, estimatedCostUsd: 0, estimatedCostByTier: {}, estimatedCostByTokenType: { cacheRead: 0, cacheWrite: 0, input: 0, output: 0 }, estimatedCostUnsplitUsd: 0, priced: 0, unpriced: 0, duplicateFetches: 0, duplicateFetchTokens: 0, cacheBreaks: 0, cacheBreakTokens: 0, cacheBreakUsd: 0, cacheBreakCauses: {}, cacheBreakIdle: {}, cacheLowSessions: 0 });
   const tokens = (s: Session) => {
     const u = s.stats.usage ?? {};
     return (u.inputTokens ?? 0) + (u.outputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0);
@@ -733,8 +784,13 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
     a.cacheWriteTokens += u.cacheWriteTokens ?? 0;
     if (typeof u.costUsd === "number" && Number.isFinite(u.costUsd)) {
       a.costUsd += u.costUsd;
-      a.estimatedCostUsd += u.estimatedCostUsd ?? 0;
+      const est = u.estimatedCostUsd ?? 0;
+      a.estimatedCostUsd += est;
       for (const [k, v] of Object.entries(u.estimatedCostByTier ?? {})) if (typeof v === "number" && Number.isFinite(v)) a.estimatedCostByTier[k] = (a.estimatedCostByTier[k] ?? 0) + v;
+      // A session's split adds up to its estimate; without one, its estimate counts as unsplit.
+      const parts = est > 0 ? splitOf(u.estimatedCostByTokenType, est) : undefined;
+      if (parts) for (const k of TOKEN_TYPES) a.estimatedCostByTokenType[k] += parts[k];
+      else if (est > 0) a.estimatedCostUnsplitUsd += est;
       a.priced++;
     } else if (tokens(s) > 0) a.unpriced++;
     a.duplicateFetches += s.stats.waste?.duplicateFetches ?? 0;
@@ -794,7 +850,7 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
   // another day), so dividing them by the group's turns gave millions per turn.
   // Cache reads are left out too: every model call re-reads the whole context,
   // so they grow with the number of calls, not with the work.
-  const fix = ({ priced, unpriced, costUsd, estimatedCostUsd, estimatedCostByTier, duplicateFetches, duplicateFetchTokens, cacheBreaks, cacheBreakTokens, cacheBreakUsd, cacheBreakCauses, cacheBreakIdle, cacheLowSessions, turnTokens, ...a }: Acc) => {
+  const fix = ({ priced, unpriced, costUsd, estimatedCostUsd, estimatedCostByTier, estimatedCostByTokenType, estimatedCostUnsplitUsd, duplicateFetches, duplicateFetchTokens, cacheBreaks, cacheBreakTokens, cacheBreakUsd, cacheBreakCauses, cacheBreakIdle, cacheLowSessions, turnTokens, ...a }: Acc) => {
     const tiers = Object.entries(estimatedCostByTier).sort((x, y) => y[1] - x[1]);
     const totalTokens = a.inputTokens + a.outputTokens + a.cacheReadTokens + a.cacheWriteTokens;
     const prompt = a.inputTokens + a.cacheReadTokens + a.cacheWriteTokens;
@@ -803,6 +859,8 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
       ...(priced ? { costUsd: round4(costUsd) } : {}),
       ...(priced && estimatedCostUsd > 0 ? { estimatedCostUsd: round4(estimatedCostUsd) } : {}),
       ...(priced && tiers.length ? { estimatedCostByTier: Object.fromEntries(tiers.map(([k, v]) => [k, round4(v)])) } : {}),
+      // Only priced sessions add to the parts and the unsplit part, so an unpriced row has neither.
+      ...byTokenType(estimatedCostByTokenType, estimatedCostUsd, round4(estimatedCostUnsplitUsd)),
       ...(priced && unpriced ? { costPartial: true, unpricedSessions: unpriced } : {}),
       totalTokens,
       ...(a.turns ? { tokensPerTurn: Math.round(turnTokens / a.turns) } : {}),
@@ -835,6 +893,9 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
   if (total.estimatedCostUsd > 0) notes.push(`$${round4(total.estimatedCostUsd)} of costUsd is estimated: token counts times list prices (estimatedCostUsd), not a bill. Reported and gateway-billed costs are used as is.`);
   const tierUsd = Object.values(total.estimatedCostByTier).reduce((x, y) => x + y, 0);
   if (tierUsd > 0) notes.push(`$${round4(tierUsd)} of the estimate used batch, flex, priority, fast, long-context or US-only rates rather than standard ones (estimatedCostByTier, by the calls' payload.priceTier).`);
+  const totalRow = fix(total);
+  const split = splitNote(totalRow);
+  if (split) notes.push(split);
   if (total.cacheBreaks) {
     const topCause = Object.entries(total.cacheBreakCauses).sort((a, b) => b[1] - a[1])[0]?.[0] as CacheBreakCause | undefined;
     const fix = topCause ? ` Top cause ${topCause} (${total.cacheBreakCauses[topCause]}): ${CACHE_BREAK_FIX[topCause]}.` : "";
@@ -848,7 +909,7 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
   return {
     window: windowOf(q, total.sessions, truncated),
     groupBy,
-    total: fix(total),
+    total: totalRow,
     groups: rows.slice(0, limit),
     topSessions: top,
     topSessionsRankedBy: anyCost ? "costUsd" : "outputTokens",

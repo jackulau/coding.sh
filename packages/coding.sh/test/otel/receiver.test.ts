@@ -94,7 +94,14 @@ describe("OTLP receiver over HTTP", () => {
     assert.equal(s.agent, "weather-bot");
     assert.equal(s.title, "What's the weather in Paris?");
     // No cost on the spans: the local collector prices them from list prices, as serve does.
-    assert.deepEqual(s.stats.usage, { inputTokens: 300, outputTokens: 45, cacheReadTokens: 20, costUsd: 0.001225, estimatedCostUsd: 0.001225 });
+    assert.deepEqual(s.stats.usage, {
+      inputTokens: 300,
+      outputTokens: 45,
+      cacheReadTokens: 20,
+      costUsd: 0.001225,
+      estimatedCostUsd: 0.001225,
+      estimatedCostByTokenType: { cacheRead: 0.000025, cacheWrite: 0, input: 0.00075, output: 0.00045 },
+    });
     assert.equal(s.stats.toolCalls, 2);
     assert.equal(s.endedAt, 1767225605000);
     assert.equal(batches.length, 1);
@@ -221,16 +228,20 @@ describe("OTLP receiver over HTTP", () => {
     const r = await store.getSession(`otel-sub-${T}-${reader}`);
     assert.equal(r?.stats.toolCalls, 1);
     assert.equal(r?.stats.latency?.llmCalls, 1);
-    // Tokens but no reported cost: priced from the list price, and marked as an estimate.
-    const { costUsd: rc, estimatedCostUsd: re, ...rTokens } = r?.stats.usage ?? {};
+    // Tokens but no reported cost: priced from the list price, marked as an estimate and split by token type.
+    const { costUsd: rc, estimatedCostUsd: re, estimatedCostByTokenType: rs, ...rTokens } = r?.stats.usage ?? {};
     // A reported cache read of 0 is no cache read (as the transcript adapters store it).
     assert.deepEqual(rTokens, { inputTokens: 300, outputTokens: 30 });
     assert.ok(rc !== undefined && rc > 0 && re === rc, `estimated cost ${rc} / ${re}`);
+    assert.deepEqual(rs, { cacheRead: 0, cacheWrite: 0, input: 0.000075, output: 0.00006 });
     const call = (await store.listEvents(r!.id)).find((e) => e.kind === "llm.call");
     assert.equal(call?.payload.costEstimated, true);
     const w = await store.getSession(`otel-sub-${T}-${writer}`);
     const { costUsd: wc, ...wTokens } = w?.stats.usage ?? {};
-    assert.deepEqual({ ...wTokens, estimatedCostUsd: undefined }, { inputTokens: 500, outputTokens: 30, cacheReadTokens: 200, estimatedCostUsd: undefined });
+    assert.deepEqual(
+      { ...wTokens, estimatedCostUsd: undefined, estimatedCostByTokenType: undefined },
+      { inputTokens: 500, outputTokens: 30, cacheReadTokens: 200, estimatedCostUsd: undefined, estimatedCostByTokenType: undefined },
+    );
     assert.ok(wc !== undefined && wc > rc!, "the writer read more, so it cost more");
     const parent = await store.getSession(T);
     assert.equal(parent?.stats.latency?.subagents, 2);

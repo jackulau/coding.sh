@@ -6,7 +6,8 @@ import { GATEWAY_FLAG, gatewayFlagsOf, gatewayOfEvent } from "../integrations/ga
 import type { GatewayId } from "../integrations/gateway/providers.ts";
 import { DERAIL_FLAGS, derailsOf, derailState, detectDerails, foldDerails, type Derail, type DerailState } from "./derail.ts";
 import { foldOutline, outlineOf, outlineState, phasesToStore, REOPEN_SLACK_MS, type OutlineState } from "./outline.ts";
-import type { AgentEvent, DuplicateUsage, LatencyStats, LlmErrors, Session, Usage } from "../schema/index.ts";
+import type { AgentEvent, CostByTokenType, DuplicateUsage, LatencyStats, LlmErrors, Session, Usage } from "../schema/index.ts";
+import { splitOf } from "./pricing.ts";
 import { DURABLE_FLAGS, durableFlags, durableStats } from "./durable.ts";
 import { detectTestTamper, foldTamper, tamperState, type TamperState } from "./intent.ts";
 // waste.ts and skills-use.ts import commandOf and FLAGS back from here, inside functions only.
@@ -209,6 +210,30 @@ const addTiers = (into: Tiers, from: Tiers): void => {
   for (const [k, v] of Object.entries(from)) into[k] = (into[k] ?? 0) + v;
 };
 
+/**
+ * An estimate in parts by token type (its call's `payload.costByTokenType`), and
+ * the estimate whose call has no split that adds up to it (`unsplit`).
+ */
+interface Split {
+  parts: CostByTokenType;
+  unsplit: number;
+}
+const noParts = (): CostByTokenType => ({ cacheRead: 0, cacheWrite: 0, input: 0, output: 0 });
+const NO_SPLIT: Readonly<Split> = Object.freeze({ parts: Object.freeze(noParts()), unsplit: 0 });
+const addSplit = (into: Split, from: Split): void => {
+  into.parts.cacheRead += from.parts.cacheRead;
+  into.parts.cacheWrite += from.parts.cacheWrite;
+  into.parts.input += from.parts.input;
+  into.parts.output += from.parts.output;
+  into.unsplit += from.unsplit;
+};
+/** The split of `est`, the estimate counted for `e`. */
+const splitEstimate = (e: AgentEvent, est: number): Split => {
+  if (!(est > 0)) return NO_SPLIT;
+  const parts = splitOf(e.payload?.costByTokenType, est);
+  return parts ? { parts, unsplit: 0 } : { parts: noParts(), unsplit: est };
+};
+
 /** Parent walks stop after this many hops (and on a cycle). */
 const MAX_PARENT_HOPS = 64;
 
@@ -230,7 +255,9 @@ export interface UsageRollup {
  * - a model call repeating an earlier call's `payload.responseId` counts once;
  * - `estimatedCostUsd` is the part of `costUsd` computed from the price table
  *   (`payload.costEstimated`), unless a gateway companion billed that call
- *   (its `payload.billedCostUsd`).
+ *   (its `payload.billedCostUsd`). `estimatedCostByTokenType` splits that same
+ *   part, from the counted calls' `payload.costByTokenType`; reported and billed
+ *   costs have no split.
  * What was left out is returned as `duplicate`. Events without trace ids sum as before.
  */
 export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
@@ -270,8 +297,10 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
     const t = e.payload?.priceTier;
     return est > 0 && typeof t === "string" && t ? { [t]: est } : {};
   };
+  // The estimate of a call by token type, from its `payload.costByTokenType`.
+  const splitOfEvent = (e: AgentEvent): Split => splitEstimate(e, estimatedOf(e));
   // A call's usage with its nested calls folded in: own value per field, else the nested sum.
-  const fold = (c: AgentEvent, depth = 0): { u: Usage; est: number; tiers: Tiers } => {
+  const fold = (c: AgentEvent, depth = 0): { u: Usage; est: number; tiers: Tiers; split: Split } => {
     const kids = depth < MAX_PARENT_HOPS ? (children.get(c) ?? []).map((k) => fold(k, depth + 1)) : [];
     const u: Usage = {};
     for (const k of TOKEN_KEYS) {
@@ -287,17 +316,23 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
     const kidsReported = kidCost !== undefined && kidCost - kidEst > 0;
     if (own !== undefined && (ownEst === 0 || !kidsReported || billed.has(c.id))) {
       u.costUsd = own;
-      return { u, est: ownEst, tiers: tiersOf(c) };
+      return { u, est: ownEst, tiers: tiersOf(c), split: splitEstimate(c, ownEst) };
     }
     if (kidCost !== undefined) u.costUsd = kidCost;
     const tiers: Tiers = {};
-    if (kidCost !== undefined) for (const k of kids) addTiers(tiers, k.tiers);
-    return { u, est: kidCost !== undefined ? kidEst : 0, tiers };
+    const split: Split = { parts: noParts(), unsplit: 0 };
+    if (kidCost !== undefined)
+      for (const k of kids) {
+        addTiers(tiers, k.tiers);
+        addSplit(split, k.split);
+      }
+    return { u, est: kidCost !== undefined ? kidEst : 0, tiers, split };
   };
 
   const usage: Usage = {};
   let estimated = 0;
   const byTier: Tiers = {};
+  const split: Split = { parts: noParts(), unsplit: 0 };
   let snapshot: AgentEvent | undefined;
   const responses = new Set<string>();
   const dropped = new Set<string>();
@@ -329,10 +364,11 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
     if (isUsageSnapshot(e)) continue;
     if (carriesUsage(e)) {
       if (dropped.has(e.id)) continue;
-      const f = children.has(e) ? fold(e) : { u: e.usage!, est: estimatedOf(e), tiers: tiersOf(e) };
+      const f = children.has(e) ? fold(e) : { u: e.usage!, est: estimatedOf(e), tiers: tiersOf(e), split: splitOfEvent(e) };
       addUsage(usage, f.u);
       estimated += f.est;
       addTiers(byTier, f.tiers);
+      addSplit(split, f.split);
       counted += tokens(f.u);
       countedCost += num(f.u.costUsd) ?? 0;
       continue;
@@ -345,8 +381,9 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
     addUsage(usage, e.usage);
     estimated += estimatedOf(e);
     addTiers(byTier, tiersOf(e));
+    addSplit(split, splitOfEvent(e));
   }
-  return usageResult({ usage, estimated, byTier, ...(snapshot ? { snapshot: { usage: snapshot.usage ?? {}, est: estimatedOf(snapshot) } } : {}), calls, raw, rawCost, counted, countedCost });
+  return usageResult({ usage, estimated, byTier, split, ...(snapshot ? { snapshot: { usage: snapshot.usage ?? {}, est: estimatedOf(snapshot), split: splitOfEvent(snapshot) } } : {}), calls, raw, rawCost, counted, countedCost });
 }
 
 /** Totals of a usage rollup before the snapshot is added (see rollupUsage). */
@@ -354,7 +391,9 @@ interface UsageTotals {
   usage: Usage;
   estimated: number;
   byTier: Tiers;
-  snapshot?: { usage: Usage; est: number };
+  /** `estimated` by token type. */
+  split: Split;
+  snapshot?: { usage: Usage; est: number; split: Split };
   calls: number;
   raw: number;
   rawCost: number;
@@ -365,14 +404,18 @@ interface UsageTotals {
 function usageResult(t: UsageTotals): UsageRollup {
   const usage: Usage = { ...t.usage };
   const byTier: Tiers = { ...t.byTier };
+  const split: Split = { parts: { ...t.split.parts }, unsplit: t.split.unsplit };
   let estimated = t.estimated;
   if (t.snapshot) {
     addUsage(usage, t.snapshot.usage);
     estimated += t.snapshot.est;
+    addSplit(split, t.snapshot.split);
   }
   if (estimated > 0 && usage.costUsd !== undefined) {
     usage.estimatedCostUsd = Math.min(estimated, usage.costUsd);
     if (Object.keys(byTier).length) usage.estimatedCostByTier = byTier;
+    // A split of all of the estimate, or none: its parts add up to estimatedCostUsd.
+    if (split.unsplit === 0 && estimated <= usage.costUsd + 1e-9 * Math.max(1, usage.costUsd)) usage.estimatedCostByTokenType = split.parts;
   }
   if (!t.calls) return { usage };
   const dupCost = Math.round((t.rawCost - t.countedCost) * 1e9) / 1e9;
@@ -391,7 +434,7 @@ interface UsageState extends UsageTotals {
   responses: Set<string>;
 }
 
-const usageState = (): UsageState => ({ usage: {}, estimated: 0, byTier: {}, calls: 0, raw: 0, rawCost: 0, counted: 0, countedCost: 0, snapshotTokens: 0, responses: new Set() });
+const usageState = (): UsageState => ({ usage: {}, estimated: 0, byTier: {}, split: { parts: noParts(), unsplit: 0 }, calls: 0, raw: 0, rawCost: 0, counted: 0, countedCost: 0, snapshotTokens: 0, responses: new Set() });
 
 const simpleEstimate = (e: AgentEvent): number => (e.payload?.costEstimated === true ? (num(e.usage?.costUsd) ?? 0) : 0);
 const simpleTiers = (e: AgentEvent): Tiers => {
@@ -399,6 +442,7 @@ const simpleTiers = (e: AgentEvent): Tiers => {
   const t = e.payload?.priceTier;
   return est > 0 && typeof t === "string" && t ? { [t]: est } : {};
 };
+const simpleSplit = (e: AgentEvent): Split => splitEstimate(e, simpleEstimate(e));
 const usageTokens = (u: Usage) => TOKEN_KEYS.reduce((s, k) => s + (num(u[k]) ?? 0), 0);
 
 function foldUsage(s: UsageState, e: AgentEvent): void {
@@ -407,7 +451,7 @@ function foldUsage(s: UsageState, e: AgentEvent): void {
     if (s.snapshotTs === undefined || e.ts > s.snapshotTs || (e.ts === s.snapshotTs && total >= s.snapshotTokens)) {
       s.snapshotTs = e.ts;
       s.snapshotTokens = total;
-      s.snapshot = { usage: { ...e.usage }, est: simpleEstimate(e) };
+      s.snapshot = { usage: { ...e.usage }, est: simpleEstimate(e), split: simpleSplit(e) };
     }
     return;
   }
@@ -426,6 +470,7 @@ function foldUsage(s: UsageState, e: AgentEvent): void {
   addUsage(s.usage, e.usage);
   s.estimated += simpleEstimate(e);
   addTiers(s.byTier, simpleTiers(e));
+  addSplit(s.split, simpleSplit(e));
 }
 
 const usageOf = (s: UsageState): UsageRollup => usageResult(s);
@@ -465,7 +510,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * new derivation. A new or retyped sub-state changes the stamp by itself; a
  * new optional field or a change of meaning still needs the bump.
  */
-export const SESSION_FOLD_VERSION = 30; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory). 19: a session with transcript model calls counts them, not the copies its OTLP logs carry (sansOtel, transcriptCalls). 20: weight edits (stats.weightEdits, the weights:edited tag, SessionState.weightEdits). 21: weight checkpoints (stats.weightEdits.checkpoints, the weights:checkpoint tag), and stats.weightEdits on a session with a checkpoint and no edit. 22: a `<parent>:sub:<agentId>` session with no session.start takes its parent from the id. 23: an API error event (source api, or status 400 or more) counts in stats.llmErrors. 24: api-stall (FlagState.apiStall); filesChanged counts files a shell call writes (shellCallFiles, SessionState.shellFiles), and keys file.change paths relative to the cwd. 25: a session with no prompt is titled by its session.start's name (SessionState.startName), so an SDK trace() of weight edits is not untitled. 26: stats.compactionRefetches (core/waste.ts WasteState.preCompact), reads that fetched again what a compaction dropped. 27: stats.waiting (core/waiting.ts). 28: stats.endInferred, an endedAt that is the last activity seen rather than a session.end. 29: a session with a tool call still open and no real end (no session.end, or only a transcript's quiet marker) has no endedAt (SessionState.endIdle). 30: a host's thread title (a host-link notification's `title`, T3 Code) titles the session before its prompt (SessionState.hostTitle).
+export const SESSION_FOLD_VERSION = 31; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory). 19: a session with transcript model calls counts them, not the copies its OTLP logs carry (sansOtel, transcriptCalls). 20: weight edits (stats.weightEdits, the weights:edited tag, SessionState.weightEdits). 21: weight checkpoints (stats.weightEdits.checkpoints, the weights:checkpoint tag), and stats.weightEdits on a session with a checkpoint and no edit. 22: a `<parent>:sub:<agentId>` session with no session.start takes its parent from the id. 23: an API error event (source api, or status 400 or more) counts in stats.llmErrors. 24: api-stall (FlagState.apiStall); filesChanged counts files a shell call writes (shellCallFiles, SessionState.shellFiles), and keys file.change paths relative to the cwd. 25: a session with no prompt is titled by its session.start's name (SessionState.startName), so an SDK trace() of weight edits is not untitled. 26: stats.compactionRefetches (core/waste.ts WasteState.preCompact), reads that fetched again what a compaction dropped. 27: stats.waiting (core/waiting.ts). 28: stats.endInferred, an endedAt that is the last activity seen rather than a session.end. 29: a session with a tool call still open and no real end (no session.end, or only a transcript's quiet marker) has no endedAt (SessionState.endIdle). 30: a host's thread title (a host-link notification's `title`, T3 Code) titles the session before its prompt (SessionState.hostTitle). 31: stats.usage.estimatedCostByTokenType, the estimate split by token type from the calls' payload.costByTokenType (UsageState.split).
 
 /**
  * A session's events folded so far: everything buildSession needs from them,

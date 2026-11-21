@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import type { AgentEvent, EventKind } from "../../src/schema/index.ts";
+import type { AgentEvent, CostByTokenType, EventKind } from "../../src/schema/index.ts";
+import { priceEvent, pricesFor } from "../../src/core/pricing.ts";
 import {
   buildSession,
   detectFlags,
@@ -577,6 +578,90 @@ describe("session usage rollup", () => {
     const r = rollupUsage([outer, inner, gw]);
     assert.equal(r.usage.costUsd, 0.01);
     assert.deepEqual(r.duplicate, { calls: 1, tokens: 100, costUsd: 0.03 });
+  });
+});
+
+describe("the estimate by token type (stats.usage.estimatedCostByTokenType)", () => {
+  const table = pricesFor();
+  // Opus 4.5: $5 in, $25 out, $0.50 cache read, $6.25 cache write per million.
+  const priced = (usage: AgentEvent["usage"], o: Partial<AgentEvent> = {}) => priceEvent(ev("llm.call", {}, { model: "claude-opus-4-5", usage, ...o }), table);
+  const near = (a: CostByTokenType | undefined, b: CostByTokenType) => {
+    assert.ok(a, "a split");
+    assert.deepEqual(Object.keys(a), Object.keys(b));
+    for (const k of Object.keys(b) as (keyof CostByTokenType)[]) assert.ok(Math.abs(a[k] - b[k]) < 1e-12, `${k}: ${a[k]} vs ${b[k]}`);
+  };
+  const sum = (p: CostByTokenType) => p.cacheRead + p.cacheWrite + p.input + p.output;
+
+  it("splits the estimate into cache reads, cache writes, uncached input and output that add up to it", () => {
+    const a = priced({ inputTokens: 1000, outputTokens: 2000, cacheReadTokens: 100_000, cacheWriteTokens: 10_000 });
+    const b = priced({ inputTokens: 4000, cacheReadTokens: 50_000 });
+    const u = buildSession([a, b]).stats.usage!;
+    near(u.estimatedCostByTokenType, { cacheRead: 0.075, cacheWrite: 0.0625, input: 0.025, output: 0.05 });
+    assert.ok(Math.abs(sum(u.estimatedCostByTokenType!) - u.estimatedCostUsd!) < 1e-12);
+    assert.equal(u.estimatedCostUsd, u.costUsd);
+  });
+
+  it("leaves reported and gateway-billed costs out, so the split never contradicts the total", () => {
+    const est = priced({ inputTokens: 100_000 }); // $0.50
+    const reported = ev("llm.call", {}, { model: "claude-opus-4-5", usage: { inputTokens: 10, costUsd: 1 } });
+    const u = buildSession([est, reported]).stats.usage!;
+    assert.deepEqual([u.costUsd, u.estimatedCostUsd], [1.5, 0.5]);
+    near(u.estimatedCostByTokenType, { cacheRead: 0, cacheWrite: 0, input: 0.5, output: 0 });
+    // A gateway billed the estimated call: nothing is estimated, so nothing is split.
+    const gw = ev("span", { gateway: "cliproxyapi", billedCostUsd: 0.75 }, { source: "gateway", parentId: est.id, usage: { costUsd: 0.25 } });
+    const billed = buildSession([est, reported, gw]).stats.usage!;
+    assert.deepEqual([billed.costUsd, billed.estimatedCostUsd, billed.estimatedCostByTokenType], [1.75, undefined, undefined]);
+    // Costs that cut the total below the estimate: the estimate is capped, and no split claims more than the total.
+    const credit = ev("llm.call", {}, { usage: { costUsd: -0.3 } });
+    const capped = buildSession([est, credit]).stats.usage!;
+    assert.ok(Math.abs(capped.estimatedCostUsd! - 0.2) < 1e-12);
+    assert.equal(capped.estimatedCostByTokenType, undefined);
+  });
+
+  it("is absent when nothing has a known price, and when an estimated call has no split that adds up to it", () => {
+    assert.equal(buildSession([ev("llm.call", {}, { model: "no-such-model", usage: { inputTokens: 10 } })]).stats.usage?.estimatedCostByTokenType, undefined);
+    assert.equal(buildSession([ev("llm.call", {}, { usage: { inputTokens: 10, costUsd: 1 } })]).stats.usage?.estimatedCostByTokenType, undefined);
+    // Estimated before splits: the estimate stays, and no split covers only part of it.
+    const old = ev("llm.call", { costEstimated: true }, { usage: { inputTokens: 10, costUsd: 0.25 } });
+    const u = buildSession([priced({ inputTokens: 100_000 }), old]).stats.usage!;
+    assert.deepEqual([u.estimatedCostUsd, u.estimatedCostByTokenType], [0.75, undefined]);
+    const p = priced({ inputTokens: 100_000 });
+    const wrong = { ...p, payload: { ...p.payload, costByTokenType: { cacheRead: 0, cacheWrite: 0, input: 0.4, output: 0 } } };
+    assert.equal(buildSession([wrong]).stats.usage?.estimatedCostByTokenType, undefined);
+  });
+
+  it("a nested call's split folds into the call that wraps it", () => {
+    const span = (spanId: string, parentSpanId: string | undefined, e: AgentEvent): AgentEvent => {
+      const s: AgentEvent = { ...e, traceId: "t1", spanId };
+      if (parentSpanId) s.parentSpanId = parentSpanId;
+      return s;
+    };
+    const inner1 = span("b", "a", priced({ inputTokens: 100, cacheReadTokens: 60_000 }));
+    const inner2 = span("c", "a", priced({ inputTokens: 100, cacheReadTokens: 40_000, outputTokens: 1000 }));
+    // A wrapper with tokens and no model has no price: its cost and split come from the calls inside it.
+    const wrapper = span("a", undefined, ev("llm.call", {}, { usage: { inputTokens: 200, cacheReadTokens: 100_000 } }));
+    const r = rollupUsage([wrapper, inner1, inner2]);
+    near(r.usage.estimatedCostByTokenType, { cacheRead: 0.05, cacheWrite: 0, input: 0.001, output: 0.025 });
+    assert.ok(Math.abs(r.usage.estimatedCostUsd! - 0.076) < 1e-12);
+    assert.deepEqual(buildSession([wrapper, inner1, inner2]).stats.usage, r.usage);
+    // A priced wrapper keeps its own cost and split; the calls inside it are copies.
+    const own = span("a", undefined, priced({ inputTokens: 200, cacheReadTokens: 100_000 }));
+    near(rollupUsage([own, inner1, inner2]).usage.estimatedCostByTokenType, { cacheRead: 0.05, cacheWrite: 0, input: 0.001, output: 0 });
+  });
+
+  it("a usage snapshot's split counts, and the incremental fold agrees with the full rollup", () => {
+    // gpt-5.4: $15 out; snapshots are priced at standard rates.
+    const snap = priceEvent(ev("notification", { type: "usage-summary" }, { model: "gpt-5.4", usage: { outputTokens: 1_000_000 } }), table);
+    assert.deepEqual(rollupUsage([snap]).usage.estimatedCostByTokenType, { cacheRead: 0, cacheWrite: 0, input: 0, output: 15 });
+    const evs = [
+      priced({ inputTokens: 1000, cacheReadTokens: 100_000, cacheWriteTokens: 10_000 }, { payload: { cacheWrite1hTokens: 4000 } }),
+      priced({ inputTokens: 300_000, outputTokens: 123_457 }, { payload: { serviceTier: "batch" } }),
+      ev("llm.call", {}, { usage: { inputTokens: 10, costUsd: 1 } }),
+      snap,
+    ];
+    const u = buildSession(evs).stats.usage!;
+    assert.deepEqual(u, rollupUsage(evs).usage);
+    assert.ok(Math.abs(sum(u.estimatedCostByTokenType!) - u.estimatedCostUsd!) < 1e-9);
   });
 });
 

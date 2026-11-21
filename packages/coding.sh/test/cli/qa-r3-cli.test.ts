@@ -37,6 +37,8 @@ describe("--json numbers", () => {
 
   test("tidyNumbers leaves integers, non-cost floats and strings alone", () => {
     assert.deepEqual(tidyNumbers({ costUsd: 0.1 + 0.2, waitMs: 1.6, ratio: 0.1 + 0.2, n: 3, s: "x" }), { costUsd: 0.3, waitMs: 2, ratio: 0.1 + 0.2, n: 3, s: "x" });
+    // Maps of costs by name hold dollars under every key.
+    assert.deepEqual(tidyNumbers({ estimatedCostByTokenType: { cacheRead: 0.1 + 0.2, output: 0.075 }, estimatedCostByTier: { batch: 0.1 + 0.2 } }), { estimatedCostByTokenType: { cacheRead: 0.3, output: 0.075 }, estimatedCostByTier: { batch: 0.3 } });
   });
 });
 
