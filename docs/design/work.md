@@ -188,8 +188,10 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
   another ingest holds the lock, then the 7-day window.
 - The local viewer's Work page (`#/work`, `src/viewer/work.ts`, the tab after Sessions) reads the
   queue through `GET /api/work`, which builds it with `readWorkQueue` and `workJson` like the
-  command, so its items equal `work --json` for the same store and filters. The agent, repo, since
-  and `all` filters live in the URL. Ack and snooze buttons post to `/api/work/ack` and
+  command, so its items equal `work --json` for the same store and filters. The agent, repo, since,
+  stage and `all` filters live in the URL; `stage` filters as `--stage` does. Each item shows its
+  stage and kind as chips with `stageWhy` as their title, and the header counts the stages. A server
+  that sends no `stages` gets no chips and no stage filter. Ack and snooze buttons post to `/api/work/ack` and
   `/api/work/snooze`, which write `work.json` by the command's rules. Only `coding.sh ui` serves
   it; `coding.sh serve` answers 404.
 - The MCP `status` tool gets a `work` field, so an agent can read the queue without a new tool:

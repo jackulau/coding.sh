@@ -1616,7 +1616,8 @@ curl -sS -X POST "$CSH/api/views" \
 
 Review queues: the sessions a query matched, scored by hand one at a time with one score config.
 `coding.sh review create` makes a queue; these routes read it and work through it
-([evals guide](../guides/evals.md#review-queues)).
+([evals guide](../guides/evals.md#review-queues)). The viewer's Review page (`#/review`) is built on
+them.
 
 - `GET /api/review` answers `{"items": [{queue, config, done, skipped, total, where, createdAt}]}`.
 - `GET /api/review/{queue}` answers `{queue, config, done, skipped, total}`.
@@ -1942,10 +1943,11 @@ The viewer's Work page (`#/work`): the queue [`coding.sh work`](cli.md#codingsh-
 | `since` | the window, default `7d` |
 | `agent` | a name, or several separated by commas |
 | `repo` | one repo |
+| `stage` | only items in these stages, hidden ones too, like `--stage`: repeated, or a comma list (`review,approval`) |
 | `all=1` | show hidden items, like `--all` |
 | `limit` | default 20, at most 500 |
 
-It returns what `coding.sh work --json` returns for the same store and filters, built by the same code, plus two fields for the page: `members` maps each listed item's id to its member session ids (the main session first, at most 50), and `hiddenBy` counts the hidden items by reason (`running`, `done`, `acked` or `snoozed`). A bad `since` or `limit` answers 400.
+It returns what `coding.sh work --json` returns for the same store and filters, built by the same code, plus two fields for the page: `members` maps each listed item's id to its member session ids (the main session first, at most 50), and `hiddenBy` counts the hidden items by reason (`running`, `done`, `acked` or `snoozed`). A bad `since`, `limit` or `stage` answers 400.
 
 - `POST /api/work/ack` takes `{"id": "w1a2b3c"}` and acknowledges the item's current cause, as `coding.sh work ack` does. It returns `id`, `acked: true`, the `bucket` and its `label`, and `now`, the item after the ack.
 - An item with no cause to acknowledge returns `id`, `acked: false` and `hidden`, and writes nothing.

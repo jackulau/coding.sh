@@ -1190,6 +1190,14 @@ item done with that score's id. An item is its number or its session id. `coding
 On `serve` the person is the read key's name, and `next` shows only the items assigned to that
 name or to no one. Review queues are kept in the SQLite store; the other stores exit 1.
 
+The viewer's Review page (`#/review`, or `g r`) lists the queues with their progress. A queue's
+page shows its next item: the session's title, agent, repo, start, cost and flags, a control for
+the config (Yes and No, one button per category, a number box with the config's range, or a text
+box) and an optional comment. Enter is Done, `s` skips, `o` opens the session, `y` and `n` answer a
+boolean config, and 1 to 9 pick a category. No key acts while a box has focus. A value the server
+refuses shows its message next to the control and keeps what you typed. The tab is hidden when the
+server has no review queues.
+
 ## Judges
 
 Judges call Anthropic with `ANTHROPIC_API_KEY` or OpenAI with `OPENAI_API_KEY`. Like the vendors'
