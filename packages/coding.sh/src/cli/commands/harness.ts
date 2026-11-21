@@ -201,7 +201,7 @@ async function tools(c: CommandContext): Promise<number> {
       out.ok(changedOnly ? "No tool changed" : "No tools");
       return 0;
     }
-    const why = (t: (typeof rows)[number]) => (t.changed === "pin" ? "differs from pin" : t.changed === "variants" ? "changed" : t.pinned ? "pinned" : "");
+    const why = (t: (typeof rows)[number]) => (t.changed === "pin" ? "differs from pin" : t.changed === "new" ? "new since pin" : t.changed === "variants" ? "changed" : t.pinned ? "pinned" : "");
     out.table(
       ["SERVER", "TOOL", "DESC", "SCHEMA", "VARIANTS", "SESSIONS", "LAST SEEN", "STATUS"],
       rows.map((t) => [t.server, t.tool, t.descSha, t.schemaSha, String(t.variants), String(t.sessions), ago(t.lastSeen), why(t)]),

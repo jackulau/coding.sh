@@ -215,7 +215,10 @@ when any remain. `harness tools pin` saves the latest hashes of every tool to `t
 in the coding.sh data directory.
 
 After a pin, `--changed` keeps a pinned tool only when its latest version, or one seen since the
-pin, differs from the pin. Only hashes are printed, never the descriptions. Every flag:
+pin, differs from the pin. It also keeps a tool with no pin that was first seen at or after the
+last pin, such as one an MCP server added, and marks it `new since pin`. Pin again to accept it.
+
+Only hashes are printed, never the descriptions. Every flag:
 [coding.sh harness](https://coding.sh/docs/cli/harness).
 
 ## Read the result

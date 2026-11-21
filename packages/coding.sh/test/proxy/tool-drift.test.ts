@@ -95,6 +95,36 @@ describe("toolDrift", () => {
     const early = await toolDrift(index, blobs, { since: t0, pins: { "docs/search": { descSha: latest.descSha, schemaSha: latest.schemaSha, at: t0 + 1500 } } });
     assert.equal(early.tools.find((r) => r.tool === "search")!.changed, "pin");
   });
+
+  it("marks a tool first seen after the newest pin as new, and leaves older unpinned tools as they were", async () => {
+    const index = new MemoryIndexStore();
+    const blobs = new MemoryBlobStore();
+    const t0 = Date.UTC(2026, 10, 1);
+    const gained = { name: "mcp__srv__b", description: "Read b", input_schema: SCHEMA };
+    const first = await blobs.put(JSON.stringify([BASH, search("Search docs v0")]));
+    const second = await blobs.put(JSON.stringify([BASH, search("Search docs v1")]));
+    const third = await blobs.put(JSON.stringify([BASH, search("Search docs v1"), gained]));
+    let n = 0;
+    const ev = (sessionId: string, ts: number, toolsRef: string): AgentEvent => ({ id: `n${n++}`, v: SCHEMA_VERSION, sessionId, ts, source: "proxy", agent: "claude-code", kind: "llm.call", payload: { toolsRef } });
+    await index.putEvents([ev("s1", t0, first), ev("s2", t0 + 1000, second), ev("s3", t0 + 3000, third)]);
+    for (const id of ["s1", "s2", "s3"]) await index.upsertSession({ id, agent: "claude-code", startedAt: t0, stats: { events: 1, turns: 0, toolCalls: 0, toolErrors: 0 } } as never);
+    const bash = toolHashes(BASH)!;
+    const row = (d: Awaited<ReturnType<typeof toolDrift>>, tool: string) => d.tools.find((r) => r.tool === tool)!;
+
+    // Only Bash was pinned, at t0 + 2000. b came after: new. search came before and stays unpinned: two variants.
+    const pinned = await toolDrift(index, blobs, { since: t0, pins: { "builtin/Bash": { descSha: bash.descSha, schemaSha: bash.schemaSha, at: t0 + 2000 } } });
+    assert.deepEqual([row(pinned, "b").server, row(pinned, "b").changed], ["srv", "new"]);
+    assert.equal(row(pinned, "Bash").changed, undefined);
+    assert.equal(row(pinned, "search").changed, "variants");
+    assert.deepEqual(pinned.tools.map((t) => t.tool), ["search", "b", "Bash"], "changed rows sort first");
+    // A pin newer than b's first sighting: b is not new.
+    const later = await toolDrift(index, blobs, { since: t0, pins: { "builtin/Bash": { descSha: bash.descSha, schemaSha: bash.schemaSha, at: t0 + 4000 } } });
+    assert.equal(row(later, "b").changed, undefined);
+    // No pins at all: nothing is new.
+    const none = await toolDrift(index, blobs, { since: t0 });
+    assert.equal(row(none, "b").changed, undefined);
+    assert.equal(row(none, "search").changed, "variants");
+  });
 });
 
 describe("CLI: harness tools", () => {
@@ -187,6 +217,22 @@ describe("CLI: harness tools", () => {
     const again = await cli(["--changed", "--json"]);
     assert.equal(again.status, 1);
     assert.equal((JSON.parse(again.stdout) as { tools: { changed: string }[] }).tools[0]!.changed, "pin");
+  });
+
+  it("flags a tool first offered after the pin as new since pin, until it is pinned", async () => {
+    assert.equal((await send(proxy, "tool-drift-5", [BASH, { name: "mcp__srv__b", description: "Read b", input_schema: SCHEMA }])).status, 200);
+    await sync();
+    const changed = await cli(["--changed", "--json"]);
+    assert.equal(changed.status, 1, changed.stderr);
+    const b = (JSON.parse(changed.stdout) as { tools: { server: string; tool: string; changed: string; pinned?: unknown }[] }).tools.find((t) => t.server === "srv");
+    assert.deepEqual([b?.tool, b?.changed, b?.pinned], ["b", "new", undefined]);
+    const text = await cli(["--changed"]);
+    assert.equal(text.status, 1);
+    assert.match(text.stdout, /srv\s+b\s+[0-9a-f]{12}\s+[0-9a-f]{12}\s+1\s+1\s.*new since pin/);
+    assert.equal((await cli(["pin"])).status, 0);
+    const after = await cli(["--changed", "--json"]);
+    assert.equal(after.status, 0, after.stdout + after.stderr);
+    assert.deepEqual((JSON.parse(after.stdout) as { tools: unknown[] }).tools, []);
   });
 
   it("refuses an unknown subcommand", async () => {
