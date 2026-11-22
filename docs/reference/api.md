@@ -1842,14 +1842,16 @@ curl -sS "$CSH/api/workflows?limit=1" -H "Authorization: Bearer $READ_KEY"
 {
   "runs": [{
     "id": "wf_45d472ff-246", "framework": "claude-code-workflow", "name": "improve", "status": "ok",
-    "startedAt": "2026-11-08T09:12:04.000Z", "endedAt": "2026-11-08T10:40:51.000Z", "wallMs": 5327000,
-    "agents": 14, "costUsd": 31.2, "tokens": 18450210, "variant": null, "experimentId": null,
-    "caseId": null, "resumedFrom": null, "hostSessionId": "…", "tags": []
+    "error": null, "startedAt": "2026-11-08T09:12:04.000Z", "endedAt": "2026-11-08T10:40:51.000Z",
+    "wallMs": 5327000, "agents": 14, "costUsd": 31.2, "tokens": 18450210, "variant": null,
+    "experimentId": null, "caseId": null, "resumedFrom": null, "hostSessionId": "…", "tags": []
   }]
 }
 ```
 
-A `limit` outside 1 to 500 or a malformed `framework` gets 400.
+`error` is why a run that `workflows run` started failed, as its driver reported it (`timed out`,
+the last lines of its stderr, or its exit code), redacted. It is null otherwise. A `limit` outside 1
+to 500 or a malformed `framework` gets 400.
 
 ### `GET /api/workflows/{id}`
 

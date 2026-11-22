@@ -90,6 +90,11 @@ past runs of the workflow and asks before it spends more than the confirm thresh
 | `--resume` | off | Continues an interrupted experiment. Only unfinished runs run. |
 | `-y`, `--yes` | off | Runs without asking about the cost. |
 
+A run that fails keeps why: `timed out`, the last three lines the workflow printed to stderr, or
+`exit <code>` when it printed none, redacted with your capture settings. A command that does not
+exist shows its spawn error, such as `spawn wf-app ENOENT`. `workflows run` prints the reason for
+each failed run, and `workflows show <run>` prints it on an `Error` row.
+
 ## Compare them
 
 ```sh

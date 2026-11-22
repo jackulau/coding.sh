@@ -36,6 +36,11 @@ export interface WorkflowRun {
   startedAt: number;
   endedAt?: number;
   status: "ok" | "failed" | "aborted" | "running";
+  /**
+   * Why the run failed, as its driver reported it (a spawn or driver error, or the last lines of
+   * the command's stderr), redacted. Absent when the driver reported none.
+   */
+  error?: string;
   /** min(16, cpus − 2) for Claude Code workflows, when known. */
   concurrencyCap?: number;
   /** The workflow's return value. */

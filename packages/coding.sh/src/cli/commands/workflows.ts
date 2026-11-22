@@ -22,12 +22,13 @@ import { totalTokens } from "../../workflows/metrics.ts";
 import type { DeploymentRule, WorkflowCase, WorkflowDriver,WorkflowFramework, WorkflowNode, WorkflowRun, WorkflowVariant } from "../../workflows/types.ts";
 import { sortableId } from "../../core/ids.ts";
 import { jobConfig, taskFingerprint } from "../../jobs/config.ts";
+import { captureRedactor } from "../../runner/verifier-output.ts";
 import { parseSince, positiveInt, suggest, UsageError } from "../args.ts";
 import { finishJob, openJob, resumeField, resumeNote, retryFlag, trialTimeout } from "../jobs.ts";
 import { jsonArg, ingestCli, lockContention, num, oneLine, list, requireConsent, resolveSession, shellQuote, spawnDetachedCli, str, withContext } from "../common.ts";
 import { acquireLock } from "../../core/lock.ts";
 import { paths } from "../../core/paths.ts";
-import { ago, clean, CliError, duration, plural, tokens, usd, type Output } from "../output.ts";
+import { ago, clean, CliError, duration, LABEL_WIDTH, plural, tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
 const FRAMEWORKS: WorkflowFramework[] = ["claude-code-workflow", "claude-agent-sdk", "openai-agents", "langgraph", "crewai", "mastra", "otel", "command", "vercel-workflow", "temporal", "inngest", "restate", "dbos"];
@@ -305,6 +306,12 @@ async function show(c: CommandContext): Promise<number> {
   out.row("Run", `${run.id} (${run.framework})`);
   out.row("Workflow", clean(run.name));
   out.row("Status", stalled ? `${run.status} (${plural(stalled, "agent")} stalled)` : run.status, run.status === "ok" ? "ok" : run.status === "running" && !stalled ? "none" : "fail");
+  if (run.error) {
+    // The first line on the row, the rest under it.
+    const [first = "", ...rest] = clean(run.error).split("\n");
+    out.row("Error", first);
+    for (const l of rest) out.note(`${" ".repeat(LABEL_WIDTH)}${l}`);
+  }
   out.row("Wall", `${duration(wallOf(run))}${segmentsText(run.stats)}${run.stats.criticalPathMs !== undefined ? `, critical path ${duration(run.stats.criticalPathMs)}${run.stats.criticalPathExact ? "" : " (approx)"}` : ""}`);
   out.row("Cost", `${usd(run.stats.costUsd)}, ${tokens(totalTokens(run.stats.tokens))} tokens`);
   if (run.resumedFrom) out.row("Resumed from", `${run.resumedFrom} (${run.stats.cacheHits} cached)`);
@@ -674,6 +681,8 @@ async function runExperiment(c: CommandContext): Promise<number> {
           job: job.scope(),
           retry: retryFlag(c),
           experimentId: job.id,
+          // The capture profile's redaction, as everything else a run keeps.
+          redactor: captureRedactor(ctx.config, c.env),
           // Every truth kind, as `workflows score` grades it: seeded bugs, verifier tests, judge.
           score: async (r, output, kase) => (await scoreWorkflowCase(output, kase, scoreDeps(c, r.id, ctx.index.getJudge ? (jid) => ctx.index.getJudge!(jid) : undefined))).score,
           onProgress: (p) =>
@@ -701,13 +710,28 @@ async function runExperiment(c: CommandContext): Promise<number> {
   out.print(result.experimentId);
   if (result.cancelled) {
     out.warn(`Cancelled after ${plural(result.runs.length, "workflow run")} of ${jobs}`);
+    warnFailed(out, result.runs, k);
     resumeNote(c, job);
     return 1;
   }
   out.ok(`Ran ${plural(result.runs.length, "workflow run")}${failed ? `, ${failed} failed` : ""}${infra ? `, ${infra} hit infrastructure errors` : ""}`);
+  warnFailed(out, result.runs, k);
   resumeNote(c, job);
   if (variants.length >= 2) out.next("Compare two variants", `coding.sh workflows compare ${result.experimentId} --baseline ${shellQuote(variants[0]!.name)} --candidate ${shellQuote(variants[1]!.name)}`);
   return 0;
+}
+
+/** Failed runs `workflows run` names, each with why it failed. */
+const FAILED_SHOWN = 5;
+
+/** One line per failed run that kept an error: variant, case, the error on one line, and the run id for `workflows show`. */
+function warnFailed(out: Output, runs: readonly WorkflowRun[], k: number): void {
+  const failed = runs.filter((r) => r.status === "failed" && r.error);
+  for (const r of failed.slice(0, FAILED_SHOWN)) {
+    const attempt = k > 1 && r.attempt !== undefined ? `, attempt ${r.attempt}` : "";
+    out.warn(`${clean(r.variant ?? "")} on ${clean(r.caseId ?? "")}${attempt} failed: ${oneLine(clean(r.error ?? ""), 160)} (${r.id})`);
+  }
+  if (failed.length > FAILED_SHOWN) out.note(`${failed.length - FAILED_SHOWN} more failed; coding.sh workflows show <run> prints why a run failed`);
 }
 
 const ci = (b: { mean: number; lo: number; hi: number }, f: (x: number) => string) => `${f(b.mean)} [${f(b.lo)}, ${f(b.hi)}]`;

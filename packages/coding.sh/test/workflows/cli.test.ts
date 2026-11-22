@@ -350,6 +350,40 @@ describe("workflows command helpers", () => {
     assert.match(r.stderr, /! Variant "solo": ignored unknown field "replayfrom" \(did you mean replayFrom\?\)/);
   });
 
+  it("run says why each run failed, redacted with the capture profile, and show prints it", async () => {
+    const home = join(root, "failed-runs");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, "config.toml"), '[capture]\nredactPatterns = ["hunter2"]\n');
+    writeFileSync(join(root, "deny.mjs"), 'console.error("login failed for hunter2");\nprocess.exit(1);\n');
+    const e = { CODING_SH_HOME: home };
+    const flags = {
+      driver: "command",
+      variant: [JSON.stringify({ name: "missing", command: ["no-such-cmd-xyz"] }), JSON.stringify({ name: "denied", command: [process.execPath, join(root, "deny.mjs")] })],
+      split: "dev",
+      k: 1,
+      yes: true,
+    };
+    const doc = await json("run", ["review"], flags, e);
+    assert.equal(doc.failed, 4);
+    const missing = doc.runs.find((r: { variant: string; caseId: string }) => r.variant === "missing" && r.caseId === "seeded-1");
+    assert.match(missing.error, /spawn no-such-cmd-xyz ENOENT/);
+    const denied = doc.runs.find((r: { variant: string; caseId: string }) => r.variant === "denied" && r.caseId === "seeded-1");
+    assert.match(denied.error, /^login failed for \[redacted/);
+    assert.doesNotMatch(JSON.stringify(doc), /hunter2/);
+    const human = await cli("run", ["review"], flags, { env: e });
+    assert.equal(human.code, 0);
+    assert.match(human.stderr, /Ran 4 workflow runs, 4 failed/);
+    assert.match(human.stderr, /! missing on seeded-1 failed: spawn no-such-cmd-xyz ENOENT \(wfr_\w+\)/);
+    assert.match(human.stderr, /! denied on verify-1 failed: login failed for \[redacted[^\n]*\(wfr_\w+\)/);
+    assert.doesNotMatch(human.stderr, /hunter2/);
+    const shown = await cli("show", [missing.id], {}, { env: e });
+    assert.match(shown.stderr, /✗ Status +failed\n {2}Error +spawn no-such-cmd-xyz ENOENT\n/);
+    const shownJson = await json("show", [denied.id], {}, e);
+    assert.match(shownJson.run.error, /^login failed for \[redacted/);
+    // A run that did not fail has no error.
+    assert.equal((await json("list", [], { import: false })).runs.every((r: { status: string; error: unknown }) => r.status !== "ok" || r.error === null), true);
+  });
+
   it("reads the confirm threshold from the environment", () => {
     assert.equal(confirmAboveUsd({}), 1);
     assert.equal(confirmAboveUsd({ CODING_SH_CONFIRM_ABOVE_USD: "2.5" }), 2.5);
