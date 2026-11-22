@@ -324,6 +324,30 @@ for (const kind of ["memory", "sqlite"] as const) {
   });
 }
 
+describe("serve sign-in page", () => {
+  const signIn = async (env: NodeJS.ProcessEnv): Promise<Res> => {
+    const { h } = await serve("memory", tmpEnv({ CODING_SH_INGEST_KEYS: generateKey("ingest"), CODING_SH_READ_KEYS: generateKey("read"), ...env }));
+    const page = await call(h, "/", { headers: { accept: "text/html" } });
+    await h.shutdown();
+    return page;
+  };
+
+  it("asks for a read key, and offers a user sign-in only when serve has a viewer login", async () => {
+    const keysOnly = await signIn({});
+    assert.equal(keysOnly.status, 401);
+    assert.match(keysOnly.text, /<form method=post action="\/"><input name=t /);
+    assert.match(keysOnly.text, /\/\?t=&lt;read key&gt;/);
+    assert.doesNotMatch(keysOnly.text, /sign in with/, "no login is set, so the page does not offer one");
+    assert.equal(keysOnly.headers.get("www-authenticate"), null);
+
+    const withLogin = await signIn({ CODING_SH_BASIC_AUTH: "team:a-long-password" });
+    assert.equal(withLogin.status, 401);
+    assert.match(withLogin.text, /<form method=post action="\/"><input name=t /);
+    assert.match(withLogin.text, /sign in with the configured user/);
+    assert.match(withLogin.headers.get("www-authenticate") ?? "", /^Basic realm="coding\.sh"/);
+  });
+});
+
 describe("serve backpressure", () => {
   it("answers 429 with Retry-After when the queue is full, and every acked event is stored", async () => {
     let release!: () => void;
@@ -747,13 +771,15 @@ describe("serve on loopback with no keys", () => {
     await h.shutdown();
   });
 
-  it("logs once that it refused a proxied request, naming keygen", async () => {
+  it("logs once that it refused a proxied request, naming keygen for both keys", async () => {
     const lines: string[] = [];
     const { h } = await serve("memory", tmpEnv(), { log: createLogger({ format: "json", write: (l) => lines.push(l) }) });
     for (const headers of forwarded) assert.equal((await call(h, "/api/sessions", { headers })).status, 401);
     const warned = lines.filter((l) => /a proxy passed on/.test(l));
     assert.equal(warned.length, 1);
-    assert.match(warned[0]!, /serve keygen/);
+    // Behind a proxy both keys are needed: the ingest key to send, the read key to open the viewer.
+    assert.ok(warned[0]!.includes("`coding.sh serve keygen --project <id>`"), warned[0]);
+    assert.ok(warned[0]!.includes("`coding.sh serve keygen --project '*' --read`"), warned[0]);
     await h.shutdown();
   });
 

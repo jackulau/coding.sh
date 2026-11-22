@@ -2097,7 +2097,7 @@
     {
       "rule": "conditional-empty-spread",
       "path": "packages/coding.sh/src/server/config.ts",
-      "max": 4,
+      "max": 2,
       "reason": "baseline 2026-11-09: existing code, do not add more"
     },
     {
