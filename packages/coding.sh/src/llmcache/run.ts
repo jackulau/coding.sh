@@ -49,7 +49,7 @@ export async function openLlmCache(o: LlmRunOpts, env: NodeJS.ProcessEnv = proce
     ...(o.until !== undefined ? { until: o.until } : {}),
     ...(o.upstream ? { upstream: o.upstream } : {}),
     key: { ...(o.excludeTools ? { excludeTools: true } : {}), ...(o.excludeModel ? { excludeModel: true } : {}) },
-    ...(o.redactor ? { redactor: o.redactor } : {}),
+    redactor: o.redactor, // undefined: startLlmCache uses the built-in secret rules
     ...(o.onWarn ? { onWarn: o.onWarn } : {}),
   });
 }

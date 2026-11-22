@@ -300,7 +300,7 @@ function maskFile(path: string, scrub: Scrubber, dryRun: boolean): boolean {
 /** A gzip file's content: "big" past MAX_FILE_BYTES, undefined when it is not gzip. `partial` keeps what a torn file holds. */
 function gunzipped(buf: Buffer, partial = false): Buffer | "big" | undefined {
   try {
-    return gunzipSync(buf, { maxOutputLength: MAX_FILE_BYTES, ...(partial ? { finishFlush: zlibConstants.Z_SYNC_FLUSH } : {}) });
+    return gunzipSync(buf, { maxOutputLength: MAX_FILE_BYTES, finishFlush: partial ? zlibConstants.Z_SYNC_FLUSH : zlibConstants.Z_FINISH });
   } catch (e) {
     return (e as NodeJS.ErrnoException).code === "ERR_BUFFER_TOO_LARGE" ? "big" : undefined;
   }
@@ -578,7 +578,10 @@ async function snapshotReposHolding(dir: string | undefined, scrub: Scrubber, sk
     } catch {
       // a repo from `eval import` keeps no root
     }
-    out.push({ path, ...(root && !scrub.holds(root) ? { root } : {}), ...(unreadable ? { unreadable: true as const } : {}) });
+    const repo: SnapshotRepo = { path };
+    if (root && !scrub.holds(root)) repo.root = root;
+    if (unreadable) repo.unreadable = true;
+    out.push(repo);
   }
   return out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }

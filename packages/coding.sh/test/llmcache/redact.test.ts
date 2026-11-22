@@ -47,7 +47,9 @@ describe("exp run --record / --replay with the user's redaction settings", () =>
     return file;
   };
   const record = async (name: string, json = true) => {
-    const r = await cli(["exp", "run", spec(name), "--record", ...(json ? ["--json"] : [])]);
+    const args = ["exp", "run", spec(name), "--record"];
+    if (json) args.push("--json");
+    const r = await cli(args);
     assert.equal(r.status, 0, r.stderr);
     return r;
   };

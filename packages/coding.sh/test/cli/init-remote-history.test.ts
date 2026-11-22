@@ -74,13 +74,13 @@ afterEach(() => {
   t.restore();
 });
 
-async function cli(command: typeof init, flags: CommandContext["flags"]): Promise<Record<string, unknown>> {
+async function cli<T>(command: typeof init, flags: CommandContext["flags"]): Promise<T> {
   const cap = { stdout: "", stderr: "" };
   const env = { ...process.env, NO_COLOR: "1", CI: "" };
   const out = new Output({ json: true, env, stdout: { write: (s: string) => ((cap.stdout += s), true), isTTY: false }, stderr: { write: (s: string) => ((cap.stderr += s), true), isTTY: false }, stdin: { isTTY: false } });
   const code = await command({ flags, positionals: [], rest: [], out, env, cwd: t.home, debug: false, signal: new AbortController().signal });
   assert.equal(code, 0, cap.stderr);
-  return JSON.parse(cap.stdout) as Record<string, unknown>;
+  return JSON.parse(cap.stdout) as T;
 }
 
 interface IngestJson {
@@ -90,12 +90,12 @@ const sentSessions = () => [...new Set([...got.events.map((e) => e.sessionId), .
 
 test("init --remote sends the sessions that start after it, and none from before", async () => {
   const started = Date.now();
-  const done = (await cli(init, { remote: url, key: KEY, agent: ["claude-code", "codex"], yes: true, mcp: false })) as { import: { sessions: number } };
+  const done = await cli<{ import: { sessions: number } }>(init, { remote: url, key: KEY, agent: ["claude-code", "codex"], yes: true, mcp: false });
   assert.ok(done.import.sessions > 0, "the history was imported into the local store");
   assert.deepEqual(sentSessions(), [], "the import inside init sent past sessions");
 
   // A later ingest reads what the hook spooled before init --remote: still nothing goes out.
-  const later = (await cli(ingest, {})) as unknown as IngestJson;
+  const later = await cli<IngestJson>(ingest, {});
   assert.ok(later.spool.events > 0, "the spooled session was stored locally");
   assert.deepEqual(sentSessions(), [], "a later ingest sent past sessions");
   assert.deepEqual(later.spool.sinks, [{ name: "team", sent: 0, ok: true }]);
@@ -105,7 +105,7 @@ test("init --remote sends the sessions that start after it, and none from before
   const now = Date.now();
   const lines = loadSpool("claude-code/hooks.spool.jsonl").slice(0, 2);
   spool(lines.map((l, i) => ({ ...l, ts: now + i, raw: { ...(l.raw as Record<string, unknown>), session_id: fresh, transcript_path: join(t.root, "none.jsonl") } })));
-  const next = (await cli(ingest, {})) as unknown as IngestJson;
+  const next = await cli<IngestJson>(ingest, {});
   assert.deepEqual(sentSessions(), [fresh]);
   assert.ok(got.events.length > 0 && got.sessions.length > 0);
   assert.deepEqual(next.spool.sinks, [{ name: "team", sent: got.events.length, ok: true }]);
