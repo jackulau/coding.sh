@@ -168,8 +168,12 @@ describe("hook bin after `coding.sh update` (INS-6)", () => {
     assert.equal(readFileSync(hook, "utf8"), "// hook v1\n", "the hook is left as it is");
     assert.equal(readFileSync(pointer, "utf8"), first + "\n", "hooks still start the first install");
     assert.match(human.text.stderr, new RegExp(`^! Hooks run the coding\\.sh 0\\.1\\.6 at ${esc(first)}, another install`, "m"));
-    // upgrade-store asks before it moves the hooks to this install.
-    assert.match(human.text.stderr, new RegExp(`\\n {4}${esc(cliCommand(e, ["upgrade-store"]))}\\n`));
+    // upgrade-store asks before it moves the hooks to this install. The command runs where the user is:
+    // codingsh in PowerShell and cmd on Windows (no MSYSTEM, no SHELL), coding.sh in Git Bash.
+    assert.match(human.text.stderr, process.platform === "win32" ? /\n {4}codingsh upgrade-store\n/ : /\n {4}coding\.sh upgrade-store\n/);
+    const bash = captured({ ...e, MSYSTEM: "MINGW64" }, { "refresh-bin": true });
+    assert.equal(await runUpdate(bash.c, { cli: second }), 0);
+    assert.match(bash.text.stderr, /\n {4}coding\.sh upgrade-store\n/);
 
     const json = captured(e, { "refresh-bin": true }, true);
     assert.equal(await runUpdate(json.c, { cli: second }), 0);
