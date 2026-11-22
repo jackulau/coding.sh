@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { after, describe, test } from "node:test";
 import * as budget from "../../src/cli/commands/budget.ts";
 import * as sessionsCmd from "../../src/cli/commands/sessions.ts";
+import * as usageCmd from "../../src/cli/commands/usage.ts";
 import { mkSession, runCmd, sandbox, type Sandbox } from "./_cmd.ts";
 import { MAIN, runSync } from "./_run-cli.ts";
 
@@ -133,7 +134,8 @@ describe("coding.sh budget (in process)", () => {
     assert.ok(text.stderr.includes(`${BIN} budget rm day-w0ld000`), text.stderr);
   });
 
-  test("a repo budget counts the sessions sessions --repo lists: a checkout's root takes in its linked worktrees", async () => {
+  /** A checkout `demo` with a session in it, one in its linked worktree (codex) and one elsewhere. */
+  const repoBox = async () => {
     const b = box();
     mkdirSync(join(b.root, "demo", ".git"), { recursive: true });
     writeFileSync(join(b.root, "demo", ".git", "HEAD"), "ref: refs/heads/main\n");
@@ -142,15 +144,40 @@ describe("coding.sh budget (in process)", () => {
     const wt = join(dirname(checkout), "demo-wt");
     await b.seed([
       priced("in-checkout", 0.5, { cwd: checkout, repo: { root: checkout, head: "" } as never }),
-      priced("in-worktree", 0.25, { cwd: wt, repo: { root: wt, main: checkout, head: "" } as never }),
+      priced("in-worktree", 0.25, { agent: "codex", cwd: wt, repo: { root: wt, main: checkout, head: "" } as never }),
       priced("elsewhere", 4, { cwd: join(b.root, "other") }),
     ]);
+    return { b, checkout };
+  };
+
+  test("a repo budget counts the sessions sessions --repo lists: a checkout's root takes in its linked worktrees", async () => {
+    const { b, checkout } = await repoBox();
     const listed = await runCmd(sessionsCmd, b, { flags: { repo: checkout }, json: true });
     assert.deepEqual(listed.json.sessions.map((s: { id: string }) => s.id).sort(), ["in-checkout", "in-worktree"], String(listed.error ?? listed.stderr));
     const set = await runCmd(budget, b, { action: "set", positionals: ["day", "10"], flags: { repo: checkout } });
     assert.equal(set.code, 0, String(set.error));
     const r = await runCmd(budget, b, { action: "status", json: true });
     assert.deepEqual([r.json.budgets[0].sessions, r.json.budgets[0].spendUsd], [2, 0.75]);
+  });
+
+  test("usage --repo gives the total a budget with the same agent and repo counts, for a path and a repo name", async () => {
+    const { b, checkout } = await repoBox();
+    for (const [repo, agent] of [[checkout, undefined], ["demo", undefined], [checkout, "codex"]] as const) {
+      const scope = { repo, ...(agent ? { agent } : {}) };
+      const set = await runCmd(budget, b, { action: "set", positionals: ["day", "10"], flags: scope, json: true });
+      assert.equal(set.code, 0, String(set.error));
+      const [status] = (await runCmd(budget, b, { action: "status", json: true })).json.budgets.filter((s: { id: string }) => s.id === set.json.budget.id);
+      const u = await runCmd(usageCmd, b, { flags: { ...scope, since: "today" }, json: true });
+      assert.equal(u.code, 0, String(u.error));
+      assert.deepEqual([u.json.total.costUsd, u.json.total.sessions], [status.spendUsd, status.sessions], `usage and the budget, --repo ${repo}${agent ? ` --agent ${agent}` : ""}`);
+      assert.equal(status.spendUsd, agent ? 0.25 : 0.75);
+    }
+    // Through the CLI: the flag parses, and -r is its short form.
+    const cli = runSync(["usage", "-r", checkout, "--since", "today", "--json"], b.env);
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.equal(JSON.parse(cli.stdout).total.costUsd, 0.75);
+    const empty = await runCmd(usageCmd, b, { flags: { repo: " " } });
+    assert.match(String(empty.error?.message), /--repo needs a path or a repo name/);
   });
 
   test("status with no budgets says how to set one", async () => {

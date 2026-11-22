@@ -29,7 +29,8 @@ coding-sh-triage  8         8      13.4k   221     1679      0%          ~$0.009
 ```
 
 `coding-sh-triage` is an SDK app; its rows sit next to the coding agents. `--since` defaults to
-`30d`. `-a codex` keeps one agent, and `--where` takes any [query](https://coding.sh/docs/query).
+`30d`. `-a codex` keeps one agent, `--repo` keeps one repo (a path or a repo name, read as
+`sessions --repo` reads it), and `--where` takes any [query](https://coding.sh/docs/query).
 
 ## 2. Find the most expensive sessions
 
@@ -246,8 +247,9 @@ coding.sh budget status
 ```
 
 Spend is the estimated cost of the sessions that started in the current period, subagents
-included: the same total as `coding.sh usage` over that window, filtered by the budget's agent and
-repo. A session counts in the period it started in. A repo counts the sessions
+included: the same total as `coding.sh usage` over that window with the budget's `--agent` and
+`--repo`. For a `day` budget set with `--repo .`, that is `coding.sh usage --since today --repo .`
+run from the same folder. A session counts in the period it started in. A repo counts the sessions
 `coding.sh sessions --repo` lists for it: a checkout's root, or a folder in a linked worktree,
 takes in every worktree of the repo.
 

@@ -746,6 +746,7 @@ export const COMMANDS: CommandSpec[] = [
       { name: "by", type: "string", value: "<GROUP>", choices: ["agent", "model", "agent-model", "day", "repo", "mcp", "skill", "subagent"], desc: "Group rows by", default: "agent" },
       { name: "cache", type: "boolean", desc: "Prompt-cache economics instead: hit rate, read vs write tokens, read:write ratio, breaks and their cost, with what to change, and the estimate by token type. Not with --by mcp, skill or subagent" },
       AGENT_ONE,
+      { name: "repo", short: "r", type: "string", value: "<PATH|NAME>", desc: "Only sessions in this repo, as sessions --repo and a repo budget count them: a path (matches at or under it; a checkout's root or a folder in a linked worktree takes in every worktree) or a repo name (its main checkout and every worktree)" },
       { ...SINCE, default: "30d" },
       LIMIT(20),
       { name: "reprice", type: "boolean", desc: "Recompute estimated costs from the current price table first" },
@@ -753,7 +754,7 @@ export const COMMANDS: CommandSpec[] = [
       WHERE("sessions"),
       FRESH,
     ],
-    examples: ["coding.sh usage", "coding.sh usage --baseline", "coding.sh usage --cache --by model", "coding.sh usage --by agent-model --since 90d", "coding.sh usage --by model --where 'repo:coding-sh tool:Bash'", "coding.sh usage --by mcp", "coding.sh usage --by subagent --json"],
+    examples: ["coding.sh usage", "coding.sh usage --baseline", "coding.sh usage --cache --by model", "coding.sh usage --by agent-model --since 90d", "coding.sh usage --repo . --since today", "coding.sh usage --by model --where 'repo:coding-sh tool:Bash'", "coding.sh usage --by mcp", "coding.sh usage --by subagent --json"],
     notes: [
       "Totals cover every session in the window. A scan that stops at 100,000 sessions says so under the table (Stopped after 100,000 sessions) and sets window.truncated in --json; cache doctor does the same.",
       "--by mcp, skill and subagent attribute cost to what sessions used, and every row in --json has basis: \"attributed\". mcp: one row per MCP server, with calls, failed calls, the bytes the results returned and their tokens (the stored count, else bytes / 4, marked ~), priced at the input rate of the session's model. skill: the whole sessions tagged skill:<name>; a session with two skills counts in both rows, so the rows do not add up to the total (rowsOverlap in --json). subagent: child sessions by subagent type (unnamed when there is none), with count, tokens, cost and median duration; their parents' own cost is left out. A T3 Code thread that switched agents is not a subagent: its cost stays with the parent's.",

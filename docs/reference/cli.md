@@ -1124,6 +1124,7 @@ coding.sh usage [options]
 | `--by <GROUP>` | `agent` | Group rows by. One of: `agent`, `model`, `agent-model`, `day`, `repo`, `mcp`, `skill`, `subagent`. |
 | `--cache` |  | Prompt-cache economics instead: hit rate, read vs write tokens, read:write ratio, breaks and their cost, with what to change, and the estimate by token type. Not with --by mcp, skill or subagent. |
 | `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
+| `-r, --repo <PATH|NAME>` |  | Only sessions in this repo, as sessions --repo and a repo budget count them: a path (matches at or under it; a checkout's root or a folder in a linked worktree takes in every worktree) or a repo name (its main checkout and every worktree) |
 | `--since <WHEN>` | `30d` | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
 | `-n, --limit <N>` | `20` | Maximum rows. |
 | `--reprice` |  | Recompute estimated costs from the current price table first. |
@@ -1136,6 +1137,7 @@ coding.sh usage
 coding.sh usage --baseline
 coding.sh usage --cache --by model
 coding.sh usage --by agent-model --since 90d
+coding.sh usage --repo . --since today
 coding.sh usage --by model --where 'repo:coding-sh tool:Bash'
 coding.sh usage --by mcp
 coding.sh usage --by subagent --json
