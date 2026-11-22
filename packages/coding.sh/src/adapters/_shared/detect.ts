@@ -54,8 +54,19 @@ export function packageVersion(binary: string, pkg: string): string | undefined 
   return undefined;
 }
 
-/** Runs `<binary> --version` (no shell) with a short timeout. Never throws. */
-export function probeVersion(binary: string, args: string[] = ["--version"], timeoutMs = 5000, env: NodeJS.ProcessEnv = process.env): Promise<string | undefined> {
+/**
+ * `--version` budget during detect. Probes run in parallel for every adapter,
+ * so on a loaded machine a node-based CLI (cursor-agent: ~3 s under load) can
+ * take far longer than its idle time; a short budget made installed agents
+ * vanish from init.
+ */
+export const PROBE_TIMEOUT_MS = 15_000;
+
+/**
+ * Runs `<binary> --version` (no shell), waiting PROBE_TIMEOUT_MS unless told otherwise, so a probe
+ * outside detect (OpenCode's plugin choice) reads what detect reads. Never throws.
+ */
+export function probeVersion(binary: string, args: string[] = ["--version"], timeoutMs = PROBE_TIMEOUT_MS, env: NodeJS.ProcessEnv = process.env): Promise<string | undefined> {
   return new Promise((resolve) => {
     try {
       execFile(binary, args, { timeout: timeoutMs, env, windowsHide: true, maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
@@ -68,14 +79,6 @@ export function probeVersion(binary: string, args: string[] = ["--version"], tim
     }
   });
 }
-
-/**
- * `--version` budget during detect. Probes run in parallel for every adapter,
- * so on a loaded machine a node-based CLI (cursor-agent: ~3 s under load) can
- * take far longer than its idle time; a short budget made installed agents
- * vanish from init.
- */
-export const PROBE_TIMEOUT_MS = 15_000;
 
 export interface DetectSpec {
   /** Candidate binary names, first found wins (e.g. ["cursor-agent", "agent"]). */

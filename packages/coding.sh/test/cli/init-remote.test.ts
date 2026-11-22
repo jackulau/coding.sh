@@ -119,6 +119,11 @@ describe("init --remote", () => {
   test("a refused key, an unreachable server or a read key writes nothing", async () => {
     const bad = await init({ remote: url, key: "csh_ik_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" });
     assert.match(bad.error?.message ?? "", /refused the key\. Nothing was changed/);
+    // A server with no keys configured prints its own only on the start that made them, so a later
+    // start's log has none: the hint names the file that keeps them.
+    const next = ((bad.error as { next?: string[] } | undefined)?.next ?? []).join("\n");
+    assert.match(next, /docker compose cp coding-sh:\/data\/serve-keys\.json/);
+    assert.doesNotMatch(next, /docker logs/);
     const down = await init({ remote: "http://127.0.0.1:9", key: KEY });
     assert.match(down.error?.message ?? "", /Can't reach http:\/\/127\.0\.0\.1:9/);
     const notServe = await init({ remote: `${url}/elsewhere`, key: KEY });
