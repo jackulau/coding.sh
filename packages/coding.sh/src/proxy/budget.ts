@@ -99,6 +99,9 @@ export function budgetGuard(o: {
   };
 }
 
+/** `$1.40`, or `$0.0016` under $1, as `coding.sh budget status` prints amounts. */
+const money = (n: number): string => `$${n.toFixed(n < 1 ? 4 : 2)}`;
+
 /**
  * The 429 the client gets: its vendor's error shape, naming the budget, its limit and its reset.
  * `x-should-retry: false` stops the Anthropic and OpenAI SDKs retrying it: the Anthropic one would
@@ -109,7 +112,7 @@ export function budgetResponse(route: Route, block: BudgetBlock): { status: 429;
   const b = s.budget;
   const scope = b.agent ? ` for ${b.agent}` : "";
   const resets = new Date(s.resetsAt).toISOString();
-  const message = `coding.sh budget "${b.id}" (${b.period}${scope}) is over its limit: $${s.spendUsd.toFixed(2)} spent of $${b.limitUsd.toFixed(2)} (estimated). It resets at ${resets}. See coding.sh budget status.`;
+  const message = `coding.sh budget "${b.id}" (${b.period}${scope}) is over its limit: ${money(s.spendUsd)} spent of ${money(b.limitUsd)} (estimated). It resets at ${resets}. See coding.sh budget status.`;
   // JSON.stringify leaves out an agent that is undefined.
   const budget = { id: b.id, period: b.period, agent: b.agent || undefined, limitUsd: b.limitUsd, spendUsd: s.spendUsd, resetsAt: resets };
   const body =

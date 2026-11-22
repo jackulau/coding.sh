@@ -98,6 +98,14 @@ describe("proxy budget guard", () => {
     assert.equal(up.seen.length, 0);
   });
 
+  test("amounts under $1 keep 4 decimals, so a cent-sized budget does not read $0.00 of $0.00", async () => {
+    const up = await upstream();
+    const p = await proxy(up, async (now) => [over(budget({ limitUsd: 0.001 }), 0.0016, now)]);
+    const r = await call(p.url, { path: "/v1/messages", body: messages, headers: anthropicHeaders });
+    assert.equal(r.status, 429);
+    assert.match(JSON.parse(r.body.toString()).error.message, /: \$0\.0016 spent of \$0\.0010 \(estimated\)/);
+  });
+
   test("only budgets that apply block: another agent's, a repo's and one under its limit do not", async () => {
     const up = await upstream();
     const p = await proxy(up, async (now) => [over(budget({ id: "day-codex", agent: "codex" }), 5, now), over(budget({ id: "day-web", repo: "web" }), 5, now), over(budget({ id: "all", limitUsd: 10 }), 5, now)]);
@@ -248,8 +256,8 @@ describe("coding.sh proxy --enforce-budget (CLI)", () => {
     const r = await call(url, { path: "/v1/messages", body: messages, headers: anthropicHeaders });
     assert.equal(r.status, 429, r.body.toString());
     assert.match(JSON.parse(r.body.toString()).error.message, /budget "day"/);
-    // The block's line comes after anything the read printed.
-    await live.waitFor(/blocked a call/);
+    // The block's line comes after anything the read printed. It gives the reset in days, hours and minutes, not in seconds.
+    assert.match(await live.waitFor(/blocked a call.*/), /^blocked a call: budget day is over its limit \(\$1\.40 of \$1\.00\); resets in (\d+d \d+h|\d+h \d+m|\d+m)$/);
     assert.doesNotMatch(live.err.join(""), /day-w0ld000|bogus/);
     assert.equal(up.seen.length, 0);
     live.child.kill();

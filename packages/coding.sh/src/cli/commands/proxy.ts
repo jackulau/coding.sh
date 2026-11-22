@@ -15,8 +15,9 @@ import type { AgentEvent } from "../../schema/index.ts";
 import { port as portFlag, str, withContext } from "../common.ts";
 import { version } from "../meta.ts";
 import { UsageError } from "../args.ts";
-import { CliError } from "../output.ts";
+import { CliError, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
+import { until } from "./budget.ts";
 
 const fmtTokens = (n: number | undefined): string => (n === undefined ? "-" : n >= 10_000 ? `${Math.round(n / 1000)}k` : String(n));
 
@@ -102,7 +103,7 @@ async function start(c: CommandContext): Promise<number> {
         onError: (e) => out.warn(`not recorded: ${e.message}`),
         onEvent: c.flags.quiet ? undefined : (e) => out.note(callLine(e)),
         budget,
-        onBlock: budget ? (b) => out.warn(`blocked a call: budget ${b.status.budget.id} is over its limit ($${b.status.spendUsd.toFixed(2)} of $${b.status.budget.limitUsd.toFixed(2)}); resets in ${b.retryAfter}s`) : undefined,
+        onBlock: budget ? (b) => out.warn(`blocked a call: budget ${b.status.budget.id} is over its limit (${usd(b.status.spendUsd)} of ${usd(b.status.budget.limitUsd)}); resets in ${until(b.status.resetsAt)}`) : undefined,
       });
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
