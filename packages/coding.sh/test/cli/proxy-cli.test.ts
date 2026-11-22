@@ -2,11 +2,12 @@
 // upstream URLs are validated, and the background log keeps one line per call.
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { type AddressInfo, createServer } from "node:net";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { after, describe, it } from "node:test";
 import { anthropicStream, startUpstream, type Upstream } from "../proxy/_helpers.ts";
-import { cleanup, runLive, runSync, tmpHome } from "./_run-cli.ts";
+import { cleanup, runAsync, runLive, runSync, tmpHome } from "./_run-cli.ts";
 
 const ups: Upstream[] = [];
 const homes: ReturnType<typeof tmpHome>[] = [];
@@ -107,5 +108,33 @@ describe("coding.sh proxy --background", () => {
     // Ctrl-C cannot reach a detached process; the log names the command that stops it.
     assert.match(text, /Stop with: coding\.sh proxy stop/, text);
     assert.doesNotMatch(text, /Ctrl-C/, text);
+  });
+
+  it("on a port in use, says so and names the same background command on a free port", async () => {
+    // Another listener holds the port, so the detached proxy can't bind it and exits.
+    const held = createServer();
+    await new Promise<void>((resolve) => held.listen(0, "127.0.0.1", resolve));
+    const port = (held.address() as AddressInfo).port;
+    try {
+      // FORCE_COLOR: the child's error in the log is colored, and is still read.
+      const r = await runAsync(["proxy", "--background", "--enforce-budget", "--port", String(port)], { ...home().env, NO_COLOR: undefined, FORCE_COLOR: "1" });
+      assert.equal(r.status, 1, r.stderr);
+      assert.match(r.stderr, new RegExp(`port ${port} is in use`), r.stderr);
+      // --background and --enforce-budget kept, as the user's shell runs it: tmpHome's env has no
+      // SHELL, which on Windows is PowerShell or cmd.
+      const bin = process.platform === "win32" ? "codingsh" : "coding.sh";
+      assert.ok(r.stderr.includes(`${bin} proxy --background --enforce-budget --port 0`), r.stderr);
+    } finally {
+      await new Promise((resolve) => held.close(resolve));
+    }
+  });
+
+  it("with a budgets.json it can't read, says that rather than only that it did not start", () => {
+    const h = home();
+    mkdirSync(h.env.CODING_SH_HOME!, { recursive: true });
+    writeFileSync(join(h.env.CODING_SH_HOME!, "budgets.json"), "{not json");
+    const r = runSync(["proxy", "--background", "--enforce-budget", "--port", "0"], h.env);
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /Can't read the budgets/, r.stderr);
   });
 });

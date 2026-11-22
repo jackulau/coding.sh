@@ -2,7 +2,7 @@
 // logs every model call into the store. stdout gets the environment that
 // points an agent at it; one line per call goes to stderr.
 import { spawn } from "node:child_process";
-import { mkdirSync, openSync } from "node:fs";
+import { closeSync, fstatSync, mkdirSync, openSync, readSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { runningCli } from "../../mcp/launch.ts";
@@ -16,7 +16,7 @@ import { port as portFlag, str, withContext } from "../common.ts";
 import { version } from "../meta.ts";
 import { UsageError } from "../args.ts";
 import { CliError, usd } from "../output.ts";
-import { envLine } from "../next-steps.ts";
+import { cliCommand, envLine } from "../next-steps.ts";
 import type { CommandContext } from "../types.ts";
 import { until } from "./budget.ts";
 
@@ -108,7 +108,11 @@ async function start(c: CommandContext): Promise<number> {
       });
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
-      if (code === "EADDRINUSE") throw new CliError(`Can't start the proxy: port ${s.port} is in use`, { reason: "port_in_use", next: ["Pick another port:", "coding.sh proxy --port 0"] });
+      if (code === "EADDRINUSE") {
+        // The same command on a free port: a detached child names --background, as the user ran it.
+        const again = ["proxy", ...(c.env[DETACHED_ENV] === "1" ? ["--background"] : []), ...startFlags(c.flags), "--port", "0"];
+        throw new CliError(`Can't start the proxy: port ${s.port} is in use`, { reason: "port_in_use", next: ["Pick another port:", cliCommand(c.env, again)] });
+      }
       throw new CliError(`Can't start the proxy: ${(e as Error).message}`, { reason: "proxy_failed" });
     }
     // A client dials 127.0.0.1 even when the proxy listens on every interface.
@@ -151,15 +155,11 @@ export async function startInBackground(env: NodeJS.ProcessEnv, flags: Record<st
   const script = runningCli(argv1) ?? (argv1 && basename(argv1) === "main.ts" ? argv1 : undefined);
   if (!script) throw new CliError("Can't find the coding.sh CLI to start in the background", { reason: "proxy_failed" });
   // No --quiet: the log keeps one line per call.
-  const args = [...process.execArgv, script, "proxy"];
-  for (const k of ["port", "host", "anthropic-upstream", "openai-upstream"]) {
-    const v = flags[k];
-    if (v !== undefined) args.push(`--${k}`, String(v));
-  }
-  if (flags["enforce-budget"] === true) args.push("--enforce-budget");
-  if (flags.port === undefined) args.push("--port", String(port));
-  mkdirSync(dirname(proxyLogPath(env)), { recursive: true });
-  const log = openSync(proxyLogPath(env), "a");
+  const args = [...process.execArgv, script, "proxy", ...startFlags(flags), "--port", String(flags.port ?? port)];
+  const logPath = proxyLogPath(env);
+  mkdirSync(dirname(logPath), { recursive: true });
+  const log = openSync(logPath, "a");
+  const from = fstatSync(log).size;
   const child = spawn(process.execPath, args, { detached: true, stdio: ["ignore", log, log], windowsHide: true, env: { ...env, NODE_OPTIONS: undefined, [DETACHED_ENV]: "1" } });
   child.unref();
   const deadline = Date.now() + 10_000;
@@ -169,7 +169,50 @@ export async function startInBackground(env: NodeJS.ProcessEnv, flags: Record<st
     if (child.exitCode !== null) break;
     await sleep(100);
   }
-  throw new CliError("The background proxy did not start", { reason: "proxy_failed", next: ["See its log:", proxyLogPath(env)] });
+  // A child that exited printed why (a port in use, budgets it can't read): say that, with its next steps.
+  const failed = child.exitCode !== null ? printedError(readFrom(logPath, from)) : undefined;
+  if (failed) throw new CliError(failed.message, { reason: "proxy_failed", next: failed.next.length ? failed.next : ["See its log:", logPath] });
+  throw new CliError("The background proxy did not start", { reason: "proxy_failed", next: ["See its log:", logPath] });
+}
+
+/** The flags a proxy starts with, as arguments: `--host`, the upstreams and `--enforce-budget`. Not `--port`. */
+function startFlags(flags: Record<string, unknown>): string[] {
+  const args: string[] = [];
+  for (const k of ["host", "anthropic-upstream", "openai-upstream"]) {
+    const v = flags[k];
+    if (v !== undefined) args.push(`--${k}`, String(v));
+  }
+  if (flags["enforce-budget"] === true) args.push("--enforce-budget");
+  return args;
+}
+
+/** Up to 8 KB of a file from byte `from` on: what a detached child wrote to its log. */
+function readFrom(path: string, from: number): string {
+  try {
+    const fd = openSync(path, "r");
+    try {
+      const buf = Buffer.alloc(8192);
+      return buf.toString("utf8", 0, readSync(fd, buf, 0, buf.length, from));
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return "";
+  }
+}
+
+/** The last error in a CLI run's output, colored or not: its `✗ message` line and the next steps indented under it. */
+function printedError(text: string): { message: string; next: string[] } | undefined {
+  // eslint-disable-next-line no-control-regex
+  const lines = text.replace(/\u001b\[[\d;]*m/g, "").split(/\r?\n/);
+  const at = lines.findLastIndex((l) => l.startsWith("✗ "));
+  if (at < 0) return undefined;
+  const next: string[] = [];
+  for (const l of lines.slice(at + 1)) {
+    if (l.startsWith("    ")) next.push(l.trim());
+    else if (!l.startsWith("  ")) break;
+  }
+  return { message: lines[at]!.slice(2), next };
 }
 
 /**
