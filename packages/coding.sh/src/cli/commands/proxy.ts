@@ -2,12 +2,12 @@
 // logs every model call into the store. stdout gets the environment that
 // points an agent at it; one line per call goes to stderr.
 import { spawn } from "node:child_process";
-import { mkdirSync, openSync } from "node:fs";
+import { closeSync, fstatSync, mkdirSync, openSync, readSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { runningCli } from "../../mcp/launch.ts";
 import { isLoopbackHost } from "../../otel/receiver.ts";
-import { budgetStatuses, readBudgets } from "../../budget/index.ts";
+import { budgetStatuses, readBudgets, type Budget } from "../../budget/index.ts";
 import { budgetGuard, enforceable } from "../../proxy/budget.ts";
 import { startLocalProxy } from "../../proxy/index.ts";
 import { chainedUpstreams, clearProxyState, pidAlive, probeProxy, proxyEnv, proxyLogPath, proxySettings, proxyUrl, readProxyState, upstreamProblem, writeProxyState, type ProxyState } from "../../proxy/state.ts";
@@ -15,8 +15,10 @@ import type { AgentEvent } from "../../schema/index.ts";
 import { port as portFlag, str, withContext } from "../common.ts";
 import { version } from "../meta.ts";
 import { UsageError } from "../args.ts";
-import { CliError } from "../output.ts";
+import { CliError, usd } from "../output.ts";
+import { cliCommand, envLine } from "../next-steps.ts";
 import type { CommandContext } from "../types.ts";
+import { until } from "./budget.ts";
 
 const fmtTokens = (n: number | undefined): string => (n === undefined ? "-" : n >= 10_000 ? `${Math.round(n / 1000)}k` : String(n));
 
@@ -66,7 +68,7 @@ async function start(c: CommandContext): Promise<number> {
       out.note(`Already running (pid ${running.pid})`);
       return 0;
     }
-    if (running.port === s.port) throw new CliError(`A coding.sh proxy is already running on ${running.url} (pid ${running.pid})`, { reason: "already_running", next: ["Stop it:", "coding.sh proxy stop"] });
+    if (running.port === s.port) throw new CliError(`A coding.sh proxy is already running on ${running.url} (pid ${running.pid})`, { reason: "already_running", next: ["Stop it:", cliCommand(c.env, ["proxy", "stop"])] });
   }
   if (c.flags.background) {
     const st = await startInBackground(c.env, c.flags, s.port);
@@ -77,11 +79,11 @@ async function start(c: CommandContext): Promise<number> {
   }
 
   const enforce = c.flags["enforce-budget"] === true;
-  let budgetCount = 0;
+  let budgets: Budget[] = [];
   try {
-    if (enforce) budgetCount = readBudgets(c.env).length;
+    if (enforce) budgets = readBudgets(c.env);
   } catch (e) {
-    throw new CliError(`Can't read the budgets: ${(e as Error).message}`, { reason: "bad_budgets", next: ["See them:", "coding.sh budget list"] });
+    throw new CliError(`Can't read the budgets: ${(e as Error).message}`, { reason: "bad_budgets", next: ["See them:", cliCommand(c.env, ["budget", "list"])] });
   }
   return withContext(c, async (ctx) => {
     // budgets.json is read with the spend, so a budget set while the proxy runs applies within 30 s.
@@ -102,11 +104,17 @@ async function start(c: CommandContext): Promise<number> {
         onError: (e) => out.warn(`not recorded: ${e.message}`),
         onEvent: c.flags.quiet ? undefined : (e) => out.note(callLine(e)),
         budget,
-        onBlock: budget ? (b) => out.warn(`blocked a call: budget ${b.status.budget.id} is over its limit ($${b.status.spendUsd.toFixed(2)} of $${b.status.budget.limitUsd.toFixed(2)}); resets in ${b.retryAfter}s`) : undefined,
+        onBlock: budget ? (b) => out.warn(`blocked a call: budget ${b.status.budget.id} is over its limit (${usd(b.status.spendUsd)} of ${usd(b.status.budget.limitUsd)}); resets in ${until(b.status.resetsAt)}`) : undefined,
       });
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
-      if (code === "EADDRINUSE") throw new CliError(`Can't start the proxy: port ${s.port} is in use`, { reason: "port_in_use", next: ["Pick another port:", "coding.sh proxy --port 0"] });
+      if (code === "EADDRINUSE") {
+        // The same command on a free port: a detached child names --background, as the user ran it.
+        const again = ["proxy"];
+        if (c.env[DETACHED_ENV] === "1") again.push("--background");
+        again.push(...startFlags(c.flags), "--port", "0");
+        throw new CliError(`Can't start the proxy: port ${s.port} is in use`, { reason: "port_in_use", next: ["Pick another port:", cliCommand(c.env, again)] });
+      }
       throw new CliError(`Can't start the proxy: ${(e as Error).message}`, { reason: "proxy_failed" });
     }
     // A client dials 127.0.0.1 even when the proxy listens on every interface.
@@ -114,18 +122,24 @@ async function start(c: CommandContext): Promise<number> {
     await writeProxyState({ pid: process.pid, url, host: proxy.host, port: proxy.port, startedAt: Date.now(), upstreams: s.upstreams }, c.env);
     const vars = proxyEnv(url);
     if (out.json) out.data({ url, host: proxy.host, port: proxy.port, env: vars, upstreams: s.upstreams });
-    else for (const [k, v] of Object.entries(vars)) out.print(`export ${k}=${v}`);
+    else for (const [k, v] of Object.entries(vars)) out.print(envLine(c.env, k, v));
     if (!isLoopbackHost(proxy.host)) out.warn(`Listening on ${proxy.host}: the proxy has no auth, so anyone who can reach this port can send calls through it`);
     out.note(`Ready on ${url} (Anthropic → ${s.upstreams.anthropic}, OpenAI → ${s.upstreams.openai})`);
-    if (enforce) out.note(`Enforcing budgets: a call a budget over its limit applies to gets a 429 (${budgetCount} set; coding.sh budget status)`);
+    if (enforce) out.note(`Enforcing budgets: a call a budget over its limit applies to gets a 429 (${enforcingCount(budgets)}; ${cliCommand(c.env, ["budget", "status"])})`);
     out.note(ctx.config.capture.mode === "metadata" ? "Capture mode metadata: no prompts or responses are stored" : "Logging every call; auth headers are forwarded, never stored");
     // A detached child (proxy --background) has no terminal for Ctrl-C to reach.
-    out.note(c.env[DETACHED_ENV] === "1" ? "Stop with: coding.sh proxy stop" : "Press Ctrl-C to stop");
+    out.note(c.env[DETACHED_ENV] === "1" ? `Stop with: ${cliCommand(c.env, ["proxy", "stop"])}` : "Press Ctrl-C to stop");
     await new Promise<void>((resolve) => c.signal.addEventListener("abort", () => resolve(), { once: true }));
     await proxy.close();
     clearProxyState(process.pid, c.env);
     return 130;
   });
+}
+
+/** `2 set`, or `1 of 2 set can block a call: …` when a --repo or --where budget, which never blocks, is among them. */
+function enforcingCount(budgets: readonly Budget[]): string {
+  const can = budgets.filter(enforceable).length;
+  return can === budgets.length ? `${can} set` : `${can} of ${budgets.length} set can block a call: one with --repo or --where never does`;
 }
 
 /** Set on the detached child that `proxy --background` starts. */
@@ -143,15 +157,11 @@ export async function startInBackground(env: NodeJS.ProcessEnv, flags: Record<st
   const script = runningCli(argv1) ?? (argv1 && basename(argv1) === "main.ts" ? argv1 : undefined);
   if (!script) throw new CliError("Can't find the coding.sh CLI to start in the background", { reason: "proxy_failed" });
   // No --quiet: the log keeps one line per call.
-  const args = [...process.execArgv, script, "proxy"];
-  for (const k of ["port", "host", "anthropic-upstream", "openai-upstream"]) {
-    const v = flags[k];
-    if (v !== undefined) args.push(`--${k}`, String(v));
-  }
-  if (flags["enforce-budget"] === true) args.push("--enforce-budget");
-  if (flags.port === undefined) args.push("--port", String(port));
-  mkdirSync(dirname(proxyLogPath(env)), { recursive: true });
-  const log = openSync(proxyLogPath(env), "a");
+  const args = [...process.execArgv, script, "proxy", ...startFlags(flags), "--port", String(flags.port ?? port)];
+  const logPath = proxyLogPath(env);
+  mkdirSync(dirname(logPath), { recursive: true });
+  const log = openSync(logPath, "a");
+  const from = fstatSync(log).size;
   const child = spawn(process.execPath, args, { detached: true, stdio: ["ignore", log, log], windowsHide: true, env: { ...env, NODE_OPTIONS: undefined, [DETACHED_ENV]: "1" } });
   child.unref();
   const deadline = Date.now() + 10_000;
@@ -161,7 +171,50 @@ export async function startInBackground(env: NodeJS.ProcessEnv, flags: Record<st
     if (child.exitCode !== null) break;
     await sleep(100);
   }
-  throw new CliError("The background proxy did not start", { reason: "proxy_failed", next: ["See its log:", proxyLogPath(env)] });
+  // A child that exited printed why (a port in use, budgets it can't read): say that, with its next steps.
+  const failed = child.exitCode !== null ? printedError(readFrom(logPath, from)) : undefined;
+  if (failed) throw new CliError(failed.message, { reason: "proxy_failed", next: failed.next.length ? failed.next : ["See its log:", logPath] });
+  throw new CliError("The background proxy did not start", { reason: "proxy_failed", next: ["See its log:", logPath] });
+}
+
+/** The flags a proxy starts with, as arguments: `--host`, the upstreams and `--enforce-budget`. Not `--port`. */
+function startFlags(flags: Record<string, unknown>): string[] {
+  const args: string[] = [];
+  for (const k of ["host", "anthropic-upstream", "openai-upstream"]) {
+    const v = flags[k];
+    if (v !== undefined) args.push(`--${k}`, String(v));
+  }
+  if (flags["enforce-budget"] === true) args.push("--enforce-budget");
+  return args;
+}
+
+/** Up to 8 KB of a file from byte `from` on: what a detached child wrote to its log. */
+function readFrom(path: string, from: number): string {
+  try {
+    const fd = openSync(path, "r");
+    try {
+      const buf = Buffer.alloc(8192);
+      return buf.toString("utf8", 0, readSync(fd, buf, 0, buf.length, from));
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return "";
+  }
+}
+
+/** The last error in a CLI run's output, colored or not: its `✗ message` line and the next steps indented under it. */
+function printedError(text: string): { message: string; next: string[] } | undefined {
+  // eslint-disable-next-line no-control-regex
+  const lines = text.replace(/\u001b\[[\d;]*m/g, "").split(/\r?\n/);
+  const at = lines.findLastIndex((l) => l.startsWith("✗ "));
+  if (at < 0) return undefined;
+  const next: string[] = [];
+  for (const l of lines.slice(at + 1)) {
+    if (l.startsWith("    ")) next.push(l.trim());
+    else if (!l.startsWith("  ")) break;
+  }
+  return { message: lines[at]!.slice(2), next };
 }
 
 /**
@@ -201,7 +254,7 @@ async function status(c: CommandContext): Promise<number> {
   }
   if (!health) {
     out.row("proxy", st ? `not answering on ${st.url}` : "not running", "warn");
-    out.next("Start it", "coding.sh proxy --background");
+    out.next("Start it", cliCommand(c.env, ["proxy", "--background"]));
     return 1;
   }
   out.row("proxy", `${st!.url} (pid ${st!.pid})`, "ok");
@@ -230,6 +283,6 @@ async function env(c: CommandContext): Promise<number> {
   const url = st && pidAlive(st.pid) ? st.url : `http://127.0.0.1:${s.port}`;
   const vars = proxyEnv(url);
   if (out.json) out.data({ url, env: vars });
-  else for (const [k, v] of Object.entries(vars)) out.print(`export ${k}=${v}`);
+  else for (const [k, v] of Object.entries(vars)) out.print(envLine(c.env, k, v));
   return 0;
 }

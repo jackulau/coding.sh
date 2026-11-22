@@ -61,3 +61,15 @@ export function runCommand(env: NodeJS.ProcessEnv, what: string, platform: NodeJ
 export function rerunWithYes(c: Pick<CommandContext, "argv" | "env">, fallback: readonly string[], platform: NodeJS.Platform = process.platform): string {
   return cliCommand(c.env, [...(c.argv ?? fallback), "--yes"], platform);
 }
+
+/**
+ * A printed line that sets an environment variable in the user's shell: `export NAME=value`,
+ * which `eval "$(…)"` runs, in sh. PowerShell and cmd (windowsShell) get PowerShell's
+ * `$env:NAME = 'value'`, which `… | Invoke-Expression` runs; no line runs in both, and cmd has
+ * neither export nor a way to run a command's output. PowerShell's single quotes keep `$` and
+ * backticks; a quote in the value, straight or curly, is doubled.
+ */
+export function envLine(env: NodeJS.ProcessEnv, name: string, value: string, platform: NodeJS.Platform = process.platform): string {
+  if (!windowsShell(env, platform)) return `export ${name}=${shellQuote(value)}`;
+  return `$env:${name} = '${value.replace(/['‘’‚‛]/g, "$&$&")}'`;
+}
