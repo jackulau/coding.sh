@@ -193,8 +193,8 @@ Which budgets the proxy can match:
 
 - A budget with no `--agent`, `--repo` or `--where` applies to every call.
 - A budget with `--agent claude-code` or `--agent codex` applies to that agent's calls, known from
-  their headers. Every other call, a Codex call with no session id included, is stored and counted
-  as agent `proxy`.
+  their headers. Every other call, including a Codex call that sends no session id, is stored and
+  counted as agent `proxy`.
 - A budget with `--repo` or `--where` never blocks a call, and the proxy does not read its spend:
   the proxy does not know a call's repo or session.
 
