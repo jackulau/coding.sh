@@ -316,6 +316,11 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
   window, with acks and snoozes applied. `more` counts the items left out, and `rest` names
   `coding.sh work --json`, which lists them. The tool stays
   read-only: ack and snooze stay with the user.
+- The MCP `work` tool pages the queue as `work --json` gives it, with `limit` and `cursor`, and
+  the index's age; with `all`, the hidden items too. With `id` it reads one item, found as
+  `work show` finds it (an item id, a prefix of one, or the id of a session in the item, hidden or
+  not), shaped as an item of a page. An unknown id is a tool error, and so is a prefix several
+  items share, which lists them newest first.
 
 The new stats and fields are optional. One existing field changed: a session whose events stop on a
 tool call with no result, with no session end, has no `endedAt`.

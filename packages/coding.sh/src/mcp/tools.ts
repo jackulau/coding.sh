@@ -351,11 +351,10 @@ function shortIds(ctx: Context): Promise<(id: string) => string> {
   return get;
 }
 
-/** The session `id` names, as the CLI resolves it (core/session-ref.ts): exact, "latest", a unique prefix, an SDK id or a subagent's id. */
-async function resolveSession(ctx: Context, id: string): Promise<Session> {
-  let s: Session | undefined;
+/** The session `id` names, or undefined for none. A prefix several sessions share is a tool error that lists them. */
+async function sessionByRef(ctx: Context, id: string): Promise<Session | undefined> {
   try {
-    s = await findSessionRef(ctx.index, id);
+    return await findSessionRef(ctx.index, id);
   } catch (e) {
     if (!(e instanceof AmbiguousRef)) throw e;
     const list = e.candidates.map((x) => `${x.shortId} (${x.agent}, ${iso(x.startedAt)}${x.title ? `, ${JSON.stringify(clip(x.title, 60))}` : ""})`);
@@ -368,6 +367,11 @@ async function resolveSession(ctx: Context, id: string): Promise<Session> {
     if (e.more) data.more = true;
     throw new ToolError(`Session id prefix ${JSON.stringify(id)} matches more than one session: ${list.join("; ")}${e.more ? "; and more" : ""}. Pass one of these ids, or more of the id.`, data);
   }
+}
+
+/** The session `id` names, as the CLI resolves it (core/session-ref.ts): exact, "latest", a unique prefix, an SDK id or a subagent's id. */
+async function resolveSession(ctx: Context, id: string): Promise<Session> {
+  const s = await sessionByRef(ctx, id);
   if (s) return s;
   if (id === "latest" || id === "last") throw new ToolError(noSessionsHint(ctx.env));
   const short = id.length < MIN_ID_PREFIX ? ` A prefix needs at least ${MIN_ID_PREFIX} characters.` : "";
@@ -469,6 +473,32 @@ async function forkTool(ctx: Context, env: NodeJS.ProcessEnv, s: Session, replay
 export const STATUS_WORK_ROWS = 5;
 
 /**
+ * work's `id`: the item it names, found as `work show` finds it (cli/commands/work.ts matchItem: an
+ * item id, a unique prefix of one, or a session in the item), hidden or not. None, or a prefix several
+ * items share, is a tool error; the latter lists them newest first, as work show does.
+ */
+async function workItemById(ctx: Context, id: string, since: number, sinceText: string, now: number) {
+  const { matchItem } = await import("../cli/commands/work.ts");
+  const found = await matchItem(ctx, id, since, readOverlay(ctx.paths.work), now, (r) => sessionByRef(ctx, r));
+  if (found && "ambiguous" in found) {
+    const list = found.ambiguous.map((i) => `${i.id} (${i.agent}, ${iso(i.startedAt)}${i.title ? `, ${JSON.stringify(clip(i.title, 60))}` : ""})`);
+    const candidates = found.ambiguous.map((i) => {
+      const c: Record<string, unknown> = { id: i.id, agent: i.agent, startedAt: iso(i.startedAt) };
+      if (i.title) c.title = clip(i.title, 120);
+      return c;
+    });
+    const data: Record<string, unknown> = { reason: "ambiguous", candidates };
+    if (found.more) data.more = true;
+    throw new ToolError(`Work item id prefix ${JSON.stringify(id)} matches more than one item: ${list.join("; ")}${found.more ? "; and more" : ""}. Pass one of these ids, or more of the id.`, data);
+  }
+  if (!found) {
+    const short = id.length < MIN_ID_PREFIX && id !== "latest" && id !== "last" ? ` A prefix needs at least ${MIN_ID_PREFIX} characters.` : "";
+    throw new ToolError(`No work item ${JSON.stringify(id)} since ${sinceText}.${short} List the items with all: true, or pass an earlier since.`, { reason: "not_found" });
+  }
+  return found;
+}
+
+/**
  * work: the queue `coding.sh work --json` prints, read once; each page is a slice of its items.
  * A stale index judges waits and stalls as of its last ingest, as the CLI does.
  */
@@ -481,6 +511,15 @@ async function workPages(a: Obj, c: ToolCtx): Promise<(limit: number) => Obj> {
   const asked = numArg(a, "limit", 20);
   const age = storeIndexAge(ctx, now);
   const stale = age?.stale ? age : undefined;
+  const id = strArg(a, "id");
+  if (id) {
+    // One item, shaped as an item of a page; limit and cursor do not apply.
+    const { item, sessions } = await workItemById(ctx, id, since, strArg(a, "since") ?? "7d", stale?.at ?? now);
+    await settleWorkFiles(ctx.index, [item], sessions, stale?.at ?? now);
+    const one: Obj = { since: iso(since), items: [workItemJson(item)] };
+    if (stale) one.asOf = iso(stale.at);
+    return () => ({ ...one, ...indexField(age) });
+  }
   const { queue, sessions, truncated } = await readWorkQueue(ctx.index, { since, all, now: stale?.at ?? now, overlay: readOverlay(ctx.paths.work), shortId: await shortIds(ctx) });
   // The page counts and names each item's files as work --json and work show do (core/work.ts settleWorkFiles).
   await settleWorkFiles(ctx.index, queue.items.slice(offset, offset + asked), sessions, stale?.at ?? now);
@@ -1578,10 +1617,11 @@ function toolDefs(): PagedTool[] {
     {
       name: "work",
       title: "What needs you",
-      description: "What needs you across agents (coding.sh work --json): each item's reason, next step, phases, PRs and supersededBy. Paged.",
+      description: "What needs you across agents (coding.sh work --json): each item's reason, next step, phases, PRs, supersededBy. Paged; id reads one.",
       inputSchema: input({
         since: SINCE("7d"),
         all: { type: "boolean", default: false, description: "Also running, done and snoozed items." },
+        id: { type: "string", description: "Work id, prefix or session id." },
         limit: LIMIT(20, 100),
         cursor: CURSOR,
       }),
@@ -1597,7 +1637,7 @@ function toolDefs(): PagedTool[] {
       name: "status",
       title: "coding.sh status",
       description:
-        "Health of coding.sh: version and update, data dir, 24h sessions and last capture per agent, pending spool, last error, index age, 5h and weekly plan usage. Use when data looks missing or stale. work: what needs you (7d): counts, top 5 items; the work tool has the rest.",
+        "Health of coding.sh: version, update, data dir, 24h sessions, last capture per agent, spool, last error, index age, plan usage. Use when data looks missing or stale. work: counts and top 5 items needing you (7d); the work tool has the rest.",
       inputSchema: input({}),
       outputSchema: out(
         {
@@ -1607,8 +1647,8 @@ function toolDefs(): PagedTool[] {
           last24h: out({ sessions: I, agents: arr(S) }),
           lastCapture: arr(out({ agent: S, at: S }, ["agent"])),
           latest: SESSION_OUT,
-          lastError: out({ error: S }),
-          // { updatedAt, ageMs, stale? }; work: { needYou, items (as the work tool's), more, rest }.
+          // lastError: { at, error, bytes }; index: { updatedAt, ageMs, stale? }; work: { needYou, items (as the work tool's), more, rest }.
+          lastError: { type: "object" },
           index: { type: "object" },
           work: { type: "object" },
           hints: arr(S),

@@ -30,7 +30,7 @@ const TOOLS: [string, string][] = [
   ["score_list", "Typed scores on sessions, events, dataset cases and eval runs, newest first, with filters."],
   ["score_add", "Score a session, event, case or run: a number, true or false, or a category. Scoring the same thing again replaces it."],
   ["score_add_batch", "Store up to 100 scores in one call, each checked as score_add checks one. If one is invalid, none is stored."],
-  ["work", "What needs you across agents, as coding.sh work --json gives it: each item with its reason, next step, phases and supersededBy, paged with limit and cursor, and the index's age. With all, running and done items too."],
+  ["work", "What needs you across agents, as coding.sh work --json gives it: each item with its reason, next step, phases and supersededBy, paged with limit and cursor, and the index's age. With all, running and done items too. With id (a work id, a prefix of one, or a session id), the one item coding.sh work show names."],
   ["status", "Health of coding.sh: version, available update, the store URL with any password shown as ***, recent captures, pending spool, last error, the index's age (index.updatedAt, index.ageMs), 5h and weekly plan usage. Its work field holds what needs you (coding.sh work): the count per bucket and the top 5 items, each with a reason and a next step; coding.sh work --json lists the rest."],
 ];
 
