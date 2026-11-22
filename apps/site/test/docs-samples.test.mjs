@@ -3,7 +3,7 @@
 // that the code no longer prints, and a count the CLI words another way.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
@@ -14,9 +14,23 @@ const SITE_PAGES = readdirSync(`${ROOT}apps/site/src/pages`, { recursive: true }
   .filter((f) => f.endsWith(".astro"))
   .map((f) => `apps/site/src/pages/${f.replaceAll("\\", "/")}`);
 
-/** The site's lines that match re, as "path:line: text". */
-const siteLines = (re) =>
-  SITE_PAGES.flatMap((f) => read(f).split("\n").flatMap((l, i) => (re.test(l) ? [`${f}:${i + 1}: ${l.trim()}`] : [])));
+/** The docs in the repo and the READMEs, as paths from the repo root. docs/research holds notes, not samples. */
+const DOC_PAGES = [
+  ...readdirSync(`${ROOT}docs`, { recursive: true })
+    .map((f) => `docs/${f.replaceAll("\\", "/")}`)
+    .filter((f) => f.endsWith(".md") && !f.startsWith("docs/research/")),
+  "README.md",
+  ...readdirSync(`${ROOT}packages`)
+    .map((p) => `packages/${p}/README.md`)
+    .filter((f) => existsSync(`${ROOT}${f}`)),
+];
+
+/** The lines of pages that match re, as "path:line: text". */
+const linesIn = (pages, re) =>
+  pages.flatMap((f) => read(f).split("\n").flatMap((l, i) => (re.test(l) ? [`${f}:${i + 1}: ${l.trim()}`] : [])));
+
+/** The site's lines that match re. */
+const siteLines = (re) => linesIn(SITE_PAGES, re);
 
 /**
  * A regex for a sample of the line `out.ok(`template`)` prints: ✓, then the template's text as
@@ -49,7 +63,8 @@ test("a count of one in a sample is singular, as show and tree print it", () => 
   const words = ["tool call", "tool", "file", "subagent"];
   const src = ["show.ts", "tree.ts"].map((f) => read(`packages/coding.sh/src/cli/commands/${f}`)).join("\n");
   for (const w of words) assert.match(src, new RegExp(`plural\\([^,()]+, "${w}"\\)`), `show and tree no longer count "${w}" with plural()`);
-  assert.deepEqual(siteLines(new RegExp(`(?<![\\d.,])\\b1 (${words.join("|")})s\\b`)), []);
+  assert.ok(DOC_PAGES.length > 50 && DOC_PAGES.includes("packages/coding.sh/README.md"), "the docs pages are not found");
+  assert.deepEqual(linesIn([...SITE_PAGES, ...DOC_PAGES], new RegExp(`(?<![\\d.,])\\b1 (${words.join("|")})s\\b`)), []);
 });
 
 /** exp compare samples that show a definite verdict on fewer than 10 paired cases. */
