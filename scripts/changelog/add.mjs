@@ -27,6 +27,14 @@ const TRIES = 5;
 /** Words as the shape test counts them: whitespace-separated tokens after the "-". */
 export const words = (line) => line.split(/\s+/).length - 1;
 
+/**
+ * Whether a line has a link: a markdown link to a URL, to a path that starts with /, ./,
+ * ../ or docs/, or to a #fragment, or a bare URL. The site's changelog renders a docs/
+ * path as that doc's page (apps/site/src/lib/changelog.ts). The shape test counts links
+ * with this function, so --check and the site test agree.
+ */
+export const hasLink = (line) => /\]\((?:https?:\/\/|\.{0,2}\/|#|docs\/)[^)]+\)|https?:\/\/\S+/.test(line);
+
 /** A NAME = ( "..." "..." ) range string in subset-fonts.py, as [from, to] code point pairs. */
 function pyRanges(py, name) {
   const at = py.search(new RegExp(`^${name} = \\(`, "m"));
@@ -141,7 +149,7 @@ export function lineProblems(line, ranges, root = ROOT) {
   if (!/^- \*\*[^*]+\.\*\* \S/.test(line)) problems.push('the line does not start with a bold area ("- **Sessions.** ...")');
   const bad = outsideCore(line, ranges);
   if (bad) problems.push(`${bad.name} (${String.fromCodePoint(bad.cp)}) is outside the CORE font ranges in apps/site/scripts/subset-fonts.py, so the page loads a -rest font (perf-budget rule 5)`);
-  if (!/\]\((?:https?:\/\/|\.{0,2}\/|#|docs\/)[^)]+\)|https?:\/\/\S+/.test(line)) problems.push("the line has no link");
+  if (!hasLink(line)) problems.push("the line has no link");
   for (const doc of docLinks(line)) {
     const p = linkProblem(doc, root);
     if (p) problems.push(p);
