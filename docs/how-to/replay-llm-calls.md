@@ -133,6 +133,9 @@ keeps the cache under 1 GB, dropping the least recently used recordings first.
   `SECRET`, …).
 - `coding.sh purge` rewrites a recording that holds a leaked value, keeping its replay keys. See
   [Remove a leaked secret](../guides/privacy.md#remove-a-leaked-secret).
+- While a job records, its folder holds a `.recording.lock` file with its process id and start
+  time. Purge waits for the job and exits 1 if it is still running; a recording never waits for
+  purge.
 
 ## If something goes wrong
 

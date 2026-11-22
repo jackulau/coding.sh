@@ -6,6 +6,7 @@ import { parseAge, parseSinceWhen, UsageError } from "../cli/args.ts";
 import { stagesFlag } from "../cli/commands/work.ts";
 import { parsePlace } from "../mcp/data.ts";
 import type { IndexStore } from "../core/types.ts";
+import { shortener } from "../core/session-ref.ts";
 import { indexAge, indexAgeField, indexAgeText, staleIndexText, type IndexAge } from "../core/ingest-health.ts";
 import { addAck, addSnooze, readOverlay, writeOverlay } from "../core/work-overlay.ts";
 import { BUCKET_LABELS, buildWorkQueue, itemWorkflowAgents, readWorkQueue, workItemJson, workJson, type HiddenReason, type Stage, type WorkItem } from "../core/work.ts";
@@ -114,7 +115,8 @@ export async function workList(index: IndexStore, src: WorkSource, q: URLSearchP
   // A stage filter lists hidden items too, as `--stage` does.
   const all = q.get("all") === "1" || q.get("all") === "true" || f.stages.length > 0;
   const overlay = readOverlay(src.overlay);
-  const read = { since: f.since, agents: f.agents, place: f.place, overlay, now };
+  // Next steps name sessions by the shortest id that resolves, as `work --json` does.
+  const read = { since: f.since, agents: f.agents, place: f.place, overlay, now, shortId: await shortener(index) };
   const { queue, sessions, truncated } = await readWorkQueue(index, { ...read, all, stages: f.stages });
   // Without `all` (or with a stage filter) the queue lacks hidden items; the page still says why each one is hidden.
   const every = all && !f.stages.length ? queue : buildWorkQueue(sessions, { ...read, all: true });

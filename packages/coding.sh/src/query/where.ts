@@ -278,7 +278,8 @@ function startKey(name: string, field: string, doc: string, example: string): Ke
 
 const KEY_LIST: KeyDef[] = [
   // ---- session keys
-  { name: "agent", level: "session", type: "text", doc: "Agent id", example: "agent:codex", sql: ["s.agent"], notNull: true, get: (s) => [s.agent], facet: {} },
+  // A host app's id (t3code) matches the sessions it drove too; facets count the agent that ran.
+  { name: "agent", level: "session", type: "text", doc: "Agent id: the agent that ran, or the host app that drove it (agent:t3code)", example: "agent:codex", sql: ["s.agent", `coalesce(${stat("host")}, '')`], notNull: true, get: (s) => [s.agent, s.host], facet: { sql: "s.agent", get: (s) => [s.agent] } },
   { name: "model", level: "session", type: "text", doc: "Main model", example: "model:claude-sonnet-*", sql: ["s.model"], get: (s) => [s.model], facet: {} },
   { name: "provider", level: "session", type: "text", doc: "Model provider", example: "provider:anthropic", sql: [stat("provider")], get: (s) => [s.provider], facet: {} },
   {

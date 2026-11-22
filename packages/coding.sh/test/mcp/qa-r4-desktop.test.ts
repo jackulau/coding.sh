@@ -22,6 +22,8 @@ let w: World;
 let mcp: CodingShMcp;
 let tools: { name: string; outputSchema: Record<string, unknown> }[];
 const IDS = { t3: "r4-t3-hosted", cc: "r4-claude", cx: "r4-codex" };
+/** The shortId a search hit gives beside its session's full id: the shortest id that resolves, at least 8 characters (core/session-ref.ts). */
+const HIT = { t3: "r4-t3-ho", cc: "r4-claud", cx: "r4-codex" };
 
 async function call(name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   const r = await mcp.server.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } });
@@ -32,7 +34,7 @@ async function call(name: string, args: Record<string, unknown> = {}): Promise<R
   return sc;
 }
 
-type Hit = { sessionId: string; agent: string };
+type Hit = { sessionId: string; shortId: string; agent: string };
 const hitsOf = (r: Record<string, unknown>) => r.hits as Hit[];
 
 before(async () => {
@@ -73,7 +75,9 @@ describe("search picks and labels hits by the session's agent", () => {
   it("agent t3code finds the T3 Code session's hits, labeled t3code", async () => {
     const hits = hitsOf(await call("search", { query: "worktree", agent: "t3code" }));
     assert.ok(hits.length > 0, "the t3code session matches");
+    // The full id, as an agent keeps and compares it; shortId beside it resolves too.
     assert.deepEqual([...new Set(hits.map((h) => h.sessionId))], [IDS.t3]);
+    assert.deepEqual([...new Set(hits.map((h) => h.shortId))], [HIT.t3]);
     assert.deepEqual([...new Set(hits.map((h) => h.agent))], ["t3code"]);
   });
 
@@ -86,7 +90,7 @@ describe("search picks and labels hits by the session's agent", () => {
 
   it("agent and where combine, and where agent: hits carry the session's agent", async () => {
     const both = hitsOf(await call("search", { query: "worktree", agent: "t3code", where: "kind:assistant.message" }));
-    assert.deepEqual(both.map((h) => [h.sessionId, h.agent]), [[IDS.t3, "t3code"]]);
+    assert.deepEqual(both.map((h) => [h.sessionId, h.shortId, h.agent]), [[IDS.t3, HIT.t3, "t3code"]]);
     const viaWhere = hitsOf(await call("search", { query: "worktree", where: "agent:t3code" }));
     assert.ok(viaWhere.length > 0);
     assert.deepEqual([...new Set(viaWhere.map((h) => h.agent))], ["t3code"]);

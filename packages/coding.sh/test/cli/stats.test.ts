@@ -114,6 +114,39 @@ describe("stats: a date is local midnight", () => {
   });
 });
 
+// A sub-day --since keeps only sessions at or after it: the first day's row is not the whole day.
+describe("stats: --since inside a day clips the first day", () => {
+  const TZ = "America/Chicago";
+  const hourOf = (t: number) => Number(new Intl.DateTimeFormat("en-CA", { timeZone: TZ, hourCycle: "h23", hour: "2-digit" }).format(t));
+  const ymd = (t: number) => new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(t);
+  // 06:00 and 18:00 Chicago time on the day before yesterday; --since is 12:00 that day.
+  const base = Math.floor((Date.now() - 2 * DAY) / 3_600_000) * 3_600_000;
+  const at = (h: number) => base + (h - hourOf(base)) * 3_600_000;
+  const morning = at(6);
+  const evening = at(18);
+  let env: TmpEnv;
+  before(async () => {
+    env = tmpEnv();
+    await seed(env.dataHome, {
+      sessions: [
+        session("morning", { startedAt: morning, endedAt: morning + 60_000 }),
+        session("evening", { startedAt: evening, endedAt: evening + 60_000 }),
+      ],
+    });
+  });
+  after(() => env.restore());
+
+  test("a session before --since on the same day is not counted", () => {
+    assert.equal(ymd(morning), ymd(evening));
+    const since = `${ymd(morning)}T12:00`;
+    const j = JSON.parse(ok(["stats", "--since", since, "--json"], { TZ }).stdout);
+    assert.equal(j.totals.sessions, 1);
+    assert.equal(j.all.sessions.reduce((a: number, b: number) => a + b, 0), 1);
+    const usage = JSON.parse(ok(["usage", "--since", since, "--json"], { TZ }).stdout);
+    assert.equal(usage.total.sessions, j.totals.sessions);
+  });
+});
+
 test("sparkline scales to the largest value and leaves blanks for gaps", () => {
   assert.equal(sparkline([0, 1, 2, 4]), "▁▃▅█");
   assert.equal(sparkline([null, 3, null]), " █ ");

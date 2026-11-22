@@ -188,10 +188,11 @@ describe("proxy store writes", () => {
       await sqlite.close();
       return { gateway: call!.payload.gateway, flags };
     };
-    assert.deepEqual(await flagsAfter("http://127.0.0.1:8317"), { gateway: "cliproxyapi", flags: ["gateway:cliproxyapi"] });
-    assert.deepEqual(await flagsAfter("http://127.0.0.1:8317", { metadata: true }), { gateway: "cliproxyapi", flags: ["gateway:cliproxyapi"] }, "capture mode metadata keeps the tag");
-    assert.deepEqual(await flagsAfter("https://ai-gateway.vercel.sh"), { gateway: "vercel", flags: ["gateway:vercel"] });
-    assert.deepEqual(await flagsAfter("https://litellm.internal", { env: { LITELLM_PROXY_URL: "https://litellm.internal/v1" } }), { gateway: "litellm", flags: ["gateway:litellm"] }, "a self-hosted gateway, by its URL variable");
-    assert.deepEqual(await flagsAfter("https://api.anthropic.com"), { gateway: undefined, flags: [] }, "the provider's own API is no gateway");
+    // The proxy sees model calls only, so each session also carries the tools:unseen tag.
+    assert.deepEqual(await flagsAfter("http://127.0.0.1:8317"), { gateway: "cliproxyapi", flags: ["tools:unseen", "gateway:cliproxyapi"] });
+    assert.deepEqual(await flagsAfter("http://127.0.0.1:8317", { metadata: true }), { gateway: "cliproxyapi", flags: ["tools:unseen", "gateway:cliproxyapi"] }, "capture mode metadata keeps the tag");
+    assert.deepEqual(await flagsAfter("https://ai-gateway.vercel.sh"), { gateway: "vercel", flags: ["tools:unseen", "gateway:vercel"] });
+    assert.deepEqual(await flagsAfter("https://litellm.internal", { env: { LITELLM_PROXY_URL: "https://litellm.internal/v1" } }), { gateway: "litellm", flags: ["tools:unseen", "gateway:litellm"] }, "a self-hosted gateway, by its URL variable");
+    assert.deepEqual(await flagsAfter("https://api.anthropic.com"), { gateway: undefined, flags: ["tools:unseen"] }, "the provider's own API is no gateway");
   });
 });

@@ -151,6 +151,20 @@ An object or array of 8192 characters or less as JSON goes out as a structured v
 or `arrayValue`). A string, a larger value, or one with a `null` inside a list or nesting past eight
 levels goes out as text, cut at 8192 characters.
 
+The spans follow the GenAI semantic conventions (semconv v0.1.0), with schema URL
+`https://opentelemetry.io/schemas/1.45.0` on the resource and the scope. The scope is `coding.sh`
+at the installed version. Every `chat` span, and the `invoke_agent` span, sets
+`gen_ai.provider.name` from the first of these that is known:
+
+1. the provider the model call reported;
+2. the agent: `claude-code` is `anthropic`, `codex` is `openai`, `gemini-cli` is `gcp.gemini`;
+3. the model name: `claude-` is `anthropic`, `gpt-` or `o` and a digit is `openai`, `gemini-` is
+   `gcp.gemini`.
+
+When none is known, the attribute is absent. A `chat` span carries the call's reasoning effort in
+`gen_ai.request.reasoning.level`, and an `execute_tool` span for a Skill call carries the skill in
+`gen_ai.skill.name`. Both are sent in either mode, and are absent when the event has no value.
+
 ## `[prices]`
 
 One `[prices."<model>"]` table per model, with prices in USD per million tokens. Ingest and
@@ -370,7 +384,7 @@ Tool-eval model drivers read the key variable set by `apiKeyEnv` in `coding.sh.t
 | `CI` | Treated as non-interactive: no prompts or spinners. Commands that would ask need `--yes`. |
 | `NO_UPDATE_NOTIFIER`, `CODING_SH_NO_UPDATE_CHECK` | Turn off the update check. Same as `update.check = false`. |
 | `CODING_SH_NO_STAR_PROMPT` | Turn off the one-time GitHub star prompt in the terminal and the viewer. `NO_UPDATE_NOTIFIER` and `CI` turn it off too. |
-| `CODING_SH_READ_BUDGET_MS` | How long read commands (`status`, `sessions`, `search`, `show`, `usage`, ...) and MCP tool calls ingest pending captures before answering from what is indexed (with a `pending` field in JSON and MCP results). Default `1500`; `--fresh` waits for all. A read while another process imports transcripts answers at once. While a re-parse holds `reparse.lock`, these reads skip the ingest, leave the spool to the re-parse, and add `"reparsing": true` to `pending`. |
+| `CODING_SH_READ_BUDGET_MS` | How long read commands (`status`, `sessions`, `search`, `show`, `usage`, ...) and MCP tool calls ingest pending captures before answering from what is indexed (with a `pending` field in JSON and MCP results). Default `1500`; `--fresh` waits for all. A read while another process imports transcripts answers at once. While a re-parse holds `reparse.lock`, these reads skip the ingest, leave the spool to the re-parse, and add `"reparsing": true` to `pending`. After an upgrade that changes how sessions are folded, MCP results carry `"index": {"refolding": true}` until the stored sessions are folded again (`coding.sh ingest` does it, or the background ingest a read starts), and while a re-parse runs: a session not yet folded shows the older version's stats, whole. |
 
 ### Installer
 

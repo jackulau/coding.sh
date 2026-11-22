@@ -18,6 +18,13 @@
 // it: one task gives the same value on every draw, and with a coin-flip score a
 // CI over 2 tasks sits above 0.5 in about 1 table in 5. Below `minTasks` tasks
 // there is no verdict, however many pairs those tasks hold.
+//
+// Pooling arms can hide a signal that flips direction: arXiv 2605.18332 (64,380
+// SWE-bench runs) finds signals that predict failure in one framework and success
+// in another, and pooled over both they cancel to about 0.5. So each signal also
+// gets the within-task-and-arm AUROC and CI of each arm (`byArm`), and when two
+// arms that each pass the pair and task thresholds have CIs on opposite sides of
+// 0.5, the verdict is differs-by-arm.
 import type { Session } from "../schema/index.ts";
 import { mulberry32 } from "./prng.ts";
 import { quantileSorted } from "./summary.ts";
@@ -31,7 +38,15 @@ export interface SignalRow {
   scores: Record<string, number | undefined>;
 }
 
-export type SignalVerdict = "adds-run-signal" | "tracks-difficulty" | "no-signal" | "too-few-pairs";
+export type SignalVerdict = "adds-run-signal" | "differs-by-arm" | "tracks-difficulty" | "no-signal" | "too-few-pairs";
+
+/** Within-task AUROC over one arm's pairs; `tasks` counts the tasks that hold such a pair, and the CI resamples them. */
+export interface ArmValidity {
+  auroc: number;
+  pairs: number;
+  tasks: number;
+  ci: [number, number];
+}
 
 export interface SignalValidity {
   signal: string;
@@ -42,6 +57,8 @@ export interface SignalValidity {
   withinTask: { auroc: number; pairs: number };
   /** Same task and arm; `tasks` counts the tasks that hold such a pair. The task-cluster bootstrap CI is NaN with fewer than 2 of them. */
   withinTaskArm: { auroc: number; pairs: number; tasks: number; ci: [number, number] };
+  /** The same within-task-and-arm AUROC for each arm alone; absent unless two or more arms hold a pair. */
+  byArm?: Record<string, ArmValidity>;
   verdict: SignalVerdict;
   /** A reference row (difficulty, arm, length), not a trace signal. */
   reference?: true;
@@ -177,6 +194,9 @@ export function signalValidity(input: readonly SignalRow[], opts: SignalValidity
   const failed = rows.flatMap((r, i) => (r.pass ? [] : [i]));
   const passed = rows.flatMap((r, i) => (r.pass ? [i] : []));
   const nTasks = tasks.n.length;
+  const nArms = arms.n.length;
+  const armNames: string[] = [];
+  rows.forEach((r, i) => (armNames[armIdx[i]!] ??= r.arm));
   return specs.map(({ signal, score, n, reference }) => {
     let pw = 0;
     let pp = 0;
@@ -184,6 +204,9 @@ export function signalValidity(input: readonly SignalRow[], opts: SignalValidity
     let tp = 0;
     const armW = new Array<number>(nTasks).fill(0);
     const armP = new Array<number>(nTasks).fill(0);
+    // Per arm, per task: the same pairs split by arm.
+    const perW = Array.from({ length: nArms }, () => new Array<number>(nTasks).fill(0));
+    const perP = Array.from({ length: nArms }, () => new Array<number>(nTasks).fill(0));
     for (const i of failed) {
       for (const j of passed) {
         const s = score(i, j);
@@ -197,6 +220,8 @@ export function signalValidity(input: readonly SignalRow[], opts: SignalValidity
         if (armIdx[i] !== armIdx[j]) continue;
         armW[taskIdx[i]!]! += w;
         armP[taskIdx[i]!]!++;
+        perW[armIdx[i]!]![taskIdx[i]!]! += w;
+        perP[armIdx[i]!]![taskIdx[i]!]!++;
       }
     }
     const aw = armW.reduce((s, x) => s + x, 0);
@@ -205,8 +230,20 @@ export function signalValidity(input: readonly SignalRow[], opts: SignalValidity
     const within = ap ? aw / ap : NaN;
     const ci = clusterCi(armW, armP, iters, seed, alpha);
     const pooled = pp ? pw / pp : NaN;
-    const verdict: SignalVerdict = ap < minPairs || at < minTasks ? "too-few-pairs" : ci[0] > 0.5 ? "adds-run-signal" : pooled >= 0.6 && ci[0] <= 0.5 && ci[1] >= 0.5 ? "tracks-difficulty" : "no-signal";
+    const per: [string, ArmValidity][] = [];
+    for (let g = 0; g < nArms; g++) {
+      const p = perP[g]!.reduce((s, x) => s + x, 0);
+      if (!p) continue;
+      const w = perW[g]!.reduce((s, x) => s + x, 0);
+      per.push([armNames[g]!, { auroc: w / p, pairs: p, tasks: perP[g]!.reduce((s, x) => s + (x > 0 ? 1 : 0), 0), ci: clusterCi(perW[g]!, perP[g]!, iters, seed, alpha) }]);
+    }
+    // Arms that each pass the thresholds, one CI wholly above 0.5 and another wholly below.
+    const judged = per.filter(([, a]) => a.pairs >= minPairs && a.tasks >= minTasks).map(([, a]) => a.ci);
+    const flips = judged.some((c) => c[0] > 0.5) && judged.some((c) => c[1] < 0.5);
+    const verdict: SignalVerdict =
+      ap < minPairs || at < minTasks ? "too-few-pairs" : ci[0] > 0.5 ? "adds-run-signal" : flips ? "differs-by-arm" : pooled >= 0.6 && ci[0] <= 0.5 && ci[1] >= 0.5 ? "tracks-difficulty" : "no-signal";
     const out: SignalValidity = { signal, n, pooled, withinTask: { auroc: tp ? tw / tp : NaN, pairs: tp }, withinTaskArm: { auroc: within, pairs: ap, tasks: at, ci }, verdict };
+    if (per.length >= 2) out.byArm = Object.fromEntries(per);
     if (reference) out.reference = true;
     return out;
   });
@@ -261,6 +298,7 @@ export const SIGNALS_CAPTION = "pooled AUROC mostly measures task difficulty (ar
 /**
  * The table: reference rows first, then signals; `repeated: false` adds the k ≥ 2 hint.
  * When pairs exist but come from fewer than `minTasks` tasks, a line says why no row has a verdict.
+ * A signal row with `byArm` is followed by one indented line per arm.
  */
 export function formatSignalValidity(v: readonly SignalValidity[], o: { repeated?: boolean; minTasks?: number } = {}): string {
   const lines = ["signals  " + SIGNALS_CAPTION];
@@ -273,6 +311,7 @@ export function formatSignalValidity(v: readonly SignalValidity[], o: { repeated
   const tasks = Math.max(...v.map((r) => r.withinTaskArm.tasks));
   if (tasks > 0 && tasks < minTasks) lines.push(`  needs ${minTasks} tasks: ${tasks === 1 ? "1 task has" : `${tasks} tasks have`} a failed and a passed run in the same arm, and the 95% CI resamples tasks, so no row gets a verdict (add tasks)`);
   const f = (x: number) => (Number.isFinite(x) ? x.toFixed(2) : "–");
+  const ci = (c: [number, number]) => (Number.isFinite(c[0]) ? `[${f(c[0])}, ${f(c[1])}]` : "–");
   const head = ["signal", "n", "pooled", "task", "task+arm", "95% CI", "pairs", "verdict"];
   const body = v.map((r) => [
     r.reference ? `${r.signal} (ref)` : r.signal,
@@ -280,12 +319,17 @@ export function formatSignalValidity(v: readonly SignalValidity[], o: { repeated
     f(r.pooled),
     f(r.withinTask.auroc),
     f(r.withinTaskArm.auroc),
-    Number.isFinite(r.withinTaskArm.ci[0]) ? `[${f(r.withinTaskArm.ci[0])}, ${f(r.withinTaskArm.ci[1])}]` : "–",
+    ci(r.withinTaskArm.ci),
     String(r.withinTaskArm.pairs),
     r.verdict,
   ]);
   const w = head.map((h, c) => Math.max(h.length, ...body.map((b) => b[c]!.length)));
   const row = (cells: string[]) => "  " + cells.map((x, c) => (c === 0 || c === cells.length - 1 ? x.padEnd(w[c]!) : x.padStart(w[c]!))).join("  ").trimEnd();
-  lines.push(row(head), ...body.map(row));
+  lines.push(row(head));
+  v.forEach((r, i) => {
+    lines.push(row(body[i]!));
+    if (r.reference || !r.byArm) return;
+    for (const [arm, a] of Object.entries(r.byArm)) lines.push(`    arm ${arm}  task+arm ${f(a.auroc)}  ${ci(a.ci)}  ${a.pairs} pairs, ${a.tasks} ${a.tasks === 1 ? "task" : "tasks"}`);
+  });
   return lines.join("\n");
 }

@@ -1,6 +1,6 @@
 // coding.sh sessions [--agent --repo --since --flag --limit --empty] [--where <query>] [--view <name>] [--facets [keys]]
 import type { IndexStore, SessionFilter } from "../../core/types.ts";
-import { failureFlags, isEmptySession } from "../../core/sessions.ts";
+import { failureFlags, FLAGS, isEmptySession } from "../../core/sessions.ts";
 import { facetCounts, findSessions } from "../../query/run.ts";
 import { andQuery, FACET_KEYS, scopesSubagents, type Node, type Query } from "../../query/where.ts";
 import { parsePlace, placeNode } from "../../mcp/data.ts";
@@ -53,6 +53,18 @@ function nameNodeAnyCase(name: string): Node {
 }
 
 /** "1 of these 5 sessions is flagged", "2 of these 5 sessions are flagged", "This session is flagged". */
+/**
+ * The query asks for trial sessions (`is:run`, `run:<id>`), so the list keeps them.
+ * A negated clause asks to leave them out, which the default already does.
+ */
+export function scopesRuns(n: Node | undefined, negated = false): boolean {
+  if (!n) return false;
+  if (n.t === "and" || n.t === "or") return n.items.some((x) => scopesRuns(x, negated));
+  if (n.t === "not") return scopesRuns(n.item, !negated);
+  if (negated) return false;
+  return (n.t === "is" && n.name === "run") || (n.t === "cmp" && n.key === "run");
+}
+
 export function flaggedText(flagged: number, total: number): string {
   if (total === 1) return "This session is flagged";
   return `${flagged} of these ${total} sessions ${flagged === 1 ? "is" : "are"} flagged`;
@@ -77,12 +89,15 @@ export async function run(c: CommandContext): Promise<number> {
     const scoped = withRepo(scope.where, repo, c);
     const backlog = await autoIngest(ctx, readIngest(c));
     const topOnly = !(c.flags.subagents === true || scopesSubagents(where?.root));
+    // Trial sessions (eval, compare and exp runs, CODING_SH_RUN_ID) stay out unless asked for.
+    const organicOnly = !(c.flags["include-runs"] === true || scopesRuns(where?.root));
     const base: SessionFilter = {
       ...(scope.agent ? { agent: scope.agent } : {}),
       ...(since !== undefined ? { since } : {}),
       ...(str(c.flags.project) ? { project: str(c.flags.project)! } : {}),
       ...(str(c.flags.flag) ? { flag: str(c.flags.flag)! } : {}),
     };
+    if (organicOnly) base.runId = null;
     const filter: SessionFilter = topOnly ? { ...base, parentSessionId: null } : base;
     windowNote(out, window);
     const facets = facetKeys(c.flags.facets, ctx.index.queryFacets !== undefined || ctx.index.kind === "memory");
@@ -103,6 +118,7 @@ export async function run(c: CommandContext): Promise<number> {
     const { sessions } = listing;
     if (!sessions.length) await rejectAgentTypos(ctx.index, agents);
     const hiddenChildren = topOnly ? await childCount(ctx.index, scoped, base) : 0;
+    const hiddenRuns = organicOnly ? await runCount(ctx.index, scoped, filter) : 0;
     if (out.json) {
       // Rows are a digest; --fields picks from the whole session (stats.phases, each derail's event).
       const rows = fields ? sessions.map((s) => pickFields(sessionJson(s, { derailEvents: true, phases: true }), fields)) : sessions.map((s) => sessionJson(s));
@@ -110,6 +126,7 @@ export async function run(c: CommandContext): Promise<number> {
       if (listing.capped) doc.totalCapped = true;
       if (listing.hidden) doc.hiddenEmpty = listing.hidden;
       if (hiddenChildren) doc.hiddenChildren = hiddenChildren;
+      if (hiddenRuns) doc.hiddenRuns = hiddenRuns;
       if (window.since !== undefined || window.until !== undefined) doc.window = windowJson(window);
       out.data({ ...doc, ...pendingField(backlog) });
       return 0;
@@ -118,9 +135,10 @@ export async function run(c: CommandContext): Promise<number> {
       if (listing.total > sessions.length) out.note(`${listing.total}${listing.capped ? "+" : ""} matched, ${sessions.length} shown`);
       if (listing.hidden) out.note(`(${plural(listing.hidden, "empty session")} hidden; --empty shows them)`);
     };
-    // The last line: subagent sessions the top-level list left out.
+    // The last lines: subagent sessions the top-level list left out, and trial sessions.
     const childLine = () => {
       if (hiddenChildren) out.note(`${plural(hiddenChildren, "child session")} not shown (--subagents)`);
+      if (hiddenRuns) out.note(`${plural(hiddenRuns, "session")} from eval, compare or exp runs not shown (--include-runs)`);
     };
     if (!sessions.length) {
       out.note("No sessions");
@@ -142,8 +160,10 @@ export async function run(c: CommandContext): Promise<number> {
         ago(s.startedAt),
         s.endedAt !== undefined ? duration(s.endedAt - s.startedAt) : "-",
         String(s.stats.turns),
-        s.stats.toolErrors ? `${s.stats.toolCalls} (${s.stats.toolErrors} failed)` : String(s.stats.toolCalls),
-        tty ? oneLine(clean(s.title ?? ""), 60) : clean(s.title ?? "").replace(/[\t\n]+/g, " "),
+        // "-": the source records model calls only (tools:unseen), so 0 would claim too much.
+        s.stats.toolErrors ? `${s.stats.toolCalls} (${s.stats.toolErrors} failed)` : !s.stats.toolCalls && s.flags.includes(FLAGS.toolsUnseen) ? "-" : String(s.stats.toolCalls),
+        // Off a TTY the row stays one line a reader can scan; --json keeps the whole title.
+        oneLine(clean(s.title ?? ""), tty ? 60 : 100),
       ]),
     );
     footer();
@@ -223,6 +243,21 @@ async function childCount(index: IndexStore, scoped: Query | undefined, filter: 
   const root = andQuery(scoped?.root ? { root: { t: "or", items: [scoped.root] } } : {}, { t: "is", name: "child", at: 0 });
   try {
     const r = await facetCounts(index, root, ["agent"], { filter, limit: 1000 });
+    return (r.agent ?? []).reduce((n, x) => n + x.count, 0);
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Trial sessions (a run id: eval, compare, exp) the same filters match, which the list leaves out:
+ * one facet query, as childCount. 0 when the store can't count them.
+ */
+async function runCount(index: IndexStore, scoped: Query | undefined, filter: SessionFilter): Promise<number> {
+  const { runId: _organic, ...rest } = filter;
+  const root = andQuery(scoped?.root ? { root: { t: "or", items: [scoped.root] } } : {}, { t: "is", name: "run", at: 0 });
+  try {
+    const r = await facetCounts(index, root, ["agent"], { filter: rest, limit: 1000 });
     return (r.agent ?? []).reduce((n, x) => n + x.count, 0);
   } catch {
     return 0;

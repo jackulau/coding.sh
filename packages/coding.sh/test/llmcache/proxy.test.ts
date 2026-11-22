@@ -1,9 +1,9 @@
 // X-11: the record/replay proxy against a stub upstream and a 3-call script.
 import assert from "node:assert/strict";
-import { rmSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { after, before, describe, test } from "node:test";
 import { startLlmCache, type LlmCache, type LlmStats } from "../../src/llmcache/proxy.ts";
-import { readRecording, recordingPath } from "../../src/llmcache/store.ts";
+import { readRecording, recordingMarkers, recordingPath } from "../../src/llmcache/store.ts";
 import { API_KEY, recordingTexts, startStub, threeCalls, tmp, type ScriptOpts, type Stub } from "./_stub.ts";
 
 let stub: Stub;
@@ -237,6 +237,35 @@ describe("llm cache proxy", () => {
       assert.equal(status, 403);
       await job.close();
     });
+  });
+
+  test("a job marks its recording as in progress from its first call until it closes, so purge can wait for it", async () => {
+    await withCache({ mode: "record" }, async (c) => {
+      const job = await c.job({ expId: "exp_mark", caseId: "case-1", trial: 1 });
+      assert.deepEqual(recordingMarkers(dir).filter((m) => m.expId === "exp_mark"), [], "no marker before the first call");
+      await threeCalls(job.anthropicBaseUrl);
+      const marks = recordingMarkers(dir).filter((m) => m.expId === "exp_mark");
+      assert.equal(marks.length, 1);
+      assert.equal(marks[0]!.pid, process.pid);
+      assert.equal(typeof marks[0]!.startedAt, "number");
+      await job.close();
+      assert.deepEqual(recordingMarkers(dir).filter((m) => m.expId === "exp_mark"), [], "closing the job removes its marker");
+      assert.equal((await readRecording(recordingPath(dir, "exp_mark", "case-1", 1)))?.length, 3);
+    });
+  });
+
+  test("a job whose recording can't be written removes its marker all the same", async () => {
+    // A folder where the recording goes: the rename onto it fails.
+    mkdirSync(recordingPath(dir, "exp_markfail", "case-1", 1), { recursive: true });
+    const warn: string[] = [];
+    await withCache({ mode: "record", warn }, async (c) => {
+      const job = await c.job({ expId: "exp_markfail", caseId: "case-1", trial: 1 });
+      await threeCalls(job.anthropicBaseUrl);
+      assert.equal(recordingMarkers(dir).filter((m) => m.expId === "exp_markfail").length, 1);
+      await job.close();
+    });
+    assert.ok(warn.some((w) => w.includes("couldn't write")), warn.join("\n"));
+    assert.deepEqual(recordingMarkers(dir).filter((m) => m.expId === "exp_markfail"), []);
   });
 
   test("OpenAI chat completions go through the job's /v1 base URL", async () => {

@@ -35,7 +35,7 @@ function writeRun(projects: string): void {
     { ...base, type: "assistant", uuid: "a1", parentUuid: "u1", timestamp: iso(T0 + 3000), message: { id: "msg_a1", type: "message", role: "assistant", model: "claude-opus-5-5", content: [{ type: "text", text: `Cloned with ${TOKEN}` }], stop_reason: "end_turn", usage: { input_tokens: 5, output_tokens: 20 } } },
   ];
   writeFileSync(join(runDir, "agent-a0.jsonl"), lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
-  const journal = [{ type: "launched", runId: RUN }, { type: "started", key: "v2:a0", agentId: "a0", label: "clone", phase: "Work" }, { type: "result", key: "v2:a0", agentId: "a0", result: { ok: true }, toolsUsed: [] }];
+  const journal = [{ type: "launched", runId: RUN }, { type: "started", key: "v2:a0", agentId: "a0", label: "clone", phase: "Work" }, { type: "result", key: "v2:a0", agentId: "a0", result: { ok: true, note: `cloned with ${TOKEN}` }, toolsUsed: [] }];
   writeFileSync(join(runDir, "journal.jsonl"), journal.map((j) => JSON.stringify(j)).join("\n") + "\n");
 }
 
@@ -64,8 +64,28 @@ describe("importClaudeWorkflows redaction", () => {
     const dec = new TextDecoder();
     for (const bytes of blobs.data.values()) assert.ok(!dec.decode(bytes).includes(TOKEN), "no raw token in a blob");
 
+    // The agent's return value, stored for `workflows score`, takes the same rules.
+    const store = new WorkflowStore(join(root, "store"));
+    const node = (await store.getRun(RUN))?.nodes.find((n) => n.output);
+    assert.ok(node?.output, "the agent's return value is stored");
+    assert.deepEqual(await store.getValue(node.output), { ok: true, note: "cloned with [redacted:github-token]" });
+    for await (const ref of store.blobs.list()) assert.ok(!(await store.blobs.getText(ref))?.includes(TOKEN), "no raw token in a workflow blob");
+
     // Redaction keeps cost estimation: the profile also prices the calls.
     const child = [...index.sessions.values()].find((s) => s.parent?.sessionId === SID);
     assert.ok(child?.stats.usage?.costUsd !== undefined && child.stats.usage.costUsd > 0);
+  });
+
+  it("keeps no agent return values in metadata mode: an imported run is passive capture, like a session", async () => {
+    const env = { HOME: join(root, "home"), CODING_SH_HOME: join(root, "csh-meta") };
+    const config = defaultConfig(env);
+    const profile = profileCache({ ...config, capture: { ...config.capture, mode: "metadata" } }, env, () => {})(undefined);
+    const store = new WorkflowStore(join(root, "store-meta"));
+    const r = await importClaudeWorkflows({ root: join(root, "projects"), store, index: new MemIndex(), blobs: new MemBlobs(), profile, concurrencyCap: 2 });
+    assert.equal(r.imported.length, 1);
+    const got = await store.getRun(RUN);
+    assert.ok(got && got.nodes.length > 0);
+    assert.deepEqual(got.nodes.filter((n) => n.output).map((n) => n.id), []);
+    assert.equal(got.run.output, undefined);
   });
 });

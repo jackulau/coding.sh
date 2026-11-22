@@ -64,7 +64,7 @@ describe("--where on CLI, MCP and HTTP", () => {
 
   for (const q of QUERIES) {
     test(q, async () => {
-      const viaCli = (JSON.parse(ok(["sessions", "--subagents", "--limit", "100", "--where", q, "--json"]).stdout) as { sessions: { id: string }[] }).sessions.map((s) => s.id);
+      const viaCli = (JSON.parse(ok(["sessions", "--subagents", "--include-runs", "--limit", "100", "--where", q, "--json"]).stdout) as { sessions: { id: string }[] }).sessions.map((s) => s.id);
       const viaHttp = ((await http(`/api/sessions?limit=100&where=${encodeURIComponent(q)}`)).json.items as { id: string }[]).map((s) => s.id);
       const mcp = (await tool("sessions_list").run({ where: q, includeSubagents: true, limit: 100 }, ctx)) as { sessions: { id: string }[] };
       const viaMcp = mcp.sessions.map((s) => s.id);
@@ -76,7 +76,7 @@ describe("--where on CLI, MCP and HTTP", () => {
 
   test("facets agree on CLI, MCP and HTTP", async () => {
     const q = "agent:codex";
-    const viaCli = JSON.parse(ok(["sessions", "--subagents", "--facets", "agent,tool", "--where", q, "--json"]).stdout).facets;
+    const viaCli = JSON.parse(ok(["sessions", "--subagents", "--include-runs", "--facets", "agent,tool", "--where", q, "--json"]).stdout).facets;
     const viaHttp = (await http(`/api/facets?keys=agent,tool&limit=10&where=${encodeURIComponent(q)}`)).json.facets;
     const viaMcp = ((await tool("sessions_list").run({ where: q, includeSubagents: true, facets: ["agent", "tool"] }, ctx)) as { facets: unknown }).facets;
     assert.deepEqual(viaHttp, viaCli);

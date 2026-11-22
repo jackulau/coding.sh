@@ -201,13 +201,13 @@ describe("a migration never strands another install", () => {
     assert.ok(r.stderr.includes(owner), "names the owner's path");
     assert.match(r.stderr, new RegExp(`v${OLD}\\b`));
     assert.match(r.stderr, new RegExp(`v${SQLITE_SCHEMA_VERSION}\\b`));
-    assert.match(r.stderr, /coding\.sh upgrade-store/);
+    assert.match(r.stderr, /(?:coding\.sh|codingsh) upgrade-store/);
     assert.equal(await schemaOf(index), OLD, "the store was not migrated");
 
     const j = run(INSTALLED_CLI, ["sessions", "--json"], home);
     const err = JSON.parse(j.stderr) as { reason: string; next: string[]; askUser?: boolean };
     assert.equal(err.reason, "store_owned");
-    assert.ok(err.next.some((n) => n.includes("coding.sh upgrade-store")));
+    assert.ok(err.next.some((n) => /(?:coding\.sh|codingsh) upgrade-store/.test(n)));
     assert.equal(err.askUser, true, "an agent asks the user before stranding their other install");
     assert.equal(await schemaOf(index), OLD);
   });
@@ -260,7 +260,7 @@ describe("a migration never strands another install", () => {
     ownedBy(data, oldInstall("0.1.2"));
     const r = run(CHECKOUT_CLI, ["sessions"], home, { CODING_SH_DEV_REAL_STORE: "1" });
     assert.equal(r.status, 1, r.stderr);
-    assert.match(r.stderr, /coding\.sh upgrade-store/);
+    assert.match(r.stderr, /(?:coding\.sh|codingsh) upgrade-store/);
     assert.equal(await schemaOf(index), OLD);
   });
 });

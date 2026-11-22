@@ -1,10 +1,11 @@
 // Helpers shared by command modules (loaded only after dispatch).
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { ConfigEnvError, ConfigError } from "../core/config.ts";
 import { openContext, storeOpenNext, StoreMissingError, type Context } from "../core/context.ts";
 import type { IngestError } from "../core/ingest.ts";
-import { isEmptySession } from "../core/sessions.ts";
-import type { EvalTask, IndexStore, Session, SessionFilter } from "../core/types.ts";
+import { AmbiguousRef, findSessionRef, MIN_ID_PREFIX } from "../core/session-ref.ts";
+import type { EvalTask, IndexStore, Session } from "../core/types.ts";
 import type { GateOpts } from "../stats/tests.ts";
 import { andQuery, parseWhere, QueryError, QueryUnsupported, timeBounds, type Node, type Query } from "../query/where.ts";
 import { utcOffset, wallText, type When } from "../query/time.ts";
@@ -17,6 +18,7 @@ import { version } from "./meta.ts";
 import { acquireLock, isLocked, type LockOptions, wakeMarker } from "../core/lock.ts";
 import { spawnBackgroundIngest } from "../spool/kick.ts";
 import { suggest, UsageError, type FlagValue } from "./args.ts";
+import { cliCommand } from "./next-steps.ts";
 import { ago, CliError, plural, type Output } from "./output.ts";
 import type { CommandContext } from "./types.ts";
 import { noSessionsNext, noSessionsNextLines } from "./first-session.ts";
@@ -45,9 +47,21 @@ export function storeOpenError(e: unknown, env: NodeJS.ProcessEnv): CliError {
   if (e instanceof StoreVersionError) return storeVersionError(e);
   if (e instanceof StoreNewerError) return storeNewerError(e, env);
   if (e instanceof StoreMissingError) return new CliError(e.message, { reason: e.reason, next: e.next, data: { path: e.path } });
+  // A config.toml that does not load for a key outside [store] ([capture], [snapshot], invalid TOML…): the
+  // file is the problem, as `config get` says, not the store it names.
+  if (e instanceof ConfigError && !(e instanceof ConfigEnvError) && !configStoreKey(e)) {
+    const file = e.file ?? paths(env).config;
+    return new CliError(`Can't read config: ${e.message}`, { reason: "invalid_config", next: ["Fix the file at:", file] });
+  }
   // NoFts5Error (store/sqlite.ts, not loaded here until a store opens).
   if (e instanceof Error && (e as { reason?: unknown }).reason === "no_fts5") return new CliError(`Couldn't open the coding.sh store: ${e.message}`, { reason: "no_fts5", next: ["Install Node 22.16 or newer"] });
   return new CliError(`Couldn't open the coding.sh store: ${e instanceof Error ? e.message : String(e)}`, { reason: "store_unavailable", next: storeOpenNext(env, e) });
+}
+
+/** Whether a config error is about the [store] section (its keys, or the store URL they make). */
+function configStoreKey(e: ConfigError): boolean {
+  const msg = e.file && e.message.startsWith(`${e.file}: `) ? e.message.slice(e.file.length + 2) : e.message;
+  return /^(\[store\]|store\b)/.test(msg);
 }
 
 /** Pending migrations of a store another install owns: the user decides on `coding.sh upgrade-store`. */
@@ -81,7 +95,8 @@ export function storeNewerError(e: StoreNewerError, env: NodeJS.ProcessEnv): Cli
   const waiting = spool.files ? `${plural(spool.files, "capture file")} wait${spool.files === 1 ? "s" : ""} in the spool (${p.spool})` : `new captures wait in the spool (${p.spool})`;
   // The index from before the migration, when this coding.sh can open it.
   const backup = listBackups(e.path).find((b) => b.schema <= e.known);
-  const restore = backup ? ` To go back instead, ${UPGRADE_STORE} --restore puts back the index from before the migration (v${backup.schema}).` : "";
+  // Inside the message, not a next line Output names for the shell: name the CLI here (cliCommand).
+  const restore = backup ? ` To go back instead, ${cliCommand(env, ["upgrade-store", "--restore"])} puts back the index from before the migration (v${backup.schema}).` : "";
   return new CliError(`${e.path} uses index schema v${e.schema}${by}, but this coding.sh ${version()} only knows up to v${e.known}. Your captures are safe: ${waiting} and ${spool.files === 1 ? "is" : "are"} indexed once a coding.sh that knows v${e.schema} runs.${restore}`, {
     reason: "store_newer",
     next: [`Install ${e.writer ? `coding.sh ${e.writer.version} or newer` : `a coding.sh that knows index schema v${e.schema}`}:`, "coding.sh update"],
@@ -301,6 +316,27 @@ async function kickReparse(ctx: Context, env: NodeJS.ProcessEnv): Promise<void> 
   }
 }
 
+/**
+ * Whether the index is being rebuilt after an upgrade: a re-parse holds reparse.lock, or the
+ * sessions were last folded by an older coding.sh and the background ingest kickReparse starts
+ * folds them again. A session is rewritten whole, so one not reached yet shows the stats of the
+ * old fold. Two reads of the cursors table; never fails a read.
+ */
+export async function refolding(ctx: Context, env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
+  // A remote store is not rebuilt by this machine's ingest.
+  if (ctx.storeOverridden) return false;
+  try {
+    if (isLocked(ctx.paths.reparseLock)) return true;
+    // Nothing refolds with background ingests off, or in a store that keeps no event rows to fold from.
+    if (env.CODING_SH_NO_AUTO_INGEST === "1" || !ctx.index.replaceSessionEvents) return false;
+    const [{ REFOLD_CURSOR }, { foldStamp }] = await Promise.all([import("../core/ingest.ts"), import("../core/sessions.ts")]);
+    if ((await ctx.index.getCursor(REFOLD_CURSOR)) === foldStamp()) return false;
+    return (await ctx.index.listSessions({ limit: 1 })).length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /** The CLI a background ingest runs: this one (the bundle, or src/cli/main.ts from source), else the one init recorded. */
 export function ingestCli(pointer: string): string | undefined {
   const argv1 = process.argv[1];
@@ -411,134 +447,42 @@ export async function resolveTask(ctx: Context, ref: string): Promise<EvalTask> 
   throw new CliError(`Can't find task ${JSON.stringify(ref)}`, { reason: "not_found", next: ["List tasks:", "coding.sh eval list"] });
 }
 
-/** Exact session id, or "latest" (newest top-level session). Never prefix-matches. */
+/**
+ * The session a reference names (core/session-ref.ts findSessionRef, which the MCP tools and
+ * `work show` use too): the exact id, "latest" or "last" (the newest top-level session worth
+ * opening), a unique prefix of at least MIN_ID_PREFIX characters like a git short hash, an SDK id
+ * without its default project, a subagent's own id, or a short subagent id (shortSessionId). An
+ * ambiguous prefix fails with the candidates listed (data.candidates in --json).
+ */
 export async function resolveSession(ctx: Context, id: string): Promise<Session> {
-  if (id === "latest" || id === "last") {
-    const s = await latestSession(ctx.index);
-    if (!s) throw new CliError("No sessions captured yet", { reason: "not_found", next: noSessionsNextLines(ctx.env) });
-    return s;
+  let s: Session | undefined;
+  try {
+    s = await findSessionRef(ctx.index, id);
+  } catch (e) {
+    if (e instanceof AmbiguousRef) throw ambiguousError(e);
+    throw e;
   }
-  const s = (await ctx.index.getSession(id)) ?? (await sessionByPrefix(ctx, id)) ?? (await sdkSession(ctx, id)) ?? (await subagentById(ctx, id)) ?? (await subagentByShortId(ctx, id));
-  if (!s) {
-    const short = id.length < MIN_ID_PREFIX ? ` (an id prefix needs at least ${MIN_ID_PREFIX} characters)` : "";
-    throw new CliError(`Can't find session ${JSON.stringify(id)}${short}`, { reason: "not_found", next: ["List sessions:", "coding.sh sessions"] });
-  }
-  return s;
+  if (s) return s;
+  if (id === "latest" || id === "last") throw new CliError("No sessions captured yet", { reason: "not_found", next: noSessionsNextLines(ctx.env) });
+  const short = id.length < MIN_ID_PREFIX ? ` (an id prefix needs at least ${MIN_ID_PREFIX} characters)` : "";
+  throw new CliError(`Can't find session ${JSON.stringify(id)}${short}`, { reason: "not_found", next: ["List sessions:", "coding.sh sessions"] });
+}
+
+/** An ambiguous prefix as the CLI reports it: each candidate by the shortest id that names it alone. */
+function ambiguousError(e: AmbiguousRef): CliError {
+  const lines = e.candidates.map((x) => `  ${x.shortId}  ${x.agent}  ${ago(x.startedAt)}  ${oneLine(x.title ?? "", 50)}`.trimEnd());
+  if (e.more) lines.push(`  …and more`);
+  return new CliError(`Session id prefix ${JSON.stringify(e.ref)} is ambiguous. It matches:\n${lines.join("\n")}`, {
+    reason: "ambiguous",
+    next: ["Pass one of these ids, more of the id, or list sessions:", "coding.sh sessions"],
+    data: { candidates: e.candidates.map((x) => ({ id: x.id, shortId: x.shortId, agent: x.agent, startedAt: new Date(x.startedAt).toISOString(), title: x.title ?? null })), more: e.more },
+  });
 }
 
 // In args.ts, so main.ts quotes its hints without loading this module.
 export { shellQuote } from "./args.ts";
 
-/**
- * The newest top-level session worth looking at: the newest one that is not empty (a hook with
- * no work behind it), else the newest of all. When that session is an agent run under
- * `coding.sh run` (no snapshots of its own), the wrapper session around it, the one `run`
- * printed, which holds the start and end snapshots `eval new` needs. Sessions with a run id
- * (eval, compare and experiment trials carry one) count only when there are no others.
- */
-export async function latestSession(index: IndexStore): Promise<Session | undefined> {
-  return (await newestSession(index, { runId: null })) ?? (await newestSession(index, {}));
-}
-
-/** {@link latestSession} among the top-level sessions `filter` keeps. */
-async function newestSession(index: IndexStore, filter: SessionFilter): Promise<Session | undefined> {
-  const page = 50;
-  let newest: Session | undefined;
-  for (let offset = 0; offset < page * 4; offset += page) {
-    const rows = await index.listSessions({ ...filter, limit: page, offset, parentSessionId: null });
-    newest ??= rows[0];
-    const hit = rows.find((s) => !isEmptySession(s));
-    if (hit) return (await wrapperAround(index, hit)) ?? hit;
-    if (rows.length < page) break;
-  }
-  return newest;
-}
-
-/** The `coding.sh run` wrapper session that was running when `s` started, when `s` has no snapshots of its own. */
-async function wrapperAround(index: IndexStore, s: Session): Promise<Session | undefined> {
-  if (s.agent === "wrapper" || s.repo?.snapshot || s.endSnapshot) return undefined;
-  const wrappers = await index.listSessions({ agent: "wrapper", since: s.startedAt - 6 * 3600e3, limit: 20, parentSessionId: null });
-  return wrappers.find((w) => w.startedAt <= s.startedAt && (w.endedAt === undefined || w.endedAt >= s.startedAt) && (!w.cwd || !s.cwd || w.cwd === s.cwd));
-}
-
-/** Shortest prefix that may stand for a session id (git's minimum for short hashes). */
-export const MIN_ID_PREFIX = 4;
-const MAX_CANDIDATES = 10;
-
-/**
- * The session a unique id prefix names, like a git short hash. An ambiguous
- * prefix fails with the candidates listed (data.candidates in --json).
- */
-async function sessionByPrefix(ctx: Context, prefix: string): Promise<Session | undefined> {
-  if (prefix.length < MIN_ID_PREFIX) return undefined;
-  const ids = ctx.index.sessionIdsByPrefix
-    ? await ctx.index.sessionIdsByPrefix(prefix, MAX_CANDIDATES + 1)
-    : (await ctx.index.listSessions()).map((s) => s.id).filter((x) => x.startsWith(prefix)).sort().slice(0, MAX_CANDIDATES + 1);
-  return pickSession(ctx, prefix, ids);
-}
-
-/**
- * An SDK session id as the user wrote it (`tenant-7/conv-123`): the server stores it under the
- * default project (`default/tenant-7/conv-123`, see server/project.ts scopeSessionId).
- */
-async function sdkSession(ctx: Context, id: string): Promise<Session | undefined> {
-  if (!id.includes("/") || id.startsWith("default/")) return undefined;
-  const scoped = `default/${id}`;
-  return (await ctx.index.getSession(scoped)) ?? (await sessionByPrefix(ctx, scoped));
-}
-
-/** A subagent by the id its transcript carries (`a33e97aa…`), without its parent's id in front of it. */
-async function subagentById(ctx: Context, id: string): Promise<Session | undefined> {
-  if (id.length < MIN_ID_PREFIX || id.includes(":")) return undefined;
-  const marker = `:sub:${id}`;
-  const ids = (await ctx.index.listSessions()).map((s) => s.id).filter((x) => x.includes(marker)).sort().slice(0, MAX_CANDIDATES + 1);
-  return pickSession(ctx, id, ids);
-}
-
-/**
- * A session id short enough for a table: its first 8 characters, and for a subagent
- * (`<parent>:sub:<agentId>`) 8 of each part (`a03d2f6b:sub:a7d49789`), so it does not read as
- * its parent. resolveSession takes it back.
- */
-export function shortSessionId(id: string): string {
-  return id.split(":sub:").map((part) => part.slice(0, 8)).join(":sub:");
-}
-
-/** A subagent by its short id (shortSessionId): each `:sub:` part a prefix of the same part of the stored id. */
-async function subagentByShortId(ctx: Context, id: string): Promise<Session | undefined> {
-  const parts = id.split(":sub:");
-  if (parts.length < 2 || parts[0]!.length < MIN_ID_PREFIX || parts.some((p) => !p)) return undefined;
-  const ids = (await ctx.index.listSessions())
-    .map((s) => s.id)
-    .filter((x) => {
-      const xs = x.split(":sub:");
-      return xs.length === parts.length && xs.every((p, i) => p.startsWith(parts[i]!));
-    })
-    .sort()
-    .slice(0, MAX_CANDIDATES + 1);
-  return pickSession(ctx, id, ids);
-}
-
-/**
- * The one session `ids` stand for. A parent X with its subagents X:sub:* is X, so a prefix of a
- * parent id does not turn ambiguous because its subagents share it. Else an ambiguous prefix
- * fails with the candidates listed (data.candidates in --json).
- */
-async function pickSession(ctx: Context, prefix: string, ids: string[]): Promise<Session | undefined> {
-  if (ids.length === 0) return undefined;
-  if (ids.length === 1) return ctx.index.getSession(ids[0]!);
-  const parent = ids.find((x) => !x.includes(":sub:"));
-  if (parent !== undefined && ids.every((x) => x === parent || x.startsWith(`${parent}:sub:`))) return ctx.index.getSession(parent);
-  const shown = (await Promise.all(ids.slice(0, MAX_CANDIDATES).map((x) => ctx.index.getSession(x)))).filter((x): x is Session => x !== undefined);
-  shown.sort((a, b) => b.startedAt - a.startedAt);
-  const lines = shown.map((x) => `  ${x.id}  ${x.agent}  ${ago(x.startedAt)}  ${oneLine(x.title ?? "", 50)}`.trimEnd());
-  if (ids.length > MAX_CANDIDATES) lines.push(`  …and more`);
-  throw new CliError(`Session id prefix ${JSON.stringify(prefix)} is ambiguous. It matches:\n${lines.join("\n")}`, {
-    reason: "ambiguous",
-    next: ["Use more of the id, or list sessions:", "coding.sh sessions"],
-    data: { candidates: shown.map((x) => ({ id: x.id, agent: x.agent, startedAt: new Date(x.startedAt).toISOString(), title: x.title ?? null })), more: ids.length > MAX_CANDIDATES },
-  });
-}
+export { latestSession, MIN_ID_PREFIX, shortSessionId } from "../core/session-ref.ts";
 
 /** `--where <query>`, parsed; undefined without the flag. A bad query is a usage error (exit 2) naming where it broke. */
 export function whereFlag(c: CommandContext): Query | undefined {
@@ -799,16 +743,17 @@ export function sessionJson(s: Session, keep: SessionJsonKeep = {}): Record<stri
   const stats: Record<string, unknown> = rest;
   if (derails) stats.derails = keep.derailEvents ? derails : derails.map(({ eventId: _e, index: _i, ...d }) => d);
   if (keep.phases && phases) stats.phases = phases;
-  const out: Record<string, unknown> = {
-    id: s.id,
-    agent: s.agent,
+  const out: Record<string, unknown> = { id: s.id, agent: s.agent };
+  // The host app that drove the agent (T3 Code): absent for a session no host drove.
+  if (s.host) out.host = s.host;
+  Object.assign(out, {
     ...(s.provider ? { provider: s.provider } : {}),
     ...(s.project ? { project: s.project } : {}),
     title: s.title ?? null,
     model: s.model ?? null,
     cwd: s.cwd ?? null,
     repo: s.repo?.root ?? null,
-  };
+  });
   // A linked worktree's session: the main checkout's root (RepoState.main). Absent elsewhere.
   if (s.repo?.main) out.repoMain = s.repo.main;
   return Object.assign(out, {
@@ -823,7 +768,7 @@ export function sessionJson(s: Session, keep: SessionJsonKeep = {}): Record<stri
 }
 
 /** The fields of one session in --json, for --fields. */
-export const SESSION_FIELDS = ["id", "agent", "provider", "project", "title", "model", "cwd", "repo", "repoMain", "branch", "startedAt", "endedAt", "durationMs", "parentSessionId", "flags", "stats"] as const;
+export const SESSION_FIELDS = ["id", "agent", "host", "provider", "project", "title", "model", "cwd", "repo", "repoMain", "branch", "startedAt", "endedAt", "durationMs", "parentSessionId", "flags", "stats"] as const;
 
 /**
  * --fields: the paths to keep of a --json document (`id,title,stats.usage.costUsd`), or undefined

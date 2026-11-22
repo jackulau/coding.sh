@@ -158,9 +158,13 @@ describe("show <prefix> resolves a unique session id prefix, like git", () => {
         await assert.rejects(resolveSession(ctx, "9f1c"), (e: CliError) => {
           assert.equal(e.reason, "ambiguous");
           assert.match(e.message, /Session id prefix "9f1c" is ambiguous/);
-          assert.match(e.message, new RegExp(`^  ${ids[0]}  claude-code  \\d+s ago`, "m"));
-          assert.match(e.message, new RegExp(`^  ${ids[1]}  claude-code  1m ago`, "m"));
-          assert.deepEqual((e.data as { candidates: { id: string }[] }).candidates.map((x) => x.id), [ids[0], ids[1]]);
+          // Each candidate by the shortest id that picks it (core/session-ref.ts); --json keeps the full one beside it.
+          assert.match(e.message, new RegExp(`^  ${ids[0]!.slice(0, 8)}  claude-code  \\d+s ago`, "m"));
+          assert.match(e.message, new RegExp(`^  ${ids[1]!.slice(0, 8)}  claude-code  1m ago`, "m"));
+          assert.deepEqual((e.data as { candidates: { id: string; shortId: string }[] }).candidates.map((x) => [x.id, x.shortId]), [
+            [ids[0], ids[0]!.slice(0, 8)],
+            [ids[1], ids[1]!.slice(0, 8)],
+          ]);
           return true;
         });
         await assert.rejects(resolveSession(ctx, "9f1"), (e: CliError) => e.reason === "not_found" && /at least 4 characters/.test(e.message));

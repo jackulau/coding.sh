@@ -54,9 +54,16 @@ describe("exact", () => {
     assert.equal((await exactGrader().grade(ctx({ a: 1 }, { a: 2 }))).pass, false);
     assert.equal((await exactGrader().grade(ctx("42", 42))).pass, true);
     assert.equal((await exactGrader({ value: "x" }).grade(ctx("x"))).pass, true);
-    const none = await exactGrader().grade(ctx("x"));
-    assert.equal(none.pass, false);
-    assert.match(none.reason ?? "", /no expected/);
+  });
+
+  it("a case with nothing to compare with is a grader error, not a fail", async () => {
+    // A fail would lower the pass rate; an error leaves the case ungraded (exp run) and exits 2 (judge grade).
+    await assert.rejects(exactGrader().grade(ctx("x")), /no expected value to compare with: .*"value"/);
+    await assert.rejects(containsGrader().grade(ctx("x")), /no substring/);
+    await assert.rejects(numericGrader().grade(ctx("42")), /no numeric expected value/);
+    await assert.rejects(similarityGrader().grade(ctx("x")), /no expected value/);
+    await assert.rejects(jsonPathGrader({ path: "$.a" }).grade(ctx({ a: 1 })), /"equals"/);
+    assert.equal((await jsonPathGrader({ path: "$.a" }).grade(ctx({ b: 1 }))).pass, false, "a path missing from the output still fails");
   });
 
   it("versions hash the config, not the name", () => {
@@ -359,5 +366,19 @@ describe("createGrader", () => {
   it("an unknown provider is rejected instead of silently falling back", async () => {
     await assert.rejects(createGrader({ kind: "llm", name: "x", rubric: "r", provider: "mistral" as never }), /unknown provider "mistral"/);
     await assert.rejects(createGrader({ kind: "llm", name: "x", rubric: "r", provider: "mock", mockAnswer: "maybe" as never }), /answer must be "yes" or "no"/);
+  });
+  it("refuses a key the spec does not read, naming it", async () => {
+    // Each of these was dropped before, which changed the verdict: not critical, not negated, not case-insensitive.
+    const check = { name: "ran-command", args: { command: "sed -i" } };
+    await assert.rejects(createGrader({ kind: "llm-checklist", name: "r", provider: "mock", items: [{ id: "sed", question: "Ran sed?", critcal: true, check }] } as never), /unknown key "critcal" in checklist item "sed"\. Did you mean "critical"\?/);
+    await assert.rejects(createGrader({ kind: "llm-checklist", name: "r", provider: "mock", items: [{ id: "push", question: "Never force pushed?", negate: true, check }] } as never), /unknown key "negate" in checklist item "push"\. Put "negate" in the item's "check"/);
+    await assert.rejects(createGrader({ kind: "llm-checklist", name: "r", provider: "mock", items: [{ id: "c", question: "q", check: { ...check, negat: true } }] } as never), /unknown key "negat" in the check of checklist item "c"/);
+    await assert.rejects(createGrader({ kind: "exact", nromalize: { caseInsensitive: true } } as never), /unknown key "nromalize" in the exact grader\. Did you mean "normalize"\?/);
+    await assert.rejects(createGrader({ kind: "exact", normalize: { caseinsensitve: true } } as never), /unknown key "caseinsensitve" in the exact grader's normalize/);
+    await assert.rejects(createGrader({ kind: "llm", name: "x", rubric: "r", provider: "mock", modle: "m" } as never), /unknown key "modle"/);
+    await assert.rejects(createGrader({ kind: "objective", base: 1, ref: 2, anchoredAt: "2026-01-01", gate: { kind: "regex", pattern: "x", flag: "i" } } as never), /unknown key "flag" in the regex grader/);
+    // Every key a spec does read still builds.
+    await createGrader({ kind: "llm-checklist", name: "r", provider: "mock", model: "m", mode: "batched", abstain: true, passThreshold: 0.5, items: [{ id: "a", question: "q", critical: true, weight: 2, dimension: "d", violationExample: "v", check: { ...check, negate: true } }] });
+    await createGrader({ kind: "contains", name: "c", value: "x", mode: "any", negate: true, normalize: { trim: true, caseInsensitive: true, collapseWhitespace: true, stripPunctuation: true, unicode: true } });
   });
 });

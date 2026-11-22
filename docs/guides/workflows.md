@@ -54,7 +54,11 @@ snapshot = "/tmp/seeded-1"       # the clean tree with the bugs applied
 
 Relative paths start from the case file's folder, so `../../../..` is the repo root. The truth file
 must not sit inside `repoRoot` or `snapshot`, where the agents could read it, so here it is outside
-the repo. It lists the planted bugs:
+the repo.
+
+The same holds for each bug's `patch`: a case whose patch is inside either tree is refused,
+with a folder to move it to. A `patch` already stored as a 64-character blob ref is not a file and is
+not checked. The truth file lists the planted bugs:
 
 ```json title=/tmp/review-truth/seeded-1.json
 {"bugs": [

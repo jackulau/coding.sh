@@ -734,6 +734,15 @@ const CACHE_SIZE_KIB = 16_000;
 /** Writer locks this process holds, by lock path (see acquireWriterLock). */
 const heldWriterLocks = new Set<string>();
 
+/** The stats JSON as stored: provider and host have no column, so they ride inside it (rowToSession takes them out). */
+function storedStats(s: Session): Session["stats"] & { provider?: string; host?: string } {
+  if (!s.provider && !s.host) return s.stats;
+  const out: Session["stats"] & { provider?: string; host?: string } = { ...s.stats };
+  if (s.provider) out.provider = s.provider;
+  if (s.host) out.host = s.host;
+  return out;
+}
+
 function rowToSession(r: Row): Session {
   const s: Session = {
     id: r.id as string,
@@ -742,9 +751,11 @@ function rowToSession(r: Row): Session {
     stats: parse<Session["stats"]>(r.stats)!,
     flags: parse<string[]>(r.flags) ?? [],
   };
-  // provider rides in the stats JSON (no column; see upsertSession).
-  const { provider, ...stats } = s.stats as Session["stats"] & { provider?: string };
-  if (typeof provider === "string") (s.stats = stats), (s.provider = provider);
+  // provider and host ride in the stats JSON (no column; see upsertSession).
+  const { provider, host, ...stats } = s.stats as Session["stats"] & { provider?: string; host?: string };
+  if (typeof provider === "string" || typeof host === "string") s.stats = stats;
+  if (typeof provider === "string") s.provider = provider;
+  if (typeof host === "string") s.host = host;
   const set = <K extends keyof Session>(k: K, v: Session[K] | undefined) => {
     if (v !== undefined) s[k] = v;
   };
@@ -775,7 +786,8 @@ function parseEventCursor(c: string | undefined): { ts: number; rowid: number } 
 function filterSql(f: Omit<SessionFilter, "limit" | "offset">, p: string): { where: string[]; params: (string | number)[] } {
   const where: string[] = [];
   const params: (string | number)[] = [];
-  if (f.agent) where.push(`${p}agent = ?`), params.push(f.agent);
+  // An agent matches the sessions it ran and the ones it drove as a host app (Session.host, in the stats JSON).
+  if (f.agent) where.push(`(${p}agent = ? OR json_extract(${p}stats, '$.host') = ?)`), params.push(f.agent, f.agent);
   if (f.parentSessionId === null) where.push(`${p}parent_session_id IS NULL`);
   else if (f.parentSessionId !== undefined) where.push(`${p}parent_session_id = ?`), params.push(f.parentSessionId);
   if (f.repoRoot) where.push(`${p}repo_root = ?`), params.push(f.repoRoot);
@@ -808,7 +820,8 @@ export interface SqliteIndexOptions {
   /** Open read-only (no migrations). */
   readOnly?: boolean;
   /**
-   * Runs before pending migrations (schema `from` → `to`, 0 for a new file);
+   * Runs before pending migrations (schema `from` → `to`, 0 for a new file), under the
+   * write lock and before the backup copy, with the schema and writer read there;
    * throws to refuse them and leave the file as it is (core/store-guard.ts: another
    * install owns the store, or this build is not newer than `writer`, its last one).
    */
@@ -1028,8 +1041,7 @@ export class SqliteIndexStore implements IndexStore {
     this.db.exec("CREATE TABLE IF NOT EXISTS migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
     const current = this.schemaVersion();
     if (current === SQLITE_SCHEMA_VERSION) return this.stampWriter();
-    // core/store-guard.ts: this store's schema is another install's to change, so leave it as it is.
-    this.opts.beforeMigrate?.(current, SQLITE_SCHEMA_VERSION, this.lastWriter());
+    // The owner is judged under the write lock, in lockForUpgrade (beforeMigrate).
     // Progress is for big stores only. The highest rowid bounds the count from the b-tree's edge
     // (no scan); a store that may be big is then counted, since rowids have gaps where events were deleted.
     const most = current === 0 ? 0 : (num((this.db.prepare("SELECT max(rowid) AS n FROM events").get() as Row).n) ?? 0);
@@ -1084,6 +1096,10 @@ export class SqliteIndexStore implements IndexStore {
       await this.beginUpgrade(report);
       try {
         const from = this.schemaVersion();
+        // core/store-guard.ts judges the owner here, on the schema and writer read under the lock
+        // and before the copy: a store another process finished upgrading meanwhile needs no
+        // judgment, and a refusal (the catch below) rolls back with no copy made and the lock free.
+        if (from < SQLITE_SCHEMA_VERSION) this.opts.beforeMigrate?.(from, SQLITE_SCHEMA_VERSION, this.lastWriter());
         if (from < SQLITE_SCHEMA_VERSION && !begun) {
           begun = true;
           progress.begin();
@@ -1395,11 +1411,11 @@ export class SqliteIndexStore implements IndexStore {
     // where the prefix ("the*": then, there, these, …) merges every matching word's list.
     const many = over(fts.slice(0, -1)) || over(fts);
     let sql: string;
-    let args: (string | number)[];
+    let args: (n: number) => (string | number)[];
     if (many) {
       sql = `SELECT ${eventCols("e")} FROM events_fts JOIN events e ON e.rowid = events_fts.rowid ${sessions}
         WHERE events_fts MATCH ? ${where.length ? `AND ${where.join(" AND ")}` : ""} ORDER BY events_fts.rowid DESC LIMIT ?`;
-      args = [fts, ...params, limit];
+      args = (n) => [fts, ...params, n];
     } else {
       // Unfiltered, the FTS table ranks and cuts the page itself; filtered, it ranks its (at most
       // SEARCH_RANK_MAX_MATCHES) matches and the join keeps the best that pass. Ties in rank break
@@ -1408,14 +1424,30 @@ export class SqliteIndexStore implements IndexStore {
       const page = where.length ? "" : "ORDER BY rank, rowid DESC LIMIT ?";
       sql = `SELECT ${eventCols("e")} FROM (SELECT rowid AS r, rank AS rk FROM events_fts WHERE events_fts MATCH ? ${page}) f
         JOIN events e ON e.rowid = f.r ${sessions} ${cond} ORDER BY f.rk, f.r DESC LIMIT ?`;
-      args = where.length ? [fts, ...params, limit] : [fts, limit, limit];
+      args = (n) => (where.length ? [fts, ...params, n] : [fts, n, n]);
     }
     const terms = searchTerms(text);
     // A --where query compiles to new SQL each time: prepared once, not cached.
-    return ((q?.root ? this.db.prepare(sql) : this.stmt(sql)).all(...args) as Row[]).map((r) => {
-      const event = rowToEvent(r);
-      return { event, snippet: snippet(searchableText(event) ?? "", terms) };
-    });
+    const stmt = q?.root ? this.db.prepare(sql) : this.stmt(sql);
+    // A wrapper (a Codex code-mode cell) repeats the calls it made, each its own tool.start and
+    // tool.end: its script holds their commands and its output theirs. A wrapper's event is left
+    // out when an event of the same kind from one of its calls also matches, so a hit is listed once.
+    // Fetched again, longer, while dropped hits leave the page short and more rows remain.
+    const echoSql = `SELECT 1 FROM events st JOIN events e ON e.session_id = st.session_id AND e.ts >= st.ts AND e.parent_id = st.id ${sessions}
+      WHERE st.session_id = ? AND st.kind = 'tool.start' AND st.ts <= ? AND json_extract(st.payload, '$.toolUseId') = ?
+        AND e.kind = ? ${where.length ? `AND ${where.join(" AND ")}` : ""}
+        AND EXISTS (SELECT 1 FROM events_fts WHERE events_fts MATCH ? AND events_fts.rowid = e.rowid) LIMIT 1`;
+    const echo = q?.root ? this.db.prepare(echoSql) : this.stmt(echoSql);
+    const echoed = (e: AgentEvent): boolean =>
+      (e.kind === "tool.start" || e.kind === "tool.end") && e.payload.wrapper === true && typeof e.payload.toolUseId === "string" &&
+      echo.get(e.sessionId, e.ts, e.payload.toolUseId, e.kind, ...params, fts) !== undefined;
+    for (let n = limit; ; n *= 2) {
+      const rows = stmt.all(...args(n)) as Row[];
+      const events = rows.map(rowToEvent).filter((e) => !echoed(e));
+      if (events.length >= limit || rows.length < n) {
+        return events.slice(0, limit).map((event) => ({ event, snippet: snippet(searchableText(event) ?? "", terms) }));
+      }
+    }
   }
 
   /**
@@ -1465,7 +1497,7 @@ export class SqliteIndexStore implements IndexStore {
         trace_ids = excluded.trace_ids, project_id = excluded.project_id,
         parse_version = coalesce(excluded.parse_version, sessions.parse_version)`).run(
       s.id, s.agent, s.agentVersion ?? null, s.model ?? null, s.cwd ?? null, json(s.repo), s.repo?.root ?? null,
-      s.title ?? null, s.startedAt, s.endedAt ?? null, JSON.stringify(s.provider ? { ...s.stats, provider: s.provider } : s.stats), JSON.stringify(s.flags ?? []),
+      s.title ?? null, s.startedAt, s.endedAt ?? null, JSON.stringify(storedStats(s)), JSON.stringify(s.flags ?? []),
       s.runId ?? null, s.endSnapshot ?? null, json(s.parent), s.parent?.sessionId ?? null,
       s.traceIds?.length ? JSON.stringify(s.traceIds) : null, projectCol(s.project), s.parseVersion ?? null,
     );

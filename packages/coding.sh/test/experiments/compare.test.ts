@@ -655,3 +655,30 @@ describe("compareExperiments on a few cases", () => {
   });
 });
 
+
+describe("compare: replay noise floor (EM-19)", () => {
+  const replay = (rate: number) => ({ n: 20, diverged: Math.round(rate * 20), rate, lo: 0, hi: 0.5, byAction: 20, byRubric: 0 });
+
+  it("B − A equal to the noise floor is within noise: the field and the warning agree", async () => {
+    // A passes 10 of 20 cases, B 14: B − A is 4/20 = 20 points, the floor 4/20 = 20%.
+    const a = await run("a", new Set(range(1, 10)));
+    const b = await run("b", new Set(range(1, 14)));
+    const at = compareExperiments(a, b, { seed: 1, iters: 500, replay: replay(0.2) });
+    close(at.diff.mean, 0.2);
+    assert.equal(at.replay!.withinNoise, true);
+    assert.match(at.replay!.warning!, /^B − A \(20\.0 points\) is no larger than the replay noise floor \(20\.0%\)/);
+    // A floor a case lower: B moved more than it, and there is no warning.
+    const above = compareExperiments(a, b, { seed: 1, iters: 500, replay: replay(0.15) });
+    assert.deepEqual([above.replay!.withinNoise, above.replay!.warning], [false, undefined]);
+  });
+
+  it("a floor that prints the same as B − A, to 0.1 points, counts as equal", async () => {
+    const a = await run("a", new Set(range(1, 10)));
+    const b = await run("b", new Set(range(1, 14)));
+    // 0.19999 prints as 20.0%, as B − A does.
+    const c = compareExperiments(a, b, { seed: 1, iters: 500, replay: replay(0.19999) });
+    assert.equal(c.replay!.withinNoise, true);
+    assert.match(c.replay!.warning!, /\(20\.0 points\) is no larger than the replay noise floor \(20\.0%\)/);
+    assert.equal(compareExperiments(a, b, { seed: 1, iters: 500, replay: replay(0.199) }).replay!.withinNoise, false, "19.9% is below 20.0 points");
+  });
+});

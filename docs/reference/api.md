@@ -611,6 +611,14 @@ fast, long-context or US-only rates (`batch+long-context` for both). `payload.co
 its estimate by token type at the same rates, so the parts add up to `usage.costUsd`. A reported or
 gateway-billed cost has no split.
 
+**Agent and host.**
+
+| Field | Meaning |
+|---|---|
+| `agent` | The agent that ran: `claude-code`, `codex`, … A session a host app drove keeps the agent it ran |
+| `host` | The host app that drove the agent: `t3code` for a T3 Code thread. Absent when no host drove the session, and for a T3 thread that never reached a provider (its `agent` is `t3code`). `agent=t3code` and `agent:t3code` match a session whose `agent` or `host` is `t3code` |
+| `provider` | The agent a host app ran, the same as `agent` when `host` is set. Kept for older readers |
+
 **Parent and model.**
 
 | Field | Meaning |
@@ -720,6 +728,15 @@ flagged when:
 
 One 429 that a retry got past does not flag. A 500, a 400 or an auth error does not count.
 
+The `llm-error` flag marks a session whose last failed model call it never got past: a failed
+`llm.call` or an API `error` event that is not a rate limit or an overload, with no model call,
+reply or tool call after it. A failed call shows in `show` with its status and error, and counts in
+`stats.llmErrors`.
+
+The `tools:unseen` tag marks a session whose source records model calls only: every event came from
+the proxy, or from an SDK call outside `trace()`. Its tool count is unknown, not 0, so `sessions`
+prints `-` under TOOLS and `show` says so on its Turns row.
+
 **Waste and cache breaks.** Each stat is absent when there is nothing to report.
 
 | Field | Meaning |
@@ -789,6 +806,16 @@ skills). It is what `coding.sh harness audit` counts.
 | `stats.waiting.toolUseId` | The open call it waits on. Absent for a turn wait, for a permission prompt that came before its call started, for an agent whose calls have no ids (Devin CLI), and for a T3 Code request |
 | `stats.waiting.text` | The prompt, question or plan, redacted, whitespace collapsed, at most 300 characters |
 | `stats.endInferred` | `true` when `endedAt` is the last event seen, not a session end: a session known only from a transcript with no end marker, or a conversation-keyed OpenTelemetry or SDK session. It may still be running. Absent when the end is real or there is no end |
+
+**Pull requests.**
+
+| Field | Meaning |
+|---|---|
+| `stats.prs` (`url`, `repo`, `number`, `state`, `at`) | The pull requests the session's own tool calls opened, merged, closed or linked, oldest first: every one it opened, merged or closed (up to 500), and the 20 it linked last. Read from what the calls ran and printed, with no network call. `coding.sh work` names them on the session's item. Absent when the session touched none |
+| `stats.prs.state` | `opened` (`gh pr create` printed the URL, or `gh pr reopen` ran), `merged` (`gh pr merge`, not an `--auto` merge still queued, or gh printed that it merged), `closed` (`gh pr close`) or `linked` (a host tool linked or watched it, such as T3 Code's `link_pull_request`, another `gh pr` command named it, or a push printed its URL). A PR URL that only appears in a call's output, such as release notes or a PR body, links nothing. The last state the session saw wins, but `linked` never replaces another state |
+| `stats.prs.own` | `true` on a PR the session pushed to (the push printed its URL) or linked to its own thread with T3 Code's `link_pull_request`: the PR carries its work, so `coding.sh work` counts its merge as the work landing. Absent otherwise, and on a PR it only viewed or watched |
+| `stats.prs.repo`, `stats.prs.url` | `owner/name` and the PR's page, from the URL, `--repo`, or the repo the session pushed to. Absent when the session named the PR by number only |
+| `stats.prs.at` | When the session last changed or saw it (ms) |
 
 **Tool errors and fold errors.**
 
@@ -881,7 +908,17 @@ curl -sS "$CSH/api/sessions/team%2Fchat-1" -H "Authorization: Bearer $SUPPORT_RE
 ### `GET /api/sessions/{id}/events`
 
 A session's events in order. Parameters: `limit` (1 to 20,000, default 5,000), `offset`, and
-`kinds` (comma-separated). Native-ingest ids come back as stored hashes.
+`kinds` (comma-separated). Native-ingest ids come back as stored hashes. A page of 32 KB or more
+goes gzipped when the request sends `Accept-Encoding: gzip`.
+
+`rows=1` returns compact rows, as the viewer loads them, and adds `"rows": 1` to the body. A row
+leaves out each string, number or boolean field equal to the row before's (never `id`, `ts`,
+`durationMs` or `parentId`), and `"~"` lists the fields the row before has and this one does not.
+
+When the index can read an event by id, payload strings over 240 characters are cut, ending in
+`…`, and the row carries `"…": 1`; [`/api/events/{id}`](#get-apieventsid) has the event whole.
+Prompts, replies, errors, subagent briefs, a changed file's path and the tool input a step is
+named by stay whole.
 
 ```sh
 curl -sS "$CSH/api/sessions/team%2Fchat-1/events?kinds=tool.start,tool.end" -H "Authorization: Bearer $READ_KEY"
@@ -1985,6 +2022,7 @@ Progress of the local spool ingest, for the viewer's "Indexing N files…" pill.
 
 - `coding.sh ui` ingests in a background worker after it starts listening, so pages answer from what is already indexed while `filesPending` counts down.
 - `lastIngestAt` is the end of the last finished pass (epoch ms), `null` before the first.
+- Under `coding.sh ui`, `refolding` is `true` while the worker folds the stored sessions again because another version folded them. The pill then says "Rebuilding stats…"; sessions not reached yet keep the older stats and flags. It is absent otherwise.
 - Under `coding.sh ui`, `importing` is `true` while past sessions are being imported (the background import `coding.sh init` starts when its 8 seconds run out). The pill and the empty session list then say "Importing past sessions…".
 - Under `coding.sh ui` on its own home, `index` gives the age of the last finished ingest: `updatedAt`, `text` (`index updated 4m ago`), and `stale: true` when it is 15 minutes old and no ingest runs.
 

@@ -20,7 +20,7 @@ test("rendered rows escape what they show; embedded JSON cannot close its script
   assert.ok(!html.includes("<script>") && !html.includes("<img"), html);
   assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   assert.equal(scriptJson({ a: "</script><b>" }), '{"a":"\\u003c/script>\\u003cb>"}');
-  assert.deepEqual(sessionBootPaths("team/a b"), ["/api/sessions/team%2Fa%20b?missing=null", "/api/sessions/team%2Fa%20b/events?limit=5000", "/api/labels?sessionId=team%2Fa+b", "/api/sessions?parent=team%2Fa+b&limit=500", "/api/sessions/team%2Fa%20b/outline"]);
+  assert.deepEqual(sessionBootPaths("team/a b"), ["/api/sessions/team%2Fa%20b?missing=null", "/api/sessions/team%2Fa%20b/events?limit=5000&rows=1", "/api/labels?sessionId=team%2Fa+b", "/api/sessions?parent=team%2Fa+b&limit=500", "/api/sessions/team%2Fa%20b/outline"]);
 });
 
 describe("server-drawn first paint", { skip: chrome ? false : "no Chrome/Chromium found (set CODING_SH_TEST_CHROME)" }, () => {

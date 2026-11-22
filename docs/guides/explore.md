@@ -3,9 +3,8 @@
 List, filter and search sessions, read one step by step in the terminal or the viewer, and follow a
 run while it works.
 
-Every run of your agent is a session: from your own agent through the SDK or OpenTelemetry, or
-from a coding agent through its hooks. They all land in one list. A session has turns, a turn has
-events (prompts, model calls, tool calls, file changes), and a subagent's work is a child session.
+Every run of your agent is a session, through the SDK, OpenTelemetry or a coding agent's hooks,
+in one list. A session has turns, a turn has events, and a subagent's work is a child session.
 See [Concepts](https://coding.sh/docs/concepts).
 
 ## List your sessions
@@ -24,8 +23,9 @@ ses_b32e798f30f8bed3a17e              opencode          1h ago   1m32s     1    
 ```
 
 The newest 20 come first. `coding-sh-triage` is an app traced with the SDK; the others are coding
-agents. Subagent sessions and sessions with nothing in them are hidden; the last line counts the
-hidden subagents (`hiddenChildren` in `--json`).
+agents. Subagents, trials from eval, compare and exp runs, and empty sessions are hidden; the last
+lines count them (`hiddenChildren`, `hiddenRuns` in `--json`). TOOLS is `-` when the source
+records model calls only. Off a terminal, titles are cut to 100 characters.
 
 | Flag | What it does |
 |---|---|
@@ -36,6 +36,7 @@ hidden subagents (`hiddenChildren` in `--json`).
 | `--where <query>` | Any filter the [query language](https://coding.sh/docs/query) takes. |
 | `-n, --limit 50` | More rows (default 20). |
 | `--subagents` | Include subagent sessions. |
+| `--include-runs` | Include trial sessions from eval, compare and exp runs. |
 
 ## Filter by what happened
 
@@ -59,9 +60,8 @@ coding.sh sessions --where 'model:claude-* -flag:compaction sort:-cost limit:5'
 coding.sh sessions --facets agent,flag     # count sessions per value instead of listing them
 ```
 
-The same query works in `search`, `usage`, `stats`, `export`, the viewer's filter bar and the MCP
-tools. Every key, operator and flag is in the [query reference](https://coding.sh/docs/query). A
-typo points at the character:
+The same query works in `search`, `usage`, `stats`, `export`, the viewer and the MCP tools; the
+[query reference](https://coding.sh/docs/query) has every key. A typo points at the character:
 
 ```text
 $ coding.sh sessions --where 'agent:codex modle:x'
@@ -109,6 +109,10 @@ The header sums up the run. Below it, each event in order, with the time since t
 session id, a unique prefix of 4 or more characters, or `latest`. `latest` is your newest session
 with work in it; eval, compare and experiment trials count only when there is nothing else.
 
+A failed model call shows its status and error on its `llm` line; the Model errors row counts
+them. When a source records only model calls (the proxy, or an SDK call outside `trace()`), the
+Turns row says "tool calls not recorded".
+
 ## Search every session
 
 ```sh
@@ -122,9 +126,9 @@ SESSION                                              KIND      WHEN     MATCH
 9887c95d-2739-4dae-8222-4471386def67                 tool.end  40m ago  …re-ingested (5.3ms) ✔ applies each «migration» once (41.2ms) ▶ SqliteIndexStore…
 ```
 
-Search covers prompts, replies, tool input and output, and errors: error events (message, type and
-status code), failed model calls, tool errors, and the error a session or subagent ended with.
-Every word must match within one event. Open a hit with `coding.sh show <session>`.
+Search covers prompts, replies, tool input and output, error events, failed model calls, tool
+errors and the error a session ended with. Every word must match within one event. Open a hit with
+`coding.sh show <session>`.
 
 ## Open the viewer
 
@@ -132,8 +136,8 @@ Every word must match within one event. Open a hit with `coding.sh show <session
 coding.sh ui
 ```
 
-It serves the viewer on `127.0.0.1:4319` and opens it in your browser. The URL it prints holds a
-token for this run of `ui`; the viewer needs it.
+It serves the viewer on `127.0.0.1:4319` and opens it. The URL it prints holds the token the
+viewer needs.
 
 ![The coding.sh viewer's session list: Claude Code, Codex and OpenCode sessions on the coding.sh repo, each with its agent, title, cost and flags.](shot:docs/sessions-list "The session list in coding.sh ui.")
 
@@ -172,13 +176,13 @@ token for this run of `ui`; the viewer needs it.
 coding.sh show latest --follow
 ```
 
-It prints the last 20 events, then each new event and derail as the agent works. It stops by
-itself a moment after the session ends, or on Ctrl-C.
+It prints the last 20 events, then each new event and derail as the agent works. It stops soon
+after the session ends, or on Ctrl-C.
 
 ## Long sessions
 
-A session can run for hours or days, with compactions and resumes. coding.sh keeps it as one
-timeline and splits it into phases:
+A session can run for days, with compactions and resumes. coding.sh keeps one timeline, split
+into phases:
 
 | Phase | Starts when |
 |---|---|
@@ -193,8 +197,8 @@ and `--limit 500` the first 500.
 ### Derails
 
 A derail is a point where a long run went off the rails: `looping`, `failure-streak`, `churn`,
-`no-progress`, `stalled` or `context-thrash`. Each one marks the event where it started, in `show`
-and on the viewer's timeline. What sets each one is in [Flags and derails](https://coding.sh/docs/query#flags-and-derails).
+`no-progress`, `stalled` or `context-thrash`. Each marks the event where it started, in `show`
+and the viewer. [Flags and derails](https://coding.sh/docs/query#flags-and-derails) says what sets each.
 
 ```sh
 coding.sh sessions --flag looping
@@ -203,8 +207,7 @@ coding.sh sessions --flag looping
 ## Subagents and the run tree
 
 `show` lists a session's subagents at the end, and `sessions --subagents` or `--where is:child`
-lists them. `tree` shows a whole
-multi-agent run with what each part cost:
+lists them. `tree` shows a multi-agent run with what each part cost:
 
 ```sh
 coding.sh tree 9887c95d-2739-4dae-8222-4471386def67
@@ -219,8 +222,7 @@ Apply each SQLite migration once when two processes open the index
   └ 9887c95d-2739-4dae-8222-4471386def67:sub:a8f20c41e7  Explore  claude-haiku-4-5  50s  2 tools  $0.0145  Find user_version reads
 ```
 
-`--run` reads the argument as a run id, so agents of one fan-out that share a run id show as one
-tree.
+`--run` reads the argument as a run id, so a fan-out's agents show as one tree.
 
 ## Replay a session
 
@@ -310,8 +312,7 @@ A file pulled in with an `@path` import (`@AGENTS.md`) counts as loaded in each 
 session that loaded the importing file, up to 5 imports deep. The load cost is the file's tokens (bytes / 4) times the sessions
 that loaded it.
 
-The audit also warns about a Claude Code subagent file whose `tools:` is a map, which leaves that subagent with no
-tools.
+It also warns when a Claude Code subagent file's `tools:` is a map, which leaves it no tools.
 
 ## See trends
 
@@ -330,7 +331,7 @@ total             55        11%    ~$9.78    14.9M   327    0.9%       33s      
 ```
 
 Without `--by` it prints one row per day (`--per week` for weeks). A failure is a session with a
-flag that has no colon. Cost and tokens per agent, model and repo are on [Track cost](https://coding.sh/docs/cost).
+flag that has no colon. More on cost: [Track cost](https://coding.sh/docs/cost).
 
 ## Get JSON
 
@@ -345,16 +346,16 @@ coding.sh sessions --where 'tool:Bash ok:false' --json --fields id,title,stats.t
 ```
 
 `show --json` adds `phases` and `days`. For a session over 200 events it prints `events: []` next
-to `eventCount`; `--limit N` or `--all` lists them.
+to `eventCount`; `--limit N` or `--all` lists them. Event text is whole, read back from its blob,
+with no `truncated`.
 
 ## Ask your agent
 
 `coding.sh init` registers an MCP server with your agents, so an agent can read its own past
 sessions. See [Let your agent read its own runs](https://coding.sh/docs/mcp).
 
-The server also serves four skills to hosts that load skills from MCP servers: reviewing a session,
-improving and trimming your agent setup, and building evals. See
-[Skills](https://coding.sh/docs/mcp#skills). Every MCP tool is listed in
+It also serves four skills to hosts that load them: reviewing a session, improving and trimming
+your setup, and building evals. See [Skills](https://coding.sh/docs/mcp#skills) and
 [Tools](https://coding.sh/docs/mcp#tools).
 
 ## Next steps

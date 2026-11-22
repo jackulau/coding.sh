@@ -152,7 +152,8 @@ const check = (ok, what) => {
 };
 
 try {
-  execFileSync("npm", ["install", "-g", "--no-fund", "--no-audit", PKG], { env, cwd: root, stdio: "inherit" });
+  // npm 12 runs no install script it is not told to; Claude Code's fetches its native binary. npm 11 and older accept the flag too.
+  execFileSync("npm", ["install", "-g", "--no-fund", "--no-audit", "--allow-scripts=@anthropic-ai/claude-code", PKG], { env, cwd: root, stdio: "inherit" });
   console.error(`claude ${execFileSync("claude", ["--version"], { env, cwd: project }).toString().trim()}`);
   await session("Read notes.txt and say what it holds.", []);
   const plain = seen.join("\n");

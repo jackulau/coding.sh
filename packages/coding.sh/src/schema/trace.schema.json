@@ -815,6 +815,45 @@
       ],
       "additionalProperties": false
     },
+    "PullRequestRef": {
+      "description": "One entry of Session.stats.prs: a pull request the session touched, from what its own tool calls\nprinted or named (core/sessions.ts foldPrs; no network call).\n- `opened`: `gh pr create` printed its URL, or `gh pr reopen` ran.\n- `merged`: `gh pr merge` ran (not an `--auto` merge still waiting), or gh printed that it merged it.\n- `closed`: `gh pr close` ran.\n- `linked`: the session named it without changing it: a host tool linked or watched it (T3 Code's\n  `link_pull_request`), a `git push` or a `gh pr` command printed its URL. It never replaces another state.",
+      "type": "object",
+      "properties": {
+        "url": {
+          "description": "The PR's web URL. Unset when the session named it by number and never saw its repo.",
+          "type": "string"
+        },
+        "repo": {
+          "description": "`owner/name`, from the URL, `--repo`, or a repo the session's push or gh output named. Unset when none did.",
+          "type": "string"
+        },
+        "number": {
+          "type": "number"
+        },
+        "state": {
+          "enum": [
+            "opened",
+            "merged",
+            "closed",
+            "linked"
+          ]
+        },
+        "at": {
+          "description": "When the session saw that state (ms since the epoch): the last one it saw wins.",
+          "type": "number"
+        },
+        "own": {
+          "description": "Set when the session pushed to the PR (the push printed its URL) or linked it to its own thread\n(T3 Code's `link_pull_request`): the PR carries its work, so its merge settles the work's review.\nAbsent otherwise.",
+          "const": true
+        }
+      },
+      "required": [
+        "number",
+        "state",
+        "at"
+      ],
+      "additionalProperties": false
+    },
     "RepoState": {
       "type": "object",
       "properties": {
@@ -855,10 +894,15 @@
           "type": "string"
         },
         "agent": {
+          "description": "The agent that ran, also when a host app drove it (a T3 Code thread that ran Claude Code is \"claude-code\").",
           "$ref": "#/$defs/AgentId"
         },
+        "host": {
+          "description": "The host app that drove the agent (\"t3code\" when T3 Code ran it). Absent\nwhen no host drove the session, and for a host thread that never started\nan agent (its agent is the host's id).",
+          "type": "string"
+        },
         "provider": {
-          "description": "The agent a host app ran, when `agent` is a host (T3 Code driving Codex or\nClaude Code): \"codex\", \"claude-code\", or the host's driver name.",
+          "description": "The agent a host app ran: the same as `agent` when `host` is set (\"codex\",\n\"claude-code\", or the host's driver name). Kept for older readers.",
           "type": "string"
         },
         "agentVersion": {
@@ -1017,6 +1061,13 @@
             "waiting": {
               "description": "What the session waits on from the user (a permission prompt, a question, a plan, or the next\nprompt), as of its last event (core/waiting.ts). Unset when nothing waits.",
               "$ref": "#/$defs/Waiting"
+            },
+            "prs": {
+              "description": "Pull requests the session opened, merged, closed or linked, oldest first: every one it opened, merged or closed, and the 20 latest it only linked. Unset when it touched none.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PullRequestRef"
+              }
             },
             "foldError": {
               "description": "Why coding.sh could not fold this session's stored events into its stats (a coding.sh bug, not\nthe agent's): the row then holds only what the events say directly (agent, start, end, cwd,\nevent count), and the session is tagged `fold:error`. `coding.sh ingest` folds it again. Unset\nwhen the fold worked.",

@@ -9,7 +9,7 @@ import { CACHE_BREAK_FIX, CACHE_IDLE_FIX } from "../core/cache-breaks.ts";
 import { cacheBaseline, CACHE_BASELINE_NOTE } from "../core/cache-baselines.ts";
 import { mergeCallCopies } from "../core/call-copies.ts";
 import { apportion, splitOf, TOKEN_TYPES } from "../core/pricing.ts";
-import { failureFlags, isBackfillEvent, percentile } from "../core/sessions.ts";
+import { failureFlags, isBackfillEvent } from "../core/sessions.ts";
 import { weightsEventText } from "../core/weights.ts";
 import { waitKind } from "../core/wait-tools.ts";
 import { sessionMatcher } from "../query/run.ts";
@@ -91,6 +91,8 @@ export function sessionSummary(s: Session, now: number = Date.now()): SessionSum
   return {
     id: s.id,
     agent: s.agent,
+    // The host app that drove the agent (t3code), absent when none did.
+    host: s.host,
     title: clip(s.title, 120),
     model: s.model,
     repo: s.repo?.root,
@@ -597,24 +599,33 @@ interface Dist {
 
 function dist(values: number[]): Dist {
   if (!values.length) return { n: 0 };
-  return { n: values.length, p50Ms: percentile(values, 50), p95Ms: percentile(values, 95), maxMs: Math.max(...values) };
+  // Sorted once, for the nearest-rank percentiles (core/sessions.ts percentile) and the max:
+  // Math.max(...values) overflows the call stack on a store with a few hundred thousand calls.
+  const sorted = Float64Array.from(values).sort();
+  const at = (p: number) => sorted[Math.min(sorted.length, Math.max(1, Math.ceil((p / 100) * sorted.length))) - 1];
+  return { n: values.length, p50Ms: at(50), p95Ms: at(95), maxMs: sorted[sorted.length - 1] };
 }
 
 export { waitKind, type WaitKind } from "../core/wait-tools.ts";
 
 /** Events of one kind set latency reads per session; a session with more is read in part and counted in `window.eventsTruncated`. */
 export const LATENCY_SESSION_EVENTS = 50_000;
-/** Wall time latency reads events for before it stops and says so: a stop for a runaway store, not a page. */
-export const LATENCY_TIME_BUDGET_MS = 30_000;
+/**
+ * Wall time latency reads for before it stops and says so (the newest sessions are read first).
+ * An MCP call answers within a few seconds, so a host does not time out on a big store, the
+ * first call after an upgrade included: a cut answer names what it read and how to narrow it.
+ */
+export const LATENCY_TIME_BUDGET_MS = 2_000;
 /** Slowest calls kept while reading (the answer shows at most 5). */
 const SLOWEST_KEEP = 50;
 
 export async function latency(index: IndexStore, q: ScanQuery, opts: { model?: string; limit: number; budgetMs?: number; now?: () => number }): Promise<Obj> {
   // Every session in the window: a sample of the newest ones misses the slowest calls, and a
   // filter (agent:codex) then finds a slower call than the unfiltered answer.
-  const { sessions, truncated } = await collectSessions(index, { ...q, topLevel: false }, TOTALS_SCAN_CAP);
   const now = opts.now ?? Date.now;
+  // The budget covers finding the sessions too.
   const deadline = now() + (opts.budgetMs ?? LATENCY_TIME_BUDGET_MS);
+  const { sessions, truncated } = await collectSessions(index, { ...q, topLevel: false }, TOTALS_SCAN_CAP);
   const llm: number[] = [];
   const ttft: number[] = [];
   const byModel = new Map<string, { d: number[]; ttft: number[] }>();

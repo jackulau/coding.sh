@@ -26,7 +26,7 @@ import { createRedactor, type Redactor } from "../core/redact.ts";
 import { hostOf, isLoopbackHost } from "../otel/receiver.ts";
 import { forwardHeaders, joinUpstream } from "../proxy/server.ts";
 import { apiOf, type KeyOptions, llmCallKey, modelOf, providerOf } from "./key.ts";
-import { entryBytes, type LlmEntry, type LlmUsage, LLM_ENTRY_VERSION, readRecording, recordingPath, storedBody, writeRecording } from "./store.ts";
+import { entryBytes, type LlmEntry, type LlmUsage, LLM_ENTRY_VERSION, markRecording, readRecording, recordingPath, storedBody, unmarkRecording, writeRecording } from "./store.ts";
 
 export type LlmCacheMode = "record" | "replay";
 
@@ -167,6 +167,8 @@ class JobState {
   firstLiveOrdinal: number | undefined;
   isLive: boolean;
   closed = false;
+  /** The marker that says this job is recording (store.ts markRecording), from its first cached call until it closes. */
+  marker: string | undefined;
   readonly opts: LlmJobOptions;
   readonly source: readonly LlmEntry[] | undefined;
   readonly replay: boolean;
@@ -324,6 +326,16 @@ export async function startLlmCache(o: StartLlmCacheOptions): Promise<LlmCache> 
     const api = apiOf(req.method ?? "", rest)!;
     const provider = providerOf(api);
     const ordinal = ++job.ordinal;
+    if (job.marker === undefined) {
+      // From here the job holds entries purge can't see until closeJob writes them: purge waits for this marker.
+      const file = recordingPath(o.dir, job.opts.expId, job.opts.caseId, job.opts.trial);
+      try {
+        job.marker = markRecording(file);
+      } catch (e) {
+        job.marker = "";
+        o.onWarn?.(`llm cache: couldn't mark ${file} as recording, so a purge won't wait for it: ${(e as Error).message}`);
+      }
+    }
     const text = body.toString("utf8");
     let parsed: unknown;
     try {
@@ -473,6 +485,14 @@ export async function startLlmCache(o: StartLlmCacheOptions): Promise<LlmCache> 
         await writeRecording(file, job.entries);
       } catch (e) {
         o.onWarn?.(`llm cache: couldn't write ${file}: ${(e as Error).message}`);
+      } finally {
+        if (job.marker) {
+          try {
+            unmarkRecording(job.marker);
+          } catch {
+            // a purge deletes it once this process is gone
+          }
+        }
       }
     }
     return job.stats();

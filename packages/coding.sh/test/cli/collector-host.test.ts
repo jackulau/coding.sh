@@ -9,7 +9,7 @@ describe("coding.sh collector --host", () => {
   it("refuses a non-loopback host with exit 2 and names `coding.sh serve --host 0.0.0.0`", () => {
     const r = runSync(["collector", "--host", "0.0.0.0", "--port", "0"], tmpHome().env);
     assert.equal(r.status, 2, r.stderr);
-    assert.match(r.stderr, /coding\.sh serve --host 0\.0\.0\.0/);
+    assert.match(r.stderr, /(?:coding\.sh|codingsh) serve --host 0\.0\.0\.0/);
     assert.doesNotMatch(r.stderr, /allowRemote|at .*\.ts:\d+/, "no internal error text");
   });
 });

@@ -41,8 +41,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RepoState } from "../schema/index.ts";
 import { paths } from "./paths.ts";
-import { CODING_SH_IDENTITY, EMPTY_TREE_SHA1, EMPTY_TREE_SHA256, GitError, branch, git, head, layout, run } from "./git.ts";
-import type { RepoLayout } from "./git.ts";
+import { CODING_SH_IDENTITY, EMPTY_TREE_SHA1, EMPTY_TREE_SHA256, GitError, branch, git as gitOut, head, layout, run as gitRun } from "./git.ts";
+import type { GitResult, GitRunOptions, RepoLayout } from "./git.ts";
+
+/**
+ * Every git call here reads or writes the work tree, so each one gets core.longpaths: without it
+ * Git for Windows skips a path over 260 characters (`add --ignore-errors` drops the file from the
+ * snapshot without a word). Other platforms ignore the key.
+ */
+const LONG_PATHS = ["-c", "core.longpaths=true"];
+const run = (args: string[], opts: GitRunOptions = {}): Promise<GitResult> => gitRun([...LONG_PATHS, ...args], opts);
+const git = (args: string[], opts: GitRunOptions = {}): Promise<string> => gitOut([...LONG_PATHS, ...args], opts);
 
 export const DEFAULT_SNAPSHOT_MAX_FILES = 50_000;
 export const DEFAULT_SNAPSHOT_TIMEOUT_MS = 2_000;

@@ -212,6 +212,26 @@ describe("materialize / diff", () => {
     await assert.rejects(materialize(s, dest), /not empty/);
   });
 
+  test("a file whose path is over 260 characters is snapshotted and materialized (core.longpaths)", async (t) => {
+    const root = makeRepo({ "a.txt": "a\n" });
+    const rel = Array.from({ length: 12 }, (_, i) => `${"d".repeat(24)}${i}`).join("/") + "/long.txt";
+    try {
+      write(root, { [rel]: "deep\n" });
+    } catch {
+      t.skip("this file system takes no path that long");
+      return;
+    }
+    assert.ok(join(root, rel).length > 260, String(join(root, rel).length));
+    const s = await snapshot(root, ROOMY);
+    assert.ok(s?.snapshot);
+    const files = shadowGit(root, "-c", "core.longpaths=true", "ls-tree", "-r", "--name-only", s.snapshot).split("\n").sort();
+    assert.deepEqual(files, ["a.txt", rel]);
+    const dest = join(tmp(), "long");
+    const m = await materialize(s, dest);
+    assert.ok(join(m.dir, rel).length > 260);
+    assert.equal(readFileSync(join(m.dir, rel), "utf8"), "deep\n");
+  });
+
   test("materializes one repo's commit into several dirs at once, before its shadow repo exists", async () => {
     const root = makeRepo({ "only.txt": "committed\n" });
     const sha = gitc(root, "rev-parse", "HEAD");

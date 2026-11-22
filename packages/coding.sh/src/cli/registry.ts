@@ -182,7 +182,7 @@ export const GLOBAL_FLAGS: FlagSpec[] = [
   { name: "debug", type: "boolean", desc: "Show stack traces on errors" },
   { name: "help", short: "h", type: "boolean", desc: "Show help" },
   { name: "store", type: "string", value: "<URL>", desc: "Read and write this index store instead of the configured one (also CODING_SH_STORE_URL); skips auto-ingest" },
-  { name: "blobs", type: "string", value: "<URL>", desc: "Blob store to use with --store (also CODING_SH_BLOB_URL; a postgres:// index keeps blobs in the same DB)" },
+  { name: "blobs", type: "string", value: "<URL>", desc: "Read and write this blob store instead of the configured one, with or without --store (also CODING_SH_BLOB_URL; a postgres:// --store keeps blobs in the same DB)" },
 ];
 
 export const COMMANDS: CommandSpec[] = [
@@ -379,7 +379,7 @@ export const COMMANDS: CommandSpec[] = [
       { name: "openai-upstream", type: "string", value: "<URL>", desc: "Where OpenAI calls go ([proxy] openai_upstream)", default: "https://api.openai.com" },
       { name: "background", type: "boolean", desc: "Start detached, print the URL once it answers (log: ~/.coding.sh/proxy.log)" },
       { name: "quiet", short: "q", type: "boolean", desc: "No line per call on stderr" },
-      { name: "enforce-budget", type: "boolean", desc: "Answer 429 (with Retry-After) instead of calling the API when a budget that applies to the call is over its limit (coding.sh budget)" },
+      { name: "enforce-budget", type: "boolean", desc: "Answer 429 (with Retry-After) instead of calling the API when a budget with no --repo and no --where that applies to the call is over its limit (coding.sh budget)" },
     ],
     actions: [
       { name: "status", summary: "Show whether a proxy is running, and where (exit 1 when not)", examples: ["coding.sh proxy status"] },
@@ -392,7 +392,8 @@ export const COMMANDS: CommandSpec[] = [
       "Streams pass through as they arrive. A failed store write never fails the request.",
       "Calls from Claude Code and Codex land in the session their hooks capture; other clients get a proxy-<hash> session per conversation (or send x-coding-sh-session: <id>).",
       "Prints the environment to stdout; one line per call goes to stderr.",
-      "--enforce-budget reads the spend at most every 30 s. It can match a budget for every session or for an agent (claude-code and codex by their headers, every other client as proxy), never one with --repo: the proxy does not know a call's repo. count_tokens and other paths are never blocked. Spend that can't be read lets the call through.",
+      "--enforce-budget reads the spend at most every 30 s. Only a budget for every session or for an agent stops a call (claude-code and codex by their headers, every other client as proxy). A --repo or --where budget never stops one: the proxy does not know a call's repo or which session a query would match. count_tokens and other paths are never blocked.",
+      "When the budgets can't be read, none stops a call for 30 s, and one warning prints for that read, not one per call. A budget whose own spend can't be read stops no call and gets a warning of its own.",
     ],
     load: () => import("./commands/proxy.ts"),
   },
@@ -424,9 +425,10 @@ export const COMMANDS: CommandSpec[] = [
         summary: "Exit 0 when the server answers 200, 1 otherwise (Docker HEALTHCHECK)",
         flags: [
           { name: "url", type: "string", value: "<URL>", desc: "URL to probe (default http://127.0.0.1:<port>/healthz)" },
+          { name: "port", short: "p", type: "number", value: "<PORT>", desc: "The port of the default URL (default CODING_SH_PORT, PORT, serve.port in the config, or 4318)" },
           { name: "timeout", type: "number", value: "<MS>", desc: "Give up after this many milliseconds", default: "3000" },
         ],
-        examples: ["coding.sh serve healthcheck", "coding.sh serve healthcheck --url http://127.0.0.1:4318/readyz"],
+        examples: ["coding.sh serve healthcheck", "coding.sh serve healthcheck --port 8080", "coding.sh serve healthcheck --url http://127.0.0.1:4318/readyz"],
       },
     ],
     examples: [
@@ -463,6 +465,7 @@ export const COMMANDS: CommandSpec[] = [
       LIMIT(20),
       { name: "subagents", type: "boolean", desc: "Include subagent sessions (a --where with id:, parent:, is:root or is:child picks them itself)" },
       { name: "empty", type: "boolean", desc: "Include sessions with no turn, tool call or model call (hidden by default)" },
+      { name: "include-runs", type: "boolean", desc: "Include trial sessions from eval, compare and exp runs (a --where with is:run or run: picks them itself)" },
       { name: "project", type: "string", value: "<ID>", desc: "Only sessions in this serve project (default: all)" },
       { name: "flag", type: "string", value: "<NAME>", desc: "Only sessions with this flag: looping, failure-streak, churn, no-progress, stalled, context-thrash, premature-completion, duplicate-fetch, …, or a tag such as skill:<name>" },
       WHERE("sessions"),
@@ -472,7 +475,7 @@ export const COMMANDS: CommandSpec[] = [
       FRESH,
     ],
     examples: ["coding.sh sessions --where 'agent:codex cost>0.5 since:7d'", "coding.sh sessions --where 'tool:Bash ok:false -flag:compaction'", "coding.sh sessions --view codex-flagged --since 7d", "coding.sh sessions --facets model,tool --where 'repo:coding-sh'", "coding.sh sessions --agent codex --since 7d"],
-    notes: [...WHERE_NOTES, "--facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).", "With --json each session is a digest: its stats without stats.phases, and each derail without the event it started at (eventId, index). show <id> --json has both, and --fields stats.phases or --fields stats.derails prints them here.", "In --json, repo is the root of the checkout the session ran in. A session in a linked worktree also has repoMain, the main checkout's root.", "Without --subagents the list ends with how many child (subagent) sessions the same filters match and it left out; --json has that count as hiddenChildren, absent when there are none.", PENDING_NOTE],
+    notes: [...WHERE_NOTES, "--facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).", "With --json each session is a digest: its stats without stats.phases, and each derail without the event it started at (eventId, index). show <id> --json has both, and --fields stats.phases or --fields stats.derails prints them here.", "In --json, repo is the root of the checkout the session ran in. A session in a linked worktree also has repoMain, the main checkout's root.", "Without --subagents the list ends with how many child (subagent) sessions the same filters match and it left out; --json has that count as hiddenChildren, absent when there are none.", "Without --include-runs the list leaves out sessions that ran with a run id (eval, compare, exp, or CODING_SH_RUN_ID set by hand) and ends with how many it left out; --json has that count as hiddenRuns, absent when there are none.", PENDING_NOTE],
     load: () => import("./commands/sessions.ts"),
   },
   {
@@ -693,7 +696,7 @@ export const COMMANDS: CommandSpec[] = [
     examples: ["coding.sh alert add failures --measure failure-rate --over 0.5 --window 1d --notify webhook:https://example.com/hook", "coding.sh alert check", "coding.sh alert list"],
     notes: [
       "States are OK, WARNING, ALERT and NO_DATA. An alert starts at OK, and only a change of state notifies. The measures are the ones coding.sh stats computes, over top-level sessions with their subagents' cost added; score:<NAME> averages the scores of that name given to those sessions (coding.sh score, a judge, a review).",
-      "A webhook gets a POST with the JSON body {alert, state, previous, value, threshold, direction, window, by, at} (direction: \"under\" only with --under, by only with --by agent) and the header X-Coding-Sh-Signature: sha256=<HMAC-SHA256 of the body, keyed with the alert's secret>. A command gets the same JSON on stdin and succeeds by exiting 0.",
+      "A webhook gets a POST with the JSON body {alert, state, previous, value, threshold, direction, window, by, at} (direction: \"under\" only with --under, by only with --by agent) and three headers keyed with the alert's secret: X-Coding-Sh-Timestamp (unix seconds), X-Coding-Sh-Signature-V2: sha256=<HMAC-SHA256 of \"<timestamp>.<body>\">, which covers the timestamp and the body, and X-Coding-Sh-Signature: sha256=<HMAC-SHA256 of the body alone>, which does not stop a replay. A receiver checks V2 and refuses a timestamp more than 5 minutes from its own clock. A command gets the same JSON on stdin and succeeds by exiting 0.",
       "Each notification is tried 3 times, 1 s and then 2 s apart. After 5 failed deliveries in a row the target is turned off; alert list says so, and a successful alert test turns it back on.",
       "alert check exits 0 unless the usage is wrong; with --json it lists each alert's state, value and groups. Run it from cron or Task Scheduler. coding.sh serve runs the same check every minute. The hook and the read commands never run alerts.",
       "Alerts, their states and their secrets are kept in ~/.coding.sh/alerts.json, mode 600 where the OS has file modes.",
@@ -730,6 +733,7 @@ export const COMMANDS: CommandSpec[] = [
       "The status line shows the highest budget once it passes 80% (budget 82%). coding.sh proxy --enforce-budget answers 429 to calls a budget over its limit applies to.",
       "A --where budget counts the sessions its query matches and their subagents. The status line counts it only for a day budget whose query uses session keys (agent, model, repo, flag, cost, ...), matched on the day's sessions it already read; a week or month --where budget, or one with an event key such as user:, env: or release:, is left out of the line. coding.sh proxy --enforce-budget never applies a --where budget.",
       "With --json, status gives each budget's spendUsd, limitUsd, percent, over, since and resetsAt (ISO times), and where when the budget has one.",
+      "A budget whose spend can't be read, such as one whose --where no longer parses, prints an error in place of its numbers: in --json, error replaces spendUsd, percent and over, and limitUsd, since and resetsAt stay. The other budgets still report, and status exits 1.",
     ],
     load: () => import("./commands/budget.ts"),
   },
@@ -1595,7 +1599,8 @@ export const COMMANDS: CommandSpec[] = [
       "Each monitor scores sessions that ended after its cursor (the past day on its first run), one score per session; a session it already scored is skipped.",
       "A monitor's failure never fails the ingest: it is recorded as the monitor's last error, which monitor list shows. A command that exits non-zero or prints no value scores nothing.",
       "--judge with no provider records 'no judge provider' and scores nothing until one is set.",
-      "Pass one of --judge, --run or --http. --http prints a signing secret once (64 hex characters); each POST carries X-Coding-Sh-Signature: sha256=<HMAC-SHA256 of the body>. Redirects are not followed, each try has 10 s, and a 5xx, 408, 425, 429 or network error is tried 3 times, 1 s then 2 s apart. An answer over 256 KB or any other status scores nothing and is recorded as the monitor's last error.",
+      "Pass one of --judge, --run or --http. --http prints a signing secret once (64 hex characters). Each POST carries three headers keyed with it: X-Coding-Sh-Timestamp (unix seconds), X-Coding-Sh-Signature-V2: sha256=<HMAC-SHA256 of \"<timestamp>.<body>\">, which covers the timestamp and the body, and X-Coding-Sh-Signature: sha256=<HMAC-SHA256 of the body alone>, which does not stop a replay. A receiver checks V2 and refuses a timestamp more than 5 minutes from its own clock. Redirects are not followed, each try has 10 s, and a 5xx, 408, 425, 429 or network error is tried 3 times, 1 s then 2 s apart. An answer over 256 KB or any other status scores nothing and is recorded as the monitor's last error.",
+      "When --http can't reach the service for 2 sessions in a row, the pass stops and its cursor stays before them, so the next pass tries them again. An answer for a later session, a score or a refusal, moves the cursor past them. monitor list and its --json show the --http URL without its query string or fragment.",
       "Definitions, cursors, spend, errors and --http secrets are in monitors.json (mode 600 where the OS has file modes), next to the config file (coding.sh config path shows it).",
     ],
     load: () => import("./commands/monitor.ts"),
@@ -1942,7 +1947,7 @@ export const COMMANDS: CommandSpec[] = [
         args: [{ name: "pin", desc: "pin: save the latest hashes of every tool in the window to tool-pins.json, so --changed compares with them" }],
         flags: [
           { ...SINCE, default: "30d" },
-          { name: "changed", type: "boolean", desc: "Only tools whose description or schema differs from its pin, that are new or removed since the last pin, or, with no pin, had more than one in the window; exit 1 when any remain" },
+          { name: "changed", type: "boolean", desc: "Only tools whose description or schema differs from its pin, that are new since the last pin, that are pinned but no session offered since the pin (removed), or, with no pin, had more than one in the window; exit 1 when any remain" },
         ],
         examples: ["coding.sh harness tools", "coding.sh harness tools --changed", "coding.sh harness tools pin"],
       },
@@ -1951,7 +1956,8 @@ export const COMMANDS: CommandSpec[] = [
       "A harness TOML can carry Claude Code plugins too: plugins = [\"terse\", \"./plugins/mine\"], with a directory relative to the TOML file.",
       "A plugin is looked up read-only in plugins/installed_plugins.json under $CLAUDE_CONFIG_DIR (default ~/.claude), or read from a directory with .claude-plugin/plugin.json. Its whole directory is stored in the bundle. A run writes it under the run's own home and starts Claude Code with --plugin-dir; your Claude config is not touched.",
       "harness tools reads the tools arrays coding.sh proxy stored with each model call, so it needs the proxy with request capture (capture mode full). Each distinct tools array is read once, the 2,000 most recently used at most. A tool named mcp__<server>__<tool> belongs to that MCP server; every other tool is builtin. descSha and schemaSha are the first 12 hex characters of the sha256 of the description and of the input schema as JSON.",
-      "With a pin, harness tools --changed keeps a tool when its latest description or schema differs from the pin, or when one seen since the pin does (differs from pin). It also keeps a tool with no pin first seen at or after the last pin, such as one an MCP server added (new since pin), and a pinned tool the latest tools array of every session since its pin leaves out (removed since pin). --json names up to 20 sessionIds per changed row other than removed. Pins live in tool-pins.json in the coding.sh data directory; pin keeps the pins of tools not seen in the window and drops the pins of removed tools.",
+      "With a pin, harness tools --changed keeps a tool when its latest description or schema differs from the pin, or when one seen since the pin does (differs from pin). It also keeps a tool with no pin first seen at or after the last pin, such as one an MCP server added (new since pin), and a pinned tool that no tools array offered since its pin includes, when at least one was offered (removed since pin). --json names up to 20 sessionIds per changed row other than removed. Pins live in tool-pins.json in the coding.sh data directory. pin keeps the pins of tools not seen in the window and drops the pins of removed tools; a later pin does not pin again a tool that is gone, one last seen before the newest pin.",
+      "harness snapshot --agent claude-code reads ~/.claude files from $CLAUDE_CONFIG_DIR when it is set, and records the MCP servers Claude Code would load in --dir: user and local scope from .claude.json, project scope from .mcp.json. Each keeps its name, scope, transport, and command or URL (without query string or user info), and only the names of its env and headers. harness list shows them. A trial writes a project .mcp.json like any other file, and does not load user or local servers.",
     ],
     load: () => import("./commands/harness.ts"),
   },

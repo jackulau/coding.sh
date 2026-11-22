@@ -142,10 +142,10 @@ describe("saved views on CLI, MCP and HTTP", () => {
   test("--view and --where together: both hold, each keeps its OR and negation", () => {
     ok(["views", "save", "either", "--where", "agent:codex OR agent:gemini"]);
     ok(["views", "save", "not-codex", "--where", "-agent:codex"]);
-    const both = ids(ok(["sessions", "--subagents", "--view", "either", "--where", "-flag:no-verification", "--json"]).stdout);
-    assert.deepEqual(both, ids(ok(["sessions", "--subagents", "--where", "(agent:codex OR agent:gemini) -flag:no-verification", "--json"]).stdout));
+    const both = ids(ok(["sessions", "--subagents", "--include-runs", "--view", "either", "--where", "-flag:no-verification", "--json"]).stdout);
+    assert.deepEqual(both, ids(ok(["sessions", "--subagents", "--include-runs", "--where", "(agent:codex OR agent:gemini) -flag:no-verification", "--json"]).stdout));
     assert.deepEqual([...both].sort(), ["s4", "s5"]);
-    const neg = ids(ok(["sessions", "--subagents", "--view", "not-codex", "--where", "agent:gemini OR model:claude-sonnet-*", "--json"]).stdout);
+    const neg = ids(ok(["sessions", "--subagents", "--include-runs", "--view", "not-codex", "--where", "agent:gemini OR model:claude-sonnet-*", "--json"]).stdout);
     assert.deepEqual([...neg].sort(), ["s2", "s5"]);
     ok(["views", "rm", "either"]);
     ok(["views", "rm", "not-codex"]);

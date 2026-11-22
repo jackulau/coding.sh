@@ -124,6 +124,29 @@ describe("case truth", () => {
     assert.equal(await load(`[start]\nrepoRoot = "${slash(repo)}"\nsnapshot = "${snap}"\n${bug}`, join(root, "inline-cases", "s.toml")), "loaded");
     assert.equal(await load(bug, join(dir, "s.toml")), "loaded");
   });
+
+  it("refuses a bug's patch inside the workflow's tree, with the folder to move it to; one outside, or already stored, loads", async () => {
+    const slash = (p: string) => p.replaceAll("\\", "/");
+    const load = (text: string, file: string) => parseCase(text, file, "wf", new MemBlobs()).then(() => "loaded", (e: Error) => e.message);
+    // The truth file sits outside both trees, but its patch points into the snapshot.
+    const truth = join(root, "patch-truth");
+    const snap = join(root, "patch-snap");
+    const repo = join(root, "patch-repo");
+    for (const d of [truth, snap, repo]) mkdirSync(d, { recursive: true });
+    writeFileSync(join(snap, "b1.patch"), BUG_PATCH);
+    writeFileSync(join(truth, "b1.patch"), BUG_PATCH);
+    const withPatch = (patch: string) => {
+      writeFileSync(join(truth, "s.json"), JSON.stringify({ bugs: [{ id: "b1", file: "src/a.ts", lines: [2, 2], patch }] }));
+      return `[start]\nrepoRoot = "${slash(repo)}"\nsnapshot = "${slash(snap)}"\n[truth]\nfile = "${slash(join(truth, "s.json"))}"\n`;
+    };
+    const leak = await load(withPatch(slash(join(snap, "b1.patch"))), join(root, "patch.toml"));
+    assert.match(leak, /patch\.toml: the patch ".*b1\.patch" of bug b1 is inside the workflow's tree .*, where its agents could read it; move it to a folder outside repoRoot and snapshot, such as (.+), then set its patch to the new path$/);
+    assert.equal(/such as (.+), then/.exec(leak)?.[1], join(root, "patch-snap-truth"));
+    // A relative patch resolves against the truth file, and one there loads.
+    assert.equal(await load(withPatch("b1.patch"), join(root, "patch.toml")), "loaded");
+    // A patch already stored as a blob ref names no file, so it stays valid.
+    assert.equal(await load(withPatch("a".repeat(64)), join(root, "patch.toml")), "loaded");
+  });
 });
 
 describe("scoreWorkflowCase", () => {

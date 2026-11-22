@@ -307,9 +307,11 @@ describe("failure detectors", () => {
     const call = (p: Record<string, unknown>) => ev("llm.call", p);
     assert.deepEqual(detectFlags([call({ ok: false, statusCode: 429 }), call({ ok: true })]), []);
     assert.deepEqual(detectFlags([call({ ok: false, statusCode: 429 }), call({ ok: false, statusCode: 429 }), call({ ok: false, statusCode: 529 }), call({ ok: true })]), [FLAGS.apiStall]);
-    // Not capacity: a bad request, a 500, an auth error, a refusal message.
-    assert.deepEqual(detectFlags([call({ ok: false, statusCode: 400 }), call({ ok: false, statusCode: 500 }), call({ ok: false, statusCode: 401 }), call({ ok: false, statusCode: 500 })]), []);
-    assert.deepEqual(detectFlags([ev("error", { message: "Claude Code can't respond to this message", source: "api" })]), []);
+    // Not capacity: a bad request, a 500, an auth error, a refusal message. No api-stall; the last one
+    // was never got past, so llm-error.
+    assert.deepEqual(detectFlags([call({ ok: false, statusCode: 400 }), call({ ok: false, statusCode: 500 }), call({ ok: false, statusCode: 401 }), call({ ok: false, statusCode: 500 })]), [FLAGS.llmError]);
+    assert.deepEqual(detectFlags([call({ ok: false, statusCode: 500 }), call({ ok: true })]), [], "a 500 a later call got past");
+    assert.deepEqual(detectFlags([ev("error", { message: "Claude Code can't respond to this message", source: "api" })]), [FLAGS.llmError]);
     assert.deepEqual(detectFlags([ev("error", { message: "stop hook failed: rate limit" })]), [], "not an API error");
   });
 

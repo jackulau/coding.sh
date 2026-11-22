@@ -33,9 +33,10 @@ describe("empty store", () => {
 
 describe("a store with older sessions", () => {
   test("usage and cache doctor offer a wider window", async () => {
-    for (const [mod, action, cmd] of [[usage, undefined, "coding.sh usage --since 90d"], [cache, "doctor", "coding.sh cache doctor --since 90d"]] as const) {
+    for (const [mod, action, cmd] of [[usage, undefined, "usage --since 90d"], [cache, "doctor", "cache doctor --since 90d"]] as const) {
       const r = await runCmd(mod as never, busy, { action, flags: { since: "7d" } });
-      assert.match(r.stderr, new RegExp(cmd.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+      // In PowerShell and cmd the step names `codingsh`.
+      assert.match(r.stderr, new RegExp(`(?:coding\\.sh|codingsh) ${cmd}`));
     }
   });
   test("usage says SESSIONS counts subagents", async () => {

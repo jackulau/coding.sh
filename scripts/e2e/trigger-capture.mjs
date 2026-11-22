@@ -208,7 +208,8 @@ try {
   }
   const pkgs = opts.agents.map((a) => AGENTS[a].pkg);
   log(`installing ${tarball} and ${pkgs.join(", ")}`);
-  const install = await run("npm", ["install", "-g", "--no-fund", "--no-audit", tarball, ...pkgs], { env, cwd: root });
+  // npm 12 runs no install script it is not told to; Claude Code's fetches its native binary. npm 11 and older accept the flag too.
+  const install = await run("npm", ["install", "-g", "--no-fund", "--no-audit", "--allow-scripts=@anthropic-ai/claude-code", tarball, ...pkgs], { env, cwd: root });
   if (install.code !== 0) throw new Error("npm install -g failed");
   const cs = (args, o = {}) => run("coding.sh", args, { env, cwd: root, ...o });
   const json = (r, what) => {

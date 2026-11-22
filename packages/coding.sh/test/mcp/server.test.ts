@@ -9,6 +9,7 @@ import { after, before, describe, it } from "node:test";
 import { openContext } from "../../src/core/context.ts";
 import { FileEvalStore } from "../../src/datasets/store.ts";
 import { CHARACTER_LIMIT } from "../../src/mcp/tools.ts";
+import { nextStepBin } from "../../src/cli/next-steps.ts";
 import { schemaViolations } from "../../src/toolevals/jsonschema.ts";
 import { connectMcp, resetEraCache } from "../../src/toolevals/mcp/client.ts";
 import { MAIN, RawClient, SEED, cleanup, makeWorld, seed, type World } from "./helpers.ts";
@@ -465,7 +466,7 @@ describe("tools", () => {
 
     writeFileSync(join(w.env.CODING_SH_HOME!, "update.json"), JSON.stringify({ latest: "99.0.0", checkedAt: Date.now(), url: "https://example.com/r", install: "coding.sh@99.0.0" }));
     const u = await call("status");
-    assert.deepEqual({ ...(u.update as object), checkedAt: undefined }, { current: (u.update as { current: string }).current, latest: "99.0.0", available: true, checkedAt: undefined, url: "https://example.com/r", install: "npm install -g coding.sh@99.0.0" });
+    assert.deepEqual({ ...(u.update as object), checkedAt: undefined }, { current: (u.update as { current: string }).current, latest: "99.0.0", available: true, checkedAt: undefined, url: "https://example.com/r", install: "npm install -g coding.sh@99.0.0", command: `${nextStepBin(w.env)} update` });
     assert.match((u.hints as string[]).join("\n"), /99\.0\.0 is available/);
     const init = await c.request("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "x", version: "0" } });
     assert.match(String(init.result!.instructions), /Update available: coding\.sh 99\.0\.0/);

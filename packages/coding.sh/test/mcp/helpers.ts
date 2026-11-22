@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openContext } from "../../src/core/context.ts";
-import { buildSession } from "../../src/core/sessions.ts";
+import { REFOLD_CURSOR } from "../../src/core/ingest.ts";
+import { buildSession, foldStamp } from "../../src/core/sessions.ts";
 import { FileEvalStore } from "../../src/datasets/store.ts";
 import type { ExperimentResult } from "../../src/datasets/types.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
@@ -138,6 +139,8 @@ export async function seed(w: World): Promise<void> {
       await ctx.index.putEvents(evs);
       await ctx.index.upsertSession(buildSession(evs));
     }
+    // Folded by this build, as an ingest leaves a store: no refold due (mcp/refolding.test.ts covers one).
+    await ctx.index.setCursor(REFOLD_CURSOR, foldStamp());
     const store = new FileEvalStore({ env: w.env, index: ctx.index });
     await store.putExperiment(experiment(SEED.expA, "baseline", now - H, [true, true, false, true]));
     await store.putExperiment(experiment(SEED.expB, "candidate", now - H / 2, [true, false, false, false]));

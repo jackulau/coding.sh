@@ -69,5 +69,7 @@ test("the header pill reads /api/update and renders text only", async () => {
   const html = readFileSync(new URL("../../src/viewer/ui/index.html", import.meta.url), "utf8");
   assert.match(html, /<button class="update-pill" id="update" type="button" hidden>/);
   assert.match(html, /fetch\("\/api\/update"/);
-  assert.match(html, /copy\("coding\.sh update"\)/);
+  // The browser names the bin its platform's shells run: codingsh on Windows.
+  assert.match(html, /const cmd = \(win \? "codingsh" : "coding\.sh"\) \+ " update";/);
+  assert.match(html, /copy\(cmd\)/);
 });

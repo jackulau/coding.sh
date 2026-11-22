@@ -73,6 +73,38 @@ describe("serve session metrics", () => {
     assert.match(again, /^coding_sh_sessions_total\{agent="[^"]+",outcome="ok"\} 1$/m);
     assert.equal(/^coding_sh_session_cost_usd_total\{[^}]*\} (\S+)$/m.exec(again)![1], line[2]);
   });
+
+  it("counts the root of an OTel conversation trace when its turn ends, not only its subagents", async () => {
+    const ik = generateKey("ingest");
+    const rk = generateKey("read");
+    const h = await serve(tmpEnv({ CODING_SH_INGEST_KEYS: ik, CODING_SH_READ_KEYS: `*:${rk}` }));
+    // A conversation id makes each trace one turn of a session that never sends session.end.
+    const traceId = "0af7651916cd43dd8448eb211c80319c";
+    const ns = (ms: number) => String(BigInt(NOW - 60_000 + ms) * 1_000_000n);
+    const attrs = (o: Record<string, string | number>) => Object.entries(o).map(([key, v]) => ({ key, value: typeof v === "number" ? { intValue: String(v) } : { stringValue: v } }));
+    const span = (spanId: string, parent: string, name: string, start: number, end: number, a: Record<string, string | number>) => ({ traceId, spanId, parentSpanId: parent, name, kind: 1, startTimeUnixNano: ns(start), endTimeUnixNano: ns(end), attributes: attrs({ "gen_ai.conversation.id": "conv-1", ...a }), status: { code: 1 } });
+    const chat = (spanId: string, parent: string, start: number) => span(spanId, parent, "chat gpt-4o", start, start + 500, { "gen_ai.operation.name": "chat", "gen_ai.request.model": "gpt-4o", "gen_ai.usage.input_tokens": 1000, "gen_ai.usage.output_tokens": 10 });
+    const post = (spans: unknown[]) =>
+      fetch(`${h.url}/v1/traces`, { method: "POST", headers: { authorization: `Bearer ${ik}`, "content-type": "application/json" }, body: JSON.stringify({ resourceSpans: [{ resource: { attributes: attrs({ "service.name": "orch" }) }, scopeSpans: [{ scope: { name: "test" }, spans }] }] }) });
+    const counted = async () => {
+      const m = /^coding_sh_session_cost_usd_total\{[^}]*\} (\S+)$/m.exec(await metricsText(h, rk));
+      return m ? Number(m[1]) : 0;
+    };
+    const one = (1000 * 2.5 + 10 * 10) / 1e6;
+    const agent = { "gen_ai.operation.name": "invoke_agent" };
+
+    // The subagent's spans and the root's first model call: only the ended subagent counts.
+    assert.equal((await post([span("b000000000000001", "a000000000000001", "invoke_agent researcher", 1000, 2000, { ...agent, "gen_ai.agent.name": "researcher" }), chat("c000000000000002", "b000000000000001", 1200), chat("c000000000000001", "a000000000000001", 100)])).status, 200);
+    assert.ok(Math.abs((await counted()) - one) < 1e-12);
+
+    // The root span ends the turn: the root's own cost is counted too, the subagent's not again.
+    assert.equal((await post([span("a000000000000001", "", "invoke_agent orchestrator", 0, 3000, { ...agent, "gen_ai.agent.name": "orchestrator" }), chat("c000000000000003", "a000000000000001", 2500)])).status, 200);
+    assert.ok(Math.abs((await counted()) - 3 * one) < 1e-12, String(await counted()));
+
+    // The same spans again: nothing is counted twice.
+    await post([span("a000000000000001", "", "invoke_agent orchestrator", 0, 3000, { ...agent, "gen_ai.agent.name": "orchestrator" })]);
+    assert.ok(Math.abs((await counted()) - 3 * one) < 1e-12);
+  });
 });
 
 describe("ServeMetrics.observeSessions", () => {
@@ -94,6 +126,28 @@ describe("ServeMetrics.observeSessions", () => {
       assert.doesNotMatch(text, /flag="gateway:vercel"|flag="model:switch"|flag="tests-failed"/);
       assert.match(text, /^coding_sh_session_cost_usd_total\{agent="codex",model="gpt-5"\} 0\.5$/m);
       assert.match(text, /^coding_sh_session_cost_usd_total\{agent="codex",model="unknown"\} 1$/m);
+    } finally {
+      m.close();
+    }
+  });
+
+  it("counts the cost a session gains per ended turn, once, and nothing after it ends", () => {
+    const m = new ServeMetrics();
+    try {
+      const cost = (costUsd: number, over: Partial<Session> = {}) => s("t", { model: "gpt-5", ...over, stats: { events: 1, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0, usage: { inputTokens: 1, outputTokens: 1, costUsd } } });
+      const counted = () => m.sessionCost.get({ agent: "codex", model: "gpt-5" });
+      m.observeTurns([cost(0.25)]);
+      assert.equal(counted(), 0.25);
+      m.observeTurns([cost(0.25)]);
+      assert.equal(counted(), 0.25);
+      m.observeTurns([cost(0.75)]);
+      assert.equal(counted(), 0.75);
+      m.observeSessions([cost(1)]);
+      assert.equal(counted(), 1);
+      m.observeTurns([cost(2)]);
+      m.observeSessions([cost(2)]);
+      assert.equal(counted(), 1);
+      assert.equal(m.sessions.get({ agent: "codex", outcome: "ok" }), 1);
     } finally {
       m.close();
     }

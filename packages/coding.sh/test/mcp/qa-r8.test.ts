@@ -187,7 +187,7 @@ describe("eval_candidates", () => {
     assert.ok(hosted, `the hosted session is considered: ${JSON.stringify(r.candidates)}`);
     assert.equal(hosted.reject, undefined, `not rejected: ${String(hosted.reject)}`);
     assert.equal(hosted.eligible, true);
-    assert.equal(hosted.agent, "t3code");
+    assert.equal(hosted.agent, "claude-code", "the agent that ran, not the host");
   });
 });
 

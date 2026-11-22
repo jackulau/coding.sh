@@ -14,11 +14,12 @@ export interface World {
   commits: Record<string, string>;
 }
 
-/** One planned session: `reads` Read calls, a command that fails three times in a row (`failing`: repeated-tool-failure), `npm test` (`test`). No file edits. */
+/** One planned session: `reads` Read calls, a command that fails three times in a row (`failing`: repeated-tool-failure), `npm test` (`test`), started as `claude -p` (`headless`). No file edits. */
 export interface PlannedSession {
   reads?: number;
   failing?: boolean;
   test?: boolean;
+  headless?: boolean;
 }
 
 /**
@@ -90,6 +91,7 @@ export async function improveWorld(root: string, name: string, opts: { afterFlag
     if (o.plan) {
       const planned = (id: string, head: string, daysAgo: number, p: PlannedSession) => {
         const steps: Parameters<typeof sessionEvents>[2] = [["user.message", { text: `Task ${id}` }]];
+        if (p.headless) steps.unshift(["session.start", { entrypoint: "sdk-cli" }]);
         for (let i = 0; i < (p.reads ?? 1); i++) steps.push(["tool.start", { tool: "Read", toolUseId: `${id}-r${i}`, input: { file_path: join(repo, `src/f${i}.js`) } }], ["tool.end", { tool: "Read", toolUseId: `${id}-r${i}`, ok: true, output: "x" }]);
         if (p.failing) for (let i = 0; i < 3; i++) steps.push(["tool.start", { tool: "Bash", toolUseId: `${id}-b${i}`, input: { command: "npm run build" } }], ["tool.end", { tool: "Bash", toolUseId: `${id}-b${i}`, ok: false, output: "Error: Cannot find module './gen.js'" }]);
         if (p.test) steps.push(["tool.start", { tool: "Bash", toolUseId: `${id}-t`, input: { command: "npm test" } }], ["tool.end", { tool: "Bash", toolUseId: `${id}-t`, ok: true, output: "ok" }]);

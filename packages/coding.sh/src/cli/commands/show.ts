@@ -8,7 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { callCopies } from "../../core/call-copies.ts";
 import { sessionOutline, phaseLabel, storedOutline, type Outline, type Phase } from "../../core/outline.ts";
 import { apportion, costNote, TOKEN_TYPES } from "../../core/pricing.ts";
-import { changeKey, failureFlags } from "../../core/sessions.ts";
+import { changeKey, failureFlags, FLAGS, llmCallFailed } from "../../core/sessions.ts";
 import { SKILL_EVENT_KINDS, SKILL_TAG_PREFIX, skillUse, type SkillUseReport } from "../../core/skills-use.ts";
 import { pageTree, subagentsOf, type TreeNode } from "../../core/tree.ts";
 import { checkpointRunsText, weightsEventText, weightsSummaryText } from "../../core/weights.ts";
@@ -98,6 +98,20 @@ export function failedTail(output: unknown): string {
 }
 
 /**
+ * The whole text behind a cut preview: the first of `refs` whose blob starts
+ * with the preview (without its "…") and is longer. A blob that does not start
+ * with it, such as a raw hook payload, is never taken for the text.
+ */
+async function wholeText(cut: string, refs: readonly string[], blobs: BlobStore): Promise<string | undefined> {
+  const preview = cut.endsWith("…") ? cut.slice(0, -1) : cut;
+  for (const ref of refs) {
+    const full = await blobs.getText(ref).catch(() => undefined);
+    if (full !== undefined && full.length > preview.length && full.startsWith(preview)) return full;
+  }
+  return undefined;
+}
+
+/**
  * Failed tool calls whose stored output was cut, with the full output read back
  * from its blob: the tail shown under the line is then the real end of the
  * output, not the end of the stored preview. A blob counts only when it starts
@@ -110,16 +124,68 @@ export async function withFullFailedOutputs(events: AgentEvent[], blobs: BlobSto
       if (e.kind !== "tool.end" || p.ok !== false || typeof p.output !== "string") return e;
       const own = str(p.outputBlob);
       if (!own && !p.truncated && !p.output.endsWith("…")) return e;
-      const preview = p.output.endsWith("…") ? p.output.slice(0, -1) : p.output;
       const refs = [...(e.blobs ?? [])].reverse();
       if (own) refs.unshift(own);
-      for (const ref of refs) {
-        const full = await blobs.getText(ref).catch(() => undefined);
-        if (full !== undefined && full.length > preview.length && full.startsWith(preview)) return { ...e, payload: { ...p, output: full } };
-      }
-      return e;
+      const full = await wholeText(p.output, refs, blobs);
+      return full === undefined ? e : { ...e, payload: { ...p, output: full } };
     }),
   );
+}
+
+/** How many events read their blobs at once for `show --json`. */
+const BLOB_READS = 8;
+
+/**
+ * One event for --json with every cut text read back whole: a `<key>Blob` ref
+ * back into `<key>` (serve and the OTLP mapper offload that way), and a cut
+ * string of a `truncated` event from the event's blobs (an adapter's clip).
+ * The same check as withFullFailedOutputs: a blob counts only when it starts
+ * with the preview. `truncated` goes when nothing stays cut. The text view
+ * keeps its clip.
+ */
+export async function withWholePayload(e: AgentEvent, blobs: BlobStore): Promise<AgentEvent> {
+  const p = e.payload;
+  const own = Object.keys(p).filter((k) => k.endsWith("Blob") && k.length > 4 && typeof p[k] === "string" && typeof p[k.slice(0, -4)] === "string").map((k) => k.slice(0, -4));
+  const clipped = p.truncated === true ? Object.keys(p).filter((k) => !own.includes(k) && typeof p[k] === "string" && (p[k] as string).endsWith("…")) : [];
+  if (!own.length && !clipped.length) return e;
+  const shared = [...(e.blobs ?? [])].reverse();
+  const next: Record<string, unknown> = { ...p };
+  let cut = 0;
+  for (const k of own) {
+    const full = await wholeText(p[k] as string, [p[`${k}Blob`] as string, ...shared], blobs);
+    if (full === undefined) cut++;
+    else {
+      next[k] = full;
+      delete next[`${k}Blob`];
+    }
+  }
+  for (const k of clipped) {
+    const full = await wholeText(p[k] as string, shared, blobs);
+    if (full === undefined) cut++;
+    else next[k] = full;
+  }
+  if (cut === own.length + clipped.length) return e;
+  if (!cut) delete next.truncated;
+  return { ...e, payload: next };
+}
+
+async function withWholePayloads(events: AgentEvent[], blobs: BlobStore): Promise<AgentEvent[]> {
+  const out: AgentEvent[] = new Array(events.length);
+  let i = 0;
+  const worker = async () => {
+    while (i < events.length) {
+      const n = i++;
+      out[n] = await withWholePayload(events[n]!, blobs);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(BLOB_READS, events.length) }, worker));
+  return out;
+}
+
+/** "3 tool calls (1 failed)", or what the source cannot see: an SDK call outside trace() and the proxy record model calls only. */
+function toolsText(s: Session): string {
+  if (!s.stats.toolCalls && s.flags.includes(FLAGS.toolsUnseen)) return "tool calls not recorded (the source records model calls only)";
+  return `${plural(s.stats.toolCalls, "tool call")}${s.stats.toolErrors ? ` (${s.stats.toolErrors} failed)` : ""}`;
 }
 
 /** One timeline line per event; tool.start/tool.end pairs collapse into the end line. */
@@ -149,7 +215,9 @@ function describe(e: AgentEvent, starts: Map<string, AgentEvent>): string | unde
       // Proxy calls: cache use, and the id that `show`, `diff-calls` and `exp replay` take.
       const u = e.usage;
       const proxied = e.source === "proxy" ? `${u?.cacheReadTokens || u?.cacheWriteTokens ? ` cache r${tokens(u.cacheReadTokens ?? 0)}/w${tokens(u.cacheWriteTokens ?? 0)}` : ""}  ${e.id.slice(0, 12)}` : "";
-      return `llm         ${e.model ?? str(p.model) ?? ""} ${duration(e.durationMs)} in ${tokens(e.usage?.inputTokens)} out ${tokens(e.usage?.outputTokens)}${callCost(e)}${proxied}`;
+      // A failed call says so, with what the API or the client said (an SDK fetch that threw records only that).
+      const failed = llmCallFailed(p) ? `  failed${typeof p.statusCode === "number" ? ` ${p.statusCode}` : ""}${str(p.error) ?? str(p.message) ? `: ${oneLine(clean(str(p.error) ?? str(p.message)!), 150)}` : ""}` : "";
+      return `llm         ${e.model ?? str(p.model) ?? ""} ${duration(e.durationMs)} in ${tokens(e.usage?.inputTokens)} out ${tokens(e.usage?.outputTokens)}${callCost(e)}${proxied}${failed}`;
     }
     case "subagent.start":
       return `subagent    start ${str(p.type) ?? str(p.subagentType) ?? ""} ${oneLine(clean(str(p.description) ?? str(p.prompt) ?? ""), 70)}`;
@@ -463,7 +531,7 @@ export async function run(c: CommandContext): Promise<number> {
         session: sessionJson(s, { derailEvents: true }),
         snapshot: changes ?? null,
         eventCount: s.stats.events,
-        events: listed.map((e) => eventJson(e, s)),
+        events: (await withWholePayloads(listed, ctx.blobs)).map((e) => eventJson(e, s)),
         phases: outline?.phases ?? [],
         days: outline?.days ?? [],
         subagentCount,
@@ -487,8 +555,10 @@ export async function run(c: CommandContext): Promise<number> {
       ["Repo", s.repo ? `${s.repo.root}${s.repo.branch ? ` (${s.repo.branch})` : ""}` : (s.cwd ?? "-")],
       ["Started", startedText(s.startedAt)],
       ["Duration", s.endedAt !== undefined ? duration(s.endedAt - s.startedAt) : "running or not ended"],
-      ["Turns", `${s.stats.turns}, ${plural(s.stats.toolCalls, "tool call")}${s.stats.toolErrors ? ` (${s.stats.toolErrors} failed)` : ""}, ${plural(filesChanged, "file")} changed`],
+      ["Turns", `${s.stats.turns}, ${toolsText(s)}, ${plural(filesChanged, "file")} changed`],
     ];
+    const llmErrors = s.stats.llmErrors;
+    if (llmErrors?.count) rows.push(["Model errors", `${plural(llmErrors.count, "failed model call")}${llmErrors.error ? `, first: ${oneLine(clean(llmErrors.error), 150)}` : ""}`]);
     // Tags (a colon in the name) are not failures; what is left is why `sessions --where is:flagged` listed it.
     const flags = failureFlags(s.flags);
     if (flags.length) rows.push(["Flags", flags.join(", ")]);

@@ -119,7 +119,7 @@ describe("coding.sh budget (in process)", () => {
     assert.match(text.stdout, /^day\tday\tevery session\t~\$0\.7500\t\$1\.00\t75%\t/m);
     assert.match(text.stdout, /^day-w0ld000\tday\twhere bogus:1\t-\t\$5\.00\t-\t/m);
     assert.match(text.stderr, /Budget day-w0ld000 can't be read: --where does not parse \(unknown key "bogus"\)/);
-    assert.match(text.stderr, /coding\.sh budget rm day-w0ld000/);
+    assert.match(text.stderr, /(?:coding\.sh|codingsh) budget rm day-w0ld000/);
   });
 
   test("status with no budgets says how to set one", async () => {

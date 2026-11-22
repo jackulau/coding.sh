@@ -83,7 +83,7 @@ describe("cli refine", () => {
     assert.equal(bad.status, 1);
     assert.equal(bad.stdout, 'protected-line: AGENTS.md:3 "Never run `git push --force`." (auto)\nrelaxes-protected: "Only ask the owner when the path is ambiguous." vs AGENTS.md:4 (added at AGENTS.md:5)\n');
     assert.match(bad.stderr, /2 protected-line problems from A \(git:HEAD\) to B \(your edits\)/);
-    assert.match(bad.stderr, /coding\.sh refine check --allow-protected-edit AGENTS\.md:3/);
+    assert.match(bad.stderr, /(?:coding\.sh|codingsh) refine check --allow-protected-edit AGENTS\.md:3/);
 
     const j = e.cli("refine", "check", "--json");
     assert.equal(j.status, 1);

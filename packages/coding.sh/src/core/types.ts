@@ -57,6 +57,7 @@ export interface SpoolCursor {
 // ---------------------------------------------------------------- storage
 
 export interface SessionFilter {
+  /** Sessions this agent ran, and those it drove as a host app (Session.host). */
   agent?: AgentId;
   /** Only children of this session (subagents); null = only top-level sessions. */
   parentSessionId?: string | null;
@@ -1011,8 +1012,30 @@ export interface HarnessBundle {
    * the `files` keys under "~/.coding.sh-plugins/<name>/"; absent when there are none.
    */
   plugins?: HarnessPlugin[];
+  /**
+   * The MCP servers Claude Code loaded where the bundle was snapshotted (claude-code only). A
+   * record, not part of the id: applyBundle does not install them. Absent when there are none.
+   */
+  mcpServers?: HarnessMcpServer[];
   createdAt: number;
   note?: string;
+}
+
+/** An MCP server a harness bundle records: how it starts or where it is, never an env or header value. */
+export interface HarnessMcpServer {
+  name: string;
+  /** user: ~/.claude.json; local: its entry for the project directory; project: the project's .mcp.json. */
+  scope: "user" | "local" | "project";
+  /** As configured ("stdio", "http", "sse", …); "stdio" when it names a command and no type. */
+  transport: string;
+  /** A stdio server's command, without its arguments. */
+  command?: string;
+  /** A remote server's URL, without its query string, fragment or user info. */
+  url?: string;
+  /** The names of the env vars it sets, sorted; absent when none. */
+  envKeys?: string[];
+  /** The names of the headers it sends, sorted; absent when none. */
+  headerKeys?: string[];
 }
 
 /** A Claude Code plugin carried by a harness bundle (runner/plugins.ts). */

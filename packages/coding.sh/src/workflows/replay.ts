@@ -17,6 +17,7 @@
 // It is a heuristic (a changed helper two calls away is not traced), so the
 // result says so. Inside a pipeline(), call order interleaves items across
 // stages, which the ordinal prefix captures as is.
+import type { Redactor } from "../core/redact.ts";
 import { argsHashOf } from "./sources/claude-workflow.ts";
 import { isAgentNode, workflowStats } from "./metrics.ts";
 import type { WorkflowStore } from "./store.ts";
@@ -214,6 +215,8 @@ export interface ReplayOpts {
   editedScript: string;
   args?: unknown;
   baseArgs?: unknown;
+  /** The redaction the stored outputs take (WorkflowStore.putRun; default: the built-in rules). */
+  redactor?: Redactor;
   driver: WorkflowDriver;
   store: WorkflowStore;
   dryRun?: boolean;
@@ -232,6 +235,9 @@ export async function replayWorkflow(o: ReplayOpts): Promise<{ prediction: Cache
   if (o.base.run.caseId) tree.run.caseId = o.base.run.caseId;
   tree.run.tags = [...new Set([...tree.run.tags, "replay"])];
   tree.run.stats = workflowStats(tree.run, tree.nodes, o.base);
-  await o.store.putRun(tree.run, tree.nodes, { outputs: tree.outputs, runOutput: res.output ?? tree.runOutput, ...(res.sources.script !== undefined ? { script: res.sources.script } : {}) });
+  const extra: Parameters<WorkflowStore["putRun"]>[2] = { outputs: tree.outputs, runOutput: res.output ?? tree.runOutput };
+  if (o.redactor) extra.redactor = o.redactor;
+  if (res.sources.script !== undefined) extra.script = res.sources.script;
+  await o.store.putRun(tree.run, tree.nodes, extra);
   return { prediction, run: tree.run };
 }

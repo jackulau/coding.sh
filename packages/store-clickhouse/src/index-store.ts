@@ -133,6 +133,15 @@ function eventRow(e: AgentEvent, seq: number, ver: number): Row {
   };
 }
 
+/** The stats JSON as stored: provider and host have no column, so they ride inside it (rowToSession takes them out). */
+function storedStats(s: Session): Session["stats"] & { provider?: string; host?: string } {
+  if (!s.provider && !s.host) return s.stats;
+  const out: Session["stats"] & { provider?: string; host?: string } = { ...s.stats };
+  if (s.provider) out.provider = s.provider;
+  if (s.host) out.host = s.host;
+  return out;
+}
+
 function rowToSession(r: Row): Session {
   const s: Session = {
     id: r.id as string,
@@ -141,9 +150,11 @@ function rowToSession(r: Row): Session {
     stats: parse<Session["stats"]>(r.stats)!,
     flags: Array.isArray(r.flags) ? (r.flags as string[]) : [],
   };
-  // provider rides in the stats JSON, as in the SQLite store.
-  const { provider, ...stats } = s.stats as Session["stats"] & { provider?: string };
-  if (typeof provider === "string") (s.stats = stats), (s.provider = provider);
+  // provider and host ride in the stats JSON, as in the SQLite store.
+  const { provider, host, ...stats } = s.stats as Session["stats"] & { provider?: string; host?: string };
+  if (typeof provider === "string" || typeof host === "string") s.stats = stats;
+  if (typeof provider === "string") s.provider = provider;
+  if (typeof host === "string") s.host = host;
   const set = <K extends keyof Session>(k: K, v: Session[K] | undefined) => {
     if (v !== undefined) s[k] = v;
   };
@@ -194,7 +205,8 @@ class Where {
 /** WHERE parts for a SessionFilter. */
 function sessionFilter(w: Where, f: Omit<SessionFilter, "limit" | "offset">): Where {
   if (f.project) w.add(`project_id = ${w.bind("String", f.project)}`);
-  if (f.agent) w.add(`agent = ${w.bind("String", f.agent)}`);
+  // The agent that ran, or the host app that drove it (Session.host), as in the SQLite store.
+  if (f.agent) w.add(`(agent = ${w.bind("String", f.agent)} OR JSONExtractString(stats, 'host') = ${w.bind("String", f.agent)})`);
   if (f.parentSessionId === null) w.add("parent_session_id IS NULL");
   else if (f.parentSessionId !== undefined) w.add(`parent_session_id = ${w.bind("String", f.parentSessionId)}`);
   if (f.repoRoot) w.add(`repo_root = ${w.bind("String", f.repoRoot)}`);
@@ -444,7 +456,7 @@ export class ChIndexStore implements IndexStore {
       title: opt(s.title),
       started_at: s.startedAt,
       ended_at: s.endedAt ?? null,
-      stats: JSON.stringify(s.provider ? { ...s.stats, provider: s.provider } : s.stats),
+      stats: JSON.stringify(storedStats(s)),
       flags: s.flags ?? [],
       run_id: opt(s.runId),
       end_snapshot: opt(s.endSnapshot),

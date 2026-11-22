@@ -11,7 +11,7 @@ import { after, before, describe, test } from "node:test";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { parseLiterals, purgeWait } from "../../src/cli/commands/purge.ts";
 import { shadowRepoPath, snapshot } from "../../src/core/snapshot.ts";
-import { entryBytes, readRecording, recordingPath, writeRecording, type LlmEntry } from "../../src/llmcache/store.ts";
+import { entryBytes, markRecording, readRecording, recordingPath, unmarkRecording, writeRecording, type LlmEntry } from "../../src/llmcache/store.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { searchableText } from "../../src/store/common.ts";
 import { FsBlobStore } from "../../src/store/fs-blobs.ts";
@@ -887,5 +887,89 @@ describe("coding.sh purge in llm-cache recordings and snapshot repos", () => {
     assert.match(r.stderr, /No copies of these values in the store/);
     assert.doesNotMatch(r.stderr, /Snapshots/);
     assert.ok(existsSync(shadowC), "a snapshot repo without the values stays");
+  });
+});
+
+// A recording job holds its calls in memory and writes them when it ends (llmcache/proxy.ts): its
+// marker tells purge to wait, so the file it writes is scrubbed instead of landing after the purge.
+describe("coding.sh purge and recording jobs in progress", () => {
+  let env: TmpEnv;
+  let secrets = "";
+  let llm = "";
+  const entry = (body: string): LlmEntry => ({ v: 1, ordinal: 1, provider: "anthropic", path: "/v1/messages", key: "a".repeat(64), status: 200, body, startedAt: 1, latencyMs: 5 });
+
+  before(async () => {
+    env = tmpEnv();
+    await seed(env.dataHome, { sessions: [session("s1")], events: [event("s1", 1, { payload: { text: "nothing to see" } })] });
+    secrets = join(env.root, "leaked.txt");
+    writeFileSync(secrets, `${SECRET}\n`);
+    llm = join(env.dataHome, "llm-cache");
+  });
+  after(async () => {
+    await closeBlobs();
+    env.restore();
+  });
+
+  test("--dry-run names a live job and changes nothing", () => {
+    const marker = markRecording(recordingPath(llm, "exp_live", "case-1", 0));
+    try {
+      const r = ok(["purge", "--literal", secrets, "--dry-run"], { CODING_SH_PURGE_WAIT_MS: "50" });
+      assert.match(r.stderr, new RegExp(`Recordings\\s+a job recording experiment exp_live \\(pid ${process.pid}\\) is running: a purge waits for it to end`));
+      const j = JSON.parse(ok(["purge", "--literal", secrets, "--dry-run", "--json"]).stdout);
+      assert.deepEqual(j.recordingsLive.map((l: { experiment: string; pid: number }) => [l.experiment, l.pid]), [["exp_live", process.pid]]);
+      assert.ok(existsSync(marker), "a dry run leaves the marker");
+    } finally {
+      unmarkRecording(marker);
+    }
+  });
+
+  test("waits for a live job, then exits 1 naming its experiment; passes once the job ends", () => {
+    const marker = markRecording(recordingPath(llm, "exp_live", "case-1", 0));
+    let r;
+    const t0 = Date.now();
+    try {
+      r = cli(["purge", "--literal", secrets], { CODING_SH_PURGE_WAIT_MS: "400" });
+    } finally {
+      unmarkRecording(marker);
+    }
+    assert.equal(r.status, 1, r.stderr);
+    assert.ok(Date.now() - t0 >= 400, "purge waited for the job");
+    assert.match(r.stderr, new RegExp(`a job recording experiment exp_live \\(pid ${process.pid}\\) is still running`));
+    assert.doesNotMatch(r.stderr, /Rotate the secret|No copies/);
+    const again = ok(["purge", "--literal", secrets], { CODING_SH_PURGE_WAIT_MS: "400" });
+    assert.doesNotMatch(again.stderr, /exp_live/);
+  });
+
+  test("deletes a marker whose process is gone, without waiting for it", () => {
+    const gone = spawnSync(process.execPath, ["-e", ""]).pid;
+    assert.ok(gone);
+    mkdirSync(join(llm, "exp_dead"), { recursive: true });
+    const marker = join(llm, "exp_dead", `${"0".repeat(16)}-t0.${gone}-abc123.recording.lock`);
+    writeFileSync(marker, JSON.stringify({ pid: gone, startedAt: 1 }));
+    const t0 = Date.now();
+    const r = ok(["purge", "--literal", secrets], { CODING_SH_PURGE_WAIT_MS: "60000" });
+    assert.ok(Date.now() - t0 < 50_000, "a dead job's marker is not waited for");
+    assert.doesNotMatch(r.stderr, /exp_dead/);
+    assert.ok(!existsSync(marker), "the dead job's marker is deleted");
+  });
+
+  test("a recording written while purge waits is scrubbed by that purge", async () => {
+    const rec = recordingPath(llm, "exp_wait", "case-1", 0);
+    const marker = markRecording(rec);
+    // The job ends 300 ms into the wait, writing a reply that holds the value.
+    const ended = new Promise<void>((res) =>
+      setTimeout(() => {
+        void writeRecording(rec, [entry(`use ${SECRET}`)]).then(() => {
+          unmarkRecording(marker);
+          res();
+        });
+      }, 300),
+    );
+    const blobs = fsBlobs(join(env.dataHome, "blobs"));
+    const r = await purgeLiterals({ dbPath: join(env.dataHome, "index.db"), blobs, llmCache: llm, literals: [SECRET], waitMs: 10_000 });
+    await ended;
+    assert.equal(r.recordingsLive, undefined);
+    assert.equal(r.recordings, 1);
+    assert.ok(!holds(gunzipSync(readFileSync(rec)), SECRET), "the recording the job wrote was scrubbed");
   });
 });

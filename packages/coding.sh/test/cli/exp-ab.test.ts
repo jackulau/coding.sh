@@ -203,7 +203,7 @@ describe("cli exp ab", () => {
     assert.equal(none.status, 2, none.stderr);
     assert.equal((JSON.parse(none.stderr.trim()) as { reason: string }).reason, "no_cases");
     const noneText = await cli(empty, ["exp", "ab"]);
-    assert.match(noneText.stderr, /coding\.sh exp ab --since 30d --repo all/);
+    assert.match(noneText.stderr, /(?:coding\.sh|codingsh) exp ab --since 30d --repo all/);
   });
 
   it("exp run wants a control arm for a continuation task; --no-control runs it alone and compare says so", async () => {
@@ -273,7 +273,7 @@ describe("cli exp ab", () => {
     assert.equal(err.reason, "missing_key");
     assert.match(err.message, /set ANTHROPIC_API_KEY \(6 of 6 model calls are not cached\)/);
     assert.match(err.message, /or log in to Claude Code \(.*\) or Codex \(run `codex login`\) and exp ab replays them on that subscription$/);
-    assert.ok(err.next.includes("coding.sh improve check"));
+    assert.ok(err.next.some((n: string) => /^(?:coding\.sh|codingsh) improve check$/.test(n)), err.next.join("\n"));
     const runs = await cli({ ...e, env }, ["exp", "list", "--json"]);
     assert.doesNotMatch(runs.stdout, /exp ab/, "no experiment was recorded");
   });
@@ -469,7 +469,7 @@ describe("cli exp ab on a subscription", () => {
     const err = JSON.parse(all.stderr) as { reason: string; message: string; next: string[] };
     assert.equal(err.reason, "model_error");
     assert.match(err.message, /^Every model call failed \(6 of 6 trials\): .*prompt is too long/);
-    assert.match(err.next.join("\n"), /coding\.sh exp show exp_\w+/);
+    assert.match(err.next.join("\n"), /(?:coding\.sh|codingsh) exp show exp_\w+/);
 
     const some = await cli({ ...e, env: { ...e.env, FAKE_MODE: "fail-a" } }, ["exp", "ab", "--no-cache"]);
     assert.equal(some.status, 0, some.stderr);

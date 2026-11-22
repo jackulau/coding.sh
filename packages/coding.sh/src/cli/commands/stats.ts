@@ -4,7 +4,7 @@
 // /api/metrics and the viewer's Metrics page). Without --by: one row per day
 // or week. With --by: one row per group with its totals and a trend of the
 // chosen measure. --json prints the MetricSeries document.
-import { computeMetrics, MAX_BUCKETS, METRIC_MEASURES, MetricsError, measureAt, measureOf, type MetricBucket, type MetricGroup, type MetricLine, type MetricMeasure, type MetricTotals } from "../../viewer/metrics.ts";
+import { bucketTimes, loadMetricRows, MAX_BUCKETS, metricsOf, METRIC_MEASURES, MetricsError, measureAt, measureOf, type MetricBucket, type MetricGroup, type MetricLine, type MetricMeasure, type MetricTotals } from "../../viewer/metrics.ts";
 import { parseSinceWhen, UsageError } from "../args.ts";
 import { autoIngest, pendingField, queryCliError, readIngest, str, timeWindow, whereFlag, windowJson, windowNote, withContext } from "../common.ts";
 import { noSessionsNext } from "../first-session.ts";
@@ -92,7 +92,7 @@ export async function run(c: CommandContext): Promise<number> {
     const backlog = await autoIngest(ctx, readIngest(c));
     let m;
     try {
-      m = await computeMetrics(ctx.index, {
+      const spec = {
         since,
         until,
         bucket: per,
@@ -100,7 +100,13 @@ export async function run(c: CommandContext): Promise<number> {
         tzOffsetMin: new Date(now).getTimezoneOffset(),
         ...(where ? { where } : {}),
         filter: c.flags.all === true ? {} : { parentSessionId: null },
-      });
+      };
+      // Rows from --since itself, not from its day's midnight: the first day's row is labelled by
+      // its day but counts only the sessions at or after --since, as usage and sessions do.
+      const buckets = bucketTimes(since, until, per, spec.tzOffsetMin);
+      const { rows, truncated } = await loadMetricRows(ctx.index, spec);
+      m = metricsOf(rows, spec, buckets);
+      if (truncated) m = { ...m, truncated };
     } catch (e) {
       if (e instanceof MetricsError) throw new UsageError(metricsErrorText(e), { reason: e.reason });
       throw queryCliError(e);

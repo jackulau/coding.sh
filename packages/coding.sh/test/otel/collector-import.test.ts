@@ -214,7 +214,8 @@ describe("coding.sh collector import: a run that stops part-way", () => {
     const err = JSON.parse(first.stderr) as { reason: string; message: string; next: string[] };
     assert.equal(err.reason, "clickhouse_error");
     assert.match(err.message, /^The import stopped after 5000 spans \(1667 sessions stored\): Code: 241\..*MEMORY_LIMIT_EXCEEDED/);
-    assert.deepEqual(err.next, ["Run it again to read the rest (nothing is stored twice):", `coding.sh collector import --clickhouse ${ch.url} --where 'ServiceName = '\\''chat-app'\\'''`]);
+    // In PowerShell or cmd (no MSYSTEM or SHELL) the printed bin is codingsh.
+    assert.deepEqual(err.next.map((l) => l.replace(/^codingsh /, "coding.sh ")), ["Run it again to read the rest (nothing is stored twice):", `coding.sh collector import --clickhouse ${ch.url} --where 'ServiceName = '\\''chat-app'\\'''`]);
     const partial = await totals();
     assert.equal(partial.sessions, 1667, "every stored span is in a session");
 

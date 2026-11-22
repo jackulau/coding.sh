@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,7 +7,8 @@ import { after, describe, it } from "node:test";
 import { openContext } from "../../src/core/context.ts";
 import { ownerGuard, sourceCheckout, sourceRunRefusal, StoreOwnerError, StoreVersionError } from "../../src/core/store-guard.ts";
 import { loadSqlite } from "../../src/store/sqlite-open.ts";
-import { MIGRATIONS, SQLITE_SCHEMA_VERSION } from "../../src/store/sqlite.ts";
+import { MIGRATIONS, SQLITE_SCHEMA_VERSION, SqliteIndexStore } from "../../src/store/sqlite.ts";
+import { WRITER_KEY } from "../../src/store/upgrade.ts";
 
 const PKG = realpathSync(fileURLToPath(new URL("../../", import.meta.url)));
 const root = realpathSync(mkdtempSync(join(tmpdir(), "csh-store-guard-unit-")));
@@ -181,5 +182,87 @@ describe("migrations wait for the install that owns the store", () => {
     await storeAt(elsewhere, OLD);
     const ctx = await openContext({ env: { ...env, CODING_SH_STORE_URL: `sqlite://${elsewhere}` } });
     await ctx.close();
+  });
+});
+
+describe("the owner is judged under the migration's write lock", () => {
+  const OLD = SQLITE_SCHEMA_VERSION - 1;
+  const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  /** An index at OLD in a new home, and a second connection holding its write lock. */
+  async function heldStore(owner?: string, writer?: string) {
+    const data = mkdtempSync(join(root, "lock-"));
+    if (owner) {
+      mkdirSync(join(data, "bin"), { recursive: true });
+      writeFileSync(join(data, "bin", "cli-path"), owner + "\n");
+    }
+    const file = join(data, "index.db");
+    const { DatabaseSync } = await loadSqlite();
+    const db = new DatabaseSync(file);
+    db.exec("PRAGMA journal_mode = WAL");
+    db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
+    for (const m of MIGRATIONS.filter((m) => m.version <= OLD)) {
+      db.exec(m.sql);
+      m.after?.(db);
+      db.prepare("INSERT INTO migrations (version, applied_at) VALUES (?, 0)").run(m.version);
+    }
+    db.prepare("INSERT INTO events (id, session_id, ts, agent, kind, payload) VALUES ('e0', 's', 0, 'claude-code', 'user.message', '{}')").run();
+    if (writer) db.prepare("INSERT INTO kv (key, value, updated_at) VALUES (?, ?, 0)").run(WRITER_KEY, JSON.stringify({ version: writer, schema: OLD, at: 1 }));
+    db.exec("BEGIN IMMEDIATE");
+    return { data, file, db };
+  }
+  const schema = async (file: string): Promise<number> => {
+    const { DatabaseSync } = await loadSqlite();
+    const db = new DatabaseSync(file, { readOnly: true });
+    try {
+      return (db.prepare("SELECT MAX(version) AS v FROM migrations").get() as { v: number }).v;
+    } finally {
+      db.close();
+    }
+  };
+  const backups = (data: string): string[] => readdirSync(data).filter((f) => f.endsWith(".bak"));
+
+  it("an index another process finished migrating while this one waited opens, with no StoreOwnerError", async () => {
+    // Another install owns the home, so a judgment here would refuse with a StoreOwnerError.
+    const owner = pkgAt(join(root, "lock-owner", "lib", "node_modules", "coding.sh"), false);
+    const { data, file, db } = await heldStore(owner);
+    const guard = ownerGuard(data, file, undefined, { version: "0.1.7", source: false });
+    assert.ok(guard);
+    const opening = SqliteIndexStore.open(file, { beforeMigrate: guard });
+    let settled: unknown = "pending";
+    opening.then(() => (settled = "opened"), (e: unknown) => (settled = e));
+    await tick(300);
+    assert.equal(settled, "pending", "the open waits for the write lock");
+    // The owner migrates under the lock it holds.
+    for (const m of MIGRATIONS.filter((m) => m.version > OLD)) {
+      db.exec(m.sql);
+      m.after?.(db);
+      db.prepare("INSERT INTO migrations (version, applied_at) VALUES (?, 0)").run(m.version);
+    }
+    db.exec("COMMIT");
+    db.close();
+    const store = await opening;
+    await store.close();
+    assert.equal(await schema(file), SQLITE_SCHEMA_VERSION);
+    assert.deepEqual(backups(data), []);
+  });
+
+  it("a migration refused under the lock rolls back, makes no copy and leaves the lock free", async () => {
+    // Read before the lock, the stamp says 0.1.6 and 0.1.7 may migrate; under it, 0.1.8 wrote it.
+    const { data, file, db } = await heldStore(undefined, "0.1.6");
+    db.prepare("UPDATE kv SET value = ? WHERE key = ?").run(JSON.stringify({ version: "0.1.8", schema: OLD, at: 2 }), WRITER_KEY);
+    const opening = SqliteIndexStore.open(file, { beforeMigrate: ownerGuard(data, file, undefined, { version: "0.1.7", source: false }) });
+    await tick(300);
+    db.exec("COMMIT");
+    db.close();
+    await assert.rejects(opening, (e: unknown) => e instanceof StoreVersionError && e.writer === "0.1.8" && e.from === OLD);
+    assert.deepEqual(backups(data), []);
+    assert.equal(await schema(file), OLD);
+    const { DatabaseSync } = await loadSqlite();
+    const next = new DatabaseSync(file);
+    next.exec("PRAGMA busy_timeout = 0");
+    next.exec("BEGIN IMMEDIATE");
+    next.exec("ROLLBACK");
+    next.close();
   });
 });
