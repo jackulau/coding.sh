@@ -229,7 +229,7 @@ export const COMMANDS: CommandSpec[] = [
     ],
     examples: ["coding.sh doctor", "coding.sh doctor --json", "coding.sh doctor --conformance", "coding.sh doctor --conformance --agent codex --since 30d --json"],
     notes: [
-      "A row marked ! is a warning, and --json lists each one under warnings with the command that fixes it. An agent is one when no hook for this coding.sh home is in its config or something blocks the hook; the last line then reads N agents not capturing. The exit code and ok in --json are 1 and false only when the spool or the store fails.",
+      "A row marked ! is a warning, and --json lists each one under warnings with the command that fixes it. An agent is one when no hook for this coding.sh home is in its config or something blocks the hook; the last line then reads N agents not capturing. An agent whose only problem is a stale hook file it still runs may be capturing; the last line counts it as N agents with stale hooks. The exit code and ok in --json are 1 and false only when the spool or the store fails.",
       "--conformance runs each agent's backfill over the transcripts on this machine and checks the events: ids, timestamps, tool and subagent pairing, parent links, usage and prompts. It only reads: blobs are hashed and dropped, SQLite sources are read from a copy, and the coding.sh store is not opened. Exits 1 when any agent has a violation.",
     ],
     load: () => import("./commands/doctor.ts"),
