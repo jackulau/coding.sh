@@ -13,12 +13,14 @@ import { mkSession } from "../cli/_cmd.ts";
 const T = 1_700_000_000_000;
 const session = (id: string, startedAt: number): Session => ({ id, agent: "claude-code", startedAt, title: id }) as Session;
 const ids = (r: { resources: { uri: string; name: string }[] }) => r.resources.filter((x) => x.uri !== LATEST_URI).map((x) => x.name);
+// The resources over one index: list and read need nothing else from the context.
+const resourcesOf = (index: MemoryIndexStore) => buildResources(async () => ({ index }) as unknown as Context);
 
 async function world(n: number) {
   const index = new MemoryIndexStore();
   // Two sessions share each millisecond so the id tie-break is exercised.
   for (let i = 0; i < n; i++) await index.upsertSession(session(`s${String(i).padStart(3, "0")}`, T + Math.floor(i / 2)));
-  return { index, res: buildResources(async () => ({ index }) as unknown as Context) };
+  return { index, res: resourcesOf(index) };
 }
 
 describe("MCP resources/list cursor", () => {
@@ -69,7 +71,7 @@ describe("MCP resources/read takes the session ids the tools take", () => {
     await index.upsertSession(mkSession(TWIN_A, T, { title: "first twin" }));
     await index.upsertSession(mkSession(TWIN_B, T + 1000, { title: "second twin" }));
     await index.upsertSession(mkSession(PARSER, T + 2000, { agent: "codex", title: "Fix the parser" }));
-    const resources = buildResources(async () => ({ index }) as unknown as Context);
+    const resources = resourcesOf(index);
     return new McpServer({ serverInfo: { name: "t", version: "0" }, instructions: () => "", tools: [], resources, context: () => ({}) });
   }
   /** resources/read in the legacy era (no _meta) or the modern one. */

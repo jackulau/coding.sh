@@ -542,7 +542,7 @@ function scoreDeps(c: CommandContext, runId: string | undefined, getJudge?: Scor
 function casesError(dir: string, e: unknown, given: string | undefined, retry: string): CliError {
   return new CliError(`Can't read cases from ${dir}: ${e instanceof Error ? e.message : String(e)}`, {
     reason: "invalid_cases",
-    ...(given === undefined ? { next: ["Point at the cases directory:", retry] } : {}),
+    next: given === undefined ? ["Point at the cases directory:", retry] : [],
   });
 }
 
