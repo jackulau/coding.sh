@@ -10,7 +10,7 @@ import { BUCKET_LABELS, buildWorkQueue, countsLine, itemWorkflowAgents, loadWork
 import { parseAge, parseSinceWhen, positiveInt, suggest, UsageError } from "../args.ts";
 import { agentsFlag, autoIngest, list as listFlag, num, oneLine, pendingField, readIngest, rejectAgentTypos, resolveSession, str, withContext, type IngestBacklog } from "../common.ts";
 import { ago, CliError, localTime, plural, usd } from "../output.ts";
-import { MIN_ID_PREFIX, shortener } from "../../core/session-ref.ts";
+import { IdSet, matchRef, MAX_CANDIDATES, MIN_ID_PREFIX, shortener } from "../../core/session-ref.ts";
 import type { CommandContext } from "../types.ts";
 
 /** How far back items are read unless --since says otherwise. */
@@ -194,20 +194,27 @@ const short = (p: string): string => (p.length > 40 ? `…${p.slice(-39)}` : p);
 // ------------------------------------------------------------ one item
 
 /**
- * The item an id names: an item id (w + 6 hex), else a session in one, by any reference `show` takes
- * (cli/common.ts resolveSession: a prefix, a subagent id, latest). Unknown: exit 1; an ambiguous prefix
- * lists its candidates. `shortId` is how the item's next step names a session.
+ * The item an id names: an item id (w + 6 hex), or a prefix of at least MIN_ID_PREFIX characters that
+ * one item's id in the window starts with (matched as session ids are, core/session-ref.ts matchRef),
+ * else a session in one, by any reference `show` takes (cli/common.ts resolveSession: a prefix, a
+ * subagent id, latest). Unknown: exit 1; an ambiguous prefix lists its candidates. `shortId` is how the
+ * item's next step names a session.
  */
 async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: WorkOverlay, now?: number): Promise<{ item: WorkItem; sessions: Session[]; shortId: (id: string) => string }> {
   const w = windowOf(c);
   const { sessions } = await loadWorkSessions(ctx.index, { since: w.since });
   const shortId = await shortener(ctx.index);
-  const pick = (ss: Session[], id: string) => {
-    const q = buildWorkQueue(ss, { all: true, overlay, now, shortId });
-    // A session id names the item it is in before a run item it started (whose rootId it is).
-    return q.items.find((i) => i.id === id) ?? q.items.find((i) => i.sessionIds.includes(id)) ?? q.items.find((i) => i.rootId === id);
-  };
-  let item = pick(sessions, ref);
+  const queue = (ss: Session[]) => buildWorkQueue(ss, { all: true, overlay, now, shortId }).items;
+  // A session id names the item it is in before a run item it started (whose rootId it is).
+  const pick = (items: WorkItem[], id: string) => items.find((i) => i.id === id) ?? items.find((i) => i.sessionIds.includes(id)) ?? items.find((i) => i.rootId === id);
+  const items = queue(sessions);
+  let item = pick(items, ref);
+  const m = item ? undefined : matchRef(new IdSet(items.map((i) => i.id)), ref);
+  if (m && "ambiguous" in m) {
+    const ids = new Set(m.ambiguous);
+    throw ambiguousItemError(ref, items.filter((i) => ids.has(i.id)), w);
+  }
+  if (m) item = items.find((i) => i.id === m.id);
   if (!item && !/^w[0-9a-f]{6}$/.test(ref)) {
     // Any other reference to a session: its full id, then the item it is in. A session outside the
     // window is added with its stored parents, and the sessions grouped again.
@@ -216,7 +223,7 @@ async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: W
       throw e;
     });
     if (s) {
-      item = pick(sessions, s.id);
+      item = pick(items, s.id);
       const have = new Set(sessions.map((x) => x.id));
       let cur: Session | undefined = item ? undefined : s;
       for (let n = 0; cur && n < 20 && !have.has(cur.id); n++) {
@@ -224,15 +231,27 @@ async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: W
         have.add(cur.id);
         cur = cur.parent ? await ctx.index.getSession(cur.parent.sessionId) : undefined;
       }
-      item ??= pick(sessions, s.id);
+      item ??= pick(queue(sessions), s.id);
     }
   }
   if (!item) {
-    // A session reference too short to look up says so, as `show` does.
-    const short = ref.length < MIN_ID_PREFIX && ref !== "latest" && ref !== "last" ? ` (a session id prefix needs at least ${MIN_ID_PREFIX} characters)` : "";
+    // A reference too short to look up says so, as `show` does.
+    const short = ref.length < MIN_ID_PREFIX && ref !== "latest" && ref !== "last" ? ` (an id prefix needs at least ${MIN_ID_PREFIX} characters)` : "";
     throw new CliError(`Can't find work item ${JSON.stringify(ref)} since ${w.sinceText}${short}`, { reason: "not_found", next: ["List work items, hidden ones too:", `coding.sh work --all --since ${w.sinceText}`] });
   }
   return { item, sessions, shortId };
+}
+
+/** A prefix several items' ids share, worded as the CLI words an ambiguous session id prefix (resolveSession), newest first. */
+function ambiguousItemError(ref: string, items: WorkItem[], w: Window): CliError {
+  const shown = [...items].sort((x, y) => y.startedAt - x.startedAt).slice(0, MAX_CANDIDATES);
+  const lines = shown.map((i) => `  ${i.id}  ${i.agent}  ${ago(i.startedAt)}  ${oneLine(i.title ?? "", 50)}`.trimEnd());
+  if (items.length > shown.length) lines.push(`  …and more`);
+  return new CliError(`Work item id prefix ${JSON.stringify(ref)} is ambiguous. It matches:\n${lines.join("\n")}`, {
+    reason: "ambiguous",
+    next: ["Pass one of these ids, more of the id, or list work items:", `coding.sh work --all --since ${w.sinceText}`],
+    data: { candidates: shown.map((i) => ({ id: i.id, agent: i.agent, startedAt: new Date(i.startedAt).toISOString(), title: i.title ?? null })), more: items.length > shown.length },
+  });
 }
 
 function idArg(c: CommandContext): string {

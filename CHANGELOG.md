@@ -339,6 +339,7 @@ grouped by area, with links to the docs for the details.
 - **Workflows.** `workflows show`, `stats`, `score` and `replay` take a unique prefix of a run id, 4 or more characters, as the session commands do. A prefix that several runs share fails and lists them, newest first. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/workflows.md#capture-and-measure-a-run))
 - **Workflows.** `workflows show` prints the first 6 lines of what a run returned, as stored and redacted, on an `Output` row, and `--json` prints all of it as `run.output`. Before, a run's stored output showed nowhere. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/workflows.md#capture-and-measure-a-run))
 - **Workflows.** When `workflows run` or `workflows score` refuses a case, the error prints each path resolved, with one kind of separator, and points at `--cases` only when the cases came from the default folder. Before, it mixed slashes and suggested `--cases` even when it was given. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/workflows.md#write-cases-with-known-answers))
+- **Work.** `work show`, `work ack` and `work snooze` take a prefix of a work item id, 4 or more characters, that only one item in the window starts with. A prefix that several items share fails and lists them, newest first. Before, an item id worked only whole. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#surfaces))
 
 ## [0.1.7] - 2026-11-16
 
