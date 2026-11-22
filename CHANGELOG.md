@@ -344,6 +344,7 @@ grouped by area, with links to the docs for the details.
 - **Judges.** `coding.sh judge slop` on a session with no captured diffs names the `git diff` command to grade instead with the CLI of the user's shell (`codingsh` in PowerShell and cmd). ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#agent-slop))
 - **Docs.** The evals guide says `coding.sh judge slop` exits 1, not 2, when there is nothing to grade, and 2 on a usage error. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#agent-slop))
 - **Evals.** `review next`, `done` and `skip` with `--json` print the item's command for the user's shell (`codingsh` in PowerShell and cmd), and `review create` with a query that matches nothing prints that query for `sessions --where`, quoted for the shell. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#review-queues))
+- **Judges.** `coding.sh judge calibrate` keeps a judge's stored calibration when a run reads no labels, for example with a `--criterion` no label has. Before, the run replaced a calibration measured on labels with an empty one, and `exp compare` lost the judge's bias correction. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#judges))
 
 ## [0.1.7] - 2026-11-16
 

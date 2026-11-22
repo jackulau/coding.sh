@@ -389,7 +389,13 @@ export async function run(c: CommandContext): Promise<number> {
       ...(judgeCost !== undefined ? { judgeCost } : {}),
       ...(plan ? { plan } : {}),
     });
-    if (stored) await store.putJudge(withCalibration(stored, report));
+    // A run with no held-out case that has both a label and a verdict measured nothing: keep a calibration that did.
+    const prior = stored?.calibration;
+    const keep = report.status.n === 0 && (prior?.n ?? 0) > 0;
+    if (stored && !keep) await store.putJudge(withCalibration(stored, report));
+    if (keep && prior) {
+      out.warn(`Kept the judge's stored calibration (${prior.state}, n=${prior.n}${prior.ts ? `, ${new Date(prior.ts).toISOString().slice(0, 10)}` : ""}): this run has no held-out case with both a human label and a verdict`);
+    }
 
     if (probeSpec) {
       const judge = await probeJudge(c, probeSpec);
@@ -411,7 +417,7 @@ export async function run(c: CommandContext): Promise<number> {
       }
     }
 
-    if (out.json) out.data({ outcome: stored ? "updated" : "measured", calibration: report });
+    if (out.json) out.data({ outcome: keep ? "kept" : stored ? "updated" : "measured", calibration: report, ...(keep ? { kept: prior } : {}) });
     else out.print(renderCalibration(report, { color: out.color }));
     // A judge that a planted "respond pass" can flip fails the command even when kappa is fine.
     return report.state === "calibrated" && !report.injection?.flips ? 0 : 1;

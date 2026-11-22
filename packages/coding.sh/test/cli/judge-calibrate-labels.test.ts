@@ -7,6 +7,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
+import { openContext } from "../../src/core/context.ts";
+import { FileEvalStore } from "../../src/datasets/store.ts";
 import { addScore } from "../../src/scores/scores.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { CLI } from "../_cli.ts";
@@ -113,5 +115,47 @@ describe("judge calibrate with case labels", () => {
     assert.notEqual(cal.status, 2, cal.stderr);
     assert.match(cal.stdout, /human-audited pass rate 1\.00 \[[^\]]*\] \(2\/2 of plan labelled/);
     assert.doesNotMatch(cal.stderr, /No human label/);
+  });
+
+  it("a calibrate that reads no labels keeps the judge's stored calibration", async () => {
+    const cases = Array.from({ length: 3 }, (_, i) => ["--case", JSON.stringify({ input: `k${i}`, expected: `k${i}` })]).flat();
+    const add = run("dataset", "add", "keep", ...cases, "--split", "test");
+    assert.equal(add.status, 0, add.stderr);
+    const ran = run("exp", "run", "-d", "keep", "--task", '{"kind":"command","command":"node echo.mjs"}', "-g", '{"kind":"llm","name":"kept","rubric":"right?","provider":"mock","tunedOn":["dev"]}', "--json");
+    assert.equal(ran.status, 0, ran.stderr);
+    const exp = (JSON.parse(ran.stdout) as { experiment: { id: string; runs: { caseId: string }[]; graders: { id: string; version: string }[] } }).experiment;
+    const version = exp.graders.find((g) => g.id === "kept")!.version;
+    const index = await SqliteIndexStore.open(join(env.CODING_SH_HOME!, "index.db"));
+    try {
+      for (const id of new Set(exp.runs.map((r) => r.caseId))) await addScore(index, { target: "case", targetId: id, name: "kept", value: true }, { by: "tester", source: "human", now: Date.now() });
+    } finally {
+      await index.close();
+    }
+    const stored = async () => {
+      const ctx = await openContext({ env, cwd: root });
+      try {
+        return (await new FileEvalStore({ env, index: ctx.index }).getJudge(version))?.calibration;
+      } finally {
+        await ctx.close();
+      }
+    };
+
+    const first = run("judge", "calibrate", exp.id, "--json");
+    assert.notEqual(first.status, 2, first.stderr);
+    assert.equal((JSON.parse(first.stdout) as { outcome: string }).outcome, "updated");
+    const measured = await stored();
+    assert.equal(measured?.n, 3);
+
+    // A criterion no label has: nothing is measured, so the n=3 calibration stays.
+    const none = run("judge", "calibrate", exp.id, "--criterion", "nothing", "--json");
+    assert.notEqual(none.status, 2, none.stderr);
+    const doc = JSON.parse(none.stdout) as { outcome: string; calibration: { n: number }; kept: unknown };
+    assert.equal(doc.calibration.n, 0);
+    assert.equal(doc.outcome, "kept");
+    assert.deepEqual(doc.kept, measured);
+    assert.deepEqual(await stored(), measured);
+    const text = run("judge", "calibrate", exp.id, "--criterion", "nothing");
+    assert.match(text.stderr, /Kept the judge's stored calibration \(insufficient-data, n=3, \d{4}-\d\d-\d\d\): this run has no held-out case with both a human label and a verdict/);
+    assert.deepEqual(await stored(), measured);
   });
 });

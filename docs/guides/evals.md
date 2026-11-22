@@ -1299,6 +1299,9 @@ It counts the human labels named after the judge's criterion: the grader's `crit
 `judge calibrate` and `judge sample` name the labels those cases have.
 Every report flags judges that are not calibrated. It also stores the judge's held-out sensitivity
 and specificity, so later `exp compare` runs show a bias-corrected (Rogan-Gladen) judge pass rate.
+A run that finds no held-out case with both a label and a verdict measures nothing: it leaves a
+stored calibration that was measured on labels in place (`--json` prints `"outcome": "kept"` and
+that calibration).
 
 A calibrated judge can still cost more human labels than it saves. Its corrected pass rate is only
 as precise as the labels behind its sensitivity s and false-pass rate α, and when s − α (the
