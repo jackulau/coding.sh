@@ -6,7 +6,7 @@ import type { PullRequestRef, Session } from "../../schema/index.ts";
 import type { Context } from "../../core/context.ts";
 import { indexAge, staleIndexText, type IndexAge } from "../../core/ingest-health.ts";
 import { addAck, addSnooze, readOverlay, writeOverlay, type WorkOverlay } from "../../core/work-overlay.ts";
-import { BUCKET_LABELS, buildWorkQueue, countsLine, itemWorkflowAgents, loadWorkSessions, settleWorkFiles, STAGES, stagesLine, workFiles, workItemJson, workJson, type Stage, type WorkItem, type WorkPhase, type WorkQueue } from "../../core/work.ts";
+import { BUCKET_LABELS, BUCKETS, buildWorkQueue, countsLine, itemWorkflowAgents, loadWorkSessions, settleWorkFiles, STAGES, stagesLine, workFiles, workItemJson, workJson, type Stage, type WorkItem, type WorkPhase, type WorkQueue } from "../../core/work.ts";
 import { parseAge, parseSinceWhen, positiveInt, suggest, UsageError } from "../args.ts";
 import { agentsFlag, autoIngest, list as listFlag, num, oneLine, pendingField, readIngest, rejectAgentTypos, resolveSession, str, withContext, type IngestBacklog } from "../common.ts";
 import { ago, CliError, localTime, plural, usd } from "../output.ts";
@@ -407,7 +407,9 @@ async function snooze(c: CommandContext): Promise<number> {
       return 0;
     }
     out.ok(`Snoozed ${item.id} until ${localTime(until, now)}`);
-    out.note(`It comes back sooner if it moves to a more urgent bucket than ${BUCKET_LABELS[bucket].toLowerCase()}.`);
+    // Blocked is the most urgent bucket: nothing brings the item back sooner, not even a new prompt.
+    if (bucket === BUCKETS[0]) out.note(`Nothing is more urgent than ${BUCKET_LABELS[bucket].toLowerCase()}, so it stays hidden until then, even if it waits on you again.`);
+    else out.note(`It comes back sooner if it moves to a more urgent bucket than ${BUCKET_LABELS[bucket].toLowerCase()}.`);
     return 0;
   });
 }
