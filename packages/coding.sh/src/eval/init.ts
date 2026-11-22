@@ -437,7 +437,7 @@ function setupNote(task: DraftedTask, d: string, unpinned: readonly string[]): s
 }
 
 /** `s` as one shell word, for a command a hint prints. */
-const shellWord =(s: string): string => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`);
+const shellWord = (s: string): string => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`);
 
 /** The first check a validation failed, in words. */
 function validationGap(r: { noopFails: boolean; referencePasses: { passed: number; of: number }; nearMissesFail: { failed: number; of: number }; leakage: string[] }): string {
