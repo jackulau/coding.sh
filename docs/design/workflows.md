@@ -246,7 +246,8 @@ A workflow case is `{id, args, start?: RepoState snapshot, truth, split}`, store
 Seeded cases are validated before use: on the seeded snapshot, each bug's own test fails; with the
 bug patch reverted, it passes. The truth file lives outside the workflow's working tree (`[start]`'s
 `repoRoot` and `snapshot`), where its agents can't read it. The case loader refuses one inside
-either and names a folder outside both to move it to.
+either and names a folder outside both to move it to. It refuses a case file inside either that
+lists bugs itself (`[[truth.bugs]]`) in the same way.
 
 ## 6. Experiments: A/B of workflow variants
 

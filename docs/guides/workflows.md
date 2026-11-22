@@ -61,15 +61,19 @@ the repo. It lists the planted bugs:
 ]}
 ```
 
+A case file can also list the bugs itself, as `[[truth.bugs]]` tables. Then the case file must not
+sit inside `repoRoot` or `snapshot` either, so keep it in a folder outside both and pass that folder
+with `--cases`.
+
 | Truth `kind` | For | Score |
 |---|---|---|
 | `seeded-bugs` | A review workflow, on a snapshot with planted bugs | F1 of the findings against the bugs. A finding matches when it names the same file and a line within 5 (`--slack`). |
 | `verifier` | A fix workflow | 1 when `command` exits 0, or the share of named `[[truth.tests]]` that pass. A `before = "pass"` test that fails after the run is a regression. |
 | `judge` | A research or synthesis workflow | An LLM judge's grade on a `rubric`. Marked uncalibrated until `coding.sh judge calibrate` has run for that judge. |
 
-When a planted bug has a `test` and the `patch` that planted it (a path relative to the truth file),
-`workflows run` checks it first: the test must fail on the snapshot and pass with the patch
-reverted. `coding.sh workflows score <run> --case seeded-1` scores one run by hand.
+When a planted bug has a `test` and the `patch` that planted it (a path relative to the file that
+lists the bug), `workflows run` checks it first: the test must fail on the snapshot and pass with
+the patch reverted. `coding.sh workflows score <run> --case seeded-1` scores one run by hand.
 
 ## Run two versions
 
