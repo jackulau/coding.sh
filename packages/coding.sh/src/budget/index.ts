@@ -49,6 +49,11 @@ export interface BudgetStatus {
   sessions: number;
   /** The scan stopped at TOTALS_SCAN_CAP sessions: the spend is a lower bound. */
   truncated?: boolean;
+  /**
+   * Why the spend could not be read (a stored --where query that no longer parses, say).
+   * Such a status counts nothing: spendUsd, percent and sessions are 0, and over is false.
+   */
+  error?: string;
 }
 
 export const isPeriod = (v: unknown): v is Period => typeof v === "string" && (PERIODS as readonly string[]).includes(v);
@@ -229,7 +234,12 @@ export function rolledSpend(rows: readonly SpendRow[], matched: (id: string) => 
 
 /** The budget's --where query; undefined without one. Throws on a query that no longer parses. */
 export function whereRoot(b: Budget): Node | undefined {
-  return b.where ? (parseWhere(b.where).root ?? { t: "and", items: [] }) : undefined;
+  if (!b.where) return undefined;
+  try {
+    return parseWhere(b.where).root ?? { t: "and", items: [] };
+  } catch (e) {
+    throw new Error(`--where does not parse (${(e as Error).message})`);
+  }
 }
 
 /** A --where budget's status: the period's sessions, those in scope that match, and their subagents. */
@@ -289,10 +299,20 @@ export async function budgetStatus(index: IndexStore, b: Budget, now = Date.now(
   }
 }
 
-/** Every budget's status, in the order they were set. */
+/**
+ * Every budget's status, in the order they were set. A budget whose spend can't be read
+ * (a stored --where query that no longer parses, say) gets a status with an error, and
+ * the others still report.
+ */
 export async function budgetStatuses(index: IndexStore, budgets: readonly Budget[], now = Date.now()): Promise<BudgetStatus[]> {
   const out: BudgetStatus[] = [];
-  for (const b of budgets) out.push(await budgetStatus(index, b, now));
+  for (const b of budgets) {
+    try {
+      out.push(await budgetStatus(index, b, now));
+    } catch (e) {
+      out.push({ ...statusOf(b, 0, 0, now), error: e instanceof Error ? e.message : String(e) });
+    }
+  }
   return out;
 }
 
@@ -402,6 +422,11 @@ export function statusJson(s: BudgetStatus): Record<string, unknown> {
   if (b.agent) out.agent = b.agent;
   if (b.repo) out.repo = b.repo;
   if (b.where) out.where = b.where;
+  if (s.error !== undefined) {
+    // A spend that could not be read has no numbers, only the reason.
+    Object.assign(out, { limitUsd: b.limitUsd, since: new Date(s.since).toISOString(), resetsAt: new Date(s.resetsAt).toISOString(), error: s.error });
+    return out;
+  }
   Object.assign(out, {
     limitUsd: b.limitUsd,
     spendUsd: s.spendUsd,

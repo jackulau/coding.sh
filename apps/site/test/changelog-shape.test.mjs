@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { hasLink } from "../../../scripts/changelog/add.mjs";
 import { distOpts, needDist } from "./_dist.mjs";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
@@ -21,11 +22,11 @@ const SECTIONS = ["Added", "Changed", "Fixed", "Removed", "Deprecated", "Securit
 // 0.1.7 is the unreleased version: its one long bullet is waiting to be shortened.
 export const BASELINE = {
   "0.1.7": { over60: 0, nolink: 0 },
-  "0.1.6": { over60: 63, nolink: 3 },
+  "0.1.6": { over60: 63, nolink: 0 },
   "0.1.5": { over60: 15, nolink: 0 },
   "0.1.4": { over60: 0, nolink: 0 },
   "0.1.3": { over60: 23, nolink: 0 },
-  "0.1.2": { over60: 76, nolink: 19 },
+  "0.1.2": { over60: 76, nolink: 18 },
   "0.1.1": { over60: 0, nolink: 34 },
   "0.1.0": { over60: 0, nolink: 48 },
 };
@@ -66,7 +67,7 @@ export function counts(releases) {
   return Object.fromEntries(
     releases.map((r) => [
       r.version,
-      { over60: r.bullets.filter((b) => b.words > MAX_WORDS).length, nolink: r.bullets.filter((b) => !/\]\((?:https?:\/\/|\.{0,2}\/|#)[^)]+\)|https?:\/\/\S+/.test(b.text)).length },
+      { over60: r.bullets.filter((b) => b.words > MAX_WORDS).length, nolink: r.bullets.filter((b) => !hasLink(b.text)).length },
     ]),
   );
 }
@@ -80,6 +81,11 @@ test("a long bullet with no link or bold area is reported (seeded)", () => {
   assert.deepEqual(counts(releases)["9.9.9"], { over60: 1, nolink: 1 });
   assert.equal(parseChangelog("## 1.0 - today\n").problems.length, 1);
   assert.equal(parseChangelog("## [1.0.0] - 2026-01-01\n\n### Misc\n").problems.length, 1);
+});
+
+test("a relative docs/ link counts as a link: the site renders it as the doc's page (seeded)", () => {
+  const { releases } = parseChangelog("## [9.9.9] - Unreleased\n\n### Fixed\n\n- **Cost.** Linked to the doc. ([docs](docs/how-to/track-cost.md))\n- **Cost.** Names the doc and links nothing: docs/how-to/track-cost.md\n");
+  assert.deepEqual(counts(releases)["9.9.9"], { over60: 0, nolink: 1 });
 });
 
 test("CHANGELOG.md headings, sections and bullets have the shape", () => {

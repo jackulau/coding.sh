@@ -41,13 +41,19 @@
 //
 // Needs python3 (its pty module) for the human path's terminal; without it that path is skipped.
 // Exit 0 when the agent's setupSuccess holds and the human saw the session; 1 otherwise.
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+//
+// On Windows the human path is skipped (no pty), npm and the CLIs are .cmd shims run through
+// coding.sh's portable spawn, npm's global bin is the prefix itself, and the installer line and
+// hook commands run in Git for Windows' sh, as Claude Code runs hooks there.
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFileSync, posixShell, spawn, spawnSync } from "../../packages/coding.sh/src/core/spawn.ts";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const isWin = process.platform === "win32";
+const SH = isWin ? posixShell() : "sh";
 const CLAUDE_PKG = "@anthropic-ai/claude-code@2.1.319";
 const FIXTURE = join(REPO, "packages/coding.sh/test/fixtures/adapters/claude-code/hooks.spool.jsonl");
 const FIXTURE_SESSION = "11111111-2222-4333-8444-555555555555";
@@ -70,19 +76,33 @@ function machine(name) {
   const base = join(root, name);
   const home = join(base, "home");
   const prefix = join(base, "prefix");
+  // npm -g puts command shims in <prefix>/bin on POSIX and in <prefix> itself on Windows.
+  const binDir = isWin ? prefix : join(prefix, "bin");
   const fakeBin = join(base, "fakebin");
-  for (const d of [home, prefix, fakeBin, join(home, ".claude")]) mkdirSync(d, { recursive: true });
+  const appData = isWin ? { APPDATA: join(home, "AppData", "Roaming"), LOCALAPPDATA: join(home, "AppData", "Local") } : {};
+  for (const d of [home, prefix, fakeBin, join(home, ".claude"), ...Object.values(appData)]) mkdirSync(d, { recursive: true });
   if (!REAL) {
-    writeFileSync(join(fakeBin, "claude"), '#!/bin/sh\necho "2.1.319 (Claude Code)"\n');
-    chmodSync(join(fakeBin, "claude"), 0o755);
+    // Windows runs only PATHEXT files: the stub is a .cmd there.
+    if (isWin) writeFileSync(join(fakeBin, "claude.cmd"), "@echo 2.1.319 (Claude Code)\r\n");
+    else {
+      writeFileSync(join(fakeBin, "claude"), '#!/bin/sh\necho "2.1.319 (Claude Code)"\n');
+      chmodSync(join(fakeBin, "claude"), 0o755);
+    }
   }
   const env = {};
-  for (const [k, v] of Object.entries(process.env)) if (!/^(XDG_|CLAUDE|ANTHROPIC|OPENAI|CODEX|CODING_SH|CURSOR|OPENCODE|npm_config_|NPM_CONFIG_|CI$|NO_COLOR|FORCE_COLOR)/i.test(k)) env[k] = v;
+  // T3CODE_THREAD_ID, set when this runs inside T3 Code, would give the session to T3 Code.
+  for (const [k, v] of Object.entries(process.env)) if (!/^(XDG_|CLAUDE|ANTHROPIC|OPENAI|CODEX|CODING_SH|CURSOR|OPENCODE|T3CODE|npm_config_|NPM_CONFIG_|CI$|NO_COLOR|FORCE_COLOR)/i.test(k)) env[k] = v;
+  // Windows spells it Path; a second PATH key would leave which one wins to chance.
+  const pathKey = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
+  // System dirs only, so no installed agent or coding.sh is found. On Windows: sh's own dir
+  // (Git's usr\bin holds the tools install.sh uses) and System32.
+  const system = isWin ? [dirname(SH), join(process.env.SystemRoot ?? "C:\\Windows", "System32")] : ["/usr/bin", "/bin"];
   Object.assign(env, {
     HOME: home,
     USERPROFILE: home,
+    ...appData,
     CODING_SH_HOME: join(home, ".coding.sh"),
-    PATH: [join(prefix, "bin"), fakeBin, dirname(process.execPath), "/usr/bin", "/bin"].join(delimiter),
+    [pathKey]: [binDir, fakeBin, dirname(process.execPath), ...system].join(delimiter),
     npm_config_prefix: prefix,
     npm_config_cache: join(base, "npm-cache"),
     npm_config_fund: "false",
@@ -91,7 +111,8 @@ function machine(name) {
     CODING_SH_NO_UPDATE_CHECK: "1",
     NO_COLOR: "1",
   });
-  return { base, home, prefix, env, cli: join(prefix, "bin", "coding.sh") };
+  // On Windows the portable spawn finds coding.sh.cmd next to npm's sh shim and runs its script with node.
+  return { base, home, prefix, env, cli: join(binDir, "coding.sh") };
 }
 
 function run(m, cmd, args, opts = {}) {
@@ -99,7 +120,7 @@ function run(m, cmd, args, opts = {}) {
   const r = spawnSync(cmd, args, { env: { ...m.env, ...opts.env }, cwd: opts.cwd ?? m.home, encoding: "utf8", timeout: opts.timeout ?? 120_000, input: opts.input ?? "" });
   return { code: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "", ms: performance.now() - t };
 }
-const sh = (m, line, opts) => run(m, "sh", ["-c", line], opts);
+const sh = (m, line, opts) => run(m, SH, ["-c", line], opts);
 
 /** Pipes each recorded hook payload to the command init wrote for that event, the way Claude Code runs hooks. */
 function replayHooks(m) {
@@ -454,6 +475,7 @@ async function agent(tarball) {
 
 let exit = 1;
 try {
+  if (!SH) throw new Error("no sh found: on Windows, install Git for Windows (it ships sh)");
   log(`ease: packing ${PKG}`);
   const tarball = pack();
   log("ease: human path (installer in a terminal)");

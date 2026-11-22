@@ -125,11 +125,11 @@ test("the plan has the steps in order, and --static keeps the ones that need no 
   const steps = buildSteps(REPO);
   assert.deepEqual(
     steps.map((s) => s.name),
-    ["repo-hygiene", "branch-fresh", "lint", "lint-test", "perf-test", "dogfood-test", "actionlint", "generated-fresh", "coding.sh-check", "coding.sh-build", "store-plugins", "python-sdk", "site", "secret-scan", "adapter-versions"],
+    ["repo-hygiene", "branch-fresh", "lint", "lint-test", "perf-test", "dogfood-test", "changelog", "actionlint", "generated-fresh", "coding.sh-check", "coding.sh-build", "store-plugins", "python-sdk", "site", "secret-scan", "adapter-versions"],
   );
   assert.deepEqual(
     selectSteps(steps, { only: [], static: true }).map((s) => s.name),
-    ["repo-hygiene", "branch-fresh", "lint", "lint-test", "perf-test", "dogfood-test", "actionlint", "generated-fresh", "secret-scan"],
+    ["repo-hygiene", "branch-fresh", "lint", "lint-test", "perf-test", "dogfood-test", "changelog", "actionlint", "generated-fresh", "secret-scan"],
   );
   assert.deepEqual(selectSteps(steps, { only: [], from: "site" }).map((s) => s.name), ["site", "secret-scan", "adapter-versions"]);
   assert.deepEqual(selectSteps(steps, { only: ["lint", "site"] }).map((s) => s.name), ["lint", "site"]);
@@ -145,7 +145,7 @@ test("--list --json prints every step", async () => {
   const code = await main(["--list", "--json"], { stdout: { write: (s) => (text += s) } });
   assert.equal(code, 0);
   const rows = JSON.parse(text);
-  assert.equal(rows.length, 15);
+  assert.equal(rows.length, 16);
   assert.equal(rows.find((r) => r.name === "lint").static, true);
   assert.equal(rows.find((r) => r.name === "site").static, false);
 });
