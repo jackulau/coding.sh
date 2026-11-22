@@ -187,18 +187,18 @@ verifier runs, is kept as a near miss.
 
 ## One session at a time
 
-`eval new` drafts one task, with your own name and instruction. Pass the session's id or a prefix of
+`eval new` drafts one task, with your own verifier, name and instruction. Pass the session's id or a prefix of
 it:
 
 ```sh
-coding.sh eval new a921c754 --name passallk-fix \
+coding.sh eval new a921c754 \
   --verifier 'node --no-warnings --test packages/coding.sh/test/stats/seqk.test.ts' \
   --hidden-test 'packages/coding.sh/test/stats/seqk.test.ts' \
   --tag stats
 ```
 
 ```text title=output
-✓ Drafted passallk-fix
+✓ Drafted fix-passallk-in-packages-coding-sh
   Verifier        node --no-warnings --test packages/coding.sh/test/stats/seqk.test.ts
 ! start snapshot is partial or HEAD-only: uncommitted/untracked files at session start may be missing
 ! hid 1 test file(s) from the agent: packages/coding.sh/test/stats/seqk.test.ts; the verifier gets them at check time
@@ -210,8 +210,9 @@ task_f0367ea84cbb87ed
     coding.sh eval validate task_f0367ea84cbb87ed
 ```
 
-This session already had a task from `eval init`, so `eval new` updated it and kept its id. `latest`
-also names a session, but after `eval run` the latest session is one of the run's trials.
+This session already had a task from `eval init`, so `eval new` updated it and kept its id and
+name. With a `--name` that task does not have, `eval new` drafts a second task and leaves the first,
+with its reference patch and validation, as it was. `latest` also names a session, but after `eval run` the latest session is one of the run's trials.
 
 The instruction defaults to the session's first prompt. `--instruction 'text'` or
 `--instruction @prompt.md` replaces it, and `--setup 'npm ci'` (repeatable) adds setup commands.

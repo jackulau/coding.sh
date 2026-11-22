@@ -22,7 +22,8 @@ import {
 } from "../../src/eval/task.ts";
 import { BUGGY, FIXED, FakeSnapshots, HIDDEN_TEST, MemBlobs, MemIndex, tempDir } from "../helpers-eval.ts";
 
-const ROOT = "/work/toy";
+const TOY = "/work/toy";
+const ROOT = TOY;
 const dirs: string[] = [];
 after(async () => {
   for (const d of dirs) await rm(d, { recursive: true, force: true });
@@ -35,14 +36,16 @@ function ev(kind: AgentEvent["kind"], payload: Record<string, unknown>, extra: P
 }
 const bash = (command: string) => ev("tool.start", { tool: "Bash", toolUseId: `t${seq}`, input: { command } });
 
-async function fixture(opts: { end?: Record<string, string> } = {}) {
+async function fixture(opts: { end?: Record<string, string>; root?: string; head?: string; snapshot?: string } = {}) {
   const index = new MemIndex();
   const blobs = new MemBlobs();
   const git = new FakeSnapshots().add("start", BUGGY).add("end", opts.end ?? { ...FIXED, "test/add.test.js": HIDDEN_TEST }).add("turn1", FIXED);
+  const ROOT = opts.root ?? TOY;
+  const repo = { root: ROOT, head: opts.head ?? "abc123", snapshot: opts.snapshot ?? "start" };
   const session: Session = {
     id: "s1",
     agent: "claude-code",
-    repo: { root: ROOT, head: "abc123", snapshot: "start" },
+    repo,
     startedAt: 1000,
     stats: { events: 0, turns: 2, toolCalls: 3, toolErrors: 0, filesChanged: 3 },
     flags: [],
@@ -50,7 +53,7 @@ async function fixture(opts: { end?: Record<string, string> } = {}) {
   };
   await index.upsertSession(session);
   await index.putEvents([
-    ev("session.start", {}, { repo: { root: ROOT, head: "abc123", snapshot: "start" } }),
+    ev("session.start", {}, { repo }),
     ev("user.message", { text: "add() and mul() are broken, fix them" }),
     bash(`cd ${ROOT} && ls`),
     bash(`cd ${ROOT} && npm test 2>&1 | tail -20`),
@@ -130,10 +133,56 @@ describe("draftTaskFromSession", () => {
     const { index, blobs, git } = await fixture();
     const first = await draftTaskFromSession({ index, blobs, git, sessionId: "s1", tags: ["suite:qa"], now: 5 });
     await index.putTask(first);
-    const again = await draftTaskFromSession({ index, blobs, git, sessionId: "s1", name: "renamed", now: 6 });
+    const again = await draftTaskFromSession({ index, blobs, git, sessionId: "s1", now: 6 });
     assert.equal(again.id, first.id);
+    assert.equal(again.name, first.name);
     assert.ok(again.tags.includes("suite:qa"));
     assert.ok(again.meta.notes.some((n) => /updated the existing task .*suite:qa/.test(n)), again.meta.notes.join("; "));
+  });
+  it("drafting a session again with another --name makes a second task and leaves the first alone", async () => {
+    const { index, blobs, git } = await fixture();
+    const first = await draftTaskFromSession({ index, blobs, git, sessionId: "s1", name: "tidy-notes", now: 5 });
+    await index.putTask({ ...first, status: "validated" });
+    const other = await draftTaskFromSession({ index, blobs, git, sessionId: "s1", name: "tidy-hidden", now: 6 });
+    assert.notEqual(other.id, first.id);
+    assert.equal(other.name, "tidy-hidden");
+    assert.ok(!other.meta.notes.some((n) => /updated the existing task/.test(n)), other.meta.notes.join("; "));
+    await index.putTask(other);
+    assert.equal((await index.getTask(first.id))?.status, "validated");
+    // The same name again updates the second task, the first name the first.
+    assert.equal((await draftTaskFromSession({ index, blobs, git, sessionId: "s1", name: "tidy-hidden", now: 7 })).id, other.id);
+    assert.equal((await draftTaskFromSession({ index, blobs, git, sessionId: "s1", name: "tidy-notes", now: 8 })).id, first.id);
+  });
+  it("names the session's repository and the way on when it is gone", async () => {
+    const parent = await tempDir("csh-gone-");
+    dirs.push(parent);
+    const gone = join(parent, "demo");
+    const { index, blobs } = await fixture({ root: gone, head: "17df5910abcdef" });
+    // Git's own failure, as when the repository moved away from under its shadow repo.
+    const git = new FakeSnapshots();
+    git.diffSnapshots = async () => {
+      throw new Error("git read-tree 17df591^{tree} failed with exit 128: error: unable to normalize alternate object path");
+    };
+    await assert.rejects(draftTaskFromSession({ index, blobs, git, sessionId: "s1", verifierCommand: "true", setup: [] }), (e: Error) => {
+      assert.ok(e.message.includes(`repository ${gone} is gone`), e.message);
+      assert.match(e.message, /commit 17df5910abcd/);
+      assert.match(e.message, /record the session again/);
+      assert.doesNotMatch(e.message, /read-tree|alternate/);
+      return true;
+    });
+  });
+  it("names the repository when it is there but has lost the start commit", async () => {
+    const here = await tempDir("csh-here-");
+    dirs.push(here);
+    const { index, blobs, session } = await fixture({ root: here, snapshot: "lost" });
+    const { endSnapshot: _end, ...noEnd } = session;
+    await index.upsertSession(noEnd);
+    const git = new FakeSnapshots();
+    await assert.rejects(draftTaskFromSession({ index, blobs, git, sessionId: "s1" }), (e: Error) => {
+      assert.ok(e.message.includes(`can't read the session's start state from ${here}`), e.message);
+      assert.match(e.message, /still has commit abc123/);
+      return true;
+    });
   });
   it("moves test files into hidden verifier files", async () => {
     const { index, blobs, git } = await fixture();

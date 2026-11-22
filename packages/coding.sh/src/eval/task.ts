@@ -334,6 +334,25 @@ async function startOf(index: IndexStore, session: Session, events: readonly Age
   return { repoRoot: repo.root, snapshot: snap, head: repo.head, partial: repo.partial || !repo.snapshot };
 }
 
+/**
+ * Run a git step on the session's repository and turn its failure into a plain message: the
+ * repository moved or was deleted (git says "unable to normalize alternate object path" or
+ * there is no shadow repo), or it no longer holds the start commit. Each names the way on.
+ */
+async function fromRepo<T>(start: { repoRoot: string; head: string }, step: () => Promise<T>): Promise<T> {
+  try {
+    return await step();
+  } catch (e) {
+    const commit = start.head ? `commit ${start.head.slice(0, 12)}` : "the start commit";
+    const again = "or record the session again with hooks or coding.sh run -- <agent> in the repository where it is now";
+    if (!existsSync(start.repoRoot)) {
+      throw new Error(`the session's repository ${start.repoRoot} is gone, so its start state can't be rebuilt. Put the repository back at that path (a clone that has ${commit} works), ${again}`, { cause: e });
+    }
+    const first = (e instanceof Error ? e.message : String(e)).split("\n").find((l) => l.trim()) ?? "";
+    throw new Error(`can't read the session's start state from ${start.repoRoot} (${first.trim()}). Check that the repository there still has ${commit}, ${again}`, { cause: e });
+  }
+}
+
 export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<DraftedTask> {
   const { index, blobs, sessionId } = opts;
   const session = await index.getSession(sessionId);
@@ -376,14 +395,15 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
   /** Index of the "no reference patch" note: the task id it names comes later. */
   let noRefNote: number | undefined;
   if (session.endSnapshot) {
-    const d = await ops.diffSnapshots(start.repoRoot, start.snapshot, session.endSnapshot);
+    const end = session.endSnapshot;
+    const d = await fromRepo(start, () => ops.diffSnapshots(start.repoRoot, start.snapshot, end));
     refText = d.patch;
     if (hidden.length && refText) {
       const testPaths = patchPaths(refText).filter((p) => matchAny(p, hidden));
       if (testPaths.length) {
         const endDir = await mkdtemp(join(tmpdir(), "csh-end-"));
         try {
-          await ops.materialize({ root: start.repoRoot, head: start.head, snapshot: session.endSnapshot }, endDir);
+          await fromRepo(start, () => ops.materialize({ root: start.repoRoot, head: start.head, snapshot: end }, endDir));
           for (const p of testPaths) {
             const abs = safeJoin(endDir, p);
             if (!existsSync(abs)) continue; // deleted by the session; nothing to hide
@@ -408,7 +428,7 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
     const startDir = await mkdtemp(join(tmpdir(), "csh-hide-"));
     let atStart: string[] = [];
     try {
-      await ops.materialize({ root: start.repoRoot, head: start.head, snapshot: start.snapshot }, startDir);
+      await fromRepo(start, () => ops.materialize({ root: start.repoRoot, head: start.head, snapshot: start.snapshot }, startDir));
       atStart = (await walkFiles(startDir)).filter((p) => !p.startsWith(".git/") && matchAny(p, hidden));
       const touched = new Set(refText ? patchPaths(refText) : []);
       // A file the session changed is hidden as the session left it (above); one it deleted stays as it was.
@@ -418,7 +438,7 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
     }
     const out = atStart.filter((p) => p in hiddenFiles);
     if (out.length && ops.snapshotWithout) {
-      taskStart.snapshot = await ops.snapshotWithout({ root: start.repoRoot, head: start.head, snapshot: start.snapshot }, out);
+      taskStart.snapshot = await fromRepo(start, () => ops.snapshotWithout!({ root: start.repoRoot, head: start.head, snapshot: start.snapshot }, out));
       const shown = out.slice(0, 5).join(", ") + (out.length > 5 ? `, and ${out.length - 5} more` : "");
       notes.push(`hid ${out.length} test file(s) from the agent: ${shown}; the verifier gets them at check time`);
     } else if (out.length) {
@@ -457,7 +477,7 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
   if (!setup || !verifier) {
     const dir = await mkdtemp(join(tmpdir(), "csh-start-"));
     try {
-      await ops.materialize({ root: start.repoRoot, head: start.head, snapshot: start.snapshot }, dir);
+      await fromRepo(start, () => ops.materialize({ root: start.repoRoot, head: start.head, snapshot: start.snapshot }, dir));
       const facts = await inspectRepo(dir);
       if (!setup) {
         const guessed = guessSetupFrom(facts);
@@ -478,15 +498,25 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
   if (setupSource === "guessed") notes.push(`setup guessed from ${setupFrom.join(", ")}: ${(setup ?? []).join(" && ")}`);
 
   const now = opts.now ?? Date.now();
-  const id = `task_${hashParts("task", sessionId, start.snapshot, instruction).slice(0, 16)}`;
+  let id = `task_${hashParts("task", sessionId, start.snapshot, instruction).slice(0, 16)}`;
   // The same session and prompt give the same id: drafting again updates that task, so keep its tags (suite:<name>) and say so.
-  const prior = await index.getTask(id);
+  let prior = await index.getTask(id);
+  // A --name the existing task does not have drafts a second task, as eval import does for a new name:
+  // replacing would drop the first task's reference patch and validation.
+  if (opts.name !== undefined) {
+    const namedId = `task_${hashParts("task", sessionId, start.snapshot, instruction, opts.name).slice(0, 16)}`;
+    const named = await index.getTask(namedId);
+    if (named || (prior && prior.name !== opts.name)) {
+      id = namedId;
+      prior = named;
+    }
+  }
   if (prior) notes.push(`updated the existing task ${prior.name} (${prior.tags.filter((t) => t.startsWith("suite:")).join(", ") || "no suite"}), same id ${id}`);
   if (noRefNote !== undefined) notes[noRefNote] += `; ${addReferenceHint(id)}`;
   const tags = [...new Set(["from-session", `agent:${session.agent}`, ...(prompts.length > 1 ? ["multi-turn"] : []), ...(prior?.tags ?? []), ...(opts.tags ?? [])])];
   return {
     id,
-    name: opts.name ?? defaultName(instruction),
+    name: opts.name ?? prior?.name ?? defaultName(instruction),
     status: "draft",
     sourceSessionId: sessionId,
     start: taskStart,
@@ -883,7 +913,7 @@ export async function exportHarbor(task: EvalTask, dir: string, blobs: BlobStore
     const repoDir = join(env, "repo");
     await rmrf(repoDir);
     const ops = await snapshotOps(opts.git);
-    await ops.materialize({ root: task.start.repoRoot, head: task.start.head, snapshot: task.start.snapshot }, repoDir);
+    await fromRepo(task.start, () => ops.materialize({ root: task.start.repoRoot, head: task.start.head, snapshot: task.start.snapshot }, repoDir));
   }
 
   const tests = join(dir, "tests");

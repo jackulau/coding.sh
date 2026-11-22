@@ -474,7 +474,10 @@ margin can hide. It exits 1 unless B is non-inferior; `--json` carries
 
 A grader is a JSON object with a `kind`. Every kind takes `name`, the grader's id in reports
 (default: the kind, or the judge's name). Graders that compare with an answer use the case's
-`expected` unless the grader gives `value`. A run passes when every grader passes it.
+`expected` unless the grader gives `value`. A run passes when every grader passes it. When there is
+no answer to compare with, the grader errors: the run is left ungraded, out of the pass rate, and
+`judge grade` exits 2. A key that a grader, a checklist item, its `check` or `normalize` does not
+read is refused, with the key named.
 
 | Kind | Fields | Passes when |
 |---|---|---|

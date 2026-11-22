@@ -209,8 +209,73 @@ function cacheFor(provider: ChatProvider, deps: GraderDeps): { cache?: JudgeCach
   return deps.judgeCache && provider.name !== "mock" ? { cache: deps.judgeCache } : {};
 }
 
+// The keys each spec reads. Any other key is refused: a misspelled "critcal" or "nromalize" would
+// otherwise be dropped and change the verdict without a word.
+const PROVIDER_KEYS = ["provider", "model", "baseURL", "apiKeyEnv", "effort", "temperature", "requireKey", "maxTokens", "mockAnswer"];
+const JUDGE_KEYS = ["name", "criterion", "system", "tunedOn", "concurrency", "calibration"];
+const SPEC_KEYS: Record<string, readonly string[]> = {
+  exact: ["name", "value", "normalize"],
+  contains: ["name", "value", "mode", "normalize", "negate"],
+  regex: ["name", "pattern", "flags", "negate"],
+  "json-schema": ["name", "schema"],
+  "json-path": ["name", "path", "equals", "expectedPath", "normalize"],
+  numeric: ["name", "abs", "rel", "value", "path"],
+  objective: ["name", "path", "base", "ref", "anchoredAt", "scale", "clip", "gate"],
+  progress: ["name", "flags", "maxDerails"],
+  executability: ["name", "kinds", "maxInvalid"],
+  similarity: ["name", "threshold", "value", "normalize"],
+  calls: ["name", "must", "mustNot", "max", "order"],
+  "next-action": ["name"],
+  "agent-slop": ["name", "rules", "exclude", "maxErrors", "maxWarnings"],
+  command: ["name", "command", "args", "cwd", "env", "timeoutMs", "passThreshold"],
+  module: ["name", "module", "export", "options", "passThreshold"],
+  llm: [...PROVIDER_KEYS, ...JUDGE_KEYS, "rubric", "passThreshold", "template"],
+  [CHECKLIST_KIND]: [...PROVIDER_KEYS, ...JUDGE_KEYS, "items", "mode", "abstain", "passThreshold"],
+  [PANEL_KIND]: [...JUDGE_KEYS, "rubric", "members", "target", "aggregate", "anchors", "anchorEvery", "driftThreshold"],
+  [PAIRWISE_KIND]: [...PROVIDER_KEYS, ...JUDGE_KEYS, "rubric", "template"],
+};
+const NORMALIZE_KEYS = ["trim", "caseInsensitive", "collapseWhitespace", "stripPunctuation", "unicode"];
+const ITEM_KEYS = ["id", "question", "dimension", "violationExample", "critical", "weight", "check"];
+const CHECK_KEYS = ["name", "args", "negate"];
+
+const isTable = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+function refuseUnknown(obj: Record<string, unknown>, allowed: readonly string[], where: string, hint: (key: string) => string | undefined = () => undefined): void {
+  for (const key of Object.keys(obj)) {
+    if (key === "kind" || allowed.includes(key)) continue;
+    const close = suggest(key, allowed);
+    const extra = hint(key) ?? (close ? `Did you mean ${JSON.stringify(close)}?` : `It reads ${allowed.map((k) => JSON.stringify(k)).join(", ")}.`);
+    throw new Error(`unknown key ${JSON.stringify(key)} in ${where}. ${extra}`);
+  }
+}
+
+/** Throws on a key the spec (or a checklist item, its check, a panel member or a normalize table) does not read. */
+export function checkSpecKeys(spec: GraderSpec): void {
+  const s: Record<string, unknown> = Object.fromEntries(Object.entries(spec));
+  const allowed = SPEC_KEYS[spec.kind];
+  if (!allowed) return; // createGrader names the unknown kind
+  const where = `the ${spec.kind} grader`;
+  refuseUnknown(s, allowed, where);
+  if (isTable(s.normalize)) refuseUnknown(s.normalize, NORMALIZE_KEYS, `${where}'s normalize`);
+  if (spec.kind === CHECKLIST_KIND && Array.isArray(s.items)) {
+    for (const [i, it] of s.items.entries()) {
+      if (!isTable(it)) continue;
+      const item = `checklist item ${typeof it.id === "string" && it.id ? JSON.stringify(it.id) : i + 1}`;
+      refuseUnknown(it, ITEM_KEYS, item, (k) => (k === "negate" && it.check !== undefined ? 'Put "negate" in the item\'s "check": it flips the predicate\'s answer.' : undefined));
+      if (isTable(it.check)) refuseUnknown(it.check, CHECK_KEYS, `the check of ${item}`);
+    }
+  }
+  if (spec.kind === PANEL_KIND && Array.isArray(s.members)) {
+    for (const [i, m] of s.members.entries()) if (isTable(m)) refuseUnknown(m, [...PROVIDER_KEYS, "id", "advisory"], `panel member ${i + 1}`);
+  }
+  if (spec.kind === PANEL_KIND && Array.isArray(s.anchors)) {
+    for (const [i, a] of s.anchors.entries()) if (isTable(a)) refuseUnknown(a, ["id", "input", "output", "expected", "score"], `panel anchor ${i + 1}`);
+  }
+}
+
 /** Build a grader from its spec. Async because module graders import code. */
 export async function createGrader(spec: GraderSpec, deps: GraderDeps = {}): Promise<Grader> {
+  checkSpecKeys(spec);
   const { kind, ...rest } = spec;
   switch (spec.kind) {
     case "exact":
@@ -323,6 +388,7 @@ export function createPairwiseJudgeFromSpec(spec: PairwiseGraderSpec, deps: Grad
   if (spec.kind !== PAIRWISE_KIND) throw new Error(`expected kind "${PAIRWISE_KIND}" (got ${JSON.stringify(spec.kind)})`);
   if (typeof spec.name !== "string" || !spec.name.trim()) throw new Error("a pairwise judge needs a name");
   if (typeof spec.rubric !== "string" || !spec.rubric.trim()) throw new Error("a pairwise judge needs a rubric");
+  checkSpecKeys(spec);
   const provider = providerFromSpec(spec, deps);
   return createPairwiseJudge({
     name: spec.name,

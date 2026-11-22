@@ -141,7 +141,7 @@ async function grade(c: CommandContext): Promise<number> {
   } catch (e) {
     if (c.signal?.aborted) throw e;
     // Exit 2, not 1: the grader did not grade (no key, provider error), so this is no fail verdict.
-    throw new CliError(`grader error: ${e instanceof Error ? e.message : String(e)}`, { reason: "grader_error", exitCode: 2, next: ["Check the grader's provider and API key, then run again:", "coding.sh judge grade --help"] });
+    throw new CliError(`grader error: ${e instanceof Error ? e.message : String(e)}`, { reason: "grader_error", exitCode: 2, next: [g.judgeVersion ? "Check the grader's provider and API key, then run again:" : "Fix what the error names in the grader spec, then run again:", "coding.sh judge grade --help"] });
   } finally {
     const file = env.CODING_SH_GRADER_USAGE;
     if (file && calls.length) await appendFile(file, calls.map((x) => JSON.stringify({ grader: g.id, ...x })).join("\n") + "\n").catch(() => {});

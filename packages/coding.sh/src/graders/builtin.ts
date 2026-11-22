@@ -66,6 +66,14 @@ function makeGrader(kind: string, spec: { name?: string }, grade: (ctx: GradeCon
   };
 }
 
+/**
+ * A case with nothing to compare against can't be graded: throwing makes it a grader error
+ * (ungraded in `exp run`, exit 2 from `judge grade`), not a fail that lowers the pass rate.
+ */
+function noExpected(what: string, key: string): never {
+  throw new Error(`no ${what} to compare with: give the case an expected value, or set "${key}" in the grader spec`);
+}
+
 function target(spec: { value?: unknown }, ctx: GradeContext): unknown {
   return "value" in spec && spec.value !== undefined ? spec.value : ctx.expected;
 }
@@ -84,7 +92,7 @@ export interface ExactSpec {
 export function exactGrader(spec: Omit<ExactSpec, "kind"> = {}): Grader {
   return makeGrader("exact", spec, (ctx) => {
     const want = target(spec, ctx);
-    if (want === undefined) return result(0, false, "no expected value to compare with");
+    if (want === undefined) noExpected("expected value", "value");
     const got = ctx.output;
     if (typeof want !== "string" && typeof got !== "string") {
       return deepEqual(got, want) ? result(1, true) : result(0, false, `expected ${short(want)}, got ${short(got)}`);
@@ -112,7 +120,7 @@ export interface ContainsSpec {
 export function containsGrader(spec: Omit<ContainsSpec, "kind"> = {}): Grader {
   return makeGrader("contains", spec, (ctx) => {
     const raw = target(spec, ctx);
-    if (raw === undefined) return result(0, false, "no substring to look for");
+    if (raw === undefined) noExpected("substring", "value");
     const needles = (Array.isArray(raw) ? raw : [raw]).map((n) => normalizeText(asText(n), spec.normalize));
     const hay = normalizeText(asText(ctx.output), spec.normalize);
     const found = needles.filter((n) => hay.includes(n));
@@ -194,7 +202,7 @@ export function jsonPathGrader(spec: Omit<JsonPathSpec, "kind">): Grader {
       if (want === undefined && spec.expectedPath === undefined) want = exp;
     }
     if (got === undefined) return result(0, false, `${spec.path} not found in output`);
-    if (want === undefined) return result(0, false, "no expected value to compare with");
+    if (want === undefined) noExpected("expected value", "equals");
     const eq =
       typeof got === "string" && typeof want === "string" ? normalizeText(got, spec.normalize) === normalizeText(want, spec.normalize) : deepEqual(got, want);
     return eq ? result(1, true) : result(0, false, `${spec.path}: expected ${short(want)}, got ${short(got)}`);
@@ -237,7 +245,7 @@ export function numericGrader(spec: Omit<NumericSpec, "kind"> = {}): Grader {
     const gotRaw = spec.path ? selection(ctx.output, spec.path) : ctx.output;
     const got = toNumber(gotRaw);
     const want = toNumber(spec.value ?? (spec.path ? (selection(ctx.expected, spec.path) ?? ctx.expected) : ctx.expected));
-    if (want === undefined) return result(0, false, "no numeric expected value");
+    if (want === undefined) noExpected("numeric expected value", "value");
     if (got === undefined) return result(0, false, `output ${short(gotRaw)} has no number`);
     const tol = Math.max(spec.abs ?? 0, (spec.rel ?? 0) * Math.abs(want));
     const err = Math.abs(got - want);
@@ -348,7 +356,7 @@ export function similarityGrader(spec: Omit<SimilaritySpec, "kind"> = {}): Grade
   if (!(threshold >= 0 && threshold <= 1)) throw new RangeError("similarity threshold must be within [0, 1]");
   return makeGrader("similarity", spec, (ctx) => {
     const want = target(spec, ctx);
-    if (want === undefined) return result(0, false, "no expected value to compare with");
+    if (want === undefined) noExpected("expected value", "value");
     const sim = similarity(normalizeText(asText(ctx.output), spec.normalize), normalizeText(asText(want), spec.normalize));
     const pass = sim >= threshold;
     return result(sim, pass, `similarity ${sim.toFixed(3)} ${pass ? ">=" : "<"} ${threshold}`);

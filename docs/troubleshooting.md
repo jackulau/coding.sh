@@ -136,6 +136,11 @@ For an agent or app sending over OpenTelemetry or the SDK:
 - **`eval new` fails with `has neither a start snapshot nor a HEAD`.** The session's transcript
   names the repository but no start commit: there is nothing to replay. Record it again with
   hooks or `coding.sh run --` in the repository.
+- **`eval new` fails with `the session's repository … is gone`.** The repository moved or was
+  deleted. Put it, or a clone with the named commit, back at that path, or record the session
+  again.
+- **`eval new` fails with `can't read the session's start state`.** The repository is there but no
+  longer has the session's start commit.
 
 If sessions look wrong in other ways, check what the adapters read with
 [`doctor --conformance`](#check-what-the-adapters-read).
@@ -351,7 +356,7 @@ The command ran and something failed.
 | `remote_error` | `https://obs.example.com/v1/ingest answered 503. Nothing was changed` | The server is up but not ready, often while it waits for its database. Check `curl -s <url>/readyz` and try again. |
 | `statusline_exists` | `Claude Code already has a status line: ~/bin/statusline.sh` (statusline install) | Keep it, or replace it with `coding.sh statusline install --force` (uninstall restores the old one). |
 | `no_quota_reading` | `No plan usage reading for codex` (quota wait) | The agent has not reported plan usage yet. For Claude Code, install the status line (`coding.sh statusline install`) on a Pro, Max or Ultra plan; for Codex, run a session signed in with ChatGPT. `coding.sh quota` shows what there is. |
-| `draft_failed` | `Couldn't draft a task from …: session … has no repo state; cannot build a task`, `… has neither a start snapshot nor a HEAD: …` | Record the session inside a git repository, with hooks or `coding.sh run --`. A session backfilled from a transcript has no start commit. |
+| `draft_failed` | `Couldn't draft a task from …: session … has no repo state; cannot build a task`, `… has neither a start snapshot nor a HEAD: …`, `… the session's repository … is gone` | Record the session inside a git repository, with hooks or `coding.sh run --`. A session backfilled from a transcript has no start commit. A moved repository goes back at its old path, or the session is recorded again. |
 | `no_tasks` | `No validated tasks to run` | `coding.sh eval new` then `eval validate`, or add tool-eval tasks. |
 | `unsupported_agent` | `Agent aider has no headless driver, so bundle … can't be run`, `--run forks Claude Code sessions; this one is codex` | Use an agent that can run headless. For `replay --fork`, leave out `--run`: it sends the one call again for any proxied agent. |
 | `nothing_to_ablate` | `nothing to ablate: … is in neither bundle base nor any selected task's repo` (exit 2) | Check the `--without` path against `coding.sh harness list --json`. |
