@@ -32,6 +32,9 @@ __pycache__/
 /tmp/
 /.tmp/
 coverage/
+# scripts/changelog/add.mjs: its lock and temp file, left beside CHANGELOG.md by a killed run
+/CHANGELOG.md.lock
+/CHANGELOG.md.*.tmp
 
 # private: agent harness, personal queue/lessons, research on the owner's own traces
 /.claude/

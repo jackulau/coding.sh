@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer, type Socket } from "node:net";
 import { after, before, beforeEach, test } from "node:test";
 import { flush, init, shutdown, stats, trace, withSession } from "../src/index.ts";
 import { _reset } from "../src/client.ts";
@@ -187,6 +188,41 @@ test("server down: flush and close are bounded, the batch is counted failed once
   } finally {
     console.warn = orig;
   }
+});
+
+test("a final flush that runs out of time says which flush gave up, once, and drops what is left", async () => {
+  // A server that accepts every connection and never answers.
+  const sockets = new Set<Socket>();
+  const hang = createServer((sock) => {
+    sockets.add(sock);
+    sock.on("error", () => undefined);
+    sock.on("close", () => sockets.delete(sock));
+  });
+  await new Promise<void>((r) => hang.listen(0, "127.0.0.1", r));
+  const url = `http://127.0.0.1:${(hang.address() as { port: number }).port}`;
+  const warns: string[] = [];
+  const orig = console.warn;
+  console.warn = (m: string) => void warns.push(m);
+  try {
+    init({ url, flushIntervalMs: 10 });
+    trace("t", () => 1);
+    assert.equal(await shutdown(300), false);
+    assert.deepEqual(stats(), { queued: 0, sent: 0, dropped: 0, failed: 3 });
+    const t = new Transport(resolveConfig({ url, flushIntervalMs: 10 }, {}));
+    t.enqueue("event", { v: 0, id: "x", sessionId: "s", kind: "span", ts: 1, payload: {} });
+    assert.equal(await t.close(200), false);
+  } finally {
+    console.warn = orig;
+    for (const s of sockets) s.destroy();
+    await new Promise<void>((r) => hang.close(() => r()));
+  }
+  assert.deepEqual(
+    warns.map((w) => w.replace(/after \d+ ms/, "after N ms")),
+    [
+      "[coding.sh] shutdown() gave up after N ms with 3 events not sent (the server did not answer); dropping them",
+      "[coding.sh] the final flush gave up after N ms with 1 event not sent (the server did not answer); dropping them",
+    ],
+  );
 });
 
 test("at most 5 attempts per batch, then it is dropped and counted", async () => {

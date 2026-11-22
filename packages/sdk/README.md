@@ -102,7 +102,7 @@ await generateText({
 ```
 
 Spans go to the server as OTLP JSON. `aiSdkTracer({ sessionId })` sets the session for everything that
-tracer records. Inside `trace()`, AI SDK spans join that trace.
+tracer records. Inside `trace()` or `withSession()`, each AI SDK call is a turn of that session.
 
 If you already run OpenTelemetry, you don't need the SDK. Export to `<CODING_SH_URL>/v1/traces` with
 `Authorization: Bearer <key>`, and set `gen_ai.conversation.id` (or `session.id`) to group a conversation.
@@ -128,7 +128,7 @@ const openai = observe(new OpenAI({ baseURL: "https://openrouter.ai/api/v1", api
 Streams come back unchanged. For an OpenAI chat stream without `stream_options`, the SDK asks for
 `include_usage` so tokens get counted, then hides the extra usage-only chunk, so your loop sees
 exactly what it would without the SDK. Usage is recorded when the stream ends, or when you stop
-reading it.
+reading it. Without `CODING_SH_URL` the request goes out exactly as you wrote it.
 
 ## Delivery
 
@@ -137,8 +137,9 @@ reading it.
 - On 429, 5xx and network errors the SDK retries with `Retry-After` or backoff (1, 2, 4… s, capped at
   30 s), up to 5 attempts, reusing the same event ids so the server deduplicates.
 - A 400/401/403 drops the batch and warns once. A full queue drops new events and counts them.
-- The SDK flushes on `beforeExit`. If you call `process.exit`, `await shutdown()` first. On
-  serverless, `waitUntil(flush())` (or `await flush()`) before returning.
+- The SDK flushes on `beforeExit`, for at most 5 s, and warns when it drops events. If you call
+  `process.exit`, `await shutdown()` first. On serverless, `waitUntil(flush())` (or
+  `await flush()`) before returning.
 
 ## Examples
 

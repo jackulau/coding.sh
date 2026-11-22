@@ -119,20 +119,24 @@ async function status(c: CommandContext): Promise<number> {
     const backlog = await autoIngest(ctx, readIngest(c));
     const now = Date.now();
     const statuses: BudgetStatus[] = await budgetStatuses(ctx.index, budgets, now);
+    // A budget whose spend can't be read shows its error, the others still report, and status exits 1.
+    const failed = statuses.filter((s) => s.error !== undefined);
     if (out.json) {
       out.data({ budgets: statuses.map(statusJson), estimated: true, note: ESTIMATED_NOTE, ...pendingField(backlog) });
-      return 0;
+      return failed.length ? 1 : 0;
     }
     out.table(
       ["ID", "PERIOD", "SCOPE", "SPEND", "LIMIT", "USED", "RESETS IN"],
-      statuses.map((s) => [s.over ? `! ${s.budget.id}` : s.budget.id, s.budget.period, scopeText(s.budget), `~${usd(s.spendUsd)}`, usd(s.budget.limitUsd), `${Math.floor(s.percent)}%`, until(s.resetsAt, now)]),
+      statuses.map((s) => [s.over ? `! ${s.budget.id}` : s.budget.id, s.budget.period, scopeText(s.budget), s.error !== undefined ? "-" : `~${usd(s.spendUsd)}`, usd(s.budget.limitUsd), s.error !== undefined ? "-" : `${Math.floor(s.percent)}%`, until(s.resetsAt, now)]),
     );
     out.note(ESTIMATED_NOTE);
     const over = statuses.filter((s) => s.over);
     if (over.length) out.warn(`${over.length === 1 ? `Budget ${over[0]!.budget.id} is` : `${over.length} budgets are`} over the limit (! above)`);
     if (statuses.some((s) => s.truncated)) out.warn("Stopped after 100,000 sessions: the spend of a budget marked truncated in --json is a lower bound");
     // A repo the store has no session in is likely a typo; say so rather than show $0 quietly.
-    for (const s of statuses) if (s.budget.repo && s.sessions === 0 && !repoPlace(s.budget.repo).path) out.note(`No session this ${s.budget.period} in a repo named ${s.budget.repo}`);
-    return 0;
+    for (const s of statuses) if (s.error === undefined && s.budget.repo && s.sessions === 0 && !repoPlace(s.budget.repo).path) out.note(`No session this ${s.budget.period} in a repo named ${s.budget.repo}`);
+    for (const s of failed) out.warn(`Budget ${s.budget.id} can't be read: ${s.error}`);
+    if (failed.length) out.next("Remove it, then set it again", `coding.sh budget rm ${failed[0]!.budget.id}`);
+    return failed.length ? 1 : 0;
   }, { create: false });
 }

@@ -36,6 +36,10 @@ npx coding.sh                               # try it: finds your agents, asks on
 curl -fsSL https://coding.sh/install | sh   # or install it: same setup, then opens the viewer
 ```
 
+On Windows, run `npx -p coding.sh codingsh` where this page says `npx coding.sh`, and the script in Git
+Bash. In PowerShell and cmd, type `codingsh` for an installed `coding.sh`
+([Windows](docs/guides/install.md#windows)).
+
 <p align="center">
   <img src=".github/assets/first-run.gif" alt="A terminal recording. Typing 'npx coding.sh' prints a plan: hooks and the MCP server for Claude Code and Codex CLI, T3 Code imported from its store with no hooks, and the coding.sh hook and config. It asks once, 'Set up coding.sh for 2 agents (4 config files, backed up first) and import past sessions? (Y/n)', the answer is y, and it reports 'Set up Claude Code and Codex CLI (hooks + MCP server)', that recording starts with the next session, and 'Imported 9 past sessions from Claude Code and Codex CLI in 0.2 s'. Then 'npx coding.sh usage --by model' prints a table of sessions, turns, tokens, output tokens, tokens per turn, cache read rate and estimated cost for claude-opus-5-5, claude-sonnet-5 and gpt-6.1-sol. The sessions come from .github/assets/sample-sessions.mjs.">
   <br>

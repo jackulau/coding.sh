@@ -468,7 +468,7 @@ export function pyOptionDefaults(params: string[]): Map<string, OptionInfo> {
 
 /** Env vars the SDK core reads (config.ts, _client.py). The generator fails on one missing here. */
 const ENV: { name: string; desc: string }[] = [
-  { name: "CODING_SH_URL", desc: "Base URL of your coding.sh server, e.g. `http://127.0.0.1:4318`. Unset: the SDK does nothing." },
+  { name: "CODING_SH_URL", desc: "Base URL of your coding.sh server, e.g. `http://127.0.0.1:4318`. A URL that ends in `/v1/ingest` or `/v1/traces` works too: the SDK drops that ending. Unset: the SDK does nothing." },
   { name: "CODING_SH_INGEST_KEY", desc: "Ingest key (`csh_ik_...`), sent as a Bearer token. The key decides the project. Optional on a loopback server with no keys." },
   { name: "CODING_SH_SERVICE", desc: "Service name. The server turns it into the session's agent id, e.g. `support-agent`." },
   { name: "OTEL_SERVICE_NAME", desc: "Used as the service name when `CODING_SH_SERVICE` is unset." },
@@ -507,7 +507,7 @@ const TS_FALLBACK: Record<string, string> = {
   "TraceHandle.traceId": "Id of this trace.",
   "TraceHandle.spanId": "Id of the trace's root span.",
   "TraceHandle.sessionId": "Session the trace records into: `sessionId` when given, else the trace id.",
-  "TransportStats.queued": "Events waiting to be sent.",
+  "TransportStats.queued": "Events not sent yet, including the batch in flight or waiting for its retry.",
   "TransportStats.sent": "Events the server accepted.",
   "TransportStats.dropped": "Events dropped before sending: the queue was full, or the event was too large or not serializable.",
   "TransportStats.failed": "Events the server rejected, or that were still unsent when retries or `shutdown()` gave up.",
@@ -626,7 +626,7 @@ const PY_INTRO = (requires: string, extras: string[]) => [
   "coding_sh.flush(timeout=5)  # end of a script, a job or a serverless handler",
   "```",
   "",
-  "`trace` and `span` work as context managers (`with` and `async with`) and as decorators. A decorated tool span records the call's arguments as input and the return value as output. Context follows `contextvars`, so it crosses `await` and asyncio tasks. Work handed to a thread pool starts untraced unless you run it with `contextvars.copy_context().run`.",
+  "`trace` and `span` work as context managers (`with` and `async with`) and as decorators. A decorated tool span records the call's arguments as input and the return value as output. Context follows `contextvars`, so it crosses `await` and asyncio tasks. Work handed to a thread pool starts untraced unless you run it in a copy of the context, one per task: `pool.submit(contextvars.copy_context().run, fn, *args)`.",
   "",
 ];
 
@@ -789,7 +789,7 @@ export function renderSdkReference(): string {
   out.push(
     "## Differences between the SDKs",
     "",
-    `- \`flush()\` waits at most \`${tsFlush}\` ms by default in TypeScript. In Python, \`flush()\` with \`timeout=${pyFlush}\` waits until the queue is sent or the sender gives up on it.`,
+    `- \`flush()\` waits at most \`${tsFlush}\` ms by default in TypeScript and \`${pyFlush}\` s in Python. In Python, \`flush(timeout=None)\` waits until the queue is sent or the sender gives up on it.`,
     `- \`shutdown()\` waits at most \`${tsShutdown}\` ms in TypeScript and \`${pyShutdown}\` s in Python. Without a call, Python flushes at exit for at most \`${pyExit}\` s, and TypeScript flushes on \`beforeExit\` for at most \`${tsExit}\` ms.`,
     "- TypeScript times are in milliseconds (`timeoutMs`, `flushIntervalMs`). Python timeouts are in seconds; only `flush_interval_ms` is in milliseconds.",
     "- In TypeScript, `trace()`, `span()` and `withSession()` take the function to run. In Python, they are context managers and decorators.",

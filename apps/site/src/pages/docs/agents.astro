@@ -6,10 +6,11 @@ import { ADAPTER_ROWS, PLANNED_AGENTS, STATUS_LABEL } from "../../components/doc
 import AgentLogo from "../../components/AgentLogo.astro";
 import DocShot from "../../components/docs/DocShot.astro";
 
-// Outputs on this page are real runs of coding.sh 0.1.6 (packed from the repo) under a temp HOME on
-// 2026-11-11; the repo path in the `run` output is scrubbed to /work/demo.
+// Outputs on this page are real runs under a temp HOME: the status line from coding.sh 0.1.6 (packed
+// from the repo) on 2026-11-11, the `run` output from 0.1.8 (from source) on 2026-11-21. The repo
+// path in the `run` output is scrubbed to /work/demo.
 
-const setup = `npx coding.sh          # or: coding.sh init
+const setup = `npx coding.sh          # Windows: npx -p coding.sh codingsh
 coding.sh doctor       # checks each agent's capture`;
 
 const statusInstall = `coding.sh statusline install`;
@@ -29,20 +30,20 @@ coding.sh eval run failures --yes`;
 
 const run = `coding.sh run -- sh -c 'echo "# Notes" > NOTES.md'
 coding.sh show latest`;
-const runOut = `✓ Captured session e155e2c8-38c9-45e4-b2ae-88c8bea490bf (1.0s, exit 0)
-e155e2c8-38c9-45e4-b2ae-88c8bea490bf
-  Session       e155e2c8-38c9-45e4-b2ae-88c8bea490bf
+const runOut = `✓ Captured session 9024a965-6745-4a31-a9d2-23d4d44f34f3 (the command ran 26ms, exit 0)
+9024a965-6745-4a31-a9d2-23d4d44f34f3
+  Session       9024a965-6745-4a31-a9d2-23d4d44f34f3
   Agent         wrapper
-  Repo          /work/demo (master)
-  Started       Nov 11 05:22 (19s ago)
-  Duration      7.5s
-  Turns         0, 0 tool calls, 1 files changed
+  Repo          /work/demo (main)
+  Started       Nov 21 15:57 (1s ago)
+  Duration      280ms
+  Turns         0, 0 tool calls, 1 file changed
   Flags         no-verification
-  Snapshot      8f8a330 → efe2b4d: 1 file (+1 -0): NOTES.md
+  Snapshot      246210b → 7444234: 1 file (+1 -0): NOTES.md
 
     +0ms  session.start
-   +7.5s  file        add NOTES.md
-   +7.5s  session.end exit`;
+  +280ms  file        add NOTES.md
+  +280ms  session.end exit`;
 
 const hook = `/bin/sh "/Users/you/.coding.sh/bin/hook.sh" <agent-id> <EventName>   # absolute, quoted path
 node "C:/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>      # on Windows`;
@@ -56,7 +57,8 @@ node "C:/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>      # on Win
   <Code code={setup} />
   <p>
     <code>coding.sh sessions</code> then lists every agent's sessions together. Each adapter keeps your agent's config as it was, apart
-    from the entries it adds, and <code>coding.sh uninstall</code> removes only those.
+    from the entries it adds, and <code>coding.sh uninstall</code> removes only those. In PowerShell and cmd, type <code>codingsh</code>
+    for <code>coding.sh</code>.
   </p>
   <DocShot
     name="product/hero-session"
@@ -150,7 +152,7 @@ node "C:/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>      # on Win
     <li>A flag shows only for a real failure, never for a tag such as <code>skill:pdf</code>. The flag part is left out when there is none.</li>
     <li><code>install</code> won't replace another tool's status line. <code>--force</code> replaces it and keeps the old one for <code>uninstall</code>.</li>
     <li><code>coding.sh statusline uninstall</code> puts <code>settings.json</code> back as it was before <code>install</code>.</li>
-    <li>The command needs coding.sh on your <code>PATH</code>. With no store or unexpected input it prints nothing and exits 0.</li>
+    <li>The command needs coding.sh on your <code>PATH</code>. It exits 0 even when something is wrong. Without a session id on stdin it still prints today's cost, and when the store can't be opened it prints nothing.</li>
   </ul>
 
   <h2 id="codex">Codex CLI</h2>

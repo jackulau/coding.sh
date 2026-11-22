@@ -6,7 +6,7 @@ tools, datasets and experiments run on the same database.
 
 The full contract is [docs/PRODUCTION.md](../PRODUCTION.md). This page is the short version. For a
 team's coding agents on one machine, start with [Self-host for a team](../how-to/self-host-team.md):
-one `docker run`, no keys to make.
+one Compose file, no keys to make.
 
 The image is `ghcr.io/jackulau/coding.sh`, published for amd64 and arm64 by each tagged release from
 0.1.2 on. Before that release, build it from a checkout with

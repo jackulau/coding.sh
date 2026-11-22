@@ -86,6 +86,7 @@ Apply each SQLite migration once when two processes open the index
   Duration      5m18s
   Turns         1, 9 tool calls (1 failed), 2 files changed
   Tokens        in 34  out 2.5k  cache 324k  $0.3387 (estimated)
+  Cost split    cache read 45% $0.1521  cache write 37% $0.1239  in 0% $0.0002  out 18% $0.0625
   Latency       10 llm calls, p50 6.6s, p95 1m48s; ttft p50 6.6s; tools 2m13s (p95 52s)
 
     +0ms  session.start
@@ -340,7 +341,7 @@ coding.sh sessions --where 'tool:Bash ok:false' --json --fields id,title,stats.t
 ```
 
 ```json
-{"sessions":[{"id":"9887c95d-2739-4dae-8222-4471386def67","title":"Apply each SQLite migration once when two processes open the index","stats":{"toolErrors":1}}]}
+{"sessions":[{"id":"9887c95d-2739-4dae-8222-4471386def67","title":"Apply each SQLite migration once when two processes open the index","stats":{"toolErrors":1}}],"total":1}
 ```
 
 `show --json` adds `phases` and `days`. For a session over 200 events it prints `events: []` next

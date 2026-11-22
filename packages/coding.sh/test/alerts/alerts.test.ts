@@ -9,7 +9,7 @@ import { UsageError } from "../../src/cli/args.ts";
 import * as alertCmd from "../../src/cli/commands/alert.ts";
 import { classify, recordDelivery } from "../../src/alerts/check.ts";
 import { parseMeasure, readMeasure } from "../../src/alerts/measure.ts";
-import { deliver, signBody } from "../../src/alerts/notify.ts";
+import { deliver, signatureHeaders, signBody } from "../../src/alerts/notify.ts";
 import { type AlertDef, loadAlerts, MAX_FAILED_DELIVERIES } from "../../src/alerts/store.ts";
 import type { Score } from "../../src/core/types.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
@@ -19,6 +19,8 @@ import { mkSession, runCmd, type Sandbox, sandbox } from "../cli/_cmd.ts";
 interface Post {
   body: string;
   signature: string | undefined;
+  timestamp: string | undefined;
+  signatureV2: string | undefined;
 }
 
 /** A local webhook: records each POST and answers `status()`. */
@@ -28,7 +30,8 @@ function listener(status: () => number = () => 200): Promise<{ server: Server; u
     let body = "";
     req.on("data", (d: Buffer) => (body += d.toString()));
     req.on("end", () => {
-      posts.push({ body, signature: req.headers["x-coding-sh-signature"] as string | undefined });
+      const h = (name: string) => req.headers[name] as string | undefined;
+      posts.push({ body, signature: h("x-coding-sh-signature"), timestamp: h("x-coding-sh-timestamp"), signatureV2: h("x-coding-sh-signature-v2") });
       res.writeHead(status()).end();
     });
   });
@@ -76,6 +79,10 @@ describe("coding.sh alert", () => {
     assert.equal(body.by, undefined);
     assert.ok(!Number.isNaN(Date.parse(body.at)));
     assert.equal(post.signature, `sha256=${createHmac("sha256", secret).update(post.body).digest("hex")}`);
+    // The timestamp is unix seconds, and the second signature covers "<timestamp>.<body>".
+    assert.match(post.timestamp ?? "", /^\d+$/);
+    assert.ok(Math.abs(Number(post.timestamp) - Date.now() / 1000) < 60, `timestamp ${post.timestamp} is now`);
+    assert.equal(post.signatureV2, `sha256=${createHmac("sha256", secret).update(`${post.timestamp}.${post.body}`).digest("hex")}`);
     const results = (first.json as { alerts: { name: string; state: string; value: number; notified: number }[] }).alerts;
     assert.deepEqual(results.map((r) => [r.name, r.state, r.value, r.notified]), [["failures", "ALERT", 1, 1]]);
 
@@ -94,6 +101,21 @@ describe("coding.sh alert", () => {
     assert.match(human.stdout, /failures/);
     assert.match(human.stdout, /ALERT/);
     assert.doesNotMatch(human.stdout, /csh_whsec_/);
+  });
+
+  it("add tells how to check the timestamped signature, and that the old one alone does not stop a replay", async () => {
+    const own = sandbox();
+    try {
+      const r = await runCmd(alertCmd, own, { action: "add", positionals: ["signed"], flags: { measure: "cost", over: 1, window: "1d", notify: "webhook:http://127.0.0.1:9/hook" } });
+      assert.equal(r.code, 0, String(r.error));
+      const text = r.stdout + r.stderr;
+      assert.match(text, /X-Coding-Sh-Signature-V2: sha256=<HMAC-SHA256 of "<timestamp>\.<body>"/);
+      assert.match(text, /X-Coding-Sh-Timestamp \(unix seconds\)/);
+      assert.match(text, /more than 5 minutes/);
+      assert.match(text, /X-Coding-Sh-Signature signs the body alone and does not stop a replay/);
+    } finally {
+      own.cleanup();
+    }
   });
 
   it("splits by agent, one state and one notification per agent", async () => {
@@ -330,6 +352,15 @@ describe("alert parts", () => {
     const d = await deliver({ kind: "webhook", url: "http://127.0.0.1:9/x" }, { alert: "a", state: "ALERT", previous: "OK", value: 1, threshold: 0, window: "1h", at: new Date(0).toISOString() }, { fetch: fakeFetch, backoffMs: 1 });
     assert.deepEqual(d, { ok: true, attempts: 3 });
     assert.match(signBody("k", "{}"), /^sha256=[0-9a-f]{64}$/);
+  });
+
+  it('signs the body alone, as before, and "<timestamp>.<body>" with the time it is sent', () => {
+    const hmac = (data: string) => `sha256=${createHmac("sha256", "k").update(data).digest("hex")}`;
+    assert.deepEqual(signatureHeaders("k", '{"a":1}', 1_700_000_000_999), {
+      "X-Coding-Sh-Signature": hmac('{"a":1}'),
+      "X-Coding-Sh-Timestamp": "1700000000",
+      "X-Coding-Sh-Signature-V2": hmac('1700000000.{"a":1}'),
+    });
   });
 
   it("gives a command the payload on stdin and fails on a non-zero exit", async () => {

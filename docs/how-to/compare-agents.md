@@ -23,16 +23,20 @@ quickest way to get one: the next time a test fails, hand the fix to an agent un
 
 ```sh
 cd coding.sh
-coding.sh run -- claude -p 'Fix the failing test in packages/coding.sh/test/cli/output.test.ts'
+coding.sh run -- claude -p 'Fix the failing test in packages/coding.sh/test/cli/output.test.ts' \
+  --permission-mode acceptEdits
 coding.sh eval new latest --name output-test-fix \
   --verifier 'node --no-warnings --test packages/coding.sh/test/cli/output.test.ts' \
   --hidden-test 'packages/coding.sh/test/cli/output.test.ts'
 coding.sh eval validate output-test-fix --k 3
 ```
 
-`eval validate` checks that the verifier fails on the untouched repo and passes on the session's
-diff 3 times out of 3. `compare` uses only validated tasks. Five to ten tasks is a reasonable
-start. [Turn failed runs into evals](session-to-eval.md) has the details.
+`claude -p` has no one to ask before it edits a file, so without `--permission-mode acceptEdits` it
+can't write the fix. `eval new` keeps the session's diff as the task's reference. `eval validate`
+checks that the verifier fails on the untouched repo and passes on that diff 3 times out of 3.
+
+`compare` uses only validated tasks. Five to ten tasks is a reasonable start.
+[Turn failed runs into evals](session-to-eval.md) has the details.
 
 ## 2. Snapshot each agent's setup
 
@@ -42,10 +46,10 @@ coding.sh harness snapshot --agent codex --name codex --model gpt-5
 coding.sh harness list
 ```
 
-A snapshot (a bundle) records the agent, the model and the files the agent reads: AGENTS.md, its
-own instructions file, settings, skills, hooks and MCP config, in the project and in your home.
-For Claude Code it also records the files its instructions and rules pull in with `@path` imports.
-`--dir` snapshots another project.
+A snapshot (a bundle) records the agent, the model and the files the agent reads in the project and
+in your home: its own instructions file (AGENTS.md for Codex), settings, skills, hooks and the
+project's MCP config. For Claude Code it also records the files its instructions and
+rules pull in with `@path` imports. `--dir` snapshots another project.
 
 ## 3. Run both on every validated task
 
@@ -95,15 +99,15 @@ agent did. An agent can read the results with the MCP tool `harness_compare`.
 | Does a skill help? | `compare claude --without .claude/skills/pdf --k 3`: B is A without that path. With `--gate` it reads Keep it or Drop it. |
 | Does a Claude Code plugin help? | `compare claude --with plugin:terse --k 3`: B is A plus the plugin. Your own config is not changed. |
 | Same agent, two models? | Snapshot it twice with different `--model` values. `--gateway` routes both arms through an [LLM gateway](https://coding.sh/docs/ai-gateway). |
-| Does B break one group of tasks? | Tag tasks with `eval new --tag suite:<name>` and add `--by suite:`. One group's Don't ship blocks. |
+| Does B break one group of tasks? | Tag tasks with `eval new --tag suite:<name>` and add `--gate --by suite:`. One group's Don't ship blocks. |
 | One rule or skill added or removed? | The report adds an item gate that counts only tasks where the item reached the agent. `--item-gate` makes it the exit code. |
 
 ## If something goes wrong
 
 | Symptom | Check |
 |---|---|
-| `unsupported_agent` | That agent has no headless driver in coding.sh. See [Agents](https://coding.sh/docs/agents). |
-| No tasks run | `compare` uses validated tasks only. Run `eval validate <task>`, or pass `--tag` for drafts. |
+| `Agent … has no headless driver` (`unsupported_agent`) | coding.sh can't run that agent on its own. See [Agents](https://coding.sh/docs/agents). |
+| `No validated tasks to run` | `compare` uses validated tasks only. Run `eval validate <task>`, or pass `--tag` for drafts. |
 | A note that the agent release differs | The arms ran on different agent versions, so the difference mixes your change with the release. Rerun both together with auto-update off. `--promote` holds. |
 | Every run of a task fails in both arms | The task may be broken. Run `coding.sh eval validate <task>` again. |
 

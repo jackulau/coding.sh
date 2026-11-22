@@ -1,8 +1,9 @@
 // Unit tests for CLI formatting and message helpers.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { blockingNotes, nextStepBin, setupSummary } from "../../src/cli/commands/init.ts";
+import { blockingNotes, setupSummary } from "../../src/cli/commands/init.ts";
 import { checkFailed } from "../../src/cli/commands/update.ts";
+import { nextStepBin } from "../../src/cli/next-steps.ts";
 import { duration, formatLabel, LABEL_WIDTH } from "../../src/cli/output.ts";
 import type { UpdateCache } from "../../src/update/index.ts";
 
@@ -73,6 +74,11 @@ describe("nextStepBin", () => {
     assert.equal(nextStepBin({ SHELL: "/usr/bin/bash" }, "win32"), "coding.sh");
     assert.equal(nextStepBin({}, "linux"), "coding.sh");
     assert.equal(nextStepBin({}, "darwin"), "coding.sh");
-    assert.equal(nextStepBin({ npm_command: "exec" }, "win32"), "npx coding.sh");
+    assert.equal(nextStepBin({ npm_command: "exec" }, "linux"), "npx coding.sh");
+  });
+
+  it("under npx on Windows names the codingsh bin: npx runs the command through cmd in every shell", () => {
+    assert.equal(nextStepBin({ npm_command: "exec" }, "win32"), "npx -p coding.sh codingsh");
+    assert.equal(nextStepBin({ npm_command: "exec", MSYSTEM: "MINGW64" }, "win32"), "npx -p coding.sh codingsh");
   });
 });

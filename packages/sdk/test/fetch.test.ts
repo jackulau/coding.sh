@@ -89,6 +89,29 @@ test("non-LLM requests pass straight through and HTTP errors are recorded", asyn
   assert.match(String(cs[0]!.payload.error), /HTTP 500: mock failure/);
 });
 
+test("no URL: nothing is read or cloned, so flush() does not wait on a response still streaming", async () => {
+  _reset();
+  init({});
+  let clones = 0;
+  let open!: ReadableStreamDefaultController<Uint8Array>;
+  const inner: typeof fetch = async () => {
+    const res = new Response(new ReadableStream<Uint8Array>({ start: (c) => void (open = c) }), { headers: { "content-type": "text/event-stream" } });
+    const clone = res.clone.bind(res);
+    res.clone = () => (clones++, clone());
+    return res;
+  };
+  const req = new Request("https://api.openai.com/v1/chat/completions", post({ model: "gpt-4o-mini", stream: true, messages: [{ role: "user", content: "hi" }] }));
+  const reqClone = req.clone.bind(req);
+  req.clone = () => (clones++, reqClone());
+  const res = await observeFetch(inner)(req);
+  const t0 = Date.now();
+  assert.equal(await flush(1000), true);
+  assert.ok(Date.now() - t0 < 500, `flush() waited ${Date.now() - t0} ms`);
+  assert.equal(clones, 0, "neither the request nor the response body is read");
+  open.close();
+  assert.equal(await res.text(), "");
+});
+
 test("Vercel AI Gateway calls are tagged", async () => {
   const inner = (async (_input: RequestInfo | URL, init?: RequestInit) => fetch(`${llm.url}/v1/chat/completions`, init)) as typeof fetch;
   const f = observeFetch(inner);

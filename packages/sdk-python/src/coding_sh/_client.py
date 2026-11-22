@@ -4,8 +4,8 @@ Transport contract (docs/PRODUCTION.md section 4, shared with the TS SDK):
 
 - batches of <= max_batch events and <= 4 MiB go to POST <url>/v1/ingest, gzip-compressed;
 - one request in flight at a time, from a daemon thread;
-- retries on 429, 5xx and network errors, honoring Retry-After, otherwise backing off
-  1, 2, 4 ... s up to 30 s, with at most 5 attempts;
+- retries on 429, 5xx and network errors, honoring Retry-After (seconds or an HTTP date, at
+  most 60 s), otherwise backing off 1, 2, 4 ... s up to 30 s, with at most 5 attempts;
 - 400/401/403 (and any other 4xx) drop the batch and warn once per status;
 - a full queue drops new events, counts them, and warns at most once a minute;
 - an atexit flush is bounded to 2 s;
@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import atexit
 import collections
+import email.utils
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -27,6 +29,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import timezone
 from typing import Any, Deque, Dict, List, Optional
 
 try:  # gzip needs zlib, which a few minimal builds lack.
@@ -41,6 +44,7 @@ log = logging.getLogger("coding_sh")
 MAX_BATCH_BYTES = 4 * 1024 * 1024
 MAX_ATTEMPTS = 5
 MAX_BACKOFF_S = 30.0
+MAX_RETRY_AFTER_S = 2 * MAX_BACKOFF_S  # the longest Retry-After wait, as in the TS SDK
 ATEXIT_TIMEOUT_S = 2.0
 REQUEST_TIMEOUT_S = 10.0
 QUEUE_WARN_INTERVAL_S = 60.0
@@ -58,10 +62,19 @@ def _env_bool(name: str) -> Optional[bool]:
     return None if v is None else v.strip().lower() in _TRUE
 
 
+def base_url(url: str) -> str:
+    """The server's base URL, as the TS SDK reads it: trailing slashes and then one trailing
+    /v1/ingest or /v1/traces removed (https://obs.example.com/v1/traces -> https://obs.example.com)."""
+    u = url.strip().rstrip("/")
+    for suffix in ("/v1/ingest", "/v1/traces"):
+        if u.endswith(suffix):
+            return u[: -len(suffix)]
+    return u
+
+
 def ingest_url(url: str) -> str:
     """Base URL (https://obs.example.com) -> https://obs.example.com/v1/ingest."""
-    u = url.strip().rstrip("/")
-    return u if u.endswith("/v1/ingest") else u + "/v1/ingest"
+    return base_url(url) + "/v1/ingest"
 
 
 _warned_urls: "set[str]" = set()
@@ -165,13 +178,26 @@ class _Result:
         self.body = body
 
 
-def _parse_retry_after(v: Optional[str]) -> Optional[float]:
+def _parse_retry_after(v: Optional[str], now: Optional[float] = None) -> Optional[float]:
+    """Seconds to wait for a Retry-After value, read as the TS SDK reads it: seconds, or an HTTP
+    date (0 once it has passed), at most MAX_RETRY_AFTER_S. None for a value that is neither,
+    so the sender backs off. `now` is the time in epoch seconds; tests pass it."""
     if not v:
         return None
     try:
-        return max(0.0, min(MAX_BACKOFF_S, float(v.strip())))
+        s = float(v.strip())
     except ValueError:
-        return None  # HTTP-date form: fall back to backoff
+        s = math.nan
+    if math.isfinite(s) and s >= 0:
+        return min(s, MAX_RETRY_AFTER_S)
+    try:
+        at = email.utils.parsedate_to_datetime(v.strip())  # TypeError before 3.10, ValueError since
+        if at.tzinfo is None:  # an asctime date has no zone; HTTP dates are in GMT
+            at = at.replace(tzinfo=timezone.utc)
+        wait = at.timestamp() - (time.time() if now is None else now)
+    except Exception:
+        return None
+    return max(0.0, min(wait, MAX_RETRY_AFTER_S))
 
 
 class Transport:
@@ -248,8 +274,9 @@ class Transport:
             log.warning("coding.sh: event queue full or event too large; dropping events (dropped=%d)", self._dropped)
         return queued
 
-    def flush(self, timeout: Optional[float] = None) -> bool:
-        """Block until everything queued so far is sent (or given up). True when drained."""
+    def flush(self, timeout: Optional[float] = 5.0) -> bool:
+        """Block until everything queued so far is sent (or given up), for at most timeout
+        seconds (None: no limit). True when drained."""
         if not self.cfg.enabled:
             return True
         deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)

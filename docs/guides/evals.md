@@ -1187,8 +1187,9 @@ coding.sh monitor add review --http https://evals.example.com/score
 first of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `AI_GATEWAY_API_KEY` and `GEMINI_API_KEY` that is
 set, and stops for the day at `--max-usd-day`.
 
-`--http` takes an http or https URL with no user name or password in it. `monitor add` prints a
-signing secret once: 32 random bytes in hex. `monitor list` never shows it; it is kept in
+`--http` takes an http or https URL with no user name or password in it. A query string in it is
+kept and sent with each POST, but `monitor add --json`, `monitor list` and the monitor's errors
+show the URL without it. `monitor add` prints a signing secret once: 32 random bytes in hex. `monitor list` never shows it; it is kept in
 `monitors.json`, which is written with mode 600 where the OS has file modes. For each session the
 monitor sends one POST:
 
@@ -1196,13 +1197,46 @@ monitor sends one POST:
 {"apiVersion": "v1", "monitor": "review", "session": {"session": {...}, "eventCount": 12, "events": [...]}}
 ```
 
-`session` is the redacted document a `--run` command gets on stdin. The request carries
-`X-Coding-Sh-Signature: sha256=<hex>`, the HMAC-SHA256 of the body keyed with the secret, as
-[alert](../reference/cli.md#codingsh-alert-add) webhooks do. Redirects are not followed. Each try has 10 s. A 5xx,
+`session` is the redacted document a `--run` command gets on stdin. Each try is signed with the
+secret, as [alert](../reference/cli.md#codingsh-alert-add) webhooks are with theirs. The HMAC key
+is the secret's text as printed, not bytes decoded from hex:
+
+- `X-Coding-Sh-Timestamp`: when the try was sent, in unix seconds.
+- `X-Coding-Sh-Signature-V2: sha256=<hex>`: the HMAC-SHA256 of the timestamp, a `.` and the body.
+- `X-Coding-Sh-Signature: sha256=<hex>`: the HMAC-SHA256 of the body alone, as before. It does not
+  stop a replay: a copy of a request verifies whenever it is sent again.
+
+To check a request, compute the V2 signature over the raw body, compare it in constant time, and
+refuse a timestamp more than 5 minutes from your clock. A copy sent within those 5 minutes still
+verifies; to refuse it too, keep the V2 signatures you accepted in the last 5 minutes.
+
+```js
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+// headers: lower-case names, as Node gives them. raw: the body as received, a Buffer.
+function verify(secret, headers, raw) {
+  const ts = headers["x-coding-sh-timestamp"] ?? "";
+  if (!/^\d+$/.test(ts) || Math.abs(Date.now() / 1000 - Number(ts)) > 300) return false;
+  const want = Buffer.from(`sha256=${createHmac("sha256", secret).update(`${ts}.`).update(raw).digest("hex")}`);
+  const got = Buffer.from(headers["x-coding-sh-signature-v2"] ?? "");
+  return got.length === want.length && timingSafeEqual(got, want);
+}
+```
+
+Redirects are not followed. Each try has 10 s. A 5xx,
 408, 425 or 429 answer or a network error is tried again, up to 3 tries, 1 s and then 2 s apart. At
-most 256 KB of the answer is read. A 2xx answer `{"value": ..., "comment"?: ...}` writes the score;
-any other answer writes none and becomes the monitor's last error, with the status, which `monitor
-list` shows.
+most 256 KB of the answer is read. A 2xx answer `{"value": ..., "comment"?: ...}` writes the score.
+Any other answer (another 4xx, a redirect, no `value`, over 256 KB) writes none, and the monitor
+moves past the session; [`monitor run`](../reference/cli.md#codingsh-monitor-run) sends it again,
+as it does every session in its window that has no score.
+
+When the evaluator can't be reached (a network error, a try over 10 s, or a 5xx, 408, 425 or 429 on
+all 3 tries), the session gets no score and the monitor's cursor stays before it, so the next pass
+starts at that session again. If the evaluator answers for a later session in the same pass, it is
+up, and the monitor moves past the session as it does after any other failure. A pass stops after 2
+such sessions in a row, so 2 sessions in a row that the evaluator always fails on hold the monitor
+until it answers for one of them. A failure of either kind becomes the monitor's last error, with
+the status, which `monitor list` shows.
 
 ### Review queues
 
