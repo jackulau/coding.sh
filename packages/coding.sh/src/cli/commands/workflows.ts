@@ -536,14 +536,22 @@ function scoreDeps(c: CommandContext, runId: string | undefined, getJudge?: Scor
 
 /**
  * Cases that would not load. The message says what is wrong and, for a case file, what to do. The
- * `--cases` hint comes only when the cases came from the default folder: a folder passed with
- * `--cases` was chosen on purpose.
+ * `--cases` hint comes when the cases came from the default folder, or when `--cases` named no
+ * folder (a file, or nothing there): a folder passed with `--cases` was chosen on purpose.
  */
 function casesError(dir: string, e: unknown, given: string | undefined, retry: string): CliError {
   return new CliError(`Can't read cases from ${dir}: ${e instanceof Error ? e.message : String(e)}`, {
     reason: "invalid_cases",
-    next: given === undefined ? ["Point at the cases directory:", retry] : [],
+    next: given === undefined || !isFolder(dir) ? ["Point at the cases directory:", retry] : [],
   });
+}
+
+function isFolder(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 async function score(c: CommandContext): Promise<number> {

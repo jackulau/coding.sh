@@ -326,6 +326,15 @@ describe("coding.sh workflows", () => {
     const missing = await refusal(cli("run", ["no-cases"], { driver: "command", variant, yes: true }));
     assert.match(missing.message, /^Can't read cases from .*no-cases/);
     assert.deepEqual(missing.next, ["Point at the cases directory:", "coding.sh workflows run no-cases --cases <dir> --variant …"]);
+    // So does a --cases that names no folder: a file, or nothing there.
+    const notFolder = join(root, "cases.txt");
+    writeFileSync(notFolder, "not a folder\n");
+    for (const cases of [notFolder, join(root, "cases-gone")]) {
+      const wrong = await refusal(cli("run", ["review"], { driver: "command", variant, cases, yes: true }));
+      assert.equal(wrong.reason, "invalid_cases");
+      assert.deepEqual(wrong.next, ["Point at the cases directory:", "coding.sh workflows run review --cases <dir> --variant …"]);
+      assert.deepEqual((await refusal(cli("score", [RUN], { case: "s1", cases }))).next, ["Point at the cases directory:", `coding.sh workflows score ${RUN} --case s1 --cases <dir>`]);
+    }
     // An empty folder names where a case file goes, with one kind of separator.
     const empty = join(root, "cases-empty");
     mkdirSync(empty, { recursive: true });
