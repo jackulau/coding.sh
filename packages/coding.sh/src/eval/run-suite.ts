@@ -1,14 +1,20 @@
 // Trials for the suite report (eval/report.ts), from the two kinds of stored
 // runs: repo-task runs (runner/experiment.ts RunResult) and dataset case runs
 // (experiments/run.ts CaseRun).
+import { createRedactor, type Redactor } from "../core/redact.ts";
 import type { EvalTask, RunResult } from "../core/types.ts";
 import type { Case, ExperimentResult } from "../datasets/types.ts";
 import { failureReason } from "../experiments/render.ts";
+import { runReason } from "../runner/verifier-output.ts";
 import type { TaskTrials, Trial } from "./report.ts";
 import type { TriggerObservation, TriggerSpec } from "./trigger.ts";
 
-/** One trial per task and attempt; cancelled and superseded runs are left out, an infrastructure failure is an unknown outcome. */
-export function trialsFromRuns(tasks: readonly EvalTask[], runs: readonly RunResult[]): TaskTrials[] {
+/**
+ * One trial per task and attempt; cancelled and superseded runs are left out, an
+ * infrastructure failure is an unknown outcome. Each failed trial says why
+ * (runner/verifier-output.ts runReason), redacted with `redactor`.
+ */
+export function trialsFromRuns(tasks: readonly EvalTask[], runs: readonly RunResult[], redactor: Redactor = createRedactor()): TaskTrials[] {
   return tasks.map((t) => ({
     id: t.id,
     name: t.name,
@@ -16,7 +22,7 @@ export function trialsFromRuns(tasks: readonly EvalTask[], runs: readonly RunRes
       .filter((r) => r.taskId === t.id && !r.cancelled && !r.superseded)
       .sort((a, b) => a.attempt - b.attempt)
       .map((r): Trial => {
-        const reason = r.error ?? (r.pass ? undefined : r.verifierExit === null ? "verifier did not finish" : `verifier exit ${r.verifierExit}`);
+        const reason = runReason(r, redactor);
         return { pass: r.pass, ...(r.infra ? { unknown: true } : {}), ...(r.sessionId ? { sessionId: r.sessionId } : {}), ...(reason ? { reason } : {}) };
       }),
   }));

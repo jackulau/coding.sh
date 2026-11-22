@@ -99,6 +99,15 @@ describe("itemGate: additions", () => {
     assert.equal(add(rs, { exposure: exposure(rs, "B", "listed") }).verdict, "RERUN");
   });
 
+  it("an addition that gets past RERUN had the item in context, so g1-g4 decide it", () => {
+    const rs = sweep({ t1: [0, 0], t2: [0, 3] });
+    for (const per of [{}, { t1: "not" }, { t2: "not" }, { t1: "not", t2: "not" }] as Record<string, ExposureState>[]) {
+      const g = add(rs, { exposure: exposure(rs, "B", "in-context", per) });
+      if (g.verdict === "RERUN") assert.deepEqual(g.S, []);
+      else assert.ok(g.f.fired > 0 && g.reasons.every((r) => /^g[1-4]: /.test(r)), `${g.verdict} ${JSON.stringify(per)}`);
+    }
+  });
+
   it("tasks where the item never loaded do not count toward G, N or D", () => {
     const rs = sweep({ t1: [0, 3], t2: [0, 2], t3: [3, 0], t4: [2, 0] });
     const g = add(rs, { exposure: exposure(rs, "B", "in-context", { t3: "not", t4: "listed" }) });

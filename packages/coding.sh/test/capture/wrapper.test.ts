@@ -7,7 +7,7 @@ import { after, before, describe, test } from "node:test";
 import type { SpoolLine } from "../../src/core/types.ts";
 import { wrapRun, wrapRunDetailed } from "../../src/capture/wrapper.ts";
 import { resolveRaw } from "../../src/spool/write.ts";
-import { PKG_ROOT, isolate, makeRepo, removeTmp, tmp, tsNodeArgs } from "./_helpers.ts";
+import { PKG_ROOT, gitc, isolate, makeRepo, removeTmp, tmp, tsNodeArgs } from "./_helpers.ts";
 
 let home = "";
 before(() => {
@@ -94,6 +94,21 @@ describe("wrapRun", () => {
     const ls = lines("wrapper", h);
     assert.deepEqual(ls.map((l) => l.event), ["session.start", "session.end"]);
     assert.equal((ls[0]!.raw as { repo?: unknown }).repo, undefined);
+  });
+
+  test("snapshot: false takes no snapshots and records the repo's root and HEAD only", async () => {
+    const agent = fakeAgent();
+    const h = join(tmp(), "home");
+    const root = makeRepo({ "a.txt": "a\n", "b.txt": "b\n", ".gitignore": "agent-env.json\n" });
+    const r = await wrapRunDetailed({ cmd: process.execPath, args: [agent, "0"], cwd: root, env: { CODING_SH_HOME: h }, snapshot: false });
+    assert.equal(r.exitCode, 0);
+    assert.deepEqual(r.start, { root, head: gitc(root, "rev-parse", "HEAD"), branch: "main" });
+    assert.equal(r.end?.snapshot, undefined);
+    assert.equal(r.diff, undefined);
+    assert.equal(existsSync(join(h, "repos")), false, "no shadow repo");
+    const ls = lines("wrapper", h);
+    assert.deepEqual(ls.map((l) => l.event), ["session.start", "session.end"]);
+    assert.deepEqual((resolveRaw(ls[0]!) as { repo?: unknown }).repo, r.start);
   });
 
   test("missing command → 127 and a session.end with the error", async () => {

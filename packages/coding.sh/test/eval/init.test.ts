@@ -294,6 +294,31 @@ describe("initSuite: sessions", () => {
     await assert.rejects(initSuite({ name: "none", root, source: "sessions", sessionIds: ["nope"] }, w), /no session nope/);
   });
 
+  it("says which setup every trial runs and where to change it, and guesses none without a lockfile", async () => {
+    const root = await project();
+    const w = await world();
+    const r = await initSuite({ name: "locked", root, source: "sessions", sessionIds: ["failed"] }, { ...w, now: 12_000 });
+    const [dir] = r.files.filter((f) => f.includes("/tasks/"));
+    const d = dir!.split("/")[3]!;
+    assert.deepEqual((await importTaskDir(join(root, dir!), w.blobs)).setup, ["npm ci"]);
+    const note = r.notes.find((n) => n.startsWith(`${d}: every trial runs setup`));
+    assert.equal(note, `${d}: every trial runs setup \`npm ci\` (guessed from package-lock.json) in its own copy of the repo before the agent starts; to change it, edit "setup" in tasks/${d}/task.json ([] runs none)`, r.notes.join("\n"));
+    // A package.json with no lockfile: an install from it pins nothing, so there is no guess.
+    const { "package-lock.json": _lock, ...unlocked } = BUGGY;
+    w.git.add("unlocked", unlocked).add("unlocked-end", { ...unlocked, "src/add.js": "wrong\n" });
+    const repo = { root: ROOT, head: "abc", snapshot: "unlocked" };
+    await w.index.upsertSession({ ...(await w.index.getSession("failed"))!, id: "unlocked", repo, endSnapshot: "unlocked-end", startedAt: 11_000 });
+    await w.index.putEvents([ev("unlocked", "session.start", {}, { repo }), ev("unlocked", "user.message", { text: "fix add (unlocked)" })]);
+    const u = await initSuite({ name: "unlocked", root, source: "sessions", sessionIds: ["unlocked"], verifier: "node test/add.test.js" }, { ...w, now: 12_000 });
+    const [udir] = u.files.filter((f) => f.includes("/tasks/"));
+    const ud = udir!.split("/")[3]!;
+    const t = await importTaskDir(join(root, udir!), w.blobs);
+    assert.deepEqual(t.setup, []);
+    assert.equal(t.meta?.setupSource, "none");
+    assert.ok(u.notes.includes(`${ud}: no setup: package.json has no lockfile to pin an install; if the verifier needs packages, add a command to "setup" in tasks/${ud}/task.json (every trial runs it before the agent starts)`), u.notes.join("\n"));
+    assert.ok(!u.notes.some((n) => /every trial runs setup/.test(n)), u.notes.join("\n"));
+  });
+
   it("says where to look when nothing failed", async () => {
     const root = await project();
     await assert.rejects(initSuite({ name: "f", root, source: "sessions" }, deps()), /no failed or flagged sessions .* in the last 14 days.*--repo <DIR\|all>/);

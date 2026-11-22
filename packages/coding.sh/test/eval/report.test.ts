@@ -88,6 +88,29 @@ describe("suiteReport", () => {
     assert.match(text, /case\s+0\/1\s+never\s+exact: expected "bug", got "other"/);
     assert.match(text, /never passed: case\. Read its transcript or output first/);
   });
+
+  it("names the error of a trial with no outcome when no graded trial failed, and lists the tasks when nothing was graded", () => {
+    const setup = { pass: false, unknown: true, reason: "setup `npm ci` exited 1: npm ERR! missing lockfile" };
+    const r = suiteReport("s", "regression", [
+      task("logged-out", [{ pass: false, unknown: true, sessionId: "0123456789abcdefXYZ", reason: "agent login failed: Invalid API key" }]),
+      task("retried", [setup, P]),
+      task("failing", [setup, { pass: false, reason: "verifier exit 1" }]),
+    ]);
+    assert.equal(r.rows[0]!.unknownReason, "agent login failed: Invalid API key");
+    const text = renderSuiteReport(r, { color: false, transcript: (id) => `coding.sh show ${id.slice(0, 12)}` });
+    assert.match(text, /logged-out\s+—\s+unknown\s+agent login failed: Invalid API key$/m);
+    assert.match(text, /retried\s+1\/1\s+ok\s+setup `npm ci` exited 1: npm ERR! missing lockfile$/m);
+    assert.match(text, /failing\s+0\/1\s+never\s+verifier exit 1$/m, "a graded failure comes first");
+    const md = renderSuitesMarkdown([{ suite: "s", report: r }]);
+    assert.match(md, /^\| logged-out \| — \| unknown \| agent login failed: Invalid API key \|$/m);
+    assert.match(md, /^\| retried \| 1\/1 \| ok \| setup `npm ci` exited 1: npm ERR! missing lockfile \|$/m);
+
+    const none = renderSuiteReport(suiteReport("s", "regression", [task("setup-only", [setup])]), { color: false });
+    assert.match(none, /no trial finished with a known outcome/);
+    assert.match(none, /setup-only\s+—\s+unknown\s+setup `npm ci` exited 1: npm ERR! missing lockfile$/m);
+    assert.match(none, /nothing was graded, so it can't pass/);
+    assert.doesNotMatch(none, /pass@1/);
+  });
 });
 
 describe("renderSuitesMarkdown", () => {

@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { openContext, storeOpenNext, StoreMissingError, type Context } from "../core/context.ts";
 import type { IngestError } from "../core/ingest.ts";
 import { isEmptySession } from "../core/sessions.ts";
-import type { EvalTask, IndexStore, Session } from "../core/types.ts";
+import type { EvalTask, IndexStore, Session, SessionFilter } from "../core/types.ts";
 import type { GateOpts } from "../stats/tests.ts";
 import { andQuery, parseWhere, QueryError, QueryUnsupported, timeBounds, type Node, type Query } from "../query/where.ts";
 import { utcOffset, wallText, type When } from "../query/time.ts";
@@ -433,13 +433,19 @@ export { shellQuote } from "./args.ts";
  * The newest top-level session worth looking at: the newest one that is not empty (a hook with
  * no work behind it), else the newest of all. When that session is an agent run under
  * `coding.sh run` (no snapshots of its own), the wrapper session around it, the one `run`
- * printed, which holds the start and end snapshots `eval new` needs.
+ * printed, which holds the start and end snapshots `eval new` needs. Sessions with a run id
+ * (eval, compare and experiment trials carry one) count only when there are no others.
  */
 export async function latestSession(index: IndexStore): Promise<Session | undefined> {
+  return (await newestSession(index, { runId: null })) ?? (await newestSession(index, {}));
+}
+
+/** {@link latestSession} among the top-level sessions `filter` keeps. */
+async function newestSession(index: IndexStore, filter: SessionFilter): Promise<Session | undefined> {
   const page = 50;
   let newest: Session | undefined;
   for (let offset = 0; offset < page * 4; offset += page) {
-    const rows = await index.listSessions({ limit: page, offset, parentSessionId: null });
+    const rows = await index.listSessions({ ...filter, limit: page, offset, parentSessionId: null });
     newest ??= rows[0];
     const hit = rows.find((s) => !isEmptySession(s));
     if (hit) return (await wrapperAround(index, hit)) ?? hit;
