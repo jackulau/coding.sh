@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import { buildSession, FLAGS } from "../../src/core/sessions.ts";
-import { BUCKETS, buildWorkQueue, changedPaths, countsLine, groupWorkItems, INFERRED_RUNNING_MS, needYou, PROBABLY_CLOSED_MS, STAGE_WHY_MAX, STAGES, stagesLine, STALL_MS, workFiles, workItemId, workItemJson, workJson, workStage } from "../../src/core/work.ts";
+import { BUCKETS, buildWorkQueue, changedPaths, countsLine, groupWorkItems, INFERRED_RUNNING_MS, needYou, PROBABLY_CLOSED_MS, resumeCommand, STAGE_WHY_MAX, STAGES, stagesLine, STALL_MS, workFiles, workItemId, workItemJson, workJson, workStage } from "../../src/core/work.ts";
 import { addAck, addSnooze, emptyOverlay, readOverlay, writeOverlay } from "../../src/core/work-overlay.ts";
 import type { AgentEvent, Session, Waiting } from "../../src/schema/index.ts";
 import { mkSession } from "../cli/_cmd.ts";
@@ -484,4 +484,9 @@ describe("a worktree nested in its repo", () => {
     // With no session at the root to compare branches with, the root stays.
     assert.equal(items.find((i) => i.primaryId === "alone")!.repo, "/work/other");
   });
+});
+
+test("a subagent's resume step names the session Claude Code can resume, not coding.sh's child id", () => {
+  assert.equal(resumeCommand({ id: "07ea0cbb-0000-4000-8000-000000000001:sub:a1d4c32c15a2744a7", agent: "claude-code" }), "claude --resume 07ea0cbb-0000-4000-8000-000000000001");
+  assert.equal(resumeCommand({ id: "thr:sub:x", agent: "codex" }), "codex resume thr");
 });

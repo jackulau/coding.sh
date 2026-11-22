@@ -414,6 +414,8 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .facet .more-link { display: none; }
 }
 .list-col { min-width: 0; display: grid; gap: 0.75rem; align-content: start; }
+/* The query bar gets a line of its own under the title, so it stays put while the fact line beside the title grows or shrinks (a filter that matches nothing). */
+.list-col > .page-head > :first-child { flex: 1 0 100%; }
 @media (max-width: 1023px) {
   /* Phones: title and search first, then the Filters button, then the chart and rows. */
   .sessions-layout { gap: 0.75rem; }
@@ -5978,7 +5980,7 @@ function runTreePanel(s, kidCount) {
       cost.none ? null : h("span", null, h("b", null, cost.text), " total"));
     const worst = data.worst && data.worst.flags && data.worst.flags.length
       ? h("p", { class: "rt-worst" }, "Fix first: ",
-          h("a", { href: sessionHref(data.worst.sessionId) }, data.worst.role),
+          worstLink(data),
           " — ", data.worst.flags[0])
       : null;
     const nodes = h("div", { class: "rt-nodes" });
@@ -6001,6 +6003,15 @@ function runTreePanel(s, kidCount) {
     swap(body, totals, worst, nodes);
   });
   return details;
+}
+
+/** The Run tree's "Fix first" link: the session by its title, as its tree row names it, then its role. */
+function worstLink(data) {
+  const w = data.worst;
+  const find = (ns) => { for (const n of ns || []) { if (n.id === w.sessionId) return n; const c = find(n.children); if (c) return c; } return null; };
+  const node = find(data.tree);
+  const title = node && node.title ? oneLine(node.title) : "";
+  return h("a", { href: sessionHref(w.sessionId), title: title ? title + " (" + w.role + ")" : w.sessionId }, title ? [clip(title, 80), h("span", { class: "meta" }, " (" + w.role + ")")] : w.role);
 }
 
 /** "temporal researchAgent · 4 steps · 2 retries": the header fact for a durable workflow run. */

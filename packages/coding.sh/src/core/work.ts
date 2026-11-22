@@ -449,8 +449,11 @@ export function workStage(members: readonly Session[], primary: Session, now: nu
 /** The command that resumes a session, when the agent has one. */
 export function resumeCommand(s: Pick<Session, "id" | "agent" | "provider">): string | undefined {
   const agent = s.agent === "t3code" ? undefined : s.agent;
-  if (agent === "claude-code") return `claude --resume ${s.id}`;
-  if (agent === "codex") return `codex resume ${s.id}`;
+  // A subagent's id is coding.sh's own (`<session>:sub:<agent>`): the agent resumes the session that ran it.
+  const cut = s.id.indexOf(":sub:");
+  const id = cut > 0 ? s.id.slice(0, cut) : s.id;
+  if (agent === "claude-code") return `claude --resume ${id}`;
+  if (agent === "codex") return `codex resume ${id}`;
   return undefined;
 }
 
