@@ -605,7 +605,8 @@ It is stdlib only (Python ≥ 3.9): `urllib`, `threading`, `queue`, `gzip`, `ate
 - `coding_sh.trace(name, session_id=…)` and `coding_sh.span("tool", name)` work as both context
   managers and decorators.
 - `coding_sh.flush()`. A daemon sender thread does the sending, and an `atexit` flush is bounded
-  to 2 s.
+  to 2 s. When it or `shutdown()` runs out of time, it warns once, naming which flush gave up and
+  how many events were not sent, and drops them.
 - The transport, behavior and env vars match the TS SDK. The rest of the API mirrors it in
   snake_case: `init(url, key, service, capture, flush_interval_ms, max_batch, max_queue, disabled, debug)`,
   `with_session(id)` (context manager or decorator), `shutdown()`, `stats()`, `current_session_id()`.

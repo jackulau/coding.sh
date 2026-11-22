@@ -274,6 +274,46 @@ class TransportTest(unittest.TestCase):
         self.assertLess(time.monotonic() - start, 7.0)
         self.assertIn("flush() gave up after 5 s", "\n".join(logs.output))
 
+    def _until_idle(self, t: "_client.Transport") -> None:
+        deadline = time.monotonic() + 5
+        while t.stats()["queued"] and time.monotonic() < deadline:
+            time.sleep(0.02)
+
+    def test_shutdown_that_runs_out_of_time_says_so_once_and_drops_what_is_left(self) -> None:
+        # The server answers 503 after 1 s: one batch is in flight and four are queued when
+        # shutdown(0.3) gives up. Before, it warned that flush() gave up, and the sender went on
+        # retrying the batch and then sent the rest.
+        self.server.delay = 1.0
+        self.server.plan = [(503, {}, {})]
+        start_sdk(self.server, max_batch=1)
+        t = _trace._get()
+        self._span()  # 5 events
+        with self.assertLogs("coding_sh", level="WARNING") as logs:
+            self.assertFalse(coding_sh.shutdown(0.3))
+        self.assertEqual(
+            [r.getMessage() for r in logs.records],
+            ["coding.sh: shutdown() gave up after 0.3 s with 5 events not sent (the server did not answer); dropping them"],
+        )
+        self._until_idle(t)
+        self.assertEqual(t.stats(), {"queued": 0, "sent": 0, "dropped": 0, "failed": 5})
+        self.assertEqual(len(self.server.requests), 1, "the batch in flight is not retried and the rest is not sent")
+
+    def test_an_init_that_replaces_a_transport_says_its_final_flush_gave_up(self) -> None:
+        self.server.delay = 1.5
+        self.server.plan = [(503, {}, {})]
+        start_sdk(self.server)
+        old = _trace._get()
+        self._span()
+        with self.assertLogs("coding_sh", level="WARNING") as logs:
+            start_sdk(self.server)  # waits 1 s for the old transport
+        self.assertEqual(
+            [r.getMessage() for r in logs.records],
+            ["coding.sh: the final flush gave up after 1 s with 5 events not sent (the server did not answer); dropping them"],
+        )
+        self._until_idle(old)
+        self.assertEqual(old.stats(), {"queued": 0, "sent": 0, "dropped": 0, "failed": 5})
+        self.assertEqual(len(self.server.requests), 1)
+
     def test_env_configuration(self) -> None:
         import os
 

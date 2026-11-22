@@ -693,7 +693,7 @@ def flush(timeout: Optional[float] = 5.0) -> bool
 
 ### `coding_sh.shutdown(...)`
 
-Flush, then stop accepting events.
+Flush for at most `timeout` seconds, then stop accepting events. What is still unsent then is dropped, with one warning.
 
 ```python
 def shutdown(timeout: Optional[float] = 2.0) -> bool

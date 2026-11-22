@@ -65,7 +65,7 @@ def init(
         old, _transport = _transport, Transport(cfg)
     if old is not None:
         try:
-            old.shutdown(1.0)
+            old.shutdown(1.0, "the final flush")
         except Exception:
             pass
 
@@ -105,7 +105,8 @@ def flush(timeout: Optional[float] = 5.0) -> bool:
 
 
 def shutdown(timeout: Optional[float] = 2.0) -> bool:
-    """Flush, then stop accepting events."""
+    """Flush for at most `timeout` seconds, then stop accepting events. What is still unsent
+    then is dropped, with one warning."""
     try:
         return _get().shutdown(timeout)
     except Exception:

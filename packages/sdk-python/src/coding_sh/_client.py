@@ -8,7 +8,8 @@ Transport contract (docs/PRODUCTION.md section 4, shared with the TS SDK):
   most 60 s), otherwise backing off 1, 2, 4 ... s up to 30 s, with at most 5 attempts;
 - 400/401/403 (and any other 4xx) drop the batch and warn once per status;
 - a full queue drops new events, counts them, and warns at most once a minute;
-- an atexit flush is bounded to 2 s;
+- an atexit flush is bounded to 2 s; when it or shutdown() runs out of time, it warns once and
+  drops what is left;
 - event ids are fixed when the event is created, so a retried batch never duplicates.
 
 Nothing here ever raises into the app, and nothing logs the key or a request body.
@@ -214,7 +215,7 @@ class Transport:
         ).encode("utf-8")
         self._reset_state()
         self._warned: Dict[str, bool] = {}
-        self._gave_up = False  # an explicit flush() timed out: do not wait again at exit
+        self._gave_up = False  # a flush timed out: do not wait again at exit
         self._last_queue_warn = float("-inf")
         if cfg.enabled:
             atexit.register(self._atexit)
@@ -232,7 +233,7 @@ class Transport:
         self._flush_waiters = 0
         self._thread: Optional[threading.Thread] = None
         self._closed = False
-        self._halt = threading.Event()  # set once the process is going away for good
+        self._halt = threading.Event()  # set at exit, or when a final flush gives up: retries stop
         self._sent = 0
         self._dropped = 0
         self._failed = 0
@@ -277,41 +278,13 @@ class Transport:
     def flush(self, timeout: Optional[float] = 5.0) -> bool:
         """Block until everything queued so far is sent (or given up), for at most timeout
         seconds (None: no limit). True when drained."""
-        if not self.cfg.enabled:
-            return True
-        deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
-        with self._cv:
-            if not self._q and not self._inflight:
-                return True
-            alive = self._thread is not None and self._thread.is_alive()
-            if not alive:
-                alive = self._ensure_thread()
-        if not alive:
-            # No thread can be started (interpreter shutdown): send in this thread.
-            self._drain_sync(deadline)
-            with self._cv:
-                return not self._q and not self._inflight
-        with self._cv:
-            self._flush_waiters += 1
-            self._cv.notify_all()
-            try:
-                while self._q or self._inflight:
-                    remaining = None if deadline is None else deadline - time.monotonic()
-                    if remaining is not None and remaining <= 0:
-                        self._gave_up = True
-                        self._warn_once(
-                            "flush-timeout",
-                            "coding.sh: flush() gave up after %g s with %d events not sent; "
-                            "they will not be retried at exit" % (timeout or 0, len(self._q) + self._inflight),
-                        )
-                        return False
-                    self._cv.wait(remaining if remaining is not None else 0.5)
-                return True
-            finally:
-                self._flush_waiters -= 1
+        return self._flush(timeout, None)
 
-    def shutdown(self, timeout: Optional[float] = ATEXIT_TIMEOUT_S) -> bool:
-        ok = self.flush(timeout)
+    def shutdown(self, timeout: Optional[float] = ATEXIT_TIMEOUT_S, who: str = "shutdown()") -> bool:
+        """Flush, then take no more events. When the flush runs out of time, its warning names it
+        by `who` ("shutdown()", or "the final flush" when init() replaces this transport) and
+        what is left is dropped, as close() does in the TS SDK."""
+        ok = self._flush(timeout, who)
         with self._cv:
             self._closed = True
             self._cv.notify_all()
@@ -325,6 +298,65 @@ class Transport:
                 "dropped": self._dropped,
                 "failed": self._failed,
             }
+
+    def _flush(self, timeout: Optional[float], who: Optional[str]) -> bool:
+        """flush() when `who` is None. Otherwise the final flush that `who` names (shutdown(),
+        exit), which gives up on what is left when it runs out of time (_give_up)."""
+        if not self.cfg.enabled:
+            return True
+        deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)
+        with self._cv:
+            if not self._q and not self._inflight:
+                return True
+            alive = self._thread is not None and self._thread.is_alive()
+            if not alive:
+                alive = self._ensure_thread()
+        if not alive:
+            # No thread can be started (interpreter shutdown): send in this thread.
+            self._drain_sync(deadline)
+            with self._cv:
+                if not self._q and not self._inflight:
+                    return True
+                if who is not None:
+                    self._give_up(timeout, who)
+                return False
+        with self._cv:
+            self._flush_waiters += 1
+            self._cv.notify_all()
+            try:
+                while self._q or self._inflight:
+                    remaining = None if deadline is None else deadline - time.monotonic()
+                    if remaining is not None and remaining <= 0:
+                        self._gave_up = True
+                        if who is not None:
+                            self._give_up(timeout, who)
+                            return False
+                        self._warn_once(
+                            "flush-timeout",
+                            "coding.sh: flush() gave up after %g s with %d events not sent; "
+                            "they will not be retried at exit" % (timeout or 0, len(self._q) + self._inflight),
+                        )
+                        return False
+                    self._cv.wait(remaining if remaining is not None else 0.5)
+                return True
+            finally:
+                self._flush_waiters -= 1
+
+    def _give_up(self, timeout: Optional[float], who: str) -> None:
+        """A final flush ran out of time: warn, then drop what is queued and stop retrying the
+        batch in flight. flush()'s warning key, so a process warns once. Caller holds the lock."""
+        self._gave_up = True
+        n = len(self._q) + self._inflight
+        self._warn_once(
+            "flush-timeout",
+            "coding.sh: %s gave up after %g s with %d event%s not sent (the server did not answer); "
+            "dropping them" % (who, timeout or 0, n, "" if n == 1 else "s"),
+        )
+        self._failed += len(self._q)
+        self._q.clear()
+        # Ends the retry wait of the batch in flight. Its request cannot be cut short from here:
+        # _deliver counts the batch when the request ends, and does not retry it.
+        self._halt.set()
 
     # ------------------------------------------------------------------ sender
 
@@ -478,7 +510,7 @@ class Transport:
     def _atexit(self) -> None:
         try:
             if not self._gave_up:
-                self.flush(ATEXIT_TIMEOUT_S)
+                self._flush(ATEXIT_TIMEOUT_S, "the flush at exit")
         except Exception:
             pass
         finally:

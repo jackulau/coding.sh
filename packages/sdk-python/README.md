@@ -79,7 +79,8 @@ Before a retry it waits as long as `Retry-After` says (seconds or a date, at mos
 1, 2, 4 ... s up to 30 s.
 
 400/401/403 drop the batch with one warning. A full queue drops new events and counts them. An
-`atexit` flush is bounded to 2 s.
+`atexit` flush is bounded to 2 s. When it or `shutdown()` runs out of time, it warns once, with
+the number of events not sent, and drops them.
 
 ```python
 coding_sh.flush(timeout=5)     # e.g. at the end of a script, a job or a serverless handler
