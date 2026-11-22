@@ -256,7 +256,7 @@ export function ownerGuard(
   return (from, to, writer) => {
     const running = at.version ?? version();
     const owner = storeOwner(home);
-    const command = () => upgradeStoreCommand([], { cli, ...(at.env ? { env: at.env } : {}) });
+    const command = () => upgradeStoreCommand([], { cli, env: at.env ?? process.env });
     if (owner && owner.cli !== cli) throw new StoreOwnerError({ path: file, from, to, version: running, owner: owner.cli, ...(owner.version ? { ownerVersion: owner.version } : {}), command: command() });
     if (from === 0) return; // a new index: nothing to strand
     if (writer ? !isNewer(running, writer.version) : (at.source ?? sourceCheckout() !== undefined)) {
