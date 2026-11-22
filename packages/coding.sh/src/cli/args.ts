@@ -137,10 +137,21 @@ export interface ParseOptions {
    * the position instead.
    */
   sensitive?: boolean;
+  /**
+   * The shell is PowerShell or cmd (windowsShell in next-steps.ts). Windows PowerShell 5.1 passes
+   * a double quote inside an argument on unescaped, so the program splits the value there, and
+   * the pieces after the first read as options or extra arguments. Such an error after another
+   * token then adds SPLIT_VALUE_HINT when it or a token before it holds a space.
+   */
+  windowsShell?: boolean;
 }
 
 /** What a usage error says in place of a value on a sensitive command. */
 const HIDDEN = "(value not shown)";
+
+/** How to write a double quote inside a value in PowerShell and cmd. Names no value, so a sensitive command adds it too. */
+export const SPLIT_VALUE_HINT =
+  'If this is part of a value before it, a double quote inside that value split it: Windows PowerShell 5.1 passes such quotes on unescaped. Write each one as \\", and in PowerShell put the value in single quotes.';
 
 /**
  * The text each number flag had in the last parse, and how an error may show it. Number() reads
@@ -179,6 +190,8 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
   const byShort = new Map(specs.filter((s) => s.short).map((s) => [s.short!, s]));
   const flags: Record<string, FlagValue> = {};
   const positionals: string[] = [];
+  /** The argv index of each positional, for splitHint. */
+  const positionalAt: number[] = [];
   let rest: string[] = [];
   let sawDashDash = false;
   typedNumbers = new Map();
@@ -188,14 +201,21 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
   const sensitive = opts.sensitive === true;
   /** A user token as an error may show it: quoted, or hidden on a sensitive command. */
   const shown = (raw: string): string => (sensitive ? HIDDEN : JSON.stringify(raw));
+  /**
+   * In PowerShell or cmd, when argv[0..i] holds a value with a space, the token at i may be part
+   * of a value split at a double quote inside it: the error at i then says how to write the quote.
+   * A first token has no value before it to be part of.
+   */
+  const splitHint = (i: number): string => (opts.windowsShell === true && i > 0 && argv.slice(0, i + 1).some((t) => /\s/.test(t)) ? `. ${SPLIT_VALUE_HINT}` : "");
 
-  const unknown = (token: string): never => {
+  const unknown = (token: string, i: number): never => {
     // Compared without the dashes every name shares, so the distance threshold means what it says.
     const names = [...visibleFlags(specs).map((s) => s.name), ...(opts.suggestions ?? []).map((n) => n.replace(/^--/, ""))];
     const close = token.startsWith("--") ? suggest(token.slice(2).split("=")[0]!, names) : undefined;
     const hint = close === undefined ? undefined : `--${close}`;
-    // The suggestion is always a known flag name, so it is safe to show.
-    throw new UsageError(sensitive ? `Unknown option ${HIDDEN}` : `Unknown option ${token}`, { suggestion: hint, reason: "unknown_option" });
+    // The suggestion is always a known flag name, so it is safe to show. A close name is the likelier fix, so it comes alone.
+    const split = hint === undefined ? splitHint(i) : "";
+    throw new UsageError(`${sensitive ? `Unknown option ${HIDDEN}` : `Unknown option ${token}`}${split}`, { suggestion: hint, reason: "unknown_option" });
   };
 
   const assign = (spec: FlagSpec, raw: string | undefined, token: string) => {
@@ -254,7 +274,7 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
           continue;
         }
       }
-      if (!spec) unknown(token);
+      if (!spec) unknown(token, i);
       spec = spec!;
       if (spec.optionalValue && inline === undefined) {
         const next = argv[i + 1];
@@ -277,7 +297,7 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
       const eq = token.indexOf("=");
       const short = eq === -1 ? token.slice(1) : token.slice(1, eq);
       const spec = byShort.get(short);
-      if (!spec) unknown(token);
+      if (!spec) unknown(token, i);
       if (spec!.type !== "boolean" && eq === -1) {
         const next = argv[i + 1];
         if (next === undefined) throw new UsageError(`${token} needs a value${spec!.value ? ` ${spec!.value}` : ""}`, { reason: "missing_value" });
@@ -289,13 +309,15 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
       continue;
     }
     positionals.push(token);
+    positionalAt.push(i);
   }
 
   if (whereParts.length > 1) flags.where = joinWhere(whereParts, byName.get("where")?.value);
   if (opts.maxPositionals !== undefined && positionals.length > opts.maxPositionals) {
     const extra = positionals[opts.maxPositionals]!;
-    if (sensitive) throw new UsageError(`Unexpected argument ${HIDDEN}: this command takes no values on the command line`, { reason: "extra_argument" });
-    throw new UsageError(`Unexpected argument ${JSON.stringify(extra)}`, { reason: "extra_argument" });
+    const split = splitHint(positionalAt[opts.maxPositionals]!);
+    if (sensitive) throw new UsageError(`Unexpected argument ${HIDDEN}: this command takes no values on the command line${split}`, { reason: "extra_argument" });
+    throw new UsageError(`Unexpected argument ${JSON.stringify(extra)}${split}`, { reason: "extra_argument" });
   }
   return { flags, positionals, rest, sawDashDash };
 }

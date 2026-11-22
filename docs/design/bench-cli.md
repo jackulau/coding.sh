@@ -119,8 +119,9 @@ measures that it does:
 
 - stdout holds only the result; progress, spinners and hints go to stderr. `--json` prints exactly
   one document. Mutations print the bare id, so `id=$(coding.sh bench new x)` works.
-- When stdin is not a TTY, or an agent env (CLAUDECODE, CODEX_*, CI, …) is detected, the CLI
-  never prompts. It fails with `reason: "action_required"` plus the exact flag to pass (`--yes`).
+- When stdin is not a TTY, or `CI` or an agent's variable (`AI_AGENT`, `CLAUDECODE`,
+  `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`) is set, the CLI never prompts. A step that needs
+  the user's consent fails with `askUser: true` and the exact command to rerun with `--yes`.
 - Every error carries `reason`, `next` (the command to run) and `retryable`, in both human and
   `--json` form.
 - `coding.sh <cmd> --help --json` describes flags, arguments and examples as data, so agents

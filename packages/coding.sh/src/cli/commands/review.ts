@@ -6,15 +6,19 @@
 // `coding.sh score add` takes, so a value that does not fit the config is refused (exit 2).
 import { QueryError } from "../../query/where.ts";
 import { cliError as scoreCliError, readValue } from "../../scores/cli.ts";
-import { completeItem, configValues, createQueue, listQueues, nextItem, queueStatus, ReviewError, skipItem } from "../../scores/review.ts";
+import { completeItem, configValues, createQueue, listQueues, nextItem, queueStatus, ReviewError, skipItem, type NextItem } from "../../scores/review.ts";
 import { addScore, listScoreConfigs, ScoreError, whoami } from "../../scores/scores.ts";
 import { positiveInt, shellQuote, UsageError } from "../args.ts";
 import { queryCliError, str, withContext } from "../common.ts";
+import { cliCommand } from "../next-steps.ts";
 import { ago, CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
-/** A ReviewError, QueryError or ScoreError as the CLI reports it: bad input exits 2, the rest 1. */
-export function reviewCliError(e: unknown, raw?: string, config?: string): unknown {
+/**
+ * A ReviewError, QueryError or ScoreError as the CLI reports it: bad input exits 2, the rest 1.
+ * With `env`, a query that matched nothing is printed for the user's shell.
+ */
+export function reviewCliError(e: unknown, raw?: string, config?: string, env?: NodeJS.ProcessEnv): unknown {
   if (e instanceof QueryError) return queryCliError(e, raw);
   if (e instanceof ScoreError) return scoreCliError(e);
   if (!(e instanceof ReviewError)) return e;
@@ -34,13 +38,16 @@ export function reviewCliError(e: unknown, raw?: string, config?: string): unkno
     case "queue_exists":
       return new CliError(e.message, { reason: "conflict", next: ["List the queues:", "coding.sh review list"] });
     case "no_match":
-      return new CliError(e.message, { reason: "not_found", next: ["See what a query matches:", "coding.sh sessions --where '<query>'"] });
+      return new CliError(e.message, { reason: "not_found", next: ["See what a query matches:", raw && env ? cliCommand(env, ["sessions", "--where", raw]) : "coding.sh sessions --where '<query>'"] });
     default:
       return new CliError(e.message, { reason: e.reason });
   }
 }
 
-const fail = (raw?: string, config?: string) => (e: unknown) => Promise.reject(reviewCliError(e, raw, config));
+const fail = (raw?: string, config?: string, env?: NodeJS.ProcessEnv) => (e: unknown) => Promise.reject(reviewCliError(e, raw, config, env));
+
+/** A queue's next item, its command named for the user's shell, as --json prints it. */
+const shown = (c: CommandContext, it: NextItem | undefined) => (it ? { ...it, command: c.out.command(it.command) } : null);
 
 export async function run(c: CommandContext): Promise<number> {
   switch (c.action) {
@@ -72,7 +79,7 @@ async function create(c: CommandContext): Promise<number> {
   const assign = str(c.flags.assign);
   if (assign !== undefined && !assign.trim()) throw new UsageError("--assign needs a name", { reason: "missing_value" });
   return withContext(c, async (ctx) => {
-    const r = await createQueue(ctx.index, { name, where, config, sample, assign: assign?.trim() }).catch(fail(where.trim(), config.trim()));
+    const r = await createQueue(ctx.index, { name, where, config, sample, assign: assign?.trim() }).catch(fail(where.trim(), config.trim(), c.env));
     if (out.json) {
       out.data({ queue: r.queue, total: r.items.length, matched: r.matched });
       return 0;
@@ -127,7 +134,7 @@ async function next(c: CommandContext): Promise<number> {
   return withContext(c, async (ctx) => {
     const it = await nextItem(ctx.index, name).catch(fail());
     if (out.json) {
-      out.data({ next: it ?? null });
+      out.data({ next: shown(c, it) });
       return 0;
     }
     if (!it) {
@@ -162,7 +169,7 @@ async function done(c: CommandContext): Promise<number> {
     const r = await completeItem(ctx.index, name, item, raw, write, { comment }).catch(fail());
     const after = await nextItem(ctx.index, name).catch(fail());
     if (out.json) {
-      out.data({ item: r.item, score: r.score, next: after ?? null });
+      out.data({ item: r.item, score: r.score, next: shown(c, after) });
       return 0;
     }
     out.ok(`Scored item ${r.item.id} of ${name}: ${r.score.name} = ${String(r.score.value)} on session ${r.item.targetId}`);
@@ -179,7 +186,7 @@ async function skip(c: CommandContext): Promise<number> {
     const it = await skipItem(ctx.index, name, item).catch(fail());
     const after = await nextItem(ctx.index, name).catch(fail());
     if (out.json) {
-      out.data({ item: it, next: after ?? null });
+      out.data({ item: it, next: shown(c, after) });
       return 0;
     }
     out.ok(`Skipped item ${it.id} of ${name}`);

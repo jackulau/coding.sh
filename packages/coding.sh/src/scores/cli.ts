@@ -98,13 +98,19 @@ async function add(c: CommandContext, ctx: Context): Promise<number> {
   }
   const session = str(c.flags.session);
   if (session !== undefined && target !== "session") body.sessionId = (await resolveSession(ctx, session)).id;
+  // The same --id replaces the score it held on any target and name: keep that score to say which.
+  const [held] = typeof body.id === "string" ? await listScores(ctx.index, { id: body.id }).catch(() => []) : [];
   const r = await addScore(ctx.index, body, { by: whoami(), source: "human", now: Date.now() }).catch((e) => Promise.reject(cliError(e)));
+  const replaced = held && r.changed && (held.target !== r.score.target || held.targetId !== r.score.targetId || held.name !== r.score.name) ? held : undefined;
   if (c.out.json) {
-    c.out.data({ score: r.score, created: r.created, changed: r.changed });
+    const doc: Record<string, unknown> = { score: r.score, created: r.created, changed: r.changed };
+    if (replaced) doc.replaced = replaced;
+    c.out.data(doc);
     return 0;
   }
   c.out.print(r.score.id);
-  c.out.ok(`${r.changed ? (r.created ? "Scored" : "Updated") : "Unchanged:"} ${r.score.name} = ${shown(r.score)} (${r.score.dataType}) on ${r.score.target} ${r.score.targetId}`);
+  c.out.ok(`${r.changed ? (r.created || replaced ? "Scored" : "Updated") : "Unchanged:"} ${r.score.name} = ${shown(r.score)} (${r.score.dataType}) on ${r.score.target} ${r.score.targetId}`);
+  if (replaced) c.out.warn(`--id ${r.score.id} held ${replaced.name} = ${shown(replaced)} on ${replaced.target} ${replaced.targetId}; that score is replaced. Give another --id to keep both.`);
   return 0;
 }
 
