@@ -27,7 +27,7 @@ import { cliCommand, nextStepBin, runCommand } from "../next-steps.ts";
 import { ago, LABEL_WIDTH, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { ingestStoppedField, readIngestStopped } from "../../core/ingest-health.ts";
-import { blockingNotes, hookTarget, otherScopeHooks, pickAdapters, staleNotes } from "./init.ts";
+import { blockingNotes, hookTarget, otherScopeHooks, pickAdapters, runningStaleNotes, staleNotes } from "./init.ts";
 import { ingestStoppedText } from "./status.ts";
 import { median } from "../../stats/summary.ts";
 
@@ -386,6 +386,11 @@ function staleHooks(a: DoctorAgent): boolean {
   return a.capture === "hooks" && hooksHere(a) !== undefined && a.blockers.length > 0 && staleNotes(a.blockers).length === a.blockers.length;
 }
 
+/** Stale hooks, and the agent still runs one of them (it differs from what this CLI writes): it may be capturing. */
+function mayCapture(a: DoctorAgent): boolean {
+  return staleHooks(a) && runningStaleNotes(a.blockers).length > 0;
+}
+
 /** One agent as doctor reports it (the `agents` rows of --json). */
 interface DoctorAgent {
   id: string;
@@ -592,6 +597,7 @@ export async function run(c: CommandContext): Promise<number> {
   // The CLI as the user's shell runs it (codingsh in PowerShell and cmd).
   const bin = nextStepBin(env);
   let notCapturing = 0;
+  let withStaleHooks = 0;
   for (const a of shown) {
     const r = agentRow(a, hookBin.installed, env);
     // The built-in wrapper is not something "installed": it is part of coding.sh.
@@ -603,9 +609,11 @@ export async function run(c: CommandContext): Promise<number> {
     const label = a.name.length >= LABEL_WIDTH ? a.name.replace(/\s*\(.*\)$/, "") : a.name;
     if (r.ok) out.row(label, parts.join(", "), "ok");
     else {
-      notCapturing++;
+      const maybe = mayCapture(a);
+      if (maybe) withStaleHooks++;
+      else notCapturing++;
       const hooks = a.capture === "hooks";
-      const w: DoctorWarning = { check: "agent", agent: a.id, message: `${a.name} is not capturing: ${r.state}` };
+      const w: DoctorWarning = { check: "agent", agent: a.id, message: `${a.name} ${maybe ? "may not be capturing" : "is not capturing"}: ${r.state}` };
       if (hooks && a.blockers.length) w.blockers = a.blockers;
       if (hooks && (hooksHere(a) === undefined || staleHooks(a))) w.next = cliCommand(env, ["init", "--agent", a.id]);
       warn(label, parts.join(", "), w);
@@ -671,6 +679,10 @@ export async function run(c: CommandContext): Promise<number> {
   // `ok` and the exit code are about the spool and the store, so a script that checks them keeps
   // working; an agent that cannot capture is in `warnings` and on the last line.
   out.data({ ok: problems === 0, warnings, agents, hook: hookBin, mcp, spool, store, ...ingestStoppedField(stopped), receiver, proxy, gateway });
-  out.print(problems ? "problems found" : notCapturing ? `${plural(notCapturing, "agent")} not capturing` : "ok");
+  const counts: string[] = [];
+  if (notCapturing) counts.push(`${plural(notCapturing, "agent")} not capturing`);
+  // Stale hooks the agent still runs may capture, so those agents are counted apart.
+  if (withStaleHooks) counts.push(`${notCapturing ? withStaleHooks : plural(withStaleHooks, "agent")} with stale hooks`);
+  out.print(problems ? "problems found" : counts.join(", ") || "ok");
   return problems ? 1 : 0;
 }

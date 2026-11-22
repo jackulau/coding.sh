@@ -105,10 +105,11 @@ Check it worked: `npm view coding.sh version`, `npm view @codingdotsh/sdk versio
    the tarball uploaded if it has none) and rejected when it doesn't; then github-release fails
    and neither publish job runs.
 6. Users get the CLI three ways. `npm i -g coding.sh` and `npx coding.sh` install from npm.
-   `curl -fsSL https://coding.sh/install | sh` installs from npm when the registry has the
-   version and from the GitHub release tarball otherwise (`CODING_SH_SOURCE=npm|github` forces
-   one). `coding.sh update` installs the newest of the two. Running installs show the update
-   notice within a day.
+   `curl -fsSL https://coding.sh/install | sh` installs the latest GitHub release: from npm when
+   the registry has that version, and from the release tarball otherwise
+   (`CODING_SH_SOURCE=npm|github` forces one). `coding.sh update` installs the latest GitHub
+   release from its tarball. When GitHub does not answer, both install npm's latest. Running
+   installs show the update notice within a day.
 
 The CLI package also ships `dist/schema.json` (the trace JSON Schema) and `dist/hook.sh` (the shell
 hook); both are in the tarball and checked by `scripts/release/smoke.sh`.

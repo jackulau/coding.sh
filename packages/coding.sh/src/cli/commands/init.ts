@@ -150,9 +150,10 @@ export function joinNames(names: string[]): string {
 // phrasings mark the notes that mean the installed hooks will not capture
 // anything (an agent too old for hooks, hooks disabled, hooks not trusted),
 // or may not: a hook file that "is stale", not the one this CLI writes, which
-// init writes again.
+// init writes again. A stale file the agent "will not run" captures nothing.
 const BLOCKING_NOTE = /\bpredates\b|\bwill not run\b|\bnot trusted yet\b|\bis stale\b/i;
 const STALE_NOTE = /\bis stale\b/i;
+const WONT_RUN_NOTE = /\bwill not run\b/i;
 
 /** The detect notes that block capture. */
 export function blockingNotes(notes: readonly string[] | undefined): string[] {
@@ -162,6 +163,11 @@ export function blockingNotes(notes: readonly string[] | undefined): string[] {
 /** The blocking notes init clears by writing the agent's hooks again. */
 export function staleNotes(notes: readonly string[] | undefined): string[] {
   return (notes ?? []).filter((n) => STALE_NOTE.test(n));
+}
+
+/** The stale notes on hook files the agent still runs: they differ from what this CLI writes, so they may still capture. */
+export function runningStaleNotes(notes: readonly string[] | undefined): string[] {
+  return staleNotes(notes).filter((n) => !WONT_RUN_NOTE.test(n));
 }
 
 interface Blocker {

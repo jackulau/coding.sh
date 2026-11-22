@@ -1,5 +1,6 @@
-// install.sh picks its source: npm once coding.sh is published there, the
-// GitHub release tarball until then (and whenever npm lacks the version).
+// install.sh picks its source: the latest GitHub release (what `coding.sh
+// update` installs), from npm when the registry has that version, else the
+// release tarball; npm's latest when GitHub can't be reached.
 // npm and curl are stubs on PATH; nothing touches the network or installs.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -22,32 +23,48 @@ after(() => {
   for (const dir of stubDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-/** Runs install.sh with `npm view` answering `published` (version or "" for E404). */
+/**
+ * Runs install.sh with npm publishing `published` (versions, oldest first; "" for none) and
+ * GitHub's latest release at v0.3.0. `npm view coding.sh@<v> version` answers as npm 11 does:
+ * the version, or exit 1 when the registry lacks it. CURL_FAIL=1 makes GitHub unreachable.
+ */
 function run(published: string, env: Record<string, string> = {}) {
   const bin = stubDir();
   const log = join(bin, "npm.log");
+  const curlLog = join(bin, "curl.log");
   writeFileSync(
     join(bin, "npm"),
     `#!/bin/sh
 case "$1" in
-  view) [ -n "$PUBLISHED" ] && { echo "$PUBLISHED"; exit 0; }; echo "npm error 404" >&2; exit 1 ;;
+  view)
+    spec="\${2#coding.sh@}"; found=; last=
+    for v in $PUBLISHED; do last=$v; [ "$v" = "$spec" ] && found=$v; done
+    [ "$spec" = latest ] && found=$last
+    [ -n "$found" ] && { echo "$found"; exit 0; }
+    echo "npm error code E404" >&2; exit 1 ;;
   install) shift; echo "$*" >> "${log}"; exit 0 ;;
   prefix) echo /nonexistent ;;
 esac
 `,
   );
-  writeFileSync(join(bin, "curl"), `#!/bin/sh\necho '{"tag_name": "v0.3.0", "name": "x"}'\n`);
+  writeFileSync(
+    join(bin, "curl"),
+    `#!/bin/sh\necho "$*" >> "${curlLog}"\n[ -n "$CURL_FAIL" ] && { echo "curl: (7) Failed to connect" >&2; exit 7; }\necho '{"tag_name": "v0.3.0", "name": "x"}'\n`,
+  );
   writeFileSync(join(bin, "coding.sh"), "#!/bin/sh\nexit 0\n");
   for (const f of ["npm", "curl", "coding.sh"]) chmodSync(join(bin, f), 0o755);
   const r = spawnSync("sh", [INSTALL_SH], {
     encoding: "utf8",
     env: { PATH: `${bin}:${process.env.PATH}`, HOME: bin, CODING_SH_NO_INIT: "1", PUBLISHED: published, ...env },
   });
-  let installed = "";
-  try {
-    installed = readFileSync(log, "utf8").trim();
-  } catch {}
-  return { status: r.status, stderr: r.stderr, installed };
+  const read = (file: string) => {
+    try {
+      return readFileSync(file, "utf8").trim();
+    } catch {
+      return "";
+    }
+  };
+  return { status: r.status, stderr: r.stderr, installed: read(log), curled: read(curlLog) };
 }
 
 describe("install.sh source", () => {
@@ -62,6 +79,42 @@ describe("install.sh source", () => {
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.installed, / coding\.sh@0\.3\.0$/);
     assert.match(r.stderr, /Installing coding\.sh v0\.3\.0/);
+  });
+
+  // A release whose npm publish failed or waits for approval: rerunning the script
+  // installs the release `coding.sh update` installs, not the older one on npm.
+  test("npm's latest is behind the latest GitHub release: installs the release tarball", () => {
+    const r = run("0.2.0");
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.installed, new RegExp(`${RELEASE}/v0\\.3\\.0/coding\\.sh-0\\.3\\.0\\.tgz$`));
+    assert.match(r.stderr, /Installing coding\.sh v0\.3\.0/);
+  });
+
+  test("npm has the latest GitHub release: installs that version from npm", () => {
+    const r = run("0.2.0 0.3.0");
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.installed, / coding\.sh@0\.3\.0$/);
+  });
+
+  test("GitHub can't be reached: installs npm's latest, and the lookup has a time limit", () => {
+    const r = run("0.2.0", { CURL_FAIL: "1" });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.installed, / coding\.sh@0\.2\.0$/);
+    assert.match(r.curled, /--connect-timeout \d+ --max-time \d+ /);
+  });
+
+  test("CODING_SH_SOURCE=npm installs npm's latest and never asks GitHub", () => {
+    const r = run("0.2.0", { CODING_SH_SOURCE: "npm" });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.installed, / coding\.sh@0\.2\.0$/);
+    assert.equal(r.curled, "");
+  });
+
+  test("neither GitHub nor npm answers: fails and installs nothing", () => {
+    const r = run("", { CURL_FAIL: "1" });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /Could not find the latest release/);
+    assert.equal(r.installed, "");
   });
 
   test("a pinned version npm lacks falls back to that GitHub release", () => {

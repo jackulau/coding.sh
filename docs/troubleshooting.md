@@ -65,6 +65,9 @@ An agent captured by hooks gets `✓` only when a hook that runs this home's `ho
 config doctor read, that file exists and nothing blocks it. When an agent row is a warning, the last
 line is `N agents not capturing` in place of `ok`.
 
+An agent whose only problem is a stale hook file it still runs may be capturing. The last line
+counts it as `N agents with stale hooks`.
+
 doctor exits 1 only when the spool or the store fails, and `ok` in `doctor --json` says the same.
 The warnings are in the JSON as `warnings`, each with a `check`, a `message`, the `agent` and its
 `blockers` when it is about one, and the fix as `next`.
@@ -77,12 +80,12 @@ The warnings are in the JSON as `warnings`, each with a `check`, a `message`, th
 | `hooked …, but the hook it runs is missing` | The hooks run this home's `hook.sh` (`hook.mjs` on Windows), and that file or the `hook.mjs` beside it is gone. | `coding.sh init` |
 | `events arriving, hook not in user config` | Events came in during the last 5 minutes, but doctor found no hook. They can come from an import, the proxy or a project doctor did not look in. | `coding.sh init --agent <id>`, or run doctor from the project. |
 | `hooked but not firing` | The hook is in place but the agent will not run it. The note under the row says why. | Follow the note. |
-| `hooked but stale` | The note names a hook file this coding.sh writes differently. | `coding.sh init --agent <id>` |
+| `hooked but stale` | The note names a hook file this coding.sh writes differently. Unless the note says the agent will not run it, the agent still runs it and may be capturing. | `coding.sh init --agent <id>` |
 | `no events yet` | Nothing captured from this agent. Normal right after `init`. | Use the agent, then `coding.sh sessions`. |
 | `reads its store` / `no store yet` | Host apps such as T3 Code are read from their own database, not hooks. | Nothing to do. |
 | `Agents  none detected; …` | doctor found no supported agent. | `coding.sh run -- <cmd>` |
 | `Hook missing at …/bin/hook.sh` (or `…/bin/hook.mjs`) | `init` has not run, or the file was deleted. Outside Windows the hooks run `hook.sh`, which needs `hook.mjs` beside it. | `coding.sh init` |
-| `Hook …/bin/hook.mjs is stale` | The hook bin is from another coding.sh version, or `bin/cli-path` names another install. After `npm i -g`, the next session end refreshes it by itself. | `coding.sh update --refresh-bin` |
+| `Hook …/bin/hook.mjs is stale` | The hook bin is from another coding.sh version, or `bin/cli-path` names another install. After `npm i -g`, the next session end refreshes it by itself. | `coding.sh update --refresh-bin`. If `bin/cli-path` names another install that is still there, `coding.sh upgrade-store` (it asks first). |
 | `MCP <agent>: <problem> (<file>)` | The agent's coding.sh MCP entry starts a command, script or CLI that is gone. | `coding.sh init` |
 | `Spool spool/<agent>/<day>.jsonl not writable: EACCES` | Hooks can't append to that agent's file for today, so its events are lost. | Fix the file's owner or permissions. |
 | `Spool N hook writes failed in the last day (…)` | Hooks logged write failures (`ENOSPC`, `EACCES`, …) to `spool/errors.log` in the last 24 hours. | Free disk space or fix permissions. The warning goes away a day after the last failure. |
