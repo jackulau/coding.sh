@@ -1,6 +1,6 @@
 // Hands-on QA, round 9, what a person types: a whole-number flag takes decimal digits only and an
-// error quotes what was typed, stats --since in the future says it is after now, and a bad config
-// value prints no JavaScript type name.
+// error quotes what was typed, stats --since in the future says it is after now, search "" is a
+// missing argument, and a bad config value prints no JavaScript type name.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
@@ -103,6 +103,26 @@ describe("stats --since in the future", () => {
   test("the same instant as now is not before now", () => {
     const t = Date.parse("2026-11-01T10:00:00Z");
     assert.equal(emptyWindow("now", t, undefined, t).message, '--since is not before now: "now" is 2026-11-01T10:00:00.000Z, and now is 2026-11-01T10:00:00.000Z');
+  });
+});
+
+describe("search with blank text", () => {
+  test("is a usage error, like a missing argument", () => {
+    const sb = box();
+    for (const text of ["", "   "]) {
+      const r = cli(sb, ["search", text]);
+      assert.equal(r.status, 2, JSON.stringify(text) + r.stdout + r.stderr);
+      assert.match(r.stderr, /Missing argument <TEXT>: the search text is blank/);
+      const j = cli(sb, ["search", text, "--json"]);
+      assert.equal(j.status, 2, j.stderr);
+      assert.equal(jsonError(j.stderr).reason, "missing_argument");
+    }
+  });
+
+  test("text after a blank one still searches", () => {
+    const r = cli(box(), ["search", "", "deploy"]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout + r.stderr, /No matches for "deploy"/);
   });
 });
 
