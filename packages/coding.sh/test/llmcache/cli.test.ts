@@ -42,6 +42,7 @@ describe("exp run --record / --replay from the CLI", () => {
     return file;
   };
   let recId = "";
+  let candId = "";
 
   before(async () => {
     stub = await startStub();
@@ -104,7 +105,8 @@ describe("exp run --record / --replay from the CLI", () => {
     const [a, b] = out.experiments;
     assert.equal(a.pair.arm, "control");
     assert.equal(b.pair.arm, "candidate");
-    const rec = JSON.parse((await cli(["exp", "show", recId, "--json"])).stdout).experiment;
+    candId = b.id;
+    const rec =JSON.parse((await cli(["exp", "show", recId, "--json"])).stdout).experiment;
     const outputs = (e: { runs: { caseId: string; output: unknown }[] }) => Object.fromEntries(e.runs.map((x) => [x.caseId, x.output]));
     assert.deepEqual(outputs(a), outputs(rec));
     assert.deepEqual(outputs(b), outputs(rec));
@@ -116,13 +118,27 @@ describe("exp run --record / --replay from the CLI", () => {
     assert.match(text.stdout, /llm replay noise floor 0% \(n=4\)/);
   });
 
+  it("a replay keeps its task spec too, so it is the source of the next replay, with a control arm", async () => {
+    assert.ok(candId, "the replay above ran");
+    const before = stub.calls();
+    const r = await cli(["exp", "run", spec("cand2", "sys C"), "--replay", candId, "--json"]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(stub.calls() - before, 0, "the replay recorded every call it served");
+    const [a, b] = JSON.parse(r.stdout).experiments;
+    assert.equal(a.pair.arm, "control");
+    assert.deepEqual(a.metadata.llm.task.env, { SYS: "sys B, edited" }, "the control is the task the source ran");
+    assert.deepEqual(b.metadata.llm.task.env, { SYS: "sys C" });
+  });
+
   it("--replay-until 1 --no-control: one run, call 2 live", async () => {
     const before = stub.calls();
     const r = await cli(["exp", "run", spec("until", "sys A"), "--replay", recId, "--replay-until", "1", "--no-control", "--json"]);
     assert.equal(r.status, 0, r.stderr);
     const exp = JSON.parse(r.stdout).experiment;
     assert.equal(stub.calls() - before, 4);
-    assert.deepEqual(exp.metadata.llm, { mode: "replay", source: recId, until: 1, control: "skipped" });
+    const { task, ...llm } = exp.metadata.llm;
+    assert.deepEqual(llm, { mode: "replay", source: recId, until: 1, control: "skipped" });
+    assert.deepEqual(task.env, { SYS: "sys A" });
     for (const run of exp.runs) assert.deepEqual(run.llm, { calls: 2, hits: 1, live: 1, firstLiveOrdinal: 2 });
     // Without --json: the warning, and the counts line.
     const t = await cli(["exp", "run", spec("until2", "sys A"), "--replay", recId, "--replay-until", "1", "--no-control"]);

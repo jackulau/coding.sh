@@ -351,6 +351,7 @@ grouped by area, with links to the docs for the details.
 - **Cost.** GPT-6 Rosalind is priced at OpenAI's promotional $10 input and $50 output per million tokens, which OpenAI says runs at least through December 31, 2026. Before, it was priced at $15 and $75. GPT-6 Cyber prompts over 272K tokens get its long-context rates; before, they got short-context rates. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/track-cost.md#where-cost-comes-from))
 - **CLI.** `coding.sh cache` with no subcommand runs `cache doctor`, its only subcommand, and takes the same options. Before, it stopped with "Missing command" and named doctor. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-cache))
 - **Cache.** `cache doctor` names the CLI in its `diff-calls` examples, in text and in `--json`, as your shell runs it: `codingsh` in PowerShell and `npx coding.sh` under npx, where `coding.sh` fails. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-cache-doctor))
+- **Replay.** A run made with `exp run --replay` keeps its task spec, so it can be the source of the next replay with a control arm, as the docs say. Before, that replay stopped with `no_control`. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/replay-llm-calls.md#what-is-stored))
 
 ## [0.1.7] - 2026-11-16
 
