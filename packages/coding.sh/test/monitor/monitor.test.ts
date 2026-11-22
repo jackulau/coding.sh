@@ -375,7 +375,9 @@ describe("monitor --http", () => {
       assert.match(def.lastError!.message, re, name);
       assert.equal(def.lastError!.sessionId, `mon-http-${name}`);
       // An answer is about the session, so the monitor moves past it; an evaluator that is down is not.
-      assert.equal(def.cursor === undefined, name === "down", `${name}: cursor ${def.cursor}`);
+      const ctx = await openContext({ env: sb.env, cwd: sb.root });
+      const endedAt = (await ctx.index.getSession(`mon-http-${name}`).finally(() => ctx.close()))!.endedAt!;
+      assert.equal(def.cursor, name === "down" ? endedAt - 1 : endedAt, `${name}: cursor`);
     }
   });
 
@@ -394,7 +396,7 @@ describe("monitor --http", () => {
       assert.deepEqual([first.scored, first.failed, first.stopped], [0, 2, "unreachable"]);
       assert.deepEqual(ev.posts.map((p) => JSON.parse(p.body).session.session.id), ["out-1", "out-1", "out-1", "out-2", "out-2", "out-2"], "out-3 is not tried");
       let def = readMonitors(paths(sb.env).monitors).monitors[0]!;
-      assert.equal(def.cursor, undefined, "the cursor stays before out-1");
+      assert.equal(def.cursor, sessions[0]!.endedAt! - 1, "the cursor stays before out-1");
       assert.equal(def.lastError!.sessionId, "out-2");
       assert.match(def.lastError!.message, /out-2: POST http:\/\/127\.0\.0\.1:\d+\/score failed: .*; stopped after 2 sessions in a row/);
 
@@ -407,6 +409,29 @@ describe("monitor --http", () => {
       await ctx.close();
     }
     assert.deepEqual((await monitorScores(sb)).map((s) => s.targetId).sort(), ["out-1", "out-2", "out-3"]);
+  });
+
+  it("an evaluator that answers for a later session moves the cursor past one it always fails on", async () => {
+    const sb = box();
+    const now = Date.now();
+    const sessions = [mkSession("bad-1", now - 30_000), mkSession("bad-2", now - 20_000), mkSession("bad-3", now - 10_000)];
+    await sb.seed(sessions);
+    // bad-1 gets a 500 on each of its 3 tries; the evaluator answers for every session after it.
+    const ev = await evaluator([answer(500, "oops"), answer(500, "oops"), answer(500, "oops"), answer(200, '{"value":1}')]);
+    await addHttp(sb, "bad", ev.url);
+    const ctx = await openContext({ env: sb.env, cwd: sb.root });
+    try {
+      const first = (await runMonitors(ctx, { force: true })).monitors[0]!;
+      assert.deepEqual([first.scored, first.failed, first.stopped], [2, 1, undefined]);
+      const def = readMonitors(paths(sb.env).monitors).monitors[0]!;
+      assert.equal(def.cursor, sessions[2]!.endedAt, "past bad-1: the evaluator is up, so bad-1 failed for a reason of its own");
+      assert.equal(def.lastError!.sessionId, "bad-1");
+      const second = (await runMonitors(ctx, { force: true })).monitors[0]!;
+      assert.deepEqual([second.scored, second.failed], [0, 0]);
+      assert.equal(ev.posts.length, 5, "the next pass sends bad-1 nothing more");
+    } finally {
+      await ctx.close();
+    }
   });
 
   it("a session held for the next pass is found again when one that ended at the same moment was scored before it", async () => {
@@ -430,7 +455,8 @@ describe("monitor --http", () => {
 
   it("Ctrl-C while a session is being scored records no failure, and the next pass starts at that session", async () => {
     const sb = box();
-    await sb.seed([mkSession("abort-1", Date.now() - 10_000)]);
+    const s = mkSession("abort-1", Date.now() - 10_000);
+    await sb.seed([s]);
     const ac = new AbortController();
     // The evaluator never answers: Ctrl-C comes while the POST is open.
     const ev = await evaluator([() => ac.abort()]);
@@ -441,7 +467,7 @@ describe("monitor --http", () => {
       assert.deepEqual([r.scored, r.failed, r.error], [0, 0, undefined]);
       assert.equal(ev.posts.length, 1);
       const def = readMonitors(paths(sb.env).monitors).monitors[0]!;
-      assert.equal(def.cursor, undefined);
+      assert.equal(def.cursor, s.endedAt! - 1, "a new monitor's cursor starts just before the session");
       assert.equal(def.lastError, undefined);
     } finally {
       await ctx.close();

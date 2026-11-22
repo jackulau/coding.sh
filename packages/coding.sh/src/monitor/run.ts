@@ -176,8 +176,10 @@ class Failed extends Error {}
 
 /**
  * The --http evaluator could not be reached for this session: a network error, a try that timed
- * out, or a 5xx, 408, 425 or 429 on every try. That is not about the session, so the cursor
- * stays before it and the next pass starts there again.
+ * out, or a 5xx, 408, 425 or 429 on every try. That is taken as an outage, not about the session,
+ * so the cursor stays before it and the next pass starts there again. If the evaluator answers for
+ * a later session in the same pass, it was about the session after all, and the cursor moves past
+ * it as it does past any other failed session.
  */
 class Unreachable extends Error {}
 
@@ -215,7 +217,8 @@ async function runOne(deps: MonitorDeps, def: MonitorDef, state: MonitorState, r
   }
   // Once a session is held (the pass stopped at it, or the evaluator could not be reached for it),
   // the cursor moves no further this pass: the sessions after it may still be scored, and the next
-  // pass skips those as already scored.
+  // pass skips those as already scored. An answer for a later session lets go of a hold the
+  // evaluator set: the evaluator is up, so that session failed for a reason of its own.
   const start = state.cursor;
   let held: Session | undefined;
   let unreachable = 0;
@@ -225,9 +228,12 @@ async function runOne(deps: MonitorDeps, def: MonitorDef, state: MonitorState, r
   const hold = (s: Session) => {
     if (held) return;
     held = s;
+    // A new monitor has no cursor and looks back a day each pass: start one just before this
+    // session, so a hold that outlasts the day does not lose it.
+    if (state.cursor === undefined) state.cursor = s.endedAt! - 1;
     // A session that ended at the same moment and was handled just before may have moved the
     // cursor to this end already; step back so the next pass finds this one.
-    if (state.cursor !== undefined && state.cursor >= s.endedAt! && (start === undefined || start < s.endedAt!)) state.cursor = Math.max(start ?? 0, s.endedAt! - 1);
+    else if (state.cursor >= s.endedAt! && (start === undefined || start < s.endedAt!)) state.cursor = Math.max(start ?? 0, s.endedAt! - 1);
   };
   let clean = true;
   for (const s of list) {
@@ -279,15 +285,21 @@ async function runOne(deps: MonitorDeps, def: MonitorDef, state: MonitorState, r
         continue;
       }
       unreachable = 0;
-      if (e instanceof Nothing) r.skipped++;
-      else {
-        if (!(e instanceof Failed || e instanceof ScoreError)) throw e;
-        clean = false;
-        r.failed++;
-        r.error = e.message;
-        state.lastError = { message: e.message, at: now(), sessionId: s.id };
+      if (e instanceof Nothing) {
+        r.skipped++;
+        advance(s);
+        continue;
       }
+      if (!(e instanceof Failed || e instanceof ScoreError)) throw e;
+      clean = false;
+      r.failed++;
+      r.error = e.message;
+      state.lastError = { message: e.message, at: now(), sessionId: s.id };
     }
+    // The scorer answered for this session (a score, or a refusal such as a 4xx): a session held
+    // because the evaluator could not be reached failed for a reason of its own. Without this, one
+    // the evaluator always fails on would keep the cursor before it for good.
+    held = undefined;
     advance(s);
   }
   if (clean && r.scored > 0) delete state.lastError;
