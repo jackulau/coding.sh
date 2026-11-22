@@ -1773,15 +1773,17 @@ values. `harness list` shows the server names in its `MCP` column, and `--json` 
 any other file. User and local servers live in `.claude.json`, which a snapshot does not store,
 and a trial runs Claude Code with its own config directory, so it does not load them.
 
-A file inside `$CLAUDE_CONFIG_DIR` keeps its `~/.claude/...` key when that directory is inside
-`--dir`, and is stored once: a project file that is the same file on disk is left out. When a
-bundle with the same id (the same name and content) is already stored, a snapshot prints
-`<name> already exists, unchanged` and stores it again with the snapshot's time. A name refers to
-the newest bundle with that name, so when you go back to an earlier setup and snapshot it, the
-name refers to that setup again. When only the MCP servers or a harness TOML's `note` changed,
-which are not part of the id, it stores the new ones and prints `MCP servers updated` or
-`note updated` in place of `unchanged`. `--json` gives `"outcome": "unchanged"` or `"updated"`
-where a new bundle gives `"created"`.
+When `$CLAUDE_CONFIG_DIR` is inside `--dir`, a file the snapshot stores from it under a
+`~/.claude/...` key is not stored again as a project file, and an import from one file in that
+directory to another gets a `~/.claude/...` key too. A project inside `$CLAUDE_CONFIG_DIR`, such
+as a repo in its `skills` folder, keeps its project files: Claude Code run in that repo loads them
+as project files. When a bundle with the same id (the same name and content) is already stored, a
+snapshot prints `<name> already exists, unchanged` and stores it again with the snapshot's time.
+A name refers to the newest bundle with that name, so when you go back to an earlier setup and
+snapshot it, the name refers to that setup again. When only the MCP servers or a harness TOML's
+`note` changed, which are not part of the id, it stores the new ones and prints
+`MCP servers updated` or `note updated` in place of `unchanged`. `--json` gives
+`"outcome": "unchanged"` or `"updated"` where a new bundle gives `"created"`.
 
 Under the task table, **harness changes** lists what differs from A to B: files added (`+`),
 removed (`-`) and changed (`~`), model, flags, env names (never values) and plugins. A file list

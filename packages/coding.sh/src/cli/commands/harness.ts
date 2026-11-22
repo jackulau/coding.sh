@@ -40,23 +40,26 @@ const HIDDEN_SKILL = /^(?:~\/)?\.claude\/skills\/\.[^/]+\//;
 /**
  * The bundle with what Claude Code loads that the include globs miss or wrongly take: the files
  * CLAUDE.md and rules pull in with `@path` imports (followed up to 5 hops, relative to the
- * importing file, `~/` from the home), and without dot dirs under skills/. An import in Claude
- * Code's config dir (`claudeDir`, $CLAUDE_CONFIG_DIR) is stored as `~/.claude/…`, even when that
- * dir is inside `dir`, as bundleFromDir stores the files it holds; one elsewhere in `dir`
- * repo-relative, one in the home as `~/…`; one elsewhere is left out.
+ * importing file, `~/` from the home), and without dot dirs under skills/. An import inside
+ * `dir` is stored repo-relative, one in Claude Code's config dir (`claudeDir`, $CLAUDE_CONFIG_DIR)
+ * as `~/.claude/…`, one in the home as `~/…`; one elsewhere is left out. A file in the config dir
+ * that imports another file there stores it as `~/.claude/…` even when that dir is inside `dir`,
+ * as bundleFromDir stores the files it holds, so the import resolves where the bundle is applied.
  */
 export async function claudeCodeBundle(bundle: HarnessBundle, o: { dir: string; home: string; claudeDir?: string; blobs: BlobStore }): Promise<HarnessBundle> {
   const files: Record<string, BlobRef> = {};
   for (const [k, v] of Object.entries(bundle.files)) if (!HIDDEN_SKILL.test(k)) files[k] = v;
   const claudeDir = o.claudeDir ?? join(o.home, ".claude");
   const local = (key: string) => (key.startsWith("~/") ? userFile(key.slice(2), o.home, claudeDir) : join(o.dir, key));
-  const keyOf = (abs: string): string | undefined => {
-    for (const [base, prefix] of [[claudeDir, "~/.claude/"], [o.dir, ""], [o.home, "~/"]] as const) {
-      const rel = relative(base, abs);
-      if (rel && !rel.startsWith("..") && !isAbsolute(rel)) return prefix + rel.split(sep).join("/");
-    }
-    return undefined;
+  const keyIn = (abs: string, base: string, prefix: string): string | undefined => {
+    const rel = relative(base, abs);
+    return rel && !rel.startsWith("..") && !isAbsolute(rel) ? prefix + rel.split(sep).join("/") : undefined;
   };
+  const keyOf = (abs: string, from: string): string | undefined =>
+    (from.startsWith("~/.claude/") ? keyIn(abs, claudeDir, "~/.claude/") : undefined) ??
+    keyIn(abs, o.dir, "") ??
+    keyIn(abs, claudeDir, "~/.claude/") ??
+    keyIn(abs, o.home, "~/");
   let frontier = Object.keys(files).filter((k) => IMPORTING.test(k));
   const read = new Set<string>();
   for (let hop = 0; hop < IMPORT_HOPS && frontier.length; hop++) {
@@ -68,7 +71,7 @@ export async function claudeCodeBundle(bundle: HarnessBundle, o: { dir: string; 
       const text = await readFile(abs, "utf8").catch(() => "");
       for (const p of importPaths(text)) {
         const target = p.startsWith("~/") || p.startsWith("~\\") ? join(o.home, p.slice(2)) : resolve(dirname(abs), p);
-        const key = keyOf(target);
+        const key = keyOf(target, from);
         if (!key || HIDDEN_SKILL.test(key)) continue;
         // Already in the bundle (an include took it): its own imports still count.
         if (key in files) {

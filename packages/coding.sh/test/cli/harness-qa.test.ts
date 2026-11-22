@@ -177,6 +177,36 @@ describe("harness snapshot run twice, or from a folder that holds CLAUDE_CONFIG_
     assert.equal(outside.bundle.id, inside.bundle.id);
   });
 
+  it("keys an import beside the file that imports it, and keeps the project files of a project in the config dir", () => {
+    // The config dir inside the project: the project's CLAUDE.md imports a file there by a project
+    // path, the user CLAUDE.md by its own, and each key is where that import resolves.
+    const dir = join(root, "imports-both");
+    const cfg = join(dir, "cc");
+    put(join(dir, "CLAUDE.md"), "project rules\n@cc/notes.md\n");
+    put(join(cfg, "CLAUDE.md"), "user rules\n@notes.md\n");
+    put(join(cfg, "notes.md"), "notes\n");
+    assert.deepEqual(json(dir, cfg, "both").bundle.files, ["CLAUDE.md", "cc/notes.md", "~/.claude/CLAUDE.md", "~/.claude/notes.md"]);
+    // A repo checked out in the config dir's skills/: Claude Code run in it loads its CLAUDE.md,
+    // .mcp.json and their imports as the project's, so they stay project files.
+    const config = join(root, "config-holds-repo");
+    const repo = join(config, "skills", "demo");
+    put(join(config, "CLAUDE.md"), "user rules\n");
+    put(join(repo, "SKILL.md"), "---\nname: demo\ndescription: A demo skill.\n---\n");
+    put(join(repo, "CLAUDE.md"), "repo rules\n@docs/a.md\n");
+    put(join(repo, "docs", "a.md"), "a\n");
+    put(join(repo, ".mcp.json"), "{}\n");
+    assert.deepEqual(json(repo, config, "repo").bundle.files, [
+      ".mcp.json",
+      "CLAUDE.md",
+      "docs/a.md",
+      "~/.claude/CLAUDE.md",
+      "~/.claude/skills/demo/.mcp.json",
+      "~/.claude/skills/demo/CLAUDE.md",
+      "~/.claude/skills/demo/SKILL.md",
+      "~/.claude/skills/demo/docs/a.md",
+    ]);
+  });
+
   it("says the bundle already exists when the same setup is snapshotted again, in text and --json", () => {
     const dir = join(root, "twice");
     const cfg = join(root, "twice-config");
