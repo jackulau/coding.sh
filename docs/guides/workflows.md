@@ -27,8 +27,10 @@ coding.sh workflows stats <run>
 | `stats` | Wall time, the critical path, how many agents ran at once, idle time at barriers, failures, cache hits on a resumed run, and cost per phase. |
 
 An agent you stopped shows as `cancelled`, and one a resume ran again as `superseded`; neither
-counts as a failure. `coding.sh ui` shows the same runs at `#/workflows`, one bar per agent grouped
-by phase, with the critical path outlined. A bar links to that agent's session.
+counts as a failure. On a resumed run, an agent that returned its recorded result is a cache hit,
+not one of the agents that ran: `stats` counts it on the `cache hits` row, and its failed and null
+shares are of the agents that ran. `coding.sh ui` shows the same runs at `#/workflows`, one bar per
+agent grouped by phase, with the critical path outlined. A bar links to that agent's session.
 
 ## Write cases with known answers
 

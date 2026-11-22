@@ -172,6 +172,10 @@ describe("coding.sh workflows", () => {
     const resumed = await json("stats", [RESUMED]);
     assert.equal(resumed.stats.cacheHits, 7);
     assert.ok(Math.abs(resumed.stats.resumeSavedUsd - 0.8) < 1e-9);
+    // 1 of the 2 agents that ran returned null; the 7 cached agents are on the cache hits row, not in the shares.
+    const rows = (await cli("stats", [RESUMED])).stdout;
+    assert.match(rows, /\nagents\t2 \(0 failed 0%, 1 null 50%\)\n/);
+    assert.match(rows, /\ncache hits\t7 \(78%\)\n/);
   });
 
   it("score grades the run output against a seeded-bugs case, with the verify confusion", async () => {
