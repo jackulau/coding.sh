@@ -279,6 +279,7 @@ grouped by area, with links to the docs for the details.
 - **CLI.** `doctor` and `init` wait up to 15 s, not 5 s, for the `--version` of Antigravity CLI, Aider, Amp, Copilot CLI, Devin, Droid, Goose and Pi, the time they give Claude Code and Codex. Before, on a busy machine doctor could show `installed` where it had shown the version. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-doctor))
 - **CLI.** `doctor` warns `Agents none detected` and names `coding.sh run -- <cmd>` when it finds no supported agent, and `doctor --json` carries the same warning. Before, the Any command row, which is always shown, kept that warning from ever printing. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#sessions-dont-show-up))
 - **CLI.** `init` ends with one outcome per agent, the one its plan row gave it: `Already set up` for an agent an earlier run set up, `Set up` for one this run wrote to. Before, it said `Set up` for every agent whenever another agent or its own config changed. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#what-init-changes))
+- **Docs.** The Quickstart's `coding.sh run` sample shows the line `run` prints (`the command ran 573ms, exit 0`), and its `show` sample and the OpenTelemetry page's samples print a count of one as the CLI does: `1 file changed`, `1 tool call`. ([docs](https://coding.sh/docs/quickstart))
 
 ## [0.1.7] - 2026-11-16
 
