@@ -27,7 +27,7 @@ export async function run(c: CommandContext): Promise<number> {
     agentId: str(c.flags.agent) ?? (await agentFor(cmd!)),
     // --json: stdout is reserved for the single result document, so the child's stdout goes to stderr.
     ...(out.json ? { stdoutToStderr: true } : {}),
-    ...(config.snapshot.enabled ? { snapshot: { maxFiles: config.snapshot.maxFiles, timeoutMs: config.snapshot.timeoutMs } } : {}),
+    snapshot: config.snapshot.enabled ? { maxFiles: config.snapshot.maxFiles, timeoutMs: config.snapshot.timeoutMs } : false,
   });
   const code = r.signal ? 128 + ((constants.signals as Record<string, number>)[r.signal] ?? 0) : r.exitCode;
   if (out.json) {

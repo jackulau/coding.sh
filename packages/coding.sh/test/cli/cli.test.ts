@@ -316,6 +316,24 @@ describe("cli exit codes", () => {
     assert.equal(doc.exitCode, 127);
     assert.match(String(doc.error), /nonexistent-cmd-xyz: spawn nonexistent-cmd-xyz ENOENT/);
   });
+
+  it("run takes no repo snapshots when snapshot.enabled is false", () => {
+    const h = tmpHome();
+    const gitBin = which("git") ?? "";
+    if (!gitBin) return; // snapshots need git
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries({ ...h.env, PATH: pathOf(dirname(process.execPath), dirname(gitBin)), GIT_CONFIG_NOSYSTEM: "1" })) if (v !== undefined) env[k] = v;
+    const repo = join(h.root, "repo");
+    mkdirSync(repo);
+    assert.equal(spawnSync(gitBin, ["-c", "user.name=t", "-c", "user.email=t@t", "init", "-q"], { cwd: repo, env }).status, 0);
+    assert.equal(spawnSync(gitBin, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init"], { cwd: repo, env }).status, 0);
+    mkdirSync(h.data, { recursive: true });
+    writeFileSync(join(h.data, "config.toml"), "[snapshot]\nenabled = false\n");
+    const r = spawnSync(process.execPath, [CLI, "run", "--json", "--", process.execPath, "-e", 'require("fs").writeFileSync("x.txt", "hi\\n")'], { env, cwd: repo, encoding: "utf8", timeout: 30_000 });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal((parseJson(r.stdout, "run --json") as { filesChanged: number | null }).filesChanged, null);
+    assert.equal(existsSync(join(h.data, "repos")), false, "no shadow repo");
+  });
 });
 
 describe("cli eval new from a `coding.sh run` session", () => {
