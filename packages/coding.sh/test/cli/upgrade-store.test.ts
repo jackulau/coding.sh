@@ -223,6 +223,88 @@ describe("upgrade-store always leaves bin/cli-path naming the running CLI", () =
   });
 });
 
+describe("a second install, while the install that owns the store still runs the hooks", () => {
+  /** A coding.sh at <root>/<name>, laid out as `npm i -g` does; returns its dist/cli.mjs. */
+  function install(name: string, version: string): string {
+    const pkg = join(root, name, "lib", "node_modules", "coding.sh");
+    mkdirSync(join(pkg, "dist"), { recursive: true });
+    writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "coding.sh", version }));
+    writeFileSync(join(pkg, "dist", "cli.mjs"), "// the coding.sh that owns the store\n");
+    return join(pkg, "dist", "cli.mjs");
+  }
+  const OWNER_HOOK = "// the hook of the install that owns the store\n";
+  /** The hook bin that install's init wrote: hooks start it through bin/cli-path. */
+  function binOf(data: string, owner: string): void {
+    const bin = join(data, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "hook.mjs"), OWNER_HOOK);
+    writeFileSync(join(bin, "hook.sh"), "#!/bin/sh\n");
+    writeFileSync(join(bin, "cli-path"), owner + "\n");
+  }
+  const cliPath = (data: string): string => readFileSync(join(data, "bin", "cli-path"), "utf8").trim();
+  // Under npx (npm_command=exec) printed commands name the npx command on every OS.
+  const npx = { npm_command: "exec" };
+  type Doctor = { warnings: { check: string; message: string; next?: string }[]; hook: { owner?: string; ownerVersion?: string; stale: boolean } };
+
+  it("doctor names upgrade-store, not update --refresh-bin, and after upgrade-store the hooks run this install", async () => {
+    const h = tmpHome();
+    await storeAt(h.index, SQLITE_SCHEMA_VERSION);
+    const owner = install("owner-a", "0.1.6");
+    binOf(h.data, owner);
+    const upgrade = `${nextStepBin(npx)} upgrade-store`;
+
+    const r = run(CLI, ["doctor", "--json"], h, { env: npx });
+    assert.notEqual(r.stdout, "", r.stderr);
+    const d = JSON.parse(r.stdout) as Doctor;
+    // update --refresh-bin leaves the bin of another install that is still there as it is.
+    assert.deepEqual(d.warnings.filter((w) => w.check === "hook"), [{ check: "hook", message: `Hooks run the coding.sh 0.1.6 at ${owner}, another install`, next: upgrade }]);
+    assert.deepEqual([d.hook.owner, d.hook.ownerVersion], [owner, "0.1.6"]);
+    assert.doesNotMatch(r.stdout, /refresh-bin/);
+    const text = run(CLI, ["doctor"], h, { env: npx });
+    assert.ok((text.stdout + text.stderr).includes(`run ${upgrade} to have them run this coding.sh ${VERSION} (it asks first)`), text.stdout + text.stderr);
+
+    const ask = run(CLI, ["upgrade-store", "--json"], h, { env: npx });
+    assert.equal(ask.status, 2, ask.stderr);
+    assert.equal(cliPath(h.data), owner, "nothing changes before the user says yes");
+    const yes = run(CLI, ["upgrade-store", "--yes", "--json"], h, { env: npx });
+    assert.equal(yes.status, 0, yes.stderr);
+    assert.equal(cliPath(h.data), CLI);
+
+    const now = JSON.parse(run(CLI, ["doctor", "--json"], h, { env: npx }).stdout) as Doctor;
+    assert.deepEqual(now.warnings.filter((w) => w.check === "hook"), []);
+    assert.deepEqual([now.hook.owner, now.hook.stale], [undefined, false]);
+  });
+
+  it("with a store plugin, upgrade-store asks too, then the hooks run this install, and the password stays out", async () => {
+    const h = tmpHome();
+    const owner = install("owner-b", "0.1.6");
+    binOf(h.data, owner);
+    const url = ["postgres://user:", "hunter2", "@127.0.0.1:9/coding"].join("");
+
+    const ask = run(CLI, ["upgrade-store", "--store", url, "--json"], h, { env: npx });
+    assert.equal(ask.status, 2, ask.stderr);
+    const err = JSON.parse(ask.stderr) as { reason: string; next: string[] };
+    assert.equal(err.reason, "confirmation_required");
+    // The rerun it prints keeps the flags given, with the password masked.
+    assert.match(err.next[1] ?? "", /upgrade-store --store \S*postgres:\/\/user:\*\*\*@127\.0\.0\.1:9\/coding\S* --json --yes$/);
+    assert.equal(cliPath(h.data), owner, "nothing changes before the user says yes");
+
+    const yes = run(CLI, ["upgrade-store", "--store", url, "--yes", "--json"], h, { env: npx });
+    assert.equal(yes.status, 0, yes.stderr);
+    const doc = JSON.parse(yes.stdout) as { status: string; scheme: string; cli: string; previousOwner: string; bin: string; cliPath: string };
+    assert.deepEqual([doc.status, doc.scheme, doc.cli, doc.previousOwner, doc.bin, doc.cliPath], ["owned", "postgres", CLI, owner, "refreshed", CLI]);
+    assert.equal(cliPath(h.data), CLI);
+    assert.notEqual(readFileSync(join(h.data, "bin", "hook.mjs"), "utf8"), OWNER_HOOK, "the hook is this install's");
+    assert.equal(existsSync(h.index), false, "the SQLite index is not touched");
+    for (const x of [ask, yes]) assert.doesNotMatch(x.stdout + x.stderr, /hunter2/);
+
+    // The hooks already run this install: nothing is left to do.
+    const again = run(CLI, ["upgrade-store", "--store", url, "--json"], h, { env: npx });
+    assert.equal(again.status, 0, again.stderr);
+    assert.equal((JSON.parse(again.stdout) as { status: string }).status, "plugin");
+  });
+});
+
 describe("a store one schema ahead of this coding.sh", () => {
   async function ahead(): Promise<ReturnType<typeof tmpHome>> {
     const h = tmpHome();

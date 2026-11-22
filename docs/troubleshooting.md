@@ -85,7 +85,8 @@ The warnings are in the JSON as `warnings`, each with a `check`, a `message`, th
 | `reads its store` / `no store yet` | Host apps such as T3 Code are read from their own database, not hooks. | Nothing to do. |
 | `Agents  none detected; …` | doctor found no supported agent. | `coding.sh run -- <cmd>` |
 | `Hook missing at …/bin/hook.sh` (or `…/bin/hook.mjs`) | `init` has not run, or the file was deleted. Outside Windows the hooks run `hook.sh`, which needs `hook.mjs` beside it. | `coding.sh init` |
-| `Hook …/bin/hook.mjs is stale` | The hook bin is from another coding.sh version, or `bin/cli-path` names another install. After `npm i -g`, the next session end refreshes it by itself. | `coding.sh update --refresh-bin`. If `bin/cli-path` names another install that is still there, `coding.sh upgrade-store` (it asks first). |
+| `Hook …/bin/hook.mjs is stale` | The hook bin is from another coding.sh version, or `bin/cli-path` names no install that is still there. After `npm i -g`, the next session end refreshes it by itself. | `coding.sh update --refresh-bin` |
+| `Hook hooks run the coding.sh … at …, another install` | `bin/cli-path` names another install that is still there. The hooks run it, and it owns the store. | `coding.sh upgrade-store` from the install the hooks should run (it asks first), or use the install the row names. |
 | `MCP <agent>: <problem> (<file>)` | The agent's coding.sh MCP entry starts a command, script or CLI that is gone. | `coding.sh init` |
 | `Spool spool/<agent>/<day>.jsonl not writable: EACCES` | Hooks can't append to that agent's file for today, so its events are lost. | Fix the file's owner or permissions. |
 | `Spool N hook writes failed in the last day (…)` | Hooks logged write failures (`ENOSPC`, `EACCES`, …) to `spool/errors.log` in the last 24 hours. | Free disk space or fix permissions. The warning goes away a day after the last failure. |
@@ -452,6 +453,8 @@ Before a migration changes a store that holds data, coding.sh copies the index t
 - **In `--json`,** `upgrade-store` reports `"status": "migrated"` when it changed the schema,
   `"owned"` when it only made this install the store's owner (`from` equals `to`, no `backup`),
   and `"current"` when there was nothing to do.
+- **With a store plugin,** `upgrade-store` reports `"plugin"`, or `"owned"` when it moved the hooks
+  to this install. coding.sh migrates that store when it opens it.
 :::
 
 ## Still stuck
