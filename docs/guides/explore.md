@@ -105,9 +105,8 @@ Subagents
 ```
 
 The header sums up the run. Below it, each event in order, with the time since the start. Pass a
-session id, a unique prefix of 4 or more characters, or `latest`. `latest` is the newest session
-with work in it. A session with a run id (an eval, compare or experiment trial, or an agent you
-started with `CODING_SH_RUN_ID` set) counts only when there are no others.
+session id, a unique prefix of 4 or more characters, or `latest`. `latest` is your newest session
+with work in it; eval, compare and experiment trials count only when there is nothing else.
 
 ## Search every session
 
@@ -159,7 +158,6 @@ token for this run of `ui`; the viewer needs it.
 - **Keys.** <kbd>?</kbd> lists every shortcut. <kbd>j</kbd> and <kbd>k</kbd> move through the
   list outside a text field. A focused button keeps Enter and Space, a focused link keeps Enter,
   and the arrow keys scroll the focused step detail.
-- **Theme.** The top bar's theme button overrides the system's light or dark setting.
 - **Copied commands.** Each value is single-quoted for sh and PowerShell. A value with a quote, a
   control character or `& | < >` is shown but not copied: no quoting is safe for it in every
   shell.
@@ -200,8 +198,8 @@ coding.sh sessions --flag looping
 
 ## Subagents and the run tree
 
-A subagent's work is its own session, linked to its parent. `show` lists a session's subagents at
-the end, and `sessions --subagents` or `--where is:child` lists them. `tree` shows a whole
+`show` lists a session's subagents at the end, and `sessions --subagents` or `--where is:child`
+lists them. `tree` shows a whole
 multi-agent run with what each part cost:
 
 ```sh

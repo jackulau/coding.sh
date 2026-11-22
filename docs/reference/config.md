@@ -72,8 +72,8 @@ a commit in a shadow repo under `~/.coding.sh/repos`. Two things take one, and a
 - `coding.sh run --` snapshots the repo before and after the command, and records the files that
   changed between the two.
 - For live capture, ingest snapshots the repo when it runs within 10 minutes of a turn's or
-  session's end, so `eval new` has the session's end state. Sessions with a run id
-  (`CODING_SH_RUN_ID`), such as eval trials, get none.
+  session's end, so `eval new` has the session's end state. Eval trials and other sessions with a
+  run id get none.
 
 | Key | Default | Settable | What |
 |---|---|---|---|

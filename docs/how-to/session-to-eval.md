@@ -95,8 +95,10 @@ commit, the setup commands and the verifier) and `near-misses/001.patch` (the se
 
 `eval init` guesses the setup commands from the repo's lock and manifest files, and prints them: here
 `npm ci`, from `package-lock.json`. A `package.json` with no lockfile gets no install, since an
-install from it pins no versions. Every trial runs the setup in its own copy of the repo before the
-agent starts, so it adds to each trial's time. To change it, edit `setup` in `task.json` (`[]` runs
+install from it pins no versions.
+
+Every trial runs the setup in its own copy of the repo before the agent starts, so it adds to each
+trial's time. To change it, edit `setup` in `task.json` (`[]` runs
 none). `eval run` reads the task directories each time.
 
 ### 3. Run it
