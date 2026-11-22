@@ -136,9 +136,9 @@ export function splitOf(v: unknown, total: number | undefined): CostByTokenType 
 
 /** Where each group of rows comes from and when it was last checked against that page. */
 export const PRICE_SOURCES: Record<string, { url: string; updated: string }> = {
-  openai: { url: "https://developers.openai.com/api/docs/pricing", updated: "2026-11-07" },
+  openai: { url: "https://developers.openai.com/api/docs/pricing", updated: "2026-11-22" },
   anthropic: { url: "https://platform.claude.com/docs/en/about-claude/pricing", updated: "2026-11-09" },
-  google: { url: "https://aistudio.google.com/docs/pricing", updated: "2026-11-07" },
+  google: { url: "https://aistudio.google.com/docs/pricing", updated: "2026-11-22" },
   zai: { url: "https://docs.z.ai/guides/overview/pricing", updated: "2026-11-07" },
   minimax: { url: "https://platform.minimax.io/docs/guides/pricing", updated: "2026-11-07" },
   gateway: { url: "https://vercel.com/ai-gateway/models", updated: "2026-11-07" },
@@ -221,11 +221,12 @@ export const DEFAULT_MODELS = {
  * where the provider's page lists them. `[prices."<model>"]` replaces a whole row.
  */
 export const BUILTIN_PRICES: Prices = {
-  // OpenAI (PRICE_SOURCES.openai, as of 2026-11-07): Standard, Batch, Flex, Fast (`priority`) and
+  // OpenAI (PRICE_SOURCES.openai, as of 2026-11-22): Standard, Batch, Flex, Fast (`priority`) and
   // Ultrafast tables, short and long context. Flex matches Batch wherever both are listed. Fast was
   // called Priority until 2026-07-30 (https://developers.openai.com/api/docs/guides/priority-processing).
   // Batch "-" for cached input (gpt-4.x, o3) bills cached tokens as input. gpt-5.6-sol is a
-  // promotional price that the page says runs until 2026-11-30.
+  // promotional price that the page says runs until 2026-11-30, and gpt-6-rosalind one that it says
+  // runs at least through 2026-12-31.
   // GPT-6.2 lists no Flex (OpenAI is not adding Flex to new models), so a flex call keeps standard
   // rates. Its Ultrafast is 3x through 2027-02-28 and 6x from 2027-03-01.
   "gpt-6.2-astra": tiers(openaiLong(cached125(8, 40, 0.4)), { batch: 0.5, priority: 2, ultrafast: 3 }),
@@ -235,8 +236,8 @@ export const BUILTIN_PRICES: Prices = {
   "gpt-6.1-terra": gpt6(1, 5, 0.05),
   "gpt-6-sol": gpt6(2, 10, 0.2),
   "gpt-6-luna": gpt6(0.1, 0.5, 0.01),
-  "gpt-6-cyber": cached125(20, 100, 2),
-  "gpt-6-rosalind": openaiLong(cached125(15, 75, 1.5)),
+  "gpt-6-cyber": openaiLong(cached125(20, 100, 2)),
+  "gpt-6-rosalind": openaiLong(cached125(10, 50, 1)),
   "gpt-5.6-sol": gpt6(4, 20, 0.4),
   "gpt-5.6-terra": gpt6(2, 12, 0.2),
   "gpt-5.6-luna": gpt6(0.2, 1.2, 0.02),
@@ -315,7 +316,7 @@ export const BUILTIN_PRICES: Prices = {
   "claude-3-5-sonnet": anthropic(3, 15),
   "claude-3-5-haiku": anthropic(0.8, 4),
 
-  // Google Gemini (PRICE_SOURCES.google, paid tier, as of 2026-11-07): Standard, Batch, Flex and
+  // Google Gemini (PRICE_SOURCES.google, paid tier, as of 2026-11-22): Standard, Batch, Flex and
   // Priority tabs; 3.1 Pro and 2.5 Pro bill prompts over 200K tokens higher. Writes cost plain input;
   // cache storage is billed per hour and not counted here. Where Batch and Flex caching says "Same
   // as Standard" the standard cache rate is kept. Scheduled changes: gemini-4-argon and

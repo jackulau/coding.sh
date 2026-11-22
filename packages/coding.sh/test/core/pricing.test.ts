@@ -220,8 +220,17 @@ describe("tier and long-context pricing", () => {
     check(priced("gpt-5.5", { inputTokens: 300_000 }), 300_000 * 10 / M, "long-context");
     check(priced("gpt-5.4-pro", { inputTokens: 300_000, outputTokens: M }), (300_000 * 60 + M * 270) / M, "long-context");
     // No long-context rate on the page: short rates at any size.
-    check(priced("gpt-6-cyber", { inputTokens: 300_000 }), 300_000 * 20 / M, undefined);
+    check(priced("gpt-5.6-cyber", { inputTokens: 300_000 }), 300_000 * 12.5 / M, undefined);
     check(priced("gpt-5.2", { inputTokens: 300_000 }), 300_000 * 1.75 / M, undefined);
+  });
+
+  it("bills GPT-6 Cyber's long context, and GPT-6 Rosalind at its promotional price", () => {
+    // gpt-6-cyber: 20 in, 100 out, 2 read; long: 40, 150, 4.
+    check(priced("gpt-6-cyber", { inputTokens: 100_000, outputTokens: M }), (100_000 * 20 + M * 100) / M, undefined);
+    check(priced("gpt-6-cyber", { inputTokens: 100_000, cacheReadTokens: 200_000, outputTokens: M }), (100_000 * 40 + 200_000 * 4 + M * 150) / M, "long-context");
+    // gpt-6-rosalind: 10 in, 50 out, 1 read; long: 20, 75, 2.
+    check(priced("gpt-6-rosalind", { inputTokens: 100_000, cacheReadTokens: 50_000, outputTokens: M }), (100_000 * 10 + 50_000 * 1 + M * 50) / M, undefined);
+    check(priced("gpt-6-rosalind", { inputTokens: 300_000, outputTokens: M }), (300_000 * 20 + M * 75) / M, "long-context");
   });
 
   it("bills Gemini 3.1 Pro and 2.5 Pro prompts over 200K higher; flat models stay flat", () => {
