@@ -57,7 +57,8 @@ describe("codingsh://latest on an empty store", () => {
     const text = (r.result as { contents: { text: string; mimeType: string }[] }).contents[0]!;
     assert.equal(text.mimeType, "text/markdown");
     assert.match(text.text, /No sessions captured yet/);
-    assert.match(text.text, /coding\.sh init/);
+    // The world's env sets no MSYSTEM or SHELL: on Windows that is PowerShell or cmd, which run codingsh.
+    assert.match(text.text, process.platform === "win32" ? /`codingsh init`/ : /`coding\.sh init`/);
   });
 
   it("still answers not found for a session id that does not exist", async () => {

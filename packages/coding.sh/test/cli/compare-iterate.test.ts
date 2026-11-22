@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { which } from "../../src/adapters/_shared/detect.ts";
 import { posixShell } from "../../src/core/spawn.ts";
+import { cliCommand } from "../../src/cli/next-steps.ts";
 import { pathOf } from "../_bin.ts";
 import { CLI } from "../_cli.ts";
 
@@ -33,6 +34,13 @@ function cli(args: string[], cwd = home) {
 function json<T>(r: ReturnType<typeof cli>): T {
   assert.ok(r.status === 0 && r.stdout.trim(), `exit ${r.status}${r.signal ? `, signal ${r.signal}` : ""}${r.error ? `, ${r.error.message}` : ""}\nstdout: ${r.stdout}\nstderr: ${r.stderr}`);
   return JSON.parse(r.stdout) as T;
+}
+/** The "With their approval:" step of a refusal without --yes: the command line as given, with --yes added. */
+function approvalStep(r: ReturnType<typeof cli>): string[] {
+  assert.equal(r.status, 2, r.stdout + r.stderr);
+  const doc = JSON.parse(r.stderr.trim().split("\n").at(-1)!) as { reason: string; next: string[] };
+  assert.equal(doc.reason, "confirmation_required");
+  return doc.next;
 }
 const runsLog = () => (existsSync(join(root, "runs.log")) ? readFileSync(join(root, "runs.log"), "utf8").trim().split("\n").filter(Boolean) : []);
 const clearLog = () => rmSync(join(root, "runs.log"), { force: true });
@@ -106,6 +114,10 @@ describe("compare: iterate on a comparison", () => {
   it("--retry-errors runs the rate-limited run again in place, and the slot counts once", (t) => {
     if (!gitBin) return t.skip("needs git");
     writeFileSync(join(root, "ratelimit.flag"), "");
+    // Without --yes or a terminal it runs nothing, and the step it names keeps every flag given.
+    const plan = ["compare", "base", ...WITHOUT, "--tag", "iter", "--retries", "0", "-c", "1", "--json"];
+    assert.deepEqual(approvalStep(cli(plan)), ["With their approval:", cliCommand(env, [...plan, "--yes"])]);
+    assert.equal(runsLog().length, 0);
     const r = cli(["compare", "base", ...WITHOUT, "--tag", "iter", "--retries", "0", "-c", "1", "--yes", "--json"]);
     const out = json<Out>(r);
     first = out.experimentId;
@@ -113,11 +125,9 @@ describe("compare: iterate on a comparison", () => {
     assert.equal(out.report.baseline.runs + out.report.candidate.runs, 7, "the infra-failed run is left out");
     assert.equal(runsLog().length, 7);
     clearLog();
-    // Without --yes it asks first, and the command it names keeps every flag given.
-    const ask = cli(["compare", "base", ...WITHOUT, "--experiment", first, "--retry-errors", "-c", "1"]);
-    assert.equal(ask.status, 2, ask.stdout + ask.stderr);
-    assert.match(ask.stderr, new RegExp(`With their approval: coding\\.?sh compare base --without \\.claude/skills/pdf --experiment ${first} --retry-errors -c 1 --yes\\n`), ask.stderr);
-    assert.equal(runsLog().length, 0, "asking runs nothing");
+    const retryPlan = ["compare", "base", ...WITHOUT, "--experiment", first, "--retry-errors", "-c", "1", "--json"];
+    assert.deepEqual(approvalStep(cli(retryPlan)), ["With their approval:", cliCommand(env, [...retryPlan, "--yes"])]);
+    assert.equal(runsLog().length, 0);
     const retry = cli(["compare", "base", ...WITHOUT, "--experiment", first, "--retry-errors", "--yes", "--json"]);
     const again = json<Out>(retry);
     assert.equal(again.experimentId, first);
