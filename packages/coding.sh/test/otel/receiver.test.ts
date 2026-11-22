@@ -8,7 +8,7 @@ import { type BatchInfo, createOtlpPipeline, LANGFUSE_TRACES_PATH, type Receiver
 import { LANGFUSE_INGEST_PATH } from "../../src/server/auth.ts";
 import { ProtoReader } from "../../src/otel/proto.ts";
 import { decodeLogsJson, decodeTraceJson } from "../../src/otel/json.ts";
-import { encodeLogs, encodeTraces, fixture, gzip, iAttr, otlpSpan, otlpTraces, sAttr, secretRequests, splitSpans } from "./_encode.ts";
+import { encodeLogs, encodeTraces, fixture, gzip, iAttr, otlpSpan, otlpTraces, sAttr, secretOutput, secretRequests, splitSpans } from "./_encode.ts";
 import { MemBlobs, MemIndex } from "./_memstore.ts";
 import { createRedactor } from "../../src/core/redact.ts";
 
@@ -351,6 +351,134 @@ describe("OTLP receiver over HTTP", () => {
       assert.equal(split[2]?.llm, 1);
       assert.equal(split[1]?.llm, 1);
     });
+  });
+
+  // Regression: an AI SDK subagent's ai.streamText ends before the ai.toolCall that runs it, so a batching
+  // exporter can send it first. It was stored as a plain span of the parent and its model call stayed there.
+  describe("AI SDK subagents whose loop arrives before its ai.toolCall", () => {
+    const T = "4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e";
+    const ROOT = "e000000000000001";
+    const op = (o: string, fn: string) => [sAttr("ai.operationId", o), sAttr("ai.telemetry.functionId", fn), sAttr("ai.model.id", "gpt-5-mini")];
+    const loop = (id: string, parent: string | undefined, fn: string, answer: string, s: number, e: number) =>
+      otlpSpan(T, id, parent, "ai.streamText", [...op("ai.streamText", fn), sAttr("ai.prompt", JSON.stringify({ prompt: `task ${fn}` })), sAttr("ai.response.text", answer)], s, e);
+    const call = (id: string, parent: string, fn: string, answer: string, s: number, e: number) =>
+      otlpSpan(T, id, parent, "ai.streamText.doStream", [...op("ai.streamText.doStream", fn), sAttr("ai.response.text", answer), iAttr("ai.usage.inputTokens", 100), iAttr("ai.usage.outputTokens", 10)], s, e);
+    const toolCall = (id: string, name: string, s: number, e: number) =>
+      otlpSpan(T, id, ROOT, "ai.toolCall", [sAttr("ai.operationId", "ai.toolCall"), sAttr("ai.toolCall.name", name), sAttr("ai.toolCall.id", `call_${name}`)], s, e);
+    // In end order, as a BatchSpanProcessor exports them.
+    const spans = [
+      call("e000000000000002", ROOT, "orchestrator", "plan", 100, 1000),
+      call("e000000000000012", "e000000000000011", "researcher", "found it", 1200, 2900),
+      loop("e000000000000011", "e000000000000010", "researcher", "found it", 1100, 3000),
+      toolCall("e000000000000010", "researcher", 1050, 3100),
+      call("e000000000000022", "e000000000000021", "writer", "wrote it", 3300, 4900),
+      loop("e000000000000021", "e000000000000020", "writer", "wrote it", 3200, 5000),
+      toolCall("e000000000000020", "writer", 3150, 5100),
+      call("e000000000000003", ROOT, "orchestrator", "done", 5200, 6000),
+      loop(ROOT, undefined, "orchestrator", "done", 0, 6100),
+    ];
+    const post = async (part: typeof spans) => assert.equal((await send(rx.url, json("/v1/traces", otlpTraces("aisdk-agent", part)))).status, 200);
+    const children = ["e000000000000011", "e000000000000021"].map((id) => `otel-sub-${T}-${id}`);
+    const shape = async () => {
+      const root = await store.getSession(T);
+      const out: unknown[] = [{ llm: root?.stats.latency?.llmCalls, subagents: root?.stats.latency?.subagents, spans: (await store.listEvents(T)).filter((e) => e.kind === "span").length }];
+      for (const id of children) {
+        const s = await store.getSession(id);
+        const events = await store.listEvents(id);
+        out.push({
+          parent: s?.parent?.sessionId,
+          llm: s?.stats.latency?.llmCalls,
+          answers: events.filter((e) => e.kind === "assistant.message").map((e) => e.payload.text),
+          prompts: events.filter((e) => e.kind === "user.message").map((e) => e.payload.text),
+        });
+      }
+      return out;
+    };
+    const whole = [
+      { llm: 2, subagents: 2, spans: 0 },
+      { parent: T, llm: 1, answers: ["found it"], prompts: ["task researcher"] },
+      { parent: T, llm: 1, answers: ["wrote it"], prompts: ["task writer"] },
+    ];
+
+    it("in one request, each child shows its answer once", async () => {
+      await post(spans);
+      assert.deepEqual(await shape(), whole);
+    });
+
+    for (const [name, parts] of [
+      ["one span per request", spans.map((s) => [s])],
+      ["cut after the first loop (CUT=3)", [spans.slice(0, 3), spans.slice(3)]],
+    ] as const) {
+      it(`${name}: the same sessions`, async () => {
+        for (const p of parts) await post([...p]);
+        assert.deepEqual(await shape(), whole);
+      });
+    }
+
+    it("redacts the loop's events that replace its stored copy", async () => {
+      const { text, canaries } = secretOutput();
+      const late = [
+        call("e000000000000012", "e000000000000011", "researcher", "found it", 1200, 2900),
+        otlpSpan(T, "e000000000000011", "e000000000000010", "ai.streamText", [...op("ai.streamText", "researcher"), sAttr("ai.prompt", JSON.stringify({ prompt: text })), sAttr("ai.response.text", "found it")], 1100, 3000),
+        toolCall("e000000000000010", "researcher", 1050, 3100),
+        loop(ROOT, undefined, "orchestrator", "done", 0, 6100),
+      ];
+      for (const s of late) await post([s]);
+      const events = await store.listEvents(children[0]!);
+      const prompt = events.find((e) => e.kind === "user.message");
+      assert.ok(prompt, "the subagent's prompt replaced the stored plain span");
+      assert.ok(String(prompt.payload.text).includes("DB_PASSWORD=[redacted:secret-assignment]"));
+      assert.deepEqual(canaries.filter((c) => JSON.stringify(events).includes(c)), []);
+    });
+  });
+
+  // Regression: a GenAI semconv agent took its prompt only from the root's first chat span, in the same request.
+  describe("GenAI semconv prompts from chat spans, however the spans were batched", () => {
+    const T = "3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f";
+    const ROOT = "f100000000000001";
+    const msgs = (role: string, text: string) => JSON.stringify([{ role, parts: [{ type: "text", content: text }] }]);
+    const agent = (id: string, parent: string | undefined, name: string, s: number, e: number) =>
+      otlpSpan(T, id, parent, `invoke_agent ${name}`, [sAttr("gen_ai.operation.name", "invoke_agent"), sAttr("gen_ai.agent.name", name)], s, e);
+    const chat = (id: string, parent: string, q: string, s: number, e: number) =>
+      otlpSpan(T, id, parent, "chat gpt-5-mini", [sAttr("gen_ai.operation.name", "chat"), sAttr("gen_ai.request.model", "gpt-5-mini"), sAttr("gen_ai.input.messages", msgs("user", q)), sAttr("gen_ai.output.messages", msgs("assistant", `answer ${q}`))], s, e);
+    const spans = [
+      chat("f100000000000002", ROOT, "plan", 500, 1500),
+      chat("f100000000000012", "f100000000000011", "research", 2000, 4000),
+      agent("f100000000000011", ROOT, "researcher", 1900, 4100),
+      chat("f100000000000022", "f100000000000021", "write", 5000, 8000),
+      agent("f100000000000021", ROOT, "writer", 4900, 8100),
+      chat("f100000000000003", ROOT, "wrap up", 8500, 12500),
+      agent(ROOT, undefined, "orchestrator", 0, 13000),
+    ];
+    const post = async (part: typeof spans) => assert.equal((await send(rx.url, json("/v1/traces", otlpTraces("genai-agent", part)))).status, 200);
+    const ids = [T, `otel-sub-${T}-f100000000000011`, `otel-sub-${T}-f100000000000021`];
+    const shape = async () => {
+      const out = [];
+      for (const id of ids) {
+        const s = await store.getSession(id);
+        const events = await store.listEvents(id);
+        const prompts = events.filter((e) => e.kind === "user.message");
+        const firstCall = Math.min(...events.filter((e) => e.kind === "llm.call").map((e) => e.ts));
+        out.push({ title: s?.title, turns: s?.stats.turns, prompts: prompts.length, beforeCalls: prompts.every((e) => e.ts <= firstCall) });
+      }
+      return out;
+    };
+    const want = [
+      { title: "plan", turns: 1, prompts: 1, beforeCalls: true },
+      { title: "research", turns: 1, prompts: 1, beforeCalls: true },
+      { title: "write", turns: 1, prompts: 1, beforeCalls: true },
+    ];
+
+    for (const [name, parts] of [
+      ["one request", [spans]],
+      ["one span per request", spans.map((s) => [s])],
+      ["the root in its own request (SPLIT=2)", [spans.slice(0, -1), spans.slice(-1)]],
+    ] as const) {
+      it(`${name}: root and subagents each get their first chat's prompt, before the call`, async () => {
+        for (const p of parts) await post([...p]);
+        assert.deepEqual(await shape(), want);
+      });
+    }
   });
 
   // Regression: the root invoke_agent span is the only one with gen_ai.conversation.id, and a
