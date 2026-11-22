@@ -11,6 +11,7 @@ import { packageVersion } from "../../src/adapters/_shared/detect.ts";
 import * as bench from "../../src/cli/commands/bench.ts";
 import * as show from "../../src/cli/commands/show.ts";
 import { shortSessionId } from "../../src/cli/common.ts";
+import { nextStepBin, windowsShell } from "../../src/cli/next-steps.ts";
 import { nodeBin, pathOf } from "../_bin.ts";
 import { removeTestDir } from "../_rm.ts";
 import { mkSession, runCmd, sandbox, type Sandbox } from "./_cmd.ts";
@@ -128,10 +129,32 @@ describe("bench on a benchmark that does not exist", () => {
       const r = await runCmd(bench, sb, { action, positionals: ["nope"], cwd });
       assert.match(String(r.error?.message), /Can't find benchmark "nope"/);
       assert.equal(r.error.reason, "not_found");
-      assert.ok(r.error.next.some((l: string) => l.includes("coding.sh bench new nope")), JSON.stringify(r.error.next));
+      assert.ok(r.error.next.some((l: string) => l.includes(`${nextStepBin(sb.env)} bench new nope`)), JSON.stringify(r.error.next));
       assert.ok(!r.error.next.some((l: string) => l.includes("bench run nope")), "no next step that fails too");
     });
   }
+
+  test("the command to create it runs in the user's shell", async () => {
+    // Under npx (npm_command=exec) it names the npx command, on every OS. PowerShell and cmd
+    // get the placeholders in double quotes: cmd keeps single quotes and reads a bare < as a redirect.
+    const npx = sandbox({ npm_command: "exec" });
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "csh-bench-npx-")));
+    try {
+      const r = await runCmd(bench, npx, { action: "show", positionals: ["nope"], cwd: dir });
+      const q = (s: string) => (windowsShell(npx.env) ? `"${s}"` : `'${s}'`);
+      const bin = nextStepBin(npx.env);
+      assert.equal(r.error.next.at(-1), `${bin} bench new nope --command ${q("<generator>")} -c a=${q("<cmd>")} -c b=${q("<cmd>")}`);
+      // Once it exists, the step that runs it names the same CLI.
+      const made = await runCmd(bench, npx, { action: "new", positionals: ["demo"], flags: { command: "node gen.mjs", contender: ["a=node a.mjs", "b=node b.mjs"] }, cwd: dir });
+      assert.equal(made.code, 0, String(made.error));
+      assert.ok(made.stderr.includes(`${bin} bench run demo`), made.stderr);
+      const none = await runCmd(bench, npx, { action: "show", positionals: ["demo"], cwd: dir });
+      assert.deepEqual(none.error?.next, ["Run it:", `${bin} bench run demo`]);
+    } finally {
+      npx.cleanup();
+      removeTestDir(dir);
+    }
+  });
 
   test("bench show latest is a benchmark name too", async () => {
     const r = await runCmd(bench, sb, { action: "show", positionals: ["latest"], cwd });

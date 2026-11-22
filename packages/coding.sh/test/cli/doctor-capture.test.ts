@@ -9,6 +9,7 @@ import { fakeBin, tmpEnv, writeFile, type TmpEnv } from "../adapters/_helpers.ts
 import { CLI, event, seed, session, T0 } from "../query/_seed.ts";
 import { spawnSync } from "node:child_process";
 import { implausible, PLAUSIBLE_LIMITS } from "../../src/cli/commands/doctor.ts";
+import { nextStepBin } from "../../src/cli/next-steps.ts";
 import { maskStoreUrl, maskUrlsIn } from "../../src/core/store-url.ts";
 import { acquireLock } from "../../src/core/lock.ts";
 import { spoolFile } from "../../src/spool/write.ts";
@@ -102,7 +103,7 @@ describe("doctor and status: capture problems", () => {
     });
     const doc = JSON.parse(run(["doctor", "--agent", "claude-code", "--json"]).stdout) as Doc;
     const w = doc.warnings.filter((x) => x.check === "stats");
-    assert.deepEqual(w.map((x) => [x.message, x.next]), [[`1 model call past physical limits (over ${PLAUSIBLE_LIMITS.maxTokensPerSec} tok/s 1); most in fast`, "coding.sh show fast"]]);
+    assert.deepEqual(w.map((x) => [x.message, x.next]), [[`1 model call past physical limits (over ${PLAUSIBLE_LIMITS.maxTokensPerSec} tok/s 1); most in fast`, `${nextStepBin(process.env)} show fast`]]);
     assert.match(run(["doctor", "--agent", "claude-code"]).stderr, /^! Stats\s+1 model call past physical limits/m);
   });
 

@@ -14,6 +14,7 @@ import { bundle } from "../../scripts/bundle.mjs";
 import { loadSqlite } from "../../src/store/sqlite-open.ts";
 import { MIGRATIONS, SQLITE_SCHEMA_VERSION } from "../../src/store/sqlite.ts";
 import { WRITER_KEY } from "../../src/store/upgrade.ts";
+import { nextStepBin } from "../../src/cli/next-steps.ts";
 import { SOURCE_CLI } from "../_cli.ts";
 
 const PKG = fileURLToPath(new URL("../../", import.meta.url));
@@ -43,7 +44,7 @@ function tmpHome(): { home: string; data: string; index: string } {
   return { home, data, index: join(data, "index.db") };
 }
 
-function run(cli: string, args: string[], h: { home: string; data: string }, opts: { input?: string } = {}) {
+function run(cli: string, args: string[], h: { home: string; data: string }, opts: { input?: string; env?: NodeJS.ProcessEnv } = {}) {
   const env: NodeJS.ProcessEnv = {
     HOME: h.home,
     USERPROFILE: h.home,
@@ -53,6 +54,7 @@ function run(cli: string, args: string[], h: { home: string; data: string }, opt
     PATH: dirname(process.execPath),
     NO_UPDATE_NOTIFIER: "1",
     CODING_SH_NO_AUTO_INGEST: "1",
+    ...opts.env,
   };
   const r = spawnSync(process.execPath, ["--no-warnings", cli, ...args], { env, encoding: "utf8", timeout: 60_000, input: opts.input });
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
@@ -151,6 +153,27 @@ describe("a build that is not newer than the store's last writer", () => {
     assert.equal(none.status, 1);
     assert.equal((JSON.parse(none.stderr) as { reason: string }).reason, "no_backup");
   });
+
+  it("the commands it prints keep the flags given and name the CLI as the user's shell runs it", async () => {
+    // Under npx (npm_command=exec) they name the npx command, on every OS.
+    const npx = { npm_command: "exec" };
+    const bin = nextStepBin(npx);
+    const next = (r: { stderr: string }) => (JSON.parse(r.stderr) as { next: string[] }).next;
+    const h = tmpHome();
+    await storeAt(h.index, OLD, VERSION);
+    const ask = run(CLI, ["upgrade-store", "--json"], h, { env: npx });
+    assert.equal(ask.status, 2, ask.stderr);
+    assert.deepEqual(next(ask), ["With their approval:", `${bin} upgrade-store --json --yes`]);
+    const up = run(CLI, ["upgrade-store", "--yes"], h, { env: npx });
+    assert.equal(up.status, 0, up.stderr);
+    assert.ok(up.stderr.includes(`${bin} upgrade-store --restore puts it back`), up.stderr);
+    const back = run(CLI, ["upgrade-store", "--restore", "--json"], h, { env: npx });
+    assert.equal(back.status, 2, back.stderr);
+    assert.deepEqual(next(back), ["With their approval:", `${bin} upgrade-store --restore --json --yes`]);
+    const done = run(CLI, ["upgrade-store", "--restore", "--yes"], h, { env: npx });
+    assert.equal(done.status, 0, done.stderr);
+    assert.ok(done.stderr.includes(`it migrates this store again only through ${bin} upgrade-store.`), done.stderr);
+  });
 });
 
 describe("upgrade-store always leaves bin/cli-path naming the running CLI", () => {
@@ -232,6 +255,15 @@ describe("a store one schema ahead of this coding.sh", () => {
     assert.equal(err.reason, "store_newer");
     assert.ok(err.next.includes("coding.sh update"));
     assert.deepEqual([err.data.schema, err.data.known, err.data.writer, err.data.spool.files], [SQLITE_SCHEMA_VERSION + 1, SQLITE_SCHEMA_VERSION, "9.9.9", 2]);
+  });
+
+  it("upgrade-store --restore with no copy it can open names the update command as the user's shell runs it", async () => {
+    const npx = { npm_command: "exec" };
+    const r = run(CLI, ["upgrade-store", "--restore", "--json"], await ahead(), { env: npx });
+    assert.equal(r.status, 1, r.stderr);
+    const err = JSON.parse(r.stderr) as { reason: string; next: string[] };
+    assert.equal(err.reason, "no_backup");
+    assert.deepEqual(err.next, ["Install the latest coding.sh:", `${nextStepBin(npx)} update`]);
   });
 
   it("the hook's background ingest leaves a marker, and status, status --json and the status line say ingest stopped", async () => {

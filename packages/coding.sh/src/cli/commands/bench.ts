@@ -7,7 +7,7 @@ import { verifySeed, type SeedCheck } from "../../bench/commit.ts";
 import { buildReport, renderReportHtml } from "../../bench/report.ts";
 import { gridText } from "../../bench/grid.ts";
 import { specializationLines } from "../../bench/specialization.ts";
-import { BenchRunError, regradeRun, resumeBench, resumeCommand, resumeTarget, runBench, type DryRunResult } from "../../bench/run.ts";
+import { BenchRunError, regradeRun, resumeBench, resumeTarget, runBench, type DryRunResult } from "../../bench/run.ts";
 import { JobStore } from "../../jobs/store.ts";
 import { cronLine, envRefs, installCron, systemCrontab, workflowYaml } from "../../bench/schedule.ts";
 import { SourceError } from "../../bench/sources.ts";
@@ -22,8 +22,22 @@ import type { GraderSpec } from "../../graders/index.ts";
 import { FileJudgeCache } from "../../judge/cache.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { autoIngest, jsonArg, list, requireConsent, str, withContext, readIngest } from "../common.ts";
+import { cliCommand, nextStepBin, rerunWithYes, windowsShell } from "../next-steps.ts";
 import { ago, CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
+
+/** `bench` with `args`, as the user's shell runs it (cliCommand). */
+const bench = (env: NodeJS.ProcessEnv, ...args: string[]): string => cliCommand(env, ["bench", ...args]);
+
+/**
+ * `bench new` with a generator and two contenders, placeholders by default. sh
+ * gets them in single quotes; PowerShell and cmd get double quotes, which both
+ * strip (cmd keeps single quotes, and reads a bare `<` as a redirect).
+ */
+function benchNew(env: NodeJS.ProcessEnv, name: string, generator = "<generator>", a = "<cmd>", b = "<cmd>"): string {
+  const q = (s: string) => (windowsShell(env) ? `"${s}"` : `'${s}'`);
+  return `${nextStepBin(env)} bench new ${name} --command ${q(generator)} -c a=${q(a)} -c b=${q(b)}`;
+}
 
 const pct = (x: number) => (Number.isFinite(x) ? `${(x * 100).toFixed(1)}%` : "-");
 const ms = (x: number | null | undefined) => (x === null || x === undefined || !Number.isFinite(x) ? "-" : x < 1000 ? `${Math.round(x)}ms` : `${(x / 1000).toFixed(2)}s`);
@@ -35,7 +49,7 @@ function definitionFor(c: CommandContext, ref: string): BenchDef {
   if (!file) {
     throw new CliError(`Can't find benchmark ${JSON.stringify(ref)}`, {
       reason: "not_found",
-      next: ["Looked in ./bench/ (and parent folders) and ~/.coding.sh/benchmarks/. Create one:", `coding.sh bench new ${/^[a-z0-9][a-z0-9._-]*$/.test(ref) ? ref : "<name>"} --command '<generator>' -c a='<cmd>' -c b='<cmd>'`],
+      next: ["Looked in ./bench/ (and parent folders) and ~/.coding.sh/benchmarks/. Create one:", benchNew(c.env, /^[a-z0-9][a-z0-9._-]*$/.test(ref) ? ref : "<name>")],
     });
   }
   try {
@@ -66,7 +80,7 @@ async function runsOrFail(c: CommandContext, name: string, ref: string = name): 
   const runs = await listRuns(name, c.env);
   // No runs and no definition: the benchmark doesn't exist, and `bench run` would fail too.
   if (!runs.length && !findDefinition(ref, { cwd: c.cwd, env: c.env })) definitionFor(c, ref);
-  if (!runs.length) throw new CliError(`${name} has no runs yet`, { reason: "not_found", next: ["Run it:", `coding.sh bench run ${name}`] });
+  if (!runs.length) throw new CliError(`${name} has no runs yet`, { reason: "not_found", next: ["Run it:", bench(c.env, "run", name)] });
   return runs;
 }
 
@@ -240,7 +254,9 @@ export async function run(c: CommandContext): Promise<number> {
     if (e instanceof BenchDefError || e instanceof SourceError || e instanceof DatasetError) throw new CliError(e.message, { reason: e instanceof SourceError ? "source_failed" : "invalid_definition" });
     if (e instanceof BenchRunError) {
       const interrupted = /interrupted/.test(e.message);
-      throw new CliError(e.message, { reason: interrupted ? "interrupted" : "run_failed", ...(interrupted ? { exitCode: 130 } : {}), next: e.resume ? ["Continue it:", e.resume] : undefined });
+      // resumeCommand names the CLI coding.sh; the step names it as the user's shell runs it.
+      const resume = e.resume?.replace(/^coding\.sh(?= )/, nextStepBin(c.env));
+      throw new CliError(e.message, { reason: interrupted ? "interrupted" : "run_failed", ...(interrupted ? { exitCode: 130 } : {}), next: resume ? ["Continue it:", resume] : undefined });
     }
     throw e;
   }
@@ -258,12 +274,12 @@ async function dispatch(c: CommandContext): Promise<number> {
       }
       const contenders = list(c.flags.contender).map(parseContender);
       if (contenders.length < 2) {
-        throw new UsageError("A benchmark compares at least two contenders: pass --contender NAME=CMD twice", { reason: "missing_argument", suggestion: `coding.sh bench new ${name} --command 'node gen.mjs' -c a='node a.mjs' -c b='node b.mjs'` });
+        throw new UsageError("A benchmark compares at least two contenders: pass --contender NAME=CMD twice", { reason: "missing_argument", suggestion: benchNew(env, name, "node gen.mjs", "node a.mjs", "node b.mjs") });
       }
       const graders = (await Promise.all(list(c.flags.grader).map((g) => jsonArg(g, "--grader")))) as GraderSpec[];
       const dir = c.flags.global === true ? benchHome(env) : join(c.cwd, "bench");
       const file = join(dir, `${name}.toml`);
-      if (existsSync(file) && c.flags.force !== true) throw new CliError(`${file} already exists`, { reason: "exists", askUser: true, next: ["Edit it, or overwrite it:", `coding.sh bench new ${name} --force …`] });
+      if (existsSync(file) && c.flags.force !== true) throw new CliError(`${file} already exists`, { reason: "exists", askUser: true, next: ["Edit it, or overwrite it:", `${bench(env, "new", name, "--force")} …`] });
       const text = renderDefinition({ name, source: sourceFromFlags(c), contenders, graders, cases: positiveInt(c.flags.cases, "cases") ?? 50 });
       try {
         parseDefinition(text, file); // what `run` will parse, checked before writing
@@ -277,7 +293,7 @@ async function dispatch(c: CommandContext): Promise<number> {
       else {
         out.ok(`Wrote ${relative(c.cwd, file) || file}`);
         for (const l of planLines(plan)) out.note(l);
-        out.next("Run it", `coding.sh bench run ${name}`);
+        out.next("Run it", bench(env, "run", name));
         out.print(file);
       }
       return 0;
@@ -313,7 +329,7 @@ async function dispatch(c: CommandContext): Promise<number> {
               resume = true;
               offered = open.id;
             }
-          } else out.note(`${def.name} has an unfinished run with the same protocol: ${what}. Starting a new one; to continue it instead: coding.sh bench run ${def.name} --resume ${open.id}`);
+          } else out.note(`${def.name} has an unfinished run with the same protocol: ${what}. Starting a new one; to continue it instead: ${bench(env, "run", def.name, "--resume", open.id)}`);
         }
       }
       return withContext(c, async (ctx) => {
@@ -377,8 +393,8 @@ async function dispatch(c: CommandContext): Promise<number> {
         else {
           const seedCheck = verifySeed(result, await listRuns(def.name, env));
           printRun(c, result, seedCheck ? { seedCheck } : {});
-          if (result.status === "incomplete") out.next("Continue it", resumeCommand(def.name, result.id));
-          else out.next("See it over time", `coding.sh bench history ${def.name}`);
+          if (result.status === "incomplete") out.next("Continue it", bench(env, "run", def.name, "--resume", result.id));
+          else out.next("See it over time", bench(env, "history", def.name));
           out.print(result.id);
         }
         if (result.status === "incomplete") return 1;
@@ -410,7 +426,7 @@ async function dispatch(c: CommandContext): Promise<number> {
       }
       if (!rows.length) {
         out.note("No benchmarks");
-        out.next("Create one", "coding.sh bench new <name> --command '<generator>' -c a='<cmd>' -c b='<cmd>'");
+        out.next("Create one", benchNew(env, "<name>"));
         return 0;
       }
       out.table(
@@ -431,7 +447,7 @@ async function dispatch(c: CommandContext): Promise<number> {
       const all = await runsOrFail(c, name, c.positionals[0]!);
       const ref = str(c.flags.run) ?? "latest";
       const r = await getRun(name, ref, env);
-      if (!r) throw new CliError(`${name} has no run ${JSON.stringify(ref)}`, { reason: "not_found", next: ["List runs:", `coding.sh bench history ${name}`] });
+      if (!r) throw new CliError(`${name} has no run ${JSON.stringify(ref)}`, { reason: "not_found", next: ["List runs:", bench(env, "history", name)] });
       const seedCheck = verifySeed(r, all);
       if (out.json) out.data({ run: c.flags.cases === true ? r : runJson(r), ...(seedCheck ? { seedCheck } : {}) });
       else printRun(c, r, { failures: 5, cases: c.flags.cases === true, ...(seedCheck ? { seedCheck } : {}) });
@@ -477,7 +493,7 @@ async function dispatch(c: CommandContext): Promise<number> {
         return 0;
       }
       if (!runs.length) {
-        out.note(`${name} has no counted runs yet: only adhoc or incomplete ones (${all.length}). A plain \`coding.sh bench run ${name}\` starts the history.`);
+        out.note(`${name} has no counted runs yet: only adhoc or incomplete ones (${all.length}). A plain \`${bench(env, "run", name)}\` starts the history.`);
         return 0;
       }
       const names = Object.keys(s);
@@ -496,7 +512,7 @@ async function dispatch(c: CommandContext): Promise<number> {
       }
       for (const l of changeLines(changes)) out.warn(l);
       if (runs.some((r, i) => i > 0 && r.definition.protocolHash && runs[i - 1]!.definition.protocolHash && r.definition.protocolHash !== runs[i - 1]!.definition.protocolHash)) out.note("* protocol changed (sampling, source, graders or limits): values before and after are not comparable");
-      if (skipped) out.note(`${plural(skipped, "run")} not counted (adhoc, reruns, incomplete or regraded). See them with coding.sh bench show ${name} --run <id>.`);
+      if (skipped) out.note(`${plural(skipped, "run")} not counted (adhoc, reruns, incomplete or regraded). See them with ${bench(env, "show", name)} --run <id>.`);
       return 0;
     }
     case "report": {
@@ -562,7 +578,7 @@ async function dispatch(c: CommandContext): Promise<number> {
       }
       let installed: { replaced: boolean; changed: boolean } | undefined;
       if (c.flags["install-cron"] === true) {
-        await requireConsent(c, `Add a daily ${def.name} run to your crontab?`, `coding.sh bench schedule ${def.name} --install-cron --yes`);
+        await requireConsent(c, `Add a daily ${def.name} run to your crontab?`, rerunWithYes(c, ["bench", "schedule", def.name, "--install-cron"]));
         await mkdir(join(benchHome(env), def.name), { recursive: true });
         installed = installCron(systemCrontab(env), line, def.name);
       }

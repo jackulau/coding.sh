@@ -35,6 +35,7 @@ import type { TriggerRunResult } from "./eval-trigger.ts";
 import { DEFAULT_TRIALS, resolveSuites, SuiteError, taskDirs, type LoadedSuite } from "../../eval/suite-spec.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { requireConsent, str, withContext } from "../common.ts";
+import { rerunWithYes } from "../next-steps.ts";
 import { ensureHookBin } from "../hookbin.ts";
 import { infraStopNote, retryFlag, trialTimeout } from "../jobs.ts";
 import { CliError, plural } from "../output.ts";
@@ -84,7 +85,7 @@ export async function evalRun(c: CommandContext): Promise<number> {
       const sessions = agentRuns.reduce((n, x) => n + x.n, 0);
       if (sessions) {
         const what = agentRuns.map((x) => `${x.s.spec.name}: ${plural(taskDirs(x.s).length, "task")} x ${trialsOf(x.s)}`).join(", ");
-        await requireConsent(c, `Run ${plural(sessions, "agent session")} (${what})?`, `coding.sh eval run ${c.positionals.join(" ")} --yes`.replace(/\s+/g, " "));
+        await requireConsent(c, `Run ${plural(sessions, "agent session")} (${what})?`, rerunWithYes(c, ["eval", "run", ...c.positionals]));
       }
       for (const s of rest) outcomes.push(s.kind === "tasks" ? await runTaskSuite(c, ctx, s, trialsOf(s), root) : await runCaseSuite(c, ctx, s, trialsOf(s), root));
     });

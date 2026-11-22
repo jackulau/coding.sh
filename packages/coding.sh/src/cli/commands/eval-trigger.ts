@@ -30,6 +30,7 @@ import {
 } from "../../eval/trigger.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { requireConsent, str, withContext } from "../common.ts";
+import { rerunWithYes } from "../next-steps.ts";
 import { ensureHookBin } from "../hookbin.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -131,7 +132,7 @@ export async function evalTrigger(c: CommandContext, hooks: { onResult?: (r: Tri
     const prompts = spec.should.length + spec.shouldNot.length;
     const runs = arms.length * prompts * k;
     const armText = arms.length === 2 ? "2 arms" : "1 arm";
-    await requireConsent(c, `Run ${plural(runs, "agent session")} (${armText} x ${plural(prompts, "prompt")} x ${k})?`, `coding.sh eval trigger ${target} --yes`);
+    await requireConsent(c, `Run ${plural(runs, "agent session")} (${armText} x ${plural(prompts, "prompt")} x ${k})?`, rerunWithYes(c, ["eval", "trigger", target]));
     if (!out.json) {
       out.note(`${skill} in ${skillsDirOf(agent)}/${skill}/ on ${agent}${siblings.length ? ` with ${plural(siblings.length, "sibling skill")} (${siblings.map((s) => s.name).join(", ")})` : ", no sibling skills"}`);
     }

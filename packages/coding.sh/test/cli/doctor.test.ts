@@ -7,6 +7,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { fakeBin, tmpEnv, writeFile, type TmpEnv } from "../adapters/_helpers.ts";
+import { nextStepBin, runCommand } from "../../src/cli/next-steps.ts";
 import { CLI, seed, session } from "../query/_seed.ts";
 
 interface Warning {
@@ -27,10 +28,13 @@ describe("doctor: an agent that cannot capture", () => {
   let config: string;
   let cwd: string;
   let hook: string;
-  const run = (args: string[]) => {
-    const r = spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { cwd, env: { ...process.env, CODING_SH_HOOK_SOURCE: hook, CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1", NO_COLOR: "1" }, encoding: "utf8", timeout: 60_000 });
+  const run = (args: string[], extra: NodeJS.ProcessEnv = {}) => {
+    const r = spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { cwd, env: { ...process.env, CODING_SH_HOOK_SOURCE: hook, CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1", NO_COLOR: "1", ...extra }, encoding: "utf8", timeout: 60_000 });
     return { status: r.status, stdout: r.stdout, stderr: r.stderr };
   };
+  // The CLI as doctor names it in the shell running these tests: codingsh in PowerShell or cmd.
+  const bin = nextStepBin(process.env);
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
   before(async () => {
     env = tmpEnv();
@@ -59,7 +63,7 @@ describe("doctor: an agent that cannot capture", () => {
     assert.doesNotMatch(r.stderr, /✓ Codex CLI/);
     assert.match(r.stderr, /hooks are disabled in config\.toml/);
     assert.ok(r.stderr.includes(`${config}:4`), `names the file and line: ${r.stderr}`);
-    assert.match(r.stderr, /coding\.sh init --agent codex/);
+    assert.match(r.stderr, new RegExp(`${esc(bin)} init --agent codex`));
     // Host apps found on this machine (T3 Code) can add to the count; with --agent it is exact.
     const last = r.stdout.trimEnd().split("\n").at(-1)!;
     assert.notEqual(last, "ok");
@@ -81,8 +85,26 @@ describe("doctor: an agent that cannot capture", () => {
     assert.match(w[0]!.message, /^Codex CLI is not capturing: events arriving, hook not in user config$/);
     assert.match(w[0]!.blockers![0]!, /hooks are disabled in config\.toml/);
     assert.ok(w[0]!.blockers![0]!.includes(`${config}:4`));
-    assert.equal(w[0]!.next, "coding.sh init --agent codex");
+    assert.equal(w[0]!.next, `${bin} init --agent codex`);
     assert.ok(!doc.warnings.some((x) => x.agent === "wrapper"), "the built-in wrapper is never a warning");
+  });
+
+  test("started with npx, every command it prints runs through npx", () => {
+    // coding.sh is not on PATH then. The same nextStepBin names codingsh in PowerShell and cmd.
+    const npxEnv = { ...process.env, npm_command: "exec" };
+    const npx = process.platform === "win32" ? "npx -p coding.sh codingsh" : "npx coding.sh";
+    const r = run(["doctor"], { npm_command: "exec" });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, new RegExp(`capture with ${esc(runCommand(npxEnv, "<cmd>"))}, `));
+    assert.match(r.stderr, new RegExp(`Capture the agents without hooks:\\n\\s+${esc(npx)} init --agent codex`));
+    assert.match(r.stderr, new RegExp(`route agents through it with ${esc(npx)} init --proxy`));
+    assert.doesNotMatch(r.stderr, /(?<!npx |-p )coding\.sh (?:collector|doctor|ingest|init|proxy|run|show|uninstall|update)\b/);
+    const doc = JSON.parse(run(["doctor", "--json"], { npm_command: "exec" }).stdout) as Doc;
+    assert.equal(doc.warnings.find((x) => x.agent === "codex")!.next, `${npx} init --agent codex`);
+    // A conformance flag without --conformance: the suggestion is a command too.
+    const usage = run(["doctor", "--since", "7d", "--json"], { npm_command: "exec" });
+    assert.equal(usage.status, 2, usage.stderr);
+    assert.deepEqual((JSON.parse(usage.stderr) as { next: string[] }).next, ["Did you mean:", `${npx} doctor --conformance --since 7d`]);
   });
 
   test("with the hook installed and no blocker the row is a check mark and the last line is ok", () => {
