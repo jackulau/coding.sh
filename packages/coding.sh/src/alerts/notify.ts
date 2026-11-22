@@ -6,6 +6,10 @@ import { redactUrl } from "../sinks/post.ts";
 import type { AlertState, AlertTarget } from "./store.ts";
 
 export const SIGNATURE_HEADER = "X-Coding-Sh-Signature";
+/** When the POST was sent, in unix seconds. */
+export const TIMESTAMP_HEADER = "X-Coding-Sh-Timestamp";
+/** `sha256=<hex HMAC-SHA256 of "<timestamp>.<body>">`: with the timestamp, a receiver can refuse a replay. */
+export const SIGNATURE_V2_HEADER = "X-Coding-Sh-Signature-V2";
 export const DELIVERY_TRIES = 3;
 const BACKOFF_MS = 1000;
 const WEBHOOK_TIMEOUT_MS = 10_000;
@@ -31,6 +35,23 @@ export interface AlertPayload {
 export function signBody(secret: string, body: string): string {
   return `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
 }
+
+/**
+ * The signing headers of one POST, made when it is sent. X-Coding-Sh-Signature
+ * signs the body alone, as it always has, so it verifies a copy sent again at
+ * any time; X-Coding-Sh-Signature-V2 signs `<timestamp>.<body>`, and a receiver
+ * refuses a timestamp more than 5 minutes from its own clock.
+ */
+export function signatureHeaders(secret: string, body: string, nowMs = Date.now()): Record<string, string> {
+  const ts = String(Math.floor(nowMs / 1000));
+  return { [SIGNATURE_HEADER]: signBody(secret, body), [TIMESTAMP_HEADER]: ts, [SIGNATURE_V2_HEADER]: signBody(secret, `${ts}.${body}`) };
+}
+
+/** What `alert add` and `monitor add --http` print under the secret they show once. */
+export const SIGNING_NOTES: readonly string[] = [
+  `Each POST carries ${SIGNATURE_V2_HEADER}: sha256=<HMAC-SHA256 of "<timestamp>.<body>", keyed with this secret>, with the timestamp in ${TIMESTAMP_HEADER} (unix seconds).`,
+  `Refuse a timestamp more than 5 minutes from your clock. ${SIGNATURE_HEADER} signs the body alone and does not stop a replay.`,
+];
 
 export interface DeliverOptions {
   secret?: string;
@@ -67,7 +88,7 @@ const wait = (ms: number, signal?: AbortSignal) =>
 
 async function postOnce(url: string, body: string, o: DeliverOptions): Promise<string | undefined> {
   const headers: Record<string, string> = { "content-type": "application/json", "user-agent": "coding.sh" };
-  if (o.secret) headers[SIGNATURE_HEADER] = signBody(o.secret, body);
+  if (o.secret) Object.assign(headers, signatureHeaders(o.secret, body));
   const timeout = AbortSignal.timeout(o.timeoutMs ?? WEBHOOK_TIMEOUT_MS);
   try {
     const res = await (o.fetch ?? globalThis.fetch)(url, { method: "POST", headers, body, redirect: "manual", signal: o.signal ? AbortSignal.any([timeout, o.signal]) : timeout });

@@ -3,6 +3,8 @@
 // and the last error kept in <CODING_SH_HOME>/monitors.json.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHmac } from "node:crypto";
+import { getEventListeners } from "node:events";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -14,12 +16,12 @@ import * as monitorCmd from "../../src/cli/commands/monitor.ts";
 import * as scoreCmd from "../../src/scores/cli.ts";
 import { openContext } from "../../src/core/context.ts";
 import { paths } from "../../src/core/paths.ts";
-import { SIGNATURE_HEADER, signBody } from "../../src/alerts/notify.ts";
+import { SIGNATURE_HEADER, SIGNATURE_V2_HEADER, signBody, TIMESTAMP_HEADER } from "../../src/alerts/notify.ts";
 import type { ChatProvider } from "../../src/judge/providers.ts";
 import { monitorVersion, NO_PROVIDER, parseOutput, runMonitors, sampleKey } from "../../src/monitor/run.ts";
-import { readMonitors } from "../../src/monitor/state.ts";
+import { readMonitors, shownUrl } from "../../src/monitor/state.ts";
 import { startMonitorTimer } from "../../src/monitor/timer.ts";
-import { runCmd, sandbox, type Sandbox } from "../cli/_cmd.ts";
+import { mkSession, runCmd, sandbox, type Sandbox } from "../cli/_cmd.ts";
 
 const HOOK = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "spool", "hook.ts");
 const NODE = `"${process.execPath}"`;
@@ -281,12 +283,13 @@ describe("monitor --judge --provider gemini", () => {
 
 /** A local evaluator: answers each POST with the next queued reply and records what it got. */
 async function evaluator(replies: ((res: ServerResponse) => void)[]) {
-  const posts: { path: string; body: string; signature: string | undefined }[] = [];
+  const posts: { path: string; body: string; signature: string | undefined; timestamp: string | undefined; signatureV2: string | undefined }[] = [];
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const chunks: Buffer[] = [];
     req.on("data", (d: Buffer) => chunks.push(d));
     req.on("end", () => {
-      posts.push({ path: req.url ?? "", body: Buffer.concat(chunks).toString("utf8"), signature: req.headers[SIGNATURE_HEADER.toLowerCase()] as string | undefined });
+      const h = (name: string) => req.headers[name.toLowerCase()] as string | undefined;
+      posts.push({ path: req.url ?? "", body: Buffer.concat(chunks).toString("utf8"), signature: h(SIGNATURE_HEADER), timestamp: h(TIMESTAMP_HEADER), signatureV2: h(SIGNATURE_V2_HEADER) });
       const next = replies.length > 1 ? replies.shift()! : replies[0]!;
       next(res);
     });
@@ -326,7 +329,12 @@ describe("monitor --http", () => {
     assert.equal(rows.length, 1);
     assert.deepEqual([rows[0]!.targetId, rows[0]!.value, rows[0]!.comment, rows[0]!.judgeVersion], ["mon-http-1", 1, "looks right", monitorVersion(ev.url)]);
     assert.equal(ev.posts.length, 2, "one retry after the 503");
-    for (const p of ev.posts) assert.equal(p.signature, signBody(secret, p.body));
+    for (const p of ev.posts) {
+      assert.equal(p.signature, signBody(secret, p.body), "X-Coding-Sh-Signature signs the body alone, as before");
+      assert.match(p.timestamp ?? "", /^\d+$/, "unix seconds");
+      assert.ok(Math.abs(Number(p.timestamp) - Date.now() / 1000) < 60, `timestamp ${p.timestamp} is now`);
+      assert.equal(p.signatureV2, `sha256=${createHmac("sha256", secret).update(`${p.timestamp}.${p.body}`).digest("hex")}`);
+    }
     const doc = JSON.parse(ev.posts[1]!.body);
     assert.equal(doc.apiVersion, "v1");
     assert.equal(doc.monitor, "h");
@@ -366,7 +374,179 @@ describe("monitor --http", () => {
       const def = readMonitors(paths(sb.env).monitors).monitors[0]!;
       assert.match(def.lastError!.message, re, name);
       assert.equal(def.lastError!.sessionId, `mon-http-${name}`);
+      // An answer is about the session, so the monitor moves past it; an evaluator that is down is not.
+      const ctx = await openContext({ env: sb.env, cwd: sb.root });
+      const endedAt = (await ctx.index.getSession(`mon-http-${name}`).finally(() => ctx.close()))!.endedAt!;
+      assert.equal(def.cursor, name === "down" ? endedAt - 1 : endedAt, `${name}: cursor`);
     }
+  });
+
+  it("an evaluator that can't be reached stops the pass after 2 sessions, and the next pass starts at the first of them", async () => {
+    const sb = box();
+    const now = Date.now();
+    const sessions = [mkSession("out-1", now - 30_000), mkSession("out-2", now - 20_000), mkSession("out-3", now - 10_000)];
+    await sb.seed(sessions);
+    const drop = (res: ServerResponse) => res.socket?.destroy();
+    // out-1 gets a 500 on each of its 3 tries, out-2 a dropped connection; after that the evaluator is back.
+    const ev = await evaluator([answer(500, "down"), answer(500, "down"), answer(500, "down"), drop, drop, drop, answer(200, '{"value":1}')]);
+    await addHttp(sb, "out", ev.url);
+    const ctx = await openContext({ env: sb.env, cwd: sb.root });
+    try {
+      const first = (await runMonitors(ctx, { force: true })).monitors[0]!;
+      assert.deepEqual([first.scored, first.failed, first.stopped], [0, 2, "unreachable"]);
+      assert.deepEqual(ev.posts.map((p) => JSON.parse(p.body).session.session.id), ["out-1", "out-1", "out-1", "out-2", "out-2", "out-2"], "out-3 is not tried");
+      let def = readMonitors(paths(sb.env).monitors).monitors[0]!;
+      assert.equal(def.cursor, sessions[0]!.endedAt! - 1, "the cursor stays before out-1");
+      assert.equal(def.lastError!.sessionId, "out-2");
+      assert.match(def.lastError!.message, /out-2: POST http:\/\/127\.0\.0\.1:\d+\/score failed: .*; stopped after 2 sessions in a row/);
+
+      const second = (await runMonitors(ctx, { force: true })).monitors[0]!;
+      assert.deepEqual([second.scored, second.failed, second.stopped], [3, 0, undefined]);
+      def = readMonitors(paths(sb.env).monitors).monitors[0]!;
+      assert.equal(def.cursor, sessions[2]!.endedAt);
+      assert.equal(def.lastError, undefined, "a clean pass clears the error");
+    } finally {
+      await ctx.close();
+    }
+    assert.deepEqual((await monitorScores(sb)).map((s) => s.targetId).sort(), ["out-1", "out-2", "out-3"]);
+  });
+
+  it("an evaluator that answers for a later session moves the cursor past one it always fails on", async () => {
+    const sb = box();
+    const now = Date.now();
+    const sessions = [mkSession("bad-1", now - 30_000), mkSession("bad-2", now - 20_000), mkSession("bad-3", now - 10_000)];
+    await sb.seed(sessions);
+    // bad-1 gets a 500 on each of its 3 tries; the evaluator answers for every session after it.
+    const ev = await evaluator([answer(500, "oops"), answer(500, "oops"), answer(500, "oops"), answer(200, '{"value":1}')]);
+    await addHttp(sb, "bad", ev.url);
+    const ctx = await openContext({ env: sb.env, cwd: sb.root });
+    try {
+      const first = (await runMonitors(ctx, { force: true })).monitors[0]!;
+      assert.deepEqual([first.scored, first.failed, first.stopped], [2, 1, undefined]);
+      const def = readMonitors(paths(sb.env).monitors).monitors[0]!;
+      assert.equal(def.cursor, sessions[2]!.endedAt, "past bad-1: the evaluator is up, so bad-1 failed for a reason of its own");
+      assert.equal(def.lastError!.sessionId, "bad-1");
+      const second = (await runMonitors(ctx, { force: true })).monitors[0]!;
+      assert.deepEqual([second.scored, second.failed], [0, 0]);
+      assert.equal(ev.posts.length, 5, "the next pass sends bad-1 nothing more");
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("sessions --sample leaves out take no place among a pass's 100, so a held session does not hide the next one in the sample", async () => {
+    const sb = box();
+    const kept: string[] = [];
+    const left: string[] = [];
+    for (let i = 0; kept.length < 2 || left.length < 100; i++) {
+      const id = `smp-${i}`;
+      if (sampleKey(id) < 0.5) {
+        if (kept.length < 2) kept.push(id);
+      } else if (left.length < 100) left.push(id);
+    }
+    // The first session in the sample, then 100 the sample leaves out, then the second one in it.
+    const t0 = Date.now() - 200_000;
+    const sessions = [kept[0]!, ...left, kept[1]!].map((id, i) => mkSession(id, t0 + i * 1000));
+    await sb.seed(sessions);
+    const ev = await evaluator([answer(500, "oops"), answer(500, "oops"), answer(500, "oops"), answer(200, '{"value":1}')]);
+    const r = await add(sb, "smp", { http: ev.url, sample: 0.5 });
+    assert.equal(r.json.monitor.sample, 0.5);
+    const ctx = await openContext({ env: sb.env, cwd: sb.root });
+    try {
+      const first = (await runMonitors(ctx, { force: true })).monitors[0]!;
+      assert.deepEqual([first.scored, first.failed, first.sampledOut], [1, 1, 100]);
+      assert.equal(readMonitors(paths(sb.env).monitors).monitors[0]!.cursor, sessions.at(-1)!.endedAt);
+    } finally {
+      await ctx.close();
+    }
+    assert.deepEqual((await monitorScores(sb)).map((s) => s.targetId), [kept[1]]);
+  });
+
+  it("a session held for the next pass is found again when one that ended at the same moment was scored before it", async () => {
+    const sb = box();
+    const at = Date.now() - 10_000;
+    await sb.seed([mkSession("tie-a", at), mkSession("tie-b", at)]);
+    const ev = await evaluator([answer(200, '{"value":1}'), answer(503, "busy"), answer(503, "busy"), answer(503, "busy"), answer(200, '{"value":2}')]);
+    await addHttp(sb, "tie", ev.url);
+    const ctx = await openContext({ env: sb.env, cwd: sb.root });
+    try {
+      const first = (await runMonitors(ctx, { force: true })).monitors[0]!;
+      assert.deepEqual([first.scored, first.failed], [1, 1]);
+      assert.ok(readMonitors(paths(sb.env).monitors).monitors[0]!.cursor! < at + 1000, "the cursor is before the end both sessions share");
+      const second = (await runMonitors(ctx, { force: true })).monitors[0]!;
+      assert.deepEqual([second.scored, second.skipped], [1, 1]);
+    } finally {
+      await ctx.close();
+    }
+    assert.deepEqual((await monitorScores(sb)).map((s) => [s.targetId, s.value]).sort(), [["tie-a", 1], ["tie-b", 2]]);
+  });
+
+  it("Ctrl-C while a session is being scored records no failure, and the next pass starts at that session", async () => {
+    const sb = box();
+    const s = mkSession("abort-1", Date.now() - 10_000);
+    await sb.seed([s]);
+    const ac = new AbortController();
+    // The evaluator never answers: Ctrl-C comes while the POST is open.
+    const ev = await evaluator([() => ac.abort()]);
+    await addHttp(sb, "abort", ev.url);
+    const ctx = await openContext({ env: sb.env, cwd: sb.root });
+    try {
+      const r = (await runMonitors(ctx, { force: true, signal: ac.signal })).monitors[0]!;
+      assert.deepEqual([r.scored, r.failed, r.error], [0, 0, undefined]);
+      assert.equal(ev.posts.length, 1);
+      const def = readMonitors(paths(sb.env).monitors).monitors[0]!;
+      assert.equal(def.cursor, s.endedAt! - 1, "a new monitor's cursor starts just before the session");
+      assert.equal(def.lastError, undefined);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("the waits between tries leave no listener on the signal the pass was given", async () => {
+    const sb = box();
+    await sb.seed([mkSession("wait-1", Date.now() - 10_000)]);
+    const ev = await evaluator([answer(503, "busy")]);
+    await addHttp(sb, "wait", ev.url);
+    const ac = new AbortController();
+    const ctx = await openContext({ env: sb.env, cwd: sb.root });
+    try {
+      const r = (await runMonitors(ctx, { force: true, signal: ac.signal })).monitors[0]!;
+      assert.equal(r.failed, 1);
+      assert.equal(ev.posts.length, 3, "two waits, between three tries");
+      assert.equal(getEventListeners(ac.signal, "abort").length, 0);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  it("add and list never show the URL's query string, and each POST still goes to the URL with it", async () => {
+    const sb = box();
+    await sb.seed([mkSession("query-1", Date.now() - 10_000)]);
+    const ev = await evaluator([answer(200, '{"value":1}')]);
+    const url = `${ev.url}?code=s3cret-token#part`;
+    const added = await add(sb, "q", { http: url });
+    assert.equal(added.json.monitor.url, ev.url);
+    const listed = await runCmd(monitorCmd, sb, { action: "list", json: true });
+    assert.equal(listed.json.monitors[0].url, ev.url);
+    const human = await runCmd(monitorCmd, sb, { action: "list" });
+    assert.ok(human.stdout.includes(`http: ${ev.url}`), human.stdout);
+    assert.ok(!human.stdout.includes("s3cret"), human.stdout);
+    assert.equal(readMonitors(paths(sb.env).monitors).monitors[0]!.url, url, "monitors.json keeps the whole URL");
+    const ran = await runCmd(monitorCmd, sb, { action: "run", positionals: ["q"], json: true });
+    assert.equal(ran.json.monitors[0].scored, 1);
+    assert.deepEqual(ev.posts.map((p) => p.path), ["/score?code=s3cret-token"]);
+    assert.equal(shownUrl("not a url?code=s3cret"), "not a url", "a URL that does not parse loses its query too");
+  });
+
+  it("add tells how to check the timestamped signature, and that the old one alone does not stop a replay", async () => {
+    const sb = box();
+    const r = await runCmd(monitorCmd, sb, { action: "add", positionals: ["signed"], flags: { http: "http://127.0.0.1:9/score" } });
+    assert.equal(r.code, 0, r.stderr);
+    const text = r.stdout + r.stderr;
+    assert.match(text, /X-Coding-Sh-Signature-V2: sha256=<HMAC-SHA256 of "<timestamp>\.<body>"/);
+    assert.match(text, /X-Coding-Sh-Timestamp \(unix seconds\)/);
+    assert.match(text, /more than 5 minutes/);
+    assert.match(text, /X-Coding-Sh-Signature signs the body alone and does not stop a replay/);
   });
 
   it("add takes exactly one of --judge, --run or --http, and an http(s) URL without credentials", async () => {
@@ -382,6 +562,34 @@ describe("monitor --http", () => {
     await bad({ http: "not a url" }, /http or https/);
     await bad({ http: "https://user:pw@example.test/x" }, /credentials/);
     await bad({ http: "https://example.test/x", provider: "mock" }, /--provider and --model go with --judge/);
+  });
+});
+
+describe("monitor run --watch", () => {
+  it("leaves no listener on Ctrl-C's signal once a 10 s wait is over", async () => {
+    const sb = box();
+    await add(sb, "ok", { run: `${NODE} -e "console.log(JSON.stringify({value:1}))"` });
+    const file = paths(sb.env).monitors;
+    const lastRun = () => readMonitors(file).monitors[0]!.lastRunAt;
+    const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const ac = new AbortController();
+    const run = runCmd(monitorCmd, sb, { action: "run", flags: { watch: true }, json: true, signal: ac.signal });
+    try {
+      const deadline = Date.now() + 40_000;
+      while (lastRun() === undefined && Date.now() < deadline) await pause(50);
+      await pause(500);
+      const inFirstWait = getEventListeners(ac.signal, "abort").length;
+      const first = lastRun();
+      while (lastRun() === first && Date.now() < deadline) await pause(50);
+      assert.notEqual(lastRun(), first, "a second pass ran after the wait");
+      await pause(500);
+      assert.equal(getEventListeners(ac.signal, "abort").length, inFirstWait, "the first wait's listener is gone");
+    } finally {
+      ac.abort();
+      const r = await run;
+      assert.equal(r.error, undefined, String(r.error));
+      assert.equal(r.code, 0);
+    }
   });
 });
 
