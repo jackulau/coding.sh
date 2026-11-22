@@ -10,6 +10,7 @@ import { apiForVersion, opencode, opencodeDbNotes, opencodeDbPath, pluginPath, p
 import { blockingNotes, staleNotes } from "../../src/cli/commands/init.ts";
 import { assertGolden, assertWellFormed, collect, fakeBin, FIXTURES, loadSpool, summarize, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
 import { fakeBinary, readArgv, runSpec } from "./more/_helpers.ts";
+import { nodeBin } from "../_bin.ts";
 
 const T0 = 1793527200000;
 
@@ -300,6 +301,24 @@ describe("opencode plugin on disk (doctor and init)", () => {
     // Doctor names a plugin that runs another home's hook.mjs on its own row; the code is current.
     writeFileSync(v1, pluginSource(join(env.root, "elsewhere", "bin", "hook.mjs"), 1));
     assert.deepEqual(blockingNotes((await opencode.detect()).notes), []);
+  });
+});
+
+describe("opencode plugin choice with a slow `opencode --version`", () => {
+  let env: TmpEnv;
+  before(() => {
+    env = tmpEnv();
+  });
+  after(() => env.restore());
+
+  // With no npm package.json beside it, init reads the version from `opencode --version`, which a
+  // busy machine can hold past 5 s. With no version, init wrote the 2.x plugin for OpenCode 1.x.
+  it("waits out a --version that takes over 5 s and plans the 1.x plugin for 1.19.5", { timeout: 30_000 }, async () => {
+    const bin = join(env.root, "bin");
+    nodeBin(bin, "opencode", 'setTimeout(() => console.log("1.19.5"), 6000);\n');
+    process.env.PATH = bin;
+    const plan = await opencode.install({ hookCommand: join(env.dataHome, "bin", "hook.mjs"), scope: "user", dryRun: true });
+    assert.deepEqual(plan.map((ch) => [ch.path, ch.action]), [[pluginPath({ scope: "user" }, 1), "create"]]);
   });
 });
 

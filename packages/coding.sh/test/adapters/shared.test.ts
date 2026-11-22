@@ -21,6 +21,8 @@ import {
   parsePatch,
   parseTestOutput,
   isShellCall,
+  PROBE_TIMEOUT_MS,
+  probeVersion,
   removeTomlBlock,
   revertTomlKey,
   shellCommandOf,
@@ -374,5 +376,13 @@ describe("skillLoadsOf", async () => {
     assert.deepEqual(skillFieldsOf("Read", { file_path: ".claude/skills/pdf/SKILL.md" }), { skill: "pdf" });
     assert.deepEqual(skillFieldsOf("Bash", { command: "cat .claude/skills/pdf/SKILL.md .claude/skills/pdf/forms.md .claude/skills/xlsx/SKILL.md" }), { skill: "pdf", skills: ["pdf", "xlsx"] });
     assert.deepEqual(skillFieldsOf(undefined, {}), {});
+  });
+});
+
+describe("probeVersion", () => {
+  // On a busy machine a node-based CLI can take over 5 s to print its version. Every probe waits
+  // as long as detect does, so init picks OpenCode's plugin from the version doctor shows.
+  it("waits out a --version that takes over 5 s", { timeout: PROBE_TIMEOUT_MS + 10_000 }, async () => {
+    assert.equal(await probeVersion(process.execPath, ["-e", "setTimeout(() => console.log('9.8.7'), 6000)"]), "9.8.7");
   });
 });

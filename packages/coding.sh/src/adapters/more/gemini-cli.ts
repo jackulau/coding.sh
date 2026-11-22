@@ -26,7 +26,7 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, sep } from "node:path";
 import type { Adapter, AgentRunOutput, BackfillFile, BackfillOpts, DetectResult, FileChange, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../../core/types.ts";
-import { packageVersion, probeVersion } from "../_shared/detect.ts";
+import { PROBE_TIMEOUT_MS, packageVersion, probeVersion } from "../_shared/detect.ts";
 import type { AgentEvent, Usage } from "../../schema/index.ts";
 import {
   Emitter,
@@ -380,7 +380,7 @@ export async function* geminiChatEvents(file: string, ctx: NormalizeContext, opt
  * The installed Gemini CLI's version. Every launch writes ~/.gemini/projects.json and, when two
  * processes race (it relaunches itself), leaves projects.json.<uuid>.tmp files behind, so the
  * npm package.json is read instead. Without one, `gemini --version` runs with GEMINI_CLI_HOME
- * on a temp dir that is removed after.
+ * on a temp dir that is removed after, with the time detect gives every agent's probe.
  */
 async function installedVersion(binary: string): Promise<string | undefined> {
   const fromPackage = packageVersion(binary, "@google/gemini-cli");
@@ -388,7 +388,7 @@ async function installedVersion(binary: string): Promise<string | undefined> {
   let h: string | undefined;
   try {
     h = mkdtempSync(join(tmpdir(), "csh-gemini-version-"));
-    return await probeVersion(binary, ["--version"], 5000, { ...process.env, NO_COLOR: "1", CI: "1", GEMINI_CLI_HOME: h });
+    return await probeVersion(binary, ["--version"], PROBE_TIMEOUT_MS, { ...process.env, NO_COLOR: "1", CI: "1", GEMINI_CLI_HOME: h });
   } catch {
     return undefined;
   } finally {
