@@ -30,12 +30,31 @@ describe("coding.sh proxy --host", () => {
       const out = p.out.join("");
       const err = p.err.join("");
       assert.match(err, /no auth/i, err);
-      assert.match(out, /ANTHROPIC_BASE_URL=http:\/\/127\.0\.0\.1:\d+/);
-      assert.match(out, /OPENAI_BASE_URL=http:\/\/127\.0\.0\.1:\d+\/v1/);
+      // `export NAME=url` in sh, `$env:NAME = 'url'` in PowerShell or cmd.
+      assert.match(out, /ANTHROPIC_BASE_URL(=| = ')http:\/\/127\.0\.0\.1:\d+/);
+      assert.match(out, /OPENAI_BASE_URL(=| = ')http:\/\/127\.0\.0\.1:\d+\/v1/);
       assert.doesNotMatch(out, /0\.0\.0\.0/);
     } finally {
       p.child.kill("SIGINT");
     }
+  });
+});
+
+describe("coding.sh proxy env", () => {
+  it("prints export lines in sh, and in PowerShell or cmd the $env: lines `| Invoke-Expression` runs", () => {
+    // No proxy runs in this home: the lines name the default port.
+    const h = home();
+    const lines = (env: NodeJS.ProcessEnv) => {
+      const r = runSync(["proxy", "env"], env);
+      assert.equal(r.status, 0, r.stderr);
+      return r.stdout.trim().split(/\r?\n/);
+    };
+    const sh = ["export ANTHROPIC_BASE_URL=http://127.0.0.1:4320", "export OPENAI_BASE_URL=http://127.0.0.1:4320/v1"];
+    assert.deepEqual(lines({ ...h.env, SHELL: "/bin/bash" }), sh);
+    assert.deepEqual(lines({ ...h.env, MSYSTEM: "MINGW64" }), sh);
+    // No MSYSTEM or SHELL: PowerShell or cmd on Windows, where an export line does not run.
+    const ps = ["$env:ANTHROPIC_BASE_URL = 'http://127.0.0.1:4320'", "$env:OPENAI_BASE_URL = 'http://127.0.0.1:4320/v1'"];
+    assert.deepEqual(lines(h.env), process.platform === "win32" ? ps : sh);
   });
 });
 

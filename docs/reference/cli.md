@@ -375,7 +375,7 @@ coding.sh proxy [action] [options]
 |---|---|
 | [`status`](#codingsh-proxy-status) | Show whether a proxy is running, and where (exit 1 when not) |
 | [`stop`](#codingsh-proxy-stop) | Stop the background proxy |
-| [`env`](#codingsh-proxy-env) | Print the ANTHROPIC_BASE_URL / OPENAI_BASE_URL exports for the proxy |
+| [`env`](#codingsh-proxy-env) | Print the lines that point ANTHROPIC_BASE_URL / OPENAI_BASE_URL at the proxy |
 
 | Option | Default | Description |
 |---|---|---|
@@ -397,7 +397,7 @@ coding.sh proxy --anthropic-upstream https://gateway.example.com/anthropic
 - Forwards /v1/messages (and count_tokens), /v1/chat/completions, /v1/responses and every other path to the real API with the client's own auth headers. Auth headers are never stored.
 - Streams pass through as they arrive. A failed store write never fails the request.
 - Calls from Claude Code and Codex land in the session their hooks capture; other clients get a proxy-&lt;hash&gt; session per conversation (or send x-coding-sh-session: &lt;id&gt;).
-- Prints the environment to stdout; one line per call goes to stderr.
+- Prints the environment to stdout as export lines; in PowerShell or cmd, as PowerShell's $env: lines, which codingsh proxy env \| Invoke-Expression runs. One line per call goes to stderr.
 - --enforce-budget reads the spend at most every 30 s. It can match a budget for every session or for an agent (claude-code and codex by their headers, every other client as proxy), never one with --repo: the proxy does not know a call's repo. count_tokens and other paths are never blocked. Spend that can't be read lets the call through.
 
 ### `coding.sh proxy status`
@@ -426,7 +426,7 @@ coding.sh proxy stop
 
 ### `coding.sh proxy env`
 
-Print the ANTHROPIC_BASE_URL / OPENAI_BASE_URL exports for the proxy.
+Print the lines that point ANTHROPIC_BASE_URL / OPENAI_BASE_URL at the proxy.
 
 ```text
 coding.sh proxy env

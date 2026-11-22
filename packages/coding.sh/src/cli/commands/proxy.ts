@@ -16,6 +16,7 @@ import { port as portFlag, str, withContext } from "../common.ts";
 import { version } from "../meta.ts";
 import { UsageError } from "../args.ts";
 import { CliError, usd } from "../output.ts";
+import { envLine } from "../next-steps.ts";
 import type { CommandContext } from "../types.ts";
 import { until } from "./budget.ts";
 
@@ -115,7 +116,7 @@ async function start(c: CommandContext): Promise<number> {
     await writeProxyState({ pid: process.pid, url, host: proxy.host, port: proxy.port, startedAt: Date.now(), upstreams: s.upstreams }, c.env);
     const vars = proxyEnv(url);
     if (out.json) out.data({ url, host: proxy.host, port: proxy.port, env: vars, upstreams: s.upstreams });
-    else for (const [k, v] of Object.entries(vars)) out.print(`export ${k}=${v}`);
+    else for (const [k, v] of Object.entries(vars)) out.print(envLine(c.env, k, v));
     if (!isLoopbackHost(proxy.host)) out.warn(`Listening on ${proxy.host}: the proxy has no auth, so anyone who can reach this port can send calls through it`);
     out.note(`Ready on ${url} (Anthropic → ${s.upstreams.anthropic}, OpenAI → ${s.upstreams.openai})`);
     if (enforce) out.note(`Enforcing budgets: a call a budget over its limit applies to gets a 429 (${enforcingCount(budgets)}; coding.sh budget status)`);
@@ -237,6 +238,6 @@ async function env(c: CommandContext): Promise<number> {
   const url = st && pidAlive(st.pid) ? st.url : `http://127.0.0.1:${s.port}`;
   const vars = proxyEnv(url);
   if (out.json) out.data({ url, env: vars });
-  else for (const [k, v] of Object.entries(vars)) out.print(`export ${k}=${v}`);
+  else for (const [k, v] of Object.entries(vars)) out.print(envLine(c.env, k, v));
   return 0;
 }
