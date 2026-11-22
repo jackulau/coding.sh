@@ -30,6 +30,7 @@ import { parseTestOutput, type TestSummary } from "../_shared/heuristics.ts";
 import { makeSqliteCopyDir, onSqliteCopyRelease, reapSqliteCopies, releaseSqliteCopyDir } from "../_shared/sqlite-copies.ts";
 import { editJsonc, parseJsonc as parseJsoncShared } from "../_shared/jsonc.ts";
 import { isolatedHome } from "../_shared/overlay.ts";
+import { PROBE_TIMEOUT_MS } from "../_shared/detect.ts";
 
 export type Json = Record<string, unknown>;
 
@@ -693,8 +694,8 @@ export function findBinary(names: readonly string[], env: NodeJS.ProcessEnv = pr
   return undefined;
 }
 
-/** `<bin> --version` → first version-looking token (5 s budget, never throws). */
-export function binVersion(bin: string, args: string[] = ["--version"], timeoutMs = 5000): Promise<string | undefined> {
+/** `<bin> --version` → first version-looking token (never throws). Detect's budget (PROBE_TIMEOUT_MS): a busy machine can hold a probe past 5 s. */
+export function binVersion(bin: string, args: string[] = ["--version"], timeoutMs = PROBE_TIMEOUT_MS): Promise<string | undefined> {
   return new Promise((resolve) => {
     try {
       execFile(bin, args, { timeout: timeoutMs, env: { ...process.env, NO_COLOR: "1", CI: "1" }, windowsHide: true }, (_err, stdout, stderr) => {
