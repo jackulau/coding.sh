@@ -21,9 +21,10 @@ The script checks for Node 22.16 or newer and installs coding.sh from npm. If np
 release (or can't be reached), it takes the tarball from the GitHub release instead. Then it runs
 `coding.sh init` and opens the viewer.
 
-`npx coding.sh init` also works. The hook is copied to a stable path, but the MCP entry points at
-the npx cache copy of the CLI. Install globally if you want the MCP server to survive
-`npm cache clean`.
+`npx coding.sh init` also works. On Windows, npx runs the command through cmd, where `coding.sh`
+fails (see [Windows](#windows)): run `npx -p coding.sh codingsh init`. The hook is copied to a
+stable path, but the MCP entry points at the npx cache copy of the CLI. Install globally if you want
+the MCP server to survive `npm cache clean`.
 
 ## Script options
 
@@ -57,13 +58,14 @@ script that starts no node for a plain hook call. On Windows they run `hook.mjs`
 ## Windows
 
 Run the installer from Git Bash, which comes with [Git for Windows](https://gitforwindows.org).
-The source install below works from PowerShell too. Under WSL, coding.sh behaves as it does on
-Linux and records the agents you run inside WSL.
+In PowerShell or cmd, install with npm: `npm install -g coding.sh`, then `codingsh init`. Under
+WSL, coding.sh behaves as it does on Linux and records the agents you run inside WSL.
 
 In PowerShell and cmd, type `codingsh` instead of `coding.sh` (for example `codingsh init` and
 `codingsh ui`). npm also installs an extensionless sh script named `coding.sh`, and PowerShell and
 cmd pick it over `coding.sh.cmd`, so `coding.sh` fails there. `codingsh` is the same CLI. In Git
-Bash, `coding.sh` works. `init` names `codingsh` in its next steps when it runs in PowerShell or cmd.
+Bash, `coding.sh` works. Run in PowerShell or cmd, `init`, `uninstall` and `update` name `codingsh`
+in the commands they print, and `update` names `npm install -g coding.sh` to reinstall.
 
 - Hooks run `node "C:/Users/you/.coding.sh/bin/hook.mjs" <agent> <event>`. The forward slashes
   and quotes work in cmd.exe, PowerShell and Git Bash, and with spaces in the path.
@@ -83,6 +85,9 @@ not been checked on Windows yet.
 coding.sh MCP server with the agents that support MCP. Every config file it edits is backed up to
 `~/.coding.sh/backups` first. `coding.sh init --dry-run` prints the plan (each agent, the files it
 would change, anything that blocks capture) and writes nothing; `--diff` adds the exact edits.
+
+Without a terminal, such as an agent's shell, `init` writes nothing and prints the command to run
+once you approve: the one you ran, flags included, with `--yes` added. `uninstall` does the same.
 
 Then `init` imports the sessions each agent already keeps on this machine (Claude Code transcripts,
 Codex rollouts and the others listed in [ADAPTERS.md](../ADAPTERS.md)), so the viewer opens on your
@@ -129,6 +134,9 @@ coding.sh uninstall --yes       # remove hooks and MCP entries from every agent
 npm uninstall -g coding.sh
 rm -rf ~/.coding.sh             # optional: delete captured data
 ```
+
+In PowerShell, type `codingsh` for `coding.sh`, and delete the data with
+`Remove-Item -Recurse -Force ~\.coding.sh`.
 
 `uninstall` restores each agent config file byte for byte if nothing else has edited it since
 `init`. Otherwise it removes only the coding.sh entries.

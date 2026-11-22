@@ -15,12 +15,12 @@ Any recorded run with a user prompt works. Find it, then add it to a dataset:
 
 ```sh
 coding.sh sessions --where is:flagged
-coding.sh dataset add fixes --session c435f0ac --split test
+coding.sh dataset add fixes --session a921c754 --split test
 ```
 
 ```text title=output
 ✓ fixes: 1 case
-fixes@be8fc9f95153d864
+fixes@fb8b173b41ef9616
 ```
 
 The case's input is the run's first prompt. The agent's last reply is kept in the case's metadata as
@@ -49,9 +49,9 @@ coding.sh sessions --where is:flagged
 
 ```text title=output
 ID                                    AGENT        STARTED  DURATION  TURNS  TOOLS         TITLE
-c435f0ac-4806-4a11-a21f-26e8f6200814  claude-code  20s ago  16s       1      3 (1 failed)  Fix passAllK in packages/coding.sh/src/stats/seqk.ts: packages/coding.sh/test/stats/seqk.test.ts fails
+a921c754-42cd-4265-98f7-26b9fec9eddb  claude-code  9s ago   2.6s      1      3 (1 failed)  Fix passAllK in packages/coding.sh/src/stats/seqk.ts: packa…
 
-  1 of these 1 sessions are flagged (premature-completion 1). See what to fix first and the line that fixes it:
+  This session is flagged (premature-completion 1). See what to fix first and the line that fixes it:
     coding.sh improve
 ```
 
@@ -59,8 +59,11 @@ c435f0ac-4806-4a11-a21f-26e8f6200814  claude-code  20s ago  16s       1      3 (
 verifier:
 
 ```text title=output
- 1.   6  c435f0ac-4806-4a11-a21f-26e8f6200814  Fix passAllK in packages/coding.sh/src/stats/seqk.ts: packa…
+ 1.   6  a921c754-42cd-4265-98f7-26b9fec9eddb  Fix passAllK in packages/coding.sh/src/stats/seqk.ts: packa…
          +2 premature-completion, +1 tests still failing, +2 verifier guessable, +1 last 7 days  · verifier: node --no-warnings --test packages/coding.sh/test/stats/seqk.test.ts
+
+  Turn the best ones into a suite:
+    coding.sh eval init --sessions
 ```
 
 ### 2. Write the suite
@@ -73,21 +76,34 @@ coding.sh eval init --sessions --verifier 'node --no-warnings --test packages/co
 ✓ Wrote capability suite failures (1 task) to evals/failures
   evals/failures/suite.json
   evals/failures/tasks/fix-passallk-in-packages-coding-sh/
-  fix-passallk-i… node --no-warnings --test packages/coding.sh/test/stats/seqk.test.ts · from session c435f0ac
+  fix-passallk-i… node --no-warnings --test packages/coding.sh/test/stats/seqk.test.ts · from session a921c754
 ! the agent's failed attempt is saved as near-misses/001.patch (the verifier must fail it). Add reference.patch, a correct fix, to each task dir; then coding.sh eval import evals/failures/tasks/<task> loads it and coding.sh eval validate <task> checks the verifier fails before the fix and passes after
 
   Capability suite: tasks the agent can't do reliably yet. Its score starts low; `eval run` reports it and never fails on it.
   Trials: 3 per task; the report gives pass@3 (passed at least once) and pass^3 (passed every time).
+
+  Run it:
+    coding.sh eval run failures
+
+  These tasks start from snapshots of this machine's repo, so they run here, not in CI. Gate a change to your setup with:
+    coding.sh compare <before> <after> --tag suite:failures --k 3
 ```
 
 Each task directory holds `instruction.md` (the session's first prompt), `task.json` (the starting
-commit and the verifier) and `near-misses/001.patch` (the session's own diff).
+commit, the setup commands and the verifier) and `near-misses/001.patch` (the session's own diff).
+
+`eval init` guesses the setup commands from the repo's lock and manifest files: here `npm ci`, from
+`package-lock.json`. Every trial runs them before the agent starts, so they add to each trial's time.
+To change them, edit `setup` in `task.json`. `eval run` reads the task directories each time.
 
 ### 3. Run it
 
 ```sh
 coding.sh eval run failures
 ```
+
+It asks before it starts the 3 agent sessions (1 task, 3 trials). `--yes` skips the question.
+Without a terminal to ask in, it exits 2 and prints the command with `--yes`.
 
 ```text title=output
 failures  capability suite · 1 task · 3 trials each
@@ -97,16 +113,24 @@ pass^3  0.0%  a task counts only when all 3 trials pass
 
 task                                passed         first failure
 ----------------------------------  ------  -----  ---------------------------
-fix-passallk-in-packages-coding-sh     2/3  flaky  coding.sh show 73cfa2b3-7f7
+fix-passallk-in-packages-coding-sh     2/3  flaky  coding.sh show 5de09222-506
 
 flaky: fix-passallk-in-packages-coding-sh. These pass some trials and fail others; pass^3 counts them as failures.
+1 task: a suite this small only shows large changes; grow it toward 20 to 50 tasks from real failures
 1 task without a reference solution (fix-passallk-in-packages-coding-sh): add reference.patch to the task dir, then coding.sh eval import <task dir> and coding.sh eval validate <task>
 
 Verifier output of failed runs (last 8 lines):
-  fix-passallk-in-packages-coding-sh · attempt 2  exit 1 · run_01M754Z1D3PWC0WEM0NKVJXMRA
-    │ # pass 18
-    │ # fail 2
-captured failures: 1 of 1 now pass: fix-passallk-in-packages-coding-sh (session c435f0ac-4806-4a11-a21f-26e8f6200814)
+  fix-passallk-in-packages-coding-sh · attempt 1  exit 1 · run_01M803KKCEA29Y1N5CAS46MZFM
+    │       at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    │     generatedMessage: false,
+    │     code: 'ERR_ASSERTION',
+    │     actual: false,
+    │     expected: true,
+    │     operator: '==',
+    │     diff: 'simple'
+    │   }
+captured failures: 1 of 1 now pass: fix-passallk-in-packages-coding-sh (session a921c754-42cd-4265-98f7-26b9fec9eddb)
+harness claude-code-project (1 file) · experiment exp_01M803KK8N8F234W5AZK438E4X
 ```
 
 Each trial starts the agent on a fresh copy of the repo at the session's starting commit. The agent
@@ -145,12 +169,17 @@ coding.sh eval validate fix-passallk-in-packages-coding-sh --k 5
 | No-op fails | The verifier fails on the untouched repo. |
 | Reference passes | The reference passes the verifier k times out of k. |
 | Near misses fail | The session's own diff, and other partial versions, fail the verifier. |
+| Impossible variant fails | The reference fails a copy of the tests with one expected value changed. If it passes every such copy, the verifier is gameable. |
 | Existing tests still pass | The repo's own test command passes after the reference wherever it passed before. |
-| No leakage | Hidden test content does not appear in what the agent sees. |
+| No leakage | Nothing the agent sees holds the answer: not the start tree, its git history or the instruction. |
+| Tests left alone | The reference does not rewrite, delete or skip the tests the verifier runs. |
 
 A task that passes every check is marked `validated`; otherwise it stays a `draft` and the output says
-why. `--keep` keeps the work directories so you can look. The existing-tests check runs the repo's
-whole test command, so it takes as long as your test suite.
+why. `--keep` keeps the work directories so you can look.
+
+The existing-tests check runs the repo's whole test command, so it takes as long as your test suite.
+It takes the command from the `test` script in `package.json`, pytest settings, `go.mod` or
+`Cargo.toml`. When it finds none, it skips the check and says so in a note.
 
 `eval init --validate` runs the same checks while it writes the suite. A session whose end state
 passes the verifier becomes the task's reference. One that fails it, or that edits the tests the
@@ -158,14 +187,31 @@ verifier runs, is kept as a near miss.
 
 ## One session at a time
 
-`eval new` drafts one task, with your own name and instruction:
+`eval new` drafts one task, with your own name and instruction. Pass the session's id or a prefix of
+it:
 
 ```sh
-coding.sh eval new latest --name passallk-fix \
+coding.sh eval new a921c754 --name passallk-fix \
   --verifier 'node --no-warnings --test packages/coding.sh/test/stats/seqk.test.ts' \
   --hidden-test 'packages/coding.sh/test/stats/seqk.test.ts' \
   --tag stats
 ```
+
+```text title=output
+✓ Drafted passallk-fix
+  Verifier        node --no-warnings --test packages/coding.sh/test/stats/seqk.test.ts
+! start snapshot is partial or HEAD-only: uncommitted/untracked files at session start may be missing
+! hid 1 test file(s) from the agent: packages/coding.sh/test/stats/seqk.test.ts; the verifier gets them at check time
+! setup guessed from package-lock.json: npm ci
+! updated the existing task fix-passallk-in-packages-coding-sh (suite:failures), same id task_f0367ea84cbb87ed
+task_f0367ea84cbb87ed
+
+  Check the task is fair before using it:
+    coding.sh eval validate task_f0367ea84cbb87ed
+```
+
+This session already had a task from `eval init`, so `eval new` updated it and kept its id. `latest`
+also names a session, but after `eval run` the latest session is one of the run's trials.
 
 The instruction defaults to the session's first prompt. `--instruction 'text'` or
 `--instruction @prompt.md` replaces it, and `--setup 'npm ci'` (repeatable) adds setup commands.

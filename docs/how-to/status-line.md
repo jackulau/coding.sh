@@ -30,9 +30,10 @@ Opus 5.5  ·  ctx 62%  ·  $0.0011 session  ·  $0.2867 today
 Claude Code sends. At 85% or more it reads `ctx 87% full`. Without that field there is no `ctx`
 part. `--json` has it as `contextPercent`.
 
-The session part shows only for a session coding.sh has stored. For a session id it has not
-stored yet, `--json` has `sessionCostUsd: null`. A stored session that cost nothing still shows
-`$0.0000 session`.
+The session part shows only for a stored session that has a cost. A session id coding.sh has not
+stored yet has no session part, and neither has a stored session with no cost so far: no model
+call yet, or calls with no reported cost and no list price. An unknown cost is not $0, so `--json`
+has `sessionCostUsd: null` for both. A stored session whose cost is 0 shows `$0.0000 session`.
 
 A session with a failure flag adds it after the costs (`  ·  ! no-verification`). The flag part is
 dropped when there is nothing to report. Only real failures show. A tag with a

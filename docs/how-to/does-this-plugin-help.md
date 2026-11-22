@@ -35,7 +35,7 @@ Hook context  4 texts, ~52 tokens: plugin:terse ~29 (2), unknown ~12 (1), settin
 |---|---|
 | `plugin:<name>` | belongs to an installed plugin |
 | `settings` | is in your settings files |
-| `plugin` | belongs to a plugin no longer installed, or loaded with `--plugin-dir` |
+| `plugin` | belongs to a plugin not installed in that Claude config: one removed since, or one loaded only with `--plugin-dir`, as `compare` runs do |
 | `unknown` | was not recorded by Claude Code (UserPromptSubmit hooks, as of Claude Code 2.1.319) |
 
 Scripts and SDK runs differ from sessions at a keyboard, so look at them apart with
@@ -65,13 +65,20 @@ coding.sh compare current --with plugin:terse --tag suite:plugin-check --k 3 --g
 ```
 
 B is `current-with-plugin-terse`. Each run gets its own Claude config directory and loads the plugin
-with `--plugin-dir` from the run's own home, so your own config is never changed. To measure a
-plugin your setup already has, drop it instead: `compare current --without plugin:terse`.
+with `--plugin-dir` from the run's own home, so your own config is never changed.
+
+A snapshot carries only the plugins you name with `--plugin`. To measure a plugin your setup
+already has, snapshot your setup with it, then drop it:
+
+```sh
+coding.sh harness snapshot --agent claude-code --plugin terse --name with-terse
+coding.sh compare with-terse --without plugin:terse --tag suite:plugin-check --k 3 --gate --yes
+```
 
 | Flag | Default | What it does |
 |---|---|---|
 | `--with plugin:NAME` | none | B is A plus this plugin: an installed name, `name@marketplace`, or a directory. |
-| `--without plugin:NAME` | none | B is A without it. |
+| `--without plugin:NAME` | none | B is A without it. A must carry it. |
 | `--tag` | none | Runs every task with this tag. |
 | `--k` | 1 | Attempts per task and arm. |
 | `--gate` | off | A ship-or-hold answer; exits 0 only on Ship it. |
@@ -86,7 +93,7 @@ arm, and the gate. A plugin often changes tokens more than the pass rate.
 | `Ship it` | The plugin won enough tasks without breaking what the agent solved without it. | Keep it. |
 | `Hold: not enough evidence` | Too few tasks changed outcome. The `power` line gives the smallest change these tasks could detect. | Add tasks from real failures. |
 | `Don't ship` | The plugin broke tasks; they are listed. | Read the failures below. |
-| Runs that errored | They have no outcome and are left out. | Rerun with `--experiment <id> --retry-errors`. |
+| Runs that errored | They have no outcome and are left out. | Rerun them with `compare current --with plugin:terse --experiment <id> --retry-errors`, where the id is the `exp_…` line the report ends with. |
 
 Under the report, `compare` prints the last lines each failed run's verifier printed, redacted, so
 you can tell a real miss from a broken task. `--json` has them in `failedRuns[].verifierOutput`.
@@ -98,7 +105,8 @@ is not flagged, so a plugin that makes the agent write regression tests is not c
 
 | Symptom | Check |
 |---|---|
-| No sessions match `hook:plugin:<name>` | The plugin's hooks may add no context, or Claude Code did not record them. Blocking hook output is not counted. |
+| No sessions match `hook:plugin:<name>` | The plugin's hooks may add no context, or Claude Code did not record them. Blocking hook output is not counted. A plugin loaded only with `--plugin-dir`, as in `compare` runs, shows as `hook:plugin`. |
+| `--without: bundle … has no plugin …` | The snapshot does not carry it. Snapshot again with `--plugin <name>`. |
 | Hook token counts look off | They are estimates: characters divided by 4. |
 | `eval init --sessions` finds nothing | It needs failed sessions in this repo. See [Turn failed runs into evals](session-to-eval.md). |
 

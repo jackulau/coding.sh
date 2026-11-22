@@ -16,11 +16,12 @@ import { parseSince, UsageError } from "../args.ts";
 import { num, str, withContext } from "../common.ts";
 import { ago, CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
-import { SIGNATURE_HEADER } from "../../alerts/notify.ts";
+import { SIGNING_NOTES } from "../../alerts/notify.ts";
 import { paths } from "../../core/paths.ts";
+import { sleepUnless } from "../../jobs/retry.ts";
 import { parseWhere } from "../../query/where.ts";
 import { judgeProviderKind, KEY_ENV, NO_PROVIDER, runMonitors, type MonitorResult, type RunMonitorsResult } from "../../monitor/run.ts";
-import { MONITOR_PROVIDERS, NAME_RE, publicMonitor, readMonitors, spentToday, updateMonitors, type MonitorDef, type MonitorProvider } from "../../monitor/state.ts";
+import { MONITOR_PROVIDERS, NAME_RE, publicMonitor, readMonitors, shownUrl, spentToday, updateMonitors, type MonitorDef, type MonitorProvider } from "../../monitor/state.ts";
 
 export async function run(c: CommandContext): Promise<number> {
   switch (c.action) {
@@ -104,7 +105,7 @@ async function add(c: CommandContext): Promise<number> {
   c.out.ok(`${replaced ? "Replaced" : "Added"} monitor ${name}`);
   if (def.secret) {
     c.out.print(`Signing secret (shown once): ${def.secret}`);
-    c.out.note(`Each POST carries ${SIGNATURE_HEADER}: sha256=<HMAC-SHA256 of the body, keyed with this secret>.`);
+    for (const n of SIGNING_NOTES) c.out.note(n);
   }
   if (noProvider) {
     const keys = Object.values(KEY_ENV);
@@ -128,7 +129,7 @@ function checkUrl(raw: string): void {
 }
 
 function describe(m: MonitorDef): string {
-  return m.kind === "run" ? `run: ${m.command}` : m.kind === "http" ? `http: ${m.url}` : `judge: ${m.rubric}`;
+  return m.kind === "run" ? `run: ${m.command}` : m.kind === "http" ? `http: ${shownUrl(m.url!)}` : `judge: ${m.rubric}`;
 }
 
 async function list(c: CommandContext): Promise<number> {
@@ -190,11 +191,7 @@ async function runNow(c: CommandContext): Promise<number> {
     let failed = false;
     for (let first = true; first || (watch && !c.signal.aborted); first = false) {
       if (!first) {
-        await new Promise<void>((done) => {
-          const t = setTimeout(done, 10_000);
-          c.signal.addEventListener("abort", () => (clearTimeout(t), done()), { once: true });
-        });
-        if (c.signal.aborted) break;
+        if (await sleepUnless(10_000, [c.signal])) break;
         // Pick up what agents wrote since the last pass, then score it.
         await ctx.ingest({ lock: { waitMs: 0 }, signal: c.signal }).catch(() => undefined);
       }
