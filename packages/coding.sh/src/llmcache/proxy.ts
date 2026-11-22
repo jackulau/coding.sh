@@ -15,6 +15,9 @@
 //   responses, SSE included, are teed to the client unchanged as they arrive.
 // - Request headers are never stored. Bodies go through the redactor, and the
 //   job's own credentials are scrubbed out of them, before they are written.
+//   The key is taken from the request as that redactor leaves it. Under a
+//   redactor other than the default, a replay that misses also tries the key
+//   the default rules give, so a recording made with them still replays.
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import https from "node:https";
 import { randomBytes } from "node:crypto";
@@ -47,7 +50,7 @@ export interface StartLlmCacheOptions {
   key?: Pick<KeyOptions, "excludeTools" | "excludeModel">;
   /** Default 127.0.0.1. Only loopback addresses are accepted. */
   host?: string;
-  /** Default: the "secrets" redactor. */
+  /** Default: the "secrets" redactor. The CLI passes the one capture uses (capture.redact, capture.redactPatterns). */
   redactor?: Redactor;
   onWarn?: (message: string) => void;
 }
@@ -200,6 +203,8 @@ export async function startLlmCache(o: StartLlmCacheOptions): Promise<LlmCache> 
   if (o.until !== undefined && !(Number.isInteger(o.until) && o.until >= 0)) throw new RangeError(`until must be a non-negative integer (got ${o.until})`);
   const up: LlmUpstreams = { ...DEFAULT_LLM_UPSTREAMS, ...o.upstream };
   const redactor = o.redactor ?? createRedactor();
+  // The rules every recording was made with before the CLI passed its own: a replay that misses tries their key too.
+  const builtin = o.redactor ? createRedactor() : undefined;
   const jobs = new Map<string, JobState>();
   const agents = { http: new http.Agent({ keepAlive: true }), https: new https.Agent({ keepAlive: true }) };
   const until = o.until ?? Number.POSITIVE_INFINITY;
@@ -216,8 +221,8 @@ export async function startLlmCache(o: StartLlmCacheOptions): Promise<LlmCache> 
   };
 
   /** Text as a recording holds it: the redactor's rules, then the job's own credentials. */
-  const scrubText = (job: JobState, text: string): string => {
-    let out = redactor.string(text);
+  const scrubText = (job: JobState, text: string, rules: Redactor = redactor): string => {
+    let out = rules.string(text);
     for (const s of [...job.secrets].sort((a, b) => b.length - a.length)) if (out.includes(s)) out = out.split(s).join("[redacted:api-key]");
     return out;
   };
@@ -329,20 +334,28 @@ export async function startLlmCache(o: StartLlmCacheOptions): Promise<LlmCache> 
     // The key is taken from the request as a recording would hold it. A replayed reply is the
     // redacted one, so the agent's next request quotes "[redacted:…]" where the recorded run
     // quoted the raw text; keyed on the raw bytes, that request would miss and go live.
-    let keyed = parsed;
-    const scrubbed = scrubText(job, text);
-    if (scrubbed !== text) {
-      try {
-        keyed = JSON.parse(scrubbed);
-      } catch {
-        // A redaction that breaks the JSON: key on the request as sent.
+    const keyOf = (scrubbed: string): string => {
+      let keyed = parsed;
+      if (scrubbed !== text) {
+        try {
+          keyed = JSON.parse(scrubbed);
+        } catch {
+          // A redaction that breaks the JSON: key on the request as sent.
+        }
       }
-    }
-    const key = llmCallKey(api, keyed, { ...o.key, ...(job.opts.normalize ? { normalize: job.opts.normalize } : {}) });
+      return llmCallKey(api, keyed, { ...o.key, ...(job.opts.normalize ? { normalize: job.opts.normalize } : {}) });
+    };
+    const key = keyOf(scrubText(job, text));
     const model = modelOf(parsed);
     const base = { ordinal, provider, path: rest, key, ...(model ? { model } : {}) };
     if (!job.isLive && job.source) {
-      const i = job.source.findIndex((e, j) => !job.consumed.has(j) && e.key === key && e.ordinal <= until && e.status >= 200 && e.status < 300);
+      const match = (k: string) => job.source!.findIndex((e, j) => !job.consumed.has(j) && e.key === k && e.ordinal <= until && e.status >= 200 && e.status < 300);
+      let i = match(key);
+      if (i < 0 && builtin) {
+        // A recording made with the built-in rules keyed this call as they leave it.
+        const old = keyOf(scrubText(job, text, builtin));
+        if (old !== key) i = match(old);
+      }
       if (i >= 0) {
         job.consumed.add(i);
         job.hits++;

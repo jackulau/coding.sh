@@ -152,23 +152,24 @@ export class SinkMirror {
     this.o.log?.warn(msg, { sink: lane.sink.name, ...fields });
   }
 
-  /** One write to the lane's sink. Sent: {}. Retryable: the wait, with the lane backed off. Refused: the error alone. */
-  private async send(lane: Lane, write: () => Promise<SinkAck>): Promise<{ error?: string; retryInMs?: number }> {
+  /** One write to the lane's sink. Sent: the events it left out on purpose (its since), if any. Retryable: the wait, with the lane backed off. Refused: the error alone. */
+  private async send(lane: Lane, write: () => Promise<SinkAck>): Promise<{ error?: string; retryInMs?: number; skipped?: number }> {
     let error: string | undefined;
     let retryAfterMs: number | undefined;
+    let skipped: number | undefined;
     try {
       const ack = await write();
       if (!ack.ok) {
         error = ack.error ?? "sink rejected the batch";
         retryAfterMs = ack.retryAfterMs;
-      }
+      } else skipped = ack.skipped;
     } catch (e) {
       error = (e as Error).message;
       retryAfterMs = MIN_BACKOFF_MS;
     }
     if (error === undefined) {
       lane.backoff = 0;
-      return {};
+      return { skipped };
     }
     if (retryAfterMs === undefined) return { error };
     const max = this.o.maxBackoffMs ?? MAX_BACKOFF_MS;
@@ -185,9 +186,10 @@ export class SinkMirror {
       const batch = lane.events.splice(0, lane.batchSize);
       const ids = new Set(batch.map((e) => e.sessionId));
       const sessions = [...ids].map((id) => lane.sessions.get(id)).filter((s): s is Session => s !== undefined);
-      const { error, retryInMs } = await this.send(lane, () => sink.write(meta ? batch.map(toMetadata) : batch, meta ? sessions.map(sessionToMetadata) : sessions, this.o.blobs));
+      const { error, retryInMs, skipped } = await this.send(lane, () => sink.write(meta ? batch.map(toMetadata) : batch, meta ? sessions.map(sessionToMetadata) : sessions, this.o.blobs));
       if (error === undefined) {
-        this.o.metrics?.sinkEvents.inc({ sink: sink.name, result: "sent" }, batch.length);
+        const sent = batch.length - (skipped ?? 0);
+        if (sent) this.o.metrics?.sinkEvents.inc({ sink: sink.name, result: "sent" }, sent);
         if (sink.writeOpenSessions) this.track(lane, batch);
         this.forget(lane);
         continue;

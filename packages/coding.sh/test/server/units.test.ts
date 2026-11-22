@@ -99,6 +99,13 @@ describe("serve config", () => {
     // Ingest key alone is not enough; a read key or basic auth is required too.
     const ingestOnly = resolveServeConfig({ host: "0.0.0.0", port: 0 }, tmpEnv({ CODING_SH_INGEST_KEYS: `demo:${generateKey("ingest")}` }));
     assert.throws(() => checkExposure(ingestOnly), /read key or basic auth/);
+    // The hint names the command that makes the key that is missing, and only that one.
+    const ingestCmd = "`coding.sh serve keygen --project <id>`";
+    const readCmd = "`coding.sh serve keygen --project '*' --read`";
+    assert.throws(() => checkExposure(cfg), (e: Error) => e.message.includes(ingestCmd) && e.message.includes(readCmd));
+    assert.throws(() => checkExposure(ingestOnly), (e: Error) => e.message.includes(readCmd) && !e.message.includes(ingestCmd));
+    const readOnly = resolveServeConfig({ host: "0.0.0.0", port: 0 }, tmpEnv({ CODING_SH_READ_KEYS: generateKey("read") }));
+    assert.throws(() => checkExposure(readOnly), (e: Error) => e.message.includes(ingestCmd) && !e.message.includes(readCmd));
     checkExposure(resolveServeConfig({ host: "0.0.0.0", port: 0 }, tmpEnv({ CODING_SH_INGEST_KEYS: generateKey("ingest"), CODING_SH_BASIC_AUTH: "ops:pw" })));
     // A viewer replica needs read credentials only.
     checkExposure(resolveServeConfig({ host: "0.0.0.0", port: 0, role: "viewer" }, tmpEnv({ CODING_SH_READ_KEYS: generateKey("read") })));

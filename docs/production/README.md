@@ -9,8 +9,10 @@ team's coding agents on one machine, start with [Self-host for a team](../how-to
 one Compose file, no keys to make.
 
 The image is `ghcr.io/jackulau/coding.sh`, published for amd64 and arm64 by each tagged release from
-0.1.2 on. Before that release, build it from a checkout with
-`docker build -t ghcr.io/jackulau/coding.sh .` and use the same commands.
+0.1.2 on. The tags are listed on the
+[package page](https://github.com/jackulau/coding.sh/pkgs/container/coding.sh). To run a change that
+is not released yet, build it from a checkout with `docker build -t ghcr.io/jackulau/coding.sh .`
+and use the same commands.
 
 ## Point it at a database in 3 steps
 
@@ -21,7 +23,9 @@ docker run --rm ghcr.io/jackulau/coding.sh /app/cli.mjs serve keygen --project m
 docker run --rm ghcr.io/jackulau/coding.sh /app/cli.mjs serve keygen --project myapp --read  # csh_rk_… for people
 ```
 
-Each key is printed once. With a volume on `/data` you can skip this step: with no keys set, the
+Each key is printed once. In Git Bash on Windows, put `MSYS_NO_PATHCONV=1` in front of `docker run`,
+or Git Bash turns `/app/cli.mjs` into a Windows path. With a volume on `/data` you can skip this
+step: with no keys set, the
 first start makes a key pair, keeps it in `/data/serve-keys.json` and prints it in the logs of that
 start only. Without
 a volume (most platforms with a managed database), set your own keys, or they change on every

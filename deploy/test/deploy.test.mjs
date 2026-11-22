@@ -167,7 +167,7 @@ describe("deploy/compose/compose*.yml (the team stacks)", () => {
       }
       assert.doesNotMatch(dc, /:\?/, "nothing is required");
     });
-    test(`${f}: the published image, built from this checkout until it exists`, () => {
+    test(`${f}: the published image, or built from this checkout`, () => {
       assert.match(dc, /^    image: \$\{CODING_SH_IMAGE:-ghcr\.io\/jackulau\/coding\.sh:latest\}$/m);
       assert.match(dc, /^    build:\n      context: \.\.\/\.\.$/m);
       assert.match(dc, /- coding-sh-data:\/data/);
@@ -190,6 +190,14 @@ describe("deploy/compose/compose*.yml (the team stacks)", () => {
     const ch = read("deploy/compose/compose.clickhouse.yml");
     assert.match(ch, /CODING_SH_STORE_URL: clickhouse:\/\/coding:\$\{CLICKHOUSE_PASSWORD:-coding\}@clickhouse:8123\/coding$/m);
     assert.match(ch, /CODING_SH_BLOB_URL: file:\/\/\/data\/blobs$/m);
+  });
+  test(".env.example pins a release that exists and says where the tags are", () => {
+    const pins = [...example.matchAll(/ghcr\.io\/jackulau\/coding\.sh:(\d+\.\d+\.\d+)/g)].map((m) => m[1]);
+    assert.ok(pins.length > 0, "names a release to pin");
+    // Each release publishes X.Y.Z (.github/workflows/release.yml); an unreleased version has no image.
+    const released = new Set([...read("CHANGELOG.md").matchAll(/^## \[(\d+\.\d+\.\d+)\] - \d{4}-\d{2}-\d{2}$/gm)].map((m) => m[1]));
+    for (const v of pins) assert.ok(released.has(v), `${v} is a released version in CHANGELOG.md`);
+    assert.match(example, /https:\/\/github\.com\/jackulau\/coding\.sh\/pkgs\/container\/coding\.sh/);
   });
   test("compose.postgres.yml: Postgres is healthy only when serve can reach it", () => {
     assertPostgresHealthcheck(read("deploy/compose/compose.postgres.yml"));
@@ -220,9 +228,11 @@ describe("deploy/compose/clickhouse.yml", () => {
 describe("pinned prices", () => {
   const cfg = parseToml(read("deploy/compose/config.toml"));
   test("match §5 and give the journeys' exact costs", () => {
-    assert.deepEqual(cfg.pricing["mock-gpt"], { input: 1, output: 2 });
-    assert.deepEqual(cfg.pricing["mock-claude"], { input: 3, output: 15 });
-    const cost = (m, i, o) => (i * cfg.pricing[m].input + o * cfg.pricing[m].output) / 1e6;
+    // [prices] is the spelling docs/reference/config.md documents; [pricing] is the older one.
+    assert.equal(cfg.pricing, undefined);
+    assert.deepEqual(cfg.prices["mock-gpt"], { input: 1, output: 2 });
+    assert.deepEqual(cfg.prices["mock-claude"], { input: 3, output: 15 });
+    const cost = (m, i, o) => (i * cfg.prices[m].input + o * cfg.prices[m].output) / 1e6;
     assert.ok(Math.abs(3 * cost("mock-gpt", 1000, 500) - 0.006) < 1e-9); // J1
     assert.ok(Math.abs(cost("mock-gpt", 1000, 500) + cost("mock-claude", 1000, 500) - 0.0125) < 1e-9); // J2
   });

@@ -154,11 +154,13 @@ named `team` to `~/.coding.sh/config.toml`. Run it again to change the URL, key 
 | an `https://` URL | Sends the key encrypted. Use it over the internet (step 5). |
 
 New sessions are sent at the end of each agent turn, and whenever a `coding.sh` command runs.
-Sessions from before you connected stay on the machine. Apps send to the same server with the
-SDKs or OpenTelemetry: see [Trace an app in production](../PRODUCTION.md).
+Sessions that started before you first connected stay on the machine, even when they go on after
+it: the sink's `since` holds that time, and running `init --remote` again keeps it. Apps send to
+the same server with the SDKs or OpenTelemetry: see [Trace an app in production](../PRODUCTION.md).
 
 :::more The sink init writes
-To connect by hand, add this block to `~/.coding.sh/config.toml`, then run `coding.sh ingest`:
+To connect by hand, add this block to `~/.coding.sh/config.toml` with `since` set to the current
+time, then run `coding.sh ingest`:
 
 ```toml
 [[sinks]]
@@ -166,8 +168,12 @@ name = "team"
 kind = "http"
 endpoint = "http://<server>:4318/v1/ingest"
 mode = "metadata" # "full" also sends prompts, code and tool output
+since = "2026-11-21T09:30:00Z" # sessions that started before this stay on this machine
 headers = { Authorization = "Bearer csh_ik_…" }
 ```
+
+Without `since`, the sink can also send past sessions that are still on disk. To send that history
+on purpose, see [`[[sinks]]`](../reference/config.md#sinks).
 :::
 
 ## 5. Serve it over HTTPS
@@ -217,13 +223,20 @@ docker compose cp coding-sh:/data ./coding-sh-backup
 docker compose start
 ```
 
+With `compose.postgres.yml`, the sessions and blobs are in Postgres and the volume keeps
+`serve-keys.json`. Back up the database as well:
+
+```sh
+docker compose exec -T postgres pg_dump -U coding -d coding > coding-sh.sql
+```
+
 | Task | How |
 | --- | --- |
 | Upgrade | `docker compose pull`, then `docker compose up -d`. The schema migrates on start. |
-| Pin a version | `CODING_SH_IMAGE=ghcr.io/jackulau/coding.sh:0.1.6` in `.env`. |
+| Pin a version | `CODING_SH_IMAGE=ghcr.io/jackulau/coding.sh:0.1.7` in `.env`. The tags are listed on the [package page](https://github.com/jackulau/coding.sh/pkgs/container/coding.sh). |
 | Delete old sessions | `CODING_SH_RETENTION_DAYS=30` in `.env` deletes sessions older than 30 days, every hour. Eval assets stay. |
 | Check health | `curl -s http://<server>:4318/readyz` answers `{"ok":true,…}` once the store is ready. |
-| Use Postgres | Download `compose.postgres.yml` from the same folder and run it with `-f`. Postgres holds the index and the blobs. |
+| Use Postgres | Download `compose.postgres.yml` from the same folder, add `COMPOSE_FILE=compose.postgres.yml` to `.env` so every `docker compose` command on this page uses it, and run `docker compose up -d --wait`. To pick the database password, set `POSTGRES_PASSWORD` in `.env` before that first start. Postgres holds the index and the blobs. Sessions already in SQLite are not copied over. |
 
 For ClickHouse, the store plugins and SQL over the tables, see
 [Postgres and ClickHouse stores](../reference/stores.md).
@@ -234,9 +247,15 @@ For ClickHouse, the store plugins and SQL over the tables, see
   `CODING_SH_INGEST_KEYS`, or it is a read key. Check `.env`, then run `docker compose up -d`.
 - **`init` prints `Can't reach <url>`.** Check the URL and the port, then run
   `curl -s http://<server>:4318/healthz` from the developer's machine.
-- **`docker compose up --wait` reports the container unhealthy.** On a busy host the first health
-  checks can time out. Run `docker compose ps` a minute later; `curl -s http://<server>:4318/readyz`
-  shows whether the store is ready.
+- **`docker compose up --wait` reports the container unhealthy.** Run `docker compose logs coding-sh`.
+  If it says `refusing to listen on 0.0.0.0 without auth`, add the setting it names; the
+  `serve keygen` command it prints makes the key.
+- **The log shows no refusal, and the container is still unhealthy.** On a busy host the first
+  health checks can time out. Run `docker compose ps` a minute later;
+  `curl -s http://<server>:4318/readyz` shows whether the store is ready.
+- **`serve keygen` prints `Cannot find module '/app/C:/Program Files/Git/app/cli.mjs'`.** Git Bash
+  on Windows turned `/app/cli.mjs` into a Windows path. Put `MSYS_NO_PATHCONV=1` in front of the
+  command, or run it in PowerShell.
 - **serve exits with no read key.** You set `CODING_SH_INGEST_KEYS` alone. Add
   `CODING_SH_READ_KEYS` or `CODING_SH_BASIC_AUTH`.
 - **No sessions show up.** Run `coding.sh ingest` on the developer's machine, then reload the

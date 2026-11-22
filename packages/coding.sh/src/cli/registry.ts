@@ -2289,7 +2289,7 @@ export const COMMANDS: CommandSpec[] = [
   {
     name: "purge",
     group: "Maintain",
-    summary: "Remove a leaked secret from the store: events, search, blobs, spool, eval runs",
+    summary: "Remove a leaked secret from the store: events, search, blobs, spool, eval runs, recorded model calls",
     sensitive: true,
     flags: [
       { name: "literal", type: "string", value: "<FILE|->", desc: "File with the values to remove, one per line (- reads stdin); never pass them as arguments" },
@@ -2299,6 +2299,8 @@ export const COMMANDS: CommandSpec[] = [
     examples: ["coding.sh purge --literal leaked.txt --dry-run", "pbpaste | coding.sh purge --literal -", "coding.sh purge --rule 'sk-ant-api03-[A-Za-z0-9_-]{80,}' --dry-run"],
     notes: [
       "Every copy becomes [redacted:purged]: event payloads (the full-text index is updated), session titles and stats, labels, eval docs and settings. Blobs holding a value are rewritten under their new hash and every reference follows. Spool, judge-cache and eval run files (~/.coding.sh/runs) keep their length (the value becomes asterisks) so ingest offsets stay valid. A run's .git directory and files over 64 MB are left alone.",
+      "Recorded model calls (~/.coding.sh/llm-cache, from exp run --record or --replay) that hold a value are rewritten with each call's replay key kept, so they still replay; a reply stored as base64 that holds one is emptied. A torn recording or a temp file left there that holds a value is deleted.",
+      "Snapshot repos (~/.coding.sh/repos) are read, not changed: sessions and eval tasks name a snapshot by its commit id, which a rewrite would change. Purge and --dry-run name each repo that holds a value, and purge exits 1 until you delete it. Then show leaves out the file changes of sessions in that repo, and eval tasks that start from its snapshots can't run.",
       "--rule takes a JavaScript regular expression. Each distinct match of 8 or more characters is purged like a --literal value; shorter matches are left alone, and a rule that matches over 10,000 distinct values is refused.",
       "Then the search index is merged, and the index and the blob pack (blobs/pack.db) are VACUUMed, so the old bytes leave the files. If another process is reading one of them (the viewer, serve, a sqlite3 shell), its old bytes stay until that process closes: purge says which file and exits 1, and the same purge run again finishes the job. Values shorter than 8 characters are refused. Only the SQLite store is supported.",
       "A copy of the index kept next to it by an upgrade (index.db.v<N>.bak) or by upgrade-store --restore (index.db.v<N>.undone) holds the value too. Purge deletes these copies instead of rewriting them, so upgrade-store --restore can no longer put one back; --dry-run names them. If one can't be deleted, purge names it and exits 1.",

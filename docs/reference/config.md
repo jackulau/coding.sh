@@ -103,6 +103,11 @@ hooks).
   where it stopped in the spool.
 - For transcripts it starts again at the top of each file it missed part of, so it can get a
   transcript event twice. A sink added later gets the transcripts still on disk the same way.
+- A sink with `since` sends no session that started before that time, not even the events the
+  session adds after it. `coding.sh init --remote` sets it to the time it first connects.
+- What a sink leaves out counts as handled, so removing `since` later does not send it. To send
+  the history on purpose, remove `since`, give the sink a new `name`, and run
+  `coding.sh ingest --backfill`.
 - With sinks set, one transcript import runs at a time (`~/.coding.sh/sinks.lock`).
 
 ```toml
@@ -121,6 +126,7 @@ headers = { Authorization = "Bearer ${CODING_SH_INGEST_KEY}" }
 | `mode` | `"metadata"` | `metadata` sends no prompts, code or tool output. `full` sends everything that was captured. |
 | `name` | the kind | Unique name: letters, digits, `.`, `_`, `-`. Needed when two sinks share a kind. |
 | `batchSize` | | Events per request. |
+| `since` | | A quoted time, such as `"2026-11-21T09:30:00Z"`. Sessions that started before it are not sent. |
 | `headers` | | Table of HTTP headers. |
 
 The `otlp` sink sends a session as one `invoke_agent` span when the session ends. From
