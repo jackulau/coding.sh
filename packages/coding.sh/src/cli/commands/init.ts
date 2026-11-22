@@ -13,6 +13,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { parseHookCommand } from "../../adapters/_shared/hooks.ts";
 import { detectAll, ADAPTERS } from "../../adapters/index.ts";
+import { sourceSummary } from "../../conformance/sources.ts";
 import { defaultConfigToml } from "../../core/config.ts";
 import { paths } from "../../core/paths.ts";
 import type { Adapter, FileChange, McpServerSpec } from "../../core/types.ts";
@@ -286,6 +287,30 @@ export interface ImportOutcome {
 }
 
 /**
+ * Whether an agent keeps past sessions on this machine for init to import. The files its backfill
+ * reads answer for most (names and sizes only). When none turn up there, the backfill itself runs
+ * to its first source file or event, so history kept elsewhere (a database OpenCode set aside)
+ * still counts. Read-only: nothing is stored and no store is opened.
+ */
+export async function hasHistory(a: Pick<Adapter, "id" | "backfill">, env: NodeJS.ProcessEnv): Promise<boolean> {
+  if (!a.backfill) return false;
+  if ((sourceSummary(a.id, { env })?.files ?? 0) > 0) return true;
+  const { hashOnlyContext } = await import("../../conformance/index.ts");
+  let found = false;
+  const changed = async (): Promise<boolean> => {
+    found = true;
+    throw new Error("found a source file"); // ends the walk at the first one
+  };
+  try {
+    for await (const _ of a.backfill(hashOnlyContext(), { changed })) return true;
+  } catch {
+    // A source file, or a backfill that failed: the import reports what it finds.
+    return true;
+  }
+  return found;
+}
+
+/**
  * Imports the past sessions of `agents` (adapter.backfill), stopping at the time budget and
  * starting `ingest --background --backfill` for the rest. Undefined when there is nothing to
  * import from or the store is not this machine's.
@@ -434,8 +459,10 @@ export async function run(c: CommandContext): Promise<number> {
   const pending = plans.filter((pl) => agentChanges(pl).length);
   const total = pending.reduce((n, pl) => n + agentChanges(pl).length, 0);
   const failed = plans.some((pl) => pl.hooks.error || pl.mcp?.error || pl.proxy?.error);
-  // Past sessions to import once set up: every planned agent that keeps its own history.
-  const importFrom = c.flags.import === false ? [] : plans.map((pl) => pl.adapter).filter((a) => a.backfill);
+  // Past sessions to import once set up: from every planned agent with some on this machine.
+  const candidates = c.flags.import === false ? [] : plans.map((pl) => pl.adapter);
+  const withHistory = await Promise.all(candidates.map((a) => hasHistory(a, env)));
+  const importFrom = candidates.filter((_, i) => withHistory[i]);
 
   if (dryRun) {
     if (out.json) {

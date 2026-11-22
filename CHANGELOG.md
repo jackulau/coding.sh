@@ -212,6 +212,7 @@ grouped by area, with links to the docs for the details.
 - **CLI.** The dim line that says a newer release is out names `codingsh update` in PowerShell and cmd, and the npx command when started with npx. Before, it named `coding.sh update`, which fails there. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#updates))
 - **CLI.** Without a terminal, the `--yes` rerun that `compare`, `eval run`, `eval trigger` and `bench schedule --install-cron` ask you to approve is the command you ran, flags included, and names `codingsh` in PowerShell and cmd. Before, it dropped the flags: `eval run scope --harness skilled` named `coding.sh eval run scope --yes`, which runs another harness. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#usage-errors-exit-2))
 - **CLI.** `init --dry-run` ends with the command that applies its plan: the one you ran, flags included, without `--dry-run` and `--diff`. It names `codingsh` in PowerShell and cmd, and the npx command when started with npx. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#what-init-changes))
+- **CLI.** `init` asks to import past sessions only when an agent it sets up keeps some on this machine, and its plan names only those agents. Before, it asked on a machine with none. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#what-init-changes))
 
 ## [0.1.7] - 2026-11-16
 
