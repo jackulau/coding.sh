@@ -106,6 +106,15 @@ const IMPROVE_FLAGS = (since: string, limit: number): FlagSpec[] => [
   FRESH,
 ];
 
+/** cache doctor's flags; `cache` with no subcommand runs doctor and takes the same ones. */
+const CACHE_DOCTOR_FLAGS: FlagSpec[] = [
+  AGENT_ONE,
+  { ...SINCE, default: "30d" },
+  { name: "limit", short: "n", type: "number", value: "<N>", desc: "Read the stored requests of at most this many sessions with breaks, costliest first; the totals, the causes and the grade cover every session", default: "200" },
+  WHERE("sessions"),
+  FRESH,
+];
+
 /** Tie-break sampling (exp run, toolevals run). */
 const SAMPLES_FLAG: FlagSpec = {
   name: "samples",
@@ -766,21 +775,18 @@ export const COMMANDS: CommandSpec[] = [
     name: "cache",
     group: "Explore",
     summary: "Score prompt-cache health and name what breaks the cached prefix",
+    actionOptional: true,
+    flags: CACHE_DOCTOR_FLAGS,
     actions: [
       {
         name: "doctor",
         summary: "Hit rate, a grade, and the cache breaks ranked by cost: cause, sessions, tokens re-billed, extra USD, the fix, and two calls to diff",
-        flags: [
-          AGENT_ONE,
-          { ...SINCE, default: "30d" },
-          { name: "limit", short: "n", type: "number", value: "<N>", desc: "Read the stored requests of at most this many sessions with breaks, costliest first; the totals, the causes and the grade cover every session", default: "200" },
-          WHERE("sessions"),
-          FRESH,
-        ],
+        flags: CACHE_DOCTOR_FLAGS,
         examples: ["coding.sh cache doctor", "coding.sh cache doctor --agent claude-code --since 7d", "coding.sh cache doctor --json"],
       },
     ],
     notes: [
+      "With no subcommand it runs doctor, with the same options.",
       "Hit rate is cache reads / all prompt tokens, the CACHE READ column of coding.sh usage, over the same sessions. The breaks are the ones coding.sh show and usage count, so tokens and USD match theirs.",
       "Each break gets the first change between its two calls, in the order the cache reads a request: model-switch; tools-added, tools-removed, tools-reordered, tools-changed; system-volatile-line (a line that differs only in its numbers, such as a timestamp), system-changed; compaction (the history was compacted or rewritten, the name usage --cache and improve use); then idle (a wait past the cache lifetime) or other. Idle and other are not counted as avoidable.",
       "Grade: 60% the hit rate against 90%, 40% the share of prompt tokens re-billed for avoidable causes (a quarter or more scores 0). A 90+, B 80+, C 70+, D 60+, else F.",
@@ -788,6 +794,7 @@ export const COMMANDS: CommandSpec[] = [
       "--limit bounds only the sessions whose stored requests are read. The hit rate, breaks, tokens, USD and grade cover every session in the window, and the grade is the same at any --limit wherever the hashes and counts show the change. A session with stored requests past the limit is classified as one without them is, from hashes, message counts, the model and timing: a tools or system prompt change is named without its detail (tools-changed, system-changed), and a history edit that keeps the message count reads as other. --json has sessionsNotRead and breaksNotRead. A session with no stored requests reads the same at any --limit.",
       PENDING_NOTE,
     ],
+    examples: ["coding.sh cache", "coding.sh cache --agent claude-code --since 7d", "coding.sh cache doctor --json"],
     load: () => import("./commands/cache.ts"),
   },
   {
