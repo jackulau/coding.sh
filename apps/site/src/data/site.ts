@@ -34,6 +34,12 @@ export const SOURCE_STEPS = [
 export const CLI_PATH = "packages/coding.sh/dist/cli.mjs";
 /** The one-liner once it is on npm. */
 export const INSTALL_CMD = "npx coding.sh init";
+/**
+ * The one-liner on Windows. There npx runs a command through cmd, which opens npm's extensionless
+ * `coding.sh` sh script with the .sh file's app instead of running it, so this names the same CLI's
+ * other command, `codingsh`.
+ */
+export const INSTALL_CMD_WIN = "npx -p coding.sh codingsh init";
 /** The installer (repo root install.sh, served at /install): latest GitHub release, then `init`, then the viewer. */
 export const INSTALL_SH = "curl -fsSL https://coding.sh/install | sh";
 /** The release tarball the installer fetches (install.sh: releases/download/<tag>/coding.sh-<n>.tgz). */
