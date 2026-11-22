@@ -25,7 +25,7 @@ import { suggest, UsageError } from "../args.ts";
 import { changeJson, printChanges, shortPath } from "../changes.ts";
 import { ingestCli, list, requireConsent, str, underImportLock, withContext } from "../common.ts";
 import { hookRedactSource, hookShSource, hookSource, planHookBin, writeHookBin } from "../hookbin.ts";
-import { nextStepBin, rerunWithYes } from "../next-steps.ts";
+import { nextStepBin, rerunWithYes, runCommand } from "../next-steps.ts";
 import { parseRemote, probeRemote, REMOTE_SINK, validateConfigText, withRemoteSink } from "../remote.ts";
 import { CliError, plural, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -170,7 +170,7 @@ function planBlockers(pl: AgentPlan, env: NodeJS.ProcessEnv, cwd: string): Block
   if (pl.proxyUnsupported) out.push({ text: `init --proxy can't route this agent; point it at the variables from ${nextStepBin(env)} proxy env`, fatal: false });
   if (!pl.installed) {
     // A wrapper-only agent (tier C) or a store-read one has no hooks to fire.
-    const later = pl.adapter.tail ? "its sessions are imported once it is" : pl.adapter.tier === "C" ? `capture it with ${nextStepBin(env)} run -- ${pl.adapter.id} once it is` : "its hooks fire once it is";
+    const later = pl.adapter.tail ? "its sessions are imported once it is" : pl.adapter.tier === "C" ? `capture it with ${runCommand(env, pl.adapter.id)} once it is` : "its hooks fire once it is";
     out.push({ text: `${pl.adapter.displayName} is not installed on this machine; ${later}`, fatal: false });
   }
   if (pl.otherScope) {
@@ -203,7 +203,7 @@ function renderPlan(out: Output, plans: AgentPlan[], own: FileChange[], scope: s
     emit(`  ${out.style(pl.adapter.displayName, "bold", stream)} (${scope} scope)`);
     const rows = rowsOf(pl);
     for (const r of rows) emit(file(r));
-    if (!rows.length && !pl.hooks.error && !pl.mcp?.error && !pl.proxy?.error && !pl.skipped) emit(pl.adapter.tail ? "    no hooks needed; imports from its store" : pl.adapter.tier === "C" ? `    no hooks needed; capture with ${nextStepBin(env)} run -- ${pl.adapter.id}` : "    already set up");
+    if (!rows.length && !pl.hooks.error && !pl.mcp?.error && !pl.proxy?.error && !pl.skipped) emit(pl.adapter.tail ? "    no hooks needed; imports from its store" : pl.adapter.tier === "C" ? `    no hooks needed; capture with ${runCommand(env, pl.adapter.id)}` : "    already set up");
     for (const b of planBlockers(pl, env, cwd)) emit(`    ${b.fatal ? out.style("✗", "red", stream) : out.style("!", "yellow", stream)} ${b.text}`);
   }
   if (own.length) {
@@ -406,7 +406,7 @@ export async function run(c: CommandContext): Promise<number> {
   if (plans.length === 0 && !remote) {
     throw new CliError(named.length ? "None of the named agents can be installed" : "No supported agents found on this machine", {
       reason: "no_agents",
-      next: [`Wrap any agent: ${bin} run -- <agent command>`, "Trace an agent you built: https://coding.sh/docs/how-to/trace-your-agent"],
+      next: [`Wrap any agent: ${runCommand(env, "<agent command>")}`, "Trace an agent you built: https://coding.sh/docs/how-to/trace-your-agent"],
     });
   }
 
@@ -553,7 +553,7 @@ export async function run(c: CommandContext): Promise<number> {
   const hookedNow = ready.filter((x) => x.hooks.changes.length).map((x) => x.pl.adapter.displayName);
   if (hookedNow.length) out.note(firstSessionNote(hookedNow));
   if (remote) {
-    if (!plans.length) out.warn(`No supported agents found on this machine; apps and \`${bin} run -- <cmd>\` still send`);
+    if (!plans.length) out.warn(`No supported agents found on this machine; apps and \`${runCommand(env, "<cmd>")}\` still send`);
     out.ok(`Sending new sessions to ${remote.url} (${remote.mode === "full" ? "full content" : "metadata only"}). Sessions from before stay on this machine`);
     out.note(`Team viewer: ${out.style(remote.url, "cyan", "err")}`);
   }
