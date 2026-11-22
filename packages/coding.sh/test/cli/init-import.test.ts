@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { run as ingest } from "../../src/cli/commands/ingest.ts";
 import { run as init } from "../../src/cli/commands/init.ts";
+import { nextStepBin } from "../../src/cli/next-steps.ts";
 import { Output } from "../../src/cli/output.ts";
 import type { CommandContext } from "../../src/cli/types.ts";
 import { openContext } from "../../src/core/context.ts";
@@ -126,7 +127,8 @@ describe("init imports past sessions", () => {
     assert.ok(j.import.pendingFiles > 0, "transcripts left for the background import");
     assert.equal(j.import.background, false, "CODING_SH_NO_AUTO_INGEST=1: no detached import");
     const human = await runInit({});
-    assert.match(human.stderr, /transcripts? left\. Import them: coding\.sh ingest --backfill/);
+    // The CLI as init names it in the shell running these tests: codingsh in PowerShell or cmd.
+    assert.match(human.stderr, new RegExp(`transcripts? left\\. Import them: ${nextStepBin(process.env).replaceAll(".", "\\.")} ingest --backfill`));
     const before = (await stored()).length;
     // What init would have started detached.
     const cap: Run = { stdout: "", stderr: "" };
