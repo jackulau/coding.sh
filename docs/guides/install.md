@@ -116,7 +116,8 @@ Check your setup with `coding.sh doctor`.
 
 Commands print one dim line on stderr when a newer release is out. The check runs in the
 background at most once a day, and commands never wait on it. `coding.sh update` installs the new
-release.
+release: the latest GitHub release, which running the install script again also installs (npm's
+latest when GitHub can't be reached).
 
 The check is off when `CI` is set, or with `NO_UPDATE_NOTIFIER=1`, `CODING_SH_NO_UPDATE_CHECK=1`
 or `[update] check = false` in `~/.coding.sh/config.toml`.

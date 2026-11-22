@@ -285,6 +285,7 @@ grouped by area, with links to the docs for the details.
 - **Serve.** The viewer sign-in page of `coding.sh serve` offers a user sign-in only when `CODING_SH_BASIC_AUTH` is set. Before, it offered one on servers with read keys only, where no user exists. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/self-host-team.md#2-make-your-own-keys))
 - **Self-host.** Self-host for a team says how to keep every `docker compose` command on the Postgres stack (`COMPOSE_FILE` in `.env`), how to back up Postgres, what to do when Git Bash breaks `serve keygen`, and where to look when the container is unhealthy. The team guide shows the admin CLI inside the serve container. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/self-host-team.md#if-something-goes-wrong))
 - **Serve.** When `coding.sh serve` runs on loopback with no keys and refuses a request that a proxy passed on, its warning names the commands for both keys a server behind a proxy needs, an ingest key and a read key. Before, it named only the ingest key command. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md#12-auth))
+- **Install.** The install script installs the latest GitHub release, the one `coding.sh update` installs: from npm when npm has it, else the release tarball. It used to install npm's latest, which can be a release behind. Without an answer from GitHub in 30 seconds, it installs npm's latest. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#updates))
 
 ## [0.1.7] - 2026-11-16
 
