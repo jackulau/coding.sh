@@ -298,6 +298,7 @@ grouped by area, with links to the docs for the details.
 - **Serve.** When `coding.sh serve` runs on loopback with no keys and refuses a request that a proxy passed on, its warning names the commands for both keys a server behind a proxy needs, an ingest key and a read key. Before, it named only the ingest key command. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md#12-auth))
 - **Cost.** `coding.sh proxy --enforce-budget` adds `x-should-retry: false` to its 429, so the Anthropic and OpenAI SDKs raise the budget error at once. The Anthropic SDK used to wait the whole Retry-After, up to the next reset, before it showed anything. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/capture-with-proxy.md#stop-calls-over-a-budget))
 - **Cost.** The budget 429 from `coding.sh proxy --enforce-budget` and the proxy's `blocked a call` line show amounts under $1 to four decimals, as `coding.sh budget status` does, instead of `$0.00 spent of $0.00`. The line gives the reset as `5h 20m`, not in seconds. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/capture-with-proxy.md#stop-calls-over-a-budget))
+- **Cost.** `coding.sh proxy --enforce-budget` counts in its start note only the budgets that can block a call, and says when a `--repo` or `--where` budget, which never blocks one, is set. Before, it counted every budget. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/capture-with-proxy.md#stop-calls-over-a-budget))
 
 ## [0.1.7] - 2026-11-16
 

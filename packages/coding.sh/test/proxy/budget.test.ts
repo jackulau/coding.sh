@@ -252,7 +252,8 @@ describe("coding.sh proxy --enforce-budget (CLI)", () => {
     writeFileSync(join(h.env.CODING_SH_HOME!, "budgets.json"), JSON.stringify({ budgets }));
     const live = runLive(["proxy", "--port", "0", "--anthropic-upstream", up.url, "--enforce-budget"], h.env);
     const url = await live.waitFor(/http:\/\/127\.0\.0\.1:\d+/);
-    await live.waitFor(/Enforcing budgets/);
+    // The note counts the budgets that can block a call, not every budget set.
+    assert.match(await live.waitFor(/Enforcing budgets.*/), /\(1 of 2 set can block a call: one with --repo or --where never does; /);
     const r = await call(url, { path: "/v1/messages", body: messages, headers: anthropicHeaders });
     assert.equal(r.status, 429, r.body.toString());
     assert.match(JSON.parse(r.body.toString()).error.message, /budget "day"/);

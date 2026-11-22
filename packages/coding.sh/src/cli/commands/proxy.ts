@@ -7,7 +7,7 @@ import { basename, dirname } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { runningCli } from "../../mcp/launch.ts";
 import { isLoopbackHost } from "../../otel/receiver.ts";
-import { budgetStatuses, readBudgets } from "../../budget/index.ts";
+import { budgetStatuses, readBudgets, type Budget } from "../../budget/index.ts";
 import { budgetGuard, enforceable } from "../../proxy/budget.ts";
 import { startLocalProxy } from "../../proxy/index.ts";
 import { chainedUpstreams, clearProxyState, pidAlive, probeProxy, proxyEnv, proxyLogPath, proxySettings, proxyUrl, readProxyState, upstreamProblem, writeProxyState, type ProxyState } from "../../proxy/state.ts";
@@ -78,9 +78,9 @@ async function start(c: CommandContext): Promise<number> {
   }
 
   const enforce = c.flags["enforce-budget"] === true;
-  let budgetCount = 0;
+  let budgets: Budget[] = [];
   try {
-    if (enforce) budgetCount = readBudgets(c.env).length;
+    if (enforce) budgets = readBudgets(c.env);
   } catch (e) {
     throw new CliError(`Can't read the budgets: ${(e as Error).message}`, { reason: "bad_budgets", next: ["See them:", "coding.sh budget list"] });
   }
@@ -118,7 +118,7 @@ async function start(c: CommandContext): Promise<number> {
     else for (const [k, v] of Object.entries(vars)) out.print(`export ${k}=${v}`);
     if (!isLoopbackHost(proxy.host)) out.warn(`Listening on ${proxy.host}: the proxy has no auth, so anyone who can reach this port can send calls through it`);
     out.note(`Ready on ${url} (Anthropic → ${s.upstreams.anthropic}, OpenAI → ${s.upstreams.openai})`);
-    if (enforce) out.note(`Enforcing budgets: a call a budget over its limit applies to gets a 429 (${budgetCount} set; coding.sh budget status)`);
+    if (enforce) out.note(`Enforcing budgets: a call a budget over its limit applies to gets a 429 (${enforcingCount(budgets)}; coding.sh budget status)`);
     out.note(ctx.config.capture.mode === "metadata" ? "Capture mode metadata: no prompts or responses are stored" : "Logging every call; auth headers are forwarded, never stored");
     // A detached child (proxy --background) has no terminal for Ctrl-C to reach.
     out.note(c.env[DETACHED_ENV] === "1" ? "Stop with: coding.sh proxy stop" : "Press Ctrl-C to stop");
@@ -127,6 +127,12 @@ async function start(c: CommandContext): Promise<number> {
     clearProxyState(process.pid, c.env);
     return 130;
   });
+}
+
+/** `2 set`, or `1 of 2 set can block a call: …` when a --repo or --where budget, which never blocks, is among them. */
+function enforcingCount(budgets: readonly Budget[]): string {
+  const can = budgets.filter(enforceable).length;
+  return can === budgets.length ? `${can} set` : `${can} of ${budgets.length} set can block a call: one with --repo or --where never does`;
 }
 
 /** Set on the detached child that `proxy --background` starts. */
