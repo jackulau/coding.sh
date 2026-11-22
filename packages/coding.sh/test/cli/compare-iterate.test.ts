@@ -5,7 +5,7 @@
 // its first run with a rate-limit error while a flag file exists.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -131,6 +131,42 @@ describe("compare: iterate on a comparison", () => {
     const none = cli(["compare", "base", ...WITHOUT, "--experiment", first, "--retry-errors", "--yes", "--json"]);
     assert.equal(json<Out>(none).retried, 0);
     assert.equal(runsLog().length, 0);
+  });
+
+  it("--experiment alone takes both arms from the stored comparison, baseline first", (t) => {
+    if (!gitBin) return t.skip("needs git");
+    assert.ok(first, "needs the experiment the --retry-errors test runs");
+    type Arm = { name?: string; bundleId: string; passes: number; runs: number };
+    const arms = (o: Out) => [o.report.baseline, o.report.candidate].map((a) => a as Arm).map((a) => [a.name, a.bundleId, a.passes, a.runs]);
+    const named = json<Out>(cli(["compare", "base", ...WITHOUT, "--experiment", first, "--json"]));
+    const bare = json<Out>(cli(["compare", "--experiment", first, "--json"]));
+    assert.equal(bare.experimentId, first);
+    assert.deepEqual(arms(bare), arms(named));
+    assert.deepEqual(arms(bare).map((a) => a[0]), ["base", "base-without-claude-skills-pdf"]);
+    const text = cli(["compare", "--experiment", first]);
+    assert.equal(text.status, 0, text.stderr);
+    assert.match(text.stdout, /^baseline {3}base \(\w+\)\ncandidate {2}base-without-claude-skills-pdf \(\w+\)$/m);
+    // An arm derived with --without needs the bundle it comes from; nothing at all is still a missing <A>.
+    for (const args of [["--experiment", first, ...WITHOUT], []]) {
+      const r = cli(["compare", ...args]);
+      assert.equal(r.status, 2, r.stderr);
+      assert.match(r.stderr, /Missing argument <A>\. Usage: coding\.?sh compare <A> <B>, or coding\.?sh compare --experiment <ID>/);
+    }
+    const missing = cli(["compare", "--experiment", "exp_nope"]);
+    assert.equal(missing.status, 1, missing.stderr);
+    assert.match(missing.stderr, /Experiment exp_nope has no stored runs/);
+    // Without the comparison's own record, nothing says which arm is the baseline: it asks for both.
+    const job = join(home, ".coding.sh", "jobs", `${first}.json`);
+    assert.ok(existsSync(job), job);
+    renameSync(job, `${job}.bak`);
+    try {
+      const lost = cli(["compare", "--experiment", first]);
+      assert.equal(lost.status, 2, lost.stderr);
+      assert.match(lost.stderr, /Can't tell which arm of (exp_\w+) is the baseline \(it ran base(-without-claude-skills-pdf)? and base(-without-claude-skills-pdf)?\): name both, coding\.?sh compare <A> <B> --experiment \1/);
+      assert.ok(lost.stderr.includes(`arm of ${first} is`), lost.stderr);
+    } finally {
+      renameSync(`${job}.bak`, job);
+    }
   });
 
   it("--failing runs only the tasks A failed, and says the rates are conditioned on it", (t) => {

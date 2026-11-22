@@ -84,9 +84,12 @@ breaks: [Gate a change in CI](https://coding.sh/docs/harness-evals#gate).
 ## 5. Look again without re-running
 
 ```sh
-coding.sh compare claude codex --experiment <experiment-id>
-coding.sh compare claude codex --experiment <experiment-id> --json
+coding.sh compare --experiment <experiment-id>
+coding.sh compare --experiment <experiment-id> --json
 ```
+
+With no arms, `compare` takes both from the comparison's runs, baseline first. When it can't tell
+which arm was the baseline, it says so; name both then: `compare claude codex --experiment <id>`.
 
 Every run is also a captured session, so `coding.sh sessions` and `coding.sh ui` show what each
 agent did. An agent can read the results with the MCP tool `harness_compare`.

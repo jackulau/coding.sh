@@ -36,6 +36,7 @@ import { describeSelection, erroredRuns, latestPerSlot, sampleTasks, selectFaili
 import { sortableId } from "../../core/ids.ts";
 import { paint } from "../../experiments/text.ts";
 import { jobConfig } from "../../jobs/config.ts";
+import { JobStore } from "../../jobs/store.ts";
 import { parseAge, positiveInt, UsageError } from "../args.ts";
 import { finishedToResume, finishJob, infraStopNote, openJob, resumeField, resumeNote, retryFlag, trialTimeout } from "../jobs.ts";
 import { gateFlags, list, promoteFlags, requireConsent, resolveTask, str, withContext } from "../common.ts";
@@ -49,6 +50,9 @@ export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
   // --parity compares two pages, not two harnesses: no store, no runs.
   if (c.flags.parity === true) return (await import("./compare-parity.ts")).run(c);
+  // `--experiment <ID>` alone re-analyses a stored comparison: its runs name both arms (experimentArms).
+  const inferArms = !!str(c.flags.experiment) && !c.positionals.length && !list(c.flags.without).length && !list(c.flags.with).length;
+  if (!c.positionals.length && !inferArms) throw new UsageError("Missing argument <A>. Usage: coding.sh compare <A> <B>, or coding.sh compare --experiment <ID> to re-analyse a stored comparison", { reason: "missing_argument" });
   if (c.flags["user-agent"] !== undefined) throw new UsageError("--user-agent needs --parity", { reason: "invalid_argument" });
   // Fail on a missing gateway key before touching the store or running anything.
   const gateway = c.flags.gateway === undefined || c.flags.gateway === false ? undefined : requireGateway(c.env, c.flags.gateway === true ? defaultGateway(c.env) : String(c.flags.gateway));
@@ -105,8 +109,8 @@ export async function run(c: CommandContext): Promise<number> {
     if (withs.length && c.positionals.length > 1) throw new UsageError("--with derives the second arm from the first; pass one bundle", { reason: "invalid_argument" });
     const bad = withs.find((w) => !pluginRef(w));
     if (bad !== undefined) throw new UsageError(`--with takes a Claude Code plugin, plugin:<name|name@marketplace|dir>; got ${JSON.stringify(bad)}`, { reason: "invalid_argument" });
-    if (!without.length && !withs.length && c.positionals.length < 2) throw new UsageError("Missing argument <B>. Usage: coding.sh compare <A> <B> (or <A> --without <PATH>, or <A> --with plugin:<NAME>)", { reason: "missing_argument" });
-    const bundles: HarnessBundle[] = [];
+    if (!inferArms && !without.length && !withs.length && c.positionals.length < 2) throw new UsageError("Missing argument <B>. Usage: coding.sh compare <A> <B> (or <A> --without <PATH>, <A> --with plugin:<NAME>, or --experiment <ID> with no arms)", { reason: "missing_argument" });
+    const bundles: HarnessBundle[] = inferArms ? await experimentArms(ctx, c.env, String(c.flags.experiment)) : [];
     for (const ref of c.positionals.slice(0, 2)) {
       const b = await ctx.index.getBundle(ref);
       if (!b) throw new CliError(`Can't find harness bundle ${JSON.stringify(ref)}`, { reason: "not_found", next: ["List bundles:", "coding.sh harness list"] });
@@ -153,7 +157,7 @@ export async function run(c: CommandContext): Promise<number> {
       throw new UsageError("--item-gate needs B to add or remove exactly one rule, skill or context file and change nothing else", { reason: "invalid_argument" });
     }
     // How to name this comparison again (consent prompt, cancel hint).
-    const armArgs = [...c.positionals.slice(0, 2), ...without.flatMap((p) => ["--without", p]), ...withs.flatMap((p) => ["--with", p])];
+    const armArgs = inferArms ? [await bundleRef(ctx, A), await bundleRef(ctx, B)] : [...c.positionals.slice(0, 2), ...without.flatMap((p) => ["--without", p]), ...withs.flatMap((p) => ["--with", p])];
     const arms = armArgs.join(" ");
     /** Store the derived arm once; a rerun finds it by its content id. */
     const storeAblation = async () => {
@@ -459,6 +463,37 @@ export async function run(c: CommandContext): Promise<number> {
     const failed = (report.gate && report.gate.decision !== "accept") || (promote && !report.pareto?.promote) || (itemFlag === true && !itemOk);
     return failed ? 1 : 0;
   });
+}
+
+/**
+ * `compare --experiment <ID>` with no arms: the two bundles its stored runs used, baseline first.
+ * A comparison's job hashes its bundle ids in arm order (`jobConfig` in run()), so the order whose
+ * hash matches is the order it ran. Without that record, the user names the arms.
+ */
+async function experimentArms(ctx: Context, env: NodeJS.ProcessEnv, exp: string): Promise<HarnessBundle[]> {
+  const runs = await ctx.index.listRuns({ experimentId: exp });
+  if (!runs.length) throw new CliError(`Experiment ${exp} has no stored runs`, { reason: "not_found" });
+  const ids = [...new Set(runs.map((r) => r.bundleId))];
+  const found = await Promise.all(ids.map((id) => ctx.index.getBundle(id)));
+  const names = ids.map((id, i) => found[i]?.name ?? id);
+  if (ids.length === 1) throw new UsageError(`${exp} ran one bundle, ${names[0]}; a comparison needs runs of two`, { reason: "bundle_mismatch" });
+  if (ids.length > 2) throw new UsageError(`${exp} ran ${ids.length} bundles (${names.join(", ")}); name the two to compare: coding.sh compare <A> <B> --experiment ${exp}`, { reason: "bundle_mismatch" });
+  const lost = ids.find((_, i) => !found[i]);
+  if (lost) throw new CliError(`Can't find harness bundle ${JSON.stringify(lost)}`, { reason: "not_found", next: ["List bundles:", "coding.sh harness list"] });
+  const [x, y] = found as [HarnessBundle, HarnessBundle];
+  const recorded = (await JobStore.forEnv(env).find(exp))?.header.config.parts.bundles;
+  const orders: [HarnessBundle, HarnessBundle][] = [
+    [x, y],
+    [y, x],
+  ];
+  const order = orders.find(([a, b]) => jobConfig({ bundles: [a.id, b.id] }).parts.bundles === recorded);
+  if (!order) throw new UsageError(`Can't tell which arm of ${exp} is the baseline (it ran ${x.name} and ${y.name}): name both, coding.sh compare <A> <B> --experiment ${exp}`, { reason: "missing_argument" });
+  return order;
+}
+
+/** How to name a bundle in a printed command: its name when that finds it, else its id. */
+async function bundleRef(ctx: Context, b: HarnessBundle): Promise<string> {
+  return (await ctx.index.getBundle(b.name))?.id === b.id ? b.name : b.id;
 }
 
 /** A dollar flag: a finite amount above 0 (or at least 0 when `zero` is allowed). */

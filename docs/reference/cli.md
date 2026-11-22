@@ -3533,12 +3533,12 @@ coding.sh harness tools pin
 A/B two harness bundles on eval tasks.
 
 ```text
-coding.sh compare <A> [b] [options]
+coding.sh compare [a] [b] [options]
 ```
 
 | Argument | Required | Description |
 |---|---|---|
-| `a` | yes | Baseline bundle id or name (with --parity: a URL, or a command that prints the page) |
+| `a` | no | Baseline bundle id or name (with --experiment, omit both arms to take them from its runs; with --parity: a URL, or a command that prints the page) |
 | `b` | no | Candidate bundle id or name (omit with --without or --with; with --parity: the other URL or command) |
 
 | Option | Default | Description |
