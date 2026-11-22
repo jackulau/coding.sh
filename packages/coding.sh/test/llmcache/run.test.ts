@@ -11,7 +11,7 @@ import { compareExperiments } from "../../src/experiments/compare.ts";
 import { renderComparison, renderExperiment } from "../../src/experiments/render.ts";
 import { runExperiment } from "../../src/experiments/run.ts";
 import type { TaskContext } from "../../src/experiments/task.ts";
-import { controlNoise, llmReplayNote } from "../../src/llmcache/report.ts";
+import { controlNoise, llmReplayNote, renderLlmReplay, type ComparisonLlmReplay } from "../../src/llmcache/report.ts";
 import { gcLlmCache } from "../../src/llmcache/store.ts";
 import { exactGrader } from "../../src/graders/builtin.ts";
 import { API_KEY, recordingTexts, startStub, threeCalls, tmp, type Stub } from "./_stub.ts";
@@ -134,11 +134,18 @@ describe("exp run with the llm cache", () => {
     assert.equal(cmp.llmReplay?.noise?.n, 3);
     const text = renderComparison(cmp, { color: false, a: ab.a, b: ab.b });
     assert.match(text, /llm replay noise floor 0% \(n=3\)/);
-    assert.match(text, /first live call 2–2 \(median 2\)/);
+    assert.match(text, /; first live call 2$/m, "every case-trial went live at call 2: one number, not 2–2");
     assert.match(text, /Confirm with a fresh live run/);
     // No replay on either side: no note.
     assert.equal(compareExperiments(rec, rec, { force: true }).llmReplay, undefined);
     assert.match(llmReplayNote({ metadata: { llm: { mode: "replay", control: "skipped" } } }, {})!.controlWarning!, /--no-control/);
+  });
+
+  test("the first live call: a range with its median, or one number when every case-trial went live at the same call", () => {
+    const line = (min: number, median: number, max: number) =>
+      renderLlmReplay({ replayed: ["a", "b"], note: "n", noise: { rate: 0.04, n: 50, lo: 0.01, hi: 0.14, source: "exp_r", outputsDiffer: 9, firstLive: { n: 50, min, median, max } } } as ComparisonLlmReplay, (s) => s)[0]!;
+    assert.match(line(3, 7, 12), /; first live call 3–12 \(median 7\)$/);
+    assert.match(line(2, 2, 2), /; first live call 2$/);
   });
 
   test("gc drops the least recently used recordings past the cap", async () => {

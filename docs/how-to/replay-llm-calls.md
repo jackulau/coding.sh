@@ -69,7 +69,7 @@ llm replay noise floor 4% (n=50) [1%, 14%]; control vs exp_01J…: 9 output(s) d
 |---|---|
 | `noise floor 4%` | The control's pass or fail differs from the recording's in 4% of case-trials. A smaller B − A may be noise. |
 | `9 output(s) differ` | Outputs of the control that differ from the recording's, passing or not. |
-| `first live call 3–12` | Where the control's replay stopped in each case-trial. It is left out when the control replayed every call. Each run keeps its own as `runs[].llm.firstLiveOrdinal`. |
+| `first live call 3–12` | Where the control's replay stopped in each case-trial: the earliest and the latest, or one number when every case-trial stopped at the same call. It is left out when the control replayed every call. Each run keeps its own as `runs[].llm.firstLiveOrdinal`. |
 | `unscored` | The recording had no entry for that case-trial, or a live call failed. It is left out, and a warning names the case-trial and why. |
 | `Replayed arms are correlated` | Confirm a win with a fresh live run before you ship it. |
 
