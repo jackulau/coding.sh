@@ -280,6 +280,7 @@ The command line was wrong. Nothing ran.
 | `cost_confirmation_required` | `Estimated cost $7.20 exceeds confirmAboveUsd $5.00` | With `--json` this is `{"status":"action_required",…}`. Re-run with `--yes`, or raise `[toolevals] confirmAboveUsd`. |
 | `insecure_bind` | `refusing to listen on 0.0.0.0 without auth: …` | Only some credentials are set. Set both `CODING_SH_INGEST_KEYS` and `CODING_SH_READ_KEYS` (make keys with `coding.sh serve keygen`), unset both to use the first-start keys, or pass `--insecure` on a trusted network. |
 | `unknown_agent` | `Unknown agent "claude"` | Use an agent id from [Coding agents](https://coding.sh/docs/agents). |
+| `unknown_flag` | `Unknown session flag "no-verificaton"` / `Did you mean --flag no-verification?` (sessions) | Use the flag it names, or one from [Flags and derails](https://coding.sh/docs/query#flags-and-derails). |
 | `unknown_key` | `Can't set "capture.mod". Settable keys: …`, or in `--where`: `unknown key "modle" at character 13` | Use a key from [Configuration](https://coding.sh/docs/config), or a `--where` key from [Query language](https://coding.sh/docs/query#filter-with---where). To search for the word itself, quote it. |
 | `bad_value` | `--where: cost: must be a USD amount like 0.5, got "abc" at character 6` | Use a value the key takes; the message gives one. Durations need a unit (`duration>10m`). |
 | `unterminated_quote`, `unbalanced_parens` | `--where: missing ')' at character 23` | Close the quote or parenthesis the caret points at. |

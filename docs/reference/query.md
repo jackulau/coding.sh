@@ -217,6 +217,9 @@ coding.sh views rm codex-flagged
 
 coding.sh checks each session for failure patterns at every ingest and keeps them as flags.
 `coding.sh sessions --flag <name>` or `--where flag:<name>` lists the sessions that have one.
+When `sessions` finds none, and the name is no flag coding.sh sets and no stored session carries
+but is close to one, it exits 2 and names that flag: `--flag no-verificaton` suggests
+`--flag no-verification`.
 
 ```sh
 coding.sh sessions --flag no-verification

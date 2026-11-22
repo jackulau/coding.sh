@@ -1,12 +1,12 @@
 // Hands-on QA, round 9, what a person types: a whole-number flag takes decimal digits only and an
 // error quotes what was typed, stats --since in the future says it is after now, --where given
-// twice joins with AND, search "" is a missing argument, an unknown --agent lists the agent ids,
-// and a bad config value prints no JavaScript type name.
+// twice joins with AND, a --flag typo names the flag it meant, search "" is a missing argument, an
+// unknown --agent lists the agent ids, and a bad config value prints no JavaScript type name.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { after, describe, test } from "node:test";
+import { after, before, describe, test } from "node:test";
 import { joinWhere, parseArgs, positiveInt, UsageError, type FlagSpec } from "../../src/cli/args.ts";
 import { suiteHarness } from "../../src/cli/commands/eval-run.ts";
 import { emptyWindow } from "../../src/cli/commands/stats.ts";
@@ -169,6 +169,65 @@ describe("--where given more than once", () => {
     assert.deepEqual(ids(["--where", "agent:codex", "--where", "cost>1"]), ["codex-dear"]);
     assert.deepEqual(ids(["--where", "cost>1", "--where", "agent:codex"]), ["codex-dear"], "in either order");
     assert.deepEqual(ids(["--where", "agent:codex cost>1"]), ["codex-dear"], "the same as one --where");
+  });
+});
+
+describe("a --flag or flag: value typed wrong", () => {
+  let sb: Sandbox;
+  before(async () => {
+    sb = box();
+    const t = Date.now() - 3_600_000;
+    await sb.seed([mkSession("verified", t, { flags: ["no-verification"] }), mkSession("tagged", t - 60_000, { flags: ["my-own-tag"] }), mkSession("plain", t - 120_000)]);
+  });
+
+  test("sessions --flag no-verificaton names the flag it meant, and exits 2", () => {
+    const r = cli(sb, ["sessions", "--flag", "no-verificaton"]);
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stderr, /Unknown session flag "no-verificaton"/);
+    assert.match(r.stderr, /Did you mean --flag no-verification\?/);
+  });
+
+  test("in --json too, reason unknown_flag", () => {
+    const r = cli(sb, ["sessions", "--flag", "no-verificaton", "--json"]);
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    const e = jsonError(r.stderr);
+    assert.equal(e.reason, "unknown_flag");
+    assert.ok(e.next?.includes("--flag no-verification"), r.stderr);
+  });
+
+  test("a flag: term in --where, including one typed in another case (flag: matches case too)", () => {
+    for (const typed of ["no-verificaton", "NO-VERIFICATION"]) {
+      const r = cli(sb, ["sessions", "--where", `flag:${typed}`]);
+      assert.equal(r.status, 2, r.stdout + r.stderr);
+      assert.match(r.stderr, new RegExp(`Unknown session flag "${typed}"`));
+      assert.match(r.stderr, /Did you mean flag:no-verification\?/);
+    }
+  });
+
+  test("a tag only stored sessions carry is suggested too", () => {
+    const r = cli(sb, ["sessions", "--flag", "my-own-tga"]);
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stderr, /Did you mean --flag my-own-tag\?/);
+  });
+
+  test("a value a stored session carries is no typo, though this search found none", () => {
+    const r = cli(sb, ["sessions", "--flag", "my-own-tag", "--agent", "codex"]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout + r.stderr, /No sessions/);
+  });
+
+  test("a flag coding.sh sets that no session has, or a name near nothing, is an empty list", () => {
+    for (const args of [["--flag", "compaction"], ["--flag", "zzzzzzzzzzzz"], ["--where", "-flag:no-verificaton agent:codex"]]) {
+      const r = cli(sb, ["sessions", ...args]);
+      assert.equal(r.status, 0, `${args.join(" ")}: ${r.stderr}`);
+      assert.match(r.stdout + r.stderr, /No sessions/);
+    }
+  });
+
+  test("when something matched, the typo is not checked", () => {
+    const r = cli(sb, ["sessions", "--json", "--where", "flag:no-verificaton OR flag:my-own-tag"]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual((JSON.parse(r.stdout) as { sessions: { id: string }[] }).sessions.map((s) => s.id), ["tagged"]);
   });
 });
 
