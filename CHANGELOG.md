@@ -338,6 +338,7 @@ grouped by area, with links to the docs for the details.
 - **CLI.** When `~/.coding.sh/bin/cli-path` names another install that is still there, `doctor` names `coding.sh upgrade-store`, which asks before it moves the hooks, instead of `update --refresh-bin`, which leaves them alone. With a store plugin, `upgrade-store` now moves the hooks too. Before, it said there was nothing to do. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#sessions-dont-show-up))
 - **CLI.** Options that take a whole number, such as `--limit` and `--trials`, take decimal digits only: `1e3`, `0x10` and `5.0` are refused instead of read as numbers. The error quotes the value as typed and words the range the same way for every option and for `limit:` in `--where`. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#output-and-exit-codes))
 - **CLI.** `stats --since` with a time in the future and no `--until` says `--since` is after now and prints both times, instead of asking for it to be before a `--until` that was not given. It still exits 2. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-stats))
+- **Config.** A bad config value prints as written, `got -1` or `got "5"`, without a type name such as `number` in front of it. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/config.md#where-settings-come-from))
 
 ## [0.1.7] - 2026-11-16
 

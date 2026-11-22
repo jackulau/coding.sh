@@ -1,10 +1,14 @@
 // Hands-on QA, round 9, what a person types: a whole-number flag takes decimal digits only and an
-// error quotes what was typed, and stats --since in the future says it is after now.
+// error quotes what was typed, stats --since in the future says it is after now, and a bad config
+// value prints no JavaScript type name.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import { parseArgs, positiveInt, UsageError, type FlagSpec } from "../../src/cli/args.ts";
 import { emptyWindow } from "../../src/cli/commands/stats.ts";
+import { ConfigError, loadConfig } from "../../src/core/config.ts";
 import { parseWhere, QueryError } from "../../src/query/where.ts";
 import { CLI } from "../_cli.ts";
 import { sandbox, type Sandbox } from "./_cmd.ts";
@@ -99,5 +103,35 @@ describe("stats --since in the future", () => {
   test("the same instant as now is not before now", () => {
     const t = Date.parse("2026-11-01T10:00:00Z");
     assert.equal(emptyWindow("now", t, undefined, t).message, '--since is not before now: "now" is 2026-11-01T10:00:00.000Z, and now is 2026-11-01T10:00:00.000Z');
+  });
+});
+
+describe("a bad config value", () => {
+  const msg = (toml: string): string => {
+    const sb = box();
+    const file = join(sb.root, "config.toml");
+    writeFileSync(file, toml);
+    try {
+      loadConfig({ env: sb.env, file });
+    } catch (e) {
+      assert.ok(e instanceof ConfigError, String(e));
+      return e.message;
+    }
+    assert.fail(`no error for ${toml}`);
+  };
+
+  test("prints the value as written, with no type name", () => {
+    assert.match(msg("[retention]\nkeepSpoolDays = -1\n"), /retention\.keepSpoolDays must be an integer >= 0, got -1$/);
+    assert.match(msg('[retention]\nkeepSpoolDays = "5"\n'), /retention\.keepSpoolDays must be an integer >= 0, got "5"$/);
+    assert.match(msg('[update]\ncheck = "yes"\n'), /update\.check must be true or false, got "yes"$/);
+    assert.match(msg("[capture]\nredact = [1]\n"), /capture\.redact must be an array of strings, got \[1\]$/);
+    assert.match(msg("retention = 5\n"), /retention must be a table, got 5$/);
+  });
+
+  test("config set retention.keepSpoolDays -1 says got -1", () => {
+    const r = cli(box(), ["config", "set", "retention.keepSpoolDays", "-1"]);
+    assert.notEqual(r.status, 0, r.stdout);
+    assert.match(r.stderr, /must be an integer >= 0, got -1\b/);
+    assert.doesNotMatch(r.stderr, /got number/);
   });
 });
