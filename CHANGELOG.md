@@ -378,6 +378,7 @@ grouped by area, with links to the docs for the details.
 - **CLI.** In PowerShell and cmd, the fix `run` prints when `--` is missing quotes it (`codingsh run "--" claude`), as PowerShell drops a bare `--`. A missing argument's `Usage:` line and the commands inside `exp ab`'s report and `refine`'s hints and log now name `codingsh` there, and npx's command under npx, instead of `coding.sh`. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#windows))
 - **Query.** When `export`, `search` or `usage` finds nothing, a `--flag` or `flag:` name close to a known flag, or an `--agent` close to an agent id, exits 2 and names the one meant, as `sessions` does. `export --evidence --force` refuses before it clears the directory. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#usage-errors-exit-2))
 - **Sessions.** `coding.sh sessions` and `coding.sh show` name the host app that drove a session: the AGENT cell reads `claude-code via t3code`, so a row that `--agent t3code` lists says why it matched. `--json` keeps `agent` and `host` apart, as before. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#list-your-sessions))
+- **Viewer.** The session list names the app that drove an agent after its name, `claude-code via T3 Code`, so a row that `agent:t3code` lists says why it matched. The page drawn before its script runs reads the same. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#host-apps-t3-code))
 
 ## [0.1.7] - 2026-11-16
 
