@@ -154,8 +154,8 @@ viewer needs.
   [Comment](https://coding.sh/docs/api/read/search#post-apiscores) adds a note to it or one step. A running
   session gets new events every 4 seconds.
 - **Work** (<kbd>g</kbd> <kbd>w</kbd>). The [`coding.sh work`](https://coding.sh/docs/cli/work) queue,
-  with linked sessions and index age. A workflow run shows its agents by phase and state,
-  with phase costs; a superseded failure links its replacement. Ack and Snooze write
+  with index age; headings count whole buckets. An item's page shows its sessions, PRs, files,
+  a run's agents by phase and a superseded failure's replacement. Ack and Snooze write
   `work.json`.
 - **Explore** (<kbd>g</kbd> <kbd>x</kbd>). Six charts per day or week: sessions, failure rate,
   cost, tokens, tool error rate and p95 model-call time, split by agent, model, repo or flag.

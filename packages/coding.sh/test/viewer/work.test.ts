@@ -56,6 +56,14 @@ function req(port: number, path: string, opts: { method?: string; headers?: Reco
 const KEYS = ["counts", "needYou", "hidden", "noPromptSignal", "items", "more", "groups", "truncated"];
 const pick = (doc: Record<string, unknown>) => Object.fromEntries(KEYS.filter((k) => k in doc).map((k) => [k, doc[k]]));
 
+/** `work show <id> --json`, less what only the CLI gives: an old index's time and the ingest backlog. */
+async function showJson(sb: Sandbox, id: string): Promise<Record<string, unknown>> {
+  const r = await runCmd(work, sb, { action: "show", positionals: [id], json: true });
+  assert.equal(r.error, undefined, r.error?.stack);
+  const { indexUpdatedAt: _, asOf: __, pending: ___, ...doc } = r.json as Record<string, unknown>;
+  return doc;
+}
+
 describe("viewer /api/work", () => {
   let sb: Sandbox;
   let index: SqliteIndexStore;
@@ -83,6 +91,14 @@ describe("viewer /api/work", () => {
       const want = pick(await cli(flags));
       const res = await get(path);
       if (isDeepStrictEqual(pick(await cli(flags)), want) || i === 2) return { want, res };
+    }
+  };
+  /** `work show <id> --json` and GET /api/work/<id>, read before and after as cliAndApi reads them. */
+  const showAndApi = async (id: string) => {
+    for (let i = 0; ; i++) {
+      const want = await showJson(sb, id);
+      const res = await get(`/api/work/${id}`);
+      if (isDeepStrictEqual(await showJson(sb, id), want) || i === 2) return { want, res };
     }
   };
 
@@ -167,6 +183,46 @@ describe("viewer /api/work", () => {
     assert.equal(staged.totals.hidden, 1);
     // The filters narrow the totals as they narrow the items.
     assert.deepEqual((await get("/api/work?agent=codex&limit=1")).json().totals, { ...countOf([]), failed: 1 });
+  });
+
+  test("GET /api/work/<id> gives the item work show <id> --json gives, and the list's now", async () => {
+    for (const sid of ["blocked", "failed", "review"]) {
+      const { want, res } = await showAndApi(workItemId(sid));
+      assert.equal(res.status, 200, res.body);
+      const { now: at, ...got } = res.json();
+      assert.deepEqual(got, want);
+      assert.match(at, /^\d{4}-\d{2}-\d{2}T/);
+    }
+    const blocked = (await get(`/api/work/${workItemId("blocked")}`)).json();
+    assert.deepEqual(blocked.sessions.map((s: { id: string }) => s.id), ["blocked", "blocked:sub:a1"]);
+    assert.match(blocked.reason, /\S/);
+    assert.equal(blocked.bucket, "blocked");
+    // A hidden item has a page too, as `work show` shows it.
+    assert.equal((await get(`/api/work/${workItemId("done")}`)).json().hidden, "done");
+  });
+
+  test("GET /api/work/<id>: a malformed id is a 400, an unknown one a 404, and the list's filters apply", async () => {
+    const unknown = await get("/api/work/w000000");
+    assert.equal(unknown.status, 404, unknown.body);
+    assert.equal(unknown.json().error, "no work item w000000 since 7d");
+    const bad = await get("/api/work/not-an-id");
+    assert.equal(bad.status, 400, bad.body);
+    assert.match(bad.json().error, /^id must be a work item id/);
+    assert.equal((await get("/api/work/W1A2B3C")).status, 400);
+    const id = workItemId("blocked");
+    const other = await get(`/api/work/${id}?agent=codex`);
+    assert.equal(other.status, 404, other.body);
+    assert.equal(other.json().error, `no work item ${id} since 7d that matches the filters`);
+    assert.equal((await get(`/api/work/${id}?repo=api`)).status, 404);
+    assert.equal((await get(`/api/work/${id}?agent=claude-code&repo=demo`)).status, 200);
+    // An item older than the window is found once the window takes it in.
+    const old = workItemId("old");
+    assert.equal((await get(`/api/work/${old}`)).status, 404);
+    assert.equal((await get(`/api/work/${old}?since=60d`)).status, 200);
+    assert.equal((await get(`/api/work/${id}?since=yesterdayish`)).status, 400);
+    assert.equal((await post(`/api/work/${id}`, {})).status, 405);
+    assert.equal((await get(`/api/work/${id}/sessions`)).status, 404);
+    assert.equal((await req(v.port, `/api/work/${id}`)).status, 401);
   });
 
   test("ack and snooze write the overlay coding.sh work reads", async () => {
@@ -301,6 +357,27 @@ describe("viewer /api/work: workflow runs, superseded failures and the index's a
     // The item that superseded it ended with no failure, so it is hidden as done; the page still links it.
     assert.ok(!got.items.some((i: { id: string }) => i.id === failed.supersededBy));
     assert.deepEqual(got.sessionOf, { [workItemId("passed")]: "passed" });
+  });
+
+  test("an item's page carries a run's agents and a superseded failure's link, as work show gives them", async () => {
+    const items = (await req(v.port, "/api/work?all=1", { token: v.token })).json().items;
+    const run = items.find((i: { workflow?: { id: string } }) => i.workflow?.id === "run-a");
+    const failed = workItemId("failed");
+    for (const id of [run.id, failed]) {
+      const res = await req(v.port, `/api/work/${id}`, { token: v.token });
+      assert.equal(res.status, 200, res.body);
+      // The index is old, so both sides judge the item as of its last ingest: no clock to split them.
+      const { now: at, index: age, sessionOf: _, ...got } = res.json();
+      assert.deepEqual(got, await showJson(sb, id));
+      assert.equal(at, age.updatedAt);
+    }
+    const agents = (await req(v.port, `/api/work/${run.id}`, { token: v.token })).json().workflowAgents;
+    assert.deepEqual(agents.map((a: Record<string, unknown>) => [a.sessionId, a.phase, a.state]), [["lead:sub:b1", "build", "done"], ["lead:sub:b2", "build", "failed"], ["lead:sub:v1", "review", "running"]]);
+    assert.match(agents[0].startedAt, /^\d{4}-\d{2}-\d{2}T/);
+    const superseded = (await req(v.port, `/api/work/${failed}`, { token: v.token })).json();
+    assert.equal(superseded.supersededBy, workItemId("passed"));
+    assert.deepEqual(superseded.sessionOf, { [workItemId("passed")]: "passed" });
+    assert.equal((await req(bare.port, `/api/work/${failed}`, { token: bare.token })).json().index, undefined);
   });
 
   test("carries the index's age in the CLI's words, and judges an old index's queue as of its last ingest", async () => {

@@ -147,6 +147,7 @@ same `CODING_SH_HOME` as the server.
 | GET | [`/api/work`](#get-apiwork-post-apiworkack-post-apiworksnooze) | ui token | ui |
 | POST | [`/api/work/ack`](#get-apiwork-post-apiworkack-post-apiworksnooze) | ui token | ui |
 | POST | [`/api/work/snooze`](#get-apiwork-post-apiworkack-post-apiworksnooze) | ui token | ui |
+| GET | [`/api/work/{id}`](#get-apiworkid) | ui token | ui |
 
 Any other path answers 404 `{"error":"not found","status":404}`.
 
@@ -2032,6 +2033,12 @@ Item fields for workflow runs and replaced failures:
 - `POST /api/work/snooze` takes `{"id": "w1a2b3c", "duration": "1h"}` and hides the item until then, as `coding.sh work snooze` does. It returns `id`, `snoozedUntil` (an ISO time) and the `bucket` the snooze holds.
 - Both writes look the item up in the last 7 days, or the window in `?since=`. An item not in the window answers 404.
 - An id that is not an item id, or a duration that does not parse, answers 400. The body must be JSON, is capped at 1 KB, and the `Origin` must match the host.
+
+### `GET /api/work/{id}`
+
+The viewer's item page (`#/w/<id>`): one item, as `coding.sh work show <id> --json` prints it, built by the same code, plus the list's `now` and `index` and, for a superseded failure, `sessionOf`. Only `coding.sh ui` answers.
+
+It takes `since`, `agent` and `repo` as `GET /api/work` does. An id that is not an item id answers 400; an item not in the window, or not matching the filters, answers 404.
 
 ### `GET /api/ingest`
 

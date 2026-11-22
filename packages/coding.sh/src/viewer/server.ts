@@ -44,7 +44,7 @@ import { computeMetrics, DAY_MS, MAX_GROUPS, METRIC_BUCKETS, METRIC_GROUPS, Metr
 import { parseTime } from "../query/where.ts";
 import { getScoreConfigs, getScores, postScore, postScoreConfig, type ApiReply, type ScoresApiCtx } from "../scores/api.ts";
 import { paths } from "../core/paths.ts";
-import { indexDoc, WorkApiError, workAck, workList, workSnooze, type WorkSource } from "./work.ts";
+import { indexDoc, WORK_ITEM_ID, WorkApiError, workAck, workList, workShow, workSnooze, type WorkSource } from "./work.ts";
 import { indexAge } from "../core/ingest-health.ts";
 import { ScoreError } from "../scores/scores.ts";
 import { checkViewName, removeView, saveView, viewStore, ViewError } from "../query/views.ts";
@@ -1266,7 +1266,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
     }
 
     case "work": {
-      // GET: the queue. POST ack and POST snooze take {"id": "w…"} and write the same work.json the CLI writes.
+      // GET: the queue, or one item. POST ack and POST snooze take {"id": "w…"} and write the same work.json the CLI writes.
       // Only `coding.sh ui` passes a work source: acks and snoozes live in this machine's coding.sh home.
       if (!ctx.work) throw new HttpError(404, "not found: the work queue is only in the local viewer (coding.sh ui)");
       if (ctx.project !== undefined) throw new HttpError(404, "not found: the work queue is only in the local viewer (coding.sh ui)");
@@ -1287,6 +1287,11 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
           if (method !== "POST") throw new HttpError(405, "method not allowed");
           checkOrigin(req, ctx.checkHost);
           return sendJson(res, 200, await workSnooze(ctx.index, src, q, await readJson(req, res, 1024)));
+        }
+        // GET /api/work/<id>: one item, as `work show <id> --json` gives it (a malformed id is a 400).
+        if (sub === undefined && (method === "GET" || WORK_ITEM_ID.test(id))) {
+          get();
+          return sendJsonCompressed(req, res, await workShow(ctx.index, src, id, q));
         }
         throw notFound();
       } catch (e) {

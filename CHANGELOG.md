@@ -51,6 +51,7 @@ grouped by area, with links to the docs for the details.
 - **Sessions.** `coding.sh views save <name> --where <query>` keeps a query under a name, and `views list` and `views rm` manage them. `sessions --view <name>` lists its sessions, ANDed with `--where` when both are given; the MCP `sessions_list` tool takes `view`, and the viewer API serves `/api/views`. [Query](https://coding.sh/docs/query#saved-views)
 - **Viewer.** Comment on a session or one step in `coding.sh ui`: each comment is a text score named `comment`, shown as text with its author and time, and `coding.sh show` prints them under their step (`comments` in `--json`). The session list's Views menu applies and deletes saved views, and Save view keeps the current filter. [Explore](https://coding.sh/docs/explore#open-the-viewer)
 - **Viewer.** On the Work page a workflow run shows each phase's agents by state, with its agents grouped by phase and each phase's cost. A superseded failure links the session that superseded it. Work and the session list say how old the index is, as a warning when stale. Worktree sessions show their main checkout's repo. [Explore](https://coding.sh/docs/explore#open-the-viewer)
+- **Viewer.** Each Work item has its own page (`#/w/<id>`), built by the same code as `coding.sh work show`: its reason, next step, sessions, PRs, files and a run's agents by phase, with Ack and Snooze. Every card links to it, and back returns to the list where it was. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#open-the-viewer))
 
 ### Changed
 
