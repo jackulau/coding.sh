@@ -31,7 +31,7 @@ const TOOLS: [string, string][] = [
   ["score_add", "Score a session, event, case or run: a number, true or false, or a category. Scoring the same thing again replaces it."],
   ["score_add_batch", "Store up to 100 scores in one call, each checked as score_add checks one. If one is invalid, none is stored."],
   ["work", "What needs you across agents, as coding.sh work --json gives it: each item with its reason, next step, phases and supersededBy, paged with limit and cursor, and the index's age. With all, running and done items too."],
-  ["status", "Health of coding.sh: version, available update, recent captures, pending spool, last error, the index's age (index.updatedAt, index.ageMs), 5h and weekly plan usage. Its work field holds what needs you (coding.sh work): the count per bucket and the top 5 items, each with a reason and a next step; coding.sh work --json lists the rest."],
+  ["status", "Health of coding.sh: version, available update, the store URL with any password shown as ***, recent captures, pending spool, last error, the index's age (index.updatedAt, index.ageMs), 5h and weekly plan usage. Its work field holds what needs you (coding.sh work): the count per bucket and the top 5 items, each with a reason and a next step; coding.sh work --json lists the rest."],
 ];
 
 // The skills follow packages/coding.sh/skills/<name>/SKILL.md.

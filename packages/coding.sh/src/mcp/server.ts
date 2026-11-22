@@ -11,6 +11,7 @@ import { openContext, storeOpenNext, type Context } from "../core/context.ts";
 import { autoIngest, pendingField, readBudgetMs, refolding, type IngestBacklog } from "../cli/common.ts";
 import { version } from "../cli/meta.ts";
 import { paths } from "../core/paths.ts";
+import { maskUrlsIn } from "../core/store-url.ts";
 import { schemaViolations } from "../toolevals/jsonschema.ts";
 import { McpServer, serveStdio, ToolError, type StdioStreams } from "./protocol.ts";
 import { buildPrompts } from "./prompts.ts";
@@ -98,7 +99,8 @@ export function createCodingShMcp(o: CodingShMcpOptions = {}): CodingShMcp {
       opened = undefined;
       // The next step follows what named the store (core/context.ts storeOpenNext).
       const next = (e as { reason?: unknown }).reason === "no_fts5" ? "Install Node 22.16 or newer" : storeOpenNext(env, e).join(" ");
-      throw new ToolError(`Couldn't open the coding.sh store: ${e instanceof Error ? e.message : String(e)}. ${next}.`);
+      // A store's error can name its URL, password included: masked, as `coding.sh doctor` does.
+      throw new ToolError(`Couldn't open the coding.sh store: ${maskUrlsIn(e instanceof Error ? e.message : String(e))}. ${next}.`);
     });
     return opened;
   };

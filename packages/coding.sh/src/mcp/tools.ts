@@ -50,6 +50,7 @@ import { needYou, readWorkQueue, settleWorkFiles, WORK_WINDOW_MS, workFiles, wor
 import { indexAge, indexAgeField, type IndexAge } from "../core/ingest-health.ts";
 import { readOverlay } from "../core/work-overlay.ts";
 import { AmbiguousRef, findSessionRef, MIN_ID_PREFIX, shortener } from "../core/session-ref.ts";
+import { maskStoreUrl } from "../core/store-url.ts";
 
 type Obj = Record<string, unknown>;
 
@@ -1691,7 +1692,8 @@ function toolDefs(): PagedTool[] {
           version: version(),
           update,
           home: ctx.paths.root,
-          store: ctx.config.store.index,
+          // Masked as `coding.sh status` prints it: the answer goes into the agent's context and on to its model provider.
+          store: maskStoreUrl(ctx.config.store.index),
           last24h: { sessions: day.sessions.length, agents: [...new Set(day.sessions.map((s) => s.agent))].sort() },
           lastCapture: [...lastByAgent].sort((x, y) => x[0].localeCompare(y[0])).map(([agent, s]) => ({ agent, at: iso(lastActivity(s)), sessionId: s.id, shortId: short(s.id) })),
           latest: latest ? sessionSummary(latest, now) : undefined,
