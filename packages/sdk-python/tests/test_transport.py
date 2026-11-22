@@ -1,20 +1,23 @@
 from __future__ import annotations
 
-import calendar
 import email.utils
 import gzip
 import json
+import os
 import socket
 import threading
 import time
 import unittest
 from typing import List, Optional
 
-import support  # noqa: F401  (sets up sys.path and a temp HOME)
+import support  # sets up sys.path and a temp HOME
 from support import KEY, IngestServer, collect, start_sdk
 
 import coding_sh
 from coding_sh import _client, _trace
+
+# How both SDKs read each Retry-After value. A missing file fails the test that reads it.
+RETRY_AFTER = os.path.join(support.ROOT, "..", "sdk", "test", "fixtures", "retry-after.json")
 
 
 def _free_port() -> int:
@@ -38,28 +41,21 @@ class _RecordedWaits(threading.Event):
 
 
 class RetryAfterTest(unittest.TestCase):
-    """Retry-After is read as in the TS SDK (retryAfterMs in packages/sdk/src/transport.ts)."""
+    """Retry-After as RFC 9110 defines it, read the same way as retryAfterMs in
+    packages/sdk/src/transport.ts."""
 
-    DATE = "Sun, 06 Nov 1994 08:49:37 GMT"
-    AT = float(calendar.timegm((1994, 11, 6, 8, 49, 37)))
+    def test_each_case_is_read_as_in_the_ts_sdk(self) -> None:
+        # The TS SDK's transport.test.ts reads the same cases.
+        with open(RETRY_AFTER, encoding="utf-8") as f:
+            fx = json.load(f)
+        for c in fx["cases"]:
+            with self.subTest(value=c["value"], why=c["why"]):
+                self.assertEqual(_client._parse_retry_after(c["value"], now=fx["now"]), c["wait"])
 
-    def test_seconds_are_waited_up_to_60(self) -> None:
-        for v, want in (("0", 0.0), ("5", 5.0), (" 1.5 ", 1.5), ("60", 60.0), ("61", 60.0), ("1e3", 60.0)):
-            with self.subTest(v=v):
-                self.assertEqual(_client._parse_retry_after(v), want)
-
-    def test_a_date_is_waited_until_it_passes_up_to_60_s(self) -> None:
-        # The three HTTP date forms; asctime has no zone and is read as GMT.
-        for date in (self.DATE, "Sunday, 06-Nov-94 08:49:37 GMT", "Sun Nov  6 08:49:37 1994"):
-            with self.subTest(date=date):
-                self.assertEqual(_client._parse_retry_after(date, now=self.AT - 10), 10.0)
-                self.assertEqual(_client._parse_retry_after(date, now=self.AT - 3600), 60.0)
-                self.assertEqual(_client._parse_retry_after(date, now=self.AT + 10), 0.0)
-
-    def test_a_value_that_is_neither_falls_back_to_backoff(self) -> None:
-        for v in (None, "", "soon", "Infinity", "NaN", "-30", "Sun, 99 Foo 1994 08:49:37 GMT"):
-            with self.subTest(v=v):
-                self.assertIsNone(_client._parse_retry_after(v))
+    def test_a_number_of_thousands_of_digits_waits_60_s(self) -> None:
+        # int() refuses a string of more than 4300 digits.
+        self.assertEqual(_client._parse_retry_after("9" * 5000), 60.0)
+        self.assertEqual(_client._parse_retry_after("0" * 5000 + "5"), 5.0)
 
 
 class TransportTest(unittest.TestCase):
@@ -273,6 +269,46 @@ class TransportTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertLess(time.monotonic() - start, 7.0)
         self.assertIn("flush() gave up after 5 s", "\n".join(logs.output))
+
+    def _until_idle(self, t: "_client.Transport") -> None:
+        deadline = time.monotonic() + 5
+        while t.stats()["queued"] and time.monotonic() < deadline:
+            time.sleep(0.02)
+
+    def test_shutdown_that_runs_out_of_time_says_so_once_and_drops_what_is_left(self) -> None:
+        # The server answers 503 after 1 s: one batch is in flight and four are queued when
+        # shutdown(0.3) gives up. Before, it warned that flush() gave up, and the sender went on
+        # retrying the batch and then sent the rest.
+        self.server.delay = 1.0
+        self.server.plan = [(503, {}, {})]
+        start_sdk(self.server, max_batch=1)
+        t = _trace._get()
+        self._span()  # 5 events
+        with self.assertLogs("coding_sh", level="WARNING") as logs:
+            self.assertFalse(coding_sh.shutdown(0.3))
+        self.assertEqual(
+            [r.getMessage() for r in logs.records],
+            ["coding.sh: shutdown() gave up after 0.3 s with 5 events not sent (the server did not answer); dropping them"],
+        )
+        self._until_idle(t)
+        self.assertEqual(t.stats(), {"queued": 0, "sent": 0, "dropped": 0, "failed": 5})
+        self.assertEqual(len(self.server.requests), 1, "the batch in flight is not retried and the rest is not sent")
+
+    def test_an_init_that_replaces_a_transport_says_its_final_flush_gave_up(self) -> None:
+        self.server.delay = 1.5
+        self.server.plan = [(503, {}, {})]
+        start_sdk(self.server)
+        old = _trace._get()
+        self._span()
+        with self.assertLogs("coding_sh", level="WARNING") as logs:
+            start_sdk(self.server)  # waits 1 s for the old transport
+        self.assertEqual(
+            [r.getMessage() for r in logs.records],
+            ["coding.sh: the final flush gave up after 1 s with 5 events not sent (the server did not answer); dropping them"],
+        )
+        self._until_idle(old)
+        self.assertEqual(old.stats(), {"queued": 0, "sent": 0, "dropped": 0, "failed": 5})
+        self.assertEqual(len(self.server.requests), 1)
 
     def test_env_configuration(self) -> None:
         import os

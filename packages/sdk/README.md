@@ -101,8 +101,10 @@ await generateText({
 });
 ```
 
-Spans go to the server as OTLP JSON. `aiSdkTracer({ sessionId })` sets the session for everything that
-tracer records. Inside `trace()` or `withSession()`, each AI SDK call is a turn of that session.
+Spans go to the server as OTLP JSON. Inside `trace()`, each AI SDK call is a step of the trace's one
+turn, as the SDK's own model calls are. Inside `withSession()` alone, each call is a turn of that
+session. `aiSdkTracer({ sessionId })` sets the session for everything that tracer records; each call
+is a turn there, unless it is the trace's own session.
 
 If you already run OpenTelemetry, you don't need the SDK. Export to `<CODING_SH_URL>/v1/traces` with
 `Authorization: Bearer <key>`, and set `gen_ai.conversation.id` (or `session.id`) to group a conversation.

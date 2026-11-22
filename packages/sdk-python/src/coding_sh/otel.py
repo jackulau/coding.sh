@@ -15,6 +15,11 @@ OTEL_EXPORTER_OTLP_HEADERS), then CODING_SH_URL + CODING_SH_INGEST_KEY. It also 
 `gen_ai.conversation.id` on spans started inside coding_sh.with_session(...) or
 coding_sh.trace(session_id=...), so OTel spans group into the same conversation session.
 
+Inside coding_sh.trace(), a span from the provider's tracers that would be a root (the context it
+starts in holds no OTel span) gets the trace's open trace() or span() as parent and
+`coding_sh.sdk_parent`, so it is a step of the trace's one turn, not a turn of its own. A span that names another session in its
+start attributes stays a root. Spans with an OTel parent keep it.
+
 Needs `pip install coding-sh[otel]` (opentelemetry-sdk, opentelemetry-exporter-otlp-proto-http).
 Without them, configure() warns once and returns None; it never raises into the app.
 """
@@ -27,11 +32,17 @@ import urllib.parse
 from typing import Any, Dict, Optional
 
 from ._client import base_url
-from ._trace import current_session_id
+from ._trace import current_session_id, current_span_ids
 
 log = logging.getLogger("coding_sh")
 
 CONVERSATION_ATTR = "gen_ai.conversation.id"
+_SESSION_ATTRS = (CONVERSATION_ATTR, "session.id")
+
+# Set on a span whose parent is a coding_sh.trace() or span(). The SDK sends those as events, never
+# as spans, so the server waits for no parent and keeps the span a step of the trace's turn
+# (src/otel/map.ts in coding.sh).
+_SDK_PARENT_ATTR = "coding_sh.sdk_parent"
 
 
 def _env(name: str) -> Optional[str]:
@@ -86,6 +97,52 @@ class ConversationSpanProcessor:
         return True
 
 
+def _trace_parent(context: Any, attributes: Any) -> Any:
+    """A context whose span is the coding_sh.trace() or span() open here, or None.
+
+    None unless the new span would be a root (neither `context` nor the current context holds a
+    valid span) and names no session but the trace's.
+    """
+    from opentelemetry import trace as otel_trace
+
+    ids = current_span_ids()
+    if ids is None or otel_trace.get_current_span(context).get_span_context().is_valid:
+        return None
+    named = next((attributes[k] for k in _SESSION_ATTRS if attributes and attributes.get(k)), None)
+    if named is not None and str(named) != current_session_id():
+        return None
+    flags = otel_trace.TraceFlags(otel_trace.TraceFlags.SAMPLED)
+    parent = otel_trace.SpanContext(int(ids[0], 16), int(ids[1], 16), is_remote=False, trace_flags=flags)
+    return otel_trace.set_span_in_context(otel_trace.NonRecordingSpan(parent), context) if parent.is_valid else None
+
+
+def _join_traces(tracer: Any) -> Any:
+    """Makes tracer.start_span (which start_as_current_span calls) use _trace_parent."""
+    start = getattr(tracer, "start_span", None)
+    if start is None or getattr(start, "_coding_sh", False):
+        return tracer
+
+    def start_span(name: str, context: Any = None, *args: Any, **kwargs: Any) -> Any:
+        try:
+            parent = _trace_parent(context, kwargs.get("attributes", args[1] if len(args) > 1 else None))
+        except Exception:
+            parent = None
+        span = start(name, context if parent is None else parent, *args, **kwargs)
+        if parent is not None:
+            try:
+                span.set_attribute(_SDK_PARENT_ATTR, True)
+            except Exception:
+                pass
+        return span
+
+    setattr(start_span, "_coding_sh", True)
+    try:
+        setattr(tracer, "start_span", start_span)
+    except Exception:
+        pass
+    return tracer
+
+
 _warned = False
 
 
@@ -129,7 +186,12 @@ def configure(
             exporter_kwargs["headers"] = {"Authorization": "Bearer " + k}
         name = service or _env("OTEL_SERVICE_NAME") or _env("CODING_SH_SERVICE")
         resource = Resource.create({"service.name": name} if name else {})
-        provider = TracerProvider(resource=resource)
+
+        class _TracerProvider(TracerProvider):
+            def get_tracer(self, *args: Any, **kwargs: Any) -> Any:
+                return _join_traces(super().get_tracer(*args, **kwargs))
+
+        provider = _TracerProvider(resource=resource)
         provider.add_span_processor(ConversationSpanProcessor())  # type: ignore[arg-type]
         exporter = OTLPSpanExporter(**exporter_kwargs)
         provider.add_span_processor(BatchSpanProcessor(exporter) if batch else SimpleSpanProcessor(exporter))

@@ -1960,7 +1960,7 @@ export const COMMANDS: CommandSpec[] = [
     group: "Harness",
     summary: "A/B two harness bundles on eval tasks",
     args: [
-      { name: "a", desc: "Baseline bundle id or name (with --parity: a URL, or a command that prints the page)", required: true },
+      { name: "a", desc: "Baseline bundle id or name (with --experiment, omit both arms to take them from its runs; with --parity: a URL, or a command that prints the page)" },
       { name: "b", desc: "Candidate bundle id or name (omit with --without or --with; with --parity: the other URL or command)" },
     ],
     flags: [

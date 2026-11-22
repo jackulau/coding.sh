@@ -31,6 +31,12 @@ not write or that you changed since (a `reference.patch` you added, a prompt you
 them; `--force-all` deletes those too. `evals/<name>/.eval-init.json` records what `eval init`
 wrote.
 
+Each task's setup is guessed from the files at the root of the repo, such as `npm ci` from
+`package-lock.json`, and `eval init` prints it. A `package.json` with no lockfile gets no install,
+since an install from it pins no versions. Every trial runs the setup in its own copy of the repo
+before the agent starts, so no trial sees what another installed. To change it, edit `"setup"` in
+`tasks/<task>/task.json` (`[]` runs none).
+
 The session failed, so its diff is not a correct answer. It is saved as a near miss
 (`near-misses/001.patch`) that the verifier must fail. Add a correct fix as `reference.patch` in
 the task dir, load it with `coding.sh eval import evals/failures/tasks/<task>`, and `coding.sh eval
@@ -148,14 +154,16 @@ share of all trials that passed.
   wants pass^k; a tool where one good answer is enough can use pass@k.
 - A **flaky** task passed some trials and failed others. It counts for pass@k and against pass^k.
 - **first failure** links the session of a failed trial (`coding.sh show <id>`, or the viewer), or
-  gives the grader's reason. Read failed transcripts before you change a prompt or a grader: a
+  gives the grader's reason, or the agent's exit code and error when it exited non-zero. A task
+  with no failed trial shows the error of a trial with no outcome, such as a setup step that
+  failed or a refused login. Read failed transcripts before you change a prompt or a grader: a
   task no trial ever passes is more often a broken task than a hard one.
 - **experiment** names the stored runs. For a tasks suite there is no experiment record, so
   `coding.sh exp show <id>` lists those runs per task, with the agent's cost at API prices
   (`--json`: `taskRuns`).
-- Under the table, **Verifier output of failed runs** shows the last 8 lines that the verifier
-  printed for up to 5 failed trials of a repo task suite. See
-  [Verifier output](#verifier-output).
+- Under the table, **Verifier output of failed runs** shows 8 lines of what the verifier printed
+  for up to 5 failed trials of a repo task suite: from the first failing test when a test runner
+  reported one, else the last 8. See [Verifier output](#verifier-output).
 - A capability suite where 90% of tasks pass every trial is saturated: it no longer shows
   progress, so add harder tasks or move it to regression.
 - Under 20 tasks the report says the suite can show only large changes.
@@ -1823,7 +1831,7 @@ does, a path-scoped rule only after the agent touched a matching file, a skill o
 opened (listed is not enough). Exposure comes from each run's captured trace. Per task, Δ is B's
 pass rate minus A's. An addition is KEEP when some task improved (G > 0), no task dropped by more
 than τ = 0.34 (D, one run in three), no task A solved on every run lost one, B won at least 2 runs
-net (k·N ≥ m, whole runs, so a one-run win doesn't count) and the item fired. When only the drop or
+net (k·N ≥ m, whole runs, so a one-run win doesn't count). When only the drop or
 the solved-task rule fails it is RECHECK with the command to re-run those tasks; a drop again kills
 it. Otherwise KILL with the failed gates. A removal is REJECT when it costs 2 runs net, drops a task
 by more than τ, or a task the item's arm solved every time loses a run; UNMEASURED ("keep") when the
@@ -1927,7 +1935,10 @@ its verifier printed as `verifierOutput`: the last 4096 characters of stdout and
 colour codes and progress redraws removed. The text is redacted before it is stored, with the same
 `capture.redact` and `capture.redactPatterns` rules as captured sessions. A stream the verifier left
 empty is absent, and so is `verifierOutput` when both are. Each `compare --repair` round keeps its
-own. After the report, `compare` and `eval run` print the last 8 lines for up to 5 failed runs:
+own. After the report, `compare` and `eval run` print 8 lines for up to 5 failed runs, leaving out
+lines with no letter or digit. When a test runner reported a failing test (node:test, TAP, pytest,
+Jest, mocha, go test or cargo test), the lines start at the first one, so they show its name and its
+error. Otherwise they are the last 8 lines. The heading says which:
 
 ```
 Verifier output of failed runs (last 8 lines):

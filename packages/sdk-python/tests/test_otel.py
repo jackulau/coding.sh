@@ -6,7 +6,7 @@ import sys
 import unittest
 
 import support  # noqa: F401
-from support import KEY, IngestServer
+from support import KEY, IngestServer, by_kind, collect, start_sdk
 
 import coding_sh
 from coding_sh import otel
@@ -101,7 +101,8 @@ class OtelExportTest(unittest.TestCase):
         os.environ.update(self.saved)
         self.server.close()
 
-    def _spans(self):  # noqa: ANN202
+    def _records(self):  # noqa: ANN202
+        """Every exported span: its resource attributes, name, attributes and ids (hex, "" for none)."""
         from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
 
         out = []
@@ -114,10 +115,40 @@ class OtelExportTest(unittest.TestCase):
                     for sp in ss.spans:
                         attrs = {}
                         for a in sp.attributes:
-                            v = a.value
-                            attrs[a.key] = v.string_value if v.HasField("string_value") else v.int_value
-                        out.append((res, sp.name, attrs))
+                            which = a.value.WhichOneof("value")
+                            attrs[a.key] = getattr(a.value, which) if which else None
+                        out.append(
+                            {
+                                "resource": res,
+                                "name": sp.name,
+                                "attrs": attrs,
+                                "trace_id": sp.trace_id.hex(),
+                                "span_id": sp.span_id.hex(),
+                                "parent_span_id": sp.parent_span_id.hex(),
+                            }
+                        )
         return out
+
+    def _spans(self):  # noqa: ANN202
+        return [(s["resource"], s["name"], s["attrs"]) for s in self._records()]
+
+    def _with_sdk(self, body):  # noqa: ANN001, ANN202
+        """Runs body(tracer) while the SDK sends its native events to a second fake server.
+
+        Returns the spans exported to self.server by name, the native events, and what body returned.
+        """
+        native = IngestServer()
+        try:
+            start_sdk(native)
+            provider = otel.configure(service="j2-otel", url=self.server.url, key=KEY, set_global=False, batch=False)
+            result = body(provider.get_tracer("app"))
+            provider.force_flush()
+            provider.shutdown()
+            events = collect(native)
+        finally:
+            coding_sh.shutdown(1.0)
+            native.close()
+        return {s["name"]: s for s in self._records()}, events, result
 
     def _chat_span(self, provider) -> None:  # noqa: ANN001
         tracer = provider.get_tracer("app")
@@ -166,6 +197,75 @@ class OtelExportTest(unittest.TestCase):
 
     def test_configure_without_endpoint_returns_none(self) -> None:
         self.assertIsNone(otel.configure(set_global=False))
+
+    # A coding_sh.trace() sends events, never a span. A span that would be a root inside it gets the
+    # trace's id, the trace's open trace or step span as parent, and coding_sh.sdk_parent, so the
+    # server maps it as a step of the trace's one turn instead of a turn of its own.
+
+    def test_a_span_that_would_be_a_root_inside_trace_is_a_step_of_it(self) -> None:
+        from opentelemetry.context import Context
+
+        def body(tracer):  # noqa: ANN001, ANN202
+            with coding_sh.trace("handler", input="handle it") as t:
+                with tracer.start_as_current_span("chat mock-gpt"):
+                    with tracer.start_as_current_span("POST /v1/chat/completions"):
+                        pass
+                # start_span with a context that holds no span, passed by position
+                tracer.start_span("embeddings mock-embed", Context()).end()
+            return t
+
+        spans, events, t = self._with_sdk(body)
+        root = by_kind(events, "session.start")[0]
+        for name in ("chat mock-gpt", "embeddings mock-embed"):
+            with self.subTest(name=name):
+                s = spans[name]
+                self.assertEqual((s["trace_id"], s["parent_span_id"]), (t.trace_id, root["spanId"]))
+                self.assertIs(s["attrs"]["coding_sh.sdk_parent"], True)
+                self.assertEqual(s["attrs"]["gen_ai.conversation.id"], t.session_id)
+        # A span with an OTel parent keeps it.
+        nested = spans["POST /v1/chat/completions"]
+        self.assertEqual((nested["trace_id"], nested["parent_span_id"]), (t.trace_id, spans["chat mock-gpt"]["span_id"]))
+        self.assertNotIn("coding_sh.sdk_parent", nested["attrs"])
+
+    def test_a_span_inside_a_step_span_has_the_step_as_parent(self) -> None:
+        def body(tracer):  # noqa: ANN001, ANN202
+            with coding_sh.trace("handler", session_id="conv-x") as t:
+                with coding_sh.span("step", "plan"):
+                    with tracer.start_as_current_span("chat mock-gpt"):
+                        pass
+            return t
+
+        spans, events, t = self._with_sdk(body)
+        step = by_kind(events, "span")[0]
+        chat = spans["chat mock-gpt"]
+        self.assertEqual((chat["trace_id"], chat["parent_span_id"]), (t.trace_id, step["spanId"]))
+        self.assertIs(chat["attrs"]["coding_sh.sdk_parent"], True)
+        self.assertEqual(chat["attrs"]["gen_ai.conversation.id"], "conv-x")
+
+    def test_spans_outside_trace_naming_another_session_or_under_an_otel_span_are_unchanged(self) -> None:
+        def body(tracer):  # noqa: ANN001, ANN202
+            with tracer.start_as_current_span("outside"):
+                pass
+            with coding_sh.trace("handler") as t:
+                with tracer.start_as_current_span("other session", attributes={"gen_ai.conversation.id": "conv-other"}):
+                    pass
+            with tracer.start_as_current_span("request"):  # opened before the trace
+                with coding_sh.trace("handler 2"):
+                    with tracer.start_as_current_span("under request"):
+                        pass
+            return t
+
+        spans, _, t = self._with_sdk(body)
+        for name in ("outside", "other session", "request"):
+            with self.subTest(name=name):
+                s = spans[name]
+                self.assertEqual(s["parent_span_id"], "")
+                self.assertNotEqual(s["trace_id"], t.trace_id)
+                self.assertNotIn("coding_sh.sdk_parent", s["attrs"])
+        self.assertEqual(spans["other session"]["attrs"]["gen_ai.conversation.id"], "conv-other")
+        under, request = spans["under request"], spans["request"]
+        self.assertEqual((under["trace_id"], under["parent_span_id"]), (request["trace_id"], request["span_id"]))
+        self.assertNotIn("coding_sh.sdk_parent", under["attrs"])
 
 
 if __name__ == "__main__":

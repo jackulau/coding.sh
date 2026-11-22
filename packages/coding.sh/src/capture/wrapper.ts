@@ -37,6 +37,7 @@ import type { SpoolLine } from "../core/types.ts";
 import { gatewayFromEnv } from "../integrations/gateway/ids.ts";
 import type { RepoState } from "../schema/index.ts";
 import { redactArgv } from "../core/redact.ts";
+import { branch, head, layout } from "../core/git.ts";
 import { diffSnapshots, snapshot } from "../core/snapshot.ts";
 import type { DiffResult, SnapshotOptions } from "../core/snapshot.ts";
 import { spoolLineRedactor } from "../spool/redact.ts";
@@ -51,7 +52,8 @@ export interface WrapRunOptions {
   /** Extra env for the child, merged over process.env. Also used to resolve CODING_SH_HOME. */
   env?: Record<string, string | undefined>;
   agentId?: string;
-  snapshot?: Pick<SnapshotOptions, "maxFiles" | "timeoutMs">;
+  /** Limits for the snapshots before and after, or false to take none (`snapshot.enabled = false`): the session then records the repo's root, HEAD and branch only. */
+  snapshot?: Pick<SnapshotOptions, "maxFiles" | "timeoutMs"> | false;
   /**
    * Send the child's stdout to the wrapper's stderr (fd 2) instead of its stdout.
    * Used by `run --json` so stdout carries only the one JSON result document.
@@ -73,6 +75,16 @@ export interface WrapRunResult {
 
 const FORWARDED: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"];
 
+/** The repo's root, HEAD and branch with no snapshot, when snapshots are off. Undefined outside a git work tree. */
+async function headOnly(cwd: string): Promise<RepoState | undefined> {
+  const lay = await layout(cwd);
+  if (!lay) return undefined;
+  const [sha, br] = await Promise.all([head(lay.root), branch(lay.root)]);
+  const state: RepoState = { root: lay.root, head: sha };
+  if (br) state.branch = br;
+  return state;
+}
+
 /** Run `cmd` under capture and return its exit code (128 + signo when killed by a signal; 127 when it couldn't start). */
 export async function wrapRun(opts: WrapRunOptions): Promise<number> {
   return (await wrapRunDetailed(opts)).exitCode;
@@ -92,7 +104,7 @@ export async function wrapRunDetailed(opts: WrapRunOptions): Promise<WrapRunResu
   const disabled = isDisabled(env);
   const runId = env.CODING_SH_RUN_ID;
   const gateway = gatewayFromEnv(env);
-  const snapOpts: SnapshotOptions = { ...opts.snapshot, env };
+  const snapOpts: SnapshotOptions | undefined = opts.snapshot === false ? undefined : { ...opts.snapshot, env };
 
   const spool = (event: string, raw: Record<string, unknown>, ts = Date.now()) => {
     if (disabled) return;
@@ -108,7 +120,7 @@ export async function wrapRunDetailed(opts: WrapRunOptions): Promise<WrapRunResu
   const snap = async (when: string): Promise<RepoState | undefined> => {
     if (disabled) return undefined;
     try {
-      return await snapshot(cwd, { ...snapOpts, message: `coding.sh ${when} ${sessionId}` });
+      return snapOpts ? await snapshot(cwd, { ...snapOpts, message: `coding.sh ${when} ${sessionId}` }) : await headOnly(cwd);
     } catch (e) {
       logSpoolError(e, { agent, event: `snapshot.${when}`, where: "wrapper" }, env);
       return undefined;

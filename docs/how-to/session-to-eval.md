@@ -77,6 +77,7 @@ coding.sh eval init --sessions --verifier 'node --no-warnings --test packages/co
   evals/failures/suite.json
   evals/failures/tasks/fix-passallk-in-packages-coding-sh/
   fix-passallk-i… node --no-warnings --test packages/coding.sh/test/stats/seqk.test.ts · from session a921c754
+! fix-passallk-in-packages-coding-sh: every trial runs setup `npm ci` (guessed from package-lock.json) in its own copy of the repo before the agent starts; to change it, edit "setup" in tasks/fix-passallk-in-packages-coding-sh/task.json ([] runs none)
 ! the agent's failed attempt is saved as near-misses/001.patch (the verifier must fail it). Add reference.patch, a correct fix, to each task dir; then coding.sh eval import evals/failures/tasks/<task> loads it and coding.sh eval validate <task> checks the verifier fails before the fix and passes after
 
   Capability suite: tasks the agent can't do reliably yet. Its score starts low; `eval run` reports it and never fails on it.
@@ -92,9 +93,13 @@ coding.sh eval init --sessions --verifier 'node --no-warnings --test packages/co
 Each task directory holds `instruction.md` (the session's first prompt), `task.json` (the starting
 commit, the setup commands and the verifier) and `near-misses/001.patch` (the session's own diff).
 
-`eval init` guesses the setup commands from the repo's lock and manifest files: here `npm ci`, from
-`package-lock.json`. Every trial runs them before the agent starts, so they add to each trial's time.
-To change them, edit `setup` in `task.json`. `eval run` reads the task directories each time.
+`eval init` guesses the setup commands from the repo's lock and manifest files, and prints them: here
+`npm ci`, from `package-lock.json`. A `package.json` with no lockfile gets no install, since an
+install from it pins no versions.
+
+Every trial runs the setup in its own copy of the repo before the agent starts, so it adds to each
+trial's time. To change it, edit `setup` in `task.json` (`[]` runs
+none). `eval run` reads the task directories each time.
 
 ### 3. Run it
 
@@ -119,16 +124,16 @@ flaky: fix-passallk-in-packages-coding-sh. These pass some trials and fail other
 1 task: a suite this small only shows large changes; grow it toward 20 to 50 tasks from real failures
 1 task without a reference solution (fix-passallk-in-packages-coding-sh): add reference.patch to the task dir, then coding.sh eval import <task dir> and coding.sh eval validate <task>
 
-Verifier output of failed runs (last 8 lines):
+Verifier output of failed runs (8 lines from the first failing test):
   fix-passallk-in-packages-coding-sh · attempt 1  exit 1 · run_01M803KKCEA29Y1N5CAS46MZFM
-    │       at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
-    │     generatedMessage: false,
-    │     code: 'ERR_ASSERTION',
-    │     actual: false,
-    │     expected: true,
-    │     operator: '==',
-    │     diff: 'simple'
-    │   }
+    │ test at test/stats/seqk.test.ts:41:3
+    │ ✖ matches the known values (1.298ms)
+    │   AssertionError [ERR_ASSERTION]: 0.2222222222222222 ≉ 1
+    │       at close (file:///work/demo/packages/coding.sh/test/stats/seqk.test.ts:6:72)
+    │       at TestContext.<anonymous> (file:///work/demo/packages/coding.sh/test/stats/seqk.test.ts:42:5)
+    │       at Test.runInAsyncScope (node:async_hooks:227:14)
+    │       at Test.run (node:internal/test_runner/test:1397:25)
+    │       at Test.start (node:internal/test_runner/test:1257:17)
 captured failures: 1 of 1 now pass: fix-passallk-in-packages-coding-sh (session a921c754-42cd-4265-98f7-26b9fec9eddb)
 harness claude-code-project (1 file) · experiment exp_01M803KK8N8F234W5AZK438E4X
 ```
@@ -211,7 +216,8 @@ task_f0367ea84cbb87ed
 ```
 
 This session already had a task from `eval init`, so `eval new` updated it and kept its id. `latest`
-also names a session, but after `eval run` the latest session is one of the run's trials.
+names a session too. It skips the sessions that eval, compare and experiment trials made, so after
+`eval run` it is still your own session.
 
 The instruction defaults to the session's first prompt. `--instruction 'text'` or
 `--instruction @prompt.md` replaces it, and `--setup 'npm ci'` (repeatable) adds setup commands.

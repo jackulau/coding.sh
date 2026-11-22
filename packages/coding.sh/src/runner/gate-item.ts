@@ -257,7 +257,6 @@ export function itemGate(results: readonly RunResult[], o: ItemGateOpts): ItemGa
   if (overTau.length) failed.push({ g: 2, why: `g2: ${drop}` });
   if (pLost.length) failed.push({ g: 3, why: `g3: ${lostRun}` });
   if (kN < m) failed.push({ g: 4, why: `g4: net ${signedRuns(kN)} < ${m}` });
-  if (fired < 1) failed.push({ g: 5, why: "g5: never fired" });
   const reasons = failed.map((x) => x.why);
   if (!failed.length) return { verdict: "KEEP", ...base, reasons };
   if (failed.every((x) => x.g === 2 || x.g === 3)) {
