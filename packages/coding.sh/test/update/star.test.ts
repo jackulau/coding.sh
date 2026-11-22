@@ -6,6 +6,7 @@ import net from "node:net";
 import { dirname } from "node:path";
 import { request } from "node:http";
 import { describe, test } from "node:test";
+import { AGENT_ENV } from "../../src/cli/output.ts";
 import { cacheFile } from "../../src/update/index.ts";
 import { readStar, recordStar, STAR_LINE, starFile, starNotice, starVisible, type StarState } from "../../src/update/star.ts";
 import { startViewer } from "../../src/viewer/server.ts";
@@ -98,6 +99,18 @@ describe("terminal line", () => {
     assert.equal(pipe.text, "");
     assert.equal(readStar(env).cliShownAt, undefined, "a skipped run does not use up the line");
     assert.equal(starNotice(env, out, { now, stderr: ttyStream() }), true);
+  });
+
+  test("not when an agent runs the command, even at a terminal (Codex runs some commands in one): the line waits for a person", () => {
+    const env = tmpEnv();
+    seed(env, { firstSeen: 0 });
+    const now = () => 5 * DAY;
+    const err = ttyStream();
+    for (const k of AGENT_ENV) assert.equal(starNotice({ ...env, [k]: "1" }, out, { now, stderr: err }), false, k);
+    assert.equal(err.text, "");
+    assert.equal(readStar(env).cliShownAt, undefined, "the agent's runs do not use up the line");
+    assert.equal(starNotice({ ...env, AI_AGENT: "" }, out, { now, stderr: err }), true, "set but empty names no agent");
+    assert.equal(err.text, STAR_LINE + "\n");
   });
 
   test("not in the run that printed the update notice, but the next run prints it", () => {
