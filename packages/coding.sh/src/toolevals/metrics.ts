@@ -246,9 +246,18 @@ export function computeMetrics(i: MetricsInput): ToolMetrics {
   const firstOk = firstOkIdx >= 0 ? calls[firstOkIdx] : undefined;
 
   // ---- usage and cost
+  // A cost coding.sh estimated from its price table (payload.costEstimated) is not a reported
+  // one: it is set aside, and used only when `[prices]` prices none of the calls.
   const usage: Usage = {};
-  for (const e of llm) addUsage(usage, e.usage);
-  for (const e of events) if (e.kind === "llm.call" && e.payload.ok === false) addUsage(usage, e.usage);
+  let estimated = 0;
+  const add = (e: AgentEvent) => {
+    if (e.payload?.costEstimated !== true || typeof e.usage?.costUsd !== "number") return addUsage(usage, e.usage);
+    estimated += e.usage.costUsd;
+    const { costUsd: _est, ...u } = e.usage;
+    addUsage(usage, u);
+  };
+  for (const e of llm) add(e);
+  for (const e of events) if (e.kind === "llm.call" && e.payload.ok === false) add(e);
   if (!Object.keys(usage).length) {
     for (const s of i.sessions) addUsage(usage, s.stats.usage);
     if (!Object.keys(usage).length) addUsage(usage, i.run.usage);
@@ -285,6 +294,9 @@ export function computeMetrics(i: MetricsInput): ToolMetrics {
     if (priced) {
       costUsd = total;
       flatCostUsd = flat;
+      costSource = "estimated";
+    } else if (estimated > 0) {
+      costUsd = estimated;
       costSource = "estimated";
     }
   }

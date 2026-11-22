@@ -23,6 +23,7 @@ export function runSummary(run: WorkflowRun): Record<string, unknown> {
     framework: run.framework,
     name: run.name,
     status: run.status,
+    error: run.error ?? null,
     startedAt: new Date(run.startedAt).toISOString(),
     endedAt: run.endedAt !== undefined ? new Date(run.endedAt).toISOString() : null,
     wallMs: run.stats.wallMs ?? (run.endedAt !== undefined ? run.endedAt - run.startedAt : null),

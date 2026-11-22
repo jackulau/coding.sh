@@ -433,23 +433,38 @@ async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string
 
 const NAME = /^[\w.-]+$/;
 
+/** An exp spec's `llm.upstream` (X-11), checked: the base URLs its model calls go to. */
+function specUpstream(llm: unknown, what: string): AbArm["upstream"] {
+  if (llm === undefined) return undefined;
+  const up = isObj(llm) ? llm.upstream : null;
+  if (up === undefined) return undefined;
+  if (!isObj(up) || Object.values(up).some((u) => typeof u !== "string")) {
+    throw new UsageError(`${what}: "llm" must be an object and its "upstream" an object of base URLs, e.g. {"llm": {"upstream": {"anthropic": "http://127.0.0.1:8080"}}}`, { reason: "invalid_argument" });
+  }
+  return up as AbArm["upstream"];
+}
+
 /**
  * `NAME=<JSON|FILE>` (or, with `fallback`, a bare `<JSON|FILE>` named by the
- * file or the fallback). The JSON is a task spec, or an exp spec with a task.
+ * file or the fallback). The JSON is a task spec, or an exp spec with a task
+ * (and maybe its own `llm.upstream`).
  */
-async function namedTask(v: string, what: string, fallback?: string): Promise<{ name: string; task: TaskSpec }> {
+async function namedTask(v: string, what: string, fallback?: string): Promise<{ name: string; task: TaskSpec; upstream?: AbArm["upstream"] }> {
   const eq = v.indexOf("=");
   let name = eq > 0 && NAME.test(v.slice(0, eq)) ? v.slice(0, eq) : "";
   const ref = name ? v.slice(eq + 1) : v;
   if (!name && fallback !== undefined) name = ref.trim().startsWith("{") ? fallback : basename(ref, extname(ref));
   if (!NAME.test(name)) throw new UsageError(`${what} must be NAME=<JSON|FILE>, e.g. base=task.json (got ${JSON.stringify(v)})`, { reason: "invalid_argument" });
-  let task = await jsonArg(ref, `${what} ${name}`);
-  if (isObj(task) && task.kind === undefined && isObj(task.task)) task = task.task;
+  const spec = await jsonArg(ref, `${what} ${name}`);
+  const task = isObj(spec) && spec.kind === undefined && isObj(spec.task) ? spec.task : spec;
   if (!isObj(task)) throw new UsageError(`${what} ${name} must be a task spec object`, { reason: "invalid_argument" });
-  return { name, task: task as unknown as TaskSpec };
+  const out: { name: string; task: TaskSpec; upstream?: AbArm["upstream"] } = { name, task: task as unknown as TaskSpec };
+  const upstream = task !== spec && isObj(spec) ? specUpstream(spec.llm, `${what} ${name}`) : undefined;
+  if (upstream) out.upstream = upstream;
+  return out;
 }
 
-/** `--arm NAME=<JSON|FILE>`, exactly two. */
+/** `--arm NAME=<JSON|FILE>`, exactly two. An arm's own `llm.upstream` wins over the run's. */
 async function parseArms(values: string[]): Promise<[AbArm, AbArm]> {
   if (values.length !== 2) throw new UsageError(`--arm takes exactly two arms, A then B (got ${values.length})`, { reason: "invalid_argument" });
   const arms = await Promise.all(values.map((v) => namedTask(v, "--arm")));
@@ -460,7 +475,7 @@ async function parseArms(values: string[]): Promise<[AbArm, AbArm]> {
 /** `exp sweep` configs: `[NAME=]<JSON|FILE>`, at least two, distinct names. */
 async function parseConfigs(values: string[]): Promise<SweepConfig[]> {
   if (values.length < 2) throw new UsageError(`exp sweep needs at least two configs (got ${values.length})`, { reason: "missing_argument" });
-  const configs = await Promise.all(values.map((v, i) => namedTask(v, "config", `c${i + 1}`)));
+  const configs = (await Promise.all(values.map((v, i) => namedTask(v, "config", `c${i + 1}`)))).map(({ name, task }) => ({ name, task }));
   const seen = new Set<string>();
   for (const c of configs) {
     if (seen.has(c.name)) throw new UsageError(`two configs are named ${JSON.stringify(c.name)}; name them with NAME=<JSON|FILE>`, { reason: "invalid_argument" });
@@ -999,7 +1014,7 @@ export async function run(c: CommandContext): Promise<number> {
           const loaded = await loadSpec(c, store, c.positionals[0], false);
           // X-11: both arms record, or both replay one source at one boundary (A is the control).
           const llmExp = await import("./exp-llm.ts");
-          const llm = await llmExp.llmPlan(c, store, c.positionals[0]);
+          const llm = await llmExp.llmPlan(c, store, c.positionals[0], ctx.config.capture);
           const { result: ab, job } = await runArms(c, store, loaded, arms, "exp ab", {
             ...(llm ? { llm: llm.opts } : {}),
             ...(seed !== undefined ? { seed } : {}),
@@ -1041,7 +1056,7 @@ export async function run(c: CommandContext): Promise<number> {
           if (!baseline) throw new CliError(`Can't find a completed experiment ${JSON.stringify(baselineRef)} for --baseline`, { reason: "not_found", next: ["List experiments:", "coding.sh exp list"] });
         }
         // X-11: --replay runs the recorded config as a control arm next to this task, unless --no-control.
-        const llm = await llmExp.llmPlan(c, store, c.positionals[0]);
+        const llm = await llmExp.llmPlan(c, store, c.positionals[0], ctx.config.capture);
         if (llm?.source && llm.control) {
           if (adaptive || baseline || seriesFlag(c) !== undefined || picked.length || c.flags.weights !== undefined) {
             throw new UsageError(`--replay with a control arm runs an A/B; pass --no-control to combine it with ${picked.length ? `--${picked[0]}` : c.flags.weights !== undefined ? "--weights" : "--samples, --stop-on-regression or --series"}`, { reason: "invalid_argument" });

@@ -7,6 +7,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, describe, it } from "node:test";
 import { runModelTrial } from "../../src/toolevals/drivers/model.ts";
+import { computeMetrics } from "../../src/toolevals/metrics.ts";
 import { prepareSandbox } from "../../src/toolevals/sandbox.ts";
 import { startMcpProxy } from "../../src/toolevals/tap/mcp-proxy.ts";
 import type { Driver, McpTarget, TapRecord } from "../../src/toolevals/types.ts";
@@ -158,6 +159,30 @@ describe("model driver: cancellation", () => {
     } finally {
       server.closeAllConnections();
       await new Promise((r) => server.close(r));
+    }
+  });
+});
+
+describe("model driver: price", () => {
+  it("a priced model's stored calls and session carry an estimated cost, and metrics call it estimated", async () => {
+    const p = await startFakeProvider([{ text: "done", usage: { input: 100_000, output: 0 } }]);
+    try {
+      const t = task({});
+      const target = cliTarget();
+      const sb = await prepareSandbox(t, target, { name: "base" }, "trial_price", tmp());
+      const index = new MemoryIndexStore();
+      const driver = { ...driverFor("anthropic", p.url), model: "claude-sonnet-4-5" };
+      const out = await runModelTrial({ driver, task: t, target, sandbox: sb, index, trialId: `trial_price_${Date.now()}`, env: { FAKE_KEY: "k" } });
+      const call = (await index.listEvents(out.sessionId!)).find((e) => e.kind === "llm.call")!;
+      assert.equal(call.payload.costEstimated, true);
+      assert.equal(call.usage?.costUsd, 0.3);
+      const [session] = await index.listSessions({ runId: out.sessionId });
+      assert.equal(session!.stats.usage?.costUsd, 0.3);
+      const events = await index.listEvents(out.sessionId!);
+      const m = computeMetrics({ task: t, target, tap: [], events, sessions: [session!], run: out, checksPass: true });
+      assert.deepEqual([m.costUsd, m.costSource], [0.3, "estimated"]);
+    } finally {
+      await p.close();
     }
   });
 });

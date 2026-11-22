@@ -117,6 +117,8 @@ For an agent or app sending over OpenTelemetry or the SDK:
 
 ## Data looks incomplete
 
+- **`status` says `Index updated 3h ago`, or `work` says `waits and stalls are as of then`.** No
+  ingest has finished in 15 minutes. Run `coding.sh ingest`; if it fails, `status` says why.
 - **No model latency or tokens.** Hooks see tool calls, not model calls. Most adapters read model
   calls from the transcript after the session ends. For Claude Code latency, run
   `coding.sh collector` and turn on its [OpenTelemetry export](https://coding.sh/docs/otel#claude-code).
@@ -297,7 +299,7 @@ The command ran and something failed.
 
 | Reason | Example message | Fix |
 |---|---|---|
-| `store_unavailable` | `Couldn't open the coding.sh store: no index store for "foo://". Install the npm package "coding.sh-store-foo" …` | Check what named the store: the URL given with `--store` or set in `CODING_SH_STORE_URL`, else `[store]` in the config (`coding.sh config path`). For `postgres://`, install `coding.sh-store-postgres` and check the database is reachable (`connect ECONNREFUSED` means it is not). |
+| `store_unavailable` | `Couldn't open the coding.sh store: no index store for "foo://". Install the npm package "coding.sh-store-foo" …` | Check what named the store: the URL given with `--store` or set in `CODING_SH_STORE_URL`, else `[store]` in the config (`coding.sh config path`). When the message says a key `references ${NAME}, which is not set`, set that variable or change the key it names, such as a sink's header. For `postgres://`, install `coding.sh-store-postgres` and check the database is reachable (`connect ECONNREFUSED` means it is not). |
 | `store_missing` | `No coding.sh store at /work/typo.db. Nothing was created there` | A read (`sessions`, `show`, `search`, `stats`, `usage`, `export`, `sql`, `replay`, `dataset list`, `score list`, `score configs`, `eval list`, `eval export`, `exp list`, `exp show`, `tree`, `cache doctor`, `diff-calls`) named a SQLite file with `--store` or `CODING_SH_STORE_URL` that does not exist. Check the path. Commands that write create the file. |
 | `no_fts5` | `Couldn't open the coding.sh store: this Node's SQLite has no FTS5; coding.sh needs Node 22.16 or newer` | Install Node 22.16 or newer. |
 | `store_owned` | `~/.coding.sh/index.db is at index schema v8, and this coding.sh 0.1.5 would migrate it to v9. Your hooks run the coding.sh 0.1.4 at …/dist/cli.mjs, which may not open v9.` | Another install owns the store. Run `coding.sh upgrade-store` from the install your hooks should run, or use the one the message names. See [Store version errors](#store-version-errors). |

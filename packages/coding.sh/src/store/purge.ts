@@ -13,11 +13,22 @@
 // value becomes asterisks) so ingest cursors, which are byte offsets, stay valid.
 // Nothing here prints or returns a value; callers get counts.
 //
+// The llm cache (`exp run --record`) is gzipped JSONL: a recording that holds a
+// value is rewritten whole, with each call's replay key kept. A file there that no
+// replay reads (a torn recording, a temp file a crashed run left) is deleted.
+//
+// Snapshot repos (repos/) are read, never changed: a snapshot is named by its
+// commit id in sessions and eval tasks, so rewriting one would break them, and
+// dropping its objects would leave commits that can't be read. The repos that
+// hold a value are named instead (snapshotRepos), for the user to delete.
+//
 // `--rule <regex>` first reads everywhere a purge writes (findRuleMatches) and
 // turns each distinct match into a literal, so both paths scrub the same way.
-import { closeSync, existsSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeSync } from "node:fs";
-import { join } from "node:path";
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync, writeSync, type Stats } from "node:fs";
+import { join, relative, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { constants as zlibConstants, gunzipSync, gzipSync, inflateSync } from "node:zlib";
+import { run as runGit } from "../core/git.ts";
 import type { BlobStore } from "../core/types.ts";
 import type { AgentEvent } from "../schema/index.ts";
 import { errorText, searchableText } from "./common.ts";
@@ -38,6 +49,10 @@ export interface PurgeOptions {
   blobs: BlobStore;
   /** Directories of raw files to mask in place: the spool, the judge cache, eval run dirs (skipped when absent). */
   fileDirs?: readonly string[];
+  /** The llm cache: recordings of model calls, rewritten when they hold a value (skipped when absent). */
+  llmCache?: string;
+  /** The folder of snapshot repos: read, never changed; the ones that hold a value are named (skipped when absent). */
+  repos?: string;
   literals: readonly string[];
   /** Count only; change nothing. */
   dryRun?: boolean;
@@ -58,7 +73,15 @@ export interface PurgeResult {
   blobs: number;
   /** Files masked in the spool, judge cache and eval run dirs. */
   files: number;
-  /** Raw files over MAX_FILE_BYTES, left alone. Absent when none. */
+  /** Recordings of model calls (llm cache) rewritten without the values. */
+  recordings: number;
+  /** Files in the llm cache that no replay reads (a torn recording, a run's temp file) deleted because they hold a value. Absent when none. */
+  recordingsDeleted?: number;
+  /** Files in the llm cache that hold a value but could not be rewritten or deleted, as paths. Absent when none. */
+  recordingsKept?: string[];
+  /** Snapshot repos that hold a value, or could not be read. Purge does not change them. Absent when none. */
+  snapshotRepos?: SnapshotRepo[];
+  /** Raw files, recordings and snapshot objects over MAX_FILE_BYTES, left alone. Absent when none. */
   filesSkipped?: number;
   /** Saved session folds dropped (rebuilt on the next ingest). */
   foldsDropped: number;
@@ -74,6 +97,16 @@ export interface PurgeResult {
   copiesRemoved?: string[];
   /** Kept copies of the index that could not be deleted, as paths. They may hold the values. Absent when none. */
   copiesKept?: string[];
+}
+
+/** A snapshot repo under repos/ that holds a value: purge names it and leaves it as it is. */
+export interface SnapshotRepo {
+  /** The repo's folder. Deleting it removes the snapshots of `root`; the next snapshot starts a new one. */
+  path: string;
+  /** The folder it snapshots, from its coding.sh-root file. Absent when unknown, or when the path itself holds a value. */
+  root?: string;
+  /** Git could not read it, so it may hold a value. */
+  unreadable?: true;
 }
 
 /**
@@ -106,6 +139,14 @@ type Row = Record<string, unknown>;
 /** The literal as it appears inside a JSON string. */
 const jsonForm = (s: string): string => JSON.stringify(s).slice(1, -1);
 
+/** `s`, then JSON-escaped once, twice, … `times` over: a JSON string inside a JSON string. */
+function escapes(s: string, times: number): string[] {
+  const out = [s];
+  let cur = s;
+  for (let i = 0; i < times; i++) out.push((cur = jsonForm(cur)));
+  return [...new Set(out)];
+}
+
 /**
  * Positions of `needle` in `hay` that are not escaped: preceded by an even number
  * of backslashes. In JSON text, `\nabc` holds "nabc" as bytes but not as a value.
@@ -123,11 +164,14 @@ function unescapedHits(hay: string, needle: string): number[] {
 export class Scrubber {
   private readonly lits: string[];
   private readonly needles: string[];
+  /** Each literal raw and escaped up to three times: a tool call's JSON arguments, in a reply, in a recording's JSON line. */
+  private readonly deep: string[];
 
   constructor(literals: readonly string[]) {
     // Longest first, so a literal that contains another is replaced whole.
     this.lits = [...new Set(literals)].sort((a, b) => b.length - a.length);
-    this.needles = [...new Set(this.lits.flatMap((l) => [l, jsonForm(l)]))];
+    this.needles = [...new Set(this.lits.flatMap((l) => escapes(l, 1)))];
+    this.deep = [...new Set(this.lits.flatMap((l) => escapes(l, 3)))];
   }
 
   /** Raw and JSON-escaped forms, for SQL instr() prefilters. */
@@ -137,6 +181,17 @@ export class Scrubber {
 
   hit(s: string | null | undefined): boolean {
     return typeof s === "string" && this.needles.some((n) => s.includes(n));
+  }
+
+  /**
+   * Whether text, or bytes as UTF-8, hold a value: raw or JSON-escaped up to three times,
+   * whatever precedes it. For data purge deletes or reports rather than rewrites, and to test
+   * a rewrite before and after.
+   */
+  holds(data: string | Uint8Array): boolean {
+    if (typeof data === "string") return this.deep.some((n) => data.includes(n));
+    const b = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+    return this.deep.some((n) => b.includes(n));
   }
 
   text(s: string): string {
@@ -175,12 +230,12 @@ export class Scrubber {
     return ranges;
   }
 
-  /** Byte-level replace for blobs (any encoding of the literal as UTF-8). */
-  bytes(buf: Uint8Array): Uint8Array | undefined {
+  /** Byte-level replace for blobs (any encoding of the literal as UTF-8), raw and JSON-escaped up to `depth` times. */
+  bytes(buf: Uint8Array, depth = 1): Uint8Array | undefined {
     const text = Buffer.from(buf).toString("latin1");
     let out = text;
     for (const l of this.lits) {
-      for (const form of l === jsonForm(l) ? [l] : [l, jsonForm(l)]) {
+      for (const form of escapes(l, depth)) {
         const b = Buffer.from(form, "utf8").toString("latin1");
         const hits = unescapedHits(out, b);
         if (!hits.length) continue;
@@ -240,6 +295,297 @@ function maskFile(path: string, scrub: Scrubber, dryRun: boolean): boolean {
   return true;
 }
 
+// ---- the llm cache: one gzipped JSONL file per case-trial, a line per recorded call (src/llmcache/store.ts).
+
+/** A gzip file's content: "big" past MAX_FILE_BYTES, undefined when it is not gzip. `partial` keeps what a torn file holds. */
+function gunzipped(buf: Buffer, partial = false): Buffer | "big" | undefined {
+  try {
+    return gunzipSync(buf, { maxOutputLength: MAX_FILE_BYTES, finishFlush: partial ? zlibConstants.Z_SYNC_FLUSH : zlibConstants.Z_FINISH });
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "ERR_BUFFER_TOO_LARGE" ? "big" : undefined;
+  }
+}
+
+/**
+ * One recorded call without the values; undefined when nothing changed. The replay key, a hash
+ * of the request, is kept, so the recording still replays. A body stored as base64 (bytes that
+ * are not UTF-8) that holds a value is emptied, as the proxy empties one that echoes a credential.
+ */
+function scrubEntry(e: Record<string, unknown>, scrub: Scrubber): Record<string, unknown> | undefined {
+  const out: Record<string, unknown> = {};
+  let body = false;
+  let other = false;
+  for (const [k, v] of Object.entries(e)) {
+    let next = v;
+    if (k === "body" && typeof v === "string") {
+      if (e.bodyEncoding === "base64") next = scrub.holds(Buffer.from(v, "base64")) ? "" : v;
+      else {
+        // Up to twice escaped: a string in a tool call's JSON arguments, which the reply holds as a JSON string.
+        const clean = scrub.bytes(Buffer.from(v, "utf8"), 2);
+        if (clean) next = Buffer.from(clean).toString("utf8");
+      }
+      body = next !== v;
+    } else if (k !== "key") {
+      next = scrub.value(v);
+      other ||= JSON.stringify(next) !== JSON.stringify(v);
+    }
+    const name = scrub.text(k);
+    other ||= name !== k;
+    Object.defineProperty(out, name, { value: next, enumerable: true, writable: true, configurable: true });
+  }
+  if (!body && !other) return undefined;
+  if (body) {
+    if (out.body === "") delete out.bodyEncoding;
+    out.redacted = true;
+  }
+  return out;
+}
+
+/**
+ * A recording's text without the values, line by line; undefined when nothing changed. A line
+ * that is not JSON (a torn end, where replay stops) and holds a value becomes the marker, which
+ * is not JSON either, so replay still stops there.
+ */
+function scrubRecording(text: string, scrub: Scrubber): string | undefined {
+  let changed = false;
+  const lines = text.split("\n").map((line) => {
+    if (!scrub.holds(line) && !line.includes('"bodyEncoding"')) return line;
+    let v: unknown;
+    try {
+      v = JSON.parse(line);
+    } catch {
+      if (!scrub.holds(line)) return line;
+      changed = true;
+      return PURGE_MARKER;
+    }
+    let next: string | undefined;
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const e = scrubEntry(v as Record<string, unknown>, scrub);
+      if (e) next = JSON.stringify(e);
+    } else {
+      const s = JSON.stringify(scrub.value(v));
+      if (s !== JSON.stringify(v)) next = s;
+    }
+    if (next === undefined) return line;
+    changed = true;
+    return next;
+  });
+  return changed ? lines.join("\n") : undefined;
+}
+
+/** Replaces a file whole (a temp file, then a rename), keeping its mode and times. */
+function replaceFile(file: string, data: Uint8Array, st: Stats): void {
+  const tmp = `${file}.purge-${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, data, { mode: st.mode & 0o777 });
+    utimesSync(tmp, st.atimeMs / 1000, st.mtimeMs / 1000);
+    renameSync(tmp, file);
+  } catch (e) {
+    try {
+      rmSync(tmp, { force: true });
+    } catch {
+      // the error that matters is the first one
+    }
+    throw e;
+  }
+}
+
+/**
+ * Rewrites the recordings under `dir` that hold a value, keeping each file's times (gc drops the
+ * least recently used first). A file there that no replay reads (a recording cut short, the temp
+ * file of a run that stopped before its rename) is deleted when it holds one. Returns how many
+ * files it left unread for their size.
+ */
+function purgeLlmCache(dir: string | undefined, scrub: Scrubber, dry: boolean, result: PurgeResult): number {
+  if (!dir || !existsSync(dir)) return 0;
+  let skipped = 0;
+  let deleted = 0;
+  const kept: string[] = [];
+  for (const f of filesUnder(dir)) {
+    const st = statSync(f);
+    if (st.size > MAX_FILE_BYTES) {
+      skipped++;
+      continue;
+    }
+    if (!st.size) continue;
+    const buf = readFileSync(f);
+    const whole = f.endsWith(".jsonl.gz") ? gunzipped(buf) : undefined;
+    if (whole instanceof Buffer) {
+      const clean = scrubRecording(whole.toString("utf8"), scrub);
+      if (clean === undefined) continue;
+      if (!dry) {
+        try {
+          replaceFile(f, gzipSync(Buffer.from(clean, "utf8")), st);
+        } catch {
+          kept.push(f);
+          continue;
+        }
+      }
+      result.recordings++;
+      continue;
+    }
+    const part = whole ?? gunzipped(buf, true);
+    if (part === "big") {
+      skipped++;
+      continue;
+    }
+    const text = (part ?? buf).toString("utf8");
+    if (!scrub.holds(text) && scrubRecording(text, scrub) === undefined) continue;
+    if (!dry) {
+      try {
+        rmSync(f, { force: true });
+      } catch {
+        kept.push(f);
+        continue;
+      }
+    }
+    deleted++;
+  }
+  if (deleted) result.recordingsDeleted = deleted;
+  if (kept.length) result.recordingsKept = kept;
+  return skipped;
+}
+
+// ---- snapshot repos (repos/): read, never written; see the top of this file.
+
+/** The snapshot repos under `dir`: bare git repos, one per folder snapshotted. */
+function snapshotRepoDirs(dir: string | undefined): string[] {
+  if (!dir || !existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && existsSync(join(dir, e.name, "HEAD")))
+    .map((e) => join(dir, e.name));
+}
+
+/** A loose git object's content (zlib of "<type> <size>\0<content>"): "big" past MAX_FILE_BYTES, undefined when it is not zlib. */
+function looseObject(buf: Buffer): Buffer | "big" | undefined {
+  try {
+    const raw = inflateSync(buf, { maxOutputLength: MAX_FILE_BYTES + 64, finishFlush: zlibConstants.Z_SYNC_FLUSH });
+    return raw.subarray(raw.indexOf(0) + 1);
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "ERR_BUFFER_TOO_LARGE" ? "big" : undefined;
+  }
+}
+
+/**
+ * Reads `git cat-file --batch` output ("<oid> <type> <size>\n<content>\n" per object, or
+ * "<oid> missing\n"): calls `visit` with each object's content, and `skip` for one over
+ * MAX_FILE_BYTES, which it does not keep. Returns false, which stops git, once visit returns true.
+ */
+function catFileParser(visit: (buf: Buffer) => boolean, skip: () => void): (chunk: Buffer) => boolean {
+  let pending: Buffer = Buffer.alloc(0);
+  let need = -1; // bytes left of the current object and its newline; -1 while reading a header
+  let keep: Buffer[] | undefined;
+  return (chunk) => {
+    pending = pending.length ? Buffer.concat([pending, chunk]) : chunk;
+    while (pending.length) {
+      if (need < 0) {
+        const nl = pending.indexOf(10);
+        if (nl < 0) return true;
+        const head = pending.subarray(0, nl).toString("latin1").split(" ");
+        pending = pending.subarray(nl + 1);
+        const size = Number(head[2]);
+        if (head.length < 3 || !Number.isSafeInteger(size) || size < 0) continue; // "<oid> missing"
+        need = size + 1;
+        if (size > MAX_FILE_BYTES) {
+          skip();
+          keep = undefined;
+        } else keep = [];
+        continue;
+      }
+      const take = Math.min(need, pending.length);
+      keep?.push(pending.subarray(0, take));
+      pending = pending.subarray(take);
+      need -= take;
+      if (need === 0) {
+        need = -1;
+        const content = keep && Buffer.concat(keep);
+        keep = undefined;
+        if (content && visit(content.subarray(0, -1))) return false;
+      }
+    }
+    return true;
+  };
+}
+
+/** Calls `visit` with each object of a pack, read through git (a pack stores deltas), until it returns true. */
+async function packObjects(repo: string, idx: string, visit: (buf: Buffer) => boolean, skip: () => void): Promise<boolean> {
+  const env = { GIT_DIR: repo };
+  const listed = await runGit(["show-index"], { cwd: repo, env, input: readFileSync(idx) });
+  const oids = listed.stdout
+    .split("\n")
+    .map((l) => l.split(" ")[1] ?? "")
+    .filter((oid) => /^[0-9a-f]{40,64}$/.test(oid));
+  if (!oids.length) return false;
+  let hit = false;
+  let error: unknown;
+  const parse = catFileParser((b) => {
+    try {
+      return (hit = visit(b));
+    } catch (e) {
+      error = e;
+      return true;
+    }
+  }, skip);
+  await runGit(["cat-file", "--batch"], { cwd: repo, env, input: oids.join("\n") + "\n", timeoutMs: 10 * 60_000, onStdout: parse });
+  if (error) throw error;
+  return hit;
+}
+
+/**
+ * Calls `visit` with what a snapshot repo stores itself, until it returns true: each object
+ * (loose ones inflated here, packed ones read through git) and its other files as they are.
+ * The user's own objects, which it reads through alternates, are not visited.
+ */
+async function repoObjects(repo: string, visit: (buf: Buffer) => boolean, skip: () => void): Promise<boolean> {
+  const packs: string[] = [];
+  for (const f of filesUnder(repo)) {
+    const [top, sub] = relative(repo, f).split(sep);
+    if (top === "objects" && sub === "pack") {
+      if (f.endsWith(".idx")) packs.push(f);
+      continue;
+    }
+    const size = statSync(f).size;
+    if (size > MAX_FILE_BYTES) {
+      skip();
+      continue;
+    }
+    if (!size) continue;
+    const buf = readFileSync(f);
+    const obj = top === "objects" && sub !== "info" ? looseObject(buf) : undefined;
+    if (obj === "big") {
+      skip();
+      continue;
+    }
+    if (visit(obj ?? buf)) return true;
+  }
+  for (const idx of packs) if (await packObjects(repo, idx, visit, skip)) return true;
+  return false;
+}
+
+/** The snapshot repos under `dir` that hold a value, or that could not be read, by path. */
+async function snapshotReposHolding(dir: string | undefined, scrub: Scrubber, skip: () => void): Promise<SnapshotRepo[]> {
+  const out: SnapshotRepo[] = [];
+  for (const path of snapshotRepoDirs(dir)) {
+    let unreadable = false;
+    try {
+      if (!(await repoObjects(path, (b) => scrub.holds(b), skip))) continue;
+    } catch {
+      unreadable = true;
+    }
+    let root: string | undefined;
+    try {
+      root = readFileSync(join(path, "coding.sh-root"), "utf8").trim() || undefined;
+    } catch {
+      // a repo from `eval import` keeps no root
+    }
+    const repo: SnapshotRepo = { path };
+    if (root && !scrub.holds(root)) repo.root = root;
+    if (unreadable) repo.unreadable = true;
+    out.push(repo);
+  }
+  return out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
 /** JSON-holding columns, by table; others are plain text. */
 const OTHER_TABLES: { table: string; key: string; json: string[]; text: string[] }[] = [
   { table: "scores", key: "id", json: [], text: ["comment", "string_value"] },
@@ -283,7 +629,11 @@ export async function purgeLiterals(o: PurgeOptions): Promise<PurgeResult> {
   const scrub = new Scrubber(o.literals);
   const needles = scrub.searchNeedles;
   const dry = o.dryRun === true;
-  const result: PurgeResult = { events: 0, sessions: 0, otherRows: 0, blobs: 0, files: 0, foldsDropped: 0 };
+  const result: PurgeResult = { events: 0, sessions: 0, otherRows: 0, blobs: 0, files: 0, recordings: 0, foldsDropped: 0 };
+  let skipped = 0;
+  // ---- snapshot repos, read before anything changes: named, never rewritten.
+  const repos = await snapshotReposHolding(o.repos, scrub, () => skipped++);
+  if (repos.length) result.snapshotRepos = repos;
   const { DatabaseSync } = await loadSqlite();
   const db: DatabaseSync = new DatabaseSync(o.dbPath);
   db.exec("PRAGMA busy_timeout = 10000");
@@ -418,7 +768,10 @@ export async function purgeLiterals(o: PurgeOptions): Promise<PurgeResult> {
     // ---- raw files: hook payloads not yet (or already) ingested, cached judge prompts, eval run dirs.
     const raw = rawFiles(o.fileDirs);
     for (const f of raw.files) if (maskFile(f, scrub, dry)) result.files++;
-    if (raw.skipped) result.filesSkipped = raw.skipped;
+    skipped += raw.skipped;
+    // ---- recordings of model calls (exp run --record or --replay).
+    skipped += purgeLlmCache(o.llmCache, scrub, dry, result);
+    if (skipped) result.filesSkipped = skipped;
 
     // ---- copies of the index kept by an upgrade or a restore: deleted whole, whatever the rows above held.
     Object.assign(result, removeIndexCopies(o.dbPath, dry));
@@ -451,6 +804,8 @@ export interface RuleScanOptions {
   dbPath: string;
   blobs: BlobStore;
   fileDirs?: readonly string[];
+  llmCache?: string;
+  repos?: string;
   rules: readonly RegExp[];
 }
 
@@ -478,9 +833,12 @@ function eachString(v: unknown, f: (s: string) => void, depth = 0): void {
 }
 
 /**
- * Every distinct value the rules match where a purge writes: event payloads, session
- * columns, the other tables, kv rows, blobs and raw files. JSON columns are matched
- * on their decoded strings, blobs and raw files on their bytes as UTF-8. Read-only.
+ * Every distinct value the rules match where a purge writes or looks: event payloads, session
+ * columns, the other tables, kv rows, blobs, raw files, recordings of model calls and the
+ * objects of snapshot repos. JSON columns and recorded calls are matched on their decoded
+ * strings (a base64 body on its bytes as UTF-8), blobs, raw files and snapshot objects on
+ * their bytes as UTF-8. A snapshot repo git can't read is passed over: the purge names it.
+ * Read-only.
  */
 export async function findRuleMatches(o: RuleScanOptions): Promise<RuleScan> {
   const rules = o.rules.map((r) => new RegExp(r.source, r.flags.includes("g") ? r.flags : `${r.flags}g`));
@@ -534,5 +892,40 @@ export async function findRuleMatches(o: RuleScanOptions): Promise<RuleScan> {
     if (data) scan(Buffer.from(data).toString("utf8"));
   }
   for (const f of rawFiles(o.fileDirs).files) scan(readFileSync(f, "utf8"));
+  // A recording line by line: every string of the call but its replay key (a hash).
+  const recording = (s: string): void => {
+    for (const line of s.split("\n")) {
+      let v: unknown;
+      try {
+        v = JSON.parse(line);
+      } catch {
+        scan(line);
+        continue;
+      }
+      if (!v || typeof v !== "object" || Array.isArray(v)) {
+        eachString(v, scan);
+        continue;
+      }
+      const e = v as Record<string, unknown>;
+      for (const [k, x] of Object.entries(e)) {
+        if (k === "key") continue;
+        scan(k);
+        if (k === "body" && typeof x === "string" && e.bodyEncoding === "base64") scan(Buffer.from(x, "base64").toString("utf8"));
+        else eachString(x, scan);
+      }
+    }
+  };
+  for (const f of o.llmCache && existsSync(o.llmCache) ? filesUnder(o.llmCache) : []) {
+    const size = statSync(f).size;
+    if (!size || size > MAX_FILE_BYTES) continue;
+    const buf = readFileSync(f);
+    const content = gunzipped(buf, true);
+    if (content !== "big") recording((content ?? buf).toString("utf8"));
+  }
+  for (const repo of snapshotRepoDirs(o.repos)) {
+    await repoObjects(repo, (b) => (scan(b.toString("utf8")), false), () => {}).catch((e: unknown) => {
+      if (e instanceof RuleTooBroad) throw e;
+    });
+  }
   return { values: [...values], short: short.size };
 }

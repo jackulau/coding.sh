@@ -24,13 +24,14 @@ ses_b32e798f30f8bed3a17e              opencode          1h ago   1m32s     1    
 ```
 
 The newest 20 come first. `coding-sh-triage` is an app traced with the SDK; the others are coding
-agents. Subagent sessions and sessions with nothing in them are hidden.
+agents. Subagent sessions and sessions with nothing in them are hidden; the last line counts the
+hidden subagents (`hiddenChildren` in `--json`).
 
 | Flag | What it does |
 |---|---|
 | `--agent codex` | Only this agent. Repeat it or pass `a,b` for several. |
 | `--since 7d` | Only sessions that started after this: `12h`, `today`, `yesterday` or a date. |
-| `--repo <path>` | Only sessions in this repo root. |
+| `--repo <path\|name>` | Only this repo, worktrees included, by name or root. Another path: sessions under it. |
 | `--flag no-verification` | Only sessions with this flag or tag. |
 | `--where <query>` | Any filter the [query language](https://coding.sh/docs/query) takes. |
 | `-n, --limit 50` | More rows (default 20). |
@@ -121,9 +122,8 @@ SESSION                                              KIND      WHEN     MATCH
 9887c95d-2739-4dae-8222-4471386def67                 tool.end  40m ago  …re-ingested (5.3ms) ✔ applies each «migration» once (41.2ms) ▶ SqliteIndexStore…
 ```
 
-Search covers prompts, replies, tool input and tool output, and errors: error events (their
-message, type such as `rate_limit_error` and status code), failed model calls, tool errors, and
-the error a subagent or a session ended with.
+Search covers prompts, replies, tool input and output, and errors: error events (message, type and
+status code), failed model calls, tool errors, and the error a session or subagent ended with.
 Every word must match within one event. Open a hit with `coding.sh show <session>`.
 
 ## Open the viewer
@@ -140,13 +140,17 @@ token for this run of `ui`; the viewer needs it.
 - **The list.** The bar above it takes the same query as `--where` and keeps it in the URL to share.
   Save view saves it as a [saved view](https://coding.sh/docs/query#saved-views); Views applies or
   deletes one.
+- **The list's header.** The index's age, as a warning when it is stale. The repo column names a
+  worktree session by its main checkout.
 - **The sidebar.** Counts per agent, model, repo, flag and tool. Click a value to add it to the
   query, Alt-click to exclude it.
 - **A session.** The timeline shows every event, with a ⚑ where the run went off the rails.
   [Comment](https://coding.sh/docs/api/read/search#post-apiscores) adds a note to it or one step. A running
   session gets new events every 4 seconds.
 - **Work** (<kbd>g</kbd> <kbd>w</kbd>). The [`coding.sh work`](https://coding.sh/docs/cli/work) queue,
-  with sessions linked. Ack and Snooze write the CLI's `work.json`.
+  with linked sessions and index age. A workflow run shows its agents by phase and state,
+  with phase costs; a superseded failure links its replacement. Ack and Snooze write
+  `work.json`.
 - **Explore** (<kbd>g</kbd> <kbd>x</kbd>). Six charts per day or week: sessions, failure rate,
   cost, tokens, tool error rate and p95 model-call time, split by agent, model, repo or flag.
 - **Events** (<kbd>e</kbd>). The same query as event rows, newest first. Enter opens the event's
@@ -302,9 +306,8 @@ coding.sh harness audit --agent codex --since 90d
 | `write-only` | Was written, and no other session loaded or read it. |
 | `loaded-not-read` | Is a skill that was listed but never invoked or read. |
 
-A file that the agent's loaded instructions file or a rule pulls in with an `@path` import
-(`@AGENTS.md`) counts as loaded in each Claude Code session that loaded the importing file, and so
-do its own imports, up to 5 deep. The load cost is the file's tokens (bytes / 4) times the sessions
+A file pulled in with an `@path` import (`@AGENTS.md`) counts as loaded in each Claude Code
+session that loaded the importing file, up to 5 imports deep. The load cost is the file's tokens (bytes / 4) times the sessions
 that loaded it.
 
 The audit also warns about a Claude Code subagent file whose `tools:` is a map, which leaves that subagent with no
@@ -351,15 +354,8 @@ sessions. See [Let your agent read its own runs](https://coding.sh/docs/mcp).
 
 The server also serves four skills to hosts that load skills from MCP servers: reviewing a session,
 improving and trimming your agent setup, and building evals. See
-[Skills](https://coding.sh/docs/mcp#skills).
-
-:::more Every MCP tool
-`sessions_list`, `session_get`, `session_current`, `session_replay`, `search`, `improve`,
-`harness_changes`, `harness_audit`, `failures`, `latency`, `usage`, `subagents`, `session_tree`,
-`eval_from_session`, `eval_init`, `eval_candidates`, `experiments_list`, `experiment_compare`,
-`exp_session_summary`, `exp_session_note`, `harness_compare`, `benchmarks`, `status`, `score_list`,
-`score_add` and `score_add_batch`.
-:::
+[Skills](https://coding.sh/docs/mcp#skills). Every MCP tool is listed in
+[Tools](https://coding.sh/docs/mcp#tools).
 
 ## Next steps
 

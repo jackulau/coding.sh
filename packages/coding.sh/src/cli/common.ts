@@ -47,7 +47,7 @@ export function storeOpenError(e: unknown, env: NodeJS.ProcessEnv): CliError {
   if (e instanceof StoreMissingError) return new CliError(e.message, { reason: e.reason, next: e.next, data: { path: e.path } });
   // NoFts5Error (store/sqlite.ts, not loaded here until a store opens).
   if (e instanceof Error && (e as { reason?: unknown }).reason === "no_fts5") return new CliError(`Couldn't open the coding.sh store: ${e.message}`, { reason: "no_fts5", next: ["Install Node 22.16 or newer"] });
-  return new CliError(`Couldn't open the coding.sh store: ${e instanceof Error ? e.message : String(e)}`, { reason: "store_unavailable", next: storeOpenNext(env) });
+  return new CliError(`Couldn't open the coding.sh store: ${e instanceof Error ? e.message : String(e)}`, { reason: "store_unavailable", next: storeOpenNext(env, e) });
 }
 
 /** Pending migrations of a store another install owns: the user decides on `coding.sh upgrade-store`. */

@@ -11,6 +11,7 @@
 // cost / wall / critical path (per-case median difference → pairedBootstrap),
 // a Pareto report over every variant, and a per-stage breakdown.
 import { sortableId } from "../core/ids.ts";
+import { createRedactor, type Redactor } from "../core/redact.ts";
 import type { IndexStore } from "../core/types.ts";
 import { infraKind, withRetries, type RetryPolicy } from "../jobs/retry.ts";
 import type { JobScope } from "../jobs/store.ts";
@@ -83,7 +84,12 @@ export interface RunWorkflowExperimentOpts {
   job?: JobScope;
   /** Re-run a job whose driver failed on an infrastructure error (rate limit, 5xx, network); a failed workflow is never retried. */
   retry?: RetryPolicy;
+  /** Redacts the driver's error before the run keeps it (default: the built-in secret rules). */
+  redactor?: Redactor;
 }
+
+/** Characters of a driver's error a run keeps, from the end. */
+const ERROR_CHARS = 4096;
 
 /** The checkpoint key of one (case, variant, attempt). */
 export const workflowJobKey = (j: WorkflowJob): string => `${j.case.id}\u0000${j.variant.name}\u0000${j.attempt}`;
@@ -127,6 +133,7 @@ export async function runWorkflowExperiment(o: RunWorkflowExperimentOpts): Promi
   const jobs = scheduleWorkflowJobs(o.cases, o.variants, Math.max(1, o.k));
   if (jobScope && jobScope.prefix === "") await jobScope.job.setTotal(jobs.length);
   const score = o.score ?? defaultScorer;
+  const redactor = o.redactor ?? createRedactor();
   const scores = new Map<string, number>();
   const runs: WorkflowRun[] = [];
   // A resume keeps the jobs already recorded; their runs are in the store.
@@ -162,6 +169,7 @@ export async function runWorkflowExperiment(o: RunWorkflowExperimentOpts): Promi
     scores: {},
     createdAt: Date.now(),
   };
+  for (const c of o.cases) if (c.threshold !== undefined) (record.thresholds ??= {})[c.id] = c.threshold;
   if (!resumed) await o.store.putExperiment(record);
   let done = kept.size;
   await pool(jobs, o.concurrency ?? 1, async (job, i) => {
@@ -209,6 +217,8 @@ export async function runWorkflowExperiment(o: RunWorkflowExperimentOpts): Promi
     run.attempt = job.attempt;
     run.tags = [...new Set([...run.tags, `variant:${job.variant.name}`, `case:${job.case.id}`])];
     if (res.error && run.status === "ok") run.status = "failed";
+    // Why it failed, kept with the run (stderr can hold anything the workflow printed).
+    if (res.error) run.error = redactor.string(res.error).slice(-ERROR_CHARS);
     if (tried.attempts > 1) run.attempts = tried.attempts;
     if (tried.infra) run.infra = tried.infra;
     let s: number | undefined;

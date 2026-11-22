@@ -70,3 +70,27 @@ describe("stats on an empty store", () => {
     assert.match(r.stderr, new RegExp(`${nextStepBin(process.env).replace(/\./g, "\\.")} init`));
   });
 });
+
+// stats books a subagent's spend on its top-level session's day and agent, usage on its own:
+// the table says so when it rolled a subagent up, and not with --all or with no subagents.
+describe("stats names the subagent rollup", () => {
+  let env: TmpEnv;
+  before(async () => {
+    env = tmpEnv();
+    await seed(env.dataHome, {
+      sessions: [
+        session("parent", { agent: "t3code", startedAt: at, endedAt: at + 60_000, stats: usage(0.1) }),
+        session("sub", { agent: "claude-code", startedAt: at + 1000, endedAt: at + 30_000, parent: { sessionId: "parent", type: "subagent" }, stats: usage(0.02) }),
+        session("alone", { startedAt: at - 3 * DAY, endedAt: at - 3 * DAY + 60_000, stats: usage(0.05) }),
+      ],
+    });
+  });
+  after(() => env.restore());
+
+  test("a note under the table, absent with --all or a window with no subagent", () => {
+    assert.match(ok(["stats", "--since", "7d", "--by", "agent"]).stderr, /Subagents' cost, tokens and tool calls count on their top-level session's day, agent/);
+    assert.doesNotMatch(ok(["stats", "--since", "7d", "--all"]).stderr, /Subagents' cost/);
+    assert.doesNotMatch(ok(["stats", "--since", "7d", "--until", "2d"]).stderr, /Subagents' cost/);
+    assert.match(ok(["stats", "--help"]).stdout, /coding\.sh usage books each subagent on its own/);
+  });
+});

@@ -12,7 +12,7 @@ import { assertStartupBudget } from "../helpers-timing.ts";
 import { which } from "../../src/adapters/_shared/detect.ts";
 import { hookPathForCommand, hookShFor } from "../../src/adapters/_shared/hooks.ts";
 import { pathOf, printBin } from "../_bin.ts";
-import { SqliteIndexStore } from "../../src/store/sqlite.ts";
+import { SQLITE_SCHEMA_VERSION, SqliteIndexStore } from "../../src/store/sqlite.ts";
 
 let distDir = "";
 let CLI = "";
@@ -715,11 +715,31 @@ describe("cli zero setup", () => {
       const hk = spawnSync(process.execPath, [join(h.data, "bin", "hook.mjs"), "claude-code", event], { env, input: JSON.stringify(payload), encoding: "utf8" });
       assert.equal(hk.status, 0, hk.stderr);
     }
-    // Read the index directly (no lazy ingest) until the detached ingest lands.
+    // Read the index directly (no lazy ingest) until the detached ingest lands. With no history to
+    // import, init opens no store, so index.db first appears when that ingest opens it, at schema v0
+    // until its migration commits. Opened from source before then, the store guard refuses to migrate
+    // an index whose hooks run another install (this test's bundle), so wait for the migration and
+    // read without writing.
     const { openContext } = await import("../../src/core/context.ts");
+    const { DatabaseSync } = await (await import("../../src/store/sqlite-open.ts")).loadSqlite();
+    const file = join(h.data, "index.db");
+    const migrated = (): boolean => {
+      if (!existsSync(file)) return false;
+      try {
+        const db = new DatabaseSync(file, { readOnly: true });
+        try {
+          if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'migrations'").get()) return false;
+          return Number((db.prepare("SELECT MAX(version) AS v FROM migrations").get() as { v: number | null }).v) === SQLITE_SCHEMA_VERSION;
+        } finally {
+          db.close();
+        }
+      } catch {
+        return false; // locked or not yet readable while the ingest creates it
+      }
+    };
     let found = false;
     for (let i = 0; i < 100 && !found; i++) {
-      if (existsSync(join(h.data, "index.db")) && !existsSync(join(h.data, "spool", ".ingest.lock"))) {
+      if (migrated() && !existsSync(join(h.data, "spool", ".ingest.lock"))) {
         const ctx = await openContext({ env: h.env, cwd: h.home });
         try {
           found = (await ctx.index.listSessions({ limit: 10 })).some((s) => s.id === "bg-ingest");

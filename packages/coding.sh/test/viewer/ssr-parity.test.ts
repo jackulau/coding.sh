@@ -82,6 +82,7 @@ test("server-drawn rows show what the script's rows show", () => {
     base({ id: "quick", endedAt: Date.UTC(2026, 9, 7, 12) + 500, stats: { toolCalls: 2 } }),
     base({ id: "long", endedAt: Date.UTC(2026, 9, 7, 12) + 26 * 3_600_000, model: "claude-opus-5-5-20261101-extended-thinking" }),
     base({ id: "cwd", repo: undefined, cwd: "/home/user/notes" }),
+    base({ id: "worktree", repo: { root: "/work/demo/.claude/worktrees/agent-a1", main: "/work/demo", head: "" }, cwd: "/work/demo/.claude/worktrees/agent-a1" }),
     base({ id: "open", endedAt: undefined }),
     base({ id: "flag1", flags: ["unapproved-action"] }),
     base({ id: "flag4", flags: ["cache:low", "hook:settings", "no-verification", "skill:pdf"], stats: { toolCalls: 4, toolErrors: 2 } }),
@@ -110,6 +111,9 @@ test("server-drawn rows show what the script's rows show", () => {
     const dot = /<span class="dot ([^"]+)"/.exec(row)![1];
     assert.deepEqual({ badges: badges![1]!.replace(/<[^>]+>/g, ""), dot }, hydratedBadges(s), `${s.id} badges and dot`);
   });
+  const wt = rows[all.findIndex((s) => s.id === "worktree")]!;
+  assert.equal(cell(wt, "repo-cell"), "demo", "a worktree session is named by its main checkout");
+  assert.ok(wt.includes('title="/work/demo"'), "with the main checkout as the cell's title");
 });
 
 

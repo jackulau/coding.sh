@@ -40,3 +40,17 @@ test("the --where key table in query.md lists every key the parser knows", async
   const listed = [...section.matchAll(/^\| `([a-z.]+)` \| (?:session|event|query) \|/gm)].map((m) => m[1]);
   assert.deepEqual(listed, keyDocs().map((k) => k.name));
 });
+
+test("the repo column row in query.md names only RepoState keys, and says a bare repo's worktree has no main", () => {
+  const schema = JSON.parse(readFileSync(new URL("../../src/schema/trace.schema.json", import.meta.url), "utf8")) as {
+    $defs: { RepoState: { properties: Record<string, unknown>; required: string[] } };
+  };
+  const keys = Object.keys(schema.$defs.RepoState.properties);
+  const sessions = DOC.split(/^### `sessions`/m)[1]?.split(/^### /m)[0] ?? "";
+  const row = /^\| `repo` \| (.+) \|$/m.exec(sessions)?.[1];
+  assert.ok(row, "no repo row in the sessions table");
+  const named = [...row.matchAll(/`([a-z_]+)`/g)].map((m) => m[1]!);
+  for (const k of named) assert.ok(keys.includes(k), `query.md names repo key ${k}, which RepoState does not have`);
+  for (const k of [...schema.$defs.RepoState.required, "branch", "main"]) assert.ok(named.includes(k), `query.md omits repo key ${k}`);
+  assert.match(row, /bare repo has no `main`/);
+});

@@ -16,7 +16,8 @@ let c: RawClient;
 let tools: { name: string; outputSchema: Record<string, unknown> }[] = [];
 
 before(async () => {
-  root = realpathSync(mkdtempSync(join(tmpdir(), "csh-mcp-improve-")));
+  // The native real path: long names for a temp dir's 8.3 short ones (RUNNER~1 on CI), as the tool's scope.repo has.
+  root = realpathSync.native(mkdtempSync(join(tmpdir(), "csh-mcp-improve-")));
   w = await improveWorld(root, "mcp", { afterFlagged: 0 });
   c = new RawClient(w.env as Record<string, string>, w.repo);
   const init = await c.initialize();

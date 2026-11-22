@@ -16,6 +16,7 @@ import { version } from "../cli/meta.ts";
 import { ownerGuard } from "../core/store-guard.ts";
 import { createHttpSink } from "../sinks/http.ts";
 import { createOtlpSink } from "../sinks/otlp.ts";
+import { sinceSink } from "../sinks/since.ts";
 import { FsBlobStore } from "./fs-blobs.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "./memory.ts";
 import { SqliteIndexStore } from "./sqlite.ts";
@@ -177,7 +178,9 @@ export async function openSink(sc: SinkConfig, config: Config): Promise<Sink> {
     }
     sinkFactories.set(kind, factory);
   }
-  return factory(sc, config);
+  const sink = await factory(sc, config);
+  // A sink with `since` never gets sessions that started before it, from any caller.
+  return sc.since === undefined ? sink : sinceSink(sink, sc.since);
 }
 
 export interface Stores {

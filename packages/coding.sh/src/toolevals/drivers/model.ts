@@ -3,6 +3,7 @@
 // `coding.sh-model` with sessionId = trialId; this is the only driver with
 // exact TTFT for every call.
 import { currentAbortSignal } from "../../core/children.ts";
+import { priceEvent, pricesFor } from "../../core/pricing.ts";
 import { buildSession } from "../../core/sessions.ts";
 import type { AgentRunOutput, IndexStore } from "../../core/types.ts";
 import type { AgentEvent } from "../../schema/index.ts";
@@ -112,8 +113,12 @@ export async function runModelTrial(o: ModelTrialOpts): Promise<ModelTrialOutput
       ...(signal ? { signal } : {}),
     });
     if (events.length) {
-      await o.index.putEvents(events);
-      await o.index.upsertSession(buildSession(events));
+      // Priced as ingest prices a captured call (built-in prices plus `[prices]`), so the
+      // stored session has a cost; toolevals metrics still price from `[prices]` first.
+      const table = pricesFor(o.prices);
+      const priced = events.map((e) => priceEvent(e, table));
+      await o.index.putEvents(priced);
+      await o.index.upsertSession(buildSession(priced));
     }
     return {
       exitCode: loop.stopped === "error" ? 1 : 0,

@@ -22,6 +22,18 @@ export class ConfigError extends Error {
   }
 }
 
+/** A `${NAME}` in the config whose variable is not set. */
+export class ConfigEnvError extends ConfigError {
+  readonly variable: string;
+  /** The key that references it, such as `sinks[0].headers.Authorization`. */
+  readonly where: string;
+  constructor(variable: string, where: string, file?: string) {
+    super(`${where} references \${${variable}}, which is not set in the environment`, file);
+    this.variable = variable;
+    this.where = where;
+  }
+}
+
 export interface LoadConfigOptions {
   env?: NodeJS.ProcessEnv;
   /** Directory to search upward for a per-repo `.coding.sh/config.toml`. */
@@ -219,7 +231,7 @@ export function expandStoreUrl(url: string, env: NodeJS.ProcessEnv = process.env
 export function interpolateEnv(s: string, env: NodeJS.ProcessEnv, where: string, file?: string): string {
   return s.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_m, name: string) => {
     const v = env[name];
-    if (v === undefined) throw new ConfigError(`${where} references \${${name}}, which is not set in the environment`, file);
+    if (v === undefined) throw new ConfigEnvError(name, where, file);
     return v;
   });
 }
@@ -369,6 +381,12 @@ function parseSink(s: TomlTable, i: number, r: Reader, env: NodeJS.ProcessEnv, f
   }
   const batchSize = r.int(s, "batchSize", `${p}.batchSize`, 1);
   if (batchSize !== undefined) sink.batchSize = batchSize;
+  const since = r.string(s, "since", `${p}.since`);
+  if (since !== undefined) {
+    const at = /^\d{4}-\d{2}-\d{2}/.test(since) ? Date.parse(since) : NaN;
+    if (!Number.isFinite(at)) throw new ConfigError(`${p}.since must be a time such as "2026-11-21T09:30:00Z", got ${JSON.stringify(since)}`, file);
+    sink.since = at;
+  }
   const headers = s.headers;
   if (headers !== undefined) {
     if (typeof headers !== "object" || Array.isArray(headers)) throw new ConfigError(`${p}.headers must be a table`, file);

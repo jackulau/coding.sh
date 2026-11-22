@@ -169,8 +169,10 @@ export const sameFiles = (x: readonly ContextFile[], y: readonly ContextFile[]):
  * - `none`: no harness files;
  * - `git:<rev>`: the harness files committed at that revision;
  * - a directory: its CLAUDE.md, AGENTS.md, GEMINI.md, rules and skills;
- * - a file: `base` with that file swapped in (or added) under its repo path,
- *   or its name when it lives outside the repo;
+ * - a file: `base` with that file swapped in for the harness file it stands
+ *   for, as `refine test` reads it: the one at its repo path, else the one with
+ *   its name (`drafts/AGENTS.md` replaces AGENTS.md); any other file is added
+ *   under its repo path, or its name when it lives outside the repo;
  * - a harness bundle id or name (`coding.sh harness list`).
  */
 export async function resolveArm(v: string, o: { cwd: string; root: string; base: ContextFile[]; flag: string; ctx: Pick<Context, "index" | "blobs"> }): Promise<Arm> {
@@ -189,7 +191,9 @@ export async function resolveArm(v: string, o: { cwd: string; root: string; base
       return { label: v, files, watch: [{ dir: abs, recursive: true }] };
     }
     const rel = relative(o.root, abs).replace(/\\/g, "/");
-    const path = !rel.startsWith("..") && !isAbsolute(rel) ? rel : basename(abs);
+    const inside = !rel.startsWith("..") && !isAbsolute(rel);
+    const name = basename(abs);
+    const path = inside && isHarnessPath(rel) ? rel : o.base.some((f) => f.path === name) || isHarnessPath(name) ? name : inside ? rel : name;
     const text = readFileSync(abs, "utf8");
     return { label: v, files: [...o.base.filter((f) => f.path !== path), { path, text }].sort(byPath), watch: [{ dir: dirname(abs), recursive: false }] };
   }
@@ -219,12 +223,20 @@ export function lastHarnessCommit(root: string): { commit: string; short: string
 }
 
 /**
+ * The files with LF line ends. A checkout with core.autocrlf=true holds CRLF
+ * where git holds LF: that is no edit, and both arms give the model the same bytes.
+ */
+const lf = (files: ContextFile[]): ContextFile[] => files.map((f) => (f.text.includes("\r\n") ? { ...f, text: f.text.replace(/\r\n/g, "\n") } : f));
+const lfArm = (arm: Arm): Arm => ({ ...arm, files: lf(arm.files) });
+
+/**
  * Both arms, with the defaults: no flags compares git HEAD with your
  * uncommitted edits, or, with none, the last commit that changed a harness
  * file with the version before it; a lone --b runs against the repo's current files.
+ * Line ends are LF in both (see {@link lf}).
  */
 async function resolveArms(o: AbOptions, c: CommandContext, root: string, inGit: boolean, ctx: Pick<Context, "index" | "blobs">): Promise<[Arm, Arm, string?]> {
-  const current = harnessFilesIn(root);
+  const current = lf(harnessFilesIn(root));
   const currentArm: Arm = {
     label: "current files",
     files: current,
@@ -232,11 +244,12 @@ async function resolveArms(o: AbOptions, c: CommandContext, root: string, inGit:
   };
   if (o.a === undefined && o.b === undefined) {
     if (!inGit) throw new UsageError("Not in a git repo: pass the harness to test with --b <file|dir>", { reason: "missing_argument", suggestion: "coding.sh exp ab --b ./AGENTS.md" });
-    const head = harnessAtRev(root, "HEAD") ?? [];
+    const head = lf(harnessAtRev(root, "HEAD") ?? []);
     if (!sameFiles(head, current)) return [{ label: "git:HEAD", files: head, watch: [] }, { ...currentArm, label: "your edits" }];
     // Already committed: test the last harness commit against the version before it.
     const last = lastHarnessCommit(root);
-    const before = last ? harnessAtRev(root, `${last.commit}^`) : undefined;
+    const atParent = last ? harnessAtRev(root, `${last.commit}^`) : undefined;
+    const before = atParent && lf(atParent);
     if (!last || !before || sameFiles(before, head)) {
       throw new UsageError("No uncommitted changes to AGENTS.md or other instructions files, rules or skills, and no earlier commit to compare with: edit one first, or pass the versions with --a and --b", {
         reason: "missing_argument",
@@ -249,8 +262,8 @@ async function resolveArms(o: AbOptions, c: CommandContext, root: string, inGit:
       `No uncommitted edits: testing your last harness commit ${last.short} "${last.subject}" (B) against the version before it (A)`,
     ];
   }
-  const a = o.a === undefined ? currentArm : await resolveArm(o.a, { cwd: c.cwd, root, base: current, flag: "a", ctx });
-  const b = o.b === undefined ? currentArm : await resolveArm(o.b, { cwd: c.cwd, root, base: a.files, flag: "b", ctx });
+  const a = o.a === undefined ? currentArm : lfArm(await resolveArm(o.a, { cwd: c.cwd, root, base: current, flag: "a", ctx }));
+  const b = o.b === undefined ? currentArm : lfArm(await resolveArm(o.b, { cwd: c.cwd, root, base: a.files, flag: "b", ctx }));
   if (sameFiles(a.files, b.files)) {
     throw new UsageError(`A (${a.label}) and B (${b.label}) have the same harness files: nothing to compare`, {
       reason: "invalid_argument",
@@ -807,6 +820,7 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
   const anchors = await pickAnchors(o, c.cwd);
   // Resolve the arms before mining: a bad path should fail fast.
   let [armA, armB, armsNote] = await resolveArms(o, c, repoRoot, root !== undefined, ctx);
+  if (o.watch) watchDirs(armB);
   if (armsNote && !out.json) out.note(armsNote);
   // The acceptance gate is always computed (it is the headline); --gate only makes it the exit code.
   const gate = gateFlags({ ...c.flags, gate: true })!;
@@ -827,7 +841,13 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
     // Point at another agent only when the store has sessions of one that loads the edited files.
     const other = Object.keys(AGENT_NAMES).find((g) => !skipped.includes(g) && unloaded.unloaded.every((x) => loadedBy(g, x.path) === true));
     const hasOther = other !== undefined && (await ctx.index.listSessions({ agent: other as AgentId, limit: 1 })).length > 0;
-    throw new UsageError(`No arm difference: ${who} does not load ${unloaded.unloaded.map((x) => x.path).join(", ")}, so A and B give all ${plural(cases.length, "case")} the same context. Edit the file the agent loads (CLAUDE.md for Claude Code, or import it there with a line \`@${unloaded.unloaded[0]!.path}\`)${hasOther ? ", or test the edit on sessions of an agent that loads it" : ""}`, hasOther ? { reason: "no_arm_difference", suggestion: `--agent ${other}` } : { reason: "no_arm_difference" });
+    // The instructions file each of these agents does load (AGENTS.md for Codex); only Claude Code follows an `@path` import.
+    const loads = skipped.flatMap((g) => {
+      const file = ["CLAUDE.md", "AGENTS.md", "GEMINI.md"].find((p) => loadedBy(g, p) === true);
+      return file ? [`${file} for ${AGENT_NAMES[g] ?? g}`] : [];
+    });
+    if (skipped.includes("claude-code")) loads.push(`or add a line \`@${unloaded.unloaded[0]!.path}\` to CLAUDE.md`);
+    throw new UsageError(`No arm difference: ${who} ${skipped.length > 1 ? "do" : "does"} not load ${unloaded.unloaded.map((x) => x.path).join(", ")}, so A and B give all ${plural(cases.length, "case")} the same context. Edit the instructions file the agent loads${loads.length ? ` (${loads.join(", ")})` : ""}${hasOther ? ", or test the edit on sessions of an agent that loads it" : ""}`, hasOther ? { reason: "no_arm_difference", suggestion: `--agent ${other}` } : { reason: "no_arm_difference" });
   }
   if (!out.json) for (const u of unloaded.unloaded) out.warn(`${agentNames(u.agents)} does not load ${u.path}: the edit changes nothing for ${u.cases} of ${plural(cases.length, "case")}`);
   const setup = trialSetup(o, cases, c.env);
@@ -962,9 +982,16 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
     return `A ${r.passA}/${cases.length} -> B ${r.passB}/${cases.length} | fixed ${r.fixed.length}, broke ${r.broke.length} | ${verdict}${prot} | ${costText(s.usd + s.judgeUsd, setup.provider)}, ${s.calls - s.cached} new calls`;
   }, async () => {
     // Re-read B the way it was given.
-    if (o.b === undefined) return { ...armB, files: harnessFilesIn(repoRoot) };
-    return resolveArm(o.b, { cwd: c.cwd, root: repoRoot, base: armA.files, flag: "b", ctx });
+    if (o.b === undefined) return { ...armB, files: lf(harnessFilesIn(repoRoot)) };
+    return lfArm(await resolveArm(o.b, { cwd: c.cwd, root: repoRoot, base: armA.files, flag: "b", ctx }));
   });
+}
+
+/** The directories --watch follows for B. A B with none on disk (git:REV, none, a bundle) is a usage error, raised before any trial. */
+function watchDirs(armB: Arm): Arm["watch"] {
+  const dirs = armB.watch.filter((w) => existsSync(w.dir));
+  if (!dirs.length) throw new UsageError(`--watch needs B to be files on disk (B is ${armB.label})`, { reason: "invalid_argument" });
+  return dirs;
 }
 
 /**
@@ -973,8 +1000,7 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
  */
 async function watchLoop(c: CommandContext, armB: Arm, rerun: (b: Arm) => Promise<string>, reread: () => Promise<Arm>): Promise<number> {
   const { out } = c;
-  const dirs = armB.watch.filter((w) => existsSync(w.dir));
-  if (!dirs.length) throw new UsageError(`--watch needs B to be files on disk (B is ${armB.label})`, { reason: "invalid_argument" });
+  const dirs = watchDirs(armB);
   c.interruptExit?.(0);
   const stop = c.drain ?? c.signal;
   let current = armB;

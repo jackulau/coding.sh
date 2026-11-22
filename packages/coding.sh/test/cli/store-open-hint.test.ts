@@ -2,11 +2,13 @@
 // through --store never creates a SQLite file, and Node without FTS5 gets its own next step.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { storeOpenError } from "../../src/cli/common.ts";
+import * as config from "../../src/core/config.ts";
+import { storeOpenNext } from "../../src/core/context.ts";
 import { NoFts5Error } from "../../src/store/sqlite.ts";
 import { CLI } from "../query/_seed.ts";
 
@@ -55,6 +57,24 @@ test("a --store that does not open: the hint names --store, not the config", () 
   assert.doesNotMatch(j.next.join(" "), /config path/);
 });
 
+test("a sink header that names an unset variable: the hint names the variable and the sink, not [store]", () => {
+  const home = join(root, "sink-env");
+  mkdirSync(home, { recursive: true });
+  writeFileSync(join(home, "config.toml"), ["[[sinks]]", 'name = "team"', 'kind = "http"', 'endpoint = "http://127.0.0.1:9/v1/ingest"', 'headers = { Authorization = "Bearer ${TEAM_KEY}" }', ""].join("\n"));
+  const e2 = { ...env, CODING_SH_HOME: home };
+  delete (e2 as NodeJS.ProcessEnv).TEAM_KEY;
+  const r = spawnSync(process.execPath, ["--no-warnings", CLI, "sessions", "--json"], { env: e2, encoding: "utf8", timeout: 120_000 });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  const j = JSON.parse(r.stderr) as { message: string; next: string[] };
+  assert.match(j.message, /sinks\[0\]\.headers\.Authorization references \$\{TEAM_KEY\}/);
+  const next = j.next.join(" ");
+  assert.match(next, /TEAM_KEY/);
+  assert.match(next, /sinks\[0\]/);
+  assert.doesNotMatch(next, /\[store\]|--store/);
+  // The MCP server's hint comes from the same function.
+  assert.deepEqual(storeOpenNext({}, new config.ConfigEnvError("TEAM_KEY", "sinks[0].headers.Authorization")), j.next);
+});
+
 test("a Node without FTS5: reason no_fts5, next step installs Node 22.16", () => {
   const e = storeOpenError(new NoFts5Error(), {});
   assert.equal(e.reason, "no_fts5");
@@ -63,6 +83,6 @@ test("a Node without FTS5: reason no_fts5, next step installs Node 22.16", () =>
 
 test("the MCP server's store error follows the same source", () => {
   const src = readFileSync(new URL("../../src/mcp/server.ts", import.meta.url), "utf8");
-  assert.match(src, /storeOpenNext\(env\)/);
+  assert.match(src, /storeOpenNext\(env, e\)/);
   assert.doesNotMatch(src, /Check the \[store\] section of \\`coding\.sh config path\\`/);
 });

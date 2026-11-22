@@ -109,6 +109,12 @@ function armExtras(arms: readonly ToolArmSummary[], p: ReturnType<typeof painter
       out.push(p.dim(`${a.arm}: `) + (c ? `output cuts ${c.outputCuts}/${c.toolResults} (${c.outputCutRate === null ? "—" : pct(c.outputCutRate)}) · broken JSON ${c.brokenJsonCuts}` : "no output cuts"));
     }
   }
+  if (arms.some((a) => a.silentFailures || typeof a.targetCallsPerSuccess === "number")) {
+    for (const a of arms) {
+      const per = a.targetCallsPerSuccess;
+      out.push(p.dim(`${a.arm}: `) + `silent failures ${a.silentFailures ?? 0} · target calls per success ${typeof per === "number" ? fmt(per, "count") : "—"}`);
+    }
+  }
   if (arms.some((a) => a.kinds)) {
     for (const a of arms) {
       const k = a.kinds ?? {};
