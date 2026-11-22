@@ -150,6 +150,26 @@ counts do not change. Only `needYou` does.
 `needYou` counts the blocked and failed items that are neither probably closed nor superseded.
 `work --json`, `status`, the statusline and the MCP `status` tool all read it.
 
+### An old index
+
+Every ingest and backfill that finishes writes the time it finished to `ingest-last.json` in the
+coding.sh home, also when it found nothing new. One that fails, that runs out of time with files
+left to read, or that another import turns away leaves the time before. The age of that time is
+how old the index is.
+
+The index is stale when it is older than the stall threshold (15 minutes) and no ingest or import
+holds its lock. A stale index would make every agent that was active when ingest stopped look
+stalled. So while it is stale, `work` judges waits and stalls as of the last ingest, not the
+clock: a session active 5 minutes before it is still running. The header then starts with
+"index updated 3h ago: waits and stalls are as of then; run coding.sh ingest", and `work --json`
+carries `indexUpdatedAt` and `asOf`, the time the queue was judged at. `work show` and `work ack`
+judge an item the same way. `coding.sh status` judges its Work counts the same way.
+
+A fresh index, or a home with no record yet (no ingest has finished since this version), changes
+nothing. A store named by `--store` or `CODING_SH_STORE_URL` is filled elsewhere, so the home's
+record is not used for it. To bring the index up to date, run `coding.sh ingest`; if it fails,
+`coding.sh status` names the cause on its Ingest row.
+
 The agents that report prompts are Claude Code, Gemini CLI, Devin CLI and T3 Code. The header names the other agents
 in view. Items with nothing to act on are hidden, with a reason: running, done, acknowledged or
 snoozed. `--all` shows them. Every row carries a reason and a next step.
@@ -235,7 +255,9 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
   still found by its id. An unknown id exits 1.
 - `coding.sh work ack <id>` and `coding.sh work snooze <id> <duration>`. A bad duration exits 2.
 - `coding.sh status` gets a Work line with the count per bucket, and its JSON a `work` field with
-  the counts and `needYou`.
+  the counts and `needYou`. Its Index row gives the index's age ("updated 4m ago"), as a warning
+  that names `coding.sh ingest` while the index is stale, and its JSON an `index` field with
+  `updatedAt` (and `stale: true` while stale). Both are absent until an ingest records its time.
 - The statusline adds "N need you" when items are blocked on you or failed and are neither
   probably closed nor superseded, and its JSON a `needYou` field. On every render it first reads new hook events, for at most 400 ms and not while
   another ingest holds the lock, then the 7-day window.
@@ -281,6 +303,11 @@ done by a check command; budgets; cloud agents; dependencies between items; noti
 - `test/cli/work-workflow.test.ts`: `work --json` on a seeded run gives one document with its
   phases, the text view prints the phase line, `work show` lists the agents, and `show` and
   `work show` agree on the files changed.
+- `test/cli/index-age.test.ts`: with a record 3 hours old, `work` prints the stale-index header,
+  a session active 5 minutes before the record is running, not stalled, and `status --json` has
+  `index.updatedAt`. A record a minute old, or none, changes nothing.
+- `test/core/ingest-last.test.ts`: an ingest writes the record, one that finds nothing new too, with
+  no temp file left beside it; a failed ingest leaves the record before it.
 - `test/cli/work.test.ts`: the recorded workflow fixture `test/fixtures/workflows/claude-code-running`
   gives one item, keyed by its missing root. It also runs `--json`, `show`, `ack` and `snooze` on a
   seeded store, and checks that an unknown id exits 1 and a bad duration is a usage error.

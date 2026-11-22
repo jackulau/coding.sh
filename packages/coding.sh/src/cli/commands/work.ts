@@ -4,6 +4,7 @@
 import { parsePlace } from "../../mcp/data.ts";
 import type { Session } from "../../schema/index.ts";
 import type { Context } from "../../core/context.ts";
+import { indexAge, staleIndexText, type IndexAge } from "../../core/ingest-health.ts";
 import { addAck, addSnooze, readOverlay, writeOverlay, type WorkOverlay } from "../../core/work-overlay.ts";
 import { BUCKET_LABELS, buildWorkQueue, countsLine, itemWorkflowAgents, loadWorkSessions, STAGES, stagesLine, workFiles, workItemJson, workJson, type Stage, type WorkItem, type WorkPhase, type WorkQueue } from "../../core/work.ts";
 import { parseAge, parseSinceWhen, positiveInt, suggest, UsageError } from "../args.ts";
@@ -58,16 +59,17 @@ async function list(c: CommandContext): Promise<number> {
   const all = c.flags.all === true || stages.length > 0;
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
+    const stale = staleIndex(ctx);
     const overlay = readOverlay(ctx.paths.work);
     const { sessions, truncated } = await loadWorkSessions(ctx.index, { since: w.since });
-    const q = buildWorkQueue(sessions, { all, overlay, agents, place, stages });
+    const q = buildWorkQueue(sessions, { all, overlay, agents, place, stages, now: stale?.at });
     if (!q.items.length && agents.length) await rejectAgentTypos(ctx.index, agents);
     await distinctFiles(ctx, q.items.slice(0, limit), sessions);
     if (out.json) {
-      out.data({ ...workJson(q, { since: w.since, limit, truncated }), ...pendingField(backlog) });
+      out.data({ ...workJson(q, { since: w.since, limit, truncated }), ...staleIndexField(stale), ...pendingField(backlog) });
       return 0;
     }
-    printQueue(c, q, { limit, all, stages, window: w, truncated, backlog });
+    printQueue(c, q, { limit, all, stages, window: w, truncated, backlog, stale });
     return 0;
   });
 }
@@ -84,10 +86,30 @@ async function distinctFiles(ctx: Context, items: readonly WorkItem[], sessions:
   }
 }
 
-function printQueue(c: CommandContext, q: WorkQueue, o: { limit: number; all: boolean; stages: readonly Stage[]; window: Window; truncated: boolean; backlog: IngestBacklog }): void {
+/**
+ * The index's age while it is old (core/ingest-health.ts): no ingest has finished for longer than
+ * a stall takes and none runs. The queue is then judged as of the last ingest, so an agent that was
+ * active just before it is not called stalled. A store named by --store or CODING_SH_STORE_URL is
+ * filled elsewhere, so this home's record says nothing about it.
+ */
+function staleIndex(ctx: Context): IndexAge | undefined {
+  if (ctx.storeOverridden) return undefined;
+  const age = indexAge(ctx.paths.root);
+  return age?.stale ? age : undefined;
+}
+
+/** `indexUpdatedAt` and `asOf` (the time the queue was judged at) for --json, only while the index is old. */
+function staleIndexField(stale: IndexAge | undefined): { indexUpdatedAt?: string; asOf?: string } {
+  if (!stale) return {};
+  const at = new Date(stale.at).toISOString();
+  return { indexUpdatedAt: at, asOf: at };
+}
+
+function printQueue(c: CommandContext, q: WorkQueue, o: { limit: number; all: boolean; stages: readonly Stage[]; window: Window; truncated: boolean; backlog: IngestBacklog; stale?: IndexAge }): void {
   const { out } = c;
   out.print(`${out.style("Work", "bold")}  ${countsLine(q.counts)}  ${out.style(`(since ${o.window.sinceText})`, "faint")}`);
   out.print(`${out.style("Stages", "faint")}  ${stagesLine(q.stages)}`);
+  if (o.stale) out.print(out.style(staleIndexText(o.stale), "yellow"));
   if (q.noPromptSignal.length) out.print(out.style(`No prompt signal from ${q.noPromptSignal.join(", ")}: their waits show as stalled.`, "faint"));
   if (o.truncated) out.note(`Read the newest sessions only: narrow --since.`);
   if (o.backlog.pendingFiles) out.note(`${plural(o.backlog.pendingFiles, "capture")} not yet ingested; --fresh waits for them.`);
@@ -155,11 +177,11 @@ const short = (p: string): string => (p.length > 40 ? `…${p.slice(-39)}` : p);
 // ------------------------------------------------------------ one item
 
 /** The item an id names: an item id (w + 6 hex), else a session id in one. Unknown: exit 1. */
-async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: WorkOverlay): Promise<{ item: WorkItem; sessions: Session[] }> {
+async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: WorkOverlay, now?: number): Promise<{ item: WorkItem; sessions: Session[] }> {
   const w = windowOf(c);
   const { sessions } = await loadWorkSessions(ctx.index, { since: w.since });
   const pick = (ss: Session[]) => {
-    const q = buildWorkQueue(ss, { all: true, overlay });
+    const q = buildWorkQueue(ss, { all: true, overlay, now });
     // A session id names the item it is in before a run item it started (whose rootId it is).
     return q.items.find((i) => i.id === ref) ?? q.items.find((i) => i.sessionIds.includes(ref)) ?? q.items.find((i) => i.rootId === ref);
   };
@@ -196,12 +218,13 @@ async function show(c: CommandContext): Promise<number> {
   windowOf(c);
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
+    const stale = staleIndex(ctx);
     const overlay = readOverlay(ctx.paths.work);
-    const { item, sessions } = await findItem(c, ctx, ref, overlay);
+    const { item, sessions } = await findItem(c, ctx, ref, overlay, stale?.at);
     const byId = new Map(sessions.map((s) => [s.id, s]));
     const files = new Set(await workFiles(ctx.index, item, sessions));
     const children = item.sessionIds.filter((id) => id !== item.primaryId).map((id) => byId.get(id)).filter((s): s is Session => !!s);
-    const agents = itemWorkflowAgents(item, sessions, Date.now());
+    const agents = itemWorkflowAgents(item, sessions, stale?.at ?? Date.now());
     if (out.json) {
       out.data({
         ...workItemJson(item),
@@ -214,11 +237,13 @@ async function show(c: CommandContext): Promise<number> {
           if (s.stats.waiting) row.waiting = s.stats.waiting.kind;
           return row;
         }),
+        ...staleIndexField(stale),
         ...pendingField(backlog),
       });
       return 0;
     }
     out.print(`${out.style(item.id, "cyan")}  ${oneLine(item.title ?? "(untitled)", 80)}`);
+    if (stale) out.print(out.style(staleIndexText(stale), "yellow"));
     out.row("State", item.bucket ? BUCKET_LABELS[item.bucket] : `hidden (${item.hidden})`, item.bucket === "blocked" || item.bucket === "failed" ? "warn" : "none", true);
     out.row("Why", `${item.probablyClosed ? "probably closed: " : ""}${item.reason}`, "none", true);
     out.row("Stage", `${stageTag(item)}: ${item.stageWhy}`, "none", true);
@@ -259,8 +284,10 @@ async function ack(c: CommandContext): Promise<number> {
   windowOf(c);
   return withContext(c, async (ctx) => {
     await autoIngest(ctx, readIngest(c));
+    // Judged as the list was: an old index acknowledges what `work` showed, not a stall that came of its age.
+    const asOf = staleIndex(ctx)?.at;
     const overlay = readOverlay(ctx.paths.work);
-    const { item } = await findItem(c, ctx, ref, overlay);
+    const { item } = await findItem(c, ctx, ref, overlay, asOf);
     const cause = item.bucket ? item.cause : undefined;
     if (!cause) {
       if (out.json) out.data({ id: item.id, acked: false, hidden: item.hidden ?? null });
@@ -270,7 +297,7 @@ async function ack(c: CommandContext): Promise<number> {
     addAck(overlay, cause.sessionId, cause.fingerprint);
     writeOverlay(ctx.paths.work, overlay);
     // What the item shows now: the next cause, if it has one.
-    const { item: after } = await findItem(c, ctx, item.id, overlay);
+    const { item: after } = await findItem(c, ctx, item.id, overlay, asOf);
     if (out.json) {
       out.data({ id: item.id, acked: true, bucket: cause.bucket, fingerprint: cause.fingerprint, now: workItemJson(after) });
       return 0;
