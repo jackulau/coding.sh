@@ -1,16 +1,17 @@
 // Monitors (`coding.sh monitor`): definitions and their state in
 // <CODING_SH_HOME>/monitors.json. Each monitor keeps a cursor (the latest
 // session end it has scored up to), the day's estimated judge spend and its
-// last error. The file is written beside itself and renamed over, so a reader
-// never sees half of it; a lock file next to it serializes changes.
+// last error. The file is written beside itself (mode 600: an --http monitor
+// keeps its signing secret here) and renamed over, so a reader never sees half
+// of it; a lock file next to it serializes changes.
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { acquireLock } from "../core/lock.ts";
 
-export type MonitorKind = "judge" | "run";
+export type MonitorKind = "judge" | "run" | "http";
 
 /** Judge providers a monitor may name. The subscription CLIs are left out: they are not metered by tokens. */
-export const MONITOR_PROVIDERS = ["anthropic", "openai", "gateway", "mock"] as const;
+export const MONITOR_PROVIDERS = ["anthropic", "openai", "gateway", "gemini", "mock"] as const;
 export type MonitorProvider = (typeof MONITOR_PROVIDERS)[number];
 
 export interface MonitorError {
@@ -26,6 +27,10 @@ export interface MonitorDef {
   rubric?: string;
   /** --run: the command line, run by the shell. */
   command?: string;
+  /** --http: the evaluator's http(s) URL, without credentials. */
+  url?: string;
+  /** --http: the HMAC-SHA256 key each POST is signed with, 32 random bytes in hex. Never listed. */
+  secret?: string;
   /** Where the monitor was added: the command runs here. */
   cwd: string;
   /** A `--where` query sessions must match. */
@@ -73,15 +78,22 @@ function validDef(d: unknown): d is MonitorDef {
   if (typeof m.name !== "string" || !NAME_RE.test(m.name)) return false;
   if (m.kind === "run") return typeof m.command === "string" && m.command.length > 0;
   if (m.kind === "judge") return typeof m.rubric === "string" && m.rubric.length > 0;
+  if (m.kind === "http") return typeof m.url === "string" && m.url.length > 0 && typeof m.secret === "string" && m.secret.length > 0;
   return false;
 }
 
-/** Writes the file beside itself, then renames it over. */
+/** A definition without its secret: what list and add print. */
+export function publicMonitor(m: MonitorDef): MonitorDef {
+  const { secret: _secret, ...rest } = m;
+  return rest;
+}
+
+/** Writes the file beside itself with mode 600 (where the OS has modes), then renames it over. */
 export function writeMonitors(file: string, doc: MonitorsFile): void {
   mkdirSync(dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}.tmp`;
   try {
-    writeFileSync(tmp, `${JSON.stringify(doc, null, 2)}\n`);
+    writeFileSync(tmp, `${JSON.stringify(doc, null, 2)}\n`, { mode: 0o600, flag: "wx" });
     renameSync(tmp, file);
   } catch (e) {
     rmSync(tmp, { force: true });

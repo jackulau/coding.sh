@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import { buildSession, FLAGS } from "../../src/core/sessions.ts";
-import { BUCKETS, buildWorkQueue, changedPaths, countsLine, groupWorkItems, INFERRED_RUNNING_MS, needYou, PROBABLY_CLOSED_MS, STALL_MS, workFiles, workItemId, workItemJson, workJson } from "../../src/core/work.ts";
+import { BUCKETS, buildWorkQueue, changedPaths, countsLine, groupWorkItems, INFERRED_RUNNING_MS, needYou, PROBABLY_CLOSED_MS, STAGE_WHY_MAX, STAGES, stagesLine, STALL_MS, workFiles, workItemId, workItemJson, workJson, workStage } from "../../src/core/work.ts";
 import { addAck, addSnooze, emptyOverlay, readOverlay, writeOverlay } from "../../src/core/work-overlay.ts";
 import type { AgentEvent, Session, Waiting } from "../../src/schema/index.ts";
 import { mkSession } from "../cli/_cmd.ts";
@@ -308,6 +308,174 @@ describe("acks and snoozes", () => {
   });
 });
 
+describe("stages and kinds", () => {
+  const one = (sessions: Session[], opts: Parameters<typeof buildWorkQueue>[1] = {}) => queue(sessions, { all: true, ...opts }).items[0]!;
+  const stageOf = (i: { stage: string; kind?: string }) => [i.stage, i.kind];
+
+  test("approval: a member waits on a permission, a question or a plan, running or not", () => {
+    const i = one([open("a", MIN, { stats: { waiting: wait("permission", ago(2 * MIN), "t1", "Claude needs your permission to use Bash") } })]);
+    assert.deepEqual(stageOf(i), ["approval", undefined]);
+    assert.equal(i.stageWhy, "waits 2m for permission: Claude needs your permission to use Bash");
+    // A subagent's question makes the whole item wait; files already changed make it a change.
+    const root = open("root", MIN, { stats: { filesChanged: 2 } });
+    const sub = open("root:sub:1", MIN, { parent: { sessionId: "root" }, stats: { waiting: wait("question", ago(MIN), "q1") } });
+    const j = one([root, sub]);
+    assert.deepEqual(stageOf(j), ["approval", "change"]);
+    assert.equal(j.stageWhy, "waits 1m for an answer");
+    assert.deepEqual(stageOf(one([sess("p", 3 * MIN, { stats: { waiting: wait("plan", ago(3 * MIN), "x") } })])), ["approval", undefined]);
+  });
+
+  test("an acked blocked item stays approval: the agent still waits", () => {
+    const s = open("a", MIN, { stats: { waiting: wait("permission", ago(2 * MIN), "t1") } });
+    const o = emptyOverlay();
+    const c = one([s]).cause!;
+    addAck(o, c.sessionId, c.fingerprint);
+    const i = one([s], { overlay: o });
+    assert.equal(i.hidden, "acked");
+    assert.equal(i.stage, "approval");
+  });
+
+  test("executing: running or stalled, and a member changed a file or ran tests", () => {
+    const i = one([open("a", MIN, { stats: { filesChanged: 3 } })]);
+    assert.deepEqual(stageOf(i), ["executing", "change"]);
+    assert.equal(i.stageWhy, "running 2m, changed 3 files");
+    const tests = one([open("t", MIN, { stats: { testsPassed: 4, testsFailed: 2 } })]);
+    assert.deepEqual(stageOf(tests), ["executing", undefined], "tests ran, but no file changed: the kind is not known yet");
+    assert.equal(tests.stageWhy, "running 2m, tests: 4 passed, 2 failed");
+    const stalled = one([open("s", STALL_MS + MIN, { agent: "codex", stats: { filesChanged: 1 } })]);
+    assert.equal(stalled.bucket, "stalled");
+    assert.deepEqual(stageOf(stalled), ["executing", "change"]);
+    assert.equal(stalled.stageWhy, "quiet 16m, changed 1 file");
+    // A finished root with a running subagent that changed a file is still executing.
+    const root = sess("r", 10 * MIN);
+    const sub = open("r:sub:1", MIN, { parent: { sessionId: "r" }, stats: { filesChanged: 1 } });
+    assert.equal(one([root, sub]).stage, "executing");
+  });
+
+  test("planning: running or stalled with no file changed and no tests run", () => {
+    const i = one([open("a", MIN)]);
+    assert.deepEqual(stageOf(i), ["planning", undefined]);
+    assert.equal(i.stageWhy, "running 2m, no file changed yet");
+    assert.equal(one([open("s", STALL_MS + MIN, { agent: "codex" })]).stage, "planning");
+    assert.equal("kind" in workItemJson(i), false, "the kind is absent while it is not known");
+  });
+
+  test("review: stopped with changed files, a failure, or the person's turn", () => {
+    const changed = one([sess("c", 13 * MIN, { stats: { filesChanged: 3 } })]);
+    assert.deepEqual(stageOf(changed), ["review", "change"]);
+    assert.equal(changed.stageWhy, "changed 3 files, stopped 12m ago");
+    const tests = one([sess("t", 5 * MIN, { stats: { testsFailed: 2 } })]);
+    assert.deepEqual(stageOf(tests), ["review", "research"]);
+    assert.equal(tests.stageWhy, "tests: 2 failed, stopped 4m ago");
+    const turn = one([open("u", 5 * MIN, { stats: { waiting: wait("turn", ago(5 * MIN)) } })]);
+    assert.equal(turn.bucket, "turn");
+    assert.deepEqual(stageOf(turn), ["review", "research"]);
+    assert.equal(turn.stageWhy, "your turn for 5m");
+  });
+
+  test("a failed item with no change is review, with kind research", () => {
+    const i = one([sess("f", 2 * MIN, { flags: [FLAGS.apiStall], stats: { llmErrors: { count: 3, statusCode: 529 } as never } })]);
+    assert.equal(i.bucket, "failed");
+    assert.deepEqual(stageOf(i), ["review", "research"]);
+    assert.equal(i.stageWhy, "api 529, stopped 1m ago");
+  });
+
+  test("an acked review item becomes done; acking only the failure leaves it in review", () => {
+    const s = sess("a", 5 * MIN, { stats: { filesChanged: 1, testsFailed: 1 } });
+    const o = emptyOverlay();
+    const failed = one([s]).cause!;
+    addAck(o, failed.sessionId, failed.fingerprint);
+    const half = one([s], { overlay: o });
+    assert.deepEqual([half.bucket, half.stage], ["review", "review"]);
+    addAck(o, half.cause!.sessionId, half.cause!.fingerprint);
+    const done = one([s], { overlay: o });
+    assert.equal(done.hidden, "acked");
+    assert.deepEqual(stageOf(done), ["done", "change"]);
+    assert.equal(done.stageWhy, "acknowledged: tests: 1 failed, changed 1 file, stopped 4m ago");
+  });
+
+  test("a snoozed review item stays review", () => {
+    const s = sess("a", 5 * MIN, { stats: { filesChanged: 1 } });
+    const o = emptyOverlay();
+    addSnooze(o, ["a"], { until: NOW + 60 * MIN, bucket: "review" });
+    const i = one([s], { overlay: o });
+    assert.equal(i.hidden, "snoozed");
+    assert.equal(i.stage, "review");
+  });
+
+  test("done: stopped with nothing to look at", () => {
+    const i = one([sess("d", 5 * MIN)]);
+    assert.equal(i.hidden, "done");
+    assert.deepEqual(stageOf(i), ["done", "research"]);
+    assert.equal(i.stageWhy, "stopped 4m ago, no file changed");
+    assert.equal(one([sess("p", 5 * MIN, { stats: { testsPassed: 6 } })]).stageWhy, "tests: 6 passed, stopped 4m ago");
+  });
+
+  test("stages count every item in the window, hidden ones included; the stage filter lists hidden items", () => {
+    const sessions = [sess("review", 3 * MIN, { stats: { filesChanged: 2 } }), sess("done", 4 * MIN), open("running", MIN, { stats: { filesChanged: 1 } }), open("plan", MIN)];
+    const q = queue(sessions);
+    assert.deepEqual(q.items.map((i) => i.primaryId), ["review"]);
+    assert.deepEqual(q.stages, { planning: 1, executing: 1, review: 1, approval: 0, done: 1 });
+    assert.deepEqual(workJson(q, { since: 0, limit: 20 }).stages, q.stages);
+    assert.equal(stagesLine(q.stages), "1 planning · 1 executing · 1 review · 1 done");
+    assert.equal(stagesLine({ planning: 0, executing: 0, review: 0, approval: 0, done: 0 }), "no items");
+    assert.deepEqual(queue(sessions, { stages: ["done"] }).items.map((i) => i.primaryId), ["done"]);
+    assert.deepEqual(queue(sessions, { stages: ["executing", "planning"] }).items.map((i) => i.primaryId).sort(), ["plan", "running"]);
+    const j = workItemJson(q.items[0]!);
+    assert.deepEqual([j.stage, j.kind, j.stageWhy], ["review", "change", "changed 2 files, stopped 2m ago"]);
+  });
+
+  test("stageWhy stays short, and work show's distinct file count replaces the sum", async () => {
+    const long = "x".repeat(300);
+    const i = one([open("a", MIN, { stats: { waiting: wait("permission", ago(MIN), "t1", long) } })]);
+    assert.equal(i.stageWhy.length, STAGE_WHY_MAX);
+    assert.match(i.stageWhy, /…$/);
+    const root = sess("root", 5 * MIN, { stats: { filesChanged: 2 } });
+    const sub = sess("root:sub:1", 4 * MIN, { parent: { sessionId: "root" }, stats: { filesChanged: 2 } });
+    const item = queue([root, sub]).items[0]!;
+    assert.match(item.stageWhy, /^changed 4 files/);
+    const ev = (sessionId: string, path: string) => ({ id: `${sessionId}${path}`, v: 0, sessionId, ts: ago(4 * MIN), agent: "claude-code", kind: "file.change", payload: { path } }) as AgentEvent;
+    const events: Record<string, AgentEvent[]> = { root: [ev("root", "a.ts"), ev("root", "b.ts")], "root:sub:1": [ev("root:sub:1", "a.ts"), ev("root:sub:1", "c.ts")] };
+    await workFiles({ listEvents: async (id: string) => events[id] ?? [] }, item, [root, sub], NOW);
+    assert.match(item.stageWhy, /^changed 3 files, stopped/);
+  });
+
+  test("workStage reads only the sessions and causes it is given", () => {
+    const s = sess("a", 5 * MIN, { stats: { filesChanged: 1 } });
+    assert.deepEqual(workStage([s], s, NOW), { stage: "review", kind: "change", why: "changed 1 file, stopped 4m ago" });
+    assert.equal(workStage([s], s, NOW, undefined, () => true).stage, "done");
+    assert.deepEqual([...STAGES], ["planning", "executing", "review", "approval", "done"]);
+  });
+});
+
 test("BUCKETS is the documented order", () => {
   assert.deepEqual([...BUCKETS], ["blocked", "failed", "stalled", "turn", "review"]);
+});
+
+describe("a worktree nested in its repo", () => {
+  const repo = (root: string, branch: string) => ({ root, head: "", branch }) as never;
+  const fc = (sessionId: string, path: string) => ({ id: `${sessionId}${path}`, v: 0, sessionId, ts: ago(4 * MIN), agent: "claude-code", kind: "file.change", payload: { path } }) as AgentEvent;
+
+  test("names the worktree and diffs it when its branch is not the main checkout's", async () => {
+    const wt = "C:/work/demo/data/worktrees/fix-ui";
+    const main = sess("main", 30 * MIN, { cwd: "C:/work/demo", repo: repo("C:/work/demo", "main") });
+    const agent = sess("wt", 5 * MIN, { cwd: wt, repo: repo("C:/work/demo", "improve/fix-ui"), stats: { filesChanged: 2 } });
+    const item = queue([main, agent]).items.find((i) => i.primaryId === "wt")!;
+    assert.equal(item.repo, wt);
+    assert.equal(item.next, "review: `git -C C:/work/demo/data/worktrees/fix-ui diff`, then `coding.sh work ack " + item.id + "`");
+    // One path base: a path written outside the worktree makes every path absolute.
+    const events: Record<string, AgentEvent[]> = { wt: [fc("wt", "src/ui.ts"), fc("wt", "C:/work/demo/notes/ui.md")] };
+    const files = await workFiles({ listEvents: async (id: string) => events[id] ?? [] }, item, [main, agent], NOW);
+    assert.deepEqual(files.sort(), ["C:/work/demo/data/worktrees/fix-ui/src/ui.ts", "C:/work/demo/notes/ui.md"]);
+  });
+
+  test("a subfolder on the main checkout's branch keeps the repo root", () => {
+    const main = sess("main", 30 * MIN, { cwd: "/work/demo", repo: repo("/work/demo", "main") });
+    const sub = sess("sub", 5 * MIN, { cwd: "/work/demo/packages/app", repo: repo("/work/demo", "main"), stats: { filesChanged: 1 } });
+    const alone = sess("alone", 5 * MIN, { cwd: "/work/other/data/wt", repo: repo("/work/other", "feature"), stats: { filesChanged: 1 } });
+    const items = queue([main, sub, alone]).items;
+    assert.equal(items.find((i) => i.primaryId === "sub")!.repo, "/work/demo");
+    // With no session at the root to compare branches with, the root stays.
+    assert.equal(items.find((i) => i.primaryId === "alone")!.repo, "/work/other");
+  });
 });

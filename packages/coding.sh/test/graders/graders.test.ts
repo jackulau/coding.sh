@@ -357,7 +357,7 @@ describe("createGrader", () => {
   });
 
   it("an unknown provider is rejected instead of silently falling back", async () => {
-    await assert.rejects(createGrader({ kind: "llm", name: "x", rubric: "r", provider: "gemini" as never }), /unknown provider "gemini"/);
+    await assert.rejects(createGrader({ kind: "llm", name: "x", rubric: "r", provider: "mistral" as never }), /unknown provider "mistral"/);
     await assert.rejects(createGrader({ kind: "llm", name: "x", rubric: "r", provider: "mock", mockAnswer: "maybe" as never }), /answer must be "yes" or "no"/);
   });
 });

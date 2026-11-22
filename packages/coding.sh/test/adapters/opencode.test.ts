@@ -7,6 +7,7 @@ import type { AgentEvent } from "../../src/schema/index.ts";
 import { after, before, describe, it } from "node:test";
 import { apiForVersion, opencode, opencodeDbNotes, opencodeDbPath, pluginPath, pluginSource, PLUGIN_MARKER } from "../../src/adapters/opencode.ts";
 import { assertGolden, assertWellFormed, collect, fakeBin, FIXTURES, loadSpool, summarize, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
+import { fakeBinary, readArgv, runSpec } from "./more/_helpers.ts";
 
 const T0 = 1793527200000;
 
@@ -322,5 +323,25 @@ describe("opencode database discovery (real OpenCode 1.19.5 drizzle database)", 
     const notes = await opencodeDbNotes();
     assert.equal(notes.length, 1);
     assert.match(notes[0]!, /^cannot read opencode\.db \(.+\); OpenCode history is not imported$/);
+  });
+});
+
+describe("opencode run", () => {
+  let env: TmpEnv;
+  before(() => {
+    env = tmpEnv();
+  });
+  after(() => env.restore());
+
+  it("ends the options before the instruction, so one that starts with a dash stays the prompt", async () => {
+    const bin = join(env.root, "bin");
+    fakeBinary(bin, "opencode", "");
+    const cwd = join(env.root, "work");
+    mkdirSync(cwd, { recursive: true });
+    await opencode.run!(runSpec(cwd, bin, { instruction: "- fix the bug" }));
+    assert.deepEqual(readArgv(bin, "opencode").argv.slice(-2), ["--", "- fix the bug"]);
+    // A `--` the caller passed already ends the options: no second one.
+    await opencode.run!(runSpec(cwd, bin, { instruction: "- fix the bug", flags: ["--agent", "build", "--"] }));
+    assert.deepEqual(readArgv(bin, "opencode").argv.slice(-4), ["--agent", "build", "--", "- fix the bug"]);
   });
 });

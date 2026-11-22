@@ -3,10 +3,11 @@
 // `work --json` for the same store and filters. Ack and snooze write the same
 // work.json overlay the CLI writes (core/work-overlay.ts), with the CLI's rules.
 import { parseAge, parseSinceWhen, UsageError } from "../cli/args.ts";
+import { stagesFlag } from "../cli/commands/work.ts";
 import { parsePlace } from "../mcp/data.ts";
 import type { IndexStore } from "../core/types.ts";
 import { addAck, addSnooze, readOverlay, writeOverlay } from "../core/work-overlay.ts";
-import { BUCKET_LABELS, buildWorkQueue, readWorkQueue, workItemJson, workJson, type HiddenReason, type WorkItem } from "../core/work.ts";
+import { BUCKET_LABELS, buildWorkQueue, readWorkQueue, workItemJson, workJson, type HiddenReason, type Stage, type WorkItem } from "../core/work.ts";
 
 /** Where acks and snoozes live: <CODING_SH_HOME>/work.json (`paths(env).work`). `now` is for tests. */
 export interface WorkSource {
@@ -38,6 +39,7 @@ interface Filters {
   sinceText: string;
   agents: string[];
   place?: ReturnType<typeof parsePlace>;
+  stages: Stage[];
 }
 
 function filtersOf(src: WorkSource, q: URLSearchParams, now: number): Filters {
@@ -54,7 +56,15 @@ function filtersOf(src: WorkSource, q: URLSearchParams, now: number): Filters {
   const repo = q.get("repo")?.trim();
   const home = src.home ?? process.env.HOME ?? process.env.USERPROFILE ?? "/";
   const place = repo ? parsePlace(repo, src.cwd ?? process.cwd(), home) : undefined;
-  return { since, sinceText, agents, place };
+  // `stage=review,approval` or `stage=review&stage=approval`, parsed as `--stage` parses it.
+  let stages: Stage[];
+  try {
+    stages = stagesFlag({ flags: { stage: q.getAll("stage") } });
+  } catch (e) {
+    if (e instanceof UsageError) throw new WorkApiError(400, e.message);
+    throw e;
+  }
+  return { since, sinceText, agents, place, stages };
 }
 
 function limitOf(q: URLSearchParams): number {
@@ -66,7 +76,7 @@ function limitOf(q: URLSearchParams): number {
 }
 
 /**
- * GET /api/work?since=7d&agent=a,b&repo=x&all=1&limit=20: `work --json`'s document, plus three
+ * GET /api/work?since=7d&agent=a,b&repo=x&stage=review&all=1&limit=20: `work --json`'s document, plus three
  * fields for the page: `members` (item id → its member session ids, the primary first) for the
  * session links, `hiddenBy` (hidden reason → count; {} when nothing is hidden), and `now` (ISO),
  * the moment the reasons' ages were worked out.
@@ -75,12 +85,13 @@ export async function workList(index: IndexStore, src: WorkSource, q: URLSearchP
   const now = src.now?.() ?? Date.now();
   const f = filtersOf(src, q, now);
   const limit = limitOf(q);
-  const all = q.get("all") === "1" || q.get("all") === "true";
+  // A stage filter lists hidden items too, as `--stage` does.
+  const all = q.get("all") === "1" || q.get("all") === "true" || f.stages.length > 0;
   const overlay = readOverlay(src.overlay);
   const read = { since: f.since, agents: f.agents, place: f.place, overlay, now };
-  const { queue, sessions, truncated } = await readWorkQueue(index, { ...read, all });
-  // Without `all` the queue holds no hidden items; the page still says why each one is hidden.
-  const every = all ? queue : buildWorkQueue(sessions, { ...read, all: true });
+  const { queue, sessions, truncated } = await readWorkQueue(index, { ...read, all, stages: f.stages });
+  // Without `all` (or with a stage filter) the queue lacks hidden items; the page still says why each one is hidden.
+  const every = all && !f.stages.length ? queue : buildWorkQueue(sessions, { ...read, all: true });
   const hiddenBy: Partial<Record<HiddenReason, number>> = {};
   for (const i of every.items) if (i.hidden) hiddenBy[i.hidden] = (hiddenBy[i.hidden] ?? 0) + 1;
   return {

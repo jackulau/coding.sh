@@ -71,6 +71,36 @@ describe("Claude Code rate_limits", () => {
     assert.deepEqual(claudeRateLimits(null), []);
     assert.equal(quotaPart([]), "");
   });
+  test("spend_limit is one spend reading with the USD fields; it may pass 100%", () => {
+    const w = claudeRateLimits(
+      {
+        rate_limits: {
+          five_hour: { used_percentage: 62 },
+          seven_day: { used_percentage: 41 },
+          spend_limit: { used_percentage: 63, resets_at: 1792000000, used_usd: 31.5, limit_usd: 50, period: "month" },
+        },
+      },
+      1000,
+    );
+    assert.deepEqual(w[2], { agent: "claude-code", window: "spend", usedPercent: 63, resetsAt: 1792000000_000, readAt: 1000, usedUsd: 31.5, limitUsd: 50, period: "month" });
+    assert.equal(quotaPart(w), "5h 62% 7d 41% spend 63%");
+    const bare = claudeRateLimits({ rate_limits: { spend_limit: { used_percentage: 112.4, used_usd: "31", period: 3 } } }, 1000);
+    assert.deepEqual(bare, [{ agent: "claude-code", window: "spend", usedPercent: 112.4, readAt: 1000 }], "only the fields there are, of the right type");
+    assert.equal(quotaPart(bare), "spend 112%");
+  });
+  test("the saved quota file keeps the spend reading; quota --json rows carry the USD fields rounded", () => {
+    const file = join(tmp(), "quota.json");
+    const w = claudeRateLimits({ rate_limits: { spend_limit: { used_percentage: 63.123456, used_usd: 31.561234567, limit_usd: 50, period: "month" } } }, 5000);
+    saveClaudeQuota(file, w);
+    assert.deepEqual(readClaudeQuota(file), w);
+    const [row] = quotaJson({ windows: readClaudeQuota(file), missing: [] }, 5000).windows;
+    assert.equal(row!.usedPercent, 63.1235);
+    assert.equal(row!.usedUsd, 31.5612);
+    assert.equal(row!.limitUsd, 50);
+    assert.equal(row!.period, "month");
+    const [plain] = quotaJson({ windows: claudeRateLimits({ rate_limits: { five_hour: { used_percentage: 62 } } }, 5000), missing: [] }, 5000).windows;
+    assert.ok(!("usedUsd" in plain!) && !("limitUsd" in plain!) && !("period" in plain!), "other windows have no spend fields");
+  });
   test("quota.json round-trips through a rename, leaving no temp file", () => {
     const dir = tmp();
     const file = join(dir, "csh", "quota.json"); // the folder does not exist yet

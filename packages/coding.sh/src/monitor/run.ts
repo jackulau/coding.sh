@@ -1,8 +1,9 @@
 // The monitor runner: after an ingest pass, each due monitor scores the
 // sessions that ended after its cursor and match its --where query, one score
 // per session (source "monitor", name = the monitor's name). A --run monitor
-// pipes the session JSON to a command; a --judge monitor asks the LLM judge
-// with its rubric and stops for the day at its spend limit. Nothing here throws
+// pipes the session JSON to a command; an --http monitor POSTs it, signed, to an
+// evaluator service; a --judge monitor asks the LLM judge with its rubric and
+// stops for the day at its spend limit. Nothing here throws
 // to the caller for a monitor's own failure: it is logged and recorded in
 // monitors.json, so an ingest never fails because of a monitor.
 import { spawn } from "node:child_process";
@@ -193,11 +194,14 @@ async function runOne(deps: MonitorDeps, def: MonitorDef, state: MonitorState, r
     while (end < list.length && list[end]!.endedAt === list[end - 1]!.endedAt) end++;
     list = list.slice(0, end);
   }
-  const scorer = def.kind === "run" ? runScorer(deps, def, redactor, o) : await judgeScorer(deps, def, state, o);
+  const scorer = def.kind === "run" ? runScorer(deps, def, redactor, o) : def.kind === "http" ? httpScorer(deps, def, redactor, o) : await judgeScorer(deps, def, state, o);
   if (!scorer) {
     // Nothing is judged and the cursor stays: the sessions wait for a provider.
-    state.lastError = { message: NO_PROVIDER, at: now() };
-    return { ...r, error: NO_PROVIDER, stopped: "no-provider" };
+    // A monitor that names its provider says which key is missing, as `monitor add` does.
+    const key = def.provider ? KEY_ENV[def.provider] : undefined;
+    const message = key ? `${NO_PROVIDER}: ${def.provider}: set ${key}` : NO_PROVIDER;
+    state.lastError = { message, at: now() };
+    return { ...r, error: message, stopped: "no-provider" };
   }
   const advance = (s: Session) => {
     if (state.cursor === undefined || s.endedAt! > state.cursor) state.cursor = s.endedAt!;
@@ -271,10 +275,15 @@ function eventJson(e: AgentEvent, s: Session): Record<string, unknown> {
   return out;
 }
 
+/** What --run gets on stdin and --http gets as `session`: the session as show --json gives it, redacted. */
+async function sessionDoc(deps: MonitorDeps, s: Session, redactor: Redactor): Promise<unknown> {
+  const [{ sessionJson }, events] = await Promise.all([import("../cli/common.ts"), deps.index.listEvents(s.id)]);
+  return redactor.value({ session: sessionJson(s, { derailEvents: true }), eventCount: s.stats.events, events: events.map((e) => eventJson(e, s)) });
+}
+
 function runScorer(deps: MonitorDeps, def: MonitorDef, redactor: Redactor, o: RunMonitorsOptions): Scorer {
   const score = async (s: Session) => {
-    const [{ sessionJson }, events] = await Promise.all([import("../cli/common.ts"), deps.index.listEvents(s.id)]);
-    const doc = redactor.value({ session: sessionJson(s, { derailEvents: true }), eventCount: s.stats.events, events: events.map((e) => eventJson(e, s)) });
+    const doc = await sessionDoc(deps, s, redactor);
     const env = { ...deps.env, CODING_SH_SESSION_ID: s.id };
     const res = await runShell(def.command!, { cwd: existsSync(def.cwd) ? def.cwd : undefined, env, stdin: JSON.stringify(doc), timeoutMs: o.timeoutMs ?? MONITOR_TIMEOUT_MS, signal: o.signal });
     if (res.failure) throw new Failed(`${s.id}: ${res.failure}`);
@@ -340,9 +349,110 @@ function runShell(command: string, o: { cwd?: string; env: NodeJS.ProcessEnv; st
   });
 }
 
+// ---------------------------------------------------------------- --http
+
+/** One --http attempt may take this long. */
+export const HTTP_ATTEMPT_MS = 10_000;
+/** Attempts per session; waits of 1 s, then 2 s, between them. */
+const HTTP_TRIES = 3;
+const HTTP_BACKOFF_MS = 1000;
+/** The most of an evaluator's answer that is read. */
+export const MAX_HTTP_ANSWER = 256 * 1024;
+const RETRY_STATUS = new Set([408, 425, 429]);
+
+/** The URL as errors show it: no query string. */
+function shownUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    u.search = "";
+    u.hash = "";
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+/** Reads at most `max` bytes of a body; undefined when there was more. */
+async function readCapped(res: Response, max: number): Promise<string | undefined> {
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const parts: Uint8Array[] = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.byteLength;
+    if (n > max) {
+      await reader.cancel().catch(() => undefined);
+      return undefined;
+    }
+    parts.push(value);
+  }
+  return Buffer.concat(parts).toString("utf8");
+}
+
+function wait(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((done) => {
+    if (signal?.aborted) return done();
+    const t = setTimeout(done, ms);
+    signal?.addEventListener("abort", () => (clearTimeout(t), done()), { once: true });
+  });
+}
+
+function httpScorer(deps: MonitorDeps, def: MonitorDef, redactor: Redactor, o: RunMonitorsOptions): Scorer {
+  const url = def.url!;
+  const shown = shownUrl(url);
+  const score = async (s: Session) => {
+    const [{ signBody, SIGNATURE_HEADER }, doc] = await Promise.all([import("../alerts/notify.ts"), sessionDoc(deps, s, redactor)]);
+    const body = JSON.stringify({ apiVersion: "v1", monitor: def.name, session: doc });
+    const headers = { "content-type": "application/json", [SIGNATURE_HEADER]: signBody(def.secret!, body) };
+    let failure = "";
+    for (let attempt = 1; attempt <= HTTP_TRIES; attempt++) {
+      if (attempt > 1) await wait(HTTP_BACKOFF_MS * 2 ** (attempt - 2), o.signal);
+      if (o.signal?.aborted) throw new Failed(`${s.id}: stopped`);
+      const timeout = AbortSignal.timeout(HTTP_ATTEMPT_MS);
+      const signal = o.signal ? AbortSignal.any([timeout, o.signal]) : timeout;
+      let res: Response;
+      let text: string | undefined;
+      try {
+        res = await fetch(url, { method: "POST", headers, body, redirect: "manual", signal });
+        text = await readCapped(res, MAX_HTTP_ANSWER);
+      } catch (e) {
+        const err = e as Error;
+        failure = timeout.aborted ? `POST ${shown} took longer than ${HTTP_ATTEMPT_MS / 1000} s` : `POST ${shown} failed: ${redactor.string((err.cause as Error | undefined)?.message ?? err.message)}`;
+        continue;
+      }
+      if (text === undefined) throw new Failed(`${s.id}: POST ${shown} → ${res.status}: the answer is over ${MAX_HTTP_ANSWER / 1024} KB`);
+      const snippet = redactor.string(text.trim().slice(0, 200));
+      if (res.status >= 200 && res.status < 300) return parseAnswer(text, `${s.id}: POST ${shown} → ${res.status}`, redactor);
+      failure = `POST ${shown} → ${res.status}${snippet ? `: ${snippet}` : ""}`;
+      if (!(res.status >= 500 || RETRY_STATUS.has(res.status))) break;
+    }
+    throw new Failed(`${s.id}: ${failure}`);
+  };
+  return { score, version: monitorVersion(url) };
+}
+
+/** An evaluator's 2xx answer: one JSON object {"value": ..., "comment"?: ...}. */
+function parseAnswer(text: string, where: string, redactor: Redactor): { value: number | boolean | string; comment?: string } {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    // reported below
+  }
+  const v = doc && typeof doc === "object" && !Array.isArray(doc) ? (doc as Record<string, unknown>).value : undefined;
+  if (!(typeof v === "number" && Number.isFinite(v)) && typeof v !== "boolean" && typeof v !== "string") {
+    throw new Failed(`${where}: answered ${text.trim() ? JSON.stringify(redactor.string(text.trim().slice(0, 120))) : "nothing"}, not {"value": ..., "comment"?: ...}`);
+  }
+  const c = (doc as Record<string, unknown>).comment;
+  return typeof c === "string" && c ? { value: v, comment: c } : { value: v };
+}
+
 // ---------------------------------------------------------------- --judge
 
-const KEY_ENV: Record<string, string> = { anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", gateway: "AI_GATEWAY_API_KEY" };
+/** The API key each provider reads, in the order a monitor without --provider tries them. */
+export const KEY_ENV: Readonly<Record<string, string>> = { anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", gateway: "AI_GATEWAY_API_KEY", gemini: "GEMINI_API_KEY" };
 
 /** The provider kind a judge monitor uses: its own, else the first whose API key is set. */
 export function judgeProviderKind(def: Pick<MonitorDef, "provider">, env: NodeJS.ProcessEnv): string | undefined {

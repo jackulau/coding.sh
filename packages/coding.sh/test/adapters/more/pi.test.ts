@@ -220,7 +220,8 @@ describe("pi run + overlay", () => {
     fakeBinary(
       bin,
       "pi",
-      `for (const o of [{type:"session",version:3,id:"pi-run-1"},{type:"message_end",message:{role:"assistant",usage:{input:10,output:2,cost:{total:0.001}}}},{type:"message_end",message:{role:"assistant",usage:{input:20,output:3,cost:{total:0.002}}}},{type:"message_end",message:{role:"user"}}]) console.log(JSON.stringify(o));`,
+      `try { fs.writeFileSync(${JSON.stringify(join(env.root, "bin", "pi.stdin"))}, fs.readFileSync(0, "utf8")); } catch {}
+for (const o of [{type:"session",version:3,id:"pi-run-1"},{type:"message_end",message:{role:"assistant",usage:{input:10,output:2,cost:{total:0.001}}}},{type:"message_end",message:{role:"assistant",usage:{input:20,output:3,cost:{total:0.002}}}},{type:"message_end",message:{role:"user"}}]) console.log(JSON.stringify(o));`,
     );
     const cwd = join(env.root, "work");
     mkdirSync(cwd, { recursive: true });
@@ -230,7 +231,12 @@ describe("pi run + overlay", () => {
     assert.equal(r.usage!.inputTokens, 30);
     assert.equal(r.usage!.outputTokens, 5);
     assert.ok(Math.abs(r.usage!.costUsd! - 0.003) < 1e-9);
-    assert.deepEqual(readArgv(bin, "pi").argv, ["--mode", "json", "--model", "anthropic/claude-sonnet-4-5", "--approve", "fix the bug"]);
+    // The instruction goes on stdin, so one that starts with "-" is never read as an option.
+    assert.deepEqual(readArgv(bin, "pi").argv, ["--print", "--mode", "json", "--model", "anthropic/claude-sonnet-4-5", "--approve"]);
+    assert.equal(readFileSync(join(bin, "pi.stdin"), "utf8"), "fix the bug");
+    assertRunOk(await piAdapter.run!(runSpec(cwd, bin, { instruction: "- fix the bug" })));
+    assert.deepEqual(readArgv(bin, "pi").argv, ["--print", "--mode", "json", "--approve"]);
+    assert.equal(readFileSync(join(bin, "pi.stdin"), "utf8"), "- fix the bug");
   });
 
   it("overlay isolates the agent dir and copies auth.json privately", async () => {

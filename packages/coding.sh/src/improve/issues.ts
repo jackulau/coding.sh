@@ -22,7 +22,7 @@ import { commandOf } from "../core/sessions.ts";
 import { flagFindings } from "../refine/findings.ts";
 import { natureScore, signalSeverity, type SeverityLevel } from "../refine/severity.ts";
 import { extractTestCommand } from "../eval/task.ts";
-import { exitCodeOf, failingPart, isPlumbing } from "../core/failing-command.ts";
+import { exitCodeOf, failingPart, isPlumbing, partOutput } from "../core/failing-command.ts";
 
 /** The decision-point kinds `exp ab --behavior` replays (src/eval/decision.ts). */
 export type Behavior = "unverified-claim" | "done-while-failing" | "unchanged-retry";
@@ -278,7 +278,8 @@ export function failureRecords(events: readonly AgentEvent[], repoRoot?: string)
         const part = tests ? undefined : failingPart(cmd, { output: text ?? "", ...(exitCodeOf(p.exitCode, text) !== undefined ? { exitCode: exitCodeOf(p.exitCode, text)! } : {}) });
         const partText = part?.argv.join(" ");
         const label = tests ?? (partText ? (testLabel(cmd, partText) ?? commandHead(partText)) : undefined);
-        if (label) out.push({ key: `cmd:${label}`, label, ...sampleOf(text), tests: false, beforeEdits: !edited });
+        // The sample is the failing part's own output: another part's error is not this one's.
+        if (label) out.push({ key: `cmd:${label}`, label, ...sampleOf(part ? partOutput(cmd, part, text) : text), tests: false, beforeEdits: !edited });
         else out.push({ key: `compound:${errorKey(text)}`, label: COMPOUND, ...sampleOf(text), tests: false, beforeEdits: !edited });
       } else {
         const k = errorKey(text);
@@ -302,7 +303,7 @@ export function failureRecords(events: readonly AgentEvent[], repoRoot?: string)
         prev.tests = true;
         continue;
       }
-      out.push({ key, label, ...sampleOf(output), tests: true, beforeEdits: !edited });
+      out.push({ key, label, ...sampleOf(src && part ? partOutput(src, part, output) : output), tests: true, beforeEdits: !edited });
     }
   }
   return out;
@@ -340,15 +341,16 @@ export function rankIssues(sessions: readonly Session[], failures: ReadonlyMap<s
     });
   }
 
-  const byKey = new Map<string, { label: string; sample?: string; tests: boolean; sessions: Session[]; before: number; count: number }>();
+  const byKey = new Map<string, { label: string; sample?: string; errors: Set<string>; tests: boolean; sessions: Session[]; before: number; count: number }>();
   const byId = new Map(sessions.map((s) => [s.id, s]));
   for (const [id, recs] of failures) {
     const s = byId.get(id);
     if (!s) continue;
     const seen = new Set<string>();
     for (const r of recs) {
-      const g = byKey.get(r.key) ?? { label: r.label, tests: false, sessions: [], before: 0, count: 0 };
+      const g = byKey.get(r.key) ?? { label: r.label, errors: new Set<string>(), tests: false, sessions: [], before: 0, count: 0 };
       g.count++;
+      g.errors.add(r.sample ? errorKey(r.sample) : "");
       if (r.tests) g.tests = true;
       if (!g.sample && r.sample) g.sample = r.sample;
       if (!seen.has(r.key)) {
@@ -369,7 +371,8 @@ export function rankIssues(sessions: readonly Session[], failures: ReadonlyMap<s
     out.push({
       id: `fails:${key}`,
       kind: "failure",
-      title: setup ? `${what} already fails before the agent changes anything` : `${what} fails the same way in several sessions`,
+      // "The same way" only when every failure shows the same error; a command key groups different errors too.
+      title: setup ? `${what} already fails before the agent changes anything` : g.errors.size === 1 ? `${what} fails the same way in several sessions` : `${what} fails in several sessions`,
       sessions: g.sessions.length,
       analyzed,
       severity: { score: sev.score, level: sev.level },

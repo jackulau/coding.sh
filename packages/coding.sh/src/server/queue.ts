@@ -14,7 +14,7 @@ import { isVerifyToolStart } from "../core/sessions.ts";
 import type { ResourceLogs, ResourceSpans } from "../otel/model.ts";
 import type { SpanEnricher } from "../otel/map.ts";
 import { traceKvKey } from "../otel/map.ts";
-import { createOtlpPipeline, HttpError, InsertedEvents, type OtlpPipeline, rebuildSessions, RPC, type Signal } from "../otel/receiver.ts";
+import { createOtlpPipeline, HttpError, InsertedEvents, mergeAgentCopiesAfterPut, type OtlpPipeline, rebuildSessions, RPC, type Signal } from "../otel/receiver.ts";
 import { WRITER_TICK_EVENTS } from "./config.ts";
 import type { Logger } from "./log.ts";
 import type { ServeMetrics } from "./metrics.ts";
@@ -376,10 +376,13 @@ export class IngestQueue {
       for (const e of unique) this.dirty.add(e.sessionId);
       const dirtyKv = this.o.dirtyKv !== false && !!store.kvSet;
       if (this.dirty.size && dirtyKv) await store.kvSet!(DIRTY_KEY, JSON.stringify([...this.dirty]));
+      // Claude Code's log record and span of one model call share an id: the copy the put skips is merged in.
+      const mergeCopies = await mergeAgentCopiesAfterPut(store, prepared.map((r) => r.events));
       let inserted = 0;
       // Only what runs after the commit asks which events were new (a store may have to read for it).
       if (this.o.onCommit) ({ inserted, ids: newIds } = await this.insertedEvents.put(store, unique));
       else if (unique.length) ({ inserted } = await store.putEvents(unique));
+      await mergeCopies();
       // Every touched session is rebuilt once, from all its stored events. Rebuild
       // keys off the batch, not `inserted`, so a retried batch repairs its sessions too.
       const rebuilt = await rebuildSessions(store, this.dirty);

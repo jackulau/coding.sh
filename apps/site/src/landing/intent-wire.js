@@ -56,10 +56,11 @@ function wireIntent() {
   window[KEY] = read;
   read();
   document.addEventListener("astro:after-swap", read);
-  // Boxes are read as they are now, so an opened question or a scrolled page is never stale.
+  // Boxes are read as they are now, so an opened question or a scrolled page is never stale. A
+  // button hidden in place (the install box's commands that are not picked) is left out.
   const box = (el) => {
     const r = el.getBoundingClientRect();
-    return r.width && r.bottom > 0 && r.top < innerHeight ? { l: r.left, t: r.top, r: r.right, b: r.bottom } : null;
+    return r.width && r.bottom > 0 && r.top < innerHeight && getComputedStyle(el).visibility !== "hidden" ? { l: r.left, t: r.top, r: r.right, b: r.bottom } : null;
   };
 
   // Mouse: guess the button from how the pointer is slowing.

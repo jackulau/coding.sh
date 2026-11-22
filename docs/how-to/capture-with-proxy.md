@@ -214,11 +214,21 @@ in mode `metadata` are counted in a note and left out.
 when any remain. `harness tools pin` saves the latest hashes of every tool to `tool-pins.json`
 in the coding.sh data directory.
 
-After a pin, `--changed` keeps a pinned tool only when its latest version, or one seen since the
-pin, differs from the pin. It also keeps a tool with no pin that was first seen at or after the
-last pin, such as one an MCP server added, and marks it `new since pin`. Pin again to accept it.
+After a pin, `--changed` also keeps these rows, named by `changed` (`variants` for the rest):
 
-Only hashes are printed, never the descriptions. Every flag:
+- `pin`: a pinned tool whose latest version, or one seen since the pin, differs from the pin. The
+  table says `differs from pin`.
+- `new`: a tool with no pin first seen at or after the last pin, such as one an MCP server added.
+  The table says `new since pin`.
+- `removed`: a pinned tool that the latest tools array of every session since its pin leaves out,
+  with `sessions` 0 when no call in the window offered it. The table says `removed since pin`.
+
+Pin again to accept them: `harness tools pin` saves the latest hashes and drops the pins of
+removed tools.
+
+In `--json`, each changed row other than `removed` has `sessionIds`: up to 20 sessions that offered
+a definition other than the pinned one, other than the first one seen, or, for a new tool, any, the
+latest call first. Only hashes are printed, never the descriptions. Every flag:
 [coding.sh harness](https://coding.sh/docs/cli/harness).
 
 ## Read the result

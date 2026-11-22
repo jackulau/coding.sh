@@ -335,7 +335,10 @@ export async function runCursor(spec: RunSpec): Promise<AgentRunOutput> {
   if (supports("--approve-mcps") && !hasFlag(spec.flags, "--approve-mcps")) args.push("--approve-mcps");
   if (supports("--workspace") && !hasFlag(spec.flags, "--workspace")) args.push("--workspace", spec.cwd);
   if (spec.model && !hasFlag(spec.flags, "--model", "-m")) args.push("--model", spec.model);
-  args.push(...spec.flags, spec.instruction);
+  // `--` ends the options: an instruction that starts with "-" stays the prompt.
+  args.push(...spec.flags);
+  if (!spec.flags.includes("--")) args.push("--");
+  args.push(spec.instruction);
   let sessionId: string | undefined;
   const res = await runHeadless({
     stdoutFile: spec.stdoutFile,

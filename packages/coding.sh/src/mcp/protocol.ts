@@ -5,13 +5,18 @@
 // - Modern (2026-07-28): stateless. Every request carries
 //   `_meta["io.modelcontextprotocol/protocolVersion"]` and `clientCapabilities`;
 //   `server/discover` replaces the handshake; results carry `resultType`.
-// - Legacy (2025-11-25, 2025-06-18, 2025-03-26): `initialize` negotiates a
-//   version for the rest of the process, then `notifications/initialized`.
+// - Legacy (2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05): `initialize` negotiates a
+//   version for the rest of the process, then `notifications/initialized`. A version
+//   before 2025-06-18 gets no outputSchema or structuredContent, which it does not have.
 // A request with the modern `_meta` key is served statelessly; anything else
 // gets legacy semantics. Nothing but protocol frames is written to stdout.
 
 export const MODERN_VERSION = "2026-07-28";
-export const LEGACY_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"] as const;
+export const LEGACY_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"] as const;
+/** The first version with a tool's outputSchema and title and a result's structuredContent. */
+const STRUCTURED_SINCE = "2025-06-18";
+/** The first version with tool annotations. */
+const ANNOTATIONS_SINCE = "2025-03-26";
 const META = "io.modelcontextprotocol/";
 
 export const RPC = {
@@ -56,9 +61,10 @@ export interface ToolDef<C = unknown> {
 }
 
 /**
- * A failure the model should see and can fix (bad id, missing confirm…): returned as `isError: true`.
- * With `error`, the result also carries `structuredContent: {error: {message, ...error}}` (the
- * tool's outputSchema then declares that `error` property).
+ * A failure the model should see and can fix (bad id, missing confirm…): returned as `isError: true`
+ * with the message as its only content. With `error`, the result's `_meta` also carries
+ * `{"sh.coding/error": {message, ...error}}` for a program. An error result has no structuredContent:
+ * that must match the tool's outputSchema, which describes a successful answer.
  */
 export class ToolError extends Error {
   readonly error?: Obj;
@@ -331,6 +337,14 @@ export class McpServer<C> {
     return { resultType: "complete", ...CACHE_HINTS[method], ...r, _meta: { ...meta, [`${META}serverInfo`]: this.o.serverInfo } };
   }
 
+  /**
+   * Whether this request's version has outputSchema and structuredContent (2025-06-18 on). A modern
+   * request, or one before any handshake, gets them; a 2025-03-26 or 2024-11-05 session does not.
+   */
+  private since(version: string, modern: boolean): boolean {
+    return modern || this.legacyVersion === undefined || this.legacyVersion >= version;
+  }
+
   private async dispatch(method: string, params: Obj, modern: boolean): Promise<Obj> {
     switch (method) {
       case "initialize": {
@@ -344,20 +358,29 @@ export class McpServer<C> {
         return { supportedVersions: [MODERN_VERSION], capabilities: this.capabilities(), serverInfo: this.o.serverInfo, instructions: await this.o.instructions() };
       case "ping":
         return {};
-      case "tools/list":
+      case "tools/list": {
         noCursor(method, params);
+        // Each version gets the tool fields it defines: an older client may check the list against its schema.
+        const structured = this.since(STRUCTURED_SINCE, modern);
+        const annotated = this.since(ANNOTATIONS_SINCE, modern);
         return {
-          tools: this.o.tools.map((t) => ({
-            name: t.name,
-            title: t.title,
-            description: t.description,
-            inputSchema: t.inputSchema,
-            outputSchema: t.outputSchema,
-            annotations: t.annotations,
-          })),
+          tools: this.o.tools.map((t) => {
+            const tool: Record<string, unknown> = { name: t.name };
+            if (structured) tool.title = t.title;
+            tool.description = t.description;
+            tool.inputSchema = t.inputSchema;
+            if (structured) tool.outputSchema = t.outputSchema;
+            if (annotated) tool.annotations = t.annotations;
+            return tool;
+          }),
         };
-      case "tools/call":
-        return this.callTool(params);
+      }
+      case "tools/call": {
+        const r = await this.callTool(params);
+        if (this.since(STRUCTURED_SINCE, modern)) return r;
+        delete r.structuredContent;
+        return r;
+      }
       case "resources/list": {
         const r = this.o.resources;
         if (!r) throw new RpcFailure(RPC.METHOD_NOT_FOUND, "Method not found: resources/list");
@@ -464,7 +487,8 @@ export class McpServer<C> {
       const structured = await tool.run(args, this.o.context());
       return { content: [{ type: "text", text: toolText(structured) }], structuredContent: structured };
     } catch (e) {
-      if (e instanceof ToolError) return e.error ? { ...errorResult(e.message), structuredContent: { error: { message: clipText(e.message), ...e.error } } } : errorResult(e.message);
+      // No structuredContent: it would have to match the outputSchema, which describes a successful answer.
+      if (e instanceof ToolError) return e.error ? { ...errorResult(e.message), _meta: { [ERROR_META]: { message: clipText(e.message), ...e.error } } } : errorResult(e.message);
       this.o.log?.(`tool ${name} failed: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
       return errorResult(`${name} failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -472,6 +496,9 @@ export class McpServer<C> {
     }
   }
 }
+
+/** The `_meta` key of a tool error's details (reason, offset, next) for a program; the model reads the text. */
+export const ERROR_META = "sh.coding/error";
 
 function errorResult(text: string): Obj {
   return { content: [{ type: "text", text: clipText(text) }], isError: true };

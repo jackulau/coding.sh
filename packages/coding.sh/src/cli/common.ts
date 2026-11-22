@@ -793,7 +793,7 @@ export function sessionJson(s: Session, keep: SessionJsonKeep = {}): Record<stri
   const stats: Record<string, unknown> = rest;
   if (derails) stats.derails = keep.derailEvents ? derails : derails.map(({ eventId: _e, index: _i, ...d }) => d);
   if (keep.phases && phases) stats.phases = phases;
-  return {
+  const out: Record<string, unknown> = {
     id: s.id,
     agent: s.agent,
     ...(s.provider ? { provider: s.provider } : {}),
@@ -802,6 +802,10 @@ export function sessionJson(s: Session, keep: SessionJsonKeep = {}): Record<stri
     model: s.model ?? null,
     cwd: s.cwd ?? null,
     repo: s.repo?.root ?? null,
+  };
+  // A linked worktree's session: the main checkout's root (RepoState.main). Absent elsewhere.
+  if (s.repo?.main) out.repoMain = s.repo.main;
+  return Object.assign(out, {
     branch: s.repo?.branch ?? null,
     startedAt: new Date(s.startedAt).toISOString(),
     endedAt: s.endedAt !== undefined ? new Date(s.endedAt).toISOString() : null,
@@ -809,11 +813,11 @@ export function sessionJson(s: Session, keep: SessionJsonKeep = {}): Record<stri
     parentSessionId: s.parent?.sessionId ?? null,
     flags: s.flags,
     stats,
-  };
+  });
 }
 
 /** The fields of one session in --json, for --fields. */
-export const SESSION_FIELDS = ["id", "agent", "provider", "project", "title", "model", "cwd", "repo", "branch", "startedAt", "endedAt", "durationMs", "parentSessionId", "flags", "stats"] as const;
+export const SESSION_FIELDS = ["id", "agent", "provider", "project", "title", "model", "cwd", "repo", "repoMain", "branch", "startedAt", "endedAt", "durationMs", "parentSessionId", "flags", "stats"] as const;
 
 /**
  * --fields: the paths to keep of a --json document (`id,title,stats.usage.costUsd`), or undefined

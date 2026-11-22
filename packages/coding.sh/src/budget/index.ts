@@ -1,13 +1,17 @@
 // Spend budgets: a USD limit per local day, ISO week or calendar month, for every
-// session or for one agent or repo. Budgets live in <CODING_SH_HOME>/budgets.json.
+// session, for one agent or repo, or for the sessions a --where query matches.
+// Budgets live in <CODING_SH_HOME>/budgets.json.
 // Spend is the sum of the sessions' costUsd that started in the period: the same
 // numbers `coding.sh usage --since <period start>` totals, so it is an estimate
 // wherever the agent reported no cost (tokens times list price).
+import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute } from "node:path";
 import type { IndexStore, Session } from "../core/types.ts";
 import { paths } from "../core/paths.ts";
 import { matchesPlace, scanSessions, TOTALS_SCAN_CAP, type Place, type ScanQuery } from "../mcp/data.ts";
+import { matchesSession } from "../query/match.ts";
+import { needsEvents, parseWhere, type Node } from "../query/where.ts";
 
 export const PERIODS = ["day", "week", "month"] as const;
 export type Period = (typeof PERIODS)[number];
@@ -21,6 +25,11 @@ export interface Budget {
   agent?: string;
   /** Only sessions in this repo: an absolute path (the root or a folder under it) or a bare repo name. */
   repo?: string;
+  /**
+   * Only the sessions this --where query matches (`user:u1`, `model:claude-opus-*`), as typed;
+   * each one's subagents count with it.
+   */
+  where?: string;
   /** Epoch ms. */
   createdAt: number;
 }
@@ -65,7 +74,7 @@ export function periodEnd(period: Period, now = Date.now()): number {
 function validBudget(v: unknown): v is Budget {
   if (!v || typeof v !== "object") return false;
   const b = v as Record<string, unknown>;
-  return typeof b.id === "string" && isPeriod(b.period) && typeof b.limitUsd === "number" && Number.isFinite(b.limitUsd) && b.limitUsd > 0 && (b.agent === undefined || typeof b.agent === "string") && (b.repo === undefined || typeof b.repo === "string");
+  return typeof b.id === "string" && isPeriod(b.period) && typeof b.limitUsd === "number" && Number.isFinite(b.limitUsd) && b.limitUsd > 0 && (b.agent === undefined || typeof b.agent === "string") && (b.repo === undefined || typeof b.repo === "string") && (b.where === undefined || typeof b.where === "string");
 }
 
 /** The budgets in budgets.json; none when the file is missing. A file that is not a budget list throws. */
@@ -103,22 +112,26 @@ export function writeBudgets(budgets: readonly Budget[], env: NodeJS.ProcessEnv 
 
 const slug = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
+/** The id part of a --where budget: `w` and the first 6 hex of the query's SHA-256. */
+export const whereSlug = (where: string): string => `w${createHash("sha256").update(where).digest("hex").slice(0, 6)}`;
+
 /**
- * Adds a budget, or sets the limit of the one with the same period, agent and repo (it keeps its id).
+ * Adds a budget, or sets the limit of the one with the same period, agent, repo and where (it keeps its id).
  * Returns the budget stored and whether it replaced one.
  */
 export function upsertBudget(list: readonly Budget[], b: Omit<Budget, "id" | "createdAt">, now = Date.now()): { budgets: Budget[]; budget: Budget; replaced: boolean } {
-  const same = list.find((x) => x.period === b.period && x.agent === b.agent && x.repo === b.repo);
+  const same = list.find((x) => x.period === b.period && x.agent === b.agent && x.repo === b.repo && x.where === b.where);
   if (same) {
     const budget = { ...same, limitUsd: b.limitUsd };
     return { budgets: list.map((x) => (x === same ? budget : x)), budget, replaced: true };
   }
-  const base = [b.period, b.agent ? slug(b.agent) : "", b.repo ? slug(basename(b.repo)) : ""].filter(Boolean).join("-");
+  const base = [b.period, b.agent ? slug(b.agent) : "", b.repo ? slug(basename(b.repo)) : "", b.where ? whereSlug(b.where) : ""].filter(Boolean).join("-");
   let id = base;
   for (let n = 2; list.some((x) => x.id === id); n++) id = `${base}-${n}`;
   const budget: Budget = { id, period: b.period, limitUsd: b.limitUsd, createdAt: now };
   if (b.agent) budget.agent = b.agent;
   if (b.repo) budget.repo = b.repo;
+  if (b.where) budget.where = b.where;
   return { budgets: [...list, budget], budget, replaced: false };
 }
 
@@ -164,8 +177,102 @@ export function spendOf(sessions: readonly Session[], b: Budget, now = Date.now(
   return { spendUsd, sessions: n };
 }
 
+/** A session as a --where budget's spend needs it. */
+export interface SpendRow {
+  id: string;
+  parent?: string;
+  costUsd: number;
+}
+
+const spendRow = (s: Session): SpendRow => {
+  const c = s.stats.usage?.costUsd;
+  const r: SpendRow = { id: s.id, costUsd: typeof c === "number" && Number.isFinite(c) ? c : 0 };
+  if (s.parent?.sessionId) r.parent = s.parent.sessionId;
+  return r;
+};
+
+/**
+ * A --where budget's spend over the period's sessions: each session the query matches, plus
+ * the subagents under it (its parent chain reaches a match among these rows). `sessions`
+ * counts the matches with no match above them, as stats counts top-level sessions.
+ */
+export function rolledSpend(rows: readonly SpendRow[], matched: (id: string) => boolean): { spendUsd: number; sessions: number } {
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const memo = new Map<string, boolean>();
+  const counts = (r: SpendRow): boolean => {
+    const known = memo.get(r.id);
+    if (known !== undefined) return known;
+    memo.set(r.id, false); // a loop of parents ends here
+    const parent = r.parent !== undefined ? byId.get(r.parent) : undefined;
+    const yes = matched(r.id) || (parent !== undefined && counts(parent));
+    memo.set(r.id, yes);
+    return yes;
+  };
+  /** A match above r in its parent chain (a loop of parents stops at r). */
+  const matchAbove = (r: SpendRow): boolean => {
+    const seen = new Set([r.id]);
+    for (let p = r.parent !== undefined ? byId.get(r.parent) : undefined; p && !seen.has(p.id); p = p.parent !== undefined ? byId.get(p.parent) : undefined) {
+      if (matched(p.id)) return true;
+      seen.add(p.id);
+    }
+    return false;
+  };
+  let spendUsd = 0;
+  let sessions = 0;
+  for (const r of rows) {
+    if (!counts(r)) continue;
+    spendUsd += r.costUsd;
+    if (matched(r.id) && !matchAbove(r)) sessions++;
+  }
+  return { spendUsd, sessions };
+}
+
+/** The budget's --where query; undefined without one. Throws on a query that no longer parses. */
+export function whereRoot(b: Budget): Node | undefined {
+  return b.where ? (parseWhere(b.where).root ?? { t: "and", items: [] }) : undefined;
+}
+
+/** A --where budget's status: the period's sessions, those in scope that match, and their subagents. */
+async function whereStatus(index: IndexStore, b: Budget, root: Node, now: number): Promise<BudgetStatus> {
+  const since = periodStart(b.period, now);
+  const rows: SpendRow[] = [];
+  const hits = new Set<string>();
+  // Session keys are answered on the rows the scan reads; event keys and text ask the store's query path.
+  const inMemory = !needsEvents(root);
+  const all = scanSessions(index, { since, topLevel: false }, TOTALS_SCAN_CAP);
+  let truncated = false;
+  for (;;) {
+    const next = await all.next();
+    if (next.done) {
+      truncated = next.value.truncated;
+      break;
+    }
+    const s = next.value;
+    rows.push(spendRow(s));
+    if (inMemory && sessionInScope(s, b) && matchesSession(root, s, () => [])) hits.add(s.id);
+  }
+  if (!inMemory) {
+    const q: ScanQuery = { since, topLevel: false, query: { root } };
+    if (b.agent) q.agent = b.agent;
+    if (b.repo) q.place = repoPlace(b.repo);
+    const found = scanSessions(index, q, TOTALS_SCAN_CAP);
+    for (;;) {
+      const next = await found.next();
+      if (next.done) {
+        if (next.value.truncated) truncated = true;
+        break;
+      }
+      hits.add(next.value.id);
+    }
+  }
+  const r = rolledSpend(rows, (id) => hits.has(id));
+  return statusOf(b, r.spendUsd, r.sessions, now, truncated);
+}
+
 /** One budget's spend in its current period, read from the store (subagents' sessions count, as in usage). */
 export async function budgetStatus(index: IndexStore, b: Budget, now = Date.now()): Promise<BudgetStatus> {
+  const root = whereRoot(b);
+  if (root) return whereStatus(index, b, root, now);
   const since = periodStart(b.period, now);
   const q: ScanQuery = { since, topLevel: false };
   if (b.agent) q.agent = b.agent;
@@ -217,9 +324,31 @@ interface CacheEntry {
 const cacheKey = (b: Budget): string => JSON.stringify([b.id, b.period, b.agent ?? null, b.repo ?? null]);
 
 /**
+ * A --where day budget's status from `today` alone, when its query names session keys only;
+ * undefined for any other --where budget (week or month, an event key such as user:, or a
+ * query that no longer parses), which the status line leaves out rather than read the store.
+ */
+export function statuslineWhereStatus(b: Budget, today: readonly Session[], now = Date.now()): BudgetStatus | undefined {
+  let root: Node | undefined;
+  try {
+    root = whereRoot(b);
+  } catch {
+    return undefined;
+  }
+  if (!root || b.period !== "day" || needsEvents(root)) return undefined;
+  const since = periodStart(b.period, now);
+  const inPeriod = today.filter((s) => s.startedAt >= since);
+  const hits = new Set(inPeriod.filter((s) => sessionInScope(s, b) && matchesSession(root, s, () => [])).map((s) => s.id));
+  const r = rolledSpend(inPeriod.map(spendRow), (id) => hits.has(id));
+  return statusOf(b, r.spendUsd, r.sessions, now);
+}
+
+/**
  * Statuses for the status line, which runs on every turn. Day budgets are summed from
  * `today` (every session that started today, subagents too); week and month budgets reuse
  * a total from budget-spend.json no older than 60 s, or read the store and write it back.
+ * A --where budget counts only as a day budget whose query has session keys only, matched
+ * on `today` in memory (statuslineWhereStatus); every other --where budget is left out.
  */
 export async function statuslineStatuses(index: IndexStore, budgets: readonly Budget[], today: readonly Session[], env: NodeJS.ProcessEnv = process.env, now = Date.now()): Promise<BudgetStatus[]> {
   const file = paths(env).budgetSpend;
@@ -233,6 +362,11 @@ export async function statuslineStatuses(index: IndexStore, budgets: readonly Bu
   let wrote = false;
   const out: BudgetStatus[] = [];
   for (const b of budgets) {
+    if (b.where) {
+      const st = statuslineWhereStatus(b, today, now);
+      if (st) out.push(st);
+      continue;
+    }
     if (b.period === "day") {
       const s = spendOf(today, b, now);
       out.push(statusOf(b, s.spendUsd, s.sessions, now));
@@ -267,6 +401,7 @@ export function statusJson(s: BudgetStatus): Record<string, unknown> {
   const out: Record<string, unknown> = { id: b.id, period: b.period };
   if (b.agent) out.agent = b.agent;
   if (b.repo) out.repo = b.repo;
+  if (b.where) out.where = b.where;
   Object.assign(out, {
     limitUsd: b.limitUsd,
     spendUsd: s.spendUsd,

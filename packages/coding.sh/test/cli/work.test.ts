@@ -10,7 +10,8 @@ import { fileURLToPath } from "node:url";
 import { UsageError } from "../../src/cli/args.ts";
 import * as work from "../../src/cli/commands/work.ts";
 import { CliError } from "../../src/cli/output.ts";
-import { workItemId } from "../../src/core/work.ts";
+import { findCommand } from "../../src/cli/registry.ts";
+import { STAGES, workItemId } from "../../src/core/work.ts";
 import type { AgentEvent, Session } from "../../src/core/types.ts";
 import { CLI } from "../_cli.ts";
 import { removeTestDir } from "../_rm.ts";
@@ -113,6 +114,76 @@ describe("work against a seeded store", () => {
   });
 });
 
+describe("work --stage", () => {
+  let sb: Sandbox;
+  const running = (id: string, extra: Extra = {}) => sess(id, 5 * MIN, { endedAt: undefined, ...extra, stats: { latency: { wallMs: 4 * MIN }, ...extra.stats } as Extra["stats"] });
+  before(async () => {
+    sb = sandbox();
+    await sb.seed([
+      running("editing", { title: "add the parser", stats: { filesChanged: 2 } }),
+      running("reading", { title: "map the codebase" }),
+      sess("asks", 3 * MIN, { endedAt: undefined, stats: { latency: { wallMs: MIN }, waiting: { kind: "permission", at: now - 2 * MIN, toolUseId: "t1" } } as Extra["stats"] }),
+      sess("changed", 20 * MIN, { title: "fix the flaky test", stats: { filesChanged: 1 } }),
+      sess("failed", 10 * MIN, { stats: { testsFailed: 2 } }),
+      sess("finished", 40 * MIN),
+    ]);
+  });
+  after(() => sb.cleanup());
+
+  test("--json gives each item's stage, kind and evidence, and counts every stage, hidden items too", async () => {
+    const r = await runCmd(work, sb, { json: true, flags: { all: true } });
+    assert.equal(r.error, undefined, r.error?.stack);
+    assert.deepEqual(r.json.stages, { planning: 1, executing: 1, review: 2, approval: 1, done: 1 });
+    const by = Object.fromEntries(r.json.items.map((i: { id: string }) => [i.id, i]));
+    const pick = (id: string) => [by[workItemId(id)].stage, by[workItemId(id)].kind ?? null];
+    assert.deepEqual(pick("editing"), ["executing", "change"]);
+    assert.deepEqual(pick("reading"), ["planning", null]);
+    assert.deepEqual(pick("asks"), ["approval", null]);
+    assert.deepEqual(pick("changed"), ["review", "change"]);
+    assert.deepEqual(pick("failed"), ["review", "research"]);
+    assert.deepEqual(pick("finished"), ["done", "research"]);
+    assert.equal(by[workItemId("editing")].stageWhy, "running 5m, changed 2 files");
+    const plain = await runCmd(work, sb, { json: true });
+    assert.deepEqual(plain.json.stages, r.json.stages, "without --all the counts still cover hidden items");
+  });
+
+  test("--stage executing --json lists only the running item that changed a file", async () => {
+    const r = await runCmd(work, sb, { json: true, flags: { stage: ["executing"] } });
+    assert.equal(r.error, undefined, r.error?.stack);
+    assert.deepEqual(r.json.items.map((i: { id: string }) => i.id), [workItemId("editing")]);
+    assert.equal(r.json.items[0].hidden, "running");
+  });
+
+  test("--stage takes a comma list and lists the done items the queue hides", async () => {
+    const done = await runCmd(work, sb, { json: true, flags: { stage: "done" } });
+    assert.deepEqual(done.json.items.map((i: { id: string }) => i.id), [workItemId("finished")]);
+    const two = await runCmd(work, sb, { json: true, flags: { stage: ["approval", "planning"] } });
+    assert.deepEqual(two.json.items.map((i: { id: string }) => i.id).sort(), [workItemId("asks"), workItemId("reading")].sort());
+  });
+
+  test("an unknown stage is a usage error that suggests the stage meant", async () => {
+    const r = await runCmd(work, sb, { json: true, flags: { stage: ["reveiw"] } });
+    assert.ok(r.error instanceof UsageError);
+    assert.equal(r.error.suggestion, "--stage review");
+  });
+
+  test("the text view shows the stage counts and each item's stage; show prints the stage and its evidence", async () => {
+    const r = await runCmd(work, sb, {});
+    assert.equal(r.error, undefined, r.error?.stack);
+    assert.match(r.stdout, /^Work .*\nStages {2}1 planning · 1 executing · 2 review · 1 approval · 1 done\n/);
+    assert.match(r.stdout, /fix the flaky test {2}review · change {2}/);
+    const none = await runCmd(work, sb, { flags: { stage: "done", repo: "/nowhere" } });
+    assert.match(none.stdout, /No items in done since 7d\./);
+    const show = await runCmd(work, sb, { action: "show", positionals: ["editing"] });
+    assert.match(show.stdout, /Stage +executing · change: running 5m, changed 2 files/);
+  });
+
+  test("the registry offers the stages the core knows", () => {
+    const flag = findCommand("work")!.flags!.find((f) => f.name === "stage");
+    assert.deepEqual(flag?.choices, [...STAGES]);
+  });
+});
+
 describe("work and work show agree on one item", () => {
   let sb: Sandbox;
   before(async () => {
@@ -180,5 +251,8 @@ describe("the CLI on an imported workflow run", () => {
     const typo = cli(["workfl"]);
     assert.equal(typo.status, 2);
     assert.match(typo.stderr, /workflow/);
+    const stage = cli(["work", "--stage", "reveiw"]);
+    assert.equal(stage.status, 2, stage.stderr);
+    assert.match(stage.stderr, /--stage review/);
   });
 });

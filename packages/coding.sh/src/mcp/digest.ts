@@ -110,7 +110,7 @@ export async function sessionMarkdown(index: IndexStore, s: Session, maxEntries 
   };
   row("Session", `\`${s.id}\``);
   row("Agent", [s.agent, s.agentVersion, s.model].filter(Boolean).join(" · "));
-  row("Repo", s.repo ? `${s.repo.root}${s.repo.branch ? ` (${s.repo.branch})` : ""}` : s.cwd);
+  row("Repo", s.repo ? `${s.repo.root}${s.repo.branch ? ` (${s.repo.branch})` : ""}${s.repo.main ? `, a worktree of ${s.repo.main}` : ""}` : s.cwd);
   row("Started", iso(s.startedAt));
   const last = lastActivity(s);
   row("Duration", s.endedAt !== undefined ? fmtMs(s.endedAt - s.startedAt) : isRunning(s, now) ? `running (no end seen; last activity ${iso(last)})` : `${fmtMs(last - s.startedAt)} (no end seen; idle since ${iso(last)})`);

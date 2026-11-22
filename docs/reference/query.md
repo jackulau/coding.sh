@@ -52,7 +52,7 @@ test each hit.
 | `agent` | session | Agent id, or the service name of an SDK or OpenTelemetry app | `agent:codex` |
 | `model` | session | Main model | `model:claude-sonnet-*` |
 | `provider` | session | Model provider | `provider:anthropic` |
-| `repo` | session | Repo root path, or its name (else the working directory's name) | `repo:coding-sh` |
+| `repo` | session | Repo root path, or its name (else the working directory's name). A session in a worktree also matches its main repo's path and name | `repo:coding-sh` |
 | `launch` | session | `headless` (`claude -p`, an SDK, `codex exec`) or `interactive` | `launch:headless` |
 | `branch` | session | Git branch | `branch:main` |
 | `dir` | session | Working directory | `dir:/work/*` |
@@ -265,6 +265,7 @@ tags out.
 | `skill:<name>` | Used a skill, through the Skill tool or a file in the skill's folder. |
 | `hook:<source>` | Got text in its context from another hook, such as `hook:plugin:terse`. |
 | `gateway:<id>` | Sent model calls through an LLM gateway, such as `gateway:vercel`. |
+| `tag:<name>` | Came from a trace its app tagged, such as `langfuse.trace.tags` sent to the OTel receiver. |
 | `secret:exposed` | Had a vendor token replaced by redaction. The agent and its provider saw it, so rotate it. |
 | `model:switch` | Changed model mid-session. |
 | `model:fallback` | Recorded a fallback to another model, such as Claude Code's `--fallback-model`. |
@@ -376,9 +377,9 @@ JSON are text: read them with `json_extract(col, '$.path')` or `json_each(col)`.
 | `agent_version` | Agent version, when known |
 | `model` | Main model |
 | `cwd` | Working directory |
-| `repo` | Repo JSON: `root`, `branch`, `commit`, `remote` |
+| `repo` | Repo JSON: `root`, `branch`, `commit`, `remote`, and `main` for a worktree |
 | `repo_root` | The repo root, for filtering |
-| `title` | First prompt or the agent's title |
+| `title` | First prompt or the agent's title. It skips a workflow harness's frame line, a `Project:` line and pasted blocks; a prompt that is only a paste gives its first line |
 | `started_at` | Start time |
 | `ended_at` | End time (NULL while running or unknown) |
 | `stats` | Stats JSON: `events`, `turns`, `toolCalls`, `toolErrors`, `usage`, `latency`, … |

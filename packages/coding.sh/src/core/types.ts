@@ -274,7 +274,7 @@ export interface MetricRow {
   startedAt: number;
   agent: string;
   model?: string;
-  /** Repo root, else the working directory. */
+  /** The main worktree's root for a session in a linked worktree (RepoState.main), else the repo root, else the working directory. */
   dir?: string;
   flags: string[];
   inputTokens?: number;

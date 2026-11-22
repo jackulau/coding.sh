@@ -329,7 +329,8 @@ ingest key.
 
 Spans with `langfuse.session.id` join one session, and `langfuse.user.id`,
 `langfuse.environment` and `langfuse.release` become the `user`, `env` and `release` keys of
-[`--where`](query.md#tool-and-event-keys). There is no `/api/public/otel/v1/logs`. See
+[`--where`](query.md#tool-and-event-keys). Each of `langfuse.trace.tags` becomes a `tag:<name>`
+flag. There is no `/api/public/otel/v1/logs`. See
 [Langfuse SDKs](../integrations/langfuse.md).
 
 ## Model API proxy
@@ -542,6 +543,11 @@ curl -sS "$CSH/api/sessions?project=team&limit=1" -H "Authorization: Bearer $REA
 }
 ```
 
+A session that ran in a git repo has `repo`: `root` (the checkout it ran in), `head`, `branch`,
+and `main` when `root` is a linked worktree, the main checkout's root. The `repo` parameter
+matches `repo.root` exactly. `repo:` in `where` also matches a worktree's sessions by its main
+repo's path or name.
+
 `childCount` is the number of subagent sessions under each row. `nextCursor` is present only when
 `hasMore` is true; pass it back as `cursor` for the next page:
 
@@ -568,6 +574,9 @@ curl -sS "$CSH/api/sessions?where=agent:codex%20modle:x" -H "Authorization: Bear
 One session, the same shape as a list row without `childCount`. Percent-encode the id. A session
 whose weights checkpoint an experiment ran also has `checkpointExperiments`: a list of
 `{sha256, experiments: [{id, name}]}`. A key scoped to a project does not get it.
+
+A missing session is a 404; with `?missing=null` it is a 200 with the body `null`, which the viewer uses so
+the browser logs no error for an id it cannot find.
 
 ```sh
 curl -sS "$CSH/api/sessions/team%2Fchat-1" -H "Authorization: Bearer $READ_KEY"
@@ -1616,7 +1625,8 @@ curl -sS -X POST "$CSH/api/views" \
 
 Review queues: the sessions a query matched, scored by hand one at a time with one score config.
 `coding.sh review create` makes a queue; these routes read it and work through it
-([evals guide](../guides/evals.md#review-queues)).
+([evals guide](../guides/evals.md#review-queues)). The viewer's Review page (`#/review`) is built on
+them.
 
 - `GET /api/review` answers `{"items": [{queue, config, done, skipped, total, where, createdAt}]}`.
 - `GET /api/review/{queue}` answers `{queue, config, done, skipped, total}`.
@@ -1942,10 +1952,11 @@ The viewer's Work page (`#/work`): the queue [`coding.sh work`](cli.md#codingsh-
 | `since` | the window, default `7d` |
 | `agent` | a name, or several separated by commas |
 | `repo` | one repo |
+| `stage` | only items in these stages, hidden ones too, like `--stage`: repeated, or a comma list (`review,approval`) |
 | `all=1` | show hidden items, like `--all` |
 | `limit` | default 20, at most 500 |
 
-It returns what `coding.sh work --json` returns for the same store and filters, built by the same code, plus two fields for the page: `members` maps each listed item's id to its member session ids (the main session first, at most 50), and `hiddenBy` counts the hidden items by reason (`running`, `done`, `acked` or `snoozed`). A bad `since` or `limit` answers 400.
+It returns what `coding.sh work --json` returns for the same store and filters, built by the same code, plus two fields for the page: `members` maps each listed item's id to its member session ids (the main session first, at most 50), and `hiddenBy` counts the hidden items by reason (`running`, `done`, `acked` or `snoozed`). A bad `since`, `limit` or `stage` answers 400.
 
 - `POST /api/work/ack` takes `{"id": "w1a2b3c"}` and acknowledges the item's current cause, as `coding.sh work ack` does. It returns `id`, `acked: true`, the `bucket` and its `label`, and `now`, the item after the ack.
 - An item with no cause to acknowledge returns `id`, `acked: false` and `hidden`, and writes nothing.

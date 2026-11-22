@@ -7,17 +7,23 @@ import { dirname, join } from "node:path";
 
 export type QuotaAgent = "claude-code" | "codex";
 export const QUOTA_AGENTS: readonly QuotaAgent[] = ["claude-code", "codex"];
-export const QUOTA_WINDOWS = ["5h", "7d"] as const;
+/** Claude Code's spend limit behind a Claude apps gateway is the window "spend". */
+export const QUOTA_WINDOWS = ["5h", "7d", "spend"] as const;
 
 /** One plan window as last read. */
 export interface QuotaReading {
   agent: QuotaAgent;
-  /** "5h" or "7d" (another length prints as its minutes, hours or days: "90m", "3h", "2d"). */
+  /** "5h", "7d" or "spend" (another length prints as its minutes, hours or days: "90m", "3h", "2d"). */
   window: string;
   /** 0 to 100 (above 100 once over the limit). */
   usedPercent: number;
   /** When the window resets (ms since epoch), when the agent said. */
   resetsAt?: number;
+  /** The spend limit only: what was spent and the limit, in USD, when the gateway said. */
+  usedUsd?: number;
+  limitUsd?: number;
+  /** The spend limit only: the period it counts over, as the gateway names it. */
+  period?: string;
   /** When the agent reported it (ms since epoch). */
   readAt: number;
 }
@@ -36,6 +42,19 @@ const HOW: Record<QuotaAgent, string> = {
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+/** USD amounts and percents in JSON output: at most 4 decimals. */
+export const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
+
+/** The spend limit's optional fields, only those set. */
+function spendFields(usedUsd: unknown, limitUsd: unknown, period: unknown): Pick<QuotaReading, "usedUsd" | "limitUsd" | "period"> {
+  const out: Pick<QuotaReading, "usedUsd" | "limitUsd" | "period"> = {};
+  const used = num(usedUsd);
+  const limit = num(limitUsd);
+  if (used !== undefined) out.usedUsd = used;
+  if (limit !== undefined) out.limitUsd = limit;
+  if (typeof period === "string" && period) out.period = period;
+  return out;
+}
 
 function reading(agent: QuotaAgent, window: string, usedPercent: number, resetsAt: number | undefined, readAt: number): QuotaReading {
   const r: QuotaReading = { agent, window, usedPercent, readAt };
@@ -48,6 +67,7 @@ function reading(agent: QuotaAgent, window: string, usedPercent: number, resetsA
 const CLAUDE_KEYS: [string, string][] = [
   ["five_hour", "5h"],
   ["seven_day", "7d"],
+  ["spend_limit", "spend"], // behind a Claude apps gateway; used_percentage may pass 100
 ];
 
 /** The windows in a status-line payload's `rate_limits`, or [] when it has none (some Claude Code versions leave it out). */
@@ -61,12 +81,13 @@ export function claudeRateLimits(payload: unknown, now = Date.now()): QuotaReadi
     const used = num(w.used_percentage);
     if (used === undefined) continue;
     const resets = num(w.resets_at);
-    out.push(reading("claude-code", window, used, resets === undefined ? undefined : resets * 1000, now));
+    const r = reading("claude-code", window, used, resets === undefined ? undefined : resets * 1000, now);
+    out.push(window === "spend" ? { ...r, ...spendFields(w.used_usd, w.limit_usd, w.period) } : r);
   }
   return out;
 }
 
-/** `5h 62% 7d 41%`: only the windows there are; "" for none. */
+/** `5h 62% 7d 41% spend 63%`: only the windows there are; "" for none. */
 export function quotaPart(windows: readonly QuotaReading[]): string {
   return windows.map((w) => `${w.window} ${Math.round(w.usedPercent)}%`).join(" ");
 }
@@ -74,7 +95,11 @@ export function quotaPart(windows: readonly QuotaReading[]): string {
 /** Saves Claude Code's reading: a temp file, then a rename, so a reader never sees half a file. */
 export function saveClaudeQuota(file: string, windows: readonly QuotaReading[]): void {
   if (!windows.length) return;
-  const doc = { agent: "claude-code", readAt: windows[0]!.readAt, windows: windows.map((w) => ({ window: w.window, usedPercent: w.usedPercent, resetsAt: w.resetsAt })) };
+  const doc = {
+    agent: "claude-code",
+    readAt: windows[0]!.readAt,
+    windows: windows.map((w) => ({ window: w.window, usedPercent: w.usedPercent, resetsAt: w.resetsAt, ...spendFields(w.usedUsd, w.limitUsd, w.period) })),
+  };
   const tmp = `${file}.${process.pid}.tmp`;
   try {
     writeFileSync(tmp, JSON.stringify(doc) + "\n");
@@ -101,7 +126,7 @@ export function readClaudeQuota(file: string): QuotaReading[] {
     const used = num(w.usedPercent);
     if (used === undefined) continue;
     const resets = num(w.resetsAt);
-    out.push(reading("claude-code", w.window, used, resets, readAt));
+    out.push({ ...reading("claude-code", w.window, used, resets, readAt), ...spendFields(w.usedUsd, w.limitUsd, w.period) });
   }
   return out;
 }
@@ -258,17 +283,27 @@ export function hasRoom(w: QuotaReading, below: number, now = Date.now()): boole
   return (w.resetsAt !== undefined && w.resetsAt <= now) || w.usedPercent < below;
 }
 
+/** The spend limit's USD fields and period for JSON, rounded to 4 decimals; {} for the other windows. */
+export function spendJson(w: QuotaReading): { usedUsd?: number; limitUsd?: number; period?: string } {
+  const out: { usedUsd?: number; limitUsd?: number; period?: string } = {};
+  if (w.usedUsd !== undefined) out.usedUsd = round4(w.usedUsd);
+  if (w.limitUsd !== undefined) out.limitUsd = round4(w.limitUsd);
+  if (w.period !== undefined) out.period = w.period;
+  return out;
+}
+
 /** The report as JSON (CLI --json and the MCP status tool): ISO times and the reading's age. */
 export function quotaJson(r: QuotaReport, now = Date.now()) {
   return {
     windows: r.windows.map((w) => ({
       agent: w.agent,
       window: w.window,
-      usedPercent: w.usedPercent,
+      usedPercent: round4(w.usedPercent),
       resetsAt: w.resetsAt === undefined ? undefined : new Date(w.resetsAt).toISOString(), // undefined drops out of the JSON
       reset: w.resetsAt !== undefined && w.resetsAt <= now,
       readAt: new Date(w.readAt).toISOString(),
       ageSeconds: Math.max(0, Math.round((now - w.readAt) / 1000)),
+      ...spendJson(w),
     })),
     missing: r.missing,
   };

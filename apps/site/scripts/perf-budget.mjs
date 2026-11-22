@@ -26,8 +26,11 @@ const BUDGET = {
   // It is 33.0KB with stats.waiting and stats.endInferred and the star count in the header, so 36KB.
   // The front page names its translations (hreflang links, og:locale alternates and the
   // language switcher in its footer): 0.3KB, so / went from 24.5 to 25.5KB.
+  // Its install box offers the agent prompt, npx and the script, in the hero and at the
+  // bottom (the radios, two more buttons, a note each and their CSS): 25.1 to 25.7KB in the
+  // 2026-11-21 build, so 26.5KB.
   htmlBrotli: {
-    "/": 25.5 * KB,
+    "/": 26.5 * KB,
     "/docs/cli/": 30 * KB,
     "/docs/api/": 30 * KB,
     "/docs/api/read/": 36 * KB,
@@ -52,7 +55,8 @@ const BUDGET = {
   // Home JS is 6.7KB with the 2026-11-14 front page: it draws its two pictures (one
   // session, and the agents to outputs diagram) and guesses the next click in inline
   // scripts, minified at build time by src/landing/pack.ts. So 7.4KB, about 10% over.
-  inlineCss: { home: 8 * KB, docs: 8.9 * KB, changelog: 7.1 * KB, blog: 8.8 * KB, other: 5.5 * KB },
+  // Home CSS is 8.2KB with the install box's choice of three (7.9KB before), so 8.5KB.
+  inlineCss: { home: 8.5 * KB, docs: 8.9 * KB, changelog: 7.1 * KB, blog: 8.8 * KB, other: 5.5 * KB },
   inlineJs: { home: 7.4 * KB, docs: 4.4 * KB, changelog: 2.6 * KB, blog: 2.1 * KB, other: 1.4 * KB },
   preloadFonts: 28.5 * KB, // woff2 bytes preloaded by one page (26.6KB today)
   // A front page whose language needs the accented letters in the -rest fonts (German,

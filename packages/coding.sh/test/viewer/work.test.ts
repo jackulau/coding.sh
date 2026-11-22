@@ -95,7 +95,7 @@ describe("viewer /api/work", () => {
     sb?.cleanup();
   });
 
-  const cases: Record<string, FlagValue>[] = [{}, { all: true }, { agent: "codex" }, { agent: "codex,gemini-cli" }, { repo: "api" }, { since: "60d", all: true }, { limit: 2 }, { agent: "nobody-ran-this", all: true }];
+  const cases: Record<string, FlagValue>[] = [{}, { all: true }, { agent: "codex" }, { agent: "codex,gemini-cli" }, { repo: "api" }, { since: "60d", all: true }, { limit: 2 }, { agent: "nobody-ran-this", all: true }, { stage: "planning,approval" }, { stage: "review,done" }];
   for (const flags of cases) {
     test(`gives the items work --json gives (${JSON.stringify(flags)})`, async () => {
       const cliFlags = typeof flags.agent === "string" ? { ...flags, agent: flags.agent.split(",") } : flags;
@@ -129,6 +129,16 @@ describe("viewer /api/work", () => {
     assert.ok(shown.items.every((i: { hidden?: string }) => !i.hidden));
   });
 
+  test("stage filters to those stages, hidden items too, and stages counts every item", async () => {
+    const got = (await get("/api/work?stage=done&stage=review")).json();
+    assert.ok(got.items.length > 0);
+    assert.ok(got.items.every((i: { stage: string }) => i.stage === "done" || i.stage === "review"), JSON.stringify(got.items.map((i: { stage: string }) => i.stage)));
+    assert.ok(got.items.some((i: { hidden?: string }) => i.hidden === "done"), "a done item the queue hides is listed");
+    const all = (await get("/api/work?all=1")).json();
+    assert.deepEqual(got.stages, all.stages);
+    assert.deepEqual(got.hiddenBy, { done: 1 });
+  });
+
   test("ack and snooze write the overlay coding.sh work reads", async () => {
     const blocked = workItemId("blocked");
     const ack = await post("/api/work/ack", { id: blocked });
@@ -158,6 +168,9 @@ describe("viewer /api/work", () => {
   test("bad input is a 4xx with a message", async () => {
     assert.equal((await get("/api/work?since=yesterdayish")).status, 400);
     assert.equal((await get("/api/work?limit=0")).status, 400);
+    const stage = await get("/api/work?stage=reveiw");
+    assert.equal(stage.status, 400, "an unknown stage is refused, as --stage refuses it");
+    assert.match(stage.json().error, /--stage must be one of planning, executing, review, approval, done/);
     const id = workItemId("failed");
     assert.equal((await post("/api/work/snooze", { id, duration: "soon" })).status, 400);
     assert.equal((await post("/api/work/snooze", { id })).status, 400);

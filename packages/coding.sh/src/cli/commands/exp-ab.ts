@@ -23,7 +23,7 @@ import type { Job } from "../../jobs/store.ts";
 import type { GateOpts } from "../../stats/tests.ts";
 import { compareExperiments, type Comparison } from "../../experiments/compare.ts";
 import { missingModelKey, planContinuation, prefixEvents, replayNoise, type ContextFile, type ContinuationProvider, type ContinuationTask, type FrozenPrefix } from "../../experiments/continuation.ts";
-import { createGrader, providerFromSpec, type LlmGraderSpec } from "../../graders/index.ts";
+import { createGrader, DEFAULT_GEMINI_MODEL, GEMINI_API_BASE, providerFromSpec, type LlmGraderSpec } from "../../graders/index.ts";
 import { FileJudgeCache } from "../../judge/cache.ts";
 import type { ChatProvider } from "../../judge/providers.ts";
 import { autoCliProvider, CLI_DEFAULT_MODEL, CLI_PLAN, CLI_PROVIDERS, cliLimiter, cliLogin, isCliProvider, LOGIN_HINT, type CliProvider } from "../../judge/subscription.ts";
@@ -50,7 +50,7 @@ export interface AbSpec {
   limit?: number;
   a?: string;
   b?: string;
-  provider?: ContinuationProvider;
+  provider?: ContinuationProvider | "gemini";
   model?: string;
   judgeModel?: string;
   baseURL?: string;
@@ -74,6 +74,8 @@ export interface AbOptions {
   model?: string;
   judgeModel?: string;
   baseURL?: string;
+  /** Env var with the API key, when not the provider's default (--provider gemini: GEMINI_API_KEY). */
+  apiKeyEnv?: string;
   trials: number;
   concurrency: number;
   maxCost?: number;
@@ -92,7 +94,8 @@ export interface Arm {
   watch: { dir: string; recursive: boolean }[];
 }
 
-const PROVIDERS: readonly ContinuationProvider[] = ["anthropic", "openai", "openai-compatible", ...CLI_PROVIDERS];
+/** What --provider takes: the continuation providers, and gemini, which is openai-compatible at Google's endpoint with GEMINI_API_KEY. */
+export const AB_PROVIDERS: readonly string[] = ["anthropic", "openai", "openai-compatible", "gemini", ...CLI_PROVIDERS];
 const asList = (v: string | string[] | undefined): string[] => (v === undefined ? [] : (Array.isArray(v) ? v : [v]).flatMap((x) => x.split(",")).map((x) => x.trim()).filter(Boolean));
 
 // ---------------------------------------------------------------- arms
@@ -310,8 +313,10 @@ export function abOptions(c: CommandContext, root: string | undefined, spec: AbS
   const anchorFiles = list(f.anchor).length ? list(f.anchor) : asList(spec.anchor);
   const sinceText = str(f.since) ?? spec.since ?? "14d";
   const repoFlag = str(f.repo) ?? spec.repo;
-  const asked = (str(f.provider) ?? spec.provider) as ContinuationProvider | undefined;
-  if (asked !== undefined && !PROVIDERS.includes(asked)) throw new UsageError(`--provider must be one of ${PROVIDERS.join(", ")}`, { reason: "invalid_argument" });
+  const askedName = str(f.provider) ?? spec.provider;
+  if (askedName !== undefined && !AB_PROVIDERS.includes(askedName)) throw new UsageError(`--provider must be one of ${AB_PROVIDERS.join(", ")}`, { reason: "invalid_argument" });
+  const gemini = askedName === "gemini";
+  const asked = (gemini ? "openai-compatible" : askedName) as ContinuationProvider | undefined;
   const agentsFor = list(f.agent).length ? asList(list(f.agent)) : asList(spec.agent);
   // No provider and no API key: a logged-in Claude Code or Codex answers on its subscription.
   const auto = asked === undefined && !(str(f["base-url"]) ?? spec.baseURL) ? autoCliProvider(c.env, agentsFor.length && agentsFor.every((a) => a === "codex") ? "codex" : undefined) : undefined;
@@ -336,9 +341,11 @@ export function abOptions(c: CommandContext, root: string | undefined, spec: AbS
   };
   const a = str(f.a) ?? spec.a;
   const b = str(f.b) ?? spec.b;
-  const model = str(f.model) ?? spec.model;
+  // Gemini can't serve the recorded Claude or GPT model ids: its default model unless --model names one.
+  const model = str(f.model) ?? spec.model ?? (gemini ? DEFAULT_GEMINI_MODEL : undefined);
   const judgeModel = str(f["judge-model"]) ?? spec.judgeModel;
-  const baseURL = str(f["base-url"]) ?? spec.baseURL;
+  const baseURL = str(f["base-url"]) ?? spec.baseURL ?? (gemini ? GEMINI_API_BASE : undefined);
+  if (gemini) o.apiKeyEnv = "GEMINI_API_KEY";
   if (a !== undefined) o.a = a;
   if (b !== undefined) o.b = b;
   if (model) o.model = model;
@@ -435,7 +442,7 @@ export function turnOnly(g: Grader): Grader {
 }
 
 export function judgeSpec(o: AbOptions, base: string): LlmGraderSpec {
-  return {
+  const spec: LlmGraderSpec = {
     kind: "llm",
     name: "decision-point",
     rubric: DECISION_JUDGE_RUBRIC,
@@ -446,6 +453,8 @@ export function judgeSpec(o: AbOptions, base: string): LlmGraderSpec {
     ...(base ? { baseURL: base } : {}),
     ...(o.provider === "openai-compatible" && /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])/.test(base) ? { requireKey: false } : {}),
   };
+  if (o.apiKeyEnv) spec.apiKeyEnv = o.apiKeyEnv;
+  return spec;
 }
 
 /** The API base URL; "" for a subscription CLI. */
@@ -676,6 +685,8 @@ export interface TrialSetup {
   provider: ContinuationProvider;
   model: string;
   base: string;
+  /** Env var with the API key, when not the provider's default. */
+  apiKeyEnv?: string;
   judge: LlmGraderSpec;
   judgeModel: string;
   trials: number;
@@ -688,12 +699,14 @@ export function trialSetup(o: AbOptions, cases: readonly Case[], env: NodeJS.Pro
   if (!model) throw new UsageError("--provider openai-compatible has no default model and the sessions recorded none: pass --model", { reason: "missing_argument" });
   const base = baseURLFor(o, env);
   const judge = judgeSpec({ ...o, model }, base);
-  return { provider: o.provider, model, base, judge, judgeModel: judge.model ?? model, trials: o.trials, concurrency: o.concurrency, cache: o.cache };
+  const setup: TrialSetup = { provider: o.provider, model, base, judge, judgeModel: judge.model ?? model, trials: o.trials, concurrency: o.concurrency, cache: o.cache };
+  if (o.apiKeyEnv) setup.apiKeyEnv = o.apiKeyEnv;
+  return setup;
 }
 
 /** One arm's next-turn task; with `spend`, each model call is counted and priced into it. */
 export function continuationTask(t: TrialSetup, arm: Arm, spend?: Spend, onSpend?: () => void): ContinuationTask {
-  return {
+  const task: ContinuationTask = {
     kind: "continuation",
     provider: t.provider,
     model: t.model,
@@ -713,6 +726,8 @@ export function continuationTask(t: TrialSetup, arm: Arm, spend?: Spend, onSpend
         }
       : {}),
   };
+  if (t.apiKeyEnv) task.apiKeyEnv = t.apiKeyEnv;
+  return task;
 }
 
 /** Tokens and dollars of one A/B pair on these cases before running it. */

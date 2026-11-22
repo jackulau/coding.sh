@@ -253,12 +253,22 @@ repo. A session counts in the period it started in.
 limit. `budget list` and `budget rm <id>` manage them. They are kept in `budgets.json` in the data
 folder.
 
+### A budget for one user, model or project
+
+```sh
+coding.sh budget set day 5 --where 'user:alice'
+```
+
+`--where` takes the [query language](https://coding.sh/docs/query). Spend counts the sessions it
+matches and their subagents. The status line counts only `day` budgets on session keys.
+
 The [status line](https://coding.sh/docs/agents#status-line) adds `budget 82%` once the highest
 budget passes 80%.
 
 `coding.sh proxy --enforce-budget` answers 429, with a `Retry-After` header in seconds until the
 reset, to a call a budget over its limit applies to. The call never goes upstream. The body is the
-vendor's error shape and names the budget, its limit and its reset. See
+vendor's error shape and names the budget, its limit and its reset. It ignores `--where` budgets.
+See
 [Log every model call with the proxy](https://coding.sh/docs/how-to/capture-with-proxy#stop-calls-over-a-budget)
 for which budgets it can match.
 

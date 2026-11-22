@@ -652,7 +652,10 @@ export async function runOpencode(spec: RunSpec): Promise<AgentRunOutput> {
   // Without --auto, 2.x rejects permission requests in non-interactive mode.
   if (help.includes("--auto") && !hasFlag(spec.flags, "--auto")) args.push("--auto");
   if (spec.model && !hasFlag(spec.flags, "--model", "-m")) args.push("--model", spec.model);
-  args.push(...spec.flags, spec.instruction);
+  // `--` ends the options: an instruction that starts with "-" stays the prompt.
+  args.push(...spec.flags);
+  if (!spec.flags.includes("--")) args.push("--");
+  args.push(spec.instruction);
   let sessionId: string | undefined;
   let usage: Usage | undefined;
   const res = await runHeadless({

@@ -8,9 +8,12 @@ import { join } from "node:path";
 import { UsageError } from "../../src/cli/args.ts";
 import * as alertCmd from "../../src/cli/commands/alert.ts";
 import { classify, recordDelivery } from "../../src/alerts/check.ts";
-import { parseMeasure } from "../../src/alerts/measure.ts";
+import { parseMeasure, readMeasure } from "../../src/alerts/measure.ts";
 import { deliver, signBody } from "../../src/alerts/notify.ts";
 import { type AlertDef, loadAlerts, MAX_FAILED_DELIVERIES } from "../../src/alerts/store.ts";
+import type { Score } from "../../src/core/types.ts";
+import { MemoryIndexStore } from "../../src/store/memory.ts";
+import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { mkSession, runCmd, type Sandbox, sandbox } from "../cli/_cmd.ts";
 
 interface Post {
@@ -130,6 +133,102 @@ describe("coding.sh alert", () => {
   });
 });
 
+/** A session score, as `coding.sh score` writes one. */
+function score(sessionId: string, name: string, dataType: Score["dataType"], value: Score["value"], ts: number): Score {
+  return { id: `${sessionId}-${name}-${ts}`, target: "session", targetId: sessionId, sessionId, name, dataType, value, source: "judge", by: "test", ts };
+}
+
+describe("alert on a score (--measure score:<name> --under)", () => {
+  let sb: Sandbox;
+  let hook: Awaited<ReturnType<typeof listener>>;
+  before(async () => {
+    sb = sandbox();
+    hook = await listener();
+    const now = Date.now();
+    await sb.seed([mkSession("h-1", now - 3_600_000), mkSession("h-2", now - 7_200_000, { agent: "codex" as never }), mkSession("h-3", now - 600_000), mkSession("h-old", now - 3 * 86_400_000)]);
+    const index = await SqliteIndexStore.open(join(sb.env.CODING_SH_HOME!, "index.db"));
+    try {
+      for (const id of ["h-1", "h-2", "h-3"]) await index.putScore!(score(id, "helpful", "numeric", 0.2, now - 300_000));
+      // Outside the window, another name, and a categorical value: none count.
+      await index.putScore!(score("h-old", "helpful", "numeric", 1, now - 3 * 86_400_000 + 1000));
+      await index.putScore!(score("h-1", "correct", "numeric", 1, now - 300_000));
+      await index.putScore!(score("h-3", "helpful", "categorical", "yes", now - 200_000));
+    } finally {
+      await index.close();
+    }
+  });
+  after(async () => {
+    await close(hook.server);
+    sb.cleanup();
+  });
+
+  it("posts one ALERT with the mean score and direction under", async () => {
+    const add = await runCmd(alertCmd, sb, { action: "add", positionals: ["low"], flags: { measure: "score:helpful", under: 0.5, window: "1d", notify: `webhook:${hook.url}` }, json: true });
+    assert.equal(add.error, undefined, String(add.error));
+    assert.equal((add.json as { alert: AlertDef }).alert.direction, "under");
+    const r = await runCmd(alertCmd, sb, { action: "check", json: true });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(hook.posts.length, 1);
+    const body = JSON.parse(hook.posts[0]!.body);
+    assert.equal(body.state, "ALERT");
+    assert.ok(Math.abs(body.value - 0.2) < 1e-9, String(body.value));
+    assert.equal(body.threshold, 0.5);
+    assert.equal(body.direction, "under");
+    assert.deepEqual(Object.keys(body), ["alert", "state", "previous", "value", "threshold", "direction", "window", "at"]);
+    const human = await runCmd(alertCmd, sb, { action: "list" });
+    assert.match(human.stdout, /< 0\.5/);
+  });
+
+  it("splits a score by agent; an over alert's body has no direction", async () => {
+    const before = hook.posts.length;
+    const add = await runCmd(alertCmd, sb, { action: "add", positionals: ["high"], flags: { measure: "score:helpful", over: 0.1, by: "agent", window: "1d", notify: `webhook:${hook.url}` }, json: true });
+    assert.equal(add.code, 0, String(add.error));
+    const r = await runCmd(alertCmd, sb, { action: "check", json: true });
+    const res = (r.json as { alerts: { name: string; groups: { agent: string; value: number }[] }[] }).alerts.find((a) => a.name === "high")!;
+    assert.deepEqual(res.groups.map((g) => [g.agent, g.value]), [["claude-code", 0.2], ["codex", 0.2]]);
+    const sent = hook.posts.slice(before).map((p) => JSON.parse(p.body));
+    assert.equal(sent.length, 2);
+    for (const b of sent) assert.equal("direction" in b, false);
+  });
+
+  it("refuses --under with --over or --warn, and a --warn-under not above --under (exit 2)", async () => {
+    for (const flags of [
+      { measure: "score:helpful", under: 0.5, over: 1, window: "1d", notify: "command:true" },
+      { measure: "score:helpful", under: 0.5, warn: 0.2, window: "1d", notify: "command:true" },
+      { measure: "score:helpful", "warn-under": 0.7, over: 1, window: "1d", notify: "command:true" },
+      { measure: "score:helpful", under: 0.5, "warn-under": 0.4, window: "1d", notify: "command:true" },
+      { measure: "score:", under: 0.5, window: "1d", notify: "command:true" },
+    ]) {
+      const r = await runCmd(alertCmd, sb, { action: "add", positionals: ["bad"], flags });
+      assert.ok(r.error instanceof UsageError, `${JSON.stringify(flags)}: ${String(r.error)}`);
+    }
+    const ok = await runCmd(alertCmd, sb, { action: "add", positionals: ["warned"], flags: { measure: "score:helpful", under: 0.5, "warn-under": 0.7, window: "1d", notify: "command:true" }, json: true });
+    assert.equal(ok.code, 0, String(ok.error));
+    assert.equal((ok.json as { alert: AlertDef }).alert.warn, 0.7);
+  });
+});
+
+describe("score measure", () => {
+  const now = Date.now();
+  const def = (over: Partial<AlertDef> = {}): AlertDef => ({ name: "s", measure: "score:helpful", over: 0.5, direction: "under", window: "1d", notify: { kind: "command", command: "true" }, createdAt: 0, states: {}, delivery: { failures: 0 }, ...over });
+
+  it("averages numeric and boolean session scores; null with sessions but no score", async () => {
+    const index = new MemoryIndexStore();
+    await index.upsertSession(mkSession("a", now - 1000));
+    await index.upsertSession(mkSession("b", now - 2000));
+    await index.upsertSession(mkSession("c", now - 3000, { agent: "codex" as never }));
+    await index.putScore(score("a", "helpful", "boolean", true, now - 500));
+    await index.putScore(score("b", "helpful", "numeric", 0.5, now - 500));
+    await index.putScore(score("b", "helpful", "text", "fine", now - 400));
+    const r = await readMeasure(index, def(), now);
+    assert.equal(r.values.get(""), 0.75);
+    const byAgent = await readMeasure(index, def({ by: "agent" }), now);
+    assert.deepEqual([...byAgent.values].sort(), [["claude-code", 0.75], ["codex", null]]);
+    const where = await readMeasure(index, def({ where: "agent:codex" }), now);
+    assert.equal(where.values.get(""), null);
+  });
+});
+
 describe("alert check with a broken target", () => {
   it("turns the target off after 5 failed deliveries, says so in list, and alert test turns it back on", async () => {
     const sb = sandbox();
@@ -198,11 +297,21 @@ describe("alert parts", () => {
     assert.equal(classify({ ...def, noData: "keep" }, null, "WARNING"), "WARNING");
   });
 
+  it("classifies an under alert below its thresholds", () => {
+    const under = { over: 0.5, warn: 0.7, direction: "under" } as Pick<AlertDef, "over" | "warn" | "noData" | "direction">;
+    assert.equal(classify(under, 0.2, "OK"), "ALERT");
+    assert.equal(classify(under, 0.5, "OK"), "WARNING");
+    assert.equal(classify(under, 0.7, "OK"), "OK");
+    assert.equal(classify(under, null, "OK"), "NO_DATA");
+  });
+
   it("parses measures", () => {
     assert.deepEqual(parseMeasure("cost"), { kind: "cost" });
     assert.deepEqual(parseMeasure("flag:repeated-tool-failure"), { kind: "flag", flag: "repeated-tool-failure" });
     assert.equal(parseMeasure("flag:"), undefined);
     assert.equal(parseMeasure("tokens"), undefined);
+    assert.deepEqual(parseMeasure("score:helpful"), { kind: "score", name: "helpful" });
+    assert.equal(parseMeasure("score: "), undefined);
   });
 
   it("disables a target on the 5th failure in a row and resets on a success", () => {

@@ -13,11 +13,11 @@ export const BOOT_LIST_PATHS = [
   "/api/where",
 ] as const;
 
-/** Opening a session reads these first (showSession); the first row's are embedded when they are small. */
+/** Opening a session reads these first (showSession, sessionRecordPath); the first row's are embedded when they are small. */
 export function sessionBootPaths(id: string): string[] {
   const base = "/api/sessions/" + encodeURIComponent(id);
   return [
-    base,
+    base + "?missing=null",
     base + "/events?" + new URLSearchParams({ limit: "5000" }).toString(),
     "/api/labels?" + new URLSearchParams({ sessionId: id }).toString(),
     "/api/sessions?" + new URLSearchParams({ parent: id, limit: "500" }).toString(),
@@ -191,7 +191,7 @@ export function renderSessionsMain(items: readonly (Session & { childCount?: num
       `<div class="row-cells">`,
       `<span class="cell agent-cell"><span>${esc(agent)}</span>${s.model ? `<span class="sub"> ${esc(midClip(s.model, 22))}</span>` : ""}</span>`,
       `<span class="cell muted repo-cell${repo ? "" : " is-none"}"${dir ? ` title="${esc(dir)}"` : ""}>${esc(repo || "—")}</span>`,
-      `<span class="cell act-cell">${esc(act.text)}${act.failed ? `<span class="err"> ${esc("· " + act.failed)}</span>` : ""}</span>`,
+      `<span class="cell act-cell">${esc(act.text)}${act.failed ? `<span class="err"><span class="sep"> · </span>${esc(act.failed)}</span>` : ""}</span>`,
       `<span class="cell num muted tok-cell">${tokens ? esc(fmtCompact(tokens) + " tok") : ""}</span>`,
       `<span class="cell num cost-cell${cost.none ? " muted opt" : ""}">${esc(cost.text)}</span>`,
       `<span class="cell num muted dur-cell">${s.endedAt ? esc(fmtDuration(s.endedAt - s.startedAt)) : ""}</span>`,

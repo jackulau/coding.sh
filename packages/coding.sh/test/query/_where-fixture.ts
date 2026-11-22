@@ -61,6 +61,38 @@ export function repoNameSessions(): Session[] {
 }
 export const REPO_NAMES: [string, number][] = [["T", 1], ["tmp", 3], ["tmp.Ab12", 1]];
 
+/**
+ * Sessions in worktrees of the repo /work/demo: a linked worktree whose repo state names its main
+ * repo (RepoState.main), a Claude Code worktree stored before that field, removed T3 Code and
+ * Codex worktrees known by path only, and one on Windows. WORKTREE_QUERIES: the ids each repo
+ * query returns (a worktree's sessions count under its main repo); WORKTREE_FACET: the repo facet.
+ */
+export function worktreeSessions(): Session[] {
+  const at = (k: number) => ({ startedAt: T0 - (k + 1) * 60_000, endedAt: T0 - k * 60_000 });
+  return [
+    session("wt-main", { repo: { root: "/work/demo", head: "abc" }, cwd: "/work/demo", ...at(0) }),
+    session("wt-linked", { repo: { root: "/work/demo-feature", head: "abc", main: "/work/demo" }, cwd: "/work/demo-feature/src", ...at(1) }),
+    session("wt-claude", { repo: { root: "/work/demo/.claude/worktrees/fix", head: "abc" }, cwd: "/work/demo/.claude/worktrees/fix", ...at(2) }),
+    session("wt-t3", { cwd: "/home/user/.t3/worktrees/demo/t3-abc", ...at(3) }),
+    session("wt-codex", { cwd: "/home/user/.codex/worktrees/a1b2/demo/src", ...at(4) }),
+    session("wt-win", { cwd: "C:\\work\\demo\\.claude\\worktrees\\b", ...at(5) }),
+    session("wt-other", { repo: { root: "/work/other", head: "abc" }, cwd: "/work/other", ...at(6) }),
+  ];
+}
+export const WORKTREE_QUERIES: [string, string[]][] = [
+  ["repo:demo", ["wt-claude", "wt-codex", "wt-linked", "wt-main", "wt-t3", "wt-win"]],
+  ["repo:/work/demo", ["wt-claude", "wt-linked", "wt-main"]],
+  ["repo:/work/demo-feature", ["wt-linked"]],
+  ["repo:demo-feature", ["wt-linked"]],
+  ["repo:fix", ["wt-claude"]],
+  ["repo:t3-abc", ["wt-t3"]],
+  ["repo:/work/demo/*", ["wt-claude"]],
+  ["repo:dem*", ["wt-claude", "wt-codex", "wt-linked", "wt-main", "wt-t3", "wt-win"]],
+  ["repo:other", ["wt-other"]],
+  ["-repo:demo", ["wt-other"]],
+];
+export const WORKTREE_FACET: [string, number][] = [["demo", 6], ["other", 1]];
+
 export const QUERIES = [
   "agent:codex",
   "agent:codex,gemini",
