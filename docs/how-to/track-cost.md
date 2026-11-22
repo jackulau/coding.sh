@@ -122,7 +122,7 @@ docs    1      1       32 B    ~8      ~<$0.0001
 |---|---|
 | `mcp` | The calls to one server, the failed ones, and the bytes the calls returned. `TOKENS` is the token count the source stored, else the bytes / 4, marked `~`. `COST` is those tokens at the input price of the session's model, so it is always an estimate. A `≥` on `RESULT` means some results were clipped in the index and their full size is not known. |
 | `skill` | The sessions tagged with one skill, with their whole tokens and cost. A session with two skills counts in both rows, so the rows do not add up to the total; the line under the table gives the total, and `--json` has `"rowsOverlap": true`. |
-| `subagent` | Child sessions of one subagent type (`unnamed` when the agent recorded none), with their count, tokens, cost and median duration. The parents' own cost is left out. |
+| `subagent` | Child sessions of one subagent type (`unnamed` when the agent recorded none), with their count, tokens, cost and median duration. The parents' own cost is left out, and so is a T3 Code thread's switch to another agent. |
 
 `--cache` and `--baseline` work with the other groups only; with these three they exit 2.
 

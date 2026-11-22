@@ -159,6 +159,7 @@ describe("reads during ingest", () => {
       // What a wait costs this thread on an idle store, same process, same moment.
       const idle = await sample((n) => n >= 6);
       const bg = startBackgroundIngest({ env: h.env, cwd: h.cwd, intervalMs: 60_000 });
+      assert.ok(bg, "no CODING_SH_NO_AUTO_INGEST here");
       const started = performance.now();
       const busy = await sample(() => bg.status().lastIngestAt !== null || performance.now() - started > 120_000);
       const seconds = (performance.now() - started) / 1000;
@@ -219,5 +220,30 @@ describe("reads during ingest", () => {
       ac.abort();
       assert.equal(await done, 130);
     }
+  });
+
+  test("CODING_SH_NO_AUTO_INGEST=1: no background ingest starts, and coding.sh ui shows only what is indexed", async () => {
+    const h = home(3);
+    const env = { ...h.env, CODING_SH_NO_AUTO_INGEST: "1" };
+    assert.equal(startBackgroundIngest({ env, cwd: h.cwd, intervalMs: 60_000 }), undefined, "every caller gets the check");
+    const { io, out } = capture(env);
+    const ac = new AbortController();
+    const done = ui({ flags: { port: "0", open: false }, positionals: [], rest: [], out, env, cwd: h.cwd, debug: false, signal: ac.signal });
+    try {
+      for (let i = 0; i < 400 && !io.stderr.includes("Ctrl-C"); i++) await new Promise((r) => setTimeout(r, 25));
+      const url = new URL(io.stdout.trim());
+      const auth = { authorization: `Bearer ${url.searchParams.get("t")}` };
+      const api = async (path: string) => (await fetch(new URL(path, url), { headers: auth })).json() as Promise<Record<string, unknown>>;
+      // Long enough for a worker to index three small files (the test above sees five within this).
+      for (let i = 0; i < 20; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        assert.deepEqual((await api("/api/sessions?limit=50")).items, [], "nothing ingested");
+      }
+      assert.deepEqual(await api("/api/ingest"), { ingesting: false, filesPending: 0, lastIngestAt: null }, "no worker reports progress");
+    } finally {
+      ac.abort();
+      assert.equal(await done, 130);
+    }
+    assert.equal(await sessionCount(h.env), 0, "the spool is left for an ingest the user runs");
   });
 });

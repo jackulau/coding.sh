@@ -377,7 +377,10 @@ export async function snapshotChanges(s: Session, env: NodeJS.ProcessEnv): Promi
   const start = s.repo?.snapshot ?? s.repo?.head;
   if (!root || !start || !s.endSnapshot || start === s.endSnapshot) return undefined;
   try {
-    const { diffSnapshots } = await import("../../core/snapshot.ts");
+    const { diffSnapshots, hasShadow } = await import("../../core/snapshot.ts");
+    // No shadow repo here (a store copied from another machine, or one gc removed): the end snapshot
+    // is not on this machine, and show writes nothing into the store to find that out.
+    if (!hasShadow(root, env)) return undefined;
     const { files } = await diffSnapshots(root, start, s.endSnapshot, env);
     return { start, startKind: s.repo?.snapshot ? "snapshot" : "head", end: s.endSnapshot, files };
   } catch {

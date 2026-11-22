@@ -47,6 +47,7 @@ export async function run(c: CommandContext): Promise<number> {
       throw e;
     }
     // A remote store (--store / CODING_SH_STORE_URL) is read as is: never push this machine's spool into it.
+    // With CODING_SH_NO_AUTO_INGEST=1 no worker starts: the viewer shows what is indexed.
     if (!ctx.storeOverridden) ingest = startBackgroundIngest({ env: c.env, cwd: c.cwd, onError: (m) => out.warn(`Background ingest failed: ${m}`) });
     if (out.json) out.data({ url: viewer.url, port: viewer.port });
     // Piped: the URL alone on stdout for scripts. In a terminal the note below already shows it.
