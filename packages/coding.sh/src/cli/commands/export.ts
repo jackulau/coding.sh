@@ -10,9 +10,10 @@ import { writeEvidence } from "../../core/evidence.ts";
 import { createRedactor } from "../../core/redact.ts";
 import type { Session } from "../../schema/index.ts";
 import { EXPORT_FORMATS, EXPORT_KINDS, exportRows, sessionsOf, type ExportFormat, type ExportKind } from "../../query/export.ts";
+import { rejectFlagTypos } from "../../query/flag-typos.ts";
 import { scopesSubagents } from "../../query/where.ts";
 import { parseSince, positiveInt, suggest, UsageError } from "../args.ts";
-import { agentScope, agentsFlag, autoIngest, queryCliError, readIngest, shellQuote, str, whereFlag, withContext } from "../common.ts";
+import { agentScope, agentsFlag, autoIngest, queryCliError, readIngest, rejectAgentTypos, shellQuote, str, whereFlag, withContext } from "../common.ts";
 import { CliError, forTerminal, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { withRepo } from "./sessions.ts";
@@ -70,8 +71,14 @@ export async function run(c: CommandContext): Promise<number> {
   const since = str(c.flags.since) !== undefined ? parseSince(str(c.flags.since)!) : undefined;
   const repo = str(c.flags.repo);
   const userWhere = whereFlag(c);
-  const scope = agentScope(agentsFlag(c), userWhere);
+  const agents = agentsFlag(c);
+  const scope = agentScope(agents, userWhere);
   const agent = scope.agent;
+  // Nothing matched: an --agent, --flag or flag: value typed wrong is named, as `sessions` does.
+  const rejectTypos = async (index: Parameters<typeof rejectAgentTypos>[0]) => {
+    await rejectAgentTypos(index, agents);
+    await rejectFlagTypos(index, str(c.flags.flag), userWhere);
+  };
   // --repo as `sessions` reads it: a path or a repo name, worktrees included.
   const where = withRepo(scope.where, repo, c);
   const dir = evidence ? resolve(c.cwd, evidence) : undefined;
@@ -99,6 +106,7 @@ export async function run(c: CommandContext): Promise<number> {
       } catch (e) {
         throw queryCliError(e);
       }
+      if (!sessions.length) await rejectTypos(ctx.index);
       // The directory is rewritten whole: sessions an earlier run left there are not part of this one.
       if (c.flags.force === true && nonEmpty(dir)) clearEvidence(dir);
       // The capture rules, and always the secret rules: an export is made to be passed on.
@@ -116,6 +124,7 @@ export async function run(c: CommandContext): Promise<number> {
       format,
       write: stdoutWriter(),
     }).catch((e) => Promise.reject(queryCliError(e)));
+    if (!r.rows) await rejectTypos(ctx.index);
     c.out.note(`Exported ${plural(r.rows, kind === "sessions" ? "session" : kind === "events" ? "event" : "label")}`);
     return 0;
   }, { create: false });

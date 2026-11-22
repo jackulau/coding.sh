@@ -383,6 +383,7 @@ grouped by area, with links to the docs for the details.
 - **Evals.** A trial whose agent program is not installed or not on PATH counts as unknown, not failed, and is retried once like a failed setup step. Its reason says `the agent could not start: claude was not found; install it or put it on PATH`, and the verifier no longer grades the untouched start. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#long-runs-resume-retries-status))
 - **Evals.** `eval trigger` names each expected route once, summed over the prompts that expect it: two prompts that expect `docx` read `docx 2/2`. They read `docx 1/1, docx 1/1`, one entry per prompt. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#skill-triggers))
 - **Evals.** `eval run` on a case suite names each line of the cases file it leaves out for repeating an earlier line's input and expected answer, and `--json` lists them in `duplicates`. A file of 10 lines reported 9 cases with no word on which one went. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#an-app-or-a-prompt))
+- **Query.** When `export`, `search` or `usage` finds nothing, a `--flag` or `flag:` name close to a known flag, or an `--agent` close to an agent id, exits 2 and names the one meant, as `sessions` does. `export --evidence --force` refuses before it clears the directory. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#usage-errors-exit-2))
 
 ## [0.1.7] - 2026-11-16
 
