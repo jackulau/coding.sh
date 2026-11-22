@@ -51,7 +51,8 @@ export const ASK_USER = "The user must approve this first: ask them, and run it 
 /**
  * Variables an agent sets for the commands it runs: Claude Code sets CLAUDECODE, AI_AGENT and
  * CLAUDE_CODE_SESSION_ID, and Codex sets CODEX_THREAD_ID. Any one set means an agent reads the
- * output, even at a terminal (Codex can run a command in one).
+ * output, even at a terminal (Codex can run a command in one). There the CLI is not interactive:
+ * the agent could answer a prompt itself, and consent is the user's to give.
  */
 export const AGENT_ENV = ["AI_AGENT", "CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"] as const;
 
@@ -104,9 +105,9 @@ export class Output {
   readonly json: boolean;
   readonly color: boolean;
   readonly errColor: boolean;
-  /** Prompts allowed: stdin and stderr are TTYs, not --json, not CI. */
+  /** A person at a terminal, so prompts and spinners: stdin and stderr are TTYs, not --json, not CI, and no agent named in the env (AGENT_ENV). */
   readonly interactive: boolean;
-  /** An agent may read the output: no one is at a terminal, or the env names an agent (AGENT_ENV). Errors then print the askUser lines. */
+  /** An agent may read the output: no one is at a terminal, or the env names an agent (AGENT_ENV), so not interactive. Errors then print the askUser lines. */
   readonly forAgent: boolean;
   /** The help command for what is running (`coding.sh run --help`); errors with no next step point at it. */
   helpCommand?: string;
@@ -115,6 +116,8 @@ export class Output {
   private readonly se: { write(s: string): unknown; isTTY?: boolean };
   private spinnerTimer: ReturnType<typeof setInterval> | undefined;
   private spinnerText = "";
+  /** CI or an agent (AGENT_ENV) runs the command: no prompt and no spinner, even at a terminal. */
+  private readonly automated: boolean;
   private readonly env: NodeJS.ProcessEnv;
   private readonly platform: NodeJS.Platform;
 
@@ -130,8 +133,9 @@ export class Output {
     this.color = !this.json && colorEnabled(this.so, env, opts.noColor);
     this.errColor = !this.json && colorEnabled(this.se, env, opts.noColor);
     const ci = env.CI !== undefined && env.CI !== "" && env.CI !== "0" && env.CI !== "false";
-    this.interactive = !this.json && !ci && stdin.isTTY === true && this.se.isTTY === true;
-    this.forAgent = !this.interactive || AGENT_ENV.some((k) => !!env[k]);
+    this.automated = ci || AGENT_ENV.some((k) => !!env[k]);
+    this.interactive = !this.json && !this.automated && stdin.isTTY === true && this.se.isTTY === true;
+    this.forAgent = !this.interactive;
   }
 
   style(s: string, style: Style, stream: "out" | "err" = "out"): string {
@@ -274,10 +278,10 @@ export class Output {
 
   // ------------------------------------------------------------ progress
 
-  /** Spinner naming the phase. Only on an interactive, colored stderr; otherwise one plain line. */
+  /** Spinner naming the phase. Only on a colored terminal stderr, and not in CI or under an agent; otherwise one plain line. */
   spin(text: string): { stop(): void; update(text: string): void } {
     if (this.json) return { stop() {}, update() {} };
-    if (!this.errColor || this.se.isTTY !== true) {
+    if (!this.errColor || this.se.isTTY !== true || this.automated) {
       this.ew(`  ${text}\n`);
       return { stop() {}, update() {} };
     }
