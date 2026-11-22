@@ -191,3 +191,47 @@ describe("doctor: an OpenCode plugin OpenCode will not run", () => {
     assert.equal(r.stdout, "ok\n");
   });
 });
+
+describe("doctor: no agent detected", () => {
+  let env: TmpEnv;
+  let cwd: string;
+  let hook: string;
+  const run = (args: string[], extra: NodeJS.ProcessEnv = {}) => {
+    const r = spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { cwd, env: { ...process.env, CODING_SH_HOOK_SOURCE: hook, CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1", NO_COLOR: "1", ...extra }, encoding: "utf8", timeout: 60_000 });
+    return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+  };
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  before(() => {
+    env = tmpEnv();
+    cwd = join(env.home, "elsewhere");
+    mkdirSync(cwd, { recursive: true });
+    hook = join(env.root, "dist", "hook.mjs");
+    writeFile(hook, "// hook\n");
+    // A PATH with no agent on it.
+    const bin = join(env.root, "bin");
+    mkdirSync(bin, { recursive: true });
+    process.env.PATH = bin;
+  });
+  after(() => env.restore());
+
+  test("says so and names the wrapper command, in Git Bash, in PowerShell and in --json", () => {
+    // The "Any command" row is always there, so a check for no rows at all never fired.
+    for (const shell of [{ MSYSTEM: "MINGW64", SHELL: "/usr/bin/bash" }, { MSYSTEM: undefined, SHELL: undefined }]) {
+      const cmd = runCommand({ ...process.env, ...shell }, "<cmd>");
+      const r = run(["doctor"], shell);
+      assert.equal(r.status, 0, r.stderr);
+      assert.match(r.stderr, /^✓ Any command\s+no hooks needed; /m);
+      assert.match(r.stderr, new RegExp(`^! Agents\\s+none detected; capture any agent with ${esc(cmd)}$`, "m"));
+      const doc = JSON.parse(run(["doctor", "--json"], shell).stdout) as Doc;
+      assert.deepEqual(doc.agents.filter((a) => a.installed).map((a) => a.id), ["wrapper"]);
+      assert.deepEqual(doc.warnings.filter((w) => w.check === "agents"), [{ check: "agents", message: "No agent detected", next: cmd }]);
+    }
+    // An agent on PATH: no such warning.
+    fakeBin(env, "opencode", "1.19.5");
+    const doc = JSON.parse(run(["doctor", "--json"]).stdout) as Doc;
+    assert.deepEqual(doc.agents.filter((a) => a.installed).map((a) => a.id).sort(), ["opencode", "wrapper"]);
+    assert.deepEqual(doc.warnings.filter((w) => w.check === "agents"), []);
+    assert.doesNotMatch(run(["doctor"]).stderr, /none detected/);
+  });
+});

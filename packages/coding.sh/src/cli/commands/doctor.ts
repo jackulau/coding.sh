@@ -560,7 +560,8 @@ export async function run(c: CommandContext): Promise<number> {
     // Every blocker, hooked or not: each names what to change.
     for (const n of r.notes) out.note(n);
   }
-  if (!shown.length) warn("Agents", `none detected; capture any agent with ${runCommand(env, "<cmd>")}`, { check: "agents", message: "No agent detected", next: runCommand(env, "<cmd>") });
+  // The built-in wrapper's row is always shown: it is not an agent doctor found.
+  if (!shown.some((a) => a.id !== "wrapper")) warn("Agents", `none detected; capture any agent with ${runCommand(env, "<cmd>")}`, { check: "agents", message: "No agent detected", next: runCommand(env, "<cmd>") });
   if (hookBin.missing !== undefined) warn("Hook", `missing at ${hookBin.missing}; run ${bin} init`, { check: "hook", message: `The hook is missing at ${hookBin.missing}`, next: `${bin} init` });
   else if (hookBin.stale) {
     const why = hookBin.hookCurrent === false ? "differs from the hook this CLI ships" : hookBin.cliPath && !hookBin.cliPathExists ? `cli-path names a missing ${hookBin.cliPath}` : `cli-path names ${hookBin.cliPath ?? "nothing"}, not this CLI`;

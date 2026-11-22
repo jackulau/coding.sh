@@ -80,7 +80,7 @@ The warnings are in the JSON as `warnings`, each with a `check`, a `message`, th
 | `hooked but stale` | The note names a hook file this coding.sh writes differently. | `coding.sh init --agent <id>` |
 | `no events yet` | Nothing captured from this agent. Normal right after `init`. | Use the agent, then `coding.sh sessions`. |
 | `reads its store` / `no store yet` | Host apps such as T3 Code are read from their own database, not hooks. | Nothing to do. |
-| `Any command  no hooks needed; …` | Always shown. With no agent row above it, doctor found no supported agent. | `coding.sh run -- <cmd>` |
+| `Agents  none detected; …` | doctor found no supported agent. | `coding.sh run -- <cmd>` |
 | `Hook missing at …/bin/hook.sh` (or `…/bin/hook.mjs`) | `init` has not run, or the file was deleted. Outside Windows the hooks run `hook.sh`, which needs `hook.mjs` beside it. | `coding.sh init` |
 | `Hook …/bin/hook.mjs is stale` | The hook bin is from another coding.sh version, or `bin/cli-path` names another install. After `npm i -g`, the next session end refreshes it by itself. | `coding.sh update --refresh-bin` |
 | `MCP <agent>: <problem> (<file>)` | The agent's coding.sh MCP entry starts a command, script or CLI that is gone. | `coding.sh init` |
