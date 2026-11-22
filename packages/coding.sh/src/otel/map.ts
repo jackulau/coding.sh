@@ -1678,8 +1678,34 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
     }
   }
   if (dropped.size) result.events = result.events.filter((_, i) => !dropped.has(i));
+  result.events = startsFirst(result.events);
   if (rehome.size) result.rehome = [...rehome.values()];
   return result;
+}
+
+/**
+ * Each session.start before the events of its session and trace at its time that came before it.
+ * An exporter sends a span after its children (they end first), so a model call gives its agent
+ * the prompt at the agent's start before the agent's session.start is mapped, and the store lists
+ * events of one time in the order they came. A conversation's other traces keep their places.
+ */
+function startsFirst(events: AgentEvent[]): AgentEvent[] {
+  // The first event of each session, trace and time that is not a session.start.
+  const first = new Map<string, number>();
+  let moved = false;
+  const rank = events.map((e, i) => {
+    const key = `${e.sessionId}\0${e.traceId ?? ""}\0${e.ts}`;
+    if (e.kind !== "session.start") {
+      if (!first.has(key)) first.set(key, i);
+      return i;
+    }
+    const at = first.get(key);
+    if (at === undefined) return i;
+    moved = true;
+    return at - 0.5;
+  });
+  if (!moved) return events;
+  return events.map((e, i) => ({ e, i, r: rank[i]! })).sort((a, b) => a.r - b.r || a.i - b.i).map((x) => x.e);
 }
 
 /** A held model-call prompt given to agent span `spanId` (see HeldPrompt): its id, session and time are the agent's. */

@@ -850,6 +850,21 @@ describe("GenAI semconv chat content under an invoke_agent root", () => {
     assert.deepEqual(ofKind(child, "assistant.message").map((e) => e.payload.text), ["found"]);
   });
 
+  // Regression: an exporter sends spans as they end, so the model calls came before their agents and each
+  // session listed the prompt at its start before its session.start.
+  it("lists each session's session.start before the prompt at its start, though the spans came in end order", async () => {
+    const SUB = "f000000000000010";
+    const sub = otlpSpan(T, SUB, ROOT, "invoke_agent researcher", [sAttr("gen_ai.operation.name", "invoke_agent"), sAttr("gen_ai.agent.name", "researcher")], 200, 1800);
+    const inner = { ...chat("f000000000000011", "research it", "found", 300, 1700), parentSpanId: SUB };
+    const events = await run([chat("f000000000000002", "plan it", "planned", 50, 150), inner, sub, root()]);
+    for (const id of [T, childSessionId(T, SUB)]) {
+      // The store lists events by time, and events of one time in the order they came.
+      const listed = events.filter((e) => e.sessionId === id).sort((a, b) => a.ts - b.ts);
+      assert.deepEqual(listed.slice(0, 2).map((e) => e.kind), ["session.start", "user.message"], id);
+      assert.equal(listed[0]!.ts, listed[1]!.ts, id);
+    }
+  });
+
   it("gives the root its chat's prompt when the root comes in a later request", async () => {
     const c = { ...ctx(), spanTree: new SpanTree() };
     const first = await mapTraces(decodeTraceJson(otlpTraces("qa", [chat("f000000000000002", "LATE question", "a", 100, 1100)])), c);
