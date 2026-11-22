@@ -1,8 +1,8 @@
 # Privacy and redaction
 
-coding.sh keeps what it records on your machine, in `~/.coding.sh`. Secrets are replaced before
-anything is written, and nothing is sent anywhere unless you add a sink or connect to a team
-server.
+coding.sh keeps what it records on your machine, in `~/.coding.sh`. Secrets are replaced before a
+session reaches the index, the blobs or a sink, and nothing is sent anywhere unless you add a sink
+or connect to a team server.
 
 ## What redaction looks like
 
@@ -35,7 +35,8 @@ A made-up key, like the ones in docs and test fixtures, is redacted too, but cou
 | `index.db` | The SQLite index of sessions and events. |
 | `blobs/` | Large prompts and tool output, compressed and stored by hash. |
 | `spool/` | What the hook received from the agent, redacted by the node hook; see below. |
-| `repos/` | Snapshots of the working tree before and after a session. Your repo's own refs are never touched. |
+| `repos/` | Snapshots of the working tree before and after a session. They hold your files as they are, not redacted; files your `.gitignore` skips are left out. Your repo's own refs are never touched. |
+| `llm-cache/` | Model replies recorded by `exp run --record` or `--replay`, in any capture mode, redacted with the `secrets` rules only. See [Replay recorded model calls](../how-to/replay-llm-calls.md). |
 | `backups/` | A copy of every agent config file before coding.sh edited it. |
 | `config.toml` | Your settings. |
 | `star.json` | When you first ran coding.sh and when the one-time GitHub star prompt was shown, dismissed or clicked. Four timestamps, no network call. |
@@ -191,8 +192,8 @@ Every copy becomes `[redacted:purged]`:
 | Index backups from an upgrade | Deletes them; `--dry-run` names them. |
 
 Values shorter than 8 characters are refused, and neither values nor matches are printed. Purge
-works on the SQLite store only. Rotate the secret as well: the agent's own transcripts, your shell
-history and git are not touched.
+works on the SQLite store only. Rotate the secret as well: purge does not touch the agent's own
+transcripts, your shell history, git, the snapshots in `repos/` or the recordings in `llm-cache/`.
 
 :::more When purge exits 1
 - **Another process holds a file open.** The viewer, `serve`, a `sqlite3` shell or a backup keeps
