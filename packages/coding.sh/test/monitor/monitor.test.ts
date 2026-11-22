@@ -434,6 +434,34 @@ describe("monitor --http", () => {
     }
   });
 
+  it("sessions --sample leaves out take no place among a pass's 100, so a held session does not hide the next one in the sample", async () => {
+    const sb = box();
+    const kept: string[] = [];
+    const left: string[] = [];
+    for (let i = 0; kept.length < 2 || left.length < 100; i++) {
+      const id = `smp-${i}`;
+      if (sampleKey(id) < 0.5) {
+        if (kept.length < 2) kept.push(id);
+      } else if (left.length < 100) left.push(id);
+    }
+    // The first session in the sample, then 100 the sample leaves out, then the second one in it.
+    const t0 = Date.now() - 200_000;
+    const sessions = [kept[0]!, ...left, kept[1]!].map((id, i) => mkSession(id, t0 + i * 1000));
+    await sb.seed(sessions);
+    const ev = await evaluator([answer(500, "oops"), answer(500, "oops"), answer(500, "oops"), answer(200, '{"value":1}')]);
+    const r = await add(sb, "smp", { http: ev.url, sample: 0.5 });
+    assert.equal(r.json.monitor.sample, 0.5);
+    const ctx = await openContext({ env: sb.env, cwd: sb.root });
+    try {
+      const first = (await runMonitors(ctx, { force: true })).monitors[0]!;
+      assert.deepEqual([first.scored, first.failed, first.sampledOut], [1, 1, 100]);
+      assert.equal(readMonitors(paths(sb.env).monitors).monitors[0]!.cursor, sessions.at(-1)!.endedAt);
+    } finally {
+      await ctx.close();
+    }
+    assert.deepEqual((await monitorScores(sb)).map((s) => s.targetId), [kept[1]]);
+  });
+
   it("a session held for the next pass is found again when one that ended at the same moment was scored before it", async () => {
     const sb = box();
     const at = Date.now() - 10_000;

@@ -183,6 +183,9 @@ class Failed extends Error {}
  */
 class Unreachable extends Error {}
 
+/** A session --sample leaves out: passed over with no score and no call. */
+const sampledOut = (def: MonitorDef, s: Session): boolean => def.sample !== undefined && def.sample < 1 && sampleKey(s.id) >= def.sample;
+
 /** Nothing to score in this session (a judge monitor and no user message). */
 class Nothing extends Error {}
 
@@ -200,10 +203,13 @@ async function runOne(deps: MonitorDeps, def: MonitorDef, state: MonitorState, r
   const r: MonitorResult = { name: def.name, scored: 0, skipped: 0, sampledOut: 0, failed: 0 };
   const after = o.since ?? state.cursor ?? now() - DAY;
   let list = await candidates(deps.index, def, after);
-  if (!o.all && list.length > MAX_PER_PASS) {
+  if (!o.all) {
+    // At most MAX_PER_PASS sessions in the sample a pass: those --sample leaves out cost nothing and
+    // take no place, so a held session followed by a run of them still meets the next one in it.
+    let end = 0;
+    for (let n = 0; end < list.length && n < MAX_PER_PASS; end++) if (!sampledOut(def, list[end]!)) n++;
     // Sessions that end at the same time as the last one are handled together, so the cursor skips none.
-    let end = MAX_PER_PASS;
-    while (end < list.length && list[end]!.endedAt === list[end - 1]!.endedAt) end++;
+    while (end > 0 && end < list.length && list[end]!.endedAt === list[end - 1]!.endedAt) end++;
     list = list.slice(0, end);
   }
   const scorer = def.kind === "run" ? runScorer(deps, def, redactor, o) : def.kind === "http" ? httpScorer(deps, def, redactor, o) : await judgeScorer(deps, def, state, o);
@@ -238,7 +244,7 @@ async function runOne(deps: MonitorDeps, def: MonitorDef, state: MonitorState, r
   let clean = true;
   for (const s of list) {
     if (o.signal?.aborted) break;
-    if (def.sample !== undefined && def.sample < 1 && sampleKey(s.id) >= def.sample) {
+    if (sampledOut(def, s)) {
       r.sampledOut++;
       advance(s);
       continue;
