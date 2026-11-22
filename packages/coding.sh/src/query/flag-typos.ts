@@ -28,7 +28,8 @@ export function flagValues(n: Node | undefined): string[] {
  * none; nor is one near nothing, such as a tag of your own.
  */
 export async function rejectFlagTypos(index: IndexStore, flag: string | undefined, where: Query | undefined): Promise<void> {
-  const typed = [...(flag === undefined ? [] : [{ value: flag, option: true }]), ...flagValues(where?.root).map((value) => ({ value, option: false }))];
+  const typed = flagValues(where?.root).map((value) => ({ value, option: false }));
+  if (flag !== undefined) typed.unshift({ value: flag, option: true });
   if (!typed.length) return;
   const set: string[] = Object.values(FLAGS);
   let stored: string[] | undefined;
