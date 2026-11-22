@@ -51,6 +51,12 @@ class OtelHelpersTest(unittest.TestCase):
         self.assertNotIn("OTEL_SERVICE_NAME", env)
         self.assertEqual(otel.otel_env(), {})
 
+    def test_otel_env_takes_the_base_of_a_url_ending_in_v1_traces_or_v1_ingest(self) -> None:
+        # The exporter adds /v1/traces to OTEL_EXPORTER_OTLP_ENDPOINT itself.
+        for url in ("https://obs.example.com/v1/traces", "https://obs.example.com/v1/ingest/"):
+            with self.subTest(url=url):
+                self.assertEqual(otel.otel_env(url)["OTEL_EXPORTER_OTLP_ENDPOINT"], "https://obs.example.com")
+
     def test_conversation_processor(self) -> None:
         p = otel.ConversationSpanProcessor()
         s = _FakeSpan()
@@ -135,6 +141,11 @@ class OtelExportTest(unittest.TestCase):
         self.assertEqual(name, "chat mock-gpt")
         self.assertEqual(attrs["gen_ai.conversation.id"], "j2-otel")
         self.assertEqual(attrs["gen_ai.usage.input_tokens"], 1000)
+
+    def test_configure_with_a_url_ending_in_v1_ingest_exports_to_v1_traces(self) -> None:
+        provider = otel.configure(service="j2-otel", url=self.server.url + "/v1/ingest", key=KEY, set_global=False, batch=False)
+        self._chat_span(provider)
+        self.assertEqual([r["path"] for r in self.server.requests], ["/v1/traces"])
 
     def test_configure_honors_standard_otel_env(self) -> None:
         os.environ.update(

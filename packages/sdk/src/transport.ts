@@ -299,6 +299,52 @@ export class Transport {
    * timeoutMs. True when the queue drained.
    */
   async flush(timeoutMs = 5000): Promise<boolean> {
+    const drained = await this.untilDrained(timeoutMs);
+    if (!drained && !this.closed) {
+      this.flushGaveUp = true;
+      // A request the server accepted and never answered would hold the process open until its
+      // 10 s timeout. Abort it once no flush() waits: the batch goes back to an unref'd retry.
+      if (this.flushing === 0) this.controller?.abort();
+      this.warnOnce(
+        "flush-timeout",
+        `[coding.sh] flush() gave up after ${timeoutMs} ms with ${this.unsent()} not sent (the server did not answer); they are retried while the process runs and dropped when it exits`,
+      );
+    }
+    return drained;
+  }
+
+  /**
+   * Final bounded flush (process exit, shutdown): no retry outlives the
+   * deadline and the request in flight is aborted when it passes. `who` names
+   * this flush in the warning when it gives up ("the flush at exit", "shutdown()").
+   */
+  async close(timeoutMs = 5000, who = "the final flush"): Promise<boolean> {
+    if (this.closed) return this.q.length === 0;
+    this.deadline = Date.now() + Math.max(0, timeoutMs);
+    const ok = await this.untilDrained(timeoutMs);
+    this.closed = true;
+    this.closedHard = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
+    if (!ok) {
+      // flush()'s key: an app whose flush() already gave up on this transport is not told twice.
+      this.warnOnce("flush-timeout", `[coding.sh] ${who} gave up after ${timeoutMs} ms with ${this.unsent()} not sent (the server did not answer); dropping them`);
+      // Give up on what is left: count it once, stop the retry loop and the request in flight.
+      const c = this.current;
+      if (c && !c.done) {
+        c.done = true;
+        this.failed += c.n;
+      }
+      this.failed += this.q.length;
+      this.q.length = 0;
+      this.controller?.abort();
+      this.wake?.();
+    }
+    return ok;
+  }
+
+  /** Waits until everything queued so far is sent or given up on, at most timeoutMs. True when the queue drained. */
+  private async untilDrained(timeoutMs: number): Promise<boolean> {
     if (this.cfg.url === undefined) return true;
     const deadline = Date.now() + Math.max(0, timeoutMs);
     this.flushing++;
@@ -316,45 +362,13 @@ export class Transport {
       // No flush() waits any more: a retry sleeping on from the one that gave up must not keep the process open.
       if (this.flushing === 0 && this.sleepTimer) unref(this.sleepTimer);
     }
-    const drained = this.q.length === 0 && !this.inflight;
-    if (!drained && !this.closed) {
-      this.flushGaveUp = true;
-      // A request the server accepted and never answered would hold the process open until its
-      // 10 s timeout. Abort it once no flush() waits: the batch goes back to an unref'd retry.
-      if (this.flushing === 0) this.controller?.abort();
-      this.warnOnce(
-        "flush-timeout",
-        `[coding.sh] flush() gave up after ${timeoutMs} ms with ${this.q.length + (this.current && !this.current.done ? this.current.n : 0)} events not sent (the server did not answer); they are retried while the process runs and dropped when it exits`,
-      );
-    }
-    return drained;
+    return this.q.length === 0 && !this.inflight;
   }
 
-  /**
-   * Final bounded flush (process exit, shutdown): no retry outlives the
-   * deadline and the request in flight is aborted when it passes.
-   */
-  async close(timeoutMs = 5000): Promise<boolean> {
-    if (this.closed) return this.q.length === 0;
-    this.deadline = Date.now() + Math.max(0, timeoutMs);
-    const ok = await this.flush(timeoutMs);
-    this.closed = true;
-    this.closedHard = true;
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = undefined;
-    if (!ok) {
-      // Give up on what is left: count it once, stop the retry loop and the request in flight.
-      const c = this.current;
-      if (c && !c.done) {
-        c.done = true;
-        this.failed += c.n;
-      }
-      this.failed += this.q.length;
-      this.q.length = 0;
-      this.controller?.abort();
-      this.wake?.();
-    }
-    return ok;
+  /** What is still to send, queued or in the batch being sent, as "3 events". */
+  private unsent(): string {
+    const n = this.stats().queued;
+    return `${n} event${n === 1 ? "" : "s"}`;
   }
 
   private warnOnce(key: string, msg: string): void {

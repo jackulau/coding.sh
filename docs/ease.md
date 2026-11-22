@@ -27,6 +27,15 @@ node scripts/e2e/ease.mjs --pkg <base>/packages/coding.sh --install-sh <base>/in
 It exits 0 when the agent path's setup succeeds and the person saw their session. The human path
 needs `python3` for its pseudo-terminal; without it, that path is skipped.
 
+## On Windows
+
+On Windows it measures the agent path only. The human path is skipped, because it needs a
+pseudo-terminal. The installer line and the hook commands run in Git for Windows' `sh`, as Claude
+Code runs hooks there; without that `sh` the run stops with `no sh found`. Each `coding.sh` command
+from agents.md runs the installed CLI with node, as the `coding.sh.cmd` shim npm adds does, so no
+shell picks the command. It does not measure setup by a person, or typing the commands in
+PowerShell or cmd, where `coding.sh` opens npm's sh script and the command is `codingsh`.
+
 ## What it measures
 
 **Human.** `install.sh` runs in a pseudo-terminal from a local tarball (`CODING_SH_TARBALL`), and
