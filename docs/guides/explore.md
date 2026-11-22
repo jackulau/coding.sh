@@ -104,7 +104,9 @@ Subagents
 ```
 
 The header sums up the run. Below it, each event in order, with the time since the start. Pass a
-session id, a unique prefix of 4 or more characters, or `latest`.
+session id, a unique prefix of 4 or more characters, or `latest`. `latest` is the newest session
+with work in it. A session with a run id (an eval, compare or experiment trial, or an agent you
+started with `CODING_SH_RUN_ID` set) counts only when there are no others.
 
 ## Search every session
 
