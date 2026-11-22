@@ -94,7 +94,7 @@ for (const [name, open] of [["memory", async () => new MemoryIndexStore()], ["sq
       const evs = [
         // Prompts under OpenAI's 272K long-context threshold.
         ev("exact", { model: "gpt-6.1-sol", usage: { inputTokens: 125_000, cacheWriteTokens: 100_000 } }), // 0.25 + 0.25
-        ev("sibling", { model: "gpt-6.2-sol", usage: { inputTokens: 125_000 } }), // as gpt-6.1-sol: 0.25
+        ev("sibling", { model: "gpt-6.3-sol", usage: { inputTokens: 125_000 } }), // as gpt-6.2-sol: 0.25
         ev("paid", { model: "gpt-6.1-sol", usage: { inputTokens: M, costUsd: 1 } }),
       ];
       await store.putEvents(evs);
@@ -103,10 +103,10 @@ for (const [name, open] of [["memory", async () => new MemoryIndexStore()], ["sq
       const byId = async () => Object.fromEntries((await store.listEvents("s1")).map((e) => [e.id, e]));
       let e = await byId();
       assert.deepEqual([e.exact!.usage?.costUsd, e.sibling!.usage?.costUsd, e.paid!.usage?.costUsd], [0.5, 0.25, 1]);
-      assert.deepEqual([e.exact!.payload.pricedAs, e.sibling!.payload.pricedAs, e.sibling!.payload.costEstimated], [undefined, "gpt-6.1-sol", true]);
+      assert.deepEqual([e.exact!.payload.pricedAs, e.sibling!.payload.pricedAs, e.sibling!.payload.costEstimated], [undefined, "gpt-6.2-sol", true]);
       let u = (await store.getSession("s1"))!.stats.usage!;
       assert.deepEqual([u.costUsd, u.estimatedCostUsd], [1.75, 0.75]);
-      await repriceStored(store, { "gpt-6.2-sol": { input: 3, output: 3 } });
+      await repriceStored(store, { "gpt-6.3-sol": { input: 3, output: 3 } });
       e = await byId();
       assert.deepEqual([e.sibling!.usage?.costUsd, e.sibling!.payload.pricedAs, e.sibling!.payload.costEstimated], [0.375, undefined, true]);
       u = (await store.getSession("s1"))!.stats.usage!;
