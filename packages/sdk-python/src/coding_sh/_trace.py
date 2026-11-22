@@ -28,7 +28,7 @@ import os
 import threading
 import time
 import uuid
-from typing import Any, Callable, Dict, Generic, Optional, TypeVar
+from typing import Any, Callable, Dict, Generic, Optional, Tuple, TypeVar
 
 from ._client import Config, Transport, dumps
 
@@ -65,7 +65,7 @@ def init(
         old, _transport = _transport, Transport(cfg)
     if old is not None:
         try:
-            old.shutdown(1.0)
+            old.shutdown(1.0, "the final flush")
         except Exception:
             pass
 
@@ -105,7 +105,8 @@ def flush(timeout: Optional[float] = 5.0) -> bool:
 
 
 def shutdown(timeout: Optional[float] = 2.0) -> bool:
-    """Flush, then stop accepting events."""
+    """Flush for at most `timeout` seconds, then stop accepting events. What is still unsent
+    then is dropped, with one warning."""
     try:
         return _get().shutdown(timeout)
     except Exception:
@@ -202,6 +203,12 @@ def current_session_id() -> Optional[str]:
     if n is not None:
         return n.root.session_id
     return _session_var.get()
+
+
+def current_span_ids() -> Optional[Tuple[str, str]]:
+    """The trace id and span id of the trace() or span() open here, if any."""
+    n = _node_var.get()
+    return (n.root.trace_id, n.span_id) if n is not None else None
 
 
 class Root:

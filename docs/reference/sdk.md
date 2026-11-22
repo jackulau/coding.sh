@@ -288,7 +288,7 @@ function weightsDelta(base: WeightsArray, edited: WeightsArray): WeightsDelta
 
 ### `aiSdkTracer(opts?)`
 
-An OpenTelemetry Tracer-shaped object that sends AI SDK spans to coding.sh.
+An OpenTelemetry Tracer-shaped object that sends AI SDK spans to coding.sh. Inside trace(), each AI SDK call is a step of the trace's one turn. Outside it, each call is a turn of the withSession() session, or a session of its own.
 
 ```ts
 function aiSdkTracer(opts: AiSdkTracerOptions = {}): AiSdkTracer
@@ -479,7 +479,7 @@ interface AiSdkTracerOptions {
 
 | Field | Type | Description |
 |---|---|---|
-| `sessionId` | `string` | Session for every span this tracer makes (overrides withSession/trace). |
+| `sessionId` | `string` | Session for every span this tracer makes (overrides withSession/trace). A call made inside a trace() of another session is a turn of this one. |
 
 ### `TransportStats`
 
@@ -693,7 +693,7 @@ def flush(timeout: Optional[float] = 5.0) -> bool
 
 ### `coding_sh.shutdown(...)`
 
-Flush, then stop accepting events.
+Flush for at most `timeout` seconds, then stop accepting events. What is still unsent then is dropped, with one warning.
 
 ```python
 def shutdown(timeout: Optional[float] = 2.0) -> bool

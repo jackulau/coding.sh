@@ -92,15 +92,44 @@ test("AI SDK 6: experimental_telemetry.tracer with metadata.sessionId", async ()
   assert.deepEqual(s.stats.usage, { inputTokens: 1000, outputTokens: 500 });
 });
 
-test("AI SDK spans inside trace() join that trace's session", async () => {
-  const sid = await trace("handler", async (t) => {
-    await generateText({ model: model(), prompt: "ping", telemetry: { integrations: new OpenTelemetry({ tracer: aiSdkTracer() }) } });
-    return t.sessionId;
-  });
+const prompts = (sessionId: string) => serve.events().filter((e) => e.sessionId === sessionId && e.kind === "user.message").map((e) => e.payload.text);
+
+test("AI SDK 7 calls inside trace() join that trace's session as steps of its one turn", async () => {
+  const telemetry = { integrations: new OpenTelemetry({ tracer: aiSdkTracer() }) };
+  const sid = await trace(
+    "handler",
+    async (t) => {
+      await generateText({ model: model(), prompt: "ping", telemetry });
+      await generateText({ model: model(), prompt: "ping again", telemetry });
+      return t.sessionId;
+    },
+    { input: "handle it" },
+  );
   await flush();
   const s = serve.session(sid)!;
-  assert.equal(s.stats.latency?.llmCalls, 1);
-  assert.equal(s.stats.usage?.inputTokens, 1000);
+  assert.equal(s.stats.latency?.llmCalls, 2);
+  assert.equal(s.stats.usage?.inputTokens, 2000);
+  assert.equal(s.stats.turns, 1, "one turn, not one per call");
+  assert.equal(s.stats.latency?.subagents, undefined, "the invoke_agent span is a step, not a subagent");
+  assert.deepEqual(prompts(sid), ["handle it"], "the trace's input is the turn's only prompt");
+});
+
+test("AI SDK 6 calls inside trace() are steps of its one turn", async () => {
+  const tracer = aiSdkTracer() as never;
+  const sid = await trace(
+    "handler",
+    async (t) => {
+      for (const prompt of ["ping", "ping again"]) await generateTextV6({ model: v6Model(), prompt, experimental_telemetry: { isEnabled: true, tracer } });
+      return t.sessionId;
+    },
+    { input: "handle it" },
+  );
+  await flush();
+  const s = serve.session(sid)!;
+  assert.equal(s.stats.latency?.llmCalls, 2);
+  assert.deepEqual(s.stats.usage, { inputTokens: 2000, outputTokens: 1000 });
+  assert.equal(s.stats.turns, 1);
+  assert.deepEqual(prompts(sid), ["handle it"]);
 });
 
 test("metadata capture mode drops prompt and response text from spans", async () => {
