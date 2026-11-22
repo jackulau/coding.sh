@@ -50,10 +50,10 @@ describe("resolvePrice", () => {
 
   it("falls back to the nearest version in the same family and major, and says so", () => {
     const cases: [string, string][] = [
-      ["gpt-6.2-sol", "gpt-6.1-sol"],
+      ["gpt-6.3-sol", "gpt-6.2-sol"],
       ["gpt-6.1-luna", "gpt-6-luna"],
       ["gpt-5.7-terra", "gpt-5.6-terra"],
-      ["gpt-6.2-sol-2026-12-01", "gpt-6.1-sol"],
+      ["gpt-6.3-sol-2027-01-01", "gpt-6.2-sol"],
       ["gpt-5.5-mini", "gpt-5.4-mini"],
       ["gpt-5.7", "gpt-5.5"],
       ["claude-opus-5-6", "claude-opus-5-5"],
@@ -101,9 +101,9 @@ describe("priceEvent", () => {
     assert.equal(exact.usage?.costUsd, 0.5);
     assert.equal(exact.payload.costEstimated, true);
     assert.equal(exact.payload.pricedAs, undefined);
-    const fb = priceEvent(call({ model: "gpt-6.2-sol", usage: { inputTokens: 250_000 } }), table);
+    const fb = priceEvent(call({ model: "gpt-6.3-sol", usage: { inputTokens: 250_000 } }), table);
     assert.equal(fb.usage?.costUsd, 0.5);
-    assert.deepEqual([fb.payload.costEstimated, fb.payload.pricedAs], [true, "gpt-6.1-sol"]);
+    assert.deepEqual([fb.payload.costEstimated, fb.payload.pricedAs], [true, "gpt-6.2-sol"]);
   });
 
   it("prefers any name with its own row over a fallback", () => {
@@ -324,6 +324,57 @@ describe("tier and long-context pricing", () => {
     assert.deepEqual(callRates(p, undefined, 11), { rates: p.longContext, tier: "long-context" });
     assert.deepEqual(callRates(p), { rates: p });
     assert.equal(promptTokens({ inputTokens: 1, cacheReadTokens: 2, cacheWriteTokens: 3, outputTokens: 100 }), 6);
+  });
+});
+
+describe("GPT-6.2, Gemini 4 Neon, Hydrogen and Carbon, and -orchestrator names", () => {
+  const priced = (model: string, usage: AgentEvent["usage"], payload: Record<string, unknown> = {}) => priceEvent(call({ model, usage, payload }), table);
+  const own = (id: string, key: string) => assert.deepEqual(resolvePrice(id, table), { price: BUILTIN_PRICES[key], key, fallback: false }, id);
+  const rates = (key: string) => [BUILTIN_PRICES[key]?.input, BUILTIN_PRICES[key]?.output, BUILTIN_PRICES[key]?.cacheRead];
+  const check = (e: AgentEvent, usd: number, tier: string | undefined) => {
+    close(e.usage?.costUsd, usd);
+    assert.deepEqual([e.payload.priceTier, e.payload.pricedAs], [tier, undefined]);
+  };
+
+  it("prices GPT-6.2 Astra and Sol on their own rows: long context, Batch, Fast, Ultrafast at 3x, and no Flex", () => {
+    own("gpt-6.2-astra", "gpt-6.2-astra");
+    own("openai/gpt-6.2-astra-2026-11-17", "gpt-6.2-astra");
+    own("gpt-6.2-sol", "gpt-6.2-sol");
+    assert.deepEqual(rates("gpt-6.2-astra"), [8, 40, 0.4]);
+    assert.deepEqual(rates("gpt-6.2-sol"), [2, 10, 0.1]);
+    // A 300K prompt is past the 272K threshold: Astra's long-context rates are 16 in, 0.8 cached, 60 out.
+    check(priced("gpt-6.2-astra", { inputTokens: 300_000, outputTokens: M }), (300_000 * 16 + M * 60) / M, "long-context");
+    check(priced("gpt-6.2-astra", { inputTokens: 100_000, cacheReadTokens: 200_000 }), (100_000 * 16 + 200_000 * 0.8) / M, "long-context");
+    check(priced("gpt-6.2-astra", { inputTokens: 100_000 }, { serviceTier: "batch" }), 0.4, "batch");
+    check(priced("gpt-6.2-astra", { inputTokens: 100_000 }, { serviceTier: "fast" }), 1.6, "priority");
+    check(priced("gpt-6.2-astra", { inputTokens: 300_000 }, { serviceTier: "ultrafast" }), 300_000 * 48 / M, "ultrafast+long-context");
+    check(priced("gpt-6.2-sol", { inputTokens: 100_000 }, { serviceTier: "ultrafast" }), 0.6, "ultrafast");
+    // OpenAI adds no Flex to new models: a flex call keeps standard rates.
+    check(priced("gpt-6.2-sol", { inputTokens: 100_000 }, { serviceTier: "flex" }), 0.2, undefined);
+  });
+
+  it("prices Gemini 4 Neon, Hydrogen and Carbon on their own rows, with Batch, Flex and Priority; Argon is unchanged", () => {
+    for (const key of ["gemini-4-neon", "gemini-4-hydrogen", "gemini-4-carbon", "gemini-4-argon"]) own(key, key);
+    own("gemini-4-neon-preview", "gemini-4-neon");
+    own("google/gemini-4-hydrogen", "gemini-4-hydrogen");
+    assert.deepEqual(rates("gemini-4-neon"), [3, 15, 0.15]);
+    assert.deepEqual(rates("gemini-4-hydrogen"), [1.5, 7.5, 0.075]);
+    assert.deepEqual(rates("gemini-4-carbon"), [2, 10, 0.1]);
+    assert.deepEqual(rates("gemini-4-argon"), [2, 10, 0.1]);
+    check(priced("gemini-4-neon", { inputTokens: M }, { serviceTier: "priority" }), 5.4, "priority");
+    check(priced("gemini-4-hydrogen", { inputTokens: M, outputTokens: M }, { serviceTier: "batch" }), 0.75 + 3.75, "batch");
+    check(priced("gemini-4-carbon", { inputTokens: M }, { serviceTier: "flex" }), 1, "flex");
+    check(priced("gemini-4-argon", { inputTokens: M }, { serviceTier: "priority" }), 3.6, "priority");
+  });
+
+  it("prices Antigravity's -orchestrator names as the Gemini 4 model they run", () => {
+    own("gemini-pro-orchestrator-g1-pro", "gemini-4-argon");
+    own("gemini-pro-orchestrator-neon", "gemini-4-neon");
+    own("gemini-4-hydrogen-orchestrator", "gemini-4-hydrogen");
+    own("gemini-4-neon-orchestrator-preview", "gemini-4-neon");
+    check(priced("gemini-pro-orchestrator-neon", { inputTokens: M, outputTokens: M }), 3 + 15, undefined);
+    // An alias names a row only when the table has it.
+    assert.equal(resolvePrice("gemini-pro-orchestrator-neon", { "gemini-4-argon": BUILTIN_PRICES["gemini-4-argon"]! }), undefined);
   });
 });
 

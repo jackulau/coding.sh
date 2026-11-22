@@ -150,8 +150,9 @@ export const PRICE_SOURCES: Record<string, { url: string; updated: string }> = {
  * 3: per-call long-context and service-tier rates (`payload.priceTier`).
  * 4: 1-hour cache writes at their own rate, and the US-only data-residency multiplier.
  * 5: each estimate split by token type (`payload.costByTokenType`).
+ * 6: `-orchestrator` names, and aliases for names that share no id with their row (`ALIASES`).
  */
-export const PRICING_RULES_VERSION = 5;
+export const PRICING_RULES_VERSION = 6;
 
 /** `r` times `k`, field by field. */
 const scale = (r: Rates, k: number): Rates => ({
@@ -225,6 +226,10 @@ export const BUILTIN_PRICES: Prices = {
   // called Priority until 2026-07-30 (https://developers.openai.com/api/docs/guides/priority-processing).
   // Batch "-" for cached input (gpt-4.x, o3) bills cached tokens as input. gpt-5.6-sol is a
   // promotional price that the page says runs until 2026-11-30.
+  // GPT-6.2 lists no Flex (OpenAI is not adding Flex to new models), so a flex call keeps standard
+  // rates. Its Ultrafast is 3x through 2027-02-28 and 6x from 2027-03-01.
+  "gpt-6.2-astra": tiers(openaiLong(cached125(8, 40, 0.4)), { batch: 0.5, priority: 2, ultrafast: 3 }),
+  "gpt-6.2-sol": tiers(openaiLong(cached125(2, 10, 0.1)), { batch: 0.5, priority: 2, ultrafast: 3 }),
   "gpt-6-astra": gpt6(10, 50, 1, { ultrafast: 6 }),
   "gpt-6.1-sol": gpt6(2, 10, 0.1, { ultrafast: 6 }),
   "gpt-6.1-terra": gpt6(1, 5, 0.05),
@@ -313,11 +318,17 @@ export const BUILTIN_PRICES: Prices = {
   // Google Gemini (PRICE_SOURCES.google, paid tier, as of 2026-11-07): Standard, Batch, Flex and
   // Priority tabs; 3.1 Pro and 2.5 Pro bill prompts over 200K tokens higher. Writes cost plain input;
   // cache storage is billed per hour and not counted here. Where Batch and Flex caching says "Same
-  // as Standard" the standard cache rate is kept. Scheduled changes: gemini-4-argon goes to 4/20
-  // (read 0.2) on 2026-12-01, gemini-3.8-flash and 3.6-flash to 1.5/7.5 (read 0.15) on 2027-01-01.
+  // as Standard" the standard cache rate is kept. Scheduled changes: gemini-4-argon and
+  // gemini-4-carbon go to 4/20 (read 0.2) on 2026-12-01, gemini-3.8-flash and 3.6-flash to 1.5/7.5
+  // (read 0.15) on 2027-01-01. From 2026-12-01 Google serves gemini-2.5-pro calls with Gemini 3.8
+  // Flash and gemini-2.5-flash calls with 3.5 Flash-Lite, at those models' prices.
   // Antigravity runs these models (and Claude, gpt-oss) by display name; its ids resolve here
-  // through the suffix and family rules below.
+  // through the suffix, alias and family rules below, and its `-orchestrator` names bill as the
+  // Gemini 4 model they run.
   "gemini-4-argon": tiers(plain(2, 10, 0.1), { batch: 0.5, flex: 0.5, priority: 1.8 }),
+  "gemini-4-neon": tiers(plain(3, 15, 0.15), { batch: 0.5, flex: 0.5, priority: 1.8 }),
+  "gemini-4-hydrogen": tiers(plain(1.5, 7.5, 0.075), { batch: 0.5, flex: 0.5, priority: 1.8 }),
+  "gemini-4-carbon": tiers(plain(2, 10, 0.1), { batch: 0.5, flex: 0.5, priority: 1.8 }),
   "gemini-3.8-flash": tiers(plain(0.75, 3.75, 0.075), { batch: 0.5, flex: 0.5, priority: 1.8 }),
   "gemini-3.6-flash": tiers(plain(0.75, 3.75, 0.075), { batch: 0.5, flex: 0.5, priority: 1.8 }),
   "gemini-3.5-flash-lite": tiers(plain(0.3, 2.5, 0.03), { batch: 0.5, flex: plain(0.15, 1.25, 0.02), priority: plain(0.54, 4.5, 0.05) }),
@@ -365,9 +376,15 @@ export const BUILTIN_PRICES: Prices = {
 // `-2024-07-18`, `-20250929`, `@20251101`, `-0613`, `-latest`, optionally followed by more.
 const DATED_SUFFIX = /^[-@](?:\d{4}-\d{2}-\d{2}|\d{8}|\d{4}|latest)(?:[-:@.].*)?$/;
 // Suffixes that name a mode or a release channel of the same model at the same price.
-const VARIANT_SUFFIX = /-(?:thinking|preview|customtools|exp|experimental|latest|high|medium|low|codex)$/;
-// A dated tail on its own (`gpt-6.2-sol-2026-12-01`), dropped before the suffix and family steps.
+const VARIANT_SUFFIX = /-(?:thinking|preview|customtools|exp|experimental|latest|high|medium|low|codex|orchestrator)$/;
+// A dated tail on its own (`gpt-6.3-sol-2027-01-01`), dropped before the suffix and family steps.
 const DATED_SUFFIX_TAIL = /[-@](?:\d{4}-\d{2}-\d{2}|\d{8})$/;
+// Names that share no id with the row they bill as: Antigravity's orchestrator models, priced as
+// the Gemini 4 model they run. An alias applies only when the table has its row.
+const ALIASES = new Map([
+  ["gemini-pro-orchestrator-g1-pro", "gemini-4-argon"],
+  ["gemini-pro-orchestrator-neon", "gemini-4-neon"],
+]);
 
 /** A resolved price: which table key it came from, and whether that key is a different model of the same family. */
 export interface ResolvedPrice {
@@ -431,9 +448,10 @@ function direct(id: string, prices: Prices, ix: Index): string | undefined {
 
 /**
  * Price for a model name. In order: exact; bare (lowercase, no `provider/` or Bedrock
- * prefix); a dated variant of a key (`-20250929`, `@20251101`); the same with mode and
- * channel suffixes dropped (`-thinking`, `-preview`, `-codex`, ...). Then the family
- * fallback: the same family and major version (`gpt-6.2-sol` → `gpt-6.1-sol`,
+ * prefix); a dated variant of a key (`-20250929`, `@20251101`); an alias
+ * (`gemini-pro-orchestrator-neon` → `gemini-4-neon`); the same with mode and channel
+ * suffixes dropped (`-thinking`, `-preview`, `-codex`, `-orchestrator`, ...). Then the family
+ * fallback: the same family and major version (`gpt-6.3-sol` → `gpt-6.2-sol`,
  * `claude-opus-5-6` → `claude-opus-5-5`) at the highest minor at or below the one asked
  * for, else the lowest one above it. Never across majors. Only the fallback sets
  * `fallback`. Undefined for unknown models.
@@ -452,7 +470,8 @@ export function resolvePrice(model: string | undefined, prices: Prices): Resolve
 function resolveUncached(model: string, prices: Prices, ix: Index): ResolvedPrice | undefined {
   let id = normalize(model);
   for (;;) {
-    const key = direct(id, prices, ix);
+    const alias = ALIASES.get(id);
+    const key = direct(id, prices, ix) ?? (alias && prices[alias] ? alias : undefined);
     if (key) return { price: prices[key]!, key, fallback: false };
     const shorter = id.replace(DATED_SUFFIX_TAIL, "").replace(VARIANT_SUFFIX, "");
     if (shorter === id) break;
