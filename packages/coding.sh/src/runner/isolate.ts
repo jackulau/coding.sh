@@ -288,9 +288,9 @@ export interface IsolatedDirs {
  * Swap the verified tree in at the work dir's path, run `fn` there, and put the
  * agent's tree back. `reuseStart` keeps the pristine copy for a later round
  * (copied, not moved). The plan is decided before the swap. On Windows a folder
- * can't move while a process has its current directory in it (git run by
- * another trial's ingest, an antivirus scan), so each move waits a moment for
- * it (renameOver) instead of failing the trial.
+ * can't move while another process has its current directory or a file in it
+ * open, so each move waits a moment for that process (renameOver) instead of
+ * failing the trial.
  */
 export async function withIsolatedTree<T>(
   d: IsolatedDirs,
