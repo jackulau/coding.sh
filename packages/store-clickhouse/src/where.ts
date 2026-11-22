@@ -68,7 +68,8 @@ const tokens = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTok
  * matches when any expression does. List-valued keys (flags, weights.checkpoint) use the lambda argument `f`, an item of MULTI_FROM.
  */
 export const KEY_SQL: Record<string, string[]> = {
-  agent: ["agent"],
+  // An agent, or the host app that drove the session (Session.host), as in the SQLite store.
+  agent: ["agent", `ifNull(${jstr("stats", "host")}, '')`],
   model: ["model"],
   provider: [jstr("stats", "provider")],
   launch: [jstr("stats", "launch")],

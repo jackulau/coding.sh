@@ -33,12 +33,14 @@ describe("clickhouse --where compiler", () => {
   it("compiles to one condition with typed placeholders", () => {
     const c = compile("agent:codex -title:Fix cost>0.5 tool:Bash ok:false");
     const cost = "if(JSONType(stats, 'usage', 'costUsd') IN ('Int64', 'UInt64', 'Double'), JSONExtractFloat(stats, 'usage', 'costUsd'), NULL)";
+    // agent: matches the agent that ran or the host app that drove it (stats.host).
+    const host = "ifNull(if(JSONType(stats, 'host') = 'String', JSONExtractString(stats, 'host'), NULL), '')";
     assert.equal(
       c.sql,
-      "(id IN (SELECT session_id FROM `t`.events FINAL WHERE (tool = {p0:String} AND ok = {p1:Bool})) AND agent = {p2:String}" +
-        ` AND NOT (ifNull(lower(title) LIKE {p3:String}, 0)) AND ${cost} > {p4:Float64})`,
+      "(id IN (SELECT session_id FROM `t`.events FINAL WHERE (tool = {p0:String} AND ok = {p1:Bool})) AND (agent = {p2:String} OR " + host + " = {p3:String})" +
+        ` AND NOT (ifNull(lower(title) LIKE {p4:String}, 0)) AND ${cost} > {p5:Float64})`,
     );
-    assert.deepEqual(c.params, { p0: "Bash", p1: "false", p2: "codex", p3: "%fix%", p4: "0.5" });
+    assert.deepEqual(c.params, { p0: "Bash", p1: "false", p2: "codex", p3: "codex", p4: "%fix%", p5: "0.5" });
     assert.equal(orderBy(p("sort:-cost").sort), `isNull(${cost}), ${cost} DESC, started_at DESC, id`);
     assert.equal(orderBy(undefined), "started_at DESC, id");
     const words = compile("migration flaky");

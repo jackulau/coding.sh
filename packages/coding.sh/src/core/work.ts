@@ -183,7 +183,10 @@ export function workRunning(s: Session, now: number): boolean {
 }
 
 /** The agent that would report a prompt: a host app that reports its own (T3 Code's store), else the agent it ran, else the session's own. */
-const promptAgent = (s: Session): string => (HOST_AGENTS.has(s.agent) && s.provider && !PROMPT_SIGNAL_AGENTS.has(s.agent) ? s.provider : s.agent);
+const promptAgent = (s: Session): string => {
+  const host = s.host ?? s.agent;
+  return HOST_AGENTS.has(host) && s.provider && !PROMPT_SIGNAL_AGENTS.has(host) ? s.provider : host;
+};
 
 /** True when the session's prompts reach coding.sh: its agent reports them, or a permission prompt was seen. */
 const reportsPrompts = (s: Session): boolean => PROMPT_SIGNAL_AGENTS.has(promptAgent(s)) || s.stats.waiting?.kind === "permission";
@@ -192,7 +195,7 @@ const reportsPrompts = (s: Session): boolean => PROMPT_SIGNAL_AGENTS.has(promptA
 function ownItem(s: Session): boolean {
   if (!s.parent) return true;
   if (s.parent.type && OWN_ITEM_PARENT.has(s.parent.type)) return true;
-  return HOST_AGENTS.has(s.agent) && s.parent.type !== "provider-switch";
+  return HOST_AGENTS.has(s.host ?? s.agent) && s.parent.type !== "provider-switch";
 }
 
 interface RawItem {
@@ -447,8 +450,9 @@ export function workStage(members: readonly Session[], primary: Session, now: nu
 }
 
 /** The command that resumes a session, when the agent has one. */
-export function resumeCommand(s: Pick<Session, "id" | "agent" | "provider">): string | undefined {
-  const agent = s.agent === "t3code" ? undefined : s.agent;
+export function resumeCommand(s: Pick<Session, "id" | "agent" | "provider" | "host">): string | undefined {
+  // A host app's thread (T3 Code) is resumed in the host, not by the agent's CLI.
+  const agent = s.agent === "t3code" || s.host ? undefined : s.agent;
   // A subagent's id is coding.sh's own (`<session>:sub:<agent>`): the agent resumes the session that ran it.
   const cut = s.id.indexOf(":sub:");
   const id = cut > 0 ? s.id.slice(0, cut) : s.id;

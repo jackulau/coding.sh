@@ -855,10 +855,15 @@
           "type": "string"
         },
         "agent": {
+          "description": "The agent that ran, also when a host app drove it (a T3 Code thread that ran Claude Code is \"claude-code\").",
           "$ref": "#/$defs/AgentId"
         },
+        "host": {
+          "description": "The host app that drove the agent (\"t3code\" when T3 Code ran it). Absent\nwhen no host drove the session, and for a host thread that never started\nan agent (its agent is the host's id).",
+          "type": "string"
+        },
         "provider": {
-          "description": "The agent a host app ran, when `agent` is a host (T3 Code driving Codex or\nClaude Code): \"codex\", \"claude-code\", or the host's driver name.",
+          "description": "The agent a host app ran: the same as `agent` when `host` is set (\"codex\",\n\"claude-code\", or the host's driver name). Kept for older readers.",
           "type": "string"
         },
         "agentVersion": {

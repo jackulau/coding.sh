@@ -110,7 +110,8 @@ describe("a Claude Code session T3 Code ran, stored before its host link", () =>
 
   const assertLinked = async (o: Awaited<ReturnType<typeof setup>>) => {
     const s = await o.index.getSession(CLAUDE_ID);
-    assert.equal(s?.agent, "t3code");
+    assert.equal(s?.agent, "claude-code");
+    assert.equal(s?.host, "t3code");
     assert.equal(s?.provider, "claude-code");
     assert.equal(s?.title, "Add sum", "the T3 thread titles the session again");
     const ids = (await o.index.listEvents(CLAUDE_ID)).map((e) => e.id).sort();
@@ -148,7 +149,7 @@ describe("a Claude Code session T3 Code ran, stored before its host link", () =>
     const cenv = { ...process.env };
     const index = new MemoryIndexStore();
     await backfill({ config: defaultConfig(cenv), index, blobs: new MemoryBlobStore(), env: cenv, adapters: [claudeCode, t3code] });
-    assert.equal((await index.getSession(CLAUDE_ID))?.agent, "t3code");
+    assert.equal((await index.getSession(CLAUDE_ID))?.host, "t3code");
     const adapters = new Map<string, Adapter>([[claudeCode.id, claudeCode], [t3code.id, t3code]]);
     assert.equal(await reparseDue(index, adapters), false);
     assert.equal(await index.getCursor(relinkCursor(T3_AGENT)), t3code.parseVersion);

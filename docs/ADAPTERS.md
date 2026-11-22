@@ -28,7 +28,7 @@ sessions; `gemini-cli` stays for older Gemini CLI history. Aider is stale (last 
 | Crush | `crushrc` or JSON `hooks` key | Pre/PostToolUse, Session*, TurnStart/End | `session_id`, `cwd`. Subagents fire no hooks. |
 | Antigravity CLI (`agy`) | `~/.gemini/config/hooks.json` (shared by the agy CLI, App and IDE) or `.agents/hooks.json`. **A hook must print a JSON object on stdout**, so ours run with `--reply={}`. | SessionStart, PreToolUse, PostToolUse, PreInvocation, PostInvocation, Stop | camelCase: `conversationId`, `workspacePaths`, `transcriptPath`, `modelName` (often `"auto"`, which we drop), `lastUserInput` (wrapped in `<USER_REQUEST>`, which we strip), `toolCall{name,args}`, `stepIdx`, `error`, `invocationNum`, `terminationReason`. No tool output, tokens or cost; backfill fills those in. |
 | Aider | None | — | — |
-| T3 Code | None of its own. Its Codex and Claude runs fire the codex/claude-code hooks. | Those agents' events | The hook records T3's env marker as `host`: `T3CODE_THREAD_ID` (Claude Agent SDK) or `CODEX_INTERNAL_ORIGINATOR_OVERRIDE="T3 Code"` (`codex app-server`). |
+| T3 Code | None of its own. Its Codex and Claude runs fire the codex/claude-code hooks. | Those agents' events | The hook records T3's env marker as `host`: `T3CODE_THREAD_ID` (Claude Agent SDK) or `CODEX_INTERNAL_ORIGINATOR_OVERRIDE="T3 Code"` (`codex app-server`). The session keeps that agent, with `host: "t3code"` ([host apps](#host-apps-t3-code)). |
 | Devin CLI | `config.json` `hooks` in Devin's config folder (`$DEVIN_CONFIG_HOME/devin`, else `%APPDATA%\devin` on Windows and `~/.config/devin` elsewhere), or `.devin/config.local.json` for one project. Devin also reads `.devin/hooks.v1.json` and `.devin/config.json` from the session's folder up to the project root, and runs Claude Code's hooks (`read_config_from.claude`, on by default). | SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PermissionRequest, Stop, PostCompaction, SessionEnd | `session_id` (a slug such as `brave-otter`), `prompt_id`. No cwd, model, transcript path or tool call id. Every hook gets `DEVIN_PROJECT_DIR`, the project root: the repository root, or the session's folder outside a repository. Seen on 3000.14.30821 without a login. |
 
 ## Transcripts, headless runs, isolation
@@ -146,10 +146,12 @@ one session per provider thread, keyed by the provider's native id. A T3-run Cod
 is therefore the same session the codex and claude-code adapters import, with no duplicates in either import
 order.
 
-- **Attribution:** a session is attributed to T3 Code when any of its events has `payload.via = "t3code"`.
+- **Attribution:** a session is hosted by T3 Code when any of its events has `payload.via = "t3code"`.
   The sources are the T3 adapter's `host-link` notification, the hook's env marker, or a Codex
-  `session_meta.originator` of "T3 Code". The session then gets `agent: "t3code"`, and `provider` names the
-  agent T3 ran.
+  `session_meta.originator` of "T3 Code". The session keeps the agent that ran as `agent` (`claude-code`,
+  `codex`, or the provider name) and gets `host: "t3code"`; `provider` repeats the agent. A T3 thread that
+  never reached a provider keeps `agent: "t3code"` and has no `host`. `--agent t3code` matches both, and
+  `usage --by agent`, `status` and the viewer's Agent facet count the agent that ran.
 - **Provider instances:** T3 names a provider by its driver or by an instance id the user chose. An id
   that is a known driver maps to its agent; otherwise one that starts with a driver kind, ignoring case, maps
   to that agent (`claudeHub` is Claude Code, `codex-work` is Codex; likewise Cursor, OpenCode and Pi). Any

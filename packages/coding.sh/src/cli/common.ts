@@ -793,16 +793,17 @@ export function sessionJson(s: Session, keep: SessionJsonKeep = {}): Record<stri
   const stats: Record<string, unknown> = rest;
   if (derails) stats.derails = keep.derailEvents ? derails : derails.map(({ eventId: _e, index: _i, ...d }) => d);
   if (keep.phases && phases) stats.phases = phases;
-  const out: Record<string, unknown> = {
-    id: s.id,
-    agent: s.agent,
+  const out: Record<string, unknown> = { id: s.id, agent: s.agent };
+  // The host app that drove the agent (T3 Code): absent for a session no host drove.
+  if (s.host) out.host = s.host;
+  Object.assign(out, {
     ...(s.provider ? { provider: s.provider } : {}),
     ...(s.project ? { project: s.project } : {}),
     title: s.title ?? null,
     model: s.model ?? null,
     cwd: s.cwd ?? null,
     repo: s.repo?.root ?? null,
-  };
+  });
   // A linked worktree's session: the main checkout's root (RepoState.main). Absent elsewhere.
   if (s.repo?.main) out.repoMain = s.repo.main;
   return Object.assign(out, {
@@ -817,7 +818,7 @@ export function sessionJson(s: Session, keep: SessionJsonKeep = {}): Record<stri
 }
 
 /** The fields of one session in --json, for --fields. */
-export const SESSION_FIELDS = ["id", "agent", "provider", "project", "title", "model", "cwd", "repo", "repoMain", "branch", "startedAt", "endedAt", "durationMs", "parentSessionId", "flags", "stats"] as const;
+export const SESSION_FIELDS = ["id", "agent", "host", "provider", "project", "title", "model", "cwd", "repo", "repoMain", "branch", "startedAt", "endedAt", "durationMs", "parentSessionId", "flags", "stats"] as const;
 
 /**
  * --fields: the paths to keep of a --json document (`id,title,stats.usage.costUsd`), or undefined

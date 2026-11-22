@@ -289,7 +289,7 @@ export class MemoryIndexStore implements IndexStore {
   async listSessions(f: SessionFilter = {}): Promise<Session[]> {
     const rows = [...this.sessions.values()]
       .filter((s) =>
-        (!f.agent || s.agent === f.agent) &&
+        (!f.agent || s.agent === f.agent || s.host === f.agent) &&
         (f.parentSessionId === undefined || (f.parentSessionId === null ? !s.parent : s.parent?.sessionId === f.parentSessionId)) &&
         (!f.repoRoot || s.repo?.root === f.repoRoot) &&
         (f.runId === undefined || (f.runId === null ? s.runId === undefined : s.runId === f.runId)) &&

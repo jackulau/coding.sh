@@ -57,6 +57,7 @@ export interface SpoolCursor {
 // ---------------------------------------------------------------- storage
 
 export interface SessionFilter {
+  /** Sessions this agent ran, and those it drove as a host app (Session.host). */
   agent?: AgentId;
   /** Only children of this session (subagents); null = only top-level sessions. */
   parentSessionId?: string | null;

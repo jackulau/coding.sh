@@ -611,6 +611,14 @@ fast, long-context or US-only rates (`batch+long-context` for both). `payload.co
 its estimate by token type at the same rates, so the parts add up to `usage.costUsd`. A reported or
 gateway-billed cost has no split.
 
+**Agent and host.**
+
+| Field | Meaning |
+|---|---|
+| `agent` | The agent that ran: `claude-code`, `codex`, … A session a host app drove keeps the agent it ran |
+| `host` | The host app that drove the agent: `t3code` for a T3 Code thread. Absent when no host drove the session, and for a T3 thread that never reached a provider (its `agent` is `t3code`). `agent=t3code` and `agent:t3code` match a session whose `agent` or `host` is `t3code` |
+| `provider` | The agent a host app ran, the same as `agent` when `host` is set. Kept for older readers |
+
 **Parent and model.**
 
 | Field | Meaning |

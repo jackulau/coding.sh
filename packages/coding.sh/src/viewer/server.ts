@@ -1649,7 +1649,8 @@ function facetParams(q: URLSearchParams): Facets {
 }
 function matchesFacets(s: Session, f: Facets, skip?: keyof Facets | "time"): boolean {
   return (
-    (skip === "agent" || !f.agent || s.agent === f.agent) &&
+    // A host app id (t3code) matches the sessions it drove, as --agent does; the facet counts the agent that ran.
+    (skip === "agent" || !f.agent || s.agent === f.agent || s.host === f.agent) &&
     (skip === "flag" || !f.flag || s.flags.includes(f.flag)) &&
     (skip === "repo" || !f.repo || s.repo?.root === f.repo) &&
     (skip === "model" || !f.model || s.model === f.model) &&

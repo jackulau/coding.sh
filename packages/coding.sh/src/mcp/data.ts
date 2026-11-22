@@ -91,6 +91,8 @@ export function sessionSummary(s: Session, now: number = Date.now()): SessionSum
   return {
     id: s.id,
     agent: s.agent,
+    // The host app that drove the agent (t3code), absent when none did.
+    host: s.host,
     title: clip(s.title, 120),
     model: s.model,
     repo: s.repo?.root,

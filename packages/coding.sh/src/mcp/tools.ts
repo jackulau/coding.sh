@@ -758,8 +758,8 @@ function toolDefs(): PagedTool[] {
         const limit = numArg(a, "limit", 10);
         const agent = strArg(a, "agent");
         const project = strArg(a, "project");
-        // agent picks sessions by the session's agent, as sessions_list and `coding.sh search --agent` do:
-        // a Claude Code session hosted by T3 Code is t3code, though its events carry claude-code.
+        // agent picks sessions by the session's agent or host, as sessions_list and `coding.sh search --agent` do:
+        // a Claude Code session hosted by T3 Code matches claude-code and t3code.
         const userWhere = whereArg(a, c.now());
         const where = agent ? agentWhere(agent, userWhere) : userWhere;
         const opts = { limit: offset + limit + 1, ...(project ? { project } : {}) };

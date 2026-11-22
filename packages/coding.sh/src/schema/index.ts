@@ -369,10 +369,17 @@ export interface AgentEvent {
 
 export interface Session {
   id: string;
+  /** The agent that ran, also when a host app drove it (a T3 Code thread that ran Claude Code is "claude-code"). */
   agent: AgentId;
   /**
-   * The agent a host app ran, when `agent` is a host (T3 Code driving Codex or
-   * Claude Code): "codex", "claude-code", or the host's driver name.
+   * The host app that drove the agent ("t3code" when T3 Code ran it). Absent
+   * when no host drove the session, and for a host thread that never started
+   * an agent (its agent is the host's id).
+   */
+  host?: string;
+  /**
+   * The agent a host app ran: the same as `agent` when `host` is set ("codex",
+   * "claude-code", or the host's driver name). Kept for older readers.
    */
   provider?: string;
   agentVersion?: string;

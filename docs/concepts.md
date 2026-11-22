@@ -24,6 +24,7 @@ thread, one trace from your own agent, or one `coding.sh run -- <command>`.
   or `F`, goes back to it.
 - A session with no failure opens on its first prompt. A link to a step opens on that step.
 - In the CLI: `coding.sh sessions` lists sessions, and `coding.sh show <id>` prints one.
+- Agent is the agent that ran: Claude Code in T3 Code is `claude-code`, host `t3code`.
 
 ### Turn
 

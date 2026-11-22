@@ -87,6 +87,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Sessions.** A session T3 Code ran now has the agent that ran (`claude-code`, `codex`) and `host: "t3code"`, so `usage --by agent`, `status` and the viewer's Agent facet compare Claude Code with Codex. The header says "via T3 Code", and `--agent t3code` still lists these sessions. [Host apps](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#host-apps-t3-code)
 - **Work.** `coding.sh work`, `work --json` and the MCP `work` tool give the review step `work show` gives: an item whose changed files are all outside its repo names them, not an empty `git diff`. A file a shell call edited by absolute path from a subfolder counts once, so `work`, `work show` and `show` agree. [Work](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-work)
 - **Improve.** A failed command's sample is an error line: a notice such as taskkill's `SUCCESS: …`, a status line (`exit: 0`), a `key: value` field or a line of code is not one, so an issue with no error line shows no sample. [Improve](https://github.com/jackulau/coding.sh/blob/main/docs/guides/improve.md#see-what-to-fix-first)
 - **MCP.** `sessions_list` says which time window it read: a `window` with the `since` and `until` from its arguments and any `since:` or `until:` clause in `where`, the tighter of each. Given only `until`, it still lists every session before it. [MCP](https://coding.sh/docs/mcp#tools)

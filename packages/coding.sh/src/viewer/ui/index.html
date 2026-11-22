@@ -1934,6 +1934,10 @@ function fmtDurationTick(ms, ticks) {
   if (step) return "0" + /[a-z]+$/.exec(fmtDurationTick(step))[0];
   return fmtDuration(ms).replace(/ 0[smh]$/, "");
 }
+/** " via T3 Code" for a session a host app drove (Session.host), else "". */
+function viaHost(s) {
+  return s && s.host ? " via " + ({ t3code: "T3 Code" }[s.host] || s.host) : "";
+}
 /** A subagent's header badge: "subagent", then its type when that says more (t3code's type is "subagent"). */
 function subagentBadge(type) {
   const t = String(type || "").trim();
@@ -3818,7 +3822,7 @@ function sessionList(view) {
         h("span", { class: "row-title truncate", dir: "auto", title: sessionTitle(s) }, depth ? h("span", { class: "sub-mark", "aria-hidden": "true" }, "↳ ") : null, sessionTitle(s)),
         h("span", { class: "row-badges" }, toggle, testsBadge(s), failedReqs, rowFlags(s.flags))),
       h("div", { class: "row-cells" },
-        h("span", { class: "cell agent-cell", title: [s.agent, s.model].filter(Boolean).join(" · ") }, h("span", null, s.parent && s.parent.type ? s.parent.type : s.agent), s.model ? h("span", { class: "sub" }, " " + midClip(s.model, 22)) : null),
+        h("span", { class: "cell agent-cell", title: [s.agent + viaHost(s), s.model].filter(Boolean).join(" · ") }, h("span", null, s.parent && s.parent.type ? s.parent.type : s.agent), s.model ? h("span", { class: "sub" }, " " + midClip(s.model, 22)) : null),
         h("span", { class: "cell muted repo-cell" + (repoLabel(s) ? "" : " is-none"), title: repoDir(s) }, repoLabel(s) || "—"),
         h("span", { class: "cell act-cell" }, act, actErr ? h("span", { class: "err" }, h("span", { class: "sep" }, " · "), actErr) : null),
         h("span", { class: "cell num muted tok-cell" }, rowTokens(st.usage).replace(" tokens", " tok")),
@@ -5898,7 +5902,7 @@ function sessionHeader(s, labels, rel) {
       h("button", { class: "copy-id", type: "button", "aria-label": "Copy session id", onclick: () => copy(s.id, "session id") }, "copy")),
     h("div", { class: "head-row" }, h("h1", { title: sessionTitle(s), dir: "auto" }, sessionTitle(s)), rel && rel.firstFail),
     factsList = h("dl", { class: "facts" + (factsAll ? " all" : ""), id: "facts" },
-      fact("agent", s.agent + (s.agentVersion ? " " + s.agentVersion : "")),
+      fact("agent", s.agent + (s.agentVersion ? " " + s.agentVersion : "") + viaHost(s)),
       fact("model", s.model),
       fact("repo", repo.root ? basename(repo.root) + (repo.head ? "@" + short(repo.head) : "") + (repo.branch ? " (" + repo.branch + ")" : "") : "", repo.root),
       fact("started", fmtDate(s.startedAt), new Date(s.startedAt).toISOString()),

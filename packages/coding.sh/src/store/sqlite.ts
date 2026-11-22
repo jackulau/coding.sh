@@ -734,6 +734,15 @@ const CACHE_SIZE_KIB = 16_000;
 /** Writer locks this process holds, by lock path (see acquireWriterLock). */
 const heldWriterLocks = new Set<string>();
 
+/** The stats JSON as stored: provider and host have no column, so they ride inside it (rowToSession takes them out). */
+function storedStats(s: Session): Session["stats"] & { provider?: string; host?: string } {
+  if (!s.provider && !s.host) return s.stats;
+  const out: Session["stats"] & { provider?: string; host?: string } = { ...s.stats };
+  if (s.provider) out.provider = s.provider;
+  if (s.host) out.host = s.host;
+  return out;
+}
+
 function rowToSession(r: Row): Session {
   const s: Session = {
     id: r.id as string,
@@ -742,9 +751,11 @@ function rowToSession(r: Row): Session {
     stats: parse<Session["stats"]>(r.stats)!,
     flags: parse<string[]>(r.flags) ?? [],
   };
-  // provider rides in the stats JSON (no column; see upsertSession).
-  const { provider, ...stats } = s.stats as Session["stats"] & { provider?: string };
-  if (typeof provider === "string") (s.stats = stats), (s.provider = provider);
+  // provider and host ride in the stats JSON (no column; see upsertSession).
+  const { provider, host, ...stats } = s.stats as Session["stats"] & { provider?: string; host?: string };
+  if (typeof provider === "string" || typeof host === "string") s.stats = stats;
+  if (typeof provider === "string") s.provider = provider;
+  if (typeof host === "string") s.host = host;
   const set = <K extends keyof Session>(k: K, v: Session[K] | undefined) => {
     if (v !== undefined) s[k] = v;
   };
@@ -775,7 +786,8 @@ function parseEventCursor(c: string | undefined): { ts: number; rowid: number } 
 function filterSql(f: Omit<SessionFilter, "limit" | "offset">, p: string): { where: string[]; params: (string | number)[] } {
   const where: string[] = [];
   const params: (string | number)[] = [];
-  if (f.agent) where.push(`${p}agent = ?`), params.push(f.agent);
+  // An agent matches the sessions it ran and the ones it drove as a host app (Session.host, in the stats JSON).
+  if (f.agent) where.push(`(${p}agent = ? OR json_extract(${p}stats, '$.host') = ?)`), params.push(f.agent, f.agent);
   if (f.parentSessionId === null) where.push(`${p}parent_session_id IS NULL`);
   else if (f.parentSessionId !== undefined) where.push(`${p}parent_session_id = ?`), params.push(f.parentSessionId);
   if (f.repoRoot) where.push(`${p}repo_root = ?`), params.push(f.repoRoot);
@@ -1465,7 +1477,7 @@ export class SqliteIndexStore implements IndexStore {
         trace_ids = excluded.trace_ids, project_id = excluded.project_id,
         parse_version = coalesce(excluded.parse_version, sessions.parse_version)`).run(
       s.id, s.agent, s.agentVersion ?? null, s.model ?? null, s.cwd ?? null, json(s.repo), s.repo?.root ?? null,
-      s.title ?? null, s.startedAt, s.endedAt ?? null, JSON.stringify(s.provider ? { ...s.stats, provider: s.provider } : s.stats), JSON.stringify(s.flags ?? []),
+      s.title ?? null, s.startedAt, s.endedAt ?? null, JSON.stringify(storedStats(s)), JSON.stringify(s.flags ?? []),
       s.runId ?? null, s.endSnapshot ?? null, json(s.parent), s.parent?.sessionId ?? null,
       s.traceIds?.length ? JSON.stringify(s.traceIds) : null, projectCol(s.project), s.parseVersion ?? null,
     );

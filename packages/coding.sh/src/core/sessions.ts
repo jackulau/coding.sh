@@ -583,7 +583,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * new derivation. A new or retyped sub-state changes the stamp by itself; a
  * new optional field or a change of meaning still needs the bump.
  */
-export const SESSION_FOLD_VERSION = 37; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory). 19: a session with transcript model calls counts them, not the copies its OTLP logs carry (sansOtel, transcriptCalls). 20: weight edits (stats.weightEdits, the weights:edited tag, SessionState.weightEdits). 21: weight checkpoints (stats.weightEdits.checkpoints, the weights:checkpoint tag), and stats.weightEdits on a session with a checkpoint and no edit. 22: a `<parent>:sub:<agentId>` session with no session.start takes its parent from the id. 23: an API error event (source api, or status 400 or more) counts in stats.llmErrors. 24: api-stall (FlagState.apiStall); filesChanged counts files a shell call writes (shellCallFiles, SessionState.shellFiles), and keys file.change paths relative to the cwd. 25: a session with no prompt is titled by its session.start's name (SessionState.startName), so an SDK trace() of weight edits is not untitled. 26: stats.compactionRefetches (core/waste.ts WasteState.preCompact), reads that fetched again what a compaction dropped. 27: stats.waiting (core/waiting.ts). 28: stats.endInferred, an endedAt that is the last activity seen rather than a session.end. 29: a session with a tool call still open and no real end (no session.end, or only a transcript's quiet marker) has no endedAt (SessionState.endIdle). 30: a host's thread title (a host-link notification's `title`, T3 Code) titles the session before its prompt (SessionState.hostTitle). 31: stats.usage.estimatedCostByTokenType, the estimate split by token type from the calls' payload.costByTokenType (UsageState.split). 32: an `exec` call with a command line (Devin CLI) is a shell call (isShellCall), so filesChanged and waste count it; Devin's `run_subagent` starts a subagent (waiting, unapproved); a permission wait picks an open call of the tool its prompt names, and on a call with no id ends with that tool's end only (WaitingState.wait.tool). 33: a host app store request (T3 Code approvals and questions: a notification with a requestId) sets stats.waiting in a backfill too, until its resolved notification (WaitingState.wait.request); waiting and unapproved share SPAWN_TOOL, so a prompt never names an open invoke_agent call. 34: a host notification before the session.start (T3 Code host-link) opens no phase of its own, so the session.start after it is no resume (OutlineState.begun). 35: titles skip a workflow-harness frame line, a `Project:` header and pasted blocks (TITLE_SKIP); a session.start's payload.tags (Langfuse trace tags from the OTel receiver) become tag:<name> flags (SessionState.tags); also refolds the other changes of improvement round 7. 36: a workflow agent's parent link names its run, phase and label (parent.workflowId, workflowName, phase, label); filesChanged keys a path by the session's cwd after resolving it against the event's (changeKey), so a file edited from two folders counts once; titles skip frame lines before a subagent's prompt is cut to one line, skip a `Project:` line only in a framed prompt, a frame-only workflow agent is titled "<phase> · <label>", and a phase is titled by its first prompt that is not a harness notice or frame (phasePromptTitle), and a T3 Code delegated-task result is a harness notice, not a prompt (isSyntheticPrompt). 37: changeKey keys an absolute path that is outside the event's folder but inside the session's cwd relative to the cwd, so a file a shell call edited after `cd <repo>` from a subfolder counts once.
+export const SESSION_FOLD_VERSION = 38; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory). 19: a session with transcript model calls counts them, not the copies its OTLP logs carry (sansOtel, transcriptCalls). 20: weight edits (stats.weightEdits, the weights:edited tag, SessionState.weightEdits). 21: weight checkpoints (stats.weightEdits.checkpoints, the weights:checkpoint tag), and stats.weightEdits on a session with a checkpoint and no edit. 22: a `<parent>:sub:<agentId>` session with no session.start takes its parent from the id. 23: an API error event (source api, or status 400 or more) counts in stats.llmErrors. 24: api-stall (FlagState.apiStall); filesChanged counts files a shell call writes (shellCallFiles, SessionState.shellFiles), and keys file.change paths relative to the cwd. 25: a session with no prompt is titled by its session.start's name (SessionState.startName), so an SDK trace() of weight edits is not untitled. 26: stats.compactionRefetches (core/waste.ts WasteState.preCompact), reads that fetched again what a compaction dropped. 27: stats.waiting (core/waiting.ts). 28: stats.endInferred, an endedAt that is the last activity seen rather than a session.end. 29: a session with a tool call still open and no real end (no session.end, or only a transcript's quiet marker) has no endedAt (SessionState.endIdle). 30: a host's thread title (a host-link notification's `title`, T3 Code) titles the session before its prompt (SessionState.hostTitle). 31: stats.usage.estimatedCostByTokenType, the estimate split by token type from the calls' payload.costByTokenType (UsageState.split). 32: an `exec` call with a command line (Devin CLI) is a shell call (isShellCall), so filesChanged and waste count it; Devin's `run_subagent` starts a subagent (waiting, unapproved); a permission wait picks an open call of the tool its prompt names, and on a call with no id ends with that tool's end only (WaitingState.wait.tool). 33: a host app store request (T3 Code approvals and questions: a notification with a requestId) sets stats.waiting in a backfill too, until its resolved notification (WaitingState.wait.request); waiting and unapproved share SPAWN_TOOL, so a prompt never names an open invoke_agent call. 34: a host notification before the session.start (T3 Code host-link) opens no phase of its own, so the session.start after it is no resume (OutlineState.begun). 35: titles skip a workflow-harness frame line, a `Project:` header and pasted blocks (TITLE_SKIP); a session.start's payload.tags (Langfuse trace tags from the OTel receiver) become tag:<name> flags (SessionState.tags); also refolds the other changes of improvement round 7. 36: a workflow agent's parent link names its run, phase and label (parent.workflowId, workflowName, phase, label); filesChanged keys a path by the session's cwd after resolving it against the event's (changeKey), so a file edited from two folders counts once; titles skip frame lines before a subagent's prompt is cut to one line, skip a `Project:` line only in a framed prompt, a frame-only workflow agent is titled "<phase> · <label>", and a phase is titled by its first prompt that is not a harness notice or frame (phasePromptTitle), and a T3 Code delegated-task result is a harness notice, not a prompt (isSyntheticPrompt). 37: changeKey keys an absolute path that is outside the event's folder but inside the session's cwd relative to the cwd, so a file a shell call edited after `cd <repo>` from a subfolder counts once. 38: a session a host app drove (payload.via, T3 Code) is the agent that ran, with the host as Session.host (hostedAgent); a host thread that started no agent (SessionState.hostBare) stays the host's.
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -610,6 +610,8 @@ export interface SessionState {
    */
   simple: boolean;
   via?: string;
+  /** A host-link that names no agent run (a T3 Code thread with no provider thread): the host never started an agent. */
+  hostBare?: boolean;
   /** Distinct agents of captured events, in order (the agent a host ran), and the first payload.provider. */
   agents: string[];
   provider?: string;
@@ -837,6 +839,19 @@ export function launchOf(p: Record<string, unknown>): "headless" | "interactive"
   return undefined;
 }
 
+/**
+ * The agent a host app (s.via) ran: the first event from another agent, else what the host's own
+ * events name (payload.provider). Undefined for a host thread that started no agent (hostBare) or
+ * names none it knows ("unknown"): that session stays the host's.
+ */
+function hostedAgent(s: SessionState, prev: Session | undefined): string | undefined {
+  const other = s.agents.find((a) => a !== s.via);
+  if (other) return other;
+  if (s.hostBare) return undefined;
+  const named = s.provider ?? (prev?.host ? prev.agent : prev?.provider);
+  return named && named !== "unknown" && named !== s.via ? named : undefined;
+}
+
 /** Folds the session's next event (in time order) into the state. */
 export function foldSession(s: SessionState, e: AgentEvent): void {
   const index = s.n++;
@@ -912,9 +927,11 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
   s.captured++;
   if (!s.agents.includes(e.agent)) s.agents.push(e.agent);
   // Host app that drove the agent (T3 Code): set on events by the host's adapter
-  // or the hook's env marker. The session belongs to the host; the agent it ran
-  // stays on the session as provider.
-  if (typeof e.payload.via === "string" && e.payload.via) s.via ??= e.payload.via;
+  // or the hook's env marker. The session is the agent that ran; the host is Session.host.
+  if (typeof e.payload.via === "string" && e.payload.via) {
+    s.via ??= e.payload.via;
+    if (e.payload.type === "host-link" && e.payload.t3ProviderThreadId === undefined) s.hostBare = true;
+  }
   if (e.traceId && s.traceIds.size < 2 * MAX_TRACE_IDS) s.traceIds.add(e.traceId);
   const end = eventEnd(e);
   if (s.lastEnd === undefined || end > s.lastEnd) s.lastEnd = end;
@@ -1044,11 +1061,13 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
   let fallbackTitle = s.fallbackTitle;
 
   const durable = s.simple ? undefined : durableStats(sorted!);
+  const ran = s.via ? hostedAgent(s, prev) : undefined;
   const session: Session = {
     id,
+    // A host app's session is the agent it ran (Session.host names the host); a host thread that started none is the host's.
     // Durable engine spans (workflow.start, steps) can precede the agent's own events; they don't name it.
     // Nor does the client that started a durable run (a Restate ingress call): the code making model calls does.
-    agent: s.via ?? (durable ? sorted!.find((e) => e.kind === "llm.call") : undefined)?.agent ?? s.agent ?? first?.agent ?? prev!.agent,
+    agent: ran ?? s.via ?? (durable ? sorted!.find((e) => e.kind === "llm.call") : undefined)?.agent ?? s.agent ?? first?.agent ?? prev!.agent,
     startedAt: first?.ts ?? prev!.startedAt,
     stats: {
       events: s.n,
@@ -1119,8 +1138,9 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
     if (v !== undefined) session[k] = v;
   };
   set("agentVersion", s.agentVersion ?? prev?.agentVersion);
-  // The agent a host ran: the first event from another agent, else what the host's own events name.
-  if (s.via) set("provider", s.agents.find((a) => a !== s.via) ?? s.provider ?? prev?.provider);
+  // The agent a host ran (also `agent`), kept as provider for older readers; the host app as host.
+  if (s.via) set("provider", ran ?? s.provider ?? prev?.provider);
+  if (ran) set("host", s.via);
   // The model most main-thread calls ran on, not the last one seen: a silent fallback
   // (stats.modelSwitch) or a helper model's call (a title) must not relabel the session.
   set("model", mainModelOf(modelFold) ?? s.model ?? prev?.model);

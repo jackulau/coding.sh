@@ -60,7 +60,8 @@ const tokens = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTok
 
 /** SQL over `s` (sessions) or `e` (events) per key; a clause matches when any expression does. List-valued keys (flags, weights.checkpoint) use `f.v`, an item of MULTI_FROM. */
 export const KEY_SQL: Record<string, string[]> = {
-  agent: ["s.agent"],
+  // An agent, or the host app that drove the session (Session.host), as in the SQLite store.
+  agent: ["s.agent", `coalesce(${jstr("s.stats", "host")}, '')`],
   model: ["s.model"],
   provider: [jstr("s.stats", "provider")],
   launch: [jstr("s.stats", "launch")],
