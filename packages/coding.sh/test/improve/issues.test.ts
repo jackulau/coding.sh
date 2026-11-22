@@ -140,6 +140,11 @@ describe("rankIssues", () => {
     assert.equal(i.beforeEdits, 2);
     assert.equal(i.severity.level, "high", "a broken test command is a defect of the setup");
     assert.equal(i.rule, undefined, "a broken command needs fixing, not a line");
+    assert.equal(
+      stepsFor(i, 1, { provider: undefined }).find((s) => s.label === "Find every time it failed")?.command,
+      `coding.sh search "npm test" --where 'kind:tool.end ok:false'`,
+      "the search lists the failed calls, not every call of the command",
+    );
   });
 
   it("a failure in one session only is not an issue", () => {
