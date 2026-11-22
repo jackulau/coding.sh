@@ -13,7 +13,8 @@ import { failureFlags, isBackfillEvent, percentile } from "../core/sessions.ts";
 import { weightsEventText } from "../core/weights.ts";
 import { waitKind } from "../core/wait-tools.ts";
 import { sessionMatcher } from "../query/run.ts";
-import { repoGroup, type Node, type Query } from "../query/where.ts";
+import { repoGroup, windowsSpelling, type Node, type Query } from "../query/where.ts";
+import { isBare, repoPath } from "../core/git.ts";
 
 type Obj = Record<string, unknown>;
 
@@ -147,7 +148,7 @@ export function parsePlace(v: string, cwd: string, home: string): Place {
 export function pathPlace(dir: string): Place {
   const path = driveUpper(resolve(dir));
   const repo = checkoutRepo(path);
-  return repo ? { path, repo: driveUpper(repo) } : { path };
+  return repo ? { path, repo } : { path };
 }
 
 /**
@@ -155,26 +156,27 @@ export function pathPlace(dir: string): Place {
  * worktree's root when dir is in a linked worktree (its .git file names a git dir whose
  * commondir is <main>/.git), dir itself when it is a main checkout's root, else undefined
  * (a folder inside a main checkout stays a folder; a submodule and a bare repo's worktree
- * have no main checkout).
+ * have no main checkout, a bare clone kept at proj/.git included). In the spelling
+ * RepoState.main and .root are stored in (repoPath), whatever spelling dir has.
  */
 export function checkoutRepo(dir: string): string | undefined {
   const root = gitRoot(dir);
   if (!root) return undefined;
   const dotGit = join(root, ".git");
   try {
-    if (!statSync(dotGit).isFile()) return pathKey(root) === pathKey(resolve(dir)) ? root : undefined;
+    if (!statSync(dotGit).isFile()) return pathKey(root) === pathKey(resolve(dir)) && !isBare(dotGit) ? repoPath(root) : undefined;
     const gitDir = /^gitdir:\s*(.+?)\s*$/m.exec(readFileSync(dotGit, "utf8"))?.[1];
     if (!gitDir) return undefined;
     const own = resolve(root, gitDir);
     const common = resolve(own, readFileSync(join(own, "commondir"), "utf8").trim());
-    return basename(common) === ".git" && pathKey(common) !== pathKey(own) ? dirname(common) : undefined;
+    return basename(common) === ".git" && pathKey(common) !== pathKey(own) && !isBare(common) ? repoPath(dirname(common)) : undefined;
   } catch {
     return undefined;
   }
 }
 
-/** On Windows, an upper-case drive letter: the form stored paths have, which facets (a query, not pathKey) match exactly. */
-const driveUpper = (p: string) => (process.platform === "win32" ? p.replace(/^[a-z]:/, (d) => d.toUpperCase()) : p);
+/** On Windows, an upper-case drive letter and backslashes: the form stored paths have, which facets (a query, not pathKey) match exactly. */
+const driveUpper = (p: string) => (process.platform === "win32" ? windowsSpelling(p) : p);
 
 /** A path as it is compared: on Windows, case and slash direction do not count (c:/a and C:\A are one folder). */
 export function pathKey(p: string, platform: string = process.platform): string {
@@ -876,7 +878,8 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
   const byNameOnly: Session[] = [];
   const repoKey = (s: Session): string | undefined => {
     const g = repoGroup(s);
-    return g.path ?? (g.name === undefined ? "unknown" : undefined);
+    // One key per repo however a stored root was spelled (c:\w and C:\w; sessions stored before repoPath).
+    return g.path !== undefined ? driveUpper(g.path) : g.name === undefined ? "unknown" : undefined;
   };
   // The five sessions to name, under both rankings: which one applies is known only at the end.
   const cost = (s: Session) => s.stats.usage?.costUsd ?? 0;

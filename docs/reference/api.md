@@ -548,6 +548,11 @@ and `main` when `root` is a linked worktree, the main checkout's root. The `repo
 matches `repo.root` exactly. `repo:` in `where` also matches a worktree's sessions by its main
 repo's path or name.
 
+- A worktree of a bare repo has no `main`, a bare clone kept at `proj/.git` included.
+- `root` and `main` are the real path with long names, and on Windows an upper-case drive
+  letter, whatever spelling the agent's working directory had. Sessions stored before this rule
+  keep the spelling they had.
+
 `childCount` is the number of subagent sessions under each row. `nextCursor` is present only when
 `hasMore` is true; pass it back as `cursor` for the next page:
 

@@ -24,13 +24,14 @@ ses_b32e798f30f8bed3a17e              opencode          1h ago   1m32s     1    
 ```
 
 The newest 20 come first. `coding-sh-triage` is an app traced with the SDK; the others are coding
-agents. Subagent sessions and sessions with nothing in them are hidden.
+agents. Subagent sessions and sessions with nothing in them are hidden; the last line counts the
+hidden subagents (`hiddenChildren` in `--json`).
 
 | Flag | What it does |
 |---|---|
 | `--agent codex` | Only this agent. Repeat it or pass `a,b` for several. |
 | `--since 7d` | Only sessions that started after this: `12h`, `today`, `yesterday` or a date. |
-| `--repo <path>` | Only sessions in this repo root. |
+| `--repo <path\|name>` | Only this repo, worktrees included, by name or root. Another path: sessions under it. |
 | `--flag no-verification` | Only sessions with this flag or tag. |
 | `--where <query>` | Any filter the [query language](https://coding.sh/docs/query) takes. |
 | `-n, --limit 50` | More rows (default 20). |

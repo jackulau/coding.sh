@@ -458,7 +458,7 @@ export const COMMANDS: CommandSpec[] = [
     summary: "List captured sessions",
     flags: [
       AGENT_ONE,
-      { name: "repo", short: "r", type: "string", value: "<PATH>", desc: "Only sessions in this repo root" },
+      { name: "repo", short: "r", type: "string", value: "<PATH|NAME>", desc: "Only sessions in this repo: a path (matches at or under it; a checkout's root or a folder in a linked worktree takes in every worktree) or a repo name (its main checkout and every worktree)" },
       SINCE,
       LIMIT(20),
       { name: "subagents", type: "boolean", desc: "Include subagent sessions (a --where with id:, parent:, is:root or is:child picks them itself)" },
@@ -472,7 +472,7 @@ export const COMMANDS: CommandSpec[] = [
       FRESH,
     ],
     examples: ["coding.sh sessions --where 'agent:codex cost>0.5 since:7d'", "coding.sh sessions --where 'tool:Bash ok:false -flag:compaction'", "coding.sh sessions --view codex-flagged --since 7d", "coding.sh sessions --facets model,tool --where 'repo:coding-sh'", "coding.sh sessions --agent codex --since 7d"],
-    notes: [...WHERE_NOTES, "--facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).", "With --json each session is a digest: its stats without stats.phases, and each derail without the event it started at (eventId, index). show <id> --json has both, and --fields stats.phases or --fields stats.derails prints them here.", "In --json, repo is the root of the checkout the session ran in. A session in a linked worktree also has repoMain, the main checkout's root.", PENDING_NOTE],
+    notes: [...WHERE_NOTES, "--facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).", "With --json each session is a digest: its stats without stats.phases, and each derail without the event it started at (eventId, index). show <id> --json has both, and --fields stats.phases or --fields stats.derails prints them here.", "In --json, repo is the root of the checkout the session ran in. A session in a linked worktree also has repoMain, the main checkout's root.", "Without --subagents the list ends with how many child (subagent) sessions the same filters match and it left out; --json has that count as hiddenChildren, absent when there are none.", PENDING_NOTE],
     load: () => import("./commands/sessions.ts"),
   },
   {
@@ -839,7 +839,7 @@ export const COMMANDS: CommandSpec[] = [
       { name: "evidence", type: "string", value: "<DIR>", desc: "Instead: write each matching session's events, tool inputs and full outputs, redacted, as files under DIR" },
       { ...FORCE, desc: "With --evidence, write into a directory that is not empty" },
       AGENT_ONE,
-      { name: "repo", short: "r", type: "string", value: "<PATH>", desc: "Only sessions in this repo root" },
+      { name: "repo", short: "r", type: "string", value: "<PATH|NAME>", desc: "Only sessions in this repo: a path (matches at or under it; a checkout's root or a folder in a linked worktree takes in every worktree) or a repo name (its main checkout and every worktree)" },
       SINCE,
       { name: "flag", type: "string", value: "<NAME>", desc: "Only sessions with this flag or tag, as in coding.sh sessions --flag" },
       { name: "subagents", type: "boolean", desc: "Include subagent sessions (and their events and labels). A --where with id:, parent:, is:root or is:child picks them itself" },

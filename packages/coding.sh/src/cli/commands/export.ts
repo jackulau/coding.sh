@@ -15,6 +15,7 @@ import { parseSince, positiveInt, suggest, UsageError } from "../args.ts";
 import { agentScope, agentsFlag, autoIngest, queryCliError, readIngest, shellQuote, str, whereFlag, withContext } from "../common.ts";
 import { CliError, forTerminal, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
+import { withRepo } from "./sessions.ts";
 
 /** Writes to stdout, waiting for 'drain' when the pipe is full. A terminal gets no escape sequence. */
 function stdoutWriter(): (chunk: string) => void | Promise<void> {
@@ -69,7 +70,10 @@ export async function run(c: CommandContext): Promise<number> {
   const since = str(c.flags.since) !== undefined ? parseSince(str(c.flags.since)!) : undefined;
   const repo = str(c.flags.repo);
   const userWhere = whereFlag(c);
-  const { agent, where } = agentScope(agentsFlag(c), userWhere);
+  const scope = agentScope(agentsFlag(c), userWhere);
+  const agent = scope.agent;
+  // --repo as `sessions` reads it: a path or a repo name, worktrees included.
+  const where = withRepo(scope.where, repo, c);
   const dir = evidence ? resolve(c.cwd, evidence) : undefined;
   if (dir && nonEmpty(dir) && c.flags.force !== true) {
     throw new CliError(`${dir} is not empty`, { reason: "target_exists", askUser: true, next: ["Replace what is there (sessions from an earlier export are removed):", forceCommand(c, evidence!)] });
@@ -78,7 +82,6 @@ export async function run(c: CommandContext): Promise<number> {
     await autoIngest(ctx, readIngest(c));
     const filter = {
       ...(agent ? { agent } : {}),
-      ...(repo ? { repoRoot: resolve(c.cwd, repo) } : {}),
       ...(since !== undefined ? { since } : {}),
       ...(c.flags.subagents === true || scopesSubagents(userWhere?.root) ? {} : { parentSessionId: null }),
       ...(str(c.flags.project) ? { project: str(c.flags.project)! } : {}),

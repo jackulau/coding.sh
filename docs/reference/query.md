@@ -52,7 +52,7 @@ test each hit.
 | `agent` | session | Agent id, or the service name of an SDK or OpenTelemetry app | `agent:codex` |
 | `model` | session | Main model | `model:claude-sonnet-*` |
 | `provider` | session | Model provider | `provider:anthropic` |
-| `repo` | session | Repo root path, or its name (else the working directory's name). A session in a worktree also matches its main repo's path and name | `repo:coding-sh` |
+| `repo` | session | Repo root path, or its name (else the working directory's name). A session in a worktree also matches its main repo's path and name. On Windows a typed path gets an upper-case drive letter and backslashes (`c:/w/demo` is `C:\w\demo`), the spelling stored roots have; type the long name, not an 8.3 short name | `repo:coding-sh` |
 | `launch` | session | `headless` (`claude -p`, an SDK, `codex exec`) or `interactive` | `launch:headless` |
 | `branch` | session | Git branch | `branch:main` |
 | `dir` | session | Working directory | `dir:/work/*` |
@@ -335,7 +335,8 @@ coding.sh export labels --format csv
 ```
 
 The filters `--agent`, `--repo`, `--since`, `--flag`, `--project`, `--where`, `--subagents` and
-`--limit` (the N newest sessions) pick sessions; `events` and `labels` export the rows of those
+`--limit` (the N newest sessions) pick sessions, as they do for `coding.sh sessions` (`--repo` takes
+a path or a repo name); `events` and `labels` export the rows of those
 sessions. With no filter, `export labels` exports every label, including labels on eval cases.
 
 JSONL rows are the stored objects (`Session`, `AgentEvent`, `Label` in the

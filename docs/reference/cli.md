@@ -540,7 +540,7 @@ coding.sh sessions [options]
 | Option | Default | Description |
 |---|---|---|
 | `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
-| `-r, --repo <PATH>` |  | Only sessions in this repo root. |
+| `-r, --repo <PATH|NAME>` |  | Only sessions in this repo: a path (matches at or under it; a checkout's root or a folder in a linked worktree takes in every worktree) or a repo name (its main checkout and every worktree) |
 | `--since <WHEN>` |  | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
 | `-n, --limit <N>` | `20` | Maximum rows. |
 | `--subagents` |  | Include subagent sessions (a --where with id:, parent:, is:root or is:child picks them itself) |
@@ -566,6 +566,7 @@ coding.sh sessions --agent codex --since 7d
 - --facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).
 - With --json each session is a digest: its stats without stats.phases, and each derail without the event it started at (eventId, index). show &lt;id&gt; --json has both, and --fields stats.phases or --fields stats.derails prints them here.
 - In --json, repo is the root of the checkout the session ran in. A session in a linked worktree also has repoMain, the main checkout's root.
+- Without --subagents the list ends with how many child (subagent) sessions the same filters match and it left out; --json has that count as hiddenChildren, absent when there are none.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
 ## `coding.sh views`
@@ -1255,7 +1256,7 @@ coding.sh export [what] [options]
 | `--evidence <DIR>` |  | Instead: write each matching session's events, tool inputs and full outputs, redacted, as files under DIR. |
 | `--force` |  | With --evidence, write into a directory that is not empty. |
 | `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
-| `-r, --repo <PATH>` |  | Only sessions in this repo root. |
+| `-r, --repo <PATH|NAME>` |  | Only sessions in this repo: a path (matches at or under it; a checkout's root or a folder in a linked worktree takes in every worktree) or a repo name (its main checkout and every worktree) |
 | `--since <WHEN>` |  | Only at or after this time: 7d, 12h, 30m, today, yesterday or a date. A date without a zone is local time: 2026-11-09 is local midnight. |
 | `--flag <NAME>` |  | Only sessions with this flag or tag, as in coding.sh sessions --flag. |
 | `--subagents` |  | Include subagent sessions (and their events and labels). A --where with id:, parent:, is:root or is:child picks them itself. |
