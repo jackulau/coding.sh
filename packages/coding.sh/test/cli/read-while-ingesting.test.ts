@@ -200,7 +200,12 @@ describe("reads during ingest", () => {
         items = (await api("/api/sessions?limit=50")).items as unknown[];
       }
       assert.equal(items.length, 5);
-      const st = await api("/api/ingest");
+      // The list fills file by file; the pass records that it finished (ingest-last.json) after the last one.
+      let st = await api("/api/ingest");
+      for (let i = 0; i < 600 && st.lastIngestAt === null; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        st = await api("/api/ingest");
+      }
       // `index` dates the index by this home's last finished ingest (ingest-last.json), as `coding.sh status` does.
       assert.deepEqual(Object.keys(st).sort(), ["captureSetUp", "filesPending", "importing", "index", "ingesting", "lastIngestAt"]);
       assert.equal(st.importing, false);
