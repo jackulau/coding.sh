@@ -18,6 +18,7 @@ import { proxySettings } from "../../proxy/state.ts";
 import type { Session } from "../../schema/index.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { list, oneLine, shellQuote, str } from "../common.ts";
+import { cliCommand } from "../next-steps.ts";
 import { clean, CliError, duration, plural, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -108,7 +109,7 @@ export async function fork(c: CommandContext, ctx: Context, s: Session, replay: 
   let saved: { suite: string; dir: string; caseId: string; created: boolean } | undefined;
   if (suite !== undefined) {
     const expected = caseExpectation(rc.recorded, result);
-    if (!expected) throw new CliError(`Step ${n}'s recorded reply was text, and the fork gave no single tool call to expect instead, so the case would have nothing to check`, { reason: "nothing_to_check", next: ["Fork with a few trials first:", `coding.sh replay ${shellQuote(s.id)} --step ${n} --fork -k 3 --save-case ${suite}`] });
+    if (!expected) throw new CliError(`Step ${n}'s recorded reply was text, and the fork gave no single tool call to expect instead, so the case would have nothing to check`, { reason: "nothing_to_check", next: ["Fork with a few trials first:", cliCommand(c.env, ["replay", s.id, "--step", String(n), "--fork", ...forkArgs(c, Math.max(trials, 3)), "--save-case", suite])] });
     const root = (await repoRoot(c.cwd)) ?? c.cwd;
     const dir = join(root, SUITES_DIR, suite);
     const caseId = `fork-${s.id.slice(0, 8)}-step${n}`;
@@ -141,17 +142,19 @@ export async function fork(c: CommandContext, ctx: Context, s: Session, replay: 
     out.print(`Saved case ${saved.caseId} in ${saved.dir}${saved.created ? " (new suite)" : ""}`);
     out.print(out.style("Its request file holds the conversation up to this step, redacted as stored. Read it before you commit it.", "faint"));
     out.next("Run it", `coding.sh eval run ${saved.suite}`);
-  } else if (result && result.differ) out.next("Keep this step as a regression case", `coding.sh replay ${shellQuote(s.id)} --step ${n} --fork ${forkFlags(c)}--save-case forks`);
+  } else if (result && result.differ) out.next("Keep this step as a regression case", cliCommand(c.env, ["replay", s.id, "--step", String(n), "--fork", ...forkArgs(c, trials), "--save-case", "forks"]));
   return run?.verify && !run.verify.ok ? 1 : 0;
 }
 
-function forkFlags(c: CommandContext): string {
-  const parts = list(c.flags.with).map((w) => `--with ${w} `);
-  const h = str(c.flags.harness);
-  if (h) parts.push(`--harness ${h} `);
-  const m = str(c.flags.model);
-  if (m) parts.push(`--model ${m} `);
-  return parts.join("");
+/** The change flags as given (--with, --harness, --model, --system) and -k past 1, so a printed rerun forks the same way. */
+function forkArgs(c: CommandContext, trials: number): string[] {
+  const args = list(c.flags.with).flatMap((w) => ["--with", w]);
+  for (const f of ["harness", "model", "system"]) {
+    const v = str(c.flags[f]);
+    if (v !== undefined) args.push(`--${f}`, v);
+  }
+  if (trials > 1) args.push("-k", String(trials));
+  return args;
 }
 
 function printTrials(out: Output, r: ForkResult): void {
