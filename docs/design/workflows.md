@@ -244,8 +244,9 @@ A workflow case is `{id, args, start?: RepoState snapshot, truth, split}`, store
 | Council / design loops | Programmatic budgets first (Lighthouse etc.), council relative score second | As in docs/design/dogfood.md §3.4 |
 
 Seeded cases are validated before use: on the seeded snapshot, each bug's own test fails; with the
-bug patch reverted, it passes. The truth file lives in `hidden/` and is never readable from the
-workflow's working tree.
+bug patch reverted, it passes. The truth file lives outside the workflow's working tree (`[start]`'s
+`repoRoot` and `snapshot`), where its agents can't read it. The case loader refuses one inside
+either and names a folder outside both to move it to.
 
 ## 6. Experiments: A/B of workflow variants
 

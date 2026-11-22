@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse } from "node:path";
 import { after, before, describe, it } from "node:test";
 import type { JudgeVersion } from "../../src/datasets/types.ts";
 import { mockProvider } from "../../src/graders/mock.ts";
@@ -62,12 +62,41 @@ describe("case truth", () => {
     assert.equal(ok.start!.snapshot, join(root, "tree"));
     await assert.rejects(
       parseCase(`[start]\nrepoRoot = "../../../tree"\n[truth]\nfile = "../../../tree/secret/s.json"\n`, join(dir, "leak.toml"), "wf", new MemBlobs()),
-      /leak\.toml: truth\.file .* is inside the workflow's tree .*; keep it outside/,
+      /leak\.toml: truth\.file .* is inside the workflow's tree .*, where its agents could read it; move it/,
     );
     // A sibling directory whose name starts with the tree's is not inside it.
     mkdirSync(join(root, "tree-other"), { recursive: true });
     writeFileSync(join(root, "tree-other", "s.json"), bugs);
     await parseCase(`[start]\nrepoRoot = "../../../tree"\n[truth]\nfile = "../../../tree-other/s.json"\n`, join(dir, "near.toml"), "wf", new MemBlobs());
+  });
+
+  it("names a folder outside the workflow's trees for a truth file inside them, and the case loads from there", async () => {
+    const slash = (p: string) => p.replaceAll("\\", "/");
+    const load = (text: string, file: string) => parseCase(text, file, "wf", new MemBlobs()).then(() => "loaded", (e: Error) => e.message);
+    const folder = (message: string) => /, to a folder outside repoRoot and snapshot, such as (.+), then set truth\.file to its new path$/.exec(message)?.[1];
+    const bugs = JSON.stringify({ bugs: [{ id: "h1", file: "src/a.ts", lines: [1, 1], patch: "h1.patch" }] });
+    const writeTruth = (d: string) => {
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, "s.json"), bugs);
+      writeFileSync(join(d, "h1.patch"), BUG_PATCH);
+    };
+    // The guide's layout: cases in the repo, repoRoot the repo root, and the truth in hidden/ next to cases/.
+    const repo = join(root, "repo");
+    const dir = join(repo, "evals", "wf", "cases");
+    writeTruth(join(repo, "evals", "wf", "hidden"));
+    const kase = (truth: string) => `[start]\nrepoRoot = "../../.."\nsnapshot = "${slash(join(root, "snap"))}"\n[truth]\nfile = "${slash(truth)}"\n`;
+    const leak = await load(kase("../hidden/s.json"), join(dir, "s.toml"));
+    assert.equal(folder(leak), join(root, "repo-truth"), leak);
+    writeTruth(join(root, "repo-truth"));
+    assert.equal(await load(kase(join(root, "repo-truth", "s.json")), join(dir, "s.toml")), "loaded");
+    // Beside the tree that holds the truth is inside the other tree here, so the folder goes beside that one.
+    const outer = join(root, "outer");
+    writeTruth(join(outer, "repo"));
+    const nested = `[start]\nrepoRoot = "${slash(join(outer, "repo"))}"\nsnapshot = "${slash(outer)}"\n[truth]\nfile = "${slash(join(outer, "repo", "s.json"))}"\n`;
+    assert.equal(folder(await load(nested, join(root, "nested.toml"))), join(root, "outer-truth"));
+    // Nothing sits beside a filesystem root, so the hint names no folder.
+    const top = await load(`[start]\nrepoRoot = "${slash(parse(root).root)}"\n[truth]\nfile = "${slash(join(outer, "repo", "s.json"))}"\n`, join(root, "top.toml"));
+    assert.match(top, /, to a folder outside repoRoot and snapshot, then set truth\.file to its new path$/);
   });
 });
 
