@@ -279,7 +279,12 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
 - `coding.sh status` gets a Work line with the count per bucket, and its JSON a `work` field with
   the counts and `needYou`. Its Index row gives the index's age ("updated 4m ago"), as a warning
   that names `coding.sh ingest` while the index is stale, and its JSON an `index` field with
-  `updatedAt` (and `stale: true` while stale). Both are absent until an ingest records its time.
+  `updatedAt`, `ageMs` (and `stale: true` while stale). Both are absent until an ingest records its time.
+  It says the rest of what the MCP `status` tool says, from the same code (`src/cli/status-info.ts`):
+  a Last capture row names the agents that captured a session in the window, most recent first,
+  three and then "+N more", and an Update row appears when the update check's cache names a newer
+  release. Its JSON has `version`, `update` (read from that cache, with no network) and
+  `lastCapture`: per agent, its session active last, with `agent`, `at`, `sessionId` and `shortId`.
 - The statusline adds "N need you" when items are blocked on you or failed and are neither
   probably closed nor superseded, and its JSON a `needYou` field. On every render it first reads new hook events, for at most 400 ms and not while
   another ingest holds the lock, then the 7-day window.
@@ -334,7 +339,10 @@ done by a check command; budgets; cloud agents; dependencies between items; noti
   `work show` agree on the files changed.
 - `test/cli/index-age.test.ts`: with a record 3 hours old, `work` prints the stale-index header,
   a session active 5 minutes before the record is running, not stalled, and `status --json` has
-  `index.updatedAt`. A record a minute old, or none, changes nothing.
+  `index.updatedAt` and `index.ageMs`. A record a minute old, or none, changes nothing.
+- `test/cli/status-parity.test.ts`: on a store with five agents, `status --json` and the MCP
+  `status` tool give the same `version`, `update`, `lastCapture` and `index.ageMs`; the update
+  comes from the cache file with no network call; the text has the Last capture and Update rows.
 - `test/core/ingest-last.test.ts`: an ingest writes the record, one that finds nothing new too, with
   no temp file left beside it; a failed ingest leaves the record before it.
 - `test/cli/work.test.ts`: the recorded workflow fixture `test/fixtures/workflows/claude-code-running`

@@ -36,7 +36,7 @@ Every command accepts these.
 |---|---|---|
 | [`init`](#codingsh-init) | Capture | Set up capture hooks and the MCP server for every detected agent |
 | [`doctor`](#codingsh-doctor) | Capture | Check agents, hooks, spool, store and the OTLP port |
-| [`status`](#codingsh-status) | Capture | Show capture totals and the latest session |
+| [`status`](#codingsh-status) | Capture | Show capture totals, each agent's last capture and the latest session |
 | [`statusline`](#codingsh-statusline) | Capture | Print a Claude Code status line (model, cost, worst flag), or install it |
 | [`quota`](#codingsh-quota) | Capture | Plan usage for the 5-hour and weekly windows, per agent, or wait for room |
 | [`ingest`](#codingsh-ingest) | Capture | Move captured hook events from the spool into the index |
@@ -153,7 +153,7 @@ coding.sh doctor --conformance --agent codex --since 30d --json
 
 ## `coding.sh status`
 
-Show capture totals and the latest session.
+Show capture totals, each agent's last capture and the latest session.
 
 ```text
 coding.sh status [options]
@@ -163,6 +163,8 @@ coding.sh status [options]
 |---|---|---|
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
+- The Last capture row names the agents that captured a session in the last 7 days, most recent first: three, then +N more. An Update row appears when the update check's cache names a newer release.
+- With --json: version; update (current, latest, available, checkedAt, and url, install and command when a newer release is out), read from the update check's cache with no network; lastCapture, one row per agent over the last 7 days (agent, at, sessionId, shortId), as the MCP status tool gives it; and index (updatedAt, ageMs, and stale: true while stale), absent until an ingest records its time.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
 ## `coding.sh statusline`

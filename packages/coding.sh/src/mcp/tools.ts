@@ -13,7 +13,6 @@ import { parseSince } from "../cli/args.ts";
 import { version } from "../cli/meta.ts";
 import { noSessionsHint } from "../cli/first-session.ts";
 import { nextStepBin } from "../cli/next-steps.ts";
-import { isNewer } from "../update/semver.ts";
 import { gateHeadline } from "../stats/gate.ts";
 import {
   clip,
@@ -22,7 +21,6 @@ import {
   currentByCwd,
   failures,
   iso,
-  lastActivity,
   latency,
   pageSessions,
   parsePlace,
@@ -47,10 +45,10 @@ import { fitAnswer, pageIndex, pageRange, pageStep } from "./replay-page.ts";
 import { toolText, ToolError, type ToolDef } from "./protocol.ts";
 import { scoreTools } from "../scores/mcp.ts";
 import { needYou, readWorkQueue, settleWorkFiles, WORK_WINDOW_MS, workFiles, workItemJson, workJson } from "../core/work.ts";
-import { indexAge, indexAgeField, type IndexAge } from "../core/ingest-health.ts";
 import { readOverlay } from "../core/work-overlay.ts";
 import { AmbiguousRef, findSessionRef, MIN_ID_PREFIX, shortener } from "../core/session-ref.ts";
 import { maskStoreUrl } from "../core/store-url.ts";
+import { indexField, lastCaptures, storeIndexAge, updateInfo } from "../cli/status-info.ts";
 
 type Obj = Record<string, unknown>;
 
@@ -467,31 +465,8 @@ async function forkTool(ctx: Context, env: NodeJS.ProcessEnv, s: Session, replay
   }
 }
 
-function readUpdateCache(file: string): Obj | undefined {
-  try {
-    const v = JSON.parse(readFileSync(file, "utf8")) as unknown;
-    return v && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /** The status tool lists this many work items at most; `coding.sh work --json` lists the rest. */
 export const STATUS_WORK_ROWS = 5;
-
-/**
- * The index's age (core/ingest-health.ts). A store named by CODING_SH_STORE_URL is filled
- * elsewhere, so this home's record says nothing about it: undefined then, as `coding.sh work` does.
- */
-function storeIndexAge(ctx: Context, now: number): IndexAge | undefined {
-  return ctx.storeOverridden ? undefined : indexAge(ctx.paths.root, now);
-}
-
-/** `index: { updatedAt, ageMs, stale? }` for a tool answer, absent without a record. */
-function indexField(age: IndexAge | undefined): { index?: Obj } {
-  const f = indexAgeField(age);
-  return f.index && age ? { index: { ...f.index, ageMs: age.ageMs } } : {};
-}
 
 /**
  * work: the queue `coding.sh work --json` prints, read once; each page is a slice of its items.
@@ -516,27 +491,6 @@ async function workPages(a: Obj, c: ToolCtx): Promise<(limit: number) => Obj> {
     if (offset + limit < queue.items.length) page.nextCursor = String(offset + limit);
     if (stale) page.asOf = iso(stale.at);
     return { ...page, ...indexField(age) };
-  };
-}
-
-/**
- * Update availability from the cache the update checker keeps (no network here).
- * `command` names the CLI the way the user's shell runs it (nextStepBin of `env`,
- * the environment the agent started this server with).
- */
-export function updateInfo(home: string, current = version(), env: NodeJS.ProcessEnv = process.env): Obj {
-  const c = readUpdateCache(join(home, "update.json"));
-  const latest = typeof c?.latest === "string" ? c.latest : undefined;
-  const available = isNewer(latest, current);
-  const install = typeof c?.install === "string" ? c.install : undefined;
-  return {
-    current,
-    latest,
-    available,
-    checkedAt: typeof c?.checkedAt === "number" ? iso(c.checkedAt) : undefined,
-    url: available && typeof c?.url === "string" ? c.url : undefined,
-    install: available && install ? `npm install -g ${install}` : undefined,
-    command: available ? `${nextStepBin(env)} update` : undefined,
   };
 }
 
@@ -1668,12 +1622,6 @@ function toolDefs(): PagedTool[] {
         const ctx = await c.store();
         const now = c.now();
         const day = await collectSessions(ctx.index, { topLevel: false, since: now - 86400e3 }, 10_000);
-        const week = await collectSessions(ctx.index, { topLevel: false, since: now - 7 * 86400e3 }, 10_000);
-        const lastByAgent = new Map<string, Session>();
-        for (const s of week.sessions) {
-          const prev = lastByAgent.get(s.agent);
-          if (!prev || lastActivity(s) > lastActivity(prev)) lastByAgent.set(s.agent, s);
-        }
         const [latest] = await ctx.index.listSessions({ limit: 1, parentSessionId: null });
         const update = updateInfo(ctx.paths.root, version(), ctx.env);
         const bin = nextStepBin(ctx.env);
@@ -1681,7 +1629,8 @@ function toolDefs(): PagedTool[] {
         const lastError = lastSpoolError(ctx.paths.spoolErrors);
         // The work queue `coding.sh work` shows (core/work.ts), over its default window, with acks and snoozes applied.
         const short = await shortIds(ctx);
-        const { queue, truncated } = await readWorkQueue(ctx.index, { since: now - WORK_WINDOW_MS, now, overlay: readOverlay(ctx.paths.work), shortId: short });
+        const since = now - WORK_WINDOW_MS;
+        const { queue, sessions, truncated } = await readWorkQueue(ctx.index, { since, now, overlay: readOverlay(ctx.paths.work), shortId: short });
         const hints: string[] = [];
         if (update.available) hints.push(`coding.sh ${update.latest} is available (running ${update.current}). Tell the user; update with: ${update.install ?? update.command}`);
         if (!latest) hints.push(noSessionsHint(ctx.env));
@@ -1695,7 +1644,8 @@ function toolDefs(): PagedTool[] {
           // Masked as `coding.sh status` prints it: the answer goes into the agent's context and on to its model provider.
           store: maskStoreUrl(ctx.config.store.index),
           last24h: { sessions: day.sessions.length, agents: [...new Set(day.sessions.map((s) => s.agent))].sort() },
-          lastCapture: [...lastByAgent].sort((x, y) => x[0].localeCompare(y[0])).map(([agent, s]) => ({ agent, at: iso(lastActivity(s)), sessionId: s.id, shortId: short(s.id) })),
+          // Folded over the sessions the work queue read (cli/status-info.ts), as `coding.sh status` folds them.
+          lastCapture: lastCaptures(sessions, since, short),
           latest: latest ? sessionSummary(latest, now) : undefined,
           spool,
           lastError,

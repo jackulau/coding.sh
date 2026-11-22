@@ -10,6 +10,7 @@
 import { openContext, storeOpenNext, type Context } from "../core/context.ts";
 import { autoIngest, pendingField, readBudgetMs, refolding, type IngestBacklog } from "../cli/common.ts";
 import { version } from "../cli/meta.ts";
+import { updateInfo } from "../cli/status-info.ts";
 import { paths } from "../core/paths.ts";
 import { maskUrlsIn } from "../core/store-url.ts";
 import { schemaViolations } from "../toolevals/jsonschema.ts";
@@ -17,7 +18,7 @@ import { McpServer, serveStdio, ToolError, type StdioStreams } from "./protocol.
 import { buildPrompts } from "./prompts.ts";
 import { buildResources } from "./resources.ts";
 import { buildSkillProvider } from "./skills.ts";
-import { buildTools, updateInfo, type ToolCtx } from "./tools.ts";
+import { buildTools, type ToolCtx } from "./tools.ts";
 
 export const SERVER_NAME = "coding.sh";
 
