@@ -365,6 +365,7 @@ grouped by area, with links to the docs for the details.
 - **CLI.** An unknown `--agent` with no close match lists the agent ids to pick from, on `init`, `doctor`, `ingest`, `uninstall`, `harness audit`, `harness snapshot`, `eval run` and `eval trigger`. A close match is still suggested. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/agents.md#coding-agents))
 - **Query.** `--where` given more than once joins the queries with AND, as if written in one, instead of keeping only the last. A later `sort:` or `limit:` wins. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md#filter-with---where))
 - **Query.** When `sessions --flag` or a `flag:` term finds nothing and the name is close to a flag coding.sh sets or a stored session carries, `sessions` exits 2 and names that flag. A name a stored session carries is not a typo. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#usage-errors-exit-2))
+- **Query.** When `export`, `search` or `usage` finds nothing, a `--flag` or `flag:` name close to a known flag, or an `--agent` close to an agent id, exits 2 and names the one meant, as `sessions` does. `export --evidence --force` refuses before it clears the directory. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#usage-errors-exit-2))
 
 ## [0.1.7] - 2026-11-16
 
