@@ -12,6 +12,7 @@ import { gatewayFlag, GATEWAYS, isGatewayId, type GatewayId } from "../../integr
 import type { Session } from "../../core/types.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { autoIngest, list, resolveSession, str, withContext, readIngest } from "../common.ts";
+import { cliCommand, envLine } from "../next-steps.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -139,7 +140,7 @@ export async function run(c: CommandContext): Promise<number> {
         for (const [g, n] of Object.entries(r.needKeyBy)) {
           const cfg = configs.find((x) => x.id === g);
           const why = missingConfig[g as GatewayId];
-          out.row("Key", `${plural(n, "request")} via ${g} need a lookup; ${why ?? `export ${cfg?.apiKeyEnv ?? "the key"}=…`} and run again`, "warn");
+          out.row("Key", `${plural(n, "request")} via ${g} need a lookup; ${why ?? (cfg ? envLine(env, cfg.apiKeyEnv, "...") : "set its key")} and run again`, "warn");
         }
         if (r.noLookup) out.note(`${plural(r.noLookup, "call")} went through a gateway with no lookup API and carried no cost`);
         for (const e of r.errors) out.row("Error", e, "fail");
@@ -163,7 +164,7 @@ async function drainEnrich(c: CommandContext, g: GatewayConfig, ids: string[], s
   const dryRun = c.flags["dry-run"] === true;
   const base = cliProxyBaseUrl(g.baseUrl, env);
   const read = !dryRun && !offline;
-  if (read && !g.apiKey) throw new CliError(`Reading CLIProxyAPI's usage queue needs its management key in $${g.apiKeyEnv}`, { reason: "missing_key", next: [`export ${g.apiKeyEnv}=…`, `coding.sh gateway enrich --gateway ${g.id}`] });
+  if (read && !g.apiKey) throw new CliError(`Reading CLIProxyAPI's usage queue needs its management key in $${g.apiKeyEnv}`, { reason: "missing_key", next: [envLine(env, g.apiKeyEnv, "..."), cliCommand(env, ["gateway", "enrich", "--gateway", g.id])] });
   return withContext(c, async (ctx) => {
     await autoIngest(ctx, readIngest(c));
     const sessions = ids.length ? await Promise.all(ids.map((id) => resolveSession(ctx, id))) : await ctx.index.listSessions({ since: parseSince(since ?? "30d"), limit });
