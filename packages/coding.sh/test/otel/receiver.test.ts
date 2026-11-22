@@ -459,14 +459,17 @@ describe("OTLP receiver over HTTP", () => {
         const events = await store.listEvents(id);
         const prompts = events.filter((e) => e.kind === "user.message");
         const firstCall = Math.min(...events.filter((e) => e.kind === "llm.call").map((e) => e.ts));
-        out.push({ title: s?.title, turns: s?.stats.turns, prompts: prompts.length, beforeCalls: prompts.every((e) => e.ts <= firstCall) });
+        // The prompt sits at the agent's start, the session.start's time: the session.start is listed first.
+        const opens = events.slice(0, 2).map((e) => e.kind);
+        out.push({ title: s?.title, turns: s?.stats.turns, prompts: prompts.length, beforeCalls: prompts.every((e) => e.ts <= firstCall), opens });
       }
       return out;
     };
+    const opens = ["session.start", "user.message"];
     const want = [
-      { title: "plan", turns: 1, prompts: 1, beforeCalls: true },
-      { title: "research", turns: 1, prompts: 1, beforeCalls: true },
-      { title: "write", turns: 1, prompts: 1, beforeCalls: true },
+      { title: "plan", turns: 1, prompts: 1, beforeCalls: true, opens },
+      { title: "research", turns: 1, prompts: 1, beforeCalls: true, opens },
+      { title: "write", turns: 1, prompts: 1, beforeCalls: true, opens },
     ];
 
     for (const [name, parts] of [
@@ -474,7 +477,7 @@ describe("OTLP receiver over HTTP", () => {
       ["one span per request", spans.map((s) => [s])],
       ["the root in its own request (SPLIT=2)", [spans.slice(0, -1), spans.slice(-1)]],
     ] as const) {
-      it(`${name}: root and subagents each get their first chat's prompt, before the call`, async () => {
+      it(`${name}: root and subagents each get their first chat's prompt, after their session.start and before the call`, async () => {
         for (const p of parts) await post([...p]);
         assert.deepEqual(await shape(), want);
       });

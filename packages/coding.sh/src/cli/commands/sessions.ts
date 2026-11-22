@@ -6,6 +6,7 @@ import { andQuery, FACET_KEYS, scopesSubagents, type Node, type Query } from "..
 import { parsePlace, placeNode } from "../../mcp/data.ts";
 import { userHome } from "../../core/paths.ts";
 import { viewQuery } from "../../query/views.ts";
+import { rejectFlagTypos } from "../../query/flag-typos.ts";
 import { viewCliError } from "./views.ts";
 import type { Session } from "../../schema/index.ts";
 import { parseSinceWhen, positiveInt, UsageError } from "../args.ts";
@@ -116,7 +117,10 @@ export async function run(c: CommandContext): Promise<number> {
       };
     } else listing = await listPlain(ctx.index, filter, limit, empty);
     const { sessions } = listing;
-    if (!sessions.length) await rejectAgentTypos(ctx.index, agents);
+    if (!sessions.length) {
+      await rejectAgentTypos(ctx.index, agents);
+      await rejectFlagTypos(ctx.index, str(c.flags.flag), typed);
+    }
     const hiddenChildren = topOnly ? await childCount(ctx.index, scoped, base) : 0;
     const hiddenRuns = organicOnly ? await runCount(ctx.index, scoped, filter) : 0;
     if (out.json) {

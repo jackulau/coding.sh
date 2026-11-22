@@ -968,16 +968,23 @@ const derivedPrompts = new WeakMap<AgentEvent, number>();
 export const childSessionId = (traceId: string, spanId: string): string => `otel-sub-${traceId}-${spanId}`;
 
 const SPAN_TTFT_MS = ["ai.response.msToFirstChunk", "ai.stream.msToFirstChunk", "ttft_ms"];
-const SPAN_TTFT_S = ["gen_ai.response.time_to_first_chunk"]; // semconv: seconds
+/** The GenAI semconv server metric (seconds). OpenLIT sets it on its spans too, in seconds. */
+const SERVER_TTFT = "gen_ai.server.time_to_first_token";
+// In seconds. The semconv span attribute comes first, so a span that carries both is read by it.
+const SPAN_TTFT_S = ["gen_ai.response.time_to_first_chunk", SERVER_TTFT];
+/** Strands Agents' Python tracer, which sets SERVER_TTFT on its chat spans in milliseconds. */
+const STRANDS_SCOPE = "strands.telemetry.tracer";
 const FIRST_CHUNK_EVENT = /first[._ -]?(chunk|token)/i;
 
 /** Time to first token in ms: span attributes, else a streaming "first chunk" span event. */
-function ttftMs(span: OtelSpan): number | undefined {
+function ttftMs(span: OtelSpan, scope: string): number | undefined {
   const a = span.attributes;
   const ms = num(a, ...SPAN_TTFT_MS);
   if (ms !== undefined) return ms;
-  const s = num(a, ...SPAN_TTFT_S);
-  if (s !== undefined) return Math.round(s * 1e6) / 1e3;
+  for (const k of SPAN_TTFT_S) {
+    const s = num(a, k);
+    if (s !== undefined) return k === SERVER_TTFT && scope === STRANDS_SCOPE ? s : Math.round(s * 1e6) / 1e3;
+  }
   const ev = span.events.find((e) => FIRST_CHUNK_EVENT.test(e.name));
   if (!ev) return undefined;
   const evMs = num(ev.attributes, ...SPAN_TTFT_MS);
@@ -1216,7 +1223,7 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
       .set("inferenceGeo", hints.inferenceGeo)
       .set("operation", klass === "embedding" ? "embeddings" : (str(a, "gen_ai.operation.name") ?? "chat"))
       .set("name", span.name)
-      .set("ttftMs", ttftMs(span))
+      .set("ttftMs", ttftMs(span, c.scope.name))
       .set("stopReason", finishReason(a))
       .set("reasoningTokens", reasoningTokens(a))
       .set("reasoningEffort", str(a, "gen_ai.request.reasoning.level"))
@@ -1671,8 +1678,34 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
     }
   }
   if (dropped.size) result.events = result.events.filter((_, i) => !dropped.has(i));
+  result.events = startsFirst(result.events);
   if (rehome.size) result.rehome = [...rehome.values()];
   return result;
+}
+
+/**
+ * Each session.start before the events of its session and trace at its time that came before it.
+ * An exporter sends a span after its children (they end first), so a model call gives its agent
+ * the prompt at the agent's start before the agent's session.start is mapped, and the store lists
+ * events of one time in the order they came. A conversation's other traces keep their places.
+ */
+function startsFirst(events: AgentEvent[]): AgentEvent[] {
+  // The first event of each session, trace and time that is not a session.start.
+  const first = new Map<string, number>();
+  let moved = false;
+  const rank = events.map((e, i) => {
+    const key = `${e.sessionId}\0${e.traceId ?? ""}\0${e.ts}`;
+    if (e.kind !== "session.start") {
+      if (!first.has(key)) first.set(key, i);
+      return i;
+    }
+    const at = first.get(key);
+    if (at === undefined) return i;
+    moved = true;
+    return at - 0.5;
+  });
+  if (!moved) return events;
+  return events.map((e, i) => ({ e, i, r: rank[i]! })).sort((a, b) => a.r - b.r || a.i - b.i).map((x) => x.e);
 }
 
 /** A held model-call prompt given to agent span `spanId` (see HeldPrompt): its id, session and time are the agent's. */

@@ -10,7 +10,7 @@ import { userHome } from "../../core/paths.ts";
 import { bundleFromDir, bundleFromToml, bundleId, DEFAULT_INCLUDE, userFile, type BundleFromDirOpts } from "../../runner/bundle.ts";
 import { claudeDirOf, isPluginPath } from "../../runner/plugins.ts";
 import type { BlobRef, BlobStore, HarnessBundle, HarnessMcpServer } from "../../core/types.ts";
-import { parseSince, positiveInt, suggest, UsageError } from "../args.ts";
+import { parseSince, positiveInt, unknownAgent, UsageError } from "../args.ts";
 import { autoIngest, list, str, withContext, pendingField, readIngest } from "../common.ts";
 import { ago, bytes, CliError, plural, tokens } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -167,8 +167,7 @@ async function audit(c: CommandContext): Promise<number> {
   const agent = str(c.flags.agent);
   if (agent && !getAdapter(agent)) {
     const { ADAPTERS } = await import("../../adapters/index.ts");
-    const s = suggest(agent, ADAPTERS.map((a) => a.id));
-    throw new UsageError(`Unknown agent ${JSON.stringify(agent)}`, { suggestion: s ? `--agent ${s}` : undefined, reason: "unknown_agent" });
+    throw unknownAgent(agent, ADAPTERS.map((a) => a.id));
   }
   const sinceFlag = str(c.flags.since) ?? "30d";
   const since = parseSince(sinceFlag);
@@ -333,8 +332,7 @@ export async function run(c: CommandContext): Promise<number> {
       const adapter = getAdapter(agent);
       if (!adapter) {
         const { ADAPTERS } = await import("../../adapters/index.ts");
-        const s = suggest(agent, ADAPTERS.map((a) => a.id));
-        throw new UsageError(`Unknown agent ${JSON.stringify(agent)}`, { suggestion: s ? `--agent ${s}` : undefined, reason: "unknown_agent" });
+        throw unknownAgent(agent, ADAPTERS.map((a) => a.id));
       }
       const dir = resolve(c.cwd, str(c.flags.dir) ?? ".");
       const st = statSync(dir, { throwIfNoEntry: false });
