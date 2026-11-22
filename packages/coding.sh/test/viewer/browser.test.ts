@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, test } from "node:test";
-import { chromeArgs, describeClose, findChrome, launchBrowser, loadTimeoutMessage, startFailureMessage } from "./browser.ts";
+import { chromeArgs, chromeEnv, describeClose, findChrome, launchBrowser, loadTimeoutMessage, startFailureMessage } from "./browser.ts";
 
 const root = mkdtempSync(join(tmpdir(), "find-chrome-"));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -41,6 +41,18 @@ test("test Chrome stays out of the macOS keychain, which a test HOME does not ha
 test("test Chrome does not look up the system's proxy: the viewer is on this machine", () => {
   // On Windows the lookup holds the first page load of every new Chrome for 0.6-1.7 s.
   assert.ok(chromeArgs("/tmp/profile").includes("--no-proxy-server"));
+});
+
+test("test Chrome's temp folder is in its profile, so the files Chrome leaves there go with the profile", () => {
+  // Chrome on Windows takes its temp folder from TMP, then TEMP, and does not always remove the <GUID>.tmp files it writes there.
+  const profile = join(root, "csh-chrome-profile");
+  const env = chromeEnv(profile, { PATH: "/usr/bin", TEMP: root, TMP: root, TMPDIR: root });
+  assert.equal(dirname(env.TMP!), profile);
+  // TMPDIR stays: on Linux, Chrome's singleton socket is under it, and a long path stops Chrome.
+  assert.deepEqual(env, { PATH: "/usr/bin", TEMP: env.TMP, TMP: env.TMP, TMPDIR: root });
+  // By default, the rest of the environment is the test's own.
+  const own = chromeEnv(profile);
+  for (const [k, v] of Object.entries(process.env)) if (k !== "TEMP" && k !== "TMP") assert.equal(own[k], v, k);
 });
 
 test("CODING_SH_TEST_CHROME wins, and a wrong one fails instead of skipping", () => {
