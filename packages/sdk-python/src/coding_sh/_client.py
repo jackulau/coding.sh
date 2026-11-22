@@ -248,8 +248,9 @@ class Transport:
             log.warning("coding.sh: event queue full or event too large; dropping events (dropped=%d)", self._dropped)
         return queued
 
-    def flush(self, timeout: Optional[float] = None) -> bool:
-        """Block until everything queued so far is sent (or given up). True when drained."""
+    def flush(self, timeout: Optional[float] = 5.0) -> bool:
+        """Block until everything queued so far is sent (or given up), for at most timeout
+        seconds (None: no limit). True when drained."""
         if not self.cfg.enabled:
             return True
         deadline = None if timeout is None else time.monotonic() + max(0.0, timeout)

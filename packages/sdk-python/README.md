@@ -52,7 +52,8 @@ with coding_sh.trace("support-reply", session_id=conversation_id, user_id=user.i
   `span("tool", ...)` records the call's arguments as input and its return value as output.
 - `span("step", name)` records a generic step.
 - Context follows `contextvars`, so it crosses `await` and asyncio tasks. Work handed to a thread
-  pool starts untraced unless you run it with `contextvars.copy_context().run`.
+  pool starts untraced unless you run it in a copy of the context, one per task:
+  `pool.submit(contextvars.copy_context().run, fn, *args)`.
 
 ## LLM gateways
 
