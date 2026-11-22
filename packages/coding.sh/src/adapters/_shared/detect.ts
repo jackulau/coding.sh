@@ -22,9 +22,9 @@ export function which(bin: string, env: NodeJS.ProcessEnv = process.env): string
   return undefined;
 }
 
-/** First version-looking token in a `--version` output (e.g. "2.1.3", "2025.09.18-7ae6800"). */
+/** First version-looking token in a `--version` output (e.g. "2.1.3", "opencode v2.3.2", "2025.09.18-7ae6800"). */
 export function parseVersion(text: string): string | undefined {
-  const m = /\b(\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?)\b/.exec(text);
+  const m = /\bv?(\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?)\b/.exec(text);
   return m?.[1];
 }
 

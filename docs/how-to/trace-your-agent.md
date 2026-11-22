@@ -266,7 +266,7 @@ Viewer search misses tool output
   Repo          -
   Started       Nov 11 08:52 (4s ago)
   Duration      4.0s
-  Turns         1, 1 tool calls, 0 files changed
+  Turns         1, 1 tool call, 0 files changed
   Tokens        in 201  out 370  cache -  $0.0008 (estimated)
   Latency       2 llm calls, p50 1.9s, p95 2.1s; tools 0ms (p95 0ms)
 

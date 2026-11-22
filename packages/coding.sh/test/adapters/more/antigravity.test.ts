@@ -101,6 +101,23 @@ describe("antigravity install", () => {
   });
 });
 
+describe("antigravity detect", () => {
+  let env: TmpEnv;
+  before(() => (env = moreEnv()));
+  after(() => env.restore());
+
+  // On a busy machine (doctor right after init, with the first import running) `agy --version`
+  // can take more than 5 s: detect gave up on it and doctor showed "installed" where it had shown v1.3.0.
+  it("keeps agy's version when --version takes more than 5 s", async () => {
+    const bin = join(env.root, "bin");
+    fakeBinary(bin, "agy", 'setTimeout(() => console.log("agy 1.3.0"), 5500);\n');
+    process.env.PATH = bin;
+    const r = await antigravityAdapter.detect();
+    assert.equal(r.installed, true);
+    assert.equal(r.version, "1.3.0");
+  });
+});
+
 describe("antigravity run", () => {
   let env: TmpEnv;
   before(() => {
