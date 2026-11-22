@@ -79,6 +79,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Capture.** A shell call gives a test result only when its command runs tests, so `tail ci.log` or `grep "test result" log` no longer reports an old run. T3 Code instance ids such as `claudeHub` map to their agent, and workflow agents carry their run id, name, phase and label. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#test-results)
 - **MCP.** `session_get`, `session_current` and `sessions_list` add `repoMain`, the main checkout's root, for a session in a linked worktree, as `show --json` does. The session resource's Repo line names it too. [MCP](https://coding.sh/docs/mcp#tools)
 - **Viewer.** Review stays a top tab on a phone, where tabs scroll sideways with no name cut. The Run tree shows every name on a phone, the activity cell fits "5,050 tools · 45 failed", and an unknown session logs no 404. A skip refused because the item was scored elsewhere moves on; Review buttons are 44px on touch. [Explore](https://coding.sh/docs/explore#open-the-viewer)
 - **Improve.** The error line under a failing command comes from that command's own output, not from another part of the same shell line, and the title says "fails the same way" only when the errors match. [Improve](https://github.com/jackulau/coding.sh/blob/main/docs/guides/improve.md)

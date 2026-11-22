@@ -1,6 +1,9 @@
 // Heuristics over tool calls: test-runner summaries from shell output, file
 // changes from edit tools and apply_patch envelopes.
 
+import { isVerifyCommand } from "../../core/sessions.ts";
+import { stripHeredocs } from "../../core/shell-diff.ts";
+
 export interface TestSummary {
   runner: string;
   passed: number;
@@ -20,6 +23,126 @@ export const TEST_COMMAND_RE =
 
 export function isTestCommand(cmd: string | undefined): boolean {
   return !!cmd && TEST_COMMAND_RE.test(cmd);
+}
+
+/** Runner shapes isVerifyCommand leaves out: cargo nextest, and a package manager's options or workspace before `test`. */
+const RUNS_TESTS_EXTRA = /\bcargo\s+nextest\b|\b(?:npm|pnpm|yarn|bun)\s+(?:\S+\s+)*?(?:run\s+)?test(?::[\w:-]+)?(?=\s|$)|\b(?:turbo|nx|lerna)\s+(?:run\s+)?test\b/i;
+/** Commands that print, list or search text: a stage they start runs nothing, whatever its arguments name. */
+const READERS = new Set(["cat", "tac", "head", "tail", "less", "more", "bat", "nl", "strings", "grep", "egrep", "fgrep", "rg", "ag", "ack", "sed", "awk", "gawk", "cut", "sort", "uniq", "wc", "jq", "echo", "printf", "ls", "dir", "type", "gc", "get-content", "select-string", "sls", "findstr", "write-output", "write-host"]);
+const ENV_ASSIGN = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const DURATION = /^\d+(?:\.\d+)?[smhd]?$/;
+/** Shell keywords that open a compound command: the stage is judged by the command after them (`until grep …; do sleep 15; done`). */
+const KEYWORDS = new Set(["if", "then", "else", "elif", "fi", "while", "until", "do", "done", "!", "{", "}"]);
+/** A log or text file a command reads or writes: its name (`ci-tsc.log`) names no command. */
+const LOG_FILE = /\.(?:log|txt|out|err)$/i;
+/** A shell that runs a heredoc's body as commands (`bash <<EOF`): its body is not data. */
+const SHELL_HEREDOC = /(?:^|[\s;&|(])(?:bash|sh|zsh|dash|pwsh|powershell)(?:\.exe)?\b[^\n]*<<(?!<)/m;
+
+/** A command split into its stages on |, &&, ||, ;, & and line breaks outside quotes. */
+function shellStages(cmd: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let q: string | undefined;
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i]!;
+    if (q) {
+      cur += c;
+      if (c === "\\" && q === '"' && i + 1 < cmd.length) cur += cmd[++i];
+      else if (c === q) q = undefined;
+    } else if (c === '"' || c === "'") {
+      q = c;
+      cur += c;
+    } else if (c === "\\" && i + 1 < cmd.length) {
+      cur += c + cmd[++i]; // an escaped character, or a line continuation
+    } else if (c === "|" || c === "&" || c === ";" || c === "\n" || c === "\r") {
+      out.push(cur);
+      cur = "";
+    } else {
+      cur += c;
+    }
+  }
+  out.push(cur);
+  return out.map((s) => s.trim()).filter(Boolean);
+}
+
+interface Word {
+  raw: string;
+  value: string;
+  quoted: boolean;
+}
+
+/** A stage's words: quoted strings as one word (unquoted in `value`), and where each starts. */
+function stageWords(stage: string): (Word & { at: number })[] {
+  const out: (Word & { at: number })[] = [];
+  for (const m of stage.matchAll(/"((?:[^"\\]|\\.)*)"?|'([^']*)'?|[^\s"']+/g)) {
+    const quoted = m[1] !== undefined || m[2] !== undefined;
+    out.push({ raw: m[0], value: quoted ? (m[1] ?? m[2])! : m[0], quoted, at: m.index });
+  }
+  return out;
+}
+
+const exeName = (w: string): string => w.replace(/^.*[\\/]/, "").toLowerCase().replace(/\.exe$/, "");
+
+/**
+ * Whether one stage runs tests or checks: past env assignments, cd, time and timeout <n>, a shell
+ * launcher (powershell/pwsh -Command, bash/sh -c, cmd /c) is judged by the command it runs; a
+ * stage that starts with a reader (cat, tail, grep, Get-Content, …) runs nothing; else the stage,
+ * its quoted strings removed, must name a test or check command.
+ */
+function stageRunsTests(stage: string, depth: number): boolean {
+  const s = stage.replace(/^[({!\s]+/, "");
+  const words = stageWords(s);
+  let i = 0;
+  for (;;) {
+    const w = words[i];
+    if (!w || w.quoted) break;
+    const name = w.value.toLowerCase();
+    if (ENV_ASSIGN.test(w.value) || name === "env" || name === "time" || KEYWORDS.has(name)) i++;
+    else if (name === "cd" || name === "pushd" || name === "set-location" || name === "sl") i += 2;
+    else if (name === "timeout") {
+      i++;
+      while (words[i] && /^-/.test(words[i]!.value)) i++;
+      if (words[i] && DURATION.test(words[i]!.value)) i++;
+    } else break;
+  }
+  const first = words[i];
+  if (!first) return false;
+  const rest = words.slice(i + 1);
+  const name = exeName(first.value);
+  // The launcher's command: a quoted last word as its text, else the stage from that word on.
+  const argAfter = (flag: RegExp): string | undefined => {
+    const k = rest.findIndex((w) => !w.quoted && flag.test(w.value));
+    const next = k < 0 ? undefined : rest[k + 1];
+    if (!next) return undefined;
+    return next.quoted && k + 2 === rest.length ? next.value : s.slice(next.at);
+  };
+  if (depth < 4 && (name === "powershell" || name === "pwsh")) {
+    const arg = argAfter(/^[-/](?:c|command)$/i);
+    if (arg !== undefined) return runsTestsAt(arg, depth + 1);
+  } else if (depth < 4 && (name === "bash" || name === "sh" || name === "zsh" || name === "dash")) {
+    const k = rest.findIndex((w) => !w.quoted && /^-[a-z]*c[a-z]*$/.test(w.value));
+    if (k >= 0 && rest[k + 1]) return runsTestsAt(rest[k + 1]!.value, depth + 1);
+  } else if (depth < 4 && name === "cmd") {
+    const arg = argAfter(/^\/[ck]$/i);
+    if (arg !== undefined) return runsTestsAt(arg, depth + 1);
+  }
+  if (READERS.has(name)) return false;
+  const bare = words.slice(i).filter((w, k) => !w.quoted && (k === 0 || !LOG_FILE.test(w.value))).map((w) => w.raw).join(" ");
+  return isVerifyCommand(bare) || RUNS_TESTS_EXTRA.test(bare);
+}
+
+const runsTestsAt = (cmd: string, depth: number): boolean => shellStages(cmd).some((st) => stageRunsTests(st, depth));
+
+/**
+ * Whether a shell command runs tests or checks, so its output can carry a test result: some
+ * stage of it (split on |, &&, ||, ; and line breaks outside quotes) does, by isVerifyCommand.
+ * `tail -50 ci.log`, `grep -n "test result" log` and `Get-Content test.log` run none;
+ * `npm test 2>&1 | tail -40` and `powershell -Command "npm test"` do. A heredoc's body is data
+ * (`python3 - <<'EOF' … EOF`, even one cut off before its end), unless a shell reads it.
+ */
+export function runsTests(cmd: string | undefined): boolean {
+  if (!cmd) return false;
+  return runsTestsAt(SHELL_HEREDOC.test(cmd) ? cmd : stripHeredocs(cmd), 0);
 }
 
 const n = (s: string | undefined) => (s ? Number.parseInt(s, 10) : 0);

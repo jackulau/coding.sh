@@ -1142,7 +1142,8 @@ export const codex: Adapter = {
   // 10 (0.1.8): a shell call's test.result reads the last jest, vitest, node:test or mocha summary in its output, not the first.
   // 11 (0.1.8): a rollout written inside the --since window is imported whole, not cut at since.
   // 12 (0.1.8): a line holding a raw U+2028 or U+2029 inside a string is read whole, not split and dropped.
-  parseVersion: 12,
+  // 13 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none.
+  parseVersion: 13,
 
   detect() {
     const home = codexHome();

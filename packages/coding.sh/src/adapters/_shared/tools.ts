@@ -1,7 +1,7 @@
 // Cross-agent tool-call semantics: which tools are shells, which edit files,
 // and the derived file.change / test.result events they imply.
 import { isAbsolute, relative } from "node:path";
-import { diffHeader, editStats, parsePatch, parseTestOutput, patchDiffs, structuredPatchDiff, unifiedDiff, type FileChangeInfo } from "./heuristics.ts";
+import { diffHeader, editStats, parsePatch, parseTestOutput, patchDiffs, runsTests, structuredPatchDiff, unifiedDiff, type FileChangeInfo } from "./heuristics.ts";
 import { arr, blobList, fieldLimit, isObj, obj, outputText, str, type Emitter } from "./normalize.ts";
 
 const SHELL_TOOLS = new Set(["bash", "shell", "shell_command", "exec_command", "local_shell", "local_shell_call", "run_terminal_cmd", "terminal", "command_execution", "run_shell_command", "execute_command", "powershell"]);
@@ -188,7 +188,7 @@ export async function clipDiff(ctx: Emitter["ctx"], diff: string | undefined): P
 /**
  * Emits file.change (one per touched file, with a unified diff when the call
  * carries enough to build one) and test.result (when a shell tool ran a test
- * suite) for a finished tool call. Ids use natural keys, so the same call seen
+ * suite: runsTests) for a finished tool call. Ids use natural keys, so the same call seen
  * live and in a backfilled transcript dedupes.
  */
 export async function emitDerived(em: Emitter, o: DerivedOpts): Promise<void> {
@@ -203,8 +203,9 @@ export async function emitDerived(em: Emitter, o: DerivedOpts): Promise<void> {
       );
     }
   }
+  // Only a command that runs tests vouches for a summary in its output: `tail ci.log` prints an old one.
   const cmd = shellCommandOf(o.tool, o.input);
-  if (cmd !== undefined) {
+  if (runsTests(cmd)) {
     const s = parseTestOutput(outputText(o.output), cmd);
     if (s) em.emit("test.result", { runner: s.runner, passed: s.passed, failed: s.failed, skipped: s.skipped, toolUseId: o.toolUseId }, { ...o.extra, key: [o.toolUseId] });
   }

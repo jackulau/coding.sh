@@ -408,7 +408,8 @@ export const geminiCliAdapter: Adapter = {
   // 3 (0.1.5): a tool call that loads a skill names it (payload.skill).
   // 4 (0.1.8): test.result comes from the shared parser: pytest -q's bare summary line counts, the node runner is "node:test", and skipped is absent when 0.
   // 5 (0.1.8): a tool call the user cancelled (status cancelled) is an interruption (payload.interrupted), not a tool error.
-  parseVersion: 5,
+  // 6 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none.
+  parseVersion: 6,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["gemini"]);
     const dir = geminiDir();

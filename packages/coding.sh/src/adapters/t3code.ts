@@ -60,7 +60,20 @@ export function t3UserData(env: NodeJS.ProcessEnv = process.env): string {
 
 /** T3 driver kind → coding.sh agent with its own adapter. Other drivers stay as named. */
 const DRIVER_AGENT: Record<string, string> = { codex: "codex", claudeAgent: CLAUDE_AGENT, claude: CLAUDE_AGENT, claudeCode: CLAUDE_AGENT, cursor: "cursor", opencode: "opencode", pi: "pi" };
-export const providerAgent = (driver: string): string => DRIVER_AGENT[driver] ?? driver;
+/** Driver kinds a provider instance id can start with ("claudeHub", "codex-work"), and their agent. */
+const DRIVER_PREFIX: [string, string][] = [["claude", CLAUDE_AGENT], ["codex", "codex"], ["cursor", "cursor"], ["opencode", "opencode"], ["pi", "pi"]];
+
+/**
+ * The coding.sh agent for a T3 driver or provider instance id: an exact driver kind first, else
+ * the agent whose driver kind the id starts with (case-insensitive: a "claudeHub" instance runs
+ * Claude Code), else the id as T3 names it.
+ */
+export function providerAgent(driver: string): string {
+  const exact = Object.hasOwn(DRIVER_AGENT, driver) ? DRIVER_AGENT[driver] : undefined;
+  if (exact) return exact;
+  const lower = driver.toLowerCase();
+  return DRIVER_PREFIX.find(([kind]) => lower.startsWith(kind))?.[1] ?? driver;
+}
 
 /**
  * The provider's own session id from a T3 native id. ACP instance-scoped ids carry a
@@ -739,8 +752,6 @@ function readV2Requests(db: DatabaseSync, threadId: string, turns: StoreTurn[]):
 
 // ---------------------------------------------------------------- v1 store
 
-const V1_CLAUDE = /^claude/i;
-
 function readV1Threads(db: DatabaseSync, skip: Set<string>): { thread: Thread; v1: true }[] {
   if (!hasTable(db, "projection_threads")) return [];
   const projects = new Map<string, Row>();
@@ -757,7 +768,7 @@ function readV1Threads(db: DatabaseSync, skip: Set<string>): { thread: Thread; v
     const s = sessions.get(id);
     const rt = runtime.get(id);
     const providerName = str(s?.provider_name) ?? str(rt?.provider_name) ?? str(sel.provider) ?? str(sel.instanceId);
-    const driver = providerName ? (V1_CLAUDE.test(providerName) ? "claudeAgent" : providerName) : undefined;
+    const driver = providerName ? providerAgent(providerName) : undefined;
     const cursor = parse(rt?.resume_cursor_json);
     const nativeId = str(s?.provider_thread_id) ?? str(cursor.threadId) ?? str(cursor.resume) ?? str(cursor.sessionId);
     const project = projects.get(String(r.project_id));
@@ -986,7 +997,8 @@ export const t3code: Adapter = {
   // 13 (0.1.8): a transcript line holding a raw U+2028 or U+2029 inside a string is read whole, not split and dropped.
   // 14: a Codex exec cell built from the store is ok by the codex adapter's rule (codeModeCellOk), and a tool
   //    request with "no active turn" ends interrupted, not failed.
-  parseVersion: 14,
+  // 15 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none. A provider instance id (claudeHub, codex-work) maps to the agent its driver kind names.
+  parseVersion: 15,
 
   async detect() {
     const env = process.env;

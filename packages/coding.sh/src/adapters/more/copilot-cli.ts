@@ -354,7 +354,8 @@ export const copilotCliAdapter: Adapter = {
   // 2 (0.1.2): hook and transcript copies share ids; no duplicate initial prompt; one llm.call per usage record.
   // 3 (0.1.5): hook events keep the OTel trace from the hook's traceparent (traceId, parentSpanId). A tool call that loads a skill names it (payload.skill).
   // 4 (0.1.8): test.result comes from the shared parser: pytest -q's bare summary line counts, the node runner is "node:test", and skipped is absent when 0.
-  parseVersion: 4,
+  // 5 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none.
+  parseVersion: 5,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["copilot"]);
     const dir = copilotHome();
