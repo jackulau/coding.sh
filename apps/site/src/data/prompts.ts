@@ -12,8 +12,11 @@ export interface QuickstartPath {
 }
 
 const STOP = "If a release-age policy or a permission error blocks an install, stop and ask me instead of changing it.";
+// npm also installs an extensionless sh script named coding.sh, and PowerShell and cmd open it instead of
+// running coding.sh.cmd. codingsh is the same CLI (docs/guides/install.md#windows).
+const WIN = "On Windows, in PowerShell or cmd, run codingsh instead of coding.sh.";
 
-export const SETUP_PROMPT = `Set up coding.sh on this machine. It needs Node.js 22.16 or newer.
+export const SETUP_PROMPT = `Set up coding.sh on this machine. It needs Node.js 22.16 or newer. ${WIN}
 
 1. Install the CLI: npm install -g coding.sh. ${STOP}
 2. Run coding.sh init --dry-run and show me the plan. When I agree, run coding.sh init --yes. It adds a capture hook and the coding.sh MCP server to each agent it finds, and imports their past sessions.
@@ -28,7 +31,7 @@ const sdkSetup = (lang: "TypeScript" | "Python") => {
   const wrap = ts
     ? `import { observe } from "@codingdotsh/sdk" and wrap each OpenAI or Anthropic client the agent creates: observe(new OpenAI()).`
     : `import coding_sh and wrap each OpenAI or Anthropic client the agent creates: coding_sh.observe(OpenAI()). Call coding_sh.flush() before a script exits.`;
-  return `Add coding.sh tracing to the ${lang} agent in this project.
+  return `Add coding.sh tracing to the ${lang} agent in this project. ${WIN}
 
 1. Install the coding.sh CLI (npm install -g coding.sh, Node.js 22.16 or newer) and ${pkg}. ${STOP}
 2. Read https://coding.sh/docs/sdk.md. Then ${wrap} Change nothing else in the agent.

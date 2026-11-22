@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { distOpts, needDist } from "./_dist.mjs";
 import { LOCALES } from "../src/i18n/locales.mjs";
-import { SETUP_PROMPT } from "../src/data/prompts.ts";
+import { QUICKSTART_PATHS, SETUP_PROMPT } from "../src/data/prompts.ts";
 
 const SITE = fileURLToPath(new URL("../", import.meta.url));
 const DIST = join(SITE, "dist");
@@ -126,4 +126,12 @@ test("the box's commands are the ones /docs/install shows", distOpts(DIST), () =
   }
   assert.equal(tabs.npx, NPX);
   assert.equal(tabs.Script, SCRIPT);
+});
+
+test("each setup prompt tells an agent on Windows to run codingsh in PowerShell and cmd", () => {
+  for (const p of QUICKSTART_PATHS) {
+    for (const word of ["Windows", "PowerShell", "cmd", "run codingsh instead of coding.sh"]) {
+      assert.ok(p.setup.includes(word), `the ${p.id} setup prompt names ${word}`);
+    }
+  }
 });
