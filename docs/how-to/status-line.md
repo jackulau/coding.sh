@@ -20,6 +20,12 @@ This writes a `statusLine` block into your Claude Code `settings.json`:
 "statusLine": { "type": "command", "command": "coding.sh statusline", "padding": 0 }
 ```
 
+On Windows the command is `codingsh.cmd statusline`. Claude Code runs it through Git Bash, or
+through PowerShell when Git Bash is not installed, and PowerShell can't run `coding.sh`, the sh
+script npm installs; `codingsh.cmd` runs in both. In PowerShell or cmd, run
+`codingsh statusline install`. A status line installed by version 0.1.7 or earlier names
+`coding.sh`: run `install` again to update it.
+
 Claude Code shows the line on the next turn. It looks like this:
 
 ```text

@@ -73,7 +73,8 @@ describe("statusline install and uninstall with --json", () => {
     assert.deepEqual(await runJson("install", { "dry-run": true }), { outcome: "planned", action: "install", path: settings() });
     assert.ok(!existsSync(settings()), "a dry run writes nothing");
     assert.deepEqual(await runJson("install"), { outcome: "installed", path: settings() });
-    assert.match(readFileSync(settings(), "utf8"), /coding\.sh statusline/);
+    // On Windows, codingsh.cmd: Claude Code runs the line through Git Bash or PowerShell.
+    assert.match(readFileSync(settings(), "utf8"), process.platform === "win32" ? /codingsh\.cmd statusline/ : /coding\.sh statusline/);
     assert.deepEqual(await runJson("install"), { outcome: "unchanged", path: settings() });
     assert.deepEqual(await runJson("uninstall", { "dry-run": true }), { outcome: "planned", action: "uninstall", path: settings() });
     assert.deepEqual(await runJson("uninstall"), { outcome: "removed", path: settings() });
