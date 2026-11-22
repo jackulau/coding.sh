@@ -130,6 +130,20 @@ describe("exp run --record / --replay from the CLI", () => {
     assert.deepEqual(b.metadata.llm.task.env, { SYS: "sys C" });
   });
 
+  it("a candidate whose every call replayed is told its system-prompt edit was never sent; one with a live call is not", async () => {
+    let before = stub.calls();
+    const r = await cli(["exp", "run", spec("cand-text", "sys B, edited"), "--replay", recId]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(stub.calls() - before, 0);
+    assert.match(r.stderr, /^! llm cache: every model call of the candidate matched the recording, so it made no live call\. The key leaves out the system prompt: a change to it alone is never sent\. Test one with a live run, without --replay$/m);
+    before = stub.calls();
+    const live = await cli(["exp", "run", spec("until-ctl", "sys A"), "--replay", recId, "--replay-until", "1"]);
+    assert.equal(live.status, 0, live.stderr);
+    assert.equal(stub.calls() - before, 8, "call 2 of each case-trial runs live, in both arms");
+    assert.match(live.stdout, /llm replay noise floor/);
+    assert.doesNotMatch(live.stderr, /made no live call/);
+  });
+
   it("--replay-until 1 --no-control: one run, call 2 live", async () => {
     const before = stub.calls();
     const r = await cli(["exp", "run", spec("until", "sys A"), "--replay", recId, "--replay-until", "1", "--no-control", "--json"]);

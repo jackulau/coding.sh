@@ -135,6 +135,16 @@ export async function storeControlNoise(store: FileEvalStore, a: ExperimentResul
   await store.putExperiment(a);
 }
 
+/** The run made model calls and the recording served every one: none ran live. */
+function servedAll(e: ExperimentResult): boolean {
+  let calls = 0;
+  for (const r of e.runs) {
+    if (r.llm?.live) return false;
+    calls += r.llm?.calls ?? 0;
+  }
+  return calls > 0;
+}
+
 /** exp run --replay with one task: the recorded config (control) and the candidate as one interleaved A/B. */
 export async function replayWithControl(c: CommandContext, store: FileEvalStore, plan: LlmPlan, specFile: string | undefined, seed: number | undefined): Promise<number> {
   const { loadSpec, runArms, cancelledWarning } = await import("./exp.ts");
@@ -162,6 +172,7 @@ export async function replayWithControl(c: CommandContext, store: FileEvalStore,
     cancelledWarning(c, ab.b);
     return 1;
   }
+  if (servedAll(ab.b)) c.out.warn("llm cache: every model call of the candidate matched the recording, so it made no live call. The key leaves out the system prompt: a change to it alone is never sent. Test one with a live run, without --replay");
   const broken = (r: ExperimentResult) => r.summary.n > 0 && r.summary.errors === r.summary.n;
   return broken(ab.a) || broken(ab.b) ? 1 : 0;
 }
