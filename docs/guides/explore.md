@@ -297,7 +297,7 @@ Hook-only captures often carry no tool output, so their invalid counts are a low
 
 ## Memory and instruction files
 
-`coding.sh harness audit` counts the sessions that loaded, read and wrote each AGENTS.md, rule,
+`coding.sh harness audit` counts the sessions loading, reading and writing each AGENTS.md, rule,
 skill and memory file over the last 30 days, flagged files first.
 
 ```sh
@@ -307,13 +307,14 @@ coding.sh harness audit --agent codex --since 90d
 
 | Flag | The file |
 |---|---|
-| `never-read` | Is on disk, and no session in the window loaded or read it. A file added after every session in the window started is not flagged. |
+| `never-read` | Is on disk, and no session loaded or read it. A file added after the last session started is not flagged. |
 | `write-only` | Was written, and no other session loaded or read it. |
-| `loaded-not-read` | Is a skill that was listed but never invoked or read. |
+| `deleted` | Would be `write-only`, but is gone from disk. |
+| `loaded-not-read` | Is a skill listed but never invoked or read. |
 
 A file pulled in with an `@path` import (`@AGENTS.md`) counts as loaded in each Claude Code
 session that loaded the importing file, up to 5 imports deep. The load cost is the file's tokens (bytes / 4) times the sessions
-that loaded it.
+loading it.
 
 It also warns when a Claude Code subagent file's `tools:` is a map, which leaves it no tools.
 

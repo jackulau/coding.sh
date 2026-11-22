@@ -141,20 +141,36 @@ describe("memory audit: synthetic sessions", () => {
     assert.equal(a.totals.neverRead, 1);
   });
 
-  it("flags never-read and write-only files", () => {
+  it("flags never-read, write-only and deleted files", () => {
     assert.deepEqual(row(a, `${MEM}/stale.md`).flags, ["never-read"]);
     // notes.md: written by s1 and s2; s2 read it, but s2 wrote it too.
     assert.deepEqual(row(a, `${MEM}/notes.md`).flags, ["write-only"]);
     const created = row(a, `${MEM}/new.md`);
     assert.equal(created.exists, false);
-    assert.deepEqual(created.flags, ["write-only"]);
+    assert.deepEqual(created.flags, ["deleted"], "written and no longer on disk: not write-only");
     assert.deepEqual(row(a, "~/app/.claude/rules/tests.md").flags, ["never-read"], "a path-scoped rule does not load at start");
     assert.deepEqual(row(a, "~/.claude/skills/pdf/SKILL.md").flags, ["loaded-not-read"]);
     assert.equal(a.totals.neverRead, 2);
-    assert.equal(a.totals.writeOnly, 2);
+    assert.equal(a.totals.writeOnly, 1);
+    assert.equal(a.totals.deleted, 1);
     assert.equal(a.totals.loadedNotRead, 1);
     assert.equal(a.totals.sessionsWriting, 2);
     assert.equal(a.totals.sessionsReading, 2);
+  });
+
+  it("a written file no longer on disk is deleted, not write-only, and listed after the rest", () => {
+    const dir = `${HOME}/.claude/projects/-home-me-app/memory`;
+    const b = auditMemory([session("w", [edit(`${dir}/a-scratch.md`), edit(`${dir}/kept.md`)])], [file(`${MEM}/kept.md`), file(`${MEM}/stale.md`)], { home: HOME });
+    const gone = row(b, `${MEM}/a-scratch.md`);
+    assert.equal(gone.exists, false);
+    assert.deepEqual(gone.flags, ["deleted"]);
+    assert.deepEqual(row(b, `${MEM}/kept.md`).flags, ["write-only"], "written, still on disk and read by no other session");
+    assert.deepEqual([b.totals.writeOnly, b.totals.deleted, b.totals.neverRead], [1, 1, 1]);
+    assert.deepEqual(b.files.map((f) => f.path), [`${MEM}/kept.md`, `${MEM}/stale.md`, `${MEM}/a-scratch.md`]);
+    // Read back by another session before it was removed: used, so no flag.
+    const c = auditMemory([session("w", [edit(`${dir}/a-scratch.md`)]), session("r", [read(`${dir}/a-scratch.md`)])], [file(`${MEM}/kept.md`)], { home: HOME });
+    assert.deepEqual(row(c, `${MEM}/a-scratch.md`).flags, []);
+    assert.equal("deleted" in c.totals, false, "absent when no file is deleted");
   });
 
   it("a read in a session that did not write it clears write-only", () => {
@@ -432,6 +448,31 @@ describe("harness audit over a store and a temp HOME", () => {
     assert.match(text.stdout, /stale\.md/);
     assert.match(text.stdout + text.stderr, /never read/);
     assert.match(cli(["harness", "audit", "--since", "nope"]).stderr, /--since/);
+  });
+
+  it("a memory file a session wrote and then removed is deleted, not write-only", async () => {
+    const cwd = join(home, "scratch-app");
+    const project = join(home, ".claude", "projects", claudeProjectSlug(cwd));
+    const mem = join(project, "memory");
+    mkdirSync(mem, { recursive: true });
+    mkdirSync(cwd, { recursive: true });
+    try {
+      writeFileSync(join(mem, "kept.md"), "kept\n");
+      writeFileSync(join(mem, "gone.md"), "gone\n");
+      const index = new MemoryIndexStore();
+      await index.upsertSession({ id: "writer", agent: "claude-code", cwd, startedAt: 7000, stats: { events: 0, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 }, flags: [] });
+      const write = (i: number, path: string): AgentEvent => ({ id: `writer-${i}`, v: 0, sessionId: "writer", agent: "claude-code", kind: "tool.start", ts: 7000 + i, payload: { tool: "Write", input: { file_path: path, content: "x" } } });
+      await index.putEvents([write(1, join(mem, "kept.md")), write(2, join(mem, "gone.md"))]);
+      rmSync(join(mem, "gone.md"));
+      const a = await memoryAudit(index, { since: 6500, env });
+      const at = (name: string) => a.files.find((f) => f.path.endsWith(`/memory/${name}`));
+      assert.deepEqual([at("gone.md")?.exists, at("gone.md")?.flags], [false, ["deleted"]], a.files.map((f) => f.path).join(", "));
+      assert.deepEqual(at("kept.md")?.flags, ["write-only"]);
+      assert.deepEqual([a.totals.writeOnly, a.totals.deleted], [1, 1]);
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });
 
