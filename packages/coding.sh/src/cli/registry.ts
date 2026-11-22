@@ -1152,7 +1152,7 @@ export const COMMANDS: CommandSpec[] = [
         args: [{ name: "spec", desc: "JSON file with the same fields as the options (behavior, since, a, b, model, …); options override it" }],
         flags: [
           { name: "a", type: "string", value: "<FILE|DIR|git:REV|BUNDLE|none>", desc: "Baseline harness (default: git HEAD when B is omitted, else the repo's current files; with no uncommitted edits, the version before your last harness commit)" },
-          { name: "b", type: "string", value: "<FILE|DIR|git:REV|BUNDLE|none>", desc: "Candidate harness; a file replaces the file of the same path in A (default: your uncommitted edits, else your last harness commit)" },
+          { name: "b", type: "string", value: "<FILE|DIR|git:REV|BUNDLE|none>", desc: "Candidate harness; a file replaces the harness file at its repo path, else the one with its name (default: your uncommitted edits, else your last harness commit)" },
           { name: "behavior", type: "list", commas: true, value: "<ID[,ID]>", desc: "Decision points to test: unverified-claim, done-while-failing, unchanged-retry (default: all)" },
           { name: "anchor", type: "list", value: "<FILE>", desc: "Module exporting your own anchor(s) (see the evals guide)" },
           { name: "since", type: "string", value: "<DURATION|DATE>", desc: "Sessions started since", default: "14d" },
@@ -2141,7 +2141,7 @@ export const COMMANDS: CommandSpec[] = [
         summary: "Check a harness edit for deleted, reworded or relaxed protected lines; exit 1 when it has any",
         flags: [
           { name: "a", type: "string", value: "<FILE|DIR|git:REV|BUNDLE|none>", desc: "Before (default: git HEAD when B is omitted, else the repo's current files)" },
-          { name: "b", type: "string", value: "<FILE|DIR|git:REV|BUNDLE|none>", desc: "After; a file replaces the file of the same path in A (default: your uncommitted edits)" },
+          { name: "b", type: "string", value: "<FILE|DIR|git:REV|BUNDLE|none>", desc: "After; a file replaces the harness file at its repo path, else the one with its name (default: your uncommitted edits)" },
           PROTECTED_EDIT,
         ],
         examples: ["coding.sh refine check", "coding.sh refine check --b ./drafts/AGENTS.md", "coding.sh refine check --a git:main --b . --json", "coding.sh refine check --allow-protected-edit AGENTS.md:12"],

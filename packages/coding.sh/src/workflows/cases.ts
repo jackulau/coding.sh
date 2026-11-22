@@ -6,21 +6,21 @@
 //   threshold = 0.5                  # optional: score ≥ threshold is a pass
 //   [truth]
 //   kind = "seeded-bugs"
-//   file = "hidden/seeded-1.json"    # bugs JSON kept outside the workflow's tree
-//   # or inline:
+//   file = "/tmp/review-truth/seeded-1.json"   # bugs JSON outside the workflow's tree
+//   # or inline, in a case file outside the workflow's tree:
 //   [[truth.bugs]]
 //   id = "b1"  file = "src/a.ts"  lines = [10, 12]  category = "logic"  severity = "P1"
 //   patch = "bugs/b1.patch"          # path relative to the case file
 //
 //   [start]                          # optional: the tree the workflow works on
-//   repoRoot = "../../../.."  snapshot = "/tmp/seeded-1"   # truth.file may not sit inside either
+//   repoRoot = "../../../.."  snapshot = "/tmp/seeded-1"   # neither may hold truth.file, nor a case file that lists bugs
 //
 // verifier (Fix workflows): kind = "verifier", command = "npm test", or named tests:
 //   [[truth.tests]]
 //   id = "orders"  command = "node --test test/orders.test.ts"  before = "pass"   # failing now = regression
 // judge (synthesis / research): kind = "judge", rubric = "…", judge = "anthropic" | "<provider>:<model>" | '{json}'.
 import { readdir, readFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { BlobStore } from "../core/types.ts";
 import { parseToml, type TomlTable } from "../core/toml.ts";
 import type { SeededBug, VerifierTest, WorkflowCase, WorkflowTruth } from "./types.ts";
@@ -88,6 +88,16 @@ function isInside(p: string, dir: string): boolean {
   return r === "" || (r !== ".." && !r.startsWith(`..${sep}`) && !isAbsolute(r));
 }
 
+/** Where to keep truth found inside `tree`: in a folder beside one of the trees, named after it, that no tree holds. */
+function truthFolder(tree: string, trees: string[]): string {
+  for (const t of [tree, ...trees].filter(Boolean).map((x) => resolve(x))) {
+    if (dirname(t) === t) continue; // nothing sits beside a filesystem root
+    const dir = join(dirname(t), `${basename(t)}-truth`);
+    if (!trees.some((x) => x && isInside(dir, x))) return `a folder outside repoRoot and snapshot, such as ${dir}`;
+  }
+  return "a folder outside repoRoot and snapshot";
+}
+
 export async function parseCase(text: string, file: string, workflow: string, blobs: Pick<BlobStore, "put">): Promise<WorkflowCase> {
   const t: TomlTable = parseToml(text, file);
   const baseDir = dirname(file);
@@ -131,9 +141,16 @@ export async function parseCase(text: string, file: string, workflow: string, bl
   if (isObj(t.start) && typeof t.start.repoRoot === "string") {
     const at = (p: unknown) => (typeof p === "string" && p ? (isAbsolute(p) ? p : resolve(baseDir, p)) : "");
     c.start = { repoRoot: at(t.start.repoRoot), snapshot: at(t.start.snapshot), head: typeof t.start.head === "string" ? t.start.head : "" };
-    // The truth is hidden from the workflow: a truth file inside the tree it works on could be read by its agents.
-    for (const tree of [c.start.repoRoot, c.start.snapshot]) {
-      if (truthFile && tree && isInside(truthFile, tree)) throw new Error(`${file}: truth.file ${JSON.stringify(t.truth && isObj(t.truth) ? t.truth.file : "")} is inside the workflow's tree ${tree}; keep it outside, e.g. in hidden/ next to cases/`);
+    // The truth is hidden from the workflow: a truth file inside the tree it works on could be read by its agents,
+    // and so could a case file there that lists bugs, whether they are the truth or left over beside truth.file.
+    const trees = [c.start.repoRoot, c.start.snapshot];
+    const listsBugs = kind === "seeded-bugs" && Array.isArray(tr.bugs) && tr.bugs.length > 0;
+    for (const tree of trees) {
+      if (truthFile && tree && isInside(truthFile, tree)) throw new Error(`${file}: truth.file ${JSON.stringify(tr.file)} is inside the workflow's tree ${tree}, where its agents could read it; move it, with the patches it names, to ${truthFolder(tree, trees)}, then set truth.file to its new path`);
+      if (listsBugs && tree && isInside(file, tree)) {
+        const listed = `${file}: this case file lists [[truth.bugs]] and is inside the workflow's tree ${tree}, where its agents could read them`;
+        throw new Error(truthFile ? `${listed}; truth.file is set, so they are not used: delete them` : `${listed}; move them, with the patches they name, to a truth file in ${truthFolder(tree, trees)}, then set truth.file to its path`);
+      }
     }
   }
   if (typeof t.threshold === "number") c.threshold = t.threshold;

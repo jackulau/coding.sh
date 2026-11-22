@@ -205,7 +205,7 @@ kind `agent` or `step` that ran (`status ≠ cached`), unless noted.
 | `perAgent[]` | Per node: duration, tokens, `costUsd`, `llmP50Ms`/`llmP95Ms`/`ttftP50Ms`, tool calls, tool errors, turns, model, effort; `agentId` (the source's agent id), `attempt` (1-based: which call with this label it was, so a label re-run after a resume is `2`; a durable step's attempt) and `endReason` (the status, or `schema-retry` for an agent that returned after a StructuredOutput validation failure) |
 | `perPhase[]` | Per phase: wall span, agent count, Σ duration, tokens, cost, failures. Phases are listed in the order the run reached them (their agents' first start; ties and untimed phases in script order), the same order `workflows show` and the Gantt use, so a phase the script dropped before a resume sits where it ran. |
 | `apiRetries` | Σ API retry attempts (Claude Code `api_error.attempt`, `llm.call ok:false`) |
-| `nullAgents`, `failedAgents` | Agents that returned `null` (skipped or died after retries) / ended in error. Rates are over all agents except cancelled and superseded ones. |
+| `nullAgents`, `failedAgents` | Agents that returned `null` (skipped or died after retries) / ended in error. Rates (`nullRate`, `failRate`) are over the agents that ran, as `agents` counts them: cached, cancelled and superseded agents are left out. |
 | `cancelledAgents`, `supersededAgents` | Agents that never returned because the run was stopped, absent when none. `cancelled`: the agent's transcript ends with Claude Code's `[Request interrupted by user]` or `[Request interrupted by user for tool use]`. `superseded`: a later call with the same label ran in its place (a re-run after a resume). Neither is a failure: both stay out of `agents`, `failedAgents` and the rates, and out of the critical path and barrier groups, but their time and tokens count in `agentMs` and cost. `perPhase[]` counts them as `cancelled` and `superseded`. |
 | `schemaFailures` | StructuredOutput calls whose result was a validation error, summed over agents. `schemaFinalInvalid` counts agents that never produced a valid output. |
 | `cacheHits`, `cacheHitRate` | Nodes with `status = cached`, plus nodes with `cacheHit` (they ran earlier in this run and a resume in the same run dir replayed them) / all agent nodes |
@@ -244,8 +244,10 @@ A workflow case is `{id, args, start?: RepoState snapshot, truth, split}`, store
 | Council / design loops | Programmatic budgets first (Lighthouse etc.), council relative score second | As in docs/design/dogfood.md §3.4 |
 
 Seeded cases are validated before use: on the seeded snapshot, each bug's own test fails; with the
-bug patch reverted, it passes. The truth file lives in `hidden/` and is never readable from the
-workflow's working tree.
+bug patch reverted, it passes. The truth file lives outside the workflow's working tree (`[start]`'s
+`repoRoot` and `snapshot`), where its agents can't read it. The case loader refuses one inside
+either and names a folder outside both to move it to. It refuses a case file inside either that
+lists bugs itself (`[[truth.bugs]]`) in the same way.
 
 ## 6. Experiments: A/B of workflow variants
 

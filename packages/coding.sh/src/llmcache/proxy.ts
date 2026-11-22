@@ -227,6 +227,11 @@ export async function startLlmCache(o: StartLlmCacheOptions): Promise<LlmCache> 
     return out;
   };
 
+  /** A replayed case-trial whose live call failed is left unscored: say so once, with why. */
+  const liveFailed = (job: JobState, ordinal: number, why: string) => {
+    if (++job.upstreamErrors === 1) o.onWarn?.(`llm cache: case ${job.opts.caseId} trial ${job.opts.trial}: live call ${ordinal} failed (${why}); leaving it unscored`);
+  };
+
   const record = (job: JobState, e: Omit<LlmEntry, "v" | "body" | "bodyEncoding" | "redacted">, raw: Pick<LlmEntry, "body" | "bodyEncoding">) => {
     job.entries.push({ v: LLM_ENTRY_VERSION, ...e, ...scrub(job, raw) });
   };
@@ -376,14 +381,14 @@ export async function startLlmCache(o: StartLlmCacheOptions): Promise<LlmCache> 
       target = joinUpstream(up[provider], `${rest}${query}`);
     } catch (err) {
       res.writeHead(400, { "Content-Type": "application/json" }).end(jsonError(400, `coding.sh llm cache: bad path: ${(err as Error).message}`));
-      if (job.replay) job.upstreamErrors++;
+      if (job.replay) liveFailed(job, ordinal, `bad path: ${(err as Error).message}`);
       return Promise.resolve();
     }
     return new Promise<void>((resolve) => {
       forward(req, res, target, body, (r) => {
         try {
           const ok = r.error === undefined && r.status !== undefined && r.status >= 200 && r.status < 300;
-          if (!ok && job.replay) job.upstreamErrors++;
+          if (!ok && job.replay) liveFailed(job, ordinal, r.error ?? `HTTP ${r.status}`);
           if (r.error === undefined && r.status !== undefined) {
             const buf = Buffer.concat(r.chunks);
             const sse = /text\/event-stream/i.test(r.contentType ?? "");
@@ -483,7 +488,7 @@ export async function startLlmCache(o: StartLlmCacheOptions): Promise<LlmCache> 
       let source: LlmEntry[] | undefined;
       if (o.mode === "replay") {
         source = await readRecording(recordingPath(o.dir, o.source!, jo.caseId, jo.trial));
-        if (!source) o.onWarn?.(`llm cache: ${o.source} has no recording for case ${jo.caseId} trial ${jo.trial}; running it live`);
+        if (!source) o.onWarn?.(`llm cache: ${o.source} has no recording for case ${jo.caseId} trial ${jo.trial}; running it live and leaving it unscored`);
       }
       const token = randomBytes(16).toString("hex");
       const state = new JobState(jo, source, o.mode === "replay");
