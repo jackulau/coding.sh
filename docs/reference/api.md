@@ -2015,9 +2015,11 @@ The viewer's Work page (`#/work`): the queue [`coding.sh work`](cli.md#codingsh-
 | `repo` | one repo |
 | `stage` | only items in these stages, hidden ones too, like `--stage`: repeated, or a comma list (`review,approval`) |
 | `all=1` | show hidden items, like `--all` |
-| `limit` | default 20, at most 500 |
+| `limit` | default 20, at most 1000 |
 
-It returns what `coding.sh work --json` returns for the same store and filters, built by the same code, plus two fields for the page: `members` maps each listed item's id to its member session ids (the main session first, at most 50), and `hiddenBy` counts the hidden items by reason (`running`, `done`, `acked` or `snoozed`). A bad `since`, `limit` or `stage` answers 400.
+It returns what `coding.sh work --json` returns for the same store and filters, built by the same code, plus fields for the page: `members` maps each listed item's id to its member session ids (the main session first, at most 50), and `hiddenBy` counts the hidden items by reason (`running`, `done`, `acked` or `snoozed`). A bad `since`, `limit` or `stage` answers 400.
+
+`totals` counts every item the answer holds before `limit` cuts it, by bucket, with `hidden` for hidden items (0 unless `all=1` or `stage` lists them). The page's headings read "20 of 671" from it.
 
 Item fields for workflow runs and replaced failures:
 

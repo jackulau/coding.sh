@@ -297,7 +297,9 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
   line as a warning, and a stale index's queue is judged as of the last ingest, as the command
   judges it. The session list's header shows the same age from `GET /api/ingest`. A server that
   sends none of these fields gets none of them. Ack and snooze buttons post to `/api/work/ack` and
-  `/api/work/snooze`, which write `work.json` by the command's rules. Only `coding.sh ui` serves
+  `/api/work/snooze`, which write `work.json` by the command's rules. A group's heading reads
+  "119 of 671" when the answer lists only part of its bucket (`totals` counts each bucket before
+  `limit` cuts the list), and Show all asks for up to 1,000 items. Only `coding.sh ui` serves
   it; `coding.sh serve` answers 404.
 - The MCP `status` tool gets a `work` field, so an agent can read the queue without a new tool:
   the counts, `needYou`, and the first 5 items as `work --json` gives them, over the same 7-day
@@ -365,6 +367,7 @@ done by a check command; budgets; cloud agents; dependencies between items; noti
   2 and suggests `review`.
 - `test/viewer/work.test.ts`: `GET /api/work` returns the items `work --json` returns for the same
   seeded store and filters, and an ack or snooze posted to the viewer is one the command sees.
+  `test/viewer/work-item-browser.test.ts` checks the headings' "N of M" and Show all.
   `test/viewer/work-browser.test.ts` drives the page in headless Chrome. The same file checks that a
   run item carries its phases and agents, a superseded failure its link, and the answer the index's
   age; `test/viewer/work-runs-browser.test.ts` draws them from a stubbed answer, and nothing new

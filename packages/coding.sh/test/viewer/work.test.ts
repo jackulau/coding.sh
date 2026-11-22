@@ -150,6 +150,25 @@ describe("viewer /api/work", () => {
     assert.deepEqual(got.hiddenBy, { done: 1 });
   });
 
+  test("totals count each bucket over the whole answer, before limit cuts it", async () => {
+    const countOf = (items: { bucket?: string }[]) => {
+      const t: Record<string, number> = { blocked: 0, failed: 0, stalled: 0, turn: 0, review: 0, hidden: 0 };
+      for (const i of items) t[i.bucket ?? "hidden"]!++;
+      return t;
+    };
+    const two = (await get("/api/work?limit=2")).json();
+    assert.equal(two.items.length, 2);
+    assert.deepEqual(two.totals, { blocked: 1, failed: 1, stalled: 1, turn: 1, review: 1, hidden: 0 });
+    assert.equal(two.more, 3);
+    // Hidden items count when the answer lists them: with all=1, or a stage filter.
+    assert.deepEqual((await get("/api/work?all=1&limit=1")).json().totals, { ...two.totals, hidden: 1 });
+    const staged = (await get("/api/work?stage=review,done")).json();
+    assert.deepEqual(staged.totals, countOf(staged.items));
+    assert.equal(staged.totals.hidden, 1);
+    // The filters narrow the totals as they narrow the items.
+    assert.deepEqual((await get("/api/work?agent=codex&limit=1")).json().totals, { ...countOf([]), failed: 1 });
+  });
+
   test("ack and snooze write the overlay coding.sh work reads", async () => {
     const blocked = workItemId("blocked");
     const ack = await post("/api/work/ack", { id: blocked });
@@ -326,6 +345,14 @@ describe("viewer /api/work: a big queue", () => {
   after(async () => {
     await v?.close();
     if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a limit lists up to 1,000 items, and totals count the rest", async () => {
+    const got = (await get("/api/work?limit=5000")).json();
+    assert.equal(got.items.length, 1000);
+    assert.equal(got.more, 50);
+    assert.equal(got.totals.review, 1050);
+    assert.equal((await get("/api/work?limit=600")).json().items.length, 600);
   });
 
   test("gzips the answer when the request takes gzip, and sends it plain when not", async () => {

@@ -9,7 +9,7 @@ import type { IndexStore } from "../core/types.ts";
 import { shortener } from "../core/session-ref.ts";
 import { indexAge, indexAgeField, indexAgeText, staleIndexText, type IndexAge } from "../core/ingest-health.ts";
 import { addAck, addSnooze, readOverlay, writeOverlay } from "../core/work-overlay.ts";
-import { BUCKET_LABELS, buildWorkQueue, itemWorkflowAgents, readWorkQueue, workItemJson, workJson, type HiddenReason, type Stage, type WorkItem } from "../core/work.ts";
+import { BUCKET_LABELS, BUCKETS, buildWorkQueue, itemWorkflowAgents, readWorkQueue, workItemJson, workJson, type HiddenReason, type Stage, type WorkItem } from "../core/work.ts";
 
 /** Where acks and snoozes live: <CODING_SH_HOME>/work.json (`paths(env).work`). `now` is for tests. */
 export interface WorkSource {
@@ -29,7 +29,8 @@ export interface WorkSource {
 export const WORK_PAGE_SINCE = "7d";
 /** Items in one response when the request names no limit: `work`'s default. */
 const DEFAULT_LIMIT = 20;
-const MAX_LIMIT = 500;
+/** A bigger limit is cut to this; the page's "Show all" asks for up to this many. */
+const MAX_LIMIT = 1000;
 /** Member session ids listed per item, for the page's links. */
 const MEMBERS_MAX = 50;
 
@@ -98,13 +99,14 @@ export function indexDoc(age: IndexAge | undefined, work = false): { index?: { u
 const judgedAt = (src: WorkSource, now: number, age = src.root ? indexAge(src.root, now) : undefined): number => (age?.stale ? age.at : now);
 
 /**
- * GET /api/work?since=7d&agent=a,b&repo=x&stage=review&all=1&limit=20: `work --json`'s document, plus three
+ * GET /api/work?since=7d&agent=a,b&repo=x&stage=review&all=1&limit=20: `work --json`'s document, plus four
  * fields for the page: `members` (item id → its member session ids, the primary first) for the
- * session links, `hiddenBy` (hidden reason → count; {} when nothing is hidden), and `now` (ISO),
- * the moment the reasons' ages were worked out. With a `root` it carries `index` (indexDoc), and an
- * old index judges the queue as of its last ingest. Left out when empty: `workflowAgents` (a run
- * item's id → its agents, as `work show --json` lists them) and `sessionOf` (the id of an item a
- * shown failure was superseded by → that item's primary session).
+ * session links, `hiddenBy` (hidden reason → count; {} when nothing is hidden), `totals` (each
+ * bucket and "hidden" → how many items of the whole answer, not just the first `limit`, fall in
+ * it), and `now` (ISO), the moment the reasons' ages were worked out. With a `root` it carries
+ * `index` (indexDoc), and an old index judges the queue as of its last ingest. Left out when empty:
+ * `workflowAgents` (a run item's id → its agents, as `work show --json` lists them) and `sessionOf`
+ * (the id of an item a shown failure was superseded by → that item's primary session).
  */
 export async function workList(index: IndexStore, src: WorkSource, q: URLSearchParams): Promise<Record<string, unknown>> {
   const clock = src.now?.() ?? Date.now();
@@ -123,6 +125,9 @@ export async function workList(index: IndexStore, src: WorkSource, q: URLSearchP
   const hiddenBy: Partial<Record<HiddenReason, number>> = {};
   for (const i of every.items) if (i.hidden) hiddenBy[i.hidden] = (hiddenBy[i.hidden] ?? 0) + 1;
   const shown = queue.items.slice(0, limit);
+  // `counts` counts every stage and leaves hidden items out; the page's headings count what this answer lists.
+  const totals: Record<string, number> = Object.fromEntries([...BUCKETS, "hidden"].map((b) => [b, 0]));
+  for (const i of queue.items) totals[i.bucket ?? "hidden"] = (totals[i.bucket ?? "hidden"] ?? 0) + 1;
   const workflowAgents: Record<string, unknown[]> = {};
   for (const i of shown) {
     if (i.workflow) workflowAgents[i.id] = itemWorkflowAgents(i, sessions, now).slice(0, MEMBERS_MAX).map(({ startedAt: _, ...a }) => a);
@@ -141,6 +146,7 @@ export async function workList(index: IndexStore, src: WorkSource, q: URLSearchP
     now: new Date(now).toISOString(),
     members: Object.fromEntries(shown.map((i) => [i.id, i.sessionIds.slice(0, MEMBERS_MAX)])),
     hiddenBy,
+    totals,
   };
   if (Object.keys(workflowAgents).length) doc.workflowAgents = workflowAgents;
   if (Object.keys(sessionOf).length) doc.sessionOf = sessionOf;

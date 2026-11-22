@@ -8089,14 +8089,21 @@ const WORK_SINCE = ["1d", "7d", "30d"];
 // core/work.ts STAGES, in order: where each item stands, apart from what needs you.
 const WORK_STAGES = ["planning", "executing", "review", "approval", "done"];
 const WORK_LIMIT = 200;
+// The most items one answer lists (viewer/work.ts MAX_LIMIT): "Show all" asks for up to this many.
+const WORK_MAX = 1000;
 const WORK_POLL_MS = 10_000;
 function workState(q) {
   const clip = (v, n) => (v || "").trim().slice(0, n);
   const stage = q.get("stage") || "";
-  return { agent: clip(q.get("agent"), 200), repo: clip(q.get("repo"), 500), since: clip(q.get("since"), 40) || "7d", all: q.get("all") === "1", stage: WORK_STAGES.includes(stage) ? stage : "" };
+  const limit = Number(q.get("limit") || WORK_LIMIT);
+  return { agent: clip(q.get("agent"), 200), repo: clip(q.get("repo"), 500), since: clip(q.get("since"), 40) || "7d", all: q.get("all") === "1", stage: WORK_STAGES.includes(stage) ? stage : "",
+    limit: Number.isInteger(limit) && limit > 0 && limit <= WORK_MAX ? limit : WORK_LIMIT };
 }
 function workHref(st) {
-  return "#/work" + qs({ agent: st.agent, repo: st.repo, since: st.since === "7d" ? "" : st.since, all: st.all ? "1" : "", stage: st.stage });
+  return "#/work" + qs({ agent: st.agent, repo: st.repo, since: st.since === "7d" ? "" : st.since, all: st.all ? "1" : "", stage: st.stage, limit: st.limit === WORK_LIMIT ? "" : st.limit });
+}
+function workPath(st) {
+  return "/api/work" + qs({ agent: st.agent, repo: st.repo, since: st.since, all: st.all ? "1" : "", stage: st.stage, limit: st.limit });
 }
 /** "1 planning · 2 review", as the CLI's stages line says it (stagesLine in core/work.ts). */
 function workStages(stages) {
@@ -8136,7 +8143,8 @@ function workHiddenReasons(by) {
 
 async function showWork(seq, query) {
   const st = workState(query);
-  const go = (patch) => { location.hash = workHref({ ...st, ...patch }); };
+  // Another filter is another list: it starts at the default limit again.
+  const go = (patch) => { location.hash = workHref({ ...st, limit: WORK_LIMIT, ...patch }); };
   const view = h("section", { class: "wrap view work", "aria-labelledby": "work-h" });
   const keys = { scope: "work", actions: {}, palette: [] };
   const meta = h("p", { class: "meta" }, "Loading…");
@@ -8170,7 +8178,7 @@ async function showWork(seq, query) {
     return row;
   }))), 250);
 
-  const path = "/api/work" + qs({ agent: st.agent, repo: st.repo, since: st.since, all: st.all ? "1" : "", stage: st.stage, limit: WORK_LIMIT });
+  let path = workPath(st);
   let d;
   try { d = await api(path); } catch (e) {
     clearTimeout(skel);
@@ -8197,7 +8205,7 @@ async function showWork(seq, query) {
     if (doc.noPromptSignal && doc.noPromptSignal.length) lines.push(h("p", { class: "meta" }, "No prompt signal from " + doc.noPromptSignal.join(", ") + ": their waits show as stalled."));
     if (doc.truncated) lines.push(h("p", { class: "meta" }, "Read the newest sessions only: pick a shorter window."));
     swap(notes, lines);
-    swap(slot, workBody(doc, st, go, act));
+    swap(slot, workBody(doc, st, go, act, showAll));
     if (!quiet) announce(doc.items.length ? workCounts(doc.counts) + (doc.hidden ? ", " + plural(doc.hidden, "hidden item") : "") : "Nothing needs you");
   };
   const reload = async () => {
@@ -8227,6 +8235,31 @@ async function showWork(seq, query) {
       toast(e.message || "That did not work");
       if (button && button.isConnected) button.disabled = false;
     } finally { acting = false; }
+  }
+  // The same list with a bigger limit, drawn in place. The hash keeps the limit, so back and a reload return to it.
+  async function showAll(n, button) {
+    if (acting) return;
+    acting = true;
+    button.disabled = true;
+    const had = new Set([...slot.querySelectorAll(".work-item")].map((el) => el.dataset.item));
+    const want = { ...st, limit: Math.min(n, WORK_MAX) };
+    let next;
+    try { next = await api(workPath(want), undefined, true); } catch (e) {
+      toast(e.message || "That did not load");
+      if (button.isConnected) button.disabled = false;
+      return;
+    } finally { acting = false; }
+    if (!current(seq)) return;
+    st.limit = want.limit;
+    path = workPath(st);
+    history.replaceState(null, "", workHref(st));
+    last = JSON.stringify(next);
+    draw(next, true);
+    announce("Showing " + plural(next.items.length, "item"));
+    // Focus goes to the first card that was not on the page.
+    const fresh = [...slot.querySelectorAll(".work-item")].find((el) => !had.has(el.dataset.item));
+    const t = fresh && fresh.querySelector(".work-title");
+    if (t) { t.focus({ preventScroll: true }); t.scrollIntoView({ block: "nearest" }); }
   }
   draw(d, false);
 
@@ -8266,7 +8299,7 @@ function workError(e, go) {
   }
   return errorPanel(e, () => route());
 }
-function workBody(doc, st, go, act) {
+function workBody(doc, st, go, act, showAll) {
   const items = doc.items || [];
   if (!items.length) {
     const filtered = !!(st.agent || st.repo || st.stage);
@@ -8286,15 +8319,27 @@ function workBody(doc, st, go, act) {
   const members = doc.members || {};
   // The moment the server wrote the reasons ("ended 2h ago"); ages on the cards count from it too.
   const now = Number.isFinite(Date.parse(doc.now)) ? Date.parse(doc.now) : Date.now();
-  const groups = WORK_BUCKETS.map(([b, label]) => [label, items.filter((i) => i.bucket === b)]).concat([["Hidden", items.filter((i) => !i.bucket)]]);
-  const out = groups.filter(([, list]) => list.length).map(([label, list], g) => h("section", { class: "work-group", "aria-labelledby": "work-g" + g },
-    h("h2", { id: "work-g" + g }, label, " ", h("span", { class: "meta" }, fmtNum(list.length))),
-    h("ul", { class: "work-list" }, list.map((i) => workItemEl(i, members[i.id] || [i.sessionId], act, now, doc)))));
+  // One pass over the items: each bucket's list in the CLI's order, the hidden ones last.
+  const groups = WORK_BUCKETS.concat([["hidden", "Hidden"]]);
+  const by = new Map(groups.map(([b]) => [b, []]));
+  for (const i of items) { const list = by.get(i.bucket || "hidden"); if (list) list.push(i); }
+  // The answer lists up to its limit; `totals` counts each bucket in the whole queue (an older server sends none).
+  const totals = doc.totals || {};
+  const count = (b, n) => (typeof totals[b] === "number" && totals[b] > n ? fmtNum(n) + " of " + fmtNum(totals[b]) : fmtNum(n));
+  const out = groups.filter(([b]) => by.get(b).length).map(([b, label], g) => h("section", { class: "work-group", "aria-labelledby": "work-g" + g },
+    h("h2", { id: "work-g" + g }, label, " ", h("span", { class: "meta" }, count(b, by.get(b).length))),
+    h("ul", { class: "work-list" }, by.get(b).map((i) => workItemEl(i, members[i.id] || [i.sessionId], act, now, doc)))));
   if (doc.groups && doc.groups.length) out.push(h("p", { class: "meta" }, doc.groups.map((gr) => gr.cause + " x" + gr.count + ": " + gr.items.join(", ")).join(" · ")));
   if (doc.more) {
+    const total = items.length + doc.more;
+    // Up to WORK_MAX, the page can list them all itself; past it, the CLI can.
+    const more = showAll && items.length < WORK_MAX
+      ? h("button", { class: "btn btn-sm", type: "button", "data-act": "all", onclick: (e) => showAll(total, e.currentTarget) }, total <= WORK_MAX ? "Show all " + fmtNum(total) : "Show " + fmtNum(WORK_MAX))
+      : null;
     out.push(h("div", { class: "work-more" },
-      h("p", { class: "meta" }, plural(doc.more, "more item") + " than this page shows. The CLI lists them all:"),
-      cmdBlock(shCmd("coding.sh work --limit", items.length + doc.more, ...(st.all ? ["--all"] : [])), "Copy work command")));
+      h("p", { class: "meta" }, plural(doc.more, "more item") + " than this page shows."), more,
+      h("p", { class: "meta" }, (total > WORK_MAX ? "The page lists up to " + fmtNum(WORK_MAX) + ". " : "") + "The CLI lists them all:"),
+      cmdBlock(shCmd("coding.sh work --limit", total, ...(st.all ? ["--all"] : [])), "Copy work command")));
   }
   return out;
 }
