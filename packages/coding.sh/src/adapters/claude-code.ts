@@ -504,14 +504,17 @@ const META_NAME_RE = /\bmeta\s*=\s*\{[^{}]*?\bname\s*:\s*(['"`])((?:(?!\1)[^\\\n
 /** `o` without its undefined fields. */
 const defined = (o: Record<string, string | undefined>): Record<string, string> => Object.fromEntries(Object.entries(o).filter((e): e is [string, string] => e[1] !== undefined));
 
-/** The workflow a Workflow tool_use runs: its input's name, else the name in its inline script's meta block. */
+/** The workflow a Workflow tool_use runs: its input's name, else the name in its inline script's meta block, else its scriptPath's file name without the extension. */
 function workflowNameOf(input: unknown): string | undefined {
   const i = obj(input);
   const name = str(i.name)?.trim();
   if (name) return name;
   const script = str(i.script);
   const meta = script ? META_NAME_RE.exec(script)?.[2]?.trim() : undefined;
-  return meta || undefined;
+  if (meta) return meta;
+  // `scriptPath: ".../coding-sh-improve-r8.js"` → `coding-sh-improve-r8`.
+  const file = str(i.scriptPath)?.trim().split(/[\\/]/).filter(Boolean).pop();
+  return file?.replace(/\.(?:[cm]?[jt]s)$/i, "") || undefined;
 }
 
 async function scanWorkflowCalls(parentFile: string): Promise<WorkflowCalls> {
@@ -747,7 +750,7 @@ export const claudeCode: Adapter = {
   // 17 (0.1.8): a line holding a raw U+2028 or U+2029 inside a string is read whole, not split and dropped.
   // 18 (0.1.8): a Notification after a new tool call is another firing even when its payload repeats one under
   //    2 s old (the same permission prompt for two tool calls in a row).
-  // 19 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none. A workflow agent's session.start names its run (workflowId, workflowName, workflowPhase, workflowLabel).
+  // 19 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none. A workflow agent's session.start names its run (workflowId, workflowName, workflowPhase, workflowLabel); a run launched by scriptPath is named by the script's file name.
   parseVersion: 19,
 
   detect() {

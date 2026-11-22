@@ -84,4 +84,10 @@ describe("claude-code workflow agents: run fields on their session.start", () =>
     events = await collect(claudeCode.backfill!(testCtx().ctx));
     assert.ok(!("workflowName" in startOf(events, `${SID}:sub:${AGENT}`).payload));
   });
+
+  it("a run launched by scriptPath is named by the script's file name", async () => {
+    parentTranscript({ scriptPath: "/work/demo/.claude/workflows/demo-review-r8.js" });
+    const events = await collect(claudeCode.backfill!(testCtx().ctx));
+    assert.equal(startOf(events, `${SID}:sub:${AGENT}`).payload.workflowName, "demo-review-r8");
+  });
 });

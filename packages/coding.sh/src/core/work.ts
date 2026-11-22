@@ -370,13 +370,20 @@ const rank = (b: Bucket): number => BUCKETS.indexOf(b);
 export interface WorkStage {
   stage: Stage;
   kind?: WorkKind;
-  /** The evidence, at most STAGE_WHY_MAX characters. */
+  /** The evidence in one line: a free-text part (a failure, a quoted question) is cut to keep it within STAGE_WHY_MAX characters; counts and ages are never cut. */
   why: string;
 }
 
 /** The longest stageWhy. */
 export const STAGE_WHY_MAX = 80;
 const clip = (text: string, n = STAGE_WHY_MAX): string => (text.length > n ? `${text.slice(0, n - 1)}…` : text);
+/** `free`, cut to the room the facts after it leave in STAGE_WHY_MAX (at least 24 characters), then the facts, whole: a cut never lands in a count. */
+const withFacts = (prefix: string, free: string | undefined, facts: readonly (string | undefined)[]): string => {
+  const tail = facts.filter(Boolean).join(", ");
+  if (!free) return prefix + tail;
+  const room = Math.max(24, STAGE_WHY_MAX - prefix.length - (tail ? tail.length + 2 : 0));
+  return prefix + [clip(free, room), tail].filter(Boolean).join(", ");
+};
 const changedText = (n: number): string => `changed ${n} ${n === 1 ? "file" : "files"}`;
 const WAIT_FOR: Record<Waiting["kind"], string> = { permission: "permission", question: "an answer", plan: "plan approval", turn: "your turn" };
 /** The buckets a person settles by looking at the result: an ack of each moves the item to done. */
@@ -423,21 +430,20 @@ export function workStage(members: readonly Session[], primary: Session, now: nu
     const active = working.some((s) => now - lastActivity(s) < STALL_MS);
     const lead = active ? `running ${short(now - Math.min(...members.map((s) => s.startedAt)))}` : `quiet ${short(now - Math.max(...working.map(lastActivity)))}`;
     const evidence = [changed, tests].filter(Boolean);
-    return { stage: evidence.length ? "executing" : "planning", kind, why: clip(`${lead}, ${evidence.length ? evidence.join(", ") : "no file changed yet"}`) };
+    return { stage: evidence.length ? "executing" : "planning", kind, why: `${lead}, ${evidence.length ? evidence.join(", ") : "no file changed yet"}` };
   }
   const end = Math.max(...members.map(lastActivity));
   const own = causes.filter((c) => REVIEW_BUCKETS.has(c.bucket));
   if (own.length) {
     const open = own.filter((c) => !acked(c));
     const turn = own.find((c) => c.bucket === "turn");
-    const failure = apiFailure(primary) ?? ((primary.stats.testsFailed ?? 0) > 0 ? `tests: ${primary.stats.testsFailed} failed` : undefined);
+    const failure = apiFailure(primary) ?? ((primary.stats.testsFailed ?? 0) > 0 ? `tests: ${primary.stats.testsFailed} failed` : undefined) ?? own.find((c) => c.bucket === "failed")?.failure;
     const tail = turn ? `your turn for ${short(now - turn.at)}` : `stopped ${short(now - end)} ago`;
-    const why = [failure, changed, tail].filter(Boolean).join(", ");
-    return { stage: open.length ? "review" : "done", kind: kind ?? "research", why: clip(open.length ? why : `acknowledged: ${why}`) };
+    return { stage: open.length ? "review" : "done", kind: kind ?? "research", why: withFacts(open.length ? "" : "acknowledged: ", failure, [changed, tail]) };
   }
   const tests = testsText(primary.stats.testsPassed, primary.stats.testsFailed);
   const why = [tests, changed, `stopped ${short(now - end)} ago`].filter(Boolean).join(", ");
-  return { stage: "done", kind: kind ?? "research", why: clip(tests || changed ? why : `${why}, no file changed`) };
+  return { stage: "done", kind: kind ?? "research", why: tests || changed ? why : `${why}, no file changed` };
 }
 
 /** The command that resumes a session, when the agent has one. */
@@ -930,7 +936,8 @@ export async function workFiles(index: Pick<IndexStore, "listEvents">, item: Wor
     item.filesChanged = files.size;
     if (item.cause?.bucket === "review") item.reason = reviewReason(short(now - item.cause.at), files.size);
     // An approval item's stageWhy quotes the agent's question, which may itself say "changed 3 files".
-    if (item.stage !== "approval") item.stageWhy = clip(item.stageWhy.replace(/\bchanged \d+ files?\b/, changedText(files.size)));
+    if (item.stage !== "approval") item.stageWhy = item.stageWhy.replace(/\bchanged \d+ files?\b/, changedText(files.size));
+  }
   }
   return [...files];
 }

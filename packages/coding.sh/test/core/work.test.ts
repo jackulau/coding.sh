@@ -444,7 +444,13 @@ describe("stages and kinds", () => {
     const s = sess("a", 5 * MIN, { stats: { filesChanged: 1 } });
     assert.deepEqual(workStage([s], s, NOW), { stage: "review", kind: "change", why: "changed 1 file, stopped 4m ago" });
     assert.equal(workStage([s], s, NOW, undefined, () => true).stage, "done");
-    assert.deepEqual([...STAGES], ["planning", "executing", "review", "approval", "done"]);
+    // A long failure is cut to make room; the file count and the age after it are never cut.
+    const big = sess("b", 5 * MIN, { stats: { filesChanged: 73 } });
+    const failure = "3 failed agents (4 failing tests, 12 failing tests, 2 failing tests)";
+    const why = workStage([big], big, NOW, [{ bucket: "failed", sessionId: "b", at: ago(4 * MIN), fingerprint: "f", failure }]).why;
+    assert.match(why, /…, changed 73 files, stopped 4m ago$/);
+    assert.ok(why.length <= STAGE_WHY_MAX, why);
+    assert.deepEqual([...STAGES],["planning", "executing", "review", "approval", "done"]);
   });
 });
 

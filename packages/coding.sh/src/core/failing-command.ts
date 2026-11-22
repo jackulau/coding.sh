@@ -11,7 +11,14 @@
 //   4. only one part that runs a program
 //   5. shell semantics: the last part of a pipeline sets its status, and tools
 //      that always name themselves when they fail (cat, sed, ls, …) did not fail
-//      when the error doesn't name them; grep, rg and diff exit 1 silently
+//      when the error doesn't name them (unless their errors go to /dev/null);
+//      grep, rg and diff exit 1 silently
+//
+// No part failed when nothing ran: a shell parse error (`bash: -c: line 9:
+// unexpected EOF …`), or a removal check's denial, which is the removal's
+// (`rm`) when one part removes. The shell's own messages never name a
+// `bash x.sh` part. A stored command cut short (`…` at its end) hides parts,
+// so rules 4 and 5, which work by elimination, give no answer for it.
 //
 // Keywords (for, do, done, if, then, …), variable assignments, redirects,
 // flags and wrappers (sudo, env, nohup, timeout, xargs) are never the command.
@@ -38,6 +45,8 @@ export interface ShellPart {
   last: boolean;
   /** Run under `timeout`. */
   timed: boolean;
+  /** Its error output goes to /dev/null (`2>/dev/null`, `&>/dev/null`): it can fail without naming itself. */
+  quiet?: true;
   /** Parsed as PowerShell. */
   ps?: true;
 }
@@ -217,10 +226,14 @@ function partOf(text: string, last: boolean): ShellPart | undefined {
     } else break;
   }
   const argv: string[] = [];
+  let quiet = false;
   for (let i = 0; i < w.length; i++) {
     const x = w[i]!;
     if (REDIRECT.test(x)) {
-      if (REDIRECT.exec(x)![0].length === x.length) i++;
+      const op = REDIRECT.exec(x)![0];
+      const target = op.length === x.length ? (w[i + 1] ?? "") : x.slice(op.length);
+      if (/^(?:2>>?|&>>?)$/.test(op) && /^(?:\/dev\/null|nul)$/i.test(unquote(target))) quiet = true;
+      if (op.length === x.length) i++;
       continue;
     }
     argv.push(x);
@@ -229,7 +242,9 @@ function partOf(text: string, last: boolean): ShellPart | undefined {
   const raw = unquote(argv[0]!);
   const base = raw.split(/[\\/]/).filter(Boolean).pop() ?? raw;
   const prog = raw === "[" || raw === "[[" ? raw : !raw.startsWith("-") && !raw.startsWith("$") && PROG.test(base) ? base : undefined;
-  return { argv, prog, last, timed };
+  const part: ShellPart = { argv, prog, last, timed };
+  if (quiet) part.quiet = true;
+  return part;
 }
 
 /** A PowerShell launcher: `powershell.exe`, `pwsh`, by path or not, quoted or not. */
@@ -481,7 +496,11 @@ function namedAt(prog: string, output: string, ps = false): number {
   // `cat: x`, `/usr/bin/find: x`, bash's `bash: line 1: cd: x`, zsh's `(eval):cd:1: x`, sh's `foo: not found`.
   const re = new RegExp(`(?:^|\\n)[^\\S\\n]*(?:[\\w.~-]*\\/)*${p}(?:\\[\\d+\\])?: |: ${p}: |:${p}:\\d+: |\\b${p}: (?:command )?not found|command not found: ${p}(?![\\w.-])`, "g");
   let at = -1;
-  for (const m of output.matchAll(re)) at = m.index;
+  for (const m of output.matchAll(re)) {
+    // `bash: -c: line 3: …`, `bash: eval: line 1: …`: the shell that ran the line, not a `bash x.sh` part.
+    if (SHELLS.has(prog) && /^(?:-c|eval|line \d+):/.test(output.slice(m.index + m[0].length))) continue;
+    at = m.index;
+  }
   if (ps) {
     // `Get-ChildItem : Cannot find path …` (5.1), `[Get-ChildItem], ItemNotFoundException`, `The term 'foo' is not recognized`.
     const psRe = new RegExp(`(?:^|\\n)[^\\S\\n]*${p}[^\\S\\n]+: |\\[${p}\\], |The term '(?:[^'\\n]*[\\\\/])?${p}' is not recognized`, "gi");
@@ -489,6 +508,22 @@ function namedAt(prog: string, output: string, ps = false): number {
   }
   return at;
 }
+
+/** POSIX shells: their own messages (`bash: -c: line 3: …`) speak for the line that ran, not for a part. */
+const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
+/** The shell could not parse the line, so no part of it ran. */
+const PARSE_ERROR = /^[^\S\n]*(?:[\w.~-]*\/)*(?:ba|z|da|k)?sh: (?:-c: |eval: )?line \d+: (?:unexpected EOF while looking for matching|syntax error)/m;
+/** The command was refused before it ran: a removal check's denial. */
+const REMOVAL_DENIED = /removal safety check denied this command/i;
+/** Programs that remove files: what a removal check refuses. */
+const REMOVERS = /^(?:rm|rmdir|unlink|shred|del|erase|rd|remove-item|ri)$/i;
+/** A stored command cut short (`…` at its end): the parts after the cut are not seen. */
+const isCut = (cmd: string): boolean => /…\s*$/.test(cmd);
+
+/** A line that reads as an error: a strong word first (`error`, `fatal`, `TypeError`), else a weaker one (`cannot`, `not found`). */
+const STRONG_ERROR = /\b(?:[Ee]rror|ERROR|[Ff]atal|FATAL|[Ee]xception|Traceback|panic)\b|[a-z](?:Error|Exception)\b/;
+const WEAK_ERROR = /cannot|not found|failed|no such|denied|missing|invalid|unknown|not recognized/i;
+export const errorLine = (lines: readonly string[]): string | undefined => lines.find((l) => STRONG_ERROR.test(l)) ?? lines.find((l) => WEAK_ERROR.test(l));
 
 /** The exit status: the event's, or the "Exit code N" line Claude Code puts first. */
 export function exitCodeOf(exitCode: unknown, output: string | undefined): number | undefined {
@@ -511,7 +546,15 @@ function only(parts: readonly ShellPart[]): ShellPart | undefined {
 export function failingPart(cmd: string, o: { output?: string; exitCode?: number; shell?: Shell } = {}): ShellPart | undefined {
   const parts = shellParts(cmd, o.shell);
   const output = (o.output ?? "").replace(/^\s*(?:Error: )?Exit code \d+[^\n]*\n?/, "");
-  if (parts.length <= 1) return parts[0]?.prog ? parts[0] : undefined;
+  // Nothing ran: the shell could not parse the line, or a removal check refused it (then the removal is the part).
+  if (o.shell !== "powershell" && PARSE_ERROR.test(output)) return undefined;
+  if (REMOVAL_DENIED.test(output)) {
+    const hit = only(parts.filter((p) => p.prog && REMOVERS.test(p.prog)));
+    return hit?.prog ? hit : undefined;
+  }
+  // A cut command hides parts: only evidence that names a part counts, never elimination.
+  const cut = isCut(cmd);
+  if (parts.length <= 1 && !cut) return parts[0]?.prog ? parts[0] : undefined;
   const exit = o.exitCode ?? exitCodeOf(undefined, o.output);
   const pick = (p: ShellPart | undefined) => (p?.prog ? p : undefined);
   // 1. The part the error names, the last one named when several are.
@@ -536,11 +579,12 @@ export function failingPart(cmd: string, o: { output?: string; exitCode?: number
     const hit = only(parts.filter((p) => p.timed));
     if (hit) return pick(hit);
   }
+  if (cut) return undefined;
   // 4. One part runs a program; or, with none, one setup step does (`cd missing`).
   if (real.length === 1) return pick(real[0]);
   if (!real.length) return pick(only(parts.filter((p) => !isPipe(p))));
   // 5. A pipeline returns its last part's status, and a self-naming tool the error doesn't name did not fail.
-  const failable = (p: ShellPart) => !p.prog || !SELF_NAMING.has(p.prog) || (SILENT_ON_1.has(p.prog) && (exit === undefined || exit === 1) && !output.trim());
+  const failable = (p: ShellPart) => !p.prog || !SELF_NAMING.has(p.prog) || p.quiet === true || (SILENT_ON_1.has(p.prog) && (exit === undefined || exit === 1) && !output.trim());
   const finals = real.filter((p) => p.last && failable(p));
   if (finals.length) return pick(only(finals));
   return pick(only(real.filter(failable)));
@@ -550,9 +594,10 @@ export function failingPart(cmd: string, o: { output?: string; exitCode?: number
  * The output of `cmd` that belongs to `part`, the part that failed: all of it
  * when every other part is a setup step (`cd x && npm test`), else the line
  * that names the part (`ls: cannot access …`, `which: no vercel in …`), else
- * the first line of a known tool's error signature that the part runs. When
- * no line can be tied to the part, undefined: another part's error (a curl
- * line before a failing `which`) is not this part's.
+ * the first line of a known tool's error signature that the part runs, else
+ * the first error line once the lines that name another part are removed.
+ * Undefined when none is left: another part's error (a curl line before a
+ * failing `which`) is not this part's.
  */
 export function partOutput(cmd: string, part: ShellPart, output: string | undefined, shell?: Shell): string | undefined {
   if (!output?.trim()) return undefined;
@@ -578,5 +623,9 @@ export function partOutput(cmd: string, part: ShellPart, output: string | undefi
     const line = lines.find((l) => /error|exception/i.test(l)) ?? lines[0];
     if (line?.trim()) return line.trim();
   }
-  return undefined;
+  // No line names the part: the first error line no other part's name claims (`ls dist && node x.mjs`: node's error, not a file name ls listed).
+  const same = (p: ShellPart) => p === part || p.argv.join(" ") === part.argv.join(" ");
+  const others = parts.filter((p) => !same(p) && p.prog);
+  const lines = text.split("\n").map((l) => l.trim()).filter((l) => l && !others.some((p) => namedAt(p.prog!, l, p.ps) >= 0));
+  return errorLine(lines);
 }

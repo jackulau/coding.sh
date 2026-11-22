@@ -122,7 +122,8 @@ export function extractTestCommand(cmd: string, repoRoot?: string): string | und
     if (cd) {
       const target = (cd[1] as string).replace(/^["']|["']$/g, "");
       const rel = repoRoot && (target === repoRoot || target.startsWith(`${repoRoot}/`)) ? relative(repoRoot, target) : target;
-      cdPrefix = rel === "" || rel === "." ? undefined : rel.startsWith("/") ? undefined : rel;
+      // An absolute path (`/x`, `D:/x`, `~/x`) or one built from a variable (`$M`) names one machine's folder, not the repo's.
+      cdPrefix = rel === "" || rel === "." || /^(?:[\\/~$]|[A-Za-z]:[\\/])/.test(rel) || rel.includes("$") ? undefined : rel;
       continue;
     }
     if (!TEST_RE.test(seg)) continue;

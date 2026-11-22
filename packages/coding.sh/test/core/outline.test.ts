@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import type { SpoolLine } from "../../src/core/types.ts";
 import { localDate, phaseLabel, sessionOutline, storedOutline } from "../../src/core/outline.ts";
-import { buildSession } from "../../src/core/sessions.ts";
+import { buildSession, isSyntheticPrompt } from "../../src/core/sessions.ts";
 import type { AgentEvent, EventKind, SessionDerail } from "../../src/schema/index.ts";
 import { testCtx } from "../adapters/_helpers.ts";
 
@@ -179,5 +179,23 @@ describe("phase titles", () => {
     const titles = sessionOutline(events).phases.map((p) => p.title);
     assert.deepEqual(titles, ["Fix the cache", "Now add the test", "Rename the export command"]);
     assert.deepEqual(buildSession(events).stats.phases?.map((p) => p.title), titles);
+  });
+
+  it("a T3 Code delegated-task result is a harness notice, not the phase's title", () => {
+    n = 0;
+    clock = T0;
+    const done = "Delegated task node:delegated-task:command%3Amcp%3Aabc%3Adelegate-task%3Adef (Research: cache gaps) [completed]:\nI wrote the report.";
+    const events = [
+      ev("session.start", { source: "startup" }),
+      ev("user.message", { text: "Fix the cache" }),
+      ev("session.start", { source: "resume" }, { gap: 60 * MIN }),
+      ev("user.message", { text: done }),
+      ev("user.message", { text: "Now add the test" }),
+      ev("session.start", { source: "resume" }, { gap: 60 * MIN }),
+      ev("user.message", { text: done }),
+    ];
+    assert.deepEqual(sessionOutline(events).phases.map((p) => p.title), ["Fix the cache", "Now add the test", undefined]);
+    assert.ok(isSyntheticPrompt(done));
+    assert.ok(!isSyntheticPrompt("Delegated task node ids look odd, fix them"));
   });
 });

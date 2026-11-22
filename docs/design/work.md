@@ -39,7 +39,8 @@ are derived from those sessions on read. Nothing is filed.
 
 A workflow agent's session.start names its run: `workflowId`, and when known `workflowName`,
 `workflowPhase` and `workflowLabel`. They land on `Session.parent` as `workflowId`,
-`workflowName`, `phase` and `label`.
+`workflowName`, `phase` and `label`. A run launched by `scriptPath` with no `name` in its
+script's meta is named by the script's file name without its extension.
 
 - Every agent with the same parent session and `workflowId` is one item: one item per run. A
   session that ran two workflows starts two items.
@@ -207,7 +208,8 @@ The kind is `change` once a session in the item changed a file, and `research` w
 in review or done without a changed file. An item that still plans or executes with no changed file
 has no kind yet.
 
-`stageWhy` gives the evidence in one line of at most 80 characters: "waits 2m for permission: …",
+`stageWhy` gives the evidence in one line. A failure or a quoted question is cut to keep the line
+within 80 characters; counts and ages are never cut. Examples: "waits 2m for permission: …",
 "running 8m, no file changed yet", "quiet 20m, changed 1 file", "tests: 2 failed, stopped 4m ago",
 "changed 3 files, stopped 12m ago", or "acknowledged: changed 3 files, stopped 12m ago". The
 running time counts from the item's first session; a stalled item says how long it has been quiet.

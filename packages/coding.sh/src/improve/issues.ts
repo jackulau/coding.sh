@@ -154,7 +154,8 @@ const clip = (s: string | undefined, n: number): string | undefined => {
 
 // ---------------------------------------------------------------- failure records
 
-const WRAPPERS = new Set(["npx", "uv", "poetry", "bundle", "cargo", "go", "make", "python", "python3", "node", "deno", "git", "docker", "dotnet", "mvn", "gradle", "gradlew"]);
+// A shell launcher keeps its script (`bash repro.sh`): the launcher alone names nothing that failed.
+const WRAPPERS = new Set(["bash", "sh", "zsh", "npx", "uv", "poetry", "bundle", "cargo", "go", "make", "python", "python3", "node", "deno", "git", "docker", "dotnet", "mvn", "gradle", "gradlew"]);
 
 /** `npm run lint -- --fix` → `npm run lint`; `cd x && pytest -q a.py` → `pytest`; env and cd prefixes dropped. */
 export function commandHead(cmd: string): string {
@@ -396,16 +397,17 @@ export function rankIssues(sessions: readonly Session[], failures: ReadonlyMap<s
     });
   }
 
-  const byKey = new Map<string, { label: string; sample?: string; errors: Set<string>; tests: boolean; sessions: Session[]; before: number; count: number }>();
+  const byKey = new Map<string, { label: string; sample?: string; errors: Set<string>; unsampled: boolean; tests: boolean; sessions: Session[]; before: number; count: number }>();
   const byId = new Map(sessions.map((s) => [s.id, s]));
   for (const [id, recs] of failures) {
     const s = byId.get(id);
     if (!s) continue;
     const seen = new Set<string>();
     for (const r of recs) {
-      const g = byKey.get(r.key) ?? { label: r.label, errors: new Set<string>(), tests: false, sessions: [], before: 0, count: 0 };
+      const g = byKey.get(r.key) ?? { label: r.label, errors: new Set<string>(), unsampled: false, tests: false, sessions: [], before: 0, count: 0 };
       g.count++;
-      g.errors.add(r.sample ? errorKey(r.sample) : "");
+      if (r.sample) g.errors.add(errorKey(r.sample));
+      else g.unsampled = true;
       if (r.tests) g.tests = true;
       if (!g.sample && r.sample) g.sample = r.sample;
       if (!seen.has(r.key)) {
@@ -426,8 +428,8 @@ export function rankIssues(sessions: readonly Session[], failures: ReadonlyMap<s
     out.push({
       id: `fails:${key}`,
       kind: "failure",
-      // "The same way" only when every failure shows the same error; a command key groups different errors too.
-      title: setup ? `${what} already fails before the agent changes anything` : g.errors.size === 1 ? `${what} fails the same way in several sessions` : `${what} fails in several sessions`,
+      // "The same way" only when every failure has a sample and they all show the same error; a command key groups different errors too.
+      title: setup ? `${what} already fails before the agent changes anything` : !g.unsampled && g.errors.size === 1 ? `${what} fails the same way in several sessions` : `${what} fails in several sessions`,
       sessions: g.sessions.length,
       analyzed,
       severity: { score: sev.score, level: sev.level },
