@@ -11,6 +11,7 @@ grouped by area, with links to the docs for the details.
 
 ### Added
 
+- **Compare.** `compare --signals` reads each signal within each arm too: `--json` adds `byArm` with each arm's AUROC, pairs, tasks and CI, the table prints one line per arm, and a signal whose arms' CIs sit on opposite sides of 0.5 is `differs-by-arm` instead of `no-signal`. [Eval methods](https://github.com/jackulau/coding.sh/blob/main/docs/reference/eval-methods.md)
 - **Work.** `coding.sh status` says how old the index is (`Index  updated 4m ago`). When no ingest has finished for 15 minutes and none runs, `work` judges waits and stalls as of the last ingest and says so in its header, so a stopped ingest no longer looks like a fleet of stalled agents. [Work](https://github.com/jackulau/coding.sh/blob/main/docs/design/work.md#an-old-index)
 - **Tool evals.** Each arm summary counts silent failures, failed trials with no rejected call, failed call or retry, and target calls per success. The arm table prints both when an arm has them. [Tool evals](https://github.com/jackulau/coding.sh/blob/main/docs/TOOL-EVALS.md#6-metrics)
 - **Capture.** The Claude Code status line shows how full the context window is (`ctx 62%`, `ctx 87% full` from 85%) and the Claude apps gateway spend limit (`spend 63%`). `quota --json` lists a `spend` row with `usedUsd`, `limitUsd` and `period`, and `quota wait --window spend` waits on it. [Agents](https://coding.sh/docs/agents#status-line)
