@@ -130,14 +130,22 @@ coding.sh init --remote http://<server>:4318 --key csh_ik_…
   Detecting agents…
   Claude Code (user scope)
     create  ~/.claude/settings.json  hooks
-✓ Set up Claude Code (hooks)
+    create  ~/.claude.json           MCP server
+  coding.sh
+    create  ~/.coding.sh/bin/hook.mjs
+    …
+    create  ~/.coding.sh/config.toml
+  then import past sessions from Claude Code (--no-import skips)
+…
+✓ Set up Claude Code (hooks + MCP server)
+  Recording starts with the next session: start a new Claude Code session. Sessions already open may not have loaded the hooks
 ✓ Sending new sessions to http://<server>:4318 (metadata only). Sessions from before stay on this machine
   Team viewer: http://<server>:4318
 ```
 
 `init --remote` checks the key against the server first, and changes nothing if the server is
-down or refuses the key. Then it installs the capture hooks and adds a sink named `team` to
-`~/.coding.sh/config.toml`. Run it again to change the URL, key or mode.
+down or refuses the key. Then it sets up your agents as `coding.sh init` does, and adds a sink
+named `team` to `~/.coding.sh/config.toml`. Run it again to change the URL, key or mode.
 
 | Option | What it does |
 | --- | --- |

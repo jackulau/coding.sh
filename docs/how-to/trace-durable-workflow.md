@@ -169,6 +169,10 @@ session.
 `Client.connect` only; the worker inherits it. Without `add_temporal_spans=True` the plugin emits
 no Temporal spans, and each model call becomes an unrelated trace.
 
+The Python client's start span names no run. When it reaches the collector before the worker's
+spans, the session id is the trace id, not `temporal:<workflow id>:<run id>`. `coding.sh show`
+still names the run on its `Workflow` line.
+
 **Sleeps.** Temporal exports no timer span. In TypeScript, a workflow interceptor wraps every
 `sleep()` in one; register the module with `interceptors: { workflowModules: [...] }` on the
 worker:
