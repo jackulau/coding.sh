@@ -36,6 +36,9 @@ function home(sessions: number, tools = 3) {
   roots.push(root);
   const env: NodeJS.ProcessEnv = { ...process.env, CODING_SH_HOME: join(root, "home"), HOME: join(root, "user"), NO_COLOR: "1", CI: "1", CODING_SH_NO_UPDATE_CHECK: "1" };
   delete env.CODING_SH_READ_BUDGET_MS;
+  // Some runners set it for every test (the dogfood scorer's tests gate does). The tests here that
+  // want no background ingest set it themselves; the others start a worker and wait for it.
+  delete env.CODING_SH_NO_AUTO_INGEST;
   const dir = join(env.CODING_SH_HOME!, "spool", "claude-code");
   mkdirSync(dir, { recursive: true });
   const cwd = join(root, "work");
