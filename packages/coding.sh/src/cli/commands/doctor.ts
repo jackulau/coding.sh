@@ -29,6 +29,7 @@ import type { CommandContext } from "../types.ts";
 import { ingestStoppedField, readIngestStopped } from "../../core/ingest-health.ts";
 import { blockingNotes, hookTarget, otherScopeHooks, pickAdapters, staleNotes } from "./init.ts";
 import { ingestStoppedText } from "./status.ts";
+import { median } from "../../stats/summary.ts";
 
 /** Newest of the agent's spool files, and its mtime. */
 function lastSpoolWrite(spool: string, agent: string): { file: string; mtimeMs: number } | undefined {
@@ -132,45 +133,97 @@ async function hookFilesIn(a: Adapter, scope: "user" | "project", projectDir: st
  * bug (milliseconds read as seconds, tokens summed twice), not a real call.
  */
 export const PLAUSIBLE_LIMITS = {
-  /** Output tokens per second over the call's duration (no model streams faster). */
+  /** Output tokens per second over the call's duration, for a model whose calls usually stream slower. */
   maxTokensPerSec: 500,
+  /**
+   * Output tokens per second for a model whose median call streams past maxTokensPerSec:
+   * fast hosts such as Cerebras and Groq serve some models at 1,000 to 3,000.
+   */
+  maxFastTokensPerSec: 10_000,
+  /** Timed calls a model needs before its median speed can mark it fast. */
+  minFastCalls: 3,
   /** Calls shorter than this are not timed well enough to judge speed. */
   minTimedMs: 200,
   /** One call's cost in USD. */
   maxCallCostUsd: 50,
 } as const;
 
-/** Why a stored llm.call is past a physical limit (empty when it is not). */
-export function implausible(e: AgentEvent): string[] {
-  const out: string[] = [];
-  const L = PLAUSIBLE_LIMITS;
-  const ttft = e.payload.ttftMs;
+/** A stored llm.call's output tokens per second: the speed it reports, else its output tokens over a timed duration. */
+export function callSpeed(e: AgentEvent): number | undefined {
   const ms = e.durationMs;
   const outTok = e.usage?.outputTokens;
   const reported = typeof e.payload.tokensPerSec === "number" ? e.payload.tokensPerSec : undefined;
-  const speed = reported ?? (outTok !== undefined && ms !== undefined && ms >= L.minTimedMs ? outTok / (ms / 1000) : undefined);
-  if (speed !== undefined && Number.isFinite(speed) && speed > L.maxTokensPerSec) out.push("speed");
+  const speed = reported ?? (outTok !== undefined && ms !== undefined && ms >= PLAUSIBLE_LIMITS.minTimedMs ? outTok / (ms / 1000) : undefined);
+  return speed !== undefined && Number.isFinite(speed) ? speed : undefined;
+}
+
+/** Whether a speed is past the limit for a model whose calls' median speed is `typical`. */
+function tooFast(speed: number | undefined, typical: number | undefined): boolean {
+  const L = PLAUSIBLE_LIMITS;
+  return speed !== undefined && speed > (typical !== undefined && typical > L.maxTokensPerSec ? L.maxFastTokensPerSec : L.maxTokensPerSec);
+}
+
+/** Why a stored llm.call is past a physical limit other than speed. */
+function pastLimits(e: AgentEvent): string[] {
+  const out: string[] = [];
+  const ttft = e.payload.ttftMs;
+  const ms = e.durationMs;
   if (typeof ttft === "number" && (ttft < 0 || (ms !== undefined && ttft > ms))) out.push("ttft");
   const cost = e.usage?.costUsd;
-  if (cost !== undefined && (!Number.isFinite(cost) || cost < 0 || cost > L.maxCallCostUsd)) out.push("cost");
+  if (cost !== undefined && (!Number.isFinite(cost) || cost < 0 || cost > PLAUSIBLE_LIMITS.maxCallCostUsd)) out.push("cost");
   return out;
+}
+
+/**
+ * Why a stored llm.call is past a physical limit (empty when it is not). `typical` is the
+ * median speed of its model's calls: past maxTokensPerSec, the call is held to maxFastTokensPerSec.
+ */
+export function implausible(e: AgentEvent, typical?: number): string[] {
+  const rest = pastLimits(e);
+  return tooFast(callSpeed(e), typical) ? ["speed", ...rest] : rest;
 }
 
 /** Model calls past a physical limit in recent sessions: counts by check and the session with the most. */
 async function implausibleCalls(index: { listSessions: IndexStore["listSessions"]; listEvents: IndexStore["listEvents"] }, sessions = 50): Promise<{ count: number; by: Record<string, number>; worst: string } | undefined> {
+  // A call's speed limit depends on how fast its model's calls usually are, so every call is
+  // read before any is judged. Only calls that can be past a limit are kept: none is held to
+  // less than maxTokensPerSec.
+  const speeds = new Map<string, number[]>();
+  const kept: { session: string; model: string; speed?: number; rest: string[] }[] = [];
+  for (const s of await index.listSessions({ limit: sessions })) {
+    for (const e of await index.listEvents(s.id, { kinds: ["llm.call"], limit: 5000 })) {
+      const model = `${e.agent} ${e.model ?? (typeof e.payload.responseModel === "string" ? e.payload.responseModel : "")}`;
+      const speed = callSpeed(e);
+      if (speed !== undefined) {
+        const list = speeds.get(model);
+        if (list) list.push(speed);
+        else speeds.set(model, [speed]);
+      }
+      const rest = pastLimits(e);
+      if (rest.length || tooFast(speed, undefined)) kept.push({ session: s.id, model, speed, rest });
+    }
+  }
+  const typical = new Map<string, number | undefined>();
+  const typicalOf = (model: string): number | undefined => {
+    if (!typical.has(model)) {
+      const list = speeds.get(model) ?? [];
+      typical.set(model, list.length >= PLAUSIBLE_LIMITS.minFastCalls ? median(list) : undefined);
+    }
+    return typical.get(model);
+  };
   const by: Record<string, number> = {};
+  const perSession = new Map<string, number>();
+  for (const c of kept) {
+    const why = tooFast(c.speed, typicalOf(c.model)) ? ["speed", ...c.rest] : c.rest;
+    if (!why.length) continue;
+    perSession.set(c.session, (perSession.get(c.session) ?? 0) + 1);
+    for (const w of why) by[w] = (by[w] ?? 0) + 1;
+  }
   let count = 0;
   let worst: { id: string; n: number } | undefined;
-  for (const s of await index.listSessions({ limit: sessions })) {
-    let n = 0;
-    for (const e of await index.listEvents(s.id, { kinds: ["llm.call"], limit: 5000 })) {
-      const why = implausible(e);
-      if (!why.length) continue;
-      n++;
-      for (const w of why) by[w] = (by[w] ?? 0) + 1;
-    }
+  for (const [id, n] of perSession) {
     count += n;
-    if (n && (!worst || n > worst.n)) worst = { id: s.id, n };
+    if (!worst || n > worst.n) worst = { id, n };
   }
   return worst ? { count, by, worst: worst.id } : undefined;
 }
