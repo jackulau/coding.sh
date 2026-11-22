@@ -5,10 +5,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, describe, it } from "node:test";
 import { openContext } from "../../src/core/context.ts";
-import { ownerGuard, sourceCheckout, sourceRunRefusal, StoreOwnerError, StoreVersionError } from "../../src/core/store-guard.ts";
+import { cliCommand, quoteArg } from "../../src/cli/next-steps.ts";
+import { ownerGuard, pathCli, sourceCheckout, sourceRunRefusal, StoreOwnerError, StoreVersionError, upgradeStoreCommand } from "../../src/core/store-guard.ts";
 import { loadSqlite } from "../../src/store/sqlite-open.ts";
 import { MIGRATIONS, SQLITE_SCHEMA_VERSION, SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { WRITER_KEY } from "../../src/store/upgrade.ts";
+import { npmBins, npmShShim } from "../cli/_npm-bins.ts";
 
 const PKG = realpathSync(fileURLToPath(new URL("../../", import.meta.url)));
 const root = realpathSync(mkdtempSync(join(tmpdir(), "csh-store-guard-unit-")));
@@ -106,7 +108,7 @@ describe("migrations wait for the install that owns the store", () => {
     await storeAt(join(env.CODING_SH_HOME!, "index.db"), OLD);
     await assert.rejects(
       () => openContext({ env }),
-      (e: unknown) => e instanceof StoreOwnerError && e.from === OLD && e.to === SQLITE_SCHEMA_VERSION && e.owner === owner && e.ownerVersion === "9.9.9" && /coding\.sh upgrade-store/.test(e.message),
+      (e: unknown) => e instanceof StoreOwnerError && e.from === OLD && e.to === SQLITE_SCHEMA_VERSION && e.owner === owner && e.ownerVersion === "9.9.9" && e.command === cliCommand(process.env, ["upgrade-store"]) && e.message.endsWith(`: ${e.command}`),
     );
     const { DatabaseSync } = await loadSqlite();
     const db = new DatabaseSync(join(env.CODING_SH_HOME!, "index.db"), { readOnly: true });
@@ -134,7 +136,7 @@ describe("migrations wait for the install that owns the store", () => {
     await storeAt(file, OLD);
     await assert.rejects(
       () => openContext({ env }),
-      (e: unknown) => e instanceof StoreVersionError && e.from === OLD && e.to === SQLITE_SCHEMA_VERSION && e.writer === undefined && /source checkout/.test(e.message) && /coding\.sh upgrade-store/.test(e.message),
+      (e: unknown) => e instanceof StoreVersionError && e.from === OLD && e.to === SQLITE_SCHEMA_VERSION && e.writer === undefined && /source checkout/.test(e.message) && e.command === cliCommand(process.env, ["upgrade-store"]) && e.message.endsWith(`: ${e.command}`),
     );
     const { DatabaseSync } = await loadSqlite();
     const db = new DatabaseSync(file, { readOnly: true });
@@ -154,7 +156,7 @@ describe("migrations wait for the install that owns the store", () => {
     for (const [v, source] of [["0.1.6", false], ["0.1.6", true], ["0.1.5", false], ["0.1.6-dev.1", false], ["not a version", false]] as const) {
       assert.throws(
         () => guard(v, source)(OLD, SQLITE_SCHEMA_VERSION, stamp),
-        (e: unknown) => e instanceof StoreVersionError && e.writer === "0.1.6" && e.version === v && e.from === OLD && /last written by coding\.sh 0\.1\.6/.test(e.message) && /coding\.sh upgrade-store/.test(e.message),
+        (e: unknown) => e instanceof StoreVersionError && e.writer === "0.1.6" && e.version === v && e.from === OLD && /last written by coding\.sh 0\.1\.6/.test(e.message) && e.message.endsWith(`: ${cliCommand(process.env, ["upgrade-store"])}`),
         v,
       );
     }
@@ -182,6 +184,126 @@ describe("migrations wait for the install that owns the store", () => {
     await storeAt(elsewhere, OLD);
     const ctx = await openContext({ env: { ...env, CODING_SH_STORE_URL: `sqlite://${elsewhere}` } });
     await ctx.close();
+  });
+});
+
+describe("the upgrade-store command a refusal names runs the install that printed it", () => {
+  // PowerShell and cmd set neither MSYSTEM nor SHELL; Git Bash sets both.
+  const PS: NodeJS.ProcessEnv = {};
+  const BASH: NodeJS.ProcessEnv = { MSYSTEM: "MINGW64", SHELL: "/usr/bin/bash" };
+  const WIN = "C:\\Users\\user\\AppData\\Roaming\\npm\\node_modules\\coding.sh\\dist\\cli.mjs";
+  const SPACED = "C:\\Program Files\\nodejs\\node_modules\\coding.sh\\dist\\cli.mjs";
+  const LINUX = "/home/user/.npm-global/lib/node_modules/coding.sh/dist/cli.mjs";
+  const OLD = SQLITE_SCHEMA_VERSION - 1;
+
+  it("is the bin on PATH, named for the shell, when that bin starts this install", () => {
+    assert.equal(upgradeStoreCommand([], { env: PS, platform: "win32", cli: WIN, onPath: WIN }), "codingsh upgrade-store");
+    assert.equal(upgradeStoreCommand(["--restore"], { env: BASH, platform: "win32", cli: WIN, onPath: WIN }), "coding.sh upgrade-store --restore");
+    // Windows paths match in any case; others only as written.
+    assert.equal(upgradeStoreCommand([], { env: PS, platform: "win32", cli: WIN, onPath: WIN.toLowerCase() }), "codingsh upgrade-store");
+    assert.equal(upgradeStoreCommand([], { env: {}, platform: "linux", cli: LINUX, onPath: LINUX }), "coding.sh upgrade-store");
+    assert.equal(upgradeStoreCommand([], { env: {}, platform: "linux", cli: LINUX, onPath: LINUX.toUpperCase() }), `node ${LINUX} upgrade-store`);
+    // npx puts the bin of the package it runs first on PATH, and runs it through cmd on Windows.
+    assert.equal(upgradeStoreCommand([], { env: { ...BASH, npm_command: "exec" }, platform: "win32", cli: WIN, onPath: WIN }), "npx -p coding.sh codingsh upgrade-store");
+    assert.equal(upgradeStoreCommand([], { env: { npm_command: "exec" }, platform: "linux", cli: LINUX, onPath: LINUX }), "npx coding.sh upgrade-store");
+  });
+
+  it("is this install by its path, quoted for the shell, when PATH starts another install or none", () => {
+    for (const onPath of [undefined, "C:\\Users\\user\\old\\node_modules\\coding.sh\\dist\\cli.mjs"]) {
+      assert.equal(upgradeStoreCommand([], { env: PS, platform: "win32", cli: WIN, onPath }), `node ${WIN} upgrade-store`);
+      assert.equal(upgradeStoreCommand([], { env: BASH, platform: "win32", cli: WIN, onPath }), `node '${WIN}' upgrade-store`);
+    }
+    assert.equal(upgradeStoreCommand(["--restore"], { env: PS, platform: "win32", cli: SPACED, onPath: undefined }), `node "${SPACED}" upgrade-store --restore`);
+    assert.equal(upgradeStoreCommand(["--restore"], { env: BASH, platform: "win32", cli: SPACED, onPath: undefined }), `node '${SPACED}' upgrade-store --restore`);
+    assert.equal(upgradeStoreCommand([], { env: {}, platform: "linux", cli: LINUX, onPath: "/usr/lib/node_modules/coding.sh/dist/cli.mjs" }), `node ${LINUX} upgrade-store`);
+  });
+
+  it("from source, where no install runs, is the bin next steps name", () => {
+    assert.equal(upgradeStoreCommand([], { env: PS, platform: "win32", cli: undefined }), "codingsh upgrade-store");
+    assert.equal(upgradeStoreCommand(["--restore"], { env: BASH, platform: "win32", cli: undefined }), "coding.sh upgrade-store --restore");
+    assert.equal(upgradeStoreCommand([], { env: {}, platform: "linux", cli: undefined }), "coding.sh upgrade-store");
+  });
+
+  it("ownerGuard's refusals name it, as e.command and at the end of the message", () => {
+    const cli = pkgAt(join(root, "this", "lib", "node_modules", "coding.sh"), false);
+    const owner = pkgAt(join(root, "that", "lib", "node_modules", "coding.sh"), false);
+    const owned = mkdtempSync(join(root, "data-"));
+    mkdirSync(join(owned, "bin"));
+    writeFileSync(join(owned, "bin", "cli-path"), owner + "\n");
+    const unowned = mkdtempSync(join(root, "data-"));
+    const refusals = (env: NodeJS.ProcessEnv): (StoreOwnerError | StoreVersionError)[] => {
+      const errors: (StoreOwnerError | StoreVersionError)[] = [];
+      try {
+        ownerGuard(owned, join(owned, "index.db"), cli, { env })!(OLD, SQLITE_SCHEMA_VERSION);
+      } catch (e) {
+        assert.ok(e instanceof StoreOwnerError);
+        errors.push(e);
+      }
+      try {
+        ownerGuard(unowned, join(unowned, "index.db"), cli, { version: "0.1.6", source: false, env })!(OLD, SQLITE_SCHEMA_VERSION, { version: "0.1.6", schema: OLD, at: 1 });
+      } catch (e) {
+        assert.ok(e instanceof StoreVersionError);
+        errors.push(e);
+      }
+      assert.equal(errors.length, 2);
+      return errors;
+    };
+    // Nothing on PATH starts this install (the owner's bin does not count): name it by its path.
+    const env = { PATH: npmBins(owner) };
+    for (const e of refusals(env)) {
+      assert.equal(e.command, `node ${quoteArg(cli, env)} upgrade-store`);
+      assert.ok(e.message.endsWith(`: node ${quoteArg(cli, env)} upgrade-store`), e.message);
+    }
+    // Its own bin is on PATH: name the bin, for PowerShell (on Windows) and for sh.
+    const dir = npmBins(cli);
+    for (const shell of [{}, BASH]) {
+      const onPath = { ...shell, PATH: dir };
+      for (const e of refusals(onPath)) assert.equal(e.command, cliCommand(onPath, ["upgrade-store"]));
+    }
+  });
+});
+
+describe("pathCli", () => {
+  const install = (name: string) => pkgAt(join(root, name, "lib", "node_modules", "coding.sh"), false);
+  const SEP = process.platform === "win32" ? ";" : ":";
+  // Git Bash on Windows runs npm's sh shim; macOS and Linux run the link.
+  const SH: NodeJS.ProcessEnv = process.platform === "win32" ? { MSYSTEM: "MINGW64" } : {};
+
+  it("follows the bin the shell runs to the CLI it starts: the link on macOS and Linux, npm's sh shim in Git Bash", () => {
+    const cli = install("pc-sh");
+    assert.equal(pathCli({ ...SH, PATH: npmBins(cli) }), cli);
+  });
+
+  it("on Windows follows codingsh.cmd in PowerShell and cmd, and under npx in any shell", { skip: process.platform !== "win32" && "Windows only" }, () => {
+    const cli = install("pc-cmd");
+    const dir = npmBins(cli);
+    assert.equal(pathCli({ PATH: dir }, "win32"), cli);
+    assert.equal(pathCli({ Path: dir }, "win32"), cli, "a copied Windows env spells it Path");
+    assert.equal(pathCli({ MSYSTEM: "MINGW64", npm_command: "exec", PATH: dir }, "win32"), cli);
+    rmSync(join(dir, "codingsh.cmd"));
+    assert.equal(pathCli({ PATH: dir }, "win32"), undefined, "the sh shim is not what PowerShell runs");
+  });
+
+  it("the first directory on PATH with the bin wins; with none it is undefined", () => {
+    const a = install("pc-a");
+    const b = install("pc-b");
+    const da = npmBins(a);
+    const db = npmBins(b);
+    const empty = mkdtempSync(join(root, "empty-"));
+    assert.equal(pathCli({ ...SH, PATH: ["", empty, db, da].join(SEP) }), b);
+    assert.equal(pathCli({ ...SH, PATH: [da, db].join(SEP) }), a);
+    assert.equal(pathCli({ ...SH, PATH: empty }), undefined);
+    assert.equal(pathCli({ ...SH }), undefined);
+  });
+
+  it("a coding.sh on PATH that is no npm link or shim is itself", () => {
+    const dir = mkdtempSync(join(root, "own-"));
+    writeFileSync(join(dir, "coding.sh"), "#!/bin/sh\necho mine\n");
+    assert.equal(pathCli({ ...SH, PATH: dir }), join(dir, "coding.sh"));
+    // A shim for another package names that package's file.
+    const other = mkdtempSync(join(root, "other-"));
+    writeFileSync(join(other, "coding.sh"), npmShShim("node_modules/other/cli.js"));
+    assert.equal(pathCli({ ...SH, PATH: other }), join(other, "node_modules", "other", "cli.js"));
   });
 });
 

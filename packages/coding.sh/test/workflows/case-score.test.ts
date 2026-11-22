@@ -60,10 +60,10 @@ describe("case truth", () => {
     const ok = await parseCase(`[start]\nrepoRoot = "../../../tree"\nsnapshot = "../../../tree"\n[truth]\nfile = "../hidden/s.json"\n`, join(dir, "ok.toml"), "wf", new MemBlobs());
     assert.equal(ok.start!.repoRoot, join(root, "tree"));
     assert.equal(ok.start!.snapshot, join(root, "tree"));
-    await assert.rejects(
-      parseCase(`[start]\nrepoRoot = "../../../tree"\n[truth]\nfile = "../../../tree/secret/s.json"\n`, join(dir, "leak.toml"), "wf", new MemBlobs()),
-      /leak\.toml: truth\.file .* is inside the workflow's tree .*, where its agents could read it; move it/,
-    );
+    // The message prints each path resolved, with one kind of separator, however the case file wrote it.
+    await assert.rejects(parseCase(`[start]\nrepoRoot = "../../../tree"\n[truth]\nfile = "../../../tree/secret/s.json"\n`, join(dir, "leak.toml"), "wf", new MemBlobs()), {
+      message: `${join(dir, "leak.toml")}: truth.file ${join(root, "tree", "secret", "s.json")} is inside the workflow's tree ${join(root, "tree")}, where its agents could read it; move it, with the patches it names, to a folder outside repoRoot and snapshot, such as ${join(root, "tree-truth")}, then set truth.file to its new path`,
+    });
     // A sibling directory whose name starts with the tree's is not inside it.
     mkdirSync(join(root, "tree-other"), { recursive: true });
     writeFileSync(join(root, "tree-other", "s.json"), bugs);
@@ -111,8 +111,11 @@ describe("case truth", () => {
     const inRepo = await load(`[start]\nrepoRoot = "../../.."\nsnapshot = "${snap}"\n${bug}`, join(dir, "s.toml"));
     const hint = /s\.toml: this case file lists \[\[truth\.bugs\]\] and is inside the workflow's tree .*, where its agents could read them; move them, with the patches they name, to a truth file in a folder outside repoRoot and snapshot, such as (.+), then set truth\.file to its path$/;
     assert.equal(hint.exec(inRepo)?.[1], join(root, "inline-repo-truth"), inRepo);
-    // snapshot is checked too.
-    assert.match(await load(`[start]\nrepoRoot = "${snap}"\nsnapshot = "../../.."\n${bug}`, join(dir, "s.toml")), /this case file lists \[\[truth\.bugs\]\] and is inside the workflow's tree/);
+    // snapshot is checked too, and printed resolved, however the case file wrote it.
+    assert.equal(
+      await load(`[start]\nrepoRoot = "${snap}"\nsnapshot = "${slash(repo)}/."\n${bug}`, join(dir, "s.toml")),
+      `${join(dir, "s.toml")}: this case file lists [[truth.bugs]] and is inside the workflow's tree ${repo}, where its agents could read them; move them, with the patches they name, to a truth file in a folder outside repoRoot and snapshot, such as ${join(root, "inline-repo-truth")}, then set truth.file to its path`,
+    );
     // Bugs left in the case file beside truth.file are not used, but its agents could still read them.
     const truth = join(root, "inline-repo-truth");
     mkdirSync(truth, { recursive: true });
@@ -137,11 +140,14 @@ describe("case truth", () => {
     writeFileSync(join(truth, "b1.patch"), BUG_PATCH);
     const withPatch = (patch: string) => {
       writeFileSync(join(truth, "s.json"), JSON.stringify({ bugs: [{ id: "b1", file: "src/a.ts", lines: [2, 2], patch }] }));
-      return `[start]\nrepoRoot = "${slash(repo)}"\nsnapshot = "${slash(snap)}"\n[truth]\nfile = "${slash(join(truth, "s.json"))}"\n`;
+      // The snapshot as a case file may write it, with forward slashes and a `.` segment.
+      return `[start]\nrepoRoot = "${slash(repo)}"\nsnapshot = "${slash(root)}/./patch-snap"\n[truth]\nfile = "${slash(join(truth, "s.json"))}"\n`;
     };
-    const leak = await load(withPatch(slash(join(snap, "b1.patch"))), join(root, "patch.toml"));
-    assert.match(leak, /patch\.toml: the patch ".*b1\.patch" of bug b1 is inside the workflow's tree .*, where its agents could read it; move it to a folder outside repoRoot and snapshot, such as (.+), then set its patch to the new path$/);
-    assert.equal(/such as (.+), then/.exec(leak)?.[1], join(root, "patch-snap-truth"));
+    // The message prints each path resolved, with one kind of separator, however the files wrote them.
+    const leak = await load(withPatch(`${slash(root)}/./patch-snap/b1.patch`), join(root, "patch.toml"));
+    assert.equal(leak, `${join(root, "patch.toml")}: the patch ${join(snap, "b1.patch")} of bug b1 is inside the workflow's tree ${snap}, where its agents could read it; move it to a folder outside repoRoot and snapshot, such as ${join(root, "patch-snap-truth")}, then set its patch to the new path`);
+    // A patch that is not there is named the same way, resolved against the truth file.
+    assert.equal(await load(withPatch("gone/../b2.patch"), join(root, "patch.toml")), `${join(root, "patch.toml")}: can't read patch ${join(truth, "b2.patch")} for bug b1`);
     // A relative patch resolves against the truth file, and one there loads.
     assert.equal(await load(withPatch("b1.patch"), join(root, "patch.toml")), "loaded");
     // A patch already stored as a blob ref names no file, so it stays valid.
