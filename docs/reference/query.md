@@ -40,10 +40,8 @@ coding.sh export events --where 'agent:codex tool.errors>0' > events.jsonl
 `sort:` and `limit:` set the order and the row count, and go at the top level only. A query is at
 most 2,000 characters.
 
-`--where` given more than once joins the queries with AND, as if they were written in one:
-`--where 'agent:codex' --where 'cost>0.5'` is `--where 'agent:codex cost>0.5'`. A later `sort:` or
-`limit:` wins. Bare words from two queries become one search, so every word must match within one
-event.
+`--where` given more than once joins the queries with AND, as if written in one. A later `sort:` or
+`limit:` wins, and every bare word must match within one event.
 
 Session keys test the session. Event keys test its events: a session matches when one of its
 events matches, and event keys in one group must match the same event. So `tool:Bash ok:false` is
@@ -217,9 +215,6 @@ coding.sh views rm codex-flagged
 
 coding.sh checks each session for failure patterns at every ingest and keeps them as flags.
 `coding.sh sessions --flag <name>` or `--where flag:<name>` lists the sessions that have one.
-When `sessions` finds none, and the name is no flag coding.sh sets and no stored session carries
-but is close to one, it exits 2 and names that flag: `--flag no-verificaton` suggests
-`--flag no-verification`.
 
 ```sh
 coding.sh sessions --flag no-verification
