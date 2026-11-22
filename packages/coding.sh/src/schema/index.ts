@@ -300,6 +300,12 @@ export interface PullRequestRef {
   state: "opened" | "merged" | "closed" | "linked";
   /** When the session saw that state (ms since the epoch): the last one it saw wins. */
   at: number;
+  /**
+   * Set when the session pushed to the PR (the push printed its URL) or linked it to its own thread
+   * (T3 Code's `link_pull_request`): the PR carries its work, so its merge settles the work's review.
+   * Absent otherwise.
+   */
+  own?: true;
 }
 
 /** Session.stats.llmErrors: how many model calls failed, and why the first one did. */

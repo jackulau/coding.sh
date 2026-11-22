@@ -138,7 +138,8 @@ through T3's store, whichever agent it runs.
 4. **Your turn**: the main session waits for the next prompt (`waiting.kind` is `turn`). Oldest
    first.
 5. **Ready for review**: no session in the item is running or waiting, and the item changed files.
-   An item whose sessions opened, merged or closed PRs that have all merged is not here: it is done, and its reason names
+   An item whose sessions opened, merged or closed PRs, or pushed to them or linked them to their
+   thread (`stats.prs.own`), that have all merged is not here: it is done, and its reason names
    the merged PRs. A merge another session ran counts. A PR the item only viewed does not. Grouped by repo and branch, newest first.
 
 A session is running when it has no end and was active in the last 30 minutes, or when its end is

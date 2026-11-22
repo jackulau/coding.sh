@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { buildSession, PRS_ALL_MAX, PRS_MAX } from "../../src/core/sessions.ts";
 import { buildWorkQueue, itemPrs, workItemJson } from "../../src/core/work.ts";
+import type { AgentEvent } from "../../src/schema/index.ts";
 import { bash, CREATED, ev, PR12, prSessions, session, T0, tool } from "./_prs.ts";
 
 describe("Session.stats.prs", () => {
@@ -142,6 +143,27 @@ describe("WorkItem.prs", () => {
     const viewer = buildSession([ev("view", "session.start", {}), ...bash("view", `gh pr view ${PR12}`, ""), ev("view", "file.change", { path: "a.ts", op: "modify" }), ev("view", "session.end", {})]);
     const v = buildWorkQueue([viewer, merger], { now: T0 + 3600e3, all: true }).items.find((i) => i.rootId === "view")!;
     assert.deepEqual([v.prs?.[0]?.state, v.bucket], ["merged", "review"]);
+  });
+
+  test("a worker that pushed to its PR or linked it to its thread leaves review when an orchestrator merges it", () => {
+    const merge = (n: number) => bash("orch", `gh pr merge ${n} --repo acme/widgets --squash`, `✓ Squashed and merged pull request acme/widgets#${n} (Fix)`);
+    const orch = session("orch", merge(36), merge(40));
+    const worker = (id: string, n: number, call: AgentEvent[]) => buildSession([ev(id, "session.start", {}), ...call, ...bash(id, `gh pr view ${n} --repo acme/widgets --json state`, "{}"), ev(id, "file.change", { path: "src/a.ts", op: "modify" }), ev(id, "session.end", {})]);
+    const pushed = bash("push", "git push origin HEAD:refs/heads/fix", "To https://github.com/acme/widgets.git\nhttps://github.com/acme/widgets/pull/36\n");
+    const linked = tool("link", "mcp__t3-code__link_pull_request", { url: "https://github.com/acme/widgets/pull/40" }, "{}");
+    const w1 = worker("push", 36, pushed);
+    const w2 = worker("link", 40, linked);
+    assert.deepEqual([w1.stats.prs?.map((p) => [p.number, p.state, p.own]), w2.stats.prs?.map((p) => [p.number, p.state, p.own])], [[[36, "linked", true]], [[40, "linked", true]]]);
+    const q = buildWorkQueue([orch, w1, w2], { now: T0 + 3600e3, all: true });
+    for (const id of ["push", "link"]) {
+      const item = q.items.find((i) => i.rootId === id)!;
+      assert.deepEqual([item.prs?.[0]?.state, item.bucket, item.hidden], ["merged", undefined, "done"], id);
+      assert.match(item.reason, /merged/);
+    }
+    // Before the merge, the PR is open and the work waits for review; watching a PR does not make it the session's.
+    assert.equal(buildWorkQueue([w1], { now: T0 + 3600e3, all: true }).items[0]!.bucket, "review");
+    const watcher = session("watch", tool("watch", "mcp__t3-code__watch_pull_request", { url: PR12 }));
+    assert.equal(watcher.stats.prs?.[0]?.own, undefined);
   });
 
   test("a PR only viewed in another repo than the item's is not the item's", () => {

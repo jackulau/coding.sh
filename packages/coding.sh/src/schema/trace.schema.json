@@ -841,6 +841,10 @@
         "at": {
           "description": "When the session saw that state (ms since the epoch): the last one it saw wins.",
           "type": "number"
+        },
+        "own": {
+          "description": "Set when the session pushed to the PR (the push printed its URL) or linked it to its own thread\n(T3 Code's `link_pull_request`): the PR carries its work, so its merge settles the work's review.\nAbsent otherwise.",
+          "const": true
         }
       },
       "required": [

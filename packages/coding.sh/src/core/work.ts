@@ -705,7 +705,7 @@ export function storePrStates(sessions: readonly Pick<Session, "stats">[]): PrSt
   return out;
 }
 
-/** An item's PRs (itemPrs), and whether every PR it opened, merged or closed has merged. */
+/** An item's PRs (itemPrs), and whether every PR it opened, merged, closed or pushed to has merged. */
 interface ItemPrs {
   prs?: PullRequestRef[];
   merged: boolean;
@@ -715,7 +715,8 @@ interface ItemPrs {
  * An item's pull requests, as itemPrs gives them, with what the rest of the store knows: a PR only
  * linked (viewed, commented on) in another repo than the item's is left out, and each PR takes the
  * newest state any stored session saw for its URL (`states`). `merged` is true when the item opened,
- * merged or closed a PR, and every such PR has merged: the work landed. A PR it only viewed does not count.
+ * merged or closed a PR, or pushed to one or linked it to its thread (PullRequestRef.own), and every
+ * such PR has merged: the work landed. A PR it only viewed does not count.
  */
 function prsOfItem(members: readonly Session[], primary: Session, states?: PrStates): ItemPrs {
   const own = itemPrs(members);
@@ -726,7 +727,7 @@ function prsOfItem(members: readonly Session[], primary: Session, states?: PrSta
   const folder = root?.replace(/\\/g, "/").replace(/\/+$/, "").split("/").pop()?.toLowerCase();
   const mine = (p: PullRequestRef): boolean => p.state !== "linked" || !p.repo || !folder || acted.has(p.repo.toLowerCase()) || p.repo.split("/").pop()!.toLowerCase() === folder;
   const kept = own.filter(mine);
-  const changed = new Set(kept.filter((p) => p.state !== "linked"));
+  const changed = new Set(kept.filter((p) => p.state !== "linked" || p.own));
   for (const p of kept) {
     const g = p.url ? states?.get(p.url) : undefined;
     if (g && g.state !== "linked" && newerPr(g, p)) {
@@ -760,6 +761,7 @@ export function itemPrs(members: readonly Pick<Session, "stats">[]): PullRequest
     }
     if (!newerPr(p, old)) continue;
     const next = { ...p };
+    if (old.own) next.own = true;
     if (old.url && !p.url) next.url = old.url;
     if (old.repo && !p.repo) next.repo = old.repo;
     byKey.set(key, next);
