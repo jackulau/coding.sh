@@ -4,8 +4,7 @@ See what your AI agents spend, per session, agent, model, repo and day, and open
 cost the most. Works for coding agents, SDK apps and OpenTelemetry apps alike.
 
 coding.sh reads the token counts that any AI agent records, turns them into cost, and keeps both
-with each session. This page gets your totals, finds the most expensive sessions, and explains
-where each dollar figure comes from.
+with each session.
 
 ## Before you start
 
@@ -164,13 +163,14 @@ It prints `Repriced N model calls in M sessions` on stderr, then the table.
 :::more Rates, tiers and Claude Code's own tally
 The price table covers current Claude, OpenAI, Gemini and common open models. A model with no row
 is priced like its nearest sibling in the same family and major version, shown in
-`payload.pricedAs`. Each call is priced at the rate it ran at:
+`payload.pricedAs`. Antigravity's `-orchestrator` models are priced as the Gemini 4 model they
+run. Each call is priced at the rate it ran at:
 
 | Rate | Price |
 | --- | --- |
 | Long context | A prompt over OpenAI 272K, Gemini Pro 200K, Haiku 5.5 100K or Sonnet 4.5 and 4 (1M beta) 200K tokens |
 | Batch | Half price at every provider |
-| OpenAI Flex | Half price |
+| OpenAI Flex | Half price (GPT-6.2 has none) |
 | OpenAI Fast (once called Priority) | About 2x |
 | Gemini Priority | 1.8x |
 | Claude fast mode | Its own rates |
