@@ -233,6 +233,7 @@ grouped by area, with links to the docs for the details.
 - **Docs.** The plugin how-to snapshots your setup with `--plugin <name>` before `compare --without plugin:<name>` drops the plugin, since a snapshot carries only the plugins it names. Its retry command names both arms, which `compare --experiment` needs. [Does this plugin help?](https://coding.sh/docs/how-to/does-this-plugin-help)
 - **Docs.** Privacy and redaction says that the working-tree snapshots in `repos/` keep your files as they are, not redacted, that model replies recorded for replay in `llm-cache/` get only the `secrets` rules, and that purge leaves both alone, so rotate a leaked secret. [Privacy and redaction](https://coding.sh/docs/privacy)
 - **Self-host.** The example `deploy/compose/config.toml` uses the `[prices]` table that Configuration documents, in place of the older `[pricing]` spelling. Both spellings still work. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/config.md#prices))
+- **Self-host.** The team Compose file no longer says the image is unpublished, and `deploy/compose/.env.example` suggests pinning 0.1.7, a real release, in place of 0.2.0. The example and the docs link the list of image tags. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/self-host-team.md#back-up-and-upgrade))
 
 ## [0.1.7] - 2026-11-16
 

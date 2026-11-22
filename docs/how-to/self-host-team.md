@@ -220,7 +220,7 @@ docker compose start
 | Task | How |
 | --- | --- |
 | Upgrade | `docker compose pull`, then `docker compose up -d`. The schema migrates on start. |
-| Pin a version | `CODING_SH_IMAGE=ghcr.io/jackulau/coding.sh:0.1.6` in `.env`. |
+| Pin a version | `CODING_SH_IMAGE=ghcr.io/jackulau/coding.sh:0.1.7` in `.env`. The tags are listed on the [package page](https://github.com/jackulau/coding.sh/pkgs/container/coding.sh). |
 | Delete old sessions | `CODING_SH_RETENTION_DAYS=30` in `.env` deletes sessions older than 30 days, every hour. Eval assets stay. |
 | Check health | `curl -s http://<server>:4318/readyz` answers `{"ok":true,…}` once the store is ready. |
 | Use Postgres | Download `compose.postgres.yml` from the same folder and run it with `-f`. Postgres holds the index and the blobs. |
