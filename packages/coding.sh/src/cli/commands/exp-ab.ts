@@ -807,6 +807,7 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
   const anchors = await pickAnchors(o, c.cwd);
   // Resolve the arms before mining: a bad path should fail fast.
   let [armA, armB, armsNote] = await resolveArms(o, c, repoRoot, root !== undefined, ctx);
+  if (o.watch) watchDirs(armB);
   if (armsNote && !out.json) out.note(armsNote);
   // The acceptance gate is always computed (it is the headline); --gate only makes it the exit code.
   const gate = gateFlags({ ...c.flags, gate: true })!;
@@ -967,14 +968,20 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
   });
 }
 
+/** The directories --watch follows for B. A B with none on disk (git:REV, none, a bundle) is a usage error, raised before any trial. */
+function watchDirs(armB: Arm): Arm["watch"] {
+  const dirs = armB.watch.filter((w) => existsSync(w.dir));
+  if (!dirs.length) throw new UsageError(`--watch needs B to be files on disk (B is ${armB.label})`, { reason: "invalid_argument" });
+  return dirs;
+}
+
 /**
  * Watch B's files: after a change settles (300 ms), re-read B and, when its
  * files changed, run again and print one history line. Ctrl-C ends it with 0.
  */
 async function watchLoop(c: CommandContext, armB: Arm, rerun: (b: Arm) => Promise<string>, reread: () => Promise<Arm>): Promise<number> {
   const { out } = c;
-  const dirs = armB.watch.filter((w) => existsSync(w.dir));
-  if (!dirs.length) throw new UsageError(`--watch needs B to be files on disk (B is ${armB.label})`, { reason: "invalid_argument" });
+  const dirs = watchDirs(armB);
   c.interruptExit?.(0);
   const stop = c.drain ?? c.signal;
   let current = armB;

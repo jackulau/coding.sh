@@ -273,6 +273,20 @@ describe("cli exp ab", () => {
     assert.doesNotMatch(runs.stdout, /exp ab/, "no experiment was recorded");
   });
 
+  it("--watch with a B it cannot watch (git:REV, none) exits 2 before any trial", async () => {
+    const e = await setup("watch-git");
+    writeFileSync(join(e.repo, "CLAUDE.md"), `Keep answers short.\n${MARKER}: run npm test first.\n`);
+    const before = hits.length;
+    for (const b of ["git:HEAD", "none"]) {
+      const r = await cli(e, ["exp", "ab", "--watch", "--b", b]);
+      assert.equal(r.status, 2, r.stderr);
+      assert.match(r.stderr, new RegExp(`--watch needs B to be files on disk \\(B is ${b}\\)`));
+      assert.equal(hits.length, before, "no model call");
+    }
+    const runs = await cli(e, ["exp", "list", "--json"]);
+    assert.doesNotMatch(runs.stdout, /exp ab/, "no experiment was recorded");
+  });
+
   it("--watch reruns once per edit, calls the model only for arm B, and Ctrl-C exits 0", { skip: process.platform === "win32" && "no SIGINT to a child on Windows" }, async (t) => {
     const e = await setup("watch");
     writeFileSync(join(e.repo, "CLAUDE.md"), `Keep answers short.\n${MARKER}: run npm test first.\n`);

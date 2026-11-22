@@ -230,6 +230,7 @@ grouped by area, with links to the docs for the details.
 - **Docs.** Privacy and redaction says that the working-tree snapshots in `repos/` keep your files as they are, not redacted, that model replies recorded for replay in `llm-cache/` get only the `secrets` rules, and that purge leaves both alone, so rotate a leaked secret. [Privacy and redaction](https://coding.sh/docs/privacy)
 - **Experiments.** A replay warns about each case-trial it leaves unscored and says why: the recording has none for it, or a live call failed, with the HTTP status or network error. Before, a failed live call was never named, so `exp run --replay --no-control` showed unscored runs with no reason. [Replay recorded model calls](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/replay-llm-calls.md#3-read-the-result)
 - **Experiments.** `exp run --replay` with two `--arm` specs sends each arm's model calls to the `llm.upstream` its own spec names, with or without a positional spec. Before, only the positional spec's upstream was used. [Replay recorded model calls](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/replay-llm-calls.md#set-it-in-the-spec)
+- **Experiments.** `exp ab --watch` with a B it cannot watch (`--b git:…`, `none` or a harness bundle) exits 2 before any trial. Before, it ran the whole A/B, model calls included, and only then refused. [Test an AGENTS.md change](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/test-agents-md-change.md#if-something-goes-wrong)
 
 ## [0.1.7] - 2026-11-16
 
