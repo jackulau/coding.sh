@@ -232,6 +232,7 @@ grouped by area, with links to the docs for the details.
 - **Docs.** Evaluate an Agent Skill's `verify.sh` finds `check.py` by its own path, since the verifier runs in the work tree. The page says the item gate reads `RERUN` when the skill never loads, drafts the trigger spec with `--draft`, since `--dry-run` only prints it, and names both arms to retry errored runs. [Evaluate an Agent Skill](https://coding.sh/docs/how-to/evaluate-a-skill)
 - **Docs.** The plugin how-to snapshots your setup with `--plugin <name>` before `compare --without plugin:<name>` drops the plugin, since a snapshot carries only the plugins it names. Its retry command names both arms, which `compare --experiment` needs. [Does this plugin help?](https://coding.sh/docs/how-to/does-this-plugin-help)
 - **Docs.** Privacy and redaction says that the working-tree snapshots in `repos/` keep your files as they are, not redacted, that model replies recorded for replay in `llm-cache/` get only the `secrets` rules, and that purge leaves both alone, so rotate a leaked secret. [Privacy and redaction](https://coding.sh/docs/privacy)
+- **Self-host.** The example `deploy/compose/config.toml` uses the `[prices]` table that Configuration documents, in place of the older `[pricing]` spelling. Both spellings still work. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/config.md#prices))
 
 ## [0.1.7] - 2026-11-16
 

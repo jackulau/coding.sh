@@ -220,9 +220,11 @@ describe("deploy/compose/clickhouse.yml", () => {
 describe("pinned prices", () => {
   const cfg = parseToml(read("deploy/compose/config.toml"));
   test("match §5 and give the journeys' exact costs", () => {
-    assert.deepEqual(cfg.pricing["mock-gpt"], { input: 1, output: 2 });
-    assert.deepEqual(cfg.pricing["mock-claude"], { input: 3, output: 15 });
-    const cost = (m, i, o) => (i * cfg.pricing[m].input + o * cfg.pricing[m].output) / 1e6;
+    // [prices] is the spelling docs/reference/config.md documents; [pricing] is the older one.
+    assert.equal(cfg.pricing, undefined);
+    assert.deepEqual(cfg.prices["mock-gpt"], { input: 1, output: 2 });
+    assert.deepEqual(cfg.prices["mock-claude"], { input: 3, output: 15 });
+    const cost = (m, i, o) => (i * cfg.prices[m].input + o * cfg.prices[m].output) / 1e6;
     assert.ok(Math.abs(3 * cost("mock-gpt", 1000, 500) - 0.006) < 1e-9); // J1
     assert.ok(Math.abs(cost("mock-gpt", 1000, 500) + cost("mock-claude", 1000, 500) - 0.0125) < 1e-9); // J2
   });
