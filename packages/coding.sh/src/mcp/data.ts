@@ -1124,19 +1124,37 @@ export function gitRoot(dir: string): string | undefined {
   return undefined;
 }
 
-/** Most recent top-level session that ran in `cwd` (or its repo), preferring one still running. */
+/**
+ * The session that ran in `cwd` (or its repo), child sessions included, so a delegate working in a
+ * worktree is found from that worktree. Ranked: running first; then the same checkout as `cwd`, then
+ * a folder under it, then a folder above it (the main checkout a nested worktree sits in); then a
+ * top-level session before a child in the same place; then the newest.
+ */
 export async function currentByCwd(index: IndexStore, cwd: string, now: number = Date.now()): Promise<{ session: Session; matchedBy: "cwd-running" | "cwd-recent" } | undefined> {
   const root = gitRoot(cwd);
-  const here = (s: Session) => under(cwd, s.cwd) || under(s.cwd, cwd) || (!!root && ((!!s.repo?.root && pathKey(s.repo.root) === pathKey(root)) || under(s.cwd, root)));
-  let recent: Session | undefined;
-  const it = scanSessions(index, { topLevel: true, where: here }, 1000);
+  const same = (a: string, b: string) => pathKey(a) === pathKey(b);
+  const here = (s: Session) => under(cwd, s.cwd) || under(s.cwd, cwd) || (!!root && ((!!s.repo?.root && same(s.repo.root, root)) || under(s.cwd, root)));
+  const place = (s: Session): number => {
+    if (s.cwd && same(s.cwd, cwd)) return 2;
+    if (root && (s.repo?.root ? same(s.repo.root, root) : under(s.cwd, root))) return 2;
+    return under(s.cwd, cwd) ? 1 : 0;
+  };
+  const rank = (s: Session) => (isRunning(s, now) ? 8 : 0) + place(s) * 2 + (s.parent?.sessionId ? 0 : 1);
+  let best: Session | undefined;
+  let bestRank = -1;
+  const it = scanSessions(index, { topLevel: false, where: here }, SCAN_CAP);
   for (;;) {
     const n = await it.next();
     if (n.done) break;
-    if (isRunning(n.value, now)) return { session: n.value, matchedBy: "cwd-running" };
-    recent ??= n.value;
+    const r = rank(n.value);
+    // Newest first, so a later row wins only by ranking higher.
+    if (r > bestRank) [best, bestRank] = [n.value, r];
+    if (bestRank === 8 + 4 + 1) {
+      await it.return({ truncated: false });
+      break;
+    }
   }
-  return recent ? { session: recent, matchedBy: "cwd-recent" } : undefined;
+  return best ? { session: best, matchedBy: isRunning(best, now) ? "cwd-running" : "cwd-recent" } : undefined;
 }
 
 export const SESSION_ENV_VARS = ["CODING_SH_SESSION_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "CODEX_SESSION_ID"] as const;

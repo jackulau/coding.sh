@@ -351,15 +351,8 @@ sessions. See [Let your agent read its own runs](https://coding.sh/docs/mcp).
 
 The server also serves four skills to hosts that load skills from MCP servers: reviewing a session,
 improving and trimming your agent setup, and building evals. See
-[Skills](https://coding.sh/docs/mcp#skills).
-
-:::more Every MCP tool
-`sessions_list`, `session_get`, `session_current`, `session_replay`, `search`, `improve`,
-`harness_changes`, `harness_audit`, `failures`, `latency`, `usage`, `subagents`, `session_tree`,
-`eval_from_session`, `eval_init`, `eval_candidates`, `experiments_list`, `experiment_compare`,
-`exp_session_summary`, `exp_session_note`, `harness_compare`, `benchmarks`, `status`, `score_list`
-and `score_add`.
-:::
+[Skills](https://coding.sh/docs/mcp#skills). Every MCP tool is listed in
+[Tools](https://coding.sh/docs/mcp#tools).
 
 ## Next steps
 
