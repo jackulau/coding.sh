@@ -57,4 +57,32 @@ describe("judge calibrate with case labels", () => {
     assert.ok(picks.length > 0);
     assert.ok(picks.every((p) => p.alreadyLabelled === true), JSON.stringify(picks));
   });
+
+  it("labels under another name than the judge's criterion: calibrate and sample name them and the --criterion that reads them", async () => {
+    const cases = Array.from({ length: 3 }, (_, i) => ["--case", JSON.stringify({ input: `q${i}`, expected: `q${i}` })]).flat();
+    const add = run("dataset", "add", "named", ...cases, "--split", "test");
+    assert.equal(add.status, 0, add.stderr);
+    // The judge's criterion is its name, "quality"; the person labelled the cases "correct".
+    const ran = run("exp", "run", "-d", "named", "--task", '{"kind":"command","command":"node echo.mjs"}', "-g", '{"kind":"llm","name":"quality","rubric":"right?","provider":"mock","tunedOn":["dev"]}', "--json");
+    assert.equal(ran.status, 0, ran.stderr);
+    const exp = (JSON.parse(ran.stdout) as { experiment: { id: string; runs: { caseId: string }[] } }).experiment;
+    const index = await SqliteIndexStore.open(join(env.CODING_SH_HOME!, "index.db"));
+    try {
+      for (const id of new Set(exp.runs.map((r) => r.caseId))) await addScore(index, { target: "case", targetId: id, name: "correct", value: true }, { by: "tester", source: "human", now: Date.now() });
+    } finally {
+      await index.close();
+    }
+
+    // The 23 "correct" labels on the other dataset's cases are not counted.
+    const hint = /No human label on these cases is named "quality"; there are labels named correct \(3\)\. Pass --criterion correct to read those\./;
+    const cal = run("judge", "calibrate", exp.id);
+    assert.equal(cal.status, 1, cal.stderr);
+    assert.match(cal.stderr, hint);
+    const sample = run("judge", "sample", exp.id, "--budget", "2");
+    assert.equal(sample.status, 0, sample.stderr);
+    assert.match(sample.stderr, hint);
+    const named = run("judge", "calibrate", exp.id, "--criterion", "correct");
+    assert.match(named.stdout, /n=3\b/);
+    assert.doesNotMatch(named.stderr, /No human label/);
+  });
 });

@@ -338,6 +338,7 @@ grouped by area, with links to the docs for the details.
 - **CLI.** When `~/.coding.sh/bin/cli-path` names another install that is still there, `doctor` names `coding.sh upgrade-store`, which asks before it moves the hooks, instead of `update --refresh-bin`, which leaves them alone. With a store plugin, `upgrade-store` now moves the hooks too. Before, it said there was nothing to do. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#sessions-dont-show-up))
 - **Evals.** `coding.sh monitor list` shows what a `--judge` monitor spent today and its `--max-usd-day` cap to four places under a dollar, such as ($0.0005/$0.0001 today), where a spend under a cent showed as $0.00. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#monitors))
 - **Evals.** `coding.sh score add --id` with an id that held a score on another target or name says which score it replaced, and `--json` gives it as `replaced`. Before, it printed "Updated" for a score the target never had. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#scores))
+- **Judges.** `coding.sh judge calibrate` and `judge sample` say which label names the cases have when none is named after the judge's criterion, and the `--criterion` that reads them. Before, the viewer's Pass and Fail labels (named `outcome`) were left out of a judge with another name without a word. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#judges))
 
 ## [0.1.7] - 2026-11-16
 

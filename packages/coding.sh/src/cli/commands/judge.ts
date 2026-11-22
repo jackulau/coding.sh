@@ -29,6 +29,7 @@ import { renderAuditPlan, renderCalibration } from "../../judge/render.ts";
 import { auditVerifier, DEFAULT_MIN_PASSES, parseCaseLabels, renderVerifierAudit, samplePasses } from "../../judge/verifier.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { jsonArg, list, num, oneLine, str, withContext } from "../common.ts";
+import { quoteArg } from "../next-steps.ts";
 import { CliError } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -277,6 +278,15 @@ export async function run(c: CommandContext): Promise<number> {
       const fromFile = await readCaseLabels(resolve(c.cwd, labelsFile));
       const named = new Set(fromFile.map((l) => l.caseId));
       labels = [...labels.filter((l) => !named.has(l.caseId)), ...fromFile];
+    }
+    // Only labels named after the criterion count (the viewer's Pass/Fail is "outcome"): name the others these cases have.
+    if (criterion !== undefined && !labels.length) {
+      const all = labelsFromCore(await ctx.index.listLabels({}), (sid) => caseBySession.get(sid), hasCase);
+      if (ctx.index.listScores) all.push(...caseLabelsFromScores(await ctx.index.listScores({ target: "case", source: "human" }), hasCase));
+      const counts = new Map<string, number>();
+      for (const l of all) if (l.value !== "skip" && l.criterion !== undefined) counts.set(l.criterion, (counts.get(l.criterion) ?? 0) + 1);
+      const names = [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+      if (names.length) out.warn(`No human label on these cases is named ${JSON.stringify(criterion)}; there are labels named ${names.map(([n, k]) => `${n} (${k})`).join(", ")}. Pass --criterion ${quoteArg(names[0]![0], env)} to read those.`);
     }
 
     if (sampling) {

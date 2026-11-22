@@ -1292,6 +1292,10 @@ without `--base-url`. `"provider":"claude-code"` and `"provider":"codex"` judge 
 ChatGPT subscription instead, through the agent's CLI.
 
 `coding.sh judge calibrate` measures judge and human agreement (Cohen's kappa) on a held-out split.
+It counts the human labels named after the judge's criterion: the grader's `criterion`, else its
+`name`, or `--criterion`. The viewer's Pass and Fail labels are named `outcome`, so
+`--criterion outcome` reads them. When no label on the experiment's cases has that name,
+`judge calibrate` and `judge sample` name the labels those cases have.
 Every report flags judges that are not calibrated. It also stores the judge's held-out sensitivity
 and specificity, so later `exp compare` runs show a bias-corrected (Rogan-Gladen) judge pass rate.
 
