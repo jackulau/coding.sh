@@ -148,3 +148,12 @@ test("each setup prompt tells an agent on Windows to run codingsh in PowerShell 
     }
   }
 });
+
+test("the SDK setup prompts verify with the agent's own sessions", () => {
+  // CODING_SH_SERVICE names the agent, and each model call outside trace() is its own session. The
+  // server lowercases the name and joins its words with "-", and --agent matches that id exactly.
+  for (const p of QUICKSTART_PATHS.filter((p) => p.id !== "coding-agents")) {
+    assert.ok(p.setup.includes("CODING_SH_SERVICE to a short lowercase name such as support-bot"), `the ${p.id} setup prompt asks for a name --agent matches`);
+    assert.ok(p.setup.includes("coding.sh sessions --agent <that name> --json"), `the ${p.id} setup prompt lists the agent's sessions`);
+  }
+});

@@ -35,8 +35,8 @@ const sdkSetup = (lang: "TypeScript" | "Python") => {
 
 1. Install the coding.sh CLI (npm install -g coding.sh, Node.js 22.16 or newer) and ${pkg}. ${STOP}
 2. Read https://coding.sh/docs/sdk.md. Then ${wrap} Change nothing else in the agent.
-3. Start coding.sh serve in another terminal and leave it running. Where the agent runs, set CODING_SH_URL=http://127.0.0.1:4318 and CODING_SH_SERVICE to a short name for this agent. Without CODING_SH_URL the SDK does nothing, so the code is safe to ship.
-4. Verify: run the agent once, then coding.sh show latest --json. It should list each model call with its tokens and cost. Tell me the session id and what it recorded.`;
+3. Start coding.sh serve in another terminal and leave it running. Where the agent runs, set CODING_SH_URL=http://127.0.0.1:4318 and CODING_SH_SERVICE to a short lowercase name such as support-bot. Without CODING_SH_URL the SDK does nothing, so the code is safe to ship.
+4. Verify: run the agent once, then coding.sh sessions --agent <that name> --json. Each model call outside trace() is its own session, with its tokens and cost. Tell me the session ids and what they recorded.`;
 };
 
 const SDK_FIRST = `Run my agent on three different inputs. Then use coding.sh sessions and coding.sh show to tell me which run cost the most, which was slowest, and why. Quote the numbers coding.sh printed.`;
