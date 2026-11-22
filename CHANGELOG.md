@@ -209,6 +209,7 @@ grouped by area, with links to the docs for the details.
 - **SDK.** The Python SDK reads a `CODING_SH_URL` that ends in `/v1/traces` or `/v1/ingest` as the TypeScript SDK does: events go to `/v1/ingest`, and `coding_sh.otel` spans go to `/v1/traces`. Before, a URL ending in `/v1/traces` sent events to `/v1/traces/v1/ingest`, which the server does not take, so they were dropped. [SDK](https://coding.sh/docs/sdk)
 - **SDK.** The Python SDK reads `Retry-After` as the TypeScript SDK does. It waits up to 60 s, not 30 s, and it honors an HTTP date, retrying at once when the date has passed; before, it ignored dates. A value it cannot read, such as `Infinity`, now means backoff, not a 30 s wait. [SDK](https://coding.sh/docs/sdk)
 - **SDK.** In TypeScript, when `shutdown()` or the flush at exit runs out of time, its warning names that flush and says the events are dropped. Before, it said `flush()` gave up and that the events would be retried while the process ran. [SDK](https://coding.sh/docs/sdk)
+- **SDK.** Inside `trace()`, each Vercel AI SDK call through `aiSdkTracer()`, and each span from Python's `coding_sh.otel` provider, is a step of the trace's one turn. Before, each call was a turn of its own and added its prompt as a user message. Sessions stored before keep their turns: spans are mapped at ingest, so nothing is parsed again. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/trace-your-agent.md#trace-the-vercel-ai-sdk))
 
 ## [0.1.7] - 2026-11-16
 

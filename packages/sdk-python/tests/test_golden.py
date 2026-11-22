@@ -157,6 +157,38 @@ class GoldenTest(unittest.TestCase):
         self.assertAlmostEqual(sdk["usage"]["costUsd"], 0.00093, places=8)
         self.assertEqual((sdk["turns"], sdk["toolCalls"], sdk["latency"]["llmCalls"]), (2, 1, 3))
 
+    def _events(self, sid: str) -> list:
+        q = urllib.request.quote(sid, safe="")
+        with urllib.request.urlopen(self.ingest + "/events?id=" + q, timeout=5) as r:
+            return json.loads(r.read())
+
+    def test_otel_spans_inside_a_trace_are_steps_of_its_one_turn(self) -> None:
+        # Each span used to be a turn of its own, with its prompt as one more user message.
+        from coding_sh.otel import configure
+
+        coding_sh.init(url=self.ingest, key=support.KEY, service="golden", flush_interval_ms=5)
+        provider = configure(service="golden", url=self.otlp, key=support.KEY, set_global=False, batch=False)
+        tracer = provider.get_tracer("golden")
+        inp = json.dumps([{"role": "user", "parts": [{"type": "text", "content": "ping"}]}])
+        with coding_sh.trace("handler", input="handle it") as t:
+            for _ in range(2):
+                with tracer.start_as_current_span("chat gpt-4o-mini") as sp:
+                    sp.set_attribute("gen_ai.operation.name", "chat")
+                    sp.set_attribute("gen_ai.request.model", "gpt-4o-mini")
+                    sp.set_attribute("gen_ai.input.messages", inp)
+                    sp.set_attribute("gen_ai.usage.input_tokens", 1000)
+                    sp.set_attribute("gen_ai.usage.output_tokens", 500)
+        provider.force_flush()
+        provider.shutdown()
+        self.assertTrue(coding_sh.flush(5))
+        stats = self._session(t.session_id)["stats"]
+        self.assertEqual(stats["turns"], 1)
+        self.assertEqual(stats["latency"]["llmCalls"], 2)
+        self.assertEqual((stats["usage"]["inputTokens"], stats["usage"]["outputTokens"]), (2000, 1000))
+        self.assertAlmostEqual(stats["usage"]["costUsd"], 0.0009, places=8)  # gpt-4o-mini, built-in prices
+        prompts = [e["payload"]["text"] for e in self._events(t.session_id) if e["kind"] == "user.message"]
+        self.assertEqual(prompts, ["handle it"])
+
 
 if __name__ == "__main__":
     unittest.main()

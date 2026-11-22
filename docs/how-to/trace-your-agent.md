@@ -413,14 +413,18 @@ Add a --json flag to coding.sh usage
 This is AI SDK 7. On AI SDK 6 and earlier, pass the tracer per call instead:
 `experimental_telemetry: { isEnabled: true, tracer: aiSdkTracer() }`.
 
-Inside a `trace()` or `withSession()`, the AI SDK's calls join that session. `aiSdkTracer({
-sessionId })` sets one for every call.
+Inside a `trace()`, each AI SDK call is a step of the trace's one turn: a handler that makes three
+model calls is one turn with three calls. Inside `withSession()` alone, each call is a turn of that
+session. `aiSdkTracer({ sessionId })` sets the session for every call; each call is a turn there,
+unless it is the trace's own session.
 
 ## Already on OpenTelemetry?
 
 If your agent already exports OpenTelemetry, or runs on the OpenAI Agents SDK, LangGraph or the
 Claude Agent SDK, send its traces to coding.sh instead. See
-[Trace a framework with OpenTelemetry](https://coding.sh/docs/otel).
+[Trace a framework with OpenTelemetry](https://coding.sh/docs/otel). In Python, spans from the
+provider `coding_sh.otel.configure()` returns that start inside `trace()` are steps of the trace's
+one turn, as AI SDK calls are.
 
 :::more coding.sh serve or coding.sh collector?
 Both take OpenTelemetry traces on `127.0.0.1:4318` and write to the same local store, so run one at

@@ -570,7 +570,10 @@ const openai = observe(new OpenAI());          // or new Anthropic(); unknown ob
   `experimental_telemetry: { isEnabled: true, tracer }`. AI SDK 7 dropped `tracer` and `metadata`
   from telemetry options, so there it goes in `telemetry: { integrations: new OpenTelemetry({ tracer }) }`
   from `@ai-sdk/otel`, and the session comes from `withSession`/`trace` or the `sessionId` option,
-  stamped as `session.id`. It encodes spans as OTLP JSON and sends them to `/v1/traces`, where the
+  stamped as `session.id`. Inside `trace()`, unless the call names another session, its outermost
+  span gets the trace's current span as parent and `coding_sh.sdk_parent=true`: the server maps the
+  call as a step of that turn, not a turn of its own, and an `invoke_agent` span there is not a
+  subagent. It encodes spans as OTLP JSON and sends them to `/v1/traces`, where the
   server's existing `ai.*`/`gen_ai.*` mapping handles them. The plain OTel exporter path also works (J3).
 - `flush(timeoutMs?)`, `shutdown()`, `stats() → {queued, sent, dropped, failed}`.
 - Optional env: `CODING_SH_SERVICE` (else `OTEL_SERVICE_NAME`), `CODING_SH_CAPTURE_MODE`,
@@ -613,7 +616,9 @@ It is stdlib only (Python ≥ 3.9): `urllib`, `threading`, `queue`, `gzip`, `ate
 - `coding_sh.otel` (extra `coding-sh[otel]`) is the OTel helper for §4.3: `configure()` installs a
   TracerProvider with the OTLP/HTTP exporter (standard `OTEL_EXPORTER_OTLP_*` env, else
   `CODING_SH_URL` + `CODING_SH_INGEST_KEY`) and stamps `gen_ai.conversation.id` from the current
-  session; `otel_env()` returns the `OTEL_*` vars for a subprocess.
+  session. Inside `trace()`, a span its tracers start with no OTel parent gets the trace's current
+  span as parent and `coding_sh.sdk_parent=true`, as `aiSdkTracer()` does, unless it names another
+  session. `otel_env()` returns the `OTEL_*` vars for a subprocess.
 - Tests use `unittest` against an in-process `http.server`. The golden test (`tests/test_golden.py`)
   runs the core's real OTLP receiver and `buildSession` through `tests/golden/harness.ts`.
 - `examples/production/python` also has `app_api.py`, an HTTP API with one trace per request.

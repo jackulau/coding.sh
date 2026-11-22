@@ -114,7 +114,9 @@ env = otel_env()                    # OTEL_EXPORTER_OTLP_* vars for a subprocess
 
 `pip install 'coding-sh[otel]'`. `configure()` uses the standard `OTEL_EXPORTER_OTLP_*` env vars
 when set, else `CODING_SH_URL` / `CODING_SH_INGEST_KEY`, and stamps `gen_ai.conversation.id` from
-the current `with_session` / `trace(session_id=...)`.
+the current `with_session` / `trace(session_id=...)`. Inside `trace()`, a span that would start a
+trace of its own gets the open `trace()` or `span()` as parent instead, so each model call is a step
+of the trace's one turn, not a turn of its own.
 
 ## Tests
 
