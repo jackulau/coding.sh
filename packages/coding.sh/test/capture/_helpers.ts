@@ -11,7 +11,8 @@ export const PKG_ROOT = realpathSync(join(import.meta.dirname, "..", ".."));
 const cleanup: string[] = [];
 
 export function tmp(prefix = "csh-test-"): string {
-  const d = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  // The native real path: long names for a temp dir's 8.3 short ones (RUNNER~1 on CI), as stored repo roots have.
+  const d = realpathSync.native(mkdtempSync(join(tmpdir(), prefix)));
   cleanup.push(d);
   return d;
 }

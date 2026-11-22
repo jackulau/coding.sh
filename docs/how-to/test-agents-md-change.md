@@ -147,7 +147,7 @@ it says No sessions yet or Too early to tell. See [Did your last change help?](.
 | Flag | Default | What it does |
 |---|---|---|
 | `--a` | git HEAD | The baseline: a file, a directory, `git:REV` or `none`. |
-| `--b` | your uncommitted edits | The candidate. A file in the repo replaces the file at its path; a file outside the repo replaces the one with its name, so `--b ../drafts/AGENTS.md` tests a draft. |
+| `--b` | your uncommitted edits | The candidate. A file replaces the instructions, rule or skill file at its path in the repo, else the one with its name, so `--b drafts/AGENTS.md` tests a draft of AGENTS.md. |
 | `--behavior` | all | Only these kinds of decision point. |
 | `--since` | 14d | Sessions started since this time. |
 | `--repo` | this repo | Another directory, or `all`. |
@@ -160,7 +160,8 @@ it says No sessions yet or Too early to tell. See [Did your last change help?](.
 | `--resume` | off | Continue an interrupted A/B. |
 
 With no uncommitted edits, the default tests your last AGENTS.md commit against the version before
-it. Every flag: [exp ab reference](https://coding.sh/docs/cli/exp).
+it. Both arms read files with LF line ends, so a change of line ends alone (CRLF and LF, as with
+`core.autocrlf`) is not an edit. Every flag: [exp ab reference](https://coding.sh/docs/cli/exp).
 
 ## If something goes wrong
 
@@ -171,7 +172,7 @@ it. Every flag: [exp ab reference](https://coding.sh/docs/cli/exp).
 | `improve` says headless sessions were left out, or `improve check` finds no sessions | Your sessions ran with `claude -p`, `codex exec` or an Agent SDK. Add `--headless` to `improve`, `improve fix` and `improve check`. |
 | It refuses to start | The estimate is over `--max-cost`. Lower `-n` or pick one `--behavior`. |
 | No API key and no login | Set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, or log in to Claude Code or Codex. Without any, commit the change and let `improve check` judge it. |
-| `--watch needs B to be files on disk` | `--watch` follows files. Drop `--b git:…`. |
+| `--watch needs B to be files on disk` | `--watch` follows files, so B must be a file or a directory, not `git:…`, `none` or a bundle. It stops before any model call. |
 | A protected-line warning | Your edit deletes or relaxes a safety line. See [Keep safety lines from being dropped](https://coding.sh/docs/harness-evals#protected). |
 
 ## Other ways to test a change

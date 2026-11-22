@@ -198,6 +198,19 @@ async function updateNotice(env: NodeJS.ProcessEnv, out: Output, command: string
 const GLOBAL_OPTION_NAMES: readonly string[] = GLOBAL_FLAGS.map((f) => `--${f.name}`);
 /** Before a command, `--version` is valid too. */
 const ROOT_OPTION_NAMES: readonly string[] = [...GLOBAL_OPTION_NAMES, "--version"];
+/**
+ * Commands people try by what they want, with no command spelled close to them: the command that
+ * answers it. Read only after the edit-distance suggestion finds nothing.
+ */
+const COMMAND_INTENTS: ReadonlyMap<string, string> = new Map([
+  ["cost", "usage"],
+  ["costs", "usage"],
+  ["spend", "usage"],
+  ["price", "usage"],
+  ["tokens", "usage"],
+  // The WASTE column: what prompt-cache breaks cost over reading from cache.
+  ["waste", "usage --cache"],
+]);
 
 function helpStyle(out: Output): HelpStyle {
   return {
@@ -245,7 +258,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
     const cmd = findCommand(name);
     if (!cmd) {
       const names = COMMANDS.flatMap((c) => [c.name, ...(c.aliases ?? [])]);
-      const s = suggest(name, names);
+      const s = suggest(name, names) ?? COMMAND_INTENTS.get(name.toLowerCase());
       throw new UsageError(`Unknown command ${JSON.stringify(name)}`, { suggestion: s ? `${BIN} ${s}` : undefined, reason: "unknown_command" });
     }
 

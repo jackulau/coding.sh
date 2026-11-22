@@ -42,7 +42,8 @@ import { computeMetrics, DAY_MS, MAX_GROUPS, METRIC_BUCKETS, METRIC_GROUPS, Metr
 import { parseTime } from "../query/where.ts";
 import { getScoreConfigs, getScores, postScore, postScoreConfig, type ApiReply, type ScoresApiCtx } from "../scores/api.ts";
 import { paths } from "../core/paths.ts";
-import { WorkApiError, workAck, workList, workSnooze, type WorkSource } from "./work.ts";
+import { indexDoc, WorkApiError, workAck, workList, workSnooze, type WorkSource } from "./work.ts";
+import { indexAge } from "../core/ingest-health.ts";
 import { ScoreError } from "../scores/scores.ts";
 import { checkViewName, removeView, saveView, viewStore, ViewError } from "../query/views.ts";
 import { completeItem, getItem, getQueue, listQueues, nextItem, queueStatus, ReviewError, skipItem } from "../scores/review.ts";
@@ -82,6 +83,8 @@ export interface ViewerOptions {
   star?: StarSource;
   /** The work queue behind /api/work (the Work page). Default: work.json in the coding.sh home of the star env, else env. */
   work?: WorkSource;
+  /** The coding.sh home whose last ingest /api/work and /api/ingest date the index by (`coding.sh ui` on its own store). Default: none. */
+  indexHome?: string;
   /** Start-snapshot content for replays (`coding.sh ui`, which can read this machine's shadow repos). */
   replayBaseline?: (s: Session) => Baseline | undefined;
   /** Forking a replay at a step (`coding.sh ui` only: it calls the model with this machine's key). Without it /fork is 404. */
@@ -415,7 +418,7 @@ export async function startViewer(opts: ViewerOptions): Promise<Viewer> {
     ...(opts.ingestStatus ? { ingestStatus: opts.ingestStatus } : {}),
     star: opts.star,
     // The local viewer reads this machine's queue: the overlay `coding.sh work` writes.
-    work: opts.work ?? { overlay: paths(opts.star?.env ?? opts.env ?? process.env).work },
+    work: opts.work ?? { overlay: paths(opts.star?.env ?? opts.env ?? process.env).work, root: opts.indexHome },
     ...(opts.replayBaseline ? { replayBaseline: opts.replayBaseline } : {}),
     ...(opts.fork ? { fork: opts.fork } : {}),
     ...(opts.playground ? { playground: opts.playground } : {}),
@@ -1284,7 +1287,9 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       get();
       if (id !== undefined) throw new HttpError(404, "not found");
       // `coding.sh serve` ingests over HTTP as events arrive, so it never has a backlog to report.
-      return sendJson(res, 200, ctx.ingestStatus?.() ?? { ingesting: false, filesPending: 0, lastIngestAt: null });
+      // `index`: how old the index is, in the CLI's words, when the work source names the home it was ingested into.
+      const root = ctx.work?.root;
+      return sendJson(res, 200, { ...(ctx.ingestStatus?.() ?? { ingesting: false, filesPending: 0, lastIngestAt: null }), ...indexDoc(root ? indexAge(root) : undefined) });
     }
 
     case "stats": {

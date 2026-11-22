@@ -444,7 +444,8 @@ async function rehomeStored(store: IndexStore, tree: SpanTree, rehome: Rehome[])
         await rebuildSessions(store, [child]);
       }
     }
-    await rebuildSessions(store, emptied ? [...moves.keys()] : [r.from, ...moves.keys()]);
+    // The model the old row took from the moved model calls leaves with them (a root whose calls all ran in its subagents has none).
+    await rebuildSessions(store, emptied ? [...moves.keys()] : [r.from, ...moves.keys()], undefined, new Set([r.from]));
   }
 }
 
@@ -453,8 +454,8 @@ async function rehomeStored(store: IndexStore, tree: SpanTree, rehome: Rehome[])
  * CLAUDE_CODE_ENHANCED_TELEMETRY_BETA, as a span, under one event id, so the second copy
  * inserts nothing. Call after the put, with the ids it inserted: a model call's stored copy
  * takes the fields of the copy that did not insert (mergeCallCopies). A prompt stored from the
- * log record before its trace's session.start, at the same time, is stored again after it, so
- * one prompt does not read as a resume. Needs replaceSessionEvents.
+ * log record before its trace's session.start (at its time, or a few ms before it) is stored again
+ * after it, at no earlier time, so one prompt does not read as a resume. Needs replaceSessionEvents.
  */
 export async function mergeAgentCopies(store: IndexStore, events: AgentEvent[], inserted: Set<string>): Promise<void> {
   if (!store.replaceSessionEvents) return;
@@ -480,10 +481,12 @@ export async function mergeAgentCopies(store: IndexStore, events: AgentEvent[], 
         if (isDeepStrictEqual(merged, s)) continue;
         remove.push(d.id);
         add.push(merged);
-      } else if (s.ts >= startOf(d)!.ts && s.source === LOG_SOURCE) {
+      } else if (s.source === LOG_SOURCE) {
         // Re-stored, it sorts after the session.start; it keeps the log's fields and gains the span's place in the trace.
+        // Claude Code stamps the log and the span from the same moment in no set order, so a log a few ms before the
+        // span's start is the same prompt: it takes the start's time, not an earlier phase of its own.
         remove.push(d.id);
-        const moved: AgentEvent = { ...d, ...s, traceId: d.traceId! };
+        const moved: AgentEvent = { ...d, ...s, traceId: d.traceId!, ts: s.ts >= startOf(d)!.ts ? s.ts : startOf(d)!.ts };
         if (d.spanId) moved.spanId = d.spanId;
         add.push(moved);
       }
@@ -594,20 +597,27 @@ export class InsertedEvents {
  * Rebuilds sessions from all their stored events (spans arrive out of order).
  * `stored`: events the caller just stored, all of them new, by session; a
  * session that has no row yet is built from these instead of being read back.
+ * `movedOut`: sessions that stored events just left (rehomeStored); they keep no model from the old row.
  */
-export async function rebuildSessions(store: IndexStore, ids: Iterable<string>, stored?: Map<string, AgentEvent[]>): Promise<Session[]> {
+export async function rebuildSessions(store: IndexStore, ids: Iterable<string>, stored?: Map<string, AgentEvent[]>, movedOut?: ReadonlySet<string>): Promise<Session[]> {
   const sessions: Session[] = [];
+  // A session that events moved out of keeps no model from its old row: only its own model calls name one.
+  const base = (id: string, prev: Session | undefined): Session | undefined => {
+    if (!prev || !movedOut?.has(id) || prev.model === undefined) return prev;
+    const { model: _m, ...rest } = prev;
+    return rest;
+  };
   for (const id of ids) {
     if (store.rebuildSession) {
       // The store reads and writes under a per-session lock (concurrent writers).
-      const s = await store.rebuildSession(id, (prev, all) => (all.length ? buildSession(all, prev) : undefined));
+      const s = await store.rebuildSession(id, (prev, all) => (all.length ? buildSession(all, base(id, prev)) : undefined));
       if (s) sessions.push(s);
       continue;
     }
     const prev = await store.getSession(id);
     const all = !prev && stored?.get(id) ? stored.get(id)! : await store.listEvents(id);
     if (!all.length) continue;
-    const session = buildSession(all, prev);
+    const session = buildSession(all, base(id, prev));
     await store.upsertSession(session);
     sessions.push(session);
   }

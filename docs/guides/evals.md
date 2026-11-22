@@ -399,8 +399,10 @@ test on flipped cases and the minimum detectable effect. It also reports:
 - **A Bayesian check at small n.** Below 100 paired cases it adds P(B>A) and a credible interval
   from a Dirichlet posterior on the paired outcomes. The bootstrap interval stays.
 - **Attrition.** Per arm, trials lost to task errors, grader errors or missing runs, split into
-  infra errors (timeouts, network, HTTP 429/5xx, a refused login, a failed setup) and agent
-  errors. Fisher's exact test flags an uneven split at p < 0.01. A trial still on an infra error
+  infra errors (network timeouts such as `ETIMEDOUT`, HTTP 429/5xx, a refused login, a failed
+  setup), timeouts (the trial timeout: the agent was too slow) and agent errors. Fisher's exact
+  test flags an uneven split at p < 0.01. When the arms' timeout counts differ, a yellow line names
+  the cases and says the verdict depends on the time limit. A trial still on an infra error
   after its retries is unknown: it is left out of the pass rate like an ungraded run, and the
   yellow line above the verdict counts it by kind. When no pair is left, that line starts with
   `void:`.
@@ -2363,9 +2365,10 @@ shell. Only one turn is generated: nothing runs in your repo.
 0.8. The judge sees only the turn, never which arm wrote it.
 
 By default A is your last commit (`git:HEAD`) and B is your working tree, so the usual loop is: edit
-AGENTS.md, run `coding.sh exp ab`, keep or revert. `--a` and `--b` take a file (it replaces the file
-of the same path in A), a directory, `git:<rev>`, a harness bundle, or `none`. It errors when the
-two arms have the same files, so a typo'd path can't produce a "no difference" result.
+AGENTS.md, run `coding.sh exp ab`, keep or revert. `--a` and `--b` take a file (it stands in for the
+harness file at its repo path, or else for the file with its name, so `drafts/AGENTS.md` replaces
+`AGENTS.md`), a directory, `git:<rev>`, a harness bundle, or `none`. It errors when the two arms
+have the same files, so a typo'd path can't produce a "no difference" result.
 
 The headline counts the cases each arm passed, and which ones flipped. The second line is the same
 ship gate as `compare --gate`, with the same settings (`--lambda`, `--gate-alpha`, `--tau`). With

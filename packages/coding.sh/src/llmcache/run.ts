@@ -2,7 +2,7 @@
 // case-trial, and the stats a case-trial keeps (CaseRun.llm).
 import { homedir, tmpdir } from "node:os";
 import { paths } from "../core/paths.ts";
-import { createRedactor } from "../core/redact.ts";
+import { createRedactor, type Redactor } from "../core/redact.ts";
 import { type LlmCache, type LlmCacheMode, type LlmJob, type LlmStats, type LlmUpstreams, startLlmCache } from "./proxy.ts";
 
 export interface LlmRunOpts {
@@ -16,6 +16,8 @@ export interface LlmRunOpts {
   upstream?: Partial<LlmUpstreams>;
   excludeTools?: boolean;
   excludeModel?: boolean;
+  /** What a recording's bodies go through (default: the built-in secret rules). The CLI passes the one capture uses. */
+  redactor?: Redactor;
   onWarn?: (message: string) => void;
   /** Extra fields for the experiment's `metadata.llm` (the CLI stores the recorded task spec here). */
   meta?: Record<string, unknown>;
@@ -47,6 +49,7 @@ export async function openLlmCache(o: LlmRunOpts, env: NodeJS.ProcessEnv = proce
     ...(o.until !== undefined ? { until: o.until } : {}),
     ...(o.upstream ? { upstream: o.upstream } : {}),
     key: { ...(o.excludeTools ? { excludeTools: true } : {}), ...(o.excludeModel ? { excludeModel: true } : {}) },
+    redactor: o.redactor, // undefined: startLlmCache uses the built-in secret rules
     ...(o.onWarn ? { onWarn: o.onWarn } : {}),
   });
 }

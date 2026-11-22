@@ -142,6 +142,12 @@ describe("runWorkflowExperiment + compareWorkflowVariants", () => {
     const exp = (await store.getExperiment(res.experimentId))!;
     assert.equal(exp.runIds.length, 8);
     assert.equal(Object.keys(exp.scores).length, 8);
+    // `workflows compare` reads each case's pass threshold from the record: seeded-1 sets 0.5, seeded-2 none.
+    assert.deepEqual(exp.thresholds, { "seeded-1": 0.5 });
+    const unset = new WorkflowStore(join(root, "store1-unset"));
+    const failing: WorkflowDriver = { id: "command", run: async () => Promise.reject(new Error("x")) };
+    const none = await runWorkflowExperiment({ workflow: "review", variants: [{ name: "x" }], cases: cases.slice(1), k: 1, driver: failing, store: unset });
+    assert.equal("thresholds" in (await unset.getExperiment(none.experimentId))!, false);
 
     const report = compareWorkflowVariants(res.runs, res.scores, { baseline: "bad", candidate: "good", iters: 500, seed: 1 });
     assert.equal(report.pairedCases, 2);
@@ -201,8 +207,32 @@ describe("runWorkflowExperiment + compareWorkflowVariants", () => {
     };
     const res = await runWorkflowExperiment({ workflow: "review", variants: [{ name: "x" }], cases: cases.slice(0, 1), k: 1, driver: throwing, store: new WorkflowStore(join(root, "store4")) });
     assert.equal(res.runs[0]!.status, "failed");
+    assert.equal(res.runs[0]!.error, "spawn failed");
     const crash = await runWorkflowExperiment({ workflow: "review", variants: [variant("crash", "crash")], cases: cases.slice(0, 1), k: 1, driver: commandDriver({ cwd: root }), store: new WorkflowStore(join(root, "store5")) });
     assert.equal(crash.runs[0]!.status, "failed");
+    // Why it failed is stored with the run: the last lines of the command's stderr.
+    assert.equal(crash.runs[0]!.error, "boom");
+    assert.equal((await new WorkflowStore(join(root, "store5")).getRun(crash.runs[0]!.id))?.run.error, "boom");
+    // A program that does not exist fails to spawn; the spawn error is the reason.
+    const missing = await runWorkflowExperiment({ workflow: "review", variants: [{ name: "missing", command: ["no-such-cmd-xyz"] }], cases: cases.slice(0, 1), k: 1, driver: commandDriver({ cwd: root }), store: new WorkflowStore(join(root, "store6")) });
+    assert.equal(missing.runs[0]!.status, "failed");
+    assert.match(missing.runs[0]!.error ?? "", /no-such-cmd-xyz ENOENT/);
+    // The error is redacted before it is stored, like everything else a run keeps.
+    const token = ["ghp_", "0123456789abcdefghijABCDEFGHIJ012345"].join("");
+    const leaky: WorkflowDriver = {
+      id: "command",
+      run: async () => {
+        throw new Error(`clone failed with ${token}`);
+      },
+    };
+    const leak = await runWorkflowExperiment({ workflow: "review", variants: [{ name: "x" }], cases: cases.slice(0, 1), k: 1, driver: leaky, store: new WorkflowStore(join(root, "store7")) });
+    const kept = (await new WorkflowStore(join(root, "store7")).getRun(leak.runs[0]!.id))?.run.error ?? "";
+    assert.match(kept, /^clone failed with \[redacted/);
+    assert.ok(!kept.includes(token));
+    // A run that did not fail keeps no error.
+    const good = await runWorkflowExperiment({ workflow: "review", variants: [variant("good", "good")], cases: cases.slice(0, 1), k: 1, driver: commandDriver({ cwd: root }), store: new WorkflowStore(join(root, "store8")) });
+    assert.equal(good.runs[0]!.status, "ok");
+    assert.equal("error" in good.runs[0]!, false);
     const report = compareWorkflowVariants(crash.runs, crash.scores, { baseline: "crash", candidate: "nope" });
     assert.equal(report.verdict.kind, "inconclusive");
     assert.deepEqual(report.unpairedCases, ["seeded-1"]);

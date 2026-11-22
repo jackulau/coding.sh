@@ -494,8 +494,23 @@ export interface Session {
    * Ingest links a child from either its `session.start` payload
    * `{ parentSessionId, parentEventId?, subagentId?, subagentType? }` or the parent's
    * `subagent.start|end` payload `childSessionId`. Adapters should prefer the former.
+   * A workflow agent's link also names its run, from the same payload's `workflowId`,
+   * `workflowName`, `workflowPhase` and `workflowLabel`: `coding.sh work` makes one item per run.
    */
-  parent?: { sessionId: string; eventId?: string; subagentId?: string; type?: string };
+  parent?: {
+    sessionId: string;
+    eventId?: string;
+    subagentId?: string;
+    type?: string;
+    /** The workflow run that started this session: one id per run of a workflow script. */
+    workflowId?: string;
+    /** The workflow's name ("round 7"). */
+    workflowName?: string;
+    /** The phase of the run the agent belongs to ("research", "build"). */
+    phase?: string;
+    /** The agent's label inside its phase. */
+    label?: string;
+  };
   /** OTel trace ids that contributed to this session (first seen first, capped at 256). Filled by buildSession from events' traceId. */
   traceIds?: string[];
   /** Project, copied from the events by buildSession. Unset means "default". */

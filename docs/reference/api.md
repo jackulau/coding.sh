@@ -548,6 +548,11 @@ and `main` when `root` is a linked worktree, the main checkout's root. The `repo
 matches `repo.root` exactly. `repo:` in `where` also matches a worktree's sessions by its main
 repo's path or name.
 
+- A worktree of a bare repo has no `main`, a bare clone kept at `proj/.git` included.
+- `root` and `main` are the real path with long names, and on Windows an upper-case drive
+  letter, whatever spelling the agent's working directory had. Sessions stored before this rule
+  keep the spelling they had.
+
 `childCount` is the number of subagent sessions under each row. `nextCursor` is present only when
 `hasMore` is true; pass it back as `cursor` for the next page:
 
@@ -612,6 +617,8 @@ gateway-billed cost has no split.
 |---|---|
 | `parent` | Set on a child session: `sessionId`, plus `eventId`, `subagentId` and `type` when known |
 | `parent.type` | The subagent type (`explore`, …), or `"harness"` for an agent started by another agent's shell tool (`codex exec` from Claude Code's Bash tool) |
+| `parent.workflowId` | Set on a workflow agent: the id of the run that started it. Its agents form one work item |
+| `parent.workflowName`, `parent.phase`, `parent.label` | The workflow's name, the agent's phase and its label, when the run names them |
 | `model` | The model that made most of the main-thread model calls (calls without a `subagentId`; the earlier one on a tie), else the last model any event named |
 | `stats.models` | Model calls per model, subagent calls included (`{"claude-sonnet-5-5": 3, "claude-sonnet-5": 2}`). Absent when one model or none made them |
 | `stats.modelSwitch` | The session's first model switch, described below |
@@ -1842,14 +1849,16 @@ curl -sS "$CSH/api/workflows?limit=1" -H "Authorization: Bearer $READ_KEY"
 {
   "runs": [{
     "id": "wf_45d472ff-246", "framework": "claude-code-workflow", "name": "improve", "status": "ok",
-    "startedAt": "2026-11-08T09:12:04.000Z", "endedAt": "2026-11-08T10:40:51.000Z", "wallMs": 5327000,
-    "agents": 14, "costUsd": 31.2, "tokens": 18450210, "variant": null, "experimentId": null,
-    "caseId": null, "resumedFrom": null, "hostSessionId": "…", "tags": []
+    "error": null, "startedAt": "2026-11-08T09:12:04.000Z", "endedAt": "2026-11-08T10:40:51.000Z",
+    "wallMs": 5327000, "agents": 14, "costUsd": 31.2, "tokens": 18450210, "variant": null,
+    "experimentId": null, "caseId": null, "resumedFrom": null, "hostSessionId": "…", "tags": []
   }]
 }
 ```
 
-A `limit` outside 1 to 500 or a malformed `framework` gets 400.
+`error` is why a run that `workflows run` started failed, as its driver reported it (`timed out`,
+the last lines of its stderr, or its exit code), redacted. It is null otherwise. A `limit` outside 1
+to 500 or a malformed `framework` gets 400.
 
 ### `GET /api/workflows/{id}`
 
@@ -1958,6 +1967,12 @@ The viewer's Work page (`#/work`): the queue [`coding.sh work`](cli.md#codingsh-
 
 It returns what `coding.sh work --json` returns for the same store and filters, built by the same code, plus two fields for the page: `members` maps each listed item's id to its member session ids (the main session first, at most 50), and `hiddenBy` counts the hidden items by reason (`running`, `done`, `acked` or `snoozed`). A bad `since`, `limit` or `stage` answers 400.
 
+Item fields for workflow runs and replaced failures:
+
+- A workflow run's item has `workflow`: the run's `id`, its `name` when known, and `phases`. Each phase has its `name` (absent if none), `agents`, `running`, `failed`, `done`, and `costUsd` when known.
+- A failed item that a later item on the same branch replaced has `supersededBy`, that item's id.
+- The top-level `needYou` counts blocked and failed items that are neither probably closed nor superseded.
+
 - `POST /api/work/ack` takes `{"id": "w1a2b3c"}` and acknowledges the item's current cause, as `coding.sh work ack` does. It returns `id`, `acked: true`, the `bucket` and its `label`, and `now`, the item after the ack.
 - An item with no cause to acknowledge returns `id`, `acked: false` and `hidden`, and writes nothing.
 - `POST /api/work/snooze` takes `{"id": "w1a2b3c", "duration": "1h"}` and hides the item until then, as `coding.sh work snooze` does. It returns `id`, `snoozedUntil` (an ISO time) and the `bucket` the snooze holds.
@@ -1971,6 +1986,7 @@ Progress of the local spool ingest, for the viewer's "Indexing N files…" pill.
 - `coding.sh ui` ingests in a background worker after it starts listening, so pages answer from what is already indexed while `filesPending` counts down.
 - `lastIngestAt` is the end of the last finished pass (epoch ms), `null` before the first.
 - Under `coding.sh ui`, `importing` is `true` while past sessions are being imported (the background import `coding.sh init` starts when its 8 seconds run out). The pill and the empty session list then say "Importing past sessions…".
+- Under `coding.sh ui` on its own home, `index` gives the age of the last finished ingest: `updatedAt`, `text` (`index updated 4m ago`), and `stale: true` when it is 15 minutes old and no ingest runs.
 
 `coding.sh serve` ingests events as they arrive, so it always answers:
 

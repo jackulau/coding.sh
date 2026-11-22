@@ -27,8 +27,12 @@ coding.sh workflows stats <run>
 | `stats` | Wall time, the critical path, how many agents ran at once, idle time at barriers, failures, cache hits on a resumed run, and cost per phase. |
 
 An agent you stopped shows as `cancelled`, and one a resume ran again as `superseded`; neither
-counts as a failure. `coding.sh ui` shows the same runs at `#/workflows`, one bar per agent grouped
-by phase, with the critical path outlined. A bar links to that agent's session.
+counts as a failure. On a resumed run, an agent that returned its recorded result is a cache hit,
+not one of the agents that ran: `stats` counts it on the `cache hits` row, and its failed and null
+shares are of the agents that ran.
+
+`coding.sh ui` shows the same runs at `#/workflows`, one bar per agent grouped by phase, with the
+critical path outlined. A bar links to that agent's session.
 
 ## Write cases with known answers
 
@@ -59,15 +63,19 @@ the repo. It lists the planted bugs:
 ]}
 ```
 
+A case file can also list the bugs itself, as `[[truth.bugs]]` tables. Then the case file must not
+sit inside `repoRoot` or `snapshot` either, so keep it in a folder outside both and pass that folder
+with `--cases`.
+
 | Truth `kind` | For | Score |
 |---|---|---|
 | `seeded-bugs` | A review workflow, on a snapshot with planted bugs | F1 of the findings against the bugs. A finding matches when it names the same file and a line within 5 (`--slack`). |
 | `verifier` | A fix workflow | 1 when `command` exits 0, or the share of named `[[truth.tests]]` that pass. A `before = "pass"` test that fails after the run is a regression. |
 | `judge` | A research or synthesis workflow | An LLM judge's grade on a `rubric`. Marked uncalibrated until `coding.sh judge calibrate` has run for that judge. |
 
-When a planted bug has a `test` and the `patch` that planted it (a path relative to the truth file),
-`workflows run` checks it first: the test must fail on the snapshot and pass with the patch
-reverted. `coding.sh workflows score <run> --case seeded-1` scores one run by hand.
+When a planted bug has a `test` and the `patch` that planted it (a path relative to the file that
+lists the bug), `workflows run` checks it first: the test must fail on the snapshot and pass with
+the patch reverted. `coding.sh workflows score <run> --case seeded-1` scores one run by hand.
 
 ## Run two versions
 
@@ -81,7 +89,7 @@ past runs of the workflow and asks before it spends more than the confirm thresh
 
 | Flag | Default | What it does |
 |---|---|---|
-| `--variant` | none | `name=script` for a Claude Code workflow, `name=command` with `--driver command`, or JSON. Repeatable. |
+| `--variant` | none | `name=script` for a Claude Code workflow, `name=command` with `--driver command`, or JSON, inline or in a `.json` file. JSON sets `name`, `script` or `command`, and optionally `args`, `resumeFromRunId`, `fromCheckpoint` and `replayFrom`. Any other field is ignored with a warning. Repeatable. |
 | `--driver` | claude | `command` runs any program: it gets `--args <json>` and prints its output as JSON. |
 | `-k` | 3 | Attempts per case and variant. |
 | `--split` | all | `dev` or `heldout`. |
@@ -89,6 +97,11 @@ past runs of the workflow and asks before it spends more than the confirm thresh
 | `--no-validate` | validate | Skips the check of planted bugs. |
 | `--resume` | off | Continues an interrupted experiment. Only unfinished runs run. |
 | `-y`, `--yes` | off | Runs without asking about the cost. |
+
+A run that fails keeps why: `timed out`, the last three lines the workflow printed to stderr, or
+`exit <code>` when it printed none, redacted with your capture settings. A command that does not
+exist shows its spawn error, such as `spawn wf-app ENOENT`. `workflows run` prints the reason for
+each failed run, and `workflows show <run>` prints it on an `Error` row.
 
 ## Compare them
 

@@ -36,7 +36,7 @@ A made-up key, like the ones in docs and test fixtures, is redacted too, but cou
 | `blobs/` | Large prompts and tool output, compressed and stored by hash. |
 | `spool/` | What the hook received from the agent, redacted by the node hook; see below. |
 | `repos/` | Snapshots of the working tree before and after a session. They hold your files as they are, not redacted; files your `.gitignore` skips are left out. Your repo's own refs are never touched. |
-| `llm-cache/` | Model replies recorded by `exp run --record` or `--replay`, in any capture mode, redacted with the `secrets` rules only. See [Replay recorded model calls](../how-to/replay-llm-calls.md). |
+| `llm-cache/` | Model replies recorded by `exp run --record` or `--replay`, in any capture mode, redacted with your `[capture]` rules. See [Replay recorded model calls](../how-to/replay-llm-calls.md#what-is-stored). |
 | `backups/` | A copy of every agent config file before coding.sh edited it. |
 | `config.toml` | Your settings. |
 | `star.json` | When you first ran coding.sh and when the one-time GitHub star prompt was shown, dismissed or clicked. Four timestamps, no network call. |
@@ -125,7 +125,10 @@ headers = { Authorization = "Bearer ${OTEL_TOKEN}" }
 ```
 
 `coding.sh init --remote` writes an `http` sink named `team` for you: see
-[Self-host for a team](../how-to/self-host-team.md).
+[Self-host for a team](../how-to/self-host-team.md). It sets the sink's `since` to the time you
+first connect, so sessions that started before it stay on your machine. A sink you write by hand
+without `since` can also send past sessions that are still on disk
+([`[[sinks]]`](../reference/config.md#sinks)).
 
 ## The model API proxy
 
@@ -183,29 +186,36 @@ expression; write the shape, not the secret, because it sits on the command line
 coding.sh purge --rule 'sk-ant-api03-[A-Za-z0-9_-]{80,}' --dry-run
 ```
 
-Every copy becomes `[redacted:purged]`:
+Purge looks in each of these places:
 
 | Where | What purge does |
 | --- | --- |
-| Events and the search index | Replaces the value. |
-| Session titles and stats, labels, eval docs, settings | Replaces the value. |
+| Events and the search index | Replaces the value with `[redacted:purged]`. |
+| Session titles and stats, labels, eval docs, settings | Replaces the value with `[redacted:purged]`. |
 | Blobs | Rewrites them under a new hash, and every reference follows. |
 | Spool, judge cache and eval run files | Replaces the value with asterisks of the same length. |
+| Recorded model calls (`llm-cache/`) | Rewrites each recording that holds the value, keeping its replay keys, so it still replays. Deletes a torn recording or a leftover temp file that holds it. |
+| Snapshots (`repos/`) | Names each snapshot repo that holds the value, and exits 1 until you delete it. It does not rewrite snapshots. |
 | `index.db` and `blobs/pack.db` | VACUUMs them, so the old bytes leave the files. |
 | Index backups from an upgrade | Deletes them; `--dry-run` names them. |
 
 Values shorter than 8 characters are refused, and neither values nor matches are printed. Purge
 works on the SQLite store only. Rotate the secret as well: purge does not touch the agent's own
-transcripts, your shell history, git, the snapshots in `repos/` or the recordings in `llm-cache/`.
+transcripts, your shell history or git, and it does not rewrite the snapshots in `repos/`.
 
 :::more When purge exits 1
 - **Another process holds a file open.** The viewer, `serve`, a `sqlite3` shell or a backup keeps
   old bytes until it closes. Purge waits a few seconds (`CODING_SH_PURGE_WAIT_MS`) and names
   the file. Close it and purge again.
 - **A backup can't be deleted.** Purge names it. Delete it by hand.
+- **A snapshot repo holds the value.** Sessions and eval tasks name a snapshot by its commit id,
+  which a rewrite would change, so purge names the folder under `repos/`. Delete it and purge
+  again.
+- **Deleting a snapshot repo** drops the file changes of its sessions from `coding.sh show`, and
+  eval tasks that start from its snapshots can't run.
 - **The database or its search index is damaged.** Purge checks both after it runs.
-- A run's `.git` folder and files over 64 MB are left alone. A `--rule` that matches empty text or
-  more than 10,000 distinct values is refused.
+- A run's `.git` folder is left alone, and files and snapshot objects over 64 MB are not read. A
+  `--rule` that matches empty text or more than 10,000 distinct values is refused.
 :::
 
 ## Next steps

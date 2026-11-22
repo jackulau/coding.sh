@@ -151,11 +151,22 @@ describe("withRemoteSink / parseRemote", () => {
     assert.throws(() => parseRemote("https://obs.example.com", 'csh_ik_"x"yyyyyyyyyyyyyyyy', undefined), /quote/);
   });
   test("appends to a file with no team sink, keeping CRLF", () => {
-    const text = withRemoteSink("[capture]\r\nmode = \"full\"\r\n", r);
+    const text = withRemoteSink("[capture]\r\nmode = \"full\"\r\n", r, "2026-11-21T09:30:00.000Z");
     assert.ok(text.startsWith('[capture]\r\nmode = "full"\r\n\r\n[[sinks]] # written by coding.sh init --remote\r\nname = "team"\r\n'), JSON.stringify(text));
+    assert.ok(text.includes('\r\nsince = "2026-11-21T09:30:00.000Z" # sessions that started before this stay on this machine\r\n'), JSON.stringify(text));
     assert.ok(text.endsWith('headers = { Authorization = "Bearer ' + KEY + '" }\r\n'));
     const file = join(t.root, "c.toml");
     writeFileSync(file, text);
-    assert.equal(loadConfig({ env: process.env, file }).sinks[0]!.endpoint, "https://obs.example.com/v1/ingest");
+    const sink = loadConfig({ env: process.env, file }).sinks[0]!;
+    assert.equal(sink.endpoint, "https://obs.example.com/v1/ingest");
+    assert.equal(sink.since, Date.parse("2026-11-21T09:30:00.000Z"));
+  });
+  test("keeps the since of the team sink it replaces, and adds one to a team sink without it", () => {
+    const first = withRemoteSink("", r, "2026-11-01T00:00:00.000Z");
+    const again = withRemoteSink(first, parseRemote("https://obs.example.com", KEY, "full"), "2026-11-21T09:30:00.000Z");
+    assert.match(again, /^since = "2026-11-01T00:00:00\.000Z" #/m);
+    assert.match(again, /^mode = "full"$/m);
+    const old = '[[sinks]]\nname = "team"\nkind = "http"\nendpoint = "https://obs.example.com/v1/ingest"\n';
+    assert.match(withRemoteSink(old, r, "2026-11-21T09:30:00.000Z"), /^since = "2026-11-21T09:30:00\.000Z" #/m);
   });
 });

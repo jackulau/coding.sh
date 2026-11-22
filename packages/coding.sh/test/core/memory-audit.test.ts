@@ -379,6 +379,26 @@ describe("harness audit over a store and a temp HOME", () => {
     assert.equal(agents.read, 1);
   });
 
+  it("a T3 Code session that ran Claude Code loads Claude Code's files, and --agent claude-code counts it", async () => {
+    const index = new MemoryIndexStore();
+    const slug = claudeProjectSlug(join(home, "app"));
+    const s = (id: string, provider?: string): Session => ({ id, agent: "t3code", provider, cwd: join(home, "app"), startedAt: 5000, stats: { events: 0, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 } }) as Session;
+    await index.upsertSession(s("t3-claude", "claude-code"));
+    const a = await memoryAudit(index, { since: 4500, env });
+    const row = (path: string) => a.files.find((f) => f.path === path);
+    assert.equal(row("~/app/CLAUDE.md")?.loadedAtStart, 1, "the project's CLAUDE.md");
+    assert.equal(row(`~/.claude/projects/${slug}/memory/MEMORY.md`)?.loadedAtStart, 1, "the project's auto-memory");
+    assert.equal(row("~/.claude/skills/pdf/SKILL.md")?.loadedAtStart, 1, "the user's skill list");
+    assert.ok(a.totals.loadTokens > 0);
+    const cc = await memoryAudit(index, { since: 4500, env, agent: "claude-code" });
+    assert.equal(cc.sessions, 1);
+    assert.equal(cc.files.find((f) => f.path === "~/app/CLAUDE.md")?.loaded, 1);
+    // A host session with no provider recorded follows no agent's start-time rules.
+    const bare = new MemoryIndexStore();
+    await bare.upsertSession(s("t3-unknown"));
+    assert.equal((await memoryAudit(bare, { since: 4500, env })).totals.sessionsLoading, 0);
+  });
+
   it("a skill committed after a session started was not loaded at that session's start", async () => {
     const repo = join(home, "repo");
     mkdirSync(join(repo, ".claude", "skills", "demo"), { recursive: true });

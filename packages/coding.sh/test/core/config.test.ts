@@ -68,6 +68,7 @@ name = "relay"
 endpoint = "https://relay.example/ingest"
 mode = "full"
 batchSize = 100
+since = "2026-11-21T09:30:00Z"
 `);
     const c = loadConfig({ env: { ...env, TOKEN: "t0k" } });
     assert.equal(c.store.index, `sqlite://${join(root, "user", "idx.db")}`);
@@ -82,7 +83,7 @@ batchSize = 100
     assert.equal(c.retention.toolOutputDays, 90);
     assert.deepEqual(c.sinks, [
       { kind: "otlp", endpoint: "http://localhost:4318", mode: "metadata", headers: { Authorization: "Bearer t0k" } },
-      { kind: "http", name: "relay", endpoint: "https://relay.example/ingest", mode: "full", batchSize: 100 },
+      { kind: "http", name: "relay", endpoint: "https://relay.example/ingest", mode: "full", batchSize: 100, since: Date.parse("2026-11-21T09:30:00Z") },
     ]);
   });
 
@@ -96,6 +97,8 @@ batchSize = 100
       ["[[sinks]]\nkind = \"otlp\"", /sinks\[0\]\.endpoint is required/],
       ["[[sinks]]\nkind = \"otlp\"\nendpoint = \"http://x/\${MISSING}\"", /\$\{MISSING\}, which is not set/],
       ["[[sinks]]\nkind = \"otlp\"\nendpoint = \"a\"\n[[sinks]]\nkind = \"otlp\"\nendpoint = \"b\"", /two sinks are named "otlp"/],
+      ["[[sinks]]\nkind = \"otlp\"\nendpoint = \"a\"\nsince = \"yesterday\"", /sinks\[0\]\.since must be a time such as "2026-11-21T09:30:00Z", got "yesterday"/],
+      ["[[sinks]]\nkind = \"otlp\"\nendpoint = \"a\"\nsince = \"2026-13-45\"", /sinks\[0\]\.since must be a time/],
       ["store = 1", /store must be a table/],
       ["[capture\n", /invalid TOML: .*config\.toml:1:/],
     ];

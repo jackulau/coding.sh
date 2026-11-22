@@ -39,12 +39,13 @@ import {
 } from "./data.ts";
 import { sessionDigest } from "./digest.ts";
 import { facetCounts, searchWhere } from "../query/run.ts";
-import { andQuery, FACET_KEYS, parseWhere, QueryError, QueryUnsupported, scopesSubagents, type Node, type Query } from "../query/where.ts";
+import { andQuery, FACET_KEYS, parseWhere, QueryError, QueryUnsupported, scopesSubagents, timeBounds, type Node, type Query } from "../query/where.ts";
 import { viewQuery, ViewError } from "../query/views.ts";
 import { fitAnswer, pageIndex, pageRange, pageStep } from "./replay-page.ts";
 import { toolText, ToolError, type ToolDef } from "./protocol.ts";
 import { scoreTools } from "../scores/mcp.ts";
-import { needYou, readWorkQueue, WORK_WINDOW_MS, workItemJson } from "../core/work.ts";
+import { needYou, readWorkQueue, settleWorkFiles, WORK_WINDOW_MS, workFiles, workItemJson, workJson } from "../core/work.ts";
+import { indexAge, indexAgeField, type IndexAge } from "../core/ingest-health.ts";
 import { readOverlay } from "../core/work-overlay.ts";
 
 type Obj = Record<string, unknown>;
@@ -63,21 +64,21 @@ export interface ToolCtx {
 
 // Shared argument descriptions, kept short: every tool definition is sent on every
 // turn, and the schema already carries defaults and bounds (LIMIT's default and maximum).
-const AGENT = { type: "string", description: "Only this agent, e.g. claude-code, codex." };
-const REPO = { type: "string", description: "Only sessions under this path or repo folder name." };
-const SINCE = (d: string) => ({ type: "string", description: `Window start: 30m, 12h, 7d, today or a local date. Default ${d}.` });
-const UNTIL = { type: "string", description: "Window end. Default now." };
-const LIMIT = (d: number, max: number) => ({ type: "integer", minimum: 1, maximum: max, default: d, description: "Max rows." });
-const CURSOR = { type: "string", description: "Last reply's nextCursor." };
+const AGENT = { type: "string", description: "Only this agent." };
+const REPO = { type: "string", description: "Only sessions under this path or repo name." };
+const SINCE = (d: string) => ({ type: "string", description: `Start: 30m, 12h, 7d, today or a date. Default ${d}.` });
+const UNTIL = { type: "string", description: "End. Default now." };
+const LIMIT = (d: number, max: number) => ({ type: "integer", minimum: 1, maximum: max, default: d, description: "Rows." });
+const CURSOR = { type: "string", description: "From nextCursor." };
 const PROJECT = { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,62}$", description: 'Only this project (its `coding.sh serve` ingest key; local is "default").' };
-const EXP_SESSION = { type: "string", description: "Session id. Default: the project's session." };
+const EXP_SESSION = { type: "string", description: "Default: the project's session." };
 const WHERE = {
   type: "string",
   description:
     "Filter query: key:value clauses ANDed; OR, ( ), - negates; a,b either; * wildcard; > >= < <= and a..b on numbers; bare words search text. Keys: agent model repo branch title flag skill cost tokens duration turns tools tool.errors since until has:tests|cost|error is:root|child|flagged; event keys tool kind ok mcp error. E.g. model:claude-* cost>0.5 tool:Bash ok:false",
 };
 const WHERE_SAME = (what: string) => ({ type: "string", description: `Filter query, same language as sessions_list where${what}.` });
-const SESSION_ID = { type: "string", minLength: 1, description: 'Session id, or "latest" (newest top-level).' };
+const SESSION_ID = { type: "string", minLength: 1, description: 'Session id, or "latest".' };
 
 const input = (properties: Obj, required: string[] = []): Obj => ({ type: "object", properties, ...(required.length ? { required } : {}), additionalProperties: false });
 const out = (properties: Obj, required: string[] = []): Obj => ({ type: "object", properties, ...(required.length ? { required } : {}) });
@@ -288,8 +289,9 @@ function when(a: Obj, k: string, now: number, dflt?: string): number | undefined
 function query(a: Obj, c: ToolCtx, o: { sinceDefault?: string; topLevel: boolean }): ScanQuery {
   const now = c.now();
   const repo = strArg(a, "repo");
-  const since = when(a, "since", now, o.sinceDefault);
   const until = when(a, "until", now);
+  // With only until, the default window ends at until, not at now: usage {until: "2026-01-01"} is the 7 days before it.
+  const since = strArg(a, "since") === undefined && until !== undefined && o.sinceDefault !== undefined ? until - (now - when(a, "since", now, o.sinceDefault)!) : when(a, "since", now, o.sinceDefault);
   // An empty window is a mistake, not an empty answer: the CLI says "--since must be before --until".
   if (since !== undefined && until !== undefined && !(since < until)) {
     const at = (k: string, ms: number) => `${k} ${strArg(a, k) ?? o.sinceDefault} is ${iso(ms)}`;
@@ -345,11 +347,31 @@ async function resolveSession(ctx: Context, id: string): Promise<Session> {
  * from the start, so the entries a running session appends after the first page never shift it, and
  * a page cut short to fit (limitUsed) still hands on the first entry it left out.
  */
-function tailPage(d: Obj & { timeline: unknown[] }, before: number | undefined, limit: number): void {
+/**
+ * A session_get tail cursor: the first entry of the last page, and for a session past
+ * DIGEST_EVENT_CAP the window of events that page read ("<entry>@<first event>:<turns before it>").
+ * The window stays put while the session grows, so the next page neither repeats nor skips entries.
+ */
+interface TailCursor {
+  before: number;
+  window?: { start: number; turnShift: number };
+}
+
+function tailCursorArg(a: Obj): TailCursor | undefined {
+  const c = strArg(a, "cursor");
+  if (c === undefined) return undefined;
+  const m = /^(\d{1,9})(?:@(\d{1,12}):(\d{1,9}))?$/.exec(c);
+  if (!m) throw new ToolError(`Invalid cursor ${JSON.stringify(c)}: pass the nextCursor value from the previous call unchanged.`);
+  const cursor: TailCursor = { before: Number(m[1]) };
+  if (m[2] !== undefined) cursor.window = { start: Number(m[2]), turnShift: Number(m[3]) };
+  return cursor;
+}
+
+function tailPage(d: Obj & { timeline: unknown[] }, before: number | undefined, limit: number, window?: { start: number; turnShift: number }): void {
   const end = Math.min(before ?? d.timeline.length, d.timeline.length);
   const start = Math.max(0, end - limit);
   d.timeline = d.timeline.slice(start, end);
-  if (start > 0) d.nextCursor = String(start);
+  if (start > 0) d.nextCursor = window && window.start > 0 ? `${start}@${window.start}:${window.turnShift}` : String(start);
   else delete d.nextCursor;
 }
 
@@ -361,10 +383,14 @@ async function sessionGetPages(a: Obj, c: ToolCtx): Promise<(limit: number) => O
   const s = await resolveSession(ctx, strArg(a, "sessionId")!);
   const tail = a.tail === true;
   const offset = tail ? 0 : cursorArg(a);
-  const before = tail && strArg(a, "cursor") !== undefined ? cursorArg(a) : undefined;
+  const cursor = tail ? tailCursorArg(a) : undefined;
+  const turn = typeof a.turn === "number" ? a.turn : undefined;
+  // A tail cursor reads the window its first page read: a plain one came from a session within the cap, read from event 0.
+  const pin = cursor && turn === undefined ? { windowStart: cursor.window?.start ?? 0, turnShift: cursor.window?.turnShift ?? 0 } : {};
+  const window = { start: 0, turnShift: 0 };
   try {
     // The whole timeline from the cursor on (with tail, all of it) comes back and is paged here.
-    const digest = await sessionDigest(ctx.index, s, { turn: typeof a.turn === "number" ? a.turn : undefined, limit: Number.MAX_SAFE_INTEGER, offset, from: tail ? "tail" : "head", now: c.now() });
+    const digest = await sessionDigest(ctx.index, s, { turn, limit: Number.MAX_SAFE_INTEGER, offset, from: tail ? "tail" : "head", now: c.now(), ...pin, window });
     // The experiments that ran each weights file the session recorded as a checkpoint, as `coding.sh show --json` has them.
     const hashes = s.stats.weightEdits?.checkpoints;
     if (hashes?.length) {
@@ -377,7 +403,7 @@ async function sessionGetPages(a: Obj, c: ToolCtx): Promise<(limit: number) => O
     return (limit: number): Obj => {
       const page: Obj & { timeline: unknown[] } = { ...digest, timeline: rows };
       // With tail, from the end toward the start; otherwise from the cursor on.
-      if (tail) tailPage(page, before, limit);
+      if (tail) tailPage(page, cursor?.before, limit, turn === undefined ? window : undefined);
       else {
         page.timeline = rows.slice(0, limit);
         delete page.nextCursor;
@@ -417,6 +443,46 @@ function readUpdateCache(file: string): Obj | undefined {
 
 /** The status tool lists this many work items at most; `coding.sh work --json` lists the rest. */
 export const STATUS_WORK_ROWS = 5;
+
+/**
+ * The index's age (core/ingest-health.ts). A store named by CODING_SH_STORE_URL is filled
+ * elsewhere, so this home's record says nothing about it: undefined then, as `coding.sh work` does.
+ */
+function storeIndexAge(ctx: Context, now: number): IndexAge | undefined {
+  return ctx.storeOverridden ? undefined : indexAge(ctx.paths.root, now);
+}
+
+/** `index: { updatedAt, ageMs, stale? }` for a tool answer, absent without a record. */
+function indexField(age: IndexAge | undefined): { index?: Obj } {
+  const f = indexAgeField(age);
+  return f.index && age ? { index: { ...f.index, ageMs: age.ageMs } } : {};
+}
+
+/**
+ * work: the queue `coding.sh work --json` prints, read once; each page is a slice of its items.
+ * A stale index judges waits and stalls as of its last ingest, as the CLI does.
+ */
+async function workPages(a: Obj, c: ToolCtx): Promise<(limit: number) => Obj> {
+  const ctx = await c.store();
+  const now = c.now();
+  const since = when(a, "since", now, "7d")!;
+  const all = a.all === true;
+  const offset = cursorArg(a);
+  const asked = numArg(a, "limit", 20);
+  const age = storeIndexAge(ctx, now);
+  const stale = age?.stale ? age : undefined;
+  const { queue, sessions, truncated } = await readWorkQueue(ctx.index, { since, all, now: stale?.at ?? now, overlay: readOverlay(ctx.paths.work) });
+  // The page counts and names each item's files as work --json and work show do (core/work.ts settleWorkFiles).
+  await settleWorkFiles(ctx.index, queue.items.slice(offset, offset + asked), sessions, stale?.at ?? now);
+  return (limit: number): Obj => {
+    const doc = workJson(queue, { since, limit: offset + limit, truncated });
+    const items = (doc.items as Obj[]).slice(offset);
+    const page: Obj = { ...doc, items };
+    if (offset + limit < queue.items.length) page.nextCursor = String(offset + limit);
+    if (stale) page.asOf = iso(stale.at);
+    return { ...page, ...indexField(age) };
+  };
+}
 
 /** Update availability from the cache the update checker keeps (no network here). */
 export function updateInfo(home: string, current = version()): Obj {
@@ -467,6 +533,38 @@ function lastSpoolError(file: string): Obj | undefined {
   }
 }
 
+/**
+ * Child (subagent) sessions a top-level sessions_list leaves out that its filters match: one facet
+ * query, as `coding.sh sessions` counts them. 0 when the store cannot count them.
+ */
+async function hiddenChildren(index: Context["index"], q: ScanQuery, where: Query | undefined, flagged: boolean): Promise<number> {
+  // The where in a group, so the agent facet keeps a typed agent: clause.
+  let root: Query = andQuery(where?.root ? { root: { t: "or", items: [where.root] } } : {}, { t: "is", name: "child", at: 0 });
+  root = andQuery(andQuery(root, q.place ? placeNode(q.place) : undefined), flagged ? { t: "is", name: "flagged", at: 0 } : undefined);
+  try {
+    const r = await facetCounts(index, root, ["agent"], { filter: scanFilter({ ...q, topLevel: false }), limit: 1000 });
+    return (r.agent ?? []).reduce((n, x) => n + x.count, 0);
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * The time bounds a sessions_list read, as `coding.sh sessions --json` reports them: since and until
+ * and the where's since:/until: clauses, the tighter of each. Undefined when it read all time.
+ * Without since the list starts at the first session (the default is all time, not 7 days).
+ */
+function listWindow(q: ScanQuery, where: Query | undefined): Obj | undefined {
+  const t = timeBounds(where);
+  const since = Math.max(q.since ?? -Infinity, t.since ?? -Infinity);
+  const until = Math.min(q.until ?? Infinity, t.until ?? Infinity);
+  if (!Number.isFinite(since) && !Number.isFinite(until)) return undefined;
+  const out: Obj = {};
+  if (Number.isFinite(since)) out.since = iso(since);
+  if (Number.isFinite(until)) out.until = iso(until);
+  return out;
+}
+
 // ------------------------------------------------------------ tools
 
 export function buildTools(): ToolDef<ToolCtx>[] {
@@ -495,7 +593,7 @@ function toolDefs(): PagedTool[] {
         limit: LIMIT(20, 100),
         cursor: CURSOR,
       }),
-      outputSchema: out({ sessions: arr(SESSION_OUT), facets: { type: "object" }, nextCursor: S, truncated: B }, ["sessions"]),
+      outputSchema: out({ sessions: arr(SESSION_OUT), facets: { type: "object" }, nextCursor: S, truncated: B, hiddenChildren: I, window: { type: "object" } }, ["sessions"]),
       annotations: READ,
       async run(a, c) {
         const ctx = await c.store();
@@ -514,8 +612,21 @@ function toolDefs(): PagedTool[] {
         try {
           const p = await pageSessions(ctx.index, q, offset, limit);
           const facets = keys.length ? await facetCounts(ctx.index, andQuery(andQuery(where ?? {}, q.place ? placeNode(q.place) : undefined), a.flagged === true ? { t: "is", name: "flagged", at: 0 } : undefined), keys, { filter: scanFilter(q), limit: 10 }) : undefined;
+          const hidden = q.topLevel ? await hiddenChildren(ctx.index, q, where, a.flagged === true) : 0;
           const now = c.now();
-          return { sessions: p.sessions.map((s) => sessionSummary(s, now)), ...(facets ? { facets } : {}), ...(p.hasMore ? { nextCursor: String(offset + limit) } : {}), ...(p.truncated ? { truncated: true } : {}) };
+          const page: Obj = {
+            sessions: p.sessions.map((s) => sessionSummary(s, now)),
+            ...(facets ? { facets } : {}),
+            ...(p.hasMore ? { nextCursor: String(offset + limit) } : {}),
+            ...(p.truncated ? { truncated: true } : {}),
+          };
+          const win = listWindow(q, where);
+          if (win) page.window = win;
+          if (hidden) {
+            page.hiddenChildren = hidden;
+            page.note = `${hidden} child ${hidden === 1 ? "session" : "sessions"} not shown: pass includeSubagents: true to list them.`;
+          }
+          return page;
         } catch (e) {
           throw queryToolError(e);
         }
@@ -548,7 +659,7 @@ function toolDefs(): PagedTool[] {
       name: "session_current",
       title: "Current session",
       description:
-        "The session of the agent calling this tool: matched by session id env var, else the newest session in this directory or repo, preferring one active in the last 30 min. Returns its summary and latest timeline entries.",
+        "The calling agent's session: by session id env var, else one in this directory or repo (subagents and worktrees too), active in the last 30 min first, else newest. Its summary and latest timeline.",
       inputSchema: input({
         cwd: { type: "string", description: "Working directory to match. Default: the MCP server's directory (your project)." },
         limit: LIMIT(15, 100),
@@ -1460,10 +1571,28 @@ function toolDefs(): PagedTool[] {
       },
     },
     {
+      name: "work",
+      title: "What needs you",
+      description: "What needs you across agents (coding.sh work --json): each item's reason, next step, phases and supersededBy. Paged.",
+      inputSchema: input({
+        since: SINCE("7d"),
+        all: { type: "boolean", default: false, description: "Also running, done and snoozed items." },
+        limit: LIMIT(20, 100),
+        cursor: CURSOR,
+      }),
+      // Open: the answer is work --json's (needYou, counts, ...), with nextCursor and index { updatedAt, ageMs, stale? }.
+      outputSchema: out({ items: arr({ type: "object" }), nextCursor: S }, ["items"]),
+      annotations: READ,
+      async run(a, c) {
+        return (await workPages(a, c))(numArg(a, "limit", 20));
+      },
+      pages: workPages,
+    },
+    {
       name: "status",
       title: "coding.sh status",
       description:
-        "Health of coding.sh: version and update, data dir, 24h sessions and last capture per agent, pending spool, last error, 5h and weekly plan usage. Use when data looks missing or stale. work: what needs the user (7d): bucket counts and top 5 items (reason, next step); coding.sh work --json has all.",
+        "Health of coding.sh: version and update, data dir, 24h sessions and last capture per agent, pending spool, last error, index age, 5h and weekly plan usage. Use when data looks missing or stale. work: what needs you (7d): counts, top 5 items; the work tool has the rest.",
       inputSchema: input({}),
       outputSchema: out(
         {
@@ -1474,7 +1603,9 @@ function toolDefs(): PagedTool[] {
           lastCapture: arr(out({ agent: S, at: S }, ["agent"])),
           latest: SESSION_OUT,
           lastError: out({ error: S }),
-          work: out({ needYou: I, items: arr(out({ id: S, bucket: S, reason: S, next: S, rootId: S })), more: I, rest: S }),
+          // { updatedAt, ageMs, stale? }; work: { needYou, items (as the work tool's), more, rest }.
+          index: { type: "object" },
+          work: { type: "object" },
           hints: arr(S),
           // Plan usage, as `coding.sh quota --json` prints it (resetsAt, readAt, ageSeconds and missing too).
           quota: out({ windows: arr(out({ agent: S, window: S, usedPercent: N })) }),
@@ -1514,6 +1645,7 @@ function toolDefs(): PagedTool[] {
           latest: latest ? sessionSummary(latest, now) : undefined,
           spool,
           lastError,
+          ...indexField(storeIndexAge(ctx, now)),
           work: {
             ...queue.counts,
             needYou: needYou(queue),

@@ -22,7 +22,8 @@ export interface ImproveScope {
 }
 
 /** Most sessions read for one report, and most whose events are read for failures. */
-const MAX_SESSIONS = 2000;
+export const MAX_SESSIONS = 2000;
+const SCOPE_PAGE = 500;
 const MAX_EVENT_SESSIONS = 300;
 const DAY = 86_400_000;
 
@@ -33,10 +34,84 @@ const DAY = 86_400_000;
  */
 export const isHeadless = (s: Session): boolean => s.stats.launch === "headless";
 
-/** Top-level sessions in scope, newest first: no subagents, no eval or benchmark runs, and no headless ones unless `headless`. */
+/** The sessions in scope, and how many more were in scope but past the cap. */
+export interface ReadScope {
+  /** Newest first, at most `max`. */
+  sessions: Session[];
+  /** Sessions in scope that the cap left out, the oldest ones; 0 when none. */
+  notRead: number;
+  /** Headless top-level sessions left out (without `headless`); 0 when none. */
+  headlessLeftOut: number;
+}
+
+/**
+ * The sessions in scope, newest first, at most `max` (MAX_SESSIONS): top-level
+ * sessions and their subagents and delegates, no eval or benchmark runs, and no
+ * headless top-level ones unless `headless`. A child is in scope when the
+ * session it hangs from is (its own launch is headless because that session
+ * started it), and starts after `since` and runs a chosen agent. `match`
+ * replaces the repo test (`--place`).
+ */
+export async function readScope(index: IndexStore, s: ImproveScope, o: { match?: (x: Session) => boolean; max?: number } = {}): Promise<ReadScope> {
+  const max = o.max ?? MAX_SESSIONS;
+  const inPlace = o.match ?? ((x: Session) => !s.repo || insideDir(s.repo, x.repo?.root) || insideDir(s.repo, x.cwd));
+  const agentOk = (x: Session) => !s.agents?.length || s.agents.includes(x.agent);
+  const listed: Session[] = [];
+  for (let offset = 0; ; offset += SCOPE_PAGE) {
+    const page = await index.listSessions({ runId: null, since: s.since, limit: SCOPE_PAGE, offset });
+    listed.push(...page);
+    if (page.length < SCOPE_PAGE) break;
+  }
+  const byId = new Map(listed.map((x) => [x.id, x]));
+  // The session a child hangs from, up the chain: from this listing, else from the store (it started before `since`).
+  const fetched = new Map<string, Session | undefined>();
+  const parentOf = async (x: Session): Promise<Session | undefined> => {
+    const id = x.parent?.sessionId;
+    if (!id) return undefined;
+    if (byId.has(id)) return byId.get(id);
+    if (!fetched.has(id)) fetched.set(id, await index.getSession(id));
+    return fetched.get(id);
+  };
+  // Whether the top of a session's chain is in scope: "in", "out", or "headless" (in scope but for --headless).
+  type Root = "in" | "out" | "headless";
+  const rootKept = new Map<string, Root>();
+  const keptRoot = async (x: Session): Promise<Root> => {
+    const chain: Session[] = [];
+    let at: Session | undefined = x;
+    while (at && !rootKept.has(at.id) && chain.length < 16) {
+      chain.push(at);
+      at = at.parent ? await parentOf(at) : undefined;
+    }
+    let ok: Root;
+    if (at && rootKept.has(at.id)) ok = rootKept.get(at.id)!;
+    else {
+      // The top of the chain: a top-level session, or a child whose parent the store no longer has (judged on its own).
+      const top = chain.at(-1)!;
+      ok = chain.some((c) => c.runId) || !inPlace(top) ? "out" : s.headless || top.parent || !isHeadless(top) ? "in" : "headless";
+    }
+    for (const c of chain) rootKept.set(c.id, ok);
+    return ok;
+  };
+  const kept: Session[] = [];
+  let headlessLeftOut = 0;
+  for (const x of listed) {
+    if (x.startedAt < s.since || x.runId || !agentOk(x)) continue;
+    const root = await keptRoot(x);
+    if (root === "in") kept.push(x);
+    else if (root === "headless" && !x.parent) headlessLeftOut++;
+  }
+  // A store lists newest first; a session it does not order is placed by its start.
+  kept.sort((a, b) => b.startedAt - a.startedAt || (a.id < b.id ? -1 : 1));
+  return { sessions: kept.slice(0, max), notRead: Math.max(0, kept.length - max), headlessLeftOut };
+}
+
+/** What the cap left out, as a sentence: `read` sessions were read and `notRead` older ones were not. "" when none was left out. */
+export const notReadLine = (read: number, notRead: number): string =>
+  notRead ? `Read the newest ${read} sessions in scope; ${notRead} older ${notRead === 1 ? "session" : "sessions"} not read. A shorter --since reads them all.` : "";
+
+/** The sessions in scope, newest first (readScope without the count past the cap). */
 export async function scopeSessions(index: IndexStore, s: ImproveScope): Promise<Session[]> {
-  const all = await index.listSessions({ parentSessionId: null, runId: null, since: s.since, limit: MAX_SESSIONS });
-  return all.filter((x) => x.startedAt >= s.since && (s.headless || !isHeadless(x)) && (!s.agents?.length || s.agents.includes(x.agent)) && (!s.repo || insideDir(s.repo, x.repo?.root) || insideDir(s.repo, x.cwd)));
+  return (await readScope(index, s)).sessions;
 }
 
 /**

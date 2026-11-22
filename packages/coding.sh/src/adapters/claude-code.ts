@@ -456,10 +456,18 @@ interface SubagentLink {
   /** The parent's Workflow tool_use id that launched (or resumed) the run. */
   toolUseId?: string;
   workflowId: string;
+  /** The workflow's name: the Workflow call's input name, else its script's meta.name. */
+  workflowName?: string;
   label?: string;
   phase?: string;
   /** The run's journal has this agent's result. */
   done?: boolean;
+}
+
+/** A parent transcript's Workflow calls: run id → its launches (from their results), and tool_use id → workflow name. */
+interface WorkflowCalls {
+  runs: Map<string, { toolUseId: string; ts: number }[]>;
+  names: Map<string, string>;
 }
 
 /**
@@ -468,7 +476,7 @@ interface SubagentLink {
  * journal.jsonl (agentId → label/phase). Each file is read once.
  */
 class WorkflowIndex {
-  private readonly calls = new Map<string, Promise<Map<string, { toolUseId: string; ts: number }[]>>>();
+  private readonly calls = new Map<string, Promise<WorkflowCalls>>();
   private readonly journals = new Map<string, Promise<Map<string, { label?: string; phase?: string; done?: boolean }>>>();
 
   async link(agentPath: string, parentSid: string, workflowId: string, agentId: string, firstTs: number | undefined): Promise<SubagentLink> {
@@ -476,30 +484,62 @@ class WorkflowIndex {
     const parentFile = join(dirname(dirname(dirname(dirname(wfDir)))), `${parentSid}.jsonl`); // <slug>/<sid>/subagents/workflows/<wf>
     if (!this.calls.has(parentFile)) this.calls.set(parentFile, scanWorkflowCalls(parentFile));
     if (!this.journals.has(wfDir)) this.journals.set(wfDir, readWorkflowJournal(join(wfDir, "journal.jsonl")));
-    const calls = (await this.calls.get(parentFile)!).get(workflowId) ?? [];
+    const scanned = await this.calls.get(parentFile)!;
+    const calls = scanned.runs.get(workflowId) ?? [];
     const j = (await this.journals.get(wfDir)!).get(agentId);
     // A run can be resumed by later Workflow calls: take the last launch at or before the agent's first entry.
     const at = firstTs ?? Infinity;
     const call = calls.filter((c) => c.ts <= at + FLUSH_SLACK_MS).at(-1) ?? calls[0];
-    return { workflowId, toolUseId: call?.toolUseId, label: j?.label, phase: j?.phase, done: j?.done };
+    const workflowName = call ? scanned.names.get(call.toolUseId) : undefined;
+    return { workflowId, toolUseId: call?.toolUseId, workflowName, label: j?.label, phase: j?.phase, done: j?.done };
   }
 }
 
 // `[\\/]+`: the cheap filter runs on raw JSON lines, where a Windows separator is `\\`.
 const WORKFLOW_DIR_RE = /subagents[\\/]+workflows[\\/]+(wf_[^\s\\/"'`]+)/;
 
-async function scanWorkflowCalls(parentFile: string): Promise<Map<string, { toolUseId: string; ts: number }[]>> {
+/** `meta.name` in a workflow script's `export const meta = { name: '…' }`: a name key before any nested `{` (as workflows/sources scanMetaName). */
+const META_NAME_RE = /\bmeta\s*=\s*\{[^{}]*?\bname\s*:\s*(['"`])((?:(?!\1)[^\\\n]|\\.)*)\1/;
+
+/** `o` without its undefined fields. */
+const defined = (o: Record<string, string | undefined>): Record<string, string> => Object.fromEntries(Object.entries(o).filter((e): e is [string, string] => e[1] !== undefined));
+
+/** The workflow a Workflow tool_use runs: its input's name, else the name in its inline script's meta block, else its scriptPath's file name without the extension. */
+function workflowNameOf(input: unknown): string | undefined {
+  const i = obj(input);
+  const name = str(i.name)?.trim();
+  if (name) return name;
+  const script = str(i.script);
+  const meta = script ? META_NAME_RE.exec(script)?.[2]?.trim() : undefined;
+  if (meta) return meta;
+  // `scriptPath: ".../coding-sh-improve-r8.js"` → `coding-sh-improve-r8`.
+  const file = str(i.scriptPath)?.trim().split(/[\\/]/).filter(Boolean).pop();
+  return file?.replace(/\.(?:[cm]?[jt]s)$/i, "") || undefined;
+}
+
+async function scanWorkflowCalls(parentFile: string): Promise<WorkflowCalls> {
   const out = new Map<string, { toolUseId: string; ts: number }[]>();
+  const names = new Map<string, string>();
   try {
     for await (const line of readLines(parentFile)) {
-      if (!line.includes("tool_result") || !WORKFLOW_DIR_RE.test(line)) continue; // cheap filter before JSON.parse
+      const result = line.includes("tool_result") && WORKFLOW_DIR_RE.test(line);
+      if (!result && !line.includes('"Workflow"')) continue; // cheap filter before JSON.parse
       let e: Record<string, unknown>;
       try {
         e = obj(JSON.parse(line));
       } catch {
         continue;
       }
-      if (e.type !== "user") continue;
+      if (e.type === "assistant") {
+        for (const b of arr(obj(e.message).content)) {
+          const o = obj(b);
+          const id = str(o.id);
+          const name = o.type === "tool_use" && o.name === "Workflow" && id ? workflowNameOf(o.input) : undefined;
+          if (name) names.set(id!, name);
+        }
+        continue;
+      }
+      if (e.type !== "user" || !result) continue;
       for (const b of arr(obj(e.message).content)) {
         const id = str(obj(b).tool_use_id);
         const m = obj(b).type === "tool_result" && id ? WORKFLOW_DIR_RE.exec(outputText(obj(b).content) ?? "") : null;
@@ -512,7 +552,7 @@ async function scanWorkflowCalls(parentFile: string): Promise<Map<string, { tool
   } catch {
     // parent transcript missing or unreadable: no links
   }
-  return out;
+  return { runs: out, names };
 }
 
 async function readWorkflowJournal(path: string): Promise<Map<string, { label?: string; phase?: string; done?: boolean }>> {
@@ -586,7 +626,9 @@ async function convertSubagentFile(ctx: NormalizeContext, path: string, parentSi
   // A subagent another subagent spawned (meta.parentAgentId) hangs off that subagent's session, under its Agent call.
   const up = subagentParent(parentSid, meta);
   const start = events.find((e) => e.kind === "session.start");
-  if (start) start.payload = { ...start.payload, source: "subagent", description, ...parentLink(ctx, CLAUDE_AGENT, up.sessionId, agentId, type) };
+  // A workflow agent names its run, the workflow, its phase and its label (core/sessions.ts parentOf); each absent when unknown.
+  const workflow = link ? defined({ workflowId: link.workflowId, workflowName: link.workflowName, workflowPhase: str(meta.workflowPhase) ?? link.phase, workflowLabel: link.label }) : {};
+  if (start) start.payload = { ...start.payload, source: "subagent", description, ...parentLink(ctx, CLAUDE_AGENT, up.sessionId, agentId, type), ...workflow };
   const toolUseId = link?.toolUseId ?? str(meta.toolUseId);
   const parentId = toolUseId ? ctx.id(CLAUDE_AGENT, up.sessionId, "tool.start", toolUseId) : undefined;
   const em = new Emitter(ctx, { agent: CLAUDE_AGENT, sessionId: up.sessionId, subagentId: up.at.subagentId, ts: first.ts, cwd: first.cwd, agentVersion: first.agentVersion }, ["subagent", agentId]);
@@ -708,7 +750,9 @@ export const claudeCode: Adapter = {
   // 17 (0.1.8): a line holding a raw U+2028 or U+2029 inside a string is read whole, not split and dropped.
   // 18 (0.1.8): a Notification after a new tool call is another firing even when its payload repeats one under
   //    2 s old (the same permission prompt for two tool calls in a row).
-  parseVersion: 18,
+  // 19 (0.1.8): a test.result comes only from a command that runs tests (runsTests): a command that prints a log holding a summary (tail, grep, cat, Get-Content) gives none. A workflow agent's session.start names its run (workflowId, workflowName, workflowPhase, workflowLabel); a run launched by scriptPath is named by the script's file name.
+  // 20 (0.1.8): a test.result reads the summary of the runner the command names first (node --test: node's own pass and fail lines), and a pytest or cargo summary only at the start of a line, not inside an assertion message, a diff or a printed fixture. A heredoc's body and a log file's name (ci-tsc.log) run no tests. A Bash call's dirty-tree diff keeps only its own edits: no files a git checkout, switch, merge or rebase brought in, and none from a command that writes nothing or runs in another directory.
+  parseVersion: 20,
 
   detect() {
     const dir = claudeConfigDir();

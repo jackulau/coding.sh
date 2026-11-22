@@ -409,6 +409,8 @@ otherwise.
 | `successRate` | passes / trials, with a Wilson 95% interval | `wilson()` |
 | `passAllK` | Fraction of tasks where all k trials pass (tau-bench pass^k) | per task |
 | `passAnyK` | Fraction of tasks where at least one trial passes (pass@k) | per task |
+| `silentFailures` | Per arm: failed trials with no task error whose `invalidCalls`, `failedCalls` and `retries` are all 0, so nothing in the trace flags them. Absent at 0 or when no trial has metrics | per arm, from trial metrics |
+| `targetCallsPerSuccess` | Per arm: `targetCalls` summed over the trials with a known outcome, divided by passes. Null with no pass, absent when no trial has metrics | per arm, from trial metrics |
 | `turns` | Model calls: count of `llm.call` events, without the ones a shell simulator or MCP sampling made (`payload.purpose`). Fallbacks: distinct assistant message ids, then the adapter-reported count (Claude `result.num_turns`) | events; `turnsSource` records which was used |
 | `toolCalls` | `tool.start` events, all tools, parent and children | events |
 | `targetCalls` | Tap records excluding `meta` | tap |

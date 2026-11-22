@@ -36,6 +36,11 @@ export interface WorkflowRun {
   startedAt: number;
   endedAt?: number;
   status: "ok" | "failed" | "aborted" | "running";
+  /**
+   * Why the run failed, as its driver reported it (a spawn or driver error, or the last lines of
+   * the command's stderr), redacted. Absent when the driver reported none.
+   */
+  error?: string;
   /** min(16, cpus − 2) for Claude Code workflows, when known. */
   concurrencyCap?: number;
   /** The workflow's return value. */
@@ -209,7 +214,7 @@ export interface WorkflowStats {
   /** Agents stopped by the operator / replaced by a later same-label call: left out of agents and the rates; absent when none. */
   cancelledAgents?: number;
   supersededAgents?: number;
-  /** Over all agent nodes, cached included, cancelled and superseded left out. */
+  /** Over the agents that ran (`agents`): cached, cancelled and superseded left out. Absent when none ran. */
   nullRate?: number;
   failRate?: number;
   apiRetries: number;

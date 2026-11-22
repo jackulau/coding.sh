@@ -23,12 +23,17 @@ const MARKER = "ALWAYS-RUN-NPM-TEST";
 interface Hit {
   judge: boolean;
   marker: string | undefined;
+  /** The request carries a carriage return. */
+  cr: boolean;
 }
 
 let server: Server;
 let base = "";
 const hits: Hit[] = [];
 let root = "";
+
+const hasCr = (v: unknown): boolean =>
+  typeof v === "string" ? v.includes("\r") : Array.isArray(v) ? v.some(hasCr) : v !== null && typeof v === "object" ? Object.values(v).some(hasCr) : false;
 
 function reply(model: string, content: unknown[], stop: string) {
   return { id: "msg_stub", type: "message", role: "assistant", model, content, stop_reason: stop, usage: { input_tokens: 1000, output_tokens: 50 } };
@@ -43,7 +48,7 @@ before(async () => {
       const judge = String(body.system ?? "").startsWith("You are a strict");
       const text = JSON.stringify(body.messages);
       const marker = /ALWAYS-RUN-NPM-TEST(?: v\d)?/.exec(text)?.[0];
-      hits.push({ judge, marker });
+      hits.push({ judge, marker, cr: hasCr(body) });
       let out;
       if (judge) {
         const output = /<output>([\s\S]*?)<\/output>/.exec(String((body.messages[0] as { content: string }).content))?.[1] ?? "";
@@ -270,6 +275,31 @@ describe("cli exp ab", () => {
     assert.match(err.message, /or log in to Claude Code \(.*\) or Codex \(run `codex login`\) and exp ab replays them on that subscription$/);
     assert.ok(err.next.includes("coding.sh improve check"));
     const runs = await cli({ ...e, env }, ["exp", "list", "--json"]);
+    assert.doesNotMatch(runs.stdout, /exp ab/, "no experiment was recorded");
+  });
+
+  it("a CRLF edit (core.autocrlf=true) reaches the model in LF, like A's text from git", async () => {
+    const e = await setup("crlf");
+    writeFileSync(join(e.repo, "CLAUDE.md"), `Keep answers short.\r\n${MARKER}: run npm test before you say you are done.\r\n`);
+    const before = hits.length;
+    const r = await cli(e, ["exp", "ab", "--json"]);
+    assert.equal(r.status, 0, r.stderr);
+    const turns = hits.slice(before).filter((h) => !h.judge);
+    assert.equal(turns.filter((h) => h.marker).length, 3, "arm B has the edit");
+    assert.deepEqual(turns.filter((h) => h.cr), [], "no model call gets a CR");
+  });
+
+  it("--watch with a B it cannot watch (git:REV, none) exits 2 before any trial", async () => {
+    const e = await setup("watch-git");
+    writeFileSync(join(e.repo, "CLAUDE.md"), `Keep answers short.\n${MARKER}: run npm test first.\n`);
+    const before = hits.length;
+    for (const b of ["git:HEAD", "none"]) {
+      const r = await cli(e, ["exp", "ab", "--watch", "--b", b]);
+      assert.equal(r.status, 2, r.stderr);
+      assert.match(r.stderr, new RegExp(`--watch needs B to be files on disk \\(B is ${b}\\)`));
+      assert.equal(hits.length, before, "no model call");
+    }
+    const runs = await cli(e, ["exp", "list", "--json"]);
     assert.doesNotMatch(runs.stdout, /exp ab/, "no experiment was recorded");
   });
 

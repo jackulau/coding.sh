@@ -399,7 +399,8 @@ export async function attributedUsage(index: IndexStore, q: ScanQuery, by: Attri
       // The total is every session in the window, so it shows how far the overlapping rows are from it.
       addSession(total, s);
       for (const k of new Set((s.flags ?? []).filter((f) => f.startsWith("skill:") && f.length > 6).map((f) => f.slice(6)))) add(k, s);
-    } else if (s.parent) {
+    } else if (s.parent && s.parent.type !== "provider-switch") {
+      // A T3 Code thread that switched agents goes on as the same conversation, not a subagent: its cost is the parent's.
       addSession(total, s);
       add(s.parent.type || "unnamed", s);
     }

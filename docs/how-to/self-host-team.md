@@ -154,11 +154,13 @@ named `team` to `~/.coding.sh/config.toml`. Run it again to change the URL, key 
 | an `https://` URL | Sends the key encrypted. Use it over the internet (step 5). |
 
 New sessions are sent at the end of each agent turn, and whenever a `coding.sh` command runs.
-Sessions from before you connected stay on the machine. Apps send to the same server with the
-SDKs or OpenTelemetry: see [Trace an app in production](../PRODUCTION.md).
+Sessions that started before you first connected stay on the machine, even when they go on after
+it: the sink's `since` holds that time, and running `init --remote` again keeps it. Apps send to
+the same server with the SDKs or OpenTelemetry: see [Trace an app in production](../PRODUCTION.md).
 
 :::more The sink init writes
-To connect by hand, add this block to `~/.coding.sh/config.toml`, then run `coding.sh ingest`:
+To connect by hand, add this block to `~/.coding.sh/config.toml` with `since` set to the current
+time, then run `coding.sh ingest`:
 
 ```toml
 [[sinks]]
@@ -166,8 +168,12 @@ name = "team"
 kind = "http"
 endpoint = "http://<server>:4318/v1/ingest"
 mode = "metadata" # "full" also sends prompts, code and tool output
+since = "2026-11-21T09:30:00Z" # sessions that started before this stay on this machine
 headers = { Authorization = "Bearer csh_ik_…" }
 ```
+
+Without `since`, the sink can also send past sessions that are still on disk. To send that history
+on purpose, see [`[[sinks]]`](../reference/config.md#sinks).
 :::
 
 ## 5. Serve it over HTTPS
