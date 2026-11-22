@@ -160,6 +160,41 @@ describe("coding.sh workflows", () => {
     await assert.rejects(cli("show", []), /Missing <run>/);
   });
 
+  it("show, stats, score and replay take a unique prefix of a run id, and a prefix several runs share lists them", async () => {
+    // The two imported runs share only "wf_".
+    assert.equal((await json("show", ["wf_b"])).run.id, RUN);
+    assert.equal((await json("show", ["wf_res"])).run.id, RESUMED);
+    assert.match((await cli("show", ["wf_base"])).stderr, new RegExp(`Run +${RUN} \\(claude-code-workflow\\)`));
+    assert.equal((await json("stats", ["wf_base"])).runId, RUN);
+    assert.equal((await json("score", ["wf_base"], { case: "verify-1" })).runId, RUN);
+    // replay finds the run before it reads the script.
+    await assert.rejects(cli("replay", ["wf_base"], { script: join(root, "missing.js") }), /Can't read --script/);
+    const short = (e: Error & { reason?: string }) => e.reason === "not_found" && e.message === `Can't find workflow run "wf_" (an id prefix needs at least 4 characters)`;
+    await assert.rejects(cli("show", ["wf_"]), short);
+    await assert.rejects(cli("show", ["wf_nope"]), (e: Error) => e.message === `Can't find workflow run "wf_nope"`);
+    // Command-driver runs share "wfr_": two of them, newest first.
+    const e = { CODING_SH_HOME: join(root, "prefix-home") };
+    const ran = await json("run", ["review"], { driver: "command", variant: [JSON.stringify({ name: "solo", command: [process.execPath, join(root, "fake-wf.mjs"), "good"] })], split: "dev", k: 1, yes: true }, e);
+    const ids = (await json("list", [], { import: false }, e)).runs.map((r: { id: string }) => r.id);
+    assert.equal(ids.length, 2);
+    assert.deepEqual([...ids].sort(), ran.runs.map((r: { id: string }) => r.id).sort());
+    const ambiguous = await cli("show", ["wfr_"], {}, { env: e }).then(
+      () => assert.fail("a shared prefix opened a run"),
+      (x: Error & { reason?: string; next?: string[]; data?: { candidates: { id: string; name: string; status: string }[]; more: boolean } }) => x,
+    );
+    assert.equal(ambiguous.reason, "ambiguous");
+    assert.equal(ambiguous.message.split("\n")[0], `Workflow run id prefix "wfr_" is ambiguous. It matches:`);
+    assert.deepEqual(ambiguous.message.split("\n").slice(1).map((l) => l.split("  ")[1]), ids);
+    assert.match(ambiguous.message, /\n {2}wfr_\w+ {2}review {2}ok {2}\S/);
+    assert.deepEqual(ambiguous.next, ["Pass one of these ids, more of the id, or list workflow runs:", "coding.sh workflows list"]);
+    assert.deepEqual(ambiguous.data?.candidates.map((x) => [x.id, x.name, x.status]), ids.map((id: string) => [id, "review", "ok"]));
+    assert.equal(ambiguous.data?.more, false);
+    // One more character than they share names one of them.
+    let common = 0;
+    while (ids[0][common] === ids[1][common]) common++;
+    assert.equal((await json("show", [ids[1].slice(0, common + 1)], {}, e)).run.id, ids[1]);
+  });
+
   it("stats prints the metrics", async () => {
     const doc = await json("stats", [RUN]);
     assert.equal(doc.stats.barrierIdleMs, 30_000);

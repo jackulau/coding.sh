@@ -26,6 +26,10 @@ coding.sh workflows stats <run>
 | `show` | The run tree with time, cost and status per node. `--gantt` prints the timeline. |
 | `stats` | Wall time, the critical path, how many agents ran at once, idle time at barriers, failures, cache hits on a resumed run, and cost per phase. |
 
+`<run>` is a run id as `list` prints it, or a unique prefix of 4 or more characters, `wf_` or
+`wfr_` included. `show`, `stats`, `score` and `replay` take either. A prefix that several runs
+share fails and lists them.
+
 An agent you stopped shows as `cancelled`, and one a resume ran again as `superseded`; neither
 counts as a failure. On a resumed run, an agent that returned its recorded result is a cache hit,
 not one of the agents that ran: `stats` counts it on the `cache hits` row, and its failed and null

@@ -29,6 +29,7 @@ import { finishJob, openJob, resumeField, resumeNote, retryFlag, trialTimeout } 
 import { jsonArg, ingestCli, lockContention, num, oneLine, list, requireConsent, resolveSession, shellQuote, spawnDetachedCli, str, withContext } from "../common.ts";
 import { acquireLock } from "../../core/lock.ts";
 import { paths } from "../../core/paths.ts";
+import { IdSet, matchRef, MAX_CANDIDATES, MIN_ID_PREFIX } from "../../core/session-ref.ts";
 import { ago, clean, CliError, duration, LABEL_WIDTH, localTime, plural, tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -81,19 +82,52 @@ export function confirmAboveUsd(env: NodeJS.ProcessEnv): number {
   return env.CODING_SH_CONFIRM_ABOVE_USD !== undefined && env.CODING_SH_CONFIRM_ABOVE_USD !== "" && Number.isFinite(v) && v >= 0 ? v : 1;
 }
 
-async function getRunOrFail(store: WorkflowStore, id: string): Promise<{ run: WorkflowRun; nodes: WorkflowNode[] }> {
-  const r = await store.getRun(id);
-  if (!r) throw new CliError(`Can't find workflow run ${JSON.stringify(id)}`, { reason: "not_found", next: ["List workflow runs:", "coding.sh workflows list"] });
+/**
+ * The stored run `ref` names: its id, or a prefix of at least MIN_ID_PREFIX characters that one
+ * run's id starts with, matched as session ids are (core/session-ref.ts matchRef). Undefined when
+ * none matches; a prefix several runs share fails, listing them.
+ */
+async function findRun(store: WorkflowStore, ref: string): Promise<{ run: WorkflowRun; nodes: WorkflowNode[] } | undefined> {
+  const exact = await store.getRun(ref);
+  if (exact || ref.length < MIN_ID_PREFIX) return exact;
+  const runs = await store.listRuns();
+  const m = matchRef(new IdSet(runs.map((r) => r.id)), ref);
+  if (!m) return undefined;
+  if ("id" in m) return store.getRun(m.id);
+  const ids = new Set(m.ambiguous);
+  throw ambiguousRunError(ref, runs.filter((r) => ids.has(r.id)));
+}
+
+/** A prefix several runs share, worded as the CLI words an ambiguous session id prefix (resolveSession), newest first. */
+function ambiguousRunError(ref: string, runs: WorkflowRun[]): CliError {
+  const shown = runs.slice(0, MAX_CANDIDATES);
+  const lines = shown.map((r) => `  ${r.id}  ${oneLine(clean(r.name), 40)}  ${r.status}  ${ago(r.startedAt)}`);
+  if (runs.length > shown.length) lines.push(`  …and more`);
+  return new CliError(`Workflow run id prefix ${JSON.stringify(ref)} is ambiguous. It matches:\n${lines.join("\n")}`, {
+    reason: "ambiguous",
+    next: ["Pass one of these ids, more of the id, or list workflow runs:", "coding.sh workflows list"],
+    data: { candidates: shown.map((r) => ({ id: r.id, name: r.name, status: r.status, startedAt: new Date(r.startedAt).toISOString() })), more: runs.length > shown.length },
+  });
+}
+
+function runNotFound(ref: string): CliError {
+  const short = ref.length < MIN_ID_PREFIX ? ` (an id prefix needs at least ${MIN_ID_PREFIX} characters)` : "";
+  return new CliError(`Can't find workflow run ${JSON.stringify(ref)}${short}`, { reason: "not_found", next: ["List workflow runs:", "coding.sh workflows list"] });
+}
+
+async function getRunOrFail(store: WorkflowStore, ref: string): Promise<{ run: WorkflowRun; nodes: WorkflowNode[] }> {
+  const r = await findRun(store, ref);
+  if (!r) throw runNotFound(ref);
   return r;
 }
 
 /**
- * A stored workflow run, else the tree of a captured durable workflow session
+ * A stored workflow run (findRun), else the tree of a captured durable workflow session
  * (OTLP spans from Vercel Workflow, Temporal, …: Session.stats.durable), built
  * from its events on the fly.
  */
 async function getRunOrSession(c: CommandContext, id: string): Promise<{ run: WorkflowRun; nodes: WorkflowNode[] }> {
-  const stored = await storeOf(c).getRun(id);
+  const stored = await findRun(storeOf(c), id);
   if (stored) return stored;
   const fromSession = await withContext(c, async (ctx) => {
     const s = await resolveSession(ctx, id).catch(() => undefined);
@@ -101,7 +135,8 @@ async function getRunOrSession(c: CommandContext, id: string): Promise<{ run: Wo
     const spans = (await ctx.index.listEvents(s.id)).filter((e) => e.spanId);
     return spans.length ? buildWorkflowTree({ spans, runId: s.id }) : undefined;
   });
-  return fromSession ?? getRunOrFail(storeOf(c), id);
+  if (!fromSession) throw runNotFound(id);
+  return fromSession;
 }
 
 function wallOf(run: WorkflowRun): number | undefined {
@@ -322,8 +357,11 @@ async function refreshRunning(c: CommandContext, id: string): Promise<void> {
 
 async function show(c: CommandContext): Promise<number> {
   const { out } = c;
-  const id = c.positionals[0];
-  if (!id) throw new UsageError("Missing <run>", { reason: "missing_argument" });
+  const ref = c.positionals[0];
+  if (!ref) throw new UsageError("Missing <run>", { reason: "missing_argument" });
+  const store = storeOf(c);
+  // A prefix names its run first: the refresh reads the run by its whole id.
+  const id = (await findRun(store, ref))?.run.id ?? ref;
   await refreshRunning(c, id);
   const { run, nodes } = await getRunOrSession(c, id);
   const stalled = run.status === "running" ? markStalled(nodes, Date.now(), (n) => transcriptMtime(run, n)) : 0;
@@ -888,12 +926,13 @@ function printCompare(out: Output, r: ReturnType<typeof compareWorkflowVariants>
 
 async function replay(c: CommandContext): Promise<number> {
   const { out } = c;
-  const id = c.positionals[0];
-  if (!id) throw new UsageError("Missing <run>", { reason: "missing_argument" });
+  const ref = c.positionals[0];
+  if (!ref) throw new UsageError("Missing <run>", { reason: "missing_argument" });
   const scriptFlag = str(c.flags.script);
   if (!scriptFlag) throw new UsageError("Pass --script <path> (the edited workflow script)", { reason: "missing_value" });
   const store = storeOf(c);
-  const base = await getRunOrFail(store, id);
+  const base = await getRunOrFail(store, ref);
+  const id = base.run.id;
   const script = resolve(c.cwd, scriptFlag);
   let editedScript: string;
   try {
