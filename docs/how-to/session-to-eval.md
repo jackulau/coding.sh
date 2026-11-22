@@ -77,6 +77,7 @@ coding.sh eval init --sessions --verifier 'node --no-warnings --test packages/co
   evals/failures/suite.json
   evals/failures/tasks/fix-passallk-in-packages-coding-sh/
   fix-passallk-i… node --no-warnings --test packages/coding.sh/test/stats/seqk.test.ts · from session a921c754
+! fix-passallk-in-packages-coding-sh: every trial runs setup `npm ci` (guessed from package-lock.json) in its own copy of the repo before the agent starts; to change it, edit "setup" in tasks/fix-passallk-in-packages-coding-sh/task.json ([] runs none)
 ! the agent's failed attempt is saved as near-misses/001.patch (the verifier must fail it). Add reference.patch, a correct fix, to each task dir; then coding.sh eval import evals/failures/tasks/<task> loads it and coding.sh eval validate <task> checks the verifier fails before the fix and passes after
 
   Capability suite: tasks the agent can't do reliably yet. Its score starts low; `eval run` reports it and never fails on it.
@@ -92,9 +93,11 @@ coding.sh eval init --sessions --verifier 'node --no-warnings --test packages/co
 Each task directory holds `instruction.md` (the session's first prompt), `task.json` (the starting
 commit, the setup commands and the verifier) and `near-misses/001.patch` (the session's own diff).
 
-`eval init` guesses the setup commands from the repo's lock and manifest files: here `npm ci`, from
-`package-lock.json`. Every trial runs them before the agent starts, so they add to each trial's time.
-To change them, edit `setup` in `task.json`. `eval run` reads the task directories each time.
+`eval init` guesses the setup commands from the repo's lock and manifest files, and prints them: here
+`npm ci`, from `package-lock.json`. A `package.json` with no lockfile gets no install, since an
+install from it pins no versions. Every trial runs the setup in its own copy of the repo before the
+agent starts, so it adds to each trial's time. To change it, edit `setup` in `task.json` (`[]` runs
+none). `eval run` reads the task directories each time.
 
 ### 3. Run it
 
@@ -211,7 +214,8 @@ task_f0367ea84cbb87ed
 ```
 
 This session already had a task from `eval init`, so `eval new` updated it and kept its id. `latest`
-also names a session, but after `eval run` the latest session is one of the run's trials.
+names a session too. It skips the sessions that eval, compare and experiment trials made, so after
+`eval run` it is still your own session.
 
 The instruction defaults to the session's first prompt. `--instruction 'text'` or
 `--instruction @prompt.md` replaces it, and `--setup 'npm ci'` (repeatable) adds setup commands.
