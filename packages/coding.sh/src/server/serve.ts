@@ -130,7 +130,10 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
   const onProxied = () => {
     if (warnedProxied) return;
     warnedProxied = true;
-    log.warn("refused a request a proxy passed on: this server runs with no keys, so it answers only this machine. Behind a proxy, set keys: coding.sh serve keygen --project <id>");
+    log.warn(
+      "refused a request a proxy passed on: this server runs with no keys, so it answers only this machine. Behind a proxy, set keys: " +
+        "an ingest key from `coding.sh serve keygen --project <id>` and a read key from `coding.sh serve keygen --project '*' --read`.",
+    );
   };
   const auth = createAuthenticator(cfg.credentials, { openIngest: open, openRead: open, directOnly: !cfg.insecure, onProxied });
   const storeScheme = canonicalScheme(parseStoreUrl(cfg.core.store.index).scheme);

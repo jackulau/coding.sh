@@ -771,13 +771,15 @@ describe("serve on loopback with no keys", () => {
     await h.shutdown();
   });
 
-  it("logs once that it refused a proxied request, naming keygen", async () => {
+  it("logs once that it refused a proxied request, naming keygen for both keys", async () => {
     const lines: string[] = [];
     const { h } = await serve("memory", tmpEnv(), { log: createLogger({ format: "json", write: (l) => lines.push(l) }) });
     for (const headers of forwarded) assert.equal((await call(h, "/api/sessions", { headers })).status, 401);
     const warned = lines.filter((l) => /a proxy passed on/.test(l));
     assert.equal(warned.length, 1);
-    assert.match(warned[0]!, /serve keygen/);
+    // Behind a proxy both keys are needed: the ingest key to send, the read key to open the viewer.
+    assert.ok(warned[0]!.includes("`coding.sh serve keygen --project <id>`"), warned[0]);
+    assert.ok(warned[0]!.includes("`coding.sh serve keygen --project '*' --read`"), warned[0]);
     await h.shutdown();
   });
 
