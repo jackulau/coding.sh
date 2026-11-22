@@ -351,6 +351,7 @@ grouped by area, with links to the docs for the details.
 - **Cost.** GPT-6 Rosalind is priced at OpenAI's promotional $10 input and $50 output per million tokens, which OpenAI says runs at least through December 31, 2026. Before, it was priced at $15 and $75. GPT-6 Cyber prompts over 272K tokens get its long-context rates; before, they got short-context rates. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/track-cost.md#where-cost-comes-from))
 - **CLI.** `coding.sh cache` with no subcommand runs `cache doctor`, its only subcommand, and takes the same options. Before, it stopped with "Missing command" and named doctor. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-cache))
 - **Evals.** `eval candidates` and `eval init --sessions` say in plain words why each session is left out and what would change that. A session whose repository is no longer on this machine is left out with that reason, where it ranked first and `eval init` then failed on it. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#your-agents-failed-sessions))
+- **Evals.** `eval candidates` and `eval init --sessions` take a `coding.sh run --` session's prompt from its command's prompt argument, as `eval new` does, where they left it out for having no prompt. One that changed no files, or whose agent recorded its own session inside it, is left out with that reason. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#your-agents-failed-sessions))
 
 ## [0.1.7] - 2026-11-16
 

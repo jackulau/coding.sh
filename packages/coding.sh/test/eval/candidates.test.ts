@@ -148,6 +148,64 @@ describe("rankEvalCandidates", () => {
   });
 });
 
+// A session captured with `coding.sh run -- <cmd> "<prompt>"` has no typed prompt. `eval new` takes the
+// command's prompt argument as the instruction, but eval candidates and eval init --sessions left the
+// session out as having no user prompt.
+describe("a session captured with coding.sh run --", () => {
+  const T0 = NOW - DAY;
+  const wrapper = (id: string, args: string[], extra: Partial<Session> = {}): CandidateItem => ({
+    session: session(id, { agent: "wrapper", endedAt: T0 + 60_000, ...extra }),
+    events: [
+      ev(id, "session.start", { source: "wrapper", cmd: "node", args }, { agent: "wrapper", ts: T0, repo: { root: ROOT, head: "abc", snapshot: "snap" } }),
+      ev(id, "file.change", { path: "mul.js", op: "modify", additions: 1, deletions: 1 }, { agent: "wrapper", ts: T0 + 50 }),
+      ev(id, "session.end", { reason: "exit", exitCode: 0 }, { agent: "wrapper", ts: T0 + 60_000 }),
+    ],
+  });
+
+  it("takes the command's prompt argument as its prompt, as eval new does", () => {
+    const r = rankEvalCandidates([wrapper("wprompt", ["agent.mjs", "make mul multiply its arguments"]), wrapper("wbare", ["agent.mjs", "--fix"])], { now: NOW });
+    assert.deepEqual(
+      r.map((c) => [c.sessionId, c.eligible, c.reject]),
+      [
+        ["wprompt", true, undefined],
+        ["wbare", false, "no-user-prompt"],
+      ],
+    );
+  });
+
+  it("rankSessions leaves out a wrapped command that changed no files, though its two snapshots are different commits", async () => {
+    // Each snapshot is a new commit, so a start and an end snapshot of the same files have different ids.
+    const index = new MemIndex();
+    const idle = wrapper("widle", ["agent.mjs", "make mul multiply its arguments"], { stats: { events: 2, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 } });
+    await index.upsertSession(idle.session);
+    await index.putEvents(idle.events.filter((e) => e.kind !== "file.change"));
+    const diffSnapshots = async (_r: string, a: string, b: string) => ({ files: a === "snap" && b === "end" ? [] : [{ path: "?" }] });
+    const r = await rankSessions(index, [...index.sessions.values()], { now: NOW, diffSnapshots, startReadable: () => true });
+    assert.deepEqual(r.map((c) => [c.sessionId, c.reject]), [["widle", "no-edits"]]);
+  });
+
+  it("rankSessions leaves out a wrapper around a session captured inside it, and names that session", async () => {
+    const index = new MemIndex();
+    const items = [
+      wrapper("wrap-1", ["-p", "make mul multiply its arguments"]),
+      { session: session("inner-claude-1", { startedAt: T0 + 1_000, endedAt: T0 + 50_000, repo: { root: ROOT, head: "abc" } }), events: events("inner-claude-1") },
+      { session: session("earlier-1", { startedAt: T0 - 3_600_000, endedAt: T0 - 3_000_000 }), events: events("earlier-1") },
+    ];
+    for (const it of items) {
+      await index.upsertSession(it.session);
+      await index.putEvents([...it.events]);
+    }
+    const r = await rankSessions(index, [...index.sessions.values()], { now: NOW, startReadable: () => true });
+    const byId = Object.fromEntries(r.map((c) => [c.sessionId, c]));
+    assert.deepEqual([byId["wrap-1"]!.reject, byId["wrap-1"]!.wrapped], ["wrapped", "inner-claude-1"]);
+    assert.equal(byId["inner-claude-1"]!.eligible, true);
+    assert.equal(byId["earlier-1"]!.eligible, true, "a session that ended before the wrapper started is not inside it");
+    const text = formatCandidates(r);
+    assert.ok(text.includes("rejected: it wrapped session inner-cl, which recorded the same work: that session is the one to use"), text);
+    assert.equal(rejectSummary(r), "1 that wrapped another session");
+  });
+});
+
 // A session whose repository was moved or deleted ranked first, and `eval init --session` then failed on
 // it ("the session's repository ... is gone"). Sessions read from another machine's transcripts were
 // left out as "no-git-start", a code that did not say their folder is not here either.

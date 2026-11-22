@@ -47,9 +47,12 @@ lists the task as having no reference solution.
 Sessions are ranked before they are drafted (`coding.sh eval candidates` shows the ranking). These
 can't become a task and are left out, with a note saying how many of each: a subagent, a session
 that ran with a run id (`CODING_SH_RUN_ID`, as eval, compare, exp and bench trials do), one with no
-git state at its start, no typed prompt or no edits, one whose commands mostly publish or deploy,
-and one whose repository is no longer on this machine (put it back at the same path to use the
-session). The rest go best first: a
+git state at its start, no prompt or no edits, one whose commands mostly publish or deploy, one
+whose repository is no longer on this machine (put it back at the same path to use the session),
+and a `coding.sh run --` session around an agent whose own session was captured inside it (that
+session is the one to use). A `coding.sh run --` session's prompt is its command's prompt argument:
+the value of `-p`, `--prompt`, `--print`, `--message`, `--instruction`, `--task` or `--query` when
+it has a space in it, or else the last argument with a space in it. The rest go best first: a
 failure flag, the user pushing back, a verifier guessable from the commands the session ran, a
 test edited after a failing run, more than one turn and a recent start each add to the score.
 
