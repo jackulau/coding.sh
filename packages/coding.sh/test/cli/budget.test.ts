@@ -2,10 +2,11 @@
 // and in process, and the status line's `budget 82%` part.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { after, describe, test } from "node:test";
 import * as budget from "../../src/cli/commands/budget.ts";
+import * as sessionsCmd from "../../src/cli/commands/sessions.ts";
 import { mkSession, runCmd, sandbox, type Sandbox } from "./_cmd.ts";
 import { MAIN, runSync } from "./_run-cli.ts";
 
@@ -130,6 +131,26 @@ describe("coding.sh budget (in process)", () => {
     assert.match(text.stdout, /^day-w0ld000\tday\twhere bogus:1\t-\t\$5\.00\t-\t/m);
     assert.match(text.stderr, /Budget day-w0ld000 can't be read: --where does not parse \(unknown key "bogus"\)/);
     assert.ok(text.stderr.includes(`${BIN} budget rm day-w0ld000`), text.stderr);
+  });
+
+  test("a repo budget counts the sessions sessions --repo lists: a checkout's root takes in its linked worktrees", async () => {
+    const b = box();
+    mkdirSync(join(b.root, "demo", ".git"), { recursive: true });
+    writeFileSync(join(b.root, "demo", ".git", "HEAD"), "ref: refs/heads/main\n");
+    // The long-name spelling RepoState stores (a temp dir can have an 8.3 short name).
+    const checkout = realpathSync.native(join(b.root, "demo"));
+    const wt = join(dirname(checkout), "demo-wt");
+    await b.seed([
+      priced("in-checkout", 0.5, { cwd: checkout, repo: { root: checkout, head: "" } as never }),
+      priced("in-worktree", 0.25, { cwd: wt, repo: { root: wt, main: checkout, head: "" } as never }),
+      priced("elsewhere", 4, { cwd: join(b.root, "other") }),
+    ]);
+    const listed = await runCmd(sessionsCmd, b, { flags: { repo: checkout }, json: true });
+    assert.deepEqual(listed.json.sessions.map((s: { id: string }) => s.id).sort(), ["in-checkout", "in-worktree"], String(listed.error ?? listed.stderr));
+    const set = await runCmd(budget, b, { action: "set", positionals: ["day", "10"], flags: { repo: checkout } });
+    assert.equal(set.code, 0, String(set.error));
+    const r = await runCmd(budget, b, { action: "status", json: true });
+    assert.deepEqual([r.json.budgets[0].sessions, r.json.budgets[0].spendUsd], [2, 0.75]);
   });
 
   test("status with no budgets says how to set one", async () => {

@@ -718,7 +718,7 @@ export const COMMANDS: CommandSpec[] = [
         ],
         flags: [
           { name: "agent", short: "a", type: "string", value: "<AGENT>", desc: "Only this agent's sessions" },
-          { name: "repo", type: "string", value: "<PATH|NAME>", desc: "Only sessions in this repo: a path (stored absolute; matches at or under it) or a repo name" },
+          { name: "repo", type: "string", value: "<PATH|NAME>", desc: "Only sessions in this repo, as sessions --repo counts them: a path (stored absolute; matches at or under it; a checkout's root or a folder in a linked worktree takes in every worktree) or a repo name (its main checkout and every worktree)" },
           { name: "where", type: "string", dashValue: true, value: "<QUERY>", desc: "Only the sessions this query matches, with their subagents, e.g. 'user:u1', 'model:claude-opus-*' or 'env:production' (keys: coding.sh sessions --help). The id ends in -w and 6 hex characters of the query's SHA-256" },
         ],
         examples: ["coding.sh budget set day 20", "coding.sh budget set week 50 --agent codex", "coding.sh budget set month 200 --repo .", "coding.sh budget set day 5 --where 'user:alice'"],

@@ -1,9 +1,9 @@
 // Spend budgets (src/budget): period bounds in local time, ids, the spend sum, the
 // status line's part and its 60 s cache for week and month totals.
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, describe, test } from "node:test";
 import { budgetPart, budgetStatus, periodEnd, periodStart, readBudgets, rolledSpend, spendOf, statuslineBudget, statuslineStatuses, statusOf, upsertBudget, writeBudgets, type Budget } from "../../src/budget/index.ts";
 import * as budgetCmd from "../../src/cli/commands/budget.ts";
@@ -125,6 +125,27 @@ describe("spend", () => {
     assert.equal((await budgetStatus(index, budget({ repo: "demo" }), now)).spendUsd, 3);
     assert.equal((await budgetStatus(index, budget({ repo: "/work/demo" }), now)).spendUsd, 3);
     assert.equal(spendOf(await index.listSessions(), budget({ repo: "api" }), now).spendUsd, 2);
+  });
+
+  test("a repo budget on a checkout's root counts its linked worktrees too, as sessions --repo does", async () => {
+    // A main checkout on disk, whose .git repoPlace reads; a linked worktree's session names it as repo.main.
+    const root = home().HOME!;
+    mkdirSync(join(root, "demo", ".git"), { recursive: true });
+    writeFileSync(join(root, "demo", ".git", "HEAD"), "ref: refs/heads/main\n");
+    // The long-name spelling RepoState stores (a temp dir can have an 8.3 short name).
+    const checkout = realpathSync.native(join(root, "demo"));
+    const wt = join(dirname(checkout), "demo-wt");
+    const index = new MemoryIndexStore();
+    await index.upsertSession(priced("main", today, 0.5, { cwd: checkout, repo: { root: checkout } } as never));
+    await index.upsertSession(priced("wt", today, 0.25, { agent: "codex", cwd: wt, repo: { root: wt, main: checkout } } as never));
+    await index.upsertSession(priced("other", today, 4, { cwd: join(root, "other") }));
+    const b = budget({ repo: checkout });
+    const read = await budgetStatus(index, b, now);
+    assert.deepEqual([read.spendUsd, read.sessions], [0.75, 2], "budget status");
+    assert.deepEqual(spendOf(await index.listSessions(), b, now), { spendUsd: 0.75, sessions: 2 }, "the status line's day sum");
+    assert.equal((await budgetStatus(index, budget({ repo: checkout, where: "agent:codex" }), now)).spendUsd, 0.25, "a --where budget in the repo");
+    // A folder inside a main checkout stays a folder.
+    assert.equal((await budgetStatus(index, budget({ repo: join(checkout, "src") }), now)).sessions, 0);
   });
 
   test("a session with no cost adds nothing", async () => {

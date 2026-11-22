@@ -247,7 +247,9 @@ coding.sh budget status
 
 Spend is the estimated cost of the sessions that started in the current period, subagents
 included: the same total as `coding.sh usage` over that window, filtered by the budget's agent and
-repo. A session counts in the period it started in.
+repo. A session counts in the period it started in. A repo counts the sessions
+`coding.sh sessions --repo` lists for it: a checkout's root, or a folder in a linked worktree,
+takes in every worktree of the repo.
 
 `budget status` shows spend, limit, percent and next reset, or `-` and a warning for a budget it
 can't read (exit code 1). Setting the same period and scope again changes the limit. `budget list`

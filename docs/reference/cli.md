@@ -1055,7 +1055,7 @@ coding.sh budget set <PERIOD> <USD> [options]
 | Option | Default | Description |
 |---|---|---|
 | `-a, --agent <AGENT>` |  | Only this agent's sessions. |
-| `--repo <PATH|NAME>` |  | Only sessions in this repo: a path (stored absolute; matches at or under it) or a repo name. |
+| `--repo <PATH|NAME>` |  | Only sessions in this repo, as sessions --repo counts them: a path (stored absolute; matches at or under it; a checkout's root or a folder in a linked worktree takes in every worktree) or a repo name (its main checkout and every worktree) |
 | `--where <QUERY>` |  | Only the sessions this query matches, with their subagents, e.g. 'user:u1', 'model:claude-opus-\*' or 'env:production' (keys: coding.sh sessions --help). The id ends in -w and 6 hex characters of the query's SHA-256. |
 
 ```sh
