@@ -10,7 +10,7 @@ import { resolveSession } from "../../src/cli/common.ts";
 import { run as init } from "../../src/cli/commands/init.ts";
 import { startedText } from "../../src/cli/commands/show.ts";
 import { cliCommand } from "../../src/cli/next-steps.ts";
-import { ago, CliError, localTime, Output } from "../../src/cli/output.ts";
+import { AGENT_ENV, ago, CliError, localTime, Output } from "../../src/cli/output.ts";
 import type { CommandContext } from "../../src/cli/types.ts";
 import type { Context } from "../../src/core/context.ts";
 import type { Session } from "../../src/core/types.ts";
@@ -43,7 +43,8 @@ interface Captured {
 
 async function runInit(flags: Record<string, string | boolean | string[]>, opts: { interactive?: boolean; cwd?: string; argv?: string[] } = {}): Promise<Captured> {
   const cap: Captured = { stdout: "", stderr: "" };
-  const env = { ...process.env, NO_COLOR: "1", CI: "" };
+  // No CI and no agent's variable (the tests may run under one): a terminal here is a person's.
+  const env = { ...process.env, NO_COLOR: "1", CI: "", ...Object.fromEntries(AGENT_ENV.map((k) => [k, ""])) };
   const out = new Output({
     json: false,
     env,
