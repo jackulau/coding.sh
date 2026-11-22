@@ -67,7 +67,7 @@ describe("eval init + eval run: cases", () => {
     const init = cli(["eval", "init", "triage", "--cases", "cases.jsonl", "--command", "node triage.mjs", "--trials", "2"]);
     assert.equal(init.status, 0, init.stdout + init.stderr);
     assert.match(init.stderr, /Wrote regression suite triage \(cases\) to evals\/triage/);
-    assert.match(init.stderr, /coding\.sh eval run triage/);
+    assert.match(init.stderr, /(?:coding\.sh|codingsh) eval run triage/);
     assert.match(init.stdout, /command: eval run triage --yes/, "the CI workflow is the answer on stdout");
     const spec = JSON.parse(readFileSync(join(proj, "evals", "triage", "suite.json"), "utf8")) as { graders: { kind: string }[]; trials: number };
     assert.deepEqual([spec.graders[0]!.kind, spec.trials], ["exact", 2]);
@@ -120,7 +120,7 @@ describe("eval init + eval run: skill", () => {
     const run = cli(["eval", "run", "pdf", "--yes"]);
     assert.equal(run.status, 1);
     assert.match(run.stderr, /6 prompts in evals\/pdf\/triggers\.toml still say TODO:/);
-    assert.match(run.stderr, /coding\.sh eval init pdf --skill \.claude\/skills\/pdf --draft --force/);
+    assert.match(run.stderr, /(?:coding\.sh|codingsh) eval init pdf --skill \.claude\/skills\/pdf --draft --force/);
     assert.equal(cli(["eval", "init", "--skill", ".claude/skills/pdf"]).status, 1, "an existing suite needs --force");
     assert.equal(cli(["eval", "init", "--skill", ".claude/skills/pdf", "--force"]).status, 0, "nothing of yours in it");
     const toml = join(proj, "evals", "pdf", "triggers.toml");
@@ -153,7 +153,7 @@ describe("eval init: no source", () => {
     const r = cli(["eval", "run"], empty);
     assert.equal(r.status, 1);
     assert.match(r.stderr, /No suites in/);
-    assert.match(r.stderr, /coding\.sh eval init/);
+    assert.match(r.stderr, /(?:coding\.sh|codingsh) eval init/);
   });
 });
 

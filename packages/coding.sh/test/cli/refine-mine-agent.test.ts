@@ -43,7 +43,7 @@ describe("refine mine --agent with no matching session", () => {
     const r = cli("refine", "mine", "--agent", "codx");
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stderr, /No session of codx since \d{4}-\d\d-\d\d under .*repo: the 3 sessions are codex \(2\), claude-code \(1\)/);
-    assert.match(r.stderr, /coding\.sh refine mine --agent codex\n/);
+    assert.match(r.stderr, /(?:coding\.sh|codingsh) refine mine --agent codex\n/);
     assert.doesNotMatch(r.stderr, /--min-support 2,1/);
   });
 
@@ -51,7 +51,7 @@ describe("refine mine --agent with no matching session", () => {
     const r = cli("refine", "mine", "--agent", "nosuchagent");
     assert.equal(r.status, 0, r.stdout + r.stderr);
     assert.match(r.stderr, /No session of nosuchagent since /);
-    assert.match(r.stderr, /coding\.sh refine mine --agent codex\n/);
+    assert.match(r.stderr, /(?:coding\.sh|codingsh) refine mine --agent codex\n/);
   });
 
   it("--json carries the agents seen; a matching agent leaves them out", () => {

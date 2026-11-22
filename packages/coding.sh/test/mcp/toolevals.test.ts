@@ -85,6 +85,8 @@ describe("tool evals against the coding.sh MCP server", () => {
     // work (the 27th: the queue status shows the top of, paged, with the index's age) adds about
     // 0.9 KB; shorter shared argument descriptions (agent, repo, since, until, limit, cursor,
     // sessionId) and status's work and index fields as open objects paid for it.
+    // status's update command (the bin the user's shell runs) and work's PRs fit in a shorter search
+    // description and session_tree's run argument.
     assert.ok(s.surfaceBytes < 44_950, `surface is ${s.surfaceBytes} bytes`);
     assert.ok(s.descriptionBytes < 11_850, `descriptions are ${s.descriptionBytes} bytes`);
     for (const it of s.items) assert.ok(it.bytes < 4_000, `${it.name} is ${it.bytes} bytes`);

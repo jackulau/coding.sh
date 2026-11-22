@@ -787,7 +787,7 @@ function toolDefs(): PagedTool[] {
     {
       name: "search",
       title: "Search sessions",
-      description: "Full-text search over captured prompts, replies and tool input/output across all sessions. Returns matching events with session ids and snippets; open one with session_get.",
+      description: "Full-text search over captured prompts, replies and tool input/output. Returns matching events with session ids and snippets; open one with session_get.",
       inputSchema: input({ query: { type: "string", minLength: 1, description: "Words to find (all must match)." }, agent: AGENT, project: PROJECT, where: WHERE_SAME("; event keys apply to the hit"), limit: LIMIT(10, 50), cursor: CURSOR }, ["query"]),
       outputSchema: out({ hits: arr(out({ sessionId: S, kind: S, snippet: S }, ["sessionId", "kind", "snippet"])), nextCursor: S }, ["hits"]),
       annotations: READ,
@@ -998,7 +998,7 @@ function toolDefs(): PagedTool[] {
       title: "Whole multi-agent run as a tree",
       description:
         "A whole multi-agent run as one tree: from any session, its top-level agent and every subagent; or with run:true a fan-out sharing a run id. Each node has model, cost, tokens, duration and flags. Paged; totals, the worst flag and worst (the node to fix first) cover the whole tree.",
-      inputSchema: input({ sessionId: SESSION_ID, run: { type: "boolean", default: false, description: "Read sessionId as a run id (CODING_SH_RUN_ID) instead of a session." }, limit: LIMIT(TREE_PAGE_NODES, 200), cursor: CURSOR }, ["sessionId"]),
+      inputSchema: input({ sessionId: SESSION_ID, run: { type: "boolean", default: false, description: "Read sessionId as a run id (CODING_SH_RUN_ID)." }, limit: LIMIT(TREE_PAGE_NODES, 200), cursor: CURSOR }, ["sessionId"]),
       outputSchema: {
         ...out(
           {

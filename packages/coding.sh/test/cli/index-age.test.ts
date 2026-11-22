@@ -53,7 +53,7 @@ describe("an index whose last ingest finished 3h ago", () => {
   test("status gives the age in the warn style and index.updatedAt in --json", async () => {
     const r = await runCmd(status, sb, {});
     assert.equal(r.error, undefined, r.error?.stack);
-    assert.match(r.stdout, /! Index +updated 3h ago; run coding\.sh ingest/);
+    assert.match(r.stdout, /! Index +updated 3h ago; run (?:coding\.sh|codingsh) ingest/);
     assert.match(r.stdout, /Work +nothing needs you/i);
     const j = await runCmd(status, sb, { json: true });
     assert.deepEqual(j.json.index, { updatedAt: new Date(lastIngest).toISOString(), stale: true });

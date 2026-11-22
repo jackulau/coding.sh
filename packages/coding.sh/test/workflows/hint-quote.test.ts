@@ -20,6 +20,6 @@ describe("hints quote user-typed names", () => {
     const env = { HOME: home, USERPROFILE: home, CODING_SH_HOME: join(root, "data"), XDG_CONFIG_HOME: join(home, ".config"), CLAUDE_CONFIG_DIR: join(root, "claude"), CODEX_HOME: join(root, "codex"), PATH: process.env.PATH, NO_COLOR: "1", CI: "1" };
     const r = spawnSync(process.execPath, ["--no-warnings", MAIN, "workflows", "run", "my flow", "--driver", "command", "--variant", "a=true", "--cases", notDir], { cwd: root, env, encoding: "utf8" });
     assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /coding\.sh workflows run 'my flow' --cases <dir>/);
+    assert.match(r.stderr, /(?:coding\.sh|codingsh) workflows run 'my flow' --cases <dir>/);
   });
 });

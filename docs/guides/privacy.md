@@ -46,8 +46,8 @@ the index backups are readable by your user only (files 0600, folders 0700). In 
 tool calls with their input and output, file changes, errors, model names, token usage and timing.
 
 - **Nothing leaves your machine by default.** With no sinks, no session data is sent. The only
-  default network request is a daily update check to `api.github.com` (or `registry.npmjs.org`),
-  which you can turn off: see [Install](install.md#updates).
+  default network request is a daily update check to `api.github.com` (or `registry.npmjs.org`);
+  [Install](install.md#updates) says how to turn it off.
 - **The viewer** listens on 127.0.0.1 and needs the token in the URL it prints.
 - **A repo's own `.coding.sh/config.toml` can only add privacy.** It can add redaction rules or
   switch to metadata mode, but never add a sink or move the store, so a cloned repo cannot send
@@ -107,8 +107,7 @@ times, event kinds, durations, token counts, cost and short labels such as tool 
 | `coding.sh serve` | `CODING_SH_CAPTURE_MODE=metadata`: drops content from everything it receives | `full` |
 
 A session sent in metadata mode has no title, so a team viewer lists it as *Untitled session*.
-The SDK setting drops message text and tool input and output before they leave your app's
-process.
+The SDK setting drops message text and tool input and output before they leave your app.
 
 ## Sinks
 
@@ -201,7 +200,7 @@ Purge looks in each of these places:
 
 Values shorter than 8 characters are refused, and neither values nor matches are printed. Purge
 works on the SQLite store only. Rotate the secret as well: purge does not touch the agent's own
-transcripts, your shell history or git, and it does not rewrite the snapshots in `repos/`.
+transcripts, your shell history or git.
 
 :::more When purge exits 1
 - **A file is open, or a job is recording.** The viewer, `serve`, `sqlite3` or a backup keeps
@@ -211,8 +210,8 @@ transcripts, your shell history or git, and it does not rewrite the snapshots in
 - **A snapshot repo holds the value.** Sessions and eval tasks name a snapshot by its commit id,
   which a rewrite would change, so purge names the folder under `repos/`. Delete it and purge
   again.
-- **Deleting a snapshot repo** drops the file changes of its sessions from `coding.sh show`, and
-  eval tasks that start from its snapshots can't run.
+- **Deleting a snapshot repo** drops its sessions' file changes from `coding.sh show`, and eval
+  tasks that start from it can't run.
 - **The database or its search index is damaged.** Purge checks both after it runs.
 - A run's `.git` folder is left alone, and files and snapshot objects over 64 MB are not read. A
   `--rule` that matches empty text or more than 10,000 distinct values is refused.

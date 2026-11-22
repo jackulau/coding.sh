@@ -1029,13 +1029,13 @@
     {
       "rule": "conditional-empty-spread",
       "path": "packages/coding.sh/src/cli/commands/harness.ts",
-      "max": 6,
+      "max": 4,
       "reason": "baseline 2026-11-09: existing code, do not add more"
     },
     {
       "rule": "conditional-empty-spread",
       "path": "packages/coding.sh/src/cli/commands/improve.ts",
-      "max": 14,
+      "max": 13,
       "reason": "baseline 2026-11-09: existing code, do not add more"
     },
     {
@@ -2326,12 +2326,6 @@
       "rule": "conditional-empty-spread",
       "path": "packages/coding.sh/src/workflows/import.ts",
       "max": 5,
-      "reason": "baseline 2026-11-09: existing code, do not add more"
-    },
-    {
-      "rule": "conditional-empty-spread",
-      "path": "packages/coding.sh/src/workflows/replay.ts",
-      "max": 1,
       "reason": "baseline 2026-11-09: existing code, do not add more"
     },
     {
