@@ -9,20 +9,23 @@ import type { Context } from "../../core/context.ts";
 import { version } from "../meta.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { autoIngest, oneLine, readIngest, shortSessionId, str, withContext } from "../common.ts";
+import { nextStepBin } from "../next-steps.ts";
 import { CliError, localTime, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
 /** The command that ran: the next steps name it, with its own arguments. */
 export type AttributionCommand = "attribution" | "blame";
 
-export function attributionCliError(e: unknown, command: AttributionCommand = "attribution"): unknown {
+/** `env` names the CLI in the next steps as the user's shell runs it (nextStepBin). */
+export function attributionCliError(e: unknown, command: AttributionCommand = "attribution", env: NodeJS.ProcessEnv = process.env): unknown {
   if (!(e instanceof AttributionError)) return e;
-  const withRepo = command === "blame" ? "coding.sh blame <path> --repo <dir>" : "coding.sh attribution --repo <dir>";
+  const bin = nextStepBin(env);
+  const withRepo = command === "blame" ? `${bin} blame <path> --repo <dir>` : `${bin} attribution --repo <dir>`;
   if (e.reason === "not_a_repo") return new CliError(e.message, { reason: "not_a_repo", next: ["Run it inside a git repository, or pass one:", withRepo] });
   if (e.reason === "unknown_rev") return new CliError(e.message, { reason: "unknown_rev", next: ["List branches and commits:", "git log --oneline -n 20"] });
   if (e.reason === "invalid_range") return new UsageError(e.message, { reason: "invalid_argument" });
   if (e.reason === "not_found") return new CliError(e.message, { reason: "not_found", next: e.next ?? ["See the files git tracks:", "git ls-files"] });
-  return new CliError(e.message, { reason: e.reason, next: ["See the options:", `coding.sh ${command} --help`] });
+  return new CliError(e.message, { reason: e.reason, next: ["See the options:", `${bin} ${command} --help`] });
 }
 
 /** Shared by attribution and blame: repo, rev, since, and a progress line on stderr. */
@@ -39,7 +42,7 @@ export async function report(c: CommandContext, ctx: Context, extra: Partial<Att
       ...extra,
     });
   } catch (e) {
-    throw attributionCliError(e, command);
+    throw attributionCliError(e, command, c.env);
   } finally {
     spin.stop();
   }
@@ -49,6 +52,7 @@ const short = (sha: string) => sha.slice(0, 8);
 
 async function list(c: CommandContext, ctx: Context): Promise<number> {
   const { out } = c;
+  const bin = nextStepBin(c.env);
   const limit = positiveInt(c.flags.limit, "limit") ?? 50;
   const r = await report(c, ctx);
   const newest = [...r.commits].reverse();
@@ -69,14 +73,14 @@ async function list(c: CommandContext, ctx: Context): Promise<number> {
   }
   if (!r.commits.length) {
     out.note(`No commits since ${localTime(r.since)} on ${short(r.rev)}`);
-    out.next("Look further back", "coding.sh attribution --since 90d");
+    out.next("Look further back", `${bin} attribution --since 90d`);
     return 0;
   }
   const pct = added ? Math.round((attributed / added) * 100) : 0;
   out.print(`${plural(r.commits.length, "commit")} since ${localTime(r.since)}: ${attributed} of ${added} added lines by ${plural(r.sessions.length, "session")} (${pct}%)`);
   if (!shown.length) {
     out.print("No commit has lines a captured session wrote.");
-    if (!r.sources) out.next("Sessions in this repo need an end snapshot or edit tool calls; check capture", "coding.sh doctor");
+    if (!r.sources) out.next("Sessions in this repo need an end snapshot or edit tool calls; check capture", `${bin} doctor`);
     return 0;
   }
   out.print();
@@ -91,7 +95,7 @@ async function list(c: CommandContext, ctx: Context): Promise<number> {
     ]),
   );
   if (shown.length > limit) out.note(`${shown.length - limit} more; --limit ${shown.length} shows all`);
-  if (r.sessions[0]) out.next("See which lines of a file each session wrote", "coding.sh blame <path>");
+  if (r.sessions[0]) out.next("See which lines of a file each session wrote", `${bin} blame <path>`);
   return 0;
 }
 
@@ -107,7 +111,7 @@ async function exportTrace(c: CommandContext, ctx: Context): Promise<number> {
     } catch {
       // not a URL
     }
-    if (!u || (u.protocol !== "http:" && u.protocol !== "https:")) throw new UsageError(`--viewer-url ${JSON.stringify(viewerUrl)} is not an http or https URL`, { reason: "invalid_argument", suggestion: "coding.sh attribution export --viewer-url http://127.0.0.1:4319" });
+    if (!u || (u.protocol !== "http:" && u.protocol !== "https:")) throw new UsageError(`--viewer-url ${JSON.stringify(viewerUrl)} is not an http or https URL`, { reason: "invalid_argument", suggestion: `${nextStepBin(c.env)} attribution export --viewer-url http://127.0.0.1:4319` });
   }
   const r = await report(c, ctx);
   const records = agentTraceRecords(r, { toolVersion: version(), ...(viewerUrl ? { viewerUrl } : {}) });

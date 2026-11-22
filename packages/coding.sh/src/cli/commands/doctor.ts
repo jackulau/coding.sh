@@ -23,6 +23,7 @@ import { allGatewayConfigs, detectGatewaySetups, gatewaySettings } from "../../i
 import { gatewayFlag, GATEWAYS, type GatewayId } from "../../integrations/gateway/providers.ts";
 import { UsageError } from "../args.ts";
 import { list, port as portFlag } from "../common.ts";
+import { cliCommand, nextStepBin, runCommand } from "../next-steps.ts";
 import { ago, LABEL_WIDTH, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { ingestStoppedField, readIngestStopped } from "../../core/ingest-health.ts";
@@ -367,8 +368,8 @@ export interface DoctorWarning {
  * doctor read, that file exists, and nothing blocks them. Recent events alone are not capture:
  * they also come from an import, the proxy or a project doctor did not look in.
  */
-function agentRow(a: DoctorAgent, hookInstalled: boolean): { state: string; ok: boolean; notes: string[] } {
-  if (a.capture === "wrapper") return { state: `no hooks needed; capture with coding.sh run -- ${a.id === "wrapper" ? "<cmd>" : a.id}`, ok: true, notes: [] };
+function agentRow(a: DoctorAgent, hookInstalled: boolean, env: NodeJS.ProcessEnv): { state: string; ok: boolean; notes: string[] } {
+  if (a.capture === "wrapper") return { state: `no hooks needed; capture with ${runCommand(env, a.id === "wrapper" ? "<cmd>" : a.id)}`, ok: true, notes: [] };
   const recent = a.lastEventAgeMs !== null && a.lastEventAgeMs < RECENT_EVENT_MS;
   if (a.store) return { state: a.hooked ? "reads its store" : "no store yet", ok: a.hooked || recent, notes: a.notes };
   const here = hooksHere(a);
@@ -385,7 +386,7 @@ function agentRow(a: DoctorAgent, hookInstalled: boolean): { state: string; ok: 
 
 export async function run(c: CommandContext): Promise<number> {
   if (c.flags.conformance) return (await import("../../conformance/doctor.ts")).runConformance(c);
-  for (const f of ["since", "max-events"]) if (c.flags[f] !== undefined) throw new UsageError(`--${f} works only with --conformance`, { suggestion: `coding.sh doctor --conformance --${f} ${String(c.flags[f])}` });
+  for (const f of ["since", "max-events"]) if (c.flags[f] !== undefined) throw new UsageError(`--${f} works only with --conformance`, { suggestion: cliCommand(c.env, ["doctor", "--conformance", `--${f}`, String(c.flags[f])]) });
   const { out, env } = c;
   const named = list(c.flags.agent);
   const port = portFlag(c.flags.port, 4318);
@@ -530,9 +531,11 @@ export async function run(c: CommandContext): Promise<number> {
     out.row(label, value, "warn");
   };
   const shown = agents.filter((a) => a.installed || named.includes(a.id));
+  // The CLI as the user's shell runs it (codingsh in PowerShell and cmd).
+  const bin = nextStepBin(env);
   let notCapturing = 0;
   for (const a of shown) {
-    const r = agentRow(a, hookBin.installed);
+    const r = agentRow(a, hookBin.installed, env);
     // The built-in wrapper is not something "installed": it is part of coding.sh.
     const parts = a.id === "wrapper" ? [r.state] : [a.version ? `v${a.version}` : "installed", r.state];
     if (a.lastEventAt) {
@@ -546,20 +549,20 @@ export async function run(c: CommandContext): Promise<number> {
       const hooks = a.capture === "hooks";
       const w: DoctorWarning = { check: "agent", agent: a.id, message: `${a.name} is not capturing: ${r.state}` };
       if (hooks && a.blockers.length) w.blockers = a.blockers;
-      if (hooks && hooksHere(a) === undefined) w.next = `coding.sh init --agent ${a.id}`;
+      if (hooks && hooksHere(a) === undefined) w.next = cliCommand(env, ["init", "--agent", a.id]);
       warn(label, parts.join(", "), w);
     }
     // Every blocker, hooked or not: each names what to change.
     for (const n of r.notes) out.note(n);
   }
-  if (!shown.length) warn("Agents", "none detected; capture any agent with coding.sh run -- <cmd>", { check: "agents", message: "No agent detected", next: "coding.sh run -- <cmd>" });
-  if (hookBin.missing !== undefined) warn("Hook", `missing at ${hookBin.missing}; run coding.sh init`, { check: "hook", message: `The hook is missing at ${hookBin.missing}`, next: "coding.sh init" });
+  if (!shown.length) warn("Agents", `none detected; capture any agent with ${runCommand(env, "<cmd>")}`, { check: "agents", message: "No agent detected", next: runCommand(env, "<cmd>") });
+  if (hookBin.missing !== undefined) warn("Hook", `missing at ${hookBin.missing}; run ${bin} init`, { check: "hook", message: `The hook is missing at ${hookBin.missing}`, next: `${bin} init` });
   else if (hookBin.stale) {
     const why = hookBin.hookCurrent === false ? "differs from the hook this CLI ships" : hookBin.cliPath && !hookBin.cliPathExists ? `cli-path names a missing ${hookBin.cliPath}` : `cli-path names ${hookBin.cliPath ?? "nothing"}, not this CLI`;
     // Only the bin lags: refreshing it leaves the agent configs alone (init would rewrite them).
-    warn("Hook", `${hookBin.path} is stale (${why}); run coding.sh update --refresh-bin`, { check: "hook", message: `${hookBin.path} is stale (${why})`, next: "coding.sh update --refresh-bin" });
+    warn("Hook", `${hookBin.path} is stale (${why}); run ${bin} update --refresh-bin`, { check: "hook", message: `${hookBin.path} is stale (${why})`, next: `${bin} update --refresh-bin` });
   } else out.row("Hook", hookBin.path, "ok");
-  for (const m of mcp.filter((x) => !x.ok)) warn("MCP", `${m.agent}: ${m.problem} (${m.file}); run coding.sh init`, { check: "mcp", agent: m.agent, message: `${m.problem} (${m.file})`, next: "coding.sh init" });
+  for (const m of mcp.filter((x) => !x.ok)) warn("MCP", `${m.agent}: ${m.problem} (${m.file}); run ${bin} init`, { check: "mcp", agent: m.agent, message: `${m.problem} (${m.file})`, next: `${bin} init` });
   if (spool.ok && spoolProblems.length) for (const m of spoolProblems) warn("Spool", m, { check: "spool", message: m });
   else out.row("Spool", spool.ok ? `${spool.path} writable` : `${spool.path} not writable: ${spool.error}`, spool.ok ? "ok" : "fail");
   out.row("Store", store.ok ? `${store.kind} ${store.url}` : `can't open: ${store.error}`, store.ok ? "ok" : "fail");
@@ -573,29 +576,29 @@ export async function run(c: CommandContext): Promise<number> {
   if (missing?.count) {
     const byAgent = Object.entries(missing.byAgent).sort((a, b) => b[1] - a[1]).map(([agent, n]) => `${agent} ${n}`);
     const message = `${plural(missing.count, "session")} ${missing.count === 1 ? "has" : "have"} events but no session row (${byAgent.join(", ")})`;
-    warn("Sessions", `${message}; run coding.sh ingest`, { check: "sessions", message, next: "coding.sh ingest" });
+    warn("Sessions", `${message}; run ${bin} ingest`, { check: "sessions", message, next: `${bin} ingest` });
   }
   if (store.implausible) {
     const { count, by, worst } = store.implausible;
     const names: Record<string, string> = { speed: `over ${PLAUSIBLE_LIMITS.maxTokensPerSec} tok/s`, ttft: "first token outside the call", cost: "cost below 0 or over $" + PLAUSIBLE_LIMITS.maxCallCostUsd };
     const message = `${plural(count, "model call")} past physical limits (${Object.entries(by).map(([k, v]) => `${names[k] ?? k} ${v}`).join(", ")}); most in ${worst}`;
-    warn("Stats", `${message}; see coding.sh show ${worst}`, { check: "stats", message, next: `coding.sh show ${worst}` });
+    warn("Stats", `${message}; see ${cliCommand(env, ["show", worst])}`, { check: "stats", message, next: cliCommand(env, ["show", worst]) });
   }
   if (store.foldErrors) {
     const message = `${plural(store.foldErrors, "session")} could not be folded (tagged ${FLAGS.foldError})`;
-    warn("Sessions", `${message}; update coding.sh, then run coding.sh ingest`, { check: "sessions", message, next: "coding.sh ingest" });
+    warn("Sessions", `${message}; update coding.sh, then run ${bin} ingest`, { check: "sessions", message, next: `${bin} ingest` });
   }
-  out.row("Receiver", receiver.listening ? `port ${port} in use (collector running?)` : `port ${port} free; start with coding.sh collector`, receiver.listening ? "ok" : "none");
+  out.row("Receiver", receiver.listening ? `port ${port} in use (collector running?)` : `port ${port} free; start with ${bin} collector`, receiver.listening ? "ok" : "none");
   const routedNames = proxy.routes.filter((r) => r.ok).map((r) => `${ADAPTERS.find((a) => a.id === r.agent)?.displayName ?? r.agent}${r.chained ? ` (then ${r.chained})` : ""}`);
   if (proxy.running) out.row("Proxy", `${proxy.url} (pid ${proxy.pid})${routedNames.length ? `, routes ${routedNames.join(", ")}` : ""}`, "ok");
   else if (routedNames.length) {
     const message = `not running, but ${routedNames.join(" and ")} call it`;
-    warn("Proxy", `${message}; it restarts on the next session start, or now with coding.sh proxy --background`, { check: "proxy", message: `The proxy is ${message}`, next: "coding.sh proxy --background" });
+    warn("Proxy", `${message}; it restarts on the next session start, or now with ${bin} proxy --background`, { check: "proxy", message: `The proxy is ${message}`, next: `${bin} proxy --background` });
   }
-  else out.row("Proxy", "not running; route agents through it with coding.sh init --proxy", "none");
+  else out.row("Proxy", `not running; route agents through it with ${bin} init --proxy`, "none");
   for (const r of proxy.routes.filter((x) => !x.ok)) {
     const message = `${r.agent} no longer points at the proxy (${r.file})`;
-    warn("Proxy", `${message}; with the user's approval, coding.sh init --proxy or coding.sh uninstall --proxy`, { check: "proxy", agent: r.agent, message });
+    warn("Proxy", `${message}; with the user's approval, ${bin} init --proxy or ${bin} uninstall --proxy`, { check: "proxy", agent: r.agent, message });
   }
   const routed = [...new Set(gateway.configured.filter((f) => f.active).map((f) => (f.gateway === "vercel" ? f.agent : `${f.agent} via ${f.gateway}`)))];
   const gwParts = [routed.length ? `routes ${routed.join(", ")}` : "not configured", gateway.key.set ? `key set (${gateway.key.source})` : "no key", `${gateway.sessions >= 1000 ? "1000+" : gateway.sessions} tagged sessions`];
@@ -603,7 +606,7 @@ export async function run(c: CommandContext): Promise<number> {
   if (others.length) out.row("Gateways", `keys set for ${others.map((g) => GATEWAYS[g.id].name).join(", ")}`, "ok");
   for (const f of gateway.configured) out.note(`${f.gateway === "vercel" ? "" : `${GATEWAYS[f.gateway].name}: `}${f.detail} (${f.where}${f.active ? "" : ", not selected"})`);
   const unhooked = shown.filter((a) => a.capture === "hooks" && hooksHere(a) === undefined);
-  if (unhooked.length) out.next("Capture the agents without hooks", `coding.sh init ${unhooked.map((a) => `--agent ${a.id}`).join(" ")}`);
+  if (unhooked.length) out.next("Capture the agents without hooks", cliCommand(env, ["init", ...unhooked.flatMap((a) => ["--agent", a.id])]));
   // `ok` and the exit code are about the spool and the store, so a script that checks them keeps
   // working; an agent that cannot capture is in `warnings` and on the last line.
   out.data({ ok: problems === 0, warnings, agents, hook: hookBin, mcp, spool, store, ...ingestStoppedField(stopped), receiver, proxy, gateway });

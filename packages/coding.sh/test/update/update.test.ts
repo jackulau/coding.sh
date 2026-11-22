@@ -14,6 +14,7 @@ import {
   type Spawner,
   type UpdateCache,
 } from "../../src/update/index.ts";
+import { nextStepBin } from "../../src/cli/next-steps.ts";
 import { clock, DAY, fakeFetch, GH, HOUR, NPM, release, tmpEnv, ttyStream } from "./helpers.ts";
 
 function seed(env: NodeJS.ProcessEnv, cache: UpdateCache): void {
@@ -189,7 +190,8 @@ describe("notice", () => {
     const sp = fakeSpawn();
     const styled = { json: false, style: (s: string) => `<faint>${s}</faint>` };
     assert.equal(notice(env, styled, { stderr: err, now: c.now, current: "0.1.0", spawn: sp.spawn }), true);
-    assert.equal(err.text, `<faint>Update available 0.1.0 → 0.2.0 · run: coding.sh update</faint>\n`);
+    // The env has no MSYSTEM or SHELL, so on Windows it names codingsh, which PowerShell and cmd run.
+    assert.equal(err.text, `<faint>Update available 0.1.0 → 0.2.0 · run: ${nextStepBin(env)} update</faint>\n`);
     assert.equal(noticeText("0.1.0", "0.2.0"), "Update available 0.1.0 → 0.2.0 · run: coding.sh update");
     assert.deepEqual(readCache(env).notified, { version: "0.2.0", at: c.now() });
 
@@ -202,6 +204,17 @@ describe("notice", () => {
     seed(env, { ...readCache(env), latest: "0.3.0" });
     assert.equal(notice(env, out, { stderr: err, now: c.now, current: "0.1.0", spawn: sp.spawn }), true);
     assert.match(err.text, /0\.1\.0 → 0\.3\.0/);
+  });
+
+  test("names the update command as the user's shell runs it", () => {
+    // Under npx (npm_command=exec) it names the npx command, on every OS.
+    const env = tmpEnv({ npm_command: "exec" });
+    const c = clock();
+    seed(env, { checkedAt: c.now(), attemptedAt: c.now(), latest: "0.2.0" });
+    const err = ttyStream();
+    assert.equal(notice(env, out, { stderr: err, now: c.now, current: "0.1.0", spawn: fakeSpawn().spawn }), true);
+    assert.equal(err.text, `Update available 0.1.0 → 0.2.0 · run: ${nextStepBin(env)} update\n`);
+    assert.match(err.text, /run: npx /);
   });
 
   test("silent when up to date, not a TTY, --json, CI, opted out, or after `update`", () => {
