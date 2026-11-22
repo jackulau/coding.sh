@@ -220,8 +220,9 @@ After a pin, `--changed` also keeps these rows, named by `changed` (`variants` f
   table says `differs from pin`.
 - `new`: a tool with no pin first seen at or after the last pin, such as one an MCP server added.
   The table says `new since pin`.
-- `removed`: a pinned tool that the latest tools array of every session since its pin leaves out,
-  with `sessions` 0 when no call in the window offered it. The table says `removed since pin`.
+- `removed`: a pinned tool left out of every tools array offered since its pin, in any call of any
+  session, with `sessions` 0 when no call in the window offered it. A session that offered it since
+  the pin keeps it, though its later calls left it out. The table says `removed since pin`.
 
 Pin again to accept them: `harness tools pin` saves the latest hashes and drops the pins of
 removed tools.

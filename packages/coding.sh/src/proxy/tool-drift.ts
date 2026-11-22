@@ -5,7 +5,8 @@
 // package) shows more than one variant, or a hash that differs from the one
 // pinned in <CODING_SH_HOME>/tool-pins.json. A tool first offered at or after
 // the last pin (an MCP server that added it) has no pin and shows as "new",
-// and a pinned tool the sessions since no longer offer shows as "removed".
+// and a pinned tool left out of every tools array offered since its pin shows
+// as "removed".
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -36,8 +37,8 @@ export interface ToolRow {
    * Why --changed keeps it: "pin" (a definition since the pin, or the latest,
    * differs from it), "variants" (no pin, more than one variant), "new" (no
    * pin, first seen at or after the newest pin: a tool an agent gained),
-   * "removed" (pinned, and the latest tools array of every session that called
-   * the model since the pin leaves it out). Absent when none applies.
+   * "removed" (pinned, and every tools array offered since the pin, in any
+   * call of any session, leaves it out). Absent when none applies.
    */
   changed?: ToolChange;
   /**
@@ -153,8 +154,6 @@ export async function toolDrift(index: IndexStore, blobs: BlobStore, o: { since:
   const refs = new Map<string, Seen>();
   let calls = 0;
   let callsWithoutTools = 0;
-  // Session id -> its latest call with a stored tools array, and that array.
-  const latestBySession = new Map<string, { ts: number; ref: string }>();
   // A session that started before the window can still have calls in it: keep any not ended before it.
   for (const s of await index.listSessions()) {
     o.signal?.throwIfAborted();
@@ -172,8 +171,6 @@ export async function toolDrift(index: IndexStore, blobs: BlobStore, o: { since:
       r.firstSeen = Math.min(r.firstSeen, e.ts);
       r.lastSeen = Math.max(r.lastSeen, e.ts);
       addSession(r, e.sessionId, e.ts);
-      const last = latestBySession.get(e.sessionId);
-      if (!last || e.ts >= last.ts) latestBySession.set(e.sessionId, { ts: e.ts, ref });
     }
   }
   const ordered = [...refs].sort((a, b) => b[1].lastSeen - a[1].lastSeen);
@@ -218,14 +215,16 @@ export async function toolDrift(index: IndexStore, blobs: BlobStore, o: { since:
   const pins = o.pins ?? {};
   // The last `harness tools pin`: a tool with no pin first seen since then is new. With no pins, nothing is.
   const newestPin = Object.values(pins).reduce((m, p) => Math.max(m, p.at), -Infinity);
-  // A pinned tool is gone when sessions called the model at or after its pin,
-  // each of their latest tools arrays was read, and none offers it. A session
-  // whose latest array was not read (capped, gc) leaves it undecided.
+  // A pinned tool is gone when calls offered tools arrays at or after its pin
+  // and none of those arrays offers it: a session that offered it once since
+  // the pin keeps it, though its later calls (a subagent's, say) left it out.
+  // An array offered since the pin that was not read (capped, gc) leaves it
+  // undecided.
   const removedSince = (key: string, at: number): boolean => {
     let any = false;
-    for (const last of latestBySession.values()) {
-      if (last.ts < at) continue;
-      const keys = refKeys.get(last.ref);
+    for (const [ref, where] of refs) {
+      if (where.lastSeen < at) continue;
+      const keys = refKeys.get(ref);
       if (!keys || keys.has(key)) return false;
       any = true;
     }
