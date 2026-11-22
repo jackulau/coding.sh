@@ -225,7 +225,9 @@ After a pin, `--changed` also keeps these rows, named by `changed` (`variants` f
   the pin keeps it, though its later calls left it out. The table says `removed since pin`.
 
 Pin again to accept them: `harness tools pin` saves the latest hashes and drops the pins of
-removed tools.
+removed tools. A removal stays accepted: a later pin does not pin the tool again while no call has
+offered it since the last pin, and `--changed` does not keep it for the versions it had before.
+Once a session offers it again, the next pin saves it.
 
 In `--json`, each changed row other than `removed` has `sessionIds`: up to 20 sessions that offered
 a definition other than the pinned one, other than the first one seen, or, for a new tool, any, the

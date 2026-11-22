@@ -35,8 +35,9 @@ export interface ToolRow {
   pinned?: { descSha: string; schemaSha: string; at: number };
   /**
    * Why --changed keeps it: "pin" (a definition since the pin, or the latest,
-   * differs from it), "variants" (no pin, more than one variant), "new" (no
-   * pin, first seen at or after the newest pin: a tool an agent gained),
+   * differs from it), "variants" (no pin, more than one variant, and offered
+   * at or after the newest pin if there is one), "new" (no pin, first seen at
+   * or after the newest pin: a tool an agent gained),
    * "removed" (pinned, and every tools array offered since the pin, in any
    * call of any session, leaves it out). Absent when none applies.
    */
@@ -253,7 +254,9 @@ export async function toolDrift(index: IndexStore, blobs: BlobStore, o: { since:
     } else if (newestPin > -Infinity && all.firstSeen >= newestPin) {
       row.changed = "new";
       row.sessionIds = sessionIds(t.variants.values());
-    } else if (t.variants.size > 1) {
+    } else if (t.variants.size > 1 && all.lastSeen >= newestPin) {
+      // After a pin, a tool with no pin that no call offered since (one whose
+      // pin was dropped as removed) is not flagged for its old variants.
       row.changed = "variants";
       let first: [string, Seen] | undefined;
       for (const entry of t.variants) if (!first || entry[1].firstSeen < first[1].firstSeen) first = entry;
@@ -294,13 +297,17 @@ export function readToolPins(env: NodeJS.ProcessEnv = process.env): ToolPins {
 /**
  * Pins the latest hashes of every row over the pins already there (tools not
  * in `rows` keep theirs). A "removed" row is not pinned: its pin is dropped,
- * which accepts that the tool is gone.
+ * which accepts that the tool is gone. Nor is a row with no pin that no call
+ * offered at or after the newest pin, such as a tool whose pin an earlier pin
+ * dropped: pinned again, the next session would show it removed again.
  */
 export function writeToolPins(rows: readonly ToolRow[], env: NodeJS.ProcessEnv = process.env, now = Date.now()): ToolPins {
   const pins = { ...readToolPins(env) };
+  const newestPin = Object.values(pins).reduce((m, p) => Math.max(m, p.at), -Infinity);
   for (const r of rows) {
-    if (r.changed === "removed") delete pins[toolKey(r)];
-    else pins[toolKey(r)] = { descSha: r.descSha, schemaSha: r.schemaSha, at: now };
+    const key = toolKey(r);
+    if (r.changed === "removed") delete pins[key];
+    else if (Object.hasOwn(pins, key) || r.lastSeen >= newestPin) pins[key] = { descSha: r.descSha, schemaSha: r.schemaSha, at: now };
   }
   const sorted: ToolPins = {};
   for (const k of Object.keys(pins).sort()) sorted[k] = pins[k]!;

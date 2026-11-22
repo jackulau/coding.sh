@@ -233,6 +233,67 @@ describe("toolDrift after a pin", () => {
   });
 });
 
+describe("harness tools pin after a removal", () => {
+  const FETCH = { name: "mcp__docs__fetch", description: "Fetch a page", input_schema: SCHEMA };
+  let root = "";
+  let env: NodeJS.ProcessEnv = {};
+  before(() => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), "csh-toolgone-")));
+    env = { PATH: process.env.PATH, HOME: join(root, "home"), USERPROFILE: join(root, "home"), CODING_SH_HOME: join(root, "data"), NO_COLOR: "1", CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_NO_AUTO_INGEST: "1" };
+  });
+  after(() => rmSync(root, { recursive: true, force: true }));
+
+  it("keeps an accepted removal through later pins, until a session offers the tool again", async () => {
+    const stores = await openStores(loadConfig(env));
+    const { index, blobs } = stores;
+    const t0 = Date.now() - 3_600_000;
+    let n = 0;
+    const call = async (sessionId: string, ts: number, tools: unknown[]) => {
+      const ref = await blobs.put(JSON.stringify(tools));
+      await index.putEvents([{ id: `g${n++}`, v: SCHEMA_VERSION, sessionId, ts, source: "proxy", agent: "claude-code", kind: "llm.call", payload: { toolsRef: ref } }]);
+      await index.upsertSession({ id: sessionId, agent: "claude-code", startedAt: t0, stats: { events: 1, turns: 0, toolCalls: 0, toolErrors: 0 } } as never);
+    };
+    const run = (args: string[]) => spawnSync(process.execPath, ["--no-warnings", CLI, "harness", "tools", ...args], { env, cwd: root, encoding: "utf8", timeout: 120_000 });
+    const changed = () => {
+      const r = run(["--changed", "--json"]);
+      return [r.status, (JSON.parse(r.stdout) as { tools: { tool: string; changed: string }[] }).tools.map((t) => [t.tool, t.changed])];
+    };
+    const pin = () => {
+      const r = run(["pin", "--json"]);
+      assert.equal(r.status, 0, r.stderr);
+      const p = JSON.parse(r.stdout) as { pinned: number; dropped?: number; pins: number };
+      return [p.pinned, p.dropped, p.pins];
+    };
+    try {
+      // fetch has one version, search two; all three tools are pinned.
+      await call("s1", t0, [BASH, search("Search docs"), FETCH]);
+      await call("s1", t0 + 100, [BASH, search("Search docs, v2"), FETCH]);
+      writeToolPins((await toolDrift(index, blobs, { since: t0 })).tools, env, t0 + 500);
+
+      // A session without them: removed. Pin accepts it, and --changed is clean.
+      await call("s2", t0 + 1000, [BASH]);
+      assert.deepEqual(changed(), [1, [["fetch", "removed"], ["search", "removed"]]]);
+      assert.deepEqual(pin(), [1, 2, 1]);
+      assert.deepEqual(changed(), [0, []]);
+
+      // Pin again: they stay unpinned, so another session without them leaves --changed clean.
+      assert.deepEqual(pin(), [1, undefined, 1]);
+      assert.deepEqual(Object.keys(readToolPins(env)), ["builtin/Bash"]);
+      await call("s3", Date.now(), [BASH]);
+      assert.deepEqual(changed(), [0, []]);
+
+      // A session that offers search again: the next pin saves it.
+      await call("s4", Date.now(), [BASH, search("Search docs, v2")]);
+      assert.deepEqual(pin(), [2, undefined, 2]);
+      assert.equal(readToolPins(env)["docs/search"]?.descSha, toolHashes(search("Search docs, v2"))!.descSha);
+      assert.deepEqual(changed(), [0, []]);
+    } finally {
+      await index.close();
+      await blobs.close?.();
+    }
+  });
+});
+
 describe("CLI: harness tools", () => {
   let up: Upstream;
   let proxy: TestProxy;
