@@ -161,6 +161,8 @@ export interface SpanNode {
   turn?: boolean;
   /** A durable-workflow replay span: model calls under it were made before (see durable.ts). */
   replay?: boolean;
+  /** A Vercel AI SDK ai.toolCall span: an ai.streamText & co. under it is a subagent (vercelSubagent). */
+  aiTool?: boolean;
 }
 
 /**
@@ -355,6 +357,13 @@ export type SpanClass = "llm" | "embedding" | "tool" | "agent" | "other";
 
 const VERCEL_LLM = /^ai\.(generateText|streamText|generateObject|streamObject)\.do(Generate|Stream)$/;
 const VERCEL_EMBED = /^ai\.embed(Many)?(\.doEmbed)?$/;
+const VERCEL_LOOP = /^ai\.(generateText|streamText|generateObject|streamObject)$/;
+const vercelOp = (span: OtelSpan): string => str(span.attributes, "ai.operationId") ?? span.name;
+/**
+ * Vercel AI SDK: the loop around model calls (ai.streamText & co.) run by a tool's execute, a child of an
+ * ai.toolCall span. That is the SDK's subagent pattern, so the loop is a nested agent with its own session.
+ */
+const vercelSubagent = (span: OtelSpan, parentIsToolCall: boolean): boolean => parentIsToolCall && VERCEL_LOOP.test(vercelOp(span));
 
 /** Claude Code's beta trace spans (CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1). */
 const CLAUDE_CODE_SPANS: Record<string, SpanClass> = {
@@ -822,6 +831,8 @@ interface SpanCtx {
   instance?: string;
   /** Span id of the trace's root agent span above a nested span of the main session: a model call's prompt is the turn's. */
   turnRoot?: string;
+  /** A span classifySpan does not call an agent that is one by its place in the trace (vercelSubagent). */
+  asAgent?: boolean;
 }
 
 export const spanEventId = (traceId: string, spanId: string, slot: number): string => hashParts("otel", traceId, spanId, slot);
@@ -1028,7 +1039,7 @@ const weightsDraft = (name: string | undefined): ((d: Draft, a: Attrs) => Draft)
 async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<AgentEvent[]> {
   const { span, traceId, spanId } = c;
   const a = span.attributes;
-  const klass = classifySpan(span);
+  const klass = c.asAgent ? "agent" : classifySpan(span);
   const isRoot = !span.parentSpanId;
   const startMs = nanosToMs(unsetTime(span.startTimeUnixNano) ? span.endTimeUnixNano : span.startTimeUnixNano);
   const endMs = unsetTime(span.endTimeUnixNano) ? startMs : nanosToMs(span.endTimeUnixNano);
@@ -1073,7 +1084,9 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
   // A span named weights.edit or weights.checkpoint is that event, whatever else its attributes say.
   const weights = weightsDraft(span.name);
   // gen_ai.workflow.name is the pre-v0.1.0 name of a workflow span's gen_ai.agent.name.
-  const agentName = str(a, "gen_ai.agent.name", "agent.name", "gen_ai.workflow.name") ?? (/^invoke_(?:agent|workflow)\s+(.+)$/.exec(span.name)?.[1] || undefined);
+  const agentName =
+    str(a, "gen_ai.agent.name", "agent.name", "gen_ai.workflow.name") ??
+    (/^invoke_(?:agent|workflow)\s+(.+)$/.exec(span.name)?.[1] || (c.asAgent ? str(a, "ai.telemetry.functionId") : undefined));
 
   // ---- model call
   const llm = async (slot: number) => {
@@ -1316,6 +1329,10 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
   // Traces of this batch whose spans an earlier batch mapped.
   const batchTraces = new Set<string>();
   const earlier = new Set<string>();
+  // Vercel AI SDK ai.toolCall spans of this batch (`${traceId}:${spanId}`): a batching exporter sends them after their children.
+  const aiTools = new Set<string>();
+  for (const rs of batch) for (const ss of rs.scopeSpans) for (const sp of ss.spans) if (sp.traceId && sp.spanId && vercelOp(sp) === "ai.toolCall") aiTools.add(`${sp.traceId}:${sp.spanId}`);
+  const nestedLoops = new Set<OtelSpan>();
   for (const rs of batch)
     for (const ss of rs.scopeSpans)
       for (const sp of ss.spans) {
@@ -1339,9 +1356,13 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
           for (const l of sp.links) if (l.traceId && l.traceId !== sp.traceId && !traceRun.has(l.traceId)) traceRun.set(l.traceId, sid);
         }
         if (sp.traceId && sp.spanId) {
-          const agentSpan = classifySpan(sp) === "agent";
+          const underTool = !!sp.parentSpanId && (aiTools.has(`${sp.traceId}:${sp.parentSpanId}`) || tree.get(sp.traceId, sp.parentSpanId)?.aiTool === true);
+          const loop = vercelSubagent(sp, underTool);
+          if (loop) nestedLoops.add(sp);
+          const agentSpan = loop || classifySpan(sp) === "agent";
           const node: SpanNode = { subagent: !!sp.parentSpanId && agentSpan };
           if (!sp.parentSpanId && agentSpan) node.turn = true;
+          if (aiTools.has(`${sp.traceId}:${sp.spanId}`)) node.aiTool = true;
           if (sp.parentSpanId) node.parentSpanId = sp.parentSpanId;
           if (d?.replay) node.replay = true;
           tree.set(sp.traceId, sp.spanId, node);
@@ -1402,6 +1423,7 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
         const version = ownVersion ?? str(span.attributes, "app.version");
         if (version) c.agentVersion = version;
         if (instance && span.parentSpanId && !local!.has(span.parentSpanId)) c.instance = instance;
+        if (nestedLoops.has(span)) c.asAgent = true;
         const runId = str(span.attributes, ...RUN_KEYS) ?? str(resource, ...RUN_KEYS);
         if (runId) c.runId = runId;
         const d = durable.get(span);
