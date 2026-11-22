@@ -153,7 +153,7 @@ describe("harness snapshot --agent claude-code with CLAUDE_CONFIG_DIR, and the M
   });
 });
 
-describe("harness snapshot from a folder that holds CLAUDE_CONFIG_DIR", () => {
+describe("harness snapshot run twice, or from a folder that holds CLAUDE_CONFIG_DIR", () => {
   const run = (cwd: string, cfg: string, args: string[]) => {
     const r = spawnSync(process.execPath, ["--no-warnings", CLI, "harness", "snapshot", "-a", "claude-code", ...args], { env: { ...env, CLAUDE_CONFIG_DIR: cfg }, cwd, encoding: "utf8", timeout: 60_000 });
     assert.equal(r.status, 0, r.stderr);
@@ -175,6 +175,25 @@ describe("harness snapshot from a folder that holds CLAUDE_CONFIG_DIR", () => {
     const outside = json(elsewhere, cfg, "inner");
     assert.deepEqual(outside.bundle.files, inside.bundle.files);
     assert.equal(outside.bundle.id, inside.bundle.id);
+  });
+
+  it("says the bundle already exists when the same setup is snapshotted again, in text and --json", () => {
+    const dir = join(root, "twice");
+    const cfg = join(root, "twice-config");
+    mkdirSync(cfg, { recursive: true });
+    put(join(dir, "CLAUDE.md"), "twice\n");
+    const first = json(dir, cfg, "twice");
+    const second = json(dir, cfg, "twice");
+    assert.deepEqual([first.outcome, second.outcome], ["created", "unchanged"]);
+    assert.equal(second.bundle.id, first.bundle.id);
+    assert.equal(second.bundle.createdAt, first.bundle.createdAt, "it keeps the time it was first stored");
+    const text = run(dir, cfg, ["--name", "twice"]);
+    assert.match(text.stderr + text.stdout, /twice already exists, unchanged: 1 file\b/);
+    assert.ok(text.stdout.includes(first.bundle.id), text.stdout);
+    put(join(dir, "CLAUDE.md"), "changed\n");
+    const changed = run(dir, cfg, ["--name", "twice"]);
+    assert.match(changed.stderr + changed.stdout, /twice: 1 file\b/);
+    assert.doesNotMatch(changed.stderr + changed.stdout, /already exists/);
   });
 });
 

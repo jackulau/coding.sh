@@ -364,12 +364,17 @@ export async function run(c: CommandContext): Promise<number> {
         if (mcpServers.length) bundle = { ...bundle, mcpServers };
       }
     }
+    // The id is the content, so the same setup snapshotted again is a bundle already stored: it
+    // keeps its creation time, and the record outside the id (MCP servers, note) is refreshed.
+    const stored = await ctx.index.getBundle(bundle.id);
+    const existed = stored?.id === bundle.id;
+    if (stored && existed) bundle = { ...bundle, createdAt: stored.createdAt };
     await ctx.index.putBundle(bundle);
-    if (out.json) out.data({ outcome: "created", bundle: bundleJson(bundle) });
+    if (out.json) out.data({ outcome: existed ? "unchanged" : "created", bundle: bundleJson(bundle) });
     else {
       const pl = bundle.plugins?.length ? `, ${plural(bundle.plugins.length, "plugin")} (${bundle.plugins.map((p) => p.name).join(", ")})` : "";
       const mcp = bundle.mcpServers?.length ? `, ${plural(bundle.mcpServers.length, "MCP server")} recorded (${bundle.mcpServers.map((m) => m.name).join(", ")})` : "";
-      out.ok(`${bundle.name}: ${plural(Object.keys(bundle.files).length, "file")}${pl}${mcp}`);
+      out.ok(`${bundle.name}${existed ? " already exists, unchanged" : ""}: ${plural(Object.keys(bundle.files).length, "file")}${pl}${mcp}`);
       out.print(bundle.id);
     }
     return 0;
