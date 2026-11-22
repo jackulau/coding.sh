@@ -394,9 +394,10 @@ describe("cli eval new from a `coding.sh run` session", () => {
 });
 
 describe("cli color", () => {
-  it("FORCE_COLOR colors stderr (control)", () => {
-    const r = cli(tmpHome(), ["doctor"], { FORCE_COLOR: "1" });
-    assert.match(r.stderr, ANSI);
+  it("FORCE_COLOR colors stdout and stderr (control)", () => {
+    // doctor's report is on stdout; an unknown command's error is on stderr.
+    assert.match(cli(tmpHome(), ["doctor"], { FORCE_COLOR: "1" }).stdout, ANSI);
+    assert.match(cli(tmpHome(), ["sesions"], { FORCE_COLOR: "1" }).stderr, ANSI);
   });
 
   it("NO_COLOR wins over FORCE_COLOR", () => {
@@ -409,6 +410,7 @@ describe("cli color", () => {
 
   it("--no-color wins over FORCE_COLOR", () => {
     const r = cli(tmpHome(), ["doctor", "--no-color"], { FORCE_COLOR: "1" });
+    assert.doesNotMatch(r.stdout, ANSI);
     assert.doesNotMatch(r.stderr, ANSI);
   });
 });
@@ -996,7 +998,8 @@ describe("cli judge sample → judge calibrate --plan", () => {
     assert.deepEqual((parseJson(cli(h, ["judge", "sample", exp.id, "--budget", "4", "--seed", "3", "--json"]).stdout, "again") as { plan: Plan }).plan, plan, "seeded");
     const text = cli(h, ["judge", "sample", exp.id, "--budget", "4", "--seed", "3", "--out", "plan.json"]);
     assert.match(text.stdout, /audit plan correct {2}split test {2}4 of 12 cases \(seed 3\); 0 of 4 already labelled/);
-    assert.match(text.stdout, /Then: coding\.sh judge calibrate .* --grader correct --plan plan\.json/);
+    // Named for the user's shell (codingsh in PowerShell), and a test-split plan needs no --split.
+    assert.match(text.stdout, new RegExp(`^Then: ${esc(BIN)} judge calibrate \\S+ --grader correct --plan plan\\.json$`, "m"));
 
     // Three of four picks labelled: 2 pass, 1 fail.
     const labels = plan.picks.slice(0, 3).map((p, i) => JSON.stringify({ caseId: p.caseId, value: i < 2 ? "pass" : "fail" }));
@@ -1091,6 +1094,9 @@ describe("cli judge calibrate --grader <verifier>", () => {
     assert.deepEqual((parseJson(cli(h, ["judge", "calibrate", exp.id, "-g", "exact", "--sample-passes", "3", "--json"]).stdout, "again") as { queue: unknown }).queue, queue, "seeded");
     const plain = cli(h, ["judge", "calibrate", exp.id, "-g", "exact", "--sample-passes", "3"]);
     assert.match(plain.stdout, /Label 3 passing case\(s\) of exact \(seed 0\)/);
+    assert.match(plain.stdout, new RegExp(`^  ${esc(BIN)} judge calibrate \\S+ --grader exact --labels labels\\.jsonl$`, "m"));
+    const named = cli(h, ["judge", "calibrate", exp.id, "-g", "exact", "--sample-passes", "3", "--criterion", "right answer"]);
+    assert.match(named.stdout, new RegExp(`^  ${esc(BIN)} judge calibrate \\S+ --grader exact --criterion ${esc(process.platform === "win32" ? '"right answer"' : "'right answer'")} --labels labels\\.jsonl$`, "m"));
 
     const labels = queue.map((x, i) => JSON.stringify({ caseId: x.caseId, value: i < 2 ? "pass" : "fail" })).join("\n");
     writeFileSync(join(h.home, "labels.jsonl"), labels + "\n");
@@ -1197,9 +1203,9 @@ describe("cli QA regressions", () => {
     // Dogfood: "! Any command  installed, not hooked" read as a problem, and the
     // next step said `coding.sh init --agent wrapper`, which installs nothing.
     const r = cli(tmpHome(), ["doctor"]);
-    assert.match(r.stderr, new RegExp(`^✓ Any command\\s+no hooks needed; capture with ${esc(RUN)} <cmd>, no runs yet$`, "m"));
-    assert.doesNotMatch(r.stderr, /Any command \(co/);
-    assert.doesNotMatch(r.stderr, /--agent wrapper/);
+    assert.match(r.stdout, new RegExp(`^✓ Any command\\s+no hooks needed; capture with ${esc(RUN)} <cmd>, no runs yet$`, "m"));
+    assert.doesNotMatch(r.stdout, /Any command \(co/);
+    assert.doesNotMatch(r.stdout + r.stderr, /--agent wrapper/);
   });
 
   it("doctor counts sessions that have events but no session row, and names the command that repairs them (RT-11)", async () => {
@@ -1213,12 +1219,12 @@ describe("cli QA regressions", () => {
     await index.close();
     const doc = parseJson(cli(h, ["doctor", "--json"]).stdout, "doctor") as { store: { missingRows?: unknown; foldErrors?: unknown } };
     assert.deepEqual([doc.store.missingRows, doc.store.foldErrors], [{ count: 2, byAgent: { codex: 2 } }, 0]);
-    assert.match(cli(h, ["doctor"]).stderr, new RegExp(`^! Sessions\\s+2 sessions have events but no session row \\(codex 2\\); run ${esc(BIN)} ingest$`, "m"));
+    assert.match(cli(h, ["doctor"]).stdout, new RegExp(`^! Sessions\\s+2 sessions have events but no session row \\(codex 2\\); run ${esc(BIN)} ingest$`, "m"));
     // The repair command it names folds them, and doctor then says nothing about it.
     assert.equal(cli(h, ["ingest"]).status, 0);
     const after = parseJson(cli(h, ["doctor", "--json"]).stdout, "doctor") as { store: { missingRows?: unknown } };
     assert.deepEqual(after.store.missingRows, { count: 0, byAgent: {} });
-    assert.doesNotMatch(cli(h, ["doctor"]).stderr, /Sessions/);
+    assert.doesNotMatch(cli(h, ["doctor"]).stdout, /Sessions/);
   });
 
   it("show reports files a hook session wrote outside edit tools, from its end snapshot", () => {
@@ -1262,8 +1268,8 @@ describe("cli QA regressions", () => {
     const PATH = pathOf(bin, h.env.PATH);
     assert.equal(cli(h, ["init", "--yes", "--agent", "cursor"], { PATH }).status, 0);
     const r = cli(h, ["doctor", "--agent", "cursor"], { PATH });
-    assert.match(r.stderr, /^! Cursor CLI\s+v2025\.09\.18-7ae6800, hooked but not firing/m);
-    assert.match(r.stderr, /predates CLI hooks/);
+    assert.match(r.stdout, /^! Cursor CLI\s+v2025\.09\.18-7ae6800, hooked but not firing/m);
+    assert.match(r.stdout, /predates CLI hooks/);
   });
 
   it("init's summary says what each agent got and warns when capture cannot work", () => {
@@ -1325,13 +1331,13 @@ describe("doctor on a dogfood machine", () => {
     const row = new RegExp(`^✓ Claude Code\\s+v2\\.1\\.319, hooked in ${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(project\\), `, "m");
 
     const inProj = run(proj, ["doctor", "--agent", "claude-code"]);
-    assert.match(inProj.stderr, row);
-    assert.doesNotMatch(inProj.stderr, /not hooked|Capture the agents without hooks/);
+    assert.match(inProj.stdout, row);
+    assert.doesNotMatch(inProj.stdout + inProj.stderr, /not hooked|Capture the agents without hooks/);
 
     // From elsewhere, the project is known from where the agent's events ran.
     hook(proj);
     const elsewhere = run(h.home, ["doctor", "--agent", "claude-code"]);
-    assert.match(elsewhere.stderr, row);
+    assert.match(elsewhere.stdout, row);
     const doc = parseJson(run(h.home, ["doctor", "--json", "--agent", "claude-code"]).stdout, "doctor") as { agents: { id: string; hooked: boolean; projectHooks: string[] }[] };
     const a = doc.agents.find((x) => x.id === "claude-code")!;
     assert.equal(a.hooked, false, "hooked stays about the user config");
@@ -1352,9 +1358,9 @@ describe("doctor on a dogfood machine", () => {
     assert.ok(!existsSync(join(h.data, "bin", "hook.mjs")));
 
     const r = run(proj, ["doctor", "--agent", "claude-code"]);
-    assert.match(r.stderr, new RegExp(`^! Claude Code\\s+v2\\.1\\.319, hooks in ${esc(file)} \\(project\\) run ${esc(otherHook)}, not this home's hook, `, "m"));
-    assert.doesNotMatch(r.stderr, /✓ Claude Code/);
-    assert.match(r.stderr, new RegExp(`^! Hook\\s+missing at .*hook\\.(?:mjs|sh); run ${esc(BIN)} init$`, "m"));
+    assert.match(r.stdout, new RegExp(`^! Claude Code\\s+v2\\.1\\.319, hooks in ${esc(file)} \\(project\\) run ${esc(otherHook)}, not this home's hook, `, "m"));
+    assert.doesNotMatch(r.stdout, /✓ Claude Code/);
+    assert.match(r.stdout, new RegExp(`^! Hook\\s+missing at .*hook\\.(?:mjs|sh); run ${esc(BIN)} init$`, "m"));
     assert.match(r.stderr, new RegExp(`${esc(BIN)} init --agent claude-code`));
     const doc = parseJson(run(proj, ["doctor", "--json", "--agent", "claude-code"]).stdout, "doctor") as { agents: { id: string; hookFiles: unknown[] }[] };
     assert.deepEqual(doc.agents.find((x) => x.id === "claude-code")!.hookFiles, [{ file, scope: "project", hook: otherHook, current: false }]);
@@ -1365,23 +1371,23 @@ describe("doctor on a dogfood machine", () => {
     assert.equal(ui.status, 0);
     rmSync(join(h.data, "bin", "hook.mjs"));
     const gone = run(proj, ["doctor", "--agent", "claude-code"]);
-    assert.match(gone.stderr, new RegExp(`^! Claude Code\\s+v2\\.1\\.319, hooked in ${esc(join(h.home, ".claude", "settings.json"))}, but the hook it runs is missing, `, "m"));
-    assert.match(gone.stderr, /^! Hook\s+missing at /m);
+    assert.match(gone.stdout, new RegExp(`^! Claude Code\\s+v2\\.1\\.319, hooked in ${esc(join(h.home, ".claude", "settings.json"))}, but the hook it runs is missing, `, "m"));
+    assert.match(gone.stdout, /^! Hook\s+missing at /m);
   });
 
   it("never says 'not hooked' while events arrive", () => {
     const { h, run, hook } = claudeHome();
     const before = run(h.home, ["doctor", "--agent", "claude-code"]);
-    assert.match(before.stderr, /^! Claude Code\s+v2\.1\.319, not hooked, no events yet/m);
+    assert.match(before.stdout, /^! Claude Code\s+v2\.1\.319, not hooked, no events yet/m);
     const other = join(h.root, "elsewhere");
     mkdirSync(other);
     hook(other);
     const r = run(h.home, ["doctor", "--agent", "claude-code"]);
     // Events alone are not capture (EZ-2): the row says they arrive, stays a warning and names the fix.
-    assert.match(r.stderr, /^! Claude Code\s+v2\.1\.319, events arriving, hook not in user config, last event /m);
-    assert.doesNotMatch(r.stderr, /not hooked/);
+    assert.match(r.stdout, /^! Claude Code\s+v2\.1\.319, events arriving, hook not in user config, last event /m);
+    assert.doesNotMatch(r.stdout + r.stderr, /not hooked/);
     assert.match(r.stderr, new RegExp(`Capture the agents without hooks:\\n\\s+${esc(BIN)} init --agent claude-code`));
-    assert.equal(r.stdout, "1 agent not capturing\n");
+    assert.equal(r.stdout.trimEnd().split("\n").at(-1), "1 agent not capturing");
   });
 
   it("a stale hook bin gets `update --refresh-bin`, not init, and the next ingest refreshes it", () => {
@@ -1394,13 +1400,13 @@ describe("doctor on a dogfood machine", () => {
     writeFileSync(join(binDir, "hook.sh"), readFileSync(new URL("../../src/spool/hook.sh", import.meta.url), "utf8"));
     writeFileSync(join(binDir, "cli-path"), CLI + "\n");
     const r = run(h.home, ["doctor"]);
-    assert.match(r.stderr, new RegExp(`^! Hook\\s+.*hook\\.mjs is stale \\(differs from the hook this CLI ships\\); run ${esc(BIN)} update --refresh-bin$`, "m"));
-    assert.doesNotMatch(r.stderr, /stale.*coding\.?sh init/);
+    assert.match(r.stdout, new RegExp(`^! Hook\\s+.*hook\\.mjs is stale \\(differs from the hook this CLI ships\\); run ${esc(BIN)} update --refresh-bin$`, "m"));
+    assert.doesNotMatch(r.stdout + r.stderr, /stale.*coding\.?sh init/);
 
     // `npm i -g` of a newer version: the hook's session-end ingest runs the new CLI.
     assert.equal(run(h.home, ["ingest", "--background"]).status, 0);
     assert.equal(readFileSync(hookFile, "utf8"), readFileSync(HOOK, "utf8"));
-    assert.match(run(h.home, ["doctor"]).stderr, /^✓ Hook\s+.*hook\.mjs$/m);
+    assert.match(run(h.home, ["doctor"]).stdout, /^✓ Hook\s+.*hook\.mjs$/m);
   });
 
   it("ingest leaves the bin alone when init never ran, or when cli-path names another install", () => {
