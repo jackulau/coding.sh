@@ -260,8 +260,11 @@ In serve, an `llm.call` that has tokens but no `costUsd` gets
 - `coding_sh_session_flags_total{flag}`: the failure flags on those sessions, tags left out
 
 The three session counters appear once a session is counted. A session counts once, when a commit
-stores its `session.end` event; cost or flags it gains later are not added. A session that never
-gets a `session.end` (a conversation-keyed OpenTelemetry session) is not counted. They start at 0
+stores its `session.end` event; cost or flags it gains later are not added. Cost is also counted
+when a commit stores a `turn.end` of a session that has not ended: the cost the session gained
+since it was last counted. So a session that never gets a `session.end` (a conversation-keyed
+OpenTelemetry session, one turn per trace) counts its cost as each trace's root span arrives, but
+not in `coding_sh_sessions_total` or `coding_sh_session_flags_total`. They start at 0
 when serve starts. Past 500 label sets a counter puts new label values under `other`.
 
 **Alerts.** The writer runs the same check as `coding.sh alert check` every minute, on the alerts in
