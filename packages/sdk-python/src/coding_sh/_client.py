@@ -58,10 +58,19 @@ def _env_bool(name: str) -> Optional[bool]:
     return None if v is None else v.strip().lower() in _TRUE
 
 
+def base_url(url: str) -> str:
+    """The server's base URL, as the TS SDK reads it: trailing slashes and then one trailing
+    /v1/ingest or /v1/traces removed (https://obs.example.com/v1/traces -> https://obs.example.com)."""
+    u = url.strip().rstrip("/")
+    for suffix in ("/v1/ingest", "/v1/traces"):
+        if u.endswith(suffix):
+            return u[: -len(suffix)]
+    return u
+
+
 def ingest_url(url: str) -> str:
     """Base URL (https://obs.example.com) -> https://obs.example.com/v1/ingest."""
-    u = url.strip().rstrip("/")
-    return u if u.endswith("/v1/ingest") else u + "/v1/ingest"
+    return base_url(url) + "/v1/ingest"
 
 
 _warned_urls: "set[str]" = set()

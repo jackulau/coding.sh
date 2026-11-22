@@ -206,6 +206,7 @@ grouped by area, with links to the docs for the details.
 - **SDK.** Without `CODING_SH_URL`, the TypeScript SDK's `observe()` and `observeFetch()` pass each call through untouched, as the docs say. Before, `observe()` still added `stream_options` to OpenAI chat streams, and `observeFetch()` still read every request and response body, so `flush()` waited on open streams. [SDK](https://coding.sh/docs/sdk)
 - **SDK.** In an Anthropic tool loop, the TypeScript SDK's `observe()` records the user's prompt as each call's `user.message` and session title, as the Python SDK does. Before, it took the text of the last `tool_result` block, so the sessions were titled with a tool's output. [SDK](https://coding.sh/docs/sdk)
 - **SDK.** In TypeScript, the exit flush also sends a batch that is waiting for its retry, and warns when it has to drop events. Before, a script that ended without `flush()` while the server was down or answered 503 exited with its events lost and no warning. [SDK](https://coding.sh/docs/sdk)
+- **SDK.** The Python SDK reads a `CODING_SH_URL` that ends in `/v1/traces` or `/v1/ingest` as the TypeScript SDK does: events go to `/v1/ingest`, and `coding_sh.otel` spans go to `/v1/traces`. Before, a URL ending in `/v1/traces` sent events to `/v1/traces/v1/ingest`, which the server does not take, so they were dropped. [SDK](https://coding.sh/docs/sdk)
 
 ## [0.1.7] - 2026-11-16
 

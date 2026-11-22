@@ -51,6 +51,25 @@ class ConfigUrlTest(unittest.TestCase):
             self.assertFalse(_client.Config().enabled)
 
 
+class BaseUrlTest(unittest.TestCase):
+    """The server URL is read as the TS SDK reads it (baseUrl in packages/sdk/src/config.ts)."""
+
+    def test_trailing_slashes_and_one_v1_ingest_or_v1_traces_are_removed(self) -> None:
+        cases = {
+            "https://obs.example.com": "https://obs.example.com",
+            "https://obs.example.com/": "https://obs.example.com",
+            " https://obs.example.com/v1/ingest ": "https://obs.example.com",
+            "https://obs.example.com/v1/traces": "https://obs.example.com",
+            "https://obs.example.com/v1/traces//": "https://obs.example.com",
+            "https://obs.example.com/csh/v1/traces": "https://obs.example.com/csh",
+            "https://obs.example.com/v1/traces/v1/ingest": "https://obs.example.com/v1/traces",
+            "https://obs.example.com/v1/tracesx": "https://obs.example.com/v1/tracesx",
+        }
+        for url, base in cases.items():
+            with self.subTest(url=url):
+                self.assertEqual(_client.ingest_url(url), base + "/v1/ingest")
+
+
 class _nullcontext:
     def __enter__(self) -> None:
         return None

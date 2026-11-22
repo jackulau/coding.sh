@@ -60,6 +60,13 @@ class TransportTest(unittest.TestCase):
         collect(self.server)
         self.assertEqual(self.server.requests[0]["path"], "/v1/ingest")
 
+    def test_url_ending_in_v1_traces_sends_to_v1_ingest(self) -> None:
+        # The OTLP address of the same server, as the TS SDK takes it.
+        start_sdk(self.server, url=self.server.url + "/v1/traces")
+        self._span()
+        collect(self.server)
+        self.assertEqual([r["path"] for r in self.server.requests], ["/v1/ingest"])
+
     def test_no_url_means_no_op(self) -> None:
         coding_sh.init(url=None, key=KEY)
         self.assertFalse(_trace.enabled())

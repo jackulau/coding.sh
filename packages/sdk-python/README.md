@@ -91,7 +91,7 @@ is optional; arguments override env vars.
 
 | Env | Meaning |
 |---|---|
-| `CODING_SH_URL` | Server base URL. Unset = SDK off. |
+| `CODING_SH_URL` | Server base URL. A URL that ends in `/v1/ingest` or `/v1/traces` works too. Unset = SDK off. |
 | `CODING_SH_INGEST_KEY` | `csh_ik_...` ingest key. It decides the project. |
 | `CODING_SH_SERVICE` (or `OTEL_SERVICE_NAME`) | Service name; becomes the session's agent id. |
 | `CODING_SH_CAPTURE_MODE` | `full` (default) or `metadata` (no message text or tool I/O). |
