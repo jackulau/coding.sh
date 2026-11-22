@@ -344,8 +344,16 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
     const ownSignals = cmd.handlesSignals === true && !action;
     const handle = !cmd.passthrough && !ownSignals;
     if (handle) for (const sig of STOP_SIGNALS) process.on(sig, onStop);
+    let upgrade: typeof import("../store/upgrade.ts") | undefined;
     try {
       const mod = await cmd.load();
+      // An index upgrade too quick to print progress names the copy of the index it kept in one dim
+      // line (store/upgrade.ts), for a person at a terminal, as the update notice: not with --json
+      // or a piped stderr, not for mcp or statusline, and not for upgrade-store, which says so itself.
+      if (!out.json && process.stderr.isTTY === true && !["mcp", "statusline", "upgrade-store"].includes(cmd.name)) {
+        upgrade = await import("../store/upgrade.ts");
+        upgrade.setUpgradeNotice((line) => out.dim(line));
+      }
       let code: number | void;
       try {
         code = await mod.run({
@@ -377,6 +385,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
       await updateNotice(env, out, cmd.name, (code ?? 0) === 0);
       return code ?? 0;
     } finally {
+      upgrade?.setUpgradeNotice(undefined);
       if (handle) for (const sig of STOP_SIGNALS) process.off(sig, onStop);
     }
   } catch (e) {

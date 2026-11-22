@@ -229,6 +229,11 @@ export class Output {
     this.err(msg ? `  ${msg}` : "");
   }
 
+  /** Dim stderr line, not indented: a notice beside what the command prints (it stops a spinner first). */
+  dim(msg: string): void {
+    this.err(this.style(msg, "faint", "err"));
+  }
+
   /** Label/value row: label at column 2 in a 16-column field, value at column 18. `answer` puts it on stdout (a report is the answer). */
   row(label: string, value: string, glyph: "ok" | "warn" | "fail" | "none" = "none", answer = false): void {
     const sink = answer ? "out" : "err";
