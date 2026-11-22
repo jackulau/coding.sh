@@ -7,8 +7,10 @@ import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { statusOf, type Budget, type BudgetStatus } from "../../src/budget/index.ts";
-import { budgetGuard } from "../../src/proxy/budget.ts";
+import { budgetGuard, callAgent } from "../../src/proxy/budget.ts";
+import { detectClient, linkCall, ResponseSessions } from "../../src/proxy/link.ts";
 import { startProxy, type ProxyServer } from "../../src/proxy/server.ts";
+import { parseRequest } from "../../src/proxy/wire.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { mkSession } from "../cli/_cmd.ts";
 import { cleanup, runLive, runSync, tmpHome } from "../cli/_run-cli.ts";
@@ -55,6 +57,9 @@ async function proxy(up: Upstream, load?: (now: number) => Promise<BudgetStatus[
 const messages = JSON.stringify({ model: "claude-sonnet-4-5", stream: true, max_tokens: 5, messages: [{ role: "user", content: "hi" }] });
 const anthropicHeaders = { "content-type": "application/json", "anthropic-version": "2023-06-01", "x-api-key": "sk-ant-x" };
 const claudeCode = { ...anthropicHeaders, "x-claude-code-session-id": "11111111-2222-3333-4444-555555555555" };
+const responsesBody = JSON.stringify({ model: "gpt-5", input: "hi" });
+const codex = { "content-type": "application/json", authorization: "Bearer sk-x", originator: "codex_cli_rs" };
+const codexSession = { ...codex, "session-id": "0193cccc-1111-7222-8333-444455556666" };
 
 describe("proxy budget guard", () => {
   test("an over budget answers 429 with Retry-After and an Anthropic error; the upstream is never called", async () => {
@@ -121,11 +126,36 @@ describe("proxy budget guard", () => {
     const p = await proxy(up, async (now) => [over(budget({ id: "day-codex", agent: "codex" }), 5, now), over(budget({ id: "day-web", repo: "web" }), 5, now), over(budget({ id: "all", limitUsd: 10 }), 5, now)]);
     let r = await call(p.url, { path: "/v1/messages", body: messages, headers: claudeCode });
     assert.equal(r.status, 200);
-    // A Codex call is the codex budget's.
-    r = await call(p.url, { path: "/v1/responses", body: JSON.stringify({ model: "gpt-5", input: "hi" }), headers: { "content-type": "application/json", authorization: "Bearer sk-x", originator: "codex_cli_rs" } });
+    // A Codex call that names its session is the codex budget's.
+    r = await call(p.url, { path: "/v1/responses", body: responsesBody, headers: codexSession });
     assert.equal(r.status, 429);
     assert.equal(JSON.parse(r.body.toString()).error.budget.agent, "codex");
     assert.equal(up.seen.length, 1);
+  });
+
+  test("a call counts in the budgets of the agent it is stored under: a Codex call that names no session is proxy's", async () => {
+    const up = await upstream();
+    // Claude Code before 2.x names its session only in the body, which the guard does not read: it stays claude-code's.
+    const oldClaudeCode = { ...anthropicHeaders, "user-agent": "claude-cli/1.0.100 (external, cli)" };
+    const oldBody = JSON.stringify({ ...JSON.parse(messages), metadata: { user_id: "user_abc_account_00000000-0000-4000-8000-000000000000_session_11111111-2222-3333-4444-555555555555" } });
+    const cases = [
+      { agent: "proxy", headers: codex, path: "/v1/responses", body: responsesBody, blocked: true },
+      { agent: "codex", headers: codex, path: "/v1/responses", body: responsesBody, blocked: false },
+      { agent: "codex", headers: codexSession, path: "/v1/responses", body: responsesBody, blocked: true },
+      { agent: "proxy", headers: codexSession, path: "/v1/responses", body: responsesBody, blocked: false },
+      { agent: "claude-code", headers: oldClaudeCode, path: "/v1/messages", body: oldBody, blocked: true },
+      { agent: "proxy", headers: oldClaudeCode, path: "/v1/messages", body: oldBody, blocked: false },
+    ] as const;
+    for (const c of cases) {
+      const p = await proxy(up, async (now) => [over(budget({ id: `day-${c.agent}`, agent: c.agent }), 5, now)]);
+      const r = await call(p.url, { path: c.path, body: c.body, headers: c.headers });
+      const label = `${c.agent} budget, ${JSON.stringify(c.headers)}`;
+      assert.equal(r.status, c.blocked ? 429 : 200, label);
+      if (c.blocked) assert.equal(JSON.parse(r.body.toString()).error.budget.agent, c.agent, label);
+      // The guard's agent is the one the proxy stores the call under.
+      const req = parseRequest(c.path === "/v1/messages" ? "messages" : "responses", JSON.parse(c.body));
+      assert.equal(callAgent(c.headers), linkCall(c.headers, detectClient(c.headers), req, undefined, new ResponseSessions()).agent, label);
+    }
   });
 
   test("count_tokens is not billed and goes through", async () => {

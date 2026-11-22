@@ -353,6 +353,7 @@ grouped by area, with links to the docs for the details.
 - **Alerts.** `alert add --help` shows a command target for Windows, `"command:node C:\alerts\notify.mjs"`, beside the `notify-send` one, and on Windows the error for an empty `--notify command:` suggests it. A command target runs in cmd.exe there, where `notify-send` fails. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/alerts.md#run-a-command))
 - **Budgets.** A repo budget counts the sessions `sessions --repo` lists for its path: set on a checkout's root, or on a folder in a linked worktree, it takes in every worktree of the repo. Before, it counted only the sessions at or under the path, so a repo budget's spend may rise. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/track-cost.md#set-a-budget))
 - **Budgets.** The 429 from `proxy --enforce-budget` names `budget status` as the shell the proxy started in runs it: `codingsh budget status` in PowerShell or cmd, where `coding.sh budget status` fails. Before, it always said `coding.sh budget status`. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/capture-with-proxy.md#stop-calls-over-a-budget))
+- **Budgets.** `proxy --enforce-budget` matches a call to the agent the proxy stores it under. A Codex call that sends no session id is stored as agent `proxy`, so a `--agent proxy` budget now blocks it and a `--agent codex` budget no longer does. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/capture-with-proxy.md#stop-calls-over-a-budget))
 
 ## [0.1.7] - 2026-11-16
 

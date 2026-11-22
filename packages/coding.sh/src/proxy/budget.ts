@@ -2,13 +2,14 @@
 // limit applies to is answered 429 before anything goes upstream. Spend is read
 // from the store at most every 30 s (and again once a period has reset).
 //
-// The proxy knows a call's agent from its headers (Claude Code, Codex, else
-// "proxy", as linkCall records it) but not its repo or the session a --where
-// query would match, so a budget with a repo or a where never blocks a call;
-// budgets for every session or for an agent do, and only their spend is read.
+// The proxy knows from a call's headers the agent it will be stored under
+// (Claude Code or Codex for a call that names its session, else "proxy", as
+// linkCall stores it) but not its repo or the session a --where query would
+// match, so a budget with a repo or a where never blocks a call; budgets for
+// every session or for an agent do, and only their spend is read.
 import type { IncomingHttpHeaders } from "node:http";
 import type { Budget, BudgetStatus } from "../budget/index.ts";
-import { detectClient } from "./link.ts";
+import { detectClient, namedSession, storedAgent } from "./link.ts";
 import type { Route } from "./wire.ts";
 
 /** How long the proxy reuses the spend it read. */
@@ -27,10 +28,15 @@ export interface BudgetGuard {
   check(route: Route, headers: IncomingHttpHeaders): Promise<BudgetBlock | undefined>;
 }
 
-/** The agent a call is recorded under: Claude Code and Codex by their headers, every other client "proxy". */
+/**
+ * The agent the call will be stored under (link.ts storedAgent): Claude Code's or Codex's id when
+ * the call names its session, else "proxy". The guard runs before the body is read, so a Claude
+ * Code call counts as naming its session: before 2.x, Claude Code names it only in the body
+ * (`metadata.user_id`). Codex names it in its headers.
+ */
 export function callAgent(headers: IncomingHttpHeaders): string {
-  const id = detectClient(headers).id;
-  return id === "claude-code" || id === "codex" ? id : "proxy";
+  const client = detectClient(headers);
+  return storedAgent(client, client.id === "claude-code" || namedSession(headers, client, undefined) !== undefined);
 }
 
 /** A budget the proxy can match a call to: one for every session or for one agent, not one with a repo or a where. */
