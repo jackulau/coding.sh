@@ -1,12 +1,13 @@
 // MCP resources: codingsh://latest and codingsh://session/<id>, each a
-// markdown digest of one session.
+// markdown digest of one session. <id> takes the ids the tools take.
 import { noSessionsHint } from "../cli/first-session.ts";
 import type { Context } from "../core/context.ts";
+import { AmbiguousRef, findSessionRef } from "../core/session-ref.ts";
 import type { IndexStore } from "../core/types.ts";
 import type { Session } from "../schema/index.ts";
 import { clip, iso } from "./data.ts";
 import { sessionMarkdown } from "./digest.ts";
-import { RPC, RpcFailure, type ResourceDef, type ResourceProvider, type ResourceTemplateDef } from "./protocol.ts";
+import { clipText, RPC, RpcFailure, type ResourceDef, type ResourceProvider, type ResourceTemplateDef } from "./protocol.ts";
 
 export const SCHEME = "codingsh:";
 export const LATEST_URI = "codingsh://latest";
@@ -49,6 +50,29 @@ async function pageAfter(index: IndexStore, c: Cursor, limit: number): Promise<S
   return out.slice(0, limit);
 }
 
+/**
+ * The session `id` in `uri` names, resolved as the tools resolve a session id (core/session-ref.ts
+ * findSessionRef): the exact id, latest, a unique prefix, an SDK id without its default project or
+ * a subagent's own id. Undefined when nothing matches, so the URI stays not found. A prefix several
+ * sessions share fails with invalid params in both eras, listing them in the tools' words.
+ */
+async function sessionRef(index: IndexStore, uri: string, id: string): Promise<Session | undefined> {
+  try {
+    return await findSessionRef(index, id);
+  } catch (e) {
+    if (!(e instanceof AmbiguousRef)) throw e;
+    const list = e.candidates.map((x) => `${x.shortId} (${x.agent}, ${iso(x.startedAt)}${x.title ? `, ${JSON.stringify(clip(x.title, 60))}` : ""})`);
+    const candidates = e.candidates.map((x) => {
+      const c: Record<string, unknown> = { sessionId: x.id, shortId: x.shortId, uri: sessionUri(x.id), agent: x.agent, startedAt: iso(x.startedAt) };
+      if (x.title) c.title = clip(x.title, 120);
+      return c;
+    });
+    const data: Record<string, unknown> = { uri: clipText(uri, 1000), reason: "ambiguous", candidates };
+    if (e.more) data.more = true;
+    throw new RpcFailure(RPC.INVALID_PARAMS, `Session id prefix ${JSON.stringify(id)} matches more than one session: ${list.join("; ")}${e.more ? "; and more" : ""}. Pass one of these ids, or more of the id.`, data);
+  }
+}
+
 export function buildResources(store: () => Promise<Context>): ResourceProvider {
   return {
     async list(cursor) {
@@ -84,7 +108,7 @@ export function buildResources(store: () => Promise<Context>): ResourceProvider 
         } catch {
           return undefined;
         }
-        if (id) s = await ctx.index.getSession(id);
+        if (id) s = await sessionRef(ctx.index, uri, id);
       }
       // codingsh://latest is always listed, so an empty store answers with what to do next, not "not found".
       if (!s && uri === LATEST_URI) return { uri, mimeType: "text/markdown", text: `# Latest session
