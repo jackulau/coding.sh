@@ -85,4 +85,33 @@ describe("judge calibrate with case labels", () => {
     assert.match(named.stdout, /n=3\b/);
     assert.doesNotMatch(named.stderr, /No human label/);
   });
+
+  it("the calibrate command judge sample prints runs as printed: the plan's split and criterion, in the user's shell", async () => {
+    const cases = Array.from({ length: 3 }, (_, i) => ["--case", JSON.stringify({ input: `d${i}`, expected: `d${i}` })]).flat();
+    const add = run("dataset", "add", "devset", ...cases, "--split", "dev");
+    assert.equal(add.status, 0, add.stderr);
+    const ran = run("exp", "run", "-d", "devset", "--task", '{"kind":"command","command":"node echo.mjs"}', "-g", '{"kind":"llm","name":"quality","rubric":"right?","provider":"mock","tunedOn":["train"]}', "--json");
+    assert.equal(ran.status, 0, ran.stderr);
+    const exp = (JSON.parse(ran.stdout) as { experiment: { id: string; runs: { caseId: string }[] } }).experiment;
+    const index = await SqliteIndexStore.open(join(env.CODING_SH_HOME!, "index.db"));
+    try {
+      for (const id of new Set(exp.runs.map((r) => r.caseId))) await addScore(index, { target: "case", targetId: id, name: "correct", value: true }, { by: "tester", source: "human", now: Date.now() });
+    } finally {
+      await index.close();
+    }
+
+    // PowerShell and cmd set no MSYSTEM or SHELL; there the CLI is codingsh.
+    const ps = spawnSync(process.execPath, ["--no-warnings", CLI, "judge", "sample", exp.id, "--budget", "2", "--split", "dev", "--criterion", "correct", "--out", "plan.json"], { env: { ...env, MSYSTEM: undefined, SHELL: undefined }, encoding: "utf8", cwd: root, timeout: 60_000 });
+    assert.equal(ps.status, 0, ps.stderr);
+    const then = /^Then: (\S+) (.+)$/m.exec(ps.stdout);
+    assert.ok(then, ps.stdout);
+    assert.equal(then[1], process.platform === "win32" ? "codingsh" : "coding.sh");
+    assert.equal(then[2], `judge calibrate ${exp.id} --grader quality --plan plan.json --split dev`);
+
+    // As printed, it reads the plan's dev split and the "correct" labels the plan was drawn for.
+    const cal = run(...then[2].split(" "));
+    assert.notEqual(cal.status, 2, cal.stderr);
+    assert.match(cal.stdout, /human-audited pass rate 1\.00 \[[^\]]*\] \(2\/2 of plan labelled/);
+    assert.doesNotMatch(cal.stderr, /No human label/);
+  });
 });

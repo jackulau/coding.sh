@@ -1417,8 +1417,11 @@ human-audited pass rate 0.71 [0.63, 0.79] (42/50 of plan labelled; worst case ±
   between 0.62 and 0.78 if the unlabelled picks all fail or all pass
 ```
 
-Until every pick is labelled, it also prints those bounds and a warning. A plan drawn for another
-experiment, grader, split or seed is refused. `--json` carries `calibration.audited`.
+Until every pick is labelled, it also prints those bounds and a warning. It reads the labels named
+after the criterion the plan was drawn for, unless `--criterion` names another. A plan drawn for
+another experiment, grader, split or seed is refused. `judge sample --out` ends with the calibrate
+command for its plan, with `--split` when the plan is not from `test`. `--json` carries
+`calibration.audited`.
 
 ### Checklists and trace checks
 
