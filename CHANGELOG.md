@@ -340,6 +340,7 @@ grouped by area, with links to the docs for the details.
 - **Viewer.** On a phone, the step detail's Steps button brings the selected step fully below the top bar, and below the replay bar during a replay, instead of partly behind it. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#open-the-viewer))
 - **Viewer.** Failure counts say what they count: the tests badge reads "1 test failed" for the last run, the tool errors badge names on hover the benign and interrupted calls it leaves out, and the step bar and folded turns say "failed steps", which counts every step that failed. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#open-the-viewer))
 - **Viewer.** Durations round as the CLI's do, on the server-drawn list too: past an hour to the nearest minute and past a day to the nearest hour, so 8,975,379 ms reads 2h 30m, not 2h 29m. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#open-the-viewer))
+- **MCP.** `session_get`, `session_current` and the `codingsh://session/<id>` resource print durations as the CLI does: 119.6 s is 2m00s, not 1m60s, and 8,975,379 ms is 2h30m, not 2h29m. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#ask-your-agent))
 
 ## [0.1.7] - 2026-11-16
 
