@@ -160,3 +160,24 @@ describe("claude --resume capture", () => {
     assert.equal(new Set([a!.id, r1!.id, r2!.id]).size, 3, "each resume is its own row");
   });
 });
+
+describe("phase titles", () => {
+  it("skip harness notices and frame-only prompts, and title from the first real prompt", () => {
+    n = 0;
+    clock = T0;
+    const frame = "[Workflow harness — computed task] The task text below was computed at runtime by a workflow script.";
+    const events = [
+      ev("session.start", { source: "startup" }),
+      ev("user.message", { text: "Fix the cache" }),
+      ev("session.start", { source: "resume" }, { gap: 60 * MIN }),
+      ev("user.message", { text: "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>" }),
+      ev("user.message", { text: frame }),
+      ev("user.message", { text: "Now add the test" }),
+      ev("session.start", { source: "resume" }, { gap: 60 * MIN }),
+      ev("user.message", { text: `${frame}\n  Project: demo\n  Rename the export command` }),
+    ];
+    const titles = sessionOutline(events).phases.map((p) => p.title);
+    assert.deepEqual(titles, ["Fix the cache", "Now add the test", "Rename the export command"]);
+    assert.deepEqual(buildSession(events).stats.phases?.map((p) => p.title), titles);
+  });
+});

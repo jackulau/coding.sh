@@ -80,6 +80,7 @@ grouped by area, with links to the docs for the details.
 
 ### Fixed
 
+- **Sessions.** A subagent's title skips workflow frame lines before it takes one line, and a `Project:` line is skipped only in a framed prompt. A workflow agent with only a frame is titled by its phase and label. A phase is titled by its first prompt that is not a harness notice or frame. [Query](https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md#sessions)
 - **Capture.** A shell call gives a test result only when its command runs tests, so `tail ci.log` or `grep "test result" log` no longer reports an old run. T3 Code instance ids such as `claudeHub` map to their agent, and workflow agents carry their run id, name, phase and label. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#test-results)
 - **MCP.** `session_get`, `session_current` and `sessions_list` add `repoMain`, the main checkout's root, for a session in a linked worktree, as `show --json` does. The session resource's Repo line names it too. [MCP](https://coding.sh/docs/mcp#tools)
 - **Viewer.** Review stays a top tab on a phone, where tabs scroll sideways with no name cut. The Run tree shows every name on a phone, the activity cell fits "5,050 tools · 45 failed", and an unknown session logs no 404. A skip refused because the item was scored elsewhere moves on; Review buttons are 44px on touch. [Explore](https://coding.sh/docs/explore#open-the-viewer)
