@@ -4,7 +4,7 @@
 // recall; with --candidate or --description, a paired A/B of two descriptions.
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { getAdapter } from "../../adapters/index.ts";
+import { ADAPTERS, getAdapter } from "../../adapters/index.ts";
 import { sortableId } from "../../core/ids.ts";
 import { paths } from "../../core/paths.ts";
 import { snapshotDir } from "../../core/snapshot.ts";
@@ -28,7 +28,7 @@ import {
   type TriggerReport,
   type TriggerSpec,
 } from "../../eval/trigger.ts";
-import { positiveInt, UsageError } from "../args.ts";
+import { positiveInt, unknownAgent, UsageError } from "../args.ts";
 import { requireConsent, str, withContext } from "../common.ts";
 import { cliCommand, rerunWithYes } from "../next-steps.ts";
 import { ensureHookBin } from "../hookbin.ts";
@@ -125,7 +125,8 @@ export async function evalTrigger(c: CommandContext, hooks: { onResult?: (r: Tri
     }
     const agent = (base?.agent ?? agentFlag ?? "claude-code") as AgentId;
     const adapter = getAdapter(agent);
-    if (!adapter) throw new UsageError(`Unknown agent ${JSON.stringify(agent)}`, { reason: "invalid_argument" });
+    // Trigger probes run the agent headless: only the agents with a driver are worth naming.
+    if (!adapter) throw unknownAgent(agent, ADAPTERS.filter((a) => a.run).map((a) => a.id), "invalid_argument");
     if (!adapter.run) throw new CliError(`Agent ${agent} has no headless driver, so it can't run trigger probes`, { reason: "unsupported_agent" });
     const model = str(c.flags.model);
     const installed = (s: SkillSource): SkillSource => ({ ...s, name: skill });

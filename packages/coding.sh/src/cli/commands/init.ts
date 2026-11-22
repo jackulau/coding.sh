@@ -22,7 +22,7 @@ import { mcpLaunchSpec, mcpLauncherSource, runningCli } from "../../mcp/launch.t
 import { applyProxyInstall, isProxyAgent, planProxyInstall, readProxyInstalls } from "../../proxy/install.ts";
 import { proxySettings } from "../../proxy/state.ts";
 import { spawnBackgroundIngest } from "../../spool/kick.ts";
-import { suggest, UsageError } from "../args.ts";
+import { unknownAgent, UsageError } from "../args.ts";
 import { changeJson, printChanges, shortPath } from "../changes.ts";
 import { ingestCli, list, requireConsent, str, underImportLock, withContext } from "../common.ts";
 import { hookRedactSource, hookShSource, hookSource, planHookBin, writeHookBin } from "../hookbin.ts";
@@ -36,10 +36,7 @@ export const DOCS_URL = "https://coding.sh/docs";
 export function pickAdapters(names: string[]): Adapter[] {
   return names.map((n) => {
     const a = ADAPTERS.find((x) => x.id === n);
-    if (!a) {
-      const s = suggest(n, ADAPTERS.map((x) => x.id));
-      throw new UsageError(`Unknown agent ${JSON.stringify(n)}`, { suggestion: s ? `--agent ${s}` : undefined, reason: "unknown_agent" });
-    }
+    if (!a) throw unknownAgent(n, ADAPTERS.map((x) => x.id));
     return a;
   });
 }
