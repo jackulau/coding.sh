@@ -1,8 +1,8 @@
 // The front page's install box, in the hero and again under "Try it on your next session",
 // offers three ways in: the setup prompt for an agent (picked first), the npx command and the
 // install script. A radio group picks one, its copy button copies exactly that text, and a note
-// under it says where it runs. The two commands are the ones /docs/install shows, and every
-// language carries the same box.
+// under it says where it runs; the npx note gives the command that runs on Windows. The commands
+// are the ones /docs/install shows, and every language carries the same box.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { distOpts, needDist } from "./_dist.mjs";
 import { LOCALES } from "../src/i18n/locales.mjs";
-import { SETUP_PROMPT } from "../src/data/prompts.ts";
+import { QUICKSTART_PATHS, SETUP_PROMPT } from "../src/data/prompts.ts";
 
 const SITE = fileURLToPath(new URL("../", import.meta.url));
 const DIST = join(SITE, "dist");
@@ -25,6 +25,7 @@ const constant = (name) => {
   return JSON.parse(m[1]);
 };
 const NPX = constant("INSTALL_CMD");
+const NPX_WIN = constant("INSTALL_CMD_WIN");
 const SCRIPT = constant("INSTALL_SH");
 
 const NAMED = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
@@ -92,7 +93,7 @@ for (const { code, path } of LOCALES) {
       // A note per option, read out with its button.
       assert.deepEqual(box.buttons.map((b) => b.describedby), box.notes.map((n) => n.id), `${where}: each button is described by its note`);
       assert.ok(box.notes[0].text, `${where}: the prompt has a note`);
-      for (const word of ["22.16", "Windows"]) assert.ok(box.notes[1].text.includes(word), `${where}: the npx note names ${word}: ${box.notes[1].text}`);
+      for (const word of ["22.16", "Windows", NPX_WIN]) assert.ok(box.notes[1].text.includes(word), `${where}: the npx note names ${word}: ${box.notes[1].text}`);
       for (const word of ["Windows", "Git Bash", "PowerShell", "cmd"]) assert.ok(box.notes[2].text.includes(word), `${where}: the script note names ${word}: ${box.notes[2].text}`);
       assert.equal(attr(box.start ?? "", "href"), "/docs/quickstart", `${where}: Get started still links the quickstart`);
     }
@@ -104,17 +105,26 @@ for (const { code, path } of LOCALES) {
   });
 }
 
-test("the picked radio shows its own button and note: npx the second, the script the third", distOpts(DIST), () => {
-  needDist(DIST);
-  const css = [...read("index.html").matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/g)]
+/** The home page's inline CSS, with whitespace and quotes removed. */
+const inlineCss = () =>
+  [...read("index.html").matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/g)]
     .map((m) => m[1])
     .join("\n")
     .replace(/\s+/g, "")
     .replace(/["']/g, "");
+
+test("the picked radio shows its own button and note: npx the second, the script the third", distOpts(DIST), () => {
+  needDist(DIST);
+  const css = inlineCss();
   assert.ok(css.includes(".f-opts>*+*,.f-note>*+*{visibility:hidden}"), "only the first option shows until another is picked");
   for (const [value, nth] of [["npx", 2], ["script", 3]]) {
     assert.ok(css.includes(`.f-actions:has([value=${value}]:checked):is(.f-opts,.f-note)>:nth-child(${nth})`), `${value} shows option ${nth}`);
   }
+});
+
+test("the Windows command in the npx note is never split across two lines", distOpts(DIST), () => {
+  needDist(DIST);
+  assert.ok(inlineCss().includes(".f-notecode{white-space:nowrap}"), "a command in a note keeps to one line");
 });
 
 test("the box's commands are the ones /docs/install shows", distOpts(DIST), () => {
@@ -126,4 +136,24 @@ test("the box's commands are the ones /docs/install shows", distOpts(DIST), () =
   }
   assert.equal(tabs.npx, NPX);
   assert.equal(tabs.Script, SCRIPT);
+  // In PowerShell and cmd, `coding.sh` opens npm's sh script of that name; `codingsh` is the same CLI.
+  assert.equal(tabs.Windows, "npm install -g coding.sh codingsh init");
+  assert.ok(text(html).includes(NPX_WIN), `/docs/install names ${NPX_WIN}`);
+});
+
+test("each setup prompt tells an agent on Windows to run codingsh in PowerShell and cmd", () => {
+  for (const p of QUICKSTART_PATHS) {
+    for (const word of ["Windows", "PowerShell", "cmd", "run codingsh instead of coding.sh"]) {
+      assert.ok(p.setup.includes(word), `the ${p.id} setup prompt names ${word}`);
+    }
+  }
+});
+
+test("the SDK setup prompts verify with the agent's own sessions", () => {
+  // CODING_SH_SERVICE names the agent, and each model call outside trace() is its own session. The
+  // server lowercases the name and joins its words with "-", and --agent matches that id exactly.
+  for (const p of QUICKSTART_PATHS.filter((p) => p.id !== "coding-agents")) {
+    assert.ok(p.setup.includes("CODING_SH_SERVICE to a short lowercase name such as support-bot"), `the ${p.id} setup prompt asks for a name --agent matches`);
+    assert.ok(p.setup.includes("coding.sh sessions --agent <that name> --json"), `the ${p.id} setup prompt lists the agent's sessions`);
+  }
 });

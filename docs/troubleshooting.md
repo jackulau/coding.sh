@@ -18,14 +18,17 @@ coding.sh doctor --json   # the same as one JSON document
 
 ```text
 ! Claude Code     installed, not hooked, no events yet
+✓ Any command     no hooks needed; capture with coding.sh run -- <cmd>, no runs yet
 ! Hook            missing at ~/.coding.sh/bin/hook.mjs; run coding.sh init
 ✓ Spool           ~/.coding.sh/spool writable
 ✓ Store           sqlite sqlite://~/.coding.sh/index.db
   Receiver        port 4318 free; start with coding.sh collector
+  Proxy           not running; route agents through it with coding.sh init --proxy
   AI Gateway      not configured, no key, 0 tagged sessions
 
   Capture the agents without hooks:
     coding.sh init --agent claude-code
+1 agent not capturing
 ```
 
 A `!` row is a warning. Run the command under it. If doctor is all `✓` and sessions still don't
@@ -77,16 +80,21 @@ The warnings are in the JSON as `warnings`, each with a `check`, a `message`, th
 | `hooked but not firing` | The hook is in place but the agent will not run it. The note under the row says why. | Follow the note. |
 | `no events yet` | Nothing captured from this agent. Normal right after `init`. | Use the agent, then `coding.sh sessions`. |
 | `reads its store` / `no store yet` | Host apps such as T3 Code are read from their own database, not hooks. | Nothing to do. |
+| `Any command  no hooks needed; …` | Always shown. With no agent row above it, doctor found no supported agent. | `coding.sh run -- <cmd>` |
 | `Hook missing at …/bin/hook.sh` (or `…/bin/hook.mjs`) | `init` has not run, or the file was deleted. Outside Windows the hooks run `hook.sh`, which needs `hook.mjs` beside it. | `coding.sh init` |
 | `Hook …/bin/hook.mjs is stale` | The hook bin is from another coding.sh version, or `bin/cli-path` names another install. After `npm i -g`, the next session end refreshes it by itself. | `coding.sh update --refresh-bin` |
+| `MCP <agent>: <problem> (<file>)` | The agent's coding.sh MCP entry starts a command, script or CLI that is gone. | `coding.sh init` |
 | `Spool spool/<agent>/<day>.jsonl not writable: EACCES` | Hooks can't append to that agent's file for today, so its events are lost. | Fix the file's owner or permissions. |
 | `Spool N hook writes failed in the last day (…)` | Hooks logged write failures (`ENOSPC`, `EACCES`, …) to `spool/errors.log` in the last 24 hours. | Free disk space or fix permissions. The warning goes away a day after the last failure. |
 | `Stats N model calls past physical limits (…)` | Recent stored model calls show more than 500 output tokens a second, a first token outside the call, or a cost below $0 or above $50. A parser or unit bug, not a real call. | `coding.sh show <session>` for the session it names, and report it. |
 | `Spool … not writable` | coding.sh can't write to `~/.coding.sh/spool` (or `$CODING_SH_HOME/spool`). | Fix the directory's owner or permissions. |
 | `Store can't open: …` | The index could not be opened. The message has the cause. | See `store_unavailable` below. |
 | `Ingest stopped 4h ago: …` | The ingest the hook starts at session end has failed since then, or the blob store refused writes in two ingests in a row (`blob_write_failed`; `ingest --json` says `"outcome": "stopped"`). Captures are not lost: the hook keeps writing them to the spool, and the next ingest that gets through stores them. `status --json` and `doctor --json` carry it as `ingestStopped`. | The command the row names, usually `coding.sh update` or `coding.sh upgrade-store`. For the blob store, check `blobs` in the `[store]` section of the file `coding.sh config path` prints, or `CODING_SH_BLOB_URL`. See [Store version errors](#store-version-errors). |
+| `Sessions N sessions have events but no session row (…)` | The store has their events but no row, so `coding.sh sessions` leaves them out. | `coding.sh ingest` |
+| `Sessions N sessions could not be folded (tagged fold:error)` | Building their stats from their events failed, so each keeps only what the events say. | Update coding.sh, then `coding.sh ingest` folds them again. |
 | `Receiver port 4318 in use` | Something listens on the OTLP port, usually `coding.sh collector`. | Nothing, or `doctor --port <n>` to check another port. |
-| `Agents none detected` | No supported agent was found on PATH or in its usual config dir. | Capture any command with `coding.sh run -- <cmd>`. |
+| `Proxy not running, but <agent> call it` | `init --proxy` routed the agent through the proxy, which is not running. | It starts at the next session start, or now with `coding.sh proxy --background`. |
+| `Proxy <agent> no longer points at the proxy (<file>)` | The agent's config no longer routes it through the proxy. | With the user's approval, `coding.sh init --proxy` or `coding.sh uninstall --proxy`. |
 :::
 
 ## Your agent's traces don't show up
@@ -247,16 +255,17 @@ The command line was wrong. Nothing ran.
 
 | Reason | Example message | Fix |
 |---|---|---|
-| `unknown_command` | `Unknown command "frobnicate"` | `coding.sh --help` lists commands. Typos get a suggestion. |
-| `missing_command` | `Missing command for coding.sh eval. Choose one of: new, validate, list, export` | Add the action. |
+| `unknown_command` | `Unknown command "workflows frob"` | `coding.sh --help` lists commands, and `coding.sh <command> --help` its actions. Typos get a suggestion. |
+| `missing_command` | `Missing command for coding.sh dataset. Choose one of: add, import, list` | Add the action. |
 | `unknown_action` | `Unknown workflows action "…"` | `coding.sh workflows --help` |
 | `unknown_option` | `Unknown option --sinse` / `Did you mean --since?` | Check `coding.sh <command> --help`. |
 | `missing_value` | `--since needs a value <WHEN>` | Give the option a value. |
-| `invalid_value` | `--by must be one of agent, model, agent-model, day, repo, got "foo"` | Use one of the values the message lists. |
+| `invalid_value` | `Invalid value for capture.mode: capture.mode must be one of "full", "metadata", got "loud"` (config set) | Use one of the values the message lists. |
+| `bad_flag` | `--facets: can't count foo; use agent, model, …` (sessions) | Use a value the message lists. |
 | `extra_argument` | `Unexpected argument "…"` | Quote arguments that contain spaces. |
 | `missing_argument` | `Missing --out <DIR>` | Add the argument or option named. |
 | `invalid_argument` | (bench) a bad `--date`, `--seed` or contender | Fix the value the message names. |
-| `invalid_usage` | Any other usage error. | Read the message. |
+| `invalid_usage` | Any other usage error, such as `--by must be one of agent, model, …, got "foo"` | Read the message. |
 | `confirmation_required` | `Set up coding.sh for 1 agent (2 config files, backed up first) needs confirmation from the user` | Not a terminal, so it can't ask. Re-run with `--yes`, or `--dry-run` first to see the changes. An AI agent asks you first (`askUser: true`). |
 | `cost_confirmation_required` | `Estimated cost $7.20 exceeds confirmAboveUsd $5.00` | With `--json` this is `{"status":"action_required",…}`. Re-run with `--yes`, or raise `[toolevals] confirmAboveUsd`. |
 | `insecure_bind` | `refusing to listen on 0.0.0.0 without auth: …` | Only some credentials are set. Set both `CODING_SH_INGEST_KEYS` and `CODING_SH_READ_KEYS` (make keys with `coding.sh serve keygen`), unset both to use the first-start keys, or pass `--insecure` on a trusted network. |
@@ -278,7 +287,7 @@ The command line was wrong. Nothing ran.
 | `no_control` | `A continuation task needs a control arm: …` or `exp_… did not record a command or http task spec, so there is no control arm to replay` (exp run) | Run the recorded config as A and your change as B (`--arm control=… --arm cand=…`), or use `coding.sh exp ab`. `--no-control` runs it alone, without a noise floor. |
 | `bad_arg` | `export what? one of sessions, events, labels` | Use one of the listed values. |
 | `too_short` | `1 value shorter than 8 characters; a short value would rewrite ordinary text` (purge) | Put the whole secret on its line, not a fragment. |
-| `read_only` | `DELETE is not allowed: coding.sh sql is read-only`, `only one statement is allowed (found text after ';')` | `coding.sh sql` only reads. Change data with the command that owns it. |
+| `read_only` | `only SELECT and WITH queries are allowed (got DELETE)`, `DELETE is not allowed: coding.sh sql is read-only`, `only one statement is allowed (found text after ';')` | `coding.sh sql` only reads. Change data with the command that owns it. |
 | `trace_incomplete` | `incomplete trace: 5 tool result(s) in the source but 3 reached the judge` (judge grade) | Tool calls in `--trace` did not reach the judge, a line was cut (`1 line(s) are not whole JSON`), a record is in no format the judge reads, or the file has no JSON records, so a grade would miss them. Fix the capture, or pass `--allow-partial-trace` to grade anyway. |
 | `no_arm_difference` | (exp ab) `No arm difference: Claude Code does not load AGENTS.md, so A and B give all 12 cases the same context` | Edit the file the sessions' agent loads, or import the edited file there (an `@AGENTS.md` line in the agent's own instructions file counts), or pick sessions of an agent that loads it with `--agent`. |
 
@@ -305,7 +314,6 @@ The command ran and something failed.
 | `redirect_loop` | (compare --parity) `https://example.com/ redirects more than 10 times` (exit 2) | Open the URL in a browser or `curl -sI` it to see where the redirects go. |
 | `command_failed` | (compare --parity) `"npm run render" exited 1 and printed no page` (exit 2) | Run the command yourself; it must print the page's HTML on stdout. |
 | `not_found` | `Can't find session "nope"` (a session id or a unique prefix of one, 4+ characters), `No sessions captured yet`, `Can't find experiment "a"` | List what exists: `coding.sh sessions`, `exp list`, `dataset list`, `eval list`, `harness list`. |
-| `bad_flag` | (usage) `--by must be one of agent, model, agent-model, day, repo` | Use one of the listed values. |
 | `config_changed` | `Can't resume exp_…: its config changed since it started (dataset, task)` | `--resume` refuses when the dataset version, graders, trials, task, agent script or timeouts differ from the interrupted run. Restore them, or start a new run without `--resume`. |
 | `target_exists` | `traces/ is not empty` (export --evidence) | Pass `--force` to write into it anyway, or pick an empty directory. |
 | `already_complete` | `exp_… already finished; nothing to resume` | The run is done: `coding.sh exp show <id>`. |

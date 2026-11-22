@@ -26,6 +26,7 @@ import os
 import urllib.parse
 from typing import Any, Dict, Optional
 
+from ._client import base_url
 from ._trace import current_session_id
 
 log = logging.getLogger("coding_sh")
@@ -49,7 +50,7 @@ def otel_env(url: Optional[str] = None, key: Optional[str] = None, service: Opti
     service = service or _env("CODING_SH_SERVICE") or _env("OTEL_SERVICE_NAME")
     env: Dict[str, str] = {}
     if url:
-        env["OTEL_EXPORTER_OTLP_ENDPOINT"] = url.rstrip("/")
+        env["OTEL_EXPORTER_OTLP_ENDPOINT"] = base_url(url)
         env["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/protobuf"
     if key:
         env["OTEL_EXPORTER_OTLP_HEADERS"] = "Authorization=" + urllib.parse.quote("Bearer " + key)
@@ -117,8 +118,7 @@ def configure(
         has_otel_endpoint = bool(_env("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") or _env("OTEL_EXPORTER_OTLP_ENDPOINT"))
         base = url or (None if has_otel_endpoint else _env("CODING_SH_URL"))
         if base:
-            base = base.rstrip("/")
-            exporter_kwargs["endpoint"] = base if base.endswith("/v1/traces") else base + "/v1/traces"
+            exporter_kwargs["endpoint"] = base_url(base) + "/v1/traces"
         elif not has_otel_endpoint:
             if not _warned:
                 _warned = True

@@ -37,7 +37,10 @@ coding.sh exp run cand.json --replay exp_01J…
 
 For each call, the proxy looks for a recorded call from the same case and trial with the same
 request. A match gets the recorded reply and the API is not called. The first call with no match
-runs live, and so does every call after it in that case-trial:
+runs live, and so does every call after it in that case-trial.
+
+The run prints the comparison in step 3, then two experiment ids: the control arm's and yours.
+`coding.sh exp show <your id>` counts your calls:
 
 ```text
 LLM calls: 412 (318 cached, 94 live)
@@ -64,8 +67,9 @@ llm replay noise floor 4% (n=50) [1%, 14%]; control vs exp_01J…: 9 output(s) d
 
 | You see | It means |
 |---|---|
-| `noise floor 4%` | The control alone differs from the recording in 4% of outputs. A smaller B − A may be noise. |
-| `first live call 3–12` | Where replay stopped in each case-trial. Each run keeps it as `runs[].llm.firstLiveOrdinal`. |
+| `noise floor 4%` | The control's pass or fail differs from the recording's in 4% of case-trials. A smaller B − A may be noise. |
+| `9 output(s) differ` | Outputs of the control that differ from the recording's, passing or not. |
+| `first live call 3–12` | Where the control's replay stopped in each case-trial. It is left out when the control replayed every call. Each run keeps its own as `runs[].llm.firstLiveOrdinal`. |
 | `unscored` | The recording had no entry for that case-trial, or a live call failed. It is left out. |
 | `Replayed arms are correlated` | Confirm a win with a fresh live run before you ship it. |
 
@@ -104,13 +108,14 @@ recorded, and only 2xx replies are served from a recording.
 | `excludeTools` | false | Leaves the tool list out of the key. |
 | `excludeModel` | false | Leaves the model out of the key. |
 
-The flags win over the spec.
+The flags win over the spec. A replay matches the keys the recording stored, so set `excludeTools`
+or `excludeModel` when you record, and keep it set when you replay.
 
 ## What is stored
 
-Recordings live in `~/.coding.sh/llm-cache/<experiment>/`, one gzipped line per call. A replay
-records too, so it can be the source of the next replay. `coding.sh gc` keeps the cache under 1 GB,
-dropping the least recently used recordings first.
+Recordings live in `~/.coding.sh/llm-cache/<experiment>/`, one gzipped file per case-trial with a
+line per call. A replay records too, so it can be the source of the next replay. `coding.sh gc`
+keeps the cache under 1 GB, dropping the least recently used recordings first.
 
 - Request headers are never stored, so API keys and OAuth tokens are not written.
 - Response bodies go through your redaction rules, `redact` and `redactPatterns` under
@@ -131,8 +136,8 @@ dropping the least recently used recordings first.
 | Symptom | Check |
 |---|---|
 | `0 cached` on a replay | The task sets its own base URL, or calls another provider. It must read `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL`. |
-| Everything runs live from call 1 | The first request changed. A change to the system prompt alone still replays; check the tools and the model, or set `excludeTools` / `excludeModel`. |
-| A function task with `--replay` fails | A function task cannot be stored as the control. Give both arms: `--arm control=recorded.json --arm cand=cand.json`, or pass `--no-control`. |
+| Everything runs live from call 1 | The first request changed. A change to the system prompt alone still replays. A change to the tools or the model replays only when the recording and the replay both set `excludeTools` or `excludeModel`. |
+| `… did not record a command or http task spec` | The recording ran a function task, which can't be stored as the control. Give both arms: `--arm control=recorded.json --arm cand=cand.json`, or pass `--no-control`. |
 | Calls missing from the count | Paths other than messages, chat completions and responses, such as `count_tokens`, go straight to the API. WebSocket APIs are not proxied. |
 
 The proxy adds under 50 ms per call, measured against a local stub API.

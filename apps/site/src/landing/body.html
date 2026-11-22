@@ -200,6 +200,10 @@
     line-height: 1.45;
     color: var(--text-muted);
   }
+  /* A command in a note moves to the next line whole, so it is never copied in halves. */
+  .f-note code {
+    white-space: nowrap;
+  }
   .f-install {
     display: inline-flex;
     align-items: center;
@@ -996,7 +1000,7 @@
           </div>
           <p class="f-note">
             <span id="f-n1">Paste it into your coding agent.</span>
-            <span id="f-n2">Needs Node.js 22.16 or newer. It does not work on Windows.</span>
+            <span id="f-n2">Needs Node.js 22.16 or newer. On Windows: <code>{{NPX_WIN}}</code></span>
             <span id="f-n3">On Windows, run it in Git Bash. It does not work in PowerShell or cmd.</span>
           </p>
           <a class="f-btn" href="/docs/quickstart">Get started</a>
@@ -1119,7 +1123,7 @@
         </div>
         <p class="f-note">
           <span id="f-c1">Paste it into your coding agent.</span>
-          <span id="f-c2">Needs Node.js 22.16 or newer. It does not work on Windows.</span>
+          <span id="f-c2">Needs Node.js 22.16 or newer. On Windows: <code>{{NPX_WIN}}</code></span>
           <span id="f-c3">On Windows, run it in Git Bash. It does not work in PowerShell or cmd.</span>
         </p>
         <a class="f-btn" href="/docs/quickstart">Get started</a>

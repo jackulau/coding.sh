@@ -51,7 +51,7 @@ so they run there, not in CI.
 
 | Suite | The job fails when |
 |---|---|
-| Regression | A task fails most of its trials, or nothing could be graded. |
+| Regression | A task fails most of its trials, or has no graded trial because its grader or the infrastructure failed. |
 | Capability | Never. Its report still shows the score. |
 
 For `eval run`, the report is a table with one row per suite (pass@1 with its 95% interval, pass@k,
