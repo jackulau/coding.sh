@@ -815,6 +815,41 @@
       ],
       "additionalProperties": false
     },
+    "PullRequestRef": {
+      "description": "One entry of Session.stats.prs: a pull request the session touched, from what its own tool calls\nprinted or named (core/sessions.ts foldPrs; no network call).\n- `opened`: `gh pr create` printed its URL, or `gh pr reopen` ran.\n- `merged`: `gh pr merge` ran (not an `--auto` merge still waiting), or gh printed that it merged it.\n- `closed`: `gh pr close` ran.\n- `linked`: the session named it without changing it: a host tool linked or watched it (T3 Code's\n  `link_pull_request`), a `git push` or a `gh pr` command printed its URL. It never replaces another state.",
+      "type": "object",
+      "properties": {
+        "url": {
+          "description": "The PR's web URL. Unset when the session named it by number and never saw its repo.",
+          "type": "string"
+        },
+        "repo": {
+          "description": "`owner/name`, from the URL, `--repo`, or a repo the session's push or gh output named. Unset when none did.",
+          "type": "string"
+        },
+        "number": {
+          "type": "number"
+        },
+        "state": {
+          "enum": [
+            "opened",
+            "merged",
+            "closed",
+            "linked"
+          ]
+        },
+        "at": {
+          "description": "When the session saw that state (ms since the epoch): the last one it saw wins.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "number",
+        "state",
+        "at"
+      ],
+      "additionalProperties": false
+    },
     "RepoState": {
       "type": "object",
       "properties": {
@@ -1022,6 +1057,13 @@
             "waiting": {
               "description": "What the session waits on from the user (a permission prompt, a question, a plan, or the next\nprompt), as of its last event (core/waiting.ts). Unset when nothing waits.",
               "$ref": "#/$defs/Waiting"
+            },
+            "prs": {
+              "description": "Pull requests the session opened, merged, closed or linked, oldest first: every one it opened, merged or closed, and the 20 latest it only linked. Unset when it touched none.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PullRequestRef"
+              }
             },
             "foldError": {
               "description": "Why coding.sh could not fold this session's stored events into its stats (a coding.sh bug, not\nthe agent's): the row then holds only what the events say directly (agent, start, end, cwd,\nevent count), and the session is tagged `fold:error`. `coding.sh ingest` folds it again. Unset\nwhen the fold worked.",

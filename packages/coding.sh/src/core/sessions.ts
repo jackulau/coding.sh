@@ -6,7 +6,7 @@ import { GATEWAY_FLAG, gatewayFlagsOf, gatewayOfEvent } from "../integrations/ga
 import type { GatewayId } from "../integrations/gateway/providers.ts";
 import { DERAIL_FLAGS, derailsOf, derailState, detectDerails, foldDerails, type Derail, type DerailState } from "./derail.ts";
 import { foldOutline, outlineOf, outlineState, phasesToStore, REOPEN_SLACK_MS, type OutlineState } from "./outline.ts";
-import type { AgentEvent, CostByTokenType, DuplicateUsage, LatencyStats, LlmErrors, Session, Usage } from "../schema/index.ts";
+import type { AgentEvent, CostByTokenType, DuplicateUsage, LatencyStats, LlmErrors, PullRequestRef, Session, Usage } from "../schema/index.ts";
 import { splitOf } from "./pricing.ts";
 import { DURABLE_FLAGS, durableFlags, durableStats } from "./durable.ts";
 import { detectTestTamper, foldTamper, tamperState, type TamperState } from "./intent.ts";
@@ -18,7 +18,7 @@ import { foldHookContext, hookContextFlags, hookContextOf, hookContextState, typ
 import { foldWaiting, waitingOf, waitingState, type WaitingState } from "./waiting.ts";
 import { shellCommandsInCode } from "./cells.ts";
 import { claimsSuccess, reportsFailure } from "./failure-report.ts";
-import { failureState, foldFailure, type FailureClass, type FailureState } from "./failures.ts";
+import { failureState, foldFailure, shellCommandOf, type FailureClass, type FailureState } from "./failures.ts";
 import { compactionRefetchStatsOf, foldWaste, wasteState, wasteStatsOf, type WasteState } from "./waste.ts";
 import { foldModels, mainModelOf, MODEL_FALLBACK, MODEL_SWITCH, modelFlags, modelState, modelSwitchOf, modelsOf, REFUSAL, type ModelState } from "./models.ts";
 import { exposesSecret, foldRedactions, redactionsOf, redactionState, SECRET_EXPOSED, type RedactionState } from "./redaction-stats.ts";
@@ -583,7 +583,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * new derivation. A new or retyped sub-state changes the stamp by itself; a
  * new optional field or a change of meaning still needs the bump.
  */
-export const SESSION_FOLD_VERSION = 38; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory). 19: a session with transcript model calls counts them, not the copies its OTLP logs carry (sansOtel, transcriptCalls). 20: weight edits (stats.weightEdits, the weights:edited tag, SessionState.weightEdits). 21: weight checkpoints (stats.weightEdits.checkpoints, the weights:checkpoint tag), and stats.weightEdits on a session with a checkpoint and no edit. 22: a `<parent>:sub:<agentId>` session with no session.start takes its parent from the id. 23: an API error event (source api, or status 400 or more) counts in stats.llmErrors. 24: api-stall (FlagState.apiStall); filesChanged counts files a shell call writes (shellCallFiles, SessionState.shellFiles), and keys file.change paths relative to the cwd. 25: a session with no prompt is titled by its session.start's name (SessionState.startName), so an SDK trace() of weight edits is not untitled. 26: stats.compactionRefetches (core/waste.ts WasteState.preCompact), reads that fetched again what a compaction dropped. 27: stats.waiting (core/waiting.ts). 28: stats.endInferred, an endedAt that is the last activity seen rather than a session.end. 29: a session with a tool call still open and no real end (no session.end, or only a transcript's quiet marker) has no endedAt (SessionState.endIdle). 30: a host's thread title (a host-link notification's `title`, T3 Code) titles the session before its prompt (SessionState.hostTitle). 31: stats.usage.estimatedCostByTokenType, the estimate split by token type from the calls' payload.costByTokenType (UsageState.split). 32: an `exec` call with a command line (Devin CLI) is a shell call (isShellCall), so filesChanged and waste count it; Devin's `run_subagent` starts a subagent (waiting, unapproved); a permission wait picks an open call of the tool its prompt names, and on a call with no id ends with that tool's end only (WaitingState.wait.tool). 33: a host app store request (T3 Code approvals and questions: a notification with a requestId) sets stats.waiting in a backfill too, until its resolved notification (WaitingState.wait.request); waiting and unapproved share SPAWN_TOOL, so a prompt never names an open invoke_agent call. 34: a host notification before the session.start (T3 Code host-link) opens no phase of its own, so the session.start after it is no resume (OutlineState.begun). 35: titles skip a workflow-harness frame line, a `Project:` header and pasted blocks (TITLE_SKIP); a session.start's payload.tags (Langfuse trace tags from the OTel receiver) become tag:<name> flags (SessionState.tags); also refolds the other changes of improvement round 7. 36: a workflow agent's parent link names its run, phase and label (parent.workflowId, workflowName, phase, label); filesChanged keys a path by the session's cwd after resolving it against the event's (changeKey), so a file edited from two folders counts once; titles skip frame lines before a subagent's prompt is cut to one line, skip a `Project:` line only in a framed prompt, a frame-only workflow agent is titled "<phase> · <label>", and a phase is titled by its first prompt that is not a harness notice or frame (phasePromptTitle), and a T3 Code delegated-task result is a harness notice, not a prompt (isSyntheticPrompt). 37: changeKey keys an absolute path that is outside the event's folder but inside the session's cwd relative to the cwd, so a file a shell call edited after `cd <repo>` from a subfolder counts once. 38: a session a host app drove (payload.via, T3 Code) is the agent that ran, with the host as Session.host (hostedAgent); a host thread that started no agent (SessionState.hostBare) stays the host's.
+export const SESSION_FOLD_VERSION = 38; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts). 17: a session.start an older ingest stamped with a harness marker names no parent (isSpawnMarker), so a ghost harness parent goes; a gateway record with no cost bills nothing (billedCallOf), so the call's cost stays in usage.estimatedCostUsd. 18: stats.memoryUse, the memory and instruction files a session's events name (core/memory-use.ts, SessionState.memory). 19: a session with transcript model calls counts them, not the copies its OTLP logs carry (sansOtel, transcriptCalls). 20: weight edits (stats.weightEdits, the weights:edited tag, SessionState.weightEdits). 21: weight checkpoints (stats.weightEdits.checkpoints, the weights:checkpoint tag), and stats.weightEdits on a session with a checkpoint and no edit. 22: a `<parent>:sub:<agentId>` session with no session.start takes its parent from the id. 23: an API error event (source api, or status 400 or more) counts in stats.llmErrors. 24: api-stall (FlagState.apiStall); filesChanged counts files a shell call writes (shellCallFiles, SessionState.shellFiles), and keys file.change paths relative to the cwd. 25: a session with no prompt is titled by its session.start's name (SessionState.startName), so an SDK trace() of weight edits is not untitled. 26: stats.compactionRefetches (core/waste.ts WasteState.preCompact), reads that fetched again what a compaction dropped. 27: stats.waiting (core/waiting.ts). 28: stats.endInferred, an endedAt that is the last activity seen rather than a session.end. 29: a session with a tool call still open and no real end (no session.end, or only a transcript's quiet marker) has no endedAt (SessionState.endIdle). 30: a host's thread title (a host-link notification's `title`, T3 Code) titles the session before its prompt (SessionState.hostTitle). 31: stats.usage.estimatedCostByTokenType, the estimate split by token type from the calls' payload.costByTokenType (UsageState.split). 32: an `exec` call with a command line (Devin CLI) is a shell call (isShellCall), so filesChanged and waste count it; Devin's `run_subagent` starts a subagent (waiting, unapproved); a permission wait picks an open call of the tool its prompt names, and on a call with no id ends with that tool's end only (WaitingState.wait.tool). 33: a host app store request (T3 Code approvals and questions: a notification with a requestId) sets stats.waiting in a backfill too, until its resolved notification (WaitingState.wait.request); waiting and unapproved share SPAWN_TOOL, so a prompt never names an open invoke_agent call. 34: a host notification before the session.start (T3 Code host-link) opens no phase of its own, so the session.start after it is no resume (OutlineState.begun). 35: titles skip a workflow-harness frame line, a `Project:` header and pasted blocks (TITLE_SKIP); a session.start's payload.tags (Langfuse trace tags from the OTel receiver) become tag:<name> flags (SessionState.tags); also refolds the other changes of improvement round 7. 36: a workflow agent's parent link names its run, phase and label (parent.workflowId, workflowName, phase, label); filesChanged keys a path by the session's cwd after resolving it against the event's (changeKey), so a file edited from two folders counts once; titles skip frame lines before a subagent's prompt is cut to one line, skip a `Project:` line only in a framed prompt, a frame-only workflow agent is titled "<phase> · <label>", and a phase is titled by its first prompt that is not a harness notice or frame (phasePromptTitle), and a T3 Code delegated-task result is a harness notice, not a prompt (isSyntheticPrompt). 37: changeKey keys an absolute path that is outside the event's folder but inside the session's cwd relative to the cwd, so a file a shell call edited after `cd <repo>` from a subfolder counts once. 38: a session a host app drove (payload.via, T3 Code) is the agent that ran, with the host as Session.host (hostedAgent); a host thread that started no agent (SessionState.hostBare) stays the host's; stats.prs, the pull requests a session opened, merged, closed or linked (SessionState.prs, foldPrs).
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -703,6 +703,8 @@ export interface SessionState {
   weightEdits: WeightEditState;
   /** What the session waits on from the user (core/waiting.ts). */
   waiting: WaitingState;
+  /** Pull requests the session's tool calls opened, merged, closed or linked (stats.prs, foldPrs). */
+  prs: PrFoldState;
   /**
    * Models of the agent's own model calls (core/models.ts), and of the
    * proxy's: the proxy's count only in a session with no other model calls.
@@ -752,6 +754,7 @@ export function sessionState(): SessionState {
     hookContext: hookContextState(),
     weightEdits: weightEditState(),
     waiting: waitingState(),
+    prs: prFoldState(),
     models: modelState(),
     proxyModels: modelState(),
   };
@@ -923,6 +926,7 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
   foldWeightEdits(s.weightEdits, e);
   if (isEnrichment(e)) return;
   foldWaiting(s.waiting, e, isBackfillEvent(e));
+  foldPrs(s.prs, e, failure?.cls);
 
   s.captured++;
   if (!s.agents.includes(e.agent)) s.agents.push(e.agent);
@@ -1107,6 +1111,8 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
   if (s.launch) session.stats.launch = s.launch;
   const waiting = waitingOf(s.waiting, s.launch);
   if (waiting) session.stats.waiting = waiting;
+  const prs = prsOf(s.prs);
+  if (prs) session.stats.prs = prs;
   if (s.inheritedTokens) session.stats.inheritedTokens = s.inheritedTokens;
   const memoryUse = memoryUseOf(s.memory, s.cwd ?? prev?.cwd);
   if (memoryUse) session.stats.memoryUse = memoryUse;
@@ -1647,4 +1653,264 @@ export function detectRepeatedToolFailure(sorted: AgentEvent[], threshold = 3): 
 export function detectNoVerification(sorted: AgentEvent[]): boolean {
   if (!sorted.some((e) => e.kind === "file.change")) return false;
   return !sorted.some((e) => e.kind === "test.result" || isVerifyToolStart(e));
+}
+
+// ------------------------------------------------------------ pull requests
+
+/**
+ * Session.stats.prs holds at most this many PRs the session only linked (viewed, watched, pushed to);
+ * a new one past it drops the linked one seen longest ago. PRs it opened, merged or closed stay.
+ */
+export const PRS_MAX = 20;
+/** Session.stats.prs holds at most this many in all; past it the oldest linked one goes first, else the oldest. */
+export const PRS_ALL_MAX = 500;
+/** Output read per tool call for PR URLs and gh's merge and close lines. */
+const PR_SCAN_CHARS = 64 * 1024;
+/** A GitHub (or GitHub Enterprise) pull request's web URL. */
+const PR_URL = /https?:\/\/([\w.-]*github[\w.-]*)\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)\b/gi;
+/** What gh prints after it merged or closed a PR: "Squashed and merged pull request owner/name#12 (title)". */
+const PR_DONE_LINE = /\b(merged|closed) pull request (?:([\w.-]+\/[\w.-]+))?#(\d+)/gi;
+/** A remote a push names: "To https://github.com/owner/name.git", "To git@github.com:owner/name.git". */ // slop-allow personal-data: an SSH remote's form, not an email
+const PUSH_REMOTE = /^To (?:https?:\/\/(?:[^@\s/]+@)?|ssh:\/\/[^@\s/]+@|[^@\s/]+@)([\w.-]*github[\w.-]*)[/:]([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?\s*$/m;
+/** gh pr verbs that name a PR without changing its state. */
+const PR_LINK_VERBS = new Set(["view", "checks", "ready", "edit", "comment", "review", "diff", "checkout"]);
+/** gh pr flags that take a value, so the value is not read as the PR. */
+const GH_VALUE_FLAGS = new Set(["-t", "--title", "-b", "--body", "-F", "--body-file", "-B", "--base", "-H", "--head", "-l", "--label", "-a", "--assignee", "-r", "--reviewer", "-m", "--milestone", "-p", "--project", "-T", "--template", "-A", "--author-email", "--subject", "--match-head-commit", "-c", "--comment", "--add-label", "--remove-label", "--add-reviewer", "--remove-reviewer", "--add-assignee", "--remove-assignee", "--json", "-q", "--jq"]);
+/** A host tool that links or watches a PR (T3 Code's link_pull_request, watch_pull_request, link_pull_requests). */
+const HOST_PR_TOOL = /(?:^|[_.:/-])(?:link|watch)_pull_requests?$/i;
+/** A GitHub MCP server's PR tools. */
+const MCP_PR_CREATE = /(?:^|[_.:/-])create_pull_request$/i;
+const MCP_PR_MERGE = /(?:^|[_.:/-])merge_pull_request$/i;
+
+type PrState = PullRequestRef["state"];
+interface PrRepo {
+  host: string;
+  name: string;
+}
+interface PrRef {
+  number?: number;
+  repo?: PrRepo;
+}
+/** One `gh pr <verb>` in a shell command. */
+interface GhPr extends PrRef {
+  verb: string;
+  auto?: boolean;
+}
+/** What a started call will do to PRs, read from its input: gh pr verbs, a push, a host or MCP PR tool. */
+interface PrCall {
+  gh: GhPr[];
+  push?: boolean;
+  /** A host or MCP tool: the state it sets, and the PRs its input names (or its output's first URL). */
+  tool?: { state: PrState; refs: PrRef[]; fromOutput?: boolean };
+}
+export interface PrFoldState {
+  list: PullRequestRef[];
+  /** Started calls that touch PRs, by toolUseId ("" for a call with no id). */
+  calls: Map<string, PrCall>;
+  /** The repo the session's push output, gh output or --repo named first. */
+  repo?: PrRepo;
+}
+
+export const prFoldState = (): PrFoldState => ({ list: [], calls: new Map() });
+
+/** "owner/name", "host/owner/name" or a repo URL, as gh's --repo takes it. */
+function repoArg(v: string | undefined): PrRepo | undefined {
+  if (!v) return undefined;
+  const m = /^(?:https?:\/\/)?(?:([\w-]+(?:\.[\w-]+)+)\/)?([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(v.trim());
+  return m ? { host: (m[1] ?? "github.com").toLowerCase(), name: `${m[2]}/${m[3]}` } : undefined;
+}
+
+/** A PR URL's number and repo. */
+function prUrl(v: string): PrRef | undefined {
+  const m = new RegExp(PR_URL.source, "i").exec(v);
+  return m ? { number: Number(m[4]), repo: { host: m[1]!.toLowerCase(), name: `${m[2]}/${m[3]}` } } : undefined;
+}
+
+/** Words of a shell command segment, with simple quoting. */
+function shellWords(seg: string): string[] {
+  const out: string[] = [];
+  const re = /"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/g;
+  for (let m = re.exec(seg); m; m = re.exec(seg)) out.push(m[1] ?? m[2] ?? m[3]!);
+  return out;
+}
+
+const isGh = (w: string): boolean => /(?:^|[/\\])gh(?:\.exe)?$/.test(w);
+const isGit = (w: string): boolean => /(?:^|[/\\])git(?:\.exe)?$/.test(w);
+
+/** The `gh pr` verbs and `git push` of a shell command. */
+function prCallOfCommand(cmd: string): PrCall | undefined {
+  if (!/\bgh(?:\.exe)?\s+pr\b|\bgit\b[^\n;&|]*\bpush\b/.test(cmd)) return undefined;
+  const call: PrCall = { gh: [] };
+  for (const seg of cmd.split(/&&|\|\||[;|\n]/)) {
+    const w = shellWords(seg);
+    const gh = w.findIndex(isGh);
+    if (gh >= 0 && w[gh + 1] === "pr" && w[gh + 2]) {
+      const pr: GhPr = { verb: w[gh + 2]! };
+      for (let i = gh + 3; i < w.length; i++) {
+        const x = w[i]!;
+        const eq = x.startsWith("-") ? x.indexOf("=") : -1;
+        const flag = eq > 0 ? x.slice(0, eq) : x;
+        const value = eq > 0 ? x.slice(eq + 1) : undefined;
+        if (flag === "-R" || flag === "--repo") pr.repo = repoArg(value ?? w[++i]) ?? pr.repo;
+        else if (flag === "--auto") pr.auto = true;
+        else if (GH_VALUE_FLAGS.has(flag)) {
+          if (value === undefined) i++;
+        } else if (!x.startsWith("-") && pr.number === undefined) {
+          const url = prUrl(x);
+          if (url) Object.assign(pr, url);
+          else if (/^#?\d+$/.test(x)) pr.number = Number(x.replace("#", ""));
+        }
+      }
+      call.gh.push(pr);
+      continue;
+    }
+    const git = w.findIndex(isGit);
+    // `git push`, `git -C dir push`: the first word after git's own options.
+    if (git >= 0) {
+      let i = git + 1;
+      while (i < w.length && w[i]!.startsWith("-")) i += w[i] === "-C" || w[i] === "-c" ? 2 : 1;
+      if (w[i] === "push") call.push = true;
+    }
+  }
+  return call.gh.length || call.push ? call : undefined;
+}
+
+const intOf = (v: unknown): number | undefined => {
+  const n = typeof v === "number" ? v : typeof v === "string" && /^#?\d+$/.test(v.trim()) ? Number(v.trim().replace("#", "")) : NaN;
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+};
+
+/** The PRs a host or MCP tool's input names: URLs, or a repository (or owner and repo) with a number. */
+function prRefsOfInput(input: Record<string, unknown>): PrRef[] {
+  const urls = (Array.isArray(input.urls) ? [input.url, ...input.urls] : [input.url]).filter((u): u is string => typeof u === "string");
+  const refs = urls.map(prUrl).filter((r): r is PrRef => !!r);
+  if (refs.length) return refs;
+  const number = intOf(input.number ?? input.pullNumber ?? input.pull_number);
+  if (number === undefined) return [];
+  const named = typeof input.repository === "string" ? input.repository : typeof input.owner === "string" && typeof input.repo === "string" ? `${input.owner}/${input.repo}` : undefined;
+  const host = typeof input.host === "string" && input.host.includes(".") ? input.host : undefined;
+  const repo = repoArg(named && host && named.split("/").length === 2 ? `${host}/${named}` : named);
+  return [repo ? { number, repo } : { number }];
+}
+
+/** What a tool call will do to PRs, from its tool name and input; undefined for a call that touches none. */
+function prCallOf(tool: unknown, input: unknown): PrCall | undefined {
+  const name = typeof tool === "string" ? tool : "";
+  const cmd = shellCommandOf(name, input);
+  if (cmd) return prCallOfCommand(cmd);
+  if (!input || typeof input !== "object") return undefined;
+  const o = input as Record<string, unknown>;
+  if (HOST_PR_TOOL.test(name)) return { gh: [], tool: { state: "linked", refs: prRefsOfInput(o) } };
+  if (MCP_PR_MERGE.test(name)) return { gh: [], tool: { state: "merged", refs: prRefsOfInput(o) } };
+  if (MCP_PR_CREATE.test(name)) return { gh: [], tool: { state: "opened", refs: [], fromOutput: true } };
+  return undefined;
+}
+
+/**
+ * Notes a state the session saw for a PR. A PR named by number only is in the session's repo, else
+ * the one PR of that number it already saw. The later state wins, but `linked` never replaces another.
+ */
+function notePr(s: PrFoldState, number: number, repo: PrRepo | undefined, state: PrState, at: number): void {
+  const same = s.list.filter((p) => p.number === number);
+  const r = repo ?? (same.length === 1 && same[0]!.url ? prUrl(same[0]!.url)?.repo : undefined) ?? s.repo;
+  const i = s.list.findIndex((p) => p.number === number && (!r || !p.repo || p.repo === r.name));
+  const old = i >= 0 ? s.list[i]! : undefined;
+  const entry: PullRequestRef = { number, state, at };
+  if (r) {
+    entry.url = `https://${r.host}/${r.name}/pull/${number}`;
+    entry.repo = r.name;
+  }
+  if (old) {
+    s.list.splice(i, 1);
+    if (state === "linked" && old.state !== "linked") {
+      entry.state = old.state;
+      entry.at = old.at;
+    }
+  }
+  s.list.push(entry);
+  // A merge an orchestrator recorded early must outlast the PRs it only viewed later.
+  const linked = s.list.reduce((n, p) => n + (p.state === "linked" ? 1 : 0), 0);
+  if (linked > PRS_MAX || s.list.length > PRS_ALL_MAX) {
+    const drop = s.list.findIndex((p) => p.state === "linked");
+    s.list.splice(drop >= 0 ? drop : 0, 1);
+  }
+}
+
+/** A result's text: a string, a hook's { stdout, stderr }, else its JSON. */
+function prOutputOf(raw: unknown): string {
+  if (typeof raw === "string") return raw;
+  if (raw === undefined || raw === null) return "";
+  const o = raw as Record<string, unknown>;
+  if (typeof o.stdout === "string" || typeof o.stderr === "string") return [o.stdout, o.stderr].filter((x) => typeof x === "string").join("\n");
+  try {
+    return JSON.stringify(raw) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/** Folds a tool call's PRs: reads the call's input as it starts and settles them from its result as it ends. */
+export function foldPrs(s: PrFoldState, e: AgentEvent, failure?: FailureClass): void {
+  if ((e.kind !== "tool.start" && e.kind !== "tool.end") || e.payload.wrapper === true) return;
+  const id = typeof e.payload.toolUseId === "string" ? e.payload.toolUseId : "";
+  if (e.kind === "tool.start") {
+    const call = prCallOf(e.payload.tool, e.payload.input);
+    if (call) s.calls.set(id, call);
+    else s.calls.delete(id);
+    return;
+  }
+  const call = s.calls.get(id) ?? prCallOf(e.payload.tool, e.payload.input);
+  s.calls.delete(id);
+  if (!call || failure === "interrupted") return;
+  const ok = e.payload.ok !== false;
+  const out = prOutputOf(e.payload.output ?? e.payload.error).slice(0, PR_SCAN_CHARS);
+  const push = call.push ? PUSH_REMOTE.exec(out) : null;
+  const pushed: PrRepo | undefined = push ? { host: push[1]!.toLowerCase(), name: `${push[2]}/${push[3]}` } : undefined;
+  if (pushed) s.repo ??= pushed;
+  // The session's repo is one it pushed to or changed a PR in: a view's --repo may name anyone's.
+  for (const g of call.gh) if (g.repo && !PR_LINK_VERBS.has(g.verb)) s.repo ??= g.repo;
+  const urls = [...out.matchAll(PR_URL)].map((m) => prUrl(m[0])!);
+  if (urls.length && call.gh.some((g) => g.verb === "create")) s.repo ??= urls[0]!.repo;
+  const at = e.ts;
+  if (call.tool) {
+    if (!ok) return;
+    for (const r of call.tool.fromOutput ? urls.slice(0, 1) : call.tool.refs) if (r.number !== undefined) notePr(s, r.number, r.repo, call.tool.state, at);
+    return;
+  }
+  const done = [...out.matchAll(PR_DONE_LINE)].map((m) => ({ state: m[1]!.toLowerCase() as PrState, number: Number(m[3]), repo: repoArg(m[2]) }));
+  const named = new Set<number>();
+  for (const g of call.gh) {
+    if (g.verb === "create") {
+      // A create that failed because the PR exists prints that PR's URL: the session names it.
+      for (const u of urls) {
+        notePr(s, u.number!, u.repo, ok ? "opened" : "linked", at);
+        named.add(u.number!);
+      }
+      continue;
+    }
+    if (!ok) continue;
+    const said = done.find((d) => g.number === undefined || d.number === g.number);
+    const number = g.number ?? said?.number ?? urls[0]?.number;
+    if (number === undefined) continue;
+    const repo = g.repo ?? said?.repo ?? urls.find((u) => u.number === number)?.repo;
+    let state: PrState | undefined;
+    // `--auto` only queues the merge, unless gh says it merged.
+    if (g.verb === "merge") state = said?.state === "merged" || !g.auto ? "merged" : "linked";
+    else if (g.verb === "close") state = "closed";
+    else if (g.verb === "reopen") state = "opened";
+    else if (PR_LINK_VERBS.has(g.verb)) state = "linked";
+    if (!state) continue;
+    notePr(s, number, repo, state, at);
+    named.add(number);
+  }
+  // A push that printed a PR's URL (in the repo it pushed to, when its output names that) names that PR.
+  // Other URLs in a call's output (a PR body, release notes another command on the line printed) name
+  // PRs the session only read.
+  const same = (u: PrRef) => !pushed || u.repo?.name.toLowerCase() === pushed.name.toLowerCase();
+  if (call.push) for (const u of urls) if (!named.has(u.number!) && same(u)) notePr(s, u.number!, u.repo, "linked", at);
+}
+
+/** Session.stats.prs: undefined when the session touched no PR. */
+export function prsOf(s: PrFoldState): PullRequestRef[] | undefined {
+  return s.list.length ? s.list.map((p) => ({ ...p })) : undefined;
 }

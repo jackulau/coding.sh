@@ -1792,6 +1792,8 @@ a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 
 // ------------------------------------------------------------ dom helpers
 
+// The one outside link h() takes: a pull request's web page (work --json prs), host/owner/name/pull/<n> and nothing more.
+const PR_HREF = /^https:\/\/[\w.-]+\/[\w.-]+\/[\w.-]+\/pull\/\d+$/;
 function h(tag, props, ...children) {
   const el = document.createElement(tag);
   if (props) {
@@ -1801,7 +1803,7 @@ function h(tag, props, ...children) {
       else if (k === "text") el.textContent = String(v);
       else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2), v);
       else if (k === "href") {
-        if (typeof v !== "string" || !v.startsWith("#/")) throw new Error("only internal hash links");
+        if (typeof v !== "string" || !(v.startsWith("#/") || PR_HREF.test(v))) throw new Error("only internal hash links and pull request pages");
         el.setAttribute("href", v);
       } else el.setAttribute(k, v === true ? "" : String(v));
     }
@@ -8169,6 +8171,14 @@ function workPhasesEl(i, agents) {
         h("a", { class: "work-link", href: sessionHref(a.sessionId) }, oneLine(a.label || a.title) || a.sessionId), h("span", { class: "meta" }, " " + a.state))))) : null;
   });
 }
+/** The item's pull requests (work --json prs): each links to its URL, with the state its sessions saw last. */
+function workPrsEl(prs) {
+  return h("span", { class: "work-prs" }, prs.length === 1 ? "PR " : "PRs ", prs.map((p, n) => {
+    const label = "#" + p.number + " " + (p.state === "opened" ? "open" : p.state);
+    const url = typeof p.url === "string" && PR_HREF.test(p.url) ? p.url : "";
+    return [n ? ", " : null, url ? h("a", { class: "work-link work-pr", href: url, target: "_blank", rel: "noopener noreferrer", title: (p.repo ? p.repo + " " : "") + label }, label) : h("span", { class: "work-pr" }, label)];
+  }));
+}
 function workItemEl(i, ids, act, now = Date.now(), doc = {}) {
   const tone = i.bucket === "blocked" || i.bucket === "failed" ? "tone-fail" : i.bucket === "stalled" ? "tone-warn" : "tone-muted";
   const at = Date.parse(i.since || i.lastActivity);
@@ -8182,6 +8192,7 @@ function workItemEl(i, ids, act, now = Date.now(), doc = {}) {
     h("span", null, plural(i.sessions, "session")),
     where ? h("span", { class: "truncate work-where", title: where }, where + (i.branch ? " (" + i.branch + ")" : "")) : null,
     i.startedBy ? h("span", null, "started by " + i.startedBy) : null,
+    i.prs && i.prs.length ? workPrsEl(i.prs) : null,
   ];
   const cause = i.causeSessionId && i.causeSessionId !== i.sessionId ? i.causeSessionId : "";
   const others = ids.filter((id) => id !== i.sessionId);

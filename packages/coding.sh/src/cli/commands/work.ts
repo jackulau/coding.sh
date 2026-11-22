@@ -2,7 +2,7 @@
 // coding.sh work show|ack|snooze <id>: what needs you across every agent's sessions
 // (core/work.ts), with acks and snoozes in work.json (core/work-overlay.ts).
 import { parsePlace } from "../../mcp/data.ts";
-import type { Session } from "../../schema/index.ts";
+import type { PullRequestRef, Session } from "../../schema/index.ts";
 import type { Context } from "../../core/context.ts";
 import { indexAge, staleIndexText, type IndexAge } from "../../core/ingest-health.ts";
 import { addAck, addSnooze, readOverlay, writeOverlay, type WorkOverlay } from "../../core/work-overlay.ts";
@@ -138,11 +138,37 @@ function printRow(c: CommandContext, i: WorkItem): void {
   const badge = i.probablyClosed ? `${out.style("probably closed", "yellow")}  ` : "";
   const agents = i.agents.length > 1 ? `${i.agent} +${i.agents.length - 1}` : i.agent;
   const where = i.repo ?? i.cwd;
-  const meta = [agents, where ? short(where) : undefined, i.sessionIds.length > 1 ? plural(i.sessionIds.length, "session") : undefined, i.startedBy ? `started by ${i.startedBy}` : undefined].filter(Boolean).join("  ");
+  const meta = [agents, where ? short(where) : undefined, i.sessionIds.length > 1 ? plural(i.sessionIds.length, "session") : undefined, i.startedBy ? `started by ${i.startedBy}` : undefined, i.prs ? prsText(i.prs, i.repo ?? i.cwd) : undefined].filter(Boolean).join("  ");
   out.print(`  ${out.style(i.id, "cyan")}  ${oneLine(i.title ?? "(untitled)", 60)}  ${stageTag(i)}  ${out.style(meta, "faint")}`);
   if (i.workflow) out.print(`          ${out.style("phases:", "faint")} ${i.workflow.phases.map(phaseText).join(" · ")}`);
   out.print(`          ${badge}${i.reason}`);
   out.print(`          ${out.style("next:", "faint")} ${nextText(i.next)}`);
+}
+
+/** How a PR's state reads: an opened PR is open. */
+export const prStateText = (state: PullRequestRef["state"]): string => (state === "opened" ? "open" : state);
+
+/**
+ * How a PR is named next to an item: "#12" for a PR of the item's own repo, "owner/name#12" for one of
+ * another repo. A PR repo is the item's own when its name is the item folder's name. When none is (a
+ * clone can sit in a folder of another name), the PRs are its own while they all share one repo and the
+ * sessions opened, merged or closed them: a PR only linked, such as one read for research, is not.
+ */
+export function prRef(p: PullRequestRef, prs: readonly PullRequestRef[], itemRepo?: string): string {
+  if (!p.repo) return `#${p.number}`;
+  const name = (r: string) => r.replace(/[\\/]+$/, "").split(/[\\/]/).pop()!.toLowerCase();
+  const folder = itemRepo ? name(itemRepo) : undefined;
+  const named = folder !== undefined && prs.some((x) => x.repo !== undefined && name(x.repo) === folder);
+  const own = named ? name(p.repo) === folder : new Set(prs.map((x) => x.repo ?? "")).size === 1 && p.state !== "linked";
+  return own ? `#${p.number}` : `${p.repo}#${p.number}`;
+}
+
+/** "PR #12 merged", "PRs #12, #14 open", "PRs #12 merged; #14 open": an item's PRs by state, in the order first seen. */
+export function prsText(prs: readonly PullRequestRef[], itemRepo?: string): string {
+  const byState = new Map<string, string[]>();
+  for (const p of prs) byState.set(prStateText(p.state), [...(byState.get(prStateText(p.state)) ?? []), prRef(p, prs, itemRepo)]);
+  const groups = [...byState].map(([state, ns]) => `${ns.slice(0, 5).join(", ")}${ns.length > 5 ? ` +${ns.length - 5}` : ""} ${state}`);
+  return `${prs.length === 1 ? "PR" : "PRs"} ${groups.join("; ")}`;
 }
 
 /** "build: 2 running, 1 failed, 3 done", the agents of one phase of a workflow run by state. */
@@ -274,6 +300,12 @@ async function show(c: CommandContext): Promise<number> {
         }
         if (inPhase.length > 20) out.print(out.style(`      and ${inPhase.length - 20} more (--json lists every agent)`, "faint"));
       }
+    }
+    if (item.prs) {
+      const prs = item.prs;
+      const ref = (p: PullRequestRef) => prRef(p, prs, item.repo ?? item.cwd);
+      out.row(prs.length === 1 ? "PR" : "PRs", prs.map((p) => `${ref(p)} ${prStateText(p.state)}`).join(", "), "none", true);
+      for (const p of prs) out.print(`    ${ref(p)}  ${prStateText(p.state)}  ${p.url ?? "(no URL: the sessions named it by number only)"}  ${out.style(ago(p.at), "faint")}`);
     }
     out.row("Files", `${item.filesChanged ? `${plural(item.filesChanged, "file")} changed` : "none changed"}${own !== undefined ? ` across ${plural(item.sessionIds.length, "session")}; the main session changed ${own}` : ""}`, "none", true);
     for (const f of [...files].slice(0, 20)) out.print(`    ${f}`);

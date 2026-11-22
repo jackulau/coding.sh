@@ -9,7 +9,7 @@
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { AgentEvent, Session, Waiting } from "../schema/index.ts";
+import type { AgentEvent, PullRequestRef, Session, Waiting } from "../schema/index.ts";
 import { iso, isRunning, lastActivity, matchesPlace, type Place } from "../mcp/data.ts";
 import { worktreeRepo } from "../query/where.ts";
 import { DERAIL_THRESHOLDS } from "./derail.ts";
@@ -91,6 +91,8 @@ export interface WorkItem {
   running: boolean;
   costUsd?: number;
   filesChanged: number;
+  /** Pull requests the item's sessions opened, merged, closed or linked (their stats.prs): one per PR, its newest state. Unset when none. */
+  prs?: PullRequestRef[];
   /** A wait, a stall or a failure older than PROBABLY_CLOSED_MS. */
   probablyClosed?: boolean;
   /** A failed item that a later item in the same repo and branch replaced: that item's id. */
@@ -682,6 +684,37 @@ interface BuiltItem {
   ended: boolean;
 }
 
+/** Whether `p` is a newer state of a PR than `old`: a `linked` entry never replaces another state, else the later one wins. */
+const newerPr = (p: Pick<PullRequestRef, "state" | "at">, old: Pick<PullRequestRef, "state" | "at">): boolean =>
+  p.state === "linked" && old.state !== "linked" ? false : old.state === "linked" && p.state !== "linked" ? true : p.at >= old.at;
+
+/**
+ * An item's pull requests: its sessions' stats.prs, one per PR, with the newest state any of them saw.
+ * A `linked` entry never replaces another state; one with no repo joins the one PR of its number that has one.
+ */
+export function itemPrs(members: readonly Pick<Session, "stats">[]): PullRequestRef[] | undefined {
+  const all = members.flatMap((s) => s.stats.prs ?? []).sort((a, b) => a.at - b.at);
+  if (!all.length) return undefined;
+  const byKey = new Map<string, PullRequestRef>();
+  const withRepo = (n: number) => [...byKey.values()].filter((p) => p.number === n && p.repo);
+  // Entries with a repo first, so an entry with none can find the PR it names.
+  for (const p of [...all.filter((p) => p.repo), ...all.filter((p) => !p.repo)]) {
+    const named = p.repo ? undefined : withRepo(p.number);
+    const key = p.repo ? `${p.repo}#${p.number}` : named?.length === 1 ? `${named[0]!.repo}#${p.number}` : `#${p.number}`;
+    const old = byKey.get(key);
+    if (!old) {
+      byKey.set(key, { ...p });
+      continue;
+    }
+    if (!newerPr(p, old)) continue;
+    const next = { ...p };
+    if (old.url && !p.url) next.url = old.url;
+    if (old.repo && !p.repo) next.repo = old.repo;
+    byKey.set(key, next);
+  }
+  return [...byKey.values()].sort((a, b) => a.at - b.at || a.number - b.number);
+}
+
 /** Builds one item from its sessions. `checkouts` (rootCheckouts) tells a worktree nested in its repo from a subfolder. */
 export function workItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?: Checkouts, isCheckout?: (dir: string, root: string) => boolean, shortId?: (id: string) => string): WorkItem {
   return buildItem(raw, now, overlay, checkouts, isCheckout, shortId).item;
@@ -718,6 +751,8 @@ function buildItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?:
   if (primary.repo?.root) item.repo = ownCheckout(primary, checkouts, isCheckout) ? primary.cwd : primary.repo.root;
   if (primary.repo?.branch) item.branch = primary.repo.branch;
   if (cost > 0) item.costUsd = roundUsd(cost);
+  const prs = itemPrs(members);
+  if (prs) item.prs = prs;
   if (raw.startedByRoot) item.startedBy = workItemId(raw.startedByRoot);
   if (raw.workflow) {
     item.workflow = { id: raw.workflow.id, phases: workflowPhases(agents) };
@@ -1026,6 +1061,7 @@ export function workItemJson(i: WorkItem): Record<string, unknown> {
   if (i.supersededBy) out.supersededBy = i.supersededBy;
   if (i.startedBy) out.startedBy = i.startedBy;
   if (i.costUsd !== undefined) out.costUsd = i.costUsd;
+  if (i.prs) out.prs = i.prs.map((p) => defined({ url: p.url, repo: p.repo, number: p.number, state: p.state, at: iso(p.at) }));
   if (i.workflow) out.workflow = defined({ id: i.workflow.id, name: i.workflow.name || undefined, phases: i.workflow.phases.map((p) => ({ ...p })) });
   return out;
 }

@@ -1615,7 +1615,7 @@ function toolDefs(): PagedTool[] {
     {
       name: "work",
       title: "What needs you",
-      description: "What needs you across agents (coding.sh work --json): each item's reason, next step, phases and supersededBy. Paged.",
+      description: "What needs you across agents (coding.sh work --json): each item's reason, next step, phases, PRs and supersededBy. Paged.",
       inputSchema: input({
         since: SINCE("7d"),
         all: { type: "boolean", default: false, description: "Also running, done and snoozed items." },

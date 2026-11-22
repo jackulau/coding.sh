@@ -798,6 +798,15 @@ skills). It is what `coding.sh harness audit` counts.
 | `stats.waiting.text` | The prompt, question or plan, redacted, whitespace collapsed, at most 300 characters |
 | `stats.endInferred` | `true` when `endedAt` is the last event seen, not a session end: a session known only from a transcript with no end marker, or a conversation-keyed OpenTelemetry or SDK session. It may still be running. Absent when the end is real or there is no end |
 
+**Pull requests.**
+
+| Field | Meaning |
+|---|---|
+| `stats.prs` (`url`, `repo`, `number`, `state`, `at`) | The pull requests the session's own tool calls opened, merged, closed or linked, oldest first: every one it opened, merged or closed (up to 500), and the 20 it linked last. Read from what the calls ran and printed, with no network call. `coding.sh work` names them on the session's item. Absent when the session touched none |
+| `stats.prs.state` | `opened` (`gh pr create` printed the URL, or `gh pr reopen` ran), `merged` (`gh pr merge`, not an `--auto` merge still queued, or gh printed that it merged), `closed` (`gh pr close`) or `linked` (a host tool linked or watched it, such as T3 Code's `link_pull_request`, another `gh pr` command named it, or a push printed its URL). A PR URL that only appears in a call's output, such as release notes or a PR body, links nothing. The last state the session saw wins, but `linked` never replaces another state |
+| `stats.prs.repo`, `stats.prs.url` | `owner/name` and the PR's page, from the URL, `--repo`, or the repo the session pushed to. Absent when the session named the PR by number only |
+| `stats.prs.at` | When the session last changed or saw it (ms) |
+
 **Tool errors and fold errors.**
 
 | Field | Meaning |

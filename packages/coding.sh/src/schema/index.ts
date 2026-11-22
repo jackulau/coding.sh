@@ -282,6 +282,26 @@ export interface Waiting {
   text?: string;
 }
 
+/**
+ * One entry of Session.stats.prs: a pull request the session touched, from what its own tool calls
+ * printed or named (core/sessions.ts foldPrs; no network call).
+ * - `opened`: `gh pr create` printed its URL, or `gh pr reopen` ran.
+ * - `merged`: `gh pr merge` ran (not an `--auto` merge still waiting), or gh printed that it merged it.
+ * - `closed`: `gh pr close` ran.
+ * - `linked`: the session named it without changing it: a host tool linked or watched it (T3 Code's
+ *   `link_pull_request`), a `git push` or a `gh pr` command printed its URL. It never replaces another state.
+ */
+export interface PullRequestRef {
+  /** The PR's web URL. Unset when the session named it by number and never saw its repo. */
+  url?: string;
+  /** `owner/name`, from the URL, `--repo`, or a repo the session's push or gh output named. Unset when none did. */
+  repo?: string;
+  number: number;
+  state: "opened" | "merged" | "closed" | "linked";
+  /** When the session saw that state (ms since the epoch): the last one it saw wins. */
+  at: number;
+}
+
 /** Session.stats.llmErrors: how many model calls failed, and why the first one did. */
 export interface LlmErrors {
   count: number;
@@ -483,6 +503,8 @@ export interface Session {
      * prompt), as of its last event (core/waiting.ts). Unset when nothing waits.
      */
     waiting?: Waiting;
+    /** Pull requests the session opened, merged, closed or linked, oldest first: every one it opened, merged or closed, and the 20 latest it only linked. Unset when it touched none. */
+    prs?: PullRequestRef[];
     /**
      * Why coding.sh could not fold this session's stored events into its stats (a coding.sh bug, not
      * the agent's): the row then holds only what the events say directly (agent, start, end, cwd,

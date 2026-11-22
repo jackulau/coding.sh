@@ -34,6 +34,13 @@ are derived from those sessions on read. Nothing is filed.
   children group under the parent's id. The item's id does not change when the root arrives.
 - Items are built in `src/core/work.ts`. Everything there is pure except the store read and the
   `.git` file check described under Surfaces.
+- `prs` is the union of the item's sessions' `stats.prs` (see the
+  [API reference](../reference/api.md)): one entry per PR with the newest state any session saw,
+  oldest first. A later `linked` never replaces `opened`, `merged` or `closed`, and an entry with
+  no repo joins the item's one PR of that number. Absent when no session touched a PR.
+  `coding.sh work` prints them on the item's line ("PR #12 merged", "PRs #12, #14 open"),
+  `work show` lists each with its URL, `work --json` and the MCP `work` tool carry them, and the
+  Work page shows each as a link to its URL.
 
 ## Workflow runs
 
