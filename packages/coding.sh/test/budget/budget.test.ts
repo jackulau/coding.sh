@@ -75,6 +75,8 @@ describe("budgets.json", () => {
     r = upsertBudget([], { period: "day", limitUsd: 1, repo: "/work/Web" }, 0, "linux");
     r = upsertBudget(r.budgets, { period: "day", limitUsd: 2, repo: "/work/web" }, 0, "linux");
     assert.deepEqual(r.budgets.map((b) => [b.id, b.repo]), [["day-web", "/work/Web"], ["day-web-2", "/work/web"]]);
+    // The id follows the platform's paths too, on any host: there a backslash is part of a folder's name.
+    assert.equal(upsertBudget([], { period: "day", limitUsd: 1, repo: "/work/a\\web" }, 0, "linux").budget.id, "day-a-web");
   });
 
   test("written through a temp file and read back; a missing file is no budgets", () => {

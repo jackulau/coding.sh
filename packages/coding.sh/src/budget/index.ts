@@ -6,7 +6,7 @@
 // wherever the agent reported no cost (tokens times list price).
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, isAbsolute } from "node:path";
+import { dirname, isAbsolute, posix, win32 } from "node:path";
 import type { IndexStore, Session } from "../core/types.ts";
 import { paths } from "../core/paths.ts";
 import { matchesPlace, pathKey, scanSessions, TOTALS_SCAN_CAP, type Place, type ScanQuery } from "../mcp/data.ts";
@@ -132,6 +132,7 @@ export function upsertBudget(list: readonly Budget[], b: Omit<Budget, "id" | "cr
     const budget = { ...same, limitUsd: b.limitUsd };
     return { budgets: list.map((x) => (x === same ? budget : x)), budget, replaced: true };
   }
+  const { basename } = platform === "win32" ? win32 : posix;
   const base = [b.period, b.agent ? slug(b.agent) : "", b.repo ? slug(basename(b.repo)) : "", b.where ? whereSlug(b.where) : ""].filter(Boolean).join("-");
   let id = base;
   for (let n = 2; list.some((x) => x.id === id); n++) id = `${base}-${n}`;
