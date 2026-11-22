@@ -39,6 +39,7 @@ import { jobConfig } from "../../jobs/config.ts";
 import { parseAge, positiveInt, UsageError } from "../args.ts";
 import { finishedToResume, finishJob, infraStopNote, openJob, resumeField, resumeNote, retryFlag, trialTimeout } from "../jobs.ts";
 import { gateFlags, list, promoteFlags, requireConsent, resolveTask, str, withContext } from "../common.ts";
+import { rerunWithYes } from "../next-steps.ts";
 import { ensureHookBin } from "../hookbin.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -152,7 +153,8 @@ export async function run(c: CommandContext): Promise<number> {
       throw new UsageError("--item-gate needs B to add or remove exactly one rule, skill or context file and change nothing else", { reason: "invalid_argument" });
     }
     // How to name this comparison again (consent prompt, cancel hint).
-    const arms = [...c.positionals.slice(0, 2), ...without.flatMap((p) => ["--without", p]), ...withs.flatMap((p) => ["--with", p])].join(" ");
+    const armArgs = [...c.positionals.slice(0, 2), ...without.flatMap((p) => ["--without", p]), ...withs.flatMap((p) => ["--with", p])];
+    const arms = armArgs.join(" ");
     /** Store the derived arm once; a rerun finds it by its content id. */
     const storeAblation = async () => {
       if (!derived) return;
@@ -192,7 +194,7 @@ export async function run(c: CommandContext): Promise<number> {
           const replaces = new Map(errored.map((r) => [slotKey(r), r]));
           // Pass the original run's --gateway and --trial-timeout: the retry runs under what this command line says.
           const route = gateway ? gatewayRouteFor(bundles, gateway) : undefined;
-          await requireConsent(c, `Run ${plural(errored.length, "agent session")} again (the runs of ${exp} that errored)?`, `coding.sh compare ${arms} --experiment ${exp} --retry-errors --yes`);
+          await requireConsent(c, `Run ${plural(errored.length, "agent session")} again (the runs of ${exp} that errored)?`, rerunWithYes(c, ["compare", ...armArgs, "--experiment", exp, "--retry-errors"]));
           if ((await ensureHookBin(c.env)) === "unavailable") out.warn("The coding.sh hook bin is missing and can't be written, so these runs won't be captured. Run `coding.sh init` first.");
           const spin = out.spin(`Retrying 0/${errored.length}…`);
           const r = await runExperiment({
@@ -345,7 +347,7 @@ export async function run(c: CommandContext): Promise<number> {
       const extra = [cached ? `${cached} reused` : "", finished ? `${finished} already finished` : ""].filter(Boolean).join(", ");
       const rounds = repair ? `, plus up to ${plural(repair.rounds, "repair round")} per failed run` : "";
       const dollars = pick?.estimateUsd !== undefined ? `, about $${pick.estimateUsd.toFixed(2)}` : "";
-      await requireConsent(c, `Run ${plural(Math.max(0, runs - cached - finished), "agent session")} (${plural(tasks.length, "task")} x 2 arms x ${k}${extra ? `, ${extra}` : ""}${rounds}${dollars})?`, `coding.sh compare ${arms} --yes`);
+      await requireConsent(c, `Run ${plural(Math.max(0, runs - cached - finished), "agent session")} (${plural(tasks.length, "task")} x 2 arms x ${k}${extra ? `, ${extra}` : ""}${rounds}${dollars})?`, rerunWithYes(c, ["compare", ...armArgs]));
       await storeAblation();
       const job = await openJob(c, { kind: "compare", name: `${A.name} vs ${B.name}`, config, newId: () => sortableId("exp_"), concurrency: concurrency ?? 4 });
       // The isolated agent configs call the hook bin; without it no run is captured (no turns, tokens, divergence or item gate).

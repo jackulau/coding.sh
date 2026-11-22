@@ -12,6 +12,7 @@
 import { constants, copyFileSync, readdirSync, readFileSync, renameSync, rmSync, statfsSync, statSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { nextStepBin } from "../cli/next-steps.ts";
 import { ownerOnly } from "./sqlite-open.ts";
 
 /** Stores with at least this many events print upgrade progress (smaller ones upgrade in well under a second). */
@@ -204,9 +205,10 @@ export class StoreNewerError extends Error {
   readonly known: number;
   /** The coding.sh that wrote it, when it left a stamp. */
   readonly writer?: StoreWriter;
-  constructor(o: { path: string; schema: number; known: number; writer?: StoreWriter }) {
+  /** `env` names the update command as the user's shell runs it (nextStepBin); the store has none of its own, so it defaults to the process's. */
+  constructor(o: { path: string; schema: number; known: number; writer?: StoreWriter; env?: NodeJS.ProcessEnv }) {
     const by = o.writer ? `, written by coding.sh ${o.writer.version}` : "";
-    super(`${o.path} uses index schema v${o.schema}${by}, but this coding.sh only knows up to v${o.known}. Captures stay safe in the spool until a coding.sh that knows v${o.schema} indexes them: coding.sh update`);
+    super(`${o.path} uses index schema v${o.schema}${by}, but this coding.sh only knows up to v${o.known}. Captures stay safe in the spool until a coding.sh that knows v${o.schema} indexes them: ${nextStepBin(o.env ?? process.env)} update`);
     this.name = "StoreNewerError";
     this.path = o.path;
     this.schema = o.schema;

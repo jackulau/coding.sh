@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { which } from "../../src/adapters/_shared/detect.ts";
+import { cliCommand } from "../../src/cli/next-steps.ts";
 import { posixShell } from "../../src/core/spawn.ts";
 import { pathOf } from "../_bin.ts";
 import { CLI } from "../_cli.ts";
@@ -150,6 +151,11 @@ describe("eval trigger", () => {
     const consent = cli(["eval", "trigger", "skills/pdf", "--harness", "fake"]);
     assert.equal(consent.status, 2);
     assert.match(consent.stderr, /Run 8 agent sessions \(1 arm x 8 prompts x 1\) needs confirmation/);
+    // The step it names keeps every flag given: approved, it probes through the harness the user named.
+    const plan = ["eval", "trigger", "skills/pdf", "--harness", "fake", "--no-siblings", "--json"];
+    const ask = cli(plan);
+    assert.equal(ask.status, 2, ask.stdout + ask.stderr);
+    assert.deepEqual((JSON.parse(ask.stderr.trim().split("\n").at(-1)!) as { next: string[] }).next, ["With their approval:", cliCommand(env, [...plan, "--yes"])]);
     assert.equal(readdirSync(join(home, ".coding.sh", "triggers", "pdf")).length, 4, "no run, no new result file");
   });
 });

@@ -1,10 +1,17 @@
 // Schedule output: cron line, a pinned workflow with a secrets env block and
-// artifact-backed history, and crontab merging that keeps other lines.
+// artifact-backed history, crontab merging that keeps other lines, and the
+// step --install-cron names when it needs the user's approval.
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { describe, test } from "node:test";
+import { after, describe, test } from "node:test";
 import { benchHome, parseDefinition } from "../../src/bench/define.ts";
 import { cronLine, envRefs, installCron, mergeCrontab, parseAt, shq, workflowYaml } from "../../src/bench/schedule.ts";
+import * as bench from "../../src/cli/commands/bench.ts";
+import { cliCommand } from "../../src/cli/next-steps.ts";
+import { runCmd, sandbox } from "../cli/_cmd.ts";
+import { cleanup, project } from "./helpers.ts";
+
+after(cleanup);
 
 const o = { name: "daily", cwd: "/srv/proj", cli: ["coding.sh"], env: { CODING_SH_HOME: "/h/.coding.sh" } };
 
@@ -43,5 +50,20 @@ describe("bench schedule", () => {
     let stored = text;
     const io = { read: () => stored, write: (t: string) => void (stored = t) };
     assert.deepEqual(installCron(io, "1 2 * * * new # coding.sh bench daily", "daily"), { replaced: true, changed: false });
+  });
+
+  test("--install-cron without --yes or a terminal names the command as given, with --yes", async () => {
+    const p = project();
+    p.def("budget_usd = 1");
+    const sb = sandbox();
+    try {
+      const argv = ["bench", "schedule", "arith", "--install-cron", "--at", "07:30"];
+      const r = await runCmd(bench, sb, { action: "schedule", positionals: ["arith"], flags: { "install-cron": true, at: "07:30" }, cwd: p.root, argv });
+      assert.equal(r.error?.reason, "confirmation_required", String(r.error?.message));
+      // --at included: approved, the cron line runs at the time the user picked.
+      assert.equal(r.error.suggestion, cliCommand(sb.env, [...argv, "--yes"]));
+    } finally {
+      sb.cleanup();
+    }
   });
 });

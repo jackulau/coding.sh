@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { acquireLock, type Lock } from "../../core/lock.ts";
 import { loadConfig } from "../../core/config.ts";
 import { paths } from "../../core/paths.ts";
-import { storeOwner, UPGRADE_STORE } from "../../core/store-guard.ts";
+import { storeOwner } from "../../core/store-guard.ts";
 import { runningCli } from "../../mcp/launch.ts";
 import { canonicalScheme, parseStoreUrl } from "../../store/factory.ts";
 import { loadSqlite } from "../../store/sqlite-open.ts";
@@ -27,8 +27,12 @@ import { backupPath, listBackups, parseWriter, restoreBackup, StoreNewerError, W
 import { lockContention, requireConsent, storeNewerError } from "../common.ts";
 import { refreshHookBin } from "../hookbin.ts";
 import { version } from "../meta.ts";
+import { cliCommand, nextStepBin, rerunWithYes } from "../next-steps.ts";
 import { bytes, CliError } from "../output.ts";
 import type { CommandContext } from "../types.ts";
+
+/** `upgrade-store` with `args`, as the user's shell runs it (cliCommand). */
+const upgradeStore = (env: NodeJS.ProcessEnv, ...args: string[]): string => cliCommand(env, ["upgrade-store", ...args]);
 
 /** The index schema `file` is at (0 before any migration) and its writer stamp, read without writing. */
 async function stateOf(file: string): Promise<{ schema: number; writer?: StoreWriter }> {
@@ -102,7 +106,7 @@ export async function run(c: CommandContext): Promise<number> {
     return 0;
   }
   const { schema: from, writer } = await stateOf(file);
-  if (from > to) throw storeNewerError(new StoreNewerError({ path: file, schema: from, known: to, writer }), env);
+  if (from > to) throw storeNewerError(new StoreNewerError({ path: file, schema: from, known: to, writer, env }), env);
   const cli = runningCli();
   const owner = storeOwner(p.root);
   const other = owner && owner.cli !== cli ? owner : undefined;
@@ -120,7 +124,7 @@ export async function run(c: CommandContext): Promise<number> {
   const hooks = takeOver ? `have hooks run this coding.sh ${version()} instead of ${named}` : "";
   if (from < to || takeOver) {
     const question = from === to ? `${hooks[0]!.toUpperCase()}${hooks.slice(1)}?` : `Migrate ${file} from index schema v${from} to v${to}${hooks ? ` and ${hooks}` : ""}?`;
-    await requireConsent(c, question, `${UPGRADE_STORE} --yes`);
+    await requireConsent(c, question, rerunWithYes(c, ["upgrade-store"]));
   }
 
   // Opened without the guard: this command is the request it waits for. The store keeps its own copy first.
@@ -136,10 +140,10 @@ export async function run(c: CommandContext): Promise<number> {
     return 0;
   }
   if (from < to) out.ok(`Migrated ${file} to index schema v${to}`);
-  if (backup) out.note(`The index as it was is kept at ${backup}. ${UPGRADE_STORE} --restore puts it back; delete it once this version works for you.`);
+  if (backup) out.note(`The index as it was is kept at ${backup}. ${upgradeStore(env, "--restore")} puts it back; delete it once this version works for you.`);
   if (cli) out.ok(`${bin === "not_installed" ? "This store is now owned by" : "Hooks now run"} coding.sh ${version()} (${cli})`);
   // From source there is no bundled CLI for the hooks to start: the old owner still runs them.
-  if (!cli && other) out.warn(`Hooks still run ${other.cli}, which may not open v${to}. Run coding.sh init from the install they should run.`);
+  if (!cli && other) out.warn(`Hooks still run ${other.cli}, which may not open v${to}. Run ${nextStepBin(env)} init from the install they should run.`);
   return 0;
 }
 
@@ -185,14 +189,14 @@ async function restore(c: CommandContext): Promise<number> {
   if (!backup) {
     const tooNew = backups[0];
     // Only a newer coding.sh helps when the copy, or the store itself, is past this one.
-    const update: [string, string] | undefined = tooNew || current > known ? ["Install the latest coding.sh:", "coding.sh update"] : undefined;
+    const update: [string, string] | undefined = tooNew || current > known ? ["Install the latest coding.sh:", `${nextStepBin(env)} update`] : undefined;
     throw new CliError(
       tooNew ? `The index from before the migration (${tooNew.path}) is at schema v${tooNew.schema}, but this coding.sh ${version()} only knows up to v${known}` : `No index from before a migration is kept next to ${file}: nothing to restore`,
       { reason: tooNew ? "store_newer" : "no_backup", next: update },
     );
   }
   const doc = { path: file, from: current, to: backup.schema, backup: backup.path };
-  await requireConsent(c, `Put back the index from before the migration (schema v${backup.schema}, ${bytes(backup.bytes)}) in place of ${file} (schema v${current})? What was indexed since stays in the replaced index, which is kept.`, `${UPGRADE_STORE} --restore --yes`);
+  await requireConsent(c, `Put back the index from before the migration (schema v${backup.schema}, ${bytes(backup.bytes)}) in place of ${file} (schema v${current})? What was indexed since stays in the replaced index, which is kept.`, rerunWithYes(c, ["upgrade-store", "--restore"]));
 
   // No ingest may write the index while it is swapped.
   let lock: Lock | undefined;
@@ -201,13 +205,13 @@ async function restore(c: CommandContext): Promise<number> {
       lock = await acquireLock(p.ingestLock, { waitMs: 5000 });
     } catch (e) {
       if (!lockContention(e)) throw e;
-      throw new CliError(`Can't restore: an ingest is running (${(e as Error).message})`, { reason: "locked", next: ["Wait for it to finish, then run:", `${UPGRADE_STORE} --restore`] });
+      throw new CliError(`Can't restore: an ingest is running (${(e as Error).message})`, { reason: "locked", next: ["Wait for it to finish, then run:", upgradeStore(env, "--restore")] });
     }
   }
   let undone: string;
   try {
     if (!(await emptyWal(file))) {
-      throw new CliError(`Can't restore: another process keeps ${file} busy`, { reason: "locked", next: ["Close other coding.sh commands (coding.sh ui, a running ingest), then run:", `${UPGRADE_STORE} --restore`] });
+      throw new CliError(`Can't restore: another process keeps ${file} busy`, { reason: "locked", next: ["Close other coding.sh commands (coding.sh ui, a running ingest), then run:", upgradeStore(env, "--restore")] });
     }
     undone = restoreBackup(file, backup, current);
     // A build that knows a newer schema would migrate the restored index again at its next open.
@@ -239,7 +243,7 @@ async function restore(c: CommandContext): Promise<number> {
   out.ok(`Put back ${file} at index schema v${backup.schema}`);
   out.note(`The index it replaced (schema v${current}) is kept at ${undone}; delete it when you no longer need it.`);
   if (hooks) out.ok(`Hooks run ${hooks}`);
-  if (backup.schema < known) out.note(`This coding.sh ${version()} knows schema v${known}: it migrates this store again only through ${UPGRADE_STORE}.`);
-  if (waits) out.warn(`Hooks start this coding.sh, so nothing is indexed until a coding.sh that opens v${backup.schema} runs init, or you run ${UPGRADE_STORE}. Captures wait in the spool meanwhile.`);
+  if (backup.schema < known) out.note(`This coding.sh ${version()} knows schema v${known}: it migrates this store again only through ${upgradeStore(env)}.`);
+  if (waits) out.warn(`Hooks start this coding.sh, so nothing is indexed until a coding.sh that opens v${backup.schema} runs init, or you run ${upgradeStore(env)}. Captures wait in the spool meanwhile.`);
   return 0;
 }
