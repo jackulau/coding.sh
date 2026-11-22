@@ -216,6 +216,20 @@ describe("cli improve", () => {
     assert.doesNotMatch(text.stdout, /No sessions yet/);
   });
 
+  it("improve check cuts a long commit subject to one line, as sessions cuts titles; --json keeps it whole", async () => {
+    const w = await world("long-subject", { afterFlagged: 0 });
+    const subject = `CLAUDE.md: ${Array.from({ length: 30 }, (_, k) => `rule ${k} says what the tests printed`).join(", ")}`;
+    assert.ok(subject.length > 600);
+    commitRule(w, "Say what the tests printed.", subject);
+    const text = cli(w, ["improve", "check"]);
+    assert.equal(text.status, 0, text.stderr);
+    // Off a TTY, 100 characters, as the sessions table cuts a title.
+    assert.ok(text.stdout.includes(` ${JSON.stringify(`${subject.slice(0, 99)}…`)}\n`), text.stdout);
+    assert.ok(!text.stdout.includes(subject.slice(0, 101)));
+    const j = JSON.parse(cli(w, ["improve", "check", "--json"]).stdout) as { changes: { subject: string }[] };
+    assert.equal(j.changes[0]!.subject, subject);
+  });
+
   it("improve check exits 1 on a regression and 0 otherwise", async () => {
     const bad = await world("regressed", { afterFlagged: 6, beforeTested: true });
     const r = cli(bad, ["improve", "check", "--json"]);

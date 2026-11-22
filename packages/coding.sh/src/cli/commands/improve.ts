@@ -18,7 +18,7 @@ import { CLI_PLAN, isCliProvider } from "../../judge/subscription.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { autoIngest, list, oneLine, pendingField, readIngest, str, withContext } from "../common.ts";
 import { quoteArg, windowsShell } from "../next-steps.ts";
-import { ago, CliError, localTime, plural, type Output } from "../output.ts";
+import { ago, clean, CliError, localTime, plural, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { captureSetUp, START_NEW_SESSION } from "../first-session.ts";
 import { matchesPlace, parsePlace, pathPlace, type Place } from "../../mcp/data.ts";
@@ -160,6 +160,9 @@ const verdictTone = (v: Verdict) => (v === "helped" ? "green" : v === "regressed
 /** The verdict line: "Word: reason", or the reason alone for a change no counted session ran with. */
 const verdictText = (out: Output, e: ChangeEffect): string => (e.verdict === "no-sessions-after" ? e.reason : `${out.style(VERDICT_WORD[e.verdict], verdictTone(e.verdict))}: ${e.reason}`);
 
+/** A commit subject on one line, cut as the sessions table cuts a title (60 characters on a terminal, 100 off one); --json keeps it whole. */
+const shownSubject = (out: Output, subject: string): string => JSON.stringify(oneLine(clean(subject), out.stdoutTTY ? 60 : 100));
+
 /** Flagged sessions listed under each change by improve check, unless --sessions. */
 const FLAGGED_SHOWN = 5;
 
@@ -174,7 +177,7 @@ function printChange(c: CommandContext, e: ChangeEffect, o: { indent?: string; f
   const indent = o.indent ?? "  ";
   const ch = e.change;
   const files = ch.files.map((f) => `${f.path} +${f.added} -${f.removed}`).join(", ");
-  out.print(`${indent}${out.style(ch.short, "bold")}  ${localTime(ch.at)}  ${files}  ${JSON.stringify(ch.subject)}`);
+  out.print(`${indent}${out.style(ch.short, "bold")}  ${localTime(ch.at)}  ${files}  ${shownSubject(out, ch.subject)}`);
   // A change with no sessions before it (often the commit that added the file) has nothing to compare: one line is enough.
   if (e.verdict === "no-baseline") out.print(`${indent}  ${out.style(VERDICT_WORD[e.verdict], verdictTone(e.verdict))}: ${e.after.sessions} session(s) after it.`);
   else {
@@ -481,7 +484,7 @@ async function watchLoop(c: CommandContext, initial: readonly ChangeEffect[], re
         const k = key(e);
         if (seen.get(e.change.commit) === k) continue;
         seen.set(e.change.commit, k);
-        out.print(`${new Date().toTimeString().slice(0, 8)}  ${e.change.short} ${JSON.stringify(e.change.subject)}  ${verdictText(out, e)}`);
+        out.print(`${new Date().toTimeString().slice(0, 8)}  ${e.change.short} ${shownSubject(out, e.change.subject)}  ${verdictText(out, e)}`);
       }
     } catch (e) {
       out.warn(e instanceof Error ? e.message : String(e));
