@@ -43,13 +43,16 @@ function set(c: CommandContext): number {
   const { out } = c;
   const [period, raw] = c.positionals;
   if (!isPeriod(period)) {
-    const near = period ? suggest(period, PERIODS) : undefined;
+    // `budget set 20 day`: the amount and the period swapped.
+    const swapped = isPeriod(raw) && /^\$?\d+(?:\.\d+)?$/.test((period ?? "").trim());
+    const near = swapped ? raw : period ? suggest(period, PERIODS) : undefined;
+    const given = swapped ? period : raw;
     // The command again with the period it meant, each value quoted for the user's shell; a missing amount stays <USD>.
     const scope = (["agent", "repo", "where"] as const).flatMap((f) => (str(c.flags[f]) ? [`--${f}`, str(c.flags[f])!] : []));
     const q = (a: string) => quoteArg(a, c.env);
     throw new UsageError(`The period must be one of ${PERIODS.join(", ")}, got ${JSON.stringify(period ?? "")}`, {
       reason: "invalid_argument",
-      suggestion: near ? [cliCommand(c.env, ["budget", "set", near]), raw === undefined ? "<USD>" : q(raw), ...scope.map(q)].join(" ") : undefined,
+      suggestion: near ? [cliCommand(c.env, ["budget", "set", near]), given === undefined ? "<USD>" : q(given), ...scope.map(q)].join(" ") : undefined,
     });
   }
   const amount = /^\$?(\d+(?:\.\d+)?)$/.exec((raw ?? "").trim());

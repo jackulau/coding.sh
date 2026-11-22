@@ -305,6 +305,7 @@ grouped by area, with links to the docs for the details.
 - **CLI.** The next steps and suggestions of `budget`, `alert`, `proxy` and `statusline` name `codingsh` in PowerShell and cmd, and the npx command when started with npx. Before, they named `coding.sh`, which fails there. A `budget set` suggestion now quotes a `--repo` path with a space and a `--where` with `$`, so the shell passes each on. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#windows))
 - **Budgets.** On Windows, `budget set` with `--repo` updates the budget for that folder when the path differs only in case, as in `C:\Work\web` and `c:\work\web`. Before, it added a second budget, such as `month-web-2`, that counted the same sessions. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-budget-set))
 - **Alerts.** When an alert command fails, the error `alert list` and `alert check` show keeps the start of its stderr, where cmd and PowerShell name the problem. Before, it kept the last line only, so a missing program read `operable program or batch file.` with no program named. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-alert))
+- **Budgets.** `budget set 20 day`, with the amount before the period, suggests `budget set day 20`. Before, it said only that the period must be day, week or month. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-budget-set))
 
 ## [0.1.7] - 2026-11-16
 

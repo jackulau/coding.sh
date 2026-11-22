@@ -80,6 +80,12 @@ describe("coding.sh budget (in process)", () => {
     assert.equal(r.error?.suggestion, `${BIN} budget set day 20`, "a near miss names the period it meant");
     r = await runCmd(budget, b, { action: "set", positionals: ["wekk", "5"], flags: { agent: "codex" } });
     assert.equal(r.error?.suggestion, `${BIN} budget set week 5 --agent codex`);
+    r = await runCmd(budget, b, { action: "set", positionals: ["20", "day"] });
+    assert.equal(r.error?.suggestion, `${BIN} budget set day 20`, "the amount and the period swapped");
+    r = await runCmd(budget, b, { action: "set", positionals: ["2.50", "month"], flags: { agent: "codex" } });
+    assert.equal(r.error?.suggestion, `${BIN} budget set month 2.50 --agent codex`);
+    r = await runCmd(budget, b, { action: "set", positionals: ["20", "yearly"] });
+    assert.equal(r.error?.suggestion, undefined, "no period among the arguments");
     r = await runCmd(budget, b, { action: "set", positionals: ["day", "-3"] });
     assert.match(String(r.error?.message), /USD amount/);
     r = await runCmd(budget, b, { action: "set", positionals: ["day", "0"] });
