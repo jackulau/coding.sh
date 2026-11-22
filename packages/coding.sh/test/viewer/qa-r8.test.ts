@@ -11,7 +11,7 @@ import { workList } from "../../src/viewer/work.ts";
 import { session } from "./fakes.ts";
 
 const now = Date.UTC(2026, 10, 7, 12);
-const ROOT = "07ea0cbb-a16b-445d-84d4-ff2fc6bdf8df";
+const ROOT = "4b8e2c1d-6f3a-4e5b-9c7d-8a1f2e3b4c5d";
 let dir: string;
 let index: MemoryIndexStore;
 
@@ -19,7 +19,7 @@ before(async () => {
   dir = mkdtempSync(join(tmpdir(), "qa8w-"));
   index = new MemoryIndexStore();
   // As in a store whose parent transcript is not read: the subagent's item is its own.
-  await index.upsertSession(session(`${ROOT}:sub:a1d4c32c15a2744a7`, {
+  await index.upsertSession(session(`${ROOT}:sub:a7e2b9c4d1f8a3e65`, {
     startedAt: now - 3_000_000, endedAt: now - 2_400_000, cwd: "/work/demo", title: "lane A",
     parent: { sessionId: ROOT, type: "general-purpose" } as any,
     flags: [FLAGS.apiStall], stats: { events: 4, turns: 1, toolCalls: 2, toolErrors: 0, filesChanged: 0, llmErrors: { count: 3, statusCode: 529 } } as any,
@@ -34,5 +34,5 @@ test("a failed subagent's next step resumes the session that ran it", async () =
   assert.match(failed.next, new RegExp("`claude --resume " + ROOT + "`"));
   assert.doesNotMatch(failed.next, /--resume [^`]*:sub:/);
   // `coding.sh show` takes coding.sh's own id, so it keeps the subagent's.
-  assert.match(failed.next, /`coding\.sh show [^`]+:sub:a1d4c32c15a2744a7`/);
+  assert.match(failed.next, /`coding\.sh show [^`]+:sub:a7e2b9c4d1f8a3e65`/);
 });

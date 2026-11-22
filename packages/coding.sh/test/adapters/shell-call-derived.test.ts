@@ -45,17 +45,17 @@ describe("runsTests: a heredoc's body and a log's name run nothing", () => {
   });
 
   it("waiting on a log and reading it runs nothing, whatever the log is called", () => {
-    for (const log of ["D:/cs/s6/ad2028-tsc.log", "/tmp/tsc.log", "/tmp/t.log"]) {
+    for (const log of ["D:/work/logs/lane-tsc.log", "/tmp/tsc.log", "/tmp/t.log"]) {
       const cmd = `timeout 260 bash -c 'until grep -qs "^rc=" ${log}; do sleep 15; done'; grep -E "^# (tests|pass|fail)|^rc=|^not ok" ${log}; cat ${log} | tail -20`;
       assert.equal(runsTests(cmd), false, log);
     }
-    assert.equal(runsTests("mytool --log D:/cs/s6/ad2028-tsc.log"), false);
+    assert.equal(runsTests("mytool --log D:/work/logs/lane-tsc.log"), false);
     assert.equal(runsTests("until npm test; do sleep 1; done"), true);
     assert.equal(runsTests("if true; then npx tsc --noEmit; fi"), true);
   });
 
   it("no test.result for the wait-and-read command", async () => {
-    const cmd = "timeout 260 bash -c 'until grep -qs \"^rc=\" D:/cs/s6/ad2028-tsc.log; do sleep 15; done'; cat D:/cs/s6/ad2028-tsc.log | tail -20";
+    const cmd = "timeout 260 bash -c 'until grep -qs \"^rc=\" D:/work/logs/lane-tsc.log; do sleep 15; done'; cat D:/work/logs/lane-tsc.log | tail -20";
     assert.deepEqual(results(await derived(cmd, "not ok 2 - x\n# tests 537\n# pass 536\n# fail 1\nrc=1\n")), []);
   });
 });
@@ -80,7 +80,7 @@ describe("a shell call's dirty-tree diff holds only its own edits", () => {
     assert.ok(!writesNothing("git log > log.txt"));
     assert.ok(!writesNothing("npm run build"));
     assert.deepEqual(changed("git diff --stat a..b | tail -3", "src/a.ts"), []);
-    assert.ok(runsElsewhere("cd /d/cs/s4/hookfix/packages/x && node probe.mjs", "C:/Projects/demo"));
+    assert.ok(runsElsewhere("cd /d/work/hookfix/packages/x && node probe.mjs", "C:/Projects/demo"));
     assert.ok(!runsElsewhere("cd /c/projects/demo/packages/x && node probe.mjs", "C:\\Projects\\demo"), "Git Bash form of a folder inside");
     assert.ok(!runsElsewhere("cd packages/x && node probe.mjs", "/work/demo"));
     assert.deepEqual(changed("cd /other/checkout && node gen.mjs", "src/a.ts"), []);

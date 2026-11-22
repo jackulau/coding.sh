@@ -512,6 +512,6 @@ describe("a worktree nested in its repo", () => {
 });
 
 test("a subagent's resume step names the session Claude Code can resume, not coding.sh's child id", () => {
-  assert.equal(resumeCommand({ id: "07ea0cbb-0000-4000-8000-000000000001:sub:a1d4c32c15a2744a7", agent: "claude-code" }), "claude --resume 07ea0cbb-0000-4000-8000-000000000001");
+  assert.equal(resumeCommand({ id: "1f2e3d4c-0000-4000-8000-000000000001:sub:a7e2b9c4d1f8a3e65", agent: "claude-code" }), "claude --resume 1f2e3d4c-0000-4000-8000-000000000001");
   assert.equal(resumeCommand({ id: "thr:sub:x", agent: "codex" }), "codex resume thr");
 });
