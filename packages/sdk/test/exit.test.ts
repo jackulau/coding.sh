@@ -1,9 +1,10 @@
 // A process whose explicit flush() gave up on a server that is down exits at once: no second
 // bounded flush at exit and no retry timer keeping it alive. Without an explicit flush, the exit
-// flush sends what is queued or waiting to retry, and says what it dropped.
+// flush sends what is queued or waiting to retry, and says what it dropped. Each warning says
+// which flush gave up: the app's flush() or the flush at exit.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { createServer } from "node:net";
+import { createServer, type Socket } from "node:net";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -26,6 +27,26 @@ async function downServer(): Promise<{ port: number; close(): Promise<void> }> {
   await new Promise<void>((r) => s.listen(0, "127.0.0.1", r));
   return { port: (s.address() as { port: number }).port, close: () => new Promise<void>((r) => s.close(() => r())) };
 }
+
+/** A server that accepts every connection and never answers. close() drops the connections it holds. */
+async function hangServer(): Promise<{ port: number; close(): Promise<void> }> {
+  const sockets = new Set<Socket>();
+  const s = createServer((sock) => {
+    sockets.add(sock);
+    sock.on("error", () => undefined);
+    sock.on("close", () => sockets.delete(sock));
+  });
+  await new Promise<void>((r) => s.listen(0, "127.0.0.1", r));
+  return {
+    port: (s.address() as { port: number }).port,
+    close: () => {
+      for (const sock of sockets) sock.destroy();
+      return new Promise<void>((r) => s.close(() => r()));
+    },
+  };
+}
+
+const warnings = (stderr: string) => stderr.match(/\[coding\.sh\]/g)?.length ?? 0;
 
 function run(script: string, env: Record<string, string>): Promise<{ end: number; code: number | null; stdout: string; stderr: string }> {
   const dir = mkdtempSync(join(tmpdir(), "csh-sdk-exit-"));
@@ -61,38 +82,41 @@ test("exits promptly after flush() timed out against a server that drops every c
   assert.equal(drained, "false", r.stderr);
   const lingered = r.end - Number(flushedAt);
   assert.ok(lingered < 750, `the process stayed ${lingered} ms after flush() gave up`);
-  assert.equal((r.stderr.match(/\[coding\.sh\]/g) ?? []).length, 1, r.stderr);
+  assert.equal(warnings(r.stderr), 1, r.stderr);
   assert.match(r.stderr, /not sent|dropp/i);
 });
 
-test("exits promptly after flush() timed out against a server that accepts and never answers", async () => {
-  const sockets = new Set<import("node:net").Socket>();
-  const hang = createServer((sock) => {
-    sockets.add(sock);
-    sock.on("error", () => undefined);
-    sock.on("close", () => sockets.delete(sock));
-  });
-  await new Promise<void>((r) => hang.listen(0, "127.0.0.1", r));
-  const port = (hang.address() as { port: number }).port;
-  try {
-    const r = await run(
-      `import { init, trace, flush } from ${JSON.stringify(src)};
-       init({ flushIntervalMs: 10 });
-       trace("t", () => 1);
-       const drained = await flush(1000);
-       process.stdout.write(drained + " " + Date.now());`,
-      { CODING_SH_URL: `http://127.0.0.1:${port}` },
-    );
-    assert.equal(r.code, 0, r.stderr);
-    const [drained, flushedAt] = r.stdout.split(" ");
-    assert.equal(drained, "false");
-    const lingered = r.end - Number(flushedAt);
-    assert.ok(lingered < 2000, `the process stayed ${lingered} ms after flush() gave up (the request in flight held it open)`);
-    assert.match(r.stderr, /did not answer/);
-  } finally {
-    for (const s of sockets) s.destroy();
-    await new Promise<void>((r) => hang.close(() => r()));
-  }
+test("exits promptly after flush() timed out against a server that accepts and never answers, and says flush() gave up", async () => {
+  const hang = await hangServer();
+  const r = await run(
+    `import { init, trace, flush } from ${JSON.stringify(src)};
+     init({ flushIntervalMs: 10 });
+     trace("t", () => 1);
+     const drained = await flush(1000);
+     process.stdout.write(drained + " " + Date.now());`,
+    { CODING_SH_URL: `http://127.0.0.1:${hang.port}` },
+  ).finally(() => hang.close());
+  assert.equal(r.code, 0, r.stderr);
+  const [drained, flushedAt] = r.stdout.split(" ");
+  assert.equal(drained, "false");
+  const lingered = r.end - Number(flushedAt);
+  assert.ok(lingered < 2000, `the process stayed ${lingered} ms after flush() gave up (the request in flight held it open)`);
+  assert.equal(warnings(r.stderr), 1, r.stderr);
+  assert.match(
+    r.stderr,
+    /^\[coding\.sh\] flush\(\) gave up after \d+ ms with 3 events not sent \(the server did not answer\); they are retried while the process runs and dropped when it exits$/m,
+  );
+});
+
+test("with no explicit flush and a server that never answers, the warning says the flush at exit gave up", async () => {
+  const hang = await hangServer();
+  const r = await run(`import { init, trace } from ${JSON.stringify(src)};\ninit({ flushIntervalMs: 10 });\ntrace("t", () => 1);`, {
+    CODING_SH_URL: `http://127.0.0.1:${hang.port}`,
+  }).finally(() => hang.close());
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(warnings(r.stderr), 1, r.stderr);
+  assert.match(r.stderr, /^\[coding\.sh\] the flush at exit gave up after 5000 ms with 3 events not sent \(the server did not answer\); dropping them$/m);
+  assert.doesNotMatch(r.stderr, /flush\(\)/);
 });
 
 test("with no explicit flush, the exit flush still sends what is queued", async () => {
@@ -148,6 +172,6 @@ test("with no explicit flush and the server down, the exit flush says it dropped
   const down = await downServer();
   const r = await run(endsAfterFirstAttempt, { CODING_SH_URL: `http://127.0.0.1:${down.port}` }).finally(() => down.close());
   assert.equal(r.code, 0, r.stderr);
-  assert.equal((r.stderr.match(/\[coding\.sh\]/g) ?? []).length, 1, r.stderr);
+  assert.equal(warnings(r.stderr), 1, r.stderr);
   assert.match(r.stderr, /could not reach the server after \d+ attempts? \(last status network error\); dropping events/);
 });
