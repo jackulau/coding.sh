@@ -222,12 +222,13 @@ with its reference patch and validation, as it was.
 `latest` names a session too. It skips the sessions that eval, compare and experiment trials made,
 so after `eval run` it is still your own session.
 
-The instruction defaults to the session's first prompt. A session recorded with
-`coding.sh run -- <agent command>` has no typed prompt, so its command's prompt argument is used
-instead: the value of `-p`, `--prompt`, `--print`, `--message`, `--instruction`, `--task` or
-`--query` when it has a space in it, or else the last argument with a space in it.
-`--instruction 'text'` or `--instruction @prompt.md` replaces it, and `--setup 'npm ci'`
-(repeatable) adds setup commands.
+The instruction defaults to the session's first prompt. `--instruction 'text'` or
+`--instruction @prompt.md` replaces it, and `--setup 'npm ci'` (repeatable) adds setup commands.
+
+A session recorded with `coding.sh run -- <agent command>` has no typed prompt, so its command's
+prompt argument is used instead: the value of `-p`, `--prompt`, `--print`, `--message`,
+`--instruction`, `--task` or `--query` when it has a space in it, or else the last argument with a
+space in it.
 
 ## What marks a session as failed
 
