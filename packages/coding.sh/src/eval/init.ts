@@ -25,7 +25,7 @@ import type { ChatProvider } from "../judge/providers.ts";
 import { toPosix } from "../runner/fsutil.ts";
 import { snapshotOps, type SnapshotOps } from "../runner/git.ts";
 import { insideDir } from "./decision.ts";
-import { CANDIDATE_POOL, rankSessions, rejectSummary } from "./candidates.ts";
+import { CANDIDATE_POOL, rankSessions, rejectSummary, type RankOpts } from "./candidates.ts";
 import { draftCases, draftTriggers, type DraftedCase } from "./draft.ts";
 import { type SuitePurpose } from "./report.ts";
 import { DEFAULT_TRIALS, SUITE_FILE, SUITES_DIR, type SuiteKind, type SuiteSpec } from "./suite-spec.ts";
@@ -295,7 +295,9 @@ async function pickSessions(o: InitOpts, index: IndexStore, now: number, startRe
   }
   // Ranked (eval/candidates.ts): sessions that can't become a task are left out, the rest go best first.
   const pool = await recentSessions(o, index, now, !o.where, o.where);
-  const ranked = await rankSessions(index, pool, { now, ...(startReadable ? { startReadable } : {}) });
+  const rankOpts: RankOpts = { now };
+  if (startReadable) rankOpts.startReadable = startReadable;
+  const ranked = await rankSessions(index, pool, rankOpts);
   const byId = new Map(pool.map((s) => [s.id, s]));
   const sessions = ranked.filter((c) => c.eligible).slice(0, o.limit ?? DEFAULT_SESSION_LIMIT).map((c) => byId.get(c.sessionId)!);
   const rejected = rejectSummary(ranked);

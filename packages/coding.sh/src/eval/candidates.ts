@@ -238,7 +238,12 @@ export function scoreCandidate(item: CandidateItem, now = Date.now()): Candidate
   const prompts = events.filter((e) => e.kind === "user.message").map(text).filter((t): t is string => !!t);
   const flags = failureFlags(s.flags);
   const base = { sessionId: s.id, agent: s.agent, ...(s.title ? { title: s.title } : {}), startedAt: s.startedAt, flags, userMessages: prompts.length };
-  const reject = (r: CandidateReject): Candidate => ({ ...base, eligible: false, reject: r, ...(item.gone ? { gone: item.gone } : {}), ...(item.wrapped ? { wrapped: item.wrapped } : {}), score: 0, reasons: [], pushback: 0 });
+  const reject = (r: CandidateReject): Candidate => {
+    const c: Candidate = { ...base, eligible: false, reject: r, score: 0, reasons: [], pushback: 0 };
+    if (item.gone) c.gone = item.gone;
+    if (item.wrapped) c.wrapped = item.wrapped;
+    return c;
+  };
   if (s.parent) return reject("subagent");
   if (s.runId || events.some((e) => e.runId)) return reject("run");
   if (item.wrapped) return reject("wrapped");

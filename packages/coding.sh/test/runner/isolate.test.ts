@@ -88,7 +88,7 @@ describe("withIsolatedTree", () => {
         child.stdout!.once("data", () => resolve());
         child.once("error", reject);
       });
-      const task = { verifier: { command: "node -e 0", hiddenFiles: {} } } as unknown as EvalTask;
+      const task: EvalTask = { id: "busy", name: "busy", status: "draft", start: { repoRoot: work, snapshot: "", head: "" }, instruction: "", setup: [], verifier: { command: "node -e 0", hiddenFiles: {}, timeoutMs: 30_000 }, tags: [], createdAt: 0 };
       const dirs = { work, start: join(root, "start"), aside: join(root, "agent-tree"), verified: join(root, "verified") };
       const seen = await withIsolatedTree(dirs, { task, reuseStart: false, keepVerified: false }, async () => readFileSync(join(work, "sum.js"), "utf8"));
       assert.equal(seen, "module.exports = (a, b) => a + b;\n", "the verifier sees the agent's change");
