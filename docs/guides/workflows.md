@@ -81,7 +81,7 @@ past runs of the workflow and asks before it spends more than the confirm thresh
 
 | Flag | Default | What it does |
 |---|---|---|
-| `--variant` | none | `name=script` for a Claude Code workflow, `name=command` with `--driver command`, or JSON. Repeatable. |
+| `--variant` | none | `name=script` for a Claude Code workflow, `name=command` with `--driver command`, or JSON, inline or in a `.json` file. JSON sets `name`, `script` or `command`, and optionally `args`, `resumeFromRunId`, `fromCheckpoint` and `replayFrom`. Any other field is ignored with a warning. Repeatable. |
 | `--driver` | claude | `command` runs any program: it gets `--args <json>` and prints its output as JSON. |
 | `-k` | 3 | Attempts per case and variant. |
 | `--split` | all | `dev` or `heldout`. |

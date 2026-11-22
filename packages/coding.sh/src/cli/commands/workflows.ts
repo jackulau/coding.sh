@@ -22,7 +22,7 @@ import { totalTokens } from "../../workflows/metrics.ts";
 import type { DeploymentRule, WorkflowCase, WorkflowDriver,WorkflowFramework, WorkflowNode, WorkflowRun, WorkflowVariant } from "../../workflows/types.ts";
 import { sortableId } from "../../core/ids.ts";
 import { jobConfig, taskFingerprint } from "../../jobs/config.ts";
-import { parseSince, positiveInt, UsageError } from "../args.ts";
+import { parseSince, positiveInt, suggest, UsageError } from "../args.ts";
 import { finishJob, openJob, resumeField, resumeNote, retryFlag, trialTimeout } from "../jobs.ts";
 import { jsonArg, ingestCli, lockContention, num, oneLine, list, requireConsent, resolveSession, shellQuote, spawnDetachedCli, str, withContext } from "../common.ts";
 import { acquireLock } from "../../core/lock.ts";
@@ -517,8 +517,11 @@ async function score(c: CommandContext): Promise<number> {
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
-/** `name=script` (claude), `name=cmd args…` (command), a JSON object, or a .json path. */
-export async function parseVariant(raw: string, driver: "claude" | "command"): Promise<WorkflowVariant> {
+/** The fields a JSON variant may set. */
+const VARIANT_FIELDS = ["name", "script", "command", "args", "resumeFromRunId", "fromCheckpoint", "replayFrom"];
+
+/** `name=script` (claude), `name=cmd args…` (command), a JSON object, or a .json path. `warn` hears of JSON fields it ignores. */
+export async function parseVariant(raw: string, driver: "claude" | "command", warn?: (message: string) => void): Promise<WorkflowVariant> {
   const t = raw.trim();
   let v: unknown;
   if (t.startsWith("{")) v = await jsonArg(t, "--variant");
@@ -531,6 +534,17 @@ export async function parseVariant(raw: string, driver: "claude" | "command"): P
     return driver === "claude" ? { name, script: value } : { name, command: value.split(/\s+/) };
   }
   if (!isObj(v) || typeof v.name !== "string" || !v.name) throw new UsageError(`--variant JSON needs a "name"`, { reason: "invalid_value" });
+  const keys = Object.keys(v);
+  const unknown = keys.filter((k) => !VARIANT_FIELDS.includes(k));
+  if (unknown.length && warn) {
+    // Suggest only a field the variant leaves unset: "note" next to "name" suggests nothing.
+    const unset = VARIANT_FIELDS.filter((f) => !keys.includes(f));
+    const named = unknown.map((k) => {
+      const near = suggest(k, unset);
+      return `${JSON.stringify(k)}${near ? ` (did you mean ${near}?)` : ""}`;
+    });
+    warn(`Variant ${JSON.stringify(v.name)}: ignored unknown ${unknown.length > 1 ? "fields" : "field"} ${named.join(", ")}. Known fields: ${VARIANT_FIELDS.join(", ")}`);
+  }
   const out: WorkflowVariant = { name: v.name };
   if (typeof v.script === "string") out.script = v.script;
   if (Array.isArray(v.command) && v.command.every((x) => typeof x === "string")) out.command = v.command as string[];
@@ -603,7 +617,7 @@ async function runExperiment(c: CommandContext): Promise<number> {
   if (driverKind !== "claude" && driverKind !== "command") throw new UsageError("--driver must be claude or command", { reason: "invalid_value" });
   const rawVariants = list(c.flags.variant);
   if (!rawVariants.length) throw new UsageError("Pass at least one --variant", { reason: "missing_value" });
-  const variants = await Promise.all(rawVariants.map((v) => parseVariant(v, driverKind)));
+  const variants = await Promise.all(rawVariants.map((v) => parseVariant(v, driverKind, (m) => out.warn(m))));
   const names = new Set<string>();
   for (const v of variants) {
     if (names.has(v.name)) throw new UsageError(`Variant name ${JSON.stringify(v.name)} is used twice`, { reason: "invalid_value" });

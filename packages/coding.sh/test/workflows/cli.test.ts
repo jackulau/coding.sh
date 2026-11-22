@@ -324,6 +324,32 @@ describe("workflows command helpers", () => {
     await assert.rejects(parseVariant('{"script":"s.js"}', "claude"), /needs a "name"/);
   });
 
+  it("warns about each field a JSON variant has that it does not know", async () => {
+    const warnings: string[] = [];
+    const file = join(root, "variant-typo.json");
+    writeFileSync(file, JSON.stringify({ name: "fork", command: ["node", "app.mjs"], fromCheckPoint: "ckpt-1", note: "x" }));
+    assert.deepEqual(await parseVariant(file, "command", (m) => warnings.push(m)), { name: "fork", command: ["node", "app.mjs"] });
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0]!, /^Variant "fork": ignored unknown fields "fromCheckPoint" \(did you mean fromCheckpoint\?\), "note"\. Known fields: name, script, command, args, resumeFromRunId, fromCheckpoint, replayFrom$/);
+    warnings.length = 0;
+    await parseVariant('{"name":"j","script":"s.js","arg":{"x":1}}', "claude", (m) => warnings.push(m));
+    assert.deepEqual(warnings, ['Variant "j": ignored unknown field "arg" (did you mean args?). Known fields: name, script, command, args, resumeFromRunId, fromCheckpoint, replayFrom']);
+    warnings.length = 0;
+    await parseVariant(JSON.stringify({ name: "ok", script: "s.js", args: {}, resumeFromRunId: "r" }), "claude", (m) => warnings.push(m));
+    assert.deepEqual(warnings, []);
+  });
+
+  it("run prints the unknown-field warning before it runs the variant", async () => {
+    const r = await cli(
+      "run",
+      ["review"],
+      { driver: "command", variant: [JSON.stringify({ name: "solo", command: [process.execPath, join(root, "fake-wf.mjs"), "good"], replayfrom: "plan" })], split: "dev", k: 1, yes: true },
+      { env: { CODING_SH_HOME: join(root, "variant-warn") } },
+    );
+    assert.equal(r.code, 0);
+    assert.match(r.stderr, /! Variant "solo": ignored unknown field "replayfrom" \(did you mean replayFrom\?\)/);
+  });
+
   it("reads the confirm threshold from the environment", () => {
     assert.equal(confirmAboveUsd({}), 1);
     assert.equal(confirmAboveUsd({ CODING_SH_CONFIRM_ABOVE_USD: "2.5" }), 2.5);
