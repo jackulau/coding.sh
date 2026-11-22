@@ -111,6 +111,17 @@ describe("exp ab: files the session's agent loads", () => {
     assert.match(r.stderr, /Claude Code does not load AGENTS\.md: the edit changes nothing for 1 of 2 cases/);
   });
 
+  it("a CLAUDE.md-only edit on Codex sessions names the file Codex loads, not Claude Code's", async () => {
+    const e = await setup("codex-claude-md", ["codex", "codex"]);
+    writeFileSync(join(e.repo, "AGENTS.md"), "Keep answers short.\n");
+    writeFileSync(join(e.repo, "CLAUDE.md"), "Keep answers short.\nRun the tests before you say you are done.\n");
+    const r = cli(e, ["exp", "ab", "--dry-run"]);
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stderr, /No arm difference: Codex does not load CLAUDE\.md/);
+    assert.match(r.stderr, /Edit the instructions file the agent loads \(AGENTS\.md for Codex\)/);
+    assert.doesNotMatch(r.stderr, /for Claude Code|@CLAUDE\.md/);
+  });
+
   it("a line-ending change is not an edit: CRLF in the work tree against LF in git (core.autocrlf=true)", async () => {
     const e = await setup("crlf", ["codex", "codex"]);
     // What a Windows checkout with core.autocrlf=true holds for the committed text: CRLF line ends.

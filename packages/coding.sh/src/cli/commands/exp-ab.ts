@@ -841,7 +841,13 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
     // Point at another agent only when the store has sessions of one that loads the edited files.
     const other = Object.keys(AGENT_NAMES).find((g) => !skipped.includes(g) && unloaded.unloaded.every((x) => loadedBy(g, x.path) === true));
     const hasOther = other !== undefined && (await ctx.index.listSessions({ agent: other as AgentId, limit: 1 })).length > 0;
-    throw new UsageError(`No arm difference: ${who} does not load ${unloaded.unloaded.map((x) => x.path).join(", ")}, so A and B give all ${plural(cases.length, "case")} the same context. Edit the file the agent loads (CLAUDE.md for Claude Code, or import it there with a line \`@${unloaded.unloaded[0]!.path}\`)${hasOther ? ", or test the edit on sessions of an agent that loads it" : ""}`, hasOther ? { reason: "no_arm_difference", suggestion: `--agent ${other}` } : { reason: "no_arm_difference" });
+    // The instructions file each of these agents does load (AGENTS.md for Codex); only Claude Code follows an `@path` import.
+    const loads = skipped.flatMap((g) => {
+      const file = ["CLAUDE.md", "AGENTS.md", "GEMINI.md"].find((p) => loadedBy(g, p) === true);
+      return file ? [`${file} for ${AGENT_NAMES[g] ?? g}`] : [];
+    });
+    if (skipped.includes("claude-code")) loads.push(`or add a line \`@${unloaded.unloaded[0]!.path}\` to CLAUDE.md`);
+    throw new UsageError(`No arm difference: ${who} ${skipped.length > 1 ? "do" : "does"} not load ${unloaded.unloaded.map((x) => x.path).join(", ")}, so A and B give all ${plural(cases.length, "case")} the same context. Edit the instructions file the agent loads${loads.length ? ` (${loads.join(", ")})` : ""}${hasOther ? ", or test the edit on sessions of an agent that loads it" : ""}`, hasOther ? { reason: "no_arm_difference", suggestion: `--agent ${other}` } : { reason: "no_arm_difference" });
   }
   if (!out.json) for (const u of unloaded.unloaded) out.warn(`${agentNames(u.agents)} does not load ${u.path}: the edit changes nothing for ${u.cases} of ${plural(cases.length, "case")}`);
   const setup = trialSetup(o, cases, c.env);
