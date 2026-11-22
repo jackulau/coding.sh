@@ -130,7 +130,7 @@ export async function fork(c: CommandContext, ctx: Context, s: Session, replay: 
   const e = point.call.event;
   out.print(out.style(`Fork of ${oneLine(clean(s.title ?? s.id), 60)} at step ${n} of ${replay.steps.length}`, "bold"));
   const model = typeof rc.call.request?.body.model === "string" ? rc.call.request.body.model : e.model;
-  out.print(out.style(`call ${e.id.slice(0, 12)}${model ? ` · ${model}` : ""}${typeof e.payload.messageCount === "number" ? ` · ${plural(e.payload.messageCount, "message")}` : ""} · ${point.by === "tool-use" ? "made the step's tool call" : "the agent's last call before the step"}`, "faint"));
+  out.print(out.style(`call ${e.id.slice(0, 12)}${model ? ` · ${model}` : ""}${typeof e.payload.messageCount === "number" ? ` · ${plural(e.payload.messageCount, "message")}` : ""} · ${point.by === "tool-use" ? "made the step's tool call" : point.step.kind === "prompt" ? "the agent's first call after the prompt" : "the agent's last call before the step"}`, "faint"));
   const changed = edits.filter((x) => x.how !== "absent").map((x) => `${x.path} ${x.how}`);
   for (const [k, v] of Object.entries(change.set)) changed.push(k === "system" ? "system prompt replaced" : `${k}=${String(v)}`);
   out.print(out.style(`harness: ${changed.join(", ") || "as recorded"}`, "faint"));

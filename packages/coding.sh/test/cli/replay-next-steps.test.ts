@@ -115,10 +115,25 @@ describe("replay --fork: the commands it prints", () => {
     assert.equal(r.status, 0, r.stderr);
     const all = (JSON.parse(r.stdout) as { steps: { n: number; kind: string; tool?: string }[] }).steps;
     const tool = all.find((x) => x.tool === "Bash")?.n;
-    const thanks = all.filter((x) => x.kind === "prompt")[1]?.n;
-    assert.ok(tool && thanks, JSON.stringify(all));
-    return { tool, thanks };
+    const [prompt, thanks] = all.filter((x) => x.kind === "prompt").map((x) => x.n);
+    assert.ok(tool && prompt && thanks, JSON.stringify(all));
+    return { tool, prompt, thanks };
   };
+
+  it("the call line says which call the fork starts from: a prompt step's is the agent's first call after the prompt", async () => {
+    const { prompt, tool } = await steps();
+    const before = sent.length;
+    const r = await cli(["replay", SESSION, "--step", String(prompt), "--fork", "--with", "CLAUDE.md=my fixed.md"], { ANTHROPIC_API_KEY: USER_KEY });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.equal(sent.length - before, 1);
+    assert.match(r.stdout, / · the agent's first call after the prompt$/m, r.stdout);
+    assert.doesNotMatch(r.stdout, /last call before the step/);
+    // A tool step's call is the one whose reply made the tool call.
+    const t = await cli(["replay", SESSION, "--step", String(tool), "--fork", "--with", "CLAUDE.md=my fixed.md"], { ANTHROPIC_API_KEY: USER_KEY });
+    assert.equal(t.status, 0, t.stderr + t.stdout);
+    assert.equal(sent.length - before, 2);
+    assert.match(t.stdout, / · made the step's tool call$/m, t.stdout);
+  });
 
   it("keep this step: the command repeats every change flag and -k, each argument quoted for the user's shell", async () => {
     const { tool } = await steps();
