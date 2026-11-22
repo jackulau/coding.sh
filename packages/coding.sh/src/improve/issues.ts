@@ -25,7 +25,7 @@ import { commandOf } from "../core/sessions.ts";
 import { flagFindings } from "../refine/findings.ts";
 import { natureScore, signalSeverity, type SeverityLevel } from "../refine/severity.ts";
 import { extractTestCommand } from "../eval/task.ts";
-import { exitCodeOf, failingPart, isPlumbing, isPowerShellTool, partOutput, shellParts, type Shell, type ShellPart } from "../core/failing-command.ts";
+import { exitCodeOf, failingPart, failureSampleLine, isPlumbing, isPowerShellTool, partOutput, shellParts, type Shell, type ShellPart } from "../core/failing-command.ts";
 
 /** The decision-point kinds `exp ab --behavior` replays (src/eval/decision.ts). */
 export type Behavior = "unverified-claim" | "done-while-failing" | "unchanged-retry";
@@ -205,9 +205,8 @@ export function errorKey(raw: string | undefined): string {
 
 const firstErrorLine = (raw: string | undefined): string | undefined => {
   const text = withoutExitLine(raw)?.trim() ? withoutExitLine(raw) : raw;
-  if (!text) return undefined;
-  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-  return lines.find((l) => /error|cannot|not found|failed|no such|denied|missing|invalid|unknown/i.test(l)) ?? lines[0];
+  // The error line, or none: plain output (a file name, a status line, code) is no sample (core/failing-command.ts).
+  return failureSampleLine(text);
 };
 
 const outputText = (e: AgentEvent): string | undefined => {

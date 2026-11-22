@@ -2,7 +2,7 @@
 // like the ones agents run (Claude Code's "Exit code N" first line included).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { failingPart, launchedCommand, partOutput, shellParts } from "../../src/core/failing-command.ts";
+import { failingPart, failureSampleLine, launchedCommand, partOutput, shellParts } from "../../src/core/failing-command.ts";
 import { commandHead, COMPOUND, failureRecords, rankIssues } from "../../src/improve/issues.ts";
 import { extractTestCommand } from "../../src/eval/task.ts";
 import { buildSession } from "../../src/core/sessions.ts";
@@ -99,6 +99,34 @@ describe("failureRecords on compound commands", () => {
       ["cmd:cargo build", "cargo build"],
       ["compound:exit 1", COMPOUND],
     ]);
+  });
+
+  it("gives a compound failure no sample when its output holds no error line: a notice, a status line, echoed code", () => {
+    const recs = failureRecords(
+      session("a", [
+        ["tool.start", { tool: "Bash", toolUseId: "1", input: { command: 'taskkill //PID 4242 //T //F; powershell.exe -Command "Get-Process node | Select-Object Id"' } }],
+        ["tool.end", { tool: "Bash", toolUseId: "1", ok: false, output: "Exit code 1\nSUCCESS: The process with PID 4242 (child process of PID 4241) has been terminated." }],
+        ["tool.start", { tool: "Bash", toolUseId: "2", input: { command: "./run.sh && ./check.sh" } }],
+        ["tool.end", { tool: "Bash", toolUseId: "2", ok: false, output: "Exit code 2\nexit: 0" }],
+        ["tool.start", { tool: "Bash", toolUseId: "3", input: { command: "timeout 5 node -e 'go()' && echo ok" } }],
+        ["tool.end", { tool: "Bash", toolUseId: "3", ok: false, output: "Exit code 124\nTerminated\nconst err=String(p.error||p.output||\"\").slice(0,100);" }],
+      ]),
+    );
+    assert.equal(recs.length, 3);
+    for (const r of recs) assert.equal(r.sample, undefined, `${r.key} has no error line, so no sample`);
+  });
+
+  it("failureSampleLine picks a program's message or an error line, never output that only names a program", () => {
+    assert.equal(failureSampleLine("SUCCESS: The process with PID 1 has been terminated."), undefined);
+    assert.equal(failureSampleLine("exit: 0"), undefined);
+    assert.equal(failureSampleLine('const err=String(p.error||"");'), undefined);
+    assert.equal(failureSampleLine('{"error":"x"}'), undefined);
+    assert.equal(failureSampleLine('console.log("docs", n, "failed", total);'), undefined);
+    assert.equal(failureSampleLine("id: string;\nowner: someone"), undefined);
+    assert.equal(failureSampleLine("// Name what failed: the runner marks each test"), undefined);
+    assert.equal(failureSampleLine("which: no codingsh in PATH"), "which: no codingsh in PATH");
+    assert.equal(failureSampleLine("const x=1;\nTypeError: x is not a function"), "TypeError: x is not a function");
+    assert.equal(failureSampleLine("src/a.ts(3,1): error TS2322: Type '() => void' is not assignable"), "src/a.ts(3,1): error TS2322: Type '() => void' is not assignable");
   });
 
   it("keys a PowerShell launcher line on the program, never the launcher or a pipeline cmdlet", () => {
@@ -306,6 +334,15 @@ describe("issue keys and samples", () => {
   it("a shell launcher keeps its script in the key", () => {
     assert.equal(commandHead("bash repro.sh --fast"), "bash repro.sh");
     assert.equal(commandHead("sh scripts/check.sh"), "sh check.sh");
+  });
+
+  it("a JSON record or plain output line is never the sample", () => {
+    const json = failureRecords(fail("j", "node tool.mjs", 'Exit code 1\n{"ok":false,"items":[]}'));
+    assert.equal(json[0]?.sample, undefined);
+    const plain = failureRecords(fail("p", "ls store", "Exit code 1\nblobs/\nindex.db"));
+    assert.equal(plain[0]?.sample, undefined);
+    // A program's own prefixed message still is.
+    assert.equal(failureRecords(fail("w", "which vercel", "Exit code 1\nwhich: no vercel in (/usr/bin)"))[0]?.sample, "which: no vercel in (/usr/bin)");
   });
 
   it("a test command run after `cd <absolute path>` keeps no cd prefix", () => {

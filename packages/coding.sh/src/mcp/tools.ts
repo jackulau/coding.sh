@@ -44,7 +44,7 @@ import { viewQuery, ViewError } from "../query/views.ts";
 import { fitAnswer, pageIndex, pageRange, pageStep } from "./replay-page.ts";
 import { toolText, ToolError, type ToolDef } from "./protocol.ts";
 import { scoreTools } from "../scores/mcp.ts";
-import { needYou, readWorkQueue, WORK_WINDOW_MS, workFiles, workItemJson, workJson } from "../core/work.ts";
+import { needYou, readWorkQueue, settleWorkFiles, WORK_WINDOW_MS, workFiles, workItemJson, workJson } from "../core/work.ts";
 import { indexAge, indexAgeField, type IndexAge } from "../core/ingest-health.ts";
 import { readOverlay } from "../core/work-overlay.ts";
 
@@ -472,6 +472,8 @@ async function workPages(a: Obj, c: ToolCtx): Promise<(limit: number) => Obj> {
   const age = storeIndexAge(ctx, now);
   const stale = age?.stale ? age : undefined;
   const { queue, sessions, truncated } = await readWorkQueue(ctx.index, { since, all, now: stale?.at ?? now, overlay: readOverlay(ctx.paths.work) });
+  // The page counts and names each item's files as work --json and work show do (core/work.ts settleWorkFiles).
+  await settleWorkFiles(ctx.index, queue.items.slice(offset, offset + asked), sessions, stale?.at ?? now);
   return (limit: number): Obj => {
     const doc = workJson(queue, { since, limit: offset + limit, truncated });
     const items = (doc.items as Obj[]).slice(offset);

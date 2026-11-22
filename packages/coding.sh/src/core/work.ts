@@ -899,7 +899,7 @@ export function changedPaths(sorted: readonly AgentEvent[], cwd?: string): Set<s
     if ((e.kind !== "tool.start" && e.kind !== "tool.end") || e.payload.wrapper === true) continue;
     const id = typeof e.payload.toolUseId === "string" && e.payload.toolUseId ? e.payload.toolUseId : undefined;
     if (e.kind === "tool.start") {
-      const written = shellCallFiles(e.payload.tool, e.payload.input, e.cwd ?? cwd);
+      const written = shellCallFiles(e.payload.tool, e.payload.input, e.cwd ?? cwd).map((f) => changeKey(f, e.cwd, cwd));
       if (written.length && id) pending.set(id, written);
       else for (const f of written) out.add(f);
     } else if (id && pending.has(id)) {
@@ -940,9 +940,35 @@ export async function workFiles(index: Pick<IndexStore, "listEvents">, item: Wor
     if (item.cause?.bucket === "review") item.reason = reviewReason(short(now - item.cause.at), files.size);
     // An approval item's stageWhy quotes the agent's question, which may itself say "changed 3 files".
     if (item.stage !== "approval") item.stageWhy = item.stageWhy.replace(/\bchanged \d+ files?\b/, changedText(files.size));
-  }
+    // Every file outside the repo: `git -C <repo> diff` would come back empty, so the review step names the files.
+    const repo = item.repo ? pathKey(item.repo) : undefined;
+    const inRepo = ([f, cwd]: [string, string | undefined]) => {
+      if (!absolute(f) && !cwd) return true;
+      const k = pathKey(absolute(f) ? f : `${cwd}/${f}`);
+      return k === repo || k.startsWith(`${repo}/`);
+    };
+    if (repo && !item.hidden && item.cause?.bucket === "review" && !found.some(inRepo)) {
+      const list = [...files];
+      const what = list.length <= 3 ? list.map((f) => `\`${f}\``).join(", ") : `\`coding.sh work show ${item.id}\``;
+      item.next = `review: ${what} (outside ${item.repo}), then \`coding.sh work ack ${item.id}\``;
+    }
   }
   return [...files];
+}
+
+/**
+ * Reads the changed paths of the items a list shows, as `work show` does, so the
+ * list gives the same count and review step: an item several sessions changed
+ * files in counts each path once, and a review item with a repo names its files
+ * when none is inside the repo (workFiles). Items that need neither keep the fold's counts.
+ */
+export async function settleWorkFiles(index: Pick<IndexStore, "listEvents">, items: readonly WorkItem[], sessions: readonly Session[], now = Date.now()): Promise<void> {
+  const byId = new Map(sessions.map((s) => [s.id, s]));
+  for (const i of items) {
+    const changers = i.sessionIds.filter((id) => (byId.get(id)?.stats.filesChanged ?? 0) > 0).length;
+    const review = changers > 0 && !!i.repo && !i.hidden && i.cause?.bucket === "review";
+    if (changers > 1 || review) await workFiles(index, i, sessions, now);
+  }
 }
 
 /** The object without its undefined fields: optional JSON fields are absent, not null. */

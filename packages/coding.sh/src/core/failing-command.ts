@@ -525,6 +525,36 @@ const STRONG_ERROR = /\b(?:[Ee]rror|ERROR|[Ff]atal|FATAL|[Ee]xception|Traceback|
 const WEAK_ERROR = /cannot|not found|failed|no such|denied|missing|invalid|unknown|not recognized/i;
 export const errorLine = (lines: readonly string[]): string | undefined => lines.find((l) => STRONG_ERROR.test(l)) ?? lines.find((l) => WEAK_ERROR.test(l));
 
+/**
+ * A line of source code (bash's `Terminated` job report echoes the command it stopped, a script prints
+ * its own lines): a declaration, an assignment, a call statement (`console.log(…)`), or a line ending in
+ * `;` or `) {`, or a `//` comment. Code, not a message, whatever words it holds.
+ */
+const CODE_LINE = /^(?:\/\/|\/\*|(?:const|let|var)\s+[\w${[]|function\b|import\s|export\s|return\s|(?:if|for|while)\s*\()|^[A-Za-z_$][\w$.]*\s*=[^=]|^[A-Za-z_$][\w$.]*\(.*\);?$|;$|\)\s*\{$/;
+/** An error word anywhere in a line, as `improve` samples read them. */
+const ERROR_WORD = /error|cannot|not found|failed|no such|denied|missing|invalid|unknown/i;
+/** Prefixes of status lines (`exit: 0`, `status: ok`) rather than a program's message. */
+const STATUS_PREFIX = /^(?:exit|status|code|rc|result|done|ok)$/i;
+
+/**
+ * The line of a failed command's output that reads as its error, for a failure sample: the first
+ * line with an error word, else the first line a program prefixed with its name (`which: no x in …`).
+ * A JSON record, a line of source code, a status line (`exit: 0`) and an all-caps notice from another
+ * program (taskkill's `SUCCESS: …`) are output, not the error. Undefined when no line qualifies.
+ */
+export function failureSampleLine(text: string | undefined): string | undefined {
+  if (!text) return undefined;
+  const lines = text.split("\n").map((l) => l.trim()).filter((l) => l && !/^[[{]["{[]/.test(l) && !CODE_LINE.test(l));
+  return (
+    lines.find((l) => ERROR_WORD.test(l)) ??
+    lines.find((l) => {
+      const m = /^([\w.-]+): (\S.*)$/.exec(l);
+      // A message is a phrase (`no codingsh in PATH`): a one- or two-word value (`owner: someone`, `exit: 0`) is a field.
+      return !!m && /[a-z]/.test(m[1]!) && !STATUS_PREFIX.test(m[1]!) && m[2]!.trim().split(/\s+/).length >= 3;
+    })
+  );
+}
+
 /** The exit status: the event's, or the "Exit code N" line Claude Code puts first. */
 export function exitCodeOf(exitCode: unknown, output: string | undefined): number | undefined {
   if (typeof exitCode === "number" && Number.isInteger(exitCode)) return exitCode;

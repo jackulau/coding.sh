@@ -260,4 +260,24 @@ describe("review fixes", () => {
     assert.equal(changeKey("/elsewhere/z.ts", "/work/demo/app", "/work/demo"), "/elsewhere/z.ts");
     assert.equal(changeKey("src/x.ts", undefined, "/work/demo"), "src/x.ts");
   });
+
+  test("a file a shell call edited by absolute path from a subfolder counts once, and work, work show and show agree", async () => {
+    const start = { id: "s0", v: 0, sessionId: "m", ts: ago(10 * MIN), agent: "claude-code", kind: "session.start", cwd: "C:\\work\\demo", payload: {} } as AgentEvent;
+    const sub = "C:\\work\\demo\\packages\\app";
+    const events = [
+      start,
+      fc("m", "docs/a.md", "C:\\work\\demo"),
+      // `cd /c/work/demo && sed -i docs/a.md` run from packages/app: the path comes back absolute, outside the event's folder.
+      fc("m", "C:/work/demo/docs/a.md", sub),
+      fc("m", "C:\\Temp\\scratch\\notes.md", sub),
+    ];
+    const s = buildSession(events);
+    assert.equal(s.stats.filesChanged, 2, "docs/a.md once, plus the scratch file outside the checkout");
+    const item = queue([s], { all: true }).items[0]!;
+    const files = await workFiles({ listEvents: async () => events }, item, [s], NOW);
+    assert.equal(files.length, s.stats.filesChanged);
+    assert.equal(item.filesChanged, s.stats.filesChanged);
+    assert.equal(changeKey("C:/work/demo/docs/a.md", sub, "C:\\work\\demo"), "docs/a.md");
+    assert.equal(changeKey("/work/demo/docs/a.md", "/work/demo/app", "/work/demo"), "docs/a.md");
+  });
 });

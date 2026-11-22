@@ -6,7 +6,7 @@ import type { Session } from "../../schema/index.ts";
 import type { Context } from "../../core/context.ts";
 import { indexAge, staleIndexText, type IndexAge } from "../../core/ingest-health.ts";
 import { addAck, addSnooze, readOverlay, writeOverlay, type WorkOverlay } from "../../core/work-overlay.ts";
-import { BUCKET_LABELS, buildWorkQueue, countsLine, itemWorkflowAgents, loadWorkSessions, STAGES, stagesLine, workFiles, workItemJson, workJson, type Stage, type WorkItem, type WorkPhase, type WorkQueue } from "../../core/work.ts";
+import { BUCKET_LABELS, buildWorkQueue, countsLine, itemWorkflowAgents, loadWorkSessions, settleWorkFiles, STAGES, stagesLine, workFiles, workItemJson, workJson, type Stage, type WorkItem, type WorkPhase, type WorkQueue } from "../../core/work.ts";
 import { parseAge, parseSinceWhen, positiveInt, suggest, UsageError } from "../args.ts";
 import { agentsFlag, autoIngest, list as listFlag, num, oneLine, pendingField, readIngest, rejectAgentTypos, str, withContext, type IngestBacklog } from "../common.ts";
 import { ago, CliError, localTime, plural, usd } from "../output.ts";
@@ -64,7 +64,8 @@ async function list(c: CommandContext): Promise<number> {
     const { sessions, truncated } = await loadWorkSessions(ctx.index, { since: w.since });
     const q = buildWorkQueue(sessions, { all, overlay, agents, place, stages, now: stale?.at });
     if (!q.items.length && agents.length) await rejectAgentTypos(ctx.index, agents);
-    await distinctFiles(ctx, q.items.slice(0, limit), sessions);
+    // The shown items count and name their files as `work show` does (core/work.ts settleWorkFiles).
+    await settleWorkFiles(ctx.index, q.items.slice(0, limit), sessions, stale?.at);
     if (out.json) {
       out.data({ ...workJson(q, { since: w.since, limit, truncated }), ...staleIndexField(stale), ...pendingField(backlog) });
       return 0;
@@ -72,18 +73,6 @@ async function list(c: CommandContext): Promise<number> {
     printQueue(c, q, { limit, all, stages, window: w, truncated, backlog, stale });
     return 0;
   });
-}
-
-/**
- * An item whose files several sessions changed counts each path once, as `work show` does: a
- * sum of the sessions' own counts would count a path two sessions touched twice.
- */
-async function distinctFiles(ctx: Context, items: readonly WorkItem[], sessions: readonly Session[]): Promise<void> {
-  const byId = new Map(sessions.map((s) => [s.id, s]));
-  for (const i of items) {
-    const changers = i.sessionIds.filter((id) => (byId.get(id)?.stats.filesChanged ?? 0) > 0).length;
-    if (changers > 1) await workFiles(ctx.index, i, sessions);
-  }
 }
 
 /**

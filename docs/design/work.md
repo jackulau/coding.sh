@@ -251,8 +251,12 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
   item's repo is that folder, so Where names it and the review step runs `git -C <folder> diff`.
   When an item wrote files both inside and outside its folder, every path in the list is absolute.
   Paths count the way `stats.filesChanged` counts them: each resolved against the folder its event
-  ran in, then made relative to the session's folder. So `show`, `work` and `work show` give one
-  count for a session.
+  ran in, then made relative to the session's folder, even when the path is absolute (a shell call
+  that ran `cd <repo>` from a subfolder). So `show`, `work` and `work show` give one count for a
+  session. When none of an item's changed files is inside its repo, the review step names the
+  files (or `coding.sh work show <id>` for more than three) instead of a `git diff` that comes back
+  empty; `work`, `work --json` and the MCP `work` tool read the shown review items' files to say
+  the same.
   The id is an item id or the id of any session in the item. A session outside the window is
   still found by its id. An unknown id exits 1.
 - `coding.sh work ack <id>` and `coding.sh work snooze <id> <duration>`. A bad duration exits 2.
