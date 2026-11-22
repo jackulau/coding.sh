@@ -242,9 +242,10 @@ For ClickHouse, the store plugins and SQL over the tables, see
 - **`init` prints `Can't reach <url>`.** Check the URL and the port, then run
   `curl -s http://<server>:4318/healthz` from the developer's machine.
 - **`docker compose up --wait` reports the container unhealthy.** Run `docker compose logs coding-sh`.
-  If serve refused to start, the log says `refusing to listen on 0.0.0.0 without auth` and names
-  the setting to add and the `serve keygen` command that makes the key. Otherwise, on a busy host the
-  first health checks can time out. Run `docker compose ps` a minute later;
+  If it says `refusing to listen on 0.0.0.0 without auth`, add the setting it names; the
+  `serve keygen` command it prints makes the key.
+- **The log shows no refusal, and the container is still unhealthy.** On a busy host the first
+  health checks can time out. Run `docker compose ps` a minute later;
   `curl -s http://<server>:4318/readyz` shows whether the store is ready.
 - **`serve keygen` prints `Cannot find module '/app/C:/Program Files/Git/app/cli.mjs'`.** Git Bash
   on Windows turned `/app/cli.mjs` into a Windows path. Put `MSYS_NO_PATHCONV=1` in front of the
