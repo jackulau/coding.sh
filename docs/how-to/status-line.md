@@ -27,7 +27,9 @@ On Windows the command is `codingsh.cmd statusline`. Claude Code runs it through
 through PowerShell when Git Bash is not installed, and PowerShell can't run `coding.sh`, the sh
 script npm installs; `codingsh.cmd` runs in both. In PowerShell or cmd, run
 `codingsh statusline install`. A status line installed by version 0.1.7 or earlier names
-`coding.sh`: run `install` again to update it.
+`coding.sh`: run `install` again to update it. Until you do, on Windows, `coding.sh doctor` and
+`coding.sh update --refresh-bin` warn about it and print the command that reinstalls it. So does an
+update that version 0.1.8 or later runs. None of them changes `settings.json`.
 
 Claude Code shows the line on the next turn. It looks like this:
 

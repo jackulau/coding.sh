@@ -43,6 +43,27 @@ export function statuslineCommand(platform: NodeJS.Platform = process.platform):
 }
 // Recognises a status line as ours: coding.sh, codingsh or codingsh.cmd, or a bundle path.
 const OURS = /coding\.?sh(?:\.cmd)?\s+statusline|statusline\.mjs/;
+// The program is npm's sh script, as `install` wrote it on every platform up to 0.1.7.
+// `npx coding.sh statusline` runs npx, which PowerShell runs.
+const SH_PROGRAM = /^\s*(?:\S*[\\/])?coding\.sh\s+statusline(?:\s|$)/;
+
+/**
+ * Claude Code's status line when, on Windows, it still runs `coding.sh statusline`, as one
+ * installed by 0.1.7 or earlier does: Claude Code runs it in PowerShell when Git Bash is not
+ * installed, and PowerShell can't run it. `install` rewrites it to statuslineCommand(). This reads
+ * settings.json and never writes it; undefined elsewhere, for any other command, or for a file it
+ * can't read.
+ */
+export function staleStatusLine(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): { file: string; command: string } | undefined {
+  if (platform !== "win32") return undefined;
+  const file = userSettings(env);
+  try {
+    const command = currentCommand(parseJsonObject(file, readTextIfExists(file)));
+    return command !== undefined && SH_PROGRAM.test(command) ? { file, command } : undefined;
+  } catch {
+    return undefined; // not JSON, or unreadable: `install` says why
+  }
+}
 
 /**
  * settings.json rewritten to hold `next`, changing only the members that differ (editJsonc), so
@@ -259,8 +280,8 @@ async function needYouCount(ctx: Context): Promise<number> {
   }
 }
 
-function userSettings(c: CommandContext): string {
-  return join(claudeConfigDir(c.env), "settings.json");
+function userSettings(env: NodeJS.ProcessEnv): string {
+  return join(claudeConfigDir(env), "settings.json");
 }
 
 /**
@@ -277,7 +298,7 @@ function currentCommand(cfg: Record<string, unknown>): string | undefined {
 
 async function install(c: CommandContext): Promise<number> {
   const { out, env } = c;
-  const file = userSettings(c);
+  const file = userSettings(env);
   const before = readTextIfExists(file);
   const cfg = parseJsonObject(file, before);
   const existing = currentCommand(cfg);
@@ -326,7 +347,7 @@ async function install(c: CommandContext): Promise<number> {
 
 async function uninstall(c: CommandContext): Promise<number> {
   const { out, env } = c;
-  const file = userSettings(c);
+  const file = userSettings(env);
   const text = readTextIfExists(file);
   if (text === undefined) {
     out.data({ outcome: "unchanged", path: file });
