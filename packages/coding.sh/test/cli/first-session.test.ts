@@ -7,7 +7,8 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
-import { captureSetUp, noSessionsHint, noSessionsNext } from "../../src/cli/first-session.ts";
+import { captureSetUp, noSessionsHint, noSessionsNext, noSessionsNextLines } from "../../src/cli/first-session.ts";
+import { nextStepBin } from "../../src/cli/next-steps.ts";
 import { firstSessionNote } from "../../src/cli/commands/init.ts";
 import { run as status } from "../../src/cli/commands/status.ts";
 import { run as sessions } from "../../src/cli/commands/sessions.ts";
@@ -37,6 +38,8 @@ function home(setUp: boolean): { env: NodeJS.ProcessEnv } {
   return { env: { ...process.env, NO_COLOR: "1", CODING_SH_NO_AUTO_INGEST: "1", NO_UPDATE_NOTIFIER: "1" } };
 }
 
+const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 async function runCmd(fn: (c: CommandContext) => Promise<number>, env: NodeJS.ProcessEnv, positionals: string[] = [], json = false) {
   const cap = { stdout: "", stderr: "", code: undefined as number | undefined, error: undefined as unknown };
   const out = new Output({
@@ -61,30 +64,45 @@ describe("no sessions yet: the next step depends on whether init ran", () => {
     const after = home(true).env;
     assert.equal(captureSetUp(before), false);
     assert.equal(captureSetUp(after), true);
-    assert.deepEqual(noSessionsNext(before), { label: "Install capture hooks", command: "coding.sh init" });
-    const n = noSessionsNext(after);
-    assert.equal(n.command, "coding.sh doctor");
+    assert.deepEqual(noSessionsNext(before, "linux"), { label: "Install capture hooks", command: `${nextStepBin(before, "linux")} init` });
+    const n = noSessionsNext(after, "linux");
+    assert.equal(n.command, `${nextStepBin(after, "linux")} doctor`);
     assert.match(n.label, /^Capture is set up\. Start a new agent session to record it\. Sessions that were already open may not have loaded the hooks/);
-    assert.match(noSessionsHint(before), /Run `coding\.sh init`/);
+    assert.match(noSessionsHint(before), new RegExp(`Run \`${esc(nextStepBin(before))} init\``));
     assert.match(noSessionsHint(after), /Capture is set up: Start a new agent session/);
-    assert.doesNotMatch(noSessionsHint(after), /coding\.sh init/);
+    assert.doesNotMatch(noSessionsHint(after), /coding\.?sh init/);
+  });
+
+  test("the step names the CLI as the user's shell runs it", () => {
+    // PowerShell and cmd: no MSYSTEM or SHELL. There `coding.sh` opens npm's sh shim; `codingsh` runs.
+    const ps = (setUp: boolean) => ({ ...home(setUp).env, MSYSTEM: undefined, SHELL: undefined, npm_command: undefined });
+    const before = ps(false);
+    const after = ps(true);
+    assert.equal(noSessionsNext(before, "win32").command, "codingsh init");
+    assert.deepEqual(noSessionsNextLines(after, "win32"), [`${noSessionsNext(after).label}:`, "codingsh doctor"]);
+    assert.match(noSessionsHint(before, "win32"), /Run `codingsh init`/);
+    assert.match(noSessionsHint(after, "win32"), /check capture with `codingsh doctor`/);
+    // Git Bash keeps coding.sh; started with npx, the step runs through npx.
+    assert.equal(noSessionsNext({ ...before, MSYSTEM: "MINGW64" }, "win32").command, "coding.sh init");
+    assert.equal(noSessionsNext({ ...before, npm_command: "exec" }, "linux").command, "npx coding.sh init");
+    assert.equal(noSessionsNext({ ...before, npm_command: "exec" }, "win32").command, "npx -p coding.sh codingsh init");
   });
 
   test("show latest, status and sessions on an empty store", async () => {
     for (const setUp of [false, true]) {
       const { env } = home(setUp);
-      const want = setUp ? "coding.sh doctor" : "coding.sh init";
+      const want = `${nextStepBin(env)} ${setUp ? "doctor" : "init"}`;
       const s = await runCmd(show, env, ["latest"]);
       assert.ok(s.error instanceof CliError, String(s.error));
       assert.equal((s.error as CliError).next[1], want, `show latest (set up: ${setUp})`);
       if (setUp) assert.match((s.error as CliError).next[0]!, /Start a new agent session/);
       const st = await runCmd(status, env);
       assert.equal(st.code, 0);
-      assert.match(st.stderr, new RegExp(`\\n {4}${want.replace(".", "\\.")}\\n`), `status (set up: ${setUp}):\n${st.stderr}`);
+      assert.match(st.stderr, new RegExp(`\\n {4}${esc(want)}\\n`), `status (set up: ${setUp}):\n${st.stderr}`);
       const ls = await runCmd(sessions, env);
       assert.equal(ls.code, 0);
       assert.match(ls.stderr, /No sessions/);
-      assert.match(ls.stderr, new RegExp(want.replace(".", "\\.")), `sessions (set up: ${setUp}):\n${ls.stderr}`);
+      assert.match(ls.stderr, new RegExp(esc(want)), `sessions (set up: ${setUp}):\n${ls.stderr}`);
     }
   });
 

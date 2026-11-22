@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import { tmpEnv, type TmpEnv } from "../adapters/_helpers.ts";
+import { nextStepBin } from "../../src/cli/next-steps.ts";
 import { cli, ok, seed, session } from "../query/_seed.ts";
 
 const DAY = 86_400_000;
@@ -65,6 +66,7 @@ describe("stats on an empty store", () => {
   test("names how to capture the first session", () => {
     const r = ok(["stats"]);
     assert.match(r.stderr, /No sessions/);
-    assert.match(r.stderr, /coding\.sh init/);
+    // codingsh in PowerShell or cmd, as the CLI names itself in the shell running the test.
+    assert.match(r.stderr, new RegExp(`${nextStepBin(process.env).replace(/\./g, "\\.")} init`));
   });
 });
