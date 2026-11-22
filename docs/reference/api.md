@@ -612,6 +612,8 @@ gateway-billed cost has no split.
 |---|---|
 | `parent` | Set on a child session: `sessionId`, plus `eventId`, `subagentId` and `type` when known |
 | `parent.type` | The subagent type (`explore`, …), or `"harness"` for an agent started by another agent's shell tool (`codex exec` from Claude Code's Bash tool) |
+| `parent.workflowId` | Set on a workflow agent: the id of the run that started it. Its agents form one work item |
+| `parent.workflowName`, `parent.phase`, `parent.label` | The workflow's name, the agent's phase and its label, when the run names them |
 | `model` | The model that made most of the main-thread model calls (calls without a `subagentId`; the earlier one on a tie), else the last model any event named |
 | `stats.models` | Model calls per model, subagent calls included (`{"claude-sonnet-5-5": 3, "claude-sonnet-5": 2}`). Absent when one model or none made them |
 | `stats.modelSwitch` | The session's first model switch, described below |
@@ -1957,6 +1959,12 @@ The viewer's Work page (`#/work`): the queue [`coding.sh work`](cli.md#codingsh-
 | `limit` | default 20, at most 500 |
 
 It returns what `coding.sh work --json` returns for the same store and filters, built by the same code, plus two fields for the page: `members` maps each listed item's id to its member session ids (the main session first, at most 50), and `hiddenBy` counts the hidden items by reason (`running`, `done`, `acked` or `snoozed`). A bad `since`, `limit` or `stage` answers 400.
+
+Item fields for workflow runs and replaced failures:
+
+- A workflow run's item has `workflow`: the run's `id`, its `name` when known, and `phases`. Each phase has its `name` (absent if none), `agents`, `running`, `failed`, `done`, and `costUsd` when known.
+- A failed item that a later item on the same branch replaced has `supersededBy`, that item's id.
+- The top-level `needYou` counts blocked and failed items that are neither probably closed nor superseded.
 
 - `POST /api/work/ack` takes `{"id": "w1a2b3c"}` and acknowledges the item's current cause, as `coding.sh work ack` does. It returns `id`, `acked: true`, the `bucket` and its `label`, and `now`, the item after the ack.
 - An item with no cause to acknowledge returns `id`, `acked: false` and `hidden`, and writes nothing.

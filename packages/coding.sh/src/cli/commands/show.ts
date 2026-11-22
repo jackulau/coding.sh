@@ -8,7 +8,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { callCopies } from "../../core/call-copies.ts";
 import { sessionOutline, phaseLabel, storedOutline, type Outline, type Phase } from "../../core/outline.ts";
 import { apportion, costNote, TOKEN_TYPES } from "../../core/pricing.ts";
-import { failureFlags } from "../../core/sessions.ts";
+import { changeKey, failureFlags } from "../../core/sessions.ts";
 import { SKILL_EVENT_KINDS, SKILL_TAG_PREFIX, skillUse, type SkillUseReport } from "../../core/skills-use.ts";
 import { pageTree, subagentsOf, type TreeNode } from "../../core/tree.ts";
 import { checkpointRunsText, weightsEventText, weightsSummaryText } from "../../core/weights.ts";
@@ -443,9 +443,10 @@ export async function run(c: CommandContext): Promise<number> {
     const tree = await subagentsOf(ctx.index, s);
     const subagentCount = countTree(tree);
     const changes = await snapshotChanges(s, c.env);
-    const changed = new Set(events.filter((e) => e.kind === "file.change" && typeof e.payload.path === "string").map((e) => e.payload.path as string));
+    // Each path keyed as stats.filesChanged keys it (changeKey), so this count, the fold's and `work show`'s agree.
+    const changed = new Set(events.filter((e) => e.kind === "file.change" && typeof e.payload.path === "string").map((e) => changeKey(e.payload.path as string, e.cwd, s.cwd)));
     // A HEAD-based diff can include edits from before the session; count it only against a real start snapshot.
-    if (changes?.startKind === "snapshot") for (const f of changes.files) changed.add(f.path);
+    if (changes?.startKind === "snapshot") for (const f of changes.files) changed.add(changeKey(f.path, s.repo?.root, s.cwd));
     const filesChanged = Math.max(s.stats.filesChanged, changed.size);
     const skills = await sessionSkills(ctx.index, s);
     // The experiments that ran each weights file the session recorded as a checkpoint (exp run --weights with the same hash).

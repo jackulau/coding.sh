@@ -1,16 +1,20 @@
 // Work items: what needs the user now, across every agent's sessions
 // (docs/design/work.md). An item is a root session plus every session linked to
-// it by parent (subagents, forks, workflow agents); a child that a harness or a
-// host started for a separate task is its own item. Items are derived on read
-// from stored sessions and the acks and snoozes in work.json (core/work-overlay.ts):
-// nothing is filed. Everything here is pure except loadWorkSessions.
+// it by parent (subagents, forks); a child that a harness or a host started for
+// a separate task is its own item, and the agents of one workflow run are one
+// item with phases. Items are derived on read from stored sessions and the acks
+// and snoozes in work.json (core/work-overlay.ts): nothing is filed. Everything
+// here is pure except loadWorkSessions and gitFileAt (a .git file check that
+// ownCheckout makes for a session in a folder under its repo on another branch).
 import { createHash } from "node:crypto";
+import { statSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { AgentEvent, Session, Waiting } from "../schema/index.ts";
 import { iso, isRunning, lastActivity, matchesPlace, type Place } from "../mcp/data.ts";
+import { worktreeRepo } from "../query/where.ts";
 import { DERAIL_THRESHOLDS } from "./derail.ts";
 import { failureState, foldFailure } from "./failures.ts";
-import { FLAGS } from "./sessions.ts";
-import { normalizeTracePath } from "./shell-diff.ts";
+import { changeKey, FLAGS } from "./sessions.ts";
 import { shellCallFiles } from "./shell-files.ts";
 import type { IndexStore, SessionFilter } from "./types.ts";
 import { ackedFingerprint, snoozeOf, type WorkOverlay } from "./work-overlay.ts";
@@ -87,10 +91,14 @@ export interface WorkItem {
   running: boolean;
   costUsd?: number;
   filesChanged: number;
-  /** A wait or a stall older than PROBABLY_CLOSED_MS. */
+  /** A wait, a stall or a failure older than PROBABLY_CLOSED_MS. */
   probablyClosed?: boolean;
-  /** The item that started this one (a harness or host child). */
+  /** A failed item that a later item in the same repo and branch replaced: that item's id. */
+  supersededBy?: string;
+  /** The item that started this one (a harness or host child, or the session that ran a workflow). */
   startedBy?: string;
+  /** Set on the item of one workflow run: its agents by phase. */
+  workflow?: WorkWorkflow;
   /** For an agent that reports no prompts: the stall may be an approval wait. */
   hint?: string;
   reason: string;
@@ -100,6 +108,27 @@ export interface WorkItem {
   kind?: WorkKind;
   /** The evidence for the stage, one short line: "changed 3 files, stopped 12m ago". */
   stageWhy: string;
+}
+
+/** Where a workflow agent is: still going, ended on a failure, or ended without one. */
+export type AgentState = "running" | "failed" | "done";
+
+/** One phase of a workflow run: its agents by state, and what its sessions cost. */
+export interface WorkPhase {
+  /** Unset for the agents that named no phase. */
+  name?: string;
+  agents: number;
+  running: number;
+  failed: number;
+  done: number;
+  costUsd?: number;
+}
+
+/** A workflow run: the id its agents' parent links share, its name, and its phases in order of their first start. */
+export interface WorkWorkflow {
+  id: string;
+  name?: string;
+  phases: WorkPhase[];
 }
 
 /** Failed items that share one API cause ("api 529 x4"). */
@@ -122,6 +151,8 @@ export interface WorkQueue {
   groups: WorkGroup[];
   /** Agents in view whose hooks report no prompt signal. */
   noPromptSignal: string[];
+  /** Visible blocked and failed items that are neither probably closed nor superseded. */
+  needYou: number;
 }
 
 export interface WorkOptions {
@@ -135,6 +166,8 @@ export interface WorkOptions {
   place?: Place;
   /** Only items in these stages, hidden ones included. */
   stages?: readonly Stage[];
+  /** Whether a folder between a cwd and its repo root holds a `.git` file (a linked worktree). Default gitFileAt. */
+  isCheckout?: (dir: string, root: string) => boolean;
 }
 
 export const workItemId = (rootId: string): string => `w${createHash("sha256").update(rootId).digest("hex").slice(0, 6)}`;
@@ -165,53 +198,89 @@ function ownItem(s: Session): boolean {
 interface RawItem {
   rootId: string;
   members: Session[];
-  /** Root id of the item that started this one. */
+  /** Key of the item that started this one: a session id, or a workflow run's key. */
   startedByRoot?: string;
+  /** Set on a workflow run: the run's key (workflowRunKey), which the item's id hashes. */
+  key?: string;
+  /** Set on a workflow run: its id, and for each member the workflow agent it belongs to. */
+  workflow?: { id: string; agentOf: Map<string, string> };
 }
+
+/** The key of one workflow run's item: the session that ran the workflow and the run's id. */
+export const workflowRunKey = (parentId: string, workflowId: string): string => `${parentId}/workflow/${workflowId}`;
 
 /**
  * Sessions grouped into items by parent links. A session whose parent is not
- * among `sessions` groups under the parent's id, so the agents of a workflow whose
- * root transcript is missing still form one item, and its id does not change
- * when the root arrives.
+ * among `sessions` groups under the parent's id, so the subagents of a session
+ * whose transcript is missing still form one item, and its id does not change
+ * when the root arrives. A link with a workflowId (a workflow agent) puts the
+ * session, and every session under it, in the run's item, keyed by the parent's
+ * id and the workflowId; the session that ran the workflow stays its own item.
  */
 export function groupWorkItems(sessions: readonly Session[]): RawItem[] {
   const byId = new Map(sessions.map((s) => [s.id, s]));
-  const rootOf = new Map<string, string>();
+  const keyOf = new Map<string, string>();
+  // The workflow agent each session in a run descends from (itself for the agent).
+  const agentOf = new Map<string, string>();
+  const runs = new Map<string, { parentId: string; workflowId: string }>();
   const find = (s: Session): string => {
     const seen: Session[] = [];
     let cur: Session | undefined = s;
-    let root = s.id;
+    let key = s.id;
+    let agent: string | undefined;
     while (cur) {
-      const known = rootOf.get(cur.id);
+      const known = keyOf.get(cur.id);
       if (known !== undefined) {
-        root = known;
+        key = known;
+        agent = agentOf.get(cur.id);
         break;
       }
       seen.push(cur);
+      const wf = cur.parent?.workflowId;
+      if (wf) {
+        key = workflowRunKey(cur.parent!.sessionId, wf);
+        runs.set(key, { parentId: cur.parent!.sessionId, workflowId: wf });
+        agent = cur.id;
+        break;
+      }
       if (ownItem(cur)) {
-        root = cur.id;
+        key = cur.id;
         break;
       }
       const pid: string = cur.parent!.sessionId;
       const next = byId.get(pid);
       if (!next || seen.includes(next)) {
-        root = pid;
+        key = pid;
         break;
       }
       cur = next;
     }
-    for (const x of seen) rootOf.set(x.id, root);
-    return root;
+    for (const x of seen) {
+      keyOf.set(x.id, key);
+      if (agent !== undefined) agentOf.set(x.id, agent);
+    }
+    return key;
   };
   const items = new Map<string, RawItem>();
   for (const s of sessions) {
-    const root = find(s);
-    let it = items.get(root);
-    if (!it) items.set(root, (it = { rootId: root, members: [] }));
+    const key = find(s);
+    let it = items.get(key);
+    if (!it) {
+      const run = runs.get(key);
+      it = run ? { rootId: run.parentId, key, members: [], workflow: { id: run.workflowId, agentOf: new Map() } } : { rootId: key, members: [] };
+      items.set(key, it);
+    }
     it.members.push(s);
+    const agent = agentOf.get(s.id);
+    if (it.workflow && agent !== undefined) it.workflow.agentOf.set(s.id, agent);
   }
   for (const it of items.values()) {
+    if (it.key) {
+      // A run is started by the session that ran the workflow: its item, or the id that item would have.
+      const parent = byId.get(it.rootId);
+      it.startedByRoot = parent ? find(parent) : it.rootId;
+      continue;
+    }
     const root = byId.get(it.rootId);
     if (root?.parent && ownItem(root)) {
       const parent = byId.get(root.parent.sessionId);
@@ -230,8 +299,37 @@ function apiFailure(s: Session): string | undefined {
   return `api ${code ?? "error"}`;
 }
 
-/** Every cause the item has, most urgent first. */
-export function workCauses(members: readonly Session[], primary: Session, now: number): WorkCause[] {
+/** What a session ended on: its API failure, or its failing tests. Undefined when neither. */
+function failureOf(s: Session): string | undefined {
+  const failed = s.stats.testsFailed ?? 0;
+  return apiFailure(s) ?? (failed > 0 ? `${failed} failing ${failed === 1 ? "test" : "tests"}` : undefined);
+}
+
+/**
+ * A workflow agent's state: running while it has no end (until it has been quiet
+ * for PROBABLY_CLOSED_MS) or an end that is only its last activity seen lately;
+ * failed when it ended on an API failure or failing tests; done otherwise.
+ */
+export function agentState(s: Session, now: number): AgentState {
+  if (s.endedAt === undefined ? now - lastActivity(s) < PROBABLY_CLOSED_MS : workRunning(s, now)) return "running";
+  return failureOf(s) ? "failed" : "done";
+}
+
+/**
+ * A workflow run's agents for its failed cause: the failed ones, and whether one
+ * still runs (then the run has no failed cause). The one failed cause covers every
+ * failed agent, so one ack settles them, and an agent failing later brings it back.
+ */
+export interface RunFailure {
+  failed: readonly Session[];
+  running: boolean;
+}
+
+/**
+ * Every cause the item has, most urgent first. `run`, for a workflow run, gives
+ * its failed agents: the failed cause comes from them instead of the primary.
+ */
+export function workCauses(members: readonly Session[], primary: Session, now: number, run?: RunFailure): WorkCause[] {
   const out: WorkCause[] = [];
   const cause = (bucket: Bucket, s: Session, at: number, key: string | number, extra: Partial<WorkCause> = {}) =>
     out.push({ bucket, sessionId: s.id, at, fingerprint: `${bucket}:${s.id}:${key}`, ...extra });
@@ -240,11 +338,20 @@ export function workCauses(members: readonly Session[], primary: Session, now: n
   const running = members.some((s) => workRunning(s, now));
   const anyWait = members.some((s) => s.stats.waiting);
   const stopped = !running && !anyWait;
-  if (stopped) {
+  if (run) {
+    const failed = stopped && !run.running ? [...run.failed] : [];
+    failed.sort((a, b) => lastActivity(b) - lastActivity(a));
+    const newest = failed[0];
+    if (newest) {
+      const end = lastActivity(newest);
+      const kinds = [...new Set(failed.map((s) => failureOf(s)!))];
+      const failure = failed.length === 1 ? kinds[0]! : `${failed.length} failed agents (${kinds.join(", ")})`;
+      cause("failed", newest, end, `${end}x${failed.length}`, { failure });
+    }
+  } else if (stopped) {
     const end = lastActivity(primary);
-    const api = apiFailure(primary);
-    if (api) cause("failed", primary, end, end, { failure: api });
-    else if ((primary.stats.testsFailed ?? 0) > 0) cause("failed", primary, end, end, { failure: `${primary.stats.testsFailed} failing ${primary.stats.testsFailed === 1 ? "test" : "tests"}` });
+    const failure = failureOf(primary);
+    if (failure) cause("failed", primary, end, end, { failure });
   }
   // Quiet mid-turn: no end, nothing waited on (an interactive turn that ended waits as `turn`).
   const quiet = members.filter((s) => s.endedAt === undefined && !s.stats.waiting && now - lastActivity(s) >= STALL_MS).sort((a, b) => lastActivity(a) - lastActivity(b));
@@ -424,32 +531,156 @@ export function rootCheckouts(sessions: readonly Session[]): Checkouts {
   return out;
 }
 
+/** True when `dir`, or a folder above it, holds a `.git` file (a linked worktree's root), stopping at `root`. */
+export function gitFileAt(dir: string, root: string): boolean {
+  const stop = pathKey(root);
+  for (let d = dir; pathKey(d) !== stop; ) {
+    try {
+      if (statSync(join(d, ".git")).isFile()) return true;
+    } catch {
+      // No .git here.
+    }
+    const up = dirname(d);
+    if (up === d) return false;
+    d = up;
+  }
+  return false;
+}
+
+/** Folder names under a repo that hold worktrees: `worktrees` and `.worktrees` (and the agents' layouts worktreeRepo knows). */
+const WORKTREE_DIRS = /(^|\/)\.?worktrees\/[^/]/;
+
 /**
  * True when `s` ran in a folder under its repo root on a branch other than the
- * one the root's own checkout had nearest in time: a worktree nested in the repo
- * (one since removed resolves to the enclosing repo). Its diff is in the cwd.
+ * one the root's own checkout had nearest in time, and something says the folder
+ * is a separate checkout: the repo's main worktree is another folder (repo.main),
+ * the path is in a worktree layout (a `worktrees` folder, or one worktreeRepo
+ * knows), or a folder between the cwd and the root holds a `.git` file
+ * (`isCheckout`). A branch difference alone is a subfolder of a checkout that
+ * changed branch. Its diff is in the cwd.
  */
-export function ownCheckout(s: Session, checkouts: Checkouts | undefined): boolean {
+export function ownCheckout(s: Session, checkouts: Checkouts | undefined, isCheckout: (dir: string, root: string) => boolean = gitFileAt): boolean {
   const root = s.repo?.root;
   if (!checkouts || !s.cwd || !root || !s.repo?.branch) return false;
   if (!pathKey(s.cwd).startsWith(`${pathKey(root)}/`)) return false;
   const seen = checkouts.get(pathKey(root));
   if (!seen?.length) return false;
   const nearest = seen.reduce((a, b) => (Math.abs(b.at - s.startedAt) < Math.abs(a.at - s.startedAt) ? b : a));
-  return nearest.branch !== s.repo.branch;
+  if (nearest.branch === s.repo.branch) return false;
+  if (s.repo.main && pathKey(s.repo.main) !== pathKey(root)) return true;
+  const below = pathKey(s.cwd).slice(pathKey(root).length + 1);
+  if (WORKTREE_DIRS.test(below) || worktreeRepo(s.cwd)) return true;
+  return isCheckout(s.cwd, root);
+}
+
+const sessionCost = (s: Session): number => s.stats.usage?.estimatedCostUsd ?? s.stats.usage?.costUsd ?? 0;
+const roundUsd = (n: number): number => Math.round(n * 1e4) / 1e4;
+
+/** One workflow agent of a run: its phase, label and state, and what it and the sessions under it cost (`work show`). */
+export interface WorkflowAgent {
+  sessionId: string;
+  phase?: string;
+  label?: string;
+  title?: string;
+  agent: string;
+  state: AgentState;
+  costUsd?: number;
+  /** Sessions under the agent (its subagents). */
+  sessions: number;
+  startedAt: number;
+}
+
+/** A run's workflow agents in order of start. Empty for an item that is not a run. */
+export function workflowAgents(raw: Pick<RawItem, "members" | "workflow">, now: number): WorkflowAgent[] {
+  if (!raw.workflow) return [];
+  const { agentOf } = raw.workflow;
+  const byAgent = new Map<string, Session[]>();
+  for (const s of raw.members) {
+    const a = agentOf.get(s.id) ?? s.id;
+    byAgent.set(a, [...(byAgent.get(a) ?? []), s]);
+  }
+  const out: WorkflowAgent[] = [];
+  for (const s of raw.members) {
+    if ((agentOf.get(s.id) ?? s.id) !== s.id) continue;
+    const under = byAgent.get(s.id) ?? [s];
+    const cost = under.reduce((n, m) => n + sessionCost(m), 0);
+    const a: WorkflowAgent = { sessionId: s.id, agent: s.agent, state: agentState(s, now), sessions: under.length, startedAt: s.startedAt };
+    if (s.parent?.phase) a.phase = s.parent.phase;
+    if (s.parent?.label) a.label = s.parent.label;
+    if (s.title) a.title = s.title;
+    if (cost > 0) a.costUsd = roundUsd(cost);
+    out.push(a);
+  }
+  return out.sort((a, b) => a.startedAt - b.startedAt || (a.sessionId < b.sessionId ? -1 : 1));
+}
+
+/**
+ * The workflow agents of a run item, from its sessions (`coding.sh work show`):
+ * each member joins the agent its parent links reach first. Empty for an item
+ * that is not a run.
+ */
+export function itemWorkflowAgents(item: Pick<WorkItem, "workflow" | "sessionIds">, sessions: readonly Session[], now: number): WorkflowAgent[] {
+  if (!item.workflow) return [];
+  const byId = new Map(sessions.map((s) => [s.id, s]));
+  const members = item.sessionIds.map((id) => byId.get(id)).filter((s): s is Session => !!s);
+  const inRun = new Set(members.map((s) => s.id));
+  const agentOf = new Map<string, string>();
+  for (const s of members) {
+    let cur: Session | undefined = s;
+    for (let n = 0; cur && n < 50; n++) {
+      if (cur.parent?.workflowId) {
+        agentOf.set(s.id, cur.id);
+        break;
+      }
+      const pid: string | undefined = cur.parent?.sessionId;
+      cur = pid && inRun.has(pid) ? byId.get(pid) : undefined;
+    }
+  }
+  return workflowAgents({ members, workflow: { id: item.workflow.id, agentOf } }, now);
+}
+
+/** A run's phases in order of their first start, then one unnamed phase for the agents that named none. */
+function workflowPhases(agents: readonly WorkflowAgent[]): WorkPhase[] {
+  const named = new Map<string, WorkPhase>();
+  let unnamed: WorkPhase | undefined;
+  for (const a of agents) {
+    let ph = a.phase === undefined ? unnamed : named.get(a.phase);
+    if (!ph) {
+      ph = { agents: 0, running: 0, failed: 0, done: 0 };
+      if (a.phase === undefined) unnamed = ph;
+      else named.set(a.phase, (ph = { name: a.phase, ...ph }));
+    }
+    ph.agents++;
+    ph[a.state]++;
+    if (a.costUsd !== undefined) ph.costUsd = roundUsd((ph.costUsd ?? 0) + a.costUsd);
+  }
+  return unnamed ? [...named.values(), unnamed] : [...named.values()];
+}
+
+/** An item and what buildWorkQueue reads beside it: every cause, acked or not. */
+interface BuiltItem {
+  item: WorkItem;
+  causes: WorkCause[];
+  ended: boolean;
 }
 
 /** Builds one item from its sessions. `checkouts` (rootCheckouts) tells a worktree nested in its repo from a subfolder. */
-export function workItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?: Checkouts): WorkItem {
+export function workItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?: Checkouts, isCheckout?: (dir: string, root: string) => boolean): WorkItem {
+  return buildItem(raw, now, overlay, checkouts, isCheckout).item;
+}
+
+function buildItem(raw: RawItem, now: number, overlay?: WorkOverlay, checkouts?: Checkouts, isCheckout?: (dir: string, root: string) => boolean): BuiltItem {
   const members = [...raw.members].sort((a, b) => a.startedAt - b.startedAt);
-  const root = members.find((s) => s.id === raw.rootId);
+  const root = raw.workflow ? undefined : members.find((s) => s.id === raw.rootId);
   const primary = root ?? members[0]!;
   const ordered = [primary, ...members.filter((s) => s !== primary)];
-  const cost = members.reduce((n, s) => n + (s.stats.usage?.estimatedCostUsd ?? s.stats.usage?.costUsd ?? 0), 0);
+  const cost = members.reduce((n, s) => n + sessionCost(s), 0);
+  const agents = workflowAgents(raw, now);
+  const runName = raw.workflow ? members.find((s) => s.parent?.workflowName)?.parent?.workflowName : undefined;
   const item: WorkItem = {
-    id: workItemId(raw.rootId),
+    id: workItemId(raw.key ?? raw.rootId),
     rootId: raw.rootId,
-    title: primary.title ?? members.find((s) => s.title)?.title,
+    title: raw.workflow ? (runName ?? `Workflow ${raw.workflow.id.slice(0, 8)}`) : (primary.title ?? members.find((s) => s.title)?.title),
     agent: primary.agent,
     agents: [...new Set(members.map((s) => s.agent))],
     primaryId: primary.id,
@@ -466,12 +697,18 @@ export function workItem(raw: RawItem, now: number, overlay?: WorkOverlay, check
   if (primary.provider) item.provider = primary.provider;
   if (primary.cwd) item.cwd = primary.cwd;
   // A checkout of its own is where the agent worked: Where names it and the review diffs it.
-  if (primary.repo?.root) item.repo = ownCheckout(primary, checkouts) ? primary.cwd : primary.repo.root;
+  if (primary.repo?.root) item.repo = ownCheckout(primary, checkouts, isCheckout) ? primary.cwd : primary.repo.root;
   if (primary.repo?.branch) item.branch = primary.repo.branch;
-  if (cost > 0) item.costUsd = Math.round(cost * 1e4) / 1e4;
+  if (cost > 0) item.costUsd = roundUsd(cost);
   if (raw.startedByRoot) item.startedBy = workItemId(raw.startedByRoot);
+  if (raw.workflow) {
+    item.workflow = { id: raw.workflow.id, phases: workflowPhases(agents) };
+    if (runName) item.workflow.name = runName;
+  }
   const ids = item.sessionIds;
-  const causes = workCauses(members, primary, now);
+  const byId = new Map(members.map((s) => [s.id, s]));
+  const run: RunFailure | undefined = raw.workflow ? { failed: agents.filter((a) => a.state === "failed").map((a) => byId.get(a.sessionId)!), running: agents.some((a) => a.state === "running") } : undefined;
+  const causes = workCauses(members, primary, now, run);
   const isAcked = (c: WorkCause): boolean => !!overlay && ackedFingerprint(overlay, c.sessionId, c.fingerprint);
   const open = causes.filter((c) => !isAcked(c));
   const cause = open[0];
@@ -486,7 +723,7 @@ export function workItem(raw: RawItem, now: number, overlay?: WorkOverlay, check
   const shown = cause ?? causes[0];
   if (shown) {
     item.cause = shown;
-    if (shown.bucket !== "failed" && shown.bucket !== "review" && now - shown.at >= PROBABLY_CLOSED_MS) item.probablyClosed = true;
+    if (shown.bucket !== "review" && now - shown.at >= PROBABLY_CLOSED_MS) item.probablyClosed = true;
     const d = describe(item, shown, members, now);
     item.reason = d.reason;
     item.next = d.next;
@@ -500,7 +737,7 @@ export function workItem(raw: RawItem, now: number, overlay?: WorkOverlay, check
   }
   if (item.hidden === "acked") item.next = "acknowledged: it comes back when something new happens";
   if (item.hidden === "snoozed" && snooze) item.next = `snoozed until ${new Date(snooze.until).toISOString()}`;
-  return item;
+  return { item, causes, ended: !item.running && members.every((s) => s.endedAt !== undefined) };
 }
 
 /** Sort key inside a bucket: oldest wait or stall first; newest failure or finished work first. */
@@ -519,25 +756,55 @@ function compare(a: WorkItem, b: WorkItem): number {
   return at(a) - at(b) || (a.id < b.id ? -1 : 1);
 }
 
+/** Where an item ran, for superseding: its repo and branch, else its cwd. */
+const placeKey = (i: WorkItem): string | undefined => (i.repo ? `repo:${pathKey(i.repo)}\u0000${i.branch ?? ""}` : i.cwd ? `cwd:${pathKey(i.cwd)}` : undefined);
+
+/**
+ * Marks each failed item that a later item replaced: one in the same repo and
+ * branch (the same cwd when there is no repo) that started after the failure and
+ * ended with no failure. The earliest such item is named, and the reason says so.
+ */
+function supersede(built: readonly BuiltItem[]): void {
+  const passed = new Map<string, WorkItem[]>();
+  for (const b of built) {
+    const k = placeKey(b.item);
+    if (k && b.ended && !b.causes.some((c) => c.bucket === "failed")) passed.set(k, [...(passed.get(k) ?? []), b.item]);
+  }
+  for (const { item } of built) {
+    const k = placeKey(item);
+    if (item.cause?.bucket !== "failed" || !k) continue;
+    const at = item.cause.at;
+    const later = (passed.get(k) ?? []).filter((x) => x.startedAt > at).sort((a, b) => a.startedAt - b.startedAt)[0];
+    if (!later) continue;
+    item.supersededBy = later.id;
+    item.reason += `; superseded by ${later.id}, which started later ${item.repo ? "on the same branch" : "in the same folder"} and ended with no failure`;
+  }
+}
+
 /** The queue: items from sessions, bucketed, ordered, with the failed groups and the header's agents. */
 export function buildWorkQueue(sessions: readonly Session[], opts: WorkOptions = {}): WorkQueue {
   const now = opts.now ?? Date.now();
   const agents = opts.agents?.length ? new Set(opts.agents) : undefined;
   const place = opts.place;
-  const raws = groupWorkItems(sessions).filter((raw) => {
+  const keep = (raw: RawItem): boolean => {
     if (agents && !raw.members.some((s) => agents.has(s.agent))) return false;
     if (!place) return true;
     const primary = raw.members.find((s) => s.id === raw.rootId) ?? raw.members.reduce((a, b) => (b.startedAt < a.startedAt ? b : a));
     return matchesPlace(primary, place);
-  });
+  };
   const checkouts = rootCheckouts(sessions);
-  const all = raws.map((raw) => workItem(raw, now, opts.overlay, checkouts));
+  // Every item is built, so an item outside the filter can still supersede one inside it.
+  const raws = groupWorkItems(sessions);
+  const built = raws.map((raw) => buildItem(raw, now, opts.overlay, checkouts, opts.isCheckout));
+  supersede(built);
+  const all = built.filter((_, n) => keep(raws[n]!)).map((b) => b.item);
   all.sort(compare);
   const stages = Object.fromEntries(STAGES.map((st) => [st, 0])) as Record<Stage, number>;
   for (const i of all) stages[i.stage]++;
   const visible = all.filter((i) => i.bucket);
   const counts = Object.fromEntries(BUCKETS.map((b) => [b, 0])) as Record<Bucket, number>;
   for (const i of visible) counts[i.bucket!]++;
+  const need = visible.filter((i) => (i.bucket === "blocked" || i.bucket === "failed") && !i.probablyClosed && !i.supersededBy).length;
   const byCause = new Map<string, string[]>();
   for (const i of visible) {
     const f = i.bucket === "failed" ? i.cause?.failure : undefined;
@@ -550,7 +817,7 @@ export function buildWorkQueue(sessions: readonly Session[], opts: WorkOptions =
   const inView = sessions.filter((s) => shownIds.has(s.id));
   const signaled = new Set(inView.filter(reportsPrompts).map(promptAgent));
   const noPromptSignal = [...new Set(inView.map(promptAgent))].filter((a) => !signaled.has(a)).sort();
-  return { now, items: shown, counts, stages, hidden: all.length - visible.length, groups, noPromptSignal };
+  return { now, items: shown, counts, stages, hidden: all.length - visible.length, groups, noPromptSignal, needYou: need };
 }
 
 /** "2 blocked on you · 1 failed · 3 ready for review", or "nothing needs you". */
@@ -565,8 +832,8 @@ export function stagesLine(stages: Readonly<Record<Stage, number>>): string {
   return parts.length ? parts.join(" · ") : "no items";
 }
 
-/** Items blocked on the user or failed: the statusline's "N need you". */
-export const needYou = (q: Pick<WorkQueue, "counts">): number => q.counts.blocked + q.counts.failed;
+/** Items blocked on the user or failed, less those probably closed or superseded: the statusline's "N need you". */
+export const needYou = (q: Pick<WorkQueue, "needYou">): number => q.needYou;
 
 export interface WorkLoad {
   sessions: Session[];
@@ -605,8 +872,9 @@ export async function loadWorkSessions(index: IndexStore, filter: Pick<SessionFi
 
 /**
  * The distinct paths a session's events changed, keyed as stats.filesChanged
- * counts them (core/sessions.ts): file.change paths relative to the cwd, and the
- * files a shell call wrote, unless it was stopped. `sorted` is in time order.
+ * counts them (core/sessions.ts changeKey): each path resolved against its
+ * event's cwd, then made relative to the session's cwd, and the files a shell
+ * call wrote, unless it was stopped. `sorted` is in time order.
  */
 export function changedPaths(sorted: readonly AgentEvent[], cwd?: string): Set<string> {
   const out = new Set<string>();
@@ -616,7 +884,7 @@ export function changedPaths(sorted: readonly AgentEvent[], cwd?: string): Set<s
     const failure = foldFailure(failures, e);
     if (e.source === "gateway") continue;
     if (e.kind === "file.change") {
-      if (typeof e.payload.path === "string" && e.payload.path) out.add(normalizeTracePath(e.payload.path, e.cwd ?? cwd));
+      if (typeof e.payload.path === "string" && e.payload.path) out.add(changeKey(e.payload.path, e.cwd, cwd));
       continue;
     }
     if ((e.kind !== "tool.start" && e.kind !== "tool.end") || e.payload.wrapper === true) continue;
@@ -661,7 +929,8 @@ export async function workFiles(index: Pick<IndexStore, "listEvents">, item: Wor
   if (ids.length === changers.length && files.size) {
     item.filesChanged = files.size;
     if (item.cause?.bucket === "review") item.reason = reviewReason(short(now - item.cause.at), files.size);
-    item.stageWhy = clip(item.stageWhy.replace(/\bchanged \d+ files?\b/, changedText(files.size)));
+    // An approval item's stageWhy quotes the agent's question, which may itself say "changed 3 files".
+    if (item.stage !== "approval") item.stageWhy = clip(item.stageWhy.replace(/\bchanged \d+ files?\b/, changedText(files.size)));
   }
   return [...files];
 }
@@ -707,8 +976,10 @@ export function workItemJson(i: WorkItem): Record<string, unknown> {
   }
   if (i.probablyClosed) out.probablyClosed = true;
   if (i.hint) out.hint = i.hint;
+  if (i.supersededBy) out.supersededBy = i.supersededBy;
   if (i.startedBy) out.startedBy = i.startedBy;
   if (i.costUsd !== undefined) out.costUsd = i.costUsd;
+  if (i.workflow) out.workflow = defined({ id: i.workflow.id, name: i.workflow.name || undefined, phases: i.workflow.phases.map((p) => ({ ...p })) });
   return out;
 }
 
@@ -718,7 +989,7 @@ export function workJson(q: WorkQueue, opts: { since: number; limit: number; tru
     since: iso(opts.since),
     counts: q.counts,
     stages: q.stages,
-    needYou: needYou(q),
+    needYou: q.needYou,
     hidden: q.hidden,
     noPromptSignal: q.noPromptSignal,
     items: q.items.slice(0, opts.limit).map(workItemJson),

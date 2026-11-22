@@ -20,8 +20,8 @@ are derived from those sessions on read. Nothing is filed.
 
 ## Work items
 
-- A work item is a root session plus every session linked to it by parent: subagents, forks and
-  workflow agents. A workflow that starts 45 agents is one item.
+- A work item is a root session plus every session linked to it by parent: subagents and forks.
+  The agents of one workflow run are one item of their own (see [Workflow runs](#workflow-runs)).
 - A child that a harness or host starts for a separate task (`codex exec` from an orchestrator, a
   T3 Code thread) is its own item. Its row names the item that started it. A long-lived
   orchestrator does not swallow every task it starts.
@@ -30,9 +30,33 @@ are derived from those sessions on read. Nothing is filed.
   `dev` would join unrelated work.
 - An item's id is `w` plus the first 6 hex characters of a hash of its root session id, so it stays
   the same between reads.
-- When a child's parent is not stored (a workflow agent whose root transcript is missing), the
+- When a child's parent is not stored (a subagent whose root transcript is missing), the
   children group under the parent's id. The item's id does not change when the root arrives.
-- Items are built in `src/core/work.ts`. Everything there is pure except the store read.
+- Items are built in `src/core/work.ts`. Everything there is pure except the store read and the
+  `.git` file check described under Surfaces.
+
+## Workflow runs
+
+A workflow agent's session.start names its run: `workflowId`, and when known `workflowName`,
+`workflowPhase` and `workflowLabel`. They land on `Session.parent` as `workflowId`,
+`workflowName`, `phase` and `label`.
+
+- Every agent with the same parent session and `workflowId` is one item: one item per run. A
+  session that ran two workflows starts two items.
+- Walking up parent links stops at the first link with a `workflowId`, so a subagent of a workflow
+  agent joins the run.
+- The session that ran the workflow stays its own item. The run's `startedBy` names it.
+- The run's id is a hash of the parent's session id and the `workflowId`, so it does not change
+  when the parent session arrives later.
+- The title is the workflow's name, else "Workflow" and the first 8 characters of its id.
+- The item's `workflow` field lists its phases in the order they first started, then one unnamed
+  phase for agents that named none. Each phase counts its agents by state and sums the cost of
+  their sessions, subagents included.
+- An agent is running while it has no end (until it has been quiet for 12 hours), or while its
+  end is only its last event seen and that event is recent. It failed when it ended on API errors
+  or failing tests. Otherwise it is done.
+- A run is not in the Failed bucket while an agent still runs. Once none runs, its failed agents
+  give one failed cause, so one ack covers them. Another agent failing later brings it back.
 
 ## Waiting state
 
@@ -112,6 +136,20 @@ An item shows the most urgent cause it has that is not acknowledged. A wait or a
 12 hours gets a "probably closed" badge, and its next step offers the resume command or an ack,
 since a closed terminal may send no session end.
 
+### Aging and superseding
+
+A failure stops needing you in two ways. The item stays in the Failed bucket and the bucket
+counts do not change. Only `needYou` does.
+
+- **Aging.** A failure older than 12 hours is probably closed, as an old wait is.
+- **Superseding.** A later item replaces a failed one when it ran in the same repo and branch (the
+  same folder when there is no repo), started after the failure, and ended with no failure. The
+  failed item's `supersededBy` names the earliest such item, and its reason says so. An item on
+  another branch does not replace it.
+
+`needYou` counts the blocked and failed items that are neither probably closed nor superseded.
+`work --json`, `status`, the statusline and the MCP `status` tool all read it.
+
 The agents that report prompts are Claude Code, Gemini CLI, Devin CLI and T3 Code. The header names the other agents
 in view. Items with nothing to act on are hidden, with a reason: running, done, acknowledged or
 snoozed. `--all` shows them. Every row carries a reason and a next step.
@@ -169,26 +207,37 @@ drops expired snoozes and keeps at most 20 acks per session and 5,000 sessions.
 
 - `coding.sh work [--all] [--stage <list>] [--repo <path>] [--agent <name>] [--since 7d] [--limit 20] [--json]`.
   It runs the same automatic ingest as other reads first, so a fresh prompt shows up. The header
-  gives the count of items per stage, and each row its stage and kind. `--json` gives each item's
-  `stage`, `kind` (when known) and `stageWhy`, and `stages`, the count per stage over every item in
-  the window, hidden ones included. `--stage review,approval` lists only the items in those stages,
+  gives the count of items per stage, and each row its stage and kind. A run item gets a phase
+  line: each phase's name and its agents by state ("build: 2 running, 1 failed"). `--json` gives
+  each item's `stage`, `kind` (when known) and `stageWhy`, a run's `workflow`, a failed item's
+  `supersededBy`, and `stages`, the count per stage over every item in the window, hidden ones
+  included. `--stage review,approval` lists only the items in those stages,
   hidden ones too, so `--stage done` lists the done items the queue hides. An unknown stage exits 2
   and names the stage it is closest to.
 - `coding.sh work show <id>`: the decision packet. What the item is doing, what it waits on (the
   redacted prompt text), for how long, its cost, the files it changed, its child sessions, and the
   next step: the agent and folder to answer in while it runs, or the resume command once it ended.
-  It also prints the stage, the kind and the evidence for the stage.
-  A session that ran in a folder under its repo, on a branch other than the one the sessions at the
-  repo root had nearest in time, ran in a worktree nested in the repo: the item's repo is that
-  folder, so Where names it and the review step runs `git -C <folder> diff`. When an item wrote
-  files both inside and outside its folder, every path in the list is absolute.
+  It also prints the stage, the kind and the evidence for the stage. A run item lists its phases
+  with their cost, and under each phase its agents with their state and cost; `--json` gives them
+  as `workflowAgents`. An approval item's evidence quotes the agent's question as it was.
+  A session ran in a worktree nested in its repo when it ran in a folder under the repo, on a
+  branch other than the one the sessions at the repo root had nearest in time, and something else
+  says the folder is a separate checkout: the repo's main worktree is another folder
+  (`repo.main`), the path is in a worktree layout (a `worktrees` or `.worktrees` folder, or an
+  agent's own layout), or a folder between it and the repo root holds a `.git` file. A branch
+  difference alone is a subfolder of a checkout that changed branch. For a nested worktree, the
+  item's repo is that folder, so Where names it and the review step runs `git -C <folder> diff`.
+  When an item wrote files both inside and outside its folder, every path in the list is absolute.
+  Paths count the way `stats.filesChanged` counts them: each resolved against the folder its event
+  ran in, then made relative to the session's folder. So `show`, `work` and `work show` give one
+  count for a session.
   The id is an item id or the id of any session in the item. A session outside the window is
   still found by its id. An unknown id exits 1.
 - `coding.sh work ack <id>` and `coding.sh work snooze <id> <duration>`. A bad duration exits 2.
 - `coding.sh status` gets a Work line with the count per bucket, and its JSON a `work` field with
   the counts and `needYou`.
-- The statusline adds "N need you" when items are blocked on you or failed, and its JSON a
-  `needYou` field. On every render it first reads new hook events, for at most 400 ms and not while
+- The statusline adds "N need you" when items are blocked on you or failed and are neither
+  probably closed nor superseded, and its JSON a `needYou` field. On every render it first reads new hook events, for at most 400 ms and not while
   another ingest holds the lock, then the 7-day window.
 - The local viewer's Work page (`#/work`, `src/viewer/work.ts`, the tab after Sessions) reads the
   queue through `GET /api/work`, which builds it with `readWorkQueue` and `workJson` like the
@@ -223,6 +272,15 @@ done by a check command; budgets; cloud agents; dependencies between items; noti
 
 ## Tests
 
+- `test/core/work-workflow.test.ts`: 12 workflow agents of two runs over 3 phases give two run
+  items with their phases, counts and costs, started by the parent, which stays its own item. A
+  subagent of a workflow agent joins its run, and the ids are the same without the parent. A
+  failure 13 hours old, or one that a later passing item on the same branch replaced, leaves
+  `needYou`; one on another branch does not. An approval item keeps its quoted question, a branch
+  difference alone is no separate checkout, and a file edited from two folders counts once.
+- `test/cli/work-workflow.test.ts`: `work --json` on a seeded run gives one document with its
+  phases, the text view prints the phase line, `work show` lists the agents, and `show` and
+  `work show` agree on the files changed.
 - `test/cli/work.test.ts`: the recorded workflow fixture `test/fixtures/workflows/claude-code-running`
   gives one item, keyed by its missing root. It also runs `--json`, `show`, `ack` and `snooze` on a
   seeded store, and checks that an unknown id exits 1 and a bad duration is a usage error.

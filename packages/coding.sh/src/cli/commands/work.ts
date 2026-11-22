@@ -5,7 +5,7 @@ import { parsePlace } from "../../mcp/data.ts";
 import type { Session } from "../../schema/index.ts";
 import type { Context } from "../../core/context.ts";
 import { addAck, addSnooze, readOverlay, writeOverlay, type WorkOverlay } from "../../core/work-overlay.ts";
-import { BUCKET_LABELS, buildWorkQueue, countsLine, loadWorkSessions, STAGES, stagesLine, workFiles, workItemJson, workJson, type Stage, type WorkItem, type WorkQueue } from "../../core/work.ts";
+import { BUCKET_LABELS, buildWorkQueue, countsLine, itemWorkflowAgents, loadWorkSessions, STAGES, stagesLine, workFiles, workItemJson, workJson, type Stage, type WorkItem, type WorkPhase, type WorkQueue } from "../../core/work.ts";
 import { parseAge, parseSinceWhen, positiveInt, suggest, UsageError } from "../args.ts";
 import { agentsFlag, autoIngest, list as listFlag, num, oneLine, pendingField, readIngest, rejectAgentTypos, str, withContext, type IngestBacklog } from "../common.ts";
 import { ago, CliError, localTime, plural, usd } from "../output.ts";
@@ -127,8 +127,15 @@ function printRow(c: CommandContext, i: WorkItem): void {
   const where = i.repo ?? i.cwd;
   const meta = [agents, where ? short(where) : undefined, i.sessionIds.length > 1 ? plural(i.sessionIds.length, "session") : undefined, i.startedBy ? `started by ${i.startedBy}` : undefined].filter(Boolean).join("  ");
   out.print(`  ${out.style(i.id, "cyan")}  ${oneLine(i.title ?? "(untitled)", 60)}  ${stageTag(i)}  ${out.style(meta, "faint")}`);
+  if (i.workflow) out.print(`          ${out.style("phases:", "faint")} ${i.workflow.phases.map(phaseText).join(" · ")}`);
   out.print(`          ${badge}${i.reason}`);
   out.print(`          ${out.style("next:", "faint")} ${nextText(i.next)}`);
+}
+
+/** "build: 2 running, 1 failed, 3 done", the agents of one phase of a workflow run by state. */
+export function phaseText(p: WorkPhase): string {
+  const states = (["running", "failed", "done"] as const).filter((k) => p[k]).map((k) => `${p[k]} ${k}`);
+  return `${p.name ?? "no phase"}: ${states.join(", ")}`;
 }
 
 /**
@@ -153,7 +160,8 @@ async function findItem(c: CommandContext, ctx: Context, ref: string, overlay: W
   const { sessions } = await loadWorkSessions(ctx.index, { since: w.since });
   const pick = (ss: Session[]) => {
     const q = buildWorkQueue(ss, { all: true, overlay });
-    return q.items.find((i) => i.id === ref) ?? q.items.find((i) => i.sessionIds.includes(ref) || i.rootId === ref);
+    // A session id names the item it is in before a run item it started (whose rootId it is).
+    return q.items.find((i) => i.id === ref) ?? q.items.find((i) => i.sessionIds.includes(ref)) ?? q.items.find((i) => i.rootId === ref);
   };
   let item = pick(sessions);
   if (!item && !/^w[0-9a-f]{6}$/.test(ref)) {
@@ -193,9 +201,11 @@ async function show(c: CommandContext): Promise<number> {
     const byId = new Map(sessions.map((s) => [s.id, s]));
     const files = new Set(await workFiles(ctx.index, item, sessions));
     const children = item.sessionIds.filter((id) => id !== item.primaryId).map((id) => byId.get(id)).filter((s): s is Session => !!s);
+    const agents = itemWorkflowAgents(item, sessions, Date.now());
     if (out.json) {
       out.data({
         ...workItemJson(item),
+        workflowAgents: item.workflow ? agents.map(({ startedAt, ...a }) => ({ ...a, startedAt: new Date(startedAt).toISOString() })) : undefined,
         files: [...files].slice(0, 200),
         sessions: [item.primaryId, ...children.map((s) => s.id)].map((id) => {
           const s = byId.get(id);
@@ -220,6 +230,18 @@ async function show(c: CommandContext): Promise<number> {
     out.row("Started", `${ago(item.startedAt)}, last active ${ago(item.lastActivity)}${item.running ? " (running)" : ""}`, "none", true);
     if (item.costUsd !== undefined) out.row("Cost", usd(item.costUsd), "none", true);
     if (item.startedBy) out.row("Started by", item.startedBy, "none", true);
+    if (item.workflow) {
+      out.row("Workflow", `${item.workflow.name ? `${item.workflow.name}, ` : ""}run ${item.workflow.id}, ${plural(agents.length, "agent")}`, "none", true);
+      for (const p of item.workflow.phases) {
+        out.print(`    ${phaseText(p)}${p.costUsd !== undefined ? `  ${usd(p.costUsd)}` : ""}`);
+        const inPhase = agents.filter((a) => a.phase === p.name);
+        for (const a of inPhase.slice(0, 20)) {
+          const cost = a.costUsd !== undefined ? usd(a.costUsd) : "";
+          out.print(`      ${a.sessionId}  ${a.state}  ${oneLine(a.label ?? a.title ?? "(untitled)", 50)}${cost ? `  ${cost}` : ""}`);
+        }
+        if (inPhase.length > 20) out.print(out.style(`      and ${inPhase.length - 20} more (--json lists every agent)`, "faint"));
+      }
+    }
     out.row("Files", item.filesChanged ? `${plural(item.filesChanged, "file")} changed` : "none changed", "none", true);
     for (const f of [...files].slice(0, 20)) out.print(`    ${f}`);
     if (files.size > 20) out.print(out.style(`    and ${files.size - 20} more (--json lists up to 200)`, "faint"));

@@ -1047,7 +1047,7 @@
           "type": "string"
         },
         "parent": {
-          "description": "Set when this session is a subagent of another session (own transcript / child trace).\nIngest links a child from either its `session.start` payload\n`{ parentSessionId, parentEventId?, subagentId?, subagentType? }` or the parent's\n`subagent.start|end` payload `childSessionId`. Adapters should prefer the former.",
+          "description": "Set when this session is a subagent of another session (own transcript / child trace).\nIngest links a child from either its `session.start` payload\n`{ parentSessionId, parentEventId?, subagentId?, subagentType? }` or the parent's\n`subagent.start|end` payload `childSessionId`. Adapters should prefer the former.\nA workflow agent's link also names its run, from the same payload's `workflowId`,\n`workflowName`, `workflowPhase` and `workflowLabel`: `coding.sh work` makes one item per run.",
           "type": "object",
           "properties": {
             "sessionId": {
@@ -1060,6 +1060,22 @@
               "type": "string"
             },
             "type": {
+              "type": "string"
+            },
+            "workflowId": {
+              "description": "The workflow run that started this session: one id per run of a workflow script.",
+              "type": "string"
+            },
+            "workflowName": {
+              "description": "The workflow's name (\"round 7\").",
+              "type": "string"
+            },
+            "phase": {
+              "description": "The phase of the run the agent belongs to (\"research\", \"build\").",
+              "type": "string"
+            },
+            "label": {
+              "description": "The agent's label inside its phase.",
               "type": "string"
             }
           },
