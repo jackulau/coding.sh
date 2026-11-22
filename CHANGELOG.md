@@ -352,6 +352,7 @@ grouped by area, with links to the docs for the details.
 - **CLI.** `coding.sh cache` with no subcommand runs `cache doctor`, its only subcommand, and takes the same options. Before, it stopped with "Missing command" and named doctor. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-cache))
 - **Cache.** `cache doctor` names the CLI in its `diff-calls` examples, in text and in `--json`, as your shell runs it: `codingsh` in PowerShell and `npx coding.sh` under npx, where `coding.sh` fails. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-cache-doctor))
 - **Replay.** A run made with `exp run --replay` keeps its task spec, so it can be the source of the next replay with a control arm, as the docs say. Before, that replay stopped with `no_control`. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/replay-llm-calls.md#what-is-stored))
+- **Replay.** When a replay's source stored no task spec, the `no_control` error suggests a command you can paste, and its message names `--no-control`. Before, the suggested command ended in prose, so pasting it failed. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#usage-errors-exit-2))
 
 ## [0.1.7] - 2026-11-16
 

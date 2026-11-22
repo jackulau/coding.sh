@@ -141,9 +141,9 @@ export async function replayWithControl(c: CommandContext, store: FileEvalStore,
   const source = plan.source!;
   const control = recordedTask(source);
   if (!control) {
-    throw new UsageError(`${source.id} did not record a command or http task spec, so there is no control arm to replay`, {
+    throw new UsageError(`${source.id} did not record a command or http task spec, so there is no control arm to replay. Give the recorded config as an arm of its own, or pass --no-control to replay your task alone`, {
       reason: "no_control",
-      suggestion: `coding.sh exp run --arm control=recorded.json --arm cand=cand.json --replay ${source.id}, or pass --no-control to replay one task alone`,
+      suggestion: `coding.sh exp run --arm control=recorded.json --arm cand=cand.json --replay ${source.id}`,
     });
   }
   const loaded = await loadSpec(c, store, specFile);
