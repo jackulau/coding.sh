@@ -133,7 +133,10 @@ headers = { Authorization = "Bearer ${OTEL_TOKEN}" }
 with the same rules. It keeps an allowlist of headers (API version, beta flags, user agent,
 session and request ids, rate limits) and never stores `Authorization`, `x-api-key` or cookies.
 In metadata mode it keeps hashes of the system prompt and tools, counts, tool names, usage and
-timing. It listens on 127.0.0.1 unless you pass `--host`.
+timing.
+
+It listens on 127.0.0.1 unless you pass `--host` or set `host` under `[proxy]` in `config.toml`. The
+proxy has no auth: anyone who can reach its port can send calls through it.
 
 ## The raw spool
 
