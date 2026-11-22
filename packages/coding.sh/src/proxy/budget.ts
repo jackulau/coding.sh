@@ -5,9 +5,9 @@
 // The proxy knows a call's agent from its headers (Claude Code, Codex, else
 // "proxy", as linkCall records it) but not its repo or the session a --where
 // query would match, so a budget with a repo or a where never blocks a call;
-// budgets for every session or for an agent do.
+// budgets for every session or for an agent do, and only their spend is read.
 import type { IncomingHttpHeaders } from "node:http";
-import type { BudgetStatus } from "../budget/index.ts";
+import type { Budget, BudgetStatus } from "../budget/index.ts";
 import { detectClient } from "./link.ts";
 import type { Route } from "./wire.ts";
 
@@ -31,12 +31,20 @@ export function callAgent(headers: IncomingHttpHeaders): string {
   return id === "claude-code" || id === "codex" ? id : "proxy";
 }
 
+/** A budget the proxy can match a call to: one for every session or for one agent, not one with a repo or a where. */
+export const enforceable = (b: Budget): boolean => !b.repo && !b.where;
+
 /** Only calls that bill tokens are blocked; count_tokens and other paths go through. */
 export const billed = (route: Route): boolean => route.api === "messages" || route.api === "chat" || route.api === "responses";
 
 export function budgetGuard(o: {
-  /** Every budget's status now (budgets.json read again each time, so a change applies within 30 s). */
+  /** The status now of each budget the proxy enforces (budgets.json read again each time, so a change applies within 30 s). */
   load: (now: number) => Promise<BudgetStatus[]>;
+  /**
+   * Why a read stops nothing: a budget whose spend could not be read (its status has an
+   * error), or a read that failed as a whole. Called once a read, not once a call.
+   */
+  onError?: (err: Error) => void;
   refreshMs?: number;
   now?: () => number;
 }): BudgetGuard {
@@ -46,13 +54,30 @@ export function budgetGuard(o: {
   let readAt = -Infinity;
   let reading: Promise<void> | undefined;
   const fresh = (t: number) => t - readAt < refreshMs && !statuses.some((s) => s.resetsAt <= t);
+  const report = (message: string) => {
+    try {
+      o.onError?.(new Error(message));
+    } catch {
+      // a failing listener never changes the answer
+    }
+  };
   const refresh = (t: number): Promise<void> =>
-    (reading ??= o
-      .load(t)
-      .then((s) => {
-        statuses = s;
-        readAt = t;
-      })
+    // The executor turns a load that throws before it returns a promise into a failed read.
+    (reading ??= new Promise<BudgetStatus[]>((resolve) => resolve(o.load(t)))
+      .then(
+        (s) => {
+          statuses = s;
+          readAt = t;
+          for (const x of s) if (x.error !== undefined) report(`budget ${x.budget.id} can't be read, so it stops no call: ${x.error}`);
+        },
+        (err: unknown) => {
+          // Budgets that can't be read stop no call, and are read again 30 s on: the calls
+          // in between neither wait for the read nor report it again.
+          statuses = [];
+          readAt = t;
+          report(`budgets can't be read, so none stops a call for ${Math.round(refreshMs / 1000)} s: ${err instanceof Error ? err.message : String(err)}`);
+        },
+      )
       .finally(() => {
         reading = undefined;
       }));
@@ -65,7 +90,7 @@ export function budgetGuard(o: {
       let worst: BudgetStatus | undefined;
       for (const s of statuses) {
         const b = s.budget;
-        if (!s.over || s.resetsAt <= t || b.repo || b.where || (b.agent && b.agent !== agent)) continue;
+        if (!s.over || s.resetsAt <= t || !enforceable(b) || (b.agent && b.agent !== agent)) continue;
         // Of several budgets over their limit, name the one that resets last: the call waits for it.
         if (!worst || s.resetsAt > worst.resetsAt) worst = s;
       }
