@@ -1,7 +1,7 @@
 // What replay, replay --fork and exp replay print, with each command as the user's shell runs it
-// (cliCommand, envLine): a session captured through the proxy, forked against a stub API, and a
-// session the proxy logged alone. Every forked call goes to the stub, and each test checks how
-// many it got.
+// (cliCommand, envLine): a session captured through the proxy, forked against a stub API, a
+// session the proxy logged alone, and one that wrote a file whose path needs quotes. Every forked
+// call goes to the stub, and each test checks how many it got.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -20,6 +20,7 @@ import { CLI } from "../_cli.ts";
 
 const SESSION = "7c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f";
 const PROXY_ONLY = "8d2e3f4a-5b6c-4d7e-8f9a-0b1c2d3e4f5a";
+const WRITER = "9e3f4a5b-6c7d-4e8f-9a0b-1c2d3e4f5a6b";
 const USER_KEY = ["sk-ant-api03-", "NEXTSTEPNEXTSTEPNEXTSTEP", "-abcdefAA"].join("");
 const AGENT_KEY = ["sk-ant-api03-", "AGENTKEYAGENTKEYAGENTKEY", "-abcdefAA"].join("");
 
@@ -91,6 +92,15 @@ describe("replay and exp replay: what they print", () => {
       // A session the proxy logged alone (no hooks): model calls, but no prompts or tool calls of its own.
       await proxied([first], PROXY_ONLY);
       await stores.index.upsertSession(buildSession(await stores.index.listEvents(PROXY_ONLY)));
+      // A session that writes a file in a route group: parentheses a shell reads as syntax.
+      const w = t - 30_000;
+      const write = { tool: "Write", toolUseId: "toolu_w", input: { file_path: "/work/demo/app/(auth)/login/page.tsx", content: "export default function Page() {}\n" } };
+      await stores.index.putEvents([
+        { ...hook("next-hook-0101", w, "user.message", { text: "add a login page" }), sessionId: WRITER },
+        { ...hook("next-hook-0102", w + 1, "tool.start", write), sessionId: WRITER },
+        { ...hook("next-hook-0103", w + 2, "tool.end", { tool: "Write", toolUseId: "toolu_w", ok: true }), sessionId: WRITER },
+      ]);
+      await stores.index.upsertSession(buildSession(await stores.index.listEvents(WRITER)));
     } finally {
       await proxy.close();
       await stores.index.close();
@@ -200,6 +210,23 @@ describe("replay and exp replay: what they print", () => {
     assert.equal(f.status, 2, f.stderr);
     assert.equal(up.seen.length, before, "no step to fork: no request");
     assert.match(f.stderr, /This session has no steps to replay: it came from a source that records model calls only/);
+  });
+
+  it("a step's see-the-whole-file command quotes the path, so a route group's parentheses stay one argument", async () => {
+    const path = "app/(auth)/login/page.tsx";
+    const r = await cli(["replay", WRITER, "--step", "2"]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^ {2}[AM] app\/\(auth\)\/login\/page\.tsx {2}← this step$/m, r.stdout);
+    const file = cliCommand(env, ["replay", WRITER, "--step", "2", "--file", path]);
+    assert.notEqual(file.endsWith(` ${path}`), true, "the path is quoted");
+    assert.ok(lines(r.stderr).includes(`    ${file}`), `expected "${file}" in:\n${r.stderr}`);
+    const idx = await cli(["replay", WRITER]);
+    assert.equal(idx.status, 0, idx.stderr);
+    const step = cliCommand(env, ["replay", WRITER, "--step", "2"]);
+    assert.ok(lines(idx.stderr).includes(`    ${step}`), `expected "${step}" in:\n${idx.stderr}`);
+    const shown = await cli(["replay", WRITER, "--step", "2", "--file", path]);
+    assert.equal(shown.status, 0, shown.stderr);
+    assert.match(shown.stdout, /^export default function Page\(\) \{\}$/m);
   });
 
   it("exp replay with no calls named: the example in the message runs in the user's shell", async () => {

@@ -358,6 +358,7 @@ grouped by area, with links to the docs for the details.
 - **Replay.** `replay --fork` on a prompt step says it forks the agent's first call after the prompt, the call it uses. Before, it said the agent's last call before the step. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#fork-from-a-step))
 - **Replay.** With no API key, `replay --fork` and `exp replay` print a line that sets it in the shell you use, a `$env:` line in PowerShell, and the `exp replay` usage example names the CLI the way your shell runs it. Before, PowerShell got a Bash `export` line and `coding.sh`, which fail there. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#errors-exit-1))
 - **Replay.** `replay` on a session logged only by the proxy, or by an SDK call outside `trace()`, says why it has no steps and points to `coding.sh show`, which lists its model calls. Before, it printed `0 steps` with no reason, and `--step 1` said the step was past the last one. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/use-cases/replay-agent-session.md#which-agents-can-i-replay))
+- **Replay.** `replay --step` prints its see-the-whole-file command with the path quoted for your shell. Before, a path such as `app/(auth)/login/page.tsx` was printed bare, which Bash reads as a syntax error and PowerShell as a command to run. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/use-cases/replay-agent-session.md#read-one-step))
 
 ## [0.1.7] - 2026-11-16
 
