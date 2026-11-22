@@ -155,6 +155,28 @@ describe("coding.sh alert", () => {
   });
 });
 
+describe("alert next steps", () => {
+  // A sandbox with no SHELL or MSYSTEM is PowerShell or cmd on Windows, where only codingsh runs.
+  const BIN = process.platform === "win32" ? "codingsh" : "coding.sh";
+  it("name codingsh in PowerShell and coding.sh in Git Bash", async () => {
+    for (const [extra, bin] of [[{}, BIN], [{ MSYSTEM: "MINGW64" }, "coding.sh"]] as const) {
+      const sb = sandbox(extra);
+      try {
+        const empty = await runCmd(alertCmd, sb, { action: "list" });
+        assert.ok(empty.stderr.includes(`${bin} alert add failures --measure failure-rate --over 0.5 --window 1d --notify webhook:https://example.com/hook`), empty.stderr);
+        const added = await runCmd(alertCmd, sb, { action: "add", positionals: ["spend"], flags: { measure: "cost", over: 1, window: "1d", notify: "command:true" } });
+        assert.ok(added.stderr.includes(`${bin} alert test spend`), added.stderr);
+        const dup = await runCmd(alertCmd, sb, { action: "add", positionals: ["spend"], flags: { measure: "cost", over: 1, window: "1d", notify: "command:true" } });
+        assert.deepEqual(dup.error?.next, ["Remove it first:", `${bin} alert rm spend`]);
+        const missing = await runCmd(alertCmd, sb, { action: "rm", positionals: ["nope"] });
+        assert.deepEqual(missing.error?.next, ["List the alerts:", `${bin} alert list`]);
+      } finally {
+        sb.cleanup();
+      }
+    }
+  });
+});
+
 /** A session score, as `coding.sh score` writes one. */
 function score(sessionId: string, name: string, dataType: Score["dataType"], value: Score["value"], ts: number): Score {
   return { id: `${sessionId}-${name}-${ts}`, target: "session", targetId: sessionId, sessionId, name, dataType, value, source: "judge", by: "test", ts };

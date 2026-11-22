@@ -21,6 +21,19 @@ const home = (extra: NodeJS.ProcessEnv = {}) => {
   homes.push(h);
   return h;
 };
+// The CLI a printed command names with tmpHome's env, which sets no SHELL or MSYSTEM.
+const BIN = process.platform === "win32" ? "codingsh" : "coding.sh";
+
+describe("coding.sh proxy status", () => {
+  it("with no proxy running names the command that starts one, as the user's shell runs it", () => {
+    const h = home();
+    const r = runSync(["proxy", "status"], h.env);
+    assert.equal(r.status, 1, r.stderr);
+    assert.ok((r.stdout + r.stderr).includes(`${BIN} proxy --background`), r.stderr);
+    const bash = runSync(["proxy", "status"], { ...h.env, MSYSTEM: "MINGW64" });
+    assert.ok((bash.stdout + bash.stderr).includes("coding.sh proxy --background"), bash.stderr);
+  });
+});
 
 describe("coding.sh proxy --host", () => {
   it("warns that a public bind has no auth and prints env a client can dial", async () => {
@@ -105,8 +118,9 @@ describe("coding.sh proxy --background", () => {
       }
     }
     assert.match(text, /claude-sonnet-4-5\S* 200/, text);
-    // Ctrl-C cannot reach a detached process; the log names the command that stops it.
-    assert.match(text, /Stop with: coding\.sh proxy stop/, text);
+    // Ctrl-C cannot reach a detached process; the log names the command that stops it, as the
+    // user's shell runs it (tmpHome sets no SHELL: PowerShell or cmd on Windows).
+    assert.ok(text.includes(`Stop with: ${BIN} proxy stop`), text);
     assert.doesNotMatch(text, /Ctrl-C/, text);
   });
 
@@ -120,10 +134,8 @@ describe("coding.sh proxy --background", () => {
       const r = await runAsync(["proxy", "--background", "--enforce-budget", "--port", String(port)], { ...home().env, NO_COLOR: undefined, FORCE_COLOR: "1" });
       assert.equal(r.status, 1, r.stderr);
       assert.match(r.stderr, new RegExp(`port ${port} is in use`), r.stderr);
-      // --background and --enforce-budget kept, as the user's shell runs it: tmpHome's env has no
-      // SHELL, which on Windows is PowerShell or cmd.
-      const bin = process.platform === "win32" ? "codingsh" : "coding.sh";
-      assert.ok(r.stderr.includes(`${bin} proxy --background --enforce-budget --port 0`), r.stderr);
+      // --background and --enforce-budget kept, as the user's shell runs it.
+      assert.ok(r.stderr.includes(`${BIN} proxy --background --enforce-budget --port 0`), r.stderr);
     } finally {
       await new Promise((resolve) => held.close(resolve));
     }

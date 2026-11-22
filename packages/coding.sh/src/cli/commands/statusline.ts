@@ -27,6 +27,7 @@ import { needYou, readWorkQueue, WORK_WINDOW_MS } from "../../core/work.ts";
 import { readOverlay } from "../../core/work-overlay.ts";
 import { claudeRateLimits, quotaPart, round4, saveClaudeQuota, spendJson } from "../../quota/index.ts";
 import { autoIngest, readBudgetMs, withContext } from "../common.ts";
+import { cliCommand } from "../next-steps.ts";
 import { CliError } from "../output.ts";
 import { contextPart, ingestStoppedPart, statuslineLine, worstFailureFlag } from "../statusline.ts";
 import type { CommandContext } from "../types.ts";
@@ -273,7 +274,7 @@ async function install(c: CommandContext): Promise<number> {
     throw new CliError(`Claude Code already has a status line: ${existing}`, {
       reason: "statusline_exists",
       askUser: true,
-      next: ["Replace it (the old one is restored on uninstall):", "coding.sh statusline install --force"],
+      next: ["Replace it (the old one is restored on uninstall):", cliCommand(env, ["statusline", "install", "--force"])],
     });
   }
   const after = stringifyJsonLike({ ...cfg, statusLine: { type: "command", command: statuslineCommand(), padding: 0 } }, before);
@@ -307,7 +308,7 @@ async function install(c: CommandContext): Promise<number> {
   });
   out.data({ outcome: "installed", path: file });
   out.print(`Installed the coding.sh status line into ${file}`);
-  out.note("Claude Code shows it on the next turn. Remove it with: coding.sh statusline uninstall");
+  out.note(`Claude Code shows it on the next turn. Remove it with: ${cliCommand(env, ["statusline", "uninstall"])}`);
   return 0;
 }
 

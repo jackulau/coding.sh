@@ -9,6 +9,7 @@ import { userHome } from "../../core/paths.ts";
 import { parsePlace } from "../../mcp/data.ts";
 import { suggest, UsageError } from "../args.ts";
 import { autoIngest, pendingField, readIngest, str, whereFlag, withContext } from "../common.ts";
+import { cliCommand, quoteArg } from "../next-steps.ts";
 import { CliError, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -43,10 +44,12 @@ function set(c: CommandContext): number {
   const [period, raw] = c.positionals;
   if (!isPeriod(period)) {
     const near = period ? suggest(period, PERIODS) : undefined;
-    const scope = (["agent", "repo", "where"] as const).flatMap((f) => (str(c.flags[f]) ? [`--${f} ${f === "where" ? JSON.stringify(str(c.flags[f])) : str(c.flags[f])}`] : []));
+    // The command again with the period it meant, each value quoted for the user's shell; a missing amount stays <USD>.
+    const scope = (["agent", "repo", "where"] as const).flatMap((f) => (str(c.flags[f]) ? [`--${f}`, str(c.flags[f])!] : []));
+    const q = (a: string) => quoteArg(a, c.env);
     throw new UsageError(`The period must be one of ${PERIODS.join(", ")}, got ${JSON.stringify(period ?? "")}`, {
       reason: "invalid_argument",
-      suggestion: near ? ["coding.sh budget set", near, raw ?? "<USD>", ...scope].join(" ") : undefined,
+      suggestion: near ? [cliCommand(c.env, ["budget", "set", near]), raw === undefined ? "<USD>" : q(raw), ...scope.map(q)].join(" ") : undefined,
     });
   }
   const amount = /^\$?(\d+(?:\.\d+)?)$/.exec((raw ?? "").trim());
@@ -67,7 +70,7 @@ function set(c: CommandContext): number {
     return 0;
   }
   out.ok(`${r.replaced ? "Updated" : "Added"} budget ${r.budget.id}: ${usd(r.budget.limitUsd)} per ${period}, ${scopeText(r.budget)}`);
-  out.next("See the spend against it", "coding.sh budget status");
+  out.next("See the spend against it", cliCommand(c.env, ["budget", "status"]));
   return 0;
 }
 
@@ -80,7 +83,7 @@ function list(c: CommandContext): number {
   }
   if (!budgets.length) {
     out.note("No budgets set");
-    out.next("Set one", "coding.sh budget set day 20");
+    out.next("Set one", cliCommand(c.env, ["budget", "set", "day", "20"]));
     return 0;
   }
   out.table(
@@ -96,7 +99,7 @@ function rm(c: CommandContext): number {
   const budgets = load(c);
   const gone = budgets.find((b) => b.id === id);
   if (!gone) {
-    throw new CliError(`No budget ${JSON.stringify(id ?? "")}`, { reason: "not_found", next: budgets.length ? ["See the budgets:", "coding.sh budget list"] : [] });
+    throw new CliError(`No budget ${JSON.stringify(id ?? "")}`, { reason: "not_found", next: budgets.length ? ["See the budgets:", cliCommand(c.env, ["budget", "list"])] : [] });
   }
   writeBudgets(budgets.filter((b) => b !== gone), c.env);
   if (out.json) out.data({ outcome: "removed", budget: gone });
@@ -111,7 +114,7 @@ async function status(c: CommandContext): Promise<number> {
     if (out.json) out.data({ budgets: [], estimated: true, note: ESTIMATED_NOTE });
     else {
       out.note("No budgets set");
-      out.next("Set one", "coding.sh budget set day 20");
+      out.next("Set one", cliCommand(c.env, ["budget", "set", "day", "20"]));
     }
     return 0;
   }
@@ -136,7 +139,7 @@ async function status(c: CommandContext): Promise<number> {
     // A repo the store has no session in is likely a typo; say so rather than show $0 quietly.
     for (const s of statuses) if (s.error === undefined && s.budget.repo && s.sessions === 0 && !repoPlace(s.budget.repo).path) out.note(`No session this ${s.budget.period} in a repo named ${s.budget.repo}`);
     for (const s of failed) out.warn(`Budget ${s.budget.id} can't be read: ${s.error}`);
-    if (failed.length) out.next("Remove it, then set it again", `coding.sh budget rm ${failed[0]!.budget.id}`);
+    if (failed.length) out.next("Remove it, then set it again", cliCommand(c.env, ["budget", "rm", failed[0]!.budget.id]));
     return failed.length ? 1 : 0;
   }, { create: false });
 }

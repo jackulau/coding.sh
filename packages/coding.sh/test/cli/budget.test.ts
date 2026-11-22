@@ -9,6 +9,10 @@ import * as budget from "../../src/cli/commands/budget.ts";
 import { mkSession, runCmd, sandbox, type Sandbox } from "./_cmd.ts";
 import { MAIN, runSync } from "./_run-cli.ts";
 
+// The CLI a printed command names: the sandbox sets no SHELL or MSYSTEM, which on Windows is
+// PowerShell or cmd, where only codingsh runs.
+const BIN = process.platform === "win32" ? "codingsh" : "coding.sh";
+
 const boxes: Sandbox[] = [];
 after(() => {
   for (const b of boxes) b.cleanup();
@@ -73,9 +77,9 @@ describe("coding.sh budget (in process)", () => {
     assert.match(String(r.error?.message), /day, week, month/);
     assert.equal(r.error?.suggestion, undefined, "no near period to name");
     r = await runCmd(budget, b, { action: "set", positionals: ["dya", "20"] });
-    assert.equal(r.error?.suggestion, "coding.sh budget set day 20", "a near miss names the period it meant");
+    assert.equal(r.error?.suggestion, `${BIN} budget set day 20`, "a near miss names the period it meant");
     r = await runCmd(budget, b, { action: "set", positionals: ["wekk", "5"], flags: { agent: "codex" } });
-    assert.equal(r.error?.suggestion, "coding.sh budget set week 5 --agent codex");
+    assert.equal(r.error?.suggestion, `${BIN} budget set week 5 --agent codex`);
     r = await runCmd(budget, b, { action: "set", positionals: ["day", "-3"] });
     assert.match(String(r.error?.message), /USD amount/);
     r = await runCmd(budget, b, { action: "set", positionals: ["day", "0"] });
@@ -119,13 +123,40 @@ describe("coding.sh budget (in process)", () => {
     assert.match(text.stdout, /^day\tday\tevery session\t~\$0\.7500\t\$1\.00\t75%\t/m);
     assert.match(text.stdout, /^day-w0ld000\tday\twhere bogus:1\t-\t\$5\.00\t-\t/m);
     assert.match(text.stderr, /Budget day-w0ld000 can't be read: --where does not parse \(unknown key "bogus"\)/);
-    assert.match(text.stderr, /coding\.sh budget rm day-w0ld000/);
+    assert.ok(text.stderr.includes(`${BIN} budget rm day-w0ld000`), text.stderr);
   });
 
   test("status with no budgets says how to set one", async () => {
     const r = await runCmd(budget, box(), { action: "status" });
     assert.equal(r.code, 0);
     assert.match(r.stderr + r.stdout, /budget set day/);
+  });
+
+  test("printed commands run in the user's shell: codingsh in PowerShell, coding.sh in Git Bash", async () => {
+    for (const [extra, bin] of [[{}, BIN], [{ MSYSTEM: "MINGW64" }, "coding.sh"]] as const) {
+      const b = sandbox(extra);
+      boxes.push(b);
+      const empty = await runCmd(budget, b, { action: "list" });
+      assert.ok(empty.stderr.includes(`${bin} budget set day 20`), empty.stderr);
+      const added = await runCmd(budget, b, { action: "set", positionals: ["day", "5"] });
+      assert.ok(added.stderr.includes(`${bin} budget status`), added.stderr);
+      const missing = await runCmd(budget, b, { action: "rm", positionals: ["nope"] });
+      assert.deepEqual(missing.error?.next, ["See the budgets:", `${bin} budget list`]);
+    }
+  });
+
+  test("a suggestion quotes each value as the user's shell needs, and keeps <USD> as a placeholder", async () => {
+    // SHELL set: sh on every platform. A path with a space stays one argument, and $ is not expanded.
+    const sh = sandbox({ SHELL: "/bin/bash" });
+    boxes.push(sh);
+    let r = await runCmd(budget, sh, { action: "set", positionals: ["dya", "20"], flags: { repo: "/work/my repo", where: "user:$USER" } });
+    assert.equal(r.error?.suggestion, "coding.sh budget set day 20 --repo '/work/my repo' --where 'user:$USER'");
+    r = await runCmd(budget, sh, { action: "set", positionals: ["dya"] });
+    assert.equal(r.error?.suggestion, "coding.sh budget set day <USD>");
+    if (process.platform === "win32") {
+      r = await runCmd(budget, box(), { action: "set", positionals: ["dya", "20"], flags: { repo: "C:\\My Repos\\web" } });
+      assert.equal(r.error?.suggestion, 'codingsh budget set day 20 --repo "C:\\My Repos\\web"');
+    }
   });
 });
 

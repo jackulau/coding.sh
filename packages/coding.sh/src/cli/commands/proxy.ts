@@ -68,7 +68,7 @@ async function start(c: CommandContext): Promise<number> {
       out.note(`Already running (pid ${running.pid})`);
       return 0;
     }
-    if (running.port === s.port) throw new CliError(`A coding.sh proxy is already running on ${running.url} (pid ${running.pid})`, { reason: "already_running", next: ["Stop it:", "coding.sh proxy stop"] });
+    if (running.port === s.port) throw new CliError(`A coding.sh proxy is already running on ${running.url} (pid ${running.pid})`, { reason: "already_running", next: ["Stop it:", cliCommand(c.env, ["proxy", "stop"])] });
   }
   if (c.flags.background) {
     const st = await startInBackground(c.env, c.flags, s.port);
@@ -83,7 +83,7 @@ async function start(c: CommandContext): Promise<number> {
   try {
     if (enforce) budgets = readBudgets(c.env);
   } catch (e) {
-    throw new CliError(`Can't read the budgets: ${(e as Error).message}`, { reason: "bad_budgets", next: ["See them:", "coding.sh budget list"] });
+    throw new CliError(`Can't read the budgets: ${(e as Error).message}`, { reason: "bad_budgets", next: ["See them:", cliCommand(c.env, ["budget", "list"])] });
   }
   return withContext(c, async (ctx) => {
     // budgets.json is read with the spend, so a budget set while the proxy runs applies within 30 s.
@@ -123,10 +123,10 @@ async function start(c: CommandContext): Promise<number> {
     else for (const [k, v] of Object.entries(vars)) out.print(envLine(c.env, k, v));
     if (!isLoopbackHost(proxy.host)) out.warn(`Listening on ${proxy.host}: the proxy has no auth, so anyone who can reach this port can send calls through it`);
     out.note(`Ready on ${url} (Anthropic → ${s.upstreams.anthropic}, OpenAI → ${s.upstreams.openai})`);
-    if (enforce) out.note(`Enforcing budgets: a call a budget over its limit applies to gets a 429 (${enforcingCount(budgets)}; coding.sh budget status)`);
+    if (enforce) out.note(`Enforcing budgets: a call a budget over its limit applies to gets a 429 (${enforcingCount(budgets)}; ${cliCommand(c.env, ["budget", "status"])})`);
     out.note(ctx.config.capture.mode === "metadata" ? "Capture mode metadata: no prompts or responses are stored" : "Logging every call; auth headers are forwarded, never stored");
     // A detached child (proxy --background) has no terminal for Ctrl-C to reach.
-    out.note(c.env[DETACHED_ENV] === "1" ? "Stop with: coding.sh proxy stop" : "Press Ctrl-C to stop");
+    out.note(c.env[DETACHED_ENV] === "1" ? `Stop with: ${cliCommand(c.env, ["proxy", "stop"])}` : "Press Ctrl-C to stop");
     await new Promise<void>((resolve) => c.signal.addEventListener("abort", () => resolve(), { once: true }));
     await proxy.close();
     clearProxyState(process.pid, c.env);
@@ -252,7 +252,7 @@ async function status(c: CommandContext): Promise<number> {
   }
   if (!health) {
     out.row("proxy", st ? `not answering on ${st.url}` : "not running", "warn");
-    out.next("Start it", "coding.sh proxy --background");
+    out.next("Start it", cliCommand(c.env, ["proxy", "--background"]));
     return 1;
   }
   out.row("proxy", `${st!.url} (pid ${st!.pid})`, "ok");
