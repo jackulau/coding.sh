@@ -64,6 +64,8 @@ describe("proxy budget guard", () => {
     assert.equal(r.status, 429);
     const retry = Number(r.headers["retry-after"]);
     assert.ok(retry > 3500 && retry <= 3600, String(r.headers["retry-after"]));
+    // The Anthropic and OpenAI SDKs retry a 429 unless told not to, and the Anthropic one sleeps the whole Retry-After first.
+    assert.equal(r.headers["x-should-retry"], "false");
     const body = JSON.parse(r.body.toString());
     assert.equal(body.type, "error");
     assert.equal(body.error.type, "rate_limit_error");
@@ -92,7 +94,16 @@ describe("proxy budget guard", () => {
     assert.equal(body.error.code, "spend_limit_exceeded");
     assert.equal(body.error.budget.id, "week");
     assert.match(body.error.message, /\$12\.00 spent of \$10\.00/);
+    assert.equal(r.headers["x-should-retry"], "false");
     assert.equal(up.seen.length, 0);
+  });
+
+  test("amounts under $1 keep 4 decimals, so a cent-sized budget does not read $0.00 of $0.00", async () => {
+    const up = await upstream();
+    const p = await proxy(up, async (now) => [over(budget({ limitUsd: 0.001 }), 0.0016, now)]);
+    const r = await call(p.url, { path: "/v1/messages", body: messages, headers: anthropicHeaders });
+    assert.equal(r.status, 429);
+    assert.match(JSON.parse(r.body.toString()).error.message, /: \$0\.0016 spent of \$0\.0010 \(estimated\)/);
   });
 
   test("only budgets that apply block: another agent's, a repo's and one under its limit do not", async () => {
@@ -241,12 +252,13 @@ describe("coding.sh proxy --enforce-budget (CLI)", () => {
     writeFileSync(join(h.env.CODING_SH_HOME!, "budgets.json"), JSON.stringify({ budgets }));
     const live = runLive(["proxy", "--port", "0", "--anthropic-upstream", up.url, "--enforce-budget"], h.env);
     const url = await live.waitFor(/http:\/\/127\.0\.0\.1:\d+/);
-    await live.waitFor(/Enforcing budgets/);
+    // The note counts the budgets that can block a call, not every budget set.
+    assert.match(await live.waitFor(/Enforcing budgets.*/), /\(1 of 2 set can block a call: one with --repo or --where never does; /);
     const r = await call(url, { path: "/v1/messages", body: messages, headers: anthropicHeaders });
     assert.equal(r.status, 429, r.body.toString());
     assert.match(JSON.parse(r.body.toString()).error.message, /budget "day"/);
-    // The block's line comes after anything the read printed.
-    await live.waitFor(/blocked a call/);
+    // The block's line comes after anything the read printed. It gives the reset in days, hours and minutes, not in seconds.
+    assert.match(await live.waitFor(/blocked a call.*/), /^blocked a call: budget day is over its limit \(\$1\.40 of \$1\.00\); resets in (\d+d \d+h|\d+h \d+m|\d+m)$/);
     assert.doesNotMatch(live.err.join(""), /day-w0ld000|bogus/);
     assert.equal(up.seen.length, 0);
     live.child.kill();

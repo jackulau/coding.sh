@@ -9,7 +9,7 @@ import { UsageError } from "../../src/cli/args.ts";
 import * as alertCmd from "../../src/cli/commands/alert.ts";
 import { classify, recordDelivery } from "../../src/alerts/check.ts";
 import { parseMeasure, readMeasure } from "../../src/alerts/measure.ts";
-import { deliver, signatureHeaders, signBody } from "../../src/alerts/notify.ts";
+import { deliver, signatureHeaders, signBody, stderrLine } from "../../src/alerts/notify.ts";
 import { type AlertDef, loadAlerts, MAX_FAILED_DELIVERIES } from "../../src/alerts/store.ts";
 import type { Score } from "../../src/core/types.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
@@ -152,6 +152,28 @@ describe("coding.sh alert", () => {
     assert.equal(r.code, 0);
     const missing = await runCmd(alertCmd, sb, { action: "rm", positionals: ["per-agent"] });
     assert.match(String(missing.error), /No alert named/);
+  });
+});
+
+describe("alert next steps", () => {
+  // A sandbox with no SHELL or MSYSTEM is PowerShell or cmd on Windows, where only codingsh runs.
+  const BIN = process.platform === "win32" ? "codingsh" : "coding.sh";
+  it("name codingsh in PowerShell and coding.sh in Git Bash", async () => {
+    for (const [extra, bin] of [[{}, BIN], [{ MSYSTEM: "MINGW64" }, "coding.sh"]] as const) {
+      const sb = sandbox(extra);
+      try {
+        const empty = await runCmd(alertCmd, sb, { action: "list" });
+        assert.ok(empty.stderr.includes(`${bin} alert add failures --measure failure-rate --over 0.5 --window 1d --notify webhook:https://example.com/hook`), empty.stderr);
+        const added = await runCmd(alertCmd, sb, { action: "add", positionals: ["spend"], flags: { measure: "cost", over: 1, window: "1d", notify: "command:true" } });
+        assert.ok(added.stderr.includes(`${bin} alert test spend`), added.stderr);
+        const dup = await runCmd(alertCmd, sb, { action: "add", positionals: ["spend"], flags: { measure: "cost", over: 1, window: "1d", notify: "command:true" } });
+        assert.deepEqual(dup.error?.next, ["Remove it first:", `${bin} alert rm spend`]);
+        const missing = await runCmd(alertCmd, sb, { action: "rm", positionals: ["nope"] });
+        assert.deepEqual(missing.error?.next, ["List the alerts:", `${bin} alert list`]);
+      } finally {
+        sb.cleanup();
+      }
+    }
   });
 });
 
@@ -380,5 +402,45 @@ describe("alert parts", () => {
     } finally {
       sb.cleanup();
     }
+  });
+
+  it("a failed command's error keeps the message cmd and PowerShell print first, not only the last line", async () => {
+    const sb = sandbox();
+    try {
+      // What cmd prints for a program it can't find: the last line alone does not name it.
+      const notFound = "'notify-send' is not recognized as an internal or external command,\r\noperable program or batch file.\r\n";
+      const file = join(sb.root, "fail.js");
+      writeFileSync(file, `process.stderr.write(${JSON.stringify(notFound)}); process.exit(1);`);
+      const payload = { alert: "a", state: "ALERT" as const, previous: "OK" as const, value: 2, threshold: 1, window: "1d", at: new Date(0).toISOString() };
+      const d = await deliver({ kind: "command", command: `"${process.execPath}" "${file}"` }, payload, { backoffMs: 1, timeoutMs: 30_000 });
+      assert.equal(d.error, "command exited 1: 'notify-send' is not recognized as an internal or external command, operable program or batch file.");
+    } finally {
+      sb.cleanup();
+    }
+  });
+
+  it("a failed command's error keeps the last line of a long stderr, where a Python traceback names the problem", async () => {
+    const sb = sandbox();
+    try {
+      // A deep traceback, longer than one read of the pipe, then the message on its own write.
+      const frames = Array.from({ length: 3000 }, (_, i) => `  File "/work/demo/notify.py", line ${i + 1}, in step${i}\n`).join("");
+      const file = join(sb.root, "fail.js");
+      writeFileSync(file, `process.stderr.write(${JSON.stringify(`Traceback (most recent call last):\n${frames}`)}); setTimeout(() => { process.stderr.write("ValueError: no webhook set\\n"); process.exitCode = 1; }, 50);`);
+      const payload = { alert: "a", state: "ALERT" as const, previous: "OK" as const, value: 2, threshold: 1, window: "1d", at: new Date(0).toISOString() };
+      const d = await deliver({ kind: "command", command: `"${process.execPath}" "${file}"` }, payload, { backoffMs: 1, timeoutMs: 30_000 });
+      assert.equal(d.error, "command exited 1: Traceback (most recent call last): … ValueError: no webhook set");
+    } finally {
+      sb.cleanup();
+    }
+  });
+
+  it("stderrLine keeps all of a short stderr, and the first and last lines of a long one", () => {
+    // PowerShell 5.1's Write-Error: the message, then the error record.
+    const ps = "Write-Error boom; exit 3 : boom\r\n    + CategoryInfo          : NotSpecified: (:) [Write-Error], WriteErrorException\r\n    + FullyQualifiedErrorId : Microsoft.PowerShell.Commands.WriteErrorException\r\n \r\n";
+    assert.equal(stderrLine(ps), "Write-Error boom; exit 3 : boom + CategoryInfo : NotSpecified: (:) [Write-Error], WriteErrorException + FullyQualifiedErrorId : Microsoft.PowerShell.Commands.WriteErrorException");
+    const traceback = ["Traceback (most recent call last):", ...Array.from({ length: 6 }, (_, i) => `  File "/work/demo/notify.py", line ${i + 1}, in step${i}`), "ValueError: no webhook set"].join("\n");
+    assert.equal(stderrLine(traceback), "Traceback (most recent call last): … ValueError: no webhook set");
+    assert.equal(stderrLine("x".repeat(300)), "x".repeat(200));
+    assert.equal(stderrLine(" \r\n"), "");
   });
 });
