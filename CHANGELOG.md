@@ -355,6 +355,7 @@ grouped by area, with links to the docs for the details.
 - **Budgets.** The 429 from `proxy --enforce-budget` names `budget status` as the shell the proxy started in runs it: `codingsh budget status` in PowerShell or cmd, where `coding.sh budget status` fails. Before, it always said `coding.sh budget status`. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/capture-with-proxy.md#stop-calls-over-a-budget))
 - **Budgets.** `proxy --enforce-budget` matches a call to the agent the proxy stores it under. A Codex call that sends no session id is stored as agent `proxy`, so a `--agent proxy` budget now blocks it and a `--agent codex` budget no longer does. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/capture-with-proxy.md#stop-calls-over-a-budget))
 - **Docs.** The proxy guide gives the PowerShell form of `eval "$(coding.sh proxy env)"`: `codingsh proxy env | Invoke-Expression`. It says the budget 429 carries `x-should-retry: false`, so the Anthropic and OpenAI SDKs raise it at once, and the cost guide says `--enforce-budget` ignores `--repo` budgets as well as `--where` ones. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/capture-with-proxy.md#2-point-your-client-at-it))
+- **Docs.** The alerts guide is a page on the site, under Look at runs in the docs sidebar, and the troubleshooting row for `delivery_failed` links its Run a command section. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/alerts.md#run-a-command))
 
 ## [0.1.7] - 2026-11-16
 
