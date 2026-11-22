@@ -87,7 +87,8 @@ const wait = (ms: number, signal?: AbortSignal) =>
   });
 
 async function postOnce(url: string, body: string, o: DeliverOptions): Promise<string | undefined> {
-  const headers: Record<string, string> = { "content-type": "application/json", "user-agent": "coding.sh", ...(o.secret ? signatureHeaders(o.secret, body) : {}) };
+  const headers: Record<string, string> = { "content-type": "application/json", "user-agent": "coding.sh" };
+  if (o.secret) Object.assign(headers, signatureHeaders(o.secret, body));
   const timeout = AbortSignal.timeout(o.timeoutMs ?? WEBHOOK_TIMEOUT_MS);
   try {
     const res = await (o.fetch ?? globalThis.fetch)(url, { method: "POST", headers, body, redirect: "manual", signal: o.signal ? AbortSignal.any([timeout, o.signal]) : timeout });
