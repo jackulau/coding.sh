@@ -8,6 +8,9 @@
 // A purge that is not a dry run also deletes the copies of the index an upgrade
 // or `upgrade-store --restore` kept (index.db.v<N>.bak, .undone): they hold the
 // value and are not rewritten. Exit 1 while one of them can't be deleted.
+//
+// Snapshot repos (repos/) are never rewritten: purge names the ones that hold a
+// value, and exits 1 until they are deleted.
 import { existsSync, readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { loadConfig } from "../../core/config.ts";
@@ -104,7 +107,7 @@ export async function run(c: CommandContext): Promise<number> {
   }
   const dryRun = c.flags["dry-run"] === true;
   const p = paths(c.env);
-  const fileDirs = [p.spool, p.judgeCache, p.runs];
+  const where = { fileDirs: [p.spool, p.judgeCache, p.runs], llmCache: p.llmCache, repos: p.repos };
   let literals = given;
   let matched: { values: number; short: number } | undefined;
   let copies: Copies = {};
@@ -117,7 +120,7 @@ export async function run(c: CommandContext): Promise<number> {
     });
     try {
       if (rules.length) {
-        const found = await findRuleMatches({ dbPath: fileUrlPath(rest), blobs: ctx.blobs, fileDirs, rules }).catch((e) => {
+        const found = await findRuleMatches({ dbPath: fileUrlPath(rest), blobs: ctx.blobs, ...where, rules }).catch((e) => {
           if (e instanceof RuleTooBroad) throw new CliError(`the --rule patterns match more than ${MAX_RULE_VALUES} distinct values, which is ordinary text, not one secret`, { reason: "too_broad", next: ["Anchor the pattern on the secret's prefix and length, e.g. 'sk-ant-[A-Za-z0-9_-]{80,}'"] });
           throw e;
         });
@@ -129,7 +132,7 @@ export async function run(c: CommandContext): Promise<number> {
         copies = removeIndexCopies(fileUrlPath(rest), dryRun);
         return undefined;
       }
-      return await purgeLiterals({ dbPath: fileUrlPath(rest), blobs: ctx.blobs, fileDirs, literals, dryRun, ...purgeWait(c.env) });
+      return await purgeLiterals({ dbPath: fileUrlPath(rest), blobs: ctx.blobs, ...where, literals, dryRun, ...purgeWait(c.env) });
     } finally {
       lock?.release();
     }
@@ -138,7 +141,7 @@ export async function run(c: CommandContext): Promise<number> {
   if (!r) {
     // Only rules were given, and they matched nothing to purge.
     if (out.json) {
-      out.data({ outcome: dryRun ? "planned" : "purged", values: 0, ruleMatches: matched?.values ?? 0, ...(matched?.short ? { shortMatches: matched.short } : {}), events: 0, sessions: 0, otherRows: 0, blobs: 0, files: 0, foldsDropped: 0, ...copies });
+      out.data({ outcome: dryRun ? "planned" : "purged", values: 0, ruleMatches: matched?.values ?? 0, ...(matched?.short ? { shortMatches: matched.short } : {}), events: 0, sessions: 0, otherRows: 0, blobs: 0, files: 0, recordings: 0, foldsDropped: 0, ...copies });
       return copies.copiesKept?.length ? 1 : 0;
     }
     out.row("Rules", `matched no value of ${MIN_LITERAL_LENGTH}+ characters`, "ok");
@@ -149,10 +152,13 @@ export async function run(c: CommandContext): Promise<number> {
     return 0;
   }
 
+  // A snapshot repo that holds a value is left as it is, so a purge (not a dry run) ends with exit 1 until it is deleted.
+  const left = r.oldBytesKept?.length || r.copiesKept?.length || r.recordingsKept?.length || (!dryRun && r.snapshotRepos?.length);
   if (out.json) {
     out.data({ outcome: dryRun ? "planned" : "purged", values: literals.length, ...(matched ? { ruleMatches: matched.values } : {}), ...(matched?.short ? { shortMatches: matched.short } : {}), ...r });
-    return r.integrity === false || r.oldBytesKept?.length || r.copiesKept?.length ? 1 : 0;
+    return r.integrity === false || left ? 1 : 0;
   }
+  const them = literals.length === 1 ? "the value" : "the values";
   const verb = dryRun ? "would scrub" : "scrubbed";
   if (matched) out.row("Rules", `matched ${plural(matched.values, "distinct value")}`, "ok");
   if (matched?.short) out.row("Short matches", `left ${plural(matched.short, "value")} under ${MIN_LITERAL_LENGTH} characters alone`, "ok");
@@ -161,7 +167,10 @@ export async function run(c: CommandContext): Promise<number> {
   out.row("Other rows", `${verb} ${plural(r.otherRows, "row")} (labels, eval docs, settings)`, "ok");
   out.row("Blobs", `${verb} ${plural(r.blobs, "blob")}`, "ok");
   out.row("Raw files", `${verb} ${plural(r.files, "file")} (spool, judge cache, eval run dirs)`, "ok");
-  if (r.filesSkipped) out.row("Skipped", `${plural(r.filesSkipped, "file")} over ${MAX_FILE_BYTES / 1024 / 1024} MB, not read`, "warn");
+  out.row("Recordings", `${verb} ${plural(r.recordings, "recording")} of model calls (llm-cache)`, "ok");
+  if (r.recordingsDeleted) out.row("Recordings", `${dryRun ? "would delete" : "deleted"} ${plural(r.recordingsDeleted, "torn or leftover file")} that no replay reads (llm-cache)`, "ok");
+  for (const f of r.recordingsKept ?? []) out.row("Recordings", `couldn't rewrite or delete ${f}, which holds ${them}. Delete it yourself`, "fail");
+  if (r.filesSkipped) out.row("Skipped", `${plural(r.filesSkipped, "file or snapshot object", "files or snapshot objects")} over ${MAX_FILE_BYTES / 1024 / 1024} MB, not read`, "warn");
   if (r.foldsDropped) out.row("Folds", `${dryRun ? "would drop" : "dropped"} ${plural(r.foldsDropped, "saved fold")} (rebuilt on the next ingest)`, "ok");
   if (r.integrity !== undefined) out.row("Integrity", r.integrity ? "index and search ok, file compacted" : "check failed: run coding.sh doctor", r.integrity ? "ok" : "fail");
   for (const f of r.oldBytesKept ?? []) {
@@ -169,10 +178,16 @@ export async function run(c: CommandContext): Promise<number> {
     out.row("Old bytes", `still in ${file}: another process is reading it (the viewer, serve, a sqlite3 shell or a backup). Close it and run the same purge again`, "fail");
   }
   copyRows(out, r, dryRun);
-  if (r.oldBytesKept?.length || r.copiesKept?.length) return 1;
+  for (const s of r.snapshotRepos ?? []) {
+    const repo = `${s.path}${s.root ? ` (snapshots of ${s.root})` : ""}`;
+    const what = s.unreadable ? `couldn't read ${repo}, which may hold ${them}` : dryRun ? `${repo} holds ${them}` : `${repo} still holds ${them}`;
+    out.row("Snapshots", `${what}: purge does not rewrite snapshots. Delete this folder; show then leaves out the file changes of sessions in that repo, and eval tasks that start from its snapshots can't run`, dryRun ? "warn" : "fail");
+  }
+  if (left) return 1;
   // A deleted copy was never read, so it counts as one that may have held a value.
-  const total = r.events + r.sessions + r.otherRows + r.blobs + r.files + (r.copiesRemoved?.length ?? 0);
-  if (!total) out.note(`No copies of ${literals.length === 1 ? "the value" : "these values"} in the store`);
+  const changes = r.events + r.sessions + r.otherRows + r.blobs + r.files + r.recordings + (r.recordingsDeleted ?? 0) + (r.copiesRemoved?.length ?? 0);
+  if (!changes && !r.snapshotRepos?.length) out.note(`No copies of ${literals.length === 1 ? "the value" : "these values"} in the store`);
+  else if (dryRun && !changes) out.note(`Dry run: nothing changed. Only the snapshot repos above hold ${them}, and purge leaves them as they are: delete them by hand`);
   else if (dryRun) out.note("Dry run: nothing changed. Run again without --dry-run to scrub; that cannot be undone, so an agent asks the user first");
   else out.note("Rotate the secret too: copies outside coding.sh (agent transcripts, shell history, git) are not touched");
   return r.integrity === false ? 1 : 0;

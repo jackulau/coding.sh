@@ -15,6 +15,9 @@
 //   responses, SSE included, are teed to the client unchanged as they arrive.
 // - Request headers are never stored. Bodies go through the redactor, and the
 //   job's own credentials are scrubbed out of them, before they are written.
+//   The key is taken from the request as that redactor leaves it. Under a
+//   redactor other than the default, a replay that misses also tries the key
+//   the default rules give, so a recording made with them still replays.
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import https from "node:https";
 import { randomBytes } from "node:crypto";
@@ -47,7 +50,7 @@ export interface StartLlmCacheOptions {
   key?: Pick<KeyOptions, "excludeTools" | "excludeModel">;
   /** Default 127.0.0.1. Only loopback addresses are accepted. */
   host?: string;
-  /** Default: the "secrets" redactor. */
+  /** Default: the "secrets" redactor. The CLI passes the one capture uses (capture.redact, capture.redactPatterns). */
   redactor?: Redactor;
   onWarn?: (message: string) => void;
 }
@@ -200,6 +203,8 @@ export async function startLlmCache(o: StartLlmCacheOptions): Promise<LlmCache> 
   if (o.until !== undefined && !(Number.isInteger(o.until) && o.until >= 0)) throw new RangeError(`until must be a non-negative integer (got ${o.until})`);
   const up: LlmUpstreams = { ...DEFAULT_LLM_UPSTREAMS, ...o.upstream };
   const redactor = o.redactor ?? createRedactor();
+  // The rules every recording was made with before the CLI passed its own: a replay that misses tries their key too.
+  const builtin = o.redactor ? createRedactor() : undefined;
   const jobs = new Map<string, JobState>();
   const agents = { http: new http.Agent({ keepAlive: true }), https: new https.Agent({ keepAlive: true }) };
   const until = o.until ?? Number.POSITIVE_INFINITY;
@@ -216,10 +221,15 @@ export async function startLlmCache(o: StartLlmCacheOptions): Promise<LlmCache> 
   };
 
   /** Text as a recording holds it: the redactor's rules, then the job's own credentials. */
-  const scrubText = (job: JobState, text: string): string => {
-    let out = redactor.string(text);
+  const scrubText = (job: JobState, text: string, rules: Redactor = redactor): string => {
+    let out = rules.string(text);
     for (const s of [...job.secrets].sort((a, b) => b.length - a.length)) if (out.includes(s)) out = out.split(s).join("[redacted:api-key]");
     return out;
+  };
+
+  /** A replayed case-trial whose live call failed is left unscored: say so once, with why. */
+  const liveFailed = (job: JobState, ordinal: number, why: string) => {
+    if (++job.upstreamErrors === 1) o.onWarn?.(`llm cache: case ${job.opts.caseId} trial ${job.opts.trial}: live call ${ordinal} failed (${why}); leaving it unscored`);
   };
 
   const record = (job: JobState, e: Omit<LlmEntry, "v" | "body" | "bodyEncoding" | "redacted">, raw: Pick<LlmEntry, "body" | "bodyEncoding">) => {
@@ -324,20 +334,28 @@ export async function startLlmCache(o: StartLlmCacheOptions): Promise<LlmCache> 
     // The key is taken from the request as a recording would hold it. A replayed reply is the
     // redacted one, so the agent's next request quotes "[redacted:…]" where the recorded run
     // quoted the raw text; keyed on the raw bytes, that request would miss and go live.
-    let keyed = parsed;
-    const scrubbed = scrubText(job, text);
-    if (scrubbed !== text) {
-      try {
-        keyed = JSON.parse(scrubbed);
-      } catch {
-        // A redaction that breaks the JSON: key on the request as sent.
+    const keyOf = (scrubbed: string): string => {
+      let keyed = parsed;
+      if (scrubbed !== text) {
+        try {
+          keyed = JSON.parse(scrubbed);
+        } catch {
+          // A redaction that breaks the JSON: key on the request as sent.
+        }
       }
-    }
-    const key = llmCallKey(api, keyed, { ...o.key, ...(job.opts.normalize ? { normalize: job.opts.normalize } : {}) });
+      return llmCallKey(api, keyed, { ...o.key, ...(job.opts.normalize ? { normalize: job.opts.normalize } : {}) });
+    };
+    const key = keyOf(scrubText(job, text));
     const model = modelOf(parsed);
     const base = { ordinal, provider, path: rest, key, ...(model ? { model } : {}) };
     if (!job.isLive && job.source) {
-      const i = job.source.findIndex((e, j) => !job.consumed.has(j) && e.key === key && e.ordinal <= until && e.status >= 200 && e.status < 300);
+      const match = (k: string) => job.source!.findIndex((e, j) => !job.consumed.has(j) && e.key === k && e.ordinal <= until && e.status >= 200 && e.status < 300);
+      let i = match(key);
+      if (i < 0 && builtin) {
+        // A recording made with the built-in rules keyed this call as they leave it.
+        const old = keyOf(scrubText(job, text, builtin));
+        if (old !== key) i = match(old);
+      }
       if (i >= 0) {
         job.consumed.add(i);
         job.hits++;
@@ -363,14 +381,14 @@ export async function startLlmCache(o: StartLlmCacheOptions): Promise<LlmCache> 
       target = joinUpstream(up[provider], `${rest}${query}`);
     } catch (err) {
       res.writeHead(400, { "Content-Type": "application/json" }).end(jsonError(400, `coding.sh llm cache: bad path: ${(err as Error).message}`));
-      if (job.replay) job.upstreamErrors++;
+      if (job.replay) liveFailed(job, ordinal, `bad path: ${(err as Error).message}`);
       return Promise.resolve();
     }
     return new Promise<void>((resolve) => {
       forward(req, res, target, body, (r) => {
         try {
           const ok = r.error === undefined && r.status !== undefined && r.status >= 200 && r.status < 300;
-          if (!ok && job.replay) job.upstreamErrors++;
+          if (!ok && job.replay) liveFailed(job, ordinal, r.error ?? `HTTP ${r.status}`);
           if (r.error === undefined && r.status !== undefined) {
             const buf = Buffer.concat(r.chunks);
             const sse = /text\/event-stream/i.test(r.contentType ?? "");
@@ -470,7 +488,7 @@ export async function startLlmCache(o: StartLlmCacheOptions): Promise<LlmCache> 
       let source: LlmEntry[] | undefined;
       if (o.mode === "replay") {
         source = await readRecording(recordingPath(o.dir, o.source!, jo.caseId, jo.trial));
-        if (!source) o.onWarn?.(`llm cache: ${o.source} has no recording for case ${jo.caseId} trial ${jo.trial}; running it live`);
+        if (!source) o.onWarn?.(`llm cache: ${o.source} has no recording for case ${jo.caseId} trial ${jo.trial}; running it live and leaving it unscored`);
       }
       const token = randomBytes(16).toString("hex");
       const state = new JobState(jo, source, o.mode === "replay");

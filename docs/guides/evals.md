@@ -2365,9 +2365,10 @@ shell. Only one turn is generated: nothing runs in your repo.
 0.8. The judge sees only the turn, never which arm wrote it.
 
 By default A is your last commit (`git:HEAD`) and B is your working tree, so the usual loop is: edit
-AGENTS.md, run `coding.sh exp ab`, keep or revert. `--a` and `--b` take a file (it replaces the file
-of the same path in A), a directory, `git:<rev>`, a harness bundle, or `none`. It errors when the
-two arms have the same files, so a typo'd path can't produce a "no difference" result.
+AGENTS.md, run `coding.sh exp ab`, keep or revert. `--a` and `--b` take a file (it stands in for the
+harness file at its repo path, or else for the file with its name, so `drafts/AGENTS.md` replaces
+`AGENTS.md`), a directory, `git:<rev>`, a harness bundle, or `none`. It errors when the two arms
+have the same files, so a typo'd path can't produce a "no difference" result.
 
 The headline counts the cases each arm passed, and which ones flipped. The second line is the same
 ship gate as `compare --gate`, with the same settings (`--lambda`, `--gate-alpha`, `--tau`). With

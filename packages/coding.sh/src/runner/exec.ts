@@ -56,6 +56,10 @@ export function execFileTail(file: string, args: string[], opts: ExecOpts): Prom
     env: (opts.env ?? process.env) as NodeJS.ProcessEnv,
     stdio: [opts.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     detached: group,
+    // On Windows the child gets a hidden console of its own (stdio is never inherited here), the
+    // way its own process group keeps it out of the terminal's Ctrl-C on POSIX: the user's Ctrl-C
+    // reaches coding.sh alone, and the first one can let the runs in flight finish.
+    windowsHide: true,
   });
   child.stdout?.on("data", (b: Buffer) => out.push(b));
   child.stderr?.on("data", (b: Buffer) => err.push(b));

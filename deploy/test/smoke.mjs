@@ -9,13 +9,14 @@
 //
 // Each run: start with no keys -> read the first-start keys from the logs -> send an OTLP trace
 // with curl-like fetch -> connect a throwaway HOME with `coding.sh init --remote` and replay a
-// recorded Claude Code session through the real hook -> both show in /api/sessions and the viewer
+// recorded Claude Code session through the real hook, its times moved to now so it counts as a
+// session that started after the connect -> both show in /api/sessions and the viewer
 // signs in with the read key -> restart -> the keys are not printed again, and the same keys and
 // both sessions still work.
 // Everything runs under a temp HOME; containers, volumes and the compose project are removed.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -97,6 +98,24 @@ const OTLP_SESSION = "smoke-otlp-conversation";
 const AGENT_SESSION = "11111111-2222-4333-8444-555555555555";
 const both = (items) => items.some((s) => s.id === OTLP_SESSION) && items.some((s) => s.id === AGENT_SESSION && s.agent === "claude-code");
 
+/**
+ * Copies the recorded Claude Code transcripts to `<to>/claude-code/config`, each time moved so the
+ * session starts at `at`. `init --remote` sends only the sessions that start after it connects,
+ * and the recording is older. Returns `to`, the folder that stands in for `${FIXTURES}`.
+ */
+function replayAt(to, at) {
+  const src = join(FIXTURES, "claude-code/config");
+  const files = readdirSync(src, { recursive: true }).map(String).filter((f) => f.endsWith(".jsonl"));
+  const read = (f) => readFileSync(join(src, f), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  const start = Math.min(...files.flatMap((f) => read(f).filter((o) => o.timestamp).map((o) => Date.parse(o.timestamp))));
+  cpSync(src, join(to, "claude-code/config"), { recursive: true });
+  for (const f of files) {
+    const moved = read(f).map((o) => (o.timestamp ? { ...o, timestamp: new Date(Date.parse(o.timestamp) - start + at).toISOString() } : o));
+    writeFileSync(join(to, "claude-code/config", f), moved.map((o) => `${JSON.stringify(o)}\n`).join(""));
+  }
+  return to;
+}
+
 const home = mkdtempSync(join(tmpdir(), "csh-smoke-"));
 try {
   step(`${mode}: start ${image} with no configuration`);
@@ -140,9 +159,12 @@ try {
   const init = spawnSync(process.execPath, [CLI, "init", "--remote", url, "--key", keys.ingest, "--yes", "--no-mcp"], { env, encoding: "utf8" });
   console.log(init.stderr.trim());
   assert.equal(init.status, 0, init.stderr);
-  assert.match(readFileSync(join(env.CODING_SH_HOME, "config.toml"), "utf8"), new RegExp(`endpoint = "${url}/v1/ingest"`));
+  const config = readFileSync(join(env.CODING_SH_HOME, "config.toml"), "utf8");
+  assert.match(config, new RegExp(`endpoint = "${url}/v1/ingest"`));
+  assert.match(config, /^since = "/m, "init --remote sets when it connected, so older sessions stay on this machine");
+  const replay = JSON.stringify(replayAt(join(home, "fixtures"), Date.now())).slice(1, -1); // escaped for the JSON lines
   for (const line of readFileSync(join(FIXTURES, "claude-code/hooks.spool.jsonl"), "utf8").split("\n").filter(Boolean)) {
-    const ev = JSON.parse(line.replaceAll("${FIXTURES}", FIXTURES));
+    const ev = JSON.parse(line.replaceAll("${FIXTURES}", replay));
     const h = spawnSync(process.execPath, [HOOK, ev.agent, ev.event], { env, input: JSON.stringify(ev.raw), encoding: "utf8" });
     assert.equal(h.status, 0, h.stderr);
     assert.equal(h.stdout, "", "the hook prints nothing");

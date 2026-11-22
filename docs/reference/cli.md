@@ -80,7 +80,7 @@ Every command accepts these.
 | [`refine`](#codingsh-refine) | Harness | Improve AGENTS.md and skills in tested rounds, and protect their safety rules |
 | [`gateway`](#codingsh-gateway) | Maintain | LLM gateways: detect routing, enrich sessions with billed cost |
 | [`gc`](#codingsh-gc) | Maintain | Delete expired spool files, blobs and judge cache |
-| [`purge`](#codingsh-purge) | Maintain | Remove a leaked secret from the store: events, search, blobs, spool, eval runs |
+| [`purge`](#codingsh-purge) | Maintain | Remove a leaked secret from the store: events, search, blobs, spool, eval runs, recorded model calls |
 | [`config`](#codingsh-config) | Maintain | Read and write ~/.coding.sh/config.toml |
 | [`update`](#codingsh-update) | Maintain | Install the latest coding.sh release |
 | [`upgrade-store`](#codingsh-upgrade-store) | Maintain | Migrate the store for this install, or put back the index from before a migration |
@@ -1855,7 +1855,7 @@ coding.sh exp ab [spec] [options]
 | Option | Default | Description |
 |---|---|---|
 | `--a <FILE|DIR|git:REV|BUNDLE|none>` |  | Baseline harness (default: git HEAD when B is omitted, else the repo's current files; with no uncommitted edits, the version before your last harness commit) |
-| `--b <FILE|DIR|git:REV|BUNDLE|none>` |  | Candidate harness; a file replaces the file of the same path in A (default: your uncommitted edits, else your last harness commit) |
+| `--b <FILE|DIR|git:REV|BUNDLE|none>` |  | Candidate harness; a file replaces the harness file at its repo path, else the one with its name (default: your uncommitted edits, else your last harness commit) |
 | `--behavior <ID[,ID]>` |  | Decision points to test: unverified-claim, done-while-failing, unchanged-retry (default: all) Repeatable. Takes a comma list too (a,b). |
 | `--anchor <FILE>` |  | Module exporting your own anchor(s) (see the evals guide) Repeatable. |
 | `--since <DURATION|DATE>` | `14d` | Sessions started since. |
@@ -3889,7 +3889,7 @@ coding.sh refine check [options]
 | Option | Default | Description |
 |---|---|---|
 | `--a <FILE|DIR|git:REV|BUNDLE|none>` |  | Before (default: git HEAD when B is omitted, else the repo's current files) |
-| `--b <FILE|DIR|git:REV|BUNDLE|none>` |  | After; a file replaces the file of the same path in A (default: your uncommitted edits) |
+| `--b <FILE|DIR|git:REV|BUNDLE|none>` |  | After; a file replaces the harness file at its repo path, else the one with its name (default: your uncommitted edits) |
 | `--allow-protected-edit <PATH:LINE>` |  | Allow the edit to delete, reword or relax this protected line (repeatable; never implied by --force) |
 
 ```sh
@@ -4122,7 +4122,7 @@ coding.sh gc [options]
 
 ## `coding.sh purge`
 
-Remove a leaked secret from the store: events, search, blobs, spool, eval runs.
+Remove a leaked secret from the store: events, search, blobs, spool, eval runs, recorded model calls.
 
 ```text
 coding.sh purge [options]
@@ -4141,6 +4141,8 @@ coding.sh purge --rule 'sk-ant-api03-[A-Za-z0-9_-]{80,}' --dry-run
 ```
 
 - Every copy becomes [redacted:purged]: event payloads (the full-text index is updated), session titles and stats, labels, eval docs and settings. Blobs holding a value are rewritten under their new hash and every reference follows. Spool, judge-cache and eval run files (~/.coding.sh/runs) keep their length (the value becomes asterisks) so ingest offsets stay valid. A run's .git directory and files over 64 MB are left alone.
+- Recorded model calls (~/.coding.sh/llm-cache, from exp run --record or --replay) that hold a value are rewritten with each call's replay key kept, so they still replay; a reply stored as base64 that holds one is emptied. A torn recording or a temp file left there that holds a value is deleted.
+- Snapshot repos (~/.coding.sh/repos) are read, not changed: sessions and eval tasks name a snapshot by its commit id, which a rewrite would change. Purge and --dry-run name each repo that holds a value, and purge exits 1 until you delete it. Then show leaves out the file changes of sessions in that repo, and eval tasks that start from its snapshots can't run.
 - --rule takes a JavaScript regular expression. Each distinct match of 8 or more characters is purged like a --literal value; shorter matches are left alone, and a rule that matches over 10,000 distinct values is refused.
 - Then the search index is merged, and the index and the blob pack (blobs/pack.db) are VACUUMed, so the old bytes leave the files. If another process is reading one of them (the viewer, serve, a sqlite3 shell), its old bytes stay until that process closes: purge says which file and exits 1, and the same purge run again finishes the job. Values shorter than 8 characters are refused. Only the SQLite store is supported.
 - A copy of the index kept next to it by an upgrade (index.db.v&lt;N&gt;.bak) or by upgrade-store --restore (index.db.v&lt;N&gt;.undone) holds the value too. Purge deletes these copies instead of rewriting them, so upgrade-store --restore can no longer put one back; --dry-run names them. If one can't be deleted, purge names it and exits 1.

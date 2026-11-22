@@ -1,7 +1,7 @@
 // `coding.sh workflows` through the command module's run(), with a fake
 // Output and a temp HOME / CODING_SH_HOME / CLAUDE_CONFIG_DIR.
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -89,6 +89,29 @@ describe("coding.sh workflows", () => {
     assert.match(r.stderr, /No workflow runs/);
   });
 
+  it("list with nothing in the --since window says so, when the newest run started, and how to list older runs", async () => {
+    // A store of its own, holding only the two imported runs: both started on 2026-11-01, before the last 7 days.
+    const e = { CODING_SH_HOME: join(root, "since-home") };
+    const r = await cli("list", [], { since: "7d" }, { env: e });
+    assert.equal(r.code, 0);
+    assert.equal(r.stdout, "");
+    assert.match(r.stderr, /No workflow runs since \w{3} \d+/);
+    assert.match(r.stderr, /2 older runs; the newest started \w{3} \d+/);
+    assert.match(r.stderr, /See older runs:\n {4}coding\.sh workflows list\n/);
+    assert.doesNotMatch(r.stderr, /workflows import/);
+    // The other filters stay in the command.
+    const named = await cli("list", [], { since: "7d", name: "review", framework: "claude-code-workflow", import: false }, { env: e });
+    assert.match(named.stderr, /No workflow runs named "review" from claude-code-workflow since \w{3} \d+/);
+    assert.match(named.stderr, /coding\.sh workflows list --name review --framework claude-code-workflow\n/);
+    // A filter that matches no run at all points at every run, not at an import.
+    const none = await cli("list", [], { name: "nope", import: false }, { env: e });
+    assert.match(none.stderr, /No workflow runs named "nope"\n/);
+    assert.match(none.stderr, /List every workflow run:\n {4}coding\.sh workflows list\n/);
+    assert.doesNotMatch(none.stderr, /workflows import/);
+    // JSON stays an empty list.
+    assert.deepEqual((await json("list", [], { since: "7d", import: false }, e)).runs, []);
+  });
+
   it("import reports skipped and forced re-imports", async () => {
     const again = await json("import", [join(root, "claude", "projects")]);
     assert.equal(again.found, 2);
@@ -149,6 +172,10 @@ describe("coding.sh workflows", () => {
     const resumed = await json("stats", [RESUMED]);
     assert.equal(resumed.stats.cacheHits, 7);
     assert.ok(Math.abs(resumed.stats.resumeSavedUsd - 0.8) < 1e-9);
+    // 1 of the 2 agents that ran returned null; the 7 cached agents are on the cache hits row, not in the shares.
+    const rows = (await cli("stats", [RESUMED])).stdout;
+    assert.match(rows, /\nagents\t2 \(0 failed 0%, 1 null 50%\)\n/);
+    assert.match(rows, /\ncache hits\t7 \(78%\)\n/);
   });
 
   it("score grades the run output against a seeded-bugs case, with the verify confusion", async () => {
@@ -276,6 +303,23 @@ describe("coding.sh workflows", () => {
     await assert.rejects(cli("compare", [experimentId], { ...flags, select: "cheapest" }), /--select must be one of min-cost, weighted, pareto/);
   });
 
+  it("compare counts a pass at each case's threshold, and --threshold sets one for every case", async () => {
+    const e = { CODING_SH_HOME: join(root, "threshold-home") };
+    const dir = join(root, "cases-threshold");
+    writeReviewCases(dir);
+    // seeded-1 asks for 0.9, so the good variant's F1 of 0.8 fails there, as the bad variant's 0 does.
+    const file = join(dir, "seeded-1.toml");
+    writeFileSync(file, readFileSync(file, "utf8").replace("threshold = 0.5", "threshold = 0.9"));
+    const variant = [`bad=node ${join(root, "fake-wf.mjs")} bad`, `good=node ${join(root, "fake-wf.mjs")} good`];
+    const id = (await json("run", ["review"], { driver: "command", variant, cases: dir, split: "dev", k: 1, yes: true }, e)).experimentId;
+    const passes = async (flags: Record<string, FlagValue>) => {
+      const { mcnemar } = await json("compare", [id], { baseline: "bad", candidate: "good", ...flags }, e);
+      return [mcnemar.b, mcnemar.c];
+    };
+    assert.deepEqual(await passes({}), [0, 0]);
+    assert.deepEqual(await passes({ threshold: 0.5 }), [0, 1]);
+  });
+
   it("replay predicts cache hits (dry run), asks above the threshold, and resumes through claude", async () => {
     const edited = join(root, "review-v2.js");
     writeFileSync(edited, SCRIPT.replace(`prompt: "Summarize"`, `prompt: "Summarize briefly"`));
@@ -322,6 +366,66 @@ describe("workflows command helpers", () => {
     writeFileSync(file, JSON.stringify({ name: "f", command: "node x.js" }));
     assert.deepEqual(await parseVariant(file, "command"), { name: "f", command: ["node", "x.js"] });
     await assert.rejects(parseVariant('{"script":"s.js"}', "claude"), /needs a "name"/);
+  });
+
+  it("warns about each field a JSON variant has that it does not know", async () => {
+    const warnings: string[] = [];
+    const file = join(root, "variant-typo.json");
+    writeFileSync(file, JSON.stringify({ name: "fork", command: ["node", "app.mjs"], fromCheckPoint: "ckpt-1", note: "x" }));
+    assert.deepEqual(await parseVariant(file, "command", (m) => warnings.push(m)), { name: "fork", command: ["node", "app.mjs"] });
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0]!, /^Variant "fork": ignored unknown fields "fromCheckPoint" \(did you mean fromCheckpoint\?\), "note"\. Known fields: name, script, command, args, resumeFromRunId, fromCheckpoint, replayFrom$/);
+    warnings.length = 0;
+    await parseVariant('{"name":"j","script":"s.js","arg":{"x":1}}', "claude", (m) => warnings.push(m));
+    assert.deepEqual(warnings, ['Variant "j": ignored unknown field "arg" (did you mean args?). Known fields: name, script, command, args, resumeFromRunId, fromCheckpoint, replayFrom']);
+    warnings.length = 0;
+    await parseVariant(JSON.stringify({ name: "ok", script: "s.js", args: {}, resumeFromRunId: "r" }), "claude", (m) => warnings.push(m));
+    assert.deepEqual(warnings, []);
+  });
+
+  it("run prints the unknown-field warning before it runs the variant", async () => {
+    const r = await cli(
+      "run",
+      ["review"],
+      { driver: "command", variant: [JSON.stringify({ name: "solo", command: [process.execPath, join(root, "fake-wf.mjs"), "good"], replayfrom: "plan" })], split: "dev", k: 1, yes: true },
+      { env: { CODING_SH_HOME: join(root, "variant-warn") } },
+    );
+    assert.equal(r.code, 0);
+    assert.match(r.stderr, /! Variant "solo": ignored unknown field "replayfrom" \(did you mean replayFrom\?\)/);
+  });
+
+  it("run says why each run failed, redacted with the capture profile, and show prints it", async () => {
+    const home = join(root, "failed-runs");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, "config.toml"), '[capture]\nredactPatterns = ["hunter2"]\n');
+    writeFileSync(join(root, "deny.mjs"), 'console.error("login failed for hunter2");\nprocess.exit(1);\n');
+    const e = { CODING_SH_HOME: home };
+    const flags = {
+      driver: "command",
+      variant: [JSON.stringify({ name: "missing", command: ["no-such-cmd-xyz"] }), JSON.stringify({ name: "denied", command: [process.execPath, join(root, "deny.mjs")] })],
+      split: "dev",
+      k: 1,
+      yes: true,
+    };
+    const doc = await json("run", ["review"], flags, e);
+    assert.equal(doc.failed, 4);
+    const missing = doc.runs.find((r: { variant: string; caseId: string }) => r.variant === "missing" && r.caseId === "seeded-1");
+    assert.match(missing.error, /spawn no-such-cmd-xyz ENOENT/);
+    const denied = doc.runs.find((r: { variant: string; caseId: string }) => r.variant === "denied" && r.caseId === "seeded-1");
+    assert.match(denied.error, /^login failed for \[redacted/);
+    assert.doesNotMatch(JSON.stringify(doc), /hunter2/);
+    const human = await cli("run", ["review"], flags, { env: e });
+    assert.equal(human.code, 0);
+    assert.match(human.stderr, /Ran 4 workflow runs, 4 failed/);
+    assert.match(human.stderr, /! missing on seeded-1 failed: spawn no-such-cmd-xyz ENOENT \(wfr_\w+\)/);
+    assert.match(human.stderr, /! denied on verify-1 failed: login failed for \[redacted[^\n]*\(wfr_\w+\)/);
+    assert.doesNotMatch(human.stderr, /hunter2/);
+    const shown = await cli("show", [missing.id], {}, { env: e });
+    assert.match(shown.stderr, /✗ Status +failed\n {2}Error +spawn no-such-cmd-xyz ENOENT\n/);
+    const shownJson = await json("show", [denied.id], {}, e);
+    assert.match(shownJson.run.error, /^login failed for \[redacted/);
+    // A run that did not fail has no error.
+    assert.equal((await json("list", [], { import: false })).runs.every((r: { status: string; error: unknown }) => r.status !== "ok" || r.error === null), true);
   });
 
   it("reads the confirm threshold from the environment", () => {

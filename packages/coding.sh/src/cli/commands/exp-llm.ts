@@ -13,6 +13,8 @@ import { controlNoise } from "../../llmcache/report.ts";
 import type { LlmRunOpts } from "../../llmcache/run.ts";
 import { hasRecordings } from "../../llmcache/store.ts";
 import { paths } from "../../core/paths.ts";
+import type { Config } from "../../core/types.ts";
+import { captureRedactor } from "../../runner/verifier-output.ts";
 import { UsageError } from "../args.ts";
 import { num, str } from "../common.ts";
 import { resumeField, resumeNote } from "../jobs.ts";
@@ -38,6 +40,12 @@ export interface LlmPlan {
   control: boolean;
 }
 
+const MORE_WARNINGS: Record<string, string> = {
+  missing: "llm cache: more case-trials have no source recording; they run live and are left unscored",
+  failed: "llm cache: more case-trials had a live call fail; they are left unscored",
+  other: "llm cache: more warnings like these are not shown",
+};
+
 /** Whether any llm flag is set (they run one task or two arms; not a matrix or --watch). */
 export const llmFlagsSet = (c: CommandContext): string[] => (["record", "replay", "replay-until"] as const).filter((f) => c.flags[f] !== undefined && c.flags[f] !== false);
 
@@ -54,8 +62,11 @@ async function specLlm(c: CommandContext, specFile: string | undefined): Promise
   }
 }
 
-/** The llm cache settings from --record/--replay/--replay-until and the spec's "llm" field; undefined when neither asks for it. */
-export async function llmPlan(c: CommandContext, store: FileEvalStore, specFile: string | undefined): Promise<LlmPlan | undefined> {
+/**
+ * The llm cache settings from --record/--replay/--replay-until and the spec's "llm" field; undefined when neither asks for it.
+ * Recordings go through the redactor capture uses (`capture`: the [capture] section of the config).
+ */
+export async function llmPlan(c: CommandContext, store: FileEvalStore, specFile: string | undefined, capture: Config["capture"]): Promise<LlmPlan | undefined> {
   const spec = (await specLlm(c, specFile)) ?? {};
   const record = c.flags.record === true || (c.flags.record === undefined && c.flags.replay === undefined && spec.record === true);
   const replayRef = str(c.flags.replay) ?? (c.flags.record === undefined ? spec.replay : undefined);
@@ -68,20 +79,32 @@ export async function llmPlan(c: CommandContext, store: FileEvalStore, specFile:
   if (untilRaw !== undefined && !replayRef) throw new UsageError("--replay-until needs --replay <EXPERIMENT>", { reason: "invalid_argument" });
   if (!record && !replayRef) return undefined;
   const dir = paths(c.env).llmCache;
-  let warned = 0;
+  // Metadata mode stores no reply text; a recording does, because the flag asked for it (a replay records too).
+  const keepsReplies = () => {
+    if (capture.mode === "metadata") c.out.warn(`capture.mode is "metadata", but this run stores the model replies it records, redacted, in ${dir} so they can be replayed`);
+  };
+  // Up to 3 warnings of each kind, then one line for the rest of that kind.
+  const warned = new Map<string, number>();
   const onWarn = (m: string) => {
-    if (++warned <= 3) c.out.warn(m);
-    else if (warned === 4) c.out.warn("llm cache: more case-trials have no source recording; they run live and are left unscored");
+    const kind = / has no recording for /.test(m) ? "missing" : / live call \d+ failed /.test(m) ? "failed" : "other";
+    const n = (warned.get(kind) ?? 0) + 1;
+    warned.set(kind, n);
+    if (n <= 3) c.out.warn(m);
+    else if (n === 4) c.out.warn(MORE_WARNINGS[kind]!);
   };
   const opts: LlmRunOpts = {
     mode: record ? "record" : "replay",
     dir,
+    redactor: captureRedactor({ capture }, c.env),
     onWarn,
     ...(spec.upstream ? { upstream: spec.upstream } : {}),
     ...(spec.excludeTools ? { excludeTools: true } : {}),
     ...(spec.excludeModel ? { excludeModel: true } : {}),
   };
-  if (!replayRef) return { opts, control: false };
+  if (!replayRef) {
+    keepsReplies();
+    return { opts, control: false };
+  }
   const source = await store.resolveExperiment(replayRef, { includeCancelled: true });
   if (!source) throw new CliError(`Can't find experiment ${JSON.stringify(replayRef)} to replay`, { reason: "not_found", next: ["List experiments:", "coding.sh exp list"] });
   if (!(await hasRecordings(dir, source.id))) {
@@ -89,6 +112,7 @@ export async function llmPlan(c: CommandContext, store: FileEvalStore, specFile:
   }
   opts.source = source.id;
   if (untilRaw !== undefined) opts.until = untilRaw;
+  keepsReplies();
   const control = c.flags.control !== false;
   if (!control) {
     opts.meta = { control: "skipped" };
