@@ -889,7 +889,17 @@ curl -sS "$CSH/api/sessions/team%2Fchat-1" -H "Authorization: Bearer $SUPPORT_RE
 ### `GET /api/sessions/{id}/events`
 
 A session's events in order. Parameters: `limit` (1 to 20,000, default 5,000), `offset`, and
-`kinds` (comma-separated). Native-ingest ids come back as stored hashes.
+`kinds` (comma-separated). Native-ingest ids come back as stored hashes. A page of 32 KB or more
+goes gzipped when the request sends `Accept-Encoding: gzip`.
+
+`rows=1` returns compact rows, as the viewer loads them, and adds `"rows": 1` to the body. A row
+leaves out each string, number or boolean field equal to the row before's (never `id`, `ts`,
+`durationMs` or `parentId`), and `"~"` lists the fields the row before has and this one does not.
+
+When the index can read an event by id, payload strings over 240 characters are cut, ending in
+`…`, and the row carries `"…": 1`; [`/api/events/{id}`](#get-apieventsid) has the event whole.
+Prompts, replies, errors, subagent briefs, a changed file's path and the tool input a step is
+named by stay whole.
 
 ```sh
 curl -sS "$CSH/api/sessions/team%2Fchat-1/events?kinds=tool.start,tool.end" -H "Authorization: Bearer $READ_KEY"

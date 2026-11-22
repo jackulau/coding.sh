@@ -418,7 +418,7 @@ drift as the file changes.
 | area | what the code does | where |
 |---|---|---|
 | layout | Two columns: the step list and a detail pane. There is no turn rail. | index.html:698–701, 4395 |
-| loading | Events load in pages of 5,000 from `/api/sessions/:id/events` (offset paging, at most 20,000 a page); "Load more" fetches the next page. | index.html:3812, 4844; viewer/server.ts:682–689 |
+| loading | Events load in pages of 5,000 from `/api/sessions/:id/events?rows=1` (offset paging, at most 20,000 a page), gzipped: compact rows with payload strings over 240 characters clipped. The rest of the run loads behind the first page; "Load more" fetches the next page. Opening a step whose rows came clipped reads its events whole from `/api/events/:id` and draws the pane again. | index.html:4183, 4284, 4563, 4604, 5375; viewer/server.ts:722–732, 1475, 2139 |
 | virtual list | Rows have a fixed height; only the rows in view plus 40 above and below are in the DOM. | index.html:3819–3821, 4431–4556 |
 | turns | A user prompt starts a turn. Its row shows "Turn N", the prompt's first line and the time into the session. `}` and `{` move between turns and stop at the first and last. | index.html:4197–4239, 4473–4519, 4778–4784 |
 | turn folding | In a session of more than three turns, each finished turn folds to one row with its duration, tool calls, errors and what it did; the row has no timing bar, and on a phone it shows only the turn number, prompt and errors. A turn with a failure, the last turn and a turn with no prompt stay open. Enter or → opens a turn; Enter on an open turn's row, or ←, folds it. | index.html:4284–4287, 4435–4472, 4646 |

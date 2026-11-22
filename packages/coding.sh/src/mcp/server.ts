@@ -5,9 +5,10 @@
 // The ingest before a read has the CLI reads' budget (1.5 s, CODING_SH_READ_BUDGET_MS):
 // past it the tool answers from what is indexed, a background `coding.sh ingest`
 // finishes the rest, and the answer carries `pending: { files, indexing }`, so a
-// big backlog never stalls the agent that called the tool.
+// big backlog never stalls the agent that called the tool. While the index is folded again after an
+// upgrade (a background ingest does it), every answer carries `index: { refolding: true }`.
 import { openContext, storeOpenNext, type Context } from "../core/context.ts";
-import { autoIngest, pendingField, readBudgetMs, type IngestBacklog } from "../cli/common.ts";
+import { autoIngest, pendingField, readBudgetMs, refolding, type IngestBacklog } from "../cli/common.ts";
 import { version } from "../cli/meta.ts";
 import { paths } from "../core/paths.ts";
 import { schemaViolations } from "../toolevals/jsonschema.ts";
@@ -51,10 +52,22 @@ const BASE_INSTRUCTIONS = [
   "To build evals for the user, call eval_init (a suite in evals/<name>/ from failed sessions, a skill's trigger prompts, or cases you write), then tell them its run command.",
   "eval_from_session, eval_init, score_add and exp_session_note write; ask the user before calling eval_from_session or eval_init with confirm: true.",
   'A result with pending: {files, indexing} was answered before every capture was indexed: it covers what is indexed so far; call again shortly for the rest.',
+  "A result with index.refolding: true was answered while coding.sh rebuilds its index after an upgrade: sessions it has not reached yet show the stats of the older version; call again in a minute for the rest.",
   "Answers stay under 25,000 characters. A page that would be longer has fewer rows and limitUsed; a tool with a cursor argument also returns nextCursor for the rest.",
 ].join(" ");
 
 /** Server instructions, with a one-line notice when the update checker found a newer release. */
+/**
+ * An answer with `refolding: true` merged into its `index` object; unchanged when `index` is not an
+ * object. 27 characters at most, within what a page leaves of CHARACTER_LIMIT (mcp/tools.ts PAGE_LIMIT)
+ * with `pending`: the instructions say what it means.
+ */
+export function withRefolding(r: Record<string, unknown>): Record<string, unknown> {
+  const idx = r.index;
+  if (idx !== undefined && (idx === null || typeof idx !== "object" || Array.isArray(idx))) return r;
+  return { ...r, index: { ...(idx as Record<string, unknown> | undefined), refolding: true } };
+}
+
 export function instructions(env: NodeJS.ProcessEnv = process.env): string {
   let note = "";
   try {
@@ -77,6 +90,8 @@ export function createCodingShMcp(o: CodingShMcpOptions = {}): CodingShMcp {
   let ingesting: Promise<void> | undefined;
   // What the last ingest left for the background; reported on every answer until an ingest finds none.
   let backlog: IngestBacklog = { pendingFiles: 0, indexing: false };
+  // Whether the last call that read the store found the index being folded again (cli/common.ts refolding).
+  let refold = false;
 
   const open = (): Promise<Context> => {
     opened ??= openContext({ env, cwd }).catch((e: unknown) => {
@@ -122,6 +137,7 @@ export function createCodingShMcp(o: CodingShMcpOptions = {}): CodingShMcp {
       const r = await Promise.race([ingesting.then(() => "done" as const), late]).finally(() => clearTimeout(timer));
       if (r === "late") backlog = { pendingFiles: Math.max(1, backlog.pendingFiles), indexing: true };
     }
+    refold = await refolding(ctx, env);
     return ctx;
   };
 
@@ -129,7 +145,10 @@ export function createCodingShMcp(o: CodingShMcpOptions = {}): CodingShMcp {
   // Not in each outputSchema (every tool definition costs context on every turn): the instructions say it once.
   const tools = buildTools().map((t) => ({
     ...t,
-    run: async (args: Record<string, unknown>, c: ToolCtx) => ({ ...(await t.run(args, c)), ...pendingField(backlog) }),
+    run: async (args: Record<string, unknown>, c: ToolCtx) => {
+      const r = { ...(await t.run(args, c)), ...pendingField(backlog) };
+      return refold ? withRefolding(r) : r;
+    },
   }));
   const server = new McpServer<ToolCtx>({
     serverInfo: { name: SERVER_NAME, title: "coding.sh", version: version() },

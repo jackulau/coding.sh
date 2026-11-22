@@ -13,6 +13,8 @@ import { readdir } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { userInfo } from "node:os";
+import { promisify } from "node:util";
+import { gzip } from "node:zlib";
 import { benchHome, loadDefinition, NAME_RE } from "../bench/define.ts";
 import { buildReport } from "../bench/report.ts";
 import { historyRuns, listRuns } from "../bench/store.ts";
@@ -723,7 +725,10 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         const offset = intParam(q, "offset", 0, 0, Number.MAX_SAFE_INTEGER);
         const kinds = q.get("kinds")?.split(",").filter(Boolean);
         const events = await ctx.index.listEvents(sessionId, { limit: limit + 1, offset, kinds });
-        return sendJson(res, 200, page(events, limit, offset));
+        const body = page(events, limit, offset);
+        // rows=1: compact rows (eventRows), long payload strings clipped when /api/events/:id serves them whole.
+        if (q.get("rows") !== "1") return sendJsonCompressed(req, res, body);
+        return sendJsonCompressed(req, res, { ...body, rows: 1, items: eventRows(body.items, !!ctx.index.eventsByIdPrefix) });
       }
       if (sub === "replay") {
         const s = await visibleSession(ctx, sessionId);
@@ -1416,6 +1421,85 @@ function clipPayload(v: unknown, depth = 0): unknown {
   return v;
 }
 
+/** Payload strings a compact /events row clips; /api/events/:id has the event whole. */
+export const EVENT_ROW_TEXT_CAP = 240;
+/** Kinds whose text a row keeps whole: the conversation the timeline shows in full, and the rare errors and subagents. */
+const WHOLE_TEXT_KINDS = new Set<string>(["user.message", "assistant.message", "error", "subagent.start"]);
+/** Envelope fields a row always carries: they differ on nearly every row. */
+const OWN_ROW_FIELDS = new Set(["id", "ts", "durationMs", "parentId"]);
+/** The tool input keys a timeline row names its step by and Find in steps searches (INPUT_KEYS in ui/index.html). */
+export const STEP_INPUT_KEYS = ["file_path", "path", "command", "cmd", "pattern", "url", "query", "description", "prompt", "notebook_path"];
+
+/** `cut` with the strings a timeline row reads put back whole: a tool call's named input, a changed file's path. */
+function keepStepText(e: AgentEvent, payload: Record<string, unknown>, cut: Record<string, unknown>): Record<string, unknown> {
+  if (e.kind === "file.change" && typeof payload.path === "string" && cut.path !== payload.path) return { ...cut, path: payload.path };
+  const input = payload.input as Record<string, unknown> | undefined;
+  if (e.kind !== "tool.start" || !input || typeof input !== "object" || Array.isArray(input)) return cut;
+  const k = STEP_INPUT_KEYS.find((x) => typeof input[x] === "string" && input[x]);
+  const cutInput = cut.input as Record<string, unknown>;
+  if (k === undefined || cutInput[k] === input[k]) return cut;
+  return { ...cut, input: { ...cutInput, [k]: input[k] } };
+}
+
+/** A copy of `v` with every string over EVENT_ROW_TEXT_CAP clipped (an ellipsis at the end), or `v` itself when none is. */
+function clipLongStrings(v: unknown): unknown {
+  if (typeof v === "string") return v.length > EVENT_ROW_TEXT_CAP ? `${v.slice(0, EVENT_ROW_TEXT_CAP - 1)}…` : v;
+  if (Array.isArray(v)) {
+    let out: unknown[] | undefined;
+    v.forEach((x, i) => {
+      const c = clipLongStrings(x);
+      if (c !== x) (out ??= v.slice())[i] = c;
+    });
+    return out ?? v;
+  }
+  if (v && typeof v === "object") {
+    let out: Record<string, unknown> | undefined;
+    for (const [k, x] of Object.entries(v)) {
+      const c = clipLongStrings(x);
+      if (c !== x) (out ??= { ...(v as Record<string, unknown>) })[k] = c;
+    }
+    return out ?? v;
+  }
+  return v;
+}
+
+const carried = (k: string, v: unknown): boolean => !OWN_ROW_FIELDS.has(k) && (typeof v === "string" || typeof v === "number" || typeof v === "boolean");
+
+/**
+ * The rows of a compact /events page (`rows=1`), read back by expandRows in ui/index.html. A row
+ * leaves out each string, number or boolean envelope field equal to the row before's (not id, ts,
+ * durationMs or parentId) and lists in `~` those the row before has and it does not. With
+ * `clip`, payload strings over EVENT_ROW_TEXT_CAP are cut (not a prompt, a reply, an error or a
+ * subagent's brief, nor the text a timeline row names its step by) and the row says so with `…: 1`. The first row of a page is whole, so each page reads on its own.
+ */
+export function eventRows(events: AgentEvent[], clip: boolean): Record<string, unknown>[] {
+  let prev: Record<string, unknown> | undefined;
+  return events.map((e) => {
+    const ev: Record<string, unknown> = { ...e };
+    const row: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(ev)) {
+      if (v === undefined || (prev && carried(k, v) && prev[k] === v)) continue;
+      row[k] = v;
+    }
+    const before = prev;
+    if (before) {
+      const gone = Object.keys(before).filter((k) => carried(k, before[k]) && ev[k] === undefined);
+      if (gone.length) row["~"] = gone;
+    }
+    // Only an event /api/events/:id can find is clipped: its id passes checkId.
+    if (clip && !WHOLE_TEXT_KINDS.has(e.kind) && e.id && e.id.length <= MAX_ID_LEN && !/[\u0000-\u001f]/.test(e.id)) {
+      const payload = e.payload ?? {};
+      const cut = clipLongStrings(payload) as Record<string, unknown>;
+      if (cut !== payload) {
+        row.payload = keepStepText(e, payload, cut);
+        row["…"] = 1;
+      }
+    }
+    prev = ev;
+    return row;
+  });
+}
+
 /** The words of every positive text clause, folded as the full-text index folds them (for snippets). */
 function textTerms(n: Node | undefined): string[] {
   if (!n || n.t === "not") return [];
@@ -2044,8 +2128,29 @@ function setBaseHeaders(res: ServerResponse): void {
   res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
 }
 
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
+const gzipAsync = promisify(gzip);
+/** Bodies under this go as they are: gzip would save a packet or two. */
+const GZIP_MIN_BYTES = 32 * 1024;
+
+/**
+ * A 200 JSON body, gzipped (level 1, off the event loop) when it is big and the client takes gzip:
+ * an events page repeats the same keys and values on every row, which gzip takes out.
+ */
+async function sendJsonCompressed(req: IncomingMessage, res: ServerResponse, body: unknown): Promise<void> {
   const json = JSON.stringify(body);
+  const accepts = /\bgzip\b/i.test(String(req.headers["accept-encoding"] ?? ""));
+  if (!accepts || json.length < GZIP_MIN_BYTES) return sendJson(res, 200, body, json);
+  const zipped = await gzipAsync(json, { level: 1 });
+  res.writeHead(200, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Encoding": "gzip",
+    Vary: "Accept-Encoding",
+    "Content-Length": zipped.length,
+  });
+  res.end(zipped);
+}
+
+function sendJson(res: ServerResponse, status: number, body: unknown, json = JSON.stringify(body)): void {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(json),

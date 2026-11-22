@@ -301,6 +301,27 @@ async function kickReparse(ctx: Context, env: NodeJS.ProcessEnv): Promise<void> 
   }
 }
 
+/**
+ * Whether the index is being rebuilt after an upgrade: a re-parse holds reparse.lock, or the
+ * sessions were last folded by an older coding.sh and the background ingest kickReparse starts
+ * folds them again. A session is rewritten whole, so one not reached yet shows the stats of the
+ * old fold. Two reads of the cursors table; never fails a read.
+ */
+export async function refolding(ctx: Context, env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
+  // A remote store is not rebuilt by this machine's ingest.
+  if (ctx.storeOverridden) return false;
+  try {
+    if (isLocked(ctx.paths.reparseLock)) return true;
+    // Nothing refolds with background ingests off, or in a store that keeps no event rows to fold from.
+    if (env.CODING_SH_NO_AUTO_INGEST === "1" || !ctx.index.replaceSessionEvents) return false;
+    const [{ REFOLD_CURSOR }, { foldStamp }] = await Promise.all([import("../core/ingest.ts"), import("../core/sessions.ts")]);
+    if ((await ctx.index.getCursor(REFOLD_CURSOR)) === foldStamp()) return false;
+    return (await ctx.index.listSessions({ limit: 1 })).length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /** The CLI a background ingest runs: this one (the bundle, or src/cli/main.ts from source), else the one init recorded. */
 export function ingestCli(pointer: string): string | undefined {
   const argv1 = process.argv[1];

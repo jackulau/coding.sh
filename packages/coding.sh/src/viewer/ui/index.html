@@ -2172,7 +2172,7 @@ function preloadSession(id) {
   if (navigator.connection && navigator.connection.saveData) return;
   const base = "/api/sessions/" + encodeURIComponent(id);
   preload(sessionRecordPath(id)).then((s) => { if (s && s.parent && s.parent.sessionId) preload(sessionRecordPath(s.parent.sessionId)); }, () => {});
-  preload(base + "/events" + qs({ limit: EVENTS_PAGE }));
+  preload(base + "/events" + qs({ limit: EVENTS_PAGE, rows: 1 }));
   preload("/api/labels" + qs({ sessionId: id }));
   preload("/api/sessions" + qs({ parent: id, limit: 500 }));
   preload(base + "/outline");
@@ -4269,6 +4269,36 @@ function callCopies(events) {
   return { merged, folded, into };
 }
 
+/** Envelope fields a compact row always carries (OWN_ROW_FIELDS in viewer/server.ts). */
+const OWN_ROW_FIELDS = new Set(["id", "ts", "durationMs", "parentId"]);
+/**
+ * The events of a compact /events page (rows=1; eventRows in viewer/server.ts): a row leaves out the
+ * string, number and boolean envelope fields equal to the row before's, and lists in "~" those the
+ * row before has and it does not. A row marked "…" has its long payload strings clipped: its id
+ * goes in `clipped`, and the pane reads the whole event when the step is opened. Any other body is
+ * returned as it is.
+ */
+function expandRows(body, clipped) {
+  if (!body || body.rows !== 1 || !Array.isArray(body.items)) return body;
+  let prev = null;
+  const items = body.items.map((r) => {
+    const ev = {};
+    if (prev) {
+      const gone = Array.isArray(r["~"]) ? r["~"] : [];
+      for (const k in prev) {
+        const v = prev[k];
+        if (OWN_ROW_FIELDS.has(k) || k in r || gone.includes(k)) continue;
+        if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") ev[k] = v;
+      }
+    }
+    for (const k in r) if (k !== "~" && k !== "…") ev[k] = r[k];
+    if (r["…"] && clipped) clipped.add(ev.id);
+    prev = ev;
+    return ev;
+  });
+  return Object.assign({}, body, { items });
+}
+
 function buildTimeline(events) {
   const items = [];
   const open = new Map();
@@ -4471,6 +4501,8 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   fromList = "";
   const replaceBody = (node) => keepFocus(view, () => { view.lastChild.replaceWith(h("div", { class: "wrap" }, node)); });
   let session, events, labels, children, parent = null;
+  // Ids of the rows whose payload came clipped (expandRows); ctx.loadFull reads them whole.
+  const clippedIds = new Set();
   const sessionPath = sessionRecordPath(id);
   // The session record is asked for once and first: an id that is not in the index is a null body here
   // (not a 404 the console reports), costs no other request, and a record the hit check read is not read again.
@@ -4495,7 +4527,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     if (firstError) throw firstError;
     session = first || await sessionRecord(sessionPath);
     [events, labels, children] = await Promise.all([
-      api(eventsPath + qs({ limit: EVENTS_PAGE })),
+      api(eventsPath + qs({ limit: EVENTS_PAGE, rows: 1 })).then((b) => expandRows(b, clippedIds)),
       api("/api/labels" + qs({ sessionId: id })),
       api("/api/sessions" + qs({ parent: id, limit: 500 })).catch((e) => { if (e.status === 401) throw e; return { items: [] }; }),
     ]);
@@ -4526,7 +4558,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
   let served = allEvents.length;
   const loadedIds = new Set(allEvents.map((e) => e.id));
   async function fetchMore(quiet, limit) {
-    const body = await api(eventsPath + qs({ limit: limit || EVENTS_PAGE, offset: served }), null, quiet);
+    const body = expandRows(await api(eventsPath + qs({ limit: limit || EVENTS_PAGE, offset: served, rows: 1 }), null, quiet), clippedIds);
     served += body.items.length;
     const fresh = body.items.filter((e) => !loadedIds.has(e.id));
     for (const e of fresh) loadedIds.add(e.id);
@@ -4560,7 +4592,44 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0, linkView 
     raw: false,
     openFold: (key) => { openFold(key); rebuildRows(); },
     comments: commentStore(session.id),
+    loadFull: (item) => loadFull(item),
   };
+
+  // A step whose rows came clipped: its events are read whole (/api/events/:id, once each) and put
+  // in place of the clipped ones, so the timeline keeps its objects. Null when nothing is clipped.
+  const fullLoads = new Map();
+  function loadFull(item) {
+    const own = [item.start, item.end, item.ev].filter(Boolean).map((e) => e.id);
+    if (item.copyId) own.push(item.copyId);
+    const want = own.filter((x) => clippedIds.has(x));
+    if (!want.length) return null;
+    const byId = new Map();
+    for (const e of allEvents) if (own.includes(e.id)) byId.set(e.id, e);
+    return Promise.all(want.map((eid) => {
+      if (!fullLoads.has(eid)) {
+        fullLoads.set(eid, api("/api/events/" + encodeURIComponent(eid), null, true).then((full) => {
+          const raw = byId.get(eid) || allEvents.find((e) => e.id === eid);
+          if (raw && full && full.sessionId === raw.sessionId) {
+            raw.payload = full.payload;
+            if (full.blobs) raw.blobs = full.blobs;
+          }
+          clippedIds.delete(eid);
+        }).catch(() => { fullLoads.delete(eid); }));
+      }
+      return fullLoads.get(eid);
+    })).then(() => {
+      // A model call two captures logged shows their merged copy (callCopies): merge the whole ones again.
+      if (item.copyId && item.ev) {
+        const a = byId.get(item.ev.id), b = byId.get(item.copyId);
+        if (a && b) {
+          const o = Object.assign({}, a.payload || {});
+          for (const k in b.payload || {}) if (o[k] === undefined && b.payload[k] !== undefined) o[k] = b.payload[k];
+          item.ev.payload = o;
+        }
+      }
+      return want.some((x) => !clippedIds.has(x));
+    });
+  }
 
   // ---- model: items (every step), rows (what the list shows after folding and find)
   let items = [];
@@ -6917,6 +6986,9 @@ function renderPane(pane, item, session, ctx) {
   // The pane starts at the top for a new step; the Raw toggle redraws the same step where it is.
   const sameStep = pane.dataset.item === item.id;
   pane.dataset.item = item.id;
+  // A step whose rows came clipped is drawn as it is, then again once its events are read whole.
+  const whole = ctx.loadFull ? ctx.loadFull(item) : null;
+  if (whole) whole.then((changed) => { if (changed && pane.isConnected && pane.dataset.item === item.id) renderPane(pane, item, session, ctx); });
   const nodes = [];
   const ts = item.ts;
   const rawEvents = [item.start, item.end, item.ev].filter(Boolean);
