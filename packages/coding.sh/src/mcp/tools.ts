@@ -789,7 +789,7 @@ function toolDefs(): PagedTool[] {
       title: "Search sessions",
       description: "Full-text search over captured prompts, replies and tool input/output. Returns matching events with session ids and snippets; open one with session_get.",
       inputSchema: input({ query: { type: "string", minLength: 1, description: "Words to find (all must match)." }, agent: AGENT, project: PROJECT, where: WHERE_SAME("; event keys apply to the hit"), limit: LIMIT(10, 50), cursor: CURSOR }, ["query"]),
-      outputSchema: out({ hits: arr(out({ sessionId: S, shortId: S, kind: S, snippet: S }, ["sessionId", "kind", "snippet"])), nextCursor: S }, ["hits"]),
+      outputSchema: out({ hits: arr(out({ sessionId: S, kind: S, snippet: S }, ["sessionId", "kind", "snippet"])), nextCursor: S }, ["hits"]),
       annotations: READ,
       async run(a, c) {
         const ctx = await c.store();
@@ -813,6 +813,7 @@ function toolDefs(): PagedTool[] {
           sessions.set(h.event.sessionId, { title: clip(s?.title, 80), agent: s?.agent });
         }
         // A hit keeps its session's full id, the one an agent compares and keeps; shortId beside it is the shortest that resolves today.
+        // shortId, like eventId and at, is not in the output schema: every declared byte costs context in every turn (test/mcp/toolevals.test.ts).
         return {
           hits: page.map((h) => {
             const s = sessions.get(h.event.sessionId);
@@ -1649,7 +1650,7 @@ function toolDefs(): PagedTool[] {
           update: out({ latest: S, available: B, install: S, command: S }, ["available"]),
           home: S,
           last24h: out({ sessions: I, agents: arr(S) }),
-          lastCapture: arr(out({ agent: S, at: S, sessionId: S, shortId: S }, ["agent"])),
+          lastCapture: arr(out({ agent: S, at: S }, ["agent"])),
           latest: SESSION_OUT,
           lastError: out({ error: S }),
           // { updatedAt, ageMs, stale? }; work: { needYou, items (as the work tool's), more, rest }.
