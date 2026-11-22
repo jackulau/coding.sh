@@ -4,7 +4,7 @@
 // built site in dist/ when a build exists.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -73,9 +73,13 @@ test("the CLI's help and status text says an adapter's status in plain words", (
 
 test("a file that uses the label is reported (seeded)", () => {
   const dir = mkdtempSync(join(tmpdir(), "psw-"));
-  writeFileSync(join(dir, "help.ts"), `const x = "ok";\nconst s = "${["fixture", "tested"].join("-")}";\n`);
-  assert.equal(hits(["help.ts"], dir).length, 1);
-  assert.match(hits(["help.ts"], dir)[0], /help\.ts:2:/);
+  try {
+    writeFileSync(join(dir, "help.ts"), `const x = "ok";\nconst s = "${["fixture", "tested"].join("-")}";\n`);
+    assert.equal(hits(["help.ts"], dir).length, 1);
+    assert.match(hits(["help.ts"], dir)[0], /help\.ts:2:/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("the site source says an adapter's status in plain words", () => {
