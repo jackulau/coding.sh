@@ -6,6 +6,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { basename, extname, join, relative, resolve } from "node:path";
 import { repoRoot } from "../../core/git.ts";
 import { providerFromSpec, type LlmProviderSpec } from "../../graders/index.ts";
+import { startReadable } from "../../eval/candidates.ts";
 import { DEFAULT_SINCE_MS, initSuite, InitError, type InitOpts, type InitResult, type InitSource } from "../../eval/init.ts";
 import { DraftError } from "../../eval/draft.ts";
 import { toPosix } from "../../runner/fsutil.ts";
@@ -170,7 +171,7 @@ export async function evalInit(c: CommandContext): Promise<number> {
     if (o.draft) out.note(`Drafting with ${o.provider!.name} ${o.provider!.model}…`);
     const spin = workRoot ? out.spin("Drafting and validating tasks…") : undefined;
     try {
-      return await initSuite(o as InitOpts, { index: ctx.index, blobs: ctx.blobs });
+      return await initSuite(o as InitOpts, { index: ctx.index, blobs: ctx.blobs, startReadable: (dir) => startReadable(dir, c.env) });
     } catch (e) {
       if (e instanceof InitError || e instanceof DraftError) {
         throw new CliError(e.message, {

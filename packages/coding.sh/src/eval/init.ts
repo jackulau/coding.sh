@@ -111,6 +111,8 @@ export interface InitDeps {
   /** Snapshot reads (default: the git-backed store). */
   git?: SnapshotOps;
   now?: number;
+  /** Whether a session's start state can be read on this machine (tests with made-up roots; default eval/candidates.ts startReadable). */
+  startReadable?: (root: string) => boolean | Promise<boolean>;
 }
 
 export interface InitResult {
@@ -281,7 +283,7 @@ export async function recentSessions(o: Pick<InitOpts, "root" | "since" | "sessi
     .slice(0, CANDIDATE_POOL);
 }
 
-async function pickSessions(o: InitOpts, index: IndexStore, now: number): Promise<{ sessions: Session[]; notes: string[] }> {
+async function pickSessions(o: InitOpts, index: IndexStore, now: number, startReadable?: InitDeps["startReadable"]): Promise<{ sessions: Session[]; notes: string[] }> {
   if (o.sessionIds?.length) {
     const out: Session[] = [];
     for (const id of o.sessionIds) {
@@ -293,7 +295,7 @@ async function pickSessions(o: InitOpts, index: IndexStore, now: number): Promis
   }
   // Ranked (eval/candidates.ts): sessions that can't become a task are left out, the rest go best first.
   const pool = await recentSessions(o, index, now, !o.where, o.where);
-  const ranked = await rankSessions(index, pool, { now });
+  const ranked = await rankSessions(index, pool, { now, ...(startReadable ? { startReadable } : {}) });
   const byId = new Map(pool.map((s) => [s.id, s]));
   const sessions = ranked.filter((c) => c.eligible).slice(0, o.limit ?? DEFAULT_SESSION_LIMIT).map((c) => byId.get(c.sessionId)!);
   const rejected = rejectSummary(ranked);
@@ -302,7 +304,7 @@ async function pickSessions(o: InitOpts, index: IndexStore, now: number): Promis
 
 async function fromSessions(o: InitOpts, deps: InitDeps, name: string, _dir: string): Promise<Built> {
   const now = deps.now ?? Date.now();
-  const picked = await pickSessions(o, deps.index, now);
+  const picked = await pickSessions(o, deps.index, now, deps.startReadable);
   const sessions = picked.sessions;
   if (!sessions.length) {
     const days = Math.round((o.since ?? DEFAULT_SINCE_MS) / 86_400_000);

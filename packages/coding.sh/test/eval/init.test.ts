@@ -236,7 +236,8 @@ describe("initSuite: sessions", () => {
     for (const id of ["failed", "tagged-only", "old"]) {
       await d.index.putEvents([ev(id, "session.start", {}, { repo: { root: ROOT, head: "abc", snapshot: "start" } }), ev(id, "user.message", { text: `fix add and mul (${id})` }), ev(id, "tool.start", { tool: "Bash", toolUseId: `t${id}`, input: { command: "node test/add.test.js" } })]);
     }
-    return { ...d, git };
+    // ROOT is not on this machine; the fake snapshots stand in for its start states.
+    return { ...d, git, startReadable: () => true };
   }
 
   it("drafts tasks from recent failed sessions only, the failed diff as a near miss", async () => {
@@ -282,7 +283,16 @@ describe("initSuite: sessions", () => {
     await w.index.putEvents([ev("sub", "session.start", {}, { repo: { root: ROOT, head: "abc", snapshot: "start" } }), ev("sub", "user.message", { text: "subtask" }), ev("noprompt", "session.start", {}, { repo: { root: ROOT, head: "abc", snapshot: "start" } })]);
     const r = await initSuite({ name: "ranked", root, source: "sessions", since: 5_000 }, { ...w, now: 12_000 });
     assert.deepEqual(r.tasks!.map((t) => t.sessionId), ["failed"]);
-    assert.ok(r.notes.some((n) => /left out 2 flagged session\(s\) that can't become a task: 1 subagent, 1 no-user-prompt/.test(n)), r.notes.join("\n"));
+    assert.ok(r.notes.some((n) => /left out 2 flagged session\(s\) that can't become a task: 1 subagent, 1 with no user prompt/.test(n)), r.notes.join("\n"));
+  });
+
+  it("leaves out a session whose repository is gone from this machine, and says so", async () => {
+    const root = await project();
+    const w = await world();
+    await assert.rejects(
+      initSuite({ name: "gone", root, source: "sessions", since: 5_000 }, { ...w, now: 12_000, startReadable: () => false }),
+      /no failed or flagged sessions that can become a task \(left out 1 flagged session\(s\) that can't become a task: 1 whose repository is gone /,
+    );
   });
 
   it("keeps the diff as the reference for a named session that didn't fail", async () => {

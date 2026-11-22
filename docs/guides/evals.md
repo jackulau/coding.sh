@@ -44,9 +44,12 @@ validate <task>` checks the verifier both ways. The verifier must pass with this
 a whole test suite that also covers other bugs never passes. Until there is a reference, `eval run`
 lists the task as having no reference solution.
 
-Sessions are ranked before they are drafted (`coding.sh eval candidates` shows the ranking). A
-subagent, a `coding.sh run` session, one with no git state at its start, no typed prompt or no
-edits can't become a task and is left out, with a note saying how many. The rest go best first: a
+Sessions are ranked before they are drafted (`coding.sh eval candidates` shows the ranking). These
+can't become a task and are left out, with a note saying how many of each: a subagent, a session
+that ran with a run id (`CODING_SH_RUN_ID`, as eval, compare, exp and bench trials do), one with no
+git state at its start, no typed prompt or no edits, one whose commands mostly publish or deploy,
+and one whose repository is no longer on this machine (put it back at the same path to use the
+session). The rest go best first: a
 failure flag, the user pushing back, a verifier guessable from the commands the session ran, a
 test edited after a failing run, more than one turn and a recent start each add to the score.
 

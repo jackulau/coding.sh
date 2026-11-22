@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
+import { shadowRepoPath } from "../../src/core/snapshot.ts";
 import type { AgentEvent, Session } from "../../src/core/types.ts";
-import { formatCandidates, isDeliveryCommand, rankEvalCandidates, rankSessions, rejectSummary, type CandidateItem } from "../../src/eval/candidates.ts";
+import { formatCandidates, isDeliveryCommand, rankEvalCandidates, rankSessions, rejectSummary, startReadable, type CandidateItem } from "../../src/eval/candidates.ts";
 import { MemIndex } from "../helpers-eval.ts";
 
 const DAY = 86_400_000;
@@ -58,7 +62,8 @@ describe("rankEvalCandidates", () => {
     assert.equal(top.pushback, 1);
     assert.deepEqual(top.reasons, ["+2 premature-completion", "+3 pushback ×1", "+2 verifier guessable", "+1 multi-turn", "+1 last 7 days"]);
     assert.equal(top.score, 9);
-    assert.equal(rejectSummary(ranked), "1 subagent, 1 run, 1 no-git-start, 1 no-user-prompt, 1 no-edits, 1 external-deliverable");
+    assert.equal(rejectSummary(ranked), "1 subagent, 1 with a run id (CODING_SH_RUN_ID), 1 with no git state at its start, 1 with no user prompt, 1 that changed no files, 1 that mostly publishes or deploys");
+    assert.equal(rejectSummary([...ranked, ...ranked]), "2 subagents, 2 with a run id (CODING_SH_RUN_ID), 2 with no git state at their start, 2 with no user prompt, 2 that changed no files, 2 that mostly publish or deploy");
   });
 
   it("ranks a pushback session above its twin without, and orders ties newest first then by id", () => {
@@ -101,7 +106,7 @@ describe("rankEvalCandidates", () => {
     assert.deepEqual(a.map((c) => c.sessionId), ["flagged"]);
     assert.equal(JSON.stringify(items), before);
     assert.deepEqual(rankEvalCandidates(items, { now: NOW }), rankEvalCandidates(items, { now: NOW }));
-    assert.match(formatCandidates(rankEvalCandidates(items, { now: NOW })), /1\.\s+9\s+flagged[\s\S]*verifier: pytest -q[\s\S]*rejected: subagent/);
+    assert.match(formatCandidates(rankEvalCandidates(items, { now: NOW })), /1\.\s+9\s+flagged[\s\S]*verifier: pytest -q[\s\S]*rejected: a subagent's session: the session that started it is the one to use/);
   });
 
   it("tells delivery commands from repo work", () => {
@@ -115,7 +120,8 @@ describe("rankEvalCandidates", () => {
       await index.upsertSession(it.session);
       await index.putEvents([...it.events]);
     }
-    const r = await rankSessions(index, [...index.sessions.values()], { now: NOW, eligibleOnly: true });
+    // ROOT is not on this machine: the start state is taken as readable here.
+    const r = await rankSessions(index, [...index.sessions.values()], { now: NOW, eligibleOnly: true, startReadable: () => true });
     assert.deepEqual(r.map((c) => c.sessionId), ["flagged", "plain"]);
   });
 
@@ -137,7 +143,61 @@ describe("rankEvalCandidates", () => {
     }
     const diffSnapshots = async (_r: string, a: string, b: string) => ({ files: a === "abc" && b === "end" && calls++ < 1 ? [{ path: "sum.js" }] : [] });
     let calls = 0;
-    const r = await rankSessions(index, [...index.sessions.values()], { now: NOW, diffSnapshots });
+    const r = await rankSessions(index, [...index.sessions.values()], { now: NOW, diffSnapshots, startReadable: () => true });
     assert.deepEqual(r.map((c) => [c.sessionId, c.reject]), [["bash", undefined], ["idle", "no-edits"]]);
+  });
+});
+
+// A session whose repository was moved or deleted ranked first, and `eval init --session` then failed on
+// it ("the session's repository ... is gone"). Sessions read from another machine's transcripts were
+// left out as "no-git-start", a code that did not say their folder is not here either.
+describe("a session's folder that is not on this machine", () => {
+  it("rankSessions leaves out a session whose repository is gone, and says where it was", async () => {
+    const index = new MemIndex();
+    const gone = join(tmpdir(), "csh-cand-moved-away");
+    for (const it of [
+      { session: session("here"), events: events("here") },
+      { session: session("moved", { repo: { root: gone, head: "abc", snapshot: "snap" } }), events: events("moved").map((e) => (e.repo ? { ...e, repo: { root: gone, head: "abc", snapshot: "snap" } } : e)) },
+      { session: session("transcript", { repo: undefined, cwd: gone }), events: events("transcript").map((e) => ({ ...e, repo: undefined })) },
+    ]) {
+      await index.upsertSession(it.session);
+      await index.putEvents([...it.events]);
+    }
+    const r = await rankSessions(index, [...index.sessions.values()], { now: NOW, startReadable: (root) => root !== gone });
+    assert.deepEqual(
+      r.map((c) => [c.sessionId, c.reject, c.gone]),
+      [
+        ["here", undefined, undefined],
+        ["moved", "repo-gone", gone],
+        ["transcript", "no-git-start", gone],
+      ],
+    );
+    const text = formatCandidates(r);
+    assert.ok(text.includes(`rejected: its repository ${gone} is not on this machine, so its start can't be rebuilt: put the repository back at that path to use it`), text);
+    assert.ok(text.includes(`rejected: no git commit was recorded at its start (read from a transcript, or not in a git repository), so its start can't be rebuilt, and its folder ${gone} is not on this machine`), text);
+    assert.equal(rejectSummary(r), "1 with no git state at its start, 1 whose repository is gone");
+  });
+
+  it("startReadable: a folder that is there, or this store's copy of a removed worktree whose main checkout still holds the objects", async () => {
+    const base = mkdtempSync(join(tmpdir(), "csh-cand-readable-"));
+    try {
+      const env = { ...process.env, CODING_SH_HOME: join(base, "home") };
+      const main = join(base, "main");
+      mkdirSync(join(main, ".git", "objects"), { recursive: true });
+      const shadowOf = (root: string, alternates: string) => {
+        const shadow = shadowRepoPath(root, env);
+        mkdirSync(join(shadow, "objects", "info"), { recursive: true });
+        writeFileSync(join(shadow, "HEAD"), "ref: refs/heads/main\n");
+        writeFileSync(join(shadow, "objects", "info", "alternates"), `${alternates}\n`);
+      };
+      assert.equal(await startReadable(main, env), true, "the folder is there");
+      assert.equal(await startReadable(join(base, "never-here"), env), false, "no folder and no copy");
+      shadowOf(join(base, "wt-removed"), join(main, ".git", "objects"));
+      assert.equal(await startReadable(join(base, "wt-removed"), env), true, "a removed worktree reads through its main checkout's objects");
+      shadowOf(join(base, "wt-orphan"), join(base, "main-deleted", ".git", "objects"));
+      assert.equal(await startReadable(join(base, "wt-orphan"), env), false, "the objects it borrows are gone too");
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });

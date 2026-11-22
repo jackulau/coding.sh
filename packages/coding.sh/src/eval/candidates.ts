@@ -11,8 +11,11 @@
 //
 // Hard rejects, first match wins:
 //   subagent            the session is a subagent of another (Session.parent)
-//   run                 a coding.sh eval or benchmark run (Session.runId)
+//   run                 ran with a run id (Session.runId, CODING_SH_RUN_ID), as eval, compare,
+//                       exp and bench trials do
 //   no-git-start        no repo state at session start (no snapshot and no HEAD)
+//   repo-gone           the repository is not on this machine and this store holds no
+//                       readable copy of its start (rankSessions checks; see startReadable)
 //   no-user-prompt      no user message with text: nothing to use as the instruction
 //   no-edits            the agent changed no files
 //   external-deliverable  most shell commands publish or deploy (gh, git push,
@@ -31,6 +34,8 @@
 //   size                −1 over 300 tool calls
 //   recency             +1 when it started within the last 7 days
 // Ties: newer first, then id.
+import { existsSync, readFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import { isPlumbing, shellParts } from "../core/failing-command.ts";
 import { failureFlags, FLAGS } from "../core/sessions.ts";
 import type { AgentEvent, Session } from "../core/types.ts";
@@ -38,9 +43,42 @@ import { isPushback } from "../mcp/data.ts";
 import { isTestPath } from "./impossible.ts";
 import { extractTestCommand, guessVerifierFromEvents, shellCommandOf } from "./task.ts";
 
-export type CandidateReject = "subagent" | "run" | "no-git-start" | "no-user-prompt" | "no-edits" | "external-deliverable";
+export type CandidateReject = "subagent" | "run" | "no-git-start" | "repo-gone" | "no-user-prompt" | "no-edits" | "external-deliverable";
 
-export const CANDIDATE_REJECTS: readonly CandidateReject[] = ["subagent", "run", "no-git-start", "no-user-prompt", "no-edits", "external-deliverable"];
+export const CANDIDATE_REJECTS: readonly CandidateReject[] = ["subagent", "run", "no-git-start", "repo-gone", "no-user-prompt", "no-edits", "external-deliverable"];
+
+/** Each reject after a count, for one session and for more: "2 that changed no files". */
+const REJECT_COUNTED: Record<CandidateReject, readonly [string, string]> = {
+  subagent: ["subagent", "subagents"],
+  run: ["with a run id (CODING_SH_RUN_ID)", "with a run id (CODING_SH_RUN_ID)"],
+  "no-git-start": ["with no git state at its start", "with no git state at their start"],
+  "repo-gone": ["whose repository is gone", "whose repositories are gone"],
+  "no-user-prompt": ["with no user prompt", "with no user prompt"],
+  "no-edits": ["that changed no files", "that changed no files"],
+  "external-deliverable": ["that mostly publishes or deploys", "that mostly publish or deploy"],
+};
+
+/** Why a session can't become a task, in words, and what would change that where something can. */
+export function rejectReason(c: Pick<Candidate, "reject" | "gone">): string {
+  switch (c.reject) {
+    case "subagent":
+      return "a subagent's session: the session that started it is the one to use";
+    case "run":
+      return "it ran with a run id (CODING_SH_RUN_ID), as eval, compare, exp and bench trials do, and trials are left out";
+    case "no-git-start":
+      return `no git commit was recorded at its start (read from a transcript, or not in a git repository), so its start can't be rebuilt${c.gone ? `, and its folder ${c.gone} is not on this machine` : ""}`;
+    case "repo-gone":
+      return `its repository${c.gone ? ` ${c.gone}` : ""} is not on this machine, so its start can't be rebuilt: put the repository back at that path to use it`;
+    case "no-user-prompt":
+      return "no prompt from the user to use as the instruction (eval new --instruction can give it one)";
+    case "no-edits":
+      return "the agent changed no files, so there is no change to check";
+    case "external-deliverable":
+      return "most of its commands publish or deploy (git push, gh, kubectl and the like), which a replay can't check";
+    default:
+      return "";
+  }
+}
 
 /** Score constants (see the file header). */
 export const SCORE = {
@@ -65,6 +103,8 @@ export interface CandidateItem {
   events: readonly AgentEvent[];
   /** Set by rankSessions: the start state (snapshot or HEAD) and the end snapshot hold different files. */
   snapshotChanged?: boolean;
+  /** Set by rankSessions: the folder the session ran in, when neither it nor a readable copy of its start is on this machine. */
+  gone?: string;
 }
 
 export interface Candidate {
@@ -75,6 +115,8 @@ export interface Candidate {
   eligible: boolean;
   /** Why it can't become a task (eligible false). */
   reject?: CandidateReject;
+  /** A rejected session's folder, when it is not on this machine (rejectReason says so). */
+  gone?: string;
   score: number;
   /** What made up the score, e.g. "+2 premature-completion". */
   reasons: string[];
@@ -96,6 +138,8 @@ export interface RankOpts {
   eligibleOnly?: boolean;
   /** Files that differ between two snapshots (tests, other backends; default src/core/snapshot.ts). */
   diffSnapshots?: (root: string, a: string, b: string) => Promise<{ files: readonly unknown[] }>;
+  /** Whether a start state recorded in this folder can be read here (tests; default startReadable). */
+  startReadable?: (root: string) => boolean | Promise<boolean>;
 }
 
 const EDIT_TOOLS = new Set(["edit", "write", "multiedit", "notebookedit", "apply_patch", "applypatch", "str_replace_editor", "str_replace_based_edit_tool", "edit_file", "write_file", "replace", "create_file", "patch"]);
@@ -163,10 +207,11 @@ export function scoreCandidate(item: CandidateItem, now = Date.now()): Candidate
   const prompts = events.filter((e) => e.kind === "user.message").map(text).filter((t): t is string => !!t);
   const flags = failureFlags(s.flags);
   const base = { sessionId: s.id, agent: s.agent, ...(s.title ? { title: s.title } : {}), startedAt: s.startedAt, flags, userMessages: prompts.length };
-  const reject = (r: CandidateReject): Candidate => ({ ...base, eligible: false, reject: r, score: 0, reasons: [], pushback: 0 });
+  const reject = (r: CandidateReject): Candidate => ({ ...base, eligible: false, reject: r, ...(item.gone ? { gone: item.gone } : {}), score: 0, reasons: [], pushback: 0 });
   if (s.parent) return reject("subagent");
   if (s.runId || events.some((e) => e.runId)) return reject("run");
   if (!startRepo(s, events)) return reject("no-git-start");
+  if (item.gone) return reject("repo-gone");
   if (!prompts.length) return reject("no-user-prompt");
   if (!edited(s, events, item.snapshotChanged)) return reject("no-edits");
   const shell = events.map(shellCommandOf).filter((c): c is string => !!c);
@@ -207,12 +252,15 @@ export function rankEvalCandidates(items: readonly CandidateItem[], opts: RankOp
   return opts.limit !== undefined ? all.slice(0, opts.limit) : all;
 }
 
-/** "2 subagent, 1 no-git-start": rejected sessions by reason. */
+/** "2 subagents, 1 that changed no files": rejected sessions by reason. */
 export function rejectSummary(cands: readonly Candidate[]): string {
-  const counts = new Map<string, number>();
+  const counts = new Map<CandidateReject, number>();
   for (const c of cands) if (c.reject) counts.set(c.reject, (counts.get(c.reject) ?? 0) + 1);
   return CANDIDATE_REJECTS.filter((r) => counts.has(r))
-    .map((r) => `${counts.get(r)} ${r}`)
+    .map((r) => {
+      const n = counts.get(r)!;
+      return `${n} ${REJECT_COUNTED[r][n === 1 ? 0 : 1]}`;
+    })
     .join(", ");
 }
 
@@ -224,7 +272,7 @@ export function formatCandidates(cands: readonly Candidate[]): string {
     const title = (c.title ?? "").replace(/\s+/g, " ").trim();
     const head = c.eligible ? `${String(i + 1).padStart(2)}. ${String(c.score).padStart(3)}  ${c.sessionId}` : `    rej  ${c.sessionId}`;
     lines.push(`${head}  ${title.length > 60 ? `${title.slice(0, 59)}…` : title}`);
-    lines.push(`         ${c.eligible ? c.reasons.join(", ") || "no signals" : `rejected: ${c.reject}`}${c.verifierGuess ? `  · verifier: ${c.verifierGuess}` : ""}`);
+    lines.push(`         ${c.eligible ? c.reasons.join(", ") || "no signals" : `rejected: ${rejectReason(c)}`}${c.verifierGuess ? `  · verifier: ${c.verifierGuess}` : ""}`);
   }
   return lines.join("\n");
 }
@@ -249,13 +297,41 @@ async function snapshotsDiffer(session: Session, events: readonly AgentEvent[], 
   }
 }
 
+/**
+ * Whether the start state of a session in `root` can still be read on this machine: the folder is
+ * there, or this store's shadow repo for it is, along with every object store it reads through (a
+ * removed linked worktree reads through its main checkout's objects; see src/core/snapshot.ts).
+ */
+export async function startReadable(root: string, env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
+  if (existsSync(root)) return true;
+  const { shadowRepoPath } = await import("../core/snapshot.ts");
+  const shadow = shadowRepoPath(root, env);
+  if (!existsSync(join(shadow, "HEAD"))) return false;
+  const objects = join(shadow, "objects");
+  let alternates = "";
+  try {
+    alternates = readFileSync(join(objects, "info", "alternates"), "utf8");
+  } catch {
+    return true; // no alternates: every object is in the shadow repo itself
+  }
+  return alternates
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .every((p) => existsSync(isAbsolute(p) ? p : join(objects, p)));
+}
+
 /** Load each session's events and rank them. */
 export async function rankSessions(index: { listEvents(sessionId: string): Promise<AgentEvent[]> }, sessions: readonly Session[], opts: RankOpts = {}): Promise<Candidate[]> {
+  const readable = opts.startReadable ?? ((root: string) => startReadable(root));
   const items: CandidateItem[] = [];
   for (const session of sessions) {
     const events = await index.listEvents(session.id);
     const item: CandidateItem = { session, events };
     if (await snapshotsDiffer(session, events, opts)) item.snapshotChanged = true;
+    // The folder a start state is read through, picked as eval/task.ts startOf picks it, else where the session ran.
+    const folder = (events.find((e) => e.kind === "session.start" && e.repo)?.repo ?? session.repo)?.root || session.cwd;
+    if (folder && !(await readable(folder))) item.gone = folder;
     items.push(item);
   }
   return rankEvalCandidates(items, opts);
