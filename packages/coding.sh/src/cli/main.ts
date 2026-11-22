@@ -13,9 +13,10 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { paths } from "../core/paths.ts";
-import { parseArgs, shellQuote, suggest, UsageError, visibleFlags, type FlagSpec } from "./args.ts";
+import { parseArgs, suggest, UsageError, visibleFlags, type FlagSpec } from "./args.ts";
 import { CliError, Output } from "./output.ts";
 import { version } from "./meta.ts";
+import { cliCommand, nextStepBin } from "./next-steps.ts";
 import { COMMANDS, findCommand, GLOBAL_FLAGS, type ActionSpec, type CommandSpec } from "./registry.ts";
 
 export const BIN = "coding.sh";
@@ -297,22 +298,24 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
     const flags = action ? (action.flags ?? []) : (cmd.flags ?? []);
     const variadic = args.some((a) => a.variadic) && !cmd.passthrough;
     out.helpCommand = `${BIN} ${cmd.name}${action ? ` ${action.name}` : ""} --help`;
-    // `coding.sh run claude -p hi`: the command goes after `--`.
+    // `coding.sh run claude -p hi`: the command goes after `--`. The fix and the usage lines are
+    // commands to paste, so they name the CLI and quote each argument for the user's shell
+    // (next-steps.ts): in PowerShell `codingsh run "--" claude`, since it drops a bare `--`.
     if (cmd.passthrough && !tail.includes("--")) {
       const at = commandStart(tail, flags);
       if (at < tail.length) {
-        throw new UsageError(`Put -- before the command to run`, { reason: "missing_argument", suggestion: `${BIN} ${cmd.name} ${[...tail.slice(0, at), "--", ...tail.slice(at)].map(shellQuote).join(" ")}` });
+        throw new UsageError(`Put -- before the command to run`, { reason: "missing_argument", suggestion: cliCommand(env, [cmd.name, ...tail.slice(0, at), "--", ...tail.slice(at)]) });
       }
     }
     const parsed = parseArgs(tail, flags, { maxPositionals: cmd.passthrough ? 0 : variadic ? undefined : args.length, suggestions: GLOBAL_OPTION_NAMES, sensitive: cmd.sensitive === true });
     if (cmd.passthrough) {
-      if (parsed.rest.length === 0) throw new UsageError(`Missing command. Usage: ${BIN} ${cmd.name} -- <cmd> [args...]`, { reason: "missing_argument" });
+      if (parsed.rest.length === 0) throw new UsageError(`Missing command. Usage: ${cliCommand(env, [cmd.name, "--"])} <cmd> [args...]`, { reason: "missing_argument" });
     } else {
       if (parsed.sawDashDash) parsed.positionals.push(...parsed.rest);
       const required = args.filter((a) => a.required).length;
       if (parsed.positionals.length < required) {
         const missing = args.filter((a) => a.required)[parsed.positionals.length]!;
-        throw new UsageError(`Missing argument <${missing.name.toUpperCase()}>. Usage: ${BIN} ${cmd.name}${action ? ` ${action.name}` : ""} ${argSyntax(args)}`, { reason: "missing_argument" });
+        throw new UsageError(`Missing argument <${missing.name.toUpperCase()}>. Usage: ${nextStepBin(env)} ${cmd.name}${action ? ` ${action.name}` : ""} ${argSyntax(args)}`, { reason: "missing_argument" });
       }
     }
 
