@@ -92,8 +92,12 @@ def full_capture() -> bool:
     return _get().cfg.full_capture
 
 
-def flush(timeout: Optional[float] = None) -> bool:
-    """Send everything queued so far. Returns True when the queue drained in time."""
+def flush(timeout: Optional[float] = 5.0) -> bool:
+    """Send everything queued so far. Returns True when the queue drained in time.
+
+    Waits at most `timeout` seconds. With `None` it waits until the queue is sent or
+    the sender gives up on it: a minute or more when the server never answers.
+    """
     try:
         return _get().flush(timeout)
     except Exception:

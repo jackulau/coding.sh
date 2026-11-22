@@ -113,23 +113,19 @@ export function errorMessage(err: unknown): string {
   return truncate(msg, 1000).text;
 }
 
+/** Content part types that hold text someone wrote: { type: "text", text }, { type: "input_text", text }, { text }. */
+const TEXT_PARTS = new Set<unknown>([undefined, "text", "input_text", "output_text"]);
+
+const partText = (p: unknown): string => (typeof p === "string" ? p : isObj(p) && TEXT_PARTS.has(p.type) && typeof p.text === "string" ? p.text : "");
+
 /**
- * Text of message content in any of the common shapes: a string, or parts
- * such as { type: "text", text }, { type: "input_text", text }, { text }.
+ * Text of message content: a string, or its text parts. Other parts are
+ * skipped, as in the Python SDK: an Anthropic tool_result block in a user
+ * message is the tool's output, not the user's prompt.
  */
-export function contentText(c: unknown, depth = 0): string {
-  if (depth > 6 || c == null) return "";
-  if (typeof c === "string") return c;
-  if (Array.isArray(c))
-    return c
-      .map((p) => contentText(p, depth + 1))
-      .filter(Boolean)
-      .join("\n");
-  if (isObj(c)) {
-    if (typeof c.text === "string") return c.text;
-    if (c.content !== undefined) return contentText(c.content, depth + 1);
-  }
-  return "";
+export function contentText(c: unknown): string {
+  if (Array.isArray(c)) return c.map(partText).filter(Boolean).join("\n");
+  return partText(c);
 }
 
 /** Text of the last user message in a chat-style messages array (OpenAI, Anthropic, Responses input). */
