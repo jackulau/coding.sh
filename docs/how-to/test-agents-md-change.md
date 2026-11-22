@@ -160,7 +160,8 @@ it says No sessions yet or Too early to tell. See [Did your last change help?](.
 | `--resume` | off | Continue an interrupted A/B. |
 
 With no uncommitted edits, the default tests your last AGENTS.md commit against the version before
-it. Every flag: [exp ab reference](https://coding.sh/docs/cli/exp).
+it. Both arms read files with LF line ends, so a change of line ends alone (CRLF and LF, as with
+`core.autocrlf`) is not an edit. Every flag: [exp ab reference](https://coding.sh/docs/cli/exp).
 
 ## If something goes wrong
 

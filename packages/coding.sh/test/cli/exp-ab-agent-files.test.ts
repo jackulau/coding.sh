@@ -111,6 +111,22 @@ describe("exp ab: files the session's agent loads", () => {
     assert.match(r.stderr, /Claude Code does not load AGENTS\.md: the edit changes nothing for 1 of 2 cases/);
   });
 
+  it("a line-ending change is not an edit: CRLF in the work tree against LF in git (core.autocrlf=true)", async () => {
+    const e = await setup("crlf", ["codex", "codex"]);
+    // What a Windows checkout with core.autocrlf=true holds for the committed text: CRLF line ends.
+    writeFileSync(join(e.repo, "AGENTS.md"), "Keep answers short.\r\n");
+    const r = cli(e, ["exp", "ab", "--dry-run"]);
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stderr, /No uncommitted changes to AGENTS\.md/);
+    const file = cli(e, ["exp", "ab", "--a", "git:HEAD", "--b", "AGENTS.md", "--dry-run"]);
+    assert.equal(file.status, 2, file.stdout + file.stderr);
+    assert.match(file.stderr, /have the same harness files/);
+    // A real edit made in CRLF still counts.
+    writeFileSync(join(e.repo, "AGENTS.md"), "Keep answers short.\r\nRun the tests first.\r\n");
+    const edit = cli(e, ["exp", "ab", "--dry-run"]);
+    assert.equal(edit.status, 0, edit.stdout + edit.stderr);
+  });
+
   it("a --b draft in a folder replaces the instructions file of its name", async () => {
     const draft = "Keep answers short.\nRun the tests before you say you are done.\n";
     const codex = await setup("draft-codex", ["codex", "codex"]);

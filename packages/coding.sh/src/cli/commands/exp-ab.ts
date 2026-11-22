@@ -223,12 +223,20 @@ export function lastHarnessCommit(root: string): { commit: string; short: string
 }
 
 /**
+ * The files with LF line ends. A checkout with core.autocrlf=true holds CRLF
+ * where git holds LF: that is no edit, and both arms give the model the same bytes.
+ */
+const lf = (files: ContextFile[]): ContextFile[] => files.map((f) => (f.text.includes("\r\n") ? { ...f, text: f.text.replace(/\r\n/g, "\n") } : f));
+const lfArm = (arm: Arm): Arm => ({ ...arm, files: lf(arm.files) });
+
+/**
  * Both arms, with the defaults: no flags compares git HEAD with your
  * uncommitted edits, or, with none, the last commit that changed a harness
  * file with the version before it; a lone --b runs against the repo's current files.
+ * Line ends are LF in both (see {@link lf}).
  */
 async function resolveArms(o: AbOptions, c: CommandContext, root: string, inGit: boolean, ctx: Pick<Context, "index" | "blobs">): Promise<[Arm, Arm, string?]> {
-  const current = harnessFilesIn(root);
+  const current = lf(harnessFilesIn(root));
   const currentArm: Arm = {
     label: "current files",
     files: current,
@@ -236,11 +244,12 @@ async function resolveArms(o: AbOptions, c: CommandContext, root: string, inGit:
   };
   if (o.a === undefined && o.b === undefined) {
     if (!inGit) throw new UsageError("Not in a git repo: pass the harness to test with --b <file|dir>", { reason: "missing_argument", suggestion: "coding.sh exp ab --b ./AGENTS.md" });
-    const head = harnessAtRev(root, "HEAD") ?? [];
+    const head = lf(harnessAtRev(root, "HEAD") ?? []);
     if (!sameFiles(head, current)) return [{ label: "git:HEAD", files: head, watch: [] }, { ...currentArm, label: "your edits" }];
     // Already committed: test the last harness commit against the version before it.
     const last = lastHarnessCommit(root);
-    const before = last ? harnessAtRev(root, `${last.commit}^`) : undefined;
+    const atParent = last ? harnessAtRev(root, `${last.commit}^`) : undefined;
+    const before = atParent && lf(atParent);
     if (!last || !before || sameFiles(before, head)) {
       throw new UsageError("No uncommitted changes to AGENTS.md or other instructions files, rules or skills, and no earlier commit to compare with: edit one first, or pass the versions with --a and --b", {
         reason: "missing_argument",
@@ -253,8 +262,8 @@ async function resolveArms(o: AbOptions, c: CommandContext, root: string, inGit:
       `No uncommitted edits: testing your last harness commit ${last.short} "${last.subject}" (B) against the version before it (A)`,
     ];
   }
-  const a = o.a === undefined ? currentArm : await resolveArm(o.a, { cwd: c.cwd, root, base: current, flag: "a", ctx });
-  const b = o.b === undefined ? currentArm : await resolveArm(o.b, { cwd: c.cwd, root, base: a.files, flag: "b", ctx });
+  const a = o.a === undefined ? currentArm : lfArm(await resolveArm(o.a, { cwd: c.cwd, root, base: current, flag: "a", ctx }));
+  const b = o.b === undefined ? currentArm : lfArm(await resolveArm(o.b, { cwd: c.cwd, root, base: a.files, flag: "b", ctx }));
   if (sameFiles(a.files, b.files)) {
     throw new UsageError(`A (${a.label}) and B (${b.label}) have the same harness files: nothing to compare`, {
       reason: "invalid_argument",
@@ -967,8 +976,8 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
     return `A ${r.passA}/${cases.length} -> B ${r.passB}/${cases.length} | fixed ${r.fixed.length}, broke ${r.broke.length} | ${verdict}${prot} | ${costText(s.usd + s.judgeUsd, setup.provider)}, ${s.calls - s.cached} new calls`;
   }, async () => {
     // Re-read B the way it was given.
-    if (o.b === undefined) return { ...armB, files: harnessFilesIn(repoRoot) };
-    return resolveArm(o.b, { cwd: c.cwd, root: repoRoot, base: armA.files, flag: "b", ctx });
+    if (o.b === undefined) return { ...armB, files: lf(harnessFilesIn(repoRoot)) };
+    return lfArm(await resolveArm(o.b, { cwd: c.cwd, root: repoRoot, base: armA.files, flag: "b", ctx }));
   });
 }
 
