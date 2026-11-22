@@ -1155,7 +1155,7 @@ a human boolean score, so `judge calibrate` reads human boolean scores as labels
 exports them.
 
 A config fixes a score name's type and allowed values. A value outside them is refused (exit 2,
-or HTTP 400):
+or HTTP 400). Here `refund-03` is the id of a case in one of your datasets:
 
 ```sh
 coding.sh score config helpfulness --type numeric --min 0 --max 5
@@ -1176,7 +1176,8 @@ name, and `score add` says which score it replaced (`replaced` in `--json`).
 A stored score keeps its type. Without a config, the type comes from how the value looks, so a
 value that reads as another type (`1,5` over a number) is refused (exit 2, or HTTP 400) unless you
 pass `--type`. An event must be in the store to be scored, and the score goes on the event's own
-session. An experiment is not a target: `score add exp:<id>` is refused (exit 2), so score its
+session. `score add` also refuses a case id that no dataset has and a run that is not stored
+(exit 1). An experiment is not a target: `score add exp:<id>` is refused (exit 2), so score its
 runs (`run:<id>`) or cases instead.
 `coding.sh ui` and `coding.sh serve` take the same scores at `POST /api/scores`
 ([API](../reference/api.md#post-apiscores)), and agents use the `score_add` and `score_list` MCP
@@ -1190,6 +1191,9 @@ A monitor scores each new session once, after `coding.sh ingest`, in the viewer 
 serve`. It scores with exactly one of a judge rubric (`--judge`), a command (`--run`) or an HTTP
 service (`--http`); two of them, or none, is refused (exit 2). Its scores have source `monitor` and
 the monitor's name. All flags are in the [CLI reference](../reference/cli.md#codingsh-monitor-add).
+The hook does not run monitors, so a session it captures waits for one of those. `coding.sh monitor
+run` scores the sessions that ended in the last day now, and `monitor run --watch` ingests and
+scores new sessions every 10 s until Ctrl-C.
 
 ```sh
 coding.sh monitor add helpful --judge rubric.md --provider gemini

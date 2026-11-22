@@ -345,6 +345,7 @@ grouped by area, with links to the docs for the details.
 - **Docs.** The evals guide says `coding.sh judge slop` exits 1, not 2, when there is nothing to grade, and 2 on a usage error. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#agent-slop))
 - **Evals.** `review next`, `done` and `skip` with `--json` print the item's command for the user's shell (`codingsh` in PowerShell and cmd), and `review create` with a query that matches nothing prints that query for `sessions --where`, quoted for the shell. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#review-queues))
 - **Judges.** `coding.sh judge calibrate` keeps a judge's stored calibration when a run reads no labels, for example with a `--criterion` no label has. Before, the run replaced a calibration measured on labels with an empty one, and `exp compare` lost the judge's bias correction. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#judges))
+- **Docs.** The evals guide says `score add case:<id>` needs the id of a case in one of your datasets (its example printed "case not found"), and that the hook runs no monitors: `monitor run` scores captured sessions now, and `monitor run --watch` keeps scoring new ones. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#monitors))
 
 ## [0.1.7] - 2026-11-16
 
