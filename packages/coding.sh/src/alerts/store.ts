@@ -128,9 +128,18 @@ export async function withAlertsLock<T>(file: string, fn: () => Promise<T>, wait
   }
 }
 
-/** The alert as list and check show it: everything but the secret. */
-export function publicAlert(a: AlertDef): Omit<AlertDef, "secret"> {
-  const out: AlertDef = { ...a };
-  delete out.secret;
-  return out;
+/** A group's state as --json prints it: the agent with --by agent, then the state. */
+export type PublicGroupState = { agent?: string } & GroupState;
+
+export type PublicAlert = Omit<AlertDef, "secret" | "states"> & { states: PublicGroupState[] };
+
+/**
+ * The alert as list and add print it with --json: everything but the secret, and the states
+ * as a list, one per group, like `alert check --json` gives its groups. Not keyed by group:
+ * the whole window's key is "", which Windows PowerShell 5.1's ConvertFrom-Json refuses.
+ * alerts.json keeps the keys.
+ */
+export function publicAlert(a: AlertDef): PublicAlert {
+  const { secret: _secret, ...rest } = a;
+  return { ...rest, states: Object.entries(a.states).map(([key, g]) => (a.by ? { agent: key, ...g } : { ...g })) };
 }

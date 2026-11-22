@@ -1,5 +1,6 @@
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -14,9 +15,11 @@ import { classify, recordDelivery, runAlertChecks } from "../../src/alerts/check
 import { parseMeasure, readMeasure } from "../../src/alerts/measure.ts";
 import { deliver, signatureHeaders, signBody, stderrLine } from "../../src/alerts/notify.ts";
 import { type AlertDef, loadAlerts, MAX_FAILED_DELIVERIES, saveAlerts } from "../../src/alerts/store.ts";
+import { resolveWindowsCommand } from "../../src/core/spawn.ts";
 import type { Score } from "../../src/core/types.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
+import { CLI } from "../_cli.ts";
 import { removeTestDir } from "../_rm.ts";
 import { mkSession, runCmd, type Sandbox, sandbox } from "../cli/_cmd.ts";
 
@@ -68,6 +71,7 @@ describe("coding.sh alert", () => {
     assert.equal(add.code, 0);
     const secret = (add.json as { secret: string }).secret;
     assert.match(secret, /^csh_whsec_[0-9a-f]{48}$/);
+    assert.deepEqual((add.json as { alert: { states: unknown } }).alert.states, [], "a new alert has no states yet, as a list");
 
     const first = await runCmd(alertCmd, sb, { action: "check", json: true });
     assert.equal(first.code, 0, first.stderr);
@@ -131,6 +135,30 @@ describe("coding.sh alert", () => {
     assert.deepEqual(res.groups.map((g) => [g.agent, g.state, g.value]), [["claude-code", "ALERT", 2], ["codex", "OK", 1]]);
     const sent = hook.posts.slice(before).map((p) => JSON.parse(p.body));
     assert.deepEqual(sent.map((b) => [b.alert, b.state, b.by]), [["per-agent", "ALERT", { agent: "claude-code" }]]);
+  });
+
+  it("list --json gives each alert's states as a list, with the agent under --by agent; alerts.json keeps its keys", async () => {
+    const r = await runCmd(alertCmd, sb, { action: "list", json: true });
+    assert.equal(r.code, 0, String(r.error));
+    // No empty key: Windows PowerShell 5.1's ConvertFrom-Json refuses one.
+    assert.doesNotMatch(r.stdout, /"":/);
+    type Listed = { name: string; states: { agent?: string; state: string; value: number | null; since: number; checkedAt: number }[] };
+    const listed = new Map((r.json as { alerts: Listed[] }).alerts.map((a) => [a.name, a.states]));
+    assert.deepEqual(listed.get("failures")!.map((g) => [Object.hasOwn(g, "agent"), g.state, g.value]), [[false, "ALERT", 1]]);
+    assert.deepEqual(listed.get("per-agent")!.map((g) => [g.agent, g.state, g.value]), [["claude-code", "ALERT", 2], ["codex", "OK", 1]]);
+    for (const g of [...listed.values()].flat()) assert.ok(g.since > 0 && g.checkedAt >= g.since, JSON.stringify(g));
+    const file = loadAlerts(join(sb.env.CODING_SH_HOME!, "alerts.json")).alerts;
+    assert.deepEqual(file.map((a) => [a.name, Object.keys(a.states)]), [["failures", [""]], ["per-agent", ["claude-code", "codex"]]]);
+  });
+
+  it("list --json reads in Windows PowerShell 5.1: ConvertFrom-Json takes it", { skip: !(process.platform === "win32" && resolveWindowsCommand("powershell")) && "PowerShell: Windows" }, () => {
+    const env: NodeJS.ProcessEnv = { ...process.env, ...sb.env };
+    for (const k of ["MSYSTEM", "SHELL", "CODING_SH_STORE_URL", "CODING_SH_BLOB_URL", "CODING_SH_DEV_REAL_STORE"]) delete env[k];
+    // The pipe a PowerShell user writes: codingsh alert list --json | ConvertFrom-Json
+    const script = `$doc = & '${process.execPath}' --no-warnings '${CLI}' alert list --json | ConvertFrom-Json; foreach ($a in $doc.alerts) { foreach ($g in $a.states) { "$($a.name)|$($g.agent)|$($g.state)|$($g.value)" } }`;
+    const r = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { env, encoding: "utf8", timeout: 60_000 });
+    assert.equal(r.error, undefined, String(r.error));
+    assert.deepEqual(r.stdout.trim().split(/\r?\n/), ["failures||ALERT|1", "per-agent|claude-code|ALERT|2", "per-agent|codex|OK|1"], r.stderr);
   });
 
   it("refuses bad usage and a name that exists", async () => {

@@ -10,7 +10,7 @@ import { LockBusyError } from "../../core/lock.ts";
 import { type AlertResult, payloadOf, recordDelivery, runAlertChecks } from "../../alerts/check.ts";
 import { parseMeasure } from "../../alerts/measure.ts";
 import { deliver, type DeliverOptions, SIGNING_NOTES, targetText } from "../../alerts/notify.ts";
-import { ALERT_WINDOWS, type AlertDef, type AlertState, type AlertTarget, type AlertWindow, isAlertName, loadAlerts, MAX_FAILED_DELIVERIES, NO_DATA_POLICIES, type NoDataPolicy, publicAlert, saveAlerts, withAlertsLock } from "../../alerts/store.ts";
+import { ALERT_WINDOWS, type AlertDef, type AlertState, type AlertTarget, type AlertWindow, isAlertName, loadAlerts, MAX_FAILED_DELIVERIES, NO_DATA_POLICIES, type NoDataPolicy, type PublicAlert, publicAlert, saveAlerts, withAlertsLock } from "../../alerts/store.ts";
 import { UsageError } from "../args.ts";
 import { autoIngest, num, readIngest, str, whereFlag, withContext } from "../common.ts";
 import { cliCommand } from "../next-steps.ts";
@@ -128,7 +128,7 @@ async function add(c: CommandContext, file: string): Promise<number> {
   });
 
   if (out.json) {
-    const doc: { alert: AlertDef; secret?: string } = { alert: publicAlert(def) };
+    const doc: { alert: PublicAlert; secret?: string } = { alert: publicAlert(def) };
     if (def.secret) doc.secret = def.secret;
     out.data(doc);
     return 0;

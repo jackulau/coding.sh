@@ -88,6 +88,7 @@ grouped by area, with links to the docs for the details.
 - **Site.** coding.sh is served by Vercel instead of a Cloudflare Worker, which had hit its daily request limit and answered 429. Moved pages, `www`, the headers and the installer behave as before. [Release](https://github.com/jackulau/coding.sh/blob/main/docs/RELEASE.md#deploying-the-site)
 - **Dogfood.** A perf or site budget missed by a little gets partial credit: the target divided by the reading for a ceiling, and the reverse for a floor. One reading near a budget moved the headline by 4 points before. `compare` scores the previous scorecard again with the current scorer and keeps its stored headline as `prevStored`. [Dogfood design](https://github.com/jackulau/coding.sh/blob/main/docs/design/dogfood.md)
 - **SDK.** In Python, `coding_sh.flush()` waits at most 5 s by default, as `flush()` does in TypeScript; `flush(timeout=None)` still waits until the queue is sent or given up. Before, a script that ended with `coding_sh.flush()`, as the quick start shows, could hang for over a minute when the server did not answer. [SDK](https://coding.sh/docs/sdk)
+- **Alerts.** `alert list --json` and `alert add --json` give an alert's `states` as a list, one entry per group with `agent` under `--by agent`, so Windows PowerShell 5.1's `ConvertFrom-Json` reads them. Before, the states were keyed by group, and the empty key of an alert without `--by` made it fail. alerts.json is unchanged. ([docs](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/alerts.md#check-on-a-schedule))
 
 ### Fixed
 

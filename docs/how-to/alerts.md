@@ -67,6 +67,10 @@ It prints each alert's state, value and threshold, with `was OK` (or the state b
 change, then `Sent 1 notification.` It exits 0 whatever the alerts say; a script reads the states
 from `alert check --json`.
 
+`alert list --json` prints the saved states without a check. Each alert's `states` is a list with
+one entry per group, and the entry has `agent` under `--by agent`. PowerShell reads it with
+`codingsh alert list --json | ConvertFrom-Json`.
+
 Run it every few minutes from cron or Task Scheduler. On Windows, `where.exe codingsh.cmd` prints
 the path to give Task Scheduler as the program, with `alert check` as its arguments.
 
